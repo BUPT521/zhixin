@@ -518,6 +518,9 @@ CREATE TABLE IF NOT EXISTS asset_chunk (
   PRIMARY KEY (hash, seq)
 )''';
 
+/// 建表之后要补的索引；drift 的 onCreate 与重建共用这一份。
+List<String> schemaIndexStatements() => _indexes;
+
 const List<String> _indexes = [
   'CREATE INDEX IF NOT EXISTS idx_material_goal ON material(goal_id)',
   'CREATE INDEX IF NOT EXISTS idx_material_page_material '
