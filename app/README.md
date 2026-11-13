@@ -56,6 +56,8 @@ lib/
 
 `ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。`ai/llm_client.dart` 负责三种接口的请求与响应格式，工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`。
 
+`application/service_runtime.dart` 是服务共用的运行环境：时间口径、数据代次、附件目录与模型调用失败的本机记录。应用根只装配一次，保存每日截止小时、整库恢复与清空之后，服务读到的是新值，不必给每个服务各传一个闭包；测试从 `test/support/service_runtime.dart` 取同一份装配。
+
 安排页的三个表单集中在 `plan_dialogs.dart`，讨论消息与引用展示位于 `discussion_message.dart`，页面继续负责加载数据和执行用户操作。
 
 ## 数据

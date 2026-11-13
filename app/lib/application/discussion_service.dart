@@ -20,7 +20,6 @@ import '../domain/models/memory.dart';
 import '../domain/models/study.dart';
 import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
-import '../domain/rules/time_policy.dart';
 import '../domain/rules/time_format.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
@@ -28,6 +27,7 @@ import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'reply_outcome.dart';
+import 'service_runtime.dart';
 
 /// 一次求助的结果：两条消息、引用与要展示的下一步建议。
 ///
@@ -106,17 +106,13 @@ class DiscussionService {
     required this.revisions,
     required this.tasks,
     required this.materials,
-    required this.policy,
+    required this.runtime,
     required this.transactions,
-    required this.filesDir,
     required this.cleanupAttachmentPaths,
     AssetStore? assets,
     AttachmentCache? cache,
-    int Function()? dataEpoch,
-    this.recordFailure,
   }) : assets = assets ?? AssetStore(),
-       cache = cache ?? AttachmentCache(filesDir: filesDir),
-       dataEpoch = dataEpoch ?? _zeroDataEpoch;
+       cache = cache ?? AttachmentCache(filesDir: () => runtime.filesDir);
 
   final ConversationRepository conversations;
   final BuddyAi ai;
@@ -130,7 +126,7 @@ class DiscussionService {
   final RevisionService revisions;
   final TaskRepository tasks;
   final MaterialRepository materials;
-  final TimePolicy Function() policy;
+  final ServiceRuntime runtime;
 
   /// 图片字节按哈希写入同一个库；业务行只保存哈希引用。
   final AssetStore assets;
@@ -139,13 +135,7 @@ class DiscussionService {
   /// 写入记录与撤销都经这份连接；与仓库共用同一个库。
   final WriteTransactions transactions;
 
-  /// 图片按文件名保存，读取时拼回应用私有目录。
-  final String Function() filesDir;
   final Future<void> Function(Iterable<String> paths) cleanupAttachmentPaths;
-  final int Function() dataEpoch;
-
-  /// 模型调用的类型、消息与调用栈只交给本机诊断记录，不进入界面说明。
-  final ModelFailureRecorder? recordFailure;
 
   /// 记录列表；[answerStatus] 按作答判定筛选，[limit] 与 [offset] 用于按页读取。
   Future<List<ConversationRecord>> records({
@@ -336,7 +326,7 @@ class DiscussionService {
     required void Function(String text)? onPartial,
     required LlmCancelToken? cancelToken,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final trimmed = text.trim();
     final paths = _cleanPaths(imagePaths);
     if (trimmed.isEmpty && paths.isEmpty) {
@@ -390,7 +380,7 @@ class DiscussionService {
     required void Function(String text)? onPartial,
     required LlmCancelToken? cancelToken,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final record = await conversations.byId(conversationId);
     if (record == null) throw StateError('未找到这条讨论');
     if (!record.open) await conversations.reopen(conversationId);
@@ -464,7 +454,7 @@ class DiscussionService {
     final sentImages = imageRefs.isNotEmpty ? imageRefs : earlierImages;
     final run = await askBuddyModel(
       ai: ai,
-      filesDir: filesDir,
+      filesDir: () => runtime.filesDir,
       context: facts,
       history: history,
       prompt: text,
@@ -474,7 +464,7 @@ class DiscussionService {
       config: config,
       onPartial: onPartial,
       cancelToken: cancelToken,
-      recordFailure: recordFailure,
+      recordFailure: runtime.recordFailure,
     );
     _ensureCurrentEpoch(requestEpoch);
     final modelReady = run.config?.isConfigured ?? false;
@@ -623,7 +613,7 @@ class DiscussionService {
             sourceKind: 'user',
             scope: scope,
             transaction: txn,
-            clock: policy().clock,
+            clock: runtime.policy.clock,
           );
           skipped.addAll(applied.skipped);
           // 每条写入带回原草案，卡片才能对回自己那一条；重复的内容没有写入。
@@ -980,7 +970,7 @@ class DiscussionService {
         sourceKind: item.source == MemorySource.user ? 'user' : 'message',
         sourceId: messageId,
         scope: resolved.scope,
-        clock: policy().clock,
+        clock: runtime.policy.clock,
         recordStatus: (status, commitId) => conversations.setMemoryItemStatus(
           messageId,
           itemId,
@@ -1180,7 +1170,7 @@ class DiscussionService {
       first == null ? second : '$first $second';
 
   void _ensureCurrentEpoch(int expected) {
-    if (dataEpoch() != expected) {
+    if (runtime.dataEpoch != expected) {
       throw StateError('数据已恢复或清空，请重新打开这条讨论后再发送。');
     }
   }
@@ -1312,8 +1302,6 @@ class _StoredMemoryItem {
   final DateTime? validUntil;
   final int? commitId;
 }
-
-int _zeroDataEpoch() => 0;
 
 class _IngestedAttachments {
   const _IngestedAttachments(this.refs, this.pending);

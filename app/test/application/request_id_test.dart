@@ -18,6 +18,7 @@ import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 class _SilentAi implements BuddyAi {
@@ -80,15 +81,14 @@ void main() {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
         attempts: attempts,
       ),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy, filesDir: () => rig.filesDir),
       transactions: WriteTransactions(rig.db),
-      filesDir: () => rig.filesDir,
     );
 
     final questionId = await service.capture(stem: '检查这道题');
@@ -139,15 +139,14 @@ void main() {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
         attempts: attempts,
       ),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy, filesDir: () => rig.filesDir),
       transactions: WriteTransactions(rig.db),
-      filesDir: () => rig.filesDir,
     );
 
     final questionId = await service.capture(stem: '请求编号去重');

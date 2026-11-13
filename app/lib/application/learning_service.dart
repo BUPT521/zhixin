@@ -19,7 +19,6 @@ import '../domain/models/question.dart';
 import '../domain/models/study.dart';
 import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
-import '../domain/rules/time_policy.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
 import 'attachment_service.dart';
@@ -27,6 +26,7 @@ import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'reply_outcome.dart';
+import 'service_runtime.dart';
 
 /// 一道题的当前状态：原题、尝试与一条未提交尝试。
 class QuestionView {
@@ -112,12 +112,9 @@ class LearningService {
     required this.ai,
     required this.context,
     required this.memoryScope,
-    required this.policy,
+    required this.runtime,
     required this.transactions,
-    required this.filesDir,
-    int Function()? dataEpoch,
-    this.recordFailure,
-  }) : dataEpoch = dataEpoch ?? _zeroDataEpoch;
+  });
 
   final AttemptRepository attempts;
   final ConversationRepository conversations;
@@ -134,13 +131,8 @@ class LearningService {
 
   /// 作答求助的记忆范围：记录归属优先，没有时沿用最近一次学习的目标。
   final MemoryScopeService memoryScope;
-  final TimePolicy Function() policy;
+  final ServiceRuntime runtime;
   final WriteTransactions transactions;
-  final String Function() filesDir;
-  final int Function() dataEpoch;
-
-  /// 模型调用的类型、消息与调用栈只交给本机诊断记录，不进入界面说明。
-  final ModelFailureRecorder? recordFailure;
 
   Future<QuestionView> view(int conversationId) async {
     final question = await conversations.question(conversationId);
@@ -215,7 +207,7 @@ class LearningService {
   /// 从一条已有讨论开始作答：题干与图片就是那时最后一条用户消息，
   /// 作答直接挂在这条记录上，不再复制题目或帮助。
   Future<int> startAnswering({required int conversationId}) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final record = await conversations.byId(conversationId);
     if (record == null) throw StateError('未找到这条讨论');
     final message = await conversations.lastUserMessage(conversationId);
@@ -255,7 +247,7 @@ class LearningService {
     LlmCancelToken? cancelToken,
     bool independentRedo = false,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
     if (question == null) throw StateError('未找到这道题');
     final conversation = await conversations.byId(questionId);
@@ -291,7 +283,7 @@ class LearningService {
           HelpEntry(
             kind: 'discuss',
             content: text,
-            at: message.createdAt ?? policy().now,
+            at: message.createdAt ?? runtime.policy.now,
           ),
         );
       }
@@ -342,7 +334,7 @@ class LearningService {
 
     final run = await askBuddyModel(
       ai: ai,
-      filesDir: filesDir,
+      filesDir: () => runtime.filesDir,
       context: facts,
       history: const [],
       prompt: prompt,
@@ -350,7 +342,7 @@ class LearningService {
       imagePaths: question.imagePaths,
       onPartial: onText,
       cancelToken: cancelToken,
-      recordFailure: recordFailure,
+      recordFailure: runtime.recordFailure,
     );
     _ensureCurrentEpoch(requestEpoch);
     var notice = run.notice;
@@ -412,7 +404,7 @@ class LearningService {
           HelpEntry(
             kind: mode.value,
             content: text,
-            at: policy().now,
+            at: runtime.policy.now,
             memories: suggestions,
           ),
           transaction: txn,
@@ -476,7 +468,7 @@ class LearningService {
     required String itemId,
     String? requestId,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
     if (attempt == null) throw StateError('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
@@ -499,7 +491,7 @@ class LearningService {
             sourceKind: 'attempt',
             sourceId: attemptId,
             scope: scope,
-            clock: policy().clock,
+            clock: runtime.policy.clock,
             recordStatus: (status, commitId) => _setHelpMemoryStatus(
               attemptId,
               helpIndex,
@@ -532,7 +524,7 @@ class LearningService {
     required int helpIndex,
     required String itemId,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
     if (attempt == null) throw StateError('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
@@ -606,7 +598,7 @@ class LearningService {
     String? checkable,
     String? requestId,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     await transactions.run(
       (txn) async {
         _ensureCurrentEpoch(requestEpoch);
@@ -651,7 +643,7 @@ class LearningService {
     Set<String> broughtIdentities = const {},
     String? requestId,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
     if (question == null) throw StateError('未找到这道题');
     final conversation = await conversations.byId(questionId);
@@ -674,7 +666,7 @@ class LearningService {
       broughtIdentities: broughtIdentities,
     );
     final config = await ai.config();
-    final prepared = await AttachmentService(filesDir: filesDir)
+    final prepared = await AttachmentService(filesDir: () => runtime.filesDir)
         .prepare(question.imagePaths, enabled: config?.allowImages ?? false);
     if (question.stem.trim().isEmpty && prepared.images.isEmpty) {
       throw StateError(prepared.notice ?? '没有可发送的题目图片，无法进行模型判断。');
@@ -742,7 +734,7 @@ class LearningService {
     int conversationId, {
     bool independentRedo = false,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     final conversation = await conversations.byId(conversationId);
     final previous = independentRedo
         ? await attempts.latestSubmitted(conversationId)
@@ -750,7 +742,7 @@ class LearningService {
     final redoOf = previous?.id;
     final delayed =
         previous?.submittedAt != null &&
-        policy().now.difference(previous!.submittedAt!) >=
+        runtime.policy.now.difference(previous!.submittedAt!) >=
             const Duration(hours: 12);
     return transactions.run((txn) async {
       _ensureCurrentEpoch(requestEpoch);
@@ -784,7 +776,7 @@ class LearningService {
     String? checkable,
     String? requestId,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     await transactions.run(
       (txn) async {
         _ensureCurrentEpoch(requestEpoch);
@@ -845,7 +837,7 @@ class LearningService {
     String? outcome,
     String? summary,
   }) async {
-    final requestEpoch = dataEpoch();
+    final requestEpoch = runtime.dataEpoch;
     await transactions.run((txn) async {
       _ensureCurrentEpoch(requestEpoch);
       await study.end(
@@ -933,10 +925,8 @@ class LearningService {
   }
 
   void _ensureCurrentEpoch(int expected) {
-    if (dataEpoch() != expected) {
+    if (runtime.dataEpoch != expected) {
       throw StateError('数据已恢复或清空，请重新打开这条学习记录后再求助。');
     }
   }
 }
-
-int _zeroDataEpoch() => 0;

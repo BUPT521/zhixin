@@ -17,6 +17,7 @@ import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 class _NoAi implements BuddyAi {
@@ -58,7 +59,7 @@ void main() {
         memories: memories,
         conversations: conversations,
         materials: MaterialRepository(rig.db),
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
@@ -68,9 +69,8 @@ void main() {
       revisions: rig.revisions,
       tasks: tasks,
       materials: MaterialRepository(rig.db),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       transactions: WriteTransactions(rig.db),
-      filesDir: () => '.',
       cleanupAttachmentPaths: (_) async {},
       assets: AssetStore(),
     );

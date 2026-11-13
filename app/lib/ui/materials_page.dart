@@ -120,8 +120,9 @@ class MaterialListState extends State<MaterialList> {
   }
 
   Future<void> _importWord() async {
-    final service = AppScope.of(context).library.material;
-    final expectedEpoch = service.dataEpoch();
+    final scope = AppScope.of(context);
+    final service = scope.library.material;
+    final expectedEpoch = scope.runtime.dataEpoch;
     setState(() => _importingWord = true);
     try {
       final file = await FilePicker.pickFile(

@@ -5,7 +5,7 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/capacity.dart';
 import '../domain/models/study.dart';
 import '../domain/rules/capacity_budget.dart';
-import '../domain/rules/time_policy.dart';
+import 'service_runtime.dart';
 
 /// 一段自由时间。
 class _Slot {
@@ -27,14 +27,14 @@ class CapacityService {
     required this.settings,
     required this.tasks,
     required this.schedule,
-    required this.policy,
+    required this.runtime,
     required this.transactions,
   });
 
   final SettingsRepository settings;
   final TaskRepository tasks;
   final ScheduleRepository schedule;
-  final TimePolicy Function() policy;
+  final ServiceRuntime runtime;
 
   /// 点选空档也是一次业务写入；提交编号随预约一起回到界面，用于撤销。
   final WriteTransactions transactions;
@@ -58,16 +58,16 @@ class CapacityService {
     if (_minutesOf(end)! <= _minutesOf(start)!) {
       throw ArgumentError('结束时间要晚于开始时间');
     }
-    await settings.setMetadata(windowStartKey, start, policy().now);
-    await settings.setMetadata(windowEndKey, end, policy().now);
+    await settings.setMetadata(windowStartKey, start, runtime.policy.now);
+    await settings.setMetadata(windowEndKey, end, runtime.policy.now);
   }
 
   /// 按当前自然周计算：从今天到本周日，入口用“这周能做什么”时不再把
   /// 下周一以后的时间算进本周预算。
   Future<CapacityPlan> computeThisWeek({int? goalId}) {
-    final now = policy().now;
+    final now = runtime.policy.now;
     final today = DateTime(now.year, now.month, now.day);
-    final week = policy().naturalWeekRange(now);
+    final week = runtime.policy.naturalWeekRange(now);
     final remaining = week.endExclusive.difference(today).inDays;
     final days = remaining < 1 ? 1 : (remaining > 7 ? 7 : remaining);
     return compute(days: days, goalId: goalId);
@@ -80,7 +80,7 @@ class CapacityService {
     String? windowStart,
     String? windowEnd,
   }) async {
-    final current = policy();
+    final current = runtime.policy;
     final now = current.now;
     final stored = await window();
     final startClock = windowStart ?? stored.start;
@@ -326,7 +326,7 @@ class CapacityService {
     bool expectedNone = false,
   }) async {
     if (!end.isAfter(start)) throw ArgumentError('结束时间要晚于开始时间');
-    final now = policy().now;
+    final now = runtime.policy.now;
     return transactions.run((txn) async {
       final current = await tasks.byId(item.id, transaction: txn);
       if (current == null) throw StateError('这个事项已经被删除，请重新估算');

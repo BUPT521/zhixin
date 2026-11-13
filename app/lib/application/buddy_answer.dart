@@ -4,6 +4,7 @@ import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../domain/models/chat_message.dart';
 import 'attachment_service.dart';
+import 'service_runtime.dart';
 
 /// 退回本地规则回答时的统一说明。
 ///
@@ -14,13 +15,6 @@ import 'attachment_service.dart';
 const String modelFallbackNotice =
     '模型调用失败，已切换为本地规则回答；问题与本地回答会保存在本机。'
     '可以点「重试这次回答」。';
-
-/// 模型调用失败时写进本机诊断记录；界面只拿归类后的说明。
-typedef ModelFailureRecorder = void Function(
-  Object error,
-  StackTrace? stack, {
-  required String kind,
-});
 
 /// 读配置、备图并调用模型之后的结果。
 class BuddyAnswerRun {

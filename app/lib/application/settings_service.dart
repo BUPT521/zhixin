@@ -8,6 +8,7 @@ import '../data/repository/settings_repository.dart';
 import '../data/revisions/revision_actions.dart';
 import '../domain/rules/day_key.dart';
 import '../domain/rules/time_policy.dart';
+import 'service_runtime.dart';
 
 /// 设置页的读写：模型、导出恢复、清空与每日截止小时。
 class SettingsService {
@@ -16,7 +17,7 @@ class SettingsService {
     required this.transactions,
     required this.llmStore,
     required this.ai,
-    required this.policy,
+    required this.runtime,
     required this.onPolicyChanged,
     required this.restore,
     required this.resetAll,
@@ -26,7 +27,7 @@ class SettingsService {
   final WriteTransactions transactions;
   final LlmConfigStore llmStore;
   final AiChatService ai;
-  final TimePolicy Function() policy;
+  final ServiceRuntime runtime;
 
   /// 截止小时保存后重新读取到应用根；界面与时间口径立刻使用新值。
   final Future<void> Function() onPolicyChanged;
@@ -65,7 +66,7 @@ class SettingsService {
       throw RangeError.range(hour, 0, maxDayCutoffHour, 'hour');
     }
     await transactions.run((txn) async {
-      await settings.setCutoffHour(hour, policy().now, transaction: txn);
+      await settings.setCutoffHour(hour, runtime.policy.now, transaction: txn);
     }, label: changeCutoffHourAction);
     await onPolicyChanged();
   }
@@ -74,11 +75,14 @@ class SettingsService {
   Future<bool> useSystemCamera() async =>
       await settings.metadata(systemCameraKey) == '1';
 
-  Future<void> setUseSystemCamera(bool value) =>
-      settings.setMetadata(systemCameraKey, value ? '1' : '0', policy().now);
+  Future<void> setUseSystemCamera(bool value) => settings.setMetadata(
+    systemCameraKey,
+    value ? '1' : '0',
+    runtime.policy.now,
+  );
 
   String exportFileName() {
-    final current = policy();
+    final current = runtime.policy;
     final day = current.attributionDay(current.now).replaceAll('-', '');
     return 'zhixin-$day.zip';
   }
