@@ -4,12 +4,7 @@ import 'theme.dart';
 
 /// 一组互斥的视图切换，例如记录里的“学习记录 / 材料”与安排里的四个页签。
 ///
-/// 原来用一排芯片表示页签，与下方的筛选芯片样式相同，用户分不清哪一排是
-/// 切换视图、哪一排是筛选。分段控件的选中项使用主色浅底；
-/// 段数少时等分整行，段数多或文字长时按内容宽度横向滚动。
-///
-/// 等分整行时，选中的卡片色滑块从原来的段滑到新的段，说明视图换到了哪里；
-/// 横向滚动时各段宽度不同，选中色在原地渐变。
+/// 等宽时共用一个滑块，窄屏或放大文字时按内容宽度横向滚动。
 class ZhixinSegmented<T> extends StatelessWidget {
   const ZhixinSegmented({
     super.key,
@@ -43,7 +38,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
           padding: const EdgeInsets.all(3),
           decoration: BoxDecoration(
             color: theme.colors.surfaceContainerHigh,
-            borderRadius: theme.radius.control,
+            borderRadius: theme.radius.card,
           ),
           child: fits && index >= 0
               ? Stack(
@@ -52,7 +47,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
                       child: AnimatedAlign(
                         duration: context.motionOf(theme.motion.standard),
                         curve: theme.motion.move,
-                        alignment: Alignment(
+                        alignment: AlignmentDirectional(
                           count == 1 ? 0 : -1 + 2 * index / (count - 1),
                           0,
                         ),
@@ -81,12 +76,14 @@ class ZhixinSegmented<T> extends StatelessWidget {
     );
   }
 
-  Widget _thumb(ZhixinTheme theme) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: theme.colors.primaryContainer,
-      borderRadius: theme.radius.tag,
-    ),
-  );
+  Widget _thumb(ZhixinTheme theme) =>
+      DecoratedBox(decoration: _selection(theme, selected: true));
+
+  ShapeDecoration _selection(ZhixinTheme theme, {required bool selected}) =>
+      ShapeDecoration(
+        color: selected ? theme.colors.primaryContainer : Colors.transparent,
+        shape: const StadiumBorder(),
+      );
 
   Widget _segment(
     BuildContext context,
@@ -113,12 +110,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
             vertical: theme.space.sm,
           ),
           // 等分整行时选中底色由滑块画，这里保持透明。
-          decoration: BoxDecoration(
-            color: isSelected && !expand
-                ? theme.colors.primaryContainer
-                : Colors.transparent,
-            borderRadius: theme.radius.tag,
-          ),
+          decoration: _selection(theme, selected: isSelected && !expand),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -134,7 +126,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.text.labelLarge.copyWith(
                     color: foreground,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),

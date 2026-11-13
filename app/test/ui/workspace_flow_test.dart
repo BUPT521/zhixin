@@ -307,6 +307,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('底栏按下时图标位置固定，选中胶囊连续滑动', (tester) async {
+    await openApp(tester);
+    final bar = find.byType(forui.FBottomNavigationBar);
+    Finder icon(IconData data) =>
+        find.descendant(of: bar, matching: find.byIcon(data));
+    final pill = find.ancestor(of: bar, matching: find.byType(Stack)).first;
+    final indicator = find.descendant(
+      of: pill,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Container &&
+            widget.decoration is ShapeDecoration &&
+            (widget.decoration as ShapeDecoration).shape is StadiumBorder,
+      ),
+    );
+    final start = tester.getCenter(icon(FLucideIcons.house));
+    final targetIcon = icon(FLucideIcons.history);
+    final iconRect = tester.getRect(targetIcon);
+    final next = iconRect.center;
+    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(start));
+
+    final gesture = await tester.startGesture(next);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final pressedRect = tester.getRect(targetIcon);
+    expect(pressedRect.size, iconRect.size);
+    expect(pressedRect.center, offsetMoreOrLessEquals(next));
+    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(start));
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(tester.getCenter(indicator).dx, inExclusiveRange(start.dx, next.dx));
+    expect(tester.getCenter(indicator).dy, moreOrLessEquals(start.dy));
+    await settle(tester);
+    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(next));
+  });
+
   testWidgets('从记录打开讨论再返回，筛选与首页输入都不重置', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {

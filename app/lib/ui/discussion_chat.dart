@@ -1496,7 +1496,15 @@ class DiscussionChatState extends State<DiscussionChat> {
                     ),
                     suffixBuilder: (_, style, _) => VoiceInputButton(
                       controller: _input,
-                      style: style.clearButtonStyle,
+                      iconSize: 20,
+                      style: style.clearButtonStyle.copyWith(
+                        iconContentStyle: const .delta(
+                          constraints: BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1504,6 +1512,8 @@ class DiscussionChatState extends State<DiscussionChat> {
                 ZhixinIconButton(
                   tooltip: _sending ? '停止生成' : '发送',
                   variant: forui.FButtonVariant.primary,
+                  size: forui.FButtonSizeVariant.lg,
+                  iconSize: _sending ? 18 : 22,
                   onPressed: _sending ? _stop : _send,
                   icon: _sending ? FLucideIcons.square : FLucideIcons.arrowUp,
                 ),

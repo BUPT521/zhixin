@@ -19,12 +19,14 @@ class VoiceInputButton extends StatefulWidget {
     super.key,
     required this.controller,
     required this.style,
+    this.iconSize,
   });
 
   final TextEditingController controller;
 
   /// 输入框后缀按钮的样式，取 FTextField 的 clearButtonStyle，尺寸与颜色才与输入框一致。
   final forui.FButtonStyle style;
+  final double? iconSize;
 
   @override
   State<VoiceInputButton> createState() => _VoiceInputButtonState();
@@ -108,7 +110,8 @@ class _VoiceInputButtonState extends State<VoiceInputButton> {
     return ZhixinIconButton(
       tooltip: _listening ? '停止语音输入' : '语音输入',
       onPressed: _toggle,
-      icon: _listening ? FLucideIcons.mic : FLucideIcons.mic,
+      icon: FLucideIcons.mic,
+      iconSize: widget.iconSize,
       iconColor: _listening ? context.zhixin.colors.error : null,
       style: widget.style,
     );

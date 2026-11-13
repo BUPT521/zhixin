@@ -30,7 +30,7 @@ class _HomeShellState extends State<HomeShell> {
   int _scheduleRequest = 0;
 
   void _open(int index) {
-    if (!mounted) return;
+    if (!mounted || index == _index) return;
     setState(() => _index = index);
   }
 
@@ -88,48 +88,10 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.zhixin;
     return ValueListenableBuilder<int>(
       valueListenable: AppScope.of(context).dataVersion,
       builder: (context, dataVersion, _) => forui.FScaffold(
-        footer: forui.FBottomNavigationBar(
-          index: _index,
-          onChange: _open,
-          style: .delta(
-            decoration: .value(
-              BoxDecoration(
-                color: theme.colors.card,
-                border: Border(
-                  top: BorderSide(color: theme.colors.outlineVariant),
-                ),
-              ),
-            ),
-            padding: .value(
-              EdgeInsets.symmetric(
-                horizontal: theme.space.page,
-                vertical: theme.space.xs,
-              ),
-            ),
-            itemStyle: .delta(spacing: theme.space.xs),
-          ),
-          children: const [
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(FLucideIcons.house),
-              label: Text('现在'),
-              semanticsLabel: '现在',
-            ),
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(FLucideIcons.history),
-              label: Text('记录'),
-              semanticsLabel: '记录',
-            ),
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(FLucideIcons.calendarClock),
-              label: Text('安排'),
-              semanticsLabel: '安排',
-            ),
-          ],
-        ),
+        footer: _BottomBar(index: _index, onChange: _open),
         // 切栏时新栏淡入并上移几个像素；三栏仍然常驻，状态不随切换重建。
         child: FadeIndexedStack(
           index: _index,
@@ -170,25 +132,113 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-class _NavIcon extends StatelessWidget {
-  const _NavIcon(this.icon);
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({required this.index, required this.onChange});
 
-  final IconData icon;
+  static const _items = [
+    (FLucideIcons.house, '现在'),
+    (FLucideIcons.history, '记录'),
+    (FLucideIcons.calendarClock, '安排'),
+  ];
+  static const _itemPadding = 5.0;
+  static const _iconHeight = 30.0;
+
+  final int index;
+  final ValueChanged<int> onChange;
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final selected = forui.FBottomNavigationBarData.of(context).selected;
-    return AnimatedContainer(
-      duration: context.motionOf(theme.motion.fast),
-      curve: theme.motion.move,
-      width: 54,
-      height: 30,
-      decoration: BoxDecoration(
-        color: selected ? theme.colors.primaryContainer : Colors.transparent,
-        borderRadius: theme.radius.control,
+    final barPadding = EdgeInsets.symmetric(
+      horizontal: theme.space.page,
+      vertical: theme.space.xs,
+    );
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colors.card,
+          border: Border(top: BorderSide(color: theme.colors.outlineVariant)),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Stack(
+            children: [
+              Positioned(
+                top: barPadding.top + _itemPadding,
+                left: barPadding.left,
+                right: barPadding.right,
+                height: _iconHeight,
+                child: IgnorePointer(
+                  child: AnimatedAlign(
+                    duration: context.motionOf(theme.motion.standard),
+                    curve: theme.motion.move,
+                    alignment: AlignmentDirectional(
+                      -1 + 2 * index / (_items.length - 1),
+                      0,
+                    ),
+                    child: FractionallySizedBox(
+                      widthFactor: 1 / _items.length,
+                      child: Center(
+                        child: Container(
+                          width: 58,
+                          height: _iconHeight,
+                          decoration: ShapeDecoration(
+                            color: theme.colors.primaryContainer,
+                            shape: const StadiumBorder(),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              forui.FBottomNavigationBar(
+                index: index,
+                onChange: onChange,
+                style: .delta(
+                  decoration: const .value(BoxDecoration()),
+                  padding: .value(barPadding),
+                  itemStyle: .delta(
+                    padding: const .value(EdgeInsets.all(_itemPadding)),
+                    spacing: theme.space.xs,
+                    tappableStyle: const .delta(
+                      motion: .delta(
+                        bounceTween: forui.FTappableMotion.noBounceTween,
+                      ),
+                    ),
+                    textStyle: .delta([
+                      .all(
+                        .delta(
+                          color: theme.colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      .exact({.selected}, .delta(color: theme.colors.primary)),
+                    ]),
+                  ),
+                ),
+                children: [
+                  for (final (i, (icon, label)) in _items.indexed)
+                    forui.FBottomNavigationBarItem(
+                      icon: SizedBox(
+                        height: _iconHeight,
+                        child: Icon(
+                          icon,
+                          size: 21,
+                          color: i == index
+                              ? theme.colors.onPrimaryContainer
+                              : theme.colors.onSurfaceVariant,
+                        ),
+                      ),
+                      label: Text(label),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
-      child: Icon(icon, size: 20),
     );
   }
 }

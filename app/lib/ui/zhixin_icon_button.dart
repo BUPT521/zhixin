@@ -12,6 +12,7 @@ class ZhixinIconButton extends StatelessWidget {
     required this.onPressed,
     this.variant = forui.FButtonVariant.ghost,
     this.size = forui.FButtonSizeVariant.md,
+    this.iconSize,
     this.iconColor,
     this.style = const forui.FButtonStyleDelta.context(),
     super.key,
@@ -22,6 +23,7 @@ class ZhixinIconButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final forui.FButtonVariant variant;
   final forui.FButtonSizeVariant size;
+  final double? iconSize;
   final Color? iconColor;
   final forui.FButtonStyleDelta style;
 
@@ -34,7 +36,7 @@ class ZhixinIconButton extends StatelessWidget {
       onPress: onPressed,
       semanticsLabel: tooltip,
       semanticsTooltip: tooltip,
-      child: Icon(icon, color: iconColor),
+      child: Icon(icon, size: iconSize, color: iconColor),
     );
   }
 }
