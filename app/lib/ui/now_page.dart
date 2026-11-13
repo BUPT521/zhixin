@@ -758,6 +758,8 @@ class _ComposerFrameState extends State<_ComposerFrame> {
       canRequestFocus: false,
       skipTraversal: true,
       onFocusChange: (value) => setState(() => _focused = value),
+      // 描边宽度固定 1.5：边框宽度会进内边距，一改就整块重新布局、文字跳半个
+      // 像素；聚焦只插值颜色，输入区的位置与大小全程不变。
       child: AnimatedContainer(
         duration: context.motionOf(theme.motion.fast),
         curve: theme.motion.move,
@@ -767,7 +769,7 @@ class _ComposerFrameState extends State<_ComposerFrame> {
           borderRadius: theme.radius.feature,
           border: Border.all(
             color: _focused ? theme.colors.primary : theme.colors.outline,
-            width: _focused ? 1.5 : 1,
+            width: 1.5,
           ),
         ),
         child: widget.child,
