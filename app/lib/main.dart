@@ -30,9 +30,9 @@ Future<void> main() async {
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);
   if (crashLog != null) _installErrorHandlers(crashLog);
   final themeMode = paths == null ? null : await _loadThemeMode(paths);
-  final reporting = paths == null
-      ? !kReleaseMode
-      : await DiagnosticsStore(paths.filesDir).read(fallback: !kReleaseMode);
+  final reporting =
+      paths != null &&
+      await DiagnosticsStore(paths.filesDir).read(fallback: !kReleaseMode);
   CrashLog.reportEnabled = reporting;
 
   void run() => runApp(ZhixinApp(crashLog: crashLog, themeMode: themeMode));
@@ -48,6 +48,13 @@ Future<void> main() async {
     options.tracesSampleRate = 0;
     options.environment = kReleaseMode ? 'release' : 'dev';
     options.enableAutoSessionTracking = true;
+    options.enableNativeCrashHandling = false;
+    options.enableAutoNativeBreadcrumbs = false;
+    options.enablePrintBreadcrumbs = false;
+    options.maxBreadcrumbs = 0;
+    options.attachScreenshot = false;
+    options.attachViewHierarchy = false;
+    options.beforeSend = prepareCrashReport;
   }, appRunner: run);
 }
 
@@ -72,10 +79,15 @@ Future<ThemeModeController?> _loadThemeMode(AppPaths paths) async {
 void _installErrorHandlers(CrashLog log) {
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
-    log.record(details.exception, details.stack, kind: 'framework');
+    log.record(
+      details.exception,
+      details.stack,
+      kind: 'framework',
+      report: false,
+    );
   };
   PlatformDispatcher.instance.onError = (error, stack) {
-    log.record(error, stack, kind: 'platform');
+    log.record(error, stack, kind: 'platform', report: false);
     // 记录下来之后仍交给引擎处理，崩溃率才不会因为吞掉错误而偏低。
     return false;
   };

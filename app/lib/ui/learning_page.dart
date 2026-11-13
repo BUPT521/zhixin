@@ -17,14 +17,12 @@ import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
 import 'buddy_flows.dart';
-import 'discussion_cards.dart';
+import 'buddy_timeline.dart';
 import 'discussion_page.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
-import 'markdown_text.dart';
 import 'undo_feedback.dart';
 import 'zhixin_chip.dart';
-import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
@@ -101,6 +99,9 @@ class _LearningPageState extends State<LearningPage> {
 
   /// 同一条记录最近几条讨论消息；学习页把讨论与作答放在一起，完整讨论另开。
   List<ChatMessage> _recentMessages = const [];
+
+  /// 时间线只向页面取当前帮助、记忆与回执，排列与失败说明由共用组件负责。
+  late final BuddyTimelineAdapter _timelineAdapter = _LearningTimeline(this);
 
   @override
   void dispose() {
@@ -452,6 +453,18 @@ class _LearningPageState extends State<LearningPage> {
     );
   }
 
+  Future<void> _undoMemory(MemoryItemView item) async {
+    final commitId = item.commitId;
+    if (commitId == null) return;
+    await undoMemoryCard(
+      context: context,
+      commitId: commitId,
+      reload: _load,
+      scope: 'learning',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
+  }
+
   /// 点开原题缩略图看大图；图片文件不在了就说明，不弹空白页。
   Future<void> _showImage(String path) async {
     final file = File(AppScope.of(context).paths.resolveImage(path));
@@ -497,29 +510,16 @@ class _LearningPageState extends State<LearningPage> {
   }
 
   Future<void> _showModelGuide() async {
-    final go = await showZhixinAlert<bool>(
-      context: context,
+    await showModelSetupGuide(
+      context,
+      dialog: true,
       title: '配置模型以使用学习帮助',
-      content: const Text(
-        '提示、讲解和检查由你配置的模型提供。配置后，回答会结合当前题目与上次尝试；'
-        '现在可以先写已知条件、记录卡住的地方，题目、作答与帮助都会保存在本机。'
-        '配置完成后回到这道题，点「用模型重新获取」，会接着回答同一个问题，不用重写题目。',
-      ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('继续本地使用'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('前往设置'),
-        ),
-      ],
+      content:
+          '提示、讲解和检查由你配置的模型提供。配置后，回答会结合当前题目与上次尝试；'
+          '现在可以先写已知条件、记录卡住的地方，题目、作答与帮助都会保存在本机。'
+          '配置完成后回到这道题，点「用模型重新获取」，会接着回答同一个问题，不用重写题目。',
+      onConfigure: _openSettings,
     );
-    if (go == true && mounted) await _openSettings();
   }
 
   /// 打开设置页并重新读取配置；返回后可以就地重新获取这一次帮助。
@@ -851,84 +851,7 @@ class _LearningPageState extends State<LearningPage> {
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: forui.FProgress(),
               ),
-            if (_help != null || _generating) ...[
-              const SizedBox(height: 12),
-              forui.FCard(
-                style: .delta(
-                  decoration: .shapeDelta(
-                    color: theme.colors.secondaryContainer,
-                  ),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: _generating
-                      ? ValueListenableBuilder<String>(
-                          valueListenable: _streamingHelp,
-                          builder: (context, text, _) => text.trim().isEmpty
-                              ? Row(
-                                  children: [
-                                    const forui.FCircularProgress(size: .xs),
-                                    const SizedBox(width: 8),
-                                    Text('正在生成', style: theme.text.bodySmall),
-                                  ],
-                                )
-                              : MarkdownText(text, streaming: true),
-                        )
-                      : MarkdownText(_help!),
-                ),
-              ),
-            ],
-            for (final item in _memoryItems)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: MemoryCard(
-                  item: item,
-                  onAccept: () => _acceptMemory(item),
-                  onDismiss: () => _dismissMemory(item),
-                  onUndo: () {
-                    final commitId = item.commitId;
-                    if (commitId != null) _undoChange(commitId);
-                  },
-                ),
-              ),
-            if (_notice != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_notice!, style: TextStyle(color: theme.colors.error)),
-                    if (_help != null && (!_lastFromModel || _lastInterrupted))
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: ModelRecoveryButtons(
-                          configured: _configured,
-                          primaryLabel: _lastInterrupted ? '重试这次回答' : '用模型重新获取',
-                          onPrimary: _retryHelp,
-                          onConfigure: _openSettings,
-                          enabled: !_busy,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            for (final change in _changeItems)
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '· ${change.text}',
-                      style: theme.text.bodySmall,
-                    ),
-                  ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () => _undoChange(change.commitId),
-                    child: const Text('撤销'),
-                  ),
-                ],
-              ),
+            BuddyTimeline(adapter: _timelineAdapter),
             if (!_independentRedo) ...[
               const SizedBox(height: 16),
               Row(
@@ -974,16 +897,7 @@ class _LearningPageState extends State<LearningPage> {
                 ],
               ),
               for (final message in _timelineMessages)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '${_roleLabel(message.role)}：'
-                    '${_timelineText(message)}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.text.bodySmall,
-                  ),
-                ),
+                ChatMessagePreview(message: message),
             ],
           ],
         ),
@@ -995,18 +909,6 @@ class _LearningPageState extends State<LearningPage> {
   List<ChatMessage> get _timelineMessages {
     if (_recentMessages.length <= 3) return _recentMessages;
     return _recentMessages.sublist(_recentMessages.length - 3);
-  }
-
-  String _roleLabel(String role) => switch (role) {
-    'user' => '你',
-    'assistant' => '搭子',
-    _ => '系统',
-  };
-
-  String _timelineText(ChatMessage message) {
-    final text = message.content.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.isEmpty) return message.hasImages ? '[图片]' : '[空消息]';
-    return text.length <= 80 ? text : '${text.substring(0, 80)}…';
   }
 
   /// 作答草稿放在原题下面：先写几步，再点检查；提交前都可以继续改。
@@ -1341,4 +1243,57 @@ class _LearningPageState extends State<LearningPage> {
         ? cleaned
         : '${cleaned.substring(0, limit)}…';
   }
+}
+
+/// 学习页的时间线取数：帮助、记忆、说明与回执都从当前未提交尝试读。
+class _LearningTimeline extends BuddyTimelineAdapter {
+  _LearningTimeline(this._state);
+
+  final _LearningPageState _state;
+
+  @override
+  List<BuddyTimelineEntry> get entries {
+    final state = _state;
+    return [
+      if (state._help != null || state._generating)
+        BuddyHelpEntry(
+          text: state._help,
+          generating: state._generating,
+          streaming: state._streamingHelp,
+        ),
+      for (final item in state._memoryItems) BuddyMemoryEntry(item),
+      if (state._notice != null)
+        BuddyNoticeEntry(
+          message: state._notice!,
+          actions: [
+            if (state._help != null &&
+                (!state._lastFromModel || state._lastInterrupted))
+              ModelRecoveryButtons(
+                configured: state._configured,
+                primaryLabel: state._lastInterrupted ? '重试这次回答' : '用模型重新获取',
+                onPrimary: state._retryHelp,
+                onConfigure: state._openSettings,
+                enabled: !state._busy,
+              ),
+          ],
+        ),
+      if (state._changeItems.isNotEmpty) BuddyChangesEntry(state._changeItems),
+    ];
+  }
+
+  @override
+  String imagePath(String stored) =>
+      AppScope.of(_state.context).paths.resolveImage(stored);
+
+  @override
+  void acceptMemory(MemoryItemView item) => _state._acceptMemory(item);
+
+  @override
+  void dismissMemory(MemoryItemView item) => _state._dismissMemory(item);
+
+  @override
+  void undoMemory(MemoryItemView item) => _state._undoMemory(item);
+
+  @override
+  void undoChange(AppliedChange change) => _state._undoChange(change.commitId);
 }

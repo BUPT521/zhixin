@@ -149,6 +149,7 @@ class RevisionService {
     required int expectedHead,
   }) {
     return db.gate.exclusive(() async {
+      await cache.markPendingRebuild();
       final commit = await engine.restore(
         raw(),
         target,
@@ -157,6 +158,7 @@ class RevisionService {
       String? cacheWarning;
       try {
         await cache.rebuild(raw(), assets);
+        await cache.clearPendingRebuild();
       } catch (error, stack) {
         cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
         onCacheFailure?.call(error, stack);

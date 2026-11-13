@@ -16,9 +16,9 @@ class DiagnosticsStore {
     try {
       final file = File(path);
       if (!await file.exists()) return fallback;
-      return (await file.readAsString()).trim() != 'off';
+      return (await file.readAsString()).trim() == 'on';
     } catch (_) {
-      return true;
+      return false;
     }
   }
 

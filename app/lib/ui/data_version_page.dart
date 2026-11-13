@@ -459,8 +459,11 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
     try {
-      await scope.importCurrentData(bytes, expectedHead: expectedHead);
-      _report('已导入当前数据');
+      final cacheWarning = await scope.importCurrentData(
+        bytes,
+        expectedHead: expectedHead,
+      );
+      _report(cacheWarning ?? '已导入当前数据');
       await _load();
     } catch (error, stack) {
       if (!mounted) return;

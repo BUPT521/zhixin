@@ -16,6 +16,9 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:enableOnBackInvokedCallback="true">
+        <!-- 由 Dart 在读取用户设置后初始化。原生崩溃转储不经过 Dart 的事件过滤。 -->
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
+        <meta-data android:name="io.sentry.ndk.enable" android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

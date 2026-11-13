@@ -11,11 +11,7 @@ extension DataPackageOperations on AppScopeState {
   /// 数据版本页回到恢复前；恢复点写不出来时中止，当前库不动。库替换成功后
   /// 图片缓存重建失败只返回提醒，不再让界面把整次恢复报成失败。
   Future<String?> restore(Uint8List bytes) async {
-    _operationEpoch++;
     String? cacheWarning;
-    // 先记一笔“缓存要重补”：还原中途退出时，下次启动会按恢复后的数据重补，
-    // 而不是留着一半新的缓存。
-    await _attachmentCache.markPendingRebuild();
     await gate.exclusive(() async {
       await _revisionPackages.validateRepositoryBytes(bytes);
       final summary = await currentRestoreSummary();
@@ -34,14 +30,10 @@ extension DataPackageOperations on AppScopeState {
       }
       // 恢复过程中失败时保留刚写好的恢复点：它要么与回滚后的数据一致，
       // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
+      await _attachmentCache.markPendingRebuild();
       await _dataPackages.restorePackage(bytes, currentDb: db, openDb: _open);
-      try {
-        await _attachmentCache.rebuild(_connection!, _engine.assets);
-        await _attachmentCache.clearPendingRebuild();
-      } catch (error, stack) {
-        crashLog.record(error, stack, kind: 'rebuild_attachments_restore');
-        cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
-      }
+      _operationEpoch++;
+      cacheWarning = await _rebuildPackageAttachments('数据已恢复');
     });
     dataVersion.value++;
     _refreshSemanticIndex();
@@ -111,23 +103,34 @@ extension DataPackageOperations on AppScopeState {
   /// 导入当前数据包之前先取 `HEAD`，提交时重新核对。
   Future<int> currentHead() => _engine.headId(_connection!);
 
-  Future<void> importCurrentData(
+  Future<String?> importCurrentData(
     Uint8List bytes, {
     required int expectedHead,
   }) async {
-    _operationEpoch++;
-    await _attachmentCache.markPendingRebuild();
-    await gate.exclusive(
-      () => _revisionPackages.importCurrent(
+    final cacheWarning = await gate.exclusive(() async {
+      await _attachmentCache.markPendingRebuild();
+      await _revisionPackages.importCurrent(
         _connection!,
         bytes,
         expectedHead: expectedHead,
-      ),
-    );
-    await _attachmentCache.rebuild(_connection!, _engine.assets);
-    await _attachmentCache.clearPendingRebuild();
+      );
+      _operationEpoch++;
+      return _rebuildPackageAttachments('数据已导入');
+    });
     dataVersion.value++;
     _refreshSemanticIndex();
+    return cacheWarning;
+  }
+
+  Future<String?> _rebuildPackageAttachments(String result) async {
+    try {
+      await _attachmentCache.rebuild(_connection!, _engine.assets);
+      await _attachmentCache.clearPendingRebuild();
+      return null;
+    } catch (error, stack) {
+      crashLog.record(error, stack, kind: 'rebuild_attachments_package');
+      return '$result，但图片缓存没有重建完成，下次打开应用会再试。';
+    }
   }
 
   /// 版本库备份：整库快照，包含历史、命名版本与附件。
