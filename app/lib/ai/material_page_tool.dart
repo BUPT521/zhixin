@@ -1,10 +1,10 @@
 import 'dart:math' as math;
 
+import '../domain/models/buddy_protocol.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/content_identity.dart';
 import 'agent_read_budget.dart';
 import 'agent_tools.dart';
-import 'buddy_protocol.dart';
 import 'llm_client.dart';
 import 'llm_context_budget.dart';
 import 'search_sources_tool.dart';

@@ -1,9 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/ai/buddy_protocol.dart';
 import 'package:zhixin/ai/buddy_tools.dart';
 import 'package:zhixin/ai/llm_client.dart';
+import 'package:zhixin/domain/models/buddy_protocol.dart';
 
 /// 一个工具的契约样例：一份合法规格，以及从解析结果里取出可比较的签名。
 class _Contract {

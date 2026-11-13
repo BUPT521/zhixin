@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../../domain/rules/time_format.dart';
+import '../../domain/rules/weekdays.dart';
 
 /// 一处时间占用冲突：重叠区间与来源说明，由调用方决定如何报告。
 class ScheduleConflict {
@@ -80,7 +81,7 @@ Future<ScheduleConflict?> findTimetableConflict(
             start: classStart.isAfter(segmentStart) ? classStart : segmentStart,
             end: classEnd.isBefore(segmentEnd) ? classEnd : segmentEnd,
             description:
-                '固定课表“$title”（${_weekdayLabel(day.weekday)} '
+                '固定课表“$title”（${weekdayLabel(day.weekday)} '
                 '${entry['start_time']}–${entry['end_time']}'
                 '${location == null || location.trim().isEmpty ? '' : '，$location'}）',
           );
@@ -187,17 +188,6 @@ Future<ScheduleConflict?> _findBlockConflict(
         '（${formatDateTime(conflictStart)}–${formatDateTime(conflictEnd)}）',
   );
 }
-
-String _weekdayLabel(int weekday) => switch (weekday) {
-  1 => '周一',
-  2 => '周二',
-  3 => '周三',
-  4 => '周四',
-  5 => '周五',
-  6 => '周六',
-  7 => '周日',
-  _ => '星期$weekday',
-};
 
 void _requireInterval(DateTime start, DateTime end) {
   if (!end.isAfter(start)) throw ArgumentError('结束时间要晚于开始时间');

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
-import 'buddy_wire.dart';
+/// 单步输出的最高上限，实际请求还受模型上下文配置约束。
+const int buddyMaxOutputTokens = 8192;
 
 /// 接口风格：同一份回答协议，分别走 Chat Completions、Responses 与
 /// Anthropic Messages 三种线格式。

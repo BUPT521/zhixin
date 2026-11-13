@@ -1,6 +1,6 @@
+import '../domain/models/buddy_protocol.dart';
 import '../domain/rules/content_identity.dart';
 import '../domain/rules/time_format.dart';
-import 'buddy_protocol.dart';
 import 'material_page_tool.dart';
 import 'search_sources_tool.dart';
 

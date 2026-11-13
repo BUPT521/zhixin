@@ -1,4 +1,8 @@
 import '../domain/rules/time_format.dart';
+import '../domain/rules/weekdays.dart';
+
+// 星期名在 domain/rules/weekdays.dart 里只写一份，这里转出给界面使用。
+export '../domain/rules/weekdays.dart' show weekdayLabel;
 
 /// 界面上的短时间：今天显示时刻，其余显示日期。
 String shortTime(DateTime time, {DateTime? now}) {
@@ -20,17 +24,6 @@ String clockOf(DateTime time) {
 
 String dayLabel(DateTime time) =>
     '${time.month}月${time.day}日 ${weekdayLabel(time.weekday)}';
-
-String weekdayLabel(int weekday) => switch (weekday) {
-  1 => '周一',
-  2 => '周二',
-  3 => '周三',
-  4 => '周四',
-  5 => '周五',
-  6 => '周六',
-  7 => '周日',
-  _ => '',
-};
 
 String dateText(DateTime? date) => date == null ? '未定' : formatDate(date);
 

@@ -1,9 +1,10 @@
+import '../domain/models/buddy_protocol.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/memory.dart';
+import '../domain/models/study_plan.dart' show StudyStepDraft;
 import '../domain/rules/study_plan_steps.dart';
 import 'agent_read_budget.dart';
 import 'agent_tools.dart';
-import 'buddy_protocol.dart';
 import 'llm_client.dart';
 import 'material_page_tool.dart';
 import 'search_sources_tool.dart';
