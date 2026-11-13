@@ -32,7 +32,7 @@ flutter analyze
 flutter test
 ```
 
-CI 跑的就是这三条。测试用 `sqflite_common_ffi` 在 Dart VM 里执行同一套 DDL，不必起模拟器。
+CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同一套表结构，不必起模拟器；备份与恢复预检的只读副本仍由 sqflite 打开。
 
 ## 目录
 
@@ -42,10 +42,10 @@ lib/
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
 ├── application/                            ← 用例：对话、学习、计划、记忆、设置
 ├── data/
-│   ├── db/                                 ← 建库与版本（表结构见 docs/01）、开库、访问协调
+│   ├── db/                                 ← drift 表结构（docs/01）、开库、访问协调
 │   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
 │   ├── backup/                             ← zip 导出、旧数据版本与分阶段恢复
-│   ├── diagnostics/                        ← 本机崩溃记录
+│   ├── diagnostics/                        ← 本机崩溃记录与自建 Sentry 上报
 │   └── repository/                         ← 讨论、作答、目标、事项、日程、记忆与设置
 ├── domain/
 │   ├── models/                             ← 数据对象与序列化
@@ -59,7 +59,7 @@ lib/
 
 ## 数据
 
-- 数据库是应用私有目录里的一个 SQLite 文件，业务表、提交历史与附件对象都在同一个库里，表清单、字段与当前版本见 [01](../docs/01-ER数据模型.md)。一条讨论就是一条学习记录，题目由首条用户消息与图片派生，作答直接挂在记录上；事项只保存一段说明，系统学习的步骤就是事项，计划只保存材料范围、顺序与继续位置。
+- 数据库是应用私有目录里的一个 SQLite 文件，业务表、提交历史与附件对象都在同一个库里，表清单、字段与当前版本见 [01](../docs/01-ER数据模型.md)。库文件由 drift 的 `NativeDatabase` 打开，SQLite 使用随包的 `sqlite3`；表结构在 `lib/data/db/drift/tables.dart`，生成文件入库，改表后要跑 `dart run build_runner build`。一条讨论就是一条学习记录，题目由首条用户消息与图片派生，作答直接挂在记录上；事项只保存一段说明，系统学习的步骤就是事项，计划只保存材料范围、顺序与继续位置。
 - 讨论按记录标识打开，可以没有目标归属，也可以只有图片消息；图片按内容哈希分块存入同一个库的 `asset_object` 与 `asset_chunk`，消息只保存哈希引用，界面读取时把临时文件补回 `question_images/`，同一个哈希只保存一份。
 - 材料按页保存，讨论可以带入材料与页码；回答里的引用先按页码取回原文、逐字核对，对不上的标为未核实，用户纠正后旧摘录不再作为依据。也可以直接导入 .docx：原文件按内容哈希与正文片段在同一条提交里写入，片段按 1 起编号，引用显示“第 N 个片段”，这类材料不能手工添加一页。添加一页遇到已有页码时拒绝写入，不覆盖已经校对过的原文；用户明确更正一页时改写内容，修改前后的整行随这次提交留在历史里，保存后提示条可以撤销，材料详情按页列出更正记录。
 - 系统学习按材料范围保存步骤、当前页码与完成状态；每一步是学习事项，可以在安排页直接预约，完成状态在系统学习页与事项详情共用。容量规划按每天的可用时段减去课表与已排时间，容量不足时说明先排与缩小范围，只调整用户确认的弹性块。
@@ -89,7 +89,7 @@ lib/
 
 三种风格共用一个传输层。地址只填域名时补 `/v1`，Anthropic 按 `base/v1/messages` 拼接（`https://api.deepseek.com/anthropic` 因此得到 `/anthropic/v1/messages`）。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限在 OpenAI 官方用 `max_completion_tokens`、其余实现用 `max_tokens`，指向 DeepSeek 时带 `{"thinking":{"type":"disabled"}}`；Responses 发顶层 `instructions`、`input`（`input_text`、`output_text`、`input_image` 的 data URL，工具用 `{type:function,name,parameters,strict:false}`）与 `max_output_tokens`，指向 DeepSeek 时带 `{"reasoning":{"effort":"none"}}`；Anthropic Messages 用 `x-api-key` 与 `anthropic-version: 2023-06-01` 鉴权，system 放顶层，工具用 `input_schema`，图片是 `{type:image,source:{type:base64,…}}` 块，指定工具时 `tool_choice` 取 `{"type":"tool","name":…}`。
 
-流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。三家的结束标记不同：Chat Completions 认 `[DONE]` 或非空 `finish_reason`，Responses 认 `response.completed`／`response.incomplete`（正文只补还没发过的后缀，工具调用按 `item_id` 归并，`output_item.done` 的完整参数覆盖分片），Anthropic 认 `message_stop`（工具参数由 `input_json_delta` 分片拼接，`stop_reason` 为 `max_tokens` 算截断）。没有结束标记时按截断保留已经生成的正文并提示；`content_filter`、`response.failed`、Anthropic 的 `error` 事件按服务端错误处理。非 2xx 的响应体会读出服务端自己的说明，便于定位 key、额度与模型名的问题。
+流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。评估过 `sse`、`flutter_client_sse`、`simple_sse` 等现成包，都不能同时满足“POST 流、逐行超时与取消、无空行收尾时 flush”，因此保留自研解析器。三家的结束标记不同：Chat Completions 认 `[DONE]` 或非空 `finish_reason`，Responses 认 `response.completed`／`response.incomplete`（正文只补还没发过的后缀，工具调用按 `item_id` 归并，`output_item.done` 的完整参数覆盖分片），Anthropic 认 `message_stop`（工具参数由 `input_json_delta` 分片拼接，`stop_reason` 为 `max_tokens` 算截断）。没有结束标记时按截断保留已经生成的正文并提示；`content_filter`、`response.failed`、Anthropic 的 `error` 事件按服务端错误处理。非 2xx 的响应体会读出服务端自己的说明，便于定位 key、额度与模型名的问题。
 
 回答正文使用 Markdown，模型可以用 `read_material_page` 读取本轮检索命中的原文，并在收到工具结果后继续回答。`propose_memories`、`propose_next_steps`、`propose_citations`、`propose_study_steps` 与 `propose_assessment` 提交的内容暂存在本轮，参数有误时丢弃对应提案，普通回答有完整正文即可结束。Chat Completions 通过 `tool_call_id` 配对调用与结果，Responses 通过 `function_call_output` 的 `call_id` 配对并带回本轮的推理条目，Anthropic Messages 把同一步的 `tool_result` 集中在下一条用户消息中。每轮的停止条件、材料范围与保存边界见 [00 第 9 节](../docs/00-产品定义.md#9-回答与工具调用)。
 

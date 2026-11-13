@@ -23,11 +23,11 @@
 | 客户端 | Flutter 3.47.9（Dart 3.13.7），本期只交付 Android；版本固定在 [ci.yml](.github/workflows/ci.yml) 的 `FLUTTER_VERSION` |
 | 界面组件 | Forui 0.27.7 承担页面骨架、按钮、表单、列表、对话框、提示、进度与主题；底部面板与日期时间选择用 `material_ui` 的对应控件，基础控件、路由、Markdown、本地化，以及 Forui 没有的控件（如下拉刷新）也用 `material_ui`，图标统一用 Lucide（`forui_lucide`） |
 | 最低系统 | Android 11（API 30）；只出 arm64 包，不兼容 32 位设备 |
-| 本地数据 | SQLite 单文件（sqflite），业务表、提交历史与附件同库，表结构与当前版本见 [01](docs/01-ER数据模型.md) |
+| 本地数据 | SQLite 单文件（drift，连接使用随包的 sqlite3），业务表、提交历史与附件同库，表结构与当前版本见 [01](docs/01-ER数据模型.md) |
 | 模型 | 用户自填 key，默认 `deepseek-flash`，接口地址与模型名可配置 |
 | 构建 | JDK 21 + Android SDK 36，命令 `flutter build apk --debug`（内测包用 `--release`），见 [app/README](app/README.md) |
 
-应用代码在 `app/` 目录，先 `cd app`，再执行 `flutter pub get` 和 `flutter run` 就能装到真机上。CI 配置见 [ci.yml](.github/workflows/ci.yml)：代码推送和 PR 都会跑格式检查、`flutter analyze` 与 `flutter test`，纯文档的提交跳过这三项；`main` 的 push 和每个 PR 都会构建 debug APK。正式包在 Actions 里手动运行“CI 与发版”生成。
+应用代码在 `app/` 目录，先 `cd app`，再执行 `flutter pub get` 和 `flutter run` 就能装到真机上。CI 配置见 [ci.yml](.github/workflows/ci.yml)：代码推送和 PR 都会跑生成代码核对、格式检查、`flutter analyze` 与 `flutter test`，纯文档的提交跳过这几项；`main` 的 push 和每个 PR 都会构建 debug APK。正式包在 Actions 里手动运行“CI 与发版”生成。
 
 ## 文档
 

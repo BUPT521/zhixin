@@ -45,6 +45,8 @@ jobs:
           cache: true
 
       - run: flutter pub get
+      - run: dart run build_runner build
+      - run: git diff --exit-code
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
@@ -171,7 +173,9 @@ jobs:
       - name: 构建 release APK
         # 只出 arm64：三 ABI 52 MB，arm64 单独 18 MB。要覆盖 32 位机器时改成
         # android-arm64,android-arm（约 33 MB），别再加回 x86_64（只给模拟器用）。
-        run: flutter build apk --release --target-platform android-arm64
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: flutter build apk --release --target-platform android-arm64 --dart-define=SENTRY_DSN="$SENTRY_DSN"
 
       - name: 校验证书不是 debug
         run: |
