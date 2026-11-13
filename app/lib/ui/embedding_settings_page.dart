@@ -62,9 +62,9 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
 
   Future<void> _load() async {
     final scope = AppScope.of(context);
-    final config = await scope.embeddingStore.read();
+    final config = await scope.settings.embedding.read();
     final materials = await scope.materials.list();
-    final stats = await scope.semanticIndex.stats();
+    final stats = await scope.library.semanticIndex.stats();
     if (!mounted) return;
     setState(() {
       _materials = materials;
@@ -116,7 +116,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       _notice = null;
     });
     try {
-      await scope.embeddingStore.save(config);
+      await scope.settings.embedding.save(config);
       scope.applyEmbeddingConfig(config, refresh: false);
       await _refresh(scope);
     } catch (error, stack) {
@@ -140,8 +140,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final app = scope ?? AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final result = await app.semanticIndex.refresh();
-      final stats = await app.semanticIndex.stats();
+      final result = await app.library.semanticIndex.refresh();
+      final stats = await app.library.semanticIndex.stats();
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -181,7 +181,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final app = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final result = await app.semanticIndex.search(
+      final result = await app.library.semanticIndex.search(
         '熵与能量有什么关系',
         scope: const EvidenceScope.userAll(),
         limit: 3,
@@ -217,8 +217,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final scope = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      await scope.semanticIndex.clear();
-      final stats = await scope.semanticIndex.stats();
+      await scope.library.semanticIndex.clear();
+      final stats = await scope.library.semanticIndex.stats();
       if (!mounted) return;
       setState(() {
         _busy = false;

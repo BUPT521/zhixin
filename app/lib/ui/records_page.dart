@@ -247,8 +247,8 @@ class _RecordsPageState extends State<RecordsPage> {
       final (goals, records) = await (
         append
             ? Future<List<LearningGoal>>.value(_goals)
-            : scope.discussionService.goals(),
-        scope.discussionService.records(
+            : scope.chat.discussion.goals(),
+        scope.chat.discussion.records(
           goalId: _unassignedOnly ? null : _goalFilter,
           unassignedOnly: _unassignedOnly,
           answerStatus: _answerFilter,
@@ -267,7 +267,7 @@ class _RecordsPageState extends State<RecordsPage> {
       ];
       final assessments = lastAttempts.isEmpty
           ? const <int, List<Assessment>>{}
-          : await scope.learningService.assessmentsFor(lastAttempts);
+          : await scope.chat.learning.assessmentsFor(lastAttempts);
       if (!mounted || request != _loadRequest) return;
       // 结果回来时若还在切栏或返回动画里，等动画走完再填，回填不打断动画。
       await context.afterTransition();
@@ -681,7 +681,7 @@ class _RecordsPageState extends State<RecordsPage> {
     );
     if (choice == null || !mounted) return;
     try {
-      await AppScope.of(context).discussionService
+      await AppScope.of(context).chat.discussion
           .setGoal(record.id, choice.goalId);
       await _load();
     } catch (error, stack) {
@@ -730,7 +730,7 @@ class _RecordsPageState extends State<RecordsPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).discussionService.clear(record.id);
+      await AppScope.of(context).chat.discussion.clear(record.id);
       await _load();
       if (!mounted) return;
       showToast(context, '已清空这条记录');

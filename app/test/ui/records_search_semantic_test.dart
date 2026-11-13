@@ -52,7 +52,7 @@ void main() {
   });
 
   tearDown(() async {
-    scope?.semanticIndex.close();
+    scope?.library.semanticIndex.close();
     await scope?.db.close();
     scope = null;
     await directory.delete(recursive: true);
@@ -154,7 +154,7 @@ void main() {
         role: 'user',
         content: '线性无关的行向量个数',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -164,7 +164,7 @@ void main() {
           },
         ),
       );
-      final refresh = await scope!.semanticIndex.refresh();
+      final refresh = await scope!.library.semanticIndex.refresh();
       expect(refresh.failed, 0);
     });
 
@@ -189,7 +189,7 @@ void main() {
         role: 'user',
         content: '矩阵的秩怎么求',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -198,8 +198,8 @@ void main() {
           },
         ),
       );
-      expect((await scope!.semanticIndex.refresh()).failed, 0);
-      scope!.semanticIndex.configure(client: _FailingClient());
+      expect((await scope!.library.semanticIndex.refresh()).failed, 0);
+      scope!.library.semanticIndex.configure(client: _FailingClient());
     });
 
     await openSearch(tester);
@@ -223,7 +223,7 @@ void main() {
         role: 'user',
         content: '矩阵的秩怎么求',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -260,7 +260,7 @@ void main() {
         role: 'user',
         content: 'det(A) 的几何意义是面积缩放',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -270,7 +270,7 @@ void main() {
           },
         ),
       );
-      expect((await scope!.semanticIndex.refresh()).failed, 0);
+      expect((await scope!.library.semanticIndex.refresh()).failed, 0);
     });
 
     await openSearch(tester);

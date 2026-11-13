@@ -144,7 +144,7 @@ class _NowPageState extends State<NowPage> {
   Future<void> _loadActivity() async {
     final scope = AppScope.of(context);
     try {
-      final activity = await scope.contextService.loadActivity();
+      final activity = await scope.chat.context.loadActivity();
       if (!mounted) return;
       await context.afterTransition();
       if (!mounted) return;
@@ -171,7 +171,7 @@ class _NowPageState extends State<NowPage> {
   Future<void> _loadContinue() async {
     final scope = AppScope.of(context);
     try {
-      final entries = await scope.continueService.load();
+      final entries = await scope.study.continueLast.load();
       if (!mounted) return;
       await context.afterTransition();
       if (!mounted) return;

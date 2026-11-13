@@ -17,7 +17,7 @@ Future<void> undoCommitWithFeedback(
   required Future<void> Function() reload,
   VoidCallback? onUndone,
 }) async {
-  final revisions = AppScope.of(context).revisions;
+  final revisions = AppScope.of(context).data.revisions;
   try {
     final result = await revisions.undoCommit(commitId);
     onUndone?.call();

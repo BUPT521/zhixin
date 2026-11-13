@@ -43,9 +43,9 @@ class _MemoryPageState extends State<MemoryPage> {
   Future<void> _load() async {
     try {
       final app = AppScope.of(context);
-      final memories = await app.memoryService.list();
+      final memories = await app.memory.edit.list();
       final goals = await app.tasks.goals();
-      final materials = await app.materialService.list();
+      final materials = await app.library.material.list();
       if (!mounted) return;
       setState(() {
         _memories = memories;
@@ -80,7 +80,7 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memoryService.add(
+      final commitId = await AppScope.of(context).memory.edit.add(
         kind: draft.kind,
         content: draft.content,
         validUntil: draft.validUntil,
@@ -110,7 +110,7 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memoryService
+      final commitId = await AppScope.of(context).memory.edit
           .save(memory, content: draft.content, validUntil: draft.validUntil);
       await _load();
       if (!mounted) return;
@@ -155,8 +155,7 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memoryService
-          .delete(memory.id);
+      final commitId = await AppScope.of(context).memory.edit.delete(memory.id);
       await _load();
       if (!mounted || commitId == null) return;
       _receipt('已删除这条记忆', commitId);

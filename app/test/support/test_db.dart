@@ -20,7 +20,12 @@ Future<Database> openTestDb() async {
 
 /// 带数据版本的测试库：每次写入形成提交，回执与撤销读提交历史。
 ///
-/// 与生产装配一致：仓库拿 [GuardedDatabase]，图片缓存指向临时目录。
+/// 与生产装配一致：仓库拿 [GuardedDatabase]，图片缓存指向临时目录。需要固定
+/// 时钟或数据变更回调时从这里传，不再各自搭一遍。
+///
+/// 三个用例保留自己的装配，因为要用文件库而不是内存库：`revision_package_test`
+/// 与 `revision_benchmark_test` 要 `VACUUM INTO`、量库大小与整库快照，
+/// `revision_flow_discussion_test` 要在恢复时真正替换库文件。
 class TestRig {
   TestRig({
     required this.raw,
@@ -41,22 +46,23 @@ class TestRig {
 
 Future<TestRig> openTestRig({
   Clock clock = systemClock,
+  RevisionEngine? engine,
   Future<void> Function()? onUndoApplied,
   Future<void> Function()? onDataChanged,
   AttachmentCache? cache,
 }) async {
   final dir = await Directory.systemTemp.createTemp('zhixin_test_rig');
   final raw = await openTestDb();
-  final engine = RevisionEngine(clock: clock);
+  final revisionEngine = engine ?? RevisionEngine(clock: clock);
   final db = GuardedDatabase(
     gate: DatabaseGate(),
     resolve: () => raw,
-    revisions: engine,
+    revisions: revisionEngine,
   );
   final revisions = RevisionService(
     db: db,
     raw: () => raw,
-    engine: engine,
+    engine: revisionEngine,
     clock: clock,
     cache: cache ?? AttachmentCache(filesDir: () => dir.path),
     onUndoApplied: onUndoApplied,
@@ -65,7 +71,7 @@ Future<TestRig> openTestRig({
   return TestRig(
     raw: raw,
     db: db,
-    engine: engine,
+    engine: revisionEngine,
     revisions: revisions,
     filesDir: dir.path,
   );

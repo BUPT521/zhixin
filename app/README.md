@@ -39,6 +39,7 @@ CI 跑的就是这三条。测试用 `sqflite_common_ffi` 在 Dart VM 里执行�
 ```
 lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
+├── app_scope_data.dart / app_services.dart ← 数据包与恢复操作、六组服务（讨论、安排、材料、记忆、设置、数据版本）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
 ├── application/                            ← 用例：对话、学习、计划、记忆、设置
 ├── data/
@@ -53,7 +54,7 @@ lib/
 └── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、关于
 ```
 
-`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。`ai/llm_client.dart` 负责三种接口的请求与响应格式，工具规格位于 `ai/buddy_tools.dart`，材料读取与提案工具的执行入口位于 `ai/buddy_agent_tools.dart`，提案解析位于 `ai/buddy_reply_parser.dart`，单步输出上限位于 `ai/buddy_wire.dart`。
+`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。`ai/llm_client.dart` 负责三种接口的请求与响应格式，工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`。
 
 安排页的三个表单集中在 `plan_dialogs.dart`，讨论消息与引用展示位于 `discussion_message.dart`，页面继续负责加载数据和执行用户操作。
 

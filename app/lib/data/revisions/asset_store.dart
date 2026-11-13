@@ -8,7 +8,6 @@ import 'package:sqflite/sqflite.dart';
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/content_identity.dart';
 import 'revision_models.dart';
-import 'revision_value.dart';
 
 /// 附件对象：字节按内容哈希去重，分块保存在同一个 SQLite 文件里。
 ///

@@ -175,7 +175,7 @@ class _PlanPageState extends State<PlanPage> {
     final scope = AppScope.of(context);
     final anchor = _anchor;
     try {
-      final week = await scope.planService.loadWeek(anchor);
+      final week = await scope.study.plan.loadWeek(anchor);
       if (!mounted) return;
       // 结果回来时若还在切栏或返回动画里，等动画走完再填。
       await context.afterTransition();
@@ -249,7 +249,7 @@ class _PlanPageState extends State<PlanPage> {
     final offset = reset ? 0 : _doneItems.length;
     setState(() => _loadingDone = true);
     try {
-      final page = await AppScope.of(context).planService
+      final page = await AppScope.of(context).study.plan
           .doneItems(limit: _donePageSize, offset: offset);
       if (!mounted) return;
       setState(() {
@@ -281,7 +281,7 @@ class _PlanPageState extends State<PlanPage> {
     final draft = await showGoalDialog(context);
     if (draft == null || !mounted) return;
     try {
-      await AppScope.of(context).planService.addGoal(
+      await AppScope.of(context).study.plan.addGoal(
         title: draft.title,
         scopeText: draft.scope,
         dueDate: draft.dueDate,
@@ -301,7 +301,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _pauseGoal(LearningGoal goal) async {
     final scope = AppScope.of(context);
-    final service = scope.planService;
+    final service = scope.study.plan;
     final flexible = await service.flexibleFutureCount(goal.id);
     if (!mounted) return;
     var cancelFlexible = false;
@@ -374,7 +374,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _resumeGoal(LearningGoal goal) async {
     try {
-      await AppScope.of(context).planService.resumeGoal(goal.id);
+      await AppScope.of(context).study.plan.resumeGoal(goal.id);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -399,7 +399,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      await AppScope.of(context).planService.addItem(
+      await AppScope.of(context).study.plan.addItem(
         title: draft.title,
         goalId: draft.goalId,
         note: draft.note,
@@ -435,7 +435,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).planService.scheduleItem(
+      final commitId = await AppScope.of(context).study.plan.scheduleItem(
         planItemId: draft.itemId,
         start: draft.start,
         end: draft.start.add(Duration(minutes: draft.minutes)),
@@ -559,7 +559,7 @@ class _PlanPageState extends State<PlanPage> {
     if (confirmed != true || !mounted) return;
     final scope = AppScope.of(context);
     try {
-      final commitId = await scope.planService.rescheduleGroup(adjustments);
+      final commitId = await scope.study.plan.rescheduleGroup(adjustments);
       await _load();
       if (!mounted) return;
       showActionToast(
@@ -597,7 +597,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      await AppScope.of(context).planService.addTimetable(
+      await AppScope.of(context).study.plan.addTimetable(
         weekday: draft.weekday,
         startTime: draft.start,
         endTime: draft.end,
@@ -644,7 +644,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).planService
+      final commitId = await AppScope.of(context).study.plan
           .deleteTimetable(entry.id);
       await _load();
       if (!mounted) return;
@@ -672,7 +672,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _setStatus(PlanItem item, PlanItemStatus status) async {
     try {
-      await AppScope.of(context).planService.setStatus(item.id, status);
+      await AppScope.of(context).study.plan.setStatus(item.id, status);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -875,7 +875,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final service = AppScope.of(context).planService;
+      final service = AppScope.of(context).study.plan;
       final end = draft.start.add(Duration(minutes: draft.minutes));
       final commitId = block == null
           ? await service.scheduleItem(
@@ -939,7 +939,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (action == null || !mounted) return;
     try {
-      final service = AppScope.of(context).planService;
+      final service = AppScope.of(context).study.plan;
       int? commitId;
       if (action == 'complete' && item != null) {
         await service.setStatus(item.id, PlanItemStatus.done);
@@ -1475,7 +1475,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).planService.closeGoal(goal.id);
+      await AppScope.of(context).study.plan.closeGoal(goal.id);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -1949,7 +1949,7 @@ class _PlanPageState extends State<PlanPage> {
       return;
     }
     if (!mounted) return;
-    final service = AppScope.of(context).planService;
+    final service = AppScope.of(context).study.plan;
     try {
       final (commitId, message) = switch (value) {
         'restore' => (
@@ -1986,7 +1986,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _setPriority(PlanItem item, int priority) async {
     try {
-      await AppScope.of(context).planService.setPriority(item.id, priority);
+      await AppScope.of(context).study.plan.setPriority(item.id, priority);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
