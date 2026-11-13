@@ -54,6 +54,9 @@ dependencies:
   # 界面图标：业务图标与 Forui 控件内部用同一套 Lucide 图形。
   forui_lucide: ^0.27.0
 
+  # 崩溃与诊断上报：自建 Sentry，DSN 由构建参数注入。
+  sentry_flutter: ^10.4.0
+
   # 打开回答里的链接。
   url_launcher: ^6.3.3
 

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'app.dart';
@@ -8,6 +9,8 @@ import 'platform/app_paths.dart';
 import 'platform/theme_mode_store.dart';
 import 'ui/theme_mode_controller.dart';
 
+const String _sentryDsn = String.fromEnvironment('SENTRY_DSN');
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   registerAppLicense();
@@ -15,7 +18,21 @@ Future<void> main() async {
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);
   if (crashLog != null) _installErrorHandlers(crashLog);
   final themeMode = paths == null ? null : await _loadThemeMode(paths);
-  runApp(ZhixinApp(crashLog: crashLog, themeMode: themeMode));
+
+  void run() => runApp(ZhixinApp(crashLog: crashLog, themeMode: themeMode));
+
+  // 没有注入 DSN 的构建（本地、PR）不初始化 Sentry，也不产生任何请求。
+  if (_sentryDsn.isEmpty) {
+    run();
+    return;
+  }
+  await SentryFlutter.init((options) {
+    options.dsn = _sentryDsn;
+    options.sendDefaultPii = false;
+    options.tracesSampleRate = 0;
+    options.environment = kReleaseMode ? 'release' : 'dev';
+    options.enableAutoSessionTracking = true;
+  }, appRunner: run);
 }
 
 /// 崩溃记录与外观都要赶在界面起来之前就位，所以路径在 main 里先解析一次；

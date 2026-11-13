@@ -781,6 +781,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.0"
+  package_info_plus:
+    dependency: transitive
+    description:
+      name: package_info_plus
+      sha256: "73ef2cd5c11a7548f9b7f6fc2a4f6113de2e64aa2a70de63feede95548822908"
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.2.2"
+  package_info_plus_platform_interface:
+    dependency: transitive
+    description:
+      name: package_info_plus_platform_interface
+      sha256: db762cb2f4f25ee60fb6359773861b0f199e00b90d237bd85a76a1e806b46ef4
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.1.0"
   path:
     dependency: "direct main"
     description:
@@ -917,6 +933,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
+  sentry:
+    dependency: transitive
+    description:
+      name: sentry
+      sha256: "6549d5e63700434b76a21d4ee6a273fb7e1735307409777d043621f50d7ff9e2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.4.0"
+  sentry_flutter:
+    dependency: "direct main"
+    description:
+      name: sentry_flutter
+      sha256: cd123c354b7189bae98b9e9d23ba915d2ecdc3ab98675b6cb85a84baad86199c
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.4.0"
   shelf:
     dependency: transitive
     description:
@@ -1186,6 +1218,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.1.6"
+  uuid:
+    dependency: transitive
+    description:
+      name: uuid
+      sha256: "9b129329f58692f6e6578329498a8fe9fbe98f090beb764ffbb8ee2eadd01dcd"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.6.0"
   val_highlight:
     dependency: transitive
     description:

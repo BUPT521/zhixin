@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import '../../domain/models/diagnostics.dart';
 import '../../domain/rules/time_format.dart';
 
-/// 本机崩溃记录：一个 JSON 文件，记启动次数与最近几次未捕获错误。
+/// 本机崩溃记录：一个 JSON 文件，记启动次数与最近几次未捕获错误；配置了 DSN 时
+/// 同一份脱敏后的说明与调用栈也上报自建 Sentry。
 ///
 /// 不联网、不进数据包、不写学习内容；文件写不进去时静默放弃，不能因为记录
 /// 崩溃而让应用起不来。清空全部学习数据时保留这个文件，用户可在设置里单独清。
@@ -68,6 +71,24 @@ class CrashLog {
         ? crashes.sublist(crashes.length - keep)
         : crashes;
     _write(data);
+    _report(error, stack, kind);
+  }
+
+  /// 上报脱敏后的类型与说明，不把 SQL、绑定参数或学习正文交给 Sentry。
+  void _report(Object error, StackTrace? stack, String kind) {
+    try {
+      unawaited(
+        Sentry.captureException(
+          DiagnosticError(
+            kind,
+            _clip(_sanitize(error.toString()), maxMessageLength),
+          ),
+          stackTrace: stack,
+        ),
+      );
+    } catch (_) {
+      // 上报失败不能影响本机记录。
+    }
   }
 
   /// 只清错误，保留启动次数，崩溃率的分母不变。
@@ -177,4 +198,15 @@ class CrashLog {
     );
     return text;
   }
+}
+
+/// 上报给 Sentry 的脱敏错误：只保留类型与清理过的说明，不带原始正文。
+class DiagnosticError implements Exception {
+  const DiagnosticError(this.kind, this.message);
+
+  final String kind;
+  final String message;
+
+  @override
+  String toString() => 'DiagnosticError(): ';
 }
