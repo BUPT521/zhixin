@@ -1095,13 +1095,10 @@ class DiscussionChatState extends State<DiscussionChat> {
         Expanded(
           child: _emptyTimeline
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(
-                      widget.emptyHint,
-                      textAlign: TextAlign.center,
-                      style: theme.text.bodyMedium,
-                    ),
+                  child: EmptyState(
+                    icon: FLucideIcons.messageCircle,
+                    title: '讨论内容',
+                    description: widget.emptyHint,
                   ),
                 )
               : ListView.builder(
@@ -1139,7 +1136,10 @@ class DiscussionChatState extends State<DiscussionChat> {
         : _goals.where((item) => item.id == record.goalId).firstOrNull;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+      padding: theme.space.pageInsets(
+        top: theme.space.xs,
+        bottom: theme.space.sm,
+      ),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: theme.colors.outlineVariant)),
       ),
@@ -1413,10 +1413,20 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   Widget _composer() {
+    final theme = context.zhixin;
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      child: Container(
+        margin: theme.space.pageInsets(
+          top: theme.space.xs,
+          bottom: theme.space.sm,
+        ),
+        padding: EdgeInsets.all(theme.space.sm),
+        decoration: BoxDecoration(
+          color: theme.colors.card,
+          border: Border.all(color: theme.colors.outlineVariant),
+          borderRadius: theme.radius.feature,
+        ),
         child: Column(
           children: [
             if (AppScope.of(context).broughtSources.length > 0)
@@ -1466,9 +1476,11 @@ class DiscussionChatState extends State<DiscussionChat> {
               children: [
                 ZhixinIconButton(
                   tooltip: '添加图片',
+                  variant: forui.FButtonVariant.secondary,
                   onPressed: _sending || _picking ? null : _chooseAttachment,
                   icon: FLucideIcons.imagePlus,
                 ),
+                SizedBox(width: theme.space.sm),
                 Expanded(
                   child: forui.FTextField(
                     control: .managed(controller: _input),
@@ -1478,6 +1490,10 @@ class DiscussionChatState extends State<DiscussionChat> {
                     hint: _record?.open == false
                         ? '这条讨论已结束，发消息会重新打开'
                         : '输入问题或添加图片',
+                    style: .delta(
+                      border: .delta([.all(InputBorder.none)]),
+                      color: .delta([.all(Colors.transparent)]),
+                    ),
                     suffixBuilder: (_, style, _) => VoiceInputButton(
                       controller: _input,
                       style: style.clearButtonStyle,

@@ -6,11 +6,11 @@ import '../app_scope.dart';
 import 'discussion_page.dart';
 import 'learning_page.dart';
 import 'memory_page.dart';
-import 'motion.dart';
 import 'now_page.dart';
 import 'plan_page.dart';
 import 'records_page.dart';
 import 'settings_page.dart';
+import 'theme.dart';
 
 /// 底部三栏（02 第 10.1 节）：现在 / 记录 / 安排，设置留在次级入口。
 ///
@@ -88,34 +88,43 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     return ValueListenableBuilder<int>(
       valueListenable: AppScope.of(context).dataVersion,
       builder: (context, dataVersion, _) => forui.FScaffold(
         footer: forui.FBottomNavigationBar(
           index: _index,
           onChange: _open,
+          style: .delta(
+            decoration: .value(
+              BoxDecoration(
+                color: theme.colors.card,
+                border: Border(
+                  top: BorderSide(color: theme.colors.outlineVariant),
+                ),
+              ),
+            ),
+            padding: .value(
+              EdgeInsets.symmetric(
+                horizontal: theme.space.page,
+                vertical: theme.space.xs,
+              ),
+            ),
+            itemStyle: .delta(spacing: theme.space.xs),
+          ),
           children: const [
             forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.house,
-                selectedIcon: FLucideIcons.house,
-              ),
+              icon: _NavIcon(FLucideIcons.house),
               label: Text('现在'),
               semanticsLabel: '现在',
             ),
             forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.history,
-                selectedIcon: FLucideIcons.history,
-              ),
+              icon: _NavIcon(FLucideIcons.history),
               label: Text('记录'),
               semanticsLabel: '记录',
             ),
             forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.calendarClock,
-                selectedIcon: FLucideIcons.calendarClock,
-              ),
+              icon: _NavIcon(FLucideIcons.calendarClock),
               label: Text('安排'),
               semanticsLabel: '安排',
             ),
@@ -161,18 +170,25 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-/// 底栏图标；Forui 的底栏项没有单独的选中图标参数，选中态由主色与加粗区分，
-/// 这里留一个选中图标的位置，需要换图形时再用。
 class _NavIcon extends StatelessWidget {
-  const _NavIcon({required this.icon, required this.selectedIcon});
+  const _NavIcon(this.icon);
 
   final IconData icon;
-  final IconData selectedIcon;
 
   @override
   Widget build(BuildContext context) {
-    return Icon(
-      forui.FBottomNavigationBarData.of(context).selected ? selectedIcon : icon,
+    final theme = context.zhixin;
+    final selected = forui.FBottomNavigationBarData.of(context).selected;
+    return AnimatedContainer(
+      duration: context.motionOf(theme.motion.fast),
+      curve: theme.motion.move,
+      width: 54,
+      height: 30,
+      decoration: BoxDecoration(
+        color: selected ? theme.colors.primaryContainer : Colors.transparent,
+        borderRadius: theme.radius.control,
+      ),
+      child: Icon(icon, size: 20),
     );
   }
 }

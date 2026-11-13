@@ -73,9 +73,9 @@ lib/
 
 ## 界面
 
-界面组件与主题由 Forui 0.27.7 承担：页面骨架用 `FScaffold` 配 `ZhixinHeader`，按钮、输入框、下拉、开关、复选与单选、列表与卡片用对应的 F 控件，对话框与短提示分别走 `showZhixinDialog` 与 `showToast`，底部面板走 `showZhixinSheet`，日期与时间选择收在 `ui/date_time_dialogs.dart`，内部用 Material 的日期与时间选择器。页面里的字号、颜色、留白与圆角从 `context.zhixin` 读取，色值只在 `ui/theme.dart` 定义一次，Forui 主题、Markdown 主题与本地化用的 `ThemeData` 都从这一份生成。页面内边距由 `FThemeData` 的 `scaffoldStyle` 统一设为零，页面自己按 `ZhixinSpace` 留白，新增页面不必再传 `childPad`。
+界面组件与主题由 Forui 0.27.7 提供，三栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
 
-`material_ui` 仍提供基础控件、`MaterialApp` 外壳、`MaterialPageRoute`、Markdown 渲染与本地化。底部面板与日期时间选择由 Material 承担：`showZhixinSheet` 包 `showModalBottomSheet`，`showZhixinDatePicker` 与 `showZhixinTimePicker` 包 `showDatePicker` 与 `showTimePicker`，面板的底色、上圆角与拖动条在 `_buildMaterial` 的底部面板主题里统一；现在页主色卡片上的“查看事项”是 `TextButton.icon`，关于页的应用图标是 `CircleAvatar`，现在、记录、安排与数据版本四页的下拉刷新是 `RefreshIndicator`。下拉刷新沿用 Material，因为 Forui 0.27.7 没有对应的控件；头像与文字按钮保持 Material，是否替换按实际效果再定。芯片与分段控件继续用 Forui 的 `FButton` 与自绘分段，不换成 Material 的 `Chip` 与 `SegmentedButton`：前者要补 `ChipThemeData` 与 Material 祖先，后者的外观与滑动动效差别明显。新增界面先找 Forui 组件，Forui 没有对应控件，或者替换要另配尺寸与样式时直接用 Material，判断依据是同一屏的字号、圆角与间距是否协调。图标统一用 Lucide：业务图标与 Forui 控件内部都取 `FLucideIcons`，`forui_lucide` 是直接依赖，新增图标从 [Lucide 图标库](https://lucide.dev/icons/) 里选含义相同的图形。
+按钮、输入框、列表、卡片与表单优先使用 Forui，对话框和短提示分别通过 `showZhixinDialog` 和 `showToast` 打开。底部面板、日期时间选择器和下拉刷新使用 Material，其中底部面板和日期时间选择分别通过 `showZhixinSheet`、`showZhixinDatePicker` 与 `showZhixinTimePicker` 打开，样式由同一主题提供。筛选使用 `ZhixinChip`，互斥的视图切换使用 `ZhixinSegmented`，业务图标统一从 [Lucide 图标库](https://lucide.dev/icons/) 选取，通过 `FLucideIcons` 引用。
 
 测试里单独构建页面时，外层要补 `FTheme`；页面里会弹提示的，还要补 `FToaster`。少了这两层，页面读不到主题，提示也找不到宿主。
 

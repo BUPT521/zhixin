@@ -9,6 +9,7 @@ import '../application/memory_proposal_service.dart';
 import '../domain/models/question.dart';
 import 'failure_feedback.dart';
 import 'undo_feedback.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -152,12 +153,12 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: const ZhixinHeader(title: Text('从作答整理记忆'), showBack: true),
       child: _loading
           ? const Center(child: forui.FCircularProgress())
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              padding: theme.space.pageInsets(),
               children: [
                 Text(
                   '从已提交作答整理可核对的记忆：只有用过提示后做错、或隔一段时间后独立完成'

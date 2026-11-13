@@ -17,6 +17,7 @@ import 'plan_dialogs.dart';
 import 'study_entry.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -283,18 +284,18 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     final theme = context.zhixin;
     final view = _view;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     if (view == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('系统学习'), showBack: true),
         child: Center(child: Text(_notice ?? '未找到这份学习计划')),
       );
     }
     final plan = view.plan;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('系统学习'),
         showBack: true,
@@ -306,7 +307,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
         ],
       ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: theme.space.pageInsets(),
         children: [
           forui.FCard(
             child: Padding(

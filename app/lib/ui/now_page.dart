@@ -219,11 +219,7 @@ class _NowPageState extends State<NowPage> {
         nested: false,
         title: const Row(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(FLucideIcons.sprout, size: 25),
-            SizedBox(width: 10),
-            Text('知新'),
-          ],
+          children: [ZhixinMark(), SizedBox(width: 10), Text('知新')],
         ),
         actions: [
           ZhixinHeaderAction(
@@ -244,12 +240,7 @@ class _NowPageState extends State<NowPage> {
           child: ListView(
             key: const PageStorageKey('now-scroll'),
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.fromLTRB(
-              theme.space.page,
-              theme.space.sm,
-              theme.space.page,
-              theme.space.section,
-            ),
+            padding: theme.space.pageInsets(),
             children: [
               // 已有预约或待办时，当前活动排在输入区之前：02 第 5 节要求首屏
               // 给出可开始的内容、预计时长与开始按钮，原来它在两张入口卡之后，
@@ -278,17 +269,17 @@ class _NowPageState extends State<NowPage> {
                   '提出一个问题',
                   style: showActivity
                       ? theme.text.titleMedium
-                      : theme.text.headlineSmall,
+                      : theme.text.headlineMedium,
                 ),
               ),
               SizedBox(height: theme.space.xs),
               Text(
-                '带上题目、想法或材料，开始学习。',
+                '可以直接输入文字，也可以添加题目照片。',
                 style: theme.text.bodyMedium.copyWith(
                   color: theme.colors.onSurfaceVariant,
                 ),
               ),
-              SizedBox(height: theme.space.md),
+              SizedBox(height: theme.space.lg),
               _composer(theme),
               SizedBox(height: theme.space.md),
               _shortcuts(theme),
@@ -365,6 +356,7 @@ class _NowPageState extends State<NowPage> {
           children: [
             ZhixinIconButton(
               tooltip: '添加图片',
+              variant: forui.FButtonVariant.secondary,
               onPressed: _opening ? null : _pickForDiscussion,
               icon: FLucideIcons.imagePlus,
             ),
@@ -381,7 +373,7 @@ class _NowPageState extends State<NowPage> {
     ),
   );
 
-  /// 两个次级入口：窄屏上下排，宽一些时并排。
+  /// 窄屏或放大文字时，次级入口改为上下排列。
   Widget _shortcuts(ZhixinTheme theme) {
     final tiles = [
       EntryTile(
@@ -399,8 +391,10 @@ class _NowPageState extends State<NowPage> {
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth < 520) {
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        if (constraints.maxWidth < 290 * textScale) {
           return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               tiles[0],
               SizedBox(height: theme.space.sm),
@@ -761,7 +755,12 @@ class _ComposerFrameState extends State<_ComposerFrame> {
       child: AnimatedContainer(
         duration: context.motionOf(theme.motion.fast),
         curve: theme.motion.move,
-        padding: const EdgeInsets.fromLTRB(16, 14, 10, 10),
+        padding: EdgeInsets.fromLTRB(
+          theme.space.lg,
+          theme.space.lg,
+          theme.space.md,
+          theme.space.md,
+        ),
         decoration: BoxDecoration(
           color: theme.colors.card,
           borderRadius: theme.radius.feature,

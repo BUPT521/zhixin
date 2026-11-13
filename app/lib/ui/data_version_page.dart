@@ -19,6 +19,7 @@ import 'failure_feedback.dart';
 import 'format.dart';
 import 'restore_flow.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
@@ -653,14 +654,14 @@ class _DataVersionPageState extends State<DataVersionPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final history = _history;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: const ZhixinHeader(title: Text('数据版本'), showBack: true),
       child: _loading || history == null
           ? const Center(child: forui.FCircularProgress())
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                padding: theme.space.pageInsets(bottom: 96),
                 children: [
                   Text(
                     '每次写入形成一条提交，当前数据对应本机 HEAD。'

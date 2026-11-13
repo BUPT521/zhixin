@@ -14,21 +14,21 @@ export 'motion.dart';
 /// 与 `TextTheme`）和本地化，不再是一份需要单独维护的色板。
 const _Palette _lightPalette = _Palette(
   brightness: Brightness.light,
-  ink: Color(0xFF203C35),
-  muted: Color(0xFF6B7280),
-  paper: Color(0xFFF5F7F3),
-  card: Color(0xFFFFFFFF),
-  code: Color(0xFFFFFFFF),
-  border: Color(0xFFE4EAE3),
-  inputBorder: Color(0xFFDAE3DA),
-  moss: Color(0xFF286653),
-  mossLight: Color(0xFFE0EDE3),
-  mossContainer: Color(0xFFCEE9DC),
-  onMossContainer: Color(0xFF344C43),
-  raised: Color(0xFFE4EAE5),
-  clay: Color(0xFFB4593C),
-  clayLight: Color(0xFFF6E7E0),
-  onClayLight: Color(0xFF7A3520),
+  ink: Color(0xFF1B2E26),
+  muted: Color(0xFF56665D),
+  paper: Color(0xFFF6F5EF),
+  card: Color(0xFFFFFEFA),
+  code: Color(0xFFEFEEE7),
+  border: Color(0xFFDEE2D7),
+  inputBorder: Color(0xFFC3CDC1),
+  moss: Color(0xFF245C48),
+  mossLight: Color(0xFFE3EFE5),
+  mossContainer: Color(0xFFD5E8D8),
+  onMossContainer: Color(0xFF214A39),
+  raised: Color(0xFFECEDE5),
+  clay: Color(0xFF9B4B32),
+  clayLight: Color(0xFFF7E8DC),
+  onClayLight: Color(0xFF743923),
   onAccent: Color(0xFFFFFFFF),
   error: Color(0xFFBA1A1A),
   onError: Color(0xFFFFFFFF),
@@ -36,18 +36,18 @@ const _Palette _lightPalette = _Palette(
 
 const _Palette _darkPalette = _Palette(
   brightness: Brightness.dark,
-  ink: Color(0xFFE3EAE5),
-  muted: Color(0xFFA3B1A9),
-  paper: Color(0xFF121815),
-  card: Color(0xFF1C2420),
-  code: Color(0xFF141C18),
-  border: Color(0xFF2F3C36),
-  inputBorder: Color(0xFF3C4B44),
-  moss: Color(0xFF8FCDB4),
-  mossLight: Color(0xFF27443A),
-  mossContainer: Color(0xFF344C42),
-  onMossContainer: Color(0xFFCEE9DB),
-  raised: Color(0xFF252B28),
+  ink: Color(0xFFE8EFE7),
+  muted: Color(0xFFA8B8AD),
+  paper: Color(0xFF141B17),
+  card: Color(0xFF1E2822),
+  code: Color(0xFF151E19),
+  border: Color(0xFF34443A),
+  inputBorder: Color(0xFF546B5D),
+  moss: Color(0xFFA2D7B7),
+  mossLight: Color(0xFF284637),
+  mossContainer: Color(0xFF345743),
+  onMossContainer: Color(0xFFC9ECD6),
+  raised: Color(0xFF28352D),
   clay: Color(0xFFE2A58C),
   clayLight: Color(0xFF412A21),
   onClayLight: Color(0xFFF3CDBD),
@@ -63,15 +63,16 @@ final forui.FThemeData zhixinDarkForuiTheme = _buildForui(_darkPalette);
 final ThemeData zhixinTheme = _buildMaterial(_lightPalette);
 final ThemeData zhixinDarkTheme = _buildMaterial(_darkPalette);
 
-const _controlRadius = Radius.circular(12);
+const _controlRadius = Radius.circular(14);
 const _cardRadius = Radius.circular(20);
+const _featureRadius = Radius.circular(24);
 
 /// 页面里的字号与颜色；从 Forui 主题的应用扩展读取。
 extension ZhixinThemeContext on BuildContext {
   ZhixinTheme get zhixin => forui.FTheme.of(this).extension<ZhixinTheme>();
 }
 
-/// 页面与表单共用的字号、行高与字重，数值与原来的 Material 文本样式一致。
+/// 页面与表单共用的字号、行高与字重。
 class ZhixinTextStyles {
   const ZhixinTextStyles({
     required this.headlineMedium,
@@ -184,20 +185,26 @@ class ZhixinSpace {
 
   /// 内容区的最大宽度；平板与横屏上居中，不把一行拉得过长。
   double get maxWidth => 720;
+
+  EdgeInsets pageInsets({double? top, double? bottom}) =>
+      EdgeInsets.fromLTRB(page, top ?? md, page, bottom ?? section);
 }
 
-/// 圆角的三档：控件、列表卡片与强调卡片。
+/// 标签、控件、列表卡片与强调卡片的圆角。
 class ZhixinRadius {
   const ZhixinRadius();
 
   /// 标签与小按钮。
   BorderRadius get tag => const BorderRadius.all(Radius.circular(8));
 
-  /// 列表里的卡片与输入框；与 FCard、卡片主题取同一个半径。
+  /// 按钮、输入框与分段控件。
+  BorderRadius get control => const BorderRadius.all(_controlRadius);
+
+  /// 列表与内容卡片。
   BorderRadius get card => const BorderRadius.all(_cardRadius);
 
   /// 首页当前活动与输入区这类一页只出现一次的卡片。
-  BorderRadius get feature => const BorderRadius.all(Radius.circular(24));
+  BorderRadius get feature => const BorderRadius.all(_featureRadius);
 }
 
 /// Forui 主题上的应用扩展：页面读它，不再读 Material 的 `Theme.of`。
@@ -237,7 +244,8 @@ forui.FThemeData _buildForui(_Palette palette) {
     primary: palette.moss,
     primaryForeground: palette.onAccent,
     secondary: palette.mossLight,
-    secondaryForeground: palette.ink,
+    secondaryForeground: palette.onMossContainer,
+    muted: palette.raised,
     mutedForeground: palette.muted,
     card: palette.card,
     border: palette.border,
@@ -247,32 +255,53 @@ forui.FThemeData _buildForui(_Palette palette) {
     destructiveForeground: palette.onError,
   );
   final text = _textStyles(palette);
+  final typography = base.typography.copyWith(
+    display: base.typography.display.copyWith(
+      xl2: text.headlineMedium,
+      xl: text.titleLarge,
+      lg: text.titleMedium,
+      md: text.titleMedium,
+    ),
+    body: base.typography.body.copyWith(
+      sm: text.bodyMedium,
+      xs: text.bodyMedium,
+      xs2: text.bodySmall,
+      xs3: text.labelMedium,
+    ),
+  );
+  final style = base.style.copyWith(
+    borderRadius: base.style.borderRadius.copyWith(
+      md: const BorderRadius.all(_controlRadius),
+      lg: const BorderRadius.all(_cardRadius),
+    ),
+  );
+  final scaffold = forui.FScaffoldStyle.inherit(colors: colors, style: style);
+  final dialog = forui.FDialogStyle.inherit(
+    colors: colors,
+    typography: typography,
+    style: style,
+    hapticFeedback: base.hapticFeedback,
+    touch: true,
+  );
   return forui.FThemeData(
     colors: colors,
-    typography: base.typography.copyWith(
-      // Forui 的表单与列表按 body.sm 排正文；原来按 Material 的 bodyMedium 折算，
-      // 这里继续取同一份字号，避免两处文字大小不同。
-      body: base.typography.body.copyWith(sm: text.bodyMedium),
-    ),
-    style: base.style.copyWith(
-      borderRadius: base.style.borderRadius.copyWith(
-        md: const BorderRadius.all(_controlRadius),
-      ),
-    ),
-    // Forui 的卡片默认取自家的半径刻度（14），与页面里读到的卡片圆角（20）
-    // 不同；这里按同一份取值改，卡片与气泡的圆角才一致。
-    cardStyle: base.cardStyle.copyWith(
+    typography: typography,
+    style: style,
+    dialogStyle: dialog.copyWith(
       decoration: forui.DecorationDelta.shapeDelta(
         shape: RoundedSuperellipseBorder(
-          borderRadius: const BorderRadius.all(_cardRadius),
-          side: BorderSide(color: colors.border, width: base.style.borderWidth),
+          borderRadius: const BorderRadius.all(_featureRadius),
+          side: BorderSide(color: colors.border),
         ),
       ),
+      titleTextStyle: forui.TextStyleDelta.value(text.titleLarge),
+      insetPadding: const .value(
+        EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      ),
     ),
-    // 页面自己按 ZhixinSpace 留白，FScaffold 再加一层页边距会让同一页出现
-    // 两层留白；这里统一把默认内边距设为零，页面不必逐个传 childPad: false。
-    scaffoldStyle: base.scaffoldStyle.copyWith(
-      childPadding: forui.EdgeInsetsGeometryDelta.value(EdgeInsets.zero),
+    scaffoldStyle: scaffold.copyWith(
+      childPadding: const .value(EdgeInsets.zero),
+      footerDecoration: const .value(BoxDecoration()),
     ),
     touch: true,
     extensions: [ZhixinTheme(text: text, colors: _colors(palette))],
@@ -304,8 +333,8 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       weight: FontWeight.w600,
     ).copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
     headlineMedium: style(
-      fontSize: 28,
-      height: 1.29,
+      fontSize: 30,
+      height: 1.26,
       letterSpacing: -0.5,
       weight: FontWeight.w700,
     ),
@@ -315,7 +344,12 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       letterSpacing: 0,
       weight: FontWeight.w700,
     ),
-    titleLarge: style(fontSize: 22, height: 1.27, letterSpacing: 0),
+    titleLarge: style(
+      fontSize: 20,
+      height: 1.35,
+      letterSpacing: 0,
+      weight: FontWeight.w700,
+    ),
     titleMedium: style(
       fontSize: 16,
       height: 1.5,
@@ -328,9 +362,9 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       letterSpacing: 0.1,
       weight: FontWeight.w600,
     ),
-    bodyLarge: style(fontSize: 16, height: 1.5, letterSpacing: 0.5),
+    bodyLarge: style(fontSize: 16, height: 1.55, letterSpacing: 0),
     bodyMedium: style(fontSize: 14, height: 1.5, letterSpacing: 0.25),
-    bodySmall: style(fontSize: 12, height: 1.45, letterSpacing: 0.4),
+    bodySmall: style(fontSize: 12, height: 1.5, letterSpacing: 0.1),
     labelLarge: style(
       fontSize: 14,
       height: 1.43,
@@ -363,7 +397,7 @@ ZhixinColors _colors(_Palette palette) => ZhixinColors(
   outline: palette.inputBorder,
   outlineVariant: palette.border,
   primaryContainer: palette.mossLight,
-  onPrimaryContainer: palette.ink,
+  onPrimaryContainer: palette.onMossContainer,
   secondaryContainer: palette.mossContainer,
   onSecondaryContainer: palette.onMossContainer,
   surface: palette.paper,
@@ -382,11 +416,12 @@ ThemeData _buildMaterial(_Palette palette) {
         seedColor: palette.moss,
         brightness: palette.brightness,
         primary: palette.moss,
+        onPrimary: palette.onAccent,
         secondary: palette.clay,
         surface: palette.paper,
       ).copyWith(
         primaryContainer: palette.mossLight,
-        onPrimaryContainer: palette.ink,
+        onPrimaryContainer: palette.onMossContainer,
         onSurface: palette.ink,
         onSurfaceVariant: palette.muted,
         outline: palette.inputBorder,
@@ -400,9 +435,34 @@ ThemeData _buildMaterial(_Palette palette) {
   final base = ThemeData(
     colorScheme: colors,
     scaffoldBackgroundColor: palette.paper,
+    dividerColor: palette.border,
+    fontFamily: forui.FTypeface.defaultFontFamily,
   );
   final text = _textStyles(palette);
   return base.copyWith(
+    appBarTheme: AppBarTheme(
+      backgroundColor: palette.paper,
+      foregroundColor: palette.ink,
+      scrolledUnderElevation: 0,
+      titleTextStyle: text.titleLarge,
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: palette.moss,
+      refreshBackgroundColor: palette.card,
+    ),
+    datePickerTheme: DatePickerThemeData(
+      backgroundColor: palette.card,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(_featureRadius),
+      ),
+    ),
+    timePickerTheme: TimePickerThemeData(
+      backgroundColor: palette.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(_featureRadius),
+      ),
+    ),
     // 底部面板改用 Material 之后，底色、上圆角与拖动条从这里取；页面打开
     // 面板时只写 showDragHandle 等行为，不再各配一遍样式。
     bottomSheetTheme: BottomSheetThemeData(
@@ -410,9 +470,9 @@ ThemeData _buildMaterial(_Palette palette) {
       modalBackgroundColor: palette.card,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      dragHandleColor: palette.border,
+      dragHandleColor: palette.inputBorder,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: _cardRadius),
+        borderRadius: BorderRadius.vertical(top: _featureRadius),
       ),
       clipBehavior: Clip.antiAlias,
     ),

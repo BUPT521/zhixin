@@ -5,7 +5,7 @@ import 'theme.dart';
 /// 一组互斥的视图切换，例如记录里的“学习记录 / 材料”与安排里的四个页签。
 ///
 /// 原来用一排芯片表示页签，与下方的筛选芯片样式相同，用户分不清哪一排是
-/// 切换视图、哪一排是筛选。这里换成一条底色轨道上的分段，选中段抬成卡片色；
+/// 切换视图、哪一排是筛选。分段控件的选中项使用主色浅底；
 /// 段数少时等分整行，段数多或文字长时按内容宽度横向滚动。
 ///
 /// 等分整行时，选中的卡片色滑块从原来的段滑到新的段，说明视图换到了哪里；
@@ -27,8 +27,8 @@ class ZhixinSegmented<T> extends StatelessWidget {
     final theme = context.zhixin;
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 每段至少要放下四个字加图标；放不下时改为按内容宽度滚动。
-        final fits = constraints.maxWidth / segments.length >= 76;
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final fits = constraints.maxWidth / segments.length >= 76 * textScale;
         final children = [
           for (final segment in segments)
             _segment(context, theme, segment, expand: fits),
@@ -43,7 +43,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
           padding: const EdgeInsets.all(3),
           decoration: BoxDecoration(
             color: theme.colors.surfaceContainerHigh,
-            borderRadius: const BorderRadius.all(Radius.circular(12)),
+            borderRadius: theme.radius.control,
           ),
           child: fits && index >= 0
               ? Stack(
@@ -83,15 +83,8 @@ class ZhixinSegmented<T> extends StatelessWidget {
 
   Widget _thumb(ZhixinTheme theme) => DecoratedBox(
     decoration: BoxDecoration(
-      color: theme.colors.card,
-      borderRadius: const BorderRadius.all(Radius.circular(9)),
-      boxShadow: [
-        BoxShadow(
-          color: theme.colors.onSurface.withValues(alpha: 0.08),
-          blurRadius: 3,
-          offset: const Offset(0, 1),
-        ),
-      ],
+      color: theme.colors.primaryContainer,
+      borderRadius: theme.radius.tag,
     ),
   );
 
@@ -103,7 +96,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
   }) {
     final isSelected = segment.value == selected;
     final foreground = isSelected
-        ? theme.colors.onSurface
+        ? theme.colors.onPrimaryContainer
         : theme.colors.onSurfaceVariant;
     final child = Semantics(
       button: true,
@@ -114,23 +107,17 @@ class ZhixinSegmented<T> extends StatelessWidget {
         child: AnimatedContainer(
           duration: context.motionOf(theme.motion.fast),
           curve: theme.motion.move,
-          constraints: const BoxConstraints(minHeight: 36),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          constraints: const BoxConstraints(minHeight: 42),
+          padding: EdgeInsets.symmetric(
+            horizontal: theme.space.md,
+            vertical: theme.space.sm,
+          ),
           // 等分整行时选中底色由滑块画，这里保持透明。
           decoration: BoxDecoration(
             color: isSelected && !expand
-                ? theme.colors.card
+                ? theme.colors.primaryContainer
                 : Colors.transparent,
-            borderRadius: const BorderRadius.all(Radius.circular(9)),
-            boxShadow: isSelected && !expand
-                ? [
-                    BoxShadow(
-                      color: theme.colors.onSurface.withValues(alpha: 0.08),
-                      blurRadius: 3,
-                      offset: const Offset(0, 1),
-                    ),
-                  ]
-                : null,
+            borderRadius: theme.radius.tag,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,

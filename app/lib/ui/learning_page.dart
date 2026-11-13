@@ -25,6 +25,7 @@ import 'settings_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -702,13 +703,13 @@ class _LearningPageState extends State<LearningPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     final view = _view;
     if (view == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('题目'), showBack: true),
         child: Center(child: Text(_notice ?? '未找到这道题')),
       );
@@ -719,7 +720,7 @@ class _LearningPageState extends State<LearningPage> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _leave();
       },
-      child: forui.FScaffold(
+      child: DetailScaffold(
         header: ZhixinHeader(
           title: const Text('学习中'),
           showBack: true,
@@ -733,7 +734,7 @@ class _LearningPageState extends State<LearningPage> {
           ],
         ),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          padding: theme.space.pageInsets(),
           children: [
             forui.FCard(
               child: Padding(
