@@ -79,7 +79,7 @@ Future<XFile?> pickQuestionImage(
 /// 设置里选了系统相机就交给取图组件，否则用应用内预览。
 Future<bool> _usesSystemCamera(BuildContext context) async {
   try {
-    return await AppScope.of(context).settingsService.useSystemCamera();
+    return await AppScope.of(context).settings.edit.useSystemCamera();
   } catch (_) {
     // 设置读不出来就按应用内相机走，取图本身不受影响。
     return false;

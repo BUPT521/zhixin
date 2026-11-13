@@ -31,7 +31,7 @@ Future<MaterialSelection?> showMaterialPicker(
   int? initialPageNo,
 }) async {
   final scope = AppScope.of(context);
-  final materials = await scope.materialService.list();
+  final materials = await scope.library.material.list();
   if (!context.mounted) return null;
   if (materials.isEmpty) {
     showToast(context, '暂无材料。前往“记录 → 材料”导入页面。');
@@ -64,7 +64,7 @@ Future<MaterialSelection?> showMaterialPicker(
   );
   if (material == null || !context.mounted) return null;
 
-  final pages = await scope.materialService.pages(material.id);
+  final pages = await scope.library.material.pages(material.id);
   if (!context.mounted) return null;
   if (pages.isEmpty) {
     showToast(context, '这份材料还没有页面');

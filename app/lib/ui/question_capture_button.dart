@@ -59,12 +59,12 @@ class QuestionCaptureButton extends StatelessWidget {
     try {
       if (draft.stem.isEmpty) {
         // 没有文字时先开一条讨论：图片就是原文，可以直接在讨论里开始作答。
-        final result = await scope.discussionService.reply(imagePaths: paths);
+        final result = await scope.chat.discussion.reply(imagePaths: paths);
         if (!context.mounted) return;
         await onOpenDiscussion(result.userMessage.conversationId);
         return;
       }
-      final id = await scope.learningService.capture(
+      final id = await scope.chat.learning.capture(
         stem: draft.stem,
         sourceRef: draft.sourceRef,
         contextText: draft.contextText,

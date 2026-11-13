@@ -153,20 +153,20 @@ class DiscussionChatState extends State<DiscussionChat> {
       final id = _conversationId;
       // 目标、模型配置与记录互不依赖，同时读取。
       final (goals, config, record) = await (
-        scope.discussionService.activeGoals(),
-        scope.settingsService.config(),
+        scope.chat.discussion.activeGoals(),
+        scope.settings.edit.config(),
         id == null
             ? Future<ConversationRecord?>.value()
-            : scope.discussionService.byId(id),
+            : scope.chat.discussion.byId(id),
       ).wait;
       final page = record == null
           ? (messages: const <ChatMessage>[], hasOlder: false)
-          : await scope.discussionService.historyPage(record.id);
+          : await scope.chat.discussion.historyPage(record.id);
       final messages = page.messages;
       // 回执与记忆卡片都从同一批消息里读，可以同时发出。
       final (changes, memoryItems) = await (
-        scope.discussionService.changesFromMessages(messages),
-        scope.discussionService.memoryItemsFromMessages(messages),
+        scope.chat.discussion.changesFromMessages(messages),
+        scope.chat.discussion.memoryItemsFromMessages(messages),
       ).wait;
       if (!mounted) return;
       setState(() {
@@ -222,14 +222,14 @@ class DiscussionChatState extends State<DiscussionChat> {
     setState(() => _loadingOlder = true);
     try {
       final scope = AppScope.of(context);
-      final page = await scope.discussionService.historyPage(
+      final page = await scope.chat.discussion.historyPage(
         id,
         beforeMessageId: beforeId,
       );
       final merged = [...page.messages, ..._messages];
       final (memoryItems, changes) = await (
-        scope.discussionService.memoryItemsFromMessages(merged),
-        scope.discussionService.changesFromMessages(merged),
+        scope.chat.discussion.memoryItemsFromMessages(merged),
+        scope.chat.discussion.changesFromMessages(merged),
       ).wait;
       if (!mounted) return;
       setState(() {
@@ -420,7 +420,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       paths = await _persistPicked(scope);
       // 从查找结果带入的来源只用于这一次回答，回答保存后即清空。
       final brought = scope.broughtSources.identities;
-      final result = await scope.discussionService.reply(
+      final result = await scope.chat.discussion.reply(
         conversationId: _conversationId,
         text: text,
         imagePaths: paths,
@@ -448,8 +448,8 @@ class DiscussionChatState extends State<DiscussionChat> {
       var notice = result.notice;
       try {
         final (loadedRecord, items) = await (
-          scope.discussionService.byId(id),
-          scope.discussionService.memoryItemsFromMessages(merged),
+          scope.chat.discussion.byId(id),
+          scope.chat.discussion.memoryItemsFromMessages(merged),
         ).wait;
         record = loadedRecord;
         memoryItems = items;
@@ -565,7 +565,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       _notice = null;
     });
     try {
-      final questionId = await AppScope.of(context).learningService
+      final questionId = await AppScope.of(context).chat.learning
           .startAnswering(conversationId: id);
       if (!mounted) return;
       await Navigator.of(context).push(
@@ -603,7 +603,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       note: '目标为可选项；更改归属会保留已有记录。',
     );
     if (choice == null || !mounted) return;
-    final service = AppScope.of(context).discussionService;
+    final service = AppScope.of(context).chat.discussion;
     try {
       await service.setGoal(record.id, choice.goalId);
       final updated = await service.byId(record.id);
@@ -634,7 +634,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       initialPageNo: record.pageNo,
     );
     if (selection == null || !mounted) return;
-    final service = AppScope.of(context).discussionService;
+    final service = AppScope.of(context).chat.discussion;
     try {
       await service.setMaterial(
         record.id,
@@ -667,7 +667,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final materialId = record?.materialId;
     if (record == null || materialId == null) return;
     final scope = AppScope.of(context);
-    final material = await scope.materialService.byId(materialId);
+    final material = await scope.library.material.byId(materialId);
     if (!mounted) return;
     if (material == null) {
       setState(() => _notice = '未找到这份材料');
@@ -709,7 +709,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         );
         if (timing == null || !mounted) return;
       }
-      final result = await scope.discussionService.acceptNextStep(
+      final result = await scope.chat.discussion.acceptNextStep(
         conversationId: id,
         messageId: suggestion.messageId,
         draft: suggestion.draft,
@@ -722,7 +722,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       var scheduledCommitId = 0;
       if (timing != null) {
         try {
-          scheduledCommitId = await scope.planService.scheduleItem(
+          scheduledCommitId = await scope.study.plan.scheduleItem(
             planItemId: result.item.id,
             start: timing.start,
             end: timing.start.add(Duration(minutes: timing.minutes)),
@@ -790,7 +790,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final id = _conversationId;
     if (id == null) return;
     try {
-      await AppScope.of(context).discussionService.dismissNextStep(
+      await AppScope.of(context).chat.discussion.dismissNextStep(
         conversationId: id,
         messageId: suggestion.messageId,
         title: suggestion.draft.title,
@@ -820,7 +820,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final id = _conversationId;
     if (id == null) return;
     try {
-      final result = await AppScope.of(context).discussionService
+      final result = await AppScope.of(context).chat.discussion
           .acceptMemoryItem(
             conversationId: id,
             messageId: item.ownerId,
@@ -850,7 +850,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final id = _conversationId;
     if (id == null) return;
     try {
-      await AppScope.of(context).discussionService.dismissMemoryItem(
+      await AppScope.of(context).chat.discussion.dismissMemoryItem(
         conversationId: id,
         messageId: item.ownerId,
         itemId: item.itemId,
@@ -888,7 +888,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final id = _conversationId;
     final record = _record;
     if (id == null || record == null || !record.open) return;
-    final service = AppScope.of(context).discussionService;
+    final service = AppScope.of(context).chat.discussion;
     try {
       await service.end(id);
       if (!mounted) return;
@@ -937,7 +937,7 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   Future<void> _reloadConfig() async {
     try {
-      final config = await AppScope.of(context).settingsService.config();
+      final config = await AppScope.of(context).settings.edit.config();
       if (mounted) setState(() => _configured = config?.isConfigured ?? false);
     } catch (error, stack) {
       if (!mounted) return;
@@ -962,7 +962,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final cancel = _beginReply(retrying: true);
     DiscussionActivity.begin(id);
     try {
-      final result = await AppScope.of(context).discussionService.reply(
+      final result = await AppScope.of(context).chat.discussion.reply(
         conversationId: id,
         repeatLast: true,
         onPartial: _showPartial,
@@ -976,7 +976,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       ];
       var memoryItems = _memoryItems;
       try {
-        memoryItems = await AppScope.of(context).discussionService
+        memoryItems = await AppScope.of(context).chat.discussion
             .memoryItemsFromMessages(merged);
       } catch (_) {
         // 卡片只是展示；读不出来不影响已经保存的回答。
@@ -1215,7 +1215,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final pageNo = record.pageNo;
       final page = pageNo == null
           ? null
-          : await AppScope.of(context).materialService
+          : await AppScope.of(context).library.material
                 .page(record.materialId!, pageNo);
       if (!mounted) return;
       await showZhixinSheet<void>(

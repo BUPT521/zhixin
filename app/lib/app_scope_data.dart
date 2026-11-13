@@ -14,16 +14,16 @@ extension DataPackageOperations on AppScopeState {
     _operationEpoch++;
     String? cacheWarning;
     await gate.exclusive(() async {
-      await revisionPackages.validateRepositoryBytes(bytes);
+      await _revisionPackages.validateRepositoryBytes(bytes);
       final summary = await currentRestoreSummary();
       try {
-        await restorePoints.capture(
+        await _restorePoints.capture(
           head: summary.head,
           commitCount: summary.commitCount,
           namedCount: summary.namedCount,
           reason: '整库恢复前自动保存',
           write: (path) =>
-              revisionPackages.backupRepository(_connection!, path),
+              _revisionPackages.backupRepository(_connection!, path),
         );
       } catch (error, stack) {
         crashLog.record(error, stack, kind: 'restore_point_capture');
@@ -31,9 +31,9 @@ extension DataPackageOperations on AppScopeState {
       }
       // 恢复过程中失败时保留刚写好的恢复点：它要么与回滚后的数据一致，
       // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
-      await packages.restorePackage(bytes, currentDb: db, openDb: _open);
+      await _dataPackages.restorePackage(bytes, currentDb: db, openDb: _open);
       try {
-        await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
+        await _attachmentCache.rebuild(_connection!, _engine.assets);
       } catch (error, stack) {
         crashLog.record(error, stack, kind: 'rebuild_attachments_restore');
         cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
@@ -48,7 +48,7 @@ extension DataPackageOperations on AppScopeState {
   ///
   /// 不是版本库备份时交给旧数据包的校验；校验失败会抛出，界面据此拒绝恢复。
   Future<RestoreInspection> inspectRestorePackage(Uint8List bytes) async {
-    final repository = await revisionPackages.inspectRepository(bytes);
+    final repository = await _revisionPackages.inspectRepository(bytes);
     if (repository != null) {
       return RestoreInspection(
         kind: RestorePackageKind.repository,
@@ -60,7 +60,7 @@ extension DataPackageOperations on AppScopeState {
         namedCount: repository.namedCount,
       );
     }
-    final data = await packages.inspectPackage(bytes);
+    final data = await _dataPackages.inspectPackage(bytes);
     return RestoreInspection(
       kind: RestorePackageKind.currentData,
       schemaVersion: data.schemaVersion,
@@ -72,8 +72,8 @@ extension DataPackageOperations on AppScopeState {
 
   /// 当前库的规模；恢复前的说明与恢复点里的记录共用这一份。
   Future<RestoreSummary> currentRestoreSummary() async {
-    final usage = await revisions.storageUsage();
-    final head = await revisionsEngine.headId(_connection!);
+    final usage = await _revisions.storageUsage();
+    final head = await _engine.headId(_connection!);
     return RestoreSummary(
       head: head,
       commitCount: usage.commitCount,
@@ -100,12 +100,12 @@ extension DataPackageOperations on AppScopeState {
   /// 导出当前数据：业务投影与附件，不含历史。
   Future<void> exportCurrentData(String outputPath) {
     return gate.exclusive(
-      () => revisionPackages.exportCurrent(_connection!, outputPath),
+      () => _revisionPackages.exportCurrent(_connection!, outputPath),
     );
   }
 
   /// 导入当前数据包之前先取 `HEAD`，提交时重新核对。
-  Future<int> currentHead() => revisionsEngine.headId(_connection!);
+  Future<int> currentHead() => _engine.headId(_connection!);
 
   Future<void> importCurrentData(
     Uint8List bytes, {
@@ -113,13 +113,13 @@ extension DataPackageOperations on AppScopeState {
   }) async {
     _operationEpoch++;
     await gate.exclusive(
-      () => revisionPackages.importCurrent(
+      () => _revisionPackages.importCurrent(
         _connection!,
         bytes,
         expectedHead: expectedHead,
       ),
     );
-    await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
+    await _attachmentCache.rebuild(_connection!, _engine.assets);
     dataVersion.value++;
     _refreshSemanticIndex();
   }
@@ -127,7 +127,7 @@ extension DataPackageOperations on AppScopeState {
   /// 版本库备份：整库快照，包含历史、命名版本与附件。
   Future<void> backupRepository(String outputPath) {
     return gate.exclusive(
-      () => revisionPackages.backupRepository(_connection!, outputPath),
+      () => _revisionPackages.backupRepository(_connection!, outputPath),
     );
   }
 

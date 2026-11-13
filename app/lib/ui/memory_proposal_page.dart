@@ -78,7 +78,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
       _current = row;
     });
     try {
-      final outcome = await AppScope.of(context).memoryProposals
+      final outcome = await AppScope.of(context).memory.proposals
           .propose(row.question.conversationId);
       if (!mounted) return;
       setState(() {
@@ -107,7 +107,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
   Future<void> _accept(MemoryProposal proposal) async {
     setState(() => _busy = true);
     try {
-      final commitId = await AppScope.of(context).memoryProposals
+      final commitId = await AppScope.of(context).memory.proposals
           .accept(proposal);
       if (!mounted) return;
       setState(() {

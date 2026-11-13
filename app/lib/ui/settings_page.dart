@@ -69,9 +69,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _load() async {
     final scope = AppScope.of(context);
     try {
-      final config = await scope.settingsService.config();
-      final cutoff = await scope.settingsService.cutoffHour();
-      final systemCamera = await scope.settingsService.useSystemCamera();
+      final config = await scope.settings.edit.config();
+      final cutoff = await scope.settings.edit.cutoffHour();
+      final systemCamera = await scope.settings.edit.useSystemCamera();
       final themeMode = scope.themeMode.value;
       if (!mounted) return;
       setState(() {
@@ -146,7 +146,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _busy = true);
     try {
       _rejectStaleKey();
-      await AppScope.of(context).settingsService.saveConfig(_formConfig());
+      await AppScope.of(context).settings.edit.saveConfig(_formConfig());
       if (!mounted) return;
       _report('模型配置已保存到本机；回到原来的讨论或题目即可接着回答');
       await _load();
@@ -176,7 +176,7 @@ class _SettingsPageState extends State<SettingsPage> {
     });
     try {
       _rejectStaleKey();
-      final duration = await AppScope.of(context).settingsService
+      final duration = await AppScope.of(context).settings.edit
           .testConfig(_formConfig());
       if (!mounted) return;
       _report('连接成功，用时 ${duration.inSeconds} 秒');
@@ -212,7 +212,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _clearConfig() async {
-    await AppScope.of(context).settingsService.clearConfig();
+    await AppScope.of(context).settings.edit.clearConfig();
     if (!mounted) return;
     _report('已删除本机保存的 API Key');
     await _load();
@@ -296,7 +296,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).settingsService.resetAllData();
+      await AppScope.of(context).settings.edit.resetAllData();
       if (!mounted) return;
       _report('本机记录已清空');
       await _load();
@@ -475,7 +475,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       final previous = _systemCamera;
                       setState(() => _systemCamera = value);
                       try {
-                        await AppScope.of(context).settingsService
+                        await AppScope.of(context).settings.edit
                             .setUseSystemCamera(value);
                       } catch (error, stack) {
                         if (!mounted || !context.mounted) return;
@@ -549,8 +549,7 @@ class _SettingsPageState extends State<SettingsPage> {
               if (value == null) return;
               setState(() => _cutoff = value);
               try {
-                await AppScope.of(context).settingsService
-                    .saveCutoffHour(value);
+                await AppScope.of(context).settings.edit.saveCutoffHour(value);
               } catch (error, stack) {
                 if (!mounted || !context.mounted) return;
                 _report(

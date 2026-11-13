@@ -123,15 +123,15 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _load({bool reapplyDraft = false}) async {
     final scope = AppScope.of(context);
     try {
-      final view = await scope.learningService.view(widget.questionId);
+      final view = await scope.chat.learning.view(widget.questionId);
       final open = view.openAttempt;
       // 判断、记忆建议、模型配置与最近讨论互不依赖，同时读取。
       final (assessments, memoryItems, config, messages) = await (
-        scope.learningService.assessmentsFor(view.attempts),
+        scope.chat.learning.assessmentsFor(view.attempts),
         open == null
             ? Future<List<MemoryItemView>>.value(const [])
-            : scope.learningService.memoryItemsFor(open),
-        scope.settingsService.config(),
+            : scope.chat.learning.memoryItemsFor(open),
+        scope.settings.edit.config(),
         scope.conversations.recent(widget.questionId, limit: 6),
       ).wait;
       if (!mounted) return;
@@ -275,7 +275,7 @@ class _LearningPageState extends State<LearningPage> {
       }
       return true;
     }
-    final service = AppScope.of(context).learningService;
+    final service = AppScope.of(context).chat.learning;
     try {
       final attempt = await service.openAttempt(widget.questionId);
       await service.saveDraft(
@@ -325,7 +325,7 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _ask(BuddyMode mode) async {
     if (_busy) return;
     final app = AppScope.of(context);
-    final service = app.learningService;
+    final service = app.chat.learning;
     setState(() {
       _busy = true;
       _notice = null;
@@ -420,7 +420,7 @@ class _LearningPageState extends State<LearningPage> {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
     try {
-      final result = await AppScope.of(context).learningService.acceptMemory(
+      final result = await AppScope.of(context).chat.learning.acceptMemory(
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
@@ -451,7 +451,7 @@ class _LearningPageState extends State<LearningPage> {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
     try {
-      await AppScope.of(context).learningService.dismissMemory(
+      await AppScope.of(context).chat.learning.dismissMemory(
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
@@ -536,7 +536,7 @@ class _LearningPageState extends State<LearningPage> {
         .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
     if (!mounted) return;
     try {
-      final config = await AppScope.of(context).settingsService.config();
+      final config = await AppScope.of(context).settings.edit.config();
       if (!mounted) return;
       setState(() => _configured = config?.isConfigured ?? false);
     } catch (error, stack) {
@@ -572,7 +572,7 @@ class _LearningPageState extends State<LearningPage> {
   /// 放到页面上；提交后恢复显示历次尝试。
   Future<void> _startRedo() async {
     if (_busy) return;
-    final service = AppScope.of(context).learningService;
+    final service = AppScope.of(context).chat.learning;
     setState(() {
       _busy = true;
       _notice = null;
@@ -624,10 +624,8 @@ class _LearningPageState extends State<LearningPage> {
       _notice = null;
     });
     try {
-      final attempt = await scope.learningService.openAttempt(
-        widget.questionId,
-      );
-      await scope.learningService.submit(
+      final attempt = await scope.chat.learning.openAttempt(widget.questionId);
+      await scope.chat.learning.submit(
         attemptId: attempt.id,
         answer: answer,
         solution: _solutionDraft.text,
@@ -685,7 +683,7 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _leave() async {
     if (_leaving) return;
     _leaving = true;
-    final service = AppScope.of(context).learningService;
+    final service = AppScope.of(context).chat.learning;
     final saved = await _saveDraft(notify: false);
     if (!saved) {
       _leaving = false;
@@ -1335,7 +1333,7 @@ class _LearningPageState extends State<LearningPage> {
     setState(() => _busy = true);
     try {
       final app = AppScope.of(context);
-      await app.learningService.assessWithModel(
+      await app.chat.learning.assessWithModel(
         questionId: widget.questionId,
         attemptId: attempt.id,
         broughtIdentities: app.broughtSources.identities,

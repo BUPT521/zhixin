@@ -172,8 +172,8 @@ class _RecordsPageState extends State<RecordsPage> {
     final filter = (_goalFilter, _unassignedOnly, _answerFilter);
     if (append) setState(() => _loadingMore = true);
     try {
-      final goals = append ? _goals : await scope.discussionService.goals();
-      final records = await scope.discussionService.records(
+      final goals = append ? _goals : await scope.chat.discussion.goals();
+      final records = await scope.chat.discussion.records(
         goalId: _unassignedOnly ? null : _goalFilter,
         unassignedOnly: _unassignedOnly,
         answerStatus: _answerFilter,
@@ -191,7 +191,7 @@ class _RecordsPageState extends State<RecordsPage> {
       ];
       final assessments = lastAttempts.isEmpty
           ? const <int, List<Assessment>>{}
-          : await scope.learningService.assessmentsFor(lastAttempts);
+          : await scope.chat.learning.assessmentsFor(lastAttempts);
       if (!mounted || request != _loadRequest) return;
       final loaded = <int, QuestionRow>{if (append) ..._questions};
       for (final row in questions) {
@@ -567,7 +567,7 @@ class _RecordsPageState extends State<RecordsPage> {
     );
     if (choice == null || !mounted) return;
     try {
-      await AppScope.of(context).discussionService
+      await AppScope.of(context).chat.discussion
           .setGoal(record.id, choice.goalId);
       await _load();
     } catch (error, stack) {
@@ -616,7 +616,7 @@ class _RecordsPageState extends State<RecordsPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).discussionService.clear(record.id);
+      await AppScope.of(context).chat.discussion.clear(record.id);
       await _load();
       if (!mounted) return;
       showToast(context, '已清空这条记录');

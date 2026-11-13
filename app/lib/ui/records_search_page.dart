@@ -131,7 +131,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       _notice = null;
     });
     try {
-      final results = await AppScope.of(context).searchService.searchPage(
+      final results = await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
         pageSize: SearchService.defaultPageSize,
@@ -165,7 +165,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     final query = _query.text.trim();
     if (query.isEmpty || _semanticLoading) return;
     final scope = AppScope.of(context);
-    final index = scope.semanticIndex;
+    final index = scope.library.semanticIndex;
     if (!index.configured) return;
     _semanticToken?.cancel();
     final token = SemanticCancelToken();
@@ -220,7 +220,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       _loadingMore = false;
     });
     try {
-      final results = await AppScope.of(context).searchService.searchPage(
+      final results = await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
         pageSize: SearchService.defaultPageSize,
@@ -256,7 +256,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     final requestId = _requests.start();
     setState(() => _loadingMore = true);
     try {
-      final next = await AppScope.of(context).searchService.searchPage(
+      final next = await AppScope.of(context).library.search.searchPage(
         _appliedQuery,
         scope: _scope,
         offset: results.nextOffset,
@@ -496,7 +496,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   /// “按意思找”与它的一条状态说明；没有配置嵌入来源时按钮不可用。
   Widget _semanticBar(ZhixinTheme theme) {
-    final configured = AppScope.of(context).semanticIndex.configured;
+    final configured = AppScope.of(context).library.semanticIndex.configured;
     final status = _semanticStatus;
     return Padding(
       padding: theme.space.pageInsets(top: theme.space.xs, bottom: 0),

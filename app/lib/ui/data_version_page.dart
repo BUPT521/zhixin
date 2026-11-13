@@ -67,18 +67,18 @@ class _DataVersionPageState extends State<DataVersionPage> {
   Future<void> _load() async {
     final scope = AppScope.of(context);
     try {
-      final history = await scope.revisions.history();
-      final usage = await scope.revisions.storageUsage();
-      final undoReasons = await scope.revisions.undoBlockReasons(
+      final history = await scope.data.revisions.history();
+      final usage = await scope.data.revisions.storageUsage();
+      final undoReasons = await scope.data.revisions.undoBlockReasons(
         history.commits,
       );
-      final points = await scope.restorePoints.list();
+      final points = await scope.data.restorePoints.list();
       if (!mounted) return;
       setState(() {
         _history = history;
         _undoReasons = undoReasons;
         _restorePoints = points;
-        _pointKeep = scope.restorePoints.keep;
+        _pointKeep = scope.data.restorePoints.keep;
         _usage = usage;
         _bytes = usage.databaseBytes;
         _loading = false;
@@ -152,7 +152,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (confirmed != true || label.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await scope.revisions.name(target, label: label, note: memo);
+      await scope.data.revisions.name(target, label: label, note: memo);
       _report('已保存命名版本“$label”');
       await _load();
     } catch (error, stack) {
@@ -175,7 +175,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   Future<void> _details(RevisionCommit commit) async {
     final scope = AppScope.of(context);
-    final details = await scope.revisions.details(commit.id);
+    final details = await scope.data.revisions.details(commit.id);
     if (!mounted || details == null) return;
     final theme = context.zhixin;
     await showZhixinSheet<void>(
@@ -243,7 +243,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final scope = AppScope.of(context);
     final history = _history;
     if (history == null) return;
-    final diff = await scope.revisions.compare(commit.id, history.head);
+    final diff = await scope.data.revisions.compare(commit.id, history.head);
     if (!mounted) return;
     final theme = context.zhixin;
     await showZhixinSheet<void>(
@@ -291,7 +291,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final scope = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final preview = await scope.revisions.previewRestore(commit.id);
+      final preview = await scope.data.revisions.previewRestore(commit.id);
       if (!mounted) return;
       final confirmed = await showRestoreConfirmDialog(
         context,
@@ -308,7 +308,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
         rollbackLine: '恢复前的版本留在提交历史里，恢复后可以在这一页回到恢复前。',
       );
       if (!confirmed || !mounted) return;
-      final restored = await scope.revisions.restore(
+      final restored = await scope.data.revisions.restore(
         commit.id,
         expectedHead: preview.head,
       );
@@ -340,7 +340,8 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).revisions.undoCommit(commit.id);
+      final result = await AppScope.of(context).data.revisions
+          .undoCommit(commit.id);
       _report(result.message);
       await _load();
     } catch (error, stack) {
@@ -506,7 +507,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final scope = AppScope.of(context);
     final Uint8List bytes;
     try {
-      bytes = await scope.restorePoints.read(point);
+      bytes = await scope.data.restorePoints.read(point);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -552,7 +553,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).restorePoints.delete(point);
+      await AppScope.of(context).data.restorePoints.delete(point);
       _report('已删除恢复点');
       await _load();
     } catch (error, stack) {
@@ -577,7 +578,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).revisions
+      final result = await AppScope.of(context).data.revisions
           .prune(keepCommits: _keep);
       final notice = result.removedCommits > 0 ? '；更早的回执不再提供撤销入口' : '';
       _report(
@@ -629,7 +630,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).revisions.clearHistory();
+      await AppScope.of(context).data.revisions.clearHistory();
       _report('已清理历史，当前数据保留；更早的回执不再提供撤销入口');
       await _load();
     } catch (error, stack) {
@@ -788,7 +789,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
                               : () async {
                                   setState(() => _busy = true);
                                   try {
-                                    await AppScope.of(context).revisions
+                                    await AppScope.of(context).data.revisions
                                         .deleteName(ref.name);
                                     await _load();
                                   } catch (error, stack) {

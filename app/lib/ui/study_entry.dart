@@ -20,12 +20,12 @@ Future<void> openPlanItem(BuildContext context, PlanItem item) async {
   final navigator = Navigator.of(context);
   try {
     if (item.isStudyStep) {
-      await scope.studyPlanService.setStepStatus(
+      await scope.study.systemPlan.setStepStatus(
         item.studyPlanId!,
         item.id,
         PlanItemStatus.doing,
       );
-      final resume = await scope.studyPlanService.resumePoint(
+      final resume = await scope.study.systemPlan.resumePoint(
         item.studyPlanId!,
         item.id,
       );

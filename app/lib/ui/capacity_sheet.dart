@@ -51,7 +51,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
   Future<void> _load() async {
     final scope = AppScope.of(context);
     try {
-      final plan = await scope.capacityService.computeThisWeek();
+      final plan = await scope.study.capacity.computeThisWeek();
       if (!mounted) return;
       setState(() {
         _plan = plan;
@@ -85,7 +85,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     if (end == null || !mounted) return;
     final scope = AppScope.of(context);
     try {
-      await scope.capacityService.setWindow(start: start, end: end);
+      await scope.study.capacity.setWindow(start: start, end: end);
       setState(() {
         _windowStart = start;
         _windowEnd = end;
@@ -199,7 +199,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     final item = candidate.item;
     int commitId;
     try {
-      commitId = (await AppScope.of(context).capacityService.book(
+      commitId = (await AppScope.of(context).study.capacity.book(
         item: item,
         start: window.start,
         end: window.end,
