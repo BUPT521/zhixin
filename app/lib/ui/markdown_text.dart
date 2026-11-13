@@ -99,6 +99,9 @@ class MarkdownText extends StatelessWidget {
 }
 
 /// 生成中的三点提示：放在正文末尾，长回答在中段也能看出还在生成。
+///
+/// 三点用 [CustomPainter] 画，透明度写进画笔颜色，每帧只重画这一小块，
+/// 不重建组件，也不带着所在的回答气泡一起重画。
 class StreamingHint extends StatefulWidget {
   const StreamingHint({super.key});
 
@@ -124,33 +127,44 @@ class _StreamingHintState extends State<StreamingHint>
     final color = context.zhixin.colors.onSurfaceVariant;
     return Semantics(
       label: '正在生成回答',
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) => Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var index = 0; index < 3; index++) ...[
-              if (index > 0) const SizedBox(width: 3),
-              Opacity(
-                opacity: 0.25 + 0.75 * _wave(index),
-                child: Container(
-                  width: 5,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ],
-          ],
+      child: RepaintBoundary(
+        child: CustomPaint(
+          size: const Size(_dotSize * 3 + _dotGap * 2, _dotSize),
+          painter: _StreamingDotsPainter(progress: _controller, color: color),
         ),
       ),
     );
   }
+}
 
-  double _wave(int index) {
-    final phase = (_controller.value + index / 3) % 1;
-    return (math.sin(phase * 2 * math.pi) + 1) / 2;
+/// 每个点的直径与点之间的间隔；与原来三个 5 像素圆点、间隔 3 像素一致。
+const double _dotSize = 5;
+const double _dotGap = 3;
+
+/// 三点提示的画笔：亮度按相位错开，每帧只重画这一小块。
+class _StreamingDotsPainter extends CustomPainter {
+  _StreamingDotsPainter({required this.progress, required this.color})
+    : super(repaint: progress);
+
+  final Animation<double> progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    for (var index = 0; index < 3; index++) {
+      final phase = (progress.value + index / 3) % 1;
+      final wave = (math.sin(phase * 2 * math.pi) + 1) / 2;
+      paint.color = color.withValues(alpha: 0.25 + 0.75 * wave);
+      canvas.drawCircle(
+        Offset(index * (_dotSize + _dotGap) + _dotSize / 2, size.height / 2),
+        _dotSize / 2,
+        paint,
+      );
+    }
   }
+
+  @override
+  bool shouldRepaint(_StreamingDotsPainter oldDelegate) =>
+      oldDelegate.color != color;
 }

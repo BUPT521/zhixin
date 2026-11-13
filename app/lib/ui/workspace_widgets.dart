@@ -19,6 +19,20 @@ class PageWidth extends StatelessWidget {
   );
 }
 
+/// 详情页内容与三栏采用相同的最大宽度。
+class DetailScaffold extends StatelessWidget {
+  const DetailScaffold({super.key, this.header, required this.child});
+
+  final Widget? header;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => forui.FScaffold(
+    header: header,
+    child: SafeArea(top: false, child: PageWidth(child: child)),
+  );
+}
+
 /// 一节内容的标题：左侧标题与一句说明，右侧可放一个文字动作。
 ///
 /// [first] 为真时去掉上方留白，用在页面第一节。说明只写这一节为什么这样
@@ -42,7 +56,7 @@ class SectionHeading extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(
         top: first ? 0 : theme.space.section - theme.space.sm,
-        bottom: theme.space.sm,
+        bottom: theme.space.md,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -51,7 +65,10 @@ class SectionHeading extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: theme.text.titleMedium),
+                Semantics(
+                  header: true,
+                  child: Text(title, style: theme.text.titleMedium),
+                ),
                 if (subtitle != null)
                   Text(
                     subtitle!,
@@ -64,6 +81,31 @@ class SectionHeading extends StatelessWidget {
           ),
           ?action,
         ],
+      ),
+    );
+  }
+}
+
+class ZhixinMark extends StatelessWidget {
+  const ZhixinMark({super.key, this.size = 36});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: theme.colors.primary,
+        borderRadius: theme.radius.control,
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        FLucideIcons.bookOpen,
+        size: size * 0.58,
+        color: theme.colors.onPrimary,
       ),
     );
   }
@@ -149,32 +191,42 @@ class TagRow extends StatelessWidget {
 
 /// 列表卡片左侧的类型图标：浅底方块里放图标，进行中的用主色，已结束的暗淡。
 class LeadingIcon extends StatelessWidget {
-  const LeadingIcon(this.icon, {super.key, this.tone = TagTone.accent});
+  const LeadingIcon(
+    this.icon, {
+    super.key,
+    this.tone = TagTone.accent,
+    this.size = 36,
+  });
   final IconData icon;
   final TagTone tone;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.zhixin.colors;
+    final theme = context.zhixin;
+    final colors = theme.colors;
     final (background, foreground) = switch (tone) {
-      TagTone.accent => (colors.primaryContainer, colors.primary),
-      TagTone.attention => (colors.attentionContainer, colors.attention),
+      TagTone.accent => (colors.primaryContainer, colors.onPrimaryContainer),
+      TagTone.attention => (
+        colors.attentionContainer,
+        colors.onAttentionContainer,
+      ),
       TagTone.neutral => (colors.surfaceContainerHigh, colors.onSurface),
       TagTone.muted => (colors.surfaceContainerHigh, colors.onSurfaceVariant),
     };
     return Container(
-      width: 36,
-      height: 36,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: background,
-        borderRadius: const BorderRadius.all(Radius.circular(10)),
+        borderRadius: theme.radius.control,
       ),
       child: Icon(icon, size: 20, color: foreground),
     );
   }
 }
 
-/// 首页的次级入口：一行图标、标题与说明，整行可点。
+/// 首页的次级入口，整张卡片可点。
 class EntryTile extends StatelessWidget {
   const EntryTile({
     super.key,
@@ -191,15 +243,38 @@ class EntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    return forui.FTile(
-      prefix: LeadingIcon(icon),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      suffix: Icon(
-        FLucideIcons.chevronRight,
-        color: theme.colors.onSurfaceVariant,
+    return forui.FTile.raw(
+      style: .delta(
+        rawContentStyle: .delta(
+          padding: .value(EdgeInsets.all(theme.space.md)),
+        ),
       ),
       onPress: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              LeadingIcon(icon),
+              Icon(
+                FLucideIcons.arrowUpRight,
+                size: 16,
+                color: theme.colors.onSurfaceVariant,
+              ),
+            ],
+          ),
+          SizedBox(height: theme.space.sm),
+          Text(title, style: theme.text.titleSmall),
+          SizedBox(height: theme.space.xs),
+          Text(
+            subtitle,
+            style: theme.text.bodySmall.copyWith(
+              color: theme.colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -224,31 +299,23 @@ class EmptyState extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: theme.space.xl,
-        vertical: theme.space.xl - 4,
+        vertical: theme.space.xl,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: theme.colors.primaryContainer,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 24, color: theme.colors.primary),
-          ),
+          LeadingIcon(icon, size: 48),
           SizedBox(height: theme.space.md),
           Text(
             title,
-            style: theme.text.titleSmall,
+            style: theme.text.titleMedium,
             textAlign: TextAlign.center,
           ),
           SizedBox(height: theme.space.xs),
           Text(
             description,
             textAlign: TextAlign.center,
-            style: theme.text.bodySmall.copyWith(
+            style: theme.text.bodyMedium.copyWith(
               color: theme.colors.onSurfaceVariant,
             ),
           ),
@@ -340,4 +407,50 @@ class LoadMoreFooter extends StatelessWidget {
             ),
     ),
   );
+}
+
+/// 首读时的占位骨架：几条与真实卡片同高的静态块，读完原位换成内容。
+///
+/// 不做闪光或呼吸动画：动效口径里不循环，而且不断变化的占位更妨碍阅读。
+/// 高度固定，替换前后页面高度不变，下面的内容不会跟着移动。
+class ListSkeleton extends StatelessWidget {
+  const ListSkeleton({
+    super.key,
+    this.rows = 3,
+    this.rowHeight = 88,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final int rows;
+  final double rowHeight;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Padding(
+      padding: padding,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var row = 0; row < rows; row++)
+            Padding(
+              padding: EdgeInsets.only(bottom: theme.space.sm),
+              child: Semantics(
+                label: '正在读取',
+                child: Container(
+                  height: rowHeight,
+                  decoration: BoxDecoration(
+                    color: theme.colors.card,
+                    borderRadius: theme.radius.card,
+                    border: Border.all(color: theme.colors.outlineVariant),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

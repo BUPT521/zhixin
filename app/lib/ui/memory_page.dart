@@ -12,6 +12,7 @@ import 'format.dart';
 import 'memory_proposal_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_menu.dart';
 import 'zhixin_select.dart';
@@ -42,9 +43,12 @@ class _MemoryPageState extends State<MemoryPage> {
   Future<void> _load() async {
     try {
       final app = AppScope.of(context);
-      final memories = await app.memoryService.list();
+      final memories = await app.memory.edit.list();
       final goals = await app.tasks.goals();
-      final materials = await app.materialService.list();
+      final materials = await app.library.material.list();
+      if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _memories = memories;
@@ -79,7 +83,7 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memoryService.add(
+      final commitId = await AppScope.of(context).memory.edit.add(
         kind: draft.kind,
         content: draft.content,
         validUntil: draft.validUntil,
@@ -109,7 +113,7 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memoryService
+      final commitId = await AppScope.of(context).memory.edit
           .save(memory, content: draft.content, validUntil: draft.validUntil);
       await _load();
       if (!mounted) return;
@@ -154,8 +158,7 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memoryService
-          .delete(memory.id);
+      final commitId = await AppScope.of(context).memory.edit.delete(memory.id);
       await _load();
       if (!mounted || commitId == null) return;
       _receipt('已删除这条记忆', commitId);
@@ -196,7 +199,7 @@ class _MemoryPageState extends State<MemoryPage> {
         .where((memory) => memory.active && !memory.isValidAt(now))
         .toList();
     final inactive = _memories.where((memory) => !memory.active).toList();
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('记忆'),
         showBack: true,
@@ -217,31 +220,31 @@ class _MemoryPageState extends State<MemoryPage> {
           _loading
               ? const Center(child: forui.FCircularProgress())
               : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                  padding: theme.space.pageInsets(bottom: 96),
                   children: [
                     Text(
                       '这些记忆用于关联学习背景；修改后使用新内容，删除后停止使用。',
                       style: theme.text.bodySmall,
                     ),
                     const SizedBox(height: 8),
-                    if (active.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Text('这里显示与学习有关的记忆，可查看、修改或添加。'),
+                    if (_memories.isEmpty)
+                      const forui.FCard(
+                        child: EmptyState(
+                          icon: FLucideIcons.brain,
+                          title: '暂无学习记忆',
+                          description: '可以添加一条学习偏好，例如“先给提示，再看完整解答”。',
+                        ),
                       ),
                     for (final memory in active) _tile(theme, memory),
                     if (expired.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text('已过期', style: theme.text.titleSmall),
-                      Text(
-                        '有效期已结束，此记忆当前停用；你仍可修改或删除。',
-                        style: theme.text.bodySmall,
+                      const SectionHeading(
+                        title: '已过期',
+                        subtitle: '有效期已结束，你仍可修改或删除。',
                       ),
                       for (final memory in expired) _tile(theme, memory),
                     ],
                     if (inactive.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text('已停用', style: theme.text.titleSmall),
+                      const SectionHeading(title: '已停用'),
                       for (final memory in inactive) _tile(theme, memory),
                     ],
                   ],

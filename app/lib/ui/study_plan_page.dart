@@ -17,6 +17,7 @@ import 'plan_dialogs.dart';
 import 'study_entry.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -50,16 +51,19 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   Future<void> _load() async {
     try {
       final scope = AppScope.of(context);
-      final view = await scope.studyPlanService.view(widget.planId);
+      final view = await scope.study.systemPlan.view(widget.planId);
       final (blocks, sessions) = await (
         scope.schedule.nextBlocksForItems(
           view.steps.map((step) => step.id),
           scope.timePolicy.now,
         ),
-        scope.studyPlanService.latestSessionsForSteps(
+        scope.study.systemPlan.latestSessionsForSteps(
           view.steps.map((step) => step.id),
         ),
       ).wait;
+      if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _view = view;
@@ -129,12 +133,12 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     setState(() => _busy = true);
     try {
       if (newDiscussion) {
-        await scope.studyPlanService.setStepStatus(
+        await scope.study.systemPlan.setStepStatus(
           widget.planId,
           step.id,
           PlanItemStatus.doing,
         );
-        final id = await scope.studyPlanService.startAtCurrent(
+        final id = await scope.study.systemPlan.startAtCurrent(
           widget.planId,
           newDiscussion: true,
         );
@@ -174,7 +178,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final service = AppScope.of(context).planService;
+      final service = AppScope.of(context).study.plan;
       final end = draft.start.add(Duration(minutes: draft.minutes));
       final commitId = block == null
           ? await service.scheduleItem(
@@ -210,7 +214,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
 
   Future<void> _mark(PlanItem step, PlanItemStatus status) async {
     try {
-      await AppScope.of(context).studyPlanService
+      await AppScope.of(context).study.systemPlan
           .setStepStatus(widget.planId, step.id, status);
       await _load();
     } catch (error, stack) {
@@ -232,7 +236,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   Future<void> _temporary() async {
     final scope = AppScope.of(context);
     try {
-      final id = await scope.studyPlanService.startTemporary(widget.planId);
+      final id = await scope.study.systemPlan.startTemporary(widget.planId);
       if (!mounted) return;
       await _openDiscussion(id);
     } catch (error, stack) {
@@ -254,7 +258,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   Future<void> _togglePause() async {
     final view = _view;
     if (view == null) return;
-    final service = AppScope.of(context).studyPlanService;
+    final service = AppScope.of(context).study.systemPlan;
     try {
       if (view.plan.open) {
         await service.pause(widget.planId);
@@ -283,18 +287,18 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     final theme = context.zhixin;
     final view = _view;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     if (view == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('系统学习'), showBack: true),
         child: Center(child: Text(_notice ?? '未找到这份学习计划')),
       );
     }
     final plan = view.plan;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('系统学习'),
         showBack: true,
@@ -306,7 +310,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
         ],
       ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: theme.space.pageInsets(),
         children: [
           forui.FCard(
             child: Padding(
@@ -493,7 +497,7 @@ Future<void> showStudyPlanSetup(
   }
   String? conversationFocus;
   if (conversationId != null) {
-    final messages = await scope.discussionService.history(conversationId);
+    final messages = await scope.chat.discussion.history(conversationId);
     final selected = selectBuddyHistory(messages);
     final focus = selected
         .map(
@@ -516,7 +520,7 @@ Future<void> showStudyPlanSetup(
   );
   if (result == null || !context.mounted) return;
   try {
-    final view = await scope.studyPlanService.createPlan(
+    final view = await scope.study.systemPlan.createPlan(
       materialId: material.id,
       pageFrom: result.pageFrom,
       pageTo: result.pageTo,
@@ -629,7 +633,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
       _proposedRange = null;
     });
     try {
-      final proposal = await AppScope.of(context).studyPlanService.propose(
+      final proposal = await AppScope.of(context).study.systemPlan.propose(
         materialId: widget.material.id,
         pageFrom: from,
         pageTo: to,

@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui/forui.dart' as forui;
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
@@ -18,6 +18,7 @@ import 'failure_feedback.dart';
 import 'memory_page.dart';
 import 'restore_flow.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
 import 'zhixin_toast.dart';
@@ -73,13 +74,16 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _load() async {
     final scope = AppScope.of(context);
     try {
-      final config = await scope.settingsService.config();
-      final cutoff = await scope.settingsService.cutoffHour();
-      final systemCamera = await scope.settingsService.useSystemCamera();
+      final config = await scope.settings.edit.config();
+      final cutoff = await scope.settings.edit.cutoffHour();
+      final systemCamera = await scope.settings.edit.useSystemCamera();
       final reportCrashes = await DiagnosticsStore(scope.paths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
       final themeMode = scope.themeMode.value;
+      if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _config = config;
@@ -154,7 +158,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _busy = true);
     try {
       _rejectStaleKey();
-      await AppScope.of(context).settingsService.saveConfig(_formConfig());
+      await AppScope.of(context).settings.edit.saveConfig(_formConfig());
       if (!mounted) return;
       _report('模型配置已保存到本机；回到原来的讨论或题目即可接着回答');
       await _load();
@@ -184,7 +188,7 @@ class _SettingsPageState extends State<SettingsPage> {
     });
     try {
       _rejectStaleKey();
-      final duration = await AppScope.of(context).settingsService
+      final duration = await AppScope.of(context).settings.edit
           .testConfig(_formConfig());
       if (!mounted) return;
       _report('连接成功，用时 ${duration.inSeconds} 秒');
@@ -220,7 +224,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _clearConfig() async {
-    await AppScope.of(context).settingsService.clearConfig();
+    await AppScope.of(context).settings.edit.clearConfig();
     if (!mounted) return;
     _report('已删除本机保存的 API Key');
     await _load();
@@ -304,7 +308,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).settingsService.resetAllData();
+      await AppScope.of(context).settings.edit.resetAllData();
       if (!mounted) return;
       _report('本机记录已清空');
       await _load();
@@ -327,189 +331,227 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     final theme = context.zhixin;
     final configured = _config?.isConfigured ?? false;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: const ZhixinHeader(title: Text('设置'), showBack: true),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        padding: theme.space.pageInsets(),
         children: [
-          _section(theme, '外观'),
-          ZhixinSelect<ThemeMode>(
-            value: _themeMode,
-            label: '深浅色',
-            description: '默认跟随系统，也可以固定为浅色或深色；选择立即生效。',
-            options: const {
-              ThemeMode.system: '跟随系统',
-              ThemeMode.light: '浅色',
-              ThemeMode.dark: '深色',
-            },
-            onChange: (value) async {
-              if (value == null) return;
-              try {
-                await AppScope.of(context).themeMode.select(value);
-              } catch (error, stack) {
-                if (!mounted || !context.mounted) return;
-                _report(
-                  describeFailure(
-                    context,
-                    error,
-                    stack,
-                    action: '保存外观',
-                    kind: 'settings_theme',
-                    kept: '当前外观没有改动',
-                    next: '可以再选一次',
+          const SectionHeading(title: '外观', first: true),
+          forui.FCard(
+            child: Padding(
+              padding: EdgeInsets.all(theme.space.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ZhixinSelect<ThemeMode>(
+                    value: _themeMode,
+                    label: '深浅色',
+                    description: '默认跟随系统，也可以固定为浅色或深色；选择立即生效。',
+                    options: const {
+                      ThemeMode.system: '跟随系统',
+                      ThemeMode.light: '浅色',
+                      ThemeMode.dark: '深色',
+                    },
+                    onChange: (value) async {
+                      if (value == null) return;
+                      try {
+                        await AppScope.of(context).themeMode.select(value);
+                      } catch (error, stack) {
+                        if (!mounted || !context.mounted) return;
+                        _report(
+                          describeFailure(
+                            context,
+                            error,
+                            stack,
+                            action: '保存外观',
+                            kind: 'settings_theme',
+                            kept: '当前外观没有改动',
+                            next: '可以再选一次',
+                          ),
+                        );
+                        return;
+                      }
+                      if (!mounted) return;
+                      setState(() => _themeMode = value);
+                    },
                   ),
-                );
-                return;
-              }
-              if (!mounted) return;
-              setState(() => _themeMode = value);
-            },
-          ),
-          const Divider(height: 32),
-          _section(theme, '模型'),
-          Text(
-            configured
-                ? '已配置模型：${_config!.model}。回到原来的讨论或题目，'
-                      '点「用模型重新回答」接着回答同一个问题。'
-                : '还没有配置模型。现在可以直接提问、记录作答与安排时间，回答区给本地步骤；'
-                      '配置后回到原来的讨论或题目，可以接着回答同一个问题。',
-            style: theme.text.bodySmall,
-          ),
-          const SizedBox(height: 8),
-          ZhixinSelect<LlmApi>(
-            value: _api,
-            label: '接口风格',
-            description: '按服务商选择；DeepSeek 与多数兼容地址用 Chat Completions。',
-            options: {for (final api in LlmApi.values) api: api.label},
-            onChange: (value) => setState(() => _api = value ?? LlmApi.chat),
-          ),
-          const SizedBox(height: 8),
-          forui.FTextField(
-            control: .managed(controller: _baseUrl),
-            label: const Text('接口地址'),
-            hint: 'https://api.deepseek.com/v1',
-          ),
-          const SizedBox(height: 8),
-          forui.FTextField(
-            control: .managed(controller: _model),
-            label: const Text('模型名'),
-            description: const Text('需要模型支持工具调用（function calling）'),
-          ),
-          const SizedBox(height: 8),
-          forui.FTextField(
-            control: .managed(controller: _key),
-            obscureText: true,
-            label: const Text('API Key'),
-          ),
-          const SizedBox(height: 8),
-          forui.FTextField(
-            control: .managed(controller: _contextWindow),
-            keyboardType: TextInputType.number,
-            label: const Text('模型上下文上限（token）'),
-            description: const Text('按服务商公布的上限填写，留空使用 65536。'),
-          ),
-          forui.FSwitch(
-            label: const Text('允许上传题目图片'),
-            description: const Text('请求提示、讲解或读图时发送当前图片。'),
-            value: _allowImages,
-            onChange: (value) => setState(() => _allowImages = value),
-          ),
-          Wrap(
-            spacing: 8,
-            children: [
-              forui.FButton(
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _saveConfig,
-                child: const Text('保存'),
+                ],
               ),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _testConfig,
-                child: const Text('测试连接'),
-              ),
-              forui.FButton(
-                variant: forui.FButtonVariant.ghost,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy || !configured ? null : _clearConfig,
-                child: const Text('删除 API Key'),
-              ),
-            ],
-          ),
-          const Divider(height: 32),
-          _section(theme, '拍照'),
-          forui.FSwitch(
-            label: const Text('拍照使用系统相机'),
-            description: const Text(
-              '关闭时用应用内预览，按下快门直接进入框选；打开后画质交给相机应用，'
-              '部分机型拍完要多确认一次。',
             ),
-            value: _systemCamera,
-            onChange: (value) async {
-              final previous = _systemCamera;
-              setState(() => _systemCamera = value);
-              try {
-                await AppScope.of(context).settingsService
-                    .setUseSystemCamera(value);
-              } catch (error, stack) {
-                if (!mounted || !context.mounted) return;
-                setState(() => _systemCamera = previous);
-                _report(
-                  describeFailure(
-                    context,
-                    error,
-                    stack,
-                    action: '保存拍照方式',
-                    kind: 'settings_camera',
-                    kept: '拍照方式保持原样',
-                    next: '可以再选一次',
-                  ),
-                );
-              }
-            },
           ),
-          const Divider(height: 32),
-          _section(theme, '数据'),
+          const SectionHeading(title: '模型'),
+          forui.FCard(
+            child: Padding(
+              padding: EdgeInsets.all(theme.space.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    configured
+                        ? '已配置模型：${_config!.model}。回到原来的讨论或题目，'
+                              '点「用模型重新回答」接着回答同一个问题。'
+                        : '还没有配置模型。现在可以直接提问、记录作答与安排时间，回答区给本地步骤；'
+                              '配置后回到原来的讨论或题目，可以接着回答同一个问题。',
+                    style: theme.text.bodySmall.copyWith(
+                      color: theme.colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ZhixinSelect<LlmApi>(
+                    value: _api,
+                    label: '接口风格',
+                    description: '按服务商选择；DeepSeek 与多数兼容地址用 Chat Completions。',
+                    options: {for (final api in LlmApi.values) api: api.label},
+                    onChange: (value) =>
+                        setState(() => _api = value ?? LlmApi.chat),
+                  ),
+                  const SizedBox(height: 8),
+                  forui.FTextField(
+                    control: .managed(controller: _baseUrl),
+                    label: const Text('接口地址'),
+                    hint: 'https://api.deepseek.com/v1',
+                  ),
+                  const SizedBox(height: 8),
+                  forui.FTextField(
+                    control: .managed(controller: _model),
+                    label: const Text('模型名'),
+                    description: const Text('需要模型支持工具调用（function calling）'),
+                  ),
+                  const SizedBox(height: 8),
+                  forui.FTextField(
+                    control: .managed(controller: _key),
+                    obscureText: true,
+                    label: const Text('API Key'),
+                  ),
+                  const SizedBox(height: 8),
+                  forui.FTextField(
+                    control: .managed(controller: _contextWindow),
+                    keyboardType: TextInputType.number,
+                    label: const Text('模型上下文上限（token）'),
+                    description: const Text('按服务商公布的上限填写，留空使用 65536。'),
+                  ),
+                  forui.FSwitch(
+                    label: const Text('允许上传题目图片'),
+                    description: const Text('请求提示、讲解或读图时发送当前图片。'),
+                    value: _allowImages,
+                    onChange: (value) => setState(() => _allowImages = value),
+                  ),
+                  Wrap(
+                    spacing: theme.space.sm,
+                    runSpacing: theme.space.sm,
+                    children: [
+                      forui.FButton(
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy ? null : _saveConfig,
+                        child: const Text('保存'),
+                      ),
+                      forui.FButton(
+                        variant: forui.FButtonVariant.outline,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy ? null : _testConfig,
+                        child: const Text('测试连接'),
+                      ),
+                      forui.FButton(
+                        variant: forui.FButtonVariant.ghost,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy || !configured ? null : _clearConfig,
+                        child: const Text('删除 API Key'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SectionHeading(title: '拍照'),
+          forui.FCard(
+            child: Padding(
+              padding: EdgeInsets.all(theme.space.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  forui.FSwitch(
+                    label: const Text('拍照使用系统相机'),
+                    description: const Text(
+                      '关闭时用应用内预览，按下快门直接进入框选；打开后画质交给相机应用，'
+                      '部分机型拍完要多确认一次。',
+                    ),
+                    value: _systemCamera,
+                    onChange: (value) async {
+                      final previous = _systemCamera;
+                      setState(() => _systemCamera = value);
+                      try {
+                        await AppScope.of(context).settings.edit
+                            .setUseSystemCamera(value);
+                      } catch (error, stack) {
+                        if (!mounted || !context.mounted) return;
+                        setState(() => _systemCamera = previous);
+                        _report(
+                          describeFailure(
+                            context,
+                            error,
+                            stack,
+                            action: '保存拍照方式',
+                            kind: 'settings_camera',
+                            kept: '拍照方式保持原样',
+                            next: '可以再选一次',
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SectionHeading(title: '数据'),
           forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.history),
             title: const Text('数据版本'),
             subtitle: const Text('查看提交历史、命名版本、留存与两类数据包。'),
-            suffix: const Icon(FLucideIcons.history),
+            suffix: const Icon(FLucideIcons.chevronRight),
             onPress: _busy ? null : _openVersions,
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.share),
             title: const Text('备份版本库'),
             subtitle: const Text('将当前数据、HEAD、历史、命名版本与附件导出为 ZIP 文件。'),
-            suffix: const Icon(FLucideIcons.share),
+            suffix: const Icon(FLucideIcons.chevronRight),
             onPress: _busy ? null : _export,
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.rotateCcw),
             title: const Text('恢复版本库备份'),
             subtitle: const Text('恢复前会先保存当前状态；版本不匹配时会显示原因。'),
-            suffix: const Icon(FLucideIcons.rotateCcw),
+            suffix: const Icon(FLucideIcons.chevronRight),
             onPress: _busy ? null : () => _restore(),
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
             variant: forui.FItemVariant.destructive,
             title: const Text('清空全部记录'),
             suffix: const Icon(FLucideIcons.trash2),
             onPress: _busy ? null : _resetAll,
           ),
-          const Divider(height: 32),
-          _section(theme, '其他'),
+          const SectionHeading(title: '其他'),
           forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.brain),
             title: const Text('学习记忆'),
             subtitle: const Text('查看、修改和删除记忆'),
-            suffix: const Icon(FLucideIcons.brain),
+            suffix: const Icon(FLucideIcons.chevronRight),
             onPress: () => Navigator.of(
               context,
             ).push(MaterialPageRoute<void>(builder: (_) => const MemoryPage())),
           ),
+          SizedBox(height: theme.space.md),
           ZhixinSelect<int>(
             value: _cutoff,
             label: '每天的截止时间',
@@ -519,8 +561,7 @@ class _SettingsPageState extends State<SettingsPage> {
               if (value == null) return;
               setState(() => _cutoff = value);
               try {
-                await AppScope.of(context).settingsService
-                    .saveCutoffHour(value);
+                await AppScope.of(context).settings.edit.saveCutoffHour(value);
               } catch (error, stack) {
                 if (!mounted || !context.mounted) return;
                 _report(
@@ -538,8 +579,8 @@ class _SettingsPageState extends State<SettingsPage> {
               }
             },
           ),
-          const Divider(height: 32),
-          _section(theme, '诊断'),
+          SizedBox(height: theme.space.sm),
+          const SectionHeading(title: '诊断'),
           forui.FSwitch(
             label: const Text('发送崩溃报告'),
             description: const Text(
@@ -563,7 +604,7 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
           forui.FTile(
-            prefix: const Icon(FLucideIcons.info),
+            prefix: const LeadingIcon(FLucideIcons.info),
             title: const Text('关于'),
             subtitle: Text('版本 $appVersion · 开源许可'),
             suffix: const Icon(FLucideIcons.chevronRight),
@@ -583,13 +624,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
         ],
       ),
-    );
-  }
-
-  Widget _section(ZhixinTheme theme, String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Text(title, style: theme.text.titleSmall),
     );
   }
 }

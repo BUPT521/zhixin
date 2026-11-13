@@ -8,7 +8,6 @@ import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
-import 'package:zhixin/application/buddy_answer.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/discussion_service.dart';
 import 'package:zhixin/application/evidence_service.dart';
@@ -32,6 +31,7 @@ import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 /// 固定回答的模型替身；不联网，也不碰 Keystore。
@@ -133,7 +133,7 @@ class _Harness {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
         evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
       ),
       memoryScope: MemoryScopeService(
@@ -144,14 +144,15 @@ class _Harness {
       revisions: rig.revisions,
       tasks: tasks,
       materials: materials,
-      policy: () => policy,
+      runtime: testRuntime(
+        policy: () => policy,
+        filesDir: () => rig.filesDir,
+        dataEpoch: () => epoch,
+        recordFailure: recordFailure,
+      ),
       transactions: WriteTransactions(db),
-      filesDir: () => rig.filesDir,
       cleanupAttachmentPaths: (paths) =>
-          AttachmentStore(filesDir: rig.filesDir)
-              .cleanupCandidates(db.raw, paths),
-      dataEpoch: () => epoch,
-      recordFailure: recordFailure,
+          AttachmentStore(filesDir: rig.filesDir).cleanupCandidates(db, paths),
     );
   }
 }
@@ -694,7 +695,7 @@ void main() {
     expect(recoveredChanges, hasLength(1));
     expect(recoveredChanges.single.commitId, accepted.commitId);
 
-    final acceptCommit = (await h.rig.engine.undoableCommits(h.db.raw))
+    final acceptCommit = (await h.rig.engine.undoableCommits(h.db))
         .firstWhere((commit) => commit.id == accepted.commitId);
     expect(acceptCommit.action, acceptNextStepAction);
 
@@ -1064,7 +1065,7 @@ void main() {
     // 同一批写入落在同一条提交里，两张卡片指向同一次写入。
     expect({for (final item in items) item.commitId}, hasLength(1));
     final commitId = items.first.commitId!;
-    final commit = (await h.rig.engine.undoableCommits(h.db.raw))
+    final commit = (await h.rig.engine.undoableCommits(h.db))
         .firstWhere((item) => item.id == commitId);
     expect(commit.action, writeMemoryAction);
 

@@ -28,6 +28,8 @@ import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
+
 class _FixedAi implements BuddyAi {
   @override
   Future<LlmConfig?> config() async => null;
@@ -98,7 +100,7 @@ class _Rig {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
@@ -108,9 +110,8 @@ class _Rig {
       revisions: revisions,
       tasks: tasks,
       materials: materials,
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy, filesDir: () => filesDir),
       transactions: WriteTransactions(db),
-      filesDir: () => filesDir,
       cleanupAttachmentPaths: (paths) =>
           AttachmentStore(filesDir: filesDir).cleanupCandidates(db.raw, paths),
       assets: engine.assets,

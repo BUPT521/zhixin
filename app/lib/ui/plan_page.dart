@@ -1,7 +1,9 @@
+import 'package:calendar_view/calendar_view.dart';
+import 'package:flutter/foundation.dart';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
-import 'package:calendar_view/calendar_view.dart';
 
 import 'theme.dart';
 
@@ -32,20 +34,21 @@ import 'zhixin_toast.dart';
 class PlanPage extends StatefulWidget {
   const PlanPage({
     super.key,
-    required this.isActive,
-    this.dataVersion = 0,
+    this.activeTab,
+    this.tabIndex = 2,
+    this.request,
     this.initialItemId,
-    this.scheduleRequest = 0,
     this.onOpenMaterials,
   });
 
   final int? initialItemId;
 
-  final bool isActive;
+  /// 底栏当前栏的下标；为空时按常驻当前页处理，二级入口直接打开安排。
+  final ValueListenable<int>? activeTab;
+  final int tabIndex;
 
-  /// 整库恢复、清空与导入之后加一；页面据此在原处重读，不被换掉重建。
-  final int dataVersion;
-  final int scheduleRequest;
+  /// 从别的栏目跳到安排时带的请求；每次变化都把页签复位到日程。
+  final ValueListenable<int>? request;
   final VoidCallback? onOpenMaterials;
 
   @override
@@ -60,8 +63,15 @@ class _PlanPageState extends State<PlanPage> {
   bool _openedInitial = false;
   int _tab = 0;
   bool _showAllPlans = false;
+
   bool _showWeekGrid = false;
   String? _error;
+
+  /// 进过的页签常驻：切回来不再重建，滚动位置一并保住。
+  final Set<int> _visited = {0};
+
+  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
+  ValueListenable<int>? _dataVersion;
 
   /// 当前显示的是哪一周；读完换周之后才更新，列表据此淡入，
   /// 同一周的刷新与从详情返回不闪。
@@ -73,6 +83,9 @@ class _PlanPageState extends State<PlanPage> {
   bool _loadingDone = false;
   bool _hasMoreDone = false;
   static const int _donePageSize = 30;
+
+  bool get _active =>
+      widget.activeTab == null || widget.activeTab!.value == widget.tabIndex;
 
   /// 本地写入失败时给一句可行动的说明；异常本身进本机诊断记录。
   void _reportFailure(
@@ -96,30 +109,79 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    widget.activeTab?.addListener(_onActiveChanged);
+    widget.request?.addListener(_onRequestChanged);
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
     _anchor = AppScope.of(context).timePolicy.now;
     // 未显示的页面不提前读取，也不在后台保留转圈；切到安排时再加载。
-    if (widget.isActive) _load();
+    if (_active) _load();
   }
 
   @override
   void didUpdateWidget(covariant PlanPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.scheduleRequest != widget.scheduleRequest) _tab = 0;
-    if (!widget.isActive) return;
-    if (!oldWidget.isActive || oldWidget.dataVersion != widget.dataVersion) {
-      _load();
+    if (oldWidget.request != widget.request) {
+      oldWidget.request?.removeListener(_onRequestChanged);
+      widget.request?.addListener(_onRequestChanged);
     }
+    if (oldWidget.activeTab != widget.activeTab) {
+      oldWidget.activeTab?.removeListener(_onActiveChanged);
+      widget.activeTab?.addListener(_onActiveChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.activeTab?.removeListener(_onActiveChanged);
+    widget.request?.removeListener(_onRequestChanged);
+    _dataVersion?.removeListener(_onDataChanged);
+    super.dispose();
+  }
+
+  /// 切到这一栏时立刻发起读取；结果回来时等切栏动画结束再填。
+  void _onActiveChanged() {
+    if (!mounted || !_active) return;
+    _load();
+  }
+
+  /// 从别的栏目跳到安排：页签复位到日程，常驻页签不重读。
+  void _onRequestChanged() {
+    if (!mounted) return;
+    setState(() {
+      _tab = 0;
+      _visited.add(0);
+    });
+  }
+
+  void _watchDataVersion(ValueListenable<int> version) {
+    if (identical(version, _dataVersion)) return;
+    _dataVersion?.removeListener(_onDataChanged);
+    _dataVersion = version;
+    version.addListener(_onDataChanged);
+  }
+
+  void _onDataChanged() {
+    if (!mounted || !_active) return;
+    _load();
   }
 
   Future<void> _load() async {
     final scope = AppScope.of(context);
     final anchor = _anchor;
     try {
-      final week = await scope.planService.loadWeek(anchor);
+      final week = await scope.study.plan.loadWeek(anchor);
+      if (!mounted) return;
+      // 结果回来时若还在切栏或返回动画里，等动画走完再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _week = week;
@@ -190,7 +252,7 @@ class _PlanPageState extends State<PlanPage> {
     final offset = reset ? 0 : _doneItems.length;
     setState(() => _loadingDone = true);
     try {
-      final page = await AppScope.of(context).planService
+      final page = await AppScope.of(context).study.plan
           .doneItems(limit: _donePageSize, offset: offset);
       if (!mounted) return;
       setState(() {
@@ -222,7 +284,7 @@ class _PlanPageState extends State<PlanPage> {
     final draft = await showGoalDialog(context);
     if (draft == null || !mounted) return;
     try {
-      await AppScope.of(context).planService.addGoal(
+      await AppScope.of(context).study.plan.addGoal(
         title: draft.title,
         scopeText: draft.scope,
         dueDate: draft.dueDate,
@@ -242,7 +304,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _pauseGoal(LearningGoal goal) async {
     final scope = AppScope.of(context);
-    final service = scope.planService;
+    final service = scope.study.plan;
     final flexible = await service.flexibleFutureCount(goal.id);
     if (!mounted) return;
     var cancelFlexible = false;
@@ -315,7 +377,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _resumeGoal(LearningGoal goal) async {
     try {
-      await AppScope.of(context).planService.resumeGoal(goal.id);
+      await AppScope.of(context).study.plan.resumeGoal(goal.id);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -340,7 +402,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      await AppScope.of(context).planService.addItem(
+      await AppScope.of(context).study.plan.addItem(
         title: draft.title,
         goalId: draft.goalId,
         note: draft.note,
@@ -376,7 +438,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).planService.scheduleItem(
+      final commitId = await AppScope.of(context).study.plan.scheduleItem(
         planItemId: draft.itemId,
         start: draft.start,
         end: draft.start.add(Duration(minutes: draft.minutes)),
@@ -500,7 +562,7 @@ class _PlanPageState extends State<PlanPage> {
     if (confirmed != true || !mounted) return;
     final scope = AppScope.of(context);
     try {
-      final commitId = await scope.planService.rescheduleGroup(adjustments);
+      final commitId = await scope.study.plan.rescheduleGroup(adjustments);
       await _load();
       if (!mounted) return;
       showActionToast(
@@ -538,7 +600,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      await AppScope.of(context).planService.addTimetable(
+      await AppScope.of(context).study.plan.addTimetable(
         weekday: draft.weekday,
         startTime: draft.start,
         endTime: draft.end,
@@ -585,7 +647,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).planService
+      final commitId = await AppScope.of(context).study.plan
           .deleteTimetable(entry.id);
       await _load();
       if (!mounted) return;
@@ -613,7 +675,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _setStatus(PlanItem item, PlanItemStatus status) async {
     try {
-      await AppScope.of(context).planService.setStatus(item.id, status);
+      await AppScope.of(context).study.plan.setStatus(item.id, status);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -816,7 +878,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final service = AppScope.of(context).planService;
+      final service = AppScope.of(context).study.plan;
       final end = draft.start.add(Duration(minutes: draft.minutes));
       final commitId = block == null
           ? await service.scheduleItem(
@@ -880,7 +942,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (action == null || !mounted) return;
     try {
-      final service = AppScope.of(context).planService;
+      final service = AppScope.of(context).study.plan;
       int? commitId;
       if (action == 'complete' && item != null) {
         await service.setStatus(item.id, PlanItemStatus.done);
@@ -969,10 +1031,23 @@ class _PlanPageState extends State<PlanPage> {
           ],
         ],
       ),
-      child: _week == null && !widget.isActive
+      child: _week == null && !_active
           ? const SizedBox.shrink()
           : _loading
-          ? const Center(child: forui.FCircularProgress())
+          // 首读也先摆出页签，读完只在下面换内容，页面不往下跳。
+          ? PageWidth(
+              child: Column(
+                children: [
+                  _tabBar(theme),
+                  Expanded(
+                    child: ListSkeleton(
+                      rows: 3,
+                      padding: EdgeInsets.fromLTRB(0, theme.space.sm, 0, 0),
+                    ),
+                  ),
+                ],
+              ),
+            )
           : week == null
           ? EmptyState(
               icon: FLucideIcons.calendarX,
@@ -990,47 +1065,23 @@ class _PlanPageState extends State<PlanPage> {
               child: PageWidth(
                 child: Column(
                   children: [
-                    // 页签固定在列表上方：原来它随列表滚走，看到日程中段时
-                    // 想切到事项要先滚回顶部。
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        theme.space.page,
-                        theme.space.xs,
-                        theme.space.page,
-                        theme.space.sm,
-                      ),
-                      child: ZhixinSegmented<int>(
-                        segments: const [
-                          ZhixinSegment(value: 0, label: '日程'),
-                          ZhixinSegment(value: 1, label: '事项'),
-                          ZhixinSegment(value: 2, label: '目标'),
-                          ZhixinSegment(value: 3, label: 'AI 改动'),
-                        ],
-                        selected: _tab,
-                        onChanged: (tab) => setState(() => _tab = tab),
-                      ),
-                    ),
+                    _tabBar(theme),
                     Expanded(
                       child: FadeIn(
                         trigger: (_tab, _shownAnchor),
                         playOnInit: false,
-                        child: RefreshIndicator(
-                          onRefresh: _load,
-                          child: ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: EdgeInsets.fromLTRB(
-                              theme.space.page,
-                              theme.space.xs,
-                              theme.space.page,
-                              theme.space.section + 4,
-                            ),
-                            children: switch (_tab) {
-                              0 => _scheduleTab(theme, week),
-                              1 => _itemsTab(theme, week),
-                              2 => _goalsTab(theme, week),
-                              _ => _operationsTab(theme, week),
-                            },
-                          ),
+                        // 四个页签常驻，切换只换显示：切回来不再重建，滚动
+                        // 位置与已读到的内容都留住；首次进入某个页签时才建。
+                        child: IndexedStack(
+                          sizing: StackFit.expand,
+                          index: _tab,
+                          children: [
+                            for (var tab = 0; tab < 4; tab++)
+                              if (_visited.contains(tab))
+                                _tabList(theme, week, tab)
+                              else
+                                const SizedBox.shrink(),
+                          ],
                         ),
                       ),
                     ),
@@ -1041,13 +1092,62 @@ class _PlanPageState extends State<PlanPage> {
     );
   }
 
+  /// 页签固定在列表上方：原来它随列表滚走，看到日程中段时想切到事项要先滚回顶部。
+  Widget _tabBar(ZhixinTheme theme) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      theme.space.page,
+      theme.space.xs,
+      theme.space.page,
+      theme.space.sm,
+    ),
+    child: ZhixinSegmented<int>(
+      segments: const [
+        ZhixinSegment(value: 0, label: '日程'),
+        ZhixinSegment(value: 1, label: '事项'),
+        ZhixinSegment(value: 2, label: '目标'),
+        ZhixinSegment(value: 3, label: 'AI 改动'),
+      ],
+      selected: _tab,
+      onChanged: (tab) => setState(() {
+        _tab = tab;
+        _visited.add(tab);
+      }),
+    ),
+  );
+
+  /// 一个页签的列表：下拉刷新、惰性构建，切走再回来接着原来的滚动位置。
+  Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
+      RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          key: PageStorageKey<String>('plan-tab-$tab'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(
+            theme.space.page,
+            theme.space.xs,
+            theme.space.page,
+            theme.space.section + 4,
+          ),
+          children: switch (tab) {
+            0 => _scheduleTab(theme, week),
+            1 => _itemsTab(theme, week),
+            2 => _goalsTab(theme, week),
+            _ => _operationsTab(theme, week),
+          },
+        ),
+      );
+
   List<Widget> _scheduleTab(ZhixinTheme theme, PlanWeek week) {
     final summaries = week.studyPlans;
-    final visiblePlans = _showAllPlans
-        ? summaries
-        : summaries
-              .where((summary) => summary.plan.open)
-              .toList(growable: false);
+    // 读取顺序本来就是进行中的计划在前，拆成“常驻的一段”与“展开的一段”
+    // 不改变计划的先后。
+    final openPlans = summaries
+        .where((summary) => summary.plan.open)
+        .toList(growable: false);
+    final closedPlans = summaries
+        .where((summary) => !summary.plan.open)
+        .toList(growable: false);
+    final visiblePlans = _showAllPlans ? summaries : openPlans;
     final policy = AppScope.of(context).timePolicy;
     final range = policy.naturalWeekRange(_anchor);
     final currentWeek =
@@ -1055,48 +1155,52 @@ class _PlanPageState extends State<PlanPage> {
     final lastDay = range.endExclusive.subtract(const Duration(days: 1));
     final planned = week.blocks.where((entry) => entry.block.planned).length;
     return [
-      Row(
-        children: [
-          ZhixinIconButton(
-            tooltip: '上一周',
-            onPressed: () {
-              _anchor = _anchor.subtract(const Duration(days: 7));
-              _load();
-            },
-            icon: FLucideIcons.chevronLeft,
-          ),
-          Expanded(
-            child: Column(
-              children: [
-                Text(
-                  '${range.start.month}月${range.start.day}日 – '
-                  '${lastDay.month}月${lastDay.day}日',
-                  textAlign: TextAlign.center,
-                  style: theme.text.titleSmall.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+      forui.FCard(
+        child: Padding(
+          padding: EdgeInsets.all(theme.space.sm),
+          child: Row(
+            children: [
+              ZhixinIconButton(
+                tooltip: '上一周',
+                onPressed: () {
+                  _anchor = _anchor.subtract(const Duration(days: 7));
+                  _load();
+                },
+                icon: FLucideIcons.chevronLeft,
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      '${range.start.month}月${range.start.day}日 – '
+                      '${lastDay.month}月${lastDay.day}日',
+                      textAlign: TextAlign.center,
+                      style: theme.text.titleMedium.copyWith(
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    if (planned > 0)
+                      Text(
+                        '${currentWeek ? '本周 · ' : ''}$planned 次预约',
+                        textAlign: TextAlign.center,
+                        style: theme.text.bodySmall.copyWith(
+                          color: theme.colors.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
                 ),
-                Text(
-                  currentWeek
-                      ? (planned == 0 ? '本周，还没有预约' : '本周，$planned 次预约')
-                      : (planned == 0 ? '这一周没有预约' : '$planned 次预约'),
-                  textAlign: TextAlign.center,
-                  style: theme.text.bodySmall.copyWith(
-                    color: theme.colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
+              ),
+              ZhixinIconButton(
+                tooltip: '下一周',
+                onPressed: () {
+                  _anchor = _anchor.add(const Duration(days: 7));
+                  _load();
+                },
+                icon: FLucideIcons.chevronRight,
+              ),
+            ],
           ),
-          ZhixinIconButton(
-            tooltip: '下一周',
-            onPressed: () {
-              _anchor = _anchor.add(const Duration(days: 7));
-              _load();
-            },
-            icon: FLucideIcons.chevronRight,
-          ),
-        ],
+        ),
       ),
       if (!currentWeek)
         Center(
@@ -1112,7 +1216,7 @@ class _PlanPageState extends State<PlanPage> {
             child: const Text('回到本周'),
           ),
         ),
-      SizedBox(height: theme.space.xs),
+      SizedBox(height: theme.space.md),
       if (week.blocks.isNotEmpty || week.timetable.isNotEmpty)
         Center(
           child: forui.FButton(
@@ -1157,51 +1261,48 @@ class _PlanPageState extends State<PlanPage> {
                 child: const Text('选择学习材料'),
               ),
       ),
-      // 展开或收起已暂停、已完成的计划时，这一组的高度平滑变化。
-      AnimatedSize(
-        duration: context.motionOf(theme.motion.standard),
-        curve: theme.motion.move,
-        alignment: Alignment.topCenter,
+      for (final summary in openPlans) _studyPlanTile(theme, summary),
+      if (openPlans.isEmpty && !_showAllPlans)
+        forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.route,
+            title: week.studyPlans.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
+            description: week.studyPlans.isEmpty
+                ? '选择教材或课件，按页码建立学习顺序。'
+                : '已暂停或已完成的计划默认收起，可以展开查看。',
+            action: widget.onOpenMaterials == null
+                ? null
+                : forui.FButton(
+                    variant: forui.FButtonVariant.outline,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: widget.onOpenMaterials,
+                    child: const Text('选择学习材料'),
+                  ),
+          ),
+        ),
+      // 已暂停与已完成的计划展开而不是逐帧改整组高度：只有这一块在做高度
+      // 过渡，后面的固定课表整体平移，不再跟着逐项重新排位。
+      ExpandReveal(
+        visible: _showAllPlans,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final summary in visiblePlans) _studyPlanTile(theme, summary),
-            if (visiblePlans.isEmpty)
-              forui.FCard(
-                child: EmptyState(
-                  icon: FLucideIcons.route,
-                  title: week.studyPlans.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
-                  description: week.studyPlans.isEmpty
-                      ? '选择教材或课件，按页码建立学习顺序。'
-                      : '已暂停或已完成的计划默认收起，可以展开查看。',
-                  action: widget.onOpenMaterials == null
-                      ? null
-                      : forui.FButton(
-                          variant: forui.FButtonVariant.outline,
-                          mainAxisSize: MainAxisSize.min,
-                          onPress: widget.onOpenMaterials,
-                          child: const Text('选择学习材料'),
-                        ),
-                ),
-              ),
+            for (final summary in closedPlans) _studyPlanTile(theme, summary),
           ],
         ),
       ),
-      if (week.studyPlans.length != visiblePlans.length || _showAllPlans)
-        if (week.studyPlans.any((summary) => !summary.plan.open))
-          Center(
-            child: forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              size: forui.FButtonSizeVariant.sm,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => setState(() => _showAllPlans = !_showAllPlans),
-              child: Text(
-                _showAllPlans
-                    ? '只看进行中的计划'
-                    : '显示全部计划（${week.studyPlans.length}）',
-              ),
+      if (closedPlans.isNotEmpty)
+        Center(
+          child: forui.FButton(
+            variant: forui.FButtonVariant.ghost,
+            size: forui.FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: () => setState(() => _showAllPlans = !_showAllPlans),
+            child: Text(
+              _showAllPlans ? '只看进行中的计划' : '显示全部计划（${week.studyPlans.length}）',
             ),
           ),
+        ),
       SectionHeading(
         title: '固定课表',
         subtitle: '安排学习时自动避开这些时段',
@@ -1489,7 +1590,7 @@ class _PlanPageState extends State<PlanPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).planService.closeGoal(goal.id);
+      await AppScope.of(context).study.plan.closeGoal(goal.id);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -1963,7 +2064,7 @@ class _PlanPageState extends State<PlanPage> {
       return;
     }
     if (!mounted) return;
-    final service = AppScope.of(context).planService;
+    final service = AppScope.of(context).study.plan;
     try {
       final (commitId, message) = switch (value) {
         'restore' => (
@@ -2000,7 +2101,7 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _setPriority(PlanItem item, int priority) async {
     try {
-      await AppScope.of(context).planService.setPriority(item.id, priority);
+      await AppScope.of(context).study.plan.setPriority(item.id, priority);
       await _load();
     } catch (error, stack) {
       if (!mounted) return;

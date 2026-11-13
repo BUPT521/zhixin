@@ -9,7 +9,6 @@ import '../db/raw_executor.dart';
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/content_identity.dart';
 import 'revision_models.dart';
-import 'revision_value.dart';
 
 /// 附件对象：字节按内容哈希去重，分块保存在同一个 SQLite 文件里。
 ///
@@ -205,9 +204,40 @@ class AttachmentCache {
 
   final String Function() filesDir;
 
+  /// 全量补建的标记文件：还原、导入之前写入，补建成功后删除。
+  ///
+  /// 应用在补建之前退出时标记还在，下次启动在首帧之后补一次；平时启动只看
+  /// 这个标记，不再全表扫描消息。
+  static const String pendingFileName = 'attachment_cache.pending';
+
   String directory() => p.join(filesDir(), questionImagesDirName);
 
   String pathFor(String hash) => p.join(directory(), hash);
+
+  File get _pendingFile => File(p.join(filesDir(), pendingFileName));
+
+  bool get pendingRebuild => _pendingFile.existsSync();
+
+  /// 没有缓存目录、目录为空也当作需要补建：系统清理过临时文件时不至于一直缺图。
+  Future<bool> get needsRebuild async {
+    if (pendingRebuild) return true;
+    final directory = Directory(this.directory());
+    if (!await directory.exists()) return true;
+    return (await directory.list(followLinks: false).isEmpty);
+  }
+
+  Future<void> markPendingRebuild() async {
+    await Directory(filesDir()).create(recursive: true);
+    await _pendingFile.writeAsString('1', flush: true);
+  }
+
+  Future<void> clearPendingRebuild() async {
+    try {
+      if (await _pendingFile.exists()) await _pendingFile.delete();
+    } catch (_) {
+      // 删不掉时下次启动会再补建一次，不影响使用。
+    }
+  }
 
   Future<File> write(String hash, Uint8List bytes) async {
     final file = File(pathFor(hash));

@@ -31,6 +31,7 @@ import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/study_plan_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/workspace_widgets.dart';
 import 'package:zhixin/ui/zhixin_chip.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
@@ -214,7 +215,7 @@ void main() {
 
     await tester.runAsync(() async {
       final beforeId = await scope!.tasks.createGoal(title: '恢复前保留目标');
-      final settings = scope!.settingsService;
+      final settings = scope!.settings.edit;
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       const channel = MethodChannel('com.zhixin.app/data_package');
@@ -240,7 +241,7 @@ void main() {
       await settings.restoreBytes(await exported.readAsBytes());
 
       expect((await scope!.tasks.goalById(beforeId))?.title, '恢复前保留目标');
-      final points = await scope!.restorePoints.list();
+      final points = await scope!.data.restorePoints.list();
       expect(points, hasLength(1));
       expect(await File(points.single.path).exists(), isTrue);
       expect(points.single.head, await scope!.currentHead());
@@ -305,6 +306,44 @@ void main() {
     await settle(tester);
     expect(find.text('导入材料'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('底栏按下时图标位置固定，选中胶囊连续滑动', (tester) async {
+    await openApp(tester);
+    final bar = find.byType(forui.FBottomNavigationBar);
+    Finder icon(IconData data) =>
+        find.descendant(of: bar, matching: find.byIcon(data));
+    final pill = find.ancestor(of: bar, matching: find.byType(Stack)).first;
+    final indicator = find.descendant(
+      of: pill,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Container &&
+            widget.decoration is ShapeDecoration &&
+            (widget.decoration as ShapeDecoration).shape is StadiumBorder,
+      ),
+    );
+    final start = tester.getCenter(icon(FLucideIcons.house));
+    final targetIcon = icon(FLucideIcons.history);
+    final iconRect = tester.getRect(targetIcon);
+    final next = iconRect.center;
+    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(start));
+
+    final gesture = await tester.startGesture(next);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final pressedRect = tester.getRect(targetIcon);
+    expect(pressedRect.size, iconRect.size);
+    expect(pressedRect.center, offsetMoreOrLessEquals(next));
+    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(start));
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(tester.getCenter(indicator).dx, inExclusiveRange(start.dx, next.dx));
+    expect(tester.getCenter(indicator).dy, moreOrLessEquals(start.dy));
+    await settle(tester);
+    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(next));
   });
 
   testWidgets('从记录打开讨论再返回，筛选与首页输入都不重置', (tester) async {
@@ -417,9 +456,9 @@ void main() {
   testWidgets('学习页可以进入先不看上次答案的独立重做', (tester) async {
     await openApp(tester);
     final questionId = (await tester.runAsync(() async {
-      final id = await scope!.learningService.capture(stem: '独立重做界面');
-      final attempt = await scope!.learningService.openAttempt(id);
-      await scope!.learningService.submit(
+      final id = await scope!.chat.learning.capture(stem: '独立重做界面');
+      final attempt = await scope!.chat.learning.openAttempt(id);
+      await scope!.chat.learning.submit(
         attemptId: attempt.id,
         answer: '旧的答案',
         isCorrect: true,
@@ -459,8 +498,8 @@ void main() {
   testWidgets('返回时草稿保存失败会留在学习页', (tester) async {
     await openApp(tester);
     final questionId = (await tester.runAsync(() async {
-      final id = await scope!.learningService.capture(stem: '保存失败也要留住');
-      await scope!.learningService.openAttempt(id);
+      final id = await scope!.chat.learning.capture(stem: '保存失败也要留住');
+      await scope!.chat.learning.openAttempt(id);
       return id;
     }))!;
     await tester.pumpAndSettle();
@@ -504,15 +543,15 @@ void main() {
   testWidgets('重新打开学习页仍保持独立重做', (tester) async {
     await openApp(tester);
     final questionId = (await tester.runAsync(() async {
-      final id = await scope!.learningService.capture(stem: '重做状态要留下');
-      final attempt = await scope!.learningService.openAttempt(id);
-      await scope!.learningService.submit(
+      final id = await scope!.chat.learning.capture(stem: '重做状态要留下');
+      final attempt = await scope!.chat.learning.openAttempt(id);
+      await scope!.chat.learning.submit(
         attemptId: attempt.id,
         answer: '上一次的答案',
         isCorrect: false,
         independent: true,
       );
-      await scope!.learningService.openAttempt(id, independentRedo: true);
+      await scope!.chat.learning.openAttempt(id, independentRedo: true);
       return id;
     }))!;
     await tester.pumpAndSettle();
@@ -539,11 +578,9 @@ void main() {
   testWidgets('学习页可以展开历次尝试的全部帮助', (tester) async {
     await openApp(tester, size: const Size(390, 1200));
     final id = (await tester.runAsync(() async {
-      final conversationId = await scope!.learningService.capture(
-        stem: '展开全部帮助',
-      );
+      final conversationId = await scope!.chat.learning.capture(stem: '展开全部帮助');
       for (var index = 0; index < 3; index++) {
-        await scope!.learningService.help(
+        await scope!.chat.learning.help(
           questionId: conversationId,
           mode: BuddyMode.hint,
         );
@@ -648,7 +685,7 @@ void main() {
     await tester.tap(dismiss);
     await settle(tester);
     final history = await tester.runAsync(
-      () => scope!.discussionService.history(id!),
+      () => scope!.chat.discussion.history(id!),
     );
     expect(history!.last.structured?['dismissed'], ['用抽球问题练习条件概率']);
     await tester.pumpAndSettle();
@@ -659,7 +696,7 @@ void main() {
   testWidgets('新问题独立保存，已有讨论保持原样，返回后可继续', (tester) async {
     await openApp(tester);
     final oldId = await tester.runAsync(
-      () => scope!.discussionService.createConversation(title: '原有讨论'),
+      () => scope!.chat.discussion.createConversation(title: '原有讨论'),
     );
     await tester.enterText(
       find
@@ -674,12 +711,12 @@ void main() {
     expect(find.byType(DiscussionPage), findsOneWidget);
     expect(find.text('导数的定义是什么'), findsOneWidget);
     final records = await tester.runAsync(
-      () => scope!.discussionService.records(),
+      () => scope!.chat.discussion.records(),
     );
     expect(records, hasLength(2));
     expect(records!.first.id, isNot(oldId));
     final original = await tester.runAsync(
-      () => scope!.discussionService.history(oldId!),
+      () => scope!.chat.discussion.history(oldId!),
     );
     expect(original, isEmpty);
     expect(tester.takeException(), isNull);
@@ -735,9 +772,7 @@ void main() {
     expect(find.byType(DiscussionPage), findsOneWidget);
     expect(find.text('已结束'), findsOneWidget);
     expect(find.text('结束讨论'), findsNothing);
-    final ended = await tester.runAsync(
-      () => scope!.discussionService.byId(id!),
-    );
+    final ended = await tester.runAsync(() => scope!.chat.discussion.byId(id!));
     expect(ended!.open, isFalse);
 
     await tester.enterText(
@@ -751,7 +786,7 @@ void main() {
     await tester.tap(find.byIcon(FLucideIcons.arrowUp));
     await settle(tester);
     final reopened = await tester.runAsync(
-      () => scope!.discussionService.byId(id!),
+      () => scope!.chat.discussion.byId(id!),
     );
     expect(reopened!.open, isTrue);
     expect(find.text('已结束'), findsNothing);
@@ -762,16 +797,16 @@ void main() {
   testWidgets('继续上次按最近一次学习排序，并给出草稿与下一步', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '概率论讲义',
         kind: 'book',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 1,
         content: '条件概率是已知一个事件发生时，另一个事件发生的概率。',
       );
-      await scope!.studyPlanService.createPlan(
+      await scope!.study.systemPlan.createPlan(
         materialId: material,
         pageFrom: 1,
         pageTo: 1,
@@ -780,8 +815,8 @@ void main() {
           StudyStepDraft(title: '阅读条件概率的定义', pageFrom: 1, pageTo: 1),
         ],
       );
-      final questionId = await scope!.learningService.capture(stem: '写出条件概率公式');
-      final view = await scope!.learningService.view(questionId);
+      final questionId = await scope!.chat.learning.capture(stem: '写出条件概率公式');
+      final view = await scope!.chat.learning.view(questionId);
       await scope!.attempts.saveDraft(
         view.openAttempt!.id,
         answer: '先写出 P(A|B)=P(AB)/P(B)',
@@ -812,16 +847,16 @@ void main() {
   testWidgets('事项可定位来源讨论与材料原文，预约预选对应事项', (tester) async {
     await openApp(tester);
     final data = await tester.runAsync(() async {
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '微积分讲义',
         kind: 'text',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 3,
         content: '导数描述函数在一点附近的变化率。',
       );
-      final conversation = await scope!.discussionService.createConversation(
+      final conversation = await scope!.chat.discussion.createConversation(
         title: '理解变化率',
         materialId: material,
         pageNo: 3,
@@ -901,7 +936,7 @@ void main() {
   testWidgets('学习中操作条在真机宽度与放大文字下不溢出', (tester) async {
     await openApp(tester, size: const Size(363, 792));
     await tester.runAsync(
-      () => scope!.learningService.capture(stem: '求极限 lim sin3x/2x，x 趋于 0'),
+      () => scope!.chat.learning.capture(stem: '求极限 lim sin3x/2x，x 趋于 0'),
     );
     await tester.tap(find.text('记录').last);
     await settle(tester);
@@ -928,10 +963,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('切栏再回来保留筛选与已读记录，不再回到骨架', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(
+      () => scope!.chat.learning.capture(stem: '切栏之后还要看到的题目'),
+    );
+    await tester.tap(find.text('记录').last);
+    await settle(tester);
+    final record = find.widgetWithText(forui.FTile, '切栏之后还要看到的题目');
+    expect(record, findsOneWidget);
+
+    // 在记录里选一个筛选，再去别的栏目转一圈。
+    await tester.tap(find.byKey(const ValueKey('records-answer-filter')));
+    await settle(tester);
+    await tester.tap(find.text('未作答'));
+    await settle(tester);
+    expect(record, findsOneWidget);
+
+    await tester.tap(find.text('现在').last);
+    await settle(tester);
+    await tester.tap(find.text('记录').last);
+    await tester.pump();
+
+    // 切回来第一帧还是原来的记录与筛选：没有重新回到骨架，也没有丢检索条件。
+    expect(find.byType(ListSkeleton), findsNothing);
+    expect(record, findsOneWidget);
+    expect(find.text('未作答'), findsOneWidget);
+    await settle(tester);
+    expect(record, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('作答草稿在页面里先保存再检查，提交后清空', (tester) async {
     await openApp(tester, size: const Size(390, 1200));
     final questionId = await tester.runAsync(
-      () => scope!.learningService.capture(stem: '写出条件概率公式'),
+      () => scope!.chat.learning.capture(stem: '写出条件概率公式'),
     );
     await tester.tap(find.text('记录').last);
     await settle(tester);
@@ -987,7 +1053,7 @@ void main() {
     expect(find.textContaining('本地检查', findRichText: true), findsWidgets);
 
     final draft = (await tester.runAsync(
-      () => scope!.learningService.view(questionId!),
+      () => scope!.chat.learning.view(questionId!),
     ))!.openAttempt!;
     expect(draft.userAnswer, '先写出 P(A|B)=P(AB)/P(B)');
     expect(draft.isCorrect, isFalse);
@@ -1015,7 +1081,7 @@ void main() {
     expect(submitted.hintUsed, isTrue);
     expect(submitted.feedback, '卡在定义');
     expect(
-      (await tester.runAsync(() => scope!.learningService.view(questionId!)))!
+      (await tester.runAsync(() => scope!.chat.learning.view(questionId!)))!
           .openAttempt,
       isNull,
     );
@@ -1034,14 +1100,14 @@ void main() {
     await openApp(tester, ai: ai, size: const Size(390, 1200));
 
     final questionId = (await tester.runAsync(
-      () => scope!.learningService.capture(stem: '求条件概率'),
+      () => scope!.chat.learning.capture(stem: '求条件概率'),
     ))!;
     // 先在提示之前留一份整库备份，恢复之后题目与作答仍回到这一份。
     final backup = File('${directory.path}/恢复前.zip');
     await tester.runAsync(() => scope!.backupRepository(backup.path));
     final bytes = (await tester.runAsync(backup.readAsBytes))!;
     final attemptId = (await tester.runAsync(
-      () => scope!.learningService.view(questionId),
+      () => scope!.chat.learning.view(questionId),
     ))!.openAttempt!.id;
 
     await tester.tap(find.text('记录').last);
@@ -1089,7 +1155,7 @@ void main() {
   testWidgets('连续点开始作答只建立一份草稿', (tester) async {
     await openApp(tester);
     final id = (await tester.runAsync(() async {
-      final result = await scope!.discussionService.reply(text: '第 8 题求条件概率');
+      final result = await scope!.chat.discussion.reply(text: '第 8 题求条件概率');
       return result.userMessage.conversationId;
     }))!;
     final navigator = tester.state<NavigatorState>(
@@ -1119,9 +1185,9 @@ void main() {
   testWidgets('记录页显示最近一次作答与模型判断', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final id = await scope!.learningService.capture(stem: '记录摘要');
-      final attempt = await scope!.learningService.openAttempt(id);
-      await scope!.learningService.submit(
+      final id = await scope!.chat.learning.capture(stem: '记录摘要');
+      final attempt = await scope!.chat.learning.openAttempt(id);
+      await scope!.chat.learning.submit(
         attemptId: attempt.id,
         answer: '设 P(A|B)=P(AB)/P(B)',
         isCorrect: true,
@@ -1147,7 +1213,7 @@ void main() {
   testWidgets('学习页把最近讨论与作答放在同一条记录里', (tester) async {
     await openApp(tester);
     final id = (await tester.runAsync(() async {
-      final result = await scope!.discussionService.reply(text: '讨论里的条件概率');
+      final result = await scope!.chat.discussion.reply(text: '讨论里的条件概率');
       return result.userMessage.conversationId;
     }))!;
     final navigator = tester.state<NavigatorState>(
@@ -1172,9 +1238,9 @@ void main() {
   testWidgets('记录默认打开学习页，复查入口直接进入独立重做', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final id = await scope!.learningService.capture(stem: '记录复查题目');
-      final attempt = await scope!.learningService.openAttempt(id);
-      await scope!.learningService.submit(
+      final id = await scope!.chat.learning.capture(stem: '记录复查题目');
+      final attempt = await scope!.chat.learning.openAttempt(id);
+      await scope!.chat.learning.submit(
         attemptId: attempt.id,
         answer: '上次写下的答案',
         isCorrect: true,
@@ -1206,7 +1272,7 @@ void main() {
 
   testWidgets('记录里可以清空一条记录，消息与作答一起删除', (tester) async {
     await openApp(tester);
-    await tester.runAsync(() => scope!.learningService.capture(stem: '保留的题目'));
+    await tester.runAsync(() => scope!.chat.learning.capture(stem: '保留的题目'));
     final deletedImage = (await tester.runAsync(() async {
       final file = File('${scope!.paths.imagesDir}/deleted-record.jpg');
       await file.parent.create(recursive: true);
@@ -1214,7 +1280,7 @@ void main() {
       return file;
     }))!;
     final conversationId = (await tester.runAsync(
-      () => scope!.discussionService.createConversation(title: '要清空的记录'),
+      () => scope!.chat.discussion.createConversation(title: '要清空的记录'),
     ))!;
     await tester.runAsync(() async {
       await scope!.conversations.append(
@@ -1239,7 +1305,7 @@ void main() {
     expect(find.text('要清空的记录'), findsNothing);
     expect(await tester.runAsync(deletedImage.exists), isFalse);
     final conversations = await tester.runAsync(
-      () => scope!.discussionService.records(),
+      () => scope!.chat.discussion.records(),
     );
     expect(
       conversations!.any((record) => record.id == conversationId),
@@ -1259,7 +1325,7 @@ void main() {
   testWidgets('课表可以删除', (tester) async {
     await openApp(tester);
     await tester.runAsync(
-      () => scope!.planService.addTimetable(
+      () => scope!.study.plan.addTimetable(
         weekday: 3,
         startTime: '08:00',
         endTime: '09:00',
@@ -1290,7 +1356,7 @@ void main() {
   testWidgets('时间预算沿用已保存的可用时段', (tester) async {
     await openApp(tester);
     await tester.runAsync(
-      () => scope!.capacityService.setWindow(start: '19:00', end: '19:30'),
+      () => scope!.study.capacity.setWindow(start: '19:00', end: '19:30'),
     );
     await tester.tap(find.text('安排').last.hitTestable());
     await settle(tester);
@@ -1303,11 +1369,11 @@ void main() {
   testWidgets('时间预算点选算出的空档直接预约', (tester) async {
     await openApp(tester);
     final itemId = await tester.runAsync(() async {
-      await scope!.capacityService.setWindow(start: '19:00', end: '19:30');
+      await scope!.study.capacity.setWindow(start: '19:00', end: '19:30');
       return scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
     });
     final window = await tester.runAsync(() async {
-      final plan = await scope!.capacityService.compute();
+      final plan = await scope!.study.capacity.compute();
       return plan.candidates.single.windows.first;
     });
     await tester.tap(find.text('安排').last.hitTestable());
@@ -1341,7 +1407,7 @@ void main() {
   testWidgets('时间预算点选空档前说明原预约会改到的时间', (tester) async {
     await openApp(tester);
     final itemId = await tester.runAsync(() async {
-      await scope!.capacityService.setWindow(start: '19:00', end: '19:30');
+      await scope!.study.capacity.setWindow(start: '19:00', end: '19:30');
       final id = await scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
       final day = DateTime.now().add(const Duration(days: 1));
       await scope!.schedule.addBlock(
@@ -1352,7 +1418,7 @@ void main() {
       return id;
     });
     final window = await tester.runAsync(() async {
-      final plan = await scope!.capacityService.compute();
+      final plan = await scope!.study.capacity.compute();
       return plan.candidates.single.windows.first;
     });
     await tester.tap(find.text('安排').last.hitTestable());
@@ -1397,16 +1463,16 @@ void main() {
   testWidgets('系统学习设置框在真机宽度下不溢出', (tester) async {
     await openApp(tester, size: const Size(363, 792));
     await tester.runAsync(() async {
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '概率论讲义',
         kind: 'text',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 1,
         content: '条件概率的定义。',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 2,
         content: '全概率公式。',
@@ -1429,16 +1495,16 @@ void main() {
   testWidgets('系统学习确认前标明顺序来源', (tester) async {
     await openApp(tester, size: const Size(390, 844));
     await tester.runAsync(() async {
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '概率论讲义',
         kind: 'text',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 1,
         content: '条件概率的定义。',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 2,
         content: '全概率公式。',
@@ -1464,8 +1530,8 @@ void main() {
   testWidgets('添加一页遇到已有页码时不覆盖，提示到详情更正', (tester) async {
     await openApp(tester);
     final materialId = await tester.runAsync(() async {
-      final id = await scope!.materialService.create(title: '概率论讲义');
-      await scope!.materialService.addPage(
+      final id = await scope!.library.material.create(title: '概率论讲义');
+      await scope!.library.material.addPage(
         materialId: id,
         pageNo: 1,
         content: '已经校对过的原文',
@@ -1495,7 +1561,7 @@ void main() {
     await tester.tap(find.text('取消').last);
     await settle(tester);
     final pages = await tester.runAsync(
-      () => scope!.materialService.pages(materialId!),
+      () => scope!.library.material.pages(materialId!),
     );
     expect(pages!.single.content, '已经校对过的原文');
     expect(tester.takeException(), isNull);
@@ -1504,7 +1570,7 @@ void main() {
   testWidgets('过期记忆单独标出且不参与回答上下文', (tester) async {
     await openApp(tester);
     await tester.runAsync(
-      () => scope!.memoryService.add(
+      () => scope!.memory.edit.add(
         kind: MemoryKind.constraint,
         content: '本周只有半小时可用于复习',
         validUntil: DateTime.now().subtract(const Duration(days: 1)),
@@ -1515,7 +1581,7 @@ void main() {
     expect(find.text('已过期'), findsOneWidget);
     expect(find.text('本周只有半小时可用于复习'), findsOneWidget);
     final memories = await tester.runAsync(
-      () async => (await scope!.contextService.load()).memories,
+      () async => (await scope!.chat.context.load()).memories,
     );
     expect(
       memories!.any((memory) => memory.content == '本周只有半小时可用于复习'),
@@ -1528,23 +1594,23 @@ void main() {
     await openApp(tester);
     final planId = await tester.runAsync(() async {
       final goal = await scope!.tasks.createGoal(title: '高等数学 · 导数与微分');
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '微积分学习讲义',
         kind: 'text',
         goalId: goal,
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 3,
         content: '导数与变化率',
       );
-      final conversation = await scope!.discussionService.createConversation(
+      final conversation = await scope!.chat.discussion.createConversation(
         title: '如何理解导数的几何意义',
         materialId: material,
         pageNo: 3,
         goalId: goal,
       );
-      final plan = await scope!.studyPlanService.createPlan(
+      final plan = await scope!.study.systemPlan.createPlan(
         materialId: material,
         pageFrom: 3,
         pageTo: 3,
@@ -1573,13 +1639,13 @@ void main() {
           end: start.add(const Duration(minutes: 20)),
         );
         if (state == 'done') {
-          await scope!.planService.setStatus(item, PlanItemStatus.done);
+          await scope!.study.plan.setStatus(item, PlanItemStatus.done);
         }
         if (state == 'cancelled') {
           await scope!.schedule.setBlockStatus(block, 'cancelled');
         }
       }
-      final activity = await scope!.contextService.loadActivity();
+      final activity = await scope!.chat.context.loadActivity();
       expect(activity.ongoing!.item.title, '独立推导一次差商极限');
       final week = scope!.timePolicy.naturalWeekRange(now);
       // 这一步的安排只用来验证安排列表与跳转，时刻固定成本周某一天的 08:00。
@@ -1667,7 +1733,7 @@ void main() {
     await settle(tester);
     expect(find.text('从变化率理解导数'), findsOneWidget);
     final view = await tester.runAsync(
-      () => scope!.studyPlanService.view(planId!),
+      () => scope!.study.systemPlan.view(planId!),
     );
     expect(view!.plan.currentPage, 3);
     expect(tester.takeException(), isNull);
@@ -1756,16 +1822,16 @@ void main() {
   testWidgets('首页把正在进行的预约直接打开到材料页', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '导数讲义',
         kind: 'text',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 3,
         content: '导数描述函数在一点附近的变化率。',
       );
-      final plan = await scope!.studyPlanService.createPlan(
+      final plan = await scope!.study.systemPlan.createPlan(
         materialId: material,
         pageFrom: 3,
         pageTo: 3,
@@ -1814,7 +1880,7 @@ void main() {
   testWidgets('首页按记录去重，有草稿的题目只出现一次并直达作答', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      await scope!.learningService.capture(stem: '首页去重题目');
+      await scope!.chat.learning.capture(stem: '首页去重题目');
       scope!.dataVersion.value++;
     });
     await settle(tester);
@@ -1829,16 +1895,16 @@ void main() {
   testWidgets('预约可以直接打开这一步的材料，结束预约不推进计划', (tester) async {
     await openApp(tester);
     final data = await tester.runAsync(() async {
-      final material = await scope!.materialService.create(
+      final material = await scope!.library.material.create(
         title: '导数讲义',
         kind: 'text',
       );
-      await scope!.materialService.addPage(
+      await scope!.library.material.addPage(
         materialId: material,
         pageNo: 3,
         content: '导数描述函数在一点附近的变化率。',
       );
-      final plan = await scope!.studyPlanService.createPlan(
+      final plan = await scope!.study.systemPlan.createPlan(
         materialId: material,
         pageFrom: 3,
         pageTo: 3,
@@ -1890,7 +1956,7 @@ void main() {
       return (
         step: await scope!.tasks.byId(data!.stepId),
         block: await scope!.schedule.blockById(data.blockId),
-        plan: await scope!.studyPlanService.view(data.planId),
+        plan: await scope!.study.systemPlan.view(data.planId),
       );
     });
     expect(after!.step!.status, PlanItemStatus.doing);
@@ -1906,7 +1972,7 @@ void main() {
   testWidgets('讨论里可以开始作答，题目沿用首条内容', (tester) async {
     await openApp(tester);
     final conversationId = await tester.runAsync(() async {
-      final result = await scope!.discussionService.reply(text: '第 8 题求条件概率');
+      final result = await scope!.chat.discussion.reply(text: '第 8 题求条件概率');
       return result.userMessage.conversationId;
     });
     final id = conversationId!;
@@ -1923,7 +1989,7 @@ void main() {
     expect(find.byType(LearningPage), findsOneWidget);
     expect(find.text('第 8 题求条件概率'), findsOneWidget);
 
-    final view = await tester.runAsync(() => scope!.learningService.view(id));
+    final view = await tester.runAsync(() => scope!.chat.learning.view(id));
     expect(view!.question.conversationId, id);
     expect(view.question.stem, '第 8 题求条件概率');
     expect(view.attempts.single.helps, isEmpty);
@@ -1932,7 +1998,7 @@ void main() {
     await settle(tester);
     expect(find.byType(DiscussionPage), findsOneWidget);
     expect(find.text('继续作答'), findsOneWidget);
-    final sessions = await tester.runAsync(() => scope!.study.recent());
+    final sessions = await tester.runAsync(() => scope!.studyRecords.recent());
     expect(sessions!.single.endedAt, isNotNull);
 
     await tester.tap(find.byKey(const ValueKey('zhixin-header-back')));
@@ -2114,7 +2180,7 @@ void main() {
 
     final head = await tester.runAsync(() => scope!.currentHead());
     final result = await tester.runAsync(
-      () => scope!.revisions.undoCommit(head!),
+      () => scope!.data.revisions.undoCommit(head!),
     );
     expect(result!.applied, isTrue, reason: result.message);
     await settle(tester);

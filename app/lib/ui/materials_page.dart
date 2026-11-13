@@ -16,6 +16,7 @@ import 'goal_picker.dart';
 import 'study_plan_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_select.dart';
@@ -56,7 +57,7 @@ class MaterialListState extends State<MaterialList> {
   Future<void> reload() async {
     final scope = AppScope.of(context);
     try {
-      final materials = await scope.materialService.list();
+      final materials = await scope.library.material.list();
       final goals = await scope.tasks.goals();
       if (!mounted) return;
       setState(() {
@@ -92,7 +93,7 @@ class MaterialListState extends State<MaterialList> {
     if (drafts == null || drafts.isEmpty || !mounted) return;
     try {
       final first = drafts.first;
-      final id = await scope.materialService.importMaterial(
+      final id = await scope.library.material.importMaterial(
         title: first.title,
         kind: first.kind,
         sourceRef: first.sourceRef,
@@ -119,8 +120,9 @@ class MaterialListState extends State<MaterialList> {
   }
 
   Future<void> _importWord() async {
-    final service = AppScope.of(context).materialService;
-    final expectedEpoch = service.dataEpoch();
+    final scope = AppScope.of(context);
+    final service = scope.library.material;
+    final expectedEpoch = scope.runtime.dataEpoch;
     setState(() => _importingWord = true);
     try {
       final file = await FilePicker.pickFile(
@@ -181,7 +183,7 @@ class MaterialListState extends State<MaterialList> {
     final scope = AppScope.of(context);
     final List<MaterialPage> pages;
     try {
-      pages = await scope.materialService.pages(material.id);
+      pages = await scope.library.material.pages(material.id);
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(
@@ -206,7 +208,7 @@ class MaterialListState extends State<MaterialList> {
     );
     if (draft == null || !mounted) return;
     try {
-      await scope.materialService.addPage(
+      await scope.library.material.addPage(
         materialId: material.id,
         pageNo: draft.pageNo,
         content: draft.content,
@@ -276,7 +278,7 @@ class MaterialListState extends State<MaterialList> {
                   ),
                 )
               : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  padding: theme.space.pageInsets(),
                   itemCount: _materials.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
@@ -377,8 +379,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   Future<void> _load() async {
     final scope = AppScope.of(context);
     try {
-      final material = await scope.materialService.byId(widget.materialId);
-      final pages = await scope.materialService.pages(widget.materialId);
+      final material = await scope.library.material.byId(widget.materialId);
+      final pages = await scope.library.material.pages(widget.materialId);
       if (!mounted) return;
       setState(() {
         _material = material;
@@ -408,12 +410,12 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       final planId = widget.studyPlanId;
       final itemId = widget.planItemId;
       final id = planId != null && itemId != null
-          ? await scope.studyPlanService.startDiscussionAtStep(
+          ? await scope.study.systemPlan.startDiscussionAtStep(
               planId: planId,
               stepId: itemId,
               pageNo: page.pageNo,
             )
-          : await scope.discussionService.createConversation(
+          : await scope.chat.discussion.createConversation(
               title: '《${material?.title ?? '材料'}》第 ${page.pageNo} 页',
               goalId: material?.goalId,
               materialId: widget.materialId,
@@ -477,7 +479,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     if (corrected == null || corrected.trim().isEmpty || !mounted) return;
     final pageNo = page.pageNo;
     try {
-      final commitId = await scope.materialService.correctPage(
+      final commitId = await scope.library.material.correctPage(
         page: page,
         corrected: corrected.trim(),
       );
@@ -525,11 +527,11 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     final scope = AppScope.of(context);
     final theme = context.zhixin;
     try {
-      final history = await scope.revisions.rowHistory(
+      final history = await scope.data.revisions.rowHistory(
         table: 'material_page',
         rowKey: '${page.id}',
       );
-      final active = await scope.revisions.activeCommits(
+      final active = await scope.data.revisions.activeCommits(
         history.map((commit) => commit.id),
       );
       if (!mounted) return;
@@ -606,7 +608,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       note: '可选择目标，也可将材料用于独立讨论。',
     );
     if (choice == null || !mounted) return;
-    await scope.materialService.setGoal(material.id, choice.goalId);
+    await scope.library.material.setGoal(material.id, choice.goalId);
     await _load();
   }
 
@@ -623,17 +625,17 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     final theme = context.zhixin;
     final material = _material;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     if (material == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('材料'), showBack: true),
         child: const Center(child: Text('未找到这份材料')),
       );
     }
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: Text(material.title),
         showBack: true,
@@ -647,7 +649,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
         ],
       ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: theme.space.pageInsets(),
         children: [
           Text(
             '${material.kindLabel}'

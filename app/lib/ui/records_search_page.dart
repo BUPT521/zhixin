@@ -13,6 +13,7 @@ import '../domain/models/study.dart';
 import '../domain/models/material.dart';
 import 'failure_feedback.dart';
 import 'materials_page.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 
@@ -130,7 +131,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       _notice = null;
     });
     try {
-      final results = await AppScope.of(context).searchService.searchPage(
+      final results = await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
         pageSize: SearchService.defaultPageSize,
@@ -164,7 +165,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     final query = _query.text.trim();
     if (query.isEmpty || _semanticLoading) return;
     final scope = AppScope.of(context);
-    final index = scope.semanticIndex;
+    final index = scope.library.semanticIndex;
     if (!index.configured) return;
     _semanticToken?.cancel();
     final token = SemanticCancelToken();
@@ -219,7 +220,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       _loadingMore = false;
     });
     try {
-      final results = await AppScope.of(context).searchService.searchPage(
+      final results = await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
         pageSize: SearchService.defaultPageSize,
@@ -255,7 +256,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     final requestId = _requests.start();
     setState(() => _loadingMore = true);
     try {
-      final next = await AppScope.of(context).searchService.searchPage(
+      final next = await AppScope.of(context).library.search.searchPage(
         _appliedQuery,
         scope: _scope,
         offset: results.nextOffset,
@@ -390,7 +391,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final results = _results;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('搜索记录'),
         showBack: true,
@@ -409,7 +410,10 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            padding: theme.space.pageInsets(
+              top: theme.space.sm,
+              bottom: theme.space.xs,
+            ),
             child: forui.FTextField(
               control: .managed(controller: _query),
               autofocus: true,
@@ -492,10 +496,10 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   /// “按意思找”与它的一条状态说明；没有配置嵌入来源时按钮不可用。
   Widget _semanticBar(ZhixinTheme theme) {
-    final configured = AppScope.of(context).semanticIndex.configured;
+    final configured = AppScope.of(context).library.semanticIndex.configured;
     final status = _semanticStatus;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      padding: theme.space.pageInsets(top: theme.space.xs, bottom: 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -563,7 +567,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     }
     return ListView(
       controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      padding: theme.space.pageInsets(top: theme.space.xs),
       children: [
         for (final entry in results.entries) _entryTile(theme, entry),
         if (results.hasMore)

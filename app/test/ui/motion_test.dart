@@ -16,6 +16,18 @@ double _opacityOf(WidgetTester tester, Finder finder) => tester
     .opacity
     .value;
 
+/// 一条内容所在那一栏的 TickerMode；非当前栏应当为假。
+bool _tickerEnabled(WidgetTester tester, String text) => tester
+    .widget<TickerMode>(
+      find
+          .ancestor(
+            of: find.text(text, skipOffstage: false),
+            matching: find.byType(TickerMode, skipOffstage: false),
+          )
+          .first,
+    )
+    .enabled;
+
 void main() {
   testWidgets('内容换掉时淡入，播完停在完全不透明', (tester) async {
     await tester.pumpWidget(
@@ -42,6 +54,17 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
+  testWidgets('淡入的内容在重绘边界里，位移不重画整块内容', (tester) async {
+    await tester.pumpWidget(_host(const FadeIn(child: Text('甲'))));
+    expect(
+      find.descendant(
+        of: find.byType(FadeIn),
+        matching: find.byType(RepaintBoundary),
+      ),
+      findsWidgets,
+    );
+  });
+
   testWidgets('收起之后内容移出树，再展开重新出现', (tester) async {
     Widget reveal(bool visible) =>
         _host(ExpandReveal(visible: visible, child: const Text('已完成')));
@@ -58,6 +81,53 @@ void main() {
     await tester.pumpWidget(reveal(true));
     await tester.pumpAndSettle();
     expect(find.text('已完成'), findsOneWidget);
+  });
+
+  testWidgets('展开用 FadeTransition 与 SizeTransition 推进，不再逐帧重画内容', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(const ExpandReveal(visible: false, child: Text('已完成'))),
+    );
+    await tester.pumpWidget(
+      _host(const ExpandReveal(visible: true, child: Text('已完成'))),
+    );
+    await tester.pump(const Duration(milliseconds: 60));
+    final content = find.text('已完成');
+    expect(
+      find.ancestor(of: content, matching: find.byType(FadeTransition)),
+      findsWidgets,
+    );
+    expect(
+      find.ancestor(of: content, matching: find.byType(SizeTransition)),
+      findsWidgets,
+    );
+    expect(
+      find.ancestor(of: content, matching: find.byType(Opacity)),
+      findsNothing,
+    );
+    expect(
+      find.ancestor(of: content, matching: find.byType(RepaintBoundary)),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('减少动态效果时展开直接到终态', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        const ExpandReveal(visible: false, child: Text('已完成')),
+        reduce: true,
+      ),
+    );
+    await tester.pumpWidget(
+      _host(
+        const ExpandReveal(visible: true, child: Text('已完成')),
+        reduce: true,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('已完成'), findsOneWidget);
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
   testWidgets('切栏淡入不重建其他栏目的状态', (tester) async {
@@ -82,6 +152,149 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1'), findsOneWidget);
   });
+
+  testWidgets('切栏时非当前栏停掉动画，当前栏照常推进', (tester) async {
+    Widget stack(int index) => _host(
+      FadeIndexedStack(
+        index: index,
+        children: const [Text('第一栏'), Text('第二栏')],
+      ),
+    );
+
+    await tester.pumpWidget(stack(0));
+    expect(_tickerEnabled(tester, '第一栏'), isTrue);
+    expect(_tickerEnabled(tester, '第二栏'), isFalse);
+
+    await tester.pumpWidget(stack(1));
+    await tester.pumpAndSettle();
+    expect(_tickerEnabled(tester, '第一栏'), isFalse);
+    expect(_tickerEnabled(tester, '第二栏'), isTrue);
+  });
+
+  testWidgets('切栏播完停在完全不透明，减少动态效果时直接到终态', (tester) async {
+    Widget stack(int index, {bool reduce = false}) => _host(
+      FadeIndexedStack(
+        index: index,
+        children: const [Text('第一栏'), Text('第二栏')],
+      ),
+      reduce: reduce,
+    );
+
+    await tester.pumpWidget(stack(0, reduce: true));
+    await tester.pumpWidget(stack(1, reduce: true));
+    await tester.pump();
+    expect(_opacityOf(tester, find.text('第二栏')), 1);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('路由过渡推进时淡入右推，播完停在终态，减少动态效果时直接到终态', (tester) async {
+    await tester.pumpWidget(_host(const _TransitionHarness()));
+    await tester.pump(const Duration(milliseconds: 100));
+    final during = _opacityOf(tester, find.text('新页'));
+    expect(during, greaterThan(0));
+    expect(during, lessThan(1));
+    expect(
+      find.ancestor(of: find.text('新页'), matching: find.byType(Transform)),
+      findsWidgets,
+    );
+
+    await tester.pumpAndSettle();
+    expect(_opacityOf(tester, find.text('新页')), 1);
+
+    await tester.pumpWidget(_host(const _TransitionHarness(), reduce: true));
+    await tester.pump();
+    // 直接到终态：不再套淡入，也不推入。
+    expect(_opacityOf(tester, find.text('新页')), 1);
+    expect(
+      find.ancestor(of: find.text('新页'), matching: find.byType(Transform)),
+      findsNothing,
+    );
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('切栏动画结束之后才回填内容', (tester) async {
+    final settledAt = <AnimationStatus?>[];
+    Widget stack(int index) => _host(
+      FadeIndexedStack(
+        index: index,
+        children: [
+          const SizedBox.shrink(),
+          _SettleProbe(running: index == 1, onSettled: settledAt.add),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(stack(0));
+    await tester.pumpAndSettle();
+    expect(settledAt, isEmpty);
+
+    await tester.pumpWidget(stack(1));
+    await tester.pump(const Duration(milliseconds: 80));
+    // 动画还在走时不回填。
+    expect(settledAt, isEmpty);
+
+    await tester.pumpAndSettle();
+    expect(settledAt, [AnimationStatus.completed]);
+  });
+}
+
+/// 在当前栏动画走完之后才拿到结果的探针：切到这一栏时发起一次“读取”。
+class _SettleProbe extends StatefulWidget {
+  const _SettleProbe({required this.running, required this.onSettled});
+
+  final bool running;
+  final void Function(AnimationStatus?) onSettled;
+
+  @override
+  State<_SettleProbe> createState() => _SettleProbeState();
+}
+
+class _SettleProbeState extends State<_SettleProbe> {
+  @override
+  void didUpdateWidget(covariant _SettleProbe oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.running || !widget.running) return;
+    final context = this.context;
+    context.afterTransition().then((_) {
+      if (!mounted) return;
+      widget.onSettled(TabTransition.maybeOf(context)?.status);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// 直接驱动页面路由过渡构建器的探针：动画时长与真实过渡一致。
+class _TransitionHarness extends StatefulWidget {
+  const _TransitionHarness();
+
+  @override
+  State<_TransitionHarness> createState() => _TransitionHarnessState();
+}
+
+class _TransitionHarnessState extends State<_TransitionHarness>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const ZhixinMotion().emphasized,
+  )..forward();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      ZhixinPageTransitionsBuilder().buildTransitions(
+        MaterialPageRoute<void>(builder: (_) => const SizedBox.shrink()),
+        context,
+        _controller,
+        kAlwaysDismissedAnimation,
+        const Text('新页'),
+      );
 }
 
 class _Counter extends StatefulWidget {

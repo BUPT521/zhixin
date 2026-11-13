@@ -8,7 +8,6 @@ import '../../domain/rules/time_policy.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
-import 'revision_value.dart';
 
 /// 参与版本采集的业务表，顺序按外键依赖排列：先被引用的表在前。
 ///

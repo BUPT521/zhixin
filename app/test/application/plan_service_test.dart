@@ -16,6 +16,7 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/models/study_plan.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
@@ -23,7 +24,7 @@ PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
     tasks: TaskRepository(rig.db.rawDb),
     schedule: ScheduleRepository(rig.db.rawDb),
     revisions: rig.revisions,
-    policy: () => policy,
+    runtime: testRuntime(policy: () => policy),
     studyPlans: StudyPlanRepository(rig.db.rawDb, clock: clock ?? systemClock),
     transactions: WriteTransactions(rig.db),
   );
@@ -84,7 +85,7 @@ void main() {
       settings: SettingsRepository(rig.db.rawDb),
       tasks: tasks,
       schedule: schedule,
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       transactions: WriteTransactions(rig.db),
     );
     await capacity.setWindow(start: '10:00', end: '11:00');
@@ -92,7 +93,7 @@ void main() {
     expect(plan.availableMinutes, 60);
 
     // 暂停目标的提交同时改了目标与预约，撤销后一起回到暂停前。
-    final pause = await rig.engine.commitById(rig.db.raw, pauseId!);
+    final pause = await rig.engine.commitById(rig.db, pauseId!);
     expect(pause!.action, '暂停目标');
     final undone = await rig.revisions.undoCommit(pauseId);
     expect(undone.applied, isTrue);

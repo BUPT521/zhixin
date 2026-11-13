@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'ai/ai_chat_service.dart';
+import 'app_services.dart';
 import 'ai/llm_config_store.dart';
 import 'application/context_service.dart';
 import 'application/brought_sources.dart';
@@ -23,6 +24,7 @@ import 'application/semantic_index_service.dart';
 import 'application/memory_scope_service.dart';
 import 'application/plan_service.dart';
 import 'application/search_service.dart';
+import 'application/service_runtime.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'data/backup/data_package_service.dart';
@@ -57,8 +59,11 @@ import 'domain/rules/day_key.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
 import 'platform/app_info.dart';
+import 'platform/first_frame.dart';
 import 'platform/secure_secret_store.dart';
 import 'ui/theme_mode_controller.dart';
+
+part 'app_scope_data.dart';
 
 /// 打开一次库，把仓库与服务挂在这里；页面不从各自开库。
 class AppScope extends StatefulWidget {
@@ -97,27 +102,28 @@ class AppScopeState extends State<AppScope> {
   /// 外观在应用根部，页面读它当前的值，也通过它保存。
   ThemeModeController get themeMode => widget.themeMode;
 
+  // 仓库按表分组，页面直接用；服务收进 [AppServices] 的六组门面，见下面。
   late ConversationRepository conversations;
   late AttemptRepository attempts;
   late TaskRepository tasks;
   late ScheduleRepository schedule;
   late MemoryRepository memories;
-  late StudyRepository study;
+  late StudyRepository studyRecords;
   late AssessmentRepository assessments;
   late MaterialRepository materials;
   late StudyPlanRepository studyPlans;
 
-  late LlmConfigStore llmStore;
+  late LlmConfigStore _llmStore;
   AiChatService? _configuredAi;
 
   /// 讨论、学习与系统学习共用的回答来源；设置页的连接测试仍用真实客户端。
-  BuddyAi get ai => widget.ai ?? _configuredAi!;
-  late DataPackageService packages;
-  late RevisionEngine revisionsEngine;
-  late RevisionService revisions;
-  late RevisionPackageService revisionPackages;
-  late RestorePointStore restorePoints;
-  late AttachmentCache attachmentCache;
+  BuddyAi get _ai => widget.ai ?? _configuredAi!;
+  late DataPackageService _dataPackages;
+  late RevisionEngine _engine;
+  late RevisionService _revisions;
+  late RevisionPackageService _revisionPackages;
+  late RestorePointStore _restorePoints;
+  late AttachmentCache _attachmentCache;
   late CrashLog crashLog;
 
   final Clock clock = systemClock;
@@ -138,156 +144,204 @@ class AppScopeState extends State<AppScope> {
 
   TimePolicy get timePolicy => TimePolicy(clock: clock, cutoffHour: cutoffHour);
 
-  late final ContextService contextService = ContextService(
-    tasks: tasks,
-    attempts: attempts,
-    schedule: schedule,
-    memories: memories,
-    conversations: conversations,
-    materials: materials,
-    policy: () => timePolicy,
-    evidence: evidenceService,
+  /// 服务共用的运行环境；时间口径随保存的设置换新，数据代次随恢复与清空推进。
+  late final ServiceRuntime runtime = ServiceRuntime(
+    policySource: () => timePolicy,
+    filesDirSource: () => paths.filesDir,
+    dataEpochSource: () => _operationEpoch,
+    recordFailure: crashLog.record,
   );
 
-  late final MaterialService materialService = MaterialService(
-    materials: materials,
-    transactions: _transactions,
-    dataEpoch: () => _operationEpoch,
-  );
+  late final EvidenceRepository _evidenceRepository = EvidenceRepository(db);
 
-  late final SearchService searchService = SearchService(
-    evidence: evidenceService,
-  );
-
-  late final EvidenceRepository evidenceRepository = EvidenceRepository(
-    db.rawDb,
-  );
-
-  late final EmbeddingConfigStore embeddingStore = EmbeddingConfigStore(
+  late final EmbeddingConfigStore _embeddingStore = EmbeddingConfigStore(
     SecureSecretStore(),
   );
 
   /// 当前嵌入配置；启动时读取，设置页保存之后由应用根重新应用。
   EmbeddingConfig? embeddingConfig;
 
-  SemanticIndexService? _semanticIndex;
+  SemanticIndexService? __semantic;
 
   /// 语义索引按需创建；没有配置时不打开向量库。
-  SemanticIndexService get semanticIndex =>
-      _semanticIndex ??= SemanticIndexService(
-        repository: evidenceRepository,
-        indexPath: paths.vectorIndexPath,
-        epoch: () async => '${await revisionsEngine.headId(db.raw)}',
-        clock: clock,
-      );
-
-  late final CrossSessionService crossSessionService = CrossSessionService(
-    repository: evidenceRepository,
+  SemanticIndexService get _semantic => __semantic ??= SemanticIndexService(
+    repository: _evidenceRepository,
+    indexPath: paths.vectorIndexPath,
+    epoch: () async => '${await _engine.headId(_connection!)}',
+    clock: clock,
   );
 
-  late final EvidenceService evidenceService = EvidenceService(
-    repository: evidenceRepository,
-    semantic: semanticIndex,
-    crossSession: crossSessionService,
+  late final CrossSessionService _crossSession = CrossSessionService(
+    repository: _evidenceRepository,
   );
+
+  late final EvidenceService _evidence = EvidenceService(
+    repository: _evidenceRepository,
+    semantic: _semantic,
+    crossSession: _crossSession,
+  );
+
+  late final AppServices _services = AppServices(
+    chat: ChatServices(
+      discussion: _discussion,
+      learning: _learning,
+      context: _context,
+      memoryScope: _memoryScope,
+    ),
+    study: StudyServices(
+      plan: _plan,
+      systemPlan: _systemPlan,
+      capacity: _capacity,
+      continueLast: _continueLast,
+    ),
+    library: LibraryServices(
+      material: _material,
+      search: _search,
+      evidence: _evidence,
+      semanticIndexFactory: () => _semantic,
+    ),
+    memory: MemoryServices(edit: _memoryEdit, proposals: _proposals),
+    settings: SettingsServices(
+      edit: _settingsEdit,
+      embedding: _embeddingStore,
+      llm: _llmStore,
+      aiFactory: () => _ai,
+    ),
+    data: DataServices(
+      revisions: _revisions,
+      engine: _engine,
+      packages: _revisionPackages,
+      currentData: _dataPackages,
+      restorePoints: _restorePoints,
+      attachments: _attachmentCache,
+    ),
+  );
+
+  /// 讨论与作答、安排与学习、材料与检索、记忆、设置、数据版本六组服务。
+  AppServices get services => _services;
+
+  ChatServices get chat => _services.chat;
+
+  StudyServices get study => _services.study;
+
+  LibraryServices get library => _services.library;
+
+  MemoryServices get memory => _services.memory;
+
+  SettingsServices get settings => _services.settings;
+
+  DataServices get data => _services.data;
 
   late final _transactions = WriteTransactions(db);
   late final _settings = SettingsRepository(db);
 
-  late final CapacityService capacityService = CapacityService(
+  late final ContextService _context = ContextService(
+    tasks: tasks,
+    attempts: attempts,
+    schedule: schedule,
+    memories: memories,
+    conversations: conversations,
+    materials: materials,
+    runtime: runtime,
+    evidence: _evidence,
+  );
+
+  late final MaterialService _material = MaterialService(
+    materials: materials,
+    transactions: _transactions,
+    runtime: runtime,
+  );
+
+  late final SearchService _search = SearchService(evidence: _evidence);
+
+  late final CapacityService _capacity = CapacityService(
     settings: _settings,
     tasks: tasks,
     schedule: schedule,
-    policy: () => timePolicy,
+    runtime: runtime,
     transactions: _transactions,
   );
 
-  late final ContinueService continueService = ContinueService(
+  late final ContinueService _continueLast = ContinueService(
     conversations: conversations,
     plans: studyPlans,
   );
 
   /// 讨论与作答共用：记录归属优先，没有时沿用最近一次学习的目标。
-  late final MemoryScopeService memoryScopeService = MemoryScopeService(
+  late final MemoryScopeService _memoryScope = MemoryScopeService(
     conversations: conversations,
     attempts: attempts,
   );
 
-  late final StudyPlanService studyPlanService = StudyPlanService(
+  late final StudyPlanService _systemPlan = StudyPlanService(
     plans: studyPlans,
     materials: materials,
-    ai: ai,
-    context: contextService,
+    ai: _ai,
+    context: _context,
     conversations: conversations,
-    study: study,
+    study: studyRecords,
     transactions: _transactions,
   );
 
-  late final DiscussionService discussionService = DiscussionService(
+  late final DiscussionService _discussion = DiscussionService(
     conversations: conversations,
-    ai: ai,
-    context: contextService,
-    memoryScope: memoryScopeService,
+    ai: _ai,
+    context: _context,
+    memoryScope: _memoryScope,
     memories: memories,
-    revisions: revisions,
+    revisions: _revisions,
     tasks: tasks,
     materials: materials,
-    policy: () => timePolicy,
+    runtime: runtime,
     transactions: _transactions,
-    filesDir: () => paths.filesDir,
     cleanupAttachmentPaths: cleanupAttachmentPaths,
-    assets: revisionsEngine.assets,
-    cache: attachmentCache,
-    dataEpoch: () => _operationEpoch,
-    recordFailure: crashLog.record,
+    assets: _engine.assets,
+    cache: _attachmentCache,
   );
 
-  late final LearningService learningService = LearningService(
+  late final LearningService _learning = LearningService(
     attempts: attempts,
     conversations: conversations,
-    study: study,
+    study: studyRecords,
     memories: memories,
-    revisions: revisions,
+    revisions: _revisions,
     schedule: schedule,
     tasks: tasks,
     assessments: assessments,
-    ai: ai,
-    context: contextService,
-    memoryScope: memoryScopeService,
-    policy: () => timePolicy,
+    ai: _ai,
+    context: _context,
+    memoryScope: _memoryScope,
+    runtime: runtime,
     transactions: _transactions,
-    filesDir: () => paths.filesDir,
-    dataEpoch: () => _operationEpoch,
-    recordFailure: crashLog.record,
   );
 
-  late final PlanService planService = PlanService(
+  late final PlanService _plan = PlanService(
     tasks: tasks,
     schedule: schedule,
-    revisions: revisions,
-    policy: () => timePolicy,
+    revisions: _revisions,
+    runtime: runtime,
     studyPlans: studyPlans,
     transactions: _transactions,
   );
 
-  late final MemoryService memoryService = MemoryService(
+  late final MemoryService _memoryEdit = MemoryService(
     memories,
     transactions: _transactions,
   );
 
-  late final MemoryProposalService memoryProposals = MemoryProposalService(
+  late final MemoryProposalService _proposals = MemoryProposalService(
     attempts: attempts,
     conversations: conversations,
     memories: memories,
     transactions: _transactions,
   );
 
-  late final SettingsService settingsService = SettingsService(
+  late final SettingsService _settingsEdit = SettingsService(
     settings: _settings,
     transactions: _transactions,
-    llmStore: llmStore,
+    llmStore: _llmStore,
     ai: _configuredAi!,
-    policy: () => timePolicy,
+    runtime: runtime,
     onPolicyChanged: _refreshDayCutoffHour,
     restore: restore,
     resetAll: resetAllData,
@@ -295,15 +349,27 @@ class AppScopeState extends State<AppScope> {
 
   late final Future<void> ready = _init();
 
+  @override
+  void initState() {
+    super.initState();
+    // 首屏数据就绪（或开库失败）之后放行第一帧；没压过第一帧时这次调用
+    // 什么都不做，测试照常跑。
+    unawaited(
+      ready
+          .then<void>((_) {}, onError: (Object error, StackTrace stack) {})
+          .whenComplete(FirstFrameGate.release),
+    );
+  }
+
   Future<void> _init() async {
     paths = await AppPaths.resolve();
     await paths.ensureDirectories();
     crashLog = widget.crashLog ?? CrashLog(filesDir: paths.filesDir);
     crashLog.recordLaunch();
     db = GuardedDatabase(gate: gate, resolve: () => _connection!);
-    llmStore = LlmConfigStore(SecureSecretStore());
-    _configuredAi = AiChatService(store: llmStore);
-    packages = DataPackageService(
+    _llmStore = LlmConfigStore(SecureSecretStore());
+    _configuredAi = AiChatService(store: _llmStore);
+    _dataPackages = DataPackageService(
       filesDir: paths.filesDir,
       dbPath: paths.dbPath,
       factory: databaseFactory,
@@ -311,40 +377,66 @@ class AppScopeState extends State<AppScope> {
       schemaVersion: zhixinSchemaVersion,
       clock: clock,
     );
-    await packages.recoverInterruptedRestore();
+    await _dataPackages.recoverInterruptedRestore();
     await _open();
-    revisionsEngine = RevisionEngine(clock: clock);
-    db.revisions = revisionsEngine;
-    attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
-    revisions = RevisionService(
+    _engine = RevisionEngine(clock: clock);
+    db.revisions = _engine;
+    _attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
+    _revisions = RevisionService(
       db: db,
       raw: () => _connection!,
-      engine: revisionsEngine,
+      engine: _engine,
       clock: clock,
-      cache: attachmentCache,
+      cache: _attachmentCache,
       onUndoApplied: _refreshDayCutoffHour,
       onDataChanged: _invalidatePendingWork,
       onCacheFailure: (error, stack) =>
           crashLog.record(error, stack, kind: 'rebuild_attachments_restore'),
     );
-    revisionPackages = RevisionPackageService(
-      engine: revisionsEngine,
-      assets: revisionsEngine.assets,
+    _revisionPackages = RevisionPackageService(
+      engine: _engine,
+      assets: _engine.assets,
       factory: databaseFactory,
       schemaVersion: zhixinSchemaVersion,
       appVersion: appVersion,
       clock: clock,
     );
-    restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
-    await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db.raw);
-    try {
-      await attachmentCache.rebuild(db.raw, revisionsEngine.assets);
-    } catch (error) {
-      crashLog.record(error, null, kind: 'rebuild_attachments');
-    }
-    embeddingConfig = await embeddingStore.read();
+    _restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
+    embeddingConfig = await _embeddingStore.read();
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
     applyEmbeddingConfig(embeddingConfig);
+    // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
+    // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
+    _scheduleAttachmentMaintenance();
+  }
+
+  /// 首帧交出之后在后台整理附件：先删掉数据库不再引用的图片，必要时补建缓存。
+  ///
+  /// 两步互不阻塞，各自失败只写诊断记录：它们与用户此刻的操作无关，下一次
+  /// 启动还会重做，不值得用一个提示打断使用。缓存补建只在还原、导入之后或
+  /// 缓存目录被系统清空时做，平时启动只做删除这一趟，避免每次全表扫描消息。
+  void _scheduleAttachmentMaintenance() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_maintainAttachments());
+    });
+  }
+
+  Future<void> _maintainAttachments() async {
+    try {
+      await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db);
+    } catch (error, stack) {
+      crashLog.record(error, stack, kind: 'cleanup_attachments');
+    }
+    if (!mounted) return;
+    try {
+      if (!await _attachmentCache.needsRebuild) return;
+      await _attachmentCache.rebuild(db, _engine.assets);
+      await _attachmentCache.clearPendingRebuild();
+    } catch (error) {
+      // 补建失败不打断使用：缺图的位置已经按“找不到图片”显示，下次再补。
+      crashLog.record(error, null, kind: 'rebuild_attachments');
+    }
   }
 
   /// 应用一套嵌入配置：换掉嵌入来源，清掉旧模型对应的索引，再在后台补建。
@@ -353,9 +445,9 @@ class AppScopeState extends State<AppScope> {
   void applyEmbeddingConfig(EmbeddingConfig? config, {bool refresh = true}) {
     embeddingConfig = config;
     final runtime = embeddingRuntime(config);
-    semanticIndex.configure(client: runtime.client, canSend: runtime.canSend);
-    if (refresh && semanticIndex.configured) {
-      unawaited(semanticIndex.refresh());
+    _semantic.configure(client: runtime.client, canSend: runtime.canSend);
+    if (refresh && _semantic.configured) {
+      unawaited(_semantic.refresh());
     }
   }
 
@@ -377,7 +469,7 @@ class AppScopeState extends State<AppScope> {
     tasks = TaskRepository(connection, clock: clock);
     schedule = ScheduleRepository(connection, clock: clock);
     memories = MemoryRepository(connection, clock: clock);
-    study = StudyRepository(connection, clock: clock);
+    studyRecords = StudyRepository(connection, clock: clock);
     assessments = AssessmentRepository(connection, clock: clock);
     materials = MaterialRepository(connection, clock: clock);
     studyPlans = StudyPlanRepository(connection, clock: clock);
@@ -410,155 +502,20 @@ class AppScopeState extends State<AppScope> {
   /// 写入触发的刷新等 [_semanticQuietPeriod] 再执行，期间再次写入只顺延，
   /// 避免每次提交都全量扫库；立即需要索引的入口仍直接调用刷新。
   void _refreshSemanticIndex() {
-    if (!semanticIndex.configured) return;
+    if (!_semantic.configured) return;
     _semanticRefreshTimer?.cancel();
     _semanticRefreshTimer = Timer(_semanticQuietPeriod, () {
       _semanticRefreshTimer = null;
-      unawaited(semanticIndex.refresh());
+      unawaited(_semantic.refresh());
     });
-  }
-
-  /// 整库恢复：先预检数据包，再把当前状态存成一份恢复点，最后替换库与附件。
-  ///
-  /// 恢复点与恢复入口使用同一种版本库备份，恢复成功后仍然保留，用户可以从
-  /// 数据版本页回到恢复前；恢复点写不出来时中止，当前库不动。库替换成功后
-  /// 图片缓存重建失败只返回提醒，不再让界面把整次恢复报成失败。
-  Future<String?> restore(Uint8List bytes) async {
-    _operationEpoch++;
-    String? cacheWarning;
-    await gate.exclusive(() async {
-      await revisionPackages.validateRepositoryBytes(bytes);
-      final summary = await currentRestoreSummary();
-      try {
-        await restorePoints.capture(
-          head: summary.head,
-          commitCount: summary.commitCount,
-          namedCount: summary.namedCount,
-          reason: '整库恢复前自动保存',
-          write: (path) =>
-              revisionPackages.backupRepository(_connection!, path),
-        );
-      } catch (error, stack) {
-        crashLog.record(error, stack, kind: 'restore_point_capture');
-        throw const BackupException('恢复前保存当前状态失败，本次恢复没有执行；当前数据没有改动。');
-      }
-      // 恢复过程中失败时保留刚写好的恢复点：它要么与回滚后的数据一致，
-      // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
-      await packages.restorePackage(bytes, currentDb: db, openDb: _open);
-      try {
-        await attachmentCache.rebuild(db.raw, revisionsEngine.assets);
-      } catch (error, stack) {
-        crashLog.record(error, stack, kind: 'rebuild_attachments_restore');
-        cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
-      }
-    });
-    dataVersion.value++;
-    _refreshSemanticIndex();
-    return cacheWarning;
-  }
-
-  /// 恢复数据包前的预检：先确认包能通过校验，再返回包内规模。
-  ///
-  /// 不是版本库备份时交给旧数据包的校验；校验失败会抛出，界面据此拒绝恢复。
-  Future<RestoreInspection> inspectRestorePackage(Uint8List bytes) async {
-    final repository = await revisionPackages.inspectRepository(bytes);
-    if (repository != null) {
-      return RestoreInspection(
-        kind: RestorePackageKind.repository,
-        schemaVersion: zhixinSchemaVersion,
-        appVersion: repository.appVersion,
-        exportedAt: repository.exportedAt,
-        head: repository.head,
-        commitCount: repository.commitCount,
-        namedCount: repository.namedCount,
-      );
-    }
-    final data = await packages.inspectPackage(bytes);
-    return RestoreInspection(
-      kind: RestorePackageKind.currentData,
-      schemaVersion: data.schemaVersion,
-      appVersion: data.appVersion,
-      exportedAt: data.exportedAt,
-      rowCount: data.rowCount,
-    );
-  }
-
-  /// 当前库的规模；恢复前的说明与恢复点里的记录共用这一份。
-  Future<RestoreSummary> currentRestoreSummary() async {
-    final usage = await revisions.storageUsage();
-    final head = await revisionsEngine.headId(db.raw);
-    return RestoreSummary(
-      head: head,
-      commitCount: usage.commitCount,
-      namedCount: usage.namedCount,
-    );
-  }
-
-  Future<void> resetAllData() async {
-    _operationEpoch++;
-    await gate.exclusive(() async {
-      await _connection?.close();
-      _connection = null;
-      await deleteLocalStudyData(
-        filesDir: paths.filesDir,
-        dbPath: paths.dbPath,
-      );
-      await paths.ensureDirectories();
-      await _open();
-    });
-    dataVersion.value++;
-    _refreshSemanticIndex();
-  }
-
-  /// 导出当前数据：业务投影与附件，不含历史。
-  Future<void> exportCurrentData(String outputPath) {
-    return gate.exclusive(
-      () => revisionPackages.exportCurrent(_connection!, outputPath),
-    );
-  }
-
-  /// 导入当前数据包之前先取 `HEAD`，提交时重新核对。
-  Future<int> currentHead() => revisionsEngine.headId(db.raw);
-
-  Future<void> importCurrentData(
-    Uint8List bytes, {
-    required int expectedHead,
-  }) async {
-    _operationEpoch++;
-    await gate.exclusive(
-      () => revisionPackages.importCurrent(
-        _connection!,
-        bytes,
-        expectedHead: expectedHead,
-      ),
-    );
-    await attachmentCache.rebuild(db.raw, revisionsEngine.assets);
-    dataVersion.value++;
-    _refreshSemanticIndex();
-  }
-
-  /// 版本库备份：整库快照，包含历史、命名版本与附件。
-  Future<void> backupRepository(String outputPath) {
-    return gate.exclusive(
-      () => revisionPackages.backupRepository(_connection!, outputPath),
-    );
-  }
-
-  Future<void> cleanupAttachmentPaths(Iterable<String> candidates) {
-    final pathsToCheck = List<String>.unmodifiable(candidates);
-    return gate.shared(
-      () =>
-          AttachmentStore(filesDir: paths.filesDir)
-              .cleanupCandidates(db.raw, pathsToCheck),
-    );
   }
 
   @override
   void dispose() {
     _semanticRefreshTimer?.cancel();
     _configuredAi?.dispose();
-    _semanticIndex?.close();
-    _semanticIndex = null;
+    __semantic?.close();
+    __semantic = null;
     if (_connection != null) db.close();
     dataVersion.dispose();
     super.dispose();

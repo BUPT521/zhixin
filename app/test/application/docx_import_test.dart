@@ -17,6 +17,7 @@ import 'package:zhixin/data/revisions/revision_package.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 
 import '../support/docx_fixture.dart';
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 void main() {
@@ -141,7 +142,7 @@ void main() {
     final service = MaterialService(
       materials: repository,
       transactions: WriteTransactions(rig.db),
-      dataEpoch: () => epoch,
+      runtime: testRuntime(dataEpoch: () => epoch),
     );
     final bytes = docxFixture();
     final document = await DocxImport.read('概率讲义.docx', Stream.value(bytes));

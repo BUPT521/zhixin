@@ -25,6 +25,7 @@ import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 class _FakeAi implements BuddyAi {
@@ -106,16 +107,14 @@ class _Harness {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
         attempts: attempts,
       ),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy, dataEpoch: () => epoch),
       transactions: WriteTransactions(db),
-      filesDir: () => '.',
-      dataEpoch: () => epoch,
     );
   }
 }
@@ -231,40 +230,46 @@ void main() {
     expect(await h.assessments.forAttempt(attempt.id), isEmpty);
   });
 
-  test('讨论超过两百条时仍把较早的助手回答导入帮助', () async {
-    final h = _Harness(reply: const BuddyReply(text: '新的提示'));
-    await h.open();
-    addTearDown(h.db.close);
+  // 这一条要逐条写入两百多条消息，整个测试套件并行跑时会顶到默认的 30 秒
+  // 上限；用例内容与断言不变，只放宽这一条的时限。
+  test(
+    '讨论超过两百条时仍把较早的助手回答导入帮助',
+    timeout: const Timeout(Duration(seconds: 90)),
+    () async {
+      final h = _Harness(reply: const BuddyReply(text: '新的提示'));
+      await h.open();
+      addTearDown(h.db.close);
 
-    final questionId = await h.service.capture(stem: '长讨论里的题目');
-    await h.conversations.append(
-      questionId,
-      role: 'assistant',
-      content: '较早的回答',
-    );
-    for (var index = 0; index < 200; index++) {
+      final questionId = await h.service.capture(stem: '长讨论里的题目');
       await h.conversations.append(
         questionId,
-        role: 'user',
-        content: '追问 $index',
+        role: 'assistant',
+        content: '较早的回答',
       );
-    }
+      for (var index = 0; index < 200; index++) {
+        await h.conversations.append(
+          questionId,
+          role: 'user',
+          content: '追问 $index',
+        );
+      }
 
-    final result = await h.service.help(
-      questionId: questionId,
-      mode: BuddyMode.hint,
-    );
+      final result = await h.service.help(
+        questionId: questionId,
+        mode: BuddyMode.hint,
+      );
 
-    // 讨论里的回答不复制进作答记录，只在本次上下文里作为帮助带入。
-    expect(
-      h.ai.lastContext!.attempt!.helps.any((help) => help.content == '较早的回答'),
-      isTrue,
-    );
-    expect(
-      result.attempt.helps.any((help) => help.content == '较早的回答'),
-      isFalse,
-    );
-  }, timeout: const Timeout(Duration(minutes: 2)));
+      // 讨论里的回答不复制进作答记录，只在本次上下文里作为帮助带入。
+      expect(
+        h.ai.lastContext!.attempt!.helps.any((help) => help.content == '较早的回答'),
+        isTrue,
+      );
+      expect(
+        result.attempt.helps.any((help) => help.content == '较早的回答'),
+        isFalse,
+      );
+    },
+  );
 
   test('作答的记忆建议先待确认，点记下才写入并可撤销', () async {
     final h = _Harness(

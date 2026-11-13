@@ -16,15 +16,16 @@ import '../application/memory_view.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
+import 'buddy_flows.dart';
 import 'discussion_cards.dart';
 import 'discussion_page.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'markdown_text.dart';
-import 'settings_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -122,17 +123,20 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _load({bool reapplyDraft = false}) async {
     final scope = AppScope.of(context);
     try {
-      final view = await scope.learningService.view(widget.questionId);
+      final view = await scope.chat.learning.view(widget.questionId);
       final open = view.openAttempt;
       // 判断、记忆建议、模型配置与最近讨论互不依赖，同时读取。
       final (assessments, memoryItems, config, messages) = await (
-        scope.learningService.assessmentsFor(view.attempts),
+        scope.chat.learning.assessmentsFor(view.attempts),
         open == null
             ? Future<List<MemoryItemView>>.value(const [])
-            : scope.learningService.memoryItemsFor(open),
-        scope.settingsService.config(),
+            : scope.chat.learning.memoryItemsFor(open),
+        scope.settings.edit.config(),
         scope.conversations.recent(widget.questionId, limit: 6),
       ).wait;
+      if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填，内容不会在滑动中途跳出来。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _view = view;
@@ -274,7 +278,7 @@ class _LearningPageState extends State<LearningPage> {
       }
       return true;
     }
-    final service = AppScope.of(context).learningService;
+    final service = AppScope.of(context).chat.learning;
     try {
       final attempt = await service.openAttempt(widget.questionId);
       await service.saveDraft(
@@ -324,7 +328,7 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _ask(BuddyMode mode) async {
     if (_busy) return;
     final app = AppScope.of(context);
-    final service = app.learningService;
+    final service = app.chat.learning;
     setState(() {
       _busy = true;
       _notice = null;
@@ -418,58 +422,34 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _acceptMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
-    try {
-      final result = await AppScope.of(context).learningService.acceptMemory(
+    await acceptMemoryCard(
+      context: context,
+      accept: () => AppScope.of(context).chat.learning.acceptMemory(
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
         requestId: 'memory-${attempt.id}-${item.ownerId}-${item.itemId}',
-      );
-      if (!mounted) return;
-      await _load();
-      if (!mounted) return;
-      // 写入后的回执就是这张卡片本身，不再另加一行，避免两处撤销。
-      showToast(context, result.notice ?? '已记下这条记忆');
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '保存这条记忆',
-          kind: 'learning_memory_accept',
-          kept: '这条记忆仍在待确认',
-          next: '可以再点一次「记下」',
-        ),
-      );
-    }
+      ),
+      reload: _load,
+      scope: 'learning',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
-    try {
-      await AppScope.of(context).learningService.dismissMemory(
+    await dismissMemoryCard(
+      context: context,
+      dismiss: () => AppScope.of(context).chat.learning.dismissMemory(
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
-      );
-      if (mounted) await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '收起这条记忆',
-          kind: 'learning_memory_dismiss',
-          kept: '记忆卡片还在页面上',
-          next: '可以再试一次',
-        ),
-      );
-    }
+      ),
+      reload: _load,
+      scope: 'learning',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   /// 点开原题缩略图看大图；图片文件不在了就说明，不弹空白页。
@@ -483,7 +463,13 @@ class _LearningPageState extends State<LearningPage> {
     if (!mounted) return;
     // 遮挡层、进出动画与圆角跟页面里的其他对话框一致；对话框默认限制宽度
     // 280 到 560，看图时改成占满屏宽只留外边距，横屏与平板上不会被压窄。
-    final size = MediaQuery.sizeOf(context);
+    final media = MediaQuery.of(context);
+    final size = media.size;
+    // 手机拍的原图直接解码要占几十 MB：按屏宽 × dpr × 2 设解码尺寸，与看图
+    // 的 4 倍放大配合已经够清晰。大图解码好之前先用同一张图的小尺寸垫底，
+    // 点开时不会先白屏，也不用等原图。
+    final decodeWidth = (size.width * media.devicePixelRatio * 2).round();
+    final thumbWidth = (size.width * media.devicePixelRatio).round();
     await forui.showFDialog<void>(
       context: context,
       builder: (context, style, animation) => forui.FDialog(
@@ -497,7 +483,14 @@ class _LearningPageState extends State<LearningPage> {
         builder: (context, style) => InteractiveViewer(
           minScale: 1,
           maxScale: 4,
-          child: Image.file(file),
+          child: Image.file(
+            file,
+            cacheWidth: decodeWidth,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              if (wasSynchronouslyLoaded || frame != null) return child;
+              return Image.file(file, cacheWidth: thumbWidth);
+            },
+          ),
         ),
       ),
     );
@@ -531,32 +524,22 @@ class _LearningPageState extends State<LearningPage> {
 
   /// 打开设置页并重新读取配置；返回后可以就地重新获取这一次帮助。
   Future<void> _openSettings() async {
-    await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+    final result = await openModelSettingsPage(
+      context,
+      kind: 'learning_config_read',
+      kept: '这道题与作答记录没有改动',
+    );
     if (!mounted) return;
-    try {
-      final config = await AppScope.of(context).settingsService.config();
-      if (!mounted) return;
-      setState(() => _configured = config?.isConfigured ?? false);
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取模型配置',
-          kind: 'learning_config_read',
-          kept: '这道题与作答记录没有改动',
-          next: '可以回到设置页重新保存一次',
-        ),
-      );
+    if (result.notice != null) {
+      setState(() => _notice = result.notice);
       return;
     }
-    if (!mounted) return;
+    final configured = result.configured;
+    if (configured == null) return;
+    setState(() => _configured = configured);
     showToast(
       context,
-      _configured ? '模型已就绪，可以点「用模型重新获取」回答这道题。' : '模型还没有配置完整，仍使用本地规则回答。',
+      configured ? '模型已就绪，可以点「用模型重新获取」回答这道题。' : '模型还没有配置完整，仍使用本地规则回答。',
     );
   }
 
@@ -571,7 +554,7 @@ class _LearningPageState extends State<LearningPage> {
   /// 放到页面上；提交后恢复显示历次尝试。
   Future<void> _startRedo() async {
     if (_busy) return;
-    final service = AppScope.of(context).learningService;
+    final service = AppScope.of(context).chat.learning;
     setState(() {
       _busy = true;
       _notice = null;
@@ -623,10 +606,8 @@ class _LearningPageState extends State<LearningPage> {
       _notice = null;
     });
     try {
-      final attempt = await scope.learningService.openAttempt(
-        widget.questionId,
-      );
-      await scope.learningService.submit(
+      final attempt = await scope.chat.learning.openAttempt(widget.questionId);
+      await scope.chat.learning.submit(
         attemptId: attempt.id,
         answer: answer,
         solution: _solutionDraft.text,
@@ -684,7 +665,7 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _leave() async {
     if (_leaving) return;
     _leaving = true;
-    final service = AppScope.of(context).learningService;
+    final service = AppScope.of(context).chat.learning;
     final saved = await _saveDraft(notify: false);
     if (!saved) {
       _leaving = false;
@@ -702,13 +683,13 @@ class _LearningPageState extends State<LearningPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     final view = _view;
     if (view == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('题目'), showBack: true),
         child: Center(child: Text(_notice ?? '未找到这道题')),
       );
@@ -719,7 +700,7 @@ class _LearningPageState extends State<LearningPage> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _leave();
       },
-      child: forui.FScaffold(
+      child: DetailScaffold(
         header: ZhixinHeader(
           title: const Text('学习中'),
           showBack: true,
@@ -733,7 +714,7 @@ class _LearningPageState extends State<LearningPage> {
           ],
         ),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          padding: theme.space.pageInsets(),
           children: [
             forui.FCard(
               child: Padding(
@@ -920,30 +901,12 @@ class _LearningPageState extends State<LearningPage> {
                     if (_help != null && (!_lastFromModel || _lastInterrupted))
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            if (_configured)
-                              forui.FButton(
-                                variant: forui.FButtonVariant.secondary,
-                                mainAxisSize: MainAxisSize.min,
-                                onPress: _busy ? null : _retryHelp,
-                                prefix: const Icon(FLucideIcons.refreshCw),
-                                child: Text(
-                                  _lastInterrupted ? '重试这次回答' : '用模型重新获取',
-                                ),
-                              )
-                            else
-                              forui.FButton(
-                                variant: forui.FButtonVariant.outline,
-                                mainAxisSize: MainAxisSize.min,
-                                onPress: _busy ? null : _openSettings,
-                                prefix: const Icon(FLucideIcons.keyRound),
-                                child: const Text('配置模型'),
-                              ),
-                          ],
+                        child: ModelRecoveryButtons(
+                          configured: _configured,
+                          primaryLabel: _lastInterrupted ? '重试这次回答' : '用模型重新获取',
+                          onPrimary: _retryHelp,
+                          onConfigure: _openSettings,
+                          enabled: !_busy,
                         ),
                       ),
                   ],
@@ -1334,7 +1297,7 @@ class _LearningPageState extends State<LearningPage> {
     setState(() => _busy = true);
     try {
       final app = AppScope.of(context);
-      await app.learningService.assessWithModel(
+      await app.chat.learning.assessWithModel(
         questionId: widget.questionId,
         attemptId: attempt.id,
         broughtIdentities: app.broughtSources.identities,

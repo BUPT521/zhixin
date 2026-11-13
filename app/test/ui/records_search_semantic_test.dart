@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
@@ -53,7 +52,7 @@ void main() {
   });
 
   tearDown(() async {
-    scope?.semanticIndex.close();
+    scope?.library.semanticIndex.close();
     await scope?.db.close();
     scope = null;
     await directory.delete(recursive: true);
@@ -116,6 +115,14 @@ void main() {
     await settle(tester);
   }
 
+  /// 等查找页自己出现的内容：列表后面还压着记录页，按文字找会先命中记录页的
+  /// 预览，等于没等到本次查找的结果。
+  Future<void> pumpUntilInSearchPage(WidgetTester tester, Finder finder) =>
+      pumpUntil(
+        tester,
+        find.descendant(of: find.byType(RecordsSearchPage), matching: finder),
+      );
+
   Future<void> openSearch(WidgetTester tester) async {
     await tester.tap(find.text('记录').last);
     await tester.pump(const Duration(milliseconds: 300));
@@ -147,7 +154,7 @@ void main() {
         role: 'user',
         content: '线性无关的行向量个数',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -157,18 +164,18 @@ void main() {
           },
         ),
       );
-      final refresh = await scope!.semanticIndex.refresh();
+      final refresh = await scope!.library.semanticIndex.refresh();
       expect(refresh.failed, 0);
     });
 
     await openSearch(tester);
     await search(tester, '矩阵');
-    await pumpUntil(tester, find.textContaining('矩阵的秩怎么求'));
+    await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('按意思'));
     await pumpUntil(tester, find.textContaining('线性无关的行向量个数'));
-    expect(find.widgetWithText(forui.FTile, '矩阵的秩怎么求'), findsOneWidget);
+    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
   });
@@ -182,7 +189,7 @@ void main() {
         role: 'user',
         content: '矩阵的秩怎么求',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -191,18 +198,18 @@ void main() {
           },
         ),
       );
-      expect((await scope!.semanticIndex.refresh()).failed, 0);
-      scope!.semanticIndex.configure(client: _FailingClient());
+      expect((await scope!.library.semanticIndex.refresh()).failed, 0);
+      scope!.library.semanticIndex.configure(client: _FailingClient());
     });
 
     await openSearch(tester);
     await search(tester, '矩阵');
-    await pumpUntil(tester, find.textContaining('矩阵的秩怎么求'));
+    await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('按意思的部分没有完成，下面是原文与关键词结果'));
     expect(find.text('按意思'), findsNothing);
-    expect(find.widgetWithText(forui.FTile, '矩阵的秩怎么求'), findsOneWidget);
+    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
   });
@@ -216,7 +223,7 @@ void main() {
         role: 'user',
         content: '矩阵的秩怎么求',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -228,12 +235,12 @@ void main() {
 
     await openSearch(tester);
     await search(tester, '矩阵');
-    await pumpUntil(tester, find.textContaining('矩阵的秩怎么求'));
+    await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('语义索引还没有内容，可以在设置里更新'));
     expect(find.text('没有找到意思相近的记录'), findsNothing);
-    expect(find.widgetWithText(forui.FTile, '矩阵的秩怎么求'), findsOneWidget);
+    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
   });
@@ -253,7 +260,7 @@ void main() {
         role: 'user',
         content: 'det(A) 的几何意义是面积缩放',
       );
-      scope!.semanticIndex.configure(
+      scope!.library.semanticIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -263,7 +270,7 @@ void main() {
           },
         ),
       );
-      expect((await scope!.semanticIndex.refresh()).failed, 0);
+      expect((await scope!.library.semanticIndex.refresh()).failed, 0);
     });
 
     await openSearch(tester);

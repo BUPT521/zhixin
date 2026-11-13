@@ -9,6 +9,7 @@ import '../application/memory_proposal_service.dart';
 import '../domain/models/question.dart';
 import 'failure_feedback.dart';
 import 'undo_feedback.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -49,6 +50,9 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
       final scope = AppScope.of(context);
       final questions = await scope.conversations.questionRows(limit: 20);
       if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
+      if (!mounted) return;
       setState(() {
         _questions = questions;
         _loading = false;
@@ -77,7 +81,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
       _current = row;
     });
     try {
-      final outcome = await AppScope.of(context).memoryProposals
+      final outcome = await AppScope.of(context).memory.proposals
           .propose(row.question.conversationId);
       if (!mounted) return;
       setState(() {
@@ -106,7 +110,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
   Future<void> _accept(MemoryProposal proposal) async {
     setState(() => _busy = true);
     try {
-      final commitId = await AppScope.of(context).memoryProposals
+      final commitId = await AppScope.of(context).memory.proposals
           .accept(proposal);
       if (!mounted) return;
       setState(() {
@@ -152,12 +156,12 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: const ZhixinHeader(title: Text('从作答整理记忆'), showBack: true),
       child: _loading
           ? const Center(child: forui.FCircularProgress())
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              padding: theme.space.pageInsets(),
               children: [
                 Text(
                   '从已提交作答整理可核对的记忆：只有用过提示后做错、或隔一段时间后独立完成'

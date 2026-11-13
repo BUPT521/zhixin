@@ -9,6 +9,7 @@ import '../data/vector/embedding_config_store.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/material.dart';
 import 'failure_feedback.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
 
@@ -61,9 +62,9 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
 
   Future<void> _load() async {
     final scope = AppScope.of(context);
-    final config = await scope.embeddingStore.read();
+    final config = await scope.settings.embedding.read();
     final materials = await scope.materials.list();
-    final stats = await scope.semanticIndex.stats();
+    final stats = await scope.library.semanticIndex.stats();
     if (!mounted) return;
     setState(() {
       _materials = materials;
@@ -115,7 +116,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       _notice = null;
     });
     try {
-      await scope.embeddingStore.save(config);
+      await scope.settings.embedding.save(config);
       scope.applyEmbeddingConfig(config, refresh: false);
       await _refresh(scope);
     } catch (error, stack) {
@@ -139,8 +140,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final app = scope ?? AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final result = await app.semanticIndex.refresh();
-      final stats = await app.semanticIndex.stats();
+      final result = await app.library.semanticIndex.refresh();
+      final stats = await app.library.semanticIndex.stats();
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -180,7 +181,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final app = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final result = await app.semanticIndex.search(
+      final result = await app.library.semanticIndex.search(
         '熵与能量有什么关系',
         scope: const EvidenceScope.userAll(),
         limit: 3,
@@ -216,8 +217,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final scope = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      await scope.semanticIndex.clear();
-      final stats = await scope.semanticIndex.stats();
+      await scope.library.semanticIndex.clear();
+      final stats = await scope.library.semanticIndex.stats();
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -245,10 +246,10 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final stats = _stats;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: const ZhixinHeader(title: Text('语义索引'), showBack: true),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        padding: theme.space.pageInsets(),
         children: [
           Text(
             '语义检索用来找回措辞不同但可能相关的作答与材料。没有配置或关闭时，'
@@ -327,30 +328,28 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                 ),
           ],
           const SizedBox(height: 16),
-          Row(
+          Wrap(
+            spacing: theme.space.sm,
+            runSpacing: theme.space.sm,
             children: [
               forui.FButton(
                 mainAxisSize: MainAxisSize.min,
                 onPress: _busy ? null : _save,
                 child: const Text('保存并更新索引'),
               ),
-              const SizedBox(width: 12),
               forui.FButton(
                 variant: forui.FButtonVariant.outline,
                 mainAxisSize: MainAxisSize.min,
                 onPress: _busy ? null : _refresh,
                 child: const Text('更新索引'),
               ),
-              if (_stats?.configured == true) ...[
-                const SizedBox(width: 12),
+              if (_stats?.configured == true)
                 forui.FButton(
                   variant: forui.FButtonVariant.outline,
                   mainAxisSize: MainAxisSize.min,
                   onPress: _busy ? null : _probeQuery,
                   child: const Text('测试查询'),
                 ),
-              ],
-              const SizedBox(width: 12),
               forui.FButton(
                 variant: forui.FButtonVariant.ghost,
                 mainAxisSize: MainAxisSize.min,

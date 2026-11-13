@@ -1,4 +1,5 @@
 import 'package:forui/forui.dart' as forui;
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 
 import 'dart:async';
@@ -244,6 +245,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     return forui.FScaffold(
       scaffoldStyle: forui.FScaffoldStyleDelta.delta(
         backgroundColor: Colors.black,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
       ),
       child: Stack(
         fit: StackFit.expand,
@@ -252,6 +254,18 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             behavior: HitTestBehavior.opaque,
             onTapDown: (details) => _focus(details.localPosition, size),
             child: _stage(),
+          ),
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black54, Colors.transparent, Colors.black54],
+                  stops: [0, 0.5, 1],
+                ),
+              ),
+            ),
           ),
           if (_focusAt != null)
             Positioned(
@@ -324,7 +338,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Widget _topBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
         children: [
           ZhixinIconButton(

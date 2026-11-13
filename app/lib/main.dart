@@ -1,19 +1,30 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
-import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'app.dart';
 import 'data/diagnostics/crash_log.dart';
 import 'platform/app_license.dart';
 import 'platform/app_paths.dart';
 import 'platform/diagnostics_store.dart';
+import 'platform/first_frame.dart';
 import 'platform/theme_mode_store.dart';
 import 'ui/theme_mode_controller.dart';
+
+/// 压住第一帧的上限：超过这个时间就露出加载页，不让用户停在一张不会动的
+/// 启动图上等下去。
+const Duration firstFrameLimit = Duration(milliseconds: 1500);
 
 const String _sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 原生启动图直接接上首页：先压住第一帧，AppScope 准备好首屏数据后再放行。
+  // 开库比上限还慢时由下面这个定时器兜底，露出加载页。
+  FirstFrameGate.defer();
+  Timer(firstFrameLimit, FirstFrameGate.release);
   registerAppLicense();
   final paths = await _resolvePaths();
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);
@@ -26,7 +37,7 @@ Future<void> main() async {
 
   void run() => runApp(ZhixinApp(crashLog: crashLog, themeMode: themeMode));
 
-  // 没有注入 DSN 的构建（本地、PR）不初始化 Sentry，也不产生任何请求。
+  // 没有 DSN 或用户关闭上报时，不初始化 Sentry，也不产生任何请求。
   if (_sentryDsn.isEmpty || !reporting) {
     run();
     return;

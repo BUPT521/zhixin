@@ -7,7 +7,7 @@ import '../data/repository/study_plan_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
-import '../domain/rules/time_policy.dart';
+import 'service_runtime.dart';
 
 /// 一份系统学习计划的摘要：下一步与最近一次预约，给日程页直接展示。
 class StudyPlanSummary {
@@ -58,7 +58,7 @@ class PlanService {
     required this.tasks,
     required this.schedule,
     required this.revisions,
-    required this.policy,
+    required this.runtime,
     required this.studyPlans,
     required this.transactions,
   });
@@ -68,7 +68,7 @@ class PlanService {
 
   /// 回执与撤销都读提交历史，不再维护单独的操作日志。
   final RevisionService revisions;
-  final TimePolicy Function() policy;
+  final ServiceRuntime runtime;
   final WriteTransactions transactions;
 
   /// 学习事项属于系统学习计划时，状态改动后同步计划的继续位置。
@@ -83,7 +83,7 @@ class PlanService {
   /// 系统学习的步骤另按未完成计划读取，既包含步骤里的已完成项，也不经事项列表
   /// 整体带入；已完成计划的步骤不再读回，进度由计划行的计数带出。
   Future<PlanWeek> loadWeek(DateTime anchor) async {
-    final current = policy();
+    final current = runtime.policy;
     final range = current.naturalWeekRange(anchor);
     final (
       items,
@@ -201,7 +201,7 @@ class PlanService {
   /// 状态；中途失败时这次事务整体回滚，不会留下已经取消的预约与仍在进行中的
   /// 目标。
   Future<int?> pauseGoal(int id, {bool cancelFlexibleFuture = false}) {
-    final now = policy().now;
+    final now = runtime.policy.now;
     return transactions.run((txn) async {
       if (cancelFlexibleFuture) {
         final blocks = await schedule.flexibleFutureBlocksForGoal(
@@ -237,7 +237,7 @@ class PlanService {
   Future<int> flexibleFutureCount(int goalId) async {
     final blocks = await schedule.flexibleFutureBlocksForGoal(
       goalId,
-      policy().now,
+      runtime.policy.now,
     );
     return blocks.length;
   }
@@ -350,5 +350,5 @@ class PlanService {
   }
 
   /// 当前时刻之后最近的一个时间块，给首页“接下来”用。
-  Future<ScheduledItem?> nextBlock() => schedule.nextAfter(policy().now);
+  Future<ScheduledItem?> nextBlock() => schedule.nextAfter(runtime.policy.now);
 }

@@ -9,6 +9,7 @@ class ZhixinChip extends StatelessWidget {
     this.selected = false,
     this.onPressed,
     this.icon,
+    this.size = forui.FButtonSizeVariant.xs,
     super.key,
   });
 
@@ -16,6 +17,7 @@ class ZhixinChip extends StatelessWidget {
   final bool selected;
   final VoidCallback? onPressed;
   final IconData? icon;
+  final forui.FButtonSizeVariant size;
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +25,7 @@ class ZhixinChip extends StatelessWidget {
       variant: selected
           ? forui.FButtonVariant.secondary
           : forui.FButtonVariant.outline,
-      size: forui.FButtonSizeVariant.xs,
+      size: size,
       mainAxisSize: MainAxisSize.min,
       selected: selected,
       onPress: onPressed,

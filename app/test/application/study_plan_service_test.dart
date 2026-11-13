@@ -23,6 +23,7 @@ import 'package:zhixin/domain/models/study_plan.dart';
 import 'package:zhixin/domain/models/study.dart';
 
 import '../support/docx_fixture.dart';
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 class _FakeAi implements BuddyAi {
@@ -112,7 +113,7 @@ class _Harness {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       conversations: conversations,
       study: study,
@@ -148,6 +149,7 @@ void main() {
     final materialId = await MaterialService(
       materials: h.materials,
       transactions: WriteTransactions(h.db),
+      runtime: testRuntime(),
     ).importDocx(document: document, title: '概率讲义', expectedEpoch: 0);
     final proposal = await h.service.propose(
       materialId: materialId,

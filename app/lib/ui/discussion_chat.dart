@@ -13,6 +13,7 @@ import '../application/memory_view.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/study.dart';
+import 'buddy_flows.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
 import 'discussion_cards.dart';
@@ -24,7 +25,6 @@ import 'material_picker.dart';
 import 'materials_page.dart';
 import 'plan_dialogs.dart';
 import 'plan_page.dart';
-import 'settings_page.dart';
 import 'study_plan_page.dart';
 import 'undo_feedback.dart';
 import 'voice_input_button.dart';
@@ -72,6 +72,10 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 只让正在生成的气泡跟着正文重建，不带着整页消息一起重建。
   final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
+
+  /// 还没交给界面的最新正文：网络分片再密，一帧最多更新一次。
+  String? _pendingStreamText;
+  bool _streamFlushScheduled = false;
 
   /// 本次发送的取消信号；生成中按停止时用它中止请求。
   LlmCancelToken? _cancelToken;
@@ -153,21 +157,20 @@ class DiscussionChatState extends State<DiscussionChat> {
       final id = _conversationId;
       // 目标、模型配置与记录互不依赖，同时读取。
       final (goals, config, record) = await (
-        scope.discussionService.activeGoals(),
-        scope.settingsService.config(),
+        scope.chat.discussion.activeGoals(),
+        scope.settings.edit.config(),
         id == null
             ? Future<ConversationRecord?>.value()
-            : scope.discussionService.byId(id),
+            : scope.chat.discussion.byId(id),
       ).wait;
       final page = record == null
           ? (messages: const <ChatMessage>[], hasOlder: false)
-          : await scope.discussionService.historyPage(record.id);
+          : await scope.chat.discussion.historyPage(record.id);
       final messages = page.messages;
-      // 回执与记忆卡片都从同一批消息里读，可以同时发出。
-      final (changes, memoryItems) = await (
-        scope.discussionService.changesFromMessages(messages),
-        scope.discussionService.memoryItemsFromMessages(messages),
-      ).wait;
+      if (!mounted) return;
+      // 消息列表决定首屏，先把它交出去；改动建议与记忆卡片随后补上，不跟着
+      // 一起等待。结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _goals = goals;
@@ -176,12 +179,20 @@ class DiscussionChatState extends State<DiscussionChat> {
         _messages = messages;
         _hasOlderMessages = page.hasOlder;
         _pending = DiscussionService.pendingSuggestions(messages);
-        _memoryItems = memoryItems;
-        _changes = changes;
         _configured = config?.isConfigured ?? false;
         _loading = false;
       });
       _jumpToEnd();
+      // 回执与记忆卡片都从同一批消息里读，可以同时发出。
+      final (changes, memoryItems) = await (
+        scope.chat.discussion.changesFromMessages(messages),
+        scope.chat.discussion.memoryItemsFromMessages(messages),
+      ).wait;
+      if (!mounted) return;
+      setState(() {
+        _memoryItems = memoryItems;
+        _changes = changes;
+      });
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {
@@ -222,14 +233,14 @@ class DiscussionChatState extends State<DiscussionChat> {
     setState(() => _loadingOlder = true);
     try {
       final scope = AppScope.of(context);
-      final page = await scope.discussionService.historyPage(
+      final page = await scope.chat.discussion.historyPage(
         id,
         beforeMessageId: beforeId,
       );
       final merged = [...page.messages, ..._messages];
       final (memoryItems, changes) = await (
-        scope.discussionService.memoryItemsFromMessages(merged),
-        scope.discussionService.changesFromMessages(merged),
+        scope.chat.discussion.memoryItemsFromMessages(merged),
+        scope.chat.discussion.changesFromMessages(merged),
       ).wait;
       if (!mounted) return;
       setState(() {
@@ -291,6 +302,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   void _showUserMessage(ChatMessage message) {
     if (!mounted || _messages.any((item) => item.id == message.id)) return;
     _streamingText.value = '';
+    _pendingStreamText = null;
     setState(() {
       _messages = [..._messages, message];
       _streaming = true;
@@ -302,9 +314,29 @@ class DiscussionChatState extends State<DiscussionChat> {
     });
   }
 
+  /// 流式正文按帧合并：一帧里来多少分片，正文都只重排一次。
+  ///
+  /// 长回答每次更新都要重新解析并排版整段 Markdown，分片越密越贵；合并之后
+  /// 正文每帧最多换一次，肉眼分辨不出，长回答末尾的贴底滚动也不再发涩。
+  /// 没有别的绘制要跑时先给自己排一帧，正文不会因为等不到帧卡住。
   void _showPartial(String text) {
     if (!mounted || !_streaming) return;
-    _streamingText.value = text;
+    _pendingStreamText = text;
+    if (_streamFlushScheduled) return;
+    _streamFlushScheduled = true;
+    WidgetsBinding.instance.scheduleFrameCallback((_) {
+      _streamFlushScheduled = false;
+      _flushStreamText();
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  /// 把攒下的最新正文交给界面；生成已经结束时丢掉，不覆盖收尾后的状态。
+  void _flushStreamText() {
+    final pending = _pendingStreamText;
+    _pendingStreamText = null;
+    if (!mounted || !_streaming || pending == null) return;
+    _streamingText.value = pending;
   }
 
   /// 一次回答写回后的收尾：消息、建议、记忆卡片与提示一起更新。
@@ -318,6 +350,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   ) {
     final followReply = _isNearBottom;
     _streamingText.value = '';
+    _pendingStreamText = null;
     setState(() {
       _messages = merged;
       _pending = DiscussionService.pendingSuggestions(merged);
@@ -343,6 +376,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final cancel = LlmCancelToken();
     _cancelToken = cancel;
     _streamingText.value = '';
+    _pendingStreamText = null;
     setState(() {
       if (retrying) {
         _retrying = true;
@@ -376,6 +410,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       _streaming = false;
     });
     _streamingText.value = '';
+    _pendingStreamText = null;
   }
 
   /// 一次回答结束后复位生成状态；取消信号与生成活动只清理这一次的。
@@ -420,7 +455,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       paths = await _persistPicked(scope);
       // 从查找结果带入的来源只用于这一次回答，回答保存后即清空。
       final brought = scope.broughtSources.identities;
-      final result = await scope.discussionService.reply(
+      final result = await scope.chat.discussion.reply(
         conversationId: _conversationId,
         text: text,
         imagePaths: paths,
@@ -448,8 +483,8 @@ class DiscussionChatState extends State<DiscussionChat> {
       var notice = result.notice;
       try {
         final (loadedRecord, items) = await (
-          scope.discussionService.byId(id),
-          scope.discussionService.memoryItemsFromMessages(merged),
+          scope.chat.discussion.byId(id),
+          scope.chat.discussion.memoryItemsFromMessages(merged),
         ).wait;
         record = loadedRecord;
         memoryItems = items;
@@ -565,7 +600,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       _notice = null;
     });
     try {
-      final questionId = await AppScope.of(context).learningService
+      final questionId = await AppScope.of(context).chat.learning
           .startAnswering(conversationId: id);
       if (!mounted) return;
       await Navigator.of(context).push(
@@ -603,7 +638,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       note: '目标为可选项；更改归属会保留已有记录。',
     );
     if (choice == null || !mounted) return;
-    final service = AppScope.of(context).discussionService;
+    final service = AppScope.of(context).chat.discussion;
     try {
       await service.setGoal(record.id, choice.goalId);
       final updated = await service.byId(record.id);
@@ -634,7 +669,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       initialPageNo: record.pageNo,
     );
     if (selection == null || !mounted) return;
-    final service = AppScope.of(context).discussionService;
+    final service = AppScope.of(context).chat.discussion;
     try {
       await service.setMaterial(
         record.id,
@@ -667,7 +702,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final materialId = record?.materialId;
     if (record == null || materialId == null) return;
     final scope = AppScope.of(context);
-    final material = await scope.materialService.byId(materialId);
+    final material = await scope.library.material.byId(materialId);
     if (!mounted) return;
     if (material == null) {
       setState(() => _notice = '未找到这份材料');
@@ -709,7 +744,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         );
         if (timing == null || !mounted) return;
       }
-      final result = await scope.discussionService.acceptNextStep(
+      final result = await scope.chat.discussion.acceptNextStep(
         conversationId: id,
         messageId: suggestion.messageId,
         draft: suggestion.draft,
@@ -722,7 +757,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       var scheduledCommitId = 0;
       if (timing != null) {
         try {
-          scheduledCommitId = await scope.planService.scheduleItem(
+          scheduledCommitId = await scope.study.plan.scheduleItem(
             planItemId: result.item.id,
             start: timing.start,
             end: timing.start.add(Duration(minutes: timing.minutes)),
@@ -765,8 +800,7 @@ class DiscussionChatState extends State<DiscussionChat> {
               )
             : () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) =>
-                      PlanPage(isActive: true, initialItemId: result.item.id),
+                  builder: (_) => PlanPage(initialItemId: result.item.id),
                 ),
               ),
       );
@@ -790,7 +824,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final id = _conversationId;
     if (id == null) return;
     try {
-      await AppScope.of(context).discussionService.dismissNextStep(
+      await AppScope.of(context).chat.discussion.dismissNextStep(
         conversationId: id,
         messageId: suggestion.messageId,
         title: suggestion.draft.title,
@@ -819,57 +853,33 @@ class DiscussionChatState extends State<DiscussionChat> {
   Future<void> _acceptMemory(MemoryItemView item) async {
     final id = _conversationId;
     if (id == null) return;
-    try {
-      final result = await AppScope.of(context).discussionService
-          .acceptMemoryItem(
-            conversationId: id,
-            messageId: item.ownerId,
-            itemId: item.itemId,
-          );
-      if (!mounted) return;
-      await _load();
-      if (!mounted) return;
-      showToast(context, result.notice ?? '已记下这条记忆');
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '保存这条记忆',
-          kind: 'discussion_memory_accept',
-          kept: '这条记忆仍在待确认',
-          next: '可以再点一次「记下」',
-        ),
-      );
-    }
+    await acceptMemoryCard(
+      context: context,
+      accept: () => AppScope.of(context).chat.discussion.acceptMemoryItem(
+        conversationId: id,
+        messageId: item.ownerId,
+        itemId: item.itemId,
+      ),
+      reload: _load,
+      scope: 'discussion',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final id = _conversationId;
     if (id == null) return;
-    try {
-      await AppScope.of(context).discussionService.dismissMemoryItem(
+    await dismissMemoryCard(
+      context: context,
+      dismiss: () => AppScope.of(context).chat.discussion.dismissMemoryItem(
         conversationId: id,
         messageId: item.ownerId,
         itemId: item.itemId,
-      );
-      await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '收起这条记忆',
-          kind: 'discussion_memory_dismiss',
-          kept: '记忆卡片还在页面上',
-          next: '可以再试一次',
-        ),
-      );
-    }
+      ),
+      reload: _load,
+      scope: 'discussion',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   Future<void> _undoMemory(MemoryItemView item) async {
@@ -888,7 +898,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final id = _conversationId;
     final record = _record;
     if (id == null || record == null || !record.open) return;
-    final service = AppScope.of(context).discussionService;
+    final service = AppScope.of(context).chat.discussion;
     try {
       await service.end(id);
       if (!mounted) return;
@@ -924,35 +934,23 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 打开设置页并重新读取配置；返回后卡片上的入口随之切换。
   Future<void> _openModelSettings() async {
-    await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+    final result = await openModelSettingsPage(
+      context,
+      kind: 'discussion_config_read',
+      kept: '这条讨论没有改动',
+    );
     if (!mounted) return;
-    await _reloadConfig();
-    if (!mounted) return;
+    if (result.notice != null) {
+      setState(() => _notice = result.notice);
+      return;
+    }
+    final configured = result.configured;
+    if (configured == null) return;
+    setState(() => _configured = configured);
     showToast(
       context,
-      _configured ? '模型已就绪，可以重新回答上面这个问题。' : '模型还没有配置完整，仍使用本地规则回答。',
+      configured ? '模型已就绪，可以重新回答上面这个问题。' : '模型还没有配置完整，仍使用本地规则回答。',
     );
-  }
-
-  Future<void> _reloadConfig() async {
-    try {
-      final config = await AppScope.of(context).settingsService.config();
-      if (mounted) setState(() => _configured = config?.isConfigured ?? false);
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取模型配置',
-          kind: 'discussion_config_read',
-          kept: '这条讨论没有改动',
-          next: '可以回到设置页重新保存一次',
-        ),
-      );
-    }
   }
 
   /// 用模型重答最后一个问题：不重复写用户消息，新回答追加在后面。
@@ -962,7 +960,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final cancel = _beginReply(retrying: true);
     DiscussionActivity.begin(id);
     try {
-      final result = await AppScope.of(context).discussionService.reply(
+      final result = await AppScope.of(context).chat.discussion.reply(
         conversationId: id,
         repeatLast: true,
         onPartial: _showPartial,
@@ -976,7 +974,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       ];
       var memoryItems = _memoryItems;
       try {
-        memoryItems = await AppScope.of(context).discussionService
+        memoryItems = await AppScope.of(context).chat.discussion
             .memoryItemsFromMessages(merged);
       } catch (_) {
         // 卡片只是展示；读不出来不影响已经保存的回答。
@@ -1047,36 +1045,13 @@ class DiscussionChatState extends State<DiscussionChat> {
               padding: const EdgeInsets.only(bottom: 6),
               child: Text(failureNotice, style: theme.text.bodySmall),
             ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (_configured)
-                forui.FButton(
-                  variant: forui.FButtonVariant.secondary,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _sending || _retrying ? null : _retry,
-                  prefix: const Icon(FLucideIcons.refreshCw),
-                  child: Text(label),
-                )
-              else
-                forui.FButton(
-                  variant: forui.FButtonVariant.outline,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _sending || _retrying ? null : _openModelSettings,
-                  prefix: const Icon(FLucideIcons.keyRound),
-                  child: const Text('配置模型'),
-                ),
-              if (_configured && needsConfig)
-                forui.FButton(
-                  variant: forui.FButtonVariant.ghost,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _sending || _retrying ? null : _openModelSettings,
-                  prefix: const Icon(FLucideIcons.settings),
-                  child: const Text('模型设置'),
-                ),
-            ],
+          ModelRecoveryButtons(
+            configured: _configured,
+            primaryLabel: label,
+            onPrimary: _retry,
+            onConfigure: _openModelSettings,
+            onOpenSettings: needsConfig ? _openModelSettings : null,
+            enabled: !(_sending || _retrying),
           ),
         ],
       ),
@@ -1095,13 +1070,10 @@ class DiscussionChatState extends State<DiscussionChat> {
         Expanded(
           child: _emptyTimeline
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(
-                      widget.emptyHint,
-                      textAlign: TextAlign.center,
-                      style: theme.text.bodyMedium,
-                    ),
+                  child: EmptyState(
+                    icon: FLucideIcons.messageCircle,
+                    title: '讨论内容',
+                    description: widget.emptyHint,
                   ),
                 )
               : ListView.builder(
@@ -1139,7 +1111,10 @@ class DiscussionChatState extends State<DiscussionChat> {
         : _goals.where((item) => item.id == record.goalId).firstOrNull;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+      padding: theme.space.pageInsets(
+        top: theme.space.xs,
+        bottom: theme.space.sm,
+      ),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: theme.colors.outlineVariant)),
       ),
@@ -1215,7 +1190,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final pageNo = record.pageNo;
       final page = pageNo == null
           ? null
-          : await AppScope.of(context).materialService
+          : await AppScope.of(context).library.material
                 .page(record.materialId!, pageNo);
       if (!mounted) return;
       await showZhixinSheet<void>(
@@ -1413,10 +1388,20 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   Widget _composer() {
+    final theme = context.zhixin;
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      child: Container(
+        margin: theme.space.pageInsets(
+          top: theme.space.xs,
+          bottom: theme.space.sm,
+        ),
+        padding: EdgeInsets.all(theme.space.sm),
+        decoration: BoxDecoration(
+          color: theme.colors.card,
+          border: Border.all(color: theme.colors.outlineVariant),
+          borderRadius: theme.radius.feature,
+        ),
         child: Column(
           children: [
             if (AppScope.of(context).broughtSources.length > 0)
@@ -1466,9 +1451,11 @@ class DiscussionChatState extends State<DiscussionChat> {
               children: [
                 ZhixinIconButton(
                   tooltip: '添加图片',
+                  variant: forui.FButtonVariant.secondary,
                   onPressed: _sending || _picking ? null : _chooseAttachment,
                   icon: FLucideIcons.imagePlus,
                 ),
+                SizedBox(width: theme.space.sm),
                 Expanded(
                   child: forui.FTextField(
                     control: .managed(controller: _input),
@@ -1478,9 +1465,21 @@ class DiscussionChatState extends State<DiscussionChat> {
                     hint: _record?.open == false
                         ? '这条讨论已结束，发消息会重新打开'
                         : '输入问题或添加图片',
+                    style: .delta(
+                      border: .delta([.all(InputBorder.none)]),
+                      color: .delta([.all(Colors.transparent)]),
+                    ),
                     suffixBuilder: (_, style, _) => VoiceInputButton(
                       controller: _input,
-                      style: style.clearButtonStyle,
+                      iconSize: 20,
+                      style: style.clearButtonStyle.copyWith(
+                        iconContentStyle: const .delta(
+                          constraints: BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1488,6 +1487,8 @@ class DiscussionChatState extends State<DiscussionChat> {
                 ZhixinIconButton(
                   tooltip: _sending ? '停止生成' : '发送',
                   variant: forui.FButtonVariant.primary,
+                  size: forui.FButtonSizeVariant.lg,
+                  iconSize: _sending ? 18 : 22,
                   onPressed: _sending ? _stop : _send,
                   icon: _sending ? FLucideIcons.square : FLucideIcons.arrowUp,
                 ),

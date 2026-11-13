@@ -39,6 +39,7 @@ CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同�
 ```
 lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
+├── app_scope_data.dart / app_services.dart ← 数据包与恢复操作、六组服务（讨论、安排、材料、记忆、设置、数据版本）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
 ├── application/                            ← 用例：对话、学习、计划、记忆、设置
 ├── data/
@@ -53,7 +54,9 @@ lib/
 └── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、关于
 ```
 
-`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。`ai/llm_client.dart` 负责三种接口的请求与响应格式，工具规格位于 `ai/buddy_tools.dart`，材料读取与提案工具的执行入口位于 `ai/buddy_agent_tools.dart`，提案解析位于 `ai/buddy_reply_parser.dart`，单步输出上限位于 `ai/buddy_wire.dart`。
+`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。`ai/llm_client.dart` 负责三种接口的请求与响应格式，工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`。
+
+`application/service_runtime.dart` 是服务共用的运行环境：时间口径、数据代次、附件目录与模型调用失败的本机记录。应用根只装配一次，保存每日截止小时、整库恢复与清空之后，服务读到的是新值，不必给每个服务各传一个闭包；测试从 `test/support/service_runtime.dart` 取同一份装配。
 
 安排页的三个表单集中在 `plan_dialogs.dart`，讨论消息与引用展示位于 `discussion_message.dart`，页面继续负责加载数据和执行用户操作。
 
@@ -73,11 +76,21 @@ lib/
 
 ## 界面
 
-界面组件与主题由 Forui 0.27.7 承担：页面骨架用 `FScaffold` 配 `ZhixinHeader`，按钮、输入框、下拉、开关、复选与单选、列表与卡片用对应的 F 控件，对话框与短提示分别走 `showZhixinDialog` 与 `showToast`，底部面板走 `showZhixinSheet`，日期与时间选择收在 `ui/date_time_dialogs.dart`，内部用 Material 的日期与时间选择器。页面里的字号、颜色、留白与圆角从 `context.zhixin` 读取，色值只在 `ui/theme.dart` 定义一次，Forui 主题、Markdown 主题与本地化用的 `ThemeData` 都从这一份生成。页面内边距由 `FThemeData` 的 `scaffoldStyle` 统一设为零，页面自己按 `ZhixinSpace` 留白，新增页面不必再传 `childPad`。
+界面组件与主题由 Forui 0.27.7 提供，三栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
 
-`material_ui` 仍提供基础控件、`MaterialApp` 外壳、`MaterialPageRoute`、Markdown 渲染与本地化。底部面板与日期时间选择由 Material 承担：`showZhixinSheet` 包 `showModalBottomSheet`，`showZhixinDatePicker` 与 `showZhixinTimePicker` 包 `showDatePicker` 与 `showTimePicker`，面板的底色、上圆角与拖动条在 `_buildMaterial` 的底部面板主题里统一；现在页主色卡片上的“查看事项”是 `TextButton.icon`，关于页的应用图标是 `CircleAvatar`，现在、记录、安排与数据版本四页的下拉刷新是 `RefreshIndicator`。下拉刷新沿用 Material，因为 Forui 0.27.7 没有对应的控件；头像与文字按钮保持 Material，是否替换按实际效果再定。芯片与分段控件继续用 Forui 的 `FButton` 与自绘分段，不换成 Material 的 `Chip` 与 `SegmentedButton`：前者要补 `ChipThemeData` 与 Material 祖先，后者的外观与滑动动效差别明显。新增界面先找 Forui 组件，Forui 没有对应控件，或者替换要另配尺寸与样式时直接用 Material，判断依据是同一屏的字号、圆角与间距是否协调。图标统一用 Lucide：业务图标与 Forui 控件内部都取 `FLucideIcons`，`forui_lucide` 是直接依赖，新增图标从 [Lucide 图标库](https://lucide.dev/icons/) 里选含义相同的图形。
+按钮、输入框、列表、卡片与表单优先使用 Forui，对话框和短提示分别通过 `showZhixinDialog` 和 `showToast` 打开。底部面板、日期时间选择器和下拉刷新使用 Material，其中底部面板和日期时间选择分别通过 `showZhixinSheet`、`showZhixinDatePicker` 与 `showZhixinTimePicker` 打开，样式由同一主题提供。筛选使用 `ZhixinChip`，互斥的视图切换使用 `ZhixinSegmented`，业务图标统一从 [Lucide 图标库](https://lucide.dev/icons/) 选取，通过 `FLucideIcons` 引用。
 
 测试里单独构建页面时，外层要补 `FTheme`；页面里会弹提示的，还要补 `FToaster`。少了这两层，页面读不到主题，提示也找不到宿主。
+
+动效与加载按 [动画流畅性优化方案](../docs/动画流畅性优化方案.md) 第 5 节执行，新增页面照下面五条写，不再另立一套：
+
+1. 逐帧变化的透明度只用 `FadeTransition`，不用 `Opacity` 组件；逐帧位移的子树先包 `RepaintBoundary`，让动画只动合成层。`FadeIn`、`ExpandReveal` 与 `FadeIndexedStack` 已经把这三件事做在组件里，页面直接用。
+2. 动画期间不改布局：输入框聚焦、分段选中这类状态变化只插值颜色，边框宽度与字重固定，不让整块重新布局。
+3. 切栏、切页签与推入页面时读取立刻发起，回填前调用 `context.afterTransition()`，结果等过渡结束再交给界面；已有数据时返回不重播淡入，也不显示转圈。
+4. 常驻但不可见的内容一律包 `TickerMode(enabled: false)`；底栏与页签用 `IndexedStack` 常驻，切换只换显示，输入、筛选、滚动位置与 `MaterialList` 的状态因此不丢。
+5. 页面路由的过渡在 `ThemeData.pageTransitionsTheme` 里配一次（安卓与桌面淡入加右推 24 像素，iOS 与 macOS 保留系统滑回手势），各页不再各写一套；减少动态效果时直接给终态。`MaterialPageRoute` 照常写，过渡由主题统一决定。
+
+首读占位用 `ListSkeleton`（与卡片同高的静态块），不要用居中转圈：转圈只占一行，内容读完之后下方整体下移，页面跟着跳动。
 
 ## 外观
 

@@ -9,6 +9,7 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/capacity.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 class _Harness {
@@ -29,7 +30,7 @@ class _Harness {
       settings: SettingsRepository(rig.db.rawDb),
       tasks: tasks,
       schedule: schedule,
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       transactions: WriteTransactions(rig.db),
     );
   }

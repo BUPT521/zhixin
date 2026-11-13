@@ -2,15 +2,14 @@ import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
-import '../app_scope.dart';
 import 'discussion_page.dart';
 import 'learning_page.dart';
 import 'memory_page.dart';
-import 'motion.dart';
 import 'now_page.dart';
 import 'plan_page.dart';
 import 'records_page.dart';
 import 'settings_page.dart';
+import 'theme.dart';
 
 /// 底部三栏（02 第 10.1 节）：现在 / 记录 / 安排，设置留在次级入口。
 ///
@@ -24,29 +23,76 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
-  RecordsTab _recordsTab = RecordsTab.learning;
-  int _recordsRequest = 0;
-  int _scheduleRequest = 0;
+  /// 当前栏与跳转请求都走 notifier：切栏只换常驻栈的下标，三栏的构造参数
+  /// 不变，切栏那一帧因此不必把三栏一起重建。
+  final ValueNotifier<int> _index = ValueNotifier<int>(0);
+  final ValueNotifier<RecordsRequest> _recordsRequest =
+      ValueNotifier<RecordsRequest>(
+        const RecordsRequest(RecordsTab.learning, 0),
+      );
+  final ValueNotifier<int> _scheduleRequest = ValueNotifier<int>(0);
+
+  /// 三栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
+  List<Widget>? _pages;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pages ??= [
+      NowPage(
+        key: const ValueKey('now'),
+        activeTab: _index,
+        tabIndex: 0,
+        onOpenLearning: _openLearning,
+        onOpenPlan: _openSchedule,
+        onOpenRecords: () => _openRecords(RecordsTab.learning),
+        onOpenMaterials: () => _openRecords(RecordsTab.materials),
+        onOpenMemory: _openMemory,
+        onOpenSettings: _openSettings,
+      ),
+      RecordsPage(
+        key: const ValueKey('records'),
+        activeTab: _index,
+        tabIndex: 1,
+        request: _recordsRequest,
+        onStartQuestion: () => _open(0),
+        onOpenLearning: _openLearning,
+        onOpenLearningRedo: _openLearningRedo,
+        onOpenDiscussion: _openDiscussion,
+      ),
+      PlanPage(
+        key: const ValueKey('plan'),
+        activeTab: _index,
+        tabIndex: 2,
+        request: _scheduleRequest,
+        onOpenMaterials: () => _openRecords(RecordsTab.materials),
+      ),
+    ];
+  }
+
+  @override
+  void dispose() {
+    // 这些 notifier 由三栏共享，页面卸载时还会移除自己的监听，所以不在这里
+    // 销毁：跟着 HomeShell 一起被回收即可。
+    super.dispose();
+  }
 
   void _open(int index) {
-    if (!mounted) return;
-    setState(() => _index = index);
+    if (!mounted || _index.value == index) return;
+    _index.value = index;
   }
 
   void _openRecords(RecordsTab tab) {
-    setState(() {
-      _recordsTab = tab;
-      _recordsRequest++;
-      _index = 1;
-    });
+    _recordsRequest.value = RecordsRequest(
+      tab,
+      _recordsRequest.value.sequence + 1,
+    );
+    _open(1);
   }
 
   void _openSchedule() {
-    setState(() {
-      _scheduleRequest++;
-      _index = 2;
-    });
+    _scheduleRequest.value++;
+    _open(2);
   }
 
   Future<void> _openLearning(int questionId) async {
@@ -89,90 +135,123 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
-      valueListenable: AppScope.of(context).dataVersion,
-      builder: (context, dataVersion, _) => forui.FScaffold(
-        footer: forui.FBottomNavigationBar(
-          index: _index,
-          onChange: _open,
-          children: const [
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.house,
-                selectedIcon: FLucideIcons.house,
-              ),
-              label: Text('现在'),
-              semanticsLabel: '现在',
-            ),
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.history,
-                selectedIcon: FLucideIcons.history,
-              ),
-              label: Text('记录'),
-              semanticsLabel: '记录',
-            ),
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.calendarClock,
-                selectedIcon: FLucideIcons.calendarClock,
-              ),
-              label: Text('安排'),
-              semanticsLabel: '安排',
-            ),
-          ],
-        ),
+      valueListenable: _index,
+      builder: (context, index, _) => forui.FScaffold(
+        footer: _BottomBar(index: index, onChange: _open),
         // 切栏时新栏淡入并上移几个像素；三栏仍然常驻，状态不随切换重建。
-        child: FadeIndexedStack(
-          index: _index,
-          children: [
-            NowPage(
-              key: const ValueKey('now'),
-              isActive: _index == 0,
-              dataVersion: dataVersion,
-              onOpenLearning: _openLearning,
-              onOpenPlan: _openSchedule,
-              onOpenRecords: () => _openRecords(RecordsTab.learning),
-              onOpenMaterials: () => _openRecords(RecordsTab.materials),
-              onOpenMemory: _openMemory,
-              onOpenSettings: _openSettings,
-            ),
-            RecordsPage(
-              key: const ValueKey('records'),
-              isActive: _index == 1,
-              dataVersion: dataVersion,
-              initialTab: _recordsTab,
-              tabRequest: _recordsRequest,
-              onStartQuestion: () => _open(0),
-              onOpenLearning: _openLearning,
-              onOpenLearningRedo: _openLearningRedo,
-              onOpenDiscussion: _openDiscussion,
-            ),
-            PlanPage(
-              key: const ValueKey('plan'),
-              isActive: _index == 2,
-              dataVersion: dataVersion,
-              scheduleRequest: _scheduleRequest,
-              onOpenMaterials: () => _openRecords(RecordsTab.materials),
-            ),
-          ],
-        ),
+        child: FadeIndexedStack(index: index, children: _pages ?? const []),
       ),
     );
   }
 }
 
-/// 底栏图标；Forui 的底栏项没有单独的选中图标参数，选中态由主色与加粗区分，
-/// 这里留一个选中图标的位置，需要换图形时再用。
-class _NavIcon extends StatelessWidget {
-  const _NavIcon({required this.icon, required this.selectedIcon});
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({required this.index, required this.onChange});
 
-  final IconData icon;
-  final IconData selectedIcon;
+  static const _items = [
+    (FLucideIcons.house, '现在'),
+    (FLucideIcons.history, '记录'),
+    (FLucideIcons.calendarClock, '安排'),
+  ];
+  static const _itemPadding = 5.0;
+  static const _iconHeight = 30.0;
+
+  final int index;
+  final ValueChanged<int> onChange;
 
   @override
   Widget build(BuildContext context) {
-    return Icon(
-      forui.FBottomNavigationBarData.of(context).selected ? selectedIcon : icon,
+    final theme = context.zhixin;
+    final barPadding = EdgeInsets.symmetric(
+      horizontal: theme.space.page,
+      vertical: theme.space.xs,
+    );
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colors.card,
+          border: Border(top: BorderSide(color: theme.colors.outlineVariant)),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Stack(
+            children: [
+              Positioned(
+                top: barPadding.top + _itemPadding,
+                left: barPadding.left,
+                right: barPadding.right,
+                height: _iconHeight,
+                child: IgnorePointer(
+                  child: AnimatedAlign(
+                    duration: context.motionOf(theme.motion.standard),
+                    curve: theme.motion.move,
+                    alignment: AlignmentDirectional(
+                      -1 + 2 * index / (_items.length - 1),
+                      0,
+                    ),
+                    child: FractionallySizedBox(
+                      widthFactor: 1 / _items.length,
+                      child: Center(
+                        child: Container(
+                          width: 58,
+                          height: _iconHeight,
+                          decoration: ShapeDecoration(
+                            color: theme.colors.primaryContainer,
+                            shape: const StadiumBorder(),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              forui.FBottomNavigationBar(
+                index: index,
+                onChange: onChange,
+                style: .delta(
+                  decoration: const .value(BoxDecoration()),
+                  padding: .value(barPadding),
+                  itemStyle: .delta(
+                    padding: const .value(EdgeInsets.all(_itemPadding)),
+                    spacing: theme.space.xs,
+                    tappableStyle: const .delta(
+                      motion: .delta(
+                        bounceTween: forui.FTappableMotion.noBounceTween,
+                      ),
+                    ),
+                    textStyle: .delta([
+                      .all(
+                        .delta(
+                          color: theme.colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      .exact({.selected}, .delta(color: theme.colors.primary)),
+                    ]),
+                  ),
+                ),
+                children: [
+                  for (final (i, (icon, label)) in _items.indexed)
+                    forui.FBottomNavigationBarItem(
+                      icon: SizedBox(
+                        height: _iconHeight,
+                        child: Icon(
+                          icon,
+                          size: 21,
+                          color: i == index
+                              ? theme.colors.onPrimaryContainer
+                              : theme.colors.onSurfaceVariant,
+                        ),
+                      ),
+                      label: Text(label),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

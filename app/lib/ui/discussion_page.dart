@@ -1,8 +1,8 @@
-import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'discussion_chat.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 
 /// 从“记录”打开的讨论：同一条记录，可以继续发消息。
@@ -28,7 +28,7 @@ class DiscussionPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: Text(startNew ? '新讨论' : '继续讨论'),
         showBack: true,

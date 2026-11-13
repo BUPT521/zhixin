@@ -13,6 +13,7 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 void main() {
@@ -32,7 +33,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: ConversationRepository(db.rawDb),
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
     final item = await tasks.createItem(title: '复习');
     final today = await schedule.addBlock(
@@ -65,7 +66,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: ConversationRepository(db.rawDb),
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
     final item = await tasks.createItem(title: '复习');
     await schedule.addBlock(
@@ -101,7 +102,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: conversations,
       materials: materials,
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       evidence: evidence,
     );
     final goal = await tasks.createGoal(title: '矩阵');
@@ -164,7 +165,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: conversations,
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
 
     final id = await conversations.create(title: '同一道题', entryKind: 'text');
@@ -211,7 +212,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: conversations,
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
 
     final goalA = await tasks.createGoal(title: '概率论');
@@ -255,7 +256,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: conversations,
       materials: materials,
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
     );
 
@@ -340,7 +341,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: conversations,
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
     );
     final probability = await tasks.createGoal(title: '概率论期末');
@@ -386,7 +387,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: ConversationRepository(db.rawDb),
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
     final item = await tasks.createItem(title: '复习');
     await schedule.addBlock(
@@ -416,7 +417,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: ConversationRepository(db.rawDb),
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
     final item = await tasks.createItem(title: '晚间复习');
     final block = await schedule.addBlock(
@@ -447,7 +448,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: ConversationRepository(db.rawDb),
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
     final doingItem = await tasks.createItem(title: '正在复习');
     final doingBlock = await schedule.addBlock(
@@ -483,7 +484,7 @@ void main() {
       memories: MemoryRepository(db.rawDb),
       conversations: ConversationRepository(db.rawDb),
       materials: MaterialRepository(db.rawDb),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
     );
     await tasks.createItem(title: '整理笔记', estMinutes: 25);
 

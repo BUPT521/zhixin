@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -27,26 +29,37 @@ import 'zhixin_toast.dart';
 
 enum RecordsTab { learning, materials }
 
+/// 从别的栏目跳到记录时的意图：切到哪个页签，以及这是第几次请求。
+///
+/// 三栏页面常驻、只建一次，跳转不再改构造参数，改用这个请求通知页面。
+class RecordsRequest {
+  const RecordsRequest(this.tab, this.sequence);
+
+  final RecordsTab tab;
+
+  /// 每次跳转加一；页面据此判断是不是新的一次请求。
+  final int sequence;
+}
+
 /// 记录：按日期找回学习记录，也可以查看材料原文。
 class RecordsPage extends StatefulWidget {
   const RecordsPage({
     super.key,
-    required this.isActive,
-    this.dataVersion = 0,
+    required this.activeTab,
+    this.tabIndex = 1,
+    required this.request,
     required this.onOpenLearning,
     required this.onOpenDiscussion,
     this.onOpenLearningRedo,
-    this.initialTab = RecordsTab.learning,
-    this.tabRequest = 0,
     this.onStartQuestion,
   });
 
-  final bool isActive;
+  /// 底栏当前栏的下标；页面自己监听，父级切栏时不再重建这一栏。
+  final ValueListenable<int> activeTab;
+  final int tabIndex;
 
-  /// 整库恢复、清空与导入之后加一；页面据此在原处重读，不被换掉重建。
-  final int dataVersion;
-  final RecordsTab initialTab;
-  final int tabRequest;
+  /// 从别的栏目跳到记录时带的意图：切到哪个页签，第几次请求。
+  final ValueListenable<RecordsRequest> request;
   final VoidCallback? onStartQuestion;
   final Future<void> Function(int questionId) onOpenLearning;
   final Future<void> Function(int conversationId) onOpenDiscussion;
@@ -78,7 +91,16 @@ class _RecordsPageState extends State<RecordsPage> {
   bool _unassignedOnly = false;
   bool _hasMore = false;
   bool _loadingMore = false;
-  late RecordsTab _tab = widget.initialTab;
+  RecordsTab _tab = RecordsTab.learning;
+
+  /// 进过的页签常驻：切回来不再重建，也不重新读取，滚动位置一并保住。
+  final Set<RecordsTab> _visited = {RecordsTab.learning};
+
+  /// 已经处理到第几次跳转请求；用来忽略重复通知。
+  int _seenRequest = 0;
+
+  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
+  ValueListenable<int>? _dataVersion;
 
   /// 列表当前显示的是哪一组筛选的结果；读完新筛选之后才换，列表据此淡入，
   /// 刷新或从详情返回时筛选没变，列表不闪。
@@ -86,36 +108,85 @@ class _RecordsPageState extends State<RecordsPage> {
   bool _loading = true;
   bool _started = false;
 
+  bool get _active => widget.activeTab.value == widget.tabIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _seenRequest = widget.request.value.sequence;
+    widget.activeTab.addListener(_onActiveChanged);
+    widget.request.addListener(_onRequestChanged);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
-    if (_started || !widget.isActive) return;
+    _watchDataVersion(AppScope.of(context).dataVersion);
+    if (_started || !_active) return;
+    _started = true;
     _load();
-  }
-
-  @override
-  void dispose() {
-    DiscussionActivity.generating.removeListener(_onGeneratingChanged);
-    _searchHint.dispose();
-    super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant RecordsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.tabRequest != widget.tabRequest) _tab = widget.initialTab;
-    if (!widget.isActive) return;
-    if (!oldWidget.isActive || oldWidget.dataVersion != widget.dataVersion) {
-      _load();
-      if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
+    if (oldWidget.activeTab != widget.activeTab) {
+      oldWidget.activeTab.removeListener(_onActiveChanged);
+      widget.activeTab.addListener(_onActiveChanged);
     }
+    if (oldWidget.request != widget.request) {
+      oldWidget.request.removeListener(_onRequestChanged);
+      widget.request.addListener(_onRequestChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.activeTab.removeListener(_onActiveChanged);
+    widget.request.removeListener(_onRequestChanged);
+    _dataVersion?.removeListener(_onDataChanged);
+    DiscussionActivity.generating.removeListener(_onGeneratingChanged);
+    _searchHint.dispose();
+    super.dispose();
+  }
+
+  /// 切到这一栏时立刻发起读取；已有内容先显示，读完静默替换。
+  void _onActiveChanged() {
+    if (!mounted || !_active) return;
+    _started = true;
+    _load();
+    if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
+  }
+
+  /// 从首页跳到“材料”或“学习记录”：只切页签，常驻内容不重读。
+  void _onRequestChanged() {
+    final request = widget.request.value;
+    if (!mounted || request.sequence == _seenRequest) return;
+    _seenRequest = request.sequence;
+    setState(() {
+      _tab = request.tab;
+      _visited.add(request.tab);
+    });
+  }
+
+  void _watchDataVersion(ValueListenable<int> version) {
+    if (identical(version, _dataVersion)) return;
+    _dataVersion?.removeListener(_onDataChanged);
+    _dataVersion = version;
+    version.addListener(_onDataChanged);
+  }
+
+  void _onDataChanged() {
+    if (!mounted || !_active) return;
+    _load();
+    if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
   }
 
   /// 生成开始或结束时重画记录；消息数与摘要等下次读取列表时更新。
   void _onGeneratingChanged() {
-    if (!mounted || !widget.isActive) return;
+    if (!mounted || !_active) return;
     setState(() {});
   }
 
@@ -172,14 +243,19 @@ class _RecordsPageState extends State<RecordsPage> {
     final filter = (_goalFilter, _unassignedOnly, _answerFilter);
     if (append) setState(() => _loadingMore = true);
     try {
-      final goals = append ? _goals : await scope.discussionService.goals();
-      final records = await scope.discussionService.records(
-        goalId: _unassignedOnly ? null : _goalFilter,
-        unassignedOnly: _unassignedOnly,
-        answerStatus: _answerFilter,
-        limit: _pageSize,
-        offset: append ? _records.length : 0,
-      );
+      // 目标列表与这一页记录互不依赖，同时发出，首屏少一次往返。
+      final (goals, records) = await (
+        append
+            ? Future<List<LearningGoal>>.value(_goals)
+            : scope.chat.discussion.goals(),
+        scope.chat.discussion.records(
+          goalId: _unassignedOnly ? null : _goalFilter,
+          unassignedOnly: _unassignedOnly,
+          answerStatus: _answerFilter,
+          limit: _pageSize,
+          offset: append ? _records.length : 0,
+        ),
+      ).wait;
       final questions = records.isEmpty
           ? const <QuestionRow>[]
           : await scope.conversations.questionRows(
@@ -191,7 +267,10 @@ class _RecordsPageState extends State<RecordsPage> {
       ];
       final assessments = lastAttempts.isEmpty
           ? const <int, List<Assessment>>{}
-          : await scope.learningService.assessmentsFor(lastAttempts);
+          : await scope.chat.learning.assessmentsFor(lastAttempts);
+      if (!mounted || request != _loadRequest) return;
+      // 结果回来时若还在切栏或返回动画里，等动画走完再填，回填不打断动画。
+      await context.afterTransition();
       if (!mounted || request != _loadRequest) return;
       final loaded = <int, QuestionRow>{if (append) ..._questions};
       for (final row in questions) {
@@ -286,8 +365,13 @@ class _RecordsPageState extends State<RecordsPage> {
                       control: .managed(controller: _searchHint),
                       readOnly: true,
                       onTap: _openSearch,
-                      prefixBuilder: (_, _, _) =>
-                          const Icon(FLucideIcons.search),
+                      prefixBuilder: (context, style, variants) =>
+                          forui.FTextField.prefixIconBuilder(
+                            context,
+                            style,
+                            variants,
+                            const Icon(FLucideIcons.search, size: 16),
+                          ),
                       hint: '搜索讨论、题目或材料原文',
                     ),
                   ),
@@ -317,21 +401,31 @@ class _RecordsPageState extends State<RecordsPage> {
                   ),
                 ],
                 selected: _tab,
-                onChanged: (tab) => setState(() => _tab = tab),
+                onChanged: (tab) => setState(() {
+                  _tab = tab;
+                  _visited.add(tab);
+                }),
               ),
             ),
             SizedBox(height: theme.space.sm),
             Expanded(
-              // 切换“学习记录 / 材料”与读完第一页时，新内容淡入。
+              // 两个页签常驻，切换只换显示：材料列表的滚动位置与已经读到的
+              // 数据都留住，切回来不再整棵重建、不再重读。首次进入某页签时
+              // 才把它建出来。换页签与读完第一页时，新内容淡入一次。
               child: FadeIn(
                 trigger: (_tab, _loading),
                 playOnInit: false,
-                child: learning
-                    ? _learningRecords(theme)
-                    : MaterialList(
-                        key: _materialsKey,
-                        isActive: widget.isActive,
-                      ),
+                child: IndexedStack(
+                  sizing: StackFit.expand,
+                  index: learning ? 0 : 1,
+                  children: [
+                    _learningRecords(theme),
+                    if (_visited.contains(RecordsTab.materials))
+                      MaterialList(key: _materialsKey, isActive: true)
+                    else
+                      const SizedBox.shrink(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -393,7 +487,7 @@ class _RecordsPageState extends State<RecordsPage> {
                 variant: answerActive
                     ? forui.FButtonVariant.secondary
                     : forui.FButtonVariant.outline,
-                size: forui.FButtonSizeVariant.xs,
+                size: forui.FButtonSizeVariant.sm,
                 mainAxisSize: MainAxisSize.min,
                 onPress: controller.toggle,
                 suffix: const Icon(FLucideIcons.chevronDown),
@@ -404,7 +498,7 @@ class _RecordsPageState extends State<RecordsPage> {
             ),
             Container(
               width: 1,
-              height: 20,
+              height: 24,
               margin: EdgeInsets.symmetric(horizontal: theme.space.sm),
               color: theme.colors.outlineVariant,
             ),
@@ -412,6 +506,7 @@ class _RecordsPageState extends State<RecordsPage> {
               padding: EdgeInsets.only(right: theme.space.sm - 2),
               child: ZhixinChip(
                 label: '全部',
+                size: forui.FButtonSizeVariant.sm,
                 selected: _goalFilter == null && !_unassignedOnly,
                 onPressed: () => _setGoalFilter(),
               ),
@@ -420,6 +515,7 @@ class _RecordsPageState extends State<RecordsPage> {
               padding: EdgeInsets.only(right: theme.space.sm - 2),
               child: ZhixinChip(
                 label: '无归属',
+                size: forui.FButtonSizeVariant.sm,
                 selected: _unassignedOnly,
                 onPressed: () => _setGoalFilter(unassigned: true),
               ),
@@ -429,6 +525,7 @@ class _RecordsPageState extends State<RecordsPage> {
                 padding: EdgeInsets.only(right: theme.space.sm - 2),
                 child: ZhixinChip(
                   label: goal.title,
+                  size: forui.FButtonSizeVariant.sm,
                   icon: FLucideIcons.flag,
                   selected: !_unassignedOnly && _goalFilter == goal.id,
                   onPressed: () => _setGoalFilter(goalId: goal.id),
@@ -441,56 +538,63 @@ class _RecordsPageState extends State<RecordsPage> {
   }
 
   Widget _learningRecords(ZhixinTheme theme) {
-    if (_loading) {
-      return widget.isActive
-          ? const Center(child: forui.FCircularProgress())
-          : const SizedBox.shrink();
-    }
     final records = _records;
     return Column(
       children: [
+        // 筛选条不依赖读取结果，首读时就位，读完只在下面换内容，页面不往下跳。
         _filterBar(theme),
         Expanded(
-          child: FadeIn(
-            trigger: _shownFilter,
-            playOnInit: false,
-            child: records.isEmpty
-                ? SingleChildScrollView(
-                    child: EmptyState(
-                      icon: _filtered
-                          ? FLucideIcons.filterX
-                          : FLucideIcons.messageCircle,
-                      title: _filtered ? '没有符合筛选的记录' : '暂无学习记录',
-                      description: _filtered
-                          ? '可以调整筛选条件，查看其他记录。'
-                          : '讨论和题目的作答都会保存在这里。',
-                      action: _filtered
-                          ? forui.FButton(
-                              variant: forui.FButtonVariant.outline,
-                              mainAxisSize: MainAxisSize.min,
-                              onPress: () {
-                                setState(() {
-                                  _goalFilter = null;
-                                  _unassignedOnly = false;
-                                  _answerFilter = null;
-                                });
-                                _load();
-                              },
-                              child: const Text('清除筛选'),
-                            )
-                          : forui.FButton(
-                              variant: forui.FButtonVariant.secondary,
-                              mainAxisSize: MainAxisSize.min,
-                              onPress: widget.onStartQuestion,
-                              child: const Text('提出问题'),
-                            ),
-                    ),
-                  )
-                : RefreshIndicator(
-                    onRefresh: _load,
-                    child: _recordList(theme, records),
+          child: _loading
+              // 首读用与记录卡片同高的静态骨架，读完原位替换。
+              ? ListSkeleton(
+                  rows: 3,
+                  padding: EdgeInsets.fromLTRB(
+                    theme.space.page,
+                    theme.space.sm,
+                    theme.space.page,
+                    0,
                   ),
-          ),
+                )
+              : FadeIn(
+                  trigger: _shownFilter,
+                  playOnInit: false,
+                  child: records.isEmpty
+                      ? SingleChildScrollView(
+                          child: EmptyState(
+                            icon: _filtered
+                                ? FLucideIcons.filterX
+                                : FLucideIcons.messageCircle,
+                            title: _filtered ? '没有符合筛选的记录' : '暂无学习记录',
+                            description: _filtered
+                                ? '可以调整筛选条件，查看其他记录。'
+                                : '讨论和题目的作答都会保存在这里。',
+                            action: _filtered
+                                ? forui.FButton(
+                                    variant: forui.FButtonVariant.outline,
+                                    mainAxisSize: MainAxisSize.min,
+                                    onPress: () {
+                                      setState(() {
+                                        _goalFilter = null;
+                                        _unassignedOnly = false;
+                                        _answerFilter = null;
+                                      });
+                                      _load();
+                                    },
+                                    child: const Text('清除筛选'),
+                                  )
+                                : forui.FButton(
+                                    variant: forui.FButtonVariant.secondary,
+                                    mainAxisSize: MainAxisSize.min,
+                                    onPress: widget.onStartQuestion,
+                                    child: const Text('提出问题'),
+                                  ),
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: _recordList(theme, records),
+                        ),
+                ),
         ),
       ],
     );
@@ -503,7 +607,12 @@ class _RecordsPageState extends State<RecordsPage> {
       final key = date == null ? '更早' : _dayHeading(date);
       groups.putIfAbsent(key, () => []).add(record);
     }
-    return ListView(
+    // 列表项按“日期标题、一条记录”铺平，交给 ListView.builder 只建可视范围
+    // 内的几项；每读一页也不再重新生成整份 children。
+    final entries = <Object>[
+      for (final entry in groups.entries) ...[entry.key, ...entry.value],
+    ];
+    return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(
         theme.space.page,
@@ -511,31 +620,44 @@ class _RecordsPageState extends State<RecordsPage> {
         theme.space.page,
         theme.space.xl,
       ),
-      children: [
-        for (final entry in groups.entries) ...[
-          Padding(
+      itemCount: entries.length + (_hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == entries.length) {
+          // 列表末尾这一项建出来，说明已经滚到离底部一屏以内，自动接着读。
+          _scheduleLoadMore();
+          return LoadMoreFooter(
+            label: '读取更早的记录',
+            loading: _loadingMore,
+            onPressed: _loadMore,
+          );
+        }
+        return switch (entries[index]) {
+          final String heading => Padding(
             padding: EdgeInsets.only(
               top: theme.space.md,
               bottom: theme.space.xs,
               left: 2,
             ),
             child: Text(
-              entry.key,
+              heading,
               style: theme.text.labelLarge.copyWith(
                 color: theme.colors.onSurfaceVariant,
               ),
             ),
           ),
-          for (final record in entry.value) _recordTile(theme, record),
-        ],
-        if (_hasMore)
-          LoadMoreFooter(
-            label: '读取更早的记录',
-            loading: _loadingMore,
-            onPressed: _loadMore,
-          ),
-      ],
+          final ConversationRecord record => _recordTile(theme, record),
+          _ => const SizedBox.shrink(),
+        };
+      },
     );
+  }
+
+  /// 滚到列表末尾时自动读下一页；按钮留着，读取失败时可以再点一次。
+  void _scheduleLoadMore() {
+    if (!_hasMore || _loadingMore) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadMore();
+    });
   }
 
   /// 日期分组的标题：今天与昨天直接写出来，其余写日期与星期。
@@ -559,7 +681,7 @@ class _RecordsPageState extends State<RecordsPage> {
     );
     if (choice == null || !mounted) return;
     try {
-      await AppScope.of(context).discussionService
+      await AppScope.of(context).chat.discussion
           .setGoal(record.id, choice.goalId);
       await _load();
     } catch (error, stack) {
@@ -608,7 +730,7 @@ class _RecordsPageState extends State<RecordsPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await AppScope.of(context).discussionService.clear(record.id);
+      await AppScope.of(context).chat.discussion.clear(record.id);
       await _load();
       if (!mounted) return;
       showToast(context, '已清空这条记录');
