@@ -24,6 +24,7 @@ import 'application/semantic_index_service.dart';
 import 'application/memory_scope_service.dart';
 import 'application/plan_service.dart';
 import 'application/search_service.dart';
+import 'application/service_runtime.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'data/backup/data_package_service.dart';
@@ -142,6 +143,14 @@ class AppScopeState extends State<AppScope> {
 
   TimePolicy get timePolicy => TimePolicy(clock: clock, cutoffHour: cutoffHour);
 
+  /// 服务共用的运行环境；时间口径随保存的设置换新，数据代次随恢复与清空推进。
+  late final ServiceRuntime runtime = ServiceRuntime(
+    policySource: () => timePolicy,
+    filesDirSource: () => paths.filesDir,
+    dataEpochSource: () => _operationEpoch,
+    recordFailure: crashLog.record,
+  );
+
   late final EvidenceRepository _evidenceRepository = EvidenceRepository(db);
 
   late final EmbeddingConfigStore _embeddingStore = EmbeddingConfigStore(
@@ -232,14 +241,14 @@ class AppScopeState extends State<AppScope> {
     memories: memories,
     conversations: conversations,
     materials: materials,
-    policy: () => timePolicy,
+    runtime: runtime,
     evidence: _evidence,
   );
 
   late final MaterialService _material = MaterialService(
     materials: materials,
     transactions: _transactions,
-    dataEpoch: () => _operationEpoch,
+    runtime: runtime,
   );
 
   late final SearchService _search = SearchService(evidence: _evidence);
@@ -248,7 +257,7 @@ class AppScopeState extends State<AppScope> {
     settings: _settings,
     tasks: tasks,
     schedule: schedule,
-    policy: () => timePolicy,
+    runtime: runtime,
     transactions: _transactions,
   );
 
@@ -282,14 +291,11 @@ class AppScopeState extends State<AppScope> {
     revisions: _revisions,
     tasks: tasks,
     materials: materials,
-    policy: () => timePolicy,
+    runtime: runtime,
     transactions: _transactions,
-    filesDir: () => paths.filesDir,
     cleanupAttachmentPaths: cleanupAttachmentPaths,
     assets: _engine.assets,
     cache: _attachmentCache,
-    dataEpoch: () => _operationEpoch,
-    recordFailure: crashLog.record,
   );
 
   late final LearningService _learning = LearningService(
@@ -304,18 +310,15 @@ class AppScopeState extends State<AppScope> {
     ai: _ai,
     context: _context,
     memoryScope: _memoryScope,
-    policy: () => timePolicy,
+    runtime: runtime,
     transactions: _transactions,
-    filesDir: () => paths.filesDir,
-    dataEpoch: () => _operationEpoch,
-    recordFailure: crashLog.record,
   );
 
   late final PlanService _plan = PlanService(
     tasks: tasks,
     schedule: schedule,
     revisions: _revisions,
-    policy: () => timePolicy,
+    runtime: runtime,
     studyPlans: studyPlans,
     transactions: _transactions,
   );
@@ -337,7 +340,7 @@ class AppScopeState extends State<AppScope> {
     transactions: _transactions,
     llmStore: _llmStore,
     ai: _configuredAi!,
-    policy: () => timePolicy,
+    runtime: runtime,
     onPolicyChanged: _refreshDayCutoffHour,
     restore: restore,
     resetAll: resetAllData,

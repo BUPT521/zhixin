@@ -8,6 +8,7 @@ import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 void main() {
@@ -34,7 +35,9 @@ void main() {
       tasks: tasks,
       schedule: schedule,
       revisions: rig.revisions,
-      policy: () => TimePolicy(clock: () => DateTime(2026, 11, 10, 10)),
+      runtime: testRuntime(
+        policy: () => TimePolicy(clock: () => DateTime(2026, 11, 10, 10)),
+      ),
       studyPlans: StudyPlanRepository(rig.db),
       transactions: WriteTransactions(rig.db),
     );

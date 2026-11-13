@@ -5,6 +5,7 @@ import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../domain/models/material.dart';
 import 'docx_import.dart';
+import 'service_runtime.dart';
 
 /// 材料页的读写：导入材料、添加一页与更正页内文字。
 ///
@@ -14,12 +15,12 @@ class MaterialService {
   MaterialService({
     required this.materials,
     required this.transactions,
-    this.dataEpoch = _initialDataEpoch,
+    required this.runtime,
   });
 
   final MaterialRepository materials;
   final WriteTransactions transactions;
-  final int Function() dataEpoch;
+  final ServiceRuntime runtime;
 
   Future<List<Material>> list({int? goalId}) => materials.list(goalId: goalId);
 
@@ -76,7 +77,7 @@ class MaterialService {
     int? goalId,
   }) {
     return transactions.run((txn) {
-      if (dataEpoch() != expectedEpoch) {
+      if (runtime.dataEpoch != expectedEpoch) {
         throw StateError('数据版本已变更，请重新选择 Word 文件');
       }
       return materials.createWithPages(
@@ -139,5 +140,3 @@ class MaterialService {
     }, label: correctMaterialPageAction);
   }
 }
-
-int _initialDataEpoch() => 0;

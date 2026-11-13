@@ -24,6 +24,7 @@ import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 class _FakeAi implements BuddyAi {
@@ -105,16 +106,14 @@ class _Harness {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
         attempts: attempts,
       ),
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy, dataEpoch: () => epoch),
       transactions: WriteTransactions(db),
-      filesDir: () => '.',
-      dataEpoch: () => epoch,
     );
   }
 }

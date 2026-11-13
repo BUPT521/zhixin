@@ -7,7 +7,6 @@ import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
-import 'package:zhixin/application/buddy_answer.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/discussion_service.dart';
 import 'package:zhixin/application/evidence_service.dart';
@@ -31,6 +30,7 @@ import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 /// 固定回答的模型替身；不联网，也不碰 Keystore。
@@ -132,7 +132,7 @@ class _Harness {
         memories: memories,
         conversations: conversations,
         materials: materials,
-        policy: () => policy,
+        runtime: testRuntime(policy: () => policy),
         evidence: EvidenceService(repository: EvidenceRepository(db)),
       ),
       memoryScope: MemoryScopeService(
@@ -143,13 +143,15 @@ class _Harness {
       revisions: rig.revisions,
       tasks: tasks,
       materials: materials,
-      policy: () => policy,
+      runtime: testRuntime(
+        policy: () => policy,
+        filesDir: () => rig.filesDir,
+        dataEpoch: () => epoch,
+        recordFailure: recordFailure,
+      ),
       transactions: WriteTransactions(db),
-      filesDir: () => rig.filesDir,
       cleanupAttachmentPaths: (paths) =>
           AttachmentStore(filesDir: rig.filesDir).cleanupCandidates(db, paths),
-      dataEpoch: () => epoch,
-      recordFailure: recordFailure,
     );
   }
 }

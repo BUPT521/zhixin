@@ -6,11 +6,13 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 MaterialService _service(TestRig rig, {Clock? clock}) => MaterialService(
   materials: MaterialRepository(rig.db, clock: clock ?? systemClock),
   transactions: WriteTransactions(rig.db),
+  runtime: testRuntime(),
 );
 
 void main() {

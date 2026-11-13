@@ -11,9 +11,9 @@ import '../domain/models/assessment.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
-import '../domain/rules/time_policy.dart';
 import 'evidence_service.dart';
 import 'memory_recall.dart';
+import 'service_runtime.dart';
 
 /// 一次回答最多带上的其他材料页与较早讨论条数；用户主动检索不受这个限制。
 const int maxContextMaterialHits = 5;
@@ -39,7 +39,7 @@ class ContextService {
     required this.memories,
     required this.conversations,
     required this.materials,
-    required this.policy,
+    required this.runtime,
     this.evidence,
   });
 
@@ -49,7 +49,7 @@ class ContextService {
   final MemoryRepository memories;
   final ConversationRepository conversations;
   final MaterialRepository materials;
-  final TimePolicy Function() policy;
+  final ServiceRuntime runtime;
 
   /// 回答前的原文检索；为空时只使用关键词检索，行为与之前一致。
   final EvidenceService? evidence;
@@ -70,7 +70,7 @@ class ContextService {
     String? conversationFocus,
     bool includeEarlier = true,
   }) async {
-    final current = policy();
+    final current = runtime.policy;
     final now = current.now;
     final range = current.naturalDayRange(now);
     final goals = await tasks.activeGoals();
@@ -284,7 +284,7 @@ class ContextService {
   /// “接下来”，不再把晚些时候的预约当成当前活动。没有下一次预约时才取最近
   /// 到期的待办，并且不重复展示已经在进行的那一项。
   Future<NowActivity> loadActivity() async {
-    final current = policy();
+    final current = runtime.policy;
     final now = current.now;
     final range = current.naturalDayRange(now);
     // 当天时间块与最近到期的待办互不依赖，同时发出，首屏少一次平台通道往返。

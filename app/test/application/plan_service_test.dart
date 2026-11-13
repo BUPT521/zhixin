@@ -16,6 +16,7 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/models/study_plan.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
@@ -23,7 +24,7 @@ PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
     tasks: TaskRepository(rig.db),
     schedule: ScheduleRepository(rig.db),
     revisions: rig.revisions,
-    policy: () => policy,
+    runtime: testRuntime(policy: () => policy),
     studyPlans: StudyPlanRepository(rig.db, clock: clock ?? systemClock),
     transactions: WriteTransactions(rig.db),
   );
@@ -84,7 +85,7 @@ void main() {
       settings: SettingsRepository(rig.db),
       tasks: tasks,
       schedule: schedule,
-      policy: () => policy,
+      runtime: testRuntime(policy: () => policy),
       transactions: WriteTransactions(rig.db),
     );
     await capacity.setWindow(start: '10:00', end: '11:00');
