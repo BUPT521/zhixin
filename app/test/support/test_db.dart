@@ -41,22 +41,23 @@ class TestRig {
 
 Future<TestRig> openTestRig({
   Clock clock = systemClock,
+  RevisionEngine? engine,
   Future<void> Function()? onUndoApplied,
   Future<void> Function()? onDataChanged,
   AttachmentCache? cache,
 }) async {
   final dir = await Directory.systemTemp.createTemp('zhixin_test_rig');
   final raw = await openTestDb();
-  final engine = RevisionEngine(clock: clock);
+  final revisionEngine = engine ?? RevisionEngine(clock: clock);
   final db = GuardedDatabase(
     gate: DatabaseGate(),
     resolve: () => raw,
-    revisions: engine,
+    revisions: revisionEngine,
   );
   final revisions = RevisionService(
     db: db,
     raw: () => raw,
-    engine: engine,
+    engine: revisionEngine,
     clock: clock,
     cache: cache ?? AttachmentCache(filesDir: () => dir.path),
     onUndoApplied: onUndoApplied,
@@ -65,7 +66,7 @@ Future<TestRig> openTestRig({
   return TestRig(
     raw: raw,
     db: db,
-    engine: engine,
+    engine: revisionEngine,
     revisions: revisions,
     filesDir: dir.path,
   );
