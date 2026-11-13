@@ -1,6 +1,6 @@
 # 长期记忆对照脚本
 
-`history.json` 与 `app/test/evaluation/longmem_eval_test.dart` 使用同一批合成历史：同一道题三次作答（提示下完成、做错、隔天独立完成）、材料页更正、无归属讨论与一组查询。查询写明查询时间、范围与必要证据标识。
+`history.json` 把 `app/test/evaluation/longmem_eval_test.dart` 里的合成历史导成一份 JSON：同一道题三次作答（提示下完成、做错、隔天独立完成）、材料页更正、无归属讨论与五条查询。查询写明查询时间、范围与必要证据标识。用例里另有四条只在应用内验证的查询，不进这份文件。两边的查询编号、文字与时间由用例中的“对照脚本的查询与用例保持同一份”比对，改一处忘另一处时测试先失败。
 
 `run_compare.py` 用 Mem0 OSS 与 Hindsight 跑这份历史：
 
