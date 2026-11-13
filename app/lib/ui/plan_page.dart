@@ -1,5 +1,8 @@
 import 'package:calendar_view/calendar_view.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart'
+    as flutter_material
+    show Material, MaterialType;
 
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
@@ -65,6 +68,8 @@ class _PlanPageState extends State<PlanPage> {
   bool _showAllPlans = false;
 
   bool _showWeekGrid = false;
+  final _weekGridKey = GlobalKey<WeekViewState<Object>>();
+  int _weekRequest = 0;
   String? _error;
 
   /// 进过的页签常驻：切回来不再重建，滚动位置一并保住。
@@ -121,7 +126,8 @@ class _PlanPageState extends State<PlanPage> {
     _watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
-    _anchor = AppScope.of(context).timePolicy.now;
+    final policy = AppScope.of(context).timePolicy;
+    _anchor = policy.naturalWeekStart(policy.now);
     // 未显示的页面不提前读取，也不在后台保留转圈；切到安排时再加载。
     if (_active) _load();
   }
@@ -177,12 +183,13 @@ class _PlanPageState extends State<PlanPage> {
   Future<void> _load() async {
     final scope = AppScope.of(context);
     final anchor = _anchor;
+    final request = ++_weekRequest;
     try {
       final week = await scope.study.plan.loadWeek(anchor);
-      if (!mounted) return;
+      if (!mounted || request != _weekRequest) return;
       // 结果回来时若还在切栏或返回动画里，等动画走完再填。
       await context.afterTransition();
-      if (!mounted) return;
+      if (!mounted || request != _weekRequest) return;
       setState(() {
         _week = week;
         _shownAnchor = anchor;
@@ -190,23 +197,30 @@ class _PlanPageState extends State<PlanPage> {
         _error = null;
         _doneItems = const [];
         _doneLoaded = false;
+        _loadingDone = false;
         _hasMoreDone = false;
       });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || request != _weekRequest) return;
+        final grid = _weekGridKey.currentState;
+        if (grid != null && grid.currentDate != anchor) grid.jumpToWeek(anchor);
+      });
       if (!_openedInitial && widget.initialItemId != null) {
-        _openedInitial = true;
         final item =
             week.items
                 .where((item) => item.id == widget.initialItemId)
                 .firstOrNull ??
             await _itemById(widget.initialItemId!);
-        if (item != null) {
+        if (mounted && request == _weekRequest && item != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _showItem(item);
+            if (!mounted || request != _weekRequest || _openedInitial) return;
+            _openedInitial = true;
+            _showItem(item);
           });
         }
       }
     } catch (error, stack) {
-      if (!mounted) return;
+      if (!mounted || request != _weekRequest) return;
       final message = describeFailure(
         context,
         error,
@@ -222,6 +236,13 @@ class _PlanPageState extends State<PlanPage> {
       });
       showToast(context, message);
     }
+  }
+
+  void _selectWeek(DateTime date) {
+    final anchor = AppScope.of(context).timePolicy.naturalWeekStart(date);
+    if (anchor == _anchor) return;
+    _anchor = anchor;
+    _load();
   }
 
   /// 已完成列表目前读回的事项；日程里点到的已完成事项可能还不在这一页里。
@@ -254,7 +275,7 @@ class _PlanPageState extends State<PlanPage> {
     try {
       final page = await AppScope.of(context).study.plan
           .doneItems(limit: _donePageSize, offset: offset);
-      if (!mounted) return;
+      if (!mounted || !identical(_week, week)) return;
       setState(() {
         _doneItems = reset ? page : [..._doneItems, ...page];
         _doneLoaded = true;
@@ -262,7 +283,7 @@ class _PlanPageState extends State<PlanPage> {
         _loadingDone = false;
       });
     } catch (error, stack) {
-      if (!mounted) return;
+      if (!mounted || !identical(_week, week)) return;
       final message = describeFailure(
         context,
         error,
@@ -1149,10 +1170,14 @@ class _PlanPageState extends State<PlanPage> {
         .toList(growable: false);
     final visiblePlans = _showAllPlans ? summaries : openPlans;
     final policy = AppScope.of(context).timePolicy;
-    final range = policy.naturalWeekRange(_anchor);
+    final range = policy.naturalWeekRange(_shownAnchor!);
     final currentWeek =
         range.start == policy.naturalWeekRange(policy.now).start;
-    final lastDay = range.endExclusive.subtract(const Duration(days: 1));
+    final lastDay = DateTime(
+      range.start.year,
+      range.start.month,
+      range.start.day + 6,
+    );
     final planned = week.blocks.where((entry) => entry.block.planned).length;
     return [
       forui.FCard(
@@ -1162,10 +1187,9 @@ class _PlanPageState extends State<PlanPage> {
             children: [
               ZhixinIconButton(
                 tooltip: '上一周',
-                onPressed: () {
-                  _anchor = _anchor.subtract(const Duration(days: 7));
-                  _load();
-                },
+                onPressed: () => _selectWeek(
+                  DateTime(_anchor.year, _anchor.month, _anchor.day - 7),
+                ),
                 icon: FLucideIcons.chevronLeft,
               ),
               Expanded(
@@ -1192,10 +1216,9 @@ class _PlanPageState extends State<PlanPage> {
               ),
               ZhixinIconButton(
                 tooltip: '下一周',
-                onPressed: () {
-                  _anchor = _anchor.add(const Duration(days: 7));
-                  _load();
-                },
+                onPressed: () => _selectWeek(
+                  DateTime(_anchor.year, _anchor.month, _anchor.day + 7),
+                ),
                 icon: FLucideIcons.chevronRight,
               ),
             ],
@@ -1208,10 +1231,7 @@ class _PlanPageState extends State<PlanPage> {
             variant: forui.FButtonVariant.ghost,
             size: forui.FButtonSizeVariant.sm,
             mainAxisSize: MainAxisSize.min,
-            onPress: () {
-              _anchor = AppScope.of(context).timePolicy.now;
-              _load();
-            },
+            onPress: () => _selectWeek(policy.now),
             prefix: const Icon(FLucideIcons.calendarDays),
             child: const Text('回到本周'),
           ),
@@ -1346,7 +1366,7 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   Widget _weekGrid(ZhixinTheme theme, PlanWeek week) {
-    final range = AppScope.of(context).timePolicy.naturalWeekRange(_anchor);
+    final weekStart = _shownAnchor!;
     final events = <CalendarEventData<Object>>[];
     for (final entry in week.blocks) {
       final start = entry.block.startAt;
@@ -1364,7 +1384,11 @@ class _PlanPageState extends State<PlanPage> {
     }
     for (final entry in week.timetable) {
       for (var offset = 0; offset < 7; offset++) {
-        final day = range.start.add(Duration(days: offset));
+        final day = DateTime(
+          weekStart.year,
+          weekStart.month,
+          weekStart.day + offset,
+        );
         if (day.weekday != entry.weekday) continue;
         final start = _atTime(day, entry.startTime);
         final end = _atTime(day, entry.endTime);
@@ -1390,24 +1414,26 @@ class _PlanPageState extends State<PlanPage> {
         borderRadius: theme.radius.card,
         border: Border.all(color: theme.colors.outlineVariant),
       ),
-      child: WeekView<Object>(
-        controller: controller,
-        initialDay: _anchor,
-        startHour: 6,
-        endHour: 24,
-        heightPerMinute: 0.55,
-        showVerticalLines: true,
-        weekPageHeaderBuilder: (start, end) => const SizedBox.shrink(),
-        weekDayStringBuilder: (index) {
-          const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-          return index >= 1 && index <= 7 ? labels[index - 1] : '';
-        },
-        timeLineStringBuilder: (date, {secondaryDate}) => '${date.hour}:00',
-        onPageChange: (date, index) {
-          _anchor = date;
-          _load();
-        },
-        onEventTap: (events, date) => _openGridEvent(events.firstOrNull?.event),
+      child: flutter_material.Material(
+        type: flutter_material.MaterialType.transparency,
+        child: WeekView<Object>(
+          key: _weekGridKey,
+          controller: controller,
+          initialDay: weekStart,
+          startHour: 6,
+          endHour: 24,
+          heightPerMinute: 0.55,
+          showVerticalLines: true,
+          weekPageHeaderBuilder: (start, end) => const SizedBox.shrink(),
+          weekDayStringBuilder: (index) {
+            const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+            return index >= 1 && index <= 7 ? labels[index - 1] : '';
+          },
+          timeLineStringBuilder: (date, {secondaryDate}) => '${date.hour}:00',
+          onPageChange: (date, _) => _selectWeek(date),
+          onEventTap: (events, date) =>
+              _openGridEvent(events.firstOrNull?.event),
+        ),
       ),
     );
   }

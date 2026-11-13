@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:calendar_view/calendar_view.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -1373,6 +1374,65 @@ void main() {
       () => scope!.conversations.questionRows(),
     );
     expect(rows!.single.question.stem, '保留的题目');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('展开的周视图与周切换按钮显示同一周', (tester) async {
+    await openApp(tester, size: const Size(390, 1100));
+    await tester.runAsync(
+      () => scope!.study.plan.addTimetable(
+        weekday: 3,
+        startTime: '08:00',
+        endTime: '09:00',
+        title: '数据结构',
+      ),
+    );
+    await tester.tap(find.text('安排').last.hitTestable());
+    await settle(tester);
+    await tester.tap(find.text('周视图'));
+    await settle(tester);
+
+    final grid = find.byType(WeekView<Object>);
+    WeekViewState<Object> calendar() =>
+        tester.state<WeekViewState<Object>>(grid);
+
+    final firstWeek = calendar().currentDate;
+    final nextWeek = find.bySemanticsLabel('下一周');
+    await tester.tap(nextWeek);
+    await tester.tap(nextWeek);
+    await settle(tester);
+    final selectedWeek = DateTime(
+      firstWeek.year,
+      firstWeek.month,
+      firstWeek.day + 14,
+    );
+    expect(calendar().currentDate, selectedWeek);
+
+    await tester.fling(grid, const Offset(300, 0), 900);
+    await settle(tester);
+    final previousWeek = DateTime(
+      firstWeek.year,
+      firstWeek.month,
+      firstWeek.day + 7,
+    );
+    expect(calendar().currentDate, previousWeek);
+    expect(
+      find.textContaining('${previousWeek.month}月${previousWeek.day}日 – '),
+      findsOneWidget,
+    );
+    final event = tester
+        .widget<WeekView<Object>>(grid)
+        .controller!
+        .allEvents
+        .single;
+    expect(
+      event.date,
+      DateTime(previousWeek.year, previousWeek.month, previousWeek.day + 2),
+    );
+
+    await tester.tap(find.text('回到本周'));
+    await settle(tester);
+    expect(calendar().currentDate, firstWeek);
     expect(tester.takeException(), isNull);
   });
 
