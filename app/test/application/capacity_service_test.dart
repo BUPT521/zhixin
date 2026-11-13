@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/capacity_service.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/settings_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
@@ -13,7 +14,7 @@ import '../support/test_db.dart';
 class _Harness {
   final DateTime now = DateTime(2026, 11, 6, 18);
   late TestRig rig;
-  late Database db;
+  late RawDatabase db;
   late TaskRepository tasks;
   late ScheduleRepository schedule;
   late CapacityService capacity;
@@ -21,11 +22,11 @@ class _Harness {
   Future<void> open() async {
     rig = await openTestRig(clock: () => now);
     db = rig.raw;
-    tasks = TaskRepository(rig.db);
-    schedule = ScheduleRepository(rig.db);
+    tasks = TaskRepository(rig.db.rawDb);
+    schedule = ScheduleRepository(rig.db.rawDb);
     final policy = TimePolicy(clock: () => now);
     capacity = CapacityService(
-      settings: SettingsRepository(rig.db),
+      settings: SettingsRepository(rig.db.rawDb),
       tasks: tasks,
       schedule: schedule,
       policy: () => policy,

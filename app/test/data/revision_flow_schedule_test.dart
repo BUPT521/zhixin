@@ -18,7 +18,7 @@ import '../support/test_db.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  late Database raw;
+  late RawDatabase raw;
   late GuardedDatabase db;
   late RevisionEngine engine;
   late RevisionService revisions;
@@ -46,14 +46,14 @@ void main() {
         dataChanges++;
       },
     );
-    schedule = ScheduleRepository(db);
-    tasks = TaskRepository(db);
+    schedule = ScheduleRepository(db.rawDb);
+    tasks = TaskRepository(db.rawDb);
     plan = PlanService(
       tasks: tasks,
       schedule: schedule,
       revisions: revisions,
       policy: () => TimePolicy(clock: () => DateTime(2026, 11, 10, 10)),
-      studyPlans: StudyPlanRepository(db),
+      studyPlans: StudyPlanRepository(db.rawDb),
       transactions: WriteTransactions(db),
     );
   });

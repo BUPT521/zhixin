@@ -9,6 +9,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../attachment_store.dart';
 import '../db/app_database.dart';
+import '../../domain/rules/attachments.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
 import 'backup_manifest.dart';
@@ -42,7 +43,7 @@ class DataPackageService {
   final Clock clock;
 
   /// 将数据包按文件流写入目标路径，供自动备份和手动导出暂存使用。
-  Future<void> exportPackageToFile(Database db, String outputPath) async {
+  Future<void> exportPackageToFile(RawDatabase db, String outputPath) async {
     final output = File(outputPath);
     final encoder = ZipFileEncoder();
     var opened = false;
@@ -152,10 +153,10 @@ class DataPackageService {
   /// 成功返回重新打开的连接，调用方用它替换旧的连接。恢复前先让临时库通过
   /// 版本、结构与业务校验（01 第 7 章），期间把阶段写进 [RestoreJournal]，
   /// 进程中断也能在下次启动回到恢复前的数据。
-  Future<Database> restorePackage(
+  Future<RawDatabase> restorePackage(
     Uint8List bytes, {
-    required Database currentDb,
-    required Future<Database> Function() openDb,
+    required RawDatabase currentDb,
+    required Future<RawDatabase> Function() openDb,
   }) async {
     final archive = _decodeArchive(bytes);
     final manifest = _readManifest(archive);
@@ -207,7 +208,7 @@ class DataPackageService {
 
     var closed = false;
     var committed = false;
-    Database? reopened;
+    RawDatabase? reopened;
     try {
       await _writeJournal(
         journal,
@@ -267,9 +268,9 @@ class DataPackageService {
         return reopened!;
       }
       if (closed) {
-        if (reopened?.isOpen == true) {
+        if (reopened != null) {
           try {
-            await reopened!.close();
+            await reopened.close();
           } catch (_) {
             // 文件恢复仍会尝试；失败时保留快照与阶段记录。
           }
@@ -443,10 +444,9 @@ class DataPackageService {
   }
 
   /// 数据库仍引用的图片文件；缺文件时中止导出，而不是悄悄少打包一张。
-  Future<List<File>> _referencedImageFiles(DatabaseExecutor db) async {
+  Future<List<File>> _referencedImageFiles(RawExecutor db) async {
     final imageRoot = p.normalize(p.absolute(p.join(filesDir, imagesEntryDir)));
-    final paths = await AttachmentStore(filesDir: filesDir)
-        .referencedPaths(db.raw);
+    final paths = await AttachmentStore(filesDir: filesDir).referencedPaths(db);
     final files = <File>[];
     final missing = <String>[];
     for (final path in paths) {
@@ -499,13 +499,13 @@ class DataPackageService {
         path,
         options: OpenDatabaseOptions(readOnly: true),
       );
-      return await _countRowsOf(db);
+      return await _countRowsOf(SqfliteRawExecutor(db));
     } finally {
       await db?.close();
     }
   }
 
-  Future<Map<String, int>> _countRowsOf(Database db) async {
+  Future<Map<String, int>> _countRowsOf(RawExecutor db) async {
     final counts = <String, int>{};
     for (final table in _countedTables) {
       final rows = await db.rawQuery('SELECT COUNT(*) AS n FROM $table');
@@ -552,7 +552,7 @@ class DataPackageService {
 
   Future<bool> _rollback(
     String rollbackDir,
-    Future<Database> Function() openDb,
+    Future<RawDatabase> Function() openDb,
   ) async {
     final restored = await _restoreSnapshot(rollbackDir);
     if (!restored) return false;

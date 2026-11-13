@@ -22,10 +22,7 @@ void main() {
     addTearDown(() async {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
-    final raw = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: '${dir.path}/zhixin.db',
-    );
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final db = GuardedDatabase(
@@ -34,9 +31,9 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
+      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
-      factory: databaseFactoryFfi,
       schemaVersion: zhixinSchemaVersion,
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
@@ -62,7 +59,7 @@ void main() {
     });
     final before = await engine.headId(raw.rawDb);
     final path = '${dir.path}/current.zip';
-    await packages.exportCurrent(db, path);
+    await packages.exportCurrent(db.rawDb, path);
 
     final archive = ZipDecoder().decodeBytes(await File(path).readAsBytes());
     final manifest = jsonDecode(
@@ -81,7 +78,7 @@ void main() {
     expect(await raw.query('message'), isEmpty);
     final current = await engine.headId(raw.rawDb);
     final commit = await packages.importCurrent(
-      raw,
+      raw.rawDb,
       await File(path).readAsBytes(),
       expectedHead: current,
     );
@@ -98,10 +95,7 @@ void main() {
     addTearDown(() async {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
-    final raw = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: '${dir.path}/zhixin.db',
-    );
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final db = GuardedDatabase(
@@ -110,9 +104,9 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
+      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
-      factory: databaseFactoryFfi,
       schemaVersion: zhixinSchemaVersion,
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
@@ -135,7 +129,7 @@ void main() {
 
     final current = '${dir.path}/current.zip';
     await expectLater(
-      packages.exportCurrent(db, current),
+      packages.exportCurrent(db.rawDb, current),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -148,7 +142,7 @@ void main() {
 
     final repository = '${dir.path}/repository.zip';
     await expectLater(
-      packages.backupRepository(raw, repository),
+      packages.backupRepository(raw.rawDb, repository),
       throwsA(anything),
     );
     expect(await File(repository).exists(), isFalse);
@@ -159,10 +153,7 @@ void main() {
     addTearDown(() async {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
-    final raw = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: '${dir.path}/zhixin.db',
-    );
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final db = GuardedDatabase(
@@ -171,9 +162,9 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
+      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
-      factory: databaseFactoryFfi,
       schemaVersion: zhixinSchemaVersion,
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
@@ -197,7 +188,7 @@ void main() {
     );
     final head = await engine.headId(raw.rawDb);
     final path = '${dir.path}/repository.zip';
-    await packages.backupRepository(raw, path);
+    await packages.backupRepository(raw.rawDb, path);
 
     final archive = ZipDecoder().decodeBytes(await File(path).readAsBytes());
     final manifest = jsonDecode(
@@ -209,10 +200,7 @@ void main() {
     expect(dbFile, isNotNull);
     final extracted = '${dir.path}/restored.db';
     await File(extracted).writeAsBytes(dbFile!.content as List<int>);
-    final restored = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: extracted,
-    );
+    final restored = await openZhixinDatabase(path: extracted);
     addTearDown(restored.close);
     expect(await engine.headId(restored.rawDb), head);
     expect(await restored.query('revision_commit'), hasLength(3));
@@ -250,22 +238,19 @@ void main() {
     addTearDown(() async {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
-    final raw = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: '${dir.path}/zhixin.db',
-    );
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final packages = RevisionPackageService(
+      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
-      factory: databaseFactoryFfi,
       schemaVersion: zhixinSchemaVersion,
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
     );
     final path = '${dir.path}/repository.zip';
-    await packages.backupRepository(raw, path);
+    await packages.backupRepository(raw.rawDb, path);
 
     // 备份完成后往库里加一条不属于本程序的触发器；备份与预检都不能把它带走。
     await raw.execute(
@@ -273,7 +258,7 @@ void main() {
       'BEGIN UPDATE app_meta SET value = value; END',
     );
     await expectLater(
-      packages.backupRepository(raw, '${dir.path}/with-trigger.zip'),
+      packages.backupRepository(raw.rawDb, '${dir.path}/with-trigger.zip'),
       throwsA(anything),
     );
     expect(await File('${dir.path}/with-trigger.zip').exists(), isFalse);
@@ -321,10 +306,7 @@ void main() {
     addTearDown(() async {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
-    final raw = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: '${dir.path}/zhixin.db',
-    );
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final db = GuardedDatabase(
@@ -333,15 +315,15 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
+      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
-      factory: databaseFactoryFfi,
       schemaVersion: zhixinSchemaVersion,
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
     );
     final path = '${dir.path}/current.zip';
-    await packages.exportCurrent(db, path);
+    await packages.exportCurrent(db.rawDb, path);
 
     expect(
       await packages.inspectRepository(await File(path).readAsBytes()),

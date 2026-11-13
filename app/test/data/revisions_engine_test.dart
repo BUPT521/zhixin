@@ -11,7 +11,7 @@ import '../support/test_db.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  late Database raw;
+  late RawDatabase raw;
   late GuardedDatabase db;
   late RevisionEngine engine;
 
@@ -117,7 +117,7 @@ void main() {
         'status': 'active',
         'created_at': '2026-11-10T09:00:00',
         'updated_at': '2026-11-10T09:00:00',
-      }, conflictAlgorithm: ConflictAlgorithm.replace),
+      }, conflictAlgorithm: ConflictAction.replace),
       throwsArgumentError,
     );
     expect(

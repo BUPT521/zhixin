@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../backup/restore_journal.dart';
 import 'app_database.dart';
+import '../../domain/rules/attachments.dart';
 
 /// 删除本机全部学习数据（06 第 7 章“删除全部记录”）。
 ///

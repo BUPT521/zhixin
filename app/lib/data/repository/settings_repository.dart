@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/rules/time_format.dart';
 import '../db/write_transactions.dart';
@@ -7,7 +7,7 @@ import '../db/write_transactions.dart';
 class SettingsRepository {
   const SettingsRepository(this._db);
 
-  final Database _db;
+  final RawDatabase _db;
 
   Future<int?> cutoffHour() async {
     final rows = await _db.query(
@@ -45,6 +45,6 @@ class SettingsRepository {
       'key': key,
       'value': value,
       'updated_at': formatDateTime(now),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }, conflictAlgorithm: ConflictAction.replace);
   }
 }

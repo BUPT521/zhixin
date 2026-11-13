@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/embedding_client.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/embedding_settings.dart';
 import 'package:zhixin/application/semantic_index_service.dart';
@@ -60,11 +61,11 @@ class _Corpus {
   final int entropyPage;
 }
 
-Future<_Corpus> _seed(Database db) async {
-  final tasks = TaskRepository(db);
-  final materials = MaterialRepository(db);
-  final conversations = ConversationRepository(db);
-  final attempts = AttemptRepository(db);
+Future<_Corpus> _seed(RawDatabase db) async {
+  final tasks = TaskRepository(db.rawDb);
+  final materials = MaterialRepository(db.rawDb);
+  final conversations = ConversationRepository(db.rawDb);
+  final attempts = AttemptRepository(db.rawDb);
   final probability = await tasks.createGoal(title: '概率论期末');
   final linear = await tasks.createGoal(title: '线性代数作业');
   final materialProbability = await materials.create(
@@ -144,7 +145,7 @@ Future<_Corpus> _seed(Database db) async {
 
 Future<
   ({
-    Database db,
+    RawDatabase db,
     EvidenceRepository repository,
     VectorIndex index,
     SemanticIndexService service,
@@ -158,7 +159,7 @@ _rig({
 }) async {
   final db = await openTestDb();
   final corpus = await _seed(db);
-  final repository = EvidenceRepository(db);
+  final repository = EvidenceRepository(db.rawDb);
   final index = VectorIndex.open(inMemory: true, spec: _spec);
   final client =
       clientFor?.call(_spec) ??
@@ -342,7 +343,7 @@ void main() {
       },
     );
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db),
+      repository: EvidenceRepository(db.rawDb),
       initialClient: client,
       indexPath: '',
       indexOpener: () => index,
@@ -416,7 +417,7 @@ void main() {
   test('没有配置嵌入来源时按不可用处理', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repository = EvidenceRepository(db);
+    final repository = EvidenceRepository(db.rawDb);
     final service = SemanticIndexService(repository: repository, indexPath: '');
     final refresh = await service.refresh();
     expect(refresh.failure, SemanticFailure.notConfigured);
@@ -534,7 +535,7 @@ void main() {
     final runtime = embeddingRuntime(config);
     expect(runtime.client, isNotNull);
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db),
+      repository: EvidenceRepository(db.rawDb),
       initialClient: _RecordingClient(
         inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
         sent: sent,
@@ -631,8 +632,8 @@ void main() {
   test('范围外向量占满候选时，目标范围仍找得到', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db);
-    final conversations = ConversationRepository(db);
+    final tasks = TaskRepository(db.rawDb);
+    final conversations = ConversationRepository(db.rawDb);
     final goal = await tasks.createGoal(title: '目标');
     final other = await tasks.createGoal(title: '其他目标');
     for (var index = 0; index < 10; index++) {
@@ -653,7 +654,7 @@ void main() {
     final index = VectorIndex.open(inMemory: true, spec: _spec);
     addTearDown(index.close);
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db),
+      repository: EvidenceRepository(db.rawDb),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: vectors),
       indexPath: '',
       indexOpener: () => index,
@@ -696,7 +697,7 @@ void main() {
       FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
     );
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db),
+      repository: EvidenceRepository(db.rawDb),
       initialClient: client,
       indexPath: '',
       indexOpener: () => index,

@@ -1,14 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:zhixin/data/attachment_store.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
 void main() {
-  late Database db;
+  late RawDatabase db;
   late Directory root;
 
   setUp(() async {

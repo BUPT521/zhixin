@@ -103,22 +103,22 @@ class StagedRestoreValidator {
     }
   }
 
-  Future<Database> _open(String path) async {
+  Future<RawDatabase> _open(String path) async {
     try {
-      return await openZhixinDatabase(factory: factory, path: path);
+      return await openZhixinDatabase(path: path);
     } catch (error) {
       throw BackupException('恢复校验未通过（打开）：打开数据包中的数据库时失败。', detail: '$error');
     }
   }
 
-  Future<void> _verifyStructure(Database db) async {
+  Future<void> _verifyStructure(RawDatabase db) async {
     final versionRows = await db.rawQuery('PRAGMA user_version');
     final version = versionRows.isEmpty ? 0 : versionRows.first.values.first;
     if (version != schemaVersion) {
       throw BackupException('恢复校验未通过（版本）：打开后的库是 v$version，应当是 v$schemaVersion');
     }
 
-    final unexpected = await unexpectedDatabaseObjects(db.raw);
+    final unexpected = await unexpectedDatabaseObjects(db);
     if (unexpected.isNotEmpty) {
       throw BackupException(
         '恢复校验未通过（对象）：数据包带有当前程序不认识的'
@@ -161,14 +161,14 @@ class StagedRestoreValidator {
     }
   }
 
-  Future<void> _verifyForeignKey(Database db) async {
+  Future<void> _verifyForeignKey(RawDatabase db) async {
     final rows = await db.rawQuery('PRAGMA foreign_key_check');
     if (rows.isEmpty) return;
     final first = rows.first;
     throw BackupException('恢复校验未通过（外键）：${first['table']} 的引用在数据包里找不到对应记录');
   }
 
-  Future<void> _verifyBusinessQueries(Database db) async {
+  Future<void> _verifyBusinessQueries(RawDatabase db) async {
     try {
       final profile = await db.rawQuery(
         'SELECT id, day_cutoff_hour FROM profile WHERE id = 1',

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/domain/models/memory.dart';
 
 import '../support/test_db.dart';
@@ -8,7 +9,7 @@ void main() {
   test('过期与停用的记忆不进入上下文', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
     final now = DateTime.now();
 
     await repo.create(
@@ -40,7 +41,7 @@ void main() {
   test('记忆不按更新时间只取最近二十条，约束优先进入上下文', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
     final now = DateTime.now();
 
     await repo.create(kind: MemoryKind.constraint, content: '这周晚上只有半小时');
@@ -57,7 +58,7 @@ void main() {
   test('有范围的记忆只在同一范围进入上下文', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
     final now = DateTime.now();
 
     await repo.create(kind: MemoryKind.preference, content: '晚上学习');
@@ -87,7 +88,7 @@ void main() {
   test('同一范围的困难只读这一范围的条目', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
 
     await repo.create(
       kind: MemoryKind.difficulty,
@@ -114,7 +115,7 @@ void main() {
   test('删除是软删除，恢复后重新可用', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
     final id = await repo.create(
       kind: MemoryKind.progress,
       content: '第 8 题独立完成',

@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/models/assessment.dart';
 import '../../domain/rules/time_format.dart';
@@ -9,7 +9,7 @@ import '../db/write_transactions.dart';
 class AssessmentRepository {
   AssessmentRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   Future<int> add({

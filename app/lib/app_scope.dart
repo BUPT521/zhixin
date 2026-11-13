@@ -90,7 +90,7 @@ class AppScope extends StatefulWidget {
 }
 
 class AppScopeState extends State<AppScope> {
-  Database? _connection;
+  RawDatabase? _connection;
   late GuardedDatabase db;
   late AppPaths paths;
 
@@ -159,7 +159,9 @@ class AppScopeState extends State<AppScope> {
     evidence: evidenceService,
   );
 
-  late final EvidenceRepository evidenceRepository = EvidenceRepository(db);
+  late final EvidenceRepository evidenceRepository = EvidenceRepository(
+    db.rawDb,
+  );
 
   late final EmbeddingConfigStore embeddingStore = EmbeddingConfigStore(
     SecureSecretStore(),
@@ -316,7 +318,7 @@ class AppScopeState extends State<AppScope> {
     attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
     revisions = RevisionService(
       db: db,
-      raw: () => SqfliteRawDatabase(_connection!),
+      raw: () => _connection!,
       engine: revisionsEngine,
       clock: clock,
       cache: attachmentCache,
@@ -357,9 +359,8 @@ class AppScopeState extends State<AppScope> {
     }
   }
 
-  Future<Database> _open() async {
+  Future<RawDatabase> _open() async {
     final connection = await openZhixinDatabase(
-      factory: databaseFactory,
       path: paths.dbPath,
       clock: clock,
     );

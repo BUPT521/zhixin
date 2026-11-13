@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 
 import '../support/test_db.dart';
@@ -9,7 +10,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 9);
-    final conversations = ConversationRepository(db, clock: () => now);
+    final conversations = ConversationRepository(db.rawDb, clock: () => now);
     final ids = <int>[];
     for (var index = 0; index < 5; index++) {
       now = DateTime(2026, 11, 10, 9, index);
@@ -36,8 +37,8 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 9);
-    final conversations = ConversationRepository(db, clock: () => now);
-    final attempts = AttemptRepository(db, clock: () => now);
+    final conversations = ConversationRepository(db.rawDb, clock: () => now);
+    final attempts = AttemptRepository(db.rawDb, clock: () => now);
 
     Future<int> record(String title) async {
       now = now.add(const Duration(minutes: 1));
@@ -92,8 +93,8 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 9);
-    final conversations = ConversationRepository(db, clock: () => now);
-    final attempts = AttemptRepository(db, clock: () => now);
+    final conversations = ConversationRepository(db.rawDb, clock: () => now);
+    final attempts = AttemptRepository(db.rawDb, clock: () => now);
 
     final kept = <int>[];
     for (var index = 0; index < 3; index++) {
@@ -119,8 +120,8 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 9);
-    final conversations = ConversationRepository(db, clock: () => now);
-    final attempts = AttemptRepository(db, clock: () => now);
+    final conversations = ConversationRepository(db.rawDb, clock: () => now);
+    final attempts = AttemptRepository(db.rawDb, clock: () => now);
 
     final ids = <int>[];
     for (var index = 0; index < 6; index++) {

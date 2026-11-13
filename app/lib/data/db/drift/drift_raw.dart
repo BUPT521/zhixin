@@ -19,6 +19,9 @@ class DriftRawDatabase implements RawDatabase {
       database.transaction(() => action(DriftRawExecutor(database)));
 
   @override
+  Future<void> close() => database.close();
+
+  @override
   Future<void> execute(String sql, [List<Object?>? arguments]) =>
       _executor.execute(sql, arguments);
 

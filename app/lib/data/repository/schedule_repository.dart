@@ -1,5 +1,3 @@
-import 'package:sqflite/sqflite.dart';
-
 import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
@@ -39,7 +37,7 @@ class ScheduleAdjustment {
 class ScheduleRepository {
   ScheduleRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   Future<List<TimetableEntry>> timetable() async {
@@ -64,7 +62,7 @@ class ScheduleRepository {
     final at = _clock();
     return _db.transaction((txn) async {
       final conflict = await findRecurringTimetableConflict(
-        txn.raw,
+        txn,
         weekday: weekday,
         startTime: startTime,
         endTime: endTime,
@@ -83,7 +81,7 @@ class ScheduleRepository {
     });
   }
 
-  Future<void> deleteTimetable(int id, {DatabaseExecutor? executor}) async {
+  Future<void> deleteTimetable(int id, {RawExecutor? executor}) async {
     await (executor ?? _db).delete(
       'timetable_entry',
       where: 'id = ?',
@@ -138,7 +136,7 @@ class ScheduleRepository {
     required DateTime end,
     String source = 'user',
     bool locked = false,
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     if (executor == null) {
       return _db.transaction(
@@ -172,7 +170,7 @@ class ScheduleRepository {
   /// 只看最终结果，既不与未参与调整的预约重叠，也不与课表重叠。
   Future<void> rescheduleGroup(
     List<ScheduleAdjustment> adjustments, {
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     if (adjustments.isEmpty) return;
     if (executor == null) {
@@ -263,12 +261,12 @@ class ScheduleRepository {
   }
 
   Future<void> _ensureNoTimetableConflict(
-    DatabaseExecutor executor, {
+    RawExecutor executor, {
     required DateTime start,
     required DateTime end,
   }) async {
     final conflict = await findTimetableConflict(
-      executor.raw,
+      executor,
       start: start,
       end: end,
     );
@@ -279,7 +277,7 @@ class ScheduleRepository {
     int id, {
     required DateTime start,
     required DateTime end,
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     if (executor == null) {
       return _db.transaction(
@@ -315,13 +313,13 @@ class ScheduleRepository {
   }
 
   Future<void> _ensureNoConflict(
-    DatabaseExecutor executor, {
+    RawExecutor executor, {
     required DateTime start,
     required DateTime end,
     int? excludeBlockId,
   }) async {
     final conflict = await findScheduleConflict(
-      executor.raw,
+      executor,
       start: start,
       end: end,
       ignoredBlockIds: {?excludeBlockId},
@@ -338,11 +336,7 @@ class ScheduleRepository {
   }
 
   /// 用户把这次安排固定下来；固定的块不参加自动调整。
-  Future<void> setLocked(
-    int id,
-    bool locked, {
-    DatabaseExecutor? executor,
-  }) async {
+  Future<void> setLocked(int id, bool locked, {RawExecutor? executor}) async {
     await (executor ?? _db).update(
       'schedule_block',
       {'locked': locked ? 1 : 0, 'updated_at': formatDateTime(_clock())},
@@ -355,7 +349,7 @@ class ScheduleRepository {
   Future<List<ScheduleBlock>> futureBlocksForItem(
     int planItemId,
     DateTime now, {
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     final rows = await (executor ?? _db).query(
       'schedule_block',
@@ -421,7 +415,7 @@ class ScheduleRepository {
   Future<List<ScheduleBlock>> flexibleFutureBlocksForGoal(
     int goalId,
     DateTime now, {
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     final rows = await (executor ?? _db).rawQuery(
       '''
@@ -440,10 +434,7 @@ class ScheduleRepository {
   ///
   /// 传入的预约里只要有一条已经取消或不再存在，就报错交给外层事务回滚，
   /// 不会只改掉其中一部分。
-  Future<void> cancelBlocks(
-    Iterable<int> ids, {
-    DatabaseExecutor? executor,
-  }) async {
+  Future<void> cancelBlocks(Iterable<int> ids, {RawExecutor? executor}) async {
     final list = ids.toSet().toList(growable: false);
     if (list.isEmpty) return;
     if (executor == null) {
@@ -465,7 +456,7 @@ class ScheduleRepository {
   Future<void> setBlockStatus(
     int id,
     String status, {
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     if (executor == null) {
       return _db.transaction(
@@ -498,7 +489,7 @@ class ScheduleRepository {
     );
   }
 
-  Future<void> deleteBlock(int id, {DatabaseExecutor? executor}) async {
+  Future<void> deleteBlock(int id, {RawExecutor? executor}) async {
     await (executor ?? _db).delete(
       'schedule_block',
       where: 'id = ?',

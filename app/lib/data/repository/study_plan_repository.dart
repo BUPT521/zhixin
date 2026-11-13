@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
 import '../../domain/models/study_plan.dart';
@@ -15,7 +15,7 @@ import 'task_repository.dart';
 class StudyPlanRepository {
   StudyPlanRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   /// 计划里下一个要做的一步：进行中的优先，其次按步骤顺序取第一个待学。
@@ -45,7 +45,7 @@ class StudyPlanRepository {
     int? pageFrom,
     int? pageTo,
     int? currentPage,
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     final text = title.trim();
     if (text.isEmpty) throw ArgumentError('学习计划的标题不能为空');
@@ -284,7 +284,7 @@ class StudyPlanRepository {
   }
 
   Future<void> _setItemStatus(
-    Transaction txn,
+    RawExecutor txn,
     int itemId,
     PlanItemStatus status,
     int? planId,
@@ -340,7 +340,7 @@ class StudyPlanRepository {
     );
   }
 
-  Future<void> _recompute(DatabaseExecutor executor, int planId) async {
+  Future<void> _recompute(RawExecutor executor, int planId) async {
     final plan = await _plainPlan(planId, executor: executor);
     if (plan == null) return;
     final rows = await executor.query(
@@ -377,7 +377,7 @@ class StudyPlanRepository {
     );
   }
 
-  Future<StudyPlan?> _plainPlan(int id, {DatabaseExecutor? executor}) async {
+  Future<StudyPlan?> _plainPlan(int id, {RawExecutor? executor}) async {
     final rows = await (executor ?? _db).query(
       'study_plan',
       where: 'id = ?',

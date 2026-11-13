@@ -49,13 +49,13 @@ class RevisionPackageService {
   ///
   /// 包内清单按数据库引用生成；有附件读不出或哈希不符时中止导出并列出缺项，
   /// 不生成一个看起来完整的包。否则用户要等到换机恢复时才会发现图片缺失。
-  Future<void> exportCurrent(Database db, String outputPath) async {
-    final projection = await engine.readProjection(SqfliteRawExecutor(db));
+  Future<void> exportCurrent(RawDatabase db, String outputPath) async {
+    final projection = await engine.readProjection(db);
     final projectionJson = encodeProjection(projection);
     final hashes = AssetStore.hashesInProjection(projection).toList()..sort();
     final missing = <String>[];
     for (final hash in hashes) {
-      if (!await assets.verify(SqfliteRawExecutor(db), hash)) missing.add(hash);
+      if (!await assets.verify(db, hash)) missing.add(hash);
     }
     if (missing.isNotEmpty) {
       throw StateError(
@@ -92,7 +92,7 @@ class RevisionPackageService {
         ArchiveFile.bytes(_dataEntry, utf8.encode(projectionJson)),
       );
       for (final hash in hashes) {
-        final bytes = await assets.readBytes(SqfliteRawExecutor(db), hash);
+        final bytes = await assets.readBytes(db, hash);
         if (bytes == null) throw StateError('附件 $hash 无法读取');
         encoder.addArchiveFile(ArchiveFile.bytes('$_assetPrefix$hash', bytes));
       }
@@ -113,7 +113,7 @@ class RevisionPackageService {
 
   /// 导入当前数据包；目标库必须仍是预览时的 `HEAD`。
   Future<RevisionCommit> importCurrent(
-    Database db,
+    RawDatabase db,
     Uint8List bytes, {
     required int expectedHead,
   }) async {
@@ -157,7 +157,7 @@ class RevisionPackageService {
       attachmentBytes[hash] = data;
     }
     return engine.importProjection(
-      SqfliteRawDatabase(db),
+      db,
       projection,
       expectedHead: expectedHead,
       attachments: attachmentBytes,
@@ -165,7 +165,7 @@ class RevisionPackageService {
   }
 
   /// 版本库备份：`VACUUM INTO` 生成一致的暂存库，校验后与 manifest 一起发布。
-  Future<void> backupRepository(Database db, String outputPath) async {
+  Future<void> backupRepository(RawDatabase db, String outputPath) async {
     final output = File(outputPath);
     await output.parent.create(recursive: true);
     final temporaryDb = File(
@@ -174,7 +174,7 @@ class RevisionPackageService {
     if (await temporaryDb.exists()) await temporaryDb.delete();
     Database? copy;
     try {
-      await db.rawQuery('VACUUM INTO ?', [temporaryDb.path]);
+      await db.execute('VACUUM INTO ?', [temporaryDb.path]);
       copy = await factory.openDatabase(
         temporaryDb.path,
         options: OpenDatabaseOptions(readOnly: true),

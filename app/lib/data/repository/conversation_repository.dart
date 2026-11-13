@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/models/chat_message.dart';
 import '../../domain/models/conversation.dart';
@@ -23,7 +23,7 @@ import '../db/write_transactions.dart';
 class ConversationRepository {
   ConversationRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   static const String _questionUserMessage =

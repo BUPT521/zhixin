@@ -221,7 +221,7 @@ class RevisionService {
 
   Future<void> _stripDeadReceipts() async {
     await db.command(
-      (txn) => engine.stripDeadReceipts(SqfliteRawExecutor(txn)),
+      (txn) => engine.stripDeadReceipts(txn),
       label: clearDeadReceiptsAction,
     );
   }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
@@ -65,7 +66,7 @@ class _Harness {
 
   final _FakeAi ai;
   int epoch = 0;
-  late Database db;
+  late RawDatabase db;
   late TestRig rig;
   late AttemptRepository attempts;
   late AssessmentRepository assessments;
@@ -79,14 +80,14 @@ class _Harness {
   Future<void> open() async {
     rig = await openTestRig();
     db = rig.db;
-    attempts = AttemptRepository(db);
-    assessments = AssessmentRepository(db);
-    conversations = ConversationRepository(db);
-    study = StudyRepository(db);
-    tasks = TaskRepository(db);
-    memories = MemoryRepository(db);
+    attempts = AttemptRepository(db.rawDb);
+    assessments = AssessmentRepository(db.rawDb);
+    conversations = ConversationRepository(db.rawDb);
+    study = StudyRepository(db.rawDb);
+    tasks = TaskRepository(db.rawDb);
+    memories = MemoryRepository(db.rawDb);
     revisions = rig.revisions;
-    final materials = MaterialRepository(db);
+    final materials = MaterialRepository(db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
     service = LearningService(
       attempts: attempts,
@@ -94,14 +95,14 @@ class _Harness {
       study: study,
       memories: memories,
       revisions: rig.revisions,
-      schedule: ScheduleRepository(db),
-      tasks: TaskRepository(db),
+      schedule: ScheduleRepository(db.rawDb),
+      tasks: TaskRepository(db.rawDb),
       assessments: assessments,
       ai: ai,
       context: ContextService(
-        tasks: TaskRepository(db),
+        tasks: TaskRepository(db.rawDb),
         attempts: attempts,
-        schedule: ScheduleRepository(db),
+        schedule: ScheduleRepository(db.rawDb),
         memories: memories,
         conversations: conversations,
         materials: materials,
@@ -617,7 +618,7 @@ void main() {
     await h.open();
     addTearDown(h.db.close);
 
-    final materials = MaterialRepository(h.db);
+    final materials = MaterialRepository(h.db.rawDb);
     final materialId = await materials.create(title: '概率论讲义', kind: 'book');
     await materials.addPage(
       materialId: materialId,
@@ -732,7 +733,7 @@ void main() {
     await h.open();
     addTearDown(h.db.close);
 
-    final plans = StudyPlanRepository(h.db);
+    final plans = StudyPlanRepository(h.db.rawDb);
     final planId = await plans.createWithDrafts(
       title: '条件概率计划',
       drafts: const [StudyStepDraft(title: '第一步', pageFrom: 1, pageTo: 1)],

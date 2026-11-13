@@ -54,6 +54,8 @@ abstract class RawExecutor {
 /// 可以自己开事务的执行器；引擎的整版恢复、命名版本与裁剪用到这里。
 abstract class RawDatabase implements RawExecutor {
   Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action);
+
+  Future<void> close();
 }
 
 /// sqflite 实现：迁移期间让旧入口与旧测试继续跑同一套引擎代码。
@@ -150,6 +152,9 @@ class SqfliteRawDatabase extends SqfliteRawExecutor implements RawDatabase {
   @override
   Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action) =>
       _database.transaction((txn) => action(SqfliteRawExecutor(txn)));
+
+  @override
+  Future<void> close() => _database.close();
 }
 
 sqflite.ConflictAlgorithm? _mapConflict(ConflictAction? action) {
@@ -170,4 +175,13 @@ extension SqfliteExecutorRaw on sqflite.DatabaseExecutor {
 
 extension SqfliteDatabaseRaw on sqflite.Database {
   RawDatabase get rawDb => SqfliteRawDatabase(this);
+}
+
+/// 迁移期让已经持有 RawExecutor/RawDatabase 的调用方继续使用 .raw/.rawDb。
+extension RawSelf on RawExecutor {
+  RawExecutor get raw => this;
+}
+
+extension RawDatabaseSelf on RawDatabase {
+  RawDatabase get rawDb => this;
 }

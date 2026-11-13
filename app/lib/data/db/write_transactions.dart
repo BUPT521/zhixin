@@ -1,16 +1,17 @@
-import 'package:sqflite/sqflite.dart';
-
 import '../revisions/revision_models.dart';
 import 'guarded_database.dart';
+import 'raw_executor.dart';
 
-/// 供多个仓库共享一次写入事务。只有数据层需要取出底层执行器。
-extension type WriteTransaction._(Transaction _transaction) {
-  /// 同一事务的执行器；仓库把它传给需要 `DatabaseExecutor` 的查询。
-  DatabaseExecutor get executor => _transaction;
+/// 一次业务写入拿到的执行器；同一命令里的仓库共用它。
+class WriteTransaction {
+  WriteTransaction(this.executor);
+
+  /// 同一事务的执行器；仓库把它传给需要 SQL 执行器的查询。
+  final RawExecutor executor;
 
   /// 本次命令已分配的提交编号；界面回执用它指回提交历史。
   Future<int?> commitId() async {
-    final rows = await _transaction.query(
+    final rows = await executor.query(
       'revision_context',
       columns: ['active_commit'],
       limit: 1,
@@ -29,7 +30,7 @@ extension type WriteTransaction._(Transaction _transaction) {
 class WriteTransactions {
   const WriteTransactions(this._db);
 
-  final Database _db;
+  final RawDatabase _db;
 
   /// 一次业务动作；[label] 写进数据变更历史，[requestId] 用于重试去重。
   Future<T> run<T>(
@@ -42,16 +43,16 @@ class WriteTransactions {
     final db = _db;
     if (db is GuardedDatabase) {
       return db.command(
-        (txn) => action(WriteTransaction._(txn)),
+        (txn) => action(WriteTransaction(txn)),
         label: label,
         actor: actor,
         requestId: requestId,
         onDuplicate: onDuplicate,
       );
     }
-    return db.transaction((txn) => action(WriteTransaction._(txn)));
+    return db.transaction((txn) => action(WriteTransaction(txn)));
   }
 }
 
-DatabaseExecutor writeExecutor(WriteTransaction? transaction, Database db) =>
-    transaction?._transaction ?? db;
+RawExecutor writeExecutor(WriteTransaction? transaction, RawExecutor db) =>
+    transaction?.executor ?? db;

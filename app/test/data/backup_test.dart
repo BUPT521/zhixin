@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:zhixin/domain/rules/attachments.dart';
 import 'package:zhixin/data/backup/backup_manifest.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/restore_journal.dart';
 import 'package:zhixin/data/db/app_database.dart';
@@ -16,19 +18,19 @@ import 'package:zhixin/domain/models/study.dart';
 
 /// 造一条有作答的学习记录，用作导出与恢复的数据标记。
 Future<int> _captureRecord(
-  Database db,
+  RawDatabase db,
   String stem, {
   String? sourceRef,
 }) async {
-  final conversations = ConversationRepository(db);
+  final conversations = ConversationRepository(db.rawDb);
   final id = await conversations.create(sourceRef: sourceRef);
   await conversations.append(id, role: 'user', content: stem);
-  await AttemptRepository(db).ensureOpenAttempt(id);
+  await AttemptRepository(db.rawDb).ensureOpenAttempt(id);
   return id;
 }
 
-Future<String?> _recordStem(Database db, int id) async =>
-    (await ConversationRepository(db).question(id))?.stem;
+Future<String?> _recordStem(RawDatabase db, int id) async =>
+    (await ConversationRepository(db.rawDb).question(id))?.stem;
 
 void main() {
   setUpAll(sqfliteFfiInit);
@@ -42,10 +44,7 @@ void main() {
     });
 
     final path1 = '${dir1.path}/zhixin.db';
-    final db1 = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path1,
-    );
+    final db1 = await openZhixinDatabase(path: path1);
     final recordId = await _captureRecord(db1, '导出前的题目', sourceRef: '第 1 页');
     final goalId = await db1.insert('learning_goal', {
       'title': '概率论期末',
@@ -102,9 +101,9 @@ void main() {
     await File('${images.path}/orphan.jpg').writeAsBytes([9, 9, 9]);
 
     final service1 = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir1.path,
       dbPath: path1,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -125,26 +124,23 @@ void main() {
     await db1.close();
 
     final path2 = '${dir2.path}/zhixin.db';
-    final db2 = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path2,
-    );
+    final db2 = await openZhixinDatabase(path: path2);
     final service2 = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir2.path,
       dbPath: path2,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
     final restored = await service2.restorePackage(
       bytes,
       currentDb: db2,
-      openDb: () =>
-          openZhixinDatabase(factory: databaseFactoryFfi, path: path2),
+      openDb: () => openZhixinDatabase(path: path2),
     );
     addTearDown(restored.close);
 
-    final record = await ConversationRepository(restored).question(recordId);
+    final record = await ConversationRepository(restored.rawDb)
+        .question(recordId);
     expect(record!.stem, '导出前的题目');
     expect(record.sourceRef, '第 1 页');
 
@@ -174,7 +170,7 @@ void main() {
     expect(await restoredImage.readAsBytes(), [4, 5, 6]);
     expect(imageMessage['image_paths_json'], '["m-1.jpg"]');
 
-    final tasks = TaskRepository(restored);
+    final tasks = TaskRepository(restored.rawDb);
     expect((await tasks.goalById(goalId))?.status, LearningGoalStatus.active);
     final items = await tasks.items();
     expect(items, hasLength(1));
@@ -186,10 +182,7 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('zhixin_interrupt_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     final recordId = await _captureRecord(db, '恢复前的题目');
     await db.close();
 
@@ -202,7 +195,6 @@ void main() {
         .create(recursive: true);
 
     final incomingDb = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
       path: '${dir.path}/incoming.db',
     );
     await _captureRecord(incomingDb, '替换后的题目');
@@ -222,9 +214,9 @@ void main() {
     );
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -234,10 +226,7 @@ void main() {
     expect(await snapshotDir.exists(), isFalse);
     expect(await File('$path.incoming').exists(), isFalse);
 
-    final recovered = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final recovered = await openZhixinDatabase(path: path);
     addTearDown(recovered.close);
     expect(await _recordStem(recovered, recordId), '恢复前的题目');
   });
@@ -246,10 +235,7 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('zhixin_stale_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     final recordId = await _captureRecord(db, '中断前的题目');
     await db.close();
 
@@ -259,9 +245,9 @@ void main() {
     await File('$path.incoming').writeAsBytes([4, 5, 6]);
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -270,10 +256,7 @@ void main() {
     expect(await Directory('${dir.path}/.restore-1').exists(), isFalse);
     expect(await File('$path.incoming').exists(), isFalse);
 
-    final reopened = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final reopened = await openZhixinDatabase(path: path);
     addTearDown(reopened.close);
     expect(await _recordStem(reopened, recordId), '中断前的题目');
   });
@@ -284,10 +267,7 @@ void main() {
     );
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     final recordId = await _captureRecord(db, '当前正式数据');
     await db.close();
 
@@ -299,9 +279,9 @@ void main() {
     await File('$path.incoming').writeAsBytes([1, 2, 3]);
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -313,10 +293,7 @@ void main() {
     expect(await File('${dir.path}/.restore-journal.json').exists(), isTrue);
     expect(await File('$path.incoming').exists(), isTrue);
 
-    final reopened = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final reopened = await openZhixinDatabase(path: path);
     addTearDown(reopened.close);
     expect(await _recordStem(reopened, recordId), '当前正式数据');
   });
@@ -331,10 +308,7 @@ void main() {
     await images.create(recursive: true);
     final image = File('${images.path}/current.jpg');
     await image.writeAsBytes([7, 8, 9]);
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     await _captureRecord(db, '当前正式数据');
     await db.close();
 
@@ -350,9 +324,9 @@ void main() {
       ),
     );
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -373,19 +347,13 @@ void main() {
     );
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
-    final current = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final current = await openZhixinDatabase(path: path);
     final recordId = await _captureRecord(current, '已提交的新数据');
     await current.close();
 
     final rollbackDir = '${dir.path}/.restore-committed';
     await Directory(rollbackDir).create(recursive: true);
-    final old = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: '${dir.path}/old.db',
-    );
+    final old = await openZhixinDatabase(path: '${dir.path}/old.db');
     await _captureRecord(old, '旧数据');
     await old.close();
     await File('${dir.path}/old.db').copy('$rollbackDir/$dbEntryName');
@@ -400,18 +368,15 @@ void main() {
     );
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
     expect(await service.recoverInterruptedRestore(), isFalse);
     expect(await Directory(rollbackDir).exists(), isFalse);
-    final reopened = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final reopened = await openZhixinDatabase(path: path);
     addTearDown(reopened.close);
     expect(await _recordStem(reopened, recordId), '已提交的新数据');
   });
@@ -422,12 +387,9 @@ void main() {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
     final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     addTearDown(db.close);
-    final conversations = ConversationRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
     final conversationId = await conversations.create();
     await conversations.append(conversationId, role: 'user', content: '带图的题');
     await db.update(
@@ -439,9 +401,9 @@ void main() {
     await Directory('${dir.path}/question_images').create(recursive: true);
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -463,16 +425,13 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('zhixin_old_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     addTearDown(db.close);
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -499,8 +458,7 @@ void main() {
         service.restorePackage(
           ZipEncoder().encodeBytes(archive),
           currentDb: db,
-          openDb: () =>
-              openZhixinDatabase(factory: databaseFactoryFfi, path: path),
+          openDb: () => openZhixinDatabase(path: path),
         ),
         throwsA(isA<BackupException>()),
         reason: 'v$oldVersion 的包应当在替换前被拒绝',
@@ -517,9 +475,9 @@ void main() {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: '${dir.path}/zhixin.db',
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );

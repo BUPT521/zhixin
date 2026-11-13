@@ -13,7 +13,7 @@ void main() {
   test('模型给的记忆落库，并留下可按提交撤销的回执', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
+    final memories = MemoryRepository(rig.db.rawDb);
 
     const draft = MemoryDraft(
       kind: MemoryKind.constraint,
@@ -41,7 +41,7 @@ void main() {
   test('用户修改记忆后，旧的写入提交不能删除新内容', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
+    final memories = MemoryRepository(rig.db.rawDb);
     final id = await memories.create(
       kind: MemoryKind.difficulty,
       content: '原有困难',
@@ -60,8 +60,8 @@ void main() {
   test('已接受的事项有后续预约时，撤销创建不会级联删除预约', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final schedule = ScheduleRepository(rig.db);
-    final tasks = TaskRepository(rig.db);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final tasks = TaskRepository(rig.db.rawDb);
     final itemId = await tasks.createItem(title: '复习题目');
     final created = (await rig.engine.undoableCommits(rig.db.raw)).last;
     final start = DateTime(2026, 11, 8, 10);
@@ -85,7 +85,7 @@ void main() {
   test('重复的记忆不重复写，过长的记忆被跳过', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
+    final memories = MemoryRepository(rig.db.rawDb);
 
     await applyMemoryDrafts(
       transactions: WriteTransactions(rig.db),
@@ -112,7 +112,7 @@ void main() {
   test('记忆去重区分类别与范围，过期记录和本批重复项不误抑制', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
+    final memories = MemoryRepository(rig.db.rawDb);
     await memories.create(
       kind: MemoryKind.difficulty,
       content: '同一内容',
@@ -155,7 +155,7 @@ void main() {
   test('困难与进展写入本次范围，偏好与限制保持全局', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
+    final memories = MemoryRepository(rig.db.rawDb);
 
     await applyMemoryDrafts(
       transactions: WriteTransactions(rig.db),

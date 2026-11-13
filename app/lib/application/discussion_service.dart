@@ -6,7 +6,6 @@ import '../ai/buddy_prompt.dart';
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
-import '../data/db/raw_executor.dart';
 import '../data/revisions/asset_store.dart';
 import '../data/revisions/revision_actions.dart';
 import '../data/revisions/revision_engine.dart';
@@ -355,7 +354,7 @@ class DiscussionService {
         await conversations.reopen(conversationId, transaction: txn);
       }
       for (final item in ingested.pending) {
-        await assets.putBytes(txn.executor.raw, item.hash, item.bytes);
+        await assets.putBytes(txn.executor, item.hash, item.bytes);
       }
       return conversations.append(
         conversationId,

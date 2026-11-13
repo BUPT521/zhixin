@@ -20,11 +20,11 @@ import '../support/test_db.dart';
 
 PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
   return PlanService(
-    tasks: TaskRepository(rig.db),
-    schedule: ScheduleRepository(rig.db),
+    tasks: TaskRepository(rig.db.rawDb),
+    schedule: ScheduleRepository(rig.db.rawDb),
     revisions: rig.revisions,
     policy: () => policy,
-    studyPlans: StudyPlanRepository(rig.db, clock: clock ?? systemClock),
+    studyPlans: StudyPlanRepository(rig.db.rawDb, clock: clock ?? systemClock),
     transactions: WriteTransactions(rig.db),
   );
 }
@@ -35,8 +35,8 @@ void main() {
   test('V2：暂停目标可以只取消该目标的弹性安排', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 6, 18);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -81,7 +81,7 @@ void main() {
 
     // 取消的弹性块不再占用容量。
     final capacity = CapacityService(
-      settings: SettingsRepository(rig.db),
+      settings: SettingsRepository(rig.db.rawDb),
       tasks: tasks,
       schedule: schedule,
       policy: () => policy,
@@ -103,8 +103,8 @@ void main() {
   test('暂停目标时多条弹性安排一次取消，撤销后一起回到暂停前', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 6, 18);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -143,8 +143,8 @@ void main() {
   test('V2：不勾选取消时，暂停不改动任何未来安排', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 6, 18);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -165,9 +165,9 @@ void main() {
   test('完成事项只把实际学习过的预约记为结束，没学的旧预约取消', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
-    final study = StudyRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final study = StudyRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 6, 18);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy, clock: () => now);
@@ -207,8 +207,8 @@ void main() {
   test('安排页按自然周读取时间块，周一凌晨不回到上一周', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 9, 0, 56);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -233,8 +233,8 @@ void main() {
   test('安排页默认只读未完成事项，已完成按页读取', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final studyPlans = StudyPlanRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final studyPlans = StudyPlanRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 9, 12);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -264,7 +264,7 @@ void main() {
   test('安排页只读未完成计划的步骤，已完成计划的摘要仍按计数显示', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final studyPlans = StudyPlanRepository(rig.db);
+    final studyPlans = StudyPlanRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 9, 12);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -298,7 +298,7 @@ void main() {
   test('安排页保留并显示全部 AI 改动，不截断较早的记录', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
+    final memories = MemoryRepository(rig.db.rawDb);
     final now = DateTime(2026, 11, 9, 12);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
@@ -335,8 +335,8 @@ void main() {
   test('搭子建议的时间块记为搭子来源，默认仍是用户', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     final service = _service(rig, policy: policy);
 

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/continue_service.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
@@ -17,9 +18,9 @@ void main() {
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 9);
     DateTime clock() => now;
-    final conversations = ConversationRepository(db, clock: clock);
-    final attempts = AttemptRepository(db, clock: clock);
-    final plans = StudyPlanRepository(db, clock: clock);
+    final conversations = ConversationRepository(db.rawDb, clock: clock);
+    final attempts = AttemptRepository(db.rawDb, clock: clock);
+    final plans = StudyPlanRepository(db.rawDb, clock: clock);
     final service = ContinueService(conversations: conversations, plans: plans);
 
     final planId = await plans.createWithDrafts(
@@ -66,8 +67,8 @@ void main() {
     addTearDown(db.close);
     final now = DateTime(2026, 11, 10, 12);
     DateTime clock() => now;
-    final conversations = ConversationRepository(db, clock: clock);
-    final plans = StudyPlanRepository(db, clock: clock);
+    final conversations = ConversationRepository(db.rawDb, clock: clock);
+    final plans = StudyPlanRepository(db.rawDb, clock: clock);
     final service = ContinueService(conversations: conversations, plans: plans);
 
     await plans.createWithDrafts(
@@ -78,7 +79,7 @@ void main() {
     await conversations.append(discussion, role: 'user', content: '一个问题');
     final draft = await conversations.create(title: '一道题');
     await conversations.append(draft, role: 'user', content: '另一道题');
-    await AttemptRepository(db, clock: clock).ensureOpenAttempt(draft);
+    await AttemptRepository(db.rawDb, clock: clock).ensureOpenAttempt(draft);
 
     final entries = await service.load();
 
@@ -94,9 +95,9 @@ void main() {
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 8);
     DateTime clock() => now;
-    final conversations = ConversationRepository(db, clock: clock);
-    final attempts = AttemptRepository(db, clock: clock);
-    final plans = StudyPlanRepository(db, clock: clock);
+    final conversations = ConversationRepository(db.rawDb, clock: clock);
+    final attempts = AttemptRepository(db.rawDb, clock: clock);
+    final plans = StudyPlanRepository(db.rawDb, clock: clock);
     final service = ContinueService(conversations: conversations, plans: plans);
 
     // 计划与讨论交替更新，另有较早的记录在最后写了草稿。

@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
@@ -19,7 +19,7 @@ class TaskRepository {
 
   TaskRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   /// 当前有效的全部目标；没有截止日期的排在后面。

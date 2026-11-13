@@ -60,31 +60,31 @@ void main() {
       clock: () => DateTime(2026, 11, 10, 10),
       cache: AttachmentCache(filesDir: () => '.'),
     );
-    final conversations = ConversationRepository(db);
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final memories = MemoryRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
+    final tasks = TaskRepository(db.rawDb);
+    final schedule = ScheduleRepository(db.rawDb);
+    final memories = MemoryRepository(db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     final service = DiscussionService(
       conversations: conversations,
       ai: _NoAi(),
       context: ContextService(
         tasks: tasks,
-        attempts: AttemptRepository(db),
+        attempts: AttemptRepository(db.rawDb),
         schedule: schedule,
         memories: memories,
         conversations: conversations,
-        materials: MaterialRepository(db),
+        materials: MaterialRepository(db.rawDb),
         policy: () => policy,
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
-        attempts: AttemptRepository(db),
+        attempts: AttemptRepository(db.rawDb),
       ),
       memories: memories,
       revisions: revisions,
       tasks: tasks,
-      materials: MaterialRepository(db),
+      materials: MaterialRepository(db.rawDb),
       policy: () => policy,
       transactions: WriteTransactions(db),
       filesDir: () => '.',

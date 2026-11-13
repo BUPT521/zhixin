@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/keyword_ranker.dart';
 import 'package:zhixin/application/cross_session_service.dart';
@@ -74,11 +75,11 @@ class CorpusIds {
   String answer(int attemptId) => 'attempt:$attemptId';
 }
 
-Future<CorpusIds> _seed(Database db) async {
-  final tasks = TaskRepository(db);
-  final materials = MaterialRepository(db);
-  final conversations = ConversationRepository(db);
-  final attempts = AttemptRepository(db);
+Future<CorpusIds> _seed(RawDatabase db) async {
+  final tasks = TaskRepository(db.rawDb);
+  final materials = MaterialRepository(db.rawDb);
+  final conversations = ConversationRepository(db.rawDb);
+  final attempts = AttemptRepository(db.rawDb);
 
   final goalProbability = await tasks.createGoal(title: '概率论期末');
   final goalLinear = await tasks.createGoal(title: '线性代数作业');
@@ -615,7 +616,10 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final ids = await _seed(db);
-    final harness = _Harness(repository: EvidenceRepository(db), ids: ids);
+    final harness = _Harness(
+      repository: EvidenceRepository(db.rawDb),
+      ids: ids,
+    );
 
     final outcomes = <CaseOutcome>[];
     final report = StringBuffer();

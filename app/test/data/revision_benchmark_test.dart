@@ -22,10 +22,7 @@ void main() {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
     final path = '${dir.path}/zhixin.db';
-    final raw = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final raw = await openZhixinDatabase(path: path);
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final db = GuardedDatabase(

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/memory_recall.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/domain/models/memory.dart';
@@ -15,7 +16,7 @@ void main() {
     addTearDown(db.close);
     var minute = 0;
     final repo = MemoryRepository(
-      db,
+      db.rawDb,
       clock: () => DateTime(2026, 11, 12, 9, minute++),
     );
     final now = DateTime(2026, 11, 12, 10);
@@ -59,7 +60,10 @@ void main() {
   test('旧记忆比新记忆更相关时排在前面', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db, clock: () => DateTime(2026, 11, 12, 9));
+    final repo = MemoryRepository(
+      db.rawDb,
+      clock: () => DateTime(2026, 11, 12, 9),
+    );
     await repo.create(
       kind: MemoryKind.progress,
       content: '条件概率与独立性可以一起判断：P(AB)=P(A)P(B)。',
@@ -84,7 +88,7 @@ void main() {
   test('过期、删除、替代与其他范围的记忆不进入召回', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
     final now = DateTime(2026, 11, 12, 10);
     await repo.create(kind: MemoryKind.preference, content: '晚上学习');
     await repo.create(
@@ -119,7 +123,7 @@ void main() {
   test('最多 40 条，单条进入提示词时截到 200 字', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
+    final repo = MemoryRepository(db.rawDb);
     final now = DateTime(2026, 11, 12, 10);
     await repo.create(kind: MemoryKind.constraint, content: '这周晚上只有半小时');
     for (var index = 0; index < 45; index++) {
@@ -149,7 +153,7 @@ void main() {
     addTearDown(db.close);
     var minute = 0;
     final repo = MemoryRepository(
-      db,
+      db.rawDb,
       clock: () => DateTime(2026, 11, 12, 9, minute++),
     );
     final now = DateTime(2026, 11, 12, 10);

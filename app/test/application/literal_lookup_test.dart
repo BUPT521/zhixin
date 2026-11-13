@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/evidence_service.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
@@ -34,11 +35,11 @@ class _Corpus {
   final int draftAnswer;
 }
 
-Future<_Corpus> _seed(Database db) async {
-  final conversations = ConversationRepository(db);
-  final attempts = AttemptRepository(db);
-  final materials = MaterialRepository(db);
-  final tasks = TaskRepository(db);
+Future<_Corpus> _seed(RawDatabase db) async {
+  final conversations = ConversationRepository(db.rawDb);
+  final attempts = AttemptRepository(db.rawDb);
+  final materials = MaterialRepository(db.rawDb);
+  final tasks = TaskRepository(db.rawDb);
 
   final probability = await tasks.createGoal(title: '概率论期末');
   final linear = await tasks.createGoal(title: '线性代数作业');
@@ -141,7 +142,7 @@ Future<_Corpus> _seed(Database db) async {
 
 Future<
   ({
-    Database db,
+    RawDatabase db,
     EvidenceRepository repository,
     EvidenceService evidence,
     SearchService search,
@@ -151,7 +152,7 @@ Future<
 _rig() async {
   final db = await openTestDb();
   final corpus = await _seed(db);
-  final repository = EvidenceRepository(db);
+  final repository = EvidenceRepository(db.rawDb);
   final evidence = EvidenceService(repository: repository);
   return (
     db: db,

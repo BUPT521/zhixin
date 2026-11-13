@@ -9,7 +9,7 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import '../support/test_db.dart';
 
 MaterialService _service(TestRig rig, {Clock? clock}) => MaterialService(
-  materials: MaterialRepository(rig.db, clock: clock ?? systemClock),
+  materials: MaterialRepository(rig.db.rawDb, clock: clock ?? systemClock),
   transactions: WriteTransactions(rig.db),
 );
 

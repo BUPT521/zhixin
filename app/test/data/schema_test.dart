@@ -161,10 +161,7 @@ void main() {
     await old.insert('knowledge_node', {'name': '极限'});
     await old.close();
 
-    final upgraded = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final upgraded = await openZhixinDatabase(path: path);
     addTearDown(upgraded.close);
 
     final legacy = await upgraded.rawQuery(
@@ -211,10 +208,7 @@ void main() {
     });
     await old.close();
 
-    final rebuilt = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final rebuilt = await openZhixinDatabase(path: path);
     addTearDown(rebuilt.close);
 
     expect(await rebuilt.query('conversation'), isEmpty);
@@ -369,10 +363,7 @@ void main() {
     });
     await old.close();
 
-    final rebuilt = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final rebuilt = await openZhixinDatabase(path: path);
     addTearDown(rebuilt.close);
 
     final version = await rebuilt.rawQuery('PRAGMA user_version');

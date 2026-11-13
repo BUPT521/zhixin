@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/models/question.dart';
 import '../../domain/rules/time_format.dart';
@@ -12,7 +12,7 @@ import '../db/write_transactions.dart';
 class AttemptRepository {
   AttemptRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   Future<List<Attempt>> attemptsFor(int conversationId) async {

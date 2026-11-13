@@ -19,10 +19,7 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('zhixin_v7_fail_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final db = await openZhixinDatabase(path: path);
     addTearDown(db.close);
     await db.insert('material', {
       'title': '当前材料',
@@ -47,9 +44,9 @@ void main() {
       )
       ..addFile(ArchiveFile.bytes(dbEntryName, Uint8List.fromList([1, 2, 3])));
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
@@ -58,8 +55,7 @@ void main() {
       service.restorePackage(
         ZipEncoder().encodeBytes(archive),
         currentDb: db,
-        openDb: () =>
-            openZhixinDatabase(factory: databaseFactoryFfi, path: path),
+        openDb: () => openZhixinDatabase(path: path),
       ),
       throwsA(isA<BackupException>()),
     );
@@ -72,10 +68,7 @@ void main() {
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/zhixin.db';
 
-    final before = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final before = await openZhixinDatabase(path: path);
     await before.insert('material', {
       'title': '恢复前',
       'kind': 'book',
@@ -91,10 +84,7 @@ void main() {
 
     // 模拟已经替换成另一份数据，但还没重新打开完成恢复。
     await File(path).delete();
-    final replaced = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final replaced = await openZhixinDatabase(path: path);
     await replaced.insert('material', {
       'title': '恢复后',
       'kind': 'book',
@@ -113,17 +103,14 @@ void main() {
     );
 
     final service = DataPackageService(
+      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
-      factory: databaseFactoryFfi,
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
     expect(await service.recoverInterruptedRestore(), isTrue);
-    final restored = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final restored = await openZhixinDatabase(path: path);
     addTearDown(restored.close);
     final materials = await restored.query('material');
     expect(materials.single['title'], '恢复前');
@@ -138,10 +125,7 @@ void main() {
     await images.create(recursive: true);
     await File('${images.path}/m-1.jpg').writeAsBytes([9, 8, 7]);
 
-    final first = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final first = await openZhixinDatabase(path: path);
     final materialId = await first.insert('material', {
       'title': '概率论讲义',
       'kind': 'book',
@@ -175,10 +159,7 @@ void main() {
     await first.close();
 
     // 正常重启：版本不变，按同一结构打开，数据与附件都还在。
-    final reopened = await openZhixinDatabase(
-      factory: databaseFactoryFfi,
-      path: path,
-    );
+    final reopened = await openZhixinDatabase(path: path);
     addTearDown(reopened.close);
     expect(
       (await reopened.rawQuery('PRAGMA user_version')).first.values.first,

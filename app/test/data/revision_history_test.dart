@@ -13,7 +13,7 @@ import '../support/test_db.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  late Database raw;
+  late RawDatabase raw;
   late GuardedDatabase db;
   late RevisionEngine engine;
 

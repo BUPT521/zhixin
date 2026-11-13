@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -34,8 +35,8 @@ void main() {
   test('记录的状态由最近一次已提交尝试派生', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db);
-    final attempts = AttemptRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
+    final attempts = AttemptRepository(db.rawDb);
     final id = await _record(
       conversations,
       attempts,
@@ -88,10 +89,10 @@ void main() {
   test('最近一次学习场次的目标由一次联表取出', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db);
-    final attempts = AttemptRepository(db);
-    final study = StudyRepository(db);
-    final tasks = TaskRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
+    final attempts = AttemptRepository(db.rawDb);
+    final study = StudyRepository(db.rawDb);
+    final tasks = TaskRepository(db.rawDb);
 
     final id = await conversations.create(entryKind: 'text');
     await conversations.append(id, role: 'user', content: '再做一次');
@@ -120,8 +121,8 @@ void main() {
   test('保存草稿一起留下自评与依据，清空时写回空值', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db);
-    final attempts = AttemptRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
+    final attempts = AttemptRepository(db.rawDb);
     final id = await _record(conversations, attempts, stem: '写出推导');
     final attempt = await attempts.ensureOpenAttempt(id);
 
@@ -157,8 +158,8 @@ void main() {
   test('题目视图就是首条用户消息与图片', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final questions = AttemptRepository(db);
-    final conversations = ConversationRepository(db);
+    final questions = AttemptRepository(db.rawDb);
+    final conversations = ConversationRepository(db.rawDb);
 
     final textId = await _record(conversations, questions, stem: '第 8 题怎么做');
     final photoId = await _record(
@@ -182,8 +183,8 @@ void main() {
   test('同时开始作答只留下一条未提交草稿', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db);
-    final attempts = AttemptRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
+    final attempts = AttemptRepository(db.rawDb);
     final id = await conversations.create(entryKind: 'text');
     await conversations.append(id, role: 'user', content: '同时开始作答');
 
@@ -200,8 +201,8 @@ void main() {
   test('没有作答过的讨论不出现在题目列表', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db);
-    final attempts = AttemptRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
+    final attempts = AttemptRepository(db.rawDb);
 
     final plain = await conversations.create(entryKind: 'text');
     await conversations.append(plain, role: 'user', content: '只是讨论');

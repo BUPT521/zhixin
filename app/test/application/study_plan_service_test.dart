@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
@@ -79,7 +80,7 @@ class _Harness {
        );
 
   final _FakeAi ai;
-  late Database db;
+  late RawDatabase db;
   late ConversationRepository conversations;
   late MaterialRepository materials;
   late StudyPlanRepository plans;
@@ -91,14 +92,14 @@ class _Harness {
 
   Future<void> open() async {
     db = await openTestDb();
-    conversations = ConversationRepository(db);
-    materials = MaterialRepository(db);
-    plans = StudyPlanRepository(db);
-    tasks = TaskRepository(db);
-    attempts = AttemptRepository(db);
-    schedule = ScheduleRepository(db);
-    study = StudyRepository(db);
-    final memories = MemoryRepository(db);
+    conversations = ConversationRepository(db.rawDb);
+    materials = MaterialRepository(db.rawDb);
+    plans = StudyPlanRepository(db.rawDb);
+    tasks = TaskRepository(db.rawDb);
+    attempts = AttemptRepository(db.rawDb);
+    schedule = ScheduleRepository(db.rawDb);
+    study = StudyRepository(db.rawDb);
+    final memories = MemoryRepository(db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
     service = StudyPlanService(
       plans: plans,

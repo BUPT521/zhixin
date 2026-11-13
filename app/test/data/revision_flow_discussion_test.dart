@@ -52,7 +52,7 @@ class _Rig {
   _Rig(this.dir);
 
   final Directory dir;
-  late Database raw;
+  late RawDatabase raw;
   late GuardedDatabase db;
   late RevisionEngine engine;
   late RevisionService revisions;
@@ -65,7 +65,7 @@ class _Rig {
 
   Future<void> open() async {
     await Directory(filesDir).create(recursive: true);
-    raw = await openZhixinDatabase(factory: databaseFactoryFfi, path: dbPath);
+    raw = await openZhixinDatabase(path: dbPath);
     engine = RevisionEngine();
     cache = AttachmentCache(filesDir: () => filesDir);
     db = GuardedDatabase(
@@ -80,13 +80,13 @@ class _Rig {
       clock: () => DateTime(2026, 11, 10, 10),
       cache: cache,
     );
-    final conversations = ConversationRepository(db);
+    final conversations = ConversationRepository(db.rawDb);
     this.conversations = conversations;
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final memories = MemoryRepository(db);
-    final attempts = AttemptRepository(db);
-    final materials = MaterialRepository(db);
+    final tasks = TaskRepository(db.rawDb);
+    final schedule = ScheduleRepository(db.rawDb);
+    final memories = MemoryRepository(db.rawDb);
+    final attempts = AttemptRepository(db.rawDb);
+    final materials = MaterialRepository(db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     discussion = DiscussionService(
       conversations: conversations,

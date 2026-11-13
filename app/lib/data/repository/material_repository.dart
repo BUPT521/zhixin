@@ -1,7 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:sqflite/sqflite.dart';
-
 import '../../domain/models/material.dart';
 import '../../domain/rules/search_terms.dart';
 import '../../domain/rules/time_format.dart';
@@ -18,7 +16,7 @@ import '../revisions/asset_store.dart';
 class MaterialRepository {
   MaterialRepository(this._db, {this._clock = systemClock});
 
-  final Database _db;
+  final RawDatabase _db;
   final Clock _clock;
 
   Future<int> create({
@@ -42,7 +40,7 @@ class MaterialRepository {
     required String kind,
     required String? sourceRef,
     required int? goalId,
-    required DatabaseExecutor executor,
+    required RawExecutor executor,
     String? sourceFileName,
     String? sourceFileHash,
   }) async {
@@ -204,7 +202,7 @@ class MaterialRepository {
     required int pageNo,
     required String content,
     required String? label,
-    required DatabaseExecutor executor,
+    required RawExecutor executor,
   }) async {
     if (pageNo <= 0) throw ArgumentError('页码从 1 开始');
     final text = content.trim();
@@ -258,7 +256,7 @@ class MaterialRepository {
     required int pageId,
     required String content,
     required String? label,
-    required DatabaseExecutor executor,
+    required RawExecutor executor,
   }) async {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('这一页还没有内容');
@@ -293,10 +291,10 @@ class MaterialRepository {
     WriteTransaction? transaction,
   }) async {
     _checkImportedPages(pages);
-    Future<int> save(DatabaseExecutor executor) async {
+    Future<int> save(RawExecutor executor) async {
       if (sourceFile != null) {
         await AssetStore().putBytes(
-          executor.raw,
+          executor,
           sourceFile.hash,
           sourceFile.bytes,
         );
@@ -335,7 +333,7 @@ class MaterialRepository {
       whereArgs: [materialId],
     );
     final hash = rows.firstOrNull?['source_file_hash'] as String?;
-    return hash == null ? null : AssetStore().readBytes(_db.raw, hash);
+    return hash == null ? null : AssetStore().readBytes(_db, hash);
   }
 
   void _checkImportedPages(List<MaterialPageDraft> pages) {
@@ -441,7 +439,7 @@ class MaterialRepository {
   Future<void> _touch(
     int materialId,
     String stamp, {
-    DatabaseExecutor? executor,
+    RawExecutor? executor,
   }) async {
     await (executor ?? _db).update(
       'material',

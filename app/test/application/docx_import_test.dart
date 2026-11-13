@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
@@ -136,7 +137,7 @@ void main() {
       }
     });
     var epoch = 0;
-    final repository = MaterialRepository(rig.db);
+    final repository = MaterialRepository(rig.db.rawDb);
     final service = MaterialService(
       materials: repository,
       transactions: WriteTransactions(rig.db),
@@ -157,7 +158,7 @@ void main() {
         goalId: -1,
         expectedEpoch: epoch,
       ),
-      throwsA(isA<DatabaseException>()),
+      throwsA(isA<SqliteException>()),
     );
     expect(await rig.engine.assets.objectHashes(rig.raw.rawDb), isEmpty);
 
@@ -167,7 +168,7 @@ void main() {
       expectedEpoch: epoch,
     );
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(rig.db)),
+      evidence: EvidenceService(repository: EvidenceRepository(rig.db.rawDb)),
     );
     final hits = await search.search(
       '用乘法公式检验独立性',
@@ -191,20 +192,20 @@ void main() {
     expect((await service.page(id, 2))!.content, second.content);
 
     final packages = RevisionPackageService(
+      factory: databaseFactoryFfi,
       engine: rig.engine,
       assets: rig.engine.assets,
-      factory: databaseFactoryFfi,
       schemaVersion: zhixinSchemaVersion,
       appVersion: 'test',
     );
     final path = '${rig.filesDir}/current.zip';
-    await packages.exportCurrent(rig.db, path);
+    await packages.exportCurrent(rig.db.rawDb, path);
     await packages.importCurrent(
-      target.raw,
+      target.raw.rawDb,
       await File(path).readAsBytes(),
       expectedHead: await target.engine.headId(target.raw.rawDb),
     );
-    final restored = MaterialRepository(target.db);
+    final restored = MaterialRepository(target.db.rawDb);
     expect((await restored.byId(id))!.sourceFileName, '概率讲义.docx');
     expect((await restored.page(id, 2))!.content, second.content);
     expect(await restored.sourceFileBytes(id), bytes);

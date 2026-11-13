@@ -50,14 +50,14 @@ void main() {
   test('同一请求编号的模型判断只写一次', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final attempts = AttemptRepository(rig.db);
-    final conversations = ConversationRepository(rig.db);
-    final study = StudyRepository(rig.db);
-    final memories = MemoryRepository(rig.db);
-    final assessments = AssessmentRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
-    final tasks = TaskRepository(rig.db);
-    final materials = MaterialRepository(rig.db);
+    final attempts = AttemptRepository(rig.db.rawDb);
+    final conversations = ConversationRepository(rig.db.rawDb);
+    final study = StudyRepository(rig.db.rawDb);
+    final memories = MemoryRepository(rig.db.rawDb);
+    final assessments = AssessmentRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final materials = MaterialRepository(rig.db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 11, 20));
     final service = LearningService(
       attempts: attempts,
@@ -114,14 +114,14 @@ void main() {
   test('同一请求编号的草稿与提交只写一次', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final attempts = AttemptRepository(rig.db);
-    final conversations = ConversationRepository(rig.db);
-    final study = StudyRepository(rig.db);
-    final memories = MemoryRepository(rig.db);
-    final assessments = AssessmentRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
-    final tasks = TaskRepository(rig.db);
-    final materials = MaterialRepository(rig.db);
+    final attempts = AttemptRepository(rig.db.rawDb);
+    final conversations = ConversationRepository(rig.db.rawDb);
+    final study = StudyRepository(rig.db.rawDb);
+    final memories = MemoryRepository(rig.db.rawDb);
+    final assessments = AssessmentRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final materials = MaterialRepository(rig.db.rawDb);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 11, 20));
     final service = LearningService(
       attempts: attempts,

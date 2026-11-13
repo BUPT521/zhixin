@@ -101,7 +101,7 @@ class _Harness {
   final ModelFailureRecorder? recordFailure;
   int epoch = 0;
   final _FakeAi ai;
-  late Database db;
+  late RawDatabase db;
   late TestRig rig;
   late ConversationRepository conversations;
   late TaskRepository tasks;
@@ -115,13 +115,13 @@ class _Harness {
   Future<void> open() async {
     rig = await openTestRig(clock: clock);
     db = rig.db;
-    conversations = ConversationRepository(db);
-    tasks = TaskRepository(db);
-    schedule = ScheduleRepository(db);
-    memories = MemoryRepository(db);
-    attempts = AttemptRepository(db);
-    study = StudyRepository(db);
-    materials = MaterialRepository(db);
+    conversations = ConversationRepository(db.rawDb);
+    tasks = TaskRepository(db.rawDb);
+    schedule = ScheduleRepository(db.rawDb);
+    memories = MemoryRepository(db.rawDb);
+    attempts = AttemptRepository(db.rawDb);
+    study = StudyRepository(db.rawDb);
+    materials = MaterialRepository(db.rawDb);
     final policy = TimePolicy(clock: clock);
     service = DiscussionService(
       conversations: conversations,
@@ -134,7 +134,7 @@ class _Harness {
         conversations: conversations,
         materials: materials,
         policy: () => policy,
-        evidence: EvidenceService(repository: EvidenceRepository(db)),
+        evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
@@ -1236,7 +1236,8 @@ void main() {
       end: start.add(const Duration(minutes: 30)),
     );
     final doneId = await h.tasks.createItem(title: '第二节作业', goalId: second);
-    await StudyPlanRepository(h.db).setItemStatus(doneId, PlanItemStatus.done);
+    await StudyPlanRepository(h.db.rawDb)
+        .setItemStatus(doneId, PlanItemStatus.done);
 
     await h.tasks.pauseGoal(first);
     expect((await h.tasks.goalById(first))!.status, LearningGoalStatus.paused);

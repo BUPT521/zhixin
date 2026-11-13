@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/models/evidence.dart';
 import '../../domain/models/material.dart';
@@ -86,7 +86,7 @@ class EvidenceSearchPage {
 class EvidenceRepository {
   EvidenceRepository(this._db);
 
-  final Database _db;
+  final RawDatabase _db;
 
   /// 按原样查找字面文本；`limitPerKind` 限制每类来源的条数，结果合并后再排序。
   Future<List<EvidenceHit>> literal(
