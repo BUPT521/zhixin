@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../application/buddy_actions.dart';
 import '../application/discussion_service.dart';
+import '../application/memory_view.dart';
 import '../domain/models/buddy_protocol.dart';
 import '../domain/rules/time_format.dart';
 import 'discussion_message.dart';

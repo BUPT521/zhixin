@@ -2,6 +2,7 @@ import '../ai/buddy_prompt.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/memory_repository.dart';
 import '../domain/rules/time_policy.dart';
+import 'memory_view.dart';
 
 /// 一次写入的结果：给界面显示回执，并拿到可以撤销的提交编号。
 class AppliedChange {
@@ -103,3 +104,37 @@ String _memoryKey({
   required String? scope,
   required String content,
 }) => '$kind\u0000${scope ?? ''}\u0000$content';
+
+/// 一次确认的共用流程：写入这条记忆，再把来源条目改成已接受或收起。
+///
+/// 讨论与作答原先各写一遍同样的判断，改一处时另一处仍按旧规则处理；两条路径
+/// 现在只在这里决定“内容重复就不写、卡片改为收起”与“写入后带回执”。
+Future<AcceptedMemory> confirmMemoryDraft({
+  required WriteTransaction transaction,
+  required WriteTransactions transactions,
+  required MemoryRepository memories,
+  required MemoryDraft draft,
+  required String sourceKind,
+  required int sourceId,
+  required String? scope,
+  required Clock clock,
+  required Future<void> Function(String status, int? commitId) recordStatus,
+}) async {
+  final applied = await applyMemoryDrafts(
+    transactions: transactions,
+    memories: memories,
+    drafts: [draft],
+    sourceKind: sourceKind,
+    sourceId: sourceId,
+    scope: scope,
+    transaction: transaction,
+    clock: clock,
+  );
+  if (applied.isEmpty) {
+    await recordStatus('dismissed', null);
+    return const AcceptedMemory(applied: false, notice: '这条记忆已经存在，没有重复保存。');
+  }
+  final change = applied.changes.first;
+  await recordStatus('accepted', change.commitId);
+  return AcceptedMemory(applied: true, change: change);
+}

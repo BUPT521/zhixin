@@ -26,6 +26,7 @@ import 'buddy_actions.dart';
 import 'buddy_answer.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
+import 'memory_view.dart';
 import 'reply_outcome.dart';
 
 /// 一次求助的结果：两条消息、引用与要展示的下一步建议。
@@ -88,35 +89,6 @@ class AcceptedSuggestion {
 
   final PlanItem item;
   final int commitId;
-}
-
-/// 一条记忆卡片：待确认的推断记忆，或已经写入、可以撤销的记忆。
-class MemoryItemView {
-  const MemoryItemView({
-    required this.messageId,
-    required this.itemId,
-    required this.draft,
-    required this.status,
-    this.commitId,
-  });
-
-  final int messageId;
-  final String itemId;
-  final MemoryDraft draft;
-  final String status;
-  final int? commitId;
-
-  bool get pending => status == 'pending';
-  bool get applied => status == 'accepted';
-}
-
-/// 用户点“记下”后的结果；重复或过长时没有写入。
-class AcceptedMemory {
-  const AcceptedMemory({required this.applied, this.change, this.notice});
-
-  final bool applied;
-  final AppliedChange? change;
-  final String? notice;
 }
 
 /// 从文字或图片开始的一次讨论。
@@ -951,7 +923,7 @@ class DiscussionService {
       }
       result.add(
         MemoryItemView(
-          messageId: entry.messageId,
+          ownerId: entry.messageId,
           itemId: item.id,
           draft: MemoryDraft(
             kind: item.kind,
@@ -996,40 +968,27 @@ class DiscussionService {
       if (item == null) throw StateError('未找到这条记忆');
       if (item.status != 'pending') throw StateError('这条记忆已经处理');
 
-      final applied = await applyMemoryDrafts(
+      return confirmMemoryDraft(
+        transaction: txn,
         transactions: transactions,
         memories: memories,
-        drafts: [
-          MemoryDraft(
-            kind: item.kind,
-            content: item.content,
-            validUntil: item.validUntil,
-          ),
-        ],
+        draft: MemoryDraft(
+          kind: item.kind,
+          content: item.content,
+          validUntil: item.validUntil,
+        ),
         sourceKind: item.source == MemorySource.user ? 'user' : 'message',
         sourceId: messageId,
         scope: resolved.scope,
-        transaction: txn,
         clock: policy().clock,
-      );
-      if (applied.changes.isEmpty) {
-        await conversations.setMemoryItemStatus(
+        recordStatus: (status, commitId) => conversations.setMemoryItemStatus(
           messageId,
           itemId,
-          status: 'dismissed',
+          status: status,
+          commitId: commitId,
           transaction: txn,
-        );
-        return const AcceptedMemory(applied: false, notice: '这条记忆已经存在，没有重复保存。');
-      }
-      final change = applied.changes.first;
-      await conversations.setMemoryItemStatus(
-        messageId,
-        itemId,
-        status: 'accepted',
-        commitId: change.commitId,
-        transaction: txn,
+        ),
       );
-      return AcceptedMemory(applied: true, change: change);
     }, label: confirmMemoryAction);
   }
 

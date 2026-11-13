@@ -9,6 +9,7 @@ import '../ai/llm_client.dart';
 import '../app_scope.dart';
 import '../application/buddy_actions.dart';
 import '../application/discussion_service.dart';
+import '../application/memory_view.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/study.dart';
@@ -822,7 +823,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final result = await AppScope.of(context).discussionService
           .acceptMemoryItem(
             conversationId: id,
-            messageId: item.messageId,
+            messageId: item.ownerId,
             itemId: item.itemId,
           );
       if (!mounted) return;
@@ -851,7 +852,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     try {
       await AppScope.of(context).discussionService.dismissMemoryItem(
         conversationId: id,
-        messageId: item.messageId,
+        messageId: item.ownerId,
         itemId: item.itemId,
       );
       await _load();
