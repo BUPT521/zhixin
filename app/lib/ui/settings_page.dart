@@ -76,7 +76,8 @@ class _SettingsPageState extends State<SettingsPage> {
       final config = await scope.settingsService.config();
       final cutoff = await scope.settingsService.cutoffHour();
       final systemCamera = await scope.settingsService.useSystemCamera();
-      final reportCrashes = await DiagnosticsStore(scope.paths.filesDir).read(fallback: !kReleaseMode);
+      final reportCrashes = await DiagnosticsStore(scope.paths.filesDir)
+          .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
       final themeMode = scope.themeMode.value;
       if (!mounted) return;
@@ -551,9 +552,8 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() => _reportCrashes = value);
               CrashLog.reportEnabled = value;
               try {
-                await DiagnosticsStore(
-                  AppScope.of(context).paths.filesDir,
-                ).write(value);
+                await DiagnosticsStore(AppScope.of(context).paths.filesDir)
+                    .write(value);
               } catch (_) {
                 if (!context.mounted) return;
                 setState(() => _reportCrashes = previous);
