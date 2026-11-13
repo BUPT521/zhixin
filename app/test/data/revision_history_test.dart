@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
@@ -31,9 +32,10 @@ void main() {
   });
 
   Future<Set<String>> lastTables() async {
-    final head = await engine.headId(raw);
+    final head = await engine.headId(raw.rawDb);
     return {
-      for (final change in await engine.changesFor(raw, head)) change.table,
+      for (final change in await engine.changesFor(raw.rawDb, head))
+        change.table,
     };
   }
 
@@ -176,7 +178,7 @@ void main() {
     final bytes = Uint8List.fromList(List<int>.generate(300, (i) => i));
     final hash = AssetStore.hashBytes(bytes);
     await db.transaction((txn) async {
-      await engine.assets.putBytes(txn, hash, bytes);
+      await engine.assets.putBytes(txn.raw, hash, bytes);
       await txn.insert('message', {
         'conversation_id': conversation,
         'role': 'user',
@@ -185,8 +187,8 @@ void main() {
         'created_at': '2026-11-10T09:00:00',
       });
     });
-    final named = await engine.headId(raw);
-    await engine.nameCommit(raw, named, name: '有图版本', note: '保留');
+    final named = await engine.headId(raw.rawDb);
+    await engine.nameCommit(raw.rawDb, named, name: '有图版本', note: '保留');
     await db.delete('conversation', where: 'id = ?', whereArgs: [conversation]);
     for (var index = 0; index < 6; index++) {
       await db.insert('memory', {
@@ -198,18 +200,18 @@ void main() {
         'updated_at': '2026-11-10T10:00:00',
       });
     }
-    final head = await engine.headId(raw);
-    final result = await engine.prune(raw, keepCommits: 2);
+    final head = await engine.headId(raw.rawDb);
+    final result = await engine.prune(raw.rawDb, keepCommits: 2);
     expect(result.removedCommits, greaterThan(0));
-    expect(await engine.headId(raw), head);
-    expect(await engine.refs(raw), hasLength(1));
-    expect(await engine.assets.verify(raw, hash), isTrue);
+    expect(await engine.headId(raw.rawDb), head);
+    expect(await engine.refs(raw.rawDb), hasLength(1));
+    expect(await engine.assets.verify(raw.rawDb, hash), isTrue);
 
-    final projection = await engine.projectionAt(raw, named);
+    final projection = await engine.projectionAt(raw.rawDb, named);
     expect(projection['conversation'], isNotEmpty);
-    await engine.restore(raw, named, expectedHead: head);
+    await engine.restore(raw.rawDb, named, expectedHead: head);
     expect(await raw.query('conversation'), hasLength(1));
-    expect(await engine.assets.verify(raw, hash), isTrue);
+    expect(await engine.assets.verify(raw.rawDb, hash), isTrue);
   });
 
   test('清理历史保留当前数据并重置为一条基线', () async {
@@ -227,18 +229,22 @@ void main() {
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    await engine.nameCommit(raw, await engine.headId(raw), name: '命名');
-    final projection = await engine.readProjection(raw);
-    await engine.clearHistory(raw);
+    await engine.nameCommit(
+      raw.rawDb,
+      await engine.headId(raw.rawDb),
+      name: '命名',
+    );
+    final projection = await engine.readProjection(raw.rawDb);
+    await engine.clearHistory(raw.rawDb);
     expect(await raw.query('revision_commit'), hasLength(1));
     expect(await raw.query('revision_change'), isEmpty);
     expect(
       await raw.query('revision_ref', where: 'name != ?', whereArgs: ['HEAD']),
       isEmpty,
     );
-    expect(await engine.readProjection(raw), projection);
-    final head = await engine.headId(raw);
-    expect(await engine.projectionAt(raw, head), projection);
+    expect(await engine.readProjection(raw.rawDb), projection);
+    final head = await engine.headId(raw.rawDb);
+    expect(await engine.projectionAt(raw.rawDb, head), projection);
     expect(
       await raw.query('learning_goal', where: 'id = ?', whereArgs: [goal]),
       hasLength(1),

@@ -9,6 +9,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
@@ -50,7 +51,7 @@ void main() {
       'updated_at': '2026-11-10T10:00:00',
     });
     await db.transaction((txn) async {
-      await engine.assets.putBytes(txn, hash, bytes);
+      await engine.assets.putBytes(txn.raw, hash, bytes);
       await txn.insert('message', {
         'conversation_id': conversation,
         'role': 'user',
@@ -59,7 +60,7 @@ void main() {
         'created_at': '2026-11-10T10:00:00',
       });
     });
-    final before = await engine.headId(raw);
+    final before = await engine.headId(raw.rawDb);
     final path = '${dir.path}/current.zip';
     await packages.exportCurrent(db, path);
 
@@ -78,7 +79,7 @@ void main() {
 
     await db.delete('conversation', where: 'id = ?', whereArgs: [conversation]);
     expect(await raw.query('message'), isEmpty);
-    final current = await engine.headId(raw);
+    final current = await engine.headId(raw.rawDb);
     final commit = await packages.importCurrent(
       raw,
       await File(path).readAsBytes(),
@@ -88,8 +89,8 @@ void main() {
     expect(commit.generation, 1);
     expect(await raw.query('conversation'), hasLength(1));
     expect(await raw.query('message'), hasLength(1));
-    expect(await engine.assets.verify(raw, hash), isTrue);
-    expect(await engine.headId(raw), greaterThan(before));
+    expect(await engine.assets.verify(raw.rawDb, hash), isTrue);
+    expect(await engine.headId(raw.rawDb), greaterThan(before));
   });
 
   test('导出前核对数据库引用与附件，缺图时中止并列出缺项', () async {
@@ -189,8 +190,12 @@ void main() {
       where: 'id = ?',
       whereArgs: [goal],
     );
-    await engine.nameCommit(raw, await engine.headId(raw), name: '命名');
-    final head = await engine.headId(raw);
+    await engine.nameCommit(
+      raw.rawDb,
+      await engine.headId(raw.rawDb),
+      name: '命名',
+    );
+    final head = await engine.headId(raw.rawDb);
     final path = '${dir.path}/repository.zip';
     await packages.backupRepository(raw, path);
 
@@ -209,7 +214,7 @@ void main() {
       path: extracted,
     );
     addTearDown(restored.close);
-    expect(await engine.headId(restored), head);
+    expect(await engine.headId(restored.rawDb), head);
     expect(await restored.query('revision_commit'), hasLength(3));
     expect(
       await restored.query(

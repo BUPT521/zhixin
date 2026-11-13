@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
 import 'database_gate.dart';
+import 'raw_executor.dart';
 
 /// 把整库访问收进 [DatabaseGate]：读共享，写、事务与关闭独占（01 第 7 章）。
 ///
@@ -39,6 +40,12 @@ class GuardedDatabase implements Database {
   static final Object _actorScope = Object();
 
   Database get _db => resolve();
+
+  /// 版本引擎、备份与撤销使用的原生执行器；读写仍经 [gate] 协调。
+  RawExecutor get raw => SqfliteRawExecutor(this);
+
+  /// 需要自己开事务的引擎方法使用这个执行器。
+  RawDatabase get rawDb => SqfliteRawDatabase(this);
 
   Transaction? get _currentTxn => Zone.current[_txnScope] as Transaction?;
 
@@ -103,18 +110,24 @@ class GuardedDatabase implements Database {
       }
       return _db.transaction((txn) async {
         if (requestId != null) {
-          final existing = await engine.commitByRequest(txn, requestId);
+          final existing = await engine.commitByRequest(
+            SqfliteRawExecutor(txn),
+            requestId,
+          );
           if (existing != null) {
             if (onDuplicate != null) return onDuplicate(existing);
             throw RevisionDuplicateRequest(existing);
           }
         }
-        final commitId = await engine.beginCommand(txn, requestId: requestId);
+        final commitId = await engine.beginCommand(
+          SqfliteRawExecutor(txn),
+          requestId: requestId,
+        );
         return runZoned(
           () async {
             final result = await action(txn);
             await engine.finishCommand(
-              txn,
+              SqfliteRawExecutor(txn),
               commitId,
               action: label ?? defaultAction,
               actor: actor,

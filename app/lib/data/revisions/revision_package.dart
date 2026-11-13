@@ -12,6 +12,7 @@ import '../backup/backup_manifest.dart';
 import '../db/schema_objects.dart';
 import 'asset_store.dart';
 import 'revision_engine.dart';
+import '../db/raw_executor.dart';
 import 'revision_models.dart';
 
 /// 当前数据包与版本库备份。
@@ -49,12 +50,12 @@ class RevisionPackageService {
   /// 包内清单按数据库引用生成；有附件读不出或哈希不符时中止导出并列出缺项，
   /// 不生成一个看起来完整的包。否则用户要等到换机恢复时才会发现图片缺失。
   Future<void> exportCurrent(Database db, String outputPath) async {
-    final projection = await engine.readProjection(db);
+    final projection = await engine.readProjection(SqfliteRawExecutor(db));
     final projectionJson = encodeProjection(projection);
     final hashes = AssetStore.hashesInProjection(projection).toList()..sort();
     final missing = <String>[];
     for (final hash in hashes) {
-      if (!await assets.verify(db, hash)) missing.add(hash);
+      if (!await assets.verify(SqfliteRawExecutor(db), hash)) missing.add(hash);
     }
     if (missing.isNotEmpty) {
       throw StateError(
@@ -91,7 +92,7 @@ class RevisionPackageService {
         ArchiveFile.bytes(_dataEntry, utf8.encode(projectionJson)),
       );
       for (final hash in hashes) {
-        final bytes = await assets.readBytes(db, hash);
+        final bytes = await assets.readBytes(SqfliteRawExecutor(db), hash);
         if (bytes == null) throw StateError('附件 $hash 无法读取');
         encoder.addArchiveFile(ArchiveFile.bytes('$_assetPrefix$hash', bytes));
       }
@@ -156,7 +157,7 @@ class RevisionPackageService {
       attachmentBytes[hash] = data;
     }
     return engine.importProjection(
-      db,
+      SqfliteRawDatabase(db),
       projection,
       expectedHead: expectedHead,
       attachments: attachmentBytes,
@@ -187,15 +188,17 @@ class RevisionPackageService {
       if (version.first.values.first != schemaVersion) {
         throw StateError('版本库备份的 schema 与当前不一致');
       }
-      final unexpected = await unexpectedDatabaseObjects(copy);
+      final unexpected = await unexpectedDatabaseObjects(
+        SqfliteRawExecutor(copy),
+      );
       if (unexpected.isNotEmpty) {
         throw StateError(
           '备份中止：数据库带有当前程序不认识的'
           '${unexpected.take(5).join('、')}${unexpected.length > 5 ? ' 等' : ''}',
         );
       }
-      final head = await engine.headId(copy);
-      final missing = await engine.verifyAssets(copy);
+      final head = await engine.headId(SqfliteRawExecutor(copy));
+      final missing = await engine.verifyAssets(SqfliteRawExecutor(copy));
       if (missing.isNotEmpty) {
         throw StateError(
           '备份中止：数据库引用的 ${missing.length} 个附件缺失或校验失败'
@@ -313,20 +316,22 @@ class RevisionPackageService {
       if (userVersion.first.values.first != schemaVersion) {
         throw const FormatException('版本库备份的 schema 与当前不一致');
       }
-      final unexpected = await unexpectedDatabaseObjects(copy);
+      final unexpected = await unexpectedDatabaseObjects(
+        SqfliteRawExecutor(copy),
+      );
       if (unexpected.isNotEmpty) {
         throw FormatException(
           '版本库备份带有当前程序不认识的'
           '${unexpected.take(5).join('、')}${unexpected.length > 5 ? ' 等' : ''}',
         );
       }
-      final head = await engine.headId(copy);
+      final head = await engine.headId(SqfliteRawExecutor(copy));
       final declaredHead = manifest['head'];
       if (declaredHead is int && declaredHead != head) {
         throw const FormatException('版本库备份声明的 HEAD 与数据库不一致');
       }
-      await engine.projectionAt(copy, head);
-      final missing = await engine.verifyAssets(copy);
+      await engine.projectionAt(SqfliteRawExecutor(copy), head);
+      final missing = await engine.verifyAssets(SqfliteRawExecutor(copy));
       if (missing.isNotEmpty) {
         throw FormatException(
           '版本库备份的 ${missing.length} 个附件缺失或校验失败'

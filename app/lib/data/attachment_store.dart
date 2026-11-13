@@ -2,7 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
+
+import 'db/raw_executor.dart';
 
 import '../domain/rules/attachments.dart';
 
@@ -12,7 +13,7 @@ class AttachmentStore {
 
   final String filesDir;
 
-  Future<Set<String>> referencedPaths(DatabaseExecutor executor) async {
+  Future<Set<String>> referencedPaths(RawExecutor executor) async {
     final rows = await executor.query(
       'message',
       columns: ['image_paths_json'],
@@ -41,7 +42,7 @@ class AttachmentStore {
     return paths;
   }
 
-  Future<void> cleanupUnreferenced(DatabaseExecutor executor) async {
+  Future<void> cleanupUnreferenced(RawExecutor executor) async {
     final root = Directory(p.join(filesDir, questionImagesDirName));
     if (!await root.exists()) return;
     final rootPath = p.normalize(p.absolute(root.path));
@@ -56,7 +57,7 @@ class AttachmentStore {
 
   /// 仅检查本次操作涉及的文件，避免清理其他页面尚未写入记录的图片。
   Future<void> cleanupCandidates(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     Iterable<String> candidates,
   ) async {
     final candidatePaths = candidates.toSet();

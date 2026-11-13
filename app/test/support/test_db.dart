@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
@@ -55,7 +56,7 @@ Future<TestRig> openTestRig({
   );
   final revisions = RevisionService(
     db: db,
-    raw: () => raw,
+    raw: () => raw.rawDb,
     engine: engine,
     clock: clock,
     cache: cache ?? AttachmentCache(filesDir: () => dir.path),

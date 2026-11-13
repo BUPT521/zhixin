@@ -15,6 +15,7 @@ import 'package:zhixin/data/attachment_store.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
@@ -74,7 +75,7 @@ class _Rig {
     );
     revisions = RevisionService(
       db: db,
-      raw: () => raw,
+      raw: () => raw.rawDb,
       engine: engine,
       clock: () => DateTime(2026, 11, 10, 10),
       cache: cache,
@@ -111,7 +112,7 @@ class _Rig {
       transactions: WriteTransactions(db),
       filesDir: () => filesDir,
       cleanupAttachmentPaths: (paths) =>
-          AttachmentStore(filesDir: filesDir).cleanupCandidates(db, paths),
+          AttachmentStore(filesDir: filesDir).cleanupCandidates(db.raw, paths),
       assets: engine.assets,
       cache: cache,
     );
@@ -149,7 +150,7 @@ void main() {
       await rig.raw.query('asset_object', where: 'hash = ?', whereArgs: [hash]),
       hasLength(1),
     );
-    expect(await rig.engine.assets.verify(rig.raw, hash), isTrue);
+    expect(await rig.engine.assets.verify(rig.raw.rawDb, hash), isTrue);
 
     // 再发一张完全相同的图片：附件对象复用，不重复分块。
     await rig.discussion.reply(
@@ -160,8 +161,8 @@ void main() {
     expect(await rig.raw.query('asset_object'), hasLength(1));
     expect(await rig.raw.query('asset_chunk'), isNotEmpty);
 
-    final submittedHead = await rig.engine.headId(rig.raw);
-    final submitted = await rig.engine.readProjection(rig.raw);
+    final submittedHead = await rig.engine.headId(rig.raw.rawDb);
+    final submitted = await rig.engine.readProjection(rig.raw.rawDb);
     expect(submitted['conversation'], isNotEmpty);
     expect(submitted['message'], isNotEmpty);
 
@@ -171,15 +172,18 @@ void main() {
     await rig.close();
     await rig.open();
     expect(await rig.raw.query('conversation'), isEmpty);
-    expect(await rig.engine.projectionAt(rig.raw, submittedHead), submitted);
+    expect(
+      await rig.engine.projectionAt(rig.raw.rawDb, submittedHead),
+      submitted,
+    );
 
     // 整版恢复到提交时的版本，逐字段比较全部业务表。
-    final currentHead = await rig.engine.headId(rig.raw);
+    final currentHead = await rig.engine.headId(rig.raw.rawDb);
     final preview = await rig.revisions.previewRestore(submittedHead);
     expect(preview.head, currentHead);
     expect(preview.diff.insertCount, greaterThan(0));
     await rig.revisions.restore(submittedHead, expectedHead: currentHead);
-    final restored = await rig.engine.readProjection(rig.raw);
+    final restored = await rig.engine.readProjection(rig.raw.rawDb);
     expect(restored, submitted);
     expect(
       await rig.raw.query(
@@ -202,7 +206,7 @@ void main() {
           ...(jsonDecode(raw) as List).whereType<String>(),
     ];
     expect(refs, contains(hash));
-    expect(await rig.engine.assets.verify(rig.raw, hash), isTrue);
+    expect(await rig.engine.assets.verify(rig.raw.rawDb, hash), isTrue);
     expect(File(rig.cache.pathFor(hash)).existsSync(), isTrue);
     await rig.close();
   });
@@ -214,7 +218,7 @@ void main() {
     });
     final rig = _Rig(dir);
     await rig.open();
-    final head = await rig.engine.headId(rig.raw);
+    final head = await rig.engine.headId(rig.raw.rawDb);
     final bytes = Uint8List.fromList(List<int>.generate(300, (i) => i));
     final hash = AssetStore.hashBytes(bytes);
     await expectLater(
@@ -226,7 +230,7 @@ void main() {
           'created_at': '2026-11-10T10:00:00',
           'updated_at': '2026-11-10T10:00:00',
         });
-        await rig.engine.assets.putBytes(txn, hash, bytes);
+        await rig.engine.assets.putBytes(txn.raw, hash, bytes);
         await txn.insert('message', {
           'conversation_id': conversation,
           'role': 'user',
@@ -238,7 +242,7 @@ void main() {
       }),
       throwsA(isA<StateError>()),
     );
-    expect(await rig.engine.headId(rig.raw), head);
+    expect(await rig.engine.headId(rig.raw.rawDb), head);
     expect(await rig.raw.query('conversation'), isEmpty);
     expect(await rig.raw.query('message'), isEmpty);
     expect(await rig.raw.query('asset_object'), isEmpty);

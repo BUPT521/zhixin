@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import 'raw_executor.dart';
 
 import '../revisions/revision_engine.dart';
 import 'schema.dart';
@@ -36,7 +36,7 @@ Set<String> allowedDatabaseTriggerNames() => {
 };
 
 /// 列出不在允许清单里的数据库对象；空表示结构与当前程序一致。
-Future<List<String>> unexpectedDatabaseObjects(DatabaseExecutor db) async {
+Future<List<String>> unexpectedDatabaseObjects(RawExecutor db) async {
   final rows = await db.rawQuery(
     "SELECT type, name FROM sqlite_master "
     "WHERE name NOT LIKE 'sqlite_%' "

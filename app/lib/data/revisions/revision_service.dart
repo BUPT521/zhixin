@@ -1,10 +1,9 @@
-import 'package:sqflite/sqflite.dart';
-
 import '../../domain/rules/time_policy.dart';
 import '../db/guarded_database.dart';
 import 'asset_store.dart';
 import 'revision_actions.dart';
 import 'revision_engine.dart';
+import '../db/raw_executor.dart';
 import 'revision_models.dart';
 import 'revision_undo.dart';
 
@@ -55,7 +54,7 @@ class RevisionService {
   }) : assets = assets ?? AssetStore();
 
   final GuardedDatabase db;
-  final Database Function() raw;
+  final RawDatabase Function() raw;
   final RevisionEngine engine;
   final Clock clock;
   final AssetStore assets;
@@ -78,18 +77,18 @@ class RevisionService {
   );
 
   Future<RevisionHistory> history({int limit = 200}) async {
-    final head = await engine.headId(db);
-    final commits = await engine.commits(db, limit: limit);
-    final refs = await engine.refs(db);
+    final head = await engine.headId(db.raw);
+    final commits = await engine.commits(db.raw, limit: limit);
+    final refs = await engine.refs(db.raw);
     return RevisionHistory(head: head, commits: commits, refs: refs);
   }
 
   Future<RevisionDetails?> details(int commitId) async {
-    final commit = await engine.commitById(db, commitId);
+    final commit = await engine.commitById(db.raw, commitId);
     if (commit == null) return null;
     return RevisionDetails(
       commit: commit,
-      changes: await engine.changesFor(db, commitId),
+      changes: await engine.changesFor(db.raw, commitId),
     );
   }
 
@@ -102,7 +101,7 @@ class RevisionService {
     required String rowKey,
     int limit = 20,
   }) async {
-    final head = await engine.commitById(db, await engine.headId(db));
+    final head = await engine.commitById(db.raw, await engine.headId(db.raw));
     if (head == null) return const [];
     final rows = await db.rawQuery(
       '''
@@ -119,28 +118,29 @@ class RevisionService {
   }
 
   Future<RevisionDiff> compare(int from, int to) =>
-      engine.compare(db, from, to);
+      engine.compare(db.raw, from, to);
 
   /// 界面的回执是否仍然可以撤销；整版恢复之后的旧提交不在结果里。
   Future<Set<int>> activeCommits(Iterable<int> commitIds) =>
-      engine.activeCommits(db, commitIds);
+      engine.activeCommits(db.raw, commitIds);
 
   /// 提交列表用的撤销判断：同一套白名单与代次规则，值为不能撤销的原因。
   Future<Map<int, String?>> undoBlockReasons(
     Iterable<RevisionCommit> commits,
-  ) => undo.undoBlockReasons(db, commits);
+  ) => undo.undoBlockReasons(db.raw, commits);
 
   /// 当前代次里还没撤销的提交，安排页从中挑出要展示的 AI 改动。
-  Future<List<RevisionCommit>> undoableCommits() => engine.undoableCommits(db);
+  Future<List<RevisionCommit>> undoableCommits() =>
+      engine.undoableCommits(db.raw);
 
   /// 安排页的回执：指定动作且改到指定表的提交，一次查询取回。
   Future<List<RevisionCommit>> receiptCommits({
     required Set<String> actions,
     required Set<String> tables,
-  }) => engine.receiptCommits(db, actions: actions, tables: tables);
+  }) => engine.receiptCommits(db.raw, actions: actions, tables: tables);
 
   Future<RevisionRestorePreview> previewRestore(int target) =>
-      engine.previewRestore(db, target);
+      engine.previewRestore(db.raw, target);
 
   /// 恢复到本机版本：数据事务提交后就算成功；图片缓存重建单独处理，失败只
   /// 返回一条说明，不能把已经完成的恢复报成失败。
@@ -221,15 +221,15 @@ class RevisionService {
 
   Future<void> _stripDeadReceipts() async {
     await db.command(
-      (txn) => engine.stripDeadReceipts(txn),
+      (txn) => engine.stripDeadReceipts(SqfliteRawExecutor(txn)),
       label: clearDeadReceiptsAction,
     );
   }
 
-  Future<List<RevisionCheckpoint>> checkpoints() => engine.checkpoints(db);
+  Future<List<RevisionCheckpoint>> checkpoints() => engine.checkpoints(db.raw);
 
   Future<RevisionStorageUsage> storageUsage() async {
-    final databaseBytes = await engine.databaseBytes(db);
+    final databaseBytes = await engine.databaseBytes(db.raw);
     final assetRows = await db.rawQuery(
       'SELECT COUNT(*) AS count, COALESCE(SUM(byte_length), 0) AS bytes '
       'FROM asset_object',
@@ -256,13 +256,13 @@ class RevisionService {
     );
   }
 
-  Future<List<String>> verifyAssets() => engine.verifyAssets(db);
+  Future<List<String>> verifyAssets() => engine.verifyAssets(db.raw);
 
-  Future<int> databaseBytes() => engine.databaseBytes(db);
+  Future<int> databaseBytes() => engine.databaseBytes(db.raw);
 
   /// 当前数据里引用到的附件哈希，导出与回收都用这一份。
   Future<Set<String>> currentAssetHashes() async {
-    final projection = await engine.readProjection(db);
+    final projection = await engine.readProjection(db.raw);
     return AssetStore.hashesInProjection(projection);
   }
 }

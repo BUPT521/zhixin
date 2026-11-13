@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/weekdays.dart';
@@ -22,7 +22,7 @@ class ScheduleConflict {
 /// 别的入口又绕开限制。[ignoredBlockIds] 用于排除正在移动或恢复的预约本身，
 /// 整组调整时也用它排除所有参与调整的预约。
 Future<ScheduleConflict?> findScheduleConflict(
-  DatabaseExecutor executor, {
+  RawExecutor executor, {
   required DateTime start,
   required DateTime end,
   Set<int> ignoredBlockIds = const {},
@@ -40,7 +40,7 @@ Future<ScheduleConflict?> findScheduleConflict(
 
 /// 只查课表占用；整组调整已经比较过预约之间的重叠时用它。
 Future<ScheduleConflict?> findTimetableConflict(
-  DatabaseExecutor executor, {
+  RawExecutor executor, {
   required DateTime start,
   required DateTime end,
 }) async {
@@ -101,7 +101,7 @@ Future<ScheduleConflict?> findTimetableConflict(
 /// 已经结束的预约不占用时间；课表时间无法解析或起止顺序不成立时返回空，
 /// 交给表约束拒绝。
 Future<ScheduleConflict?> findRecurringTimetableConflict(
-  DatabaseExecutor executor, {
+  RawExecutor executor, {
   required int weekday,
   required String startTime,
   required String endTime,
@@ -157,7 +157,7 @@ Future<ScheduleConflict?> findRecurringTimetableConflict(
 }
 
 Future<ScheduleConflict?> _findBlockConflict(
-  DatabaseExecutor executor, {
+  RawExecutor executor, {
   required DateTime start,
   required DateTime end,
   required Set<int> ignoredBlockIds,

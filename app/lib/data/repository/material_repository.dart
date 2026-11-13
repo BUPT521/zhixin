@@ -7,6 +7,7 @@ import '../../domain/rules/search_terms.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/write_transactions.dart';
+import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
 
 /// 材料与页码（01 `material` / `material_page`）。
@@ -295,7 +296,7 @@ class MaterialRepository {
     Future<int> save(DatabaseExecutor executor) async {
       if (sourceFile != null) {
         await AssetStore().putBytes(
-          executor,
+          executor.raw,
           sourceFile.hash,
           sourceFile.bytes,
         );
@@ -334,7 +335,7 @@ class MaterialRepository {
       whereArgs: [materialId],
     );
     final hash = rows.firstOrNull?['source_file_hash'] as String?;
-    return hash == null ? null : AssetStore().readBytes(_db, hash);
+    return hash == null ? null : AssetStore().readBytes(_db.raw, hash);
   }
 
   void _checkImportedPages(List<MaterialPageDraft> pages) {

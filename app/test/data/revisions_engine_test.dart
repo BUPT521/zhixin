@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
@@ -35,12 +36,12 @@ void main() {
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    final head = await engine.headId(db);
+    final head = await engine.headId(db.raw);
     expect(head, 1);
-    final commit = await engine.commitById(db, head);
+    final commit = await engine.commitById(db.raw, head);
     expect(commit!.action, '数据写入');
     expect(commit.changeCount, 1);
-    var changes = await engine.changesFor(db, head);
+    var changes = await engine.changesFor(db.raw, head);
     expect(changes, hasLength(1));
     expect(changes.first.table, 'learning_goal');
     expect(changes.first.op, 'insert');
@@ -53,9 +54,9 @@ void main() {
       where: 'id = ?',
       whereArgs: [id],
     );
-    final second = await engine.headId(db);
+    final second = await engine.headId(db.raw);
     expect(second, 2);
-    changes = await engine.changesFor(db, second);
+    changes = await engine.changesFor(db.raw, second);
     expect(changes, hasLength(1));
     expect(changes.first.op, 'update');
     expect(changes.first.before!.keys, {'title', 'updated_at'});
@@ -81,13 +82,13 @@ void main() {
       where: 'id = ?',
       whereArgs: [id],
     );
-    final changes = await engine.changesFor(db, 3);
+    final changes = await engine.changesFor(db.raw, 3);
     expect(changes.single.before!['title']!.value, 'B');
     expect(changes.single.after!['title']!.value, 'A');
   });
 
   test('命令事务失败时业务行、版本明细与 HEAD 一起回滚', () async {
-    final before = await engine.headId(db);
+    final before = await engine.headId(db.raw);
     await expectLater(
       db.transaction((txn) async {
         await txn.insert('learning_goal', {
@@ -100,7 +101,7 @@ void main() {
       }),
       throwsA(isA<StateError>()),
     );
-    expect(await engine.headId(db), before);
+    expect(await engine.headId(db.raw), before);
     expect(await db.query('learning_goal'), isEmpty);
     expect(
       await db.query('revision_commit', where: 'id > ?', whereArgs: [0]),
@@ -161,9 +162,9 @@ void main() {
     expect(replay, startsWith('replay:'));
     expect(calls, 1);
     expect(await raw.query('memory'), hasLength(1));
-    final commit = await engine.commitByRequest(raw, 'retry-1');
+    final commit = await engine.commitByRequest(raw.rawDb, 'retry-1');
     expect(commit, isNotNull);
-    expect(await engine.headId(raw), commit!.id);
+    expect(await engine.headId(raw.rawDb), commit!.id);
   });
 
   test('命令里能读到本次分配的提交编号，没有净变化时不形成提交', () async {
@@ -180,17 +181,17 @@ void main() {
         'updated_at': '2026-11-10T09:00:00',
       });
     }, label: '写入记忆');
-    final head = await engine.headId(raw);
+    final head = await engine.headId(raw.rawDb);
     expect(insideId, head);
 
-    final before = await engine.headId(raw);
+    final before = await engine.headId(raw.rawDb);
     int? emptyId;
     await transactions.run((txn) async {
       emptyId = await txn.commitId();
       expect(emptyId, isNotNull);
     }, label: '只有回执');
-    expect(await engine.headId(raw), before);
-    expect(await engine.commitById(raw, emptyId!), isNull);
+    expect(await engine.headId(raw.rawDb), before);
+    expect(await engine.commitById(raw.rawDb, emptyId!), isNull);
   });
 
   test('从检查点重建并与当前数据逐字段一致', () async {
@@ -207,8 +208,8 @@ void main() {
       where: 'id = ?',
       whereArgs: [id],
     );
-    final projection = await engine.projectionAt(db, 2);
-    final now = await engine.readProjection(db);
+    final projection = await engine.projectionAt(db.raw, 2);
+    final now = await engine.readProjection(db.raw);
     expect(projection, now);
   });
 
@@ -219,23 +220,23 @@ void main() {
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    final first = await engine.headId(db);
+    final first = await engine.headId(db.raw);
     await db.update(
       'learning_goal',
       {'title': '恢复后'},
       where: 'id = ?',
       whereArgs: [id],
     );
-    final second = await engine.headId(db);
+    final second = await engine.headId(db.raw);
     await expectLater(
-      engine.restore(db, first, expectedHead: first),
+      engine.restore(db.rawDb, first, expectedHead: first),
       throwsA(isA<RevisionStaleHead>()),
     );
-    final commit = await engine.restore(db, first, expectedHead: second);
+    final commit = await engine.restore(db.rawDb, first, expectedHead: second);
     expect(commit.restoredCommitId, first);
     expect(commit.generation, 1);
     final rows = await db.query('learning_goal');
     expect(rows.single['title'], '恢复前');
-    expect(await engine.headId(db), commit.id);
+    expect(await engine.headId(db.raw), commit.id);
   });
 }

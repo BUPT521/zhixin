@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
@@ -8,7 +9,7 @@ class _FailingCache extends AttachmentCache {
   _FailingCache() : super(filesDir: () => '.');
 
   @override
-  Future<void> rebuild(DatabaseExecutor executor, AssetStore assets) async {
+  Future<void> rebuild(RawExecutor executor, AssetStore assets) async {
     throw StateError('模拟图片缓存写入失败');
   }
 }
@@ -30,7 +31,7 @@ void main() {
       'created_at': '2026-11-10 09:00:00',
       'updated_at': '2026-11-10 09:00:00',
     });
-    final target = await rig.engine.headId(rig.raw);
+    final target = await rig.engine.headId(rig.raw.rawDb);
     await rig.db.update(
       'learning_goal',
       {'title': '恢复后'},
@@ -40,7 +41,7 @@ void main() {
 
     final result = await rig.revisions.restore(
       target,
-      expectedHead: await rig.engine.headId(rig.raw),
+      expectedHead: await rig.engine.headId(rig.raw.rawDb),
     );
 
     expect(result.commit.action, contains('恢复'));

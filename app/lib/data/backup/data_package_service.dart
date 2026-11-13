@@ -9,6 +9,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../attachment_store.dart';
 import '../db/app_database.dart';
+import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
 import 'backup_manifest.dart';
 import 'restore_journal.dart';
@@ -444,7 +445,8 @@ class DataPackageService {
   /// 数据库仍引用的图片文件；缺文件时中止导出，而不是悄悄少打包一张。
   Future<List<File>> _referencedImageFiles(DatabaseExecutor db) async {
     final imageRoot = p.normalize(p.absolute(p.join(filesDir, imagesEntryDir)));
-    final paths = await AttachmentStore(filesDir: filesDir).referencedPaths(db);
+    final paths = await AttachmentStore(filesDir: filesDir)
+        .referencedPaths(db.raw);
     final files = <File>[];
     final missing = <String>[];
     for (final path in paths) {

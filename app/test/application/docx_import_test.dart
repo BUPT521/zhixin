@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/docx_import.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/application/search_service.dart';
@@ -148,7 +149,7 @@ void main() {
       service.importDocx(document: document, title: '已过期', expectedEpoch: 0),
       throwsStateError,
     );
-    expect(await rig.engine.assets.objectHashes(rig.raw), isEmpty);
+    expect(await rig.engine.assets.objectHashes(rig.raw.rawDb), isEmpty);
     await expectLater(
       service.importDocx(
         document: document,
@@ -158,7 +159,7 @@ void main() {
       ),
       throwsA(isA<DatabaseException>()),
     );
-    expect(await rig.engine.assets.objectHashes(rig.raw), isEmpty);
+    expect(await rig.engine.assets.objectHashes(rig.raw.rawDb), isEmpty);
 
     final id = await service.importDocx(
       document: document,
@@ -201,7 +202,7 @@ void main() {
     await packages.importCurrent(
       target.raw,
       await File(path).readAsBytes(),
-      expectedHead: await target.engine.headId(target.raw),
+      expectedHead: await target.engine.headId(target.raw.rawDb),
     );
     final restored = MaterialRepository(target.db);
     expect((await restored.byId(id))!.sourceFileName, '概率讲义.docx');

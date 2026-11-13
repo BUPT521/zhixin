@@ -32,6 +32,7 @@ import 'data/attachment_store.dart';
 import 'data/db/app_database.dart';
 import 'data/db/database_gate.dart';
 import 'data/db/guarded_database.dart';
+import 'data/db/raw_executor.dart';
 import 'data/db/local_data_reset.dart';
 import 'data/db/write_transactions.dart';
 import 'data/diagnostics/crash_log.dart';
@@ -174,7 +175,7 @@ class AppScopeState extends State<AppScope> {
       _semanticIndex ??= SemanticIndexService(
         repository: evidenceRepository,
         indexPath: paths.vectorIndexPath,
-        epoch: () async => '${await revisionsEngine.headId(_connection!)}',
+        epoch: () async => '${await revisionsEngine.headId(db.raw)}',
         clock: clock,
       );
 
@@ -315,7 +316,7 @@ class AppScopeState extends State<AppScope> {
     attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
     revisions = RevisionService(
       db: db,
-      raw: () => _connection!,
+      raw: () => SqfliteRawDatabase(_connection!),
       engine: revisionsEngine,
       clock: clock,
       cache: attachmentCache,
@@ -333,9 +334,9 @@ class AppScopeState extends State<AppScope> {
       clock: clock,
     );
     restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
-    await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db);
+    await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db.raw);
     try {
-      await attachmentCache.rebuild(db, revisionsEngine.assets);
+      await attachmentCache.rebuild(db.raw, revisionsEngine.assets);
     } catch (error) {
       crashLog.record(error, null, kind: 'rebuild_attachments');
     }
@@ -444,7 +445,7 @@ class AppScopeState extends State<AppScope> {
       // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
       await packages.restorePackage(bytes, currentDb: db, openDb: _open);
       try {
-        await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
+        await attachmentCache.rebuild(db.raw, revisionsEngine.assets);
       } catch (error, stack) {
         crashLog.record(error, stack, kind: 'rebuild_attachments_restore');
         cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
@@ -484,7 +485,7 @@ class AppScopeState extends State<AppScope> {
   /// 当前库的规模；恢复前的说明与恢复点里的记录共用这一份。
   Future<RestoreSummary> currentRestoreSummary() async {
     final usage = await revisions.storageUsage();
-    final head = await revisionsEngine.headId(_connection!);
+    final head = await revisionsEngine.headId(db.raw);
     return RestoreSummary(
       head: head,
       commitCount: usage.commitCount,
@@ -516,7 +517,7 @@ class AppScopeState extends State<AppScope> {
   }
 
   /// 导入当前数据包之前先取 `HEAD`，提交时重新核对。
-  Future<int> currentHead() => revisionsEngine.headId(_connection!);
+  Future<int> currentHead() => revisionsEngine.headId(db.raw);
 
   Future<void> importCurrentData(
     Uint8List bytes, {
@@ -530,7 +531,7 @@ class AppScopeState extends State<AppScope> {
         expectedHead: expectedHead,
       ),
     );
-    await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
+    await attachmentCache.rebuild(db.raw, revisionsEngine.assets);
     dataVersion.value++;
     _refreshSemanticIndex();
   }
@@ -547,7 +548,7 @@ class AppScopeState extends State<AppScope> {
     return gate.shared(
       () =>
           AttachmentStore(filesDir: paths.filesDir)
-              .cleanupCandidates(db, pathsToCheck),
+              .cleanupCandidates(db.raw, pathsToCheck),
     );
   }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:zhixin/data/attachment_store.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
@@ -41,7 +42,7 @@ void main() {
     await kept.writeAsBytes([1]);
     await orphan.writeAsBytes([2]);
 
-    await AttachmentStore(filesDir: root.path).cleanupUnreferenced(db);
+    await AttachmentStore(filesDir: root.path).cleanupUnreferenced(db.raw);
 
     expect(await kept.exists(), isTrue);
     expect(await orphan.exists(), isFalse);
@@ -71,7 +72,7 @@ void main() {
     await unrelated.writeAsBytes([3]);
 
     await AttachmentStore(filesDir: root.path)
-        .cleanupCandidates(db, ['shared.jpg', 'orphan.jpg']);
+        .cleanupCandidates(db.raw, ['shared.jpg', 'orphan.jpg']);
 
     expect(await shared.exists(), isTrue);
     expect(await orphan.exists(), isFalse);

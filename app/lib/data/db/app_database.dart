@@ -4,6 +4,7 @@ import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../revisions/revision_engine.dart';
 import 'schema.dart';
+import 'raw_executor.dart';
 
 export '../../domain/rules/attachments.dart' show questionImagesDirName;
 
@@ -40,7 +41,7 @@ Future<Database> openZhixinDatabase({
       onDowngrade: (db, oldVersion, newVersion) =>
           _rebuild(db, newVersion, clock),
       // 触发器与采集暂存表按实际列生成；打开时重新安装，避免残留旧结构。
-      onOpen: (db) => RevisionEngine(clock: clock).initialize(db),
+      onOpen: (db) => RevisionEngine(clock: clock).initialize(db.rawDb),
     ),
   );
 }

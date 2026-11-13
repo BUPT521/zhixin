@@ -31,14 +31,14 @@ void main() {
     expect(active.single.content, contains('不等于独立性'));
 
     // 内容没变时再保存一次，仍然只有这一条记忆，也不形成新提交。
-    final head = await rig.engine.headId(rig.db);
+    final head = await rig.engine.headId(rig.db.raw);
     final commitId = await service.save(
       (await memories.byId(id))!,
       content: '条件概率不等于独立性，需要单独判断',
     );
     expect(commitId, isNull);
     expect(await memories.list(), hasLength(1));
-    expect(await rig.engine.headId(rig.db), head);
+    expect(await rig.engine.headId(rig.db.raw), head);
   });
 
   test('修改记忆返回提交编号，撤销后恢复原内容与有效期', () async {

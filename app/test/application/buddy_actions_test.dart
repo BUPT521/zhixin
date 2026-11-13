@@ -47,7 +47,7 @@ void main() {
       content: '原有困难',
       sourceKind: 'message',
     );
-    final created = (await rig.engine.undoableCommits(rig.db)).last;
+    final created = (await rig.engine.undoableCommits(rig.db.raw)).last;
     await memories.updateContent(id, content: '用户修改后的困难');
 
     final undone = await rig.revisions.undoCommit(created.id);
@@ -63,7 +63,7 @@ void main() {
     final schedule = ScheduleRepository(rig.db);
     final tasks = TaskRepository(rig.db);
     final itemId = await tasks.createItem(title: '复习题目');
-    final created = (await rig.engine.undoableCommits(rig.db)).last;
+    final created = (await rig.engine.undoableCommits(rig.db.raw)).last;
     final start = DateTime(2026, 11, 8, 10);
     final blockId = await schedule.addBlock(
       planItemId: itemId,
@@ -149,7 +149,7 @@ void main() {
     expect(otherScope.changes, hasLength(1));
     expect(otherKind.changes, hasLength(1));
     expect(await rig.db.query('memory'), hasLength(4));
-    expect(await rig.engine.undoableCommits(rig.db), hasLength(4));
+    expect(await rig.engine.undoableCommits(rig.db.raw), hasLength(4));
   });
 
   test('困难与进展写入本次范围，偏好与限制保持全局', () async {

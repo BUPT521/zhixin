@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 
+import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
@@ -63,7 +64,7 @@ class ScheduleRepository {
     final at = _clock();
     return _db.transaction((txn) async {
       final conflict = await findRecurringTimetableConflict(
-        txn,
+        txn.raw,
         weekday: weekday,
         startTime: startTime,
         endTime: endTime,
@@ -267,7 +268,7 @@ class ScheduleRepository {
     required DateTime end,
   }) async {
     final conflict = await findTimetableConflict(
-      executor,
+      executor.raw,
       start: start,
       end: end,
     );
@@ -320,7 +321,7 @@ class ScheduleRepository {
     int? excludeBlockId,
   }) async {
     final conflict = await findScheduleConflict(
-      executor,
+      executor.raw,
       start: start,
       end: end,
       ignoredBlockIds: {?excludeBlockId},

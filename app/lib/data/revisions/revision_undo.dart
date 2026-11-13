@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:sqflite/sqflite.dart';
+import '../db/raw_executor.dart';
 
 import '../repository/schedule_conflicts.dart';
 import '../../domain/rules/time_policy.dart';
@@ -46,7 +46,7 @@ class RevisionUndoService {
     confirmAttemptMemoryAction: {'attempt'},
   };
 
-  Future<RevisionUndoResult> undo(Database db, int commitId) async {
+  Future<RevisionUndoResult> undo(RawDatabase db, int commitId) async {
     return db.transaction((txn) async {
       final target = await engine.commitById(txn, commitId);
       if (target == null) {
@@ -109,7 +109,7 @@ class RevisionUndoService {
   /// 提交列表用的判断：同一套白名单、代次与撤销范围，给出每条提交不能撤销
   /// 的原因；值为 null 表示结构上可以撤销，当前值与后续修改仍在撤销时核对。
   Future<Map<int, String?>> undoBlockReasons(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     Iterable<RevisionCommit> commits,
   ) async {
     final list = commits.toList(growable: false);
@@ -145,7 +145,7 @@ class RevisionUndoService {
     };
   }
 
-  Future<Set<int>> _revertedTargets(DatabaseExecutor executor) async {
+  Future<Set<int>> _revertedTargets(RawExecutor executor) async {
     final rows = await executor.query(
       'revision_commit',
       columns: ['reverted_commit_id'],
@@ -196,7 +196,7 @@ class RevisionUndoService {
   }
 
   Future<String?> _validate(
-    Transaction txn,
+    RawExecutor txn,
     RevisionCommit target,
     List<RevisionChange> changes,
   ) async {
@@ -244,7 +244,7 @@ class RevisionUndoService {
   }
 
   Future<List<RevisionChange>> _laterChanges(
-    Transaction txn,
+    RawExecutor txn,
     int commitId,
     RevisionChange target,
   ) async {
@@ -273,7 +273,7 @@ class RevisionUndoService {
     return result;
   }
 
-  Future<TypedRow?> _currentRow(Transaction txn, RevisionChange change) async {
+  Future<TypedRow?> _currentRow(RawExecutor txn, RevisionChange change) async {
     final schema = await engine.tables(txn);
     final table = schema[change.table];
     if (table == null) return null;
@@ -289,7 +289,7 @@ class RevisionUndoService {
   Object _keyValue(String key) => int.tryParse(key) ?? key;
 
   Future<String?> _checkSchedule(
-    Transaction txn,
+    RawExecutor txn,
     RevisionChange change,
     TypedRow? current,
     List<RevisionChange> commitChanges,
@@ -392,7 +392,7 @@ class RevisionUndoService {
   /// 新增课表本来就会反向查预约（2026-11-11 判例），撤销删除也要走同一份
   /// 规则；撤销新增只是删除课表，不需要检查。
   Future<String?> _checkTimetable(
-    Transaction txn,
+    RawExecutor txn,
     RevisionChange change,
     TypedRow? current,
   ) async {
@@ -420,7 +420,7 @@ class RevisionUndoService {
   }
 
   Future<String?> _checkPlanItem(
-    Transaction txn,
+    RawExecutor txn,
     RevisionChange change,
     TypedRow? current,
   ) async {
@@ -477,7 +477,7 @@ class RevisionUndoService {
     for (final entry in after.entries) entry.key: entry.value,
   };
 
-  Future<void> _apply(Transaction txn, RevisionChange change) async {
+  Future<void> _apply(RawExecutor txn, RevisionChange change) async {
     final schema = await engine.tables(txn);
     final table = schema[change.table]!;
     final key = _keyValue(change.rowKey);
@@ -505,7 +505,7 @@ class RevisionUndoService {
   /// 撤销接受建议时一并去掉已接受的标题，建议重新出现在讨论里；撤销记忆写入
   /// 时把对应的记忆卡片放回待确认，用户可以重新决定。
   Future<void> _cleanReceipts(
-    Transaction txn, {
+    RawExecutor txn, {
     required int commitId,
     required List<RevisionChange> changes,
   }) async {

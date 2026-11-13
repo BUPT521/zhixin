@@ -3,7 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
+
+import '../db/raw_executor.dart';
 
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/content_identity.dart';
@@ -27,7 +28,7 @@ class AssetStore {
 
   /// 写入一份附件；已经存在时直接复用，不重复写块。
   Future<bool> putBytes(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     String hash,
     Uint8List bytes,
   ) async {
@@ -56,7 +57,7 @@ class AssetStore {
     return true;
   }
 
-  Future<Uint8List?> readBytes(DatabaseExecutor executor, String hash) async {
+  Future<Uint8List?> readBytes(RawExecutor executor, String hash) async {
     final object = await executor.query(
       'asset_object',
       columns: ['byte_length'],
@@ -89,7 +90,7 @@ class AssetStore {
     return bytes;
   }
 
-  Future<bool> verify(DatabaseExecutor executor, String hash) async {
+  Future<bool> verify(RawExecutor executor, String hash) async {
     try {
       final bytes = await readBytes(executor, hash);
       if (bytes == null) return false;
@@ -99,14 +100,14 @@ class AssetStore {
     }
   }
 
-  Future<Set<String>> objectHashes(DatabaseExecutor executor) async {
+  Future<Set<String>> objectHashes(RawExecutor executor) async {
     final rows = await executor.query('asset_object', columns: ['hash']);
     return {for (final row in rows) row['hash']! as String};
   }
 
   /// 只保留仍被当前数据、保留提交、检查点或进行中任务引用的附件。
   Future<int> collectGarbage(
-    DatabaseExecutor executor, {
+    RawExecutor executor, {
     required Set<String> keep,
   }) async {
     final hashes = await objectHashes(executor);
@@ -223,7 +224,7 @@ class AttachmentCache {
   }
 
   /// 把当前数据引用到的图片补回临时目录；缺失的对象会抛错。
-  Future<void> rebuild(DatabaseExecutor executor, AssetStore assets) async {
+  Future<void> rebuild(RawExecutor executor, AssetStore assets) async {
     final rows = await executor.query(
       'message',
       columns: ['image_paths_json'],

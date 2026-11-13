@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
@@ -37,7 +38,7 @@ void main() {
     dataChanges = 0;
     revisions = RevisionService(
       db: db,
-      raw: () => raw,
+      raw: () => raw.rawDb,
       engine: engine,
       clock: () => DateTime(2026, 11, 10, 10),
       cache: AttachmentCache(filesDir: () => '/zhixin_schedule_cache'),
@@ -103,7 +104,7 @@ void main() {
       ),
     ]);
     // 界面拿这次写入返回的提交编号撤销，不再从历史里取最近一条。
-    expect(commit, await engine.headId(raw));
+    expect(commit, await engine.headId(raw.rawDb));
     final moved = await schedule.blocksBetween(
       DateTime(2026, 11, 11),
       DateTime(2026, 11, 12),
@@ -209,7 +210,7 @@ void main() {
       end: DateTime(2026, 11, 11, 10),
     );
     // 提示条拿这次写入的编号撤销，不需要再从提交历史里找最近一条。
-    expect(commit, await engine.headId(raw));
+    expect(commit, await engine.headId(raw.rawDb));
     expect(
       await schedule.blocksBetween(
         DateTime(2026, 11, 11),
@@ -242,7 +243,7 @@ void main() {
         end: DateTime(2026, 11, 11, 16),
       ),
     ]);
-    final target = await engine.headId(raw);
+    final target = await engine.headId(raw.rawDb);
     await plan.moveBlock(
       ids.a,
       start: DateTime(2026, 11, 11, 16),
@@ -253,11 +254,11 @@ void main() {
       start: DateTime(2026, 11, 11, 13),
       end: DateTime(2026, 11, 11, 14),
     );
-    final head = await engine.headId(raw);
+    final head = await engine.headId(raw.rawDb);
     final result = await revisions.undoCommit(target);
     expect(result.applied, isFalse);
     expect(result.message, contains('又被修改'));
-    expect(await engine.headId(raw), head);
+    expect(await engine.headId(raw.rawDb), head);
     final a = await schedule.blockById(ids.a);
     final b = await schedule.blockById(ids.b);
     expect(a!.startAt.hour, 13);
@@ -278,14 +279,14 @@ void main() {
         end: DateTime(2026, 11, 11, 16),
       ),
     ]);
-    final target = await engine.headId(raw);
+    final target = await engine.headId(raw.rawDb);
     final blocker = await item('后来插入');
     await block(blocker, 9);
-    final head = await engine.headId(raw);
+    final head = await engine.headId(raw.rawDb);
     final result = await revisions.undoCommit(target);
     expect(result.applied, isFalse);
     expect(result.message, contains('冲突'));
-    expect(await engine.headId(raw), head);
+    expect(await engine.headId(raw.rawDb), head);
     expect((await schedule.blockById(ids.a))!.startAt.hour, 13);
     expect((await schedule.blockById(ids.b))!.startAt.hour, 15);
   });
@@ -304,17 +305,17 @@ void main() {
         end: DateTime(2026, 11, 11, 16),
       ),
     ]);
-    final target = await engine.headId(raw);
+    final target = await engine.headId(raw.rawDb);
     final blockA = await schedule.blockById(ids.a);
     await raw.delete(
       'plan_item',
       where: 'id = ?',
       whereArgs: [blockA!.planItemId],
     );
-    final head = await engine.headId(raw);
+    final head = await engine.headId(raw.rawDb);
     final result = await revisions.undoCommit(target);
     expect(result.applied, isFalse);
-    expect(await engine.headId(raw), head);
+    expect(await engine.headId(raw.rawDb), head);
     expect(await schedule.blockById(ids.a), isNull);
     expect((await schedule.blockById(ids.b))!.startAt.hour, 15);
   });
@@ -328,7 +329,7 @@ void main() {
     });
     final first = await item('第一步', planId: planId, seq: 1);
     final second = await item('第二步', planId: planId, seq: 2);
-    final before = await engine.headId(raw);
+    final before = await engine.headId(raw.rawDb);
     await db.transaction((txn) async {
       // 用临时序号避开唯一键，模拟用户把两步顺序互换。
       await txn.update(
@@ -350,7 +351,7 @@ void main() {
         whereArgs: [first],
       );
     });
-    final current = await engine.headId(raw);
+    final current = await engine.headId(raw.rawDb);
     expect(current, greaterThan(before));
     await revisions.restore(before, expectedHead: current);
     // 版本恢复同样换了当前数据，代次与三栏要跟着推进。
@@ -362,7 +363,7 @@ void main() {
 
   test('预览后 HEAD 变化则拒绝恢复', () async {
     final ids = await twoBlocks();
-    final target = await engine.headId(raw);
+    final target = await engine.headId(raw.rawDb);
     final preview = await revisions.previewRestore(target);
     await plan.moveBlock(
       ids.a,
@@ -384,7 +385,7 @@ void main() {
         end: DateTime(2026, 11, 11, 14),
       ),
     ]);
-    final target = await engine.headId(raw);
+    final target = await engine.headId(raw.rawDb);
     final undone = await revisions.undoCommit(target);
     expect(undone.applied, isTrue, reason: undone.message);
     final again = await revisions.undoCommit(undone.commit!.id);
@@ -400,7 +401,7 @@ void main() {
     expect(reasons[0], '找不到要撤销的提交');
 
     // 课表已进入单项撤销白名单，这条新增可以撤销；撤销删除时会再核对预约。
-    final timetable = await engine.headId(raw);
+    final timetable = await engine.headId(raw.rawDb);
     final afterTimetable = await revisions.history();
     final timetableReasons = await revisions.undoBlockReasons(
       afterTimetable.commits,
@@ -418,7 +419,7 @@ void main() {
     // 整版恢复推进代次，恢复提交与更早的提交都不能按单项撤销。
     final restored = await revisions.restore(
       undoReasons.keys.reduce((a, b) => a > b ? a : b),
-      expectedHead: await engine.headId(raw),
+      expectedHead: await engine.headId(raw.rawDb),
     );
     final afterRestore = await revisions.history();
     final restoreReasons = await revisions.undoBlockReasons(

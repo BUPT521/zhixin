@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
@@ -54,7 +55,7 @@ void main() {
     );
     final revisions = RevisionService(
       db: db,
-      raw: () => raw,
+      raw: () => raw.rawDb,
       engine: engine,
       clock: () => DateTime(2026, 11, 10, 10),
       cache: AttachmentCache(filesDir: () => '.'),

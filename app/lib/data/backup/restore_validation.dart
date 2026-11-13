@@ -3,6 +3,7 @@ import 'package:sqflite/sqflite.dart';
 import '../db/app_database.dart';
 import '../db/schema.dart';
 import '../db/schema_objects.dart';
+import '../db/raw_executor.dart';
 import 'backup_manifest.dart';
 
 /// 在临时库里核对版本、检查结构与必要查询。
@@ -73,7 +74,7 @@ class StagedRestoreValidator {
         path,
         options: OpenDatabaseOptions(readOnly: true),
       );
-      final unexpected = await unexpectedDatabaseObjects(db);
+      final unexpected = await unexpectedDatabaseObjects(db.raw);
       if (unexpected.isNotEmpty) {
         throw BackupException(
           '恢复校验未通过（对象）：数据包带有当前程序不认识的'
@@ -117,7 +118,7 @@ class StagedRestoreValidator {
       throw BackupException('恢复校验未通过（版本）：打开后的库是 v$version，应当是 v$schemaVersion');
     }
 
-    final unexpected = await unexpectedDatabaseObjects(db);
+    final unexpected = await unexpectedDatabaseObjects(db.raw);
     if (unexpected.isNotEmpty) {
       throw BackupException(
         '恢复校验未通过（对象）：数据包带有当前程序不认识的'

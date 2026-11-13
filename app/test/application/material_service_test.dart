@@ -117,10 +117,10 @@ void main() {
 
     final pages = await service.pages(materialId);
     expect(pages.single.content, '新原文 P(A∩B)');
-    final commit = (await rig.engine.undoableCommits(rig.db)).first;
+    final commit = (await rig.engine.undoableCommits(rig.db.raw)).first;
     expect(commit.action, '更正材料页');
     expect(commit.actor, 'user');
-    final changes = await rig.engine.changesFor(rig.db, commit.id);
+    final changes = await rig.engine.changesFor(rig.db.raw, commit.id);
     final change = changes.singleWhere((item) => item.table == 'material_page');
     expect(change.op, 'update');
     expect(change.before?['content']?.value, '旧原文 P(A|B)');
@@ -146,7 +146,7 @@ void main() {
     );
 
     expect(commitId, isNotNull);
-    final changes = await rig.engine.changesFor(rig.db, commitId!);
+    final changes = await rig.engine.changesFor(rig.db.raw, commitId!);
     expect(
       changes.map((change) => change.table),
       containsAll(['material', 'material_page']),
@@ -173,12 +173,12 @@ void main() {
       pages: const [(pageNo: 3, content: '旧原文', label: '条件概率')],
     );
     final page = (await service.pages(materialId)).single;
-    final before = await rig.engine.headId(rig.db);
+    final before = await rig.engine.headId(rig.db.raw);
 
     final commitId = await service.correctPage(page: page, corrected: '旧原文');
 
     expect(commitId, isNull);
-    expect(await rig.engine.headId(rig.db), before);
+    expect(await rig.engine.headId(rig.db.raw), before);
   });
 
   test('更正之后又改过时拒绝撤销，当前原文保持不变', () async {

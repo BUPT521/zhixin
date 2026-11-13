@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:sqflite/sqflite.dart';
 
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
 import 'revision_value.dart';
@@ -126,7 +126,7 @@ class RevisionEngine {
 
   Map<String, RevisionTable>? _cache;
 
-  Future<Map<String, RevisionTable>> tables(DatabaseExecutor executor) async {
+  Future<Map<String, RevisionTable>> tables(RawExecutor executor) async {
     final cached = _cache;
     if (cached != null) return cached;
     final result = <String, RevisionTable>{};
@@ -155,12 +155,12 @@ class RevisionEngine {
     return result;
   }
 
-  Future<void> initialize(Database db) async {
+  Future<void> initialize(RawDatabase db) async {
     await installRevisionSchema(db);
     await _ensureMetadata(db);
   }
 
-  Future<void> _ensureMetadata(Database db) async {
+  Future<void> _ensureMetadata(RawDatabase db) async {
     await db.transaction((txn) async {
       final heads = await txn.query(
         'revision_commit',
@@ -182,7 +182,7 @@ class RevisionEngine {
         await txn.insert('revision_sequence', {
           'id': 1,
           'next_commit': 1,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }, conflictAlgorithm: ConflictAction.replace);
         await _writeCheckpoint(
           txn,
           commitId: 0,
@@ -195,7 +195,7 @@ class RevisionEngine {
           'note': null,
           'created_at': now,
           'updated_at': now,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }, conflictAlgorithm: ConflictAction.replace);
         return;
       }
 
@@ -240,7 +240,7 @@ class RevisionEngine {
     });
   }
 
-  Future<int> headId(DatabaseExecutor executor) async {
+  Future<int> headId(RawExecutor executor) async {
     final rows = await executor.query(
       'revision_ref',
       columns: ['commit_id'],
@@ -251,7 +251,7 @@ class RevisionEngine {
     return rows.first['commit_id']! as int;
   }
 
-  Future<RevisionCommit?> commitById(DatabaseExecutor executor, int id) async {
+  Future<RevisionCommit?> commitById(RawExecutor executor, int id) async {
     final rows = await executor.query(
       'revision_commit',
       where: 'id = ?',
@@ -262,7 +262,7 @@ class RevisionEngine {
   }
 
   Future<RevisionCommit?> commitByRequest(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     String requestId,
   ) async {
     final rows = await executor.query(
@@ -275,7 +275,7 @@ class RevisionEngine {
   }
 
   Future<List<RevisionCommit>> commits(
-    DatabaseExecutor executor, {
+    RawExecutor executor, {
     int? limit,
   }) async {
     final rows = await executor.query(
@@ -287,7 +287,7 @@ class RevisionEngine {
   }
 
   Future<List<RevisionChange>> changesFor(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     int commitId,
   ) async {
     final rows = await executor.query(
@@ -300,7 +300,7 @@ class RevisionEngine {
   }
 
   /// 当前命令在事务里分配的提交编号；没有进行中的命令时为空。
-  Future<int?> activeCommit(DatabaseExecutor executor) async {
+  Future<int?> activeCommit(RawExecutor executor) async {
     final rows = await executor.query(
       'revision_context',
       columns: ['active_commit'],
@@ -314,7 +314,7 @@ class RevisionEngine {
   /// 整版恢复或导入会推进代次，更早的提交不再进入可撤销范围；界面的回执
   /// 也用这个方法判断是否还显示撤销按钮。
   Future<Set<int>> activeCommits(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     Iterable<int> ids,
   ) async {
     final values = ids.toSet().toList(growable: false);
@@ -338,9 +338,7 @@ class RevisionEngine {
   /// 当前代次里还没被撤销的提交，按编号倒序；撤销提交本身不在其中。
   ///
   /// 安排页的“AI 的改动”从这里挑出要展示的写入，数据版本页读的是完整历史。
-  Future<List<RevisionCommit>> undoableCommits(
-    DatabaseExecutor executor,
-  ) async {
+  Future<List<RevisionCommit>> undoableCommits(RawExecutor executor) async {
     final head = await commitById(executor, await headId(executor));
     if (head == null) return const [];
     final rows = await executor.rawQuery(
@@ -362,7 +360,7 @@ class RevisionEngine {
   /// 与 [undoableCommits] 的区别是筛选放在同一条查询里：安排页只展示真正写入
   /// 记忆或学习事项的提交，原先要先读全部可撤销提交，再为每条读一次变更明细。
   Future<List<RevisionCommit>> receiptCommits(
-    DatabaseExecutor executor, {
+    RawExecutor executor, {
     required Set<String> actions,
     required Set<String> tables,
   }) async {
@@ -390,7 +388,7 @@ class RevisionEngine {
     return rows.map(RevisionCommit.fromRow).toList(growable: false);
   }
 
-  Future<List<RevisionRef>> refs(DatabaseExecutor executor) async {
+  Future<List<RevisionRef>> refs(RawExecutor executor) async {
     final rows = await executor.query(
       'revision_ref',
       where: 'name != ?',
@@ -401,7 +399,7 @@ class RevisionEngine {
   }
 
   Future<List<RevisionCheckpoint>> checkpoints(
-    DatabaseExecutor executor, {
+    RawExecutor executor, {
     int? limit,
   }) async {
     final rows = await executor.query(
@@ -413,7 +411,7 @@ class RevisionEngine {
   }
 
   /// 开始一次命令：分配提交编号并把上下文写进当前事务。
-  Future<int> beginCommand(Transaction txn, {String? requestId}) async {
+  Future<int> beginCommand(RawExecutor txn, {String? requestId}) async {
     if (requestId != null) {
       final existing = await commitByRequest(txn, requestId);
       if (existing != null) throw RevisionDuplicateRequest(existing);
@@ -433,7 +431,7 @@ class RevisionEngine {
 
   /// 结束一次命令：合并暂存变化，有净变化才追加提交并推进 `HEAD`。
   Future<RevisionCommit?> finishCommand(
-    Transaction txn,
+    RawExecutor txn,
     int commitId, {
     required String action,
     String actor = 'user',
@@ -494,14 +492,14 @@ class RevisionEngine {
     return commit;
   }
 
-  Future<void> _clearContext(Transaction txn) async {
+  Future<void> _clearContext(RawExecutor txn) async {
     await txn.update('revision_context', {
       'active_commit': null,
       'suppress': 0,
     }, where: 'id = 1');
   }
 
-  Future<void> _clearStage(Transaction txn, int commitId) async {
+  Future<void> _clearStage(RawExecutor txn, int commitId) async {
     final schema = await tables(txn);
     for (final table in schema.values) {
       await txn.delete(
@@ -512,7 +510,7 @@ class RevisionEngine {
     }
   }
 
-  Future<List<RevisionChange>> _collect(Transaction txn, int commitId) async {
+  Future<List<RevisionChange>> _collect(RawExecutor txn, int commitId) async {
     final schema = await tables(txn);
     final result = <RevisionChange>[];
     var seq = 1;
@@ -586,7 +584,7 @@ class RevisionEngine {
   };
 
   Future<void> _insertChanges(
-    Transaction txn,
+    RawExecutor txn,
     int commitId,
     List<RevisionChange> changes,
   ) async {
@@ -596,7 +594,7 @@ class RevisionEngine {
   }
 
   /// 读取当前全部业务表；投影按表名与主键字符串索引。
-  Future<Projection> readProjection(DatabaseExecutor executor) async {
+  Future<Projection> readProjection(RawExecutor executor) async {
     final schema = await tables(executor);
     final projection = <String, Map<String, TypedRow>>{};
     for (final table in schema.values) {
@@ -611,11 +609,11 @@ class RevisionEngine {
     return projection;
   }
 
-  Future<Projection> projectionAt(DatabaseExecutor executor, int target) {
+  Future<Projection> projectionAt(RawExecutor executor, int target) {
     return _rebuild(executor, target);
   }
 
-  Future<Projection> _rebuild(DatabaseExecutor executor, int target) async {
+  Future<Projection> _rebuild(RawExecutor executor, int target) async {
     final targetCommit = await commitById(executor, target);
     if (targetCommit == null) throw RevisionCorruption('提交 $target 不存在');
     final checkpoint = await _latestCheckpoint(executor, target);
@@ -640,7 +638,7 @@ class RevisionEngine {
   }
 
   Future<RevisionCheckpoint> _latestCheckpoint(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     int target,
   ) async {
     final rows = await executor.query(
@@ -710,11 +708,7 @@ class RevisionEngine {
     }
   }
 
-  Future<RevisionDiff> compare(
-    DatabaseExecutor executor,
-    int from,
-    int to,
-  ) async {
+  Future<RevisionDiff> compare(RawExecutor executor, int from, int to) async {
     final before = await _rebuild(executor, from);
     final after = await _rebuild(executor, to);
     return diffProjections(before, after, from: from, to: to);
@@ -763,7 +757,7 @@ class RevisionEngine {
   }
 
   Future<RevisionRestorePreview> previewRestore(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     int target,
   ) async {
     final targetCommit = await commitById(executor, target);
@@ -783,7 +777,7 @@ class RevisionEngine {
   /// 清除与装入在同一个事务里完成，触发器在此期间被上下文标记为暂停，避免
   /// 把整库删除与重插记成逐行历史；净变化由事务内比较后一次性写入。
   Future<RevisionCommit> restore(
-    Database db,
+    RawDatabase db,
     int target, {
     required int expectedHead,
     String action = '恢复版本',
@@ -809,7 +803,7 @@ class RevisionEngine {
 
   /// 导入当前数据包：不依赖历史，把已校验的投影装进当前库并追加提交。
   Future<RevisionCommit> importProjection(
-    Database db,
+    RawDatabase db,
     Projection projection, {
     required int expectedHead,
     Map<String, Uint8List> attachments = const {},
@@ -827,7 +821,7 @@ class RevisionEngine {
   }
 
   Future<RevisionCommit> _replaceWithProjection(
-    Database db,
+    RawDatabase db,
     Projection targetProjection, {
     required int expectedHead,
     required String action,
@@ -889,7 +883,7 @@ class RevisionEngine {
   }
 
   Future<void> _replaceProjection(
-    Transaction txn,
+    RawExecutor txn,
     Projection projection,
   ) async {
     for (final table in versionedTableNames.reversed) {
@@ -907,7 +901,7 @@ class RevisionEngine {
     }
   }
 
-  Future<void> _verifyProjection(Transaction txn, Projection expected) async {
+  Future<void> _verifyProjection(RawExecutor txn, Projection expected) async {
     final actual = await readProjection(txn);
     for (final table in versionedTableNames) {
       final want = expected[table] ?? const <String, TypedRow>{};
@@ -984,7 +978,7 @@ class RevisionEngine {
   }
 
   Future<void> _writeCheckpoint(
-    Transaction txn, {
+    RawExecutor txn, {
     required int commitId,
     required String kind,
     required Projection projection,
@@ -1007,7 +1001,7 @@ class RevisionEngine {
   }
 
   Future<RevisionRef> nameCommit(
-    Database db,
+    RawDatabase db,
     int commitId, {
     required String name,
     String? note,
@@ -1026,7 +1020,7 @@ class RevisionEngine {
         'note': note?.trim(),
         'created_at': now,
         'updated_at': now,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }, conflictAlgorithm: ConflictAction.replace);
       final projection = await projectionAt(txn, commitId);
       await _writeCheckpoint(
         txn,
@@ -1044,7 +1038,7 @@ class RevisionEngine {
     });
   }
 
-  Future<void> deleteName(Database db, String name) async {
+  Future<void> deleteName(RawDatabase db, String name) async {
     if (name == RevisionRef.headName) throw ArgumentError('不能删除 HEAD');
     await db.transaction((txn) async {
       final rows = await txn.query(
@@ -1076,7 +1070,7 @@ class RevisionEngine {
   /// 静默改写，检查点与重建结果就和当前数据不一致。因此回执清理放在清理之后，
   /// 由调用方开一条普通提交，让触发器照常采集这次改写。没有需要清理的编号时
   /// 不更新任何消息，也不会形成提交。
-  Future<int> stripDeadReceipts(DatabaseExecutor executor) async {
+  Future<int> stripDeadReceipts(RawExecutor executor) async {
     final rows = await executor.rawQuery(
       'SELECT DISTINCT commit_id FROM revision_change',
     );
@@ -1161,7 +1155,7 @@ class RevisionEngine {
   }
 
   /// 清理历史：以当前数据为新基线，删除全部提交明细、命名版本与检查点。
-  Future<void> clearHistory(Database db) async {
+  Future<void> clearHistory(RawDatabase db) async {
     await db.transaction((txn) async {
       final head = await headId(txn);
       final projection = await readProjection(txn);
@@ -1211,7 +1205,7 @@ class RevisionEngine {
   /// 有界留存：保留最近若干提交、命名版本与 `HEAD`，更早的历史先固化成
   /// 基线检查点再删除。达到容量上限时继续减少保留提交数。
   Future<RevisionRetentionResult> prune(
-    Database db, {
+    RawDatabase db, {
     int keepCommits = 100,
     int? maxBytes,
   }) async {
@@ -1240,7 +1234,7 @@ class RevisionEngine {
     }
   }
 
-  Future<RevisionRetentionResult> _pruneOnce(Database db, int keep) async {
+  Future<RevisionRetentionResult> _pruneOnce(RawDatabase db, int keep) async {
     return db.transaction((txn) async {
       final head = await headId(txn);
       final all = await commits(txn);
@@ -1343,7 +1337,7 @@ class RevisionEngine {
   }
 
   Future<int> _collectGarbage(
-    DatabaseExecutor executor,
+    RawExecutor executor,
     Projection current, {
     required int currentHead,
   }) async {
@@ -1379,7 +1373,7 @@ class RevisionEngine {
     return assets.collectGarbage(executor, keep: keep);
   }
 
-  Future<int> databaseBytes(DatabaseExecutor executor) async {
+  Future<int> databaseBytes(RawExecutor executor) async {
     final page = await executor.rawQuery('PRAGMA page_count');
     final size = await executor.rawQuery('PRAGMA page_size');
     final count = page.isEmpty ? 0 : page.first.values.first! as int;
@@ -1391,7 +1385,7 @@ class RevisionEngine {
   ///
   /// 只查检查点会漏掉检查点之间提交里引用的附件；备份时把整库带走，所以
   /// 三类引用都要核对，缺任何一张都算备份不完整。
-  Future<List<String>> verifyAssets(DatabaseExecutor executor) async {
+  Future<List<String>> verifyAssets(RawExecutor executor) async {
     final missing = <String>[];
     final all = <String>{};
     final checkpoints = await executor.query(
@@ -1429,7 +1423,7 @@ class RevisionEngine {
 }
 
 /// 创建采集暂存表、触发器和版本上下文；打开库时执行，重复执行保持幂等。
-Future<void> installRevisionSchema(Database db) async {
+Future<void> installRevisionSchema(RawDatabase db) async {
   final engine = RevisionEngine();
   final schema = await engine.tables(db);
   final existing = await db.query(
@@ -1468,14 +1462,14 @@ Future<void> installRevisionSchema(Database db) async {
     'id': 1,
     'active_commit': null,
     'suppress': 0,
-  }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }, conflictAlgorithm: ConflictAction.ignore);
   await db.insert('revision_sequence', {
     'id': 1,
     'next_commit': 1,
-  }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }, conflictAlgorithm: ConflictAction.ignore);
 }
 
-Future<void> _createTriggers(Database db, RevisionTable table) async {
+Future<void> _createTriggers(RawDatabase db, RevisionTable table) async {
   final q = _quote;
   final stage = q(table.stageTable);
   final source = q(table.name);

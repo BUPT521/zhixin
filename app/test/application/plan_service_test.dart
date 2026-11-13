@@ -92,7 +92,7 @@ void main() {
     expect(plan.availableMinutes, 60);
 
     // 暂停目标的提交同时改了目标与预约，撤销后一起回到暂停前。
-    final pause = await rig.engine.commitById(rig.db, pauseId!);
+    final pause = await rig.engine.commitById(rig.db.raw, pauseId!);
     expect(pause!.action, '暂停目标');
     final undone = await rig.revisions.undoCommit(pauseId);
     expect(undone.applied, isTrue);
