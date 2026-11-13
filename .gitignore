@@ -1,0 +1,42 @@
+# ---- Android / Gradle ----
+*.iml
+.gradle/
+local.properties
+.idea/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# ---- Flutter / Dart ----
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---- 构建中间产物 ----
+*.tmp
+# .tmp- 与 .tmp_ 两种前缀都盖住，临时脚本不进入 git status
+.tmp*
+~$*.docx
+
+# ---- 本机角色记忆（AI 用，不入库） ----
+.agent-role
+
+# ---- 系统 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 编辑器 ----
+.vscode/
+*.swp

@@ -1,0 +1,107 @@
+# 知新 · 应用工程
+
+一个懂你的学习搭子，Flutter + SQLite 单机应用。产品定义见 [00](../docs/00-产品定义.md)，数据结构见 [01](../docs/01-ER数据模型.md)，页面与验收见 [02](../docs/02-产品与交互.md)。
+
+## 运行
+
+```bash
+flutter pub get
+flutter run                 # 接一台 Android 设备或模拟器
+flutter build apk --debug   # 出调试包
+```
+
+改界面或者逻辑时用热重载，不必每次出包再装到手机。`flutter run` 连上设备之后，改完代码在它的会话里按 `r`，一两秒后新代码就在设备上生效，按 `R` 热重启；模拟器与真机都支持，只有改了原生配置或者新增插件时才需要重新构建安装。
+
+```powershell
+pwsh tool/dev.ps1           # 没有设备时先启动第一台 AVD，再执行 flutter run
+```
+
+`dev.ps1` 先看 `adb devices` 里有没有已经连上的设备，没有就用 `emulator -list-avds` 里的第一台 AVD 启动模拟器，等到开机完成之后执行 `flutter run`。`-Avd` 指定 AVD，`-Device` 指定设备序列号，`-TimeoutSeconds` 调整等待开机的时间。模拟器单独起进程，脚本退出之后它仍然留着，下一次直接连上。
+
+模拟器按物理像素决定窗口大小、按逻辑像素决定位置，在 Windows 缩放 200% 的屏幕上会开到屏幕上方之外，标题栏拖不到。窗口超出屏幕时，脚本按工作区把它收到右下角，宽高保持 1080:2400 的比例，右边留 64 逻辑像素、下边贴着工作区；窗口本来放得下就不动，`-NoFit` 关掉这一步。
+
+模拟器上的相机是虚拟场景，语音识别走系统服务，数据库、Keystore 与界面行为与手机一致。要验证更接近真实使用的效果，用 USB 连接手机并打开 USB 调试，Android 11 以上也可以用无线调试配对，`adb devices` 能列出之后直接执行 `flutter run`。
+
+最低 Android 11（API 30），只出 arm64。构建需要 JDK 21 与 Android SDK 36；CI 的版本固定在 [ci.yml](../.github/workflows/ci.yml)。
+
+## 检查
+
+```bash
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze
+flutter test
+```
+
+CI 跑的就是这三条。测试用 `sqflite_common_ffi` 在 Dart VM 里执行同一套 DDL，不必起模拟器。
+
+## 目录
+
+```
+lib/
+├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
+├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
+├── application/                            ← 用例：对话、学习、计划、记忆、设置
+├── data/
+│   ├── db/                                 ← schema 26（15 张业务表与版本元数据）、开库、访问协调
+│   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
+│   ├── backup/                             ← zip 导出、旧数据版本与分阶段恢复
+│   ├── diagnostics/                        ← 本机崩溃记录
+│   └── repository/                         ← 讨论、作答、目标、事项、日程、记忆与设置
+├── domain/
+│   ├── models/                             ← 数据对象与序列化
+│   └── rules/                              ← 时间口径、本地兜底与下一步
+└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、关于
+```
+
+`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。`ai/llm_client.dart` 负责三种接口的请求与响应格式，工具规格位于 `ai/buddy_tools.dart`，材料读取与提案工具的执行入口位于 `ai/buddy_agent_tools.dart`，提案解析位于 `ai/buddy_reply_parser.dart`，单步输出上限位于 `ai/buddy_wire.dart`。
+
+安排页的三个表单集中在 `plan_dialogs.dart`，讨论消息与引用展示位于 `discussion_message.dart`，页面继续负责加载数据和执行用户操作。
+
+## 数据
+
+- 数据库是应用私有目录里的一个 SQLite 文件，schema 26 共 15 张业务表：目标、事项、一次学习、作答、课表、时间块、讨论、消息、材料、页码、学习计划、学习判断、记忆、档案与元数据；另有提交、净变化、指向、检查点、采集上下文与附件对象 8 张表。一条讨论就是一条学习记录，题目由首条用户消息与图片派生，作答直接挂在记录上；事项只保存一段说明，系统学习的步骤就是事项，计划只保存材料范围、顺序与继续位置。
+- 讨论按记录标识打开，可以没有目标归属，也可以只有图片消息；图片按内容哈希分块存入同一个库的 `asset_object` 与 `asset_chunk`，消息只保存哈希引用，界面读取时把临时文件补回 `question_images/`，同一个哈希只保存一份。
+- 材料按页保存，讨论可以带入材料与页码；回答里的引用先按页码取回原文、逐字核对，对不上的标为未核实，用户纠正后旧摘录不再作为依据。也可以直接导入 .docx：原文件按内容哈希与正文片段在同一条提交里写入，片段按 1 起编号，引用显示“第 N 个片段”，这类材料不能手工添加一页。添加一页遇到已有页码时拒绝写入，不覆盖已经校对过的原文；用户明确更正一页时改写内容，修改前后的整行随这次提交留在历史里，保存后提示条可以撤销，材料详情按页列出更正记录。
+- 系统学习按材料范围保存步骤、当前页码与完成状态；每一步是学习事项，可以在安排页直接预约，完成状态在系统学习页与事项详情共用。容量规划按每天的可用时段减去课表与已排时间，容量不足时说明先排与缩小范围，只调整用户确认的弹性块。
+- 学习判断只保存来源、结论与依据：`assessment(kind=model)` 是模型判断，`assessment(kind=user)` 是用户填写的核对依据，两者都不标记是否核对；用户自评由作答记录中的帮助、独立性与延迟情况推出，独立性只采信用户的三选一，未选择时记为未说明，对错可以暂不判断；`attempt.delayed` 区分当场完成与隔一段时间后重做。
+- 普通求助只写讨论、记忆与下一步建议；用户接受建议并明确选择归属后才创建学习事项，不自动改动已有预约。
+- 题目不关联知识点；一次作答的对错由用户选择，可以暂不判断，应用内帮助、独立性选择与提交时刻分别记录。
+- 本地库只认当前 schema 26。打开时版本不一致就清空旧表并按当前结构重建：开发期只有可丢弃的测试数据，不保留迁移函数。导出包也只接受 schema 26，其他版本的包在替换前拒绝。
+- 每次业务写入形成一条提交，当前数据对应本机 `HEAD`。`GuardedDatabase` 把独立写入与命令事务统一收进同一个入口，触发器采集新增、修改、删除与外键级联，提交时按表和主键合并为净变化；业务行、附件分块、版本明细与 `HEAD` 在同一个事务提交，异常时一起回滚。版本化表拒绝 `REPLACE`，新增表必须登记版本分类；带请求编号的重复写入返回原提交，界面回执指向所属提交。查看、比较、命名、撤销和整版恢复都从最近的检查点重建，恢复与导入推进数据代次，单项撤销只限当前代次，并核对相关字段在目标提交之后是否又被修改。记忆页的新增、修改与删除同样形成提交，提示条可以撤销；数据版本页与撤销入口共用同一套结构判断，不能撤销的提交在列表里直接禁用并写出原因。设置页的每日截止小时保存成一条提交，保存与撤销后应用根重新读取设置，设置页与归属日口径立即使用新值。
+- 安排页的“整组顺延”把本周未固定的预约一次移动，冲突时整组不改，提交后可从提示或数据版本页整组撤销。暂停目标时取消该目标下未开始的弹性安排与目标状态在同一条提交里，取消范围在事务内读取并一次写入，暂停后也可以从提示条整组撤销；把已取消的预约恢复为待开始时，同样核对课表与其他预约；新增课表时反过来核对已经排好的待开始预约，重叠时拒绝写入并指出冲突的那一条。历史裁剪或清理之后，消息里指向已删除提交的回执去掉提交编号，清理作为一条普通提交写入，没有失效回执时不形成提交。历史裁剪前先重建校验新基线，留存同时受条数与 256 MB 预算约束。
+- 导出分为两类：当前数据包只含业务投影与仍被引用的附件，导入时追加一条提交；版本库备份是 `VACUUM INTO` 生成的整库快照，包含 `HEAD`、历史、命名版本与附件，恢复前先校验完整性、`HEAD`、重建结果与附件哈希，再走现有的临时副本校验与连接替换流程。两个恢复入口先预检再确认：本机版本恢复列出新增、修改与删除的数量，数据包恢复列出包内 `HEAD`、提交与命名版本数以及当前库规模；整库恢复在替换之前把当前状态保存成一份版本库备份，写入应用私有目录的 `restore_points/`，恢复成功后保留，数据版本页可以回到恢复前，最多保留最近 5 份，恢复点写不出来时本次恢复不执行。两类数据包都排除诊断记录与密钥。导出与备份前按数据库引用核对附件，缺图或哈希不符时中止并列出缺项；版本库恢复前核对完整性、`HEAD`、重建结果与检查点、变更明细和当前投影引用的附件。
+
+## 界面
+
+界面组件与主题由 Forui 0.27.7 承担：页面骨架用 `FScaffold` 配 `ZhixinHeader`，按钮、输入框、下拉、开关、复选与单选、列表与卡片用对应的 F 控件，对话框与短提示分别走 `showZhixinDialog` 与 `showToast`，底部面板走 `showZhixinSheet`，日期与时间选择收在 `ui/date_time_dialogs.dart`，内部用 Material 的日期与时间选择器。页面里的字号、颜色、留白与圆角从 `context.zhixin` 读取，色值只在 `ui/theme.dart` 定义一次，Forui 主题、Markdown 主题与本地化用的 `ThemeData` 都从这一份生成。页面内边距由 `FThemeData` 的 `scaffoldStyle` 统一设为零，页面自己按 `ZhixinSpace` 留白，新增页面不必再传 `childPad`。
+
+`material_ui` 仍提供基础控件、`MaterialApp` 外壳、`MaterialPageRoute`、Markdown 渲染与本地化。底部面板与日期时间选择由 Material 承担：`showZhixinSheet` 包 `showModalBottomSheet`，`showZhixinDatePicker` 与 `showZhixinTimePicker` 包 `showDatePicker` 与 `showTimePicker`，面板的底色、上圆角与拖动条在 `_buildMaterial` 的底部面板主题里统一；现在页主色卡片上的“查看事项”是 `TextButton.icon`，关于页的应用图标是 `CircleAvatar`，现在、记录、安排与数据版本四页的下拉刷新是 `RefreshIndicator`。下拉刷新沿用 Material，因为 Forui 0.27.7 没有对应的控件；头像与文字按钮保持 Material，是否替换按实际效果再定。芯片与分段控件继续用 Forui 的 `FButton` 与自绘分段，不换成 Material 的 `Chip` 与 `SegmentedButton`：前者要补 `ChipThemeData` 与 Material 祖先，后者的外观与滑动动效差别明显。新增界面先找 Forui 组件，Forui 没有对应控件，或者替换要另配尺寸与样式时直接用 Material，判断依据是同一屏的字号、圆角与间距是否协调。图标统一用 Lucide：业务图标与 Forui 控件内部都取 `FLucideIcons`，`forui_lucide` 是直接依赖，新增图标从 [Lucide 图标库](https://lucide.dev/icons/) 里选含义相同的图形。
+
+测试里单独构建页面时，外层要补 `FTheme`；页面里会弹提示的，还要补 `FToaster`。少了这两层，页面读不到主题，提示也找不到宿主。
+
+## 外观
+
+设置页的“深浅色”可以选跟随系统、浅色或深色，选择立即生效。取值写在应用私有目录的 `theme_mode` 文件里，不随数据包导出或恢复：主题要在数据库打开之前的第一帧生效，外观也只是这台手机上的偏好。深色沿用浅色的颜色角色，只改背景、卡片、文字与强调色的明度；相机取景与框选手柄压在图片上，保留黑白叠加层。
+
+## 模型
+
+设置页填接口风格、接口地址、模型名与 API Key，默认 `Chat Completions`、`https://api.deepseek.com/v1` 与 `deepseek-flash`。key 存在 Android Keystore，不进仓库、不写日志；应用不内置密钥，也不提供代管服务。接口风格由用户显式选择，不按域名猜：同一家服务商的不同地址可能只支持其中一种，猜错时只能看到 404 或 400。
+
+三种风格共用一个传输层。地址只填域名时补 `/v1`，Anthropic 按 `base/v1/messages` 拼接（`https://api.deepseek.com/anthropic` 因此得到 `/anthropic/v1/messages`）。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限在 OpenAI 官方用 `max_completion_tokens`、其余实现用 `max_tokens`，指向 DeepSeek 时带 `{"thinking":{"type":"disabled"}}`；Responses 发顶层 `instructions`、`input`（`input_text`、`output_text`、`input_image` 的 data URL，工具用 `{type:function,name,parameters,strict:false}`）与 `max_output_tokens`，指向 DeepSeek 时带 `{"reasoning":{"effort":"none"}}`；Anthropic Messages 用 `x-api-key` 与 `anthropic-version: 2023-06-01` 鉴权，system 放顶层，工具用 `input_schema`，图片是 `{type:image,source:{type:base64,…}}` 块，指定工具时 `tool_choice` 取 `{"type":"tool","name":…}`。
+
+流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。三家的结束标记不同：Chat Completions 认 `[DONE]` 或非空 `finish_reason`，Responses 认 `response.completed`／`response.incomplete`（正文只补还没发过的后缀，工具调用按 `item_id` 归并，`output_item.done` 的完整参数覆盖分片），Anthropic 认 `message_stop`（工具参数由 `input_json_delta` 分片拼接，`stop_reason` 为 `max_tokens` 算截断）。没有结束标记时按截断保留已经生成的正文并提示；`content_filter`、`response.failed`、Anthropic 的 `error` 事件按服务端错误处理。非 2xx 的响应体会读出服务端自己的说明，便于定位 key、额度与模型名的问题。
+
+回答正文使用 Markdown，模型可以用 `read_material_page` 读取本轮检索命中的原文，并在收到工具结果后继续回答。`propose_memories`、`propose_next_steps`、`propose_citations`、`propose_study_steps` 与 `propose_assessment` 提交的内容暂存在本轮，参数有误时丢弃对应提案，普通回答有完整正文即可结束。Chat Completions 通过 `tool_call_id` 配对调用与结果，Responses 通过 `function_call_output` 的 `call_id` 配对并带回本轮的推理条目，Anthropic Messages 把同一步的 `tool_result` 集中在下一条用户消息中。每轮的停止条件、材料范围与保存边界见 [00 第 9 节](../docs/00-产品定义.md#9-回答与工具调用)。
+
+回答与记忆分开保存：用户明确说出的记忆在回答落库后单独写入，回答下方给一张可以撤销的卡片，写入失败只提示并保留待确认卡片，不回滚正文；模型推断的记忆先出确认卡片，点「记下」才写入，点「不记」收起。记忆写入形成一条提交，回执保存提交编号，讨论页可以按提交撤销；撤销后卡片回到待确认，同一批写入的多条记忆一起撤销。接受建议后创建的学习事项在同一条提交里记下已接受标题，回执同样指向这次提交。回答里的 Markdown 外链图片不自动加载，只显示可点击的提示，用户点击后才交给系统浏览器打开。
+
+官方 OpenAI Responses 请求保持 `store: false`，并用 `include: ["reasoning.encrypted_content"]` 请求加密推理条目，客户端在工具续接时将条目和配对结果一并传回。[OpenAI Responses 请求文档](https://developers.openai.com/api/reference/resources/responses/methods/create)
+
+设置页可以填写模型的上下文上限，应用据此估算输入容量并预留输出空间。连接测试用一次最小工具请求检查模型或地址能否返回可解析的工具参数。
+
+没有配置、断网或调用失败时，讨论、题目、尝试、日程与记忆仍可查看与记录，下一步由本地规则给出，并标明来源。
+
+## 发布
+
+正式包在 Actions 里手动运行“CI 与发版”，用仓库 Secrets 里的签名配置生成；本机不出正式包。版本号按 [03 第 3 节](../docs/03-团队分工与协作.md#3-交付节奏)递增，当前为 `0.1.0+1`，开发包的版本名带 `-dev` 且按 `com.zhixin.app.dev` 另装一个应用，只由发版人（见 [03 第 2 节](../docs/03-团队分工与协作.md#2-角色)）在发包前修改 `pubspec.yaml` 的 `version`，设置页的“关于”显示构建时写入的构建名与构建号，不另存版本常量；许可页同时列出知新自身的 MIT 许可与第三方组件许可，知新自身的许可从 `platform/app_license.dart` 读取，测试会核对它与仓库根目录的 `LICENSE` 同文。
+
