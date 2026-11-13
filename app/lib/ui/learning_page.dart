@@ -16,12 +16,12 @@ import '../application/memory_view.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
+import 'buddy_flows.dart';
 import 'discussion_cards.dart';
 import 'discussion_page.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'markdown_text.dart';
-import 'settings_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
@@ -419,58 +419,34 @@ class _LearningPageState extends State<LearningPage> {
   Future<void> _acceptMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
-    try {
-      final result = await AppScope.of(context).chat.learning.acceptMemory(
+    await acceptMemoryCard(
+      context: context,
+      accept: () => AppScope.of(context).chat.learning.acceptMemory(
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
         requestId: 'memory-${attempt.id}-${item.ownerId}-${item.itemId}',
-      );
-      if (!mounted) return;
-      await _load();
-      if (!mounted) return;
-      // 写入后的回执就是这张卡片本身，不再另加一行，避免两处撤销。
-      showToast(context, result.notice ?? '已记下这条记忆');
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '保存这条记忆',
-          kind: 'learning_memory_accept',
-          kept: '这条记忆仍在待确认',
-          next: '可以再点一次「记下」',
-        ),
-      );
-    }
+      ),
+      reload: _load,
+      scope: 'learning',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
-    try {
-      await AppScope.of(context).chat.learning.dismissMemory(
+    await dismissMemoryCard(
+      context: context,
+      dismiss: () => AppScope.of(context).chat.learning.dismissMemory(
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
-      );
-      if (mounted) await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '收起这条记忆',
-          kind: 'learning_memory_dismiss',
-          kept: '记忆卡片还在页面上',
-          next: '可以再试一次',
-        ),
-      );
-    }
+      ),
+      reload: _load,
+      scope: 'learning',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   /// 点开原题缩略图看大图；图片文件不在了就说明，不弹空白页。
@@ -532,32 +508,22 @@ class _LearningPageState extends State<LearningPage> {
 
   /// 打开设置页并重新读取配置；返回后可以就地重新获取这一次帮助。
   Future<void> _openSettings() async {
-    await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+    final result = await openModelSettingsPage(
+      context,
+      kind: 'learning_config_read',
+      kept: '这道题与作答记录没有改动',
+    );
     if (!mounted) return;
-    try {
-      final config = await AppScope.of(context).settings.edit.config();
-      if (!mounted) return;
-      setState(() => _configured = config?.isConfigured ?? false);
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取模型配置',
-          kind: 'learning_config_read',
-          kept: '这道题与作答记录没有改动',
-          next: '可以回到设置页重新保存一次',
-        ),
-      );
+    if (result.notice != null) {
+      setState(() => _notice = result.notice);
       return;
     }
-    if (!mounted) return;
+    final configured = result.configured;
+    if (configured == null) return;
+    setState(() => _configured = configured);
     showToast(
       context,
-      _configured ? '模型已就绪，可以点「用模型重新获取」回答这道题。' : '模型还没有配置完整，仍使用本地规则回答。',
+      configured ? '模型已就绪，可以点「用模型重新获取」回答这道题。' : '模型还没有配置完整，仍使用本地规则回答。',
     );
   }
 
@@ -919,30 +885,12 @@ class _LearningPageState extends State<LearningPage> {
                     if (_help != null && (!_lastFromModel || _lastInterrupted))
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            if (_configured)
-                              forui.FButton(
-                                variant: forui.FButtonVariant.secondary,
-                                mainAxisSize: MainAxisSize.min,
-                                onPress: _busy ? null : _retryHelp,
-                                prefix: const Icon(FLucideIcons.refreshCw),
-                                child: Text(
-                                  _lastInterrupted ? '重试这次回答' : '用模型重新获取',
-                                ),
-                              )
-                            else
-                              forui.FButton(
-                                variant: forui.FButtonVariant.outline,
-                                mainAxisSize: MainAxisSize.min,
-                                onPress: _busy ? null : _openSettings,
-                                prefix: const Icon(FLucideIcons.keyRound),
-                                child: const Text('配置模型'),
-                              ),
-                          ],
+                        child: ModelRecoveryButtons(
+                          configured: _configured,
+                          primaryLabel: _lastInterrupted ? '重试这次回答' : '用模型重新获取',
+                          onPrimary: _retryHelp,
+                          onConfigure: _openSettings,
+                          enabled: !_busy,
                         ),
                       ),
                   ],
