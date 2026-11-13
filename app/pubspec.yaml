@@ -39,6 +39,8 @@ dependencies:
   camera: ^0.12.2
   # 裁剪题目图片：纯 Dart 解码、裁剪与 JPEG 编码，不引原生库。
   image: ^4.12.0
+  # 框选交互用现成控件，裁剪在 compute 里完成。
+  crop_your_image: ^2.0.1
   speech_to_text: ^7.5.0
 
   # 回答里的 Markdown：按段缓存，流式输出时不重解析整段；依赖要求 Flutter 3.47 以上。
