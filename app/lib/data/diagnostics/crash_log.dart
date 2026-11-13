@@ -20,6 +20,9 @@ class CrashLog {
 
   static const String fileName = 'diagnostics.json';
 
+  /// 是否把脱敏后的错误交给 Sentry；设置页可以关闭，下次启动仍生效。
+  static bool reportEnabled = true;
+
   final String filesDir;
 
   /// 最多保留几条错误，超出后丢最旧的。

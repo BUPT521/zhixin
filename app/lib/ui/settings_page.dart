@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -7,8 +8,10 @@ import 'theme.dart';
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../app_scope.dart';
+import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
 import '../platform/data_package_export.dart';
+import '../platform/diagnostics_store.dart';
 import 'about_page.dart';
 import 'data_version_page.dart';
 import 'failure_feedback.dart';
@@ -39,6 +42,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _systemCamera = false;
   ThemeMode _themeMode = ThemeMode.system;
   int _cutoff = 4;
+
+  bool _reportCrashes = true;
   bool _loading = true;
   bool _busy = false;
   String? _status;
@@ -71,12 +76,15 @@ class _SettingsPageState extends State<SettingsPage> {
       final config = await scope.settingsService.config();
       final cutoff = await scope.settingsService.cutoffHour();
       final systemCamera = await scope.settingsService.useSystemCamera();
+      final reportCrashes = await DiagnosticsStore(scope.paths.filesDir).read(fallback: !kReleaseMode);
+      CrashLog.reportEnabled = reportCrashes;
       final themeMode = scope.themeMode.value;
       if (!mounted) return;
       setState(() {
         _config = config;
         _cutoff = cutoff;
         _systemCamera = systemCamera;
+        _reportCrashes = reportCrashes;
         _themeMode = themeMode;
         _allowImages = config?.allowImages ?? true;
         _api = config?.api ?? LlmApi.chat;
@@ -526,6 +534,31 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 );
                 await _load();
+              }
+            },
+          ),
+          const Divider(height: 32),
+          _section(theme, '诊断'),
+          forui.FSwitch(
+            label: const Text('发送崩溃报告'),
+            description: const Text(
+              '只发送错误类型、脱敏后的说明与调用栈；学习内容、SQL、密钥与本机路径'
+              '不会上报。关闭后下次启动生效，本机诊断记录仍保留。',
+            ),
+            value: _reportCrashes,
+            onChange: (value) async {
+              final previous = _reportCrashes;
+              setState(() => _reportCrashes = value);
+              CrashLog.reportEnabled = value;
+              try {
+                await DiagnosticsStore(
+                  AppScope.of(context).paths.filesDir,
+                ).write(value);
+              } catch (_) {
+                if (!context.mounted) return;
+                setState(() => _reportCrashes = previous);
+                CrashLog.reportEnabled = previous;
+                showToast(context, '设置没有保存，可以再试一次');
               }
             },
           ),
