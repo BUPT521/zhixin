@@ -13,6 +13,7 @@ import '../application/memory_view.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/study.dart';
+import 'buddy_flows.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
 import 'discussion_cards.dart';
@@ -24,7 +25,6 @@ import 'material_picker.dart';
 import 'materials_page.dart';
 import 'plan_dialogs.dart';
 import 'plan_page.dart';
-import 'settings_page.dart';
 import 'study_plan_page.dart';
 import 'undo_feedback.dart';
 import 'voice_input_button.dart';
@@ -853,57 +853,33 @@ class DiscussionChatState extends State<DiscussionChat> {
   Future<void> _acceptMemory(MemoryItemView item) async {
     final id = _conversationId;
     if (id == null) return;
-    try {
-      final result = await AppScope.of(context).chat.discussion
-          .acceptMemoryItem(
-            conversationId: id,
-            messageId: item.ownerId,
-            itemId: item.itemId,
-          );
-      if (!mounted) return;
-      await _load();
-      if (!mounted) return;
-      showToast(context, result.notice ?? '已记下这条记忆');
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '保存这条记忆',
-          kind: 'discussion_memory_accept',
-          kept: '这条记忆仍在待确认',
-          next: '可以再点一次「记下」',
-        ),
-      );
-    }
+    await acceptMemoryCard(
+      context: context,
+      accept: () => AppScope.of(context).chat.discussion.acceptMemoryItem(
+        conversationId: id,
+        messageId: item.ownerId,
+        itemId: item.itemId,
+      ),
+      reload: _load,
+      scope: 'discussion',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final id = _conversationId;
     if (id == null) return;
-    try {
-      await AppScope.of(context).chat.discussion.dismissMemoryItem(
+    await dismissMemoryCard(
+      context: context,
+      dismiss: () => AppScope.of(context).chat.discussion.dismissMemoryItem(
         conversationId: id,
         messageId: item.ownerId,
         itemId: item.itemId,
-      );
-      await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '收起这条记忆',
-          kind: 'discussion_memory_dismiss',
-          kept: '记忆卡片还在页面上',
-          next: '可以再试一次',
-        ),
-      );
-    }
+      ),
+      reload: _load,
+      scope: 'discussion',
+      showNotice: (notice) => setState(() => _notice = notice),
+    );
   }
 
   Future<void> _undoMemory(MemoryItemView item) async {
@@ -958,35 +934,23 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 打开设置页并重新读取配置；返回后卡片上的入口随之切换。
   Future<void> _openModelSettings() async {
-    await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+    final result = await openModelSettingsPage(
+      context,
+      kind: 'discussion_config_read',
+      kept: '这条讨论没有改动',
+    );
     if (!mounted) return;
-    await _reloadConfig();
-    if (!mounted) return;
+    if (result.notice != null) {
+      setState(() => _notice = result.notice);
+      return;
+    }
+    final configured = result.configured;
+    if (configured == null) return;
+    setState(() => _configured = configured);
     showToast(
       context,
-      _configured ? '模型已就绪，可以重新回答上面这个问题。' : '模型还没有配置完整，仍使用本地规则回答。',
+      configured ? '模型已就绪，可以重新回答上面这个问题。' : '模型还没有配置完整，仍使用本地规则回答。',
     );
-  }
-
-  Future<void> _reloadConfig() async {
-    try {
-      final config = await AppScope.of(context).settings.edit.config();
-      if (mounted) setState(() => _configured = config?.isConfigured ?? false);
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取模型配置',
-          kind: 'discussion_config_read',
-          kept: '这条讨论没有改动',
-          next: '可以回到设置页重新保存一次',
-        ),
-      );
-    }
   }
 
   /// 用模型重答最后一个问题：不重复写用户消息，新回答追加在后面。
@@ -1081,36 +1045,13 @@ class DiscussionChatState extends State<DiscussionChat> {
               padding: const EdgeInsets.only(bottom: 6),
               child: Text(failureNotice, style: theme.text.bodySmall),
             ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (_configured)
-                forui.FButton(
-                  variant: forui.FButtonVariant.secondary,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _sending || _retrying ? null : _retry,
-                  prefix: const Icon(FLucideIcons.refreshCw),
-                  child: Text(label),
-                )
-              else
-                forui.FButton(
-                  variant: forui.FButtonVariant.outline,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _sending || _retrying ? null : _openModelSettings,
-                  prefix: const Icon(FLucideIcons.keyRound),
-                  child: const Text('配置模型'),
-                ),
-              if (_configured && needsConfig)
-                forui.FButton(
-                  variant: forui.FButtonVariant.ghost,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _sending || _retrying ? null : _openModelSettings,
-                  prefix: const Icon(FLucideIcons.settings),
-                  child: const Text('模型设置'),
-                ),
-            ],
+          ModelRecoveryButtons(
+            configured: _configured,
+            primaryLabel: label,
+            onPrimary: _retry,
+            onConfigure: _openModelSettings,
+            onOpenSettings: needsConfig ? _openModelSettings : null,
+            enabled: !(_sending || _retrying),
           ),
         ],
       ),
