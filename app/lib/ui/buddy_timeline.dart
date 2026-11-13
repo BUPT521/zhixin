@@ -21,20 +21,14 @@ sealed class BuddyTimelineEntry {
   const BuddyTimelineEntry();
 }
 
-/// 一条讨论消息；[compact] 为真时只显示两行摘要，用在学页底部的最近讨论。
+/// 一条讨论消息。
 class BuddyMessageEntry extends BuddyTimelineEntry {
-  const BuddyMessageEntry({
-    required this.message,
-    this.footer,
-    this.compact = false,
-  });
+  const BuddyMessageEntry({required this.message, this.footer});
 
   final ChatMessage message;
 
   /// 回答下方的恢复入口，例如配置模型或重新回答。
   final Widget? footer;
-
-  final bool compact;
 }
 
 /// 正在生成的讨论回答。
@@ -183,18 +177,15 @@ class BuddyTimeline extends StatelessWidget {
 
   Widget _entry(BuildContext context, BuddyTimelineEntry entry) {
     return switch (entry) {
-      BuddyMessageEntry(:final message, :final footer, :final compact) =>
-        compact
-            ? ChatMessagePreview(message: message)
-            : Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: DiscussionMessage(
-                  message: message,
-                  imagePath: adapter.imagePath,
-                  footer: footer,
-                  onOpenCitation: adapter.openCitation,
-                ),
-              ),
+      BuddyMessageEntry(:final message, :final footer) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: DiscussionMessage(
+          message: message,
+          imagePath: adapter.imagePath,
+          footer: footer,
+          onOpenCitation: adapter.openCitation,
+        ),
+      ),
       BuddyStreamingEntry(:final text) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: ValueListenableBuilder<String>(
