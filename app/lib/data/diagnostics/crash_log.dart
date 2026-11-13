@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:sqlite3/sqlite3.dart';
 
 import '../../domain/models/diagnostics.dart';
 import '../../domain/rules/time_format.dart';
@@ -12,7 +13,7 @@ import '../../domain/rules/time_format.dart';
 /// 本机崩溃记录：一个 JSON 文件，记启动次数与最近几次未捕获错误；配置了 DSN 时
 /// 同一份脱敏后的说明与调用栈也上报自建 Sentry。
 ///
-/// 不联网、不进数据包、不写学习内容；文件写不进去时静默放弃，不能因为记录
+/// 本机文件不进数据包；文件写不进去时静默放弃，不能因为记录
 /// 崩溃而让应用起不来。清空全部学习数据时保留这个文件，用户可在设置里单独清。
 class CrashLog {
   CrashLog({required this.filesDir, DateTime Function()? clock, this.keep = 20})
@@ -21,7 +22,7 @@ class CrashLog {
   static const String fileName = 'diagnostics.json';
 
   /// 是否把脱敏后的错误交给 Sentry；设置页可以关闭，下次启动仍生效。
-  static bool reportEnabled = true;
+  static bool reportEnabled = false;
 
   final String filesDir;
 
@@ -58,7 +59,12 @@ class CrashLog {
   }
 
   /// 记一条错误。崩溃时进程可能马上结束，所以同步写盘，写完再返回。
-  void record(Object error, StackTrace? stack, {String kind = 'platform'}) {
+  void record(
+    Object error,
+    StackTrace? stack, {
+    String kind = 'platform',
+    bool report = true,
+  }) {
     final data = _read();
     final raw = data['crashes'];
     final crashes = <Object?>[
@@ -66,28 +72,29 @@ class CrashLog {
       {
         'at': formatDateTime(_clock()),
         'kind': kind,
-        'message': _clip(_sanitize(error.toString()), maxMessageLength),
-        'stack': _clip(stack?.toString() ?? '', maxStackLength),
+        'message': _clip(_localDescription(error), maxMessageLength),
+        'stack': _clip(_sanitize(stack?.toString() ?? ''), maxStackLength),
       },
     ];
     data['crashes'] = crashes.length > keep
         ? crashes.sublist(crashes.length - keep)
         : crashes;
     _write(data);
-    _report(error, stack, kind);
+    if (report && reportEnabled) unawaited(_report(error, stack, kind));
   }
 
-  /// 上报脱敏后的类型与说明，不把 SQL、绑定参数或学习正文交给 Sentry。
-  void _report(Object error, StackTrace? stack, String kind) {
+  static String _localDescription(Object error) => switch (error) {
+    SqliteException(:final extendedResultCode) =>
+      'SqliteException($extendedResultCode)',
+    _ => _sanitize(error.toString()),
+  };
+
+  /// 错误说明只取程序定义的类别和 SQLite 数字错误码。
+  Future<void> _report(Object error, StackTrace? stack, String kind) async {
     try {
-      unawaited(
-        Sentry.captureException(
-          DiagnosticError(
-            kind,
-            _clip(_sanitize(error.toString()), maxMessageLength),
-          ),
-          stackTrace: stack,
-        ),
+      await Sentry.captureException(
+        _DiagnosticError(kind, error.runtimeType.toString(), _errorCode(error)),
+        stackTrace: stack,
       );
     } catch (_) {
       // 上报失败不能影响本机记录。
@@ -169,7 +176,7 @@ class CrashLog {
   /// 诊断只用于排障：去掉 SQL 文本、参数、绑定值、本机绝对路径与密钥，避免
   /// 学习正文、用户文件位置与 API Key 进入日志。服务地址保留，`https://` 这类
   /// 写法不当作路径。
-  String _sanitize(String value) {
+  static String _sanitize(String value) {
     var text = value;
     text = text.replaceAll(
       RegExp(r"sql\s*'(?:[^']|'')*'", caseSensitive: false),
@@ -203,13 +210,70 @@ class CrashLog {
   }
 }
 
-/// 上报给 Sentry 的脱敏错误：只保留类型与清理过的说明，不带原始正文。
-class DiagnosticError implements Exception {
-  const DiagnosticError(this.kind, this.message);
+int? _errorCode(Object? error) =>
+    error is SqliteException ? error.extendedResultCode : null;
+
+class _DiagnosticError implements Exception {
+  const _DiagnosticError(this.kind, this.type, this.code);
 
   final String kind;
-  final String message;
+  final String type;
+  final int? code;
+}
 
-  @override
-  String toString() => 'DiagnosticError(): ';
+/// 同时处理应用主动记录和 SDK 自动捕获的 Dart 异常。
+SentryEvent? prepareCrashReport(SentryEvent event, Hint hint) {
+  final exceptions = event.exceptions;
+  if (!CrashLog.reportEnabled || exceptions == null || exceptions.isEmpty) {
+    return null;
+  }
+  final error = event.throwable;
+  final recorded = error is _DiagnosticError ? error : null;
+  final code = recorded?.code ?? _errorCode(error);
+  hint.attachments.clear();
+  return SentryEvent(
+    eventId: event.eventId,
+    timestamp: event.timestamp,
+    platform: event.platform,
+    release: event.release,
+    dist: event.dist,
+    environment: event.environment,
+    level: event.level,
+    sdk: event.sdk,
+    exceptions: [
+      for (final exception in exceptions)
+        SentryException(
+          type: recorded?.type ?? exception.type,
+          value: [
+            recorded?.kind ?? '未捕获的应用异常',
+            if (code != null) 'SQLite $code',
+          ].join(' · '),
+          mechanism: exception.mechanism == null
+              ? null
+              : Mechanism(
+                  type: exception.mechanism!.type,
+                  handled: exception.mechanism!.handled,
+                ),
+          stackTrace: _reportStack(exception.stackTrace),
+        ),
+    ],
+  );
+}
+
+SentryStackTrace? _reportStack(SentryStackTrace? stack) {
+  if (stack == null) return null;
+  final frames = [
+    for (final frame in stack.frames)
+      if (frame.absPath case final String source
+          when source.startsWith('package:') || source.startsWith('dart:'))
+        SentryStackFrame(
+          absPath: source,
+          fileName: frame.fileName,
+          function: frame.function,
+          lineNo: frame.lineNo,
+          colNo: frame.colNo,
+          inApp: frame.inApp,
+        ),
+  ];
+  return frames.isEmpty ? null : SentryStackTrace(frames: frames);
 }

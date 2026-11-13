@@ -584,8 +584,8 @@ class _SettingsPageState extends State<SettingsPage> {
           forui.FSwitch(
             label: const Text('发送崩溃报告'),
             description: const Text(
-              '只发送错误类型、脱敏后的说明与调用栈；学习内容、SQL、密钥与本机路径'
-              '不会上报。关闭后下次启动生效，本机诊断记录仍保留。',
+              '报告包含错误类型、错误分类与应用代码位置。启动时按此设置决定是否连接'
+              '诊断服务，本机诊断记录单独保存。',
             ),
             value: _reportCrashes,
             onChange: (value) async {
