@@ -1131,11 +1131,15 @@ class _PlanPageState extends State<PlanPage> {
 
   List<Widget> _scheduleTab(ZhixinTheme theme, PlanWeek week) {
     final summaries = week.studyPlans;
-    final visiblePlans = _showAllPlans
-        ? summaries
-        : summaries
-              .where((summary) => summary.plan.open)
-              .toList(growable: false);
+    // 读取顺序本来就是进行中的计划在前，拆成“常驻的一段”与“展开的一段”
+    // 不改变计划的先后。
+    final openPlans = summaries
+        .where((summary) => summary.plan.open)
+        .toList(growable: false);
+    final closedPlans = summaries
+        .where((summary) => !summary.plan.open)
+        .toList(growable: false);
+    final visiblePlans = _showAllPlans ? summaries : openPlans;
     final policy = AppScope.of(context).timePolicy;
     final range = policy.naturalWeekRange(_anchor);
     final currentWeek =
@@ -1230,51 +1234,48 @@ class _PlanPageState extends State<PlanPage> {
                 child: const Text('选择学习材料'),
               ),
       ),
-      // 展开或收起已暂停、已完成的计划时，这一组的高度平滑变化。
-      AnimatedSize(
-        duration: context.motionOf(theme.motion.standard),
-        curve: theme.motion.move,
-        alignment: Alignment.topCenter,
+      for (final summary in openPlans) _studyPlanTile(theme, summary),
+      if (openPlans.isEmpty && !_showAllPlans)
+        forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.route,
+            title: week.studyPlans.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
+            description: week.studyPlans.isEmpty
+                ? '选择教材或课件，按页码建立学习顺序。'
+                : '已暂停或已完成的计划默认收起，可以展开查看。',
+            action: widget.onOpenMaterials == null
+                ? null
+                : forui.FButton(
+                    variant: forui.FButtonVariant.outline,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: widget.onOpenMaterials,
+                    child: const Text('选择学习材料'),
+                  ),
+          ),
+        ),
+      // 已暂停与已完成的计划展开而不是逐帧改整组高度：只有这一块在做高度
+      // 过渡，后面的固定课表整体平移，不再跟着逐项重新排位。
+      ExpandReveal(
+        visible: _showAllPlans,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final summary in visiblePlans) _studyPlanTile(theme, summary),
-            if (visiblePlans.isEmpty)
-              forui.FCard(
-                child: EmptyState(
-                  icon: FLucideIcons.route,
-                  title: week.studyPlans.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
-                  description: week.studyPlans.isEmpty
-                      ? '选择教材或课件，按页码建立学习顺序。'
-                      : '已暂停或已完成的计划默认收起，可以展开查看。',
-                  action: widget.onOpenMaterials == null
-                      ? null
-                      : forui.FButton(
-                          variant: forui.FButtonVariant.outline,
-                          mainAxisSize: MainAxisSize.min,
-                          onPress: widget.onOpenMaterials,
-                          child: const Text('选择学习材料'),
-                        ),
-                ),
-              ),
+            for (final summary in closedPlans) _studyPlanTile(theme, summary),
           ],
         ),
       ),
-      if (week.studyPlans.length != visiblePlans.length || _showAllPlans)
-        if (week.studyPlans.any((summary) => !summary.plan.open))
-          Center(
-            child: forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              size: forui.FButtonSizeVariant.sm,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => setState(() => _showAllPlans = !_showAllPlans),
-              child: Text(
-                _showAllPlans
-                    ? '只看进行中的计划'
-                    : '显示全部计划（${week.studyPlans.length}）',
-              ),
+      if (closedPlans.isNotEmpty)
+        Center(
+          child: forui.FButton(
+            variant: forui.FButtonVariant.ghost,
+            size: forui.FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: () => setState(() => _showAllPlans = !_showAllPlans),
+            child: Text(
+              _showAllPlans ? '只看进行中的计划' : '显示全部计划（${week.studyPlans.length}）',
             ),
           ),
+        ),
       SectionHeading(
         title: '固定课表',
         subtitle: '安排学习时自动避开这些时段',

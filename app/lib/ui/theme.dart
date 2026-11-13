@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:forui/forui.dart' as forui;
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:material_ui/material_ui.dart';
@@ -403,6 +404,18 @@ ThemeData _buildMaterial(_Palette palette) {
   );
   final text = _textStyles(palette);
   return base.copyWith(
+    // 页面路由的过渡在这里配一次，各页不再各写一套：安卓与桌面用淡入加
+    // 右推，iOS 保留系统的滑回手势。减少动态效果时由 builder 直接给终态。
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: ZhixinPageTransitionsBuilder(),
+        TargetPlatform.fuchsia: ZhixinPageTransitionsBuilder(),
+        TargetPlatform.linux: ZhixinPageTransitionsBuilder(),
+        TargetPlatform.windows: ZhixinPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+      },
+    ),
     // 底部面板改用 Material 之后，底色、上圆角与拖动条从这里取；页面打开
     // 面板时只写 showDragHandle 等行为，不再各配一遍样式。
     bottomSheetTheme: BottomSheetThemeData(

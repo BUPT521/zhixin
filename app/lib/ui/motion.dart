@@ -106,6 +106,42 @@ class TabTransition extends InheritedWidget {
       oldWidget.animation != animation;
 }
 
+/// 二级页面的统一路由过渡：新页淡入并从右侧推入一段距离，旧页不动。
+///
+/// 缩放类过渡要给整页做快照，也不符合“不缩放”的口径，这里只用透明度与位移。
+/// 时长与曲线取自 [ZhixinMotion]；系统要求减少动态效果时直接显示终态。
+/// 在 `ThemeData.pageTransitionsTheme` 里配置一次，页面不再各写一套。
+class ZhixinPageTransitionsBuilder extends PageTransitionsBuilder {
+  const ZhixinPageTransitionsBuilder();
+
+  /// 新页从右侧推入的距离，按像素给；按百分比给在平板上会变成大半屏。
+  static const double distance = 24;
+
+  @override
+  Duration get transitionDuration => const ZhixinMotion().emphasized;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (context.reduceMotion) return child;
+    final move = animation.drive(CurveTween(curve: const ZhixinMotion().move));
+    final fade = animation.drive(CurveTween(curve: const ZhixinMotion().enter));
+    return AnimatedBuilder(
+      animation: move,
+      child: FadeTransition(opacity: fade, child: child),
+      builder: (context, child) => Transform.translate(
+        offset: Offset((1 - move.value) * distance, 0),
+        child: child,
+      ),
+    );
+  }
+}
+
 /// 子组件首次出现、或 [trigger] 变化时淡入，并自下而上移动几个像素。
 ///
 /// 只播放新内容的进入，不保留旧内容做淡出：旧内容里可能带着 GlobalKey

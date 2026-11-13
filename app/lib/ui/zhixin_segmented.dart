@@ -141,13 +141,15 @@ class ZhixinSegmented<T> extends StatelessWidget {
                 const SizedBox(width: 6),
               ],
               Flexible(
+                // 选中与否都取同一个字重：选中态已经由滑块底色与文字颜色
+                // 说明，字重再变会改变字宽，等分整行时标签会轻微重新居中。
                 child: Text(
                   segment.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.text.labelLarge.copyWith(
                     color: foreground,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),

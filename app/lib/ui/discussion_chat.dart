@@ -162,11 +162,10 @@ class DiscussionChatState extends State<DiscussionChat> {
           ? (messages: const <ChatMessage>[], hasOlder: false)
           : await scope.discussionService.historyPage(record.id);
       final messages = page.messages;
-      // 回执与记忆卡片都从同一批消息里读，可以同时发出。
-      final (changes, memoryItems) = await (
-        scope.discussionService.changesFromMessages(messages),
-        scope.discussionService.memoryItemsFromMessages(messages),
-      ).wait;
+      if (!mounted) return;
+      // 消息列表决定首屏，先把它交出去；改动建议与记忆卡片随后补上，不跟着
+      // 一起等待。结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _goals = goals;
@@ -175,12 +174,19 @@ class DiscussionChatState extends State<DiscussionChat> {
         _messages = messages;
         _hasOlderMessages = page.hasOlder;
         _pending = DiscussionService.pendingSuggestions(messages);
-        _memoryItems = memoryItems;
-        _changes = changes;
         _configured = config?.isConfigured ?? false;
         _loading = false;
       });
       _jumpToEnd();
+      final (changes, memoryItems) = await (
+        scope.discussionService.changesFromMessages(messages),
+        scope.discussionService.memoryItemsFromMessages(messages),
+      ).wait;
+      if (!mounted) return;
+      setState(() {
+        _memoryItems = memoryItems;
+        _changes = changes;
+      });
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {

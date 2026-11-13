@@ -599,7 +599,12 @@ class _RecordsPageState extends State<RecordsPage> {
       final key = date == null ? '更早' : _dayHeading(date);
       groups.putIfAbsent(key, () => []).add(record);
     }
-    return ListView(
+    // 列表项按“日期标题、一条记录”铺平，交给 ListView.builder 只建可视范围
+    // 内的几项；每读一页也不再重新生成整份 children。
+    final entries = <Object>[
+      for (final entry in groups.entries) ...[entry.key, ...entry.value],
+    ];
+    return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(
         theme.space.page,
@@ -607,31 +612,44 @@ class _RecordsPageState extends State<RecordsPage> {
         theme.space.page,
         theme.space.xl,
       ),
-      children: [
-        for (final entry in groups.entries) ...[
-          Padding(
+      itemCount: entries.length + (_hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == entries.length) {
+          // 列表末尾这一项建出来，说明已经滚到离底部一屏以内，自动接着读。
+          _scheduleLoadMore();
+          return LoadMoreFooter(
+            label: '读取更早的记录',
+            loading: _loadingMore,
+            onPressed: _loadMore,
+          );
+        }
+        return switch (entries[index]) {
+          final String heading => Padding(
             padding: EdgeInsets.only(
               top: theme.space.md,
               bottom: theme.space.xs,
               left: 2,
             ),
             child: Text(
-              entry.key,
+              heading,
               style: theme.text.labelLarge.copyWith(
                 color: theme.colors.onSurfaceVariant,
               ),
             ),
           ),
-          for (final record in entry.value) _recordTile(theme, record),
-        ],
-        if (_hasMore)
-          LoadMoreFooter(
-            label: '读取更早的记录',
-            loading: _loadingMore,
-            onPressed: _loadMore,
-          ),
-      ],
+          final ConversationRecord record => _recordTile(theme, record),
+          _ => const SizedBox.shrink(),
+        };
+      },
     );
+  }
+
+  /// 滚到列表末尾时自动读下一页；按钮留着，读取失败时可以再点一次。
+  void _scheduleLoadMore() {
+    if (!_hasMore || _loadingMore) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadMore();
+    });
   }
 
   /// 日期分组的标题：今天与昨天直接写出来，其余写日期与星期。

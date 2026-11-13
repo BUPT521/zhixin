@@ -483,7 +483,13 @@ class _LearningPageState extends State<LearningPage> {
     if (!mounted) return;
     // 遮挡层、进出动画与圆角跟页面里的其他对话框一致；对话框默认限制宽度
     // 280 到 560，看图时改成占满屏宽只留外边距，横屏与平板上不会被压窄。
-    final size = MediaQuery.sizeOf(context);
+    final media = MediaQuery.of(context);
+    final size = media.size;
+    // 手机拍的原图直接解码要占几十 MB：按屏宽 × dpr × 2 设解码尺寸，与看图
+    // 的 4 倍放大配合已经够清晰。大图解码好之前先用同一张图的小尺寸垫底，
+    // 点开时不会先白屏，也不用等原图。
+    final decodeWidth = (size.width * media.devicePixelRatio * 2).round();
+    final thumbWidth = (size.width * media.devicePixelRatio).round();
     await forui.showFDialog<void>(
       context: context,
       builder: (context, style, animation) => forui.FDialog(
@@ -497,7 +503,14 @@ class _LearningPageState extends State<LearningPage> {
         builder: (context, style) => InteractiveViewer(
           minScale: 1,
           maxScale: 4,
-          child: Image.file(file),
+          child: Image.file(
+            file,
+            cacheWidth: decodeWidth,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              if (wasSynchronouslyLoaded || frame != null) return child;
+              return Image.file(file, cacheWidth: thumbWidth);
+            },
+          ),
         ),
       ),
     );

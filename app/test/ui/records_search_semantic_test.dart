@@ -115,6 +115,14 @@ void main() {
     await settle(tester);
   }
 
+  /// 等查找页自己出现的内容：列表后面还压着记录页，按文字找会先命中记录页的
+  /// 预览，等于没等到本次查找的结果。
+  Future<void> pumpUntilInSearchPage(WidgetTester tester, Finder finder) =>
+      pumpUntil(
+        tester,
+        find.descendant(of: find.byType(RecordsSearchPage), matching: finder),
+      );
+
   Future<void> openSearch(WidgetTester tester) async {
     await tester.tap(find.text('记录').last);
     await tester.pump(const Duration(milliseconds: 300));
@@ -162,7 +170,7 @@ void main() {
 
     await openSearch(tester);
     await search(tester, '矩阵');
-    await pumpUntil(tester, find.textContaining('矩阵的秩怎么求'));
+    await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('按意思'));
@@ -196,7 +204,7 @@ void main() {
 
     await openSearch(tester);
     await search(tester, '矩阵');
-    await pumpUntil(tester, find.textContaining('矩阵的秩怎么求'));
+    await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('按意思的部分没有完成，下面是原文与关键词结果'));
@@ -227,7 +235,7 @@ void main() {
 
     await openSearch(tester);
     await search(tester, '矩阵');
-    await pumpUntil(tester, find.textContaining('矩阵的秩怎么求'));
+    await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('语义索引还没有内容，可以在设置里更新'));
