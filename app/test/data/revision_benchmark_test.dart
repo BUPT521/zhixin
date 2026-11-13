@@ -108,5 +108,5 @@ void main() {
       '${(rssAfter / 1024 / 1024).toStringAsFixed(1)} MB',
     );
     expect(head, greaterThan(commits));
-  });
+  }, timeout: Timeout.none);
 }

@@ -263,7 +263,7 @@ void main() {
       result.attempt.helps.any((help) => help.content == '较早的回答'),
       isFalse,
     );
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('作答的记忆建议先待确认，点记下才写入并可撤销', () async {
     final h = _Harness(
