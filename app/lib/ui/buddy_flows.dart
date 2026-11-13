@@ -6,6 +6,8 @@ import '../app_scope.dart';
 import '../application/memory_view.dart';
 import 'failure_feedback.dart';
 import 'settings_page.dart';
+import 'theme.dart';
+import 'zhixin_dialog.dart';
 import 'zhixin_toast.dart';
 
 /// 模型未配置或调用失败时，回答下方的恢复入口。
@@ -74,6 +76,59 @@ class ModelRecoveryButtons extends StatelessWidget {
   }
 }
 
+/// 一段失败或没有完成的说明：写清保存了什么、下一步怎么继续。
+///
+/// 讨论页的提示条与学习页的错误说明原先各画一遍底色、图标与操作按钮；
+/// 现在共用这一块，按钮由调用方给，排列与留白保持一致。
+class FailureNotice extends StatelessWidget {
+  const FailureNotice({
+    super.key,
+    required this.message,
+    this.actions = const [],
+  });
+
+  final String message;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colors.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              FLucideIcons.info,
+              size: 16,
+              color: theme.colors.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(message, style: theme.text.bodySmall),
+                  if (actions.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(spacing: 8, runSpacing: 4, children: actions),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// 打开设置页并读回模型配置。
 ///
 /// 两页原先各写一段“推设置页 → 读配置 → 失败时给说明”；现在只在这里读，
@@ -106,6 +161,42 @@ Future<({bool? configured, String? notice})> openModelSettingsPage(
       ),
     );
   }
+}
+
+/// 未配置模型时的引导：说明现在能做什么，并把配置入口接回调用方。
+///
+/// 讨论页用一条带操作的提示，学习页用说明对话框；文案由页面给，打开设置页
+/// 与读完配置之后的提示都走 [openModelSettingsPage]，两处不再各写一套。
+Future<void> showModelSetupGuide(
+  BuildContext context, {
+  required String title,
+  required String content,
+  required VoidCallback onConfigure,
+  bool dialog = false,
+}) async {
+  if (!dialog) {
+    showActionToast(context, content, label: '配置模型', onPressed: onConfigure);
+    return;
+  }
+  final go = await showZhixinAlert<bool>(
+    context: context,
+    title: title,
+    content: Text(content),
+    actions: [
+      forui.FButton(
+        variant: forui.FButtonVariant.ghost,
+        mainAxisSize: MainAxisSize.min,
+        onPress: () => Navigator.of(context).pop(false),
+        child: const Text('继续本地使用'),
+      ),
+      forui.FButton(
+        mainAxisSize: MainAxisSize.min,
+        onPress: () => Navigator.of(context).pop(true),
+        child: const Text('前往设置'),
+      ),
+    ],
+  );
+  if (go == true && context.mounted) onConfigure();
 }
 
 /// 用户点“记下”：写入后重读页面并提示，失败只更新页面提示。
@@ -148,6 +239,37 @@ Future<void> dismissMemoryCard({
     showNotice: showNotice,
     toast: null,
   );
+}
+
+/// 用户点“撤销”：按提交撤回写入，再重读页面；两页的记忆卡片共用这一条。
+Future<void> undoMemoryCard({
+  required BuildContext context,
+  required int commitId,
+  required Future<void> Function() reload,
+  required String scope,
+  required void Function(String notice) showNotice,
+}) async {
+  try {
+    final result = await AppScope.of(context).data.revisions
+        .undoCommit(commitId);
+    if (!context.mounted) return;
+    await reload();
+    if (!context.mounted) return;
+    showToast(context, result.message);
+  } catch (error, stack) {
+    if (!context.mounted) return;
+    showNotice(
+      describeFailure(
+        context,
+        error,
+        stack,
+        action: '撤销这条记忆',
+        kind: '${scope}_memory_undo',
+        kept: '这条记忆仍在页面上',
+        next: '可以再试一次',
+      ),
+    );
+  }
 }
 
 Future<void> _runMemoryAction<T>({
