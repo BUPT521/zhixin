@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
@@ -167,7 +168,7 @@ void main() {
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('按意思'));
     await pumpUntil(tester, find.textContaining('线性无关的行向量个数'));
-    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
+    expect(find.widgetWithText(forui.FTile, '矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
   });
@@ -201,7 +202,7 @@ void main() {
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('按意思的部分没有完成，下面是原文与关键词结果'));
     expect(find.text('按意思'), findsNothing);
-    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
+    expect(find.widgetWithText(forui.FTile, '矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
   });
@@ -232,7 +233,7 @@ void main() {
     await tester.tap(find.text('按意思找'));
     await pumpUntil(tester, find.text('语义索引还没有内容，可以在设置里更新'));
     expect(find.text('没有找到意思相近的记录'), findsNothing);
-    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
+    expect(find.widgetWithText(forui.FTile, '矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
   });
