@@ -187,6 +187,31 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
+  testWidgets('路由过渡推进时淡入右推，播完停在终态，减少动态效果时直接到终态', (tester) async {
+    await tester.pumpWidget(_host(const _TransitionHarness()));
+    await tester.pump(const Duration(milliseconds: 100));
+    final during = _opacityOf(tester, find.text('新页'));
+    expect(during, greaterThan(0));
+    expect(during, lessThan(1));
+    expect(
+      find.ancestor(of: find.text('新页'), matching: find.byType(Transform)),
+      findsWidgets,
+    );
+
+    await tester.pumpAndSettle();
+    expect(_opacityOf(tester, find.text('新页')), 1);
+
+    await tester.pumpWidget(_host(const _TransitionHarness(), reduce: true));
+    await tester.pump();
+    // 直接到终态：不再套淡入，也不推入。
+    expect(_opacityOf(tester, find.text('新页')), 1);
+    expect(
+      find.ancestor(of: find.text('新页'), matching: find.byType(Transform)),
+      findsNothing,
+    );
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('切栏动画结束之后才回填内容', (tester) async {
     final settledAt = <AnimationStatus?>[];
     Widget stack(int index) => _host(
@@ -238,6 +263,38 @@ class _SettleProbeState extends State<_SettleProbe> {
 
   @override
   Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// 直接驱动页面路由过渡构建器的探针：动画时长与真实过渡一致。
+class _TransitionHarness extends StatefulWidget {
+  const _TransitionHarness();
+
+  @override
+  State<_TransitionHarness> createState() => _TransitionHarnessState();
+}
+
+class _TransitionHarnessState extends State<_TransitionHarness>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const ZhixinMotion().emphasized,
+  )..forward();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      ZhixinPageTransitionsBuilder().buildTransitions(
+        MaterialPageRoute<void>(builder: (_) => const SizedBox.shrink()),
+        context,
+        _controller,
+        kAlwaysDismissedAnimation,
+        const Text('新页'),
+      );
 }
 
 class _Counter extends StatefulWidget {
