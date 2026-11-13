@@ -286,8 +286,13 @@ class _RecordsPageState extends State<RecordsPage> {
                       control: .managed(controller: _searchHint),
                       readOnly: true,
                       onTap: _openSearch,
-                      prefixBuilder: (_, _, _) =>
-                          const Icon(FLucideIcons.search),
+                      prefixBuilder: (context, style, variants) =>
+                          forui.FTextField.prefixIconBuilder(
+                            context,
+                            style,
+                            variants,
+                            const Icon(FLucideIcons.search, size: 16),
+                          ),
                       hint: '搜索讨论、题目或材料原文',
                     ),
                   ),
