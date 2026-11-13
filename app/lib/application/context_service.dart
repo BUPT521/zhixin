@@ -287,10 +287,11 @@ class ContextService {
     final current = policy();
     final now = current.now;
     final range = current.naturalDayRange(now);
-    final blocks = await schedule.blocksBetween(
-      range.start,
-      range.endExclusive,
-    );
+    // 当天时间块与最近到期的待办互不依赖，同时发出，首屏少一次平台通道往返。
+    final (blocks, pendingItem) = await (
+      schedule.blocksBetween(range.start, range.endExclusive),
+      tasks.nextDue(),
+    ).wait;
     final open = blocks
         .where((block) => block.block.planned && block.itemStatus.open)
         .toList(growable: false);
@@ -325,14 +326,13 @@ class ContextService {
     return NowActivity(
       ongoing: ongoing,
       next: next,
-      pending: next == null ? await _pendingItem(ongoing?.item.id) : null,
+      // 没有下一次预约时才用最近的待办；与正在进行的是同一项时不重复显示。
+      pending: next != null || pendingItem == null
+          ? null
+          : pendingItem.id == ongoing?.item.id
+          ? null
+          : pendingItem,
     );
-  }
-
-  Future<PlanItem?> _pendingItem(int? ongoingItemId) async {
-    final item = await tasks.nextDue();
-    if (item == null || item.id == ongoingItemId) return null;
-    return item;
   }
 }
 

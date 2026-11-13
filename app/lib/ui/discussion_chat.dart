@@ -764,8 +764,7 @@ class DiscussionChatState extends State<DiscussionChat> {
               )
             : () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) =>
-                      PlanPage(isActive: true, initialItemId: result.item.id),
+                  builder: (_) => PlanPage(initialItemId: result.item.id),
                 ),
               ),
       );

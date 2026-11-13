@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -29,8 +31,8 @@ import 'zhixin_toast.dart';
 class NowPage extends StatefulWidget {
   const NowPage({
     super.key,
-    required this.isActive,
-    this.dataVersion = 0,
+    required this.activeTab,
+    this.tabIndex = 0,
     required this.onOpenLearning,
     required this.onOpenPlan,
     required this.onOpenRecords,
@@ -38,10 +40,10 @@ class NowPage extends StatefulWidget {
     required this.onOpenMemory,
     required this.onOpenSettings,
   });
-  final bool isActive;
 
-  /// 整库恢复、清空与导入之后加一；页面据此在原处重读，不被换掉重建。
-  final int dataVersion;
+  /// 底栏当前栏的下标；页面自己监听，父级切栏时不再重建这一栏。
+  final ValueListenable<int> activeTab;
+  final int tabIndex;
   final Future<void> Function(int questionId) onOpenLearning;
   final VoidCallback onOpenPlan;
   final VoidCallback onOpenRecords;
@@ -61,37 +63,71 @@ class _NowPageState extends State<NowPage> {
   bool _started = false;
   bool _opening = false;
 
+  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
+  ValueListenable<int>? _dataVersion;
+
   /// 两段各自读取、各自出错；一段失败不挡住另一段。
   String? _activityError;
   String? _continueError;
+
+  bool get _active => widget.activeTab.value == widget.tabIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.activeTab.addListener(_onActiveChanged);
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
+    _watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
+    if (!_active) return;
     _started = true;
     _load();
-  }
-
-  /// 生成开始或结束时重画卡片；消息数与摘要等下次进入页面时重新读取。
-  void _onGeneratingChanged() {
-    if (!mounted || !widget.isActive) return;
-    setState(() {});
   }
 
   @override
   void didUpdateWidget(covariant NowPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.isActive) return;
-    if (!oldWidget.isActive || oldWidget.dataVersion != widget.dataVersion) {
-      _load();
+    if (oldWidget.activeTab != widget.activeTab) {
+      oldWidget.activeTab.removeListener(_onActiveChanged);
+      widget.activeTab.addListener(_onActiveChanged);
     }
+  }
+
+  /// 切到这一栏时立刻发起读取；结果回来时若还在切栏动画里，等动画走完再填。
+  void _onActiveChanged() {
+    if (!mounted || !_active) return;
+    _started = true;
+    _load();
+  }
+
+  void _watchDataVersion(ValueListenable<int> version) {
+    if (identical(version, _dataVersion)) return;
+    _dataVersion?.removeListener(_onDataChanged);
+    _dataVersion = version;
+    version.addListener(_onDataChanged);
+  }
+
+  void _onDataChanged() {
+    if (!mounted || !_active) return;
+    _load();
+  }
+
+  /// 生成开始或结束时重画卡片；消息数与摘要等下次进入页面时重新读取。
+  void _onGeneratingChanged() {
+    if (!mounted || !_active) return;
+    setState(() {});
   }
 
   @override
   void dispose() {
+    widget.activeTab.removeListener(_onActiveChanged);
+    _dataVersion?.removeListener(_onDataChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     _input.dispose();
     super.dispose();
@@ -109,6 +145,8 @@ class _NowPageState extends State<NowPage> {
     final scope = AppScope.of(context);
     try {
       final activity = await scope.contextService.loadActivity();
+      if (!mounted) return;
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _activity = activity;
@@ -134,6 +172,8 @@ class _NowPageState extends State<NowPage> {
     final scope = AppScope.of(context);
     try {
       final entries = await scope.continueService.load();
+      if (!mounted) return;
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _continue = entries;
@@ -293,12 +333,10 @@ class _NowPageState extends State<NowPage> {
               SizedBox(height: theme.space.md),
               _shortcuts(theme),
               if (_loading)
-                const FadeIn(
-                  rise: false,
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(child: forui.FCircularProgress()),
-                  ),
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.sm),
+                  // 首读用与卡片同高的静态骨架，读完原位替换，下面的内容不跳。
+                  child: const ListSkeleton(rows: 2, rowHeight: 76),
                 ),
               SectionHeading(
                 title: '继续上次',
@@ -735,7 +773,7 @@ class _NowPageState extends State<NowPage> {
   }
 
   Future<void> _openPlanItem(PlanItem item) {
-    return _open(PlanPage(isActive: true, initialItemId: item.id));
+    return _open(PlanPage(initialItemId: item.id));
   }
 }
 

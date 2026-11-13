@@ -2,7 +2,6 @@ import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
-import '../app_scope.dart';
 import 'discussion_page.dart';
 import 'learning_page.dart';
 import 'memory_page.dart';
@@ -24,29 +23,76 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
-  RecordsTab _recordsTab = RecordsTab.learning;
-  int _recordsRequest = 0;
-  int _scheduleRequest = 0;
+  /// 当前栏与跳转请求都走 notifier：切栏只换常驻栈的下标，三栏的构造参数
+  /// 不变，切栏那一帧因此不必把三栏一起重建。
+  final ValueNotifier<int> _index = ValueNotifier<int>(0);
+  final ValueNotifier<RecordsRequest> _recordsRequest =
+      ValueNotifier<RecordsRequest>(
+        const RecordsRequest(RecordsTab.learning, 0),
+      );
+  final ValueNotifier<int> _scheduleRequest = ValueNotifier<int>(0);
+
+  /// 三栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
+  List<Widget>? _pages;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pages ??= [
+      NowPage(
+        key: const ValueKey('now'),
+        activeTab: _index,
+        tabIndex: 0,
+        onOpenLearning: _openLearning,
+        onOpenPlan: _openSchedule,
+        onOpenRecords: () => _openRecords(RecordsTab.learning),
+        onOpenMaterials: () => _openRecords(RecordsTab.materials),
+        onOpenMemory: _openMemory,
+        onOpenSettings: _openSettings,
+      ),
+      RecordsPage(
+        key: const ValueKey('records'),
+        activeTab: _index,
+        tabIndex: 1,
+        request: _recordsRequest,
+        onStartQuestion: () => _open(0),
+        onOpenLearning: _openLearning,
+        onOpenLearningRedo: _openLearningRedo,
+        onOpenDiscussion: _openDiscussion,
+      ),
+      PlanPage(
+        key: const ValueKey('plan'),
+        activeTab: _index,
+        tabIndex: 2,
+        request: _scheduleRequest,
+        onOpenMaterials: () => _openRecords(RecordsTab.materials),
+      ),
+    ];
+  }
+
+  @override
+  void dispose() {
+    // 这些 notifier 由三栏共享，页面卸载时还会移除自己的监听，所以不在这里
+    // 销毁：跟着 HomeShell 一起被回收即可。
+    super.dispose();
+  }
 
   void _open(int index) {
     if (!mounted) return;
-    setState(() => _index = index);
+    _index.value = index;
   }
 
   void _openRecords(RecordsTab tab) {
-    setState(() {
-      _recordsTab = tab;
-      _recordsRequest++;
-      _index = 1;
-    });
+    _recordsRequest.value = RecordsRequest(
+      tab,
+      _recordsRequest.value.sequence + 1,
+    );
+    _open(1);
   }
 
   void _openSchedule() {
-    setState(() {
-      _scheduleRequest++;
-      _index = 2;
-    });
+    _scheduleRequest.value++;
+    _open(2);
   }
 
   Future<void> _openLearning(int questionId) async {
@@ -89,10 +135,10 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
-      valueListenable: AppScope.of(context).dataVersion,
-      builder: (context, dataVersion, _) => forui.FScaffold(
+      valueListenable: _index,
+      builder: (context, index, _) => forui.FScaffold(
         footer: forui.FBottomNavigationBar(
-          index: _index,
+          index: index,
           onChange: _open,
           children: const [
             forui.FBottomNavigationBarItem(
@@ -122,40 +168,7 @@ class _HomeShellState extends State<HomeShell> {
           ],
         ),
         // 切栏时新栏淡入并上移几个像素；三栏仍然常驻，状态不随切换重建。
-        child: FadeIndexedStack(
-          index: _index,
-          children: [
-            NowPage(
-              key: const ValueKey('now'),
-              isActive: _index == 0,
-              dataVersion: dataVersion,
-              onOpenLearning: _openLearning,
-              onOpenPlan: _openSchedule,
-              onOpenRecords: () => _openRecords(RecordsTab.learning),
-              onOpenMaterials: () => _openRecords(RecordsTab.materials),
-              onOpenMemory: _openMemory,
-              onOpenSettings: _openSettings,
-            ),
-            RecordsPage(
-              key: const ValueKey('records'),
-              isActive: _index == 1,
-              dataVersion: dataVersion,
-              initialTab: _recordsTab,
-              tabRequest: _recordsRequest,
-              onStartQuestion: () => _open(0),
-              onOpenLearning: _openLearning,
-              onOpenLearningRedo: _openLearningRedo,
-              onOpenDiscussion: _openDiscussion,
-            ),
-            PlanPage(
-              key: const ValueKey('plan'),
-              isActive: _index == 2,
-              dataVersion: dataVersion,
-              scheduleRequest: _scheduleRequest,
-              onOpenMaterials: () => _openRecords(RecordsTab.materials),
-            ),
-          ],
-        ),
+        child: FadeIndexedStack(index: index, children: _pages ?? const []),
       ),
     );
   }

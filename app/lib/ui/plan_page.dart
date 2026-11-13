@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -31,20 +33,21 @@ import 'zhixin_toast.dart';
 class PlanPage extends StatefulWidget {
   const PlanPage({
     super.key,
-    required this.isActive,
-    this.dataVersion = 0,
+    this.activeTab,
+    this.tabIndex = 2,
+    this.request,
     this.initialItemId,
-    this.scheduleRequest = 0,
     this.onOpenMaterials,
   });
 
   final int? initialItemId;
 
-  final bool isActive;
+  /// 底栏当前栏的下标；为空时按常驻当前页处理，二级入口直接打开安排。
+  final ValueListenable<int>? activeTab;
+  final int tabIndex;
 
-  /// 整库恢复、清空与导入之后加一；页面据此在原处重读，不被换掉重建。
-  final int dataVersion;
-  final int scheduleRequest;
+  /// 从别的栏目跳到安排时带的请求；每次变化都把页签复位到日程。
+  final ValueListenable<int>? request;
   final VoidCallback? onOpenMaterials;
 
   @override
@@ -61,6 +64,12 @@ class _PlanPageState extends State<PlanPage> {
   bool _showAllPlans = false;
   String? _error;
 
+  /// 进过的页签常驻：切回来不再重建，滚动位置一并保住。
+  final Set<int> _visited = {0};
+
+  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
+  ValueListenable<int>? _dataVersion;
+
   /// 当前显示的是哪一周；读完换周之后才更新，列表据此淡入，
   /// 同一周的刷新与从详情返回不闪。
   DateTime? _shownAnchor;
@@ -71,6 +80,9 @@ class _PlanPageState extends State<PlanPage> {
   bool _loadingDone = false;
   bool _hasMoreDone = false;
   static const int _donePageSize = 30;
+
+  bool get _active =>
+      widget.activeTab == null || widget.activeTab!.value == widget.tabIndex;
 
   /// 本地写入失败时给一句可行动的说明；异常本身进本机诊断记录。
   void _reportFailure(
@@ -94,23 +106,69 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    widget.activeTab?.addListener(_onActiveChanged);
+    widget.request?.addListener(_onRequestChanged);
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
     _anchor = AppScope.of(context).timePolicy.now;
     // 未显示的页面不提前读取，也不在后台保留转圈；切到安排时再加载。
-    if (widget.isActive) _load();
+    if (_active) _load();
   }
 
   @override
   void didUpdateWidget(covariant PlanPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.scheduleRequest != widget.scheduleRequest) _tab = 0;
-    if (!widget.isActive) return;
-    if (!oldWidget.isActive || oldWidget.dataVersion != widget.dataVersion) {
-      _load();
+    if (oldWidget.request != widget.request) {
+      oldWidget.request?.removeListener(_onRequestChanged);
+      widget.request?.addListener(_onRequestChanged);
     }
+    if (oldWidget.activeTab != widget.activeTab) {
+      oldWidget.activeTab?.removeListener(_onActiveChanged);
+      widget.activeTab?.addListener(_onActiveChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.activeTab?.removeListener(_onActiveChanged);
+    widget.request?.removeListener(_onRequestChanged);
+    _dataVersion?.removeListener(_onDataChanged);
+    super.dispose();
+  }
+
+  /// 切到这一栏时立刻发起读取；结果回来时等切栏动画结束再填。
+  void _onActiveChanged() {
+    if (!mounted || !_active) return;
+    _load();
+  }
+
+  /// 从别的栏目跳到安排：页签复位到日程，常驻页签不重读。
+  void _onRequestChanged() {
+    if (!mounted) return;
+    setState(() {
+      _tab = 0;
+      _visited.add(0);
+    });
+  }
+
+  void _watchDataVersion(ValueListenable<int> version) {
+    if (identical(version, _dataVersion)) return;
+    _dataVersion?.removeListener(_onDataChanged);
+    _dataVersion = version;
+    version.addListener(_onDataChanged);
+  }
+
+  void _onDataChanged() {
+    if (!mounted || !_active) return;
+    _load();
   }
 
   Future<void> _load() async {
@@ -118,6 +176,9 @@ class _PlanPageState extends State<PlanPage> {
     final anchor = _anchor;
     try {
       final week = await scope.planService.loadWeek(anchor);
+      if (!mounted) return;
+      // 结果回来时若还在切栏或返回动画里，等动画走完再填。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _week = week;
@@ -967,10 +1028,19 @@ class _PlanPageState extends State<PlanPage> {
           ],
         ],
       ),
-      child: _week == null && !widget.isActive
+      child: _week == null && !_active
           ? const SizedBox.shrink()
           : _loading
-          ? const Center(child: forui.FCircularProgress())
+          // 首读用与列表卡片同高的静态骨架，读完原位替换，页面不再跳。
+          ? ListSkeleton(
+              rows: 3,
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                theme.space.sm,
+                theme.space.page,
+                0,
+              ),
+            )
           : week == null
           ? EmptyState(
               icon: FLucideIcons.calendarX,
@@ -1005,30 +1075,28 @@ class _PlanPageState extends State<PlanPage> {
                           ZhixinSegment(value: 3, label: 'AI 改动'),
                         ],
                         selected: _tab,
-                        onChanged: (tab) => setState(() => _tab = tab),
+                        onChanged: (tab) => setState(() {
+                          _tab = tab;
+                          _visited.add(tab);
+                        }),
                       ),
                     ),
                     Expanded(
                       child: FadeIn(
                         trigger: (_tab, _shownAnchor),
                         playOnInit: false,
-                        child: RefreshIndicator(
-                          onRefresh: _load,
-                          child: ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: EdgeInsets.fromLTRB(
-                              theme.space.page,
-                              theme.space.xs,
-                              theme.space.page,
-                              theme.space.section + 4,
-                            ),
-                            children: switch (_tab) {
-                              0 => _scheduleTab(theme, week),
-                              1 => _itemsTab(theme, week),
-                              2 => _goalsTab(theme, week),
-                              _ => _operationsTab(theme, week),
-                            },
-                          ),
+                        // 四个页签常驻，切换只换显示：切回来不再重建，滚动
+                        // 位置与已读到的内容都留住；首次进入某个页签时才建。
+                        child: IndexedStack(
+                          sizing: StackFit.expand,
+                          index: _tab,
+                          children: [
+                            for (var tab = 0; tab < 4; tab++)
+                              if (_visited.contains(tab))
+                                _tabList(theme, week, tab)
+                              else
+                                const SizedBox.shrink(),
+                          ],
                         ),
                       ),
                     ),
@@ -1038,6 +1106,28 @@ class _PlanPageState extends State<PlanPage> {
             ),
     );
   }
+
+  /// 一个页签的列表：下拉刷新、惰性构建，切走再回来接着原来的滚动位置。
+  Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
+      RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          key: PageStorageKey<String>('plan-tab-$tab'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(
+            theme.space.page,
+            theme.space.xs,
+            theme.space.page,
+            theme.space.section + 4,
+          ),
+          children: switch (tab) {
+            0 => _scheduleTab(theme, week),
+            1 => _itemsTab(theme, week),
+            2 => _goalsTab(theme, week),
+            _ => _operationsTab(theme, week),
+          },
+        ),
+      );
 
   List<Widget> _scheduleTab(ZhixinTheme theme, PlanWeek week) {
     final summaries = week.studyPlans;

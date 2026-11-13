@@ -31,6 +31,7 @@ import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/study_plan_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/workspace_widgets.dart';
 import 'package:zhixin/ui/zhixin_chip.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
@@ -925,6 +926,37 @@ void main() {
     tester.platformDispatcher.textScaleFactorTestValue = 1.4;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('切栏再回来保留筛选与已读记录，不再回到骨架', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(
+      () => scope!.learningService.capture(stem: '切栏之后还要看到的题目'),
+    );
+    await tester.tap(find.text('记录').last);
+    await settle(tester);
+    final record = find.widgetWithText(forui.FTile, '切栏之后还要看到的题目');
+    expect(record, findsOneWidget);
+
+    // 在记录里选一个筛选，再去别的栏目转一圈。
+    await tester.tap(find.byKey(const ValueKey('records-answer-filter')));
+    await settle(tester);
+    await tester.tap(find.text('未作答'));
+    await settle(tester);
+    expect(record, findsOneWidget);
+
+    await tester.tap(find.text('现在').last);
+    await settle(tester);
+    await tester.tap(find.text('记录').last);
+    await tester.pump();
+
+    // 切回来第一帧还是原来的记录与筛选：没有重新回到骨架，也没有丢检索条件。
+    expect(find.byType(ListSkeleton), findsNothing);
+    expect(record, findsOneWidget);
+    expect(find.text('未作答'), findsOneWidget);
+    await settle(tester);
+    expect(record, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

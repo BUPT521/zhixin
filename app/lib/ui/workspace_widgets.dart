@@ -341,3 +341,49 @@ class LoadMoreFooter extends StatelessWidget {
     ),
   );
 }
+
+/// 首读时的占位骨架：几条与真实卡片同高的静态块，读完原位换成内容。
+///
+/// 不做闪光或呼吸动画：动效口径里不循环，而且一闪一闪的占位比转圈更扰人。
+/// 高度固定，替换前后页面高度不变，下面的内容不会跟着跳。
+class ListSkeleton extends StatelessWidget {
+  const ListSkeleton({
+    super.key,
+    this.rows = 3,
+    this.rowHeight = 88,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final int rows;
+  final double rowHeight;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Padding(
+      padding: padding,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var row = 0; row < rows; row++)
+            Padding(
+              padding: EdgeInsets.only(bottom: theme.space.sm),
+              child: Semantics(
+                label: '正在读取',
+                child: Container(
+                  height: rowHeight,
+                  decoration: BoxDecoration(
+                    color: theme.colors.card,
+                    borderRadius: theme.radius.card,
+                    border: Border.all(color: theme.colors.outlineVariant),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
