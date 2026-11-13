@@ -230,7 +230,12 @@ void main() {
     expect(await h.assessments.forAttempt(attempt.id), isEmpty);
   });
 
-  test('讨论超过两百条时仍把较早的助手回答导入帮助', () async {
+  // 这一条要逐条写入两百多条消息，整个测试套件并行跑时会顶到默认的 30 秒
+  // 上限；用例内容与断言不变，只放宽这一条的时限。
+  test(
+    '讨论超过两百条时仍把较早的助手回答导入帮助',
+    timeout: const Timeout(Duration(seconds: 90)),
+    () async {
     final h = _Harness(reply: const BuddyReply(text: '新的提示'));
     await h.open();
     addTearDown(h.db.close);
