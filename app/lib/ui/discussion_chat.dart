@@ -72,6 +72,10 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 只让正在生成的气泡跟着正文重建，不带着整页消息一起重建。
   final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
 
+  /// 还没交给界面的最新正文：网络分片再密，一帧最多更新一次。
+  String? _pendingStreamText;
+  bool _streamFlushScheduled = false;
+
   /// 本次发送的取消信号；生成中按停止时用它中止请求。
   LlmCancelToken? _cancelToken;
 
@@ -296,6 +300,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   void _showUserMessage(ChatMessage message) {
     if (!mounted || _messages.any((item) => item.id == message.id)) return;
     _streamingText.value = '';
+    _pendingStreamText = null;
     setState(() {
       _messages = [..._messages, message];
       _streaming = true;
@@ -307,9 +312,29 @@ class DiscussionChatState extends State<DiscussionChat> {
     });
   }
 
+  /// 流式正文按帧合并：一帧里来多少分片，正文都只重排一次。
+  ///
+  /// 长回答每次更新都要重新解析并排版整段 Markdown，分片越密越贵；合并之后
+  /// 正文每帧最多换一次，肉眼分辨不出，长回答末尾的贴底滚动也不再发涩。
+  /// 没有别的绘制要跑时先给自己排一帧，正文不会因为等不到帧卡住。
   void _showPartial(String text) {
     if (!mounted || !_streaming) return;
-    _streamingText.value = text;
+    _pendingStreamText = text;
+    if (_streamFlushScheduled) return;
+    _streamFlushScheduled = true;
+    WidgetsBinding.instance.scheduleFrameCallback((_) {
+      _streamFlushScheduled = false;
+      _flushStreamText();
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  /// 把攒下的最新正文交给界面；生成已经结束时丢掉，不覆盖收尾后的状态。
+  void _flushStreamText() {
+    final pending = _pendingStreamText;
+    _pendingStreamText = null;
+    if (!mounted || !_streaming || pending == null) return;
+    _streamingText.value = pending;
   }
 
   /// 一次回答写回后的收尾：消息、建议、记忆卡片与提示一起更新。
@@ -323,6 +348,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   ) {
     final followReply = _isNearBottom;
     _streamingText.value = '';
+    _pendingStreamText = null;
     setState(() {
       _messages = merged;
       _pending = DiscussionService.pendingSuggestions(merged);
@@ -348,6 +374,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final cancel = LlmCancelToken();
     _cancelToken = cancel;
     _streamingText.value = '';
+    _pendingStreamText = null;
     setState(() {
       if (retrying) {
         _retrying = true;
@@ -381,6 +408,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       _streaming = false;
     });
     _streamingText.value = '';
+    _pendingStreamText = null;
   }
 
   /// 一次回答结束后复位生成状态；取消信号与生成活动只清理这一次的。
