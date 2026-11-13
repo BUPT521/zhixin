@@ -217,6 +217,9 @@ void main() {
     expect(find.text('《概率论讲义》第 1 页'), findsOneWidget);
 
     // 从材料命中带入下一次回答，通知条出现；清除后消失。
+    // 先点空白处，关掉可能还开着的浮层，避免挡住下面的按钮。
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
     final materialTile = find.widgetWithText(forui.FTile, '《概率论讲义》第 1 页');
     await tester.tap(
       find.descendant(
