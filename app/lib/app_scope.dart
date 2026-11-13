@@ -430,12 +430,14 @@ class AppScopeState extends State<AppScope> {
     }
     if (!mounted) return;
     try {
-      if (!await _attachmentCache.needsRebuild) return;
-      await _attachmentCache.rebuild(db, _engine.assets);
-      await _attachmentCache.clearPendingRebuild();
-    } catch (error) {
+      await gate.shared(() async {
+        if (!await _attachmentCache.needsRebuild) return;
+        await _attachmentCache.rebuild(db, _engine.assets);
+        await _attachmentCache.clearPendingRebuild();
+      });
+    } catch (error, stack) {
       // 补建失败不打断使用：缺图的位置已经按“找不到图片”显示，下次再补。
-      crashLog.record(error, null, kind: 'rebuild_attachments');
+      crashLog.record(error, stack, kind: 'rebuild_attachments');
     }
   }
 

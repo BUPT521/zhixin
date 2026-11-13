@@ -15,6 +15,7 @@ import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/models/memory.dart';
@@ -252,6 +253,59 @@ void main() {
       await scope!.restore(await File(points.single.path).readAsBytes());
       expect(await scope!.tasks.goalById(afterId), isNull);
       expect((await scope!.tasks.goalById(beforeId))?.title, '恢复前保留目标');
+    });
+  });
+
+  testWidgets('当前数据已导入时，图片缓存写入失败仍会刷新数据', (tester) async {
+    await openApp(tester);
+
+    await tester.runAsync(() async {
+      final state = scope!;
+      final bytes = Uint8List.fromList([1, 2, 3]);
+      final hash = AssetStore.hashBytes(bytes);
+      final recordId = await state.db.transaction((txn) async {
+        final id = await txn.insert('conversation', {
+          'title': '带图的学习记录',
+          'entry_kind': 'photo',
+          'status': 'open',
+          'created_at': '2026-11-10T10:00:00',
+          'updated_at': '2026-11-10T10:00:00',
+        });
+        await AssetStore().putBytes(txn, hash, bytes);
+        await txn.insert('message', {
+          'conversation_id': id,
+          'role': 'user',
+          'content': '',
+          'image_paths_json': '["$hash"]',
+          'created_at': '2026-11-10T10:00:00',
+        });
+        return id;
+      });
+      final exported = File('${directory.path}/current.zip');
+      await state.exportCurrentData(exported.path);
+      await state.db.delete(
+        'conversation',
+        where: 'id = ?',
+        whereArgs: [recordId],
+      );
+      expect(await state.db.query('message'), isEmpty);
+
+      final images = Directory(state.paths.imagesDir);
+      await images.rename('${images.path}.original');
+      await File(images.path).writeAsString('占用缓存目录');
+      final versionBefore = state.dataVersion.value;
+      final headBefore = await state.currentHead();
+
+      final warning = await state.importCurrentData(
+        await exported.readAsBytes(),
+        expectedHead: headBefore,
+      );
+
+      expect(warning, contains('数据已导入'));
+      expect(await state.currentHead(), greaterThan(headBefore));
+      expect(await state.db.query('message'), hasLength(1));
+      expect(state.dataVersion.value, versionBefore + 1);
+      expect(state.data.attachments.pendingRebuild, isTrue);
     });
   });
 
