@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -13,6 +14,7 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/question.dart';
+import 'package:zhixin/domain/rules/time_format.dart';
 
 import '../support/test_db.dart';
 
@@ -730,6 +732,31 @@ void main() {
         ['retrieval', 'context', 'answer'],
         contains(outcome.failureStage),
         reason: '失败要能定位到具体环节',
+      );
+    }
+  });
+
+  test('对照脚本的查询与用例保持同一份', () {
+    // tools/long_memory_compare 的 history.json 给外部工具用，查询文字与时间
+    // 在这里再写一遍；两边改一处忘另一处时，这个用例先失败。
+    final history = jsonDecode(
+      File('../tools/long_memory_compare/history.json').readAsStringSync(),
+    ) as Map<String, Object?>;
+    final queries = (history['queries']! as List).cast<Map<String, Object?>>();
+
+    final cases = {for (final item in _cases) item.id: item};
+    expect(
+      queries.map((query) => query['id']),
+      everyElement(isIn(cases.keys)),
+      reason: '脚本里的查询编号要在用例里找得到',
+    );
+    for (final query in queries) {
+      final item = cases[query['id']]!;
+      expect(query['query'], item.query, reason: '${item.id} 的查询文字不一致');
+      expect(
+        query['query_time'],
+        formatDateTime(item.queryTime),
+        reason: '${item.id} 的查询时间不一致',
       );
     }
   });

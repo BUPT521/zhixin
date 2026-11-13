@@ -16,6 +16,7 @@ import 'goal_picker.dart';
 import 'study_plan_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_select.dart';
@@ -276,7 +277,7 @@ class MaterialListState extends State<MaterialList> {
                   ),
                 )
               : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  padding: theme.space.pageInsets(),
                   itemCount: _materials.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
@@ -623,17 +624,17 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     final theme = context.zhixin;
     final material = _material;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     if (material == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('材料'), showBack: true),
         child: const Center(child: Text('未找到这份材料')),
       );
     }
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: Text(material.title),
         showBack: true,
@@ -647,7 +648,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
         ],
       ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: theme.space.pageInsets(),
         children: [
           Text(
             '${material.kindLabel}'

@@ -1,6 +1,8 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
+import 'theme.dart';
+
 /// 页面顶部的一条标题栏。
 ///
 /// 原来的页面用 AppBar，进入下一页时由它自动带返回箭头；换成 FHeader 之后
@@ -25,6 +27,21 @@ class ZhixinHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    final style = forui.FHeaderStyleDelta.delta(
+      padding: .value(
+        EdgeInsets.symmetric(horizontal: theme.space.page, vertical: 6),
+      ),
+      titleTextStyle: .value(
+        nested ? theme.text.titleLarge : theme.text.headlineMedium,
+      ),
+      constraints: BoxConstraints(minHeight: nested ? 56 : 62),
+      actionSpacing: theme.space.xs,
+      actionStyle: .delta(
+        padding: const .value(EdgeInsets.all(12)),
+        iconStyle: .delta([.all(.delta(size: 20))]),
+      ),
+    );
     final leading = <Widget>[
       if (showBack)
         forui.FHeaderAction.back(
@@ -36,11 +53,12 @@ class ZhixinHeader extends StatelessWidget {
     ];
     return nested
         ? forui.FHeader.nested(
+            style: style,
             title: title,
             prefixes: leading,
             suffixes: actions,
           )
-        : forui.FHeader(title: title, suffixes: actions);
+        : forui.FHeader(style: style, title: title, suffixes: actions);
   }
 }
 

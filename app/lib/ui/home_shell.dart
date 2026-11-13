@@ -5,11 +5,11 @@ import 'package:material_ui/material_ui.dart';
 import 'discussion_page.dart';
 import 'learning_page.dart';
 import 'memory_page.dart';
-import 'motion.dart';
 import 'now_page.dart';
 import 'plan_page.dart';
 import 'records_page.dart';
 import 'settings_page.dart';
+import 'theme.dart';
 
 /// 底部三栏（02 第 10.1 节）：现在 / 记录 / 安排，设置留在次级入口。
 ///
@@ -78,7 +78,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   void _open(int index) {
-    if (!mounted) return;
+    if (!mounted || _index.value == index) return;
     _index.value = index;
   }
 
@@ -137,36 +137,7 @@ class _HomeShellState extends State<HomeShell> {
     return ValueListenableBuilder<int>(
       valueListenable: _index,
       builder: (context, index, _) => forui.FScaffold(
-        footer: forui.FBottomNavigationBar(
-          index: index,
-          onChange: _open,
-          children: const [
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.house,
-                selectedIcon: FLucideIcons.house,
-              ),
-              label: Text('现在'),
-              semanticsLabel: '现在',
-            ),
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.history,
-                selectedIcon: FLucideIcons.history,
-              ),
-              label: Text('记录'),
-              semanticsLabel: '记录',
-            ),
-            forui.FBottomNavigationBarItem(
-              icon: _NavIcon(
-                icon: FLucideIcons.calendarClock,
-                selectedIcon: FLucideIcons.calendarClock,
-              ),
-              label: Text('安排'),
-              semanticsLabel: '安排',
-            ),
-          ],
-        ),
+        footer: _BottomBar(index: index, onChange: _open),
         // 切栏时新栏淡入并上移几个像素；三栏仍然常驻，状态不随切换重建。
         child: FadeIndexedStack(index: index, children: _pages ?? const []),
       ),
@@ -174,18 +145,113 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-/// 底栏图标；Forui 的底栏项没有单独的选中图标参数，选中态由主色与加粗区分，
-/// 这里留一个选中图标的位置，需要换图形时再用。
-class _NavIcon extends StatelessWidget {
-  const _NavIcon({required this.icon, required this.selectedIcon});
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({required this.index, required this.onChange});
 
-  final IconData icon;
-  final IconData selectedIcon;
+  static const _items = [
+    (FLucideIcons.house, '现在'),
+    (FLucideIcons.history, '记录'),
+    (FLucideIcons.calendarClock, '安排'),
+  ];
+  static const _itemPadding = 5.0;
+  static const _iconHeight = 30.0;
+
+  final int index;
+  final ValueChanged<int> onChange;
 
   @override
   Widget build(BuildContext context) {
-    return Icon(
-      forui.FBottomNavigationBarData.of(context).selected ? selectedIcon : icon,
+    final theme = context.zhixin;
+    final barPadding = EdgeInsets.symmetric(
+      horizontal: theme.space.page,
+      vertical: theme.space.xs,
+    );
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colors.card,
+          border: Border(top: BorderSide(color: theme.colors.outlineVariant)),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Stack(
+            children: [
+              Positioned(
+                top: barPadding.top + _itemPadding,
+                left: barPadding.left,
+                right: barPadding.right,
+                height: _iconHeight,
+                child: IgnorePointer(
+                  child: AnimatedAlign(
+                    duration: context.motionOf(theme.motion.standard),
+                    curve: theme.motion.move,
+                    alignment: AlignmentDirectional(
+                      -1 + 2 * index / (_items.length - 1),
+                      0,
+                    ),
+                    child: FractionallySizedBox(
+                      widthFactor: 1 / _items.length,
+                      child: Center(
+                        child: Container(
+                          width: 58,
+                          height: _iconHeight,
+                          decoration: ShapeDecoration(
+                            color: theme.colors.primaryContainer,
+                            shape: const StadiumBorder(),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              forui.FBottomNavigationBar(
+                index: index,
+                onChange: onChange,
+                style: .delta(
+                  decoration: const .value(BoxDecoration()),
+                  padding: .value(barPadding),
+                  itemStyle: .delta(
+                    padding: const .value(EdgeInsets.all(_itemPadding)),
+                    spacing: theme.space.xs,
+                    tappableStyle: const .delta(
+                      motion: .delta(
+                        bounceTween: forui.FTappableMotion.noBounceTween,
+                      ),
+                    ),
+                    textStyle: .delta([
+                      .all(
+                        .delta(
+                          color: theme.colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      .exact({.selected}, .delta(color: theme.colors.primary)),
+                    ]),
+                  ),
+                ),
+                children: [
+                  for (final (i, (icon, label)) in _items.indexed)
+                    forui.FBottomNavigationBarItem(
+                      icon: SizedBox(
+                        height: _iconHeight,
+                        child: Icon(
+                          icon,
+                          size: 21,
+                          color: i == index
+                              ? theme.colors.onPrimaryContainer
+                              : theme.colors.onSurfaceVariant,
+                        ),
+                      ),
+                      label: Text(label),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -5,9 +5,9 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#286653"
+        android:fillColor="@color/splash_foreground"
         android:pathData="M22,46 C22,41 26,38 32,39 L52,42 L52,76 L30,73 C25,72 22,69 22,64 Z" />
     <path
-        android:fillColor="#286653"
+        android:fillColor="@color/splash_foreground"
         android:pathData="M86,46 C86,41 82,38 76,39 L56,42 L56,76 L78,73 C83,72 86,69 86,64 Z" />
 </vector>

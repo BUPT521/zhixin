@@ -955,7 +955,7 @@ void main() {
 
     final accepted = await h.service.acceptMemoryItem(
       conversationId: conversationId,
-      messageId: items.single.messageId,
+      messageId: items.single.ownerId,
       itemId: items.single.itemId,
     );
     expect(accepted.applied, isTrue);
@@ -1115,7 +1115,7 @@ void main() {
     await h.db.execute('DROP TRIGGER fail_memory_insert');
     final accepted = await h.service.acceptMemoryItem(
       conversationId: conversationId,
-      messageId: items.single.messageId,
+      messageId: items.single.ownerId,
       itemId: items.single.itemId,
     );
     expect(accepted.applied, isTrue);
@@ -1154,7 +1154,7 @@ void main() {
 
     final accepted = await h.service.acceptMemoryItem(
       conversationId: conversationId,
-      messageId: item.messageId,
+      messageId: item.ownerId,
       itemId: item.itemId,
     );
     expect(accepted.applied, isFalse);
@@ -1196,7 +1196,7 @@ void main() {
     )).single;
     await h.service.dismissMemoryItem(
       conversationId: conversationId,
-      messageId: item.messageId,
+      messageId: item.ownerId,
       itemId: item.itemId,
     );
 

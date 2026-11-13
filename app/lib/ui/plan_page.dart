@@ -1147,48 +1147,52 @@ class _PlanPageState extends State<PlanPage> {
     final lastDay = range.endExclusive.subtract(const Duration(days: 1));
     final planned = week.blocks.where((entry) => entry.block.planned).length;
     return [
-      Row(
-        children: [
-          ZhixinIconButton(
-            tooltip: '上一周',
-            onPressed: () {
-              _anchor = _anchor.subtract(const Duration(days: 7));
-              _load();
-            },
-            icon: FLucideIcons.chevronLeft,
-          ),
-          Expanded(
-            child: Column(
-              children: [
-                Text(
-                  '${range.start.month}月${range.start.day}日 – '
-                  '${lastDay.month}月${lastDay.day}日',
-                  textAlign: TextAlign.center,
-                  style: theme.text.titleSmall.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+      forui.FCard(
+        child: Padding(
+          padding: EdgeInsets.all(theme.space.sm),
+          child: Row(
+            children: [
+              ZhixinIconButton(
+                tooltip: '上一周',
+                onPressed: () {
+                  _anchor = _anchor.subtract(const Duration(days: 7));
+                  _load();
+                },
+                icon: FLucideIcons.chevronLeft,
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      '${range.start.month}月${range.start.day}日 – '
+                      '${lastDay.month}月${lastDay.day}日',
+                      textAlign: TextAlign.center,
+                      style: theme.text.titleMedium.copyWith(
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    if (planned > 0)
+                      Text(
+                        '${currentWeek ? '本周 · ' : ''}$planned 次预约',
+                        textAlign: TextAlign.center,
+                        style: theme.text.bodySmall.copyWith(
+                          color: theme.colors.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
                 ),
-                Text(
-                  currentWeek
-                      ? (planned == 0 ? '本周，还没有预约' : '本周，$planned 次预约')
-                      : (planned == 0 ? '这一周没有预约' : '$planned 次预约'),
-                  textAlign: TextAlign.center,
-                  style: theme.text.bodySmall.copyWith(
-                    color: theme.colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
+              ),
+              ZhixinIconButton(
+                tooltip: '下一周',
+                onPressed: () {
+                  _anchor = _anchor.add(const Duration(days: 7));
+                  _load();
+                },
+                icon: FLucideIcons.chevronRight,
+              ),
+            ],
           ),
-          ZhixinIconButton(
-            tooltip: '下一周',
-            onPressed: () {
-              _anchor = _anchor.add(const Duration(days: 7));
-              _load();
-            },
-            icon: FLucideIcons.chevronRight,
-          ),
-        ],
+        ),
       ),
       if (!currentWeek)
         Center(
@@ -1204,7 +1208,7 @@ class _PlanPageState extends State<PlanPage> {
             child: const Text('回到本周'),
           ),
         ),
-      SizedBox(height: theme.space.xs),
+      SizedBox(height: theme.space.md),
       if (week.blocks.isEmpty)
         forui.FCard(
           child: EmptyState(

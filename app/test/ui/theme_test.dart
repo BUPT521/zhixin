@@ -158,6 +158,20 @@ void main() {
         greaterThanOrEqualTo(4.5),
         reason: '卡片上的次要文字要能读清',
       );
+      expect(
+        _contrast(colors.onPrimaryContainer, colors.primaryContainer),
+        greaterThanOrEqualTo(4.5),
+        reason: '选中项的文字要能读清',
+      );
+      expect(theme.scaffoldStyle.backgroundColor, colors.surface);
+      expect(
+        (theme.cardStyle.decoration as ShapeDecoration).color,
+        colors.card,
+      );
+      expect(
+        (theme.dialogStyle.decoration as ShapeDecoration).color,
+        colors.card,
+      );
     }
   });
 

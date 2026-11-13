@@ -11,8 +11,8 @@ import '../ai/llm_client.dart';
 import '../app_scope.dart';
 import '../domain/models/buddy_protocol.dart';
 import '../application/buddy_actions.dart';
-import '../application/discussion_service.dart';
 import '../application/learning_service.dart';
+import '../application/memory_view.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
@@ -25,6 +25,7 @@ import 'settings_page.dart';
 import 'undo_feedback.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -55,7 +56,7 @@ class _LearningPageState extends State<LearningPage> {
   List<AppliedChange> _changeItems = const [];
 
   /// 当前未提交尝试上的记忆建议：待确认的可以「记下」，已写入的可以撤销。
-  List<HelpMemoryView> _memoryItems = const [];
+  List<MemoryItemView> _memoryItems = const [];
   bool _started = false;
   bool _leaving = false;
 
@@ -128,7 +129,7 @@ class _LearningPageState extends State<LearningPage> {
       final (assessments, memoryItems, config, messages) = await (
         scope.learningService.assessmentsFor(view.attempts),
         open == null
-            ? Future<List<HelpMemoryView>>.value(const [])
+            ? Future<List<MemoryItemView>>.value(const [])
             : scope.learningService.memoryItemsFor(open),
         scope.settingsService.config(),
         scope.conversations.recent(widget.questionId, limit: 6),
@@ -415,15 +416,15 @@ class _LearningPageState extends State<LearningPage> {
   );
 
   /// 帮助里的记忆建议要用户点“记下”才写入，与讨论的确认卡片一致。
-  Future<void> _acceptMemory(HelpMemoryView item) async {
+  Future<void> _acceptMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
     try {
       final result = await AppScope.of(context).learningService.acceptMemory(
         attemptId: attempt.id,
-        helpIndex: item.helpIndex,
+        helpIndex: item.ownerId,
         itemId: item.itemId,
-        requestId: 'memory-${attempt.id}-${item.helpIndex}-${item.itemId}',
+        requestId: 'memory-${attempt.id}-${item.ownerId}-${item.itemId}',
       );
       if (!mounted) return;
       await _load();
@@ -446,13 +447,13 @@ class _LearningPageState extends State<LearningPage> {
     }
   }
 
-  Future<void> _dismissMemory(HelpMemoryView item) async {
+  Future<void> _dismissMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
     if (attempt == null) return;
     try {
       await AppScope.of(context).learningService.dismissMemory(
         attemptId: attempt.id,
-        helpIndex: item.helpIndex,
+        helpIndex: item.ownerId,
         itemId: item.itemId,
       );
       if (mounted) await _load();
@@ -715,13 +716,13 @@ class _LearningPageState extends State<LearningPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     if (_loading) {
-      return const forui.FScaffold(
+      return const DetailScaffold(
         child: Center(child: forui.FCircularProgress()),
       );
     }
     final view = _view;
     if (view == null) {
-      return forui.FScaffold(
+      return DetailScaffold(
         header: const ZhixinHeader(title: Text('题目'), showBack: true),
         child: Center(child: Text(_notice ?? '未找到这道题')),
       );
@@ -732,7 +733,7 @@ class _LearningPageState extends State<LearningPage> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _leave();
       },
-      child: forui.FScaffold(
+      child: DetailScaffold(
         header: ZhixinHeader(
           title: const Text('学习中'),
           showBack: true,
@@ -746,7 +747,7 @@ class _LearningPageState extends State<LearningPage> {
           ],
         ),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          padding: theme.space.pageInsets(),
           children: [
             forui.FCard(
               child: Padding(
@@ -914,13 +915,7 @@ class _LearningPageState extends State<LearningPage> {
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: MemoryCard(
-                  item: MemoryItemView(
-                    messageId: item.helpIndex,
-                    itemId: item.itemId,
-                    draft: item.draft,
-                    status: item.status,
-                    commitId: item.commitId,
-                  ),
+                  item: item,
                   onAccept: () => _acceptMemory(item),
                   onDismiss: () => _dismissMemory(item),
                   onUndo: () {

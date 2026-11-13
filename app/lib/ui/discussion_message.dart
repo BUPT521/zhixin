@@ -29,6 +29,7 @@ class DiscussionMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 原图长边到 1600 像素，按显示宽度解码即可，一张能省下几 MB 内存。
+    final theme = context.zhixin;
     final cacheWidth = (160 * MediaQuery.devicePixelRatioOf(context)).round();
     final content = Column(
       mainAxisSize: MainAxisSize.min,
@@ -41,7 +42,7 @@ class DiscussionMessage extends StatelessWidget {
             children: [
               for (final path in message.imagePaths)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: theme.radius.tag,
                   child: Image.file(
                     File(imagePath(path)),
                     width: 160,
@@ -67,7 +68,6 @@ class DiscussionMessage extends StatelessWidget {
       return _bubble(context, isUser: message.isUser, child: content);
     }
 
-    final theme = context.zhixin;
     final citations = DiscussionService.citationsOf(message)
         .where((citation) => citation.quote.isNotEmpty);
     return _replyCard(
@@ -312,11 +312,20 @@ Widget _bubble(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       constraints: BoxConstraints(
-        maxWidth: MediaQuery.sizeOf(context).width * 0.82,
+        maxWidth:
+            MediaQuery.sizeOf(context).width.clamp(0.0, theme.space.maxWidth) *
+            0.82,
       ),
       decoration: BoxDecoration(
         color: isUser ? theme.colors.primaryContainer : theme.colors.card,
-        borderRadius: theme.radius.card,
+        borderRadius: BorderRadiusDirectional.only(
+          topStart: theme.radius.card.topLeft,
+          topEnd: theme.radius.card.topRight,
+          bottomStart: theme.radius.card.bottomLeft,
+          bottomEnd: isUser
+              ? theme.radius.tag.bottomRight
+              : theme.radius.card.bottomRight,
+        ),
         border: isUser ? null : Border.fromBorderSide(side),
       ),
       child: child,

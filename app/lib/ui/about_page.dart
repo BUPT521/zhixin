@@ -7,6 +7,7 @@ import 'theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../platform/app_info.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -19,43 +20,35 @@ class AboutPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: const ZhixinHeader(title: Text('关于'), showBack: true),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
+        padding: theme.space.pageInsets(top: theme.space.xl),
         children: [
-          Center(
-            child: CircleAvatar(
-              radius: 36,
-              backgroundColor: theme.colors.primaryContainer,
-              child: Icon(
-                FLucideIcons.bookOpenText,
-                size: 36,
-                color: theme.colors.onPrimaryContainer,
-              ),
-            ),
-          ),
+          const Center(child: ZhixinMark(size: 64)),
           const SizedBox(height: 12),
           Text(
             appName,
             textAlign: TextAlign.center,
-            style: theme.text.headlineSmall,
+            style: theme.text.headlineMedium,
           ),
           const SizedBox(height: 4),
           Text(
             '版本 $appVersion',
             textAlign: TextAlign.center,
-            style: theme.text.bodyMedium,
+            style: theme.text.bodySmall.copyWith(
+              color: theme.colors.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             '一个懂你的学习搭子',
             textAlign: TextAlign.center,
-            style: theme.text.bodySmall,
+            style: theme.text.bodyMedium,
           ),
           const Divider(height: 32),
           forui.FTile(
-            prefix: const Icon(FLucideIcons.fileText),
+            prefix: const LeadingIcon(FLucideIcons.fileText),
             title: const Text('开源许可'),
             subtitle: const Text('知新的 MIT 许可与第三方组件许可'),
             suffix: const Icon(FLucideIcons.chevronRight),
@@ -64,15 +57,11 @@ class AboutPage extends StatelessWidget {
               applicationName: appName,
               applicationVersion: appVersion,
               applicationLegalese: 'MIT License · Copyright (c) 2026 知新项目组',
-              applicationIcon: Icon(
-                FLucideIcons.bookOpenText,
-                size: 40,
-                color: theme.colors.primary,
-              ),
+              applicationIcon: const ZhixinMark(size: 40),
             ),
           ),
           forui.FTile(
-            prefix: const Icon(FLucideIcons.externalLink),
+            prefix: const LeadingIcon(FLucideIcons.externalLink),
             title: const Text('项目主页'),
             subtitle: const Text('源代码、使用说明与问题反馈'),
             suffix: const Icon(FLucideIcons.chevronRight),

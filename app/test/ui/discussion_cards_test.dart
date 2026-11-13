@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/application/buddy_actions.dart';
 import 'package:zhixin/application/discussion_service.dart';
+import 'package:zhixin/application/memory_view.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/ui/discussion_cards.dart';
@@ -17,7 +18,7 @@ MemoryItemView memory({
   int? commitId,
 }) {
   return MemoryItemView(
-    messageId: 1,
+    ownerId: 1,
     itemId: 'memory-1',
     draft: MemoryDraft(
       kind: kind,

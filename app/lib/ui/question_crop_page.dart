@@ -15,6 +15,7 @@ import 'theme.dart';
 import 'package:path/path.dart' as p;
 
 import 'failure_feedback.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -341,7 +342,7 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    return forui.FScaffold(
+    return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('框选题目'),
         prefixes: [
@@ -365,14 +366,17 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+            padding: theme.space.pageInsets(
+              top: theme.space.xs,
+              bottom: theme.space.md,
+            ),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 widget.allowRetake
-                    ? '拖动四角框住一道题，框外的部分不会保存；拍糊了就点右上角重拍。'
-                    : '拖动四角框住一道题，框外的部分不会保存。',
-                style: theme.text.bodySmall.copyWith(
+                    ? '拖动四角框住一道题，图片模糊时可选择重拍。'
+                    : '拖动四角框住一道题，只保留选中的区域。',
+                style: theme.text.bodyMedium.copyWith(
                   color: theme.colors.onSurfaceVariant,
                 ),
               ),
@@ -380,7 +384,7 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: theme.space.pageInsets(top: 0, bottom: theme.space.md),
               child: Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(

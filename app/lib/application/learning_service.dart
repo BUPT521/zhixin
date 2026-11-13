@@ -25,6 +25,7 @@ import 'buddy_answer.dart';
 import 'attachment_service.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
+import 'memory_view.dart';
 import 'reply_outcome.dart';
 
 /// 一道题的当前状态：原题、尝试与一条未提交尝试。
@@ -67,35 +68,6 @@ class HelpResult {
   final bool interrupted;
   final String? notice;
   final List<AppliedChange> changes;
-}
-
-/// 一条帮助里的记忆建议：待确认、已写入或已收起。
-class HelpMemoryView {
-  const HelpMemoryView({
-    required this.helpIndex,
-    required this.itemId,
-    required this.draft,
-    required this.status,
-    this.commitId,
-  });
-
-  final int helpIndex;
-  final String itemId;
-  final MemoryDraft draft;
-  final String status;
-  final int? commitId;
-
-  bool get pending => status == 'pending';
-  bool get applied => status == 'accepted';
-}
-
-/// 用户点“记下”后的结果；重复或过长时没有写入。
-class AcceptedHelpMemory {
-  const AcceptedHelpMemory({required this.applied, this.change, this.notice});
-
-  final bool applied;
-  final AppliedChange? change;
-  final String? notice;
 }
 
 /// 按本次最新的有判断的已提交尝试推出场次结果；没有提交或都没判断时留空。
@@ -460,7 +432,7 @@ class LearningService {
   }
 
   /// 一条未提交尝试上的记忆建议：已写入的只保留仍可撤销的那几条。
-  Future<List<HelpMemoryView>> memoryItemsFor(Attempt attempt) async {
+  Future<List<MemoryItemView>> memoryItemsFor(Attempt attempt) async {
     final stored = <({int helpIndex, HelpMemory item})>[];
     for (var index = 0; index < attempt.helps.length; index++) {
       for (final item in attempt.helps[index].memories) {
@@ -482,8 +454,8 @@ class LearningService {
         if (entry.item.status != 'accepted' ||
             (entry.item.commitId != null &&
                 active.contains(entry.item.commitId)))
-          HelpMemoryView(
-            helpIndex: entry.helpIndex,
+          MemoryItemView(
+            ownerId: entry.helpIndex,
             itemId: entry.item.id,
             draft: MemoryDraft(
               kind: entry.item.kind,
@@ -498,7 +470,7 @@ class LearningService {
   }
 
   /// 用户点“记下”后才写入帮助里的记忆建议；重复或过长时不写，卡片随之收起。
-  Future<AcceptedHelpMemory> acceptMemory({
+  Future<AcceptedMemory> acceptMemory({
     required int attemptId,
     required int helpIndex,
     required String itemId,
@@ -515,45 +487,28 @@ class LearningService {
       return await transactions.run(
         (txn) async {
           _ensureCurrentEpoch(requestEpoch);
-          final applied = await applyMemoryDrafts(
+          return confirmMemoryDraft(
+            transaction: txn,
             transactions: transactions,
             memories: memories,
-            drafts: [
-              MemoryDraft(
-                kind: item.kind,
-                content: item.content,
-                validUntil: item.validUntil,
-              ),
-            ],
+            draft: MemoryDraft(
+              kind: item.kind,
+              content: item.content,
+              validUntil: item.validUntil,
+            ),
             sourceKind: 'attempt',
             sourceId: attemptId,
             scope: scope,
-            transaction: txn,
             clock: policy().clock,
-          );
-          if (applied.changes.isEmpty) {
-            await _setHelpMemoryStatus(
+            recordStatus: (status, commitId) => _setHelpMemoryStatus(
               attemptId,
               helpIndex,
               itemId,
-              status: 'dismissed',
+              status: status,
+              commitId: commitId,
               transaction: txn,
-            );
-            return const AcceptedHelpMemory(
-              applied: false,
-              notice: '这条记忆已经存在，没有重复保存。',
-            );
-          }
-          final change = applied.changes.first;
-          await _setHelpMemoryStatus(
-            attemptId,
-            helpIndex,
-            itemId,
-            status: 'accepted',
-            commitId: change.commitId,
-            transaction: txn,
+            ),
           );
-          return AcceptedHelpMemory(applied: true, change: change);
         },
         label: confirmAttemptMemoryAction,
         requestId: requestId,
@@ -564,7 +519,7 @@ class LearningService {
       final current = refreshed == null
           ? null
           : _helpMemory(refreshed, helpIndex, itemId);
-      return AcceptedHelpMemory(
+      return AcceptedMemory(
         applied: current?.status == 'accepted',
         notice: '这条记忆已经处理。',
       );

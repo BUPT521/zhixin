@@ -9,6 +9,7 @@ import '../ai/llm_client.dart';
 import '../app_scope.dart';
 import '../application/buddy_actions.dart';
 import '../application/discussion_service.dart';
+import '../application/memory_view.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/study.dart';
@@ -855,7 +856,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final result = await AppScope.of(context).discussionService
           .acceptMemoryItem(
             conversationId: id,
-            messageId: item.messageId,
+            messageId: item.ownerId,
             itemId: item.itemId,
           );
       if (!mounted) return;
@@ -884,7 +885,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     try {
       await AppScope.of(context).discussionService.dismissMemoryItem(
         conversationId: id,
-        messageId: item.messageId,
+        messageId: item.ownerId,
         itemId: item.itemId,
       );
       await _load();
@@ -1127,13 +1128,10 @@ class DiscussionChatState extends State<DiscussionChat> {
         Expanded(
           child: _emptyTimeline
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(
-                      widget.emptyHint,
-                      textAlign: TextAlign.center,
-                      style: theme.text.bodyMedium,
-                    ),
+                  child: EmptyState(
+                    icon: FLucideIcons.messageCircle,
+                    title: '讨论内容',
+                    description: widget.emptyHint,
                   ),
                 )
               : ListView.builder(
@@ -1171,7 +1169,10 @@ class DiscussionChatState extends State<DiscussionChat> {
         : _goals.where((item) => item.id == record.goalId).firstOrNull;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+      padding: theme.space.pageInsets(
+        top: theme.space.xs,
+        bottom: theme.space.sm,
+      ),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: theme.colors.outlineVariant)),
       ),
@@ -1445,10 +1446,20 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   Widget _composer() {
+    final theme = context.zhixin;
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      child: Container(
+        margin: theme.space.pageInsets(
+          top: theme.space.xs,
+          bottom: theme.space.sm,
+        ),
+        padding: EdgeInsets.all(theme.space.sm),
+        decoration: BoxDecoration(
+          color: theme.colors.card,
+          border: Border.all(color: theme.colors.outlineVariant),
+          borderRadius: theme.radius.feature,
+        ),
         child: Column(
           children: [
             if (AppScope.of(context).broughtSources.length > 0)
@@ -1498,9 +1509,11 @@ class DiscussionChatState extends State<DiscussionChat> {
               children: [
                 ZhixinIconButton(
                   tooltip: '添加图片',
+                  variant: forui.FButtonVariant.secondary,
                   onPressed: _sending || _picking ? null : _chooseAttachment,
                   icon: FLucideIcons.imagePlus,
                 ),
+                SizedBox(width: theme.space.sm),
                 Expanded(
                   child: forui.FTextField(
                     control: .managed(controller: _input),
@@ -1510,9 +1523,21 @@ class DiscussionChatState extends State<DiscussionChat> {
                     hint: _record?.open == false
                         ? '这条讨论已结束，发消息会重新打开'
                         : '输入问题或添加图片',
+                    style: .delta(
+                      border: .delta([.all(InputBorder.none)]),
+                      color: .delta([.all(Colors.transparent)]),
+                    ),
                     suffixBuilder: (_, style, _) => VoiceInputButton(
                       controller: _input,
-                      style: style.clearButtonStyle,
+                      iconSize: 20,
+                      style: style.clearButtonStyle.copyWith(
+                        iconContentStyle: const .delta(
+                          constraints: BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1520,6 +1545,8 @@ class DiscussionChatState extends State<DiscussionChat> {
                 ZhixinIconButton(
                   tooltip: _sending ? '停止生成' : '发送',
                   variant: forui.FButtonVariant.primary,
+                  size: forui.FButtonSizeVariant.lg,
+                  iconSize: _sending ? 18 : 22,
                   onPressed: _sending ? _stop : _send,
                   icon: _sending ? FLucideIcons.square : FLucideIcons.arrowUp,
                 ),

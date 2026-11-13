@@ -365,8 +365,13 @@ class _RecordsPageState extends State<RecordsPage> {
                       control: .managed(controller: _searchHint),
                       readOnly: true,
                       onTap: _openSearch,
-                      prefixBuilder: (_, _, _) =>
-                          const Icon(FLucideIcons.search),
+                      prefixBuilder: (context, style, variants) =>
+                          forui.FTextField.prefixIconBuilder(
+                            context,
+                            style,
+                            variants,
+                            const Icon(FLucideIcons.search, size: 16),
+                          ),
                       hint: '搜索讨论、题目或材料原文',
                     ),
                   ),
@@ -482,7 +487,7 @@ class _RecordsPageState extends State<RecordsPage> {
                 variant: answerActive
                     ? forui.FButtonVariant.secondary
                     : forui.FButtonVariant.outline,
-                size: forui.FButtonSizeVariant.xs,
+                size: forui.FButtonSizeVariant.sm,
                 mainAxisSize: MainAxisSize.min,
                 onPress: controller.toggle,
                 suffix: const Icon(FLucideIcons.chevronDown),
@@ -493,7 +498,7 @@ class _RecordsPageState extends State<RecordsPage> {
             ),
             Container(
               width: 1,
-              height: 20,
+              height: 24,
               margin: EdgeInsets.symmetric(horizontal: theme.space.sm),
               color: theme.colors.outlineVariant,
             ),
@@ -501,6 +506,7 @@ class _RecordsPageState extends State<RecordsPage> {
               padding: EdgeInsets.only(right: theme.space.sm - 2),
               child: ZhixinChip(
                 label: '全部',
+                size: forui.FButtonSizeVariant.sm,
                 selected: _goalFilter == null && !_unassignedOnly,
                 onPressed: () => _setGoalFilter(),
               ),
@@ -509,6 +515,7 @@ class _RecordsPageState extends State<RecordsPage> {
               padding: EdgeInsets.only(right: theme.space.sm - 2),
               child: ZhixinChip(
                 label: '无归属',
+                size: forui.FButtonSizeVariant.sm,
                 selected: _unassignedOnly,
                 onPressed: () => _setGoalFilter(unassigned: true),
               ),
@@ -518,6 +525,7 @@ class _RecordsPageState extends State<RecordsPage> {
                 padding: EdgeInsets.only(right: theme.space.sm - 2),
                 child: ZhixinChip(
                   label: goal.title,
+                  size: forui.FButtonSizeVariant.sm,
                   icon: FLucideIcons.flag,
                   selected: !_unassignedOnly && _goalFilter == goal.id,
                   onPressed: () => _setGoalFilter(goalId: goal.id),

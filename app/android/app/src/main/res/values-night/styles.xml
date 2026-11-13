@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 深色模式下启动图底色换成深色纸色（见 values-night/colors.xml），
-         接上深色首页时不会先闪一下浅色。 -->
-    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+    <style name="LaunchTheme" parent="@android:style/Theme.Material.NoActionBar">
         <!-- Show a splash screen on the activity. Automatically removed when
              the Flutter engine draws its first frame -->
         <item name="android:windowBackground">@drawable/launch_background</item>
@@ -13,7 +11,7 @@
          running.
 
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
-    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+    <style name="NormalTheme" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/splash_background</item>
     </style>
 </resources>
