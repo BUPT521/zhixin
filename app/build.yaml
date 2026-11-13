@@ -1,0 +1,7 @@
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          # 表结构与 companion 已经够用，不生成 TableManager 与筛选器，控制生成体量。
+          generate_manager: false
