@@ -135,6 +135,9 @@ class _LearningPageState extends State<LearningPage> {
         scope.conversations.recent(widget.questionId, limit: 6),
       ).wait;
       if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填，内容不会在滑动中途跳出来。
+      await context.afterTransition();
+      if (!mounted) return;
       setState(() {
         _view = view;
         _assessments = assessments;

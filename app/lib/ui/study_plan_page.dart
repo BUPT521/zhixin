@@ -62,6 +62,9 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
         ),
       ).wait;
       if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填。
+      await context.afterTransition();
+      if (!mounted) return;
       setState(() {
         _view = view;
         _nextBlocks = blocks;
