@@ -1,6 +1,6 @@
 # 依赖更新的定期检查。4 个人各自在自己电脑上开发，靠它把能升的依赖开成 PR，
 # 不必像 2026-11-09 那样手工盘一遍 pub、Gradle 与 action 的版本。
-# 合并前按 CONTRIBUTING 第 1 节把标题改成“类型: 中文说明”，并按第 6 节在本地跑一遍
+# 合并前按 CONTRIBUTING 第 1 节把标题改成“类型: 中文说明”，并按第 7 节在本地跑一遍
 # dart format、flutter analyze 与 flutter test；Flutter SDK 的版本只在 ci.yml 的
 # FLUTTER_VERSION 一处维护，这里不管。
 version: 2

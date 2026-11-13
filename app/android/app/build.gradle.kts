@@ -30,7 +30,7 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.zhixin.app"
-        // ADR-0010：最低 Android 11（API 30）。只出 arm64 包，不为 32 位和老机器降配。
+        // ADR-0003：最低 Android 11（API 30）。只出 arm64 包，不为 32 位和老机器降配。
         minSdk = 30
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
