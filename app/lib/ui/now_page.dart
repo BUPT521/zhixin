@@ -323,12 +323,6 @@ class _NowPageState extends State<NowPage> {
               _composer(theme),
               SizedBox(height: theme.space.md),
               _shortcuts(theme),
-              if (_loading)
-                Padding(
-                  padding: EdgeInsets.only(top: theme.space.sm),
-                  // 首读用与卡片同高的静态骨架，读完原位替换，下面的内容不跳。
-                  child: const ListSkeleton(rows: 2, rowHeight: 76),
-                ),
               SectionHeading(
                 title: '继续上次',
                 action: forui.FButton(
@@ -345,12 +339,14 @@ class _NowPageState extends State<NowPage> {
                   onRetry: () => _loadContinue(),
                 ),
               // 读完之后整段淡入一次；之后返回首页的重读只换内容，不再闪动。
+              // 首读的静态骨架就放在卡片将要出现的位置，读完原位替换，页面不跳。
               FadeIn(
                 trigger: _loading,
                 playOnInit: false,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_loading) const ListSkeleton(rows: 2, rowHeight: 76),
                     for (final entry in _continue) _continueCard(theme, entry),
                     if (!_loading &&
                         _continueError == null &&

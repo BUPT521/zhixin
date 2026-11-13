@@ -1031,14 +1031,18 @@ class _PlanPageState extends State<PlanPage> {
       child: _week == null && !_active
           ? const SizedBox.shrink()
           : _loading
-          // 首读用与列表卡片同高的静态骨架，读完原位替换，页面不再跳。
-          ? ListSkeleton(
-              rows: 3,
-              padding: EdgeInsets.fromLTRB(
-                theme.space.page,
-                theme.space.sm,
-                theme.space.page,
-                0,
+          // 首读也先摆出页签，读完只在下面换内容，页面不往下跳。
+          ? PageWidth(
+              child: Column(
+                children: [
+                  _tabBar(theme),
+                  Expanded(
+                    child: ListSkeleton(
+                      rows: 3,
+                      padding: EdgeInsets.fromLTRB(0, theme.space.sm, 0, 0),
+                    ),
+                  ),
+                ],
               ),
             )
           : week == null
@@ -1058,29 +1062,7 @@ class _PlanPageState extends State<PlanPage> {
               child: PageWidth(
                 child: Column(
                   children: [
-                    // 页签固定在列表上方：原来它随列表滚走，看到日程中段时
-                    // 想切到事项要先滚回顶部。
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        theme.space.page,
-                        theme.space.xs,
-                        theme.space.page,
-                        theme.space.sm,
-                      ),
-                      child: ZhixinSegmented<int>(
-                        segments: const [
-                          ZhixinSegment(value: 0, label: '日程'),
-                          ZhixinSegment(value: 1, label: '事项'),
-                          ZhixinSegment(value: 2, label: '目标'),
-                          ZhixinSegment(value: 3, label: 'AI 改动'),
-                        ],
-                        selected: _tab,
-                        onChanged: (tab) => setState(() {
-                          _tab = tab;
-                          _visited.add(tab);
-                        }),
-                      ),
-                    ),
+                    _tabBar(theme),
                     Expanded(
                       child: FadeIn(
                         trigger: (_tab, _shownAnchor),
@@ -1106,6 +1088,29 @@ class _PlanPageState extends State<PlanPage> {
             ),
     );
   }
+
+  /// 页签固定在列表上方：原来它随列表滚走，看到日程中段时想切到事项要先滚回顶部。
+  Widget _tabBar(ZhixinTheme theme) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      theme.space.page,
+      theme.space.xs,
+      theme.space.page,
+      theme.space.sm,
+    ),
+    child: ZhixinSegmented<int>(
+      segments: const [
+        ZhixinSegment(value: 0, label: '日程'),
+        ZhixinSegment(value: 1, label: '事项'),
+        ZhixinSegment(value: 2, label: '目标'),
+        ZhixinSegment(value: 3, label: 'AI 改动'),
+      ],
+      selected: _tab,
+      onChanged: (tab) => setState(() {
+        _tab = tab;
+        _visited.add(tab);
+      }),
+    ),
+  );
 
   /// 一个页签的列表：下拉刷新、惰性构建，切走再回来接着原来的滚动位置。
   Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>

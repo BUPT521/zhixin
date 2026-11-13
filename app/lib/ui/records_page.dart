@@ -538,63 +538,63 @@ class _RecordsPageState extends State<RecordsPage> {
   }
 
   Widget _learningRecords(ZhixinTheme theme) {
-    if (_loading) {
-      // 首读用与记录卡片同高的静态骨架，读完原位替换，页面不再先转圈再撑开。
-      return ListSkeleton(
-        rows: 3,
-        padding: EdgeInsets.fromLTRB(
-          theme.space.page,
-          theme.space.sm,
-          theme.space.page,
-          0,
-        ),
-      );
-    }
     final records = _records;
     return Column(
       children: [
+        // 筛选条不依赖读取结果，首读时就位，读完只在下面换内容，页面不往下跳。
         _filterBar(theme),
         Expanded(
-          child: FadeIn(
-            trigger: _shownFilter,
-            playOnInit: false,
-            child: records.isEmpty
-                ? SingleChildScrollView(
-                    child: EmptyState(
-                      icon: _filtered
-                          ? FLucideIcons.filterX
-                          : FLucideIcons.messageCircle,
-                      title: _filtered ? '没有符合筛选的记录' : '暂无学习记录',
-                      description: _filtered
-                          ? '可以调整筛选条件，查看其他记录。'
-                          : '讨论和题目的作答都会保存在这里。',
-                      action: _filtered
-                          ? forui.FButton(
-                              variant: forui.FButtonVariant.outline,
-                              mainAxisSize: MainAxisSize.min,
-                              onPress: () {
-                                setState(() {
-                                  _goalFilter = null;
-                                  _unassignedOnly = false;
-                                  _answerFilter = null;
-                                });
-                                _load();
-                              },
-                              child: const Text('清除筛选'),
-                            )
-                          : forui.FButton(
-                              variant: forui.FButtonVariant.secondary,
-                              mainAxisSize: MainAxisSize.min,
-                              onPress: widget.onStartQuestion,
-                              child: const Text('提出问题'),
-                            ),
-                    ),
-                  )
-                : RefreshIndicator(
-                    onRefresh: _load,
-                    child: _recordList(theme, records),
+          child: _loading
+              // 首读用与记录卡片同高的静态骨架，读完原位替换。
+              ? ListSkeleton(
+                  rows: 3,
+                  padding: EdgeInsets.fromLTRB(
+                    theme.space.page,
+                    theme.space.sm,
+                    theme.space.page,
+                    0,
                   ),
-          ),
+                )
+              : FadeIn(
+                  trigger: _shownFilter,
+                  playOnInit: false,
+                  child: records.isEmpty
+                      ? SingleChildScrollView(
+                          child: EmptyState(
+                            icon: _filtered
+                                ? FLucideIcons.filterX
+                                : FLucideIcons.messageCircle,
+                            title: _filtered ? '没有符合筛选的记录' : '暂无学习记录',
+                            description: _filtered
+                                ? '可以调整筛选条件，查看其他记录。'
+                                : '讨论和题目的作答都会保存在这里。',
+                            action: _filtered
+                                ? forui.FButton(
+                                    variant: forui.FButtonVariant.outline,
+                                    mainAxisSize: MainAxisSize.min,
+                                    onPress: () {
+                                      setState(() {
+                                        _goalFilter = null;
+                                        _unassignedOnly = false;
+                                        _answerFilter = null;
+                                      });
+                                      _load();
+                                    },
+                                    child: const Text('清除筛选'),
+                                  )
+                                : forui.FButton(
+                                    variant: forui.FButtonVariant.secondary,
+                                    mainAxisSize: MainAxisSize.min,
+                                    onPress: widget.onStartQuestion,
+                                    child: const Text('提出问题'),
+                                  ),
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: _recordList(theme, records),
+                        ),
+                ),
         ),
       ],
     );
