@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -5,11 +7,20 @@ import 'app.dart';
 import 'data/diagnostics/crash_log.dart';
 import 'platform/app_license.dart';
 import 'platform/app_paths.dart';
+import 'platform/first_frame.dart';
 import 'platform/theme_mode_store.dart';
 import 'ui/theme_mode_controller.dart';
 
+/// 压住第一帧的上限：超过这个时间就露出加载页，不让用户停在一张不会动的
+/// 启动图上等下去。
+const Duration firstFrameLimit = Duration(milliseconds: 1500);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 原生启动图直接接上首页：先压住第一帧，AppScope 准备好首屏数据后再放行。
+  // 开库比上限还慢时由下面这个定时器兜底，露出加载页。
+  FirstFrameGate.defer();
+  Timer(firstFrameLimit, FirstFrameGate.release);
   registerAppLicense();
   final paths = await _resolvePaths();
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);

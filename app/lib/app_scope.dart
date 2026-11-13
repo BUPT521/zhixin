@@ -56,6 +56,7 @@ import 'domain/rules/day_key.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
 import 'platform/app_info.dart';
+import 'platform/first_frame.dart';
 import 'platform/secure_secret_store.dart';
 import 'ui/theme_mode_controller.dart';
 
@@ -292,6 +293,18 @@ class AppScopeState extends State<AppScope> {
 
   late final Future<void> ready = _init();
 
+  @override
+  void initState() {
+    super.initState();
+    // 首屏数据就绪（或开库失败）之后放行第一帧；没压过第一帧时这次调用
+    // 什么都不做，测试照常跑。
+    unawaited(
+      ready
+          .then<void>((_) {}, onError: (Object error, StackTrace stack) {})
+          .whenComplete(FirstFrameGate.release),
+    );
+  }
+
   Future<void> _init() async {
     paths = await AppPaths.resolve();
     await paths.ensureDirectories();
@@ -333,15 +346,41 @@ class AppScopeState extends State<AppScope> {
       clock: clock,
     );
     restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
-    await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db);
-    try {
-      await attachmentCache.rebuild(db, revisionsEngine.assets);
-    } catch (error) {
-      crashLog.record(error, null, kind: 'rebuild_attachments');
-    }
     embeddingConfig = await embeddingStore.read();
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
     applyEmbeddingConfig(embeddingConfig);
+    // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
+    // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
+    _scheduleAttachmentMaintenance();
+  }
+
+  /// 首帧交出之后在后台整理附件：先删掉数据库不再引用的图片，必要时补建缓存。
+  ///
+  /// 两步互不阻塞，各自失败只写诊断记录：它们与用户此刻的操作无关，下一次
+  /// 启动还会重做，不值得用一个提示打断使用。缓存补建只在还原、导入之后或
+  /// 缓存目录被系统清空时做，平时启动只做删除这一趟，避免每次全表扫描消息。
+  void _scheduleAttachmentMaintenance() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_maintainAttachments());
+    });
+  }
+
+  Future<void> _maintainAttachments() async {
+    try {
+      await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db);
+    } catch (error, stack) {
+      crashLog.record(error, stack, kind: 'cleanup_attachments');
+    }
+    if (!mounted) return;
+    try {
+      if (!await attachmentCache.needsRebuild) return;
+      await attachmentCache.rebuild(db, revisionsEngine.assets);
+      await attachmentCache.clearPendingRebuild();
+    } catch (error) {
+      // 补建失败不打断使用：缺图的位置已经按“找不到图片”显示，下次再补。
+      crashLog.record(error, null, kind: 'rebuild_attachments');
+    }
   }
 
   /// 应用一套嵌入配置：换掉嵌入来源，清掉旧模型对应的索引，再在后台补建。
@@ -424,6 +463,9 @@ class AppScopeState extends State<AppScope> {
   Future<String?> restore(Uint8List bytes) async {
     _operationEpoch++;
     String? cacheWarning;
+    // 先记一笔“缓存要重补”：还原中途退出时，下次启动会按恢复后的数据重补，
+    // 而不是留着一半新的缓存。
+    await attachmentCache.markPendingRebuild();
     await gate.exclusive(() async {
       await revisionPackages.validateRepositoryBytes(bytes);
       final summary = await currentRestoreSummary();
@@ -445,6 +487,7 @@ class AppScopeState extends State<AppScope> {
       await packages.restorePackage(bytes, currentDb: db, openDb: _open);
       try {
         await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
+        await attachmentCache.clearPendingRebuild();
       } catch (error, stack) {
         crashLog.record(error, stack, kind: 'rebuild_attachments_restore');
         cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
@@ -523,6 +566,7 @@ class AppScopeState extends State<AppScope> {
     required int expectedHead,
   }) async {
     _operationEpoch++;
+    await attachmentCache.markPendingRebuild();
     await gate.exclusive(
       () => revisionPackages.importCurrent(
         _connection!,
@@ -531,6 +575,7 @@ class AppScopeState extends State<AppScope> {
       ),
     );
     await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
+    await attachmentCache.clearPendingRebuild();
     dataVersion.value++;
     _refreshSemanticIndex();
   }
