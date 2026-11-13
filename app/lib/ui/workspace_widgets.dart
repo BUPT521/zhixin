@@ -344,8 +344,8 @@ class LoadMoreFooter extends StatelessWidget {
 
 /// 首读时的占位骨架：几条与真实卡片同高的静态块，读完原位换成内容。
 ///
-/// 不做闪光或呼吸动画：动效口径里不循环，而且一闪一闪的占位比转圈更扰人。
-/// 高度固定，替换前后页面高度不变，下面的内容不会跟着跳。
+/// 不做闪光或呼吸动画：动效口径里不循环，而且不断变化的占位更妨碍阅读。
+/// 高度固定，替换前后页面高度不变，下面的内容不会跟着移动。
 class ListSkeleton extends StatelessWidget {
   const ListSkeleton({
     super.key,
