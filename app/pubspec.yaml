@@ -1,0 +1,79 @@
+name: zhixin
+description: "知新 · 一个懂你的学习搭子"
+publish_to: 'none'
+
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 数据层：单文件 SQLite，DDL 来自 docs/01 第 4 章。
+  sqflite: ^2.4.5
+  path: ^1.9.1
+  path_provider: ^2.1.6
+
+  # 导出/恢复：zip 数据包。
+  archive: ^4.6.0
+  crypto: ^3.0.8
+  file_picker: ^13.3.2
+  xml: ^7.0.1
+
+  # 语义索引：独立的 sqlite3_vec 库，只用它保存可从业务库重建的向量。
+  sqlite3: ^3.9.1
+  sqlite3_vec: ^0.1.2
+
+  # 关键词排序：与原文一致的切词之后作为候选排序的对照路径。
+  bm25: ^2.2.3
+
+  # 接模型：HTTP 直连，key 存 Android Keystore。
+  http: ^1.6.0
+  flutter_secure_storage: ^11.2.0
+  image_picker: ^1.2.4
+  # 拍照用应用内相机：快门之后直接框选，不经过系统相机的确认界面。
+  camera: ^0.12.2
+  # 裁剪题目图片：纯 Dart 解码、裁剪与 JPEG 编码，不引原生库。
+  image: ^4.12.0
+  speech_to_text: ^7.5.0
+
+  # 回答里的 Markdown：按段缓存，流式输出时不重解析整段；依赖要求 Flutter 3.47 以上。
+  gpt_markdown: ^1.4.1
+
+  # 基础控件、路由、Markdown 与本地化，以及 Forui 没有的控件（如下拉刷新）。
+  material_ui: ^1.10.0
+
+  # 界面组件与主题：页面骨架、按钮、表单、列表、对话框、面板、提示与日期时间选择。
+  forui: 0.27.7
+  # 界面图标：业务图标与 Forui 控件内部用同一套 Lucide 图形。
+  forui_lucide: ^0.27.0
+
+  # 打开回答里的链接。
+  url_launcher: ^6.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # 在 Dart VM 里跑同一套 DDL 与查询，CI 不必起模拟器。
+  sqflite_common_ffi: ^2.4.5
+  flutter_lints: ^6.0.0
+
+# sqlite3 在测试里用系统自带的 SQLite：Linux 取 libsqlite3.so，Windows 取
+# winsqlite3.dll，这样 CI 不必从 GitHub Releases 下载（偶发 504）。Android 的
+# 系统库不对外提供 libsqlite3.so，语义索引打不开，因此只在 Android 随包放入
+# 预编译库，其余平台继续用系统库。
+hooks:
+  user_defines:
+    sqlite3:
+      source:
+        android: sqlite3
+        default: system
+      # Windows 自带的库叫 winsqlite3.dll，其余平台按默认名加载 libsqlite3.so。
+      name:
+        windows: winsqlite3
+        default: sqlite3
+
+flutter:
+  uses-material-design: true

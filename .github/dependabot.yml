@@ -1,0 +1,46 @@
+# 依赖更新的定期检查。4 个人各自在自己电脑上开发，靠它把能升的依赖开成 PR，
+# 不必像 2026-11-09 那样手工盘一遍 pub、Gradle 与 action 的版本。
+# 合并前按 CONTRIBUTING 第 1 节把标题改成“类型: 中文说明”，并按第 6 节在本地跑一遍
+# dart format、flutter analyze 与 flutter test；Flutter SDK 的版本只在 ci.yml 的
+# FLUTTER_VERSION 一处维护，这里不管。
+version: 2
+updates:
+  # 应用依赖。次要版本与补丁版本合成一个 PR，主版本各开一个，方便单独判断。
+  - package-ecosystem: "pub"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 4
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      pub-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Gradle wrapper、AGP 与 Kotlin 的版本，改动之后要真机构建一次再合。
+  - package-ecosystem: "gradle"
+    directory: "/app/android"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # workflow 里用到的 action，主版本跳跃会换运行时，合之前确认三个 job 都跑过。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns: ["*"]

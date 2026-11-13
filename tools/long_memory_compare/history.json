@@ -1,0 +1,57 @@
+{
+  "note": "与 app/test/evaluation/longmem_eval_test.dart 同一批合成历史。时间、帮助与独立性按作答记录写入，材料页更正保留更正时间。",
+  "generated_at": "2026-11-12T20:00:00+08:00",
+  "goal": "概率论期末",
+  "materials": [
+    {
+      "material_id": 1,
+      "title": "概率论讲义",
+      "pages": [
+        {"page_no": 3, "content": "条件概率 P(A|B)=P(AB)/P(B)。", "updated_at": "2026-10-01 08:00:00"},
+        {"page_no": 7, "content": "例 3-2 求条件概率 P(A|B)，其中 A、B 为事件。条件概率与贝叶斯公式：P(A|B)=P(AB)/P(B)，贝叶斯公式用于条件概率的反推，条件概率与贝叶斯公式互为补充。", "updated_at": "2026-10-01 09:00:00"},
+        {"page_no": 12, "content": "熵衡量系统的混乱程度，不等于能量，也不能直接换算成能量。", "updated_at": "2026-10-11 09:00:00", "previous_content": "熵是混乱程度的度量。", "corrected_at": "2026-10-11 09:00:00"}
+      ]
+    }
+  ],
+  "conversations": [
+    {
+      "conversation_id": 1,
+      "source_ref": "例 3-2",
+      "material_id": 1,
+      "page_no": 7,
+      "created_at": "2026-10-01 09:00:00",
+      "messages": [
+        {"role": "user", "content": "例 3-2 求条件概率 P(A|B)", "created_at": "2026-10-01 09:00:00"}
+      ],
+      "attempts": [
+        {"attempt_id": 1, "submitted_at": "2026-10-01 09:20:00", "answer": "P(A|B)=P(AB)/P(B)，答案 0.4。", "feedback": "看过提示之后才写对。", "helped": true, "help_count": 1, "independent": false, "delayed": false, "is_correct": true},
+        {"attempt_id": 2, "submitted_at": "2026-10-02 21:00:00", "answer": "P(AB)/P(B) 记反了，写成 P(B)/P(AB)。", "feedback": "把分子分母记反了。", "helped": true, "help_count": 1, "independent": false, "delayed": false, "is_correct": false},
+        {"attempt_id": 3, "submitted_at": "2026-10-03 20:00:00", "answer": "P(A|B)=P(AB)/P(B)，答案 0.4。", "feedback": null, "helped": false, "help_count": 0, "independent": true, "delayed": true, "is_correct": true, "redo_of_attempt_id": 1}
+      ]
+    },
+    {
+      "conversation_id": 2,
+      "source_ref": "例题出处未记录",
+      "material_id": 1,
+      "page_no": 12,
+      "created_at": "2026-10-05 19:00:00",
+      "messages": [
+        {"role": "user", "content": "熵和能量有什么区别？", "created_at": "2026-10-05 19:00:00"}
+      ],
+      "attempts": []
+    }
+  ],
+  "expected_facts": [
+    "第 2 次作答在提示下做错，卡在分子分母记反；来源 attempt:2，范围 goal:1",
+    "第 3 次作答隔一天后在无提示条件下独立完成；来源 attempt:3，范围 goal:1",
+    "第 1 次作答在提示下完成，不记为独立表现，不生成进展记忆",
+    "熵与能量的区别使用 2026-10-11 更正后的原文，不使用更早的说法"
+  ],
+  "queries": [
+    {"id": "ref-1", "query": "例 3-2", "query_time": "2026-10-12 20:00:00", "scope": "goal:1", "required_evidence": ["material_page:1:7", "question:1"]},
+    {"id": "time-1", "query": "10 月 1 日那次例 3-2 用了什么帮助", "query_time": "2026-10-12 20:00:00", "scope": "goal:1", "required_evidence": ["attempt:1"]},
+    {"id": "multi-1", "query": "例 3-2 后来独立做出来了吗", "query_time": "2026-10-12 20:00:00", "scope": "goal:1", "required_evidence": ["attempt:1", "attempt:3"]},
+    {"id": "correction-1", "query": "熵等于能量吗", "query_time": "2026-10-12 20:00:00", "scope": "goal:1", "required_evidence": ["material_page:1:12"]},
+    {"id": "insufficient-1", "query": "第 9 章第 4 题怎么做", "query_time": "2026-10-12 20:00:00", "scope": "goal:1", "required_evidence": []}
+  ]
+}
