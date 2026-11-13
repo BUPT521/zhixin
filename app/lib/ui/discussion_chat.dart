@@ -12,12 +12,12 @@ import '../application/discussion_service.dart';
 import '../application/memory_view.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
+import '../domain/models/material.dart' show Citation;
 import '../domain/models/study.dart';
 import 'buddy_flows.dart';
+import 'buddy_timeline.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
-import 'discussion_cards.dart';
-import 'discussion_message.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
 import 'learning_page.dart';
@@ -96,6 +96,9 @@ class DiscussionChatState extends State<DiscussionChat> {
   bool _hasOlderMessages = false;
   bool _answering = false;
   bool _started = false;
+
+  /// 时间线只向页面取当前消息、卡片与操作，排列与失败说明由共用组件负责。
+  late final BuddyTimelineAdapter _timelineAdapter = _DiscussionTimeline(this);
 
   /// 是否已经配置模型：决定本地规则回答下方给配置入口还是重新回答入口。
   bool _configured = false;
@@ -851,11 +854,12 @@ class DiscussionChatState extends State<DiscussionChat> {
   Future<void> _undoMemory(MemoryItemView item) async {
     final commitId = item.commitId;
     if (commitId == null) return;
-    await _undoChange(
-      AppliedChange(
-        commitId: commitId,
-        text: '已添加记忆：${item.draft.kind.label} · ${item.draft.content}',
-      ),
+    await undoMemoryCard(
+      context: context,
+      commitId: commitId,
+      reload: _load,
+      scope: 'discussion',
+      showNotice: (notice) => setState(() => _notice = notice),
     );
   }
 
@@ -890,11 +894,11 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 未配置时的提示条：给出配置入口，配置完成后卡片上会多出重新回答的按钮。
   void _showModelGuide() {
     if (!mounted) return;
-    showActionToast(
+    showModelSetupGuide(
       context,
-      '当前使用本地规则回答；配置模型后可以重新回答这个问题。',
-      label: '配置模型',
-      onPressed: _openModelSettings,
+      title: '配置模型以重新回答',
+      content: '当前使用本地规则回答；配置模型后可以重新回答这个问题。',
+      onConfigure: _openModelSettings,
     );
   }
 
@@ -1033,39 +1037,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     return Column(
       children: [
         if (_record != null) _recordBar(theme, _record!),
-        Expanded(
-          child: _emptyTimeline
-              ? Center(
-                  child: EmptyState(
-                    icon: FLucideIcons.messageCircle,
-                    title: '讨论内容',
-                    description: widget.emptyHint,
-                  ),
-                )
-              : ListView.builder(
-                  controller: _scroll,
-                  // 倒序列表把最新一条放在偏移 0，打开长讨论时直接落在底部。
-                  reverse: true,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  itemCount: _timelineCount + (_hasOlderMessages ? 1 : 0),
-                  itemBuilder: (context, index) =>
-                      index == _timelineCount && _hasOlderMessages
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: _loadingOlder
-                                ? const forui.FCircularProgress(size: .sm)
-                                : forui.FButton(
-                                    variant: forui.FButtonVariant.ghost,
-                                    mainAxisSize: MainAxisSize.min,
-                                    onPress: _loadOlder,
-                                    child: const Text('读取较早讨论'),
-                                  ),
-                          ),
-                        )
-                      : _timelineItem(theme, _timelineCount - 1 - index),
-                ),
-        ),
+        Expanded(child: BuddyTimeline(adapter: _timelineAdapter)),
         _composer(),
       ],
     );
@@ -1206,153 +1178,6 @@ class DiscussionChatState extends State<DiscussionChat> {
     }
   }
 
-  bool get _emptyTimeline =>
-      _messages.isEmpty &&
-      !_streaming &&
-      _memoryItems.isEmpty &&
-      _pending.isEmpty &&
-      _changes.isEmpty &&
-      _notice == null;
-
-  /// 消息、正在生成的回答、记忆卡片、建议、回执与说明排成同一列。
-  int get _timelineCount {
-    var count = _messages.isEmpty && !_streaming
-        ? 1
-        : _messages.length + (_streaming ? 1 : 0);
-    count += _memoryItems.length;
-    count += _pending.length;
-    if (_changes.isNotEmpty) count++;
-    if (_notice != null) count++;
-    return count;
-  }
-
-  Widget _timelineItem(ZhixinTheme theme, int index) {
-    var cursor = index;
-    if (_messages.isEmpty && !_streaming) {
-      if (cursor == 0) {
-        return Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            widget.emptyHint,
-            textAlign: TextAlign.center,
-            style: theme.text.bodyMedium,
-          ),
-        );
-      }
-      cursor--;
-    } else {
-      if (cursor < _messages.length) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: DiscussionMessage(
-            message: _messages[cursor],
-            imagePath: _imagePath,
-            footer: _localFooter(cursor),
-            onOpenCitation: (citation) => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => MaterialDetailPage(
-                  materialId: citation.materialId,
-                  pageFrom: citation.pageNo,
-                  pageTo: citation.pageNo,
-                  stepTitle: '引用原文',
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-      cursor -= _messages.length;
-
-      if (_streaming) {
-        if (cursor == 0) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: ValueListenableBuilder<String>(
-              valueListenable: _streamingText,
-              builder: (context, text, _) => StreamingMessage(text: text),
-            ),
-          );
-        }
-        cursor--;
-      }
-    }
-
-    if (cursor < _memoryItems.length) {
-      final item = _memoryItems[cursor];
-      return MemoryCard(
-        item: item,
-        onAccept: () => _acceptMemory(item),
-        onDismiss: () => _dismissMemory(item),
-        onUndo: () => _undoMemory(item),
-      );
-    }
-    cursor -= _memoryItems.length;
-
-    if (cursor < _pending.length) {
-      final suggestion = _pending[cursor];
-      return SuggestionCard(
-        suggestion: suggestion,
-        onAccept: () => _accept(suggestion),
-        onSchedule: () => _accept(suggestion, schedule: true),
-        onDismiss: () => _dismiss(suggestion),
-      );
-    }
-    cursor -= _pending.length;
-
-    if (_changes.isNotEmpty) {
-      if (cursor == 0) {
-        return ChangeReceiptCard(changes: _changes, onUndo: _undoChange);
-      }
-      cursor--;
-    }
-
-    if (_notice != null && cursor == 0) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: theme.colors.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  FLucideIcons.info,
-                  size: 16,
-                  color: theme.colors.onSurfaceVariant,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(_notice!, style: theme.text.bodySmall),
-                      if (_retryableNotice && !_streaming)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: forui.FButton(
-                            variant: forui.FButtonVariant.ghost,
-                            mainAxisSize: MainAxisSize.min,
-                            onPress: _retrying ? null : _retry,
-                            prefix: const Icon(FLucideIcons.refreshCw),
-                            child: const Text('重试这次回答'),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    return const SizedBox.shrink();
-  }
-
   Widget _composer() {
     final theme = context.zhixin;
     return SafeArea(
@@ -1465,4 +1290,104 @@ class DiscussionChatState extends State<DiscussionChat> {
       ),
     );
   }
+}
+
+/// 讨论页的时间线取数：消息、流式回答、记忆、建议、回执与说明都从当前状态读。
+class _DiscussionTimeline extends BuddyTimelineAdapter {
+  _DiscussionTimeline(this._state);
+
+  final DiscussionChatState _state;
+
+  @override
+  List<BuddyTimelineEntry> get entries {
+    final state = _state;
+    return [
+      for (var index = 0; index < state._messages.length; index++)
+        BuddyMessageEntry(
+          message: state._messages[index],
+          footer: state._localFooter(index),
+        ),
+      if (state._streaming) BuddyStreamingEntry(state._streamingText),
+      for (final item in state._memoryItems) BuddyMemoryEntry(item),
+      for (final suggestion in state._pending) BuddySuggestionEntry(suggestion),
+      if (state._changes.isNotEmpty) BuddyChangesEntry(state._changes),
+      if (state._notice != null)
+        BuddyNoticeEntry(
+          message: state._notice!,
+          actions: [
+            if (state._retryableNotice && !state._streaming)
+              forui.FButton(
+                variant: forui.FButtonVariant.ghost,
+                mainAxisSize: MainAxisSize.min,
+                onPress: state._retrying ? null : state._retry,
+                prefix: const Icon(FLucideIcons.refreshCw),
+                child: const Text('重试这次回答'),
+              ),
+          ],
+        ),
+    ];
+  }
+
+  @override
+  Widget? get emptyState => Center(
+    child: EmptyState(
+      icon: FLucideIcons.messageCircle,
+      title: '讨论内容',
+      description: _state.widget.emptyHint,
+    ),
+  );
+
+  @override
+  bool get scrollable => true;
+
+  @override
+  bool get hasOlder => _state._hasOlderMessages;
+
+  @override
+  bool get loadingOlder => _state._loadingOlder;
+
+  @override
+  Future<void> loadOlder() => _state._loadOlder();
+
+  @override
+  ScrollController get controller => _state._scroll;
+
+  @override
+  String imagePath(String stored) => _state._imagePath(stored);
+
+  @override
+  void openCitation(Citation citation) {
+    Navigator.of(_state.context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MaterialDetailPage(
+          materialId: citation.materialId,
+          pageFrom: citation.pageNo,
+          pageTo: citation.pageNo,
+          stepTitle: '引用原文',
+        ),
+      ),
+    );
+  }
+
+  @override
+  void acceptMemory(MemoryItemView item) => _state._acceptMemory(item);
+
+  @override
+  void dismissMemory(MemoryItemView item) => _state._dismissMemory(item);
+
+  @override
+  void undoMemory(MemoryItemView item) => _state._undoMemory(item);
+
+  @override
+  void acceptSuggestion(
+    PendingSuggestion suggestion, {
+    bool schedule = false,
+  }) => _state._accept(suggestion, schedule: schedule);
+
+  @override
+  void dismissSuggestion(PendingSuggestion suggestion) =>
+      _state._dismiss(suggestion);
+
+  @override
+  void undoChange(AppliedChange change) => _state._undoChange(change);
 }
