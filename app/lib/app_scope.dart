@@ -59,6 +59,8 @@ import 'platform/app_info.dart';
 import 'platform/secure_secret_store.dart';
 import 'ui/theme_mode_controller.dart';
 
+part 'app_scope_data.dart';
+
 /// 打开一次库，把仓库与服务挂在这里；页面不从各自开库。
 class AppScope extends StatefulWidget {
   const AppScope({
@@ -414,141 +416,6 @@ class AppScopeState extends State<AppScope> {
       _semanticRefreshTimer = null;
       unawaited(semanticIndex.refresh());
     });
-  }
-
-  /// 整库恢复：先预检数据包，再把当前状态存成一份恢复点，最后替换库与附件。
-  ///
-  /// 恢复点与恢复入口使用同一种版本库备份，恢复成功后仍然保留，用户可以从
-  /// 数据版本页回到恢复前；恢复点写不出来时中止，当前库不动。库替换成功后
-  /// 图片缓存重建失败只返回提醒，不再让界面把整次恢复报成失败。
-  Future<String?> restore(Uint8List bytes) async {
-    _operationEpoch++;
-    String? cacheWarning;
-    await gate.exclusive(() async {
-      await revisionPackages.validateRepositoryBytes(bytes);
-      final summary = await currentRestoreSummary();
-      try {
-        await restorePoints.capture(
-          head: summary.head,
-          commitCount: summary.commitCount,
-          namedCount: summary.namedCount,
-          reason: '整库恢复前自动保存',
-          write: (path) =>
-              revisionPackages.backupRepository(_connection!, path),
-        );
-      } catch (error, stack) {
-        crashLog.record(error, stack, kind: 'restore_point_capture');
-        throw const BackupException('恢复前保存当前状态失败，本次恢复没有执行；当前数据没有改动。');
-      }
-      // 恢复过程中失败时保留刚写好的恢复点：它要么与回滚后的数据一致，
-      // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
-      await packages.restorePackage(bytes, currentDb: db, openDb: _open);
-      try {
-        await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
-      } catch (error, stack) {
-        crashLog.record(error, stack, kind: 'rebuild_attachments_restore');
-        cacheWarning = '数据已恢复，但图片缓存没有重建完成，下次打开应用会再试。';
-      }
-    });
-    dataVersion.value++;
-    _refreshSemanticIndex();
-    return cacheWarning;
-  }
-
-  /// 恢复数据包前的预检：先确认包能通过校验，再返回包内规模。
-  ///
-  /// 不是版本库备份时交给旧数据包的校验；校验失败会抛出，界面据此拒绝恢复。
-  Future<RestoreInspection> inspectRestorePackage(Uint8List bytes) async {
-    final repository = await revisionPackages.inspectRepository(bytes);
-    if (repository != null) {
-      return RestoreInspection(
-        kind: RestorePackageKind.repository,
-        schemaVersion: zhixinSchemaVersion,
-        appVersion: repository.appVersion,
-        exportedAt: repository.exportedAt,
-        head: repository.head,
-        commitCount: repository.commitCount,
-        namedCount: repository.namedCount,
-      );
-    }
-    final data = await packages.inspectPackage(bytes);
-    return RestoreInspection(
-      kind: RestorePackageKind.currentData,
-      schemaVersion: data.schemaVersion,
-      appVersion: data.appVersion,
-      exportedAt: data.exportedAt,
-      rowCount: data.rowCount,
-    );
-  }
-
-  /// 当前库的规模；恢复前的说明与恢复点里的记录共用这一份。
-  Future<RestoreSummary> currentRestoreSummary() async {
-    final usage = await revisions.storageUsage();
-    final head = await revisionsEngine.headId(_connection!);
-    return RestoreSummary(
-      head: head,
-      commitCount: usage.commitCount,
-      namedCount: usage.namedCount,
-    );
-  }
-
-  Future<void> resetAllData() async {
-    _operationEpoch++;
-    await gate.exclusive(() async {
-      await _connection?.close();
-      _connection = null;
-      await deleteLocalStudyData(
-        filesDir: paths.filesDir,
-        dbPath: paths.dbPath,
-      );
-      await paths.ensureDirectories();
-      await _open();
-    });
-    dataVersion.value++;
-    _refreshSemanticIndex();
-  }
-
-  /// 导出当前数据：业务投影与附件，不含历史。
-  Future<void> exportCurrentData(String outputPath) {
-    return gate.exclusive(
-      () => revisionPackages.exportCurrent(_connection!, outputPath),
-    );
-  }
-
-  /// 导入当前数据包之前先取 `HEAD`，提交时重新核对。
-  Future<int> currentHead() => revisionsEngine.headId(_connection!);
-
-  Future<void> importCurrentData(
-    Uint8List bytes, {
-    required int expectedHead,
-  }) async {
-    _operationEpoch++;
-    await gate.exclusive(
-      () => revisionPackages.importCurrent(
-        _connection!,
-        bytes,
-        expectedHead: expectedHead,
-      ),
-    );
-    await attachmentCache.rebuild(_connection!, revisionsEngine.assets);
-    dataVersion.value++;
-    _refreshSemanticIndex();
-  }
-
-  /// 版本库备份：整库快照，包含历史、命名版本与附件。
-  Future<void> backupRepository(String outputPath) {
-    return gate.exclusive(
-      () => revisionPackages.backupRepository(_connection!, outputPath),
-    );
-  }
-
-  Future<void> cleanupAttachmentPaths(Iterable<String> candidates) {
-    final pathsToCheck = List<String>.unmodifiable(candidates);
-    return gate.shared(
-      () =>
-          AttachmentStore(filesDir: paths.filesDir)
-              .cleanupCandidates(db, pathsToCheck),
-    );
   }
 
   @override
