@@ -13,7 +13,6 @@ import '../app_scope.dart';
 import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
-import '../data/revisions/revision_value.dart';
 import '../platform/data_package_export.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
