@@ -1,6 +1,7 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
+import 'package:calendar_view/calendar_view.dart';
 
 import 'theme.dart';
 
@@ -59,6 +60,7 @@ class _PlanPageState extends State<PlanPage> {
   bool _openedInitial = false;
   int _tab = 0;
   bool _showAllPlans = false;
+  bool _showWeekGrid = false;
   String? _error;
 
   /// 当前显示的是哪一周；读完换周之后才更新，列表据此淡入，
@@ -1111,6 +1113,21 @@ class _PlanPageState extends State<PlanPage> {
           ),
         ),
       SizedBox(height: theme.space.xs),
+      if (week.blocks.isNotEmpty || week.timetable.isNotEmpty)
+        Center(
+          child: forui.FButton(
+            variant: forui.FButtonVariant.ghost,
+            size: forui.FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: () => setState(() => _showWeekGrid = !_showWeekGrid),
+            prefix: const Icon(FLucideIcons.grid3x3),
+            child: Text(_showWeekGrid ? '收起周视图' : '周视图'),
+          ),
+        ),
+      if (_showWeekGrid) ...[
+        _weekGrid(theme, week),
+        SizedBox(height: theme.space.md),
+      ],
       if (week.blocks.isEmpty)
         forui.FCard(
           child: EmptyState(
@@ -1225,6 +1242,98 @@ class _PlanPageState extends State<PlanPage> {
           ),
         ),
     ];
+  }
+
+  Widget _weekGrid(ZhixinTheme theme, PlanWeek week) {
+    final range = AppScope.of(context).timePolicy.naturalWeekRange(_anchor);
+    final events = <CalendarEventData<Object>>[];
+    for (final entry in week.blocks) {
+      final start = entry.block.startAt;
+      final end = entry.block.endAt;
+      events.add(
+        CalendarEventData<Object>(
+          date: DateTime(start.year, start.month, start.day),
+          startTime: start,
+          endTime: end,
+          title: entry.itemTitle,
+          color: theme.colors.primary,
+          event: entry,
+        ),
+      );
+    }
+    for (final entry in week.timetable) {
+      for (var offset = 0; offset < 7; offset++) {
+        final day = range.start.add(Duration(days: offset));
+        if (day.weekday != entry.weekday) continue;
+        final start = _atTime(day, entry.startTime);
+        final end = _atTime(day, entry.endTime);
+        if (start == null || end == null || !end.isAfter(start)) continue;
+        events.add(
+          CalendarEventData<Object>(
+            date: DateTime(day.year, day.month, day.day),
+            startTime: start,
+            endTime: end,
+            title: entry.title,
+            color: theme.colors.outlineVariant,
+            event: entry,
+          ),
+        );
+      }
+    }
+    final controller = EventController<Object>();
+    controller.addAll(events);
+    return Container(
+      height: 420,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: theme.radius.card,
+        border: Border.all(color: theme.colors.outlineVariant),
+      ),
+      child: WeekView<Object>(
+        controller: controller,
+        initialDay: _anchor,
+        startHour: 6,
+        endHour: 24,
+        heightPerMinute: 0.55,
+        showVerticalLines: true,
+        weekPageHeaderBuilder: (start, end) => const SizedBox.shrink(),
+        weekDayStringBuilder: (index) {
+          const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+          return index >= 1 && index <= 7 ? labels[index - 1] : '';
+        },
+        timeLineStringBuilder: (date, {secondaryDate}) => '${date.hour}:00',
+        onPageChange: (date, index) {
+          _anchor = date;
+          _load();
+        },
+        onEventTap: (events, date) => _openGridEvent(events.firstOrNull?.event),
+      ),
+    );
+  }
+
+  DateTime? _atTime(DateTime day, String text) {
+    final parts = text.split(':');
+    if (parts.length < 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return null;
+    return DateTime(day.year, day.month, day.day, hour, minute);
+  }
+
+  Future<void> _openGridEvent(Object? event) async {
+    if (event is ScheduledItem) {
+      final item = await _itemById(event.block.planItemId);
+      if (!mounted) return;
+      if (item != null) {
+        await _showItem(item);
+        return;
+      }
+      showToast(context, event.itemTitle);
+      return;
+    }
+    if (event is TimetableEntry && mounted) {
+      showToast(context, '${event.title} ${event.startTime}–${event.endTime}');
+    }
   }
 
   List<Widget> _itemsTab(ZhixinTheme theme, PlanWeek week) => [
