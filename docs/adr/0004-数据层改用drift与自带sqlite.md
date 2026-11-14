@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳
+已采纳。查询侧的编译期检查、库副本的打开方式与 sqflite 的移除由 [ADR-0011](0011-仓库查询改用drift生成代码.md) 与 [ADR-0012](0012-结束sqflite与drift并存.md) 接续，本条原文保持当时的样子。
 
 ## 日期
 
@@ -46,4 +46,4 @@
 - 依赖与构建：[app/pubspec.yaml](../../app/pubspec.yaml)、[ci.yml](../../.github/workflows/ci.yml)。
 - 数据层：[app_database.dart](../../app/lib/data/db/app_database.dart)、[guarded_database.dart](../../app/lib/data/db/guarded_database.dart)、[schema.dart](../../app/lib/data/db/schema.dart)、[schema_objects.dart](../../app/lib/data/db/schema_objects.dart)、[revision_engine.dart](../../app/lib/data/revisions/revision_engine.dart)、[app_scope.dart](../../app/lib/app_scope.dart)。
 - 测试：`app/test/` 下的建库 helper 与全部仓库测试。
-- 文档：[01 第 7 章](../01-ER数据模型.md#7-导出恢复与版本)、[app/README 数据与目录](../../app/README.md)、[README 技术栈](../README.md)。
+- 文档：[01 第 7 章](../01-ER数据模型.md#7-导出恢复与版本)、[app/README 数据与目录](../../app/README.md)、[README 技术栈](../../README.md)。

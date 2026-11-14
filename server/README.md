@@ -8,6 +8,8 @@
 
 接下来的顺序是：PostgreSQL 存储（按 [schema.sql](internal/store/schema.sql)），对象存储与 `/v1/blobs`，部署到与自建 Sentry 相同的服务器，然后接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
 
+PostgreSQL 存取用 `pgx` 加 `sqlc` 生成，契约用 `oapi-codegen` 生成并挂到标准库路由上，登录与刷新令牌用 `golang.org/x/time/rate` 限流，依赖清单与理由见 [ADR-0015](../docs/adr/0015-服务端引入代码生成与限流依赖.md)。生成代码与客户端一样提交入库，提交前重新生成并核对没有差异。
+
 ## 目录
 
 ```
