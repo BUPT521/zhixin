@@ -26,13 +26,10 @@ class TaskRepository {
 
   /// 当前有效的全部目标；没有截止日期的排在后面。
   Future<List<LearningGoal>> activeGoals() async {
-    final rows = await _db.query(
-      'learning_goal',
-      where: 'status = ?',
-      whereArgs: [LearningGoalStatus.active.code],
-      orderBy: 'due_date IS NULL, due_date, id DESC',
-    );
-    return rows.map(LearningGoal.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .activeGoals(LearningGoalStatus.active.code)
+        .get();
+    return rows.map(_goalOf).toList(growable: false);
   }
 
   /// 全部目标，当前有效的排在最前，其余按新建时间倒序。
@@ -44,20 +41,19 @@ class TaskRepository {
           LearningGoalStatus.done.code,
         )
         .get();
-    return rows
-        .map(
-          (row) => LearningGoal(
-            id: row.id,
-            title: row.title,
-            scopeText: row.scopeText,
-            dueDate: row.dueDate,
-            status: LearningGoalStatus.fromCode(row.status),
-            createdAt: DateTime.tryParse(row.createdAt),
-            updatedAt: DateTime.tryParse(row.updatedAt),
-          ),
-        )
-        .toList(growable: false);
+    return rows.map(_goalOf).toList(growable: false);
   }
+
+  /// 目标表的字段与领域模型同名，只补状态与时间解析。
+  static LearningGoal _goalOf(LearningGoalRow row) => LearningGoal(
+    id: row.id,
+    title: row.title,
+    scopeText: row.scopeText,
+    dueDate: row.dueDate,
+    status: LearningGoalStatus.fromCode(row.status),
+    createdAt: DateTime.tryParse(row.createdAt),
+    updatedAt: DateTime.tryParse(row.updatedAt),
+  );
 
   /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
   AppDatabase _connect([RawExecutor? executor]) {
@@ -212,6 +208,27 @@ class TaskRepository {
     r.sourceFileName,
   );
 
+  static PlanItem _itemOfTitle(ItemByConversationAndTitleResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
   static PlanItem _itemOfByStep(ItemByConversationAndStepResult r) => _item(
     r.id,
     r.goalId,
@@ -257,11 +274,9 @@ class TaskRepository {
     int id, {
     WriteTransaction? transaction,
   }) async {
-    final rows = await writeExecutor(
-      transaction,
-      _db,
-    ).query('learning_goal', where: 'id = ?', whereArgs: [id], limit: 1);
-    return rows.isEmpty ? null : LearningGoal.fromRow(rows.first);
+    final executor = writeExecutor(transaction, _db);
+    final row = await _connect(executor).goalById(id).getSingleOrNull();
+    return row == null ? null : _goalOf(row);
   }
 
   /// 新建目标；已有效的其他目标保持原状。
@@ -371,14 +386,10 @@ class TaskRepository {
     int conversationId,
     String title,
   ) async {
-    final rows = await _db.query(
-      'plan_item',
-      where: 'conversation_id = ? AND title = ?',
-      whereArgs: [conversationId, title.trim()],
-      orderBy: 'id DESC',
-      limit: 1,
-    );
-    return rows.isEmpty ? null : PlanItem.fromRow(rows.first);
+    final row = await _connect()
+        .itemByConversationAndTitle(conversationId, title.trim())
+        .getSingleOrNull();
+    return row == null ? null : _itemOfTitle(row);
   }
 
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) async {

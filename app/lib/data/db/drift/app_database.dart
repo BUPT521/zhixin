@@ -28,6 +28,7 @@ part 'app_database.g.dart';
     'queries/assessments.drift',
     'queries/study_sessions.drift',
     'queries/memories.drift',
+    'queries/goals.drift',
   },
   tables: [
     AppMeta,
