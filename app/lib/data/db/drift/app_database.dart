@@ -29,6 +29,7 @@ part 'app_database.g.dart';
     'queries/study_sessions.drift',
     'queries/memories.drift',
     'queries/goals.drift',
+    'queries/attempt_rows.drift',
   },
   tables: [
     AppMeta,

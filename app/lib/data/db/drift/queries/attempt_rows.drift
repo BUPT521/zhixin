@@ -1,0 +1,39 @@
+-- 作答记录的读查询（ADR-0011 第二批）。
+--
+-- 写入仍走 GuardedDatabase 的命令事务；ensureOpenAttempt 的“查不到就插入”
+-- 也仍在 Go 侧用同一事务完成。
+
+import '../tables.dart';
+
+-- 一条学习记录的全部作答，按编号倒序。
+attemptsForConversation:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId
+ORDER BY id DESC;
+
+-- 同一道题以前写下的困难：已提交且有非空反馈，最多取若干条。
+priorFeedback:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId
+  AND submitted_at IS NOT NULL
+  AND feedback IS NOT NULL AND TRIM(feedback) <> ''
+ORDER BY submitted_at DESC, id DESC
+LIMIT :rowLimit;
+
+-- 最近一次已提交的作答。
+latestSubmittedAttempt:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId AND submitted_at IS NOT NULL
+ORDER BY submitted_at DESC, id DESC
+LIMIT 1;
+
+-- 按编号取一条作答。
+attemptById:
+SELECT * FROM attempt WHERE id = :id LIMIT 1;
+
+-- 这条记录里未提交的尝试，没有就建一条时用来查已有草稿。
+openAttempt:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId AND submitted_at IS NULL
+ORDER BY id DESC
+LIMIT 1;

@@ -17,13 +17,8 @@ class AttemptRepository {
   final Clock _clock;
 
   Future<List<Attempt>> attemptsFor(int conversationId) async {
-    final rows = await _db.query(
-      'attempt',
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-      orderBy: 'id DESC',
-    );
-    return rows.map(Attempt.fromRow).toList(growable: false);
+    final rows = await _connect().attemptsForConversation(conversationId).get();
+    return rows.map(_attemptOf).toList(growable: false);
   }
 
   /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
@@ -32,6 +27,26 @@ class AttemptRepository {
     if (connection is AppDatabase) return connection;
     throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
+
+  /// 表行转成与列同名的键值，交给既有的 [Attempt.fromRow]。
+  ///
+  /// `is_correct`、`independent` 这类零一标记与提示条目的解码在 fromRow 里已有
+  /// 一份，这里不重复实现，避免两处判定走岔。
+  static Attempt _attemptOf(AttemptRow row) => Attempt.fromRow({
+    'id': row.id,
+    'conversation_id': row.conversationId,
+    'session_id': row.sessionId,
+    'redo_of_attempt_id': row.redoOfAttemptId,
+    'user_answer': row.userAnswer,
+    'solution': row.solution,
+    'is_correct': row.isCorrect,
+    'independent': row.independent,
+    'help_json': row.helpJson,
+    'feedback': row.feedback,
+    'delayed': row.delayed,
+    'submitted_at': row.submittedAt,
+    'created_at': row.createdAt,
+  });
 
   /// 这条记录最近一次学习场次的目标。
   ///
@@ -53,39 +68,27 @@ class AttemptRepository {
     int? excludeAttemptId,
     int limit = 3,
   }) async {
-    final rows = await _db.query(
-      'attempt',
-      where:
-          'conversation_id = ? AND submitted_at IS NOT NULL '
-          "AND feedback IS NOT NULL AND TRIM(feedback) != ''",
-      whereArgs: [conversationId],
-      orderBy: 'submitted_at DESC, id DESC',
-      limit: limit + 1,
-    );
+    final rows = await _connect()
+        .priorFeedback(conversationId, limit + 1)
+        .get();
     return rows
-        .map(Attempt.fromRow)
+        .map(_attemptOf)
         .where((attempt) => attempt.id != excludeAttemptId)
         .take(limit)
         .toList(growable: false);
   }
 
   Future<Attempt?> latestSubmitted(int conversationId) async {
-    final rows = await _db.query(
-      'attempt',
-      where: 'conversation_id = ? AND submitted_at IS NOT NULL',
-      whereArgs: [conversationId],
-      orderBy: 'submitted_at DESC, id DESC',
-      limit: 1,
-    );
-    return rows.isEmpty ? null : Attempt.fromRow(rows.first);
+    final row = await _connect()
+        .latestSubmittedAttempt(conversationId)
+        .getSingleOrNull();
+    return row == null ? null : _attemptOf(row);
   }
 
   Future<Attempt?> attemptById(int id, {WriteTransaction? transaction}) async {
-    final rows = await writeExecutor(
-      transaction,
-      _db,
-    ).query('attempt', where: 'id = ?', whereArgs: [id], limit: 1);
-    return rows.isEmpty ? null : Attempt.fromRow(rows.first);
+    final executor = writeExecutor(transaction, _db);
+    final row = await _connect(executor).attemptById(id).getSingleOrNull();
+    return row == null ? null : _attemptOf(row);
   }
 
   /// 取这条学习记录里未提交的尝试，没有就建一条。
@@ -102,14 +105,10 @@ class AttemptRepository {
   }) async {
     final writer = writeExecutor(transaction, _db);
     Future<Attempt?> find() async {
-      final rows = await writer.query(
-        'attempt',
-        where: 'conversation_id = ? AND submitted_at IS NULL',
-        whereArgs: [conversationId],
-        orderBy: 'id DESC',
-        limit: 1,
-      );
-      return rows.isEmpty ? null : Attempt.fromRow(rows.first);
+      final row = await _connect(writer)
+          .openAttempt(conversationId)
+          .getSingleOrNull();
+      return row == null ? null : _attemptOf(row);
     }
 
     var attempt = await find();
@@ -184,14 +183,11 @@ class AttemptRepository {
     WriteTransaction? transaction,
   }) async {
     final writer = writeExecutor(transaction, _db);
-    final rows = await writer.query(
-      'attempt',
-      columns: ['help_json'],
-      where: 'id = ?',
-      whereArgs: [attemptId],
-    );
-    if (rows.isEmpty) return;
-    final helps = HelpEntry.decodeList(rows.first['help_json'] as String?);
+    // 取整行而不是只取 help_json：这一列本身可空，空表示还没有帮助，
+    // 与“没有这次作答”是两回事。
+    final row = await _connect(writer).attemptById(attemptId).getSingleOrNull();
+    if (row == null) return;
+    final helps = HelpEntry.decodeList(row.helpJson);
     final updated = [...helps, help];
     await writer.update(
       'attempt',
@@ -215,15 +211,9 @@ class AttemptRepository {
     WriteTransaction? transaction,
   }) async {
     final writer = writeExecutor(transaction, _db);
-    final rows = await writer.query(
-      'attempt',
-      columns: ['help_json'],
-      where: 'id = ?',
-      whereArgs: [attemptId],
-      limit: 1,
-    );
-    if (rows.isEmpty) throw StateError('未找到这次作答');
-    final helps = HelpEntry.decodeList(rows.first['help_json'] as String?);
+    final row = await _connect(writer).attemptById(attemptId).getSingleOrNull();
+    if (row == null) throw StateError('未找到这次作答');
+    final helps = HelpEntry.decodeList(row.helpJson);
     if (helpIndex < 0 || helpIndex >= helps.length) {
       throw StateError('未找到这条帮助');
     }
