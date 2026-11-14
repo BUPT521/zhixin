@@ -52,7 +52,7 @@ void main() {
   });
 
   tearDown(() async {
-    scope?.library.semanticIndex.close();
+    await scope?.library.semanticIndex.close();
     await scope?.db.close();
     scope = null;
     await directory.delete(recursive: true);

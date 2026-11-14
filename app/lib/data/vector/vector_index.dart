@@ -12,6 +12,7 @@ class StoredVector {
     required this.chunk,
     required this.content,
     required this.sourceVersion,
+    required this.locatorJson,
     required this.distance,
   });
 
@@ -19,6 +20,7 @@ class StoredVector {
   final int chunk;
   final String content;
   final String sourceVersion;
+  final String locatorJson;
   final double distance;
 }
 
@@ -72,7 +74,13 @@ CREATE TABLE IF NOT EXISTS vector_entry (
     loadSqliteVec();
     final db = inMemory ? sqlite3.openInMemory() : sqlite3.open(path);
     final index = VectorIndex._(db, spec);
-    index._prepare();
+    try {
+      index._prepare();
+    } catch (_) {
+      // 建表或扩展注册失败时释放已经打开的连接，避免后台线程留下句柄。
+      db.close();
+      rethrow;
+    }
     return index;
   }
 
@@ -246,7 +254,7 @@ CREATE TABLE IF NOT EXISTS vector_entry (
     for (final candidate in candidates) {
       final rowid = candidate['rowid'] as int;
       final rows = _db.select(
-        'SELECT source_key, chunk, content, source_version '
+        'SELECT source_key, chunk, content, source_version, locator_json '
         'FROM vector_entry WHERE id = ?',
         [rowid],
       );
@@ -258,19 +266,12 @@ CREATE TABLE IF NOT EXISTS vector_entry (
           chunk: row['chunk'] as int,
           content: row['content'] as String,
           sourceVersion: row['source_version'] as String,
+          locatorJson: row['locator_json'] as String,
           distance: (candidate['distance'] as num).toDouble(),
         ),
       );
     }
     return result;
-  }
-
-  String? locatorJson(String sourceKey) {
-    final rows = _db.select(
-      'SELECT locator_json FROM vector_entry WHERE source_key = ? LIMIT 1',
-      [sourceKey],
-    );
-    return rows.isEmpty ? null : rows.first['locator_json'] as String;
   }
 
   void clear() {

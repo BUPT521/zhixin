@@ -17,6 +17,7 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/data/vector/vector_index.dart';
+import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 
@@ -169,7 +170,7 @@ _rig({
     initialClient: client,
     indexPath: '',
     epoch: () async => epoch?.call() ?? '0',
-    indexOpener: () => index,
+    vectorStoreOpener: () async => DirectVectorStore(index),
     initialShareFilter: canSend,
     queryTimeout: const Duration(seconds: 2),
   );
@@ -346,7 +347,7 @@ void main() {
       repository: EvidenceRepository(db.rawDb),
       initialClient: client,
       indexPath: '',
-      indexOpener: () => index,
+      vectorStoreOpener: () async => DirectVectorStore(index),
     );
 
     final result = await service.refresh();
@@ -427,6 +428,28 @@ void main() {
     );
     expect(result.failure, SemanticFailure.notConfigured);
     expect((await service.stats()).configured, isFalse);
+  });
+
+  test('索引打不开时语义检索退回原文，刷新把异常交给调用方', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    await _seed(db);
+    final service = SemanticIndexService(
+      repository: EvidenceRepository(db.rawDb),
+      initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+      indexPath: '',
+      vectorStoreOpener: () async =>
+          throw const VectorStoreFailure('测试里向量库打不开'),
+    );
+
+    final result = await service.search(
+      '系统混乱程度怎么衡量',
+      scope: const EvidenceScope.userAll(),
+    );
+    expect(result.usable, isFalse);
+    expect(result.failure, SemanticFailure.error);
+    expect(result.hits, isEmpty);
+    await expectLater(service.refresh(), throwsA(isA<VectorStoreFailure>()));
   });
 
   test('数据代次变化后按当前数据重建索引', () async {
@@ -541,7 +564,7 @@ void main() {
         sent: sent,
       ),
       indexPath: '',
-      indexOpener: () => index,
+      vectorStoreOpener: () async => DirectVectorStore(index),
       initialShareFilter: runtime.canSend,
     );
 
@@ -657,7 +680,7 @@ void main() {
       repository: EvidenceRepository(db.rawDb),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: vectors),
       indexPath: '',
-      indexOpener: () => index,
+      vectorStoreOpener: () async => DirectVectorStore(index),
     );
 
     final refresh = await service.refresh();
@@ -700,7 +723,7 @@ void main() {
       repository: EvidenceRepository(db.rawDb),
       initialClient: client,
       indexPath: '',
-      indexOpener: () => index,
+      vectorStoreOpener: () async => DirectVectorStore(index),
     );
 
     final first = service.refresh();

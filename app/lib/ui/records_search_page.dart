@@ -43,7 +43,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   static const int _semanticLimit = 40;
 
   final TextEditingController _query = TextEditingController();
-  final FocusNode _focus = FocusNode();
+  final FocusNode _searchFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
   SearchResults? _results;
   bool _loading = false;
@@ -70,31 +70,36 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   bool _scopeOptionsRequested = false;
 
   @override
+  void initState() {
+    super.initState();
+    // 输入框在页面推入的过渡结束后再取焦点。过渡期间用户先点了“查找范围”，
+    // 菜单已经打开，这时再弹键盘会盖住菜单，所以跳过这一次聚焦。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focusSearchField());
+  }
+
+  Future<void> _focusSearchField() async {
+    if (!mounted) return;
+    await context.afterTransition();
+    if (!mounted || _scopeMenuOpen || _searchFocus.hasFocus) return;
+    _searchFocus.requestFocus();
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // 范围选项要读应用根上的仓库，放在 initState 里会依赖尚未就绪的上下文。
     if (_scopeOptionsRequested) return;
     _scopeOptionsRequested = true;
     _loadScopeOptions();
-    _focusAfterTransition();
   }
 
   @override
   void dispose() {
     _semanticToken?.cancel();
     _query.dispose();
-    _focus.dispose();
+    _searchFocus.dispose();
     _scroll.dispose();
     super.dispose();
-  }
-
-  /// 页面推入之后再要焦点：输入框一开始就拿到焦点，软键盘会跟着推入动画一起
-  /// 弹出，键盘高度每变一帧整页就重新排版一次，正好落在滑入的 260 毫秒里。
-  /// 先让页面滑完，再弹键盘。
-  Future<void> _focusAfterTransition() async {
-    await context.afterTransition();
-    if (!mounted) return;
-    _focus.requestFocus();
   }
 
   Future<void> _loadScopeOptions() async {
@@ -344,7 +349,11 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     return forui.FPopoverMenu.tiles(
       control: forui.FPopoverControl.lifted(
         shown: _scopeMenuOpen,
-        onChange: (open) => setState(() => _scopeMenuOpen = open),
+        onChange: (open) {
+          // 打开范围菜单时收起键盘，菜单不会被输入法挡住。
+          if (open) _searchFocus.unfocus();
+          setState(() => _scopeMenuOpen = open);
+        },
       ),
       menuAnchor: AlignmentDirectional.topEnd,
       childAnchor: AlignmentDirectional.bottomEnd,
@@ -431,7 +440,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
             ),
             child: forui.FTextField(
               control: .managed(controller: _query),
-              focusNode: _focus,
+              focusNode: _searchFocus,
               textInputAction: TextInputAction.search,
               onSubmit: _search,
               hint: '搜索讨论、题目、作答或材料原文',
