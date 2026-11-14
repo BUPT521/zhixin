@@ -78,8 +78,7 @@ class EvidenceSearchPage {
   bool get hasMore => cursor != null;
 }
 
-/// 原文查找与候选读取：字面命中用带绑定参数的 `instr`，关键词检索用转义后的
-/// `LIKE`，两类查询都把范围条件放进 SQL，不由界面事后过滤。
+/// 字面查找用带绑定参数的 `instr`，关键词检索用 FTS5，范围条件在 SQL 中执行。
 ///
 /// 字面查找覆盖材料页、讨论消息、题目与已提交作答；`instr` 不对通配符做特殊
 /// 处理，因此 `a_b`、`f(x)` 只会命中同样的字符序列。读取命中之后还可以按记录
@@ -111,7 +110,7 @@ class EvidenceRepository {
     );
   }
 
-  /// 按关键词查找；关键词先切分，再用转义后的 `LIKE` 匹配。
+  /// 按关键词查找，各类候选由 FTS5 按相关性选出。
   Future<List<EvidenceHit>> keyword(
     String query, {
     required EvidenceScope scope,
@@ -145,6 +144,7 @@ class EvidenceRepository {
         scope,
         limit: limitPerKind,
         literal: literal,
+        rankBeforeLimit: !literal,
         excludePage: excludePage,
       ),
       ...await _messages(
@@ -152,14 +152,22 @@ class EvidenceRepository {
         scope,
         limit: limitPerKind,
         literal: literal,
+        rankBeforeLimit: !literal,
         excludeConversationId: excludeConversationId,
       ),
-      ...await _questions(shape, scope, limit: limitPerKind, literal: literal),
+      ...await _questions(
+        shape,
+        scope,
+        limit: limitPerKind,
+        literal: literal,
+        rankBeforeLimit: !literal,
+      ),
       ...await _answers(
         shape,
         scope,
         limit: limitPerKind,
         literal: literal,
+        rankBeforeLimit: !literal,
         excludeConversationId: excludeConversationId,
       ),
     ];
@@ -792,6 +800,7 @@ class EvidenceRepository {
     required bool literal,
     (int, int)? excludePage,
     SearchCursor? after,
+    bool rankBeforeLimit = false,
   }) async {
     final where = <String>[];
     final args = <Object?>[];
@@ -811,17 +820,26 @@ class EvidenceRepository {
       );
       args.addAll([pageAfter.$1, pageAfter.$1, pageAfter.$2]);
     }
-    final (match, matchArgs) = _pageMatch(shape, literal);
+    final fts = literal
+        ? null
+        : _ftsSearch('material_page_fts', shape.terms, 'mp.id');
+    final (match, matchArgs) = fts == null
+        ? _literalMatch([
+            'mp.content',
+            "COALESCE(mp.label, '')",
+            'm.title',
+          ], shape.text)
+        : (fts.match, [fts.query]);
     where.add(match);
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
-      'SELECT mp.material_id, mp.page_no, mp.label, mp.content, '
+      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, mp.material_id, mp.page_no, mp.label, mp.content, '
       'mp.updated_at, m.title AS material_title, m.source_file_name '
       'FROM material_page mp JOIN material m ON m.id = mp.material_id '
       'WHERE ${where.join(' AND ')} '
-      'ORDER BY mp.material_id DESC, mp.page_no '
+      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}mp.material_id DESC, mp.page_no '
       'LIMIT ?',
-      [...args, limit],
+      [if (fts != null) fts.query, ...args, limit],
     );
     return rows
         .map((row) {
@@ -840,7 +858,9 @@ class EvidenceRepository {
             text: content,
             matchedText: _matchedText(content, shape, literal, offset),
             literal: literal,
-            score: _score(shape, literal, offset, content),
+            score: fts == null
+                ? _score(shape, literal, offset, content)
+                : _keywordScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               materialId: row['material_id']! as int,
               pageNo: pageNo,
@@ -860,6 +880,7 @@ class EvidenceRepository {
     required bool literal,
     int? excludeConversationId,
     SearchCursor? after,
+    bool rankBeforeLimit = false,
   }) async {
     final where = <String>[
       "m.role IN ('user', 'assistant')",
@@ -879,17 +900,18 @@ class EvidenceRepository {
       where.add(scopeClause.where);
       args.addAll(scopeClause.args);
     }
-    final (match, matchArgs) = literal
+    final fts = literal ? null : _ftsSearch('message_fts', shape.terms, 'm.id');
+    final (match, matchArgs) = fts == null
         ? _literalMatch(['m.content'], shape.text)
-        : _ftsMatch('message_fts', shape.terms, 'm.id');
+        : (fts.match, [fts.query]);
     where.add(match);
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
-      'SELECT m.id, m.conversation_id, m.content, m.created_at, c.title '
+      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, m.id, m.conversation_id, m.content, m.created_at, c.title '
       'FROM message m JOIN conversation c ON c.id = m.conversation_id '
       'WHERE ${where.join(' AND ')} '
-      'ORDER BY m.id DESC LIMIT ?',
-      [...args, limit],
+      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}m.id DESC LIMIT ?',
+      [if (fts != null) fts.query, ...args, limit],
     );
     return rows
         .map((row) {
@@ -905,7 +927,9 @@ class EvidenceRepository {
             text: content,
             matchedText: _matchedText(content, shape, literal, offset),
             literal: literal,
-            score: _score(shape, literal, offset, content),
+            score: fts == null
+                ? _score(shape, literal, offset, content)
+                : _keywordScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               conversationId: row['conversation_id']! as int,
               messageId: row['id']! as int,
@@ -924,6 +948,7 @@ class EvidenceRepository {
     required int limit,
     required bool literal,
     SearchCursor? after,
+    bool rankBeforeLimit = false,
   }) async {
     final where = <String>[
       'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)',
@@ -938,24 +963,27 @@ class EvidenceRepository {
       where.add(scopeClause.where);
       args.addAll(scopeClause.args);
     }
-    final (match, matchArgs) = literal
+    final fts = literal
+        ? null
+        : _ftsSearch('message_fts', shape.terms, _questionMessageId);
+    final (match, matchArgs) = fts == null
         ? _literalMatch([
             "COALESCE($_firstUserContent, '')",
             "COALESCE(c.source_ref, '')",
             "COALESCE(c.context_text, '')",
           ], shape.text)
-        : _ftsMatch('message_fts', shape.terms, _questionMessageId);
+        : (fts.match, [fts.query]);
     where.add('($match)');
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
-      'SELECT c.id AS conversation_id, '
+      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, c.id AS conversation_id, '
       '$_questionMessageId AS question_message_id, '
       '$_firstUserContent AS stem, c.source_ref, c.context_text, c.title, '
       'c.page_no, c.created_at, c.updated_at '
       'FROM conversation c '
       'WHERE ${where.join(' AND ')} '
-      'ORDER BY c.id DESC LIMIT ?',
-      [...args, limit],
+      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}c.id DESC LIMIT ?',
+      [if (fts != null) fts.query, ...args, limit],
     );
     return rows
         .map((row) {
@@ -978,7 +1006,9 @@ class EvidenceRepository {
             text: text,
             matchedText: _matchedText(text, shape, literal, offset),
             literal: literal,
-            score: _score(shape, literal, offset, text) + 2,
+            score: fts == null
+                ? _score(shape, literal, offset, text) + 2
+                : _keywordScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               conversationId: row['conversation_id']! as int,
               messageId: row['question_message_id'] as int?,
@@ -1002,6 +1032,7 @@ class EvidenceRepository {
     required bool literal,
     int? excludeConversationId,
     SearchCursor? after,
+    bool rankBeforeLimit = false,
   }) async {
     final where = <String>['a.submitted_at IS NOT NULL'];
     final args = <Object?>[];
@@ -1020,22 +1051,23 @@ class EvidenceRepository {
       where.add(scopeClause.where);
       args.addAll(scopeClause.args);
     }
-    final (match, matchArgs) = literal
+    final fts = literal ? null : _ftsSearch('attempt_fts', shape.terms, 'a.id');
+    final (match, matchArgs) = fts == null
         ? _literalMatch([
             "COALESCE(a.user_answer, '')",
             "COALESCE(a.solution, '')",
             "COALESCE(a.feedback, '')",
           ], shape.text)
-        : _ftsMatch('attempt_fts', shape.terms, 'a.id');
+        : (fts.match, [fts.query]);
     where.add('($match)');
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
-      'SELECT a.id, a.conversation_id, a.user_answer, a.solution, '
+      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, a.id, a.conversation_id, a.user_answer, a.solution, '
       'a.feedback, a.submitted_at, c.title, c.source_ref '
       'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
       'WHERE ${where.join(' AND ')} '
-      'ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?',
-      [...args, limit],
+      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}a.submitted_at DESC, a.id DESC LIMIT ?',
+      [if (fts != null) fts.query, ...args, limit],
     );
     return rows
         .map((row) {
@@ -1054,7 +1086,9 @@ class EvidenceRepository {
             text: text,
             matchedText: _matchedText(text, shape, literal, offset),
             literal: literal,
-            score: _score(shape, literal, offset, text) + 1,
+            score: fts == null
+                ? _score(shape, literal, offset, text) + 1
+                : _keywordScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               conversationId: row['conversation_id']! as int,
               attemptId: row['id']! as int,
@@ -1135,18 +1169,6 @@ class EvidenceRepository {
     return 0;
   }
 
-  static (String, List<Object?>) _pageMatch(QueryShape shape, bool literal) {
-    if (literal) {
-      return _literalMatch([
-        'mp.content',
-        "COALESCE(mp.label, '')",
-        'm.title',
-      ], shape.text);
-    }
-    // 关键词走 FTS5 索引：词与索引的写法共用一套二元组切分。
-    return _ftsMatch('material_page_fts', shape.terms, 'mp.id');
-  }
-
   /// 字面匹配：命中之后不能紧接数字、字母或下划线，避免 `例 3-2` 命中
   /// `例 3-20`、`a_b` 命中 `a_bc` 这类近似写法；引号、括号等符号后面的
   /// 字符不受限制。
@@ -1168,26 +1190,27 @@ class EvidenceRepository {
     return ('(${parts.join(' OR ')})', args);
   }
 
-  /// 关键词命中：交给 FTS5 的 `MATCH`，[keyColumn] 是业务表的行号列。
-  ///
-  /// 查询词与索引列用同一套二元组切分，重复的词只留一个，避免拼出很长的
-  /// `MATCH` 表达式；标点与引号一并去掉，不会成为 FTS5 的语法。
-  static (String, List<Object?>) _ftsMatch(
+  static ({String match, String rank, String query}) _ftsSearch(
     String table,
     List<String> terms,
     String keyColumn,
   ) {
-    final tokens = <String>[];
-    for (final term in terms) {
-      for (final token in bigrams(term)) {
-        if (!tokens.contains(token)) tokens.add(token);
-      }
-    }
-    if (tokens.isEmpty) return ('(0)', const []);
+    final query = ftsQuery({for (final term in terms) ...bigrams(term)});
     return (
-      '$keyColumn IN (SELECT rowid FROM "$table" WHERE "$table" MATCH ?)',
-      [ftsQuery(tokens)],
+      match:
+          '$keyColumn IN (SELECT rowid FROM "$table" WHERE "$table" MATCH ?)',
+      rank:
+          '(SELECT bm25("$table") FROM "$table" '
+          'WHERE "$table" MATCH ? AND rowid = $keyColumn)',
+      query: query.isEmpty ? '""' : query,
     );
+  }
+
+  // FTS5 给相关性较高的结果更小的值。变换后的分数随相关性增加，且与
+  // 读取窗口的大小无关。
+  static double _keywordScore(num? rank) {
+    final relevance = -(rank ?? 0);
+    return 14 + relevance / (1 + relevance);
   }
 
   static ({String where, List<Object?> args}) _conversationScope(
