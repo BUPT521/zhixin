@@ -320,3 +320,27 @@ func TestLLMProxyDisabledWithoutKey(t *testing.T) {
 		t.Fatalf("got %d %+v", code, p)
 	}
 }
+
+func TestContractPreservesBodyLimitsAndUnknownFields(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_MAX_JSON_BYTES": "128"})
+	for _, tc := range []struct {
+		body   string
+		status int
+		code   string
+	}{
+		{`{"email":"a@b.cn","password":"password1","unused":true}`, 400, "invalid_request"},
+		{`{"email":"a@b.cn","password":"password1"} {}`, 400, "invalid_request"},
+		{strings.Repeat(" ", 129), 413, "payload_too_large"},
+	} {
+		resp := h.do("POST", "/v1/auth/register", "", strings.NewReader(tc.body),
+			map[string]string{"Content-Type": "application/json"})
+		var p problem
+		if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != tc.status || p.Code != tc.code ||
+			resp.Header.Get("Content-Type") != "application/problem+json" || p.RequestID == "" {
+			t.Fatalf("status=%d problem=%+v", resp.StatusCode, p)
+		}
+	}
+}

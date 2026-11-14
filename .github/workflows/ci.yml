@@ -86,6 +86,11 @@ jobs:
           go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
           git diff --exit-code -- internal/store/db
           test -z "$(git status --porcelain -- internal/store/db)"
+      - name: 核对 OpenAPI 生成代码
+        run: |
+          go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2 -config oapi-codegen.yaml api/openapi.yaml
+          git diff --exit-code -- internal/api
+          test -z "$(git status --porcelain -- internal/api)"
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go mod tidy -diff

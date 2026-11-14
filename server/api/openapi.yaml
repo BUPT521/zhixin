@@ -29,7 +29,15 @@ paths:
       security: []
       summary: 进程存活
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
   /readyz:
     get:
       tags: [meta]
@@ -405,8 +413,16 @@ components:
         table: { type: string }
         row_key: { type: string }
         op: { type: string, enum: [insert, update, delete] }
-        before: { description: "update 与 delete 必填" }
-        after: { description: "insert 与 update 必填" }
+        before:
+          description: "update 与 delete 必填"
+          x-go-type: rawjson.RawMessage
+          x-go-type-import: { path: encoding/json, name: rawjson }
+          x-go-type-skip-optional-pointer: true
+        after:
+          description: "insert 与 update 必填"
+          x-go-type: rawjson.RawMessage
+          x-go-type-import: { path: encoding/json, name: rawjson }
+          x-go-type-skip-optional-pointer: true
     Commit:
       type: object
       required: [request_id, device_id, schema_version, actor, action, created_at, changes]

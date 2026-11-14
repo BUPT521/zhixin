@@ -43,16 +43,14 @@ func MemoryStores() Stores {
 // New builds the complete handler.
 func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
+	legacy := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
 	authSvc.OnAccountDelete(st.Sync.DeleteUser)
 	authSvc.OnAccountDelete(st.Backups.DeleteUser)
 	authSvc.OnAccountDelete(st.Quota.DeleteUser)
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+	legacy.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if st.Ready != nil {
 			if err := st.Ready(r.Context()); err != nil {
 				httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "a dependency is not reachable")
@@ -62,11 +60,13 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_version": ClientSchemaVersion})
 	})
 
-	auth.NewHandler(authSvc, log, cfg.MaxJSONBytes).Register(mux)
+	auth.NewHandler(authSvc, log, cfg.MaxJSONBytes).Register(legacy)
 	// Push bodies carry row snapshots, so they get a larger cap than ordinary JSON.
-	syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion).Register(mux, authSvc.Require)
-	backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion).Register(mux, authSvc.Require)
-	llmproxy.New(cfg.LLM, st.Quota, cfg.Location, log).Register(mux, authSvc.Require)
+	syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion).Register(legacy, authSvc.Require)
+	backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion).Register(legacy, authSvc.Require)
+	llmproxy.New(cfg.LLM, st.Quota, cfg.Location, log).Register(legacy, authSvc.Require)
+
+	contractHandler(mux, legacy, cfg.MaxJSONBytes, cfg.LLM.MaxRequestBytes)
 
 	// Anything outside the contract gets a problem body, not the default text 404.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
