@@ -1,0 +1,33 @@
+-- 冲突检查与固定课表查询（ADR-0011 第一批）。
+--
+-- 这些语句原来拼在 schedule_conflicts.dart 里，原样搬进来由 drift 生成类型化
+-- 方法：表名、列名、参数个数与结果列的可空性在生成阶段就被检查。
+
+import '../tables.dart';
+
+-- 待开始的预约里，与给定区间重叠的那些；忽略的预约用 JSON 数组传入，
+-- 避免在 SQL 里拼可变个数的占位符。
+findOverlappingBlocks:
+SELECT b.start_at, b.end_at, p.title
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE b.status = 'planned' AND b.start_at < :endAt AND b.end_at > :startAt
+  AND b.id NOT IN (SELECT value FROM json_each(:ignoredBlockIds))
+ORDER BY b.start_at
+LIMIT 1;
+
+-- 按星期取固定课表。
+timetableEntriesOnWeekday:
+SELECT start_time, end_time, title, location
+FROM timetable_entry
+WHERE weekday = :weekday
+ORDER BY start_time;
+
+-- 还没结束的待开始预约，按开始时间排序；新增课时反过来查它们。
+plannedBlocksAfter:
+SELECT b.start_at, b.end_at, p.title
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE b.status = 'planned' AND b.end_at > :after
+ORDER BY b.start_at;
+

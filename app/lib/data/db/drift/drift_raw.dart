@@ -12,6 +12,9 @@ class DriftRawDatabase implements RawDatabase {
 
   final AppDatabase database;
 
+  @override
+  DatabaseConnectionUser get driftConnection => database;
+
   DriftRawExecutor get _executor => DriftRawExecutor(database);
 
   @override
@@ -106,6 +109,9 @@ class DriftRawExecutor implements RawExecutor {
   DriftRawExecutor(this._db);
 
   final DatabaseConnectionUser _db;
+
+  @override
+  DatabaseConnectionUser get driftConnection => _db;
 
   @override
   Future<void> execute(String sql, [List<Object?>? arguments]) =>

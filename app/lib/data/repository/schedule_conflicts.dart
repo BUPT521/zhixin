@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/rules/time_format.dart';
@@ -51,14 +54,12 @@ Future<ScheduleConflict?> findTimetableConflict(
     final segmentStart = start.isAfter(day) ? start : day;
     final segmentEnd = end.isBefore(nextDay) ? end : nextDay;
     if (segmentEnd.isAfter(segmentStart)) {
-      final entries = await executor.query(
-        'timetable_entry',
-        where: 'weekday = ?',
-        whereArgs: [day.weekday],
-      );
+      final entries = await _connect(executor)
+          .timetableEntriesOnWeekday(day.weekday)
+          .get();
       for (final entry in entries) {
-        final from = _clockMinutes(entry['start_time'] as String?);
-        final to = _clockMinutes(entry['end_time'] as String?);
+        final from = _clockMinutes(entry.startTime);
+        final to = _clockMinutes(entry.endTime);
         if (from == null || to == null) continue;
         final classStart = DateTime(
           day.year,
@@ -75,14 +76,14 @@ Future<ScheduleConflict?> findTimetableConflict(
           to % 60,
         );
         if (classStart.isBefore(segmentEnd) && classEnd.isAfter(segmentStart)) {
-          final title = entry['title'] as String? ?? '未命名课程';
-          final location = entry['location'] as String?;
+          final title = entry.title;
+          final location = entry.location;
           return ScheduleConflict(
             start: classStart.isAfter(segmentStart) ? classStart : segmentStart,
             end: classEnd.isBefore(segmentEnd) ? classEnd : segmentEnd,
             description:
                 '固定课表“$title”（${weekdayLabel(day.weekday)} '
-                '${entry['start_time']}–${entry['end_time']}'
+                '${entry.startTime}–${entry.endTime}'
                 '${location == null || location.trim().isEmpty ? '' : '，$location'}）',
           );
         }
@@ -110,19 +111,12 @@ Future<ScheduleConflict?> findRecurringTimetableConflict(
   final from = _clockMinutes(startTime);
   final to = _clockMinutes(endTime);
   if (from == null || to == null || to <= from) return null;
-  final rows = await executor.rawQuery(
-    '''
-    SELECT b.start_at, b.end_at, p.title
-    FROM schedule_block b
-    JOIN plan_item p ON p.id = b.plan_item_id
-    WHERE b.status = 'planned' AND b.end_at > ?
-    ORDER BY b.start_at
-    ''',
-    [formatDateTime(now)],
-  );
+  final rows = await _connect(executor)
+      .plannedBlocksAfter(formatDateTime(now))
+      .get();
   for (final row in rows) {
-    final blockStart = DateTime.parse(row['start_at']! as String);
-    final blockEnd = DateTime.parse(row['end_at']! as String);
+    final blockStart = DateTime.parse(row.startAt);
+    final blockEnd = DateTime.parse(row.endAt);
     var day = DateTime(blockStart.year, blockStart.month, blockStart.day);
     while (day.isBefore(blockEnd)) {
       if (day.weekday == weekday) {
@@ -145,7 +139,7 @@ Future<ScheduleConflict?> findRecurringTimetableConflict(
             start: classStart.isAfter(blockStart) ? classStart : blockStart,
             end: classEnd.isBefore(blockEnd) ? classEnd : blockEnd,
             description:
-                '预约“${row['title']}”'
+                '预约“${row.title}”'
                 '（${formatDateTime(blockStart)}–${formatDateTime(blockEnd)}）',
           );
         }
@@ -162,31 +156,31 @@ Future<ScheduleConflict?> _findBlockConflict(
   required DateTime end,
   required Set<int> ignoredBlockIds,
 }) async {
-  final ignored = ignoredBlockIds.toList(growable: false);
-  final placeholders = List.filled(ignored.length, '?').join(', ');
-  final rows = await executor.rawQuery(
-    '''
-    SELECT b.start_at, b.end_at, p.title
-    FROM schedule_block b
-    JOIN plan_item p ON p.id = b.plan_item_id
-    WHERE b.status = 'planned' AND b.start_at < ? AND b.end_at > ?
-      ${ignored.isEmpty ? '' : 'AND b.id NOT IN ($placeholders)'}
-    ORDER BY b.start_at
-    LIMIT 1
-    ''',
-    [formatDateTime(end), formatDateTime(start), ...ignored],
-  );
+  final rows = await _connect(executor)
+      .findOverlappingBlocks(
+        formatDateTime(end),
+        formatDateTime(start),
+        jsonEncode(ignoredBlockIds.toList(growable: false)),
+      )
+      .get();
   if (rows.isEmpty) return null;
   final row = rows.first;
-  final conflictStart = DateTime.parse(row['start_at']! as String);
-  final conflictEnd = DateTime.parse(row['end_at']! as String);
+  final conflictStart = DateTime.parse(row.startAt);
+  final conflictEnd = DateTime.parse(row.endAt);
   return ScheduleConflict(
     start: conflictStart.isAfter(start) ? conflictStart : start,
     end: conflictEnd.isBefore(end) ? conflictEnd : end,
     description:
-        '预约“${row['title']}”'
+        '预约“${row.title}”'
         '（${formatDateTime(conflictStart)}–${formatDateTime(conflictEnd)}）',
   );
+}
+
+/// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+AppDatabase _connect(RawExecutor executor) {
+  final connection = executor.driftConnection;
+  if (connection is AppDatabase) return connection;
+  throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
 }
 
 void _requireInterval(DateTime start, DateTime end) {

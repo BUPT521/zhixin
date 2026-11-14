@@ -11,7 +11,11 @@ part 'app_database.g.dart';
 ///
 /// 结构变化仍按 ADR-0002 清空重建，不写迁移函数。采集暂存表、索引与触发器
 /// 由版本引擎在打开后安装，这里只负责 23 张基础表。
+///
+/// 仓库层的查询写在 `queries/` 下的 `.drift` 文件里，由 [include] 挂进来：
+/// 表名、列名、参数与结果列的可空性在生成阶段检查（ADR-0011）。
 @DriftDatabase(
+  include: {'queries/schedule_conflicts.drift'},
   tables: [
     AppMeta,
     Profiles,

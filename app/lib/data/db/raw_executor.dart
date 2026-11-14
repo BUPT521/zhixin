@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show DatabaseConnectionUser;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 /// 写入冲突策略；语义与 SQLite 的 `OR ...` 一致。
@@ -7,6 +8,12 @@ enum ConflictAction { rollback, abort, fail, ignore, replace }
 ///
 /// 方法名与参数沿用原来的 sqflite 形态，切换执行引擎时只换实现，不改 SQL。
 abstract class RawExecutor {
+  /// 生成代码使用的 drift 连接；只读副本等实现返回空。
+  ///
+  /// 仓库层迁进 `.drift` 文件之后，生成的查询方法要在同一个连接上执行，因此
+  /// 从这里取连接，而不是另开一个 [RawExecutor]（ADR-0011 第 4 条）。
+  DatabaseConnectionUser? get driftConnection => null;
+
   Future<void> execute(String sql, [List<Object?>? arguments]);
 
   Future<int> rawInsert(String sql, [List<Object?>? arguments]);
@@ -73,6 +80,10 @@ class SqliteRawDatabase implements RawDatabase {
   SqliteRawDatabase(this._db);
 
   final sqlite.Database _db;
+
+  /// 只读副本走 sqlite3，没有 drift 连接，生成查询不在这里执行。
+  @override
+  DatabaseConnectionUser? get driftConnection => null;
 
   /// 执行一条语句并返回受影响的行数；回调在真实错误时抛出。
   int _run(String sql, [List<Object?>? arguments]) {

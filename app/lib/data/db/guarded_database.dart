@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:drift/drift.dart' show DatabaseConnectionUser;
+
 import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
 import 'database_gate.dart';
@@ -37,6 +39,11 @@ class GuardedDatabase implements RawDatabase {
   static final Object _actorScope = Object();
 
   RawDatabase get _db => resolve();
+
+  /// 生成查询用的 drift 连接：事务里取事务连接，否则取当前库连接。
+  @override
+  DatabaseConnectionUser? get driftConnection =>
+      _currentTxn?.driftConnection ?? _db.driftConnection;
 
   RawExecutor? get _currentTxn => Zone.current[_txnScope] as RawExecutor?;
 
