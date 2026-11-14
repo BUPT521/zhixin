@@ -7,6 +7,7 @@ import '../db/fts.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/write_transactions.dart';
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
 
@@ -61,33 +62,69 @@ class MaterialRepository {
     });
   }
 
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect() {
+    final connection = _db.driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  /// 材料的两条查询挑的列相同，按同一组字段还原成领域模型。
+  static Material _material(
+    int id,
+    String title,
+    String kind,
+    String? sourceRef,
+    String? sourceFileName,
+    int? goalId,
+    int pageCount,
+    String createdAt,
+    String updatedAt,
+  ) => Material(
+    id: id,
+    title: title,
+    kind: kind,
+    sourceRef: sourceRef,
+    sourceFileName: sourceFileName,
+    goalId: goalId,
+    pageCount: pageCount,
+    createdAt: DateTime.tryParse(createdAt),
+    updatedAt: DateTime.tryParse(updatedAt),
+  );
+
+  static Material _materialOf(MaterialByIdResult r) => _material(
+    r.id,
+    r.title,
+    r.kind,
+    r.sourceRef,
+    r.sourceFileName,
+    r.goalId,
+    r.pageCount,
+    r.createdAt,
+    r.updatedAt,
+  );
+
+  static Material _materialOfList(MaterialListResult r) => _material(
+    r.id,
+    r.title,
+    r.kind,
+    r.sourceRef,
+    r.sourceFileName,
+    r.goalId,
+    r.pageCount,
+    r.createdAt,
+    r.updatedAt,
+  );
+
   Future<Material?> byId(int id) async {
-    final rows = await _db.rawQuery(
-      '''
-      SELECT m.*, (SELECT COUNT(*) FROM material_page p
-        WHERE p.material_id = m.id) AS page_count
-      FROM material m WHERE m.id = ?
-      ''',
-      [id],
-    );
-    return rows.isEmpty ? null : Material.fromRow(rows.first);
+    final rows = await _connect().materialById(id).get();
+    return rows.isEmpty ? null : _materialOf(rows.first);
   }
 
   Future<List<Material>> list({int? goalId}) async {
-    final where = <String>[];
-    final args = <Object?>[];
-    if (goalId != null) {
-      where.add('(m.goal_id = ? OR m.goal_id IS NULL)');
-      args.add(goalId);
-    }
-    final rows = await _db.rawQuery('''
-      SELECT m.*, (SELECT COUNT(*) FROM material_page p
-        WHERE p.material_id = m.id) AS page_count
-      FROM material m
-      ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
-      ORDER BY m.updated_at DESC, m.id DESC
-      ''', args);
-    return rows.map(Material.fromRow).toList(growable: false);
+    // 传 0 表示不限目标：材料标识从 1 开始，0 不会命中任何一条。
+    final rows = await _connect().materialList(goalId ?? 0).get();
+    return rows.map(_materialOfList).toList(growable: false);
   }
 
   Future<void> setGoal(int id, int? goalId) async {
@@ -137,16 +174,9 @@ class MaterialRepository {
   }
 
   Future<({int? first, int? last})> pageBounds(int materialId) async {
-    final rows = await _db.rawQuery(
-      'SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page '
-      'FROM material_page WHERE material_id = ?',
-      [materialId],
-    );
+    final rows = await _connect().materialPageBounds(materialId).get();
     if (rows.isEmpty) return (first: null, last: null);
-    return (
-      first: rows.single['first_page'] as int?,
-      last: rows.single['last_page'] as int?,
-    );
+    return (first: rows.single.firstPage, last: rows.single.lastPage);
   }
 
   Future<MaterialPage?> page(int materialId, int pageNo) async {
