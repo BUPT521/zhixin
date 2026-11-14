@@ -359,4 +359,129 @@ void main() {
     blocks = await schedule.blocksForItem(item);
     expect({for (final block in blocks) block.source}, {'ai', 'user'});
   });
+
+  test('固定安排冲突时单条预约与改期都拒绝，也不生成提交', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
+    final service = _service(rig, policy: policy);
+
+    final fixedItem = await tasks.createItem(title: '固定复习');
+    final fixed = await schedule.addBlock(
+      planItemId: fixedItem,
+      start: DateTime(2026, 11, 11, 9),
+      end: DateTime(2026, 11, 11, 10),
+    );
+    await schedule.setLocked(fixed, true);
+    final other = await tasks.createItem(title: '另一项');
+    final head = await rig.engine.headId(rig.raw);
+
+    // 新建的预约撞上固定安排：拒绝写入，提交历史不动。
+    await expectLater(
+      service.scheduleItem(
+        planItemId: other,
+        start: DateTime(2026, 11, 11, 9, 30),
+        end: DateTime(2026, 11, 11, 10, 30),
+      ),
+      throwsA(isA<ScheduleConflictException>()),
+    );
+    expect(await schedule.blocksForItem(other), isEmpty);
+    expect(await rig.engine.headId(rig.raw), head);
+
+    // 改期撞上固定安排：原时间保持不变。
+    final movable = await schedule.addBlock(
+      planItemId: other,
+      start: DateTime(2026, 11, 11, 13),
+      end: DateTime(2026, 11, 11, 14),
+    );
+    final beforeMove = await rig.engine.headId(rig.raw);
+    await expectLater(
+      service.moveBlock(
+        movable,
+        start: DateTime(2026, 11, 11, 9, 30),
+        end: DateTime(2026, 11, 11, 10, 30),
+      ),
+      throwsA(isA<ScheduleConflictException>()),
+    );
+    expect((await schedule.blockById(movable))!.startAt.hour, 13);
+    expect(await rig.engine.headId(rig.raw), beforeMove);
+  });
+
+  test('整组顺延中任一条冲突时整组保持原样，也不生成提交', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
+    final service = _service(rig, policy: policy);
+
+    Future<int> block(String title, int hour) async {
+      final item = await tasks.createItem(title: title);
+      return schedule.addBlock(
+        planItemId: item,
+        start: DateTime(2026, 11, 11, hour),
+        end: DateTime(2026, 11, 11, hour + 1),
+      );
+    }
+
+    final first = await block('第一项', 9);
+    final second = await block('第二项', 11);
+    // 这一条不参与这次调整，但与第一项顺延之后的时间重叠。
+    await block('第三项', 13);
+    final head = await rig.engine.headId(rig.raw);
+
+    await expectLater(
+      service.rescheduleGroup([
+        ScheduleAdjustment(
+          id: first,
+          start: DateTime(2026, 11, 11, 13, 30),
+          end: DateTime(2026, 11, 11, 14, 30),
+        ),
+        ScheduleAdjustment(
+          id: second,
+          start: DateTime(2026, 11, 11, 15),
+          end: DateTime(2026, 11, 11, 16),
+        ),
+      ]),
+      throwsA(isA<ScheduleConflictException>()),
+    );
+
+    // 任一条冲突时整组不改，另一条也没有被写进去。
+    expect((await schedule.blockById(first))!.startAt.hour, 9);
+    expect((await schedule.blockById(second))!.startAt.hour, 11);
+    expect(await rig.engine.headId(rig.raw), head);
+  });
+
+  test('一次改期只生成一条提交，撤销后回到原时间', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db.rawDb);
+    final schedule = ScheduleRepository(rig.db.rawDb);
+    final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
+    final service = _service(rig, policy: policy);
+
+    final item = await tasks.createItem(title: '改期的一项');
+    final id = await schedule.addBlock(
+      planItemId: item,
+      start: DateTime(2026, 11, 11, 9),
+      end: DateTime(2026, 11, 11, 10),
+    );
+
+    final commit = await service.moveBlock(
+      id,
+      start: DateTime(2026, 11, 11, 11),
+      end: DateTime(2026, 11, 11, 12),
+    );
+    // 这次改期就是最新提交，提示条据此撤销，不会撤到别的动作。
+    expect(commit, await rig.engine.headId(rig.raw));
+    final details = await rig.revisions.details(commit);
+    expect(details!.changes, hasLength(1));
+    expect((await schedule.blockById(id))!.startAt.hour, 11);
+
+    final undone = await rig.revisions.undoCommit(commit);
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect((await schedule.blockById(id))!.startAt.hour, 9);
+  });
 }
