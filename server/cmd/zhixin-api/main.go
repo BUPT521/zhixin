@@ -9,12 +9,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata" // the container image may not ship zoneinfo
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/server"
+	"github.com/BUPT521/zhixin/server/internal/store"
 )
 
 func main() {
@@ -36,10 +41,35 @@ func run(log *slog.Logger) error {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
 	} else {
-		// PostgreSQL and object-storage stores follow internal/store/schema.sql
-		// and are the next step (ADR-0009); refuse to start rather than
-		// silently dropping data into memory.
-		return errors.New("PostgreSQL stores are not implemented yet; unset ZHIXIN_DATABASE_URL for local development")
+		if strings.TrimSpace(cfg.BackupDirectory) == "" {
+			return errors.New("ZHIXIN_BACKUP_DIRECTORY is required with PostgreSQL")
+		}
+		objects, err := os.OpenRoot(cfg.BackupDirectory)
+		if err != nil {
+			return errors.New("could not open ZHIXIN_BACKUP_DIRECTORY")
+		}
+		defer objects.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+		if err != nil {
+			cancel()
+			return errors.New("invalid ZHIXIN_DATABASE_URL")
+		}
+		defer pool.Close()
+		err = pool.Ping(ctx)
+		cancel()
+		if err != nil {
+			var databaseError *pgconn.PgError
+			if errors.As(err, &databaseError) {
+				return errors.New("PostgreSQL refused to connect (SQLSTATE " + databaseError.Code + ")")
+			}
+			return errors.New("could not connect to PostgreSQL")
+		}
+		stores = server.Stores{
+			Auth: store.Accounts(pool), Sync: store.SyncLog(pool),
+			Backups: store.Backups(pool, objects), Quota: store.Quota(pool),
+			Ready: pool.Ping,
+		}
 	}
 	if cfg.LLM.APIKey == "" {
 		log.Warn("ZHIXIN_LLM_API_KEY is empty: the model proxy answers 503")

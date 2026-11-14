@@ -18,7 +18,8 @@ type Config struct {
 	Addr string
 	// DatabaseURL is the PostgreSQL DSN. Empty means the in-memory store,
 	// which is only for local development and tests.
-	DatabaseURL string
+	DatabaseURL     string
+	BackupDirectory string
 	// Location decides where a "day" starts for the model quota.
 	Location *time.Location
 
@@ -87,14 +88,15 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		Addr:           get("ZHIXIN_ADDR", ":8080"),
-		DatabaseURL:    get("ZHIXIN_DATABASE_URL", ""),
-		Location:       loc,
-		AccessTTL:      dur("ZHIXIN_ACCESS_TTL", "1h"),
-		RefreshTTL:     dur("ZHIXIN_REFRESH_TTL", "720h"),
-		MaxJSONBytes:   num("ZHIXIN_MAX_JSON_BYTES", "1048576"),
-		MaxBackupBytes: num("ZHIXIN_MAX_BACKUP_BYTES", "268435456"),
-		BackupsKept:    int(num("ZHIXIN_BACKUPS_KEPT", "5")),
+		Addr:            get("ZHIXIN_ADDR", ":8080"),
+		DatabaseURL:     get("ZHIXIN_DATABASE_URL", ""),
+		BackupDirectory: get("ZHIXIN_BACKUP_DIRECTORY", ""),
+		Location:        loc,
+		AccessTTL:       dur("ZHIXIN_ACCESS_TTL", "1h"),
+		RefreshTTL:      dur("ZHIXIN_REFRESH_TTL", "720h"),
+		MaxJSONBytes:    num("ZHIXIN_MAX_JSON_BYTES", "1048576"),
+		MaxBackupBytes:  num("ZHIXIN_MAX_BACKUP_BYTES", "268435456"),
+		BackupsKept:     int(num("ZHIXIN_BACKUPS_KEPT", "5")),
 		LLM: LLMConfig{
 			BaseURL:         strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:          get("ZHIXIN_LLM_API_KEY", ""),

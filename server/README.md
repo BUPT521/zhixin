@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-骨架可以编译、启动并通过测试，全部存储目前是内存实现，进程退出后数据丢失，所以只能用于本地开发与联调。账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、模型代理的转发与额度都已经按契约实现；附件对象的 `/v1/blobs` 在契约里，处理函数返回 501。设置 `ZHIXIN_DATABASE_URL` 时服务拒绝启动，因为 PostgreSQL 与对象存储的实现还没有写，这样做是为了避免以为数据已经落库而实际留在内存里。
+设置 `ZHIXIN_DATABASE_URL` 后，账号、会话、同步提交序列、备份元数据及模型用量写入 PostgreSQL，备份文件写入显式配置的本地持久目录。未设置数据库地址时使用内存存储，进程退出后清空，供本地开发和联调使用。附件接口 `/v1/blobs` 当前返回 501。
 
-接下来的顺序是：PostgreSQL 存储（按 [schema.sql](internal/store/schema.sql)），对象存储与 `/v1/blobs`，部署到与自建 Sentry 相同的服务器，然后接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
+接下来完成契约生成、认证限流、S3 兼容对象存储与 `/v1/blobs`，再部署服务并接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
 
-PostgreSQL 存取用 `pgx` 加 `sqlc` 生成，契约用 `oapi-codegen` 生成并挂到标准库路由上，登录与刷新令牌用 `golang.org/x/time/rate` 限流，依赖清单与理由见 [ADR-0015](../docs/adr/0015-服务端引入代码生成与限流依赖.md)。生成代码与客户端一样提交入库，提交前重新生成并核对没有差异。
+PostgreSQL 通过 `pgx` 连接，存取代码由 `sqlc` 生成，依赖选择见 [ADR-0015](../docs/adr/0015-服务端引入代码生成与限流依赖.md)。生成代码与客户端一样提交入库，提交前重新生成并核对没有差异。
 
 ## 目录
 
@@ -24,7 +24,7 @@ server/
 │   ├── backup/                 ← 整库备份快照
 │   ├── llmproxy/               ← Chat Completions 代理与每日额度
 │   ├── server/                 ← 装配路由与中间件，端到端测试
-│   └── store/schema.sql        ← PostgreSQL 表结构草案
+│   └── store/                  ← PostgreSQL 表结构、查询、生成代码与存储实现
 └── Dockerfile
 ```
 
@@ -53,7 +53,8 @@ server/
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `ZHIXIN_ADDR` | `:8080` | 监听地址 |
-| `ZHIXIN_DATABASE_URL` | 空 | 空表示内存存储；PostgreSQL 实现完成前设置会拒绝启动 |
+| `ZHIXIN_DATABASE_URL` | 空 | PostgreSQL 连接地址，空表示内存存储 |
+| `ZHIXIN_BACKUP_DIRECTORY` | 空 | PostgreSQL 模式必填，指向可写的持久目录 |
 | `ZHIXIN_TIMEZONE` | `Asia/Shanghai` | 额度按这个时区的自然日计 |
 | `ZHIXIN_ACCESS_TTL` | `1h` | 访问令牌有效期 |
 | `ZHIXIN_REFRESH_TTL` | `720h` | 刷新令牌有效期，必须长于访问令牌 |
@@ -76,7 +77,16 @@ go run ./cmd/zhixin-api              # 内存存储，监听 :8080
 curl localhost:8080/healthz
 ```
 
-提交前执行与 CI 相同的三条命令：
+使用 PostgreSQL 时，先在空数据库中执行 [schema.sql](internal/store/schema.sql)，再设置 `ZHIXIN_DATABASE_URL` 和 `ZHIXIN_BACKUP_DIRECTORY`。备份文件与数据库需要一同保留。
+
+提交前执行与 CI 相同的检查：
+
+```bash
+go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
+git diff --exit-code -- internal/store/db
+```
+
+设置 `ZHIXIN_TEST_DATABASE_URL` 后，`go test ./...` 会连接测试数据库，在独立的 PostgreSQL schema 中验证存储实现。
 
 ```bash
 gofmt -l .        # 应当没有输出
