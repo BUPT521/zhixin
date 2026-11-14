@@ -5,12 +5,16 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
+	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -62,7 +66,14 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_version": ClientSchemaVersion})
 	})
 
-	auth.NewHandler(authSvc, log, cfg.MaxJSONBytes).Register(mux)
+	var byAddr, byAccount *ratelimit.Limiter
+	if cfg.AuthRatePerSecond > 0 {
+		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
+	}
+	if cfg.RefreshRatePerSecond > 0 {
+		byAccount = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute)
+	}
+	auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, byAccount).Register(mux)
 	// Push bodies carry row snapshots, so they get a larger cap than ordinary JSON.
 	syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion).Register(mux, authSvc.Require)
 	backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion).Register(mux, authSvc.Require)

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
 
 type ctxKey int
@@ -55,10 +57,36 @@ type Handler struct {
 	svc      *Service
 	log      *slog.Logger
 	maxBytes int64
+	// byAddr 限制同一来源地址的注册与登录尝试，两个入口共用一个桶，换入口不能
+	// 多得额度；刷新令牌同时按账号与来源地址限制（ADR-0015 第 5 条）。为零值时
+	// 一律放行。
+	byAddr    *ratelimit.Limiter
+	byAccount *ratelimit.Limiter
 }
 
-func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
-	return &Handler{svc: svc, log: log, maxBytes: maxBytes}
+func NewHandler(svc *Service, log *slog.Logger, maxBytes int64, byAddr, byAccount *ratelimit.Limiter) *Handler {
+	if byAddr == nil {
+		byAddr = ratelimit.Disabled()
+	}
+	if byAccount == nil {
+		byAccount = ratelimit.Disabled()
+	}
+	return &Handler{svc: svc, log: log, maxBytes: maxBytes, byAddr: byAddr, byAccount: byAccount}
+}
+
+// remoteKey 取来源地址；取不到时归到同一个键，宁可影响本机也不放行。
+func remoteKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || host == "" {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// tooMany 写 429 并带上 Retry-After；客户端据此退避，不解析 detail。
+func tooMany(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Retry-After", "1")
+	httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts, retry later")
 }
 
 // Register mounts the routes on mux.
@@ -78,6 +106,10 @@ type credentials struct {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+	if !h.byAddr.Allow("auth:" + remoteKey(r)) {
+		tooMany(w, r)
+		return
+	}
 	var in credentials
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -96,6 +128,10 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	if !h.byAddr.Allow("auth:" + remoteKey(r)) {
+		tooMany(w, r)
+		return
+	}
 	var in credentials
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -116,6 +152,12 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	// 刷新令牌按账号与来源地址同时限流：分布在多个地址上的尝试按地址限不住，
+	// 同一地址换账号的尝试按账号限不住。
+	if !h.byAccount.Allow("refresh:"+in.RefreshToken, "refresh-ip:"+remoteKey(r)) {
+		tooMany(w, r)
 		return
 	}
 	t, err := h.svc.Refresh(r.Context(), in.RefreshToken)

@@ -24,6 +24,16 @@ type harness struct {
 
 func newHarness(t *testing.T, env map[string]string) *harness {
 	t.Helper()
+	// 用例都从同一个来源地址发请求，默认关掉限流，免得相互干扰；
+	// 专门测限流的用例自己把这两个变量打开。
+	merged := map[string]string{
+		"ZHIXIN_AUTH_RATE":    "0",
+		"ZHIXIN_REFRESH_RATE": "0",
+	}
+	for k, v := range env {
+		merged[k] = v
+	}
+	env = merged
 	cfg, err := config.Load(func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
@@ -319,4 +329,75 @@ func TestLLMProxyDisabledWithoutKey(t *testing.T) {
 	if code := h.json("POST", "/v1/llm/chat/completions", token, map[string]any{"model": "deepseek-flash"}, &p); code != 503 || p.Code != "unavailable" {
 		t.Fatalf("got %d %+v", code, p)
 	}
+}
+
+func TestAuthRateLimitReturns429(t *testing.T) {
+	// 每秒 0.0001 个令牌、初始 1 个：第二次请求必定被拒。
+	h := newHarness(t, map[string]string{
+		"ZHIXIN_AUTH_RATE":  "0.0001",
+		"ZHIXIN_AUTH_BURST": "1",
+	})
+	body := map[string]string{"email": "rate@b.cn", "password": "password1"}
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if code := h.json("POST", "/v1/auth/register", "", body, &tok); code != http.StatusCreated {
+		t.Fatalf("第一次注册应当通过，得到 %d", code)
+	}
+
+	resp := h.do("POST", "/v1/auth/login", "", bytes.NewReader(mustJSON(t, body)), map[string]string{"Content-Type": "application/json"})
+	var p problem
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("第二次请求应返回 429，得到 %d", resp.StatusCode)
+	}
+	if p.Code != "rate_limited" {
+		t.Fatalf("problem code 应为 rate_limited，得到 %q", p.Code)
+	}
+	if got := resp.Header.Get("Retry-After"); got == "" {
+		t.Fatal("429 应带 Retry-After")
+	}
+}
+
+func TestRefreshRateLimitReturns429(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"ZHIXIN_AUTH_RATE":     "0",
+		"ZHIXIN_REFRESH_RATE":  "0.0001",
+		"ZHIXIN_REFRESH_BURST": "1",
+	})
+	var tok struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	body := map[string]string{"email": "refresh@b.cn", "password": "password1"}
+	if code := h.json("POST", "/v1/auth/register", "", body, &tok); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+
+	// 第一次刷新用掉唯一的令牌并让旧令牌失效，因此第二次要用返回的新令牌；
+	// 这里只关心限流，第二次无论令牌是否有效都应当先被限流拦下。
+	var rotated struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if code := h.json("POST", "/v1/auth/refresh", "", map[string]string{"refresh_token": tok.RefreshToken}, &rotated); code != http.StatusOK {
+		t.Fatalf("第一次刷新应当通过，得到 %d", code)
+	}
+	resp := h.do("POST", "/v1/auth/refresh", "", bytes.NewReader(mustJSON(t, map[string]string{"refresh_token": rotated.RefreshToken})), map[string]string{"Content-Type": "application/json"})
+	var p problem
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StatusCode != http.StatusTooManyRequests || p.Code != "rate_limited" {
+		t.Fatalf("第二次刷新应返回 429 rate_limited，得到 %d %q", resp.StatusCode, p.Code)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
 }

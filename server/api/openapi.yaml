@@ -51,7 +51,7 @@ paths:
     post:
       tags: [auth]
       security: []
-      summary: 注册并登录当前设备
+      summary: 注册并登录当前设备（按来源地址限流，与登录共用一个令牌桶）
       requestBody:
         required: true
         content:
@@ -64,6 +64,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tokens" }
         "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "409":
           description: "`email_taken`"
           content:
@@ -73,7 +74,7 @@ paths:
     post:
       tags: [auth]
       security: []
-      summary: 登录，每台设备一个会话
+      summary: 登录，每台设备一个会话（按来源地址限流，与注册共用一个令牌桶）
       requestBody:
         required: true
         content:
@@ -90,11 +91,12 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/refresh:
     post:
       tags: [auth]
       security: []
-      summary: 用刷新令牌换一组新令牌，旧的两枚立即失效
+      summary: 用刷新令牌换一组新令牌，旧的两枚立即失效（按账号与来源地址限流）
       requestBody:
         required: true
         content:
@@ -112,6 +114,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tokens" }
         "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/logout:
     post:
       tags: [auth]
@@ -348,6 +351,15 @@ components:
       scheme: bearer
       description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。
   responses:
+    RateLimited:
+      description: 尝试过于频繁，`code` 为 `rate_limited`；`Retry-After` 给出建议的等待秒数
+      headers:
+        Retry-After:
+          schema: { type: string }
+          description: 建议的重试间隔，秒
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
     Problem:
       description: 错误
       content:

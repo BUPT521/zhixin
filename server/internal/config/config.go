@@ -37,6 +37,14 @@ type Config struct {
 	// ApplySchema runs schema.sql on startup; meant for a fresh database.
 	ApplySchema bool
 
+	// AuthRatePerSecond 与 AuthBurst 是登录、注册按来源地址的令牌桶参数；
+	// RefreshRatePerSecond 与 RefreshBurst 是刷新令牌按账号与地址的参数。
+	// 设 AuthRatePerSecond 为 0 关闭限流（本地联调与测试用）。
+	AuthRatePerSecond    float64
+	AuthBurst            int
+	RefreshRatePerSecond float64
+	RefreshBurst         int
+
 	LLM LLMConfig
 }
 
@@ -63,6 +71,15 @@ func Load(getenv func(string) string) (Config, error) {
 			return v
 		}
 		return def
+	}
+	fnum := func(key, def string) float64 {
+		v := get(key, def)
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 {
+			errs = append(errs, fmt.Errorf("%s: want a non-negative number such as 0.2", key))
+			return 0
+		}
+		return f
 	}
 	dur := func(key, def string) time.Duration {
 		d, err := time.ParseDuration(get(key, def))
@@ -102,6 +119,11 @@ func Load(getenv func(string) string) (Config, error) {
 		BackupsKept:    int(num("ZHIXIN_BACKUPS_KEPT", "5")),
 		BlobDir:        get("ZHIXIN_BLOB_DIR", "data/blobs"),
 		ApplySchema:    get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
+
+		AuthRatePerSecond:    fnum("ZHIXIN_AUTH_RATE", "0.2"),
+		AuthBurst:            int(num("ZHIXIN_AUTH_BURST", "10")),
+		RefreshRatePerSecond: fnum("ZHIXIN_REFRESH_RATE", "1"),
+		RefreshBurst:         int(num("ZHIXIN_REFRESH_BURST", "30")),
 		LLM: LLMConfig{
 			BaseURL:         strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:          get("ZHIXIN_LLM_API_KEY", ""),

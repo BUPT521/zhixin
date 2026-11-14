@@ -21,6 +21,7 @@ const (
 	CodePayloadTooLarge    Code = "payload_too_large"
 	CodeModelNotAllowed    Code = "model_not_allowed"
 	CodeQuotaExceeded      Code = "quota_exceeded"
+	CodeRateLimited        Code = "rate_limited"
 	CodeUpstreamFailed     Code = "upstream_failed"
 	CodeUnavailable        Code = "unavailable"
 	CodeNotImplemented     Code = "not_implemented"
