@@ -1,0 +1,33 @@
+-- 判断的读查询（ADR-0011 第二批）。
+--
+-- 写入仍走 GuardedDatabase 的命令事务：写路径的 REPLACE 禁令由它保证。
+
+import '../tables.dart';
+
+-- 一次作答的全部判断，按编号升序。
+assessmentsForAttempt:
+SELECT * FROM assessment WHERE attempt_id = :attemptId ORDER BY id;
+
+-- 多次作答的判断，按尝试编号分组用；空列表表示不取任何行。
+assessmentsForAttempts:
+SELECT * FROM assessment
+WHERE attempt_id IN (SELECT value FROM json_each(:attemptIds))
+ORDER BY id;
+
+-- 某类判断里最新的一条。
+latestAssessmentOfKind:
+SELECT * FROM assessment
+WHERE attempt_id = :attemptId AND kind = :kind
+ORDER BY id DESC
+LIMIT 1;
+
+-- 某类判断的全部编号，用于去重后保留一条；新编号在前。
+assessmentIdsOfKind:
+SELECT id FROM assessment
+WHERE attempt_id = :attemptId AND kind = :kind
+ORDER BY id DESC;
+
+-- 这次作答的提交时间；没有这一行表示作答不存在，提交时间为空表示还没提交。
+-- 取整行而不是只取 submitted_at，否则「有草稿未提交」与「没有这一行」区分不开。
+attemptSubmission:
+SELECT id, submitted_at FROM attempt WHERE id = :attemptId LIMIT 1;
