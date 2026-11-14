@@ -1,0 +1,61 @@
+-- 学习计划的读查询（ADR-0011 第一批）。
+--
+-- 列与子查询原来拼在 study_plan_repository.dart 的 _planColumns 与
+-- _nextStepTitle 里。原来按调用点拼 WHERE 与 ORDER BY，这里合并成一条带开关
+-- 参数的语句：`id`、`openOnly`、`activeOnly`、`statusFirst` 为空或零时对应条件
+-- 不生效，仍然是一条可读的静态 SQL，由 drift 生成一个结果类型。
+--
+-- 步骤查询的 IN 用 json_each 传 JSON 数组，不再按个数拼占位符。
+
+import '../tables.dart';
+
+-- 计划列表；参数按调用点传，不生效的条件由参数关掉。
+planRows:
+SELECT sp.*,
+  (SELECT title FROM material WHERE id = sp.material_id) AS material_title,
+  (SELECT source_file_name FROM material WHERE id = sp.material_id)
+    AS source_file_name,
+  (SELECT COUNT(*) FROM plan_item pi
+    WHERE pi.study_plan_id = sp.id AND pi.status = :doneStatus) AS steps_done,
+  (SELECT COUNT(*) FROM plan_item pi WHERE pi.study_plan_id = sp.id)
+    AS steps_total,
+  (SELECT pi.title FROM plan_item pi WHERE pi.study_plan_id = sp.id
+    AND pi.status IN ('doing', 'todo')
+    ORDER BY CASE pi.status WHEN 'doing' THEN 0 ELSE 1 END, pi.seq, pi.id
+    LIMIT 1) AS next_step_title
+FROM study_plan sp
+WHERE (:id = 0 OR sp.id = :id)
+  AND (:openOnly = 0 OR sp.status IN (:activeStatus, :pausedStatus))
+  AND (:activeOnly = 0 OR sp.status = :activeStatus)
+ORDER BY
+  CASE WHEN :statusFirst = 0 THEN 0
+    WHEN sp.status = :activeStatus THEN 0
+    WHEN sp.status = :pausedStatus THEN 1
+    ELSE 2 END,
+  sp.updated_at DESC, sp.id DESC
+LIMIT :rowLimit;
+
+-- 一份计划的步骤，按顺序。
+planSteps:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.study_plan_id = :planId
+ORDER BY p.seq, p.id;
+
+-- 多份计划的步骤，按计划与顺序。
+planStepsForPlans:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.study_plan_id IN (SELECT value FROM json_each(:planIds))
+ORDER BY p.study_plan_id, p.seq, p.id;
+
+-- 计划下方的步骤里最大的顺序号；没有步骤时返回 0。
+lastPlanStepSeq:
+SELECT COALESCE(MAX(seq), 0) AS last FROM plan_item
+WHERE study_plan_id = :planId;
