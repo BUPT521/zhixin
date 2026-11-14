@@ -1,3 +1,4 @@
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/question.dart';
@@ -25,19 +26,22 @@ class AttemptRepository {
     return rows.map(Attempt.fromRow).toList(growable: false);
   }
 
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect([RawExecutor? executor]) {
+    final connection = (executor ?? _db).driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
   /// 这条记录最近一次学习场次的目标。
   ///
   /// 讨论与作答原先按尝试逐条读场次，一条记录答过几次就多几次读取；这里
   /// 一次联表取最近一个有目标的场次。
   Future<int?> recentSessionGoal(int conversationId) async {
-    final rows = await _db.rawQuery(
-      'SELECT s.goal_id FROM attempt a '
-      'JOIN study_session s ON s.id = a.session_id '
-      'WHERE a.conversation_id = ? AND s.goal_id IS NOT NULL '
-      'ORDER BY a.id DESC LIMIT 1',
-      [conversationId],
-    );
-    return rows.isEmpty ? null : rows.first['goal_id'] as int?;
+    final rows = await _connect()
+        .sessionGoalOfConversation(conversationId)
+        .get();
+    return rows.isEmpty ? null : rows.first;
   }
 
   /// 同一道题以前写下的困难，按提交时间倒序，最多 [limit] 条。
@@ -111,21 +115,13 @@ class AttemptRepository {
     var attempt = await find();
     if (attempt == null) {
       final now = formatDateTime(_clock());
-      await writer.rawInsert(
-        'INSERT INTO attempt '
-        '(conversation_id, session_id, redo_of_attempt_id, delayed, created_at, updated_at) '
-        'SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS ('
-        'SELECT 1 FROM attempt WHERE conversation_id = ? '
-        'AND submitted_at IS NULL)',
-        [
-          conversationId,
-          sessionId,
-          redoOfAttemptId,
-          delayed ? 1 : 0,
-          now,
-          now,
-          conversationId,
-        ],
+      await _connect(writer).insertOpenAttempt(
+        conversationId,
+        sessionId,
+        redoOfAttemptId,
+        delayed ? 1 : 0,
+        now,
+        now,
       );
       attempt = await find();
       if (attempt == null) {

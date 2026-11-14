@@ -1,0 +1,23 @@
+-- 作答的读查询与建草稿语句（ADR-0011 第二批）。
+
+import '../tables.dart';
+
+-- 这条讨论最近一次作答所属场次的目标；目标为空表示没有归属。
+sessionGoalOfConversation:
+SELECT s.goal_id FROM attempt a
+JOIN study_session s ON s.id = a.session_id
+WHERE a.conversation_id = :conversationId AND s.goal_id IS NOT NULL
+ORDER BY a.id DESC
+LIMIT 1;
+
+-- 这次讨论还没提交的草稿存在时不再新建，避免连点建立两份。
+insertOpenAttempt:
+INSERT INTO attempt
+  (conversation_id, session_id, redo_of_attempt_id, delayed, created_at,
+   updated_at)
+SELECT :conversationId, :sessionId, :redoOfAttemptId, :delayed, :createdAt,
+  :updatedAt
+WHERE NOT EXISTS (
+  SELECT 1 FROM attempt
+  WHERE conversation_id = :conversationId AND submitted_at IS NULL
+);
