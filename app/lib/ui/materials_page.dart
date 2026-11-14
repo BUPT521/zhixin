@@ -25,9 +25,9 @@ import 'zhixin_toast.dart';
 
 /// 记录页的材料分组：按材料查看页码，导入新的一份或补充一页。
 class MaterialList extends StatefulWidget {
-  const MaterialList({super.key, required this.isActive});
+  const MaterialList({super.key, required this.tabTransition});
 
-  final bool isActive;
+  final Animation<double> tabTransition;
 
   @override
   State<MaterialList> createState() => MaterialListState();
@@ -39,6 +39,7 @@ class MaterialListState extends State<MaterialList> {
   bool _loading = true;
   bool _started = false;
   bool _importingWord = false;
+  int _loadRequest = 0;
 
   @override
   void didChangeDependencies() {
@@ -48,18 +49,18 @@ class MaterialListState extends State<MaterialList> {
     reload();
   }
 
-  @override
-  void didUpdateWidget(covariant MaterialList oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!oldWidget.isActive && widget.isActive) reload();
-  }
-
   Future<void> reload() async {
+    if (!mounted) return;
     final scope = AppScope.of(context);
+    final request = ++_loadRequest;
     try {
-      final materials = await scope.library.material.list();
-      final goals = await scope.tasks.goals();
-      if (!mounted) return;
+      final (materials, goals) = await (
+        scope.library.material.list(),
+        scope.tasks.goals(),
+      ).wait;
+      if (!mounted || request != _loadRequest) return;
+      await context.afterTransition(contentTransition: widget.tabTransition);
+      if (!mounted || request != _loadRequest) return;
       setState(() {
         _materials = materials;
         _goals = [
@@ -69,7 +70,9 @@ class MaterialListState extends State<MaterialList> {
         _loading = false;
       });
     } catch (error, stack) {
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
+      await context.afterTransition(contentTransition: widget.tabTransition);
+      if (!mounted || request != _loadRequest) return;
       setState(() => _loading = false);
       final message = describeFailure(
         context,
@@ -237,9 +240,7 @@ class MaterialListState extends State<MaterialList> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    if (_loading) {
-      return const Center(child: forui.FCircularProgress());
-    }
+    final canImport = !_loading && !_importingWord;
     return Column(
       children: [
         Padding(
@@ -251,14 +252,14 @@ class MaterialListState extends State<MaterialList> {
               forui.FButton(
                 variant: forui.FButtonVariant.secondary,
                 mainAxisSize: MainAxisSize.min,
-                onPress: _importingWord ? null : _import,
+                onPress: canImport ? _import : null,
                 child: const Text('导入材料'),
               ),
               const SizedBox(width: 4),
               forui.FButton(
                 variant: forui.FButtonVariant.secondary,
                 mainAxisSize: MainAxisSize.min,
-                onPress: _importingWord ? null : _importWord,
+                onPress: canImport ? _importWord : null,
                 child: const Text('导入 Word'),
               ),
             ],
@@ -266,7 +267,14 @@ class MaterialListState extends State<MaterialList> {
         ),
         if (_importingWord) const LinearProgressIndicator(),
         Expanded(
-          child: _materials.isEmpty
+          child: _loading
+              ? SingleChildScrollView(
+                  child: ListSkeleton(
+                    rowHeight: 73,
+                    padding: theme.space.pageInsets(),
+                  ),
+                )
+              : _materials.isEmpty
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(32),

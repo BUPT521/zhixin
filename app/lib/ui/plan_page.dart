@@ -87,6 +87,8 @@ class _PlanPageState extends State<PlanPage> {
   bool _doneLoaded = false;
   bool _loadingDone = false;
   bool _hasMoreDone = false;
+  bool _doneLoadFailed = false;
+  bool _doneLoadScheduled = false;
   static const int _donePageSize = 30;
 
   bool get _active =>
@@ -199,6 +201,7 @@ class _PlanPageState extends State<PlanPage> {
         _doneLoaded = false;
         _loadingDone = false;
         _hasMoreDone = false;
+        _doneLoadFailed = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || request != _weekRequest) return;
@@ -269,9 +272,12 @@ class _PlanPageState extends State<PlanPage> {
   /// 展开或继续读取已完成事项；一次读一页，顺序按最近完成时间。
   Future<void> _loadDone({bool reset = false}) async {
     final week = _week;
-    if (week == null || _loadingDone) return;
+    if (week == null || _loadingDone || (!reset && !_hasMoreDone)) return;
     final offset = reset ? 0 : _doneItems.length;
-    setState(() => _loadingDone = true);
+    setState(() {
+      _loadingDone = true;
+      _doneLoadFailed = false;
+    });
     try {
       final page = await AppScope.of(context).study.plan
           .doneItems(limit: _donePageSize, offset: offset);
@@ -279,7 +285,9 @@ class _PlanPageState extends State<PlanPage> {
       setState(() {
         _doneItems = reset ? page : [..._doneItems, ...page];
         _doneLoaded = true;
-        _hasMoreDone = _doneItems.length < week.doneItemCount;
+        _hasMoreDone =
+            page.length == _donePageSize &&
+            _doneItems.length < week.doneItemCount;
         _loadingDone = false;
       });
     } catch (error, stack) {
@@ -291,15 +299,46 @@ class _PlanPageState extends State<PlanPage> {
         action: '读取已完成事项',
         kind: 'plan_done_read',
         kept: '已经读出的内容保持不变',
-        next: '可以合上已完成再展开重试',
+        next: reset ? '可以再次展开已完成事项' : '可以在列表底部重试',
       );
       setState(() {
         _loadingDone = false;
-        _error = message;
+        _doneLoadFailed = !reset;
       });
       showToast(context, message);
     }
   }
+
+  /// 事项页签滚到距底部一屏以内时续读，收起列表或刷新后丢弃已排队的请求。
+  bool _onItemsScroll(ScrollNotification notification) {
+    final metrics = notification.metrics;
+    if (notification.depth != 0 ||
+        (notification is! ScrollUpdateNotification &&
+            notification is! OverscrollNotification) ||
+        metrics.extentAfter > metrics.viewportDimension ||
+        _doneLoadScheduled ||
+        !_canLoadMoreDone) {
+      return false;
+    }
+    final items = _doneItems;
+    _doneLoadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _doneLoadScheduled = false;
+      if (mounted && _canLoadMoreDone && identical(items, _doneItems)) {
+        _loadDone();
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+    return false;
+  }
+
+  bool get _canLoadMoreDone =>
+      _active &&
+      _tab == 1 &&
+      _doneLoaded &&
+      _hasMoreDone &&
+      !_loadingDone &&
+      !_doneLoadFailed;
 
   Future<void> _addGoal() async {
     final draft = await showGoalDialog(context);
@@ -1136,32 +1175,39 @@ class _PlanPageState extends State<PlanPage> {
     ),
   );
 
-  /// 一个页签的列表：下拉刷新、惰性构建，切走再回来接着原来的滚动位置。
+  /// 每个页签保留自己的滚动位置，卡片进入视口缓存范围时才构建。
   Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
       RefreshIndicator(
         onRefresh: _load,
-        child: ListView(
-          key: PageStorageKey<String>('plan-tab-$tab'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(
-            theme.space.page,
-            theme.space.xs,
-            theme.space.page,
-            theme.space.section + 4,
+        child: NotificationListener<ScrollNotification>(
+          onNotification: tab == 1 ? _onItemsScroll : null,
+          child: CustomScrollView(
+            key: PageStorageKey<String>('plan-tab-$tab'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  theme.space.page,
+                  theme.space.xs,
+                  theme.space.page,
+                  theme.space.section + 4,
+                ),
+                sliver: SliverMainAxisGroup(
+                  slivers: switch (tab) {
+                    0 => _scheduleTab(theme, week),
+                    1 => _itemsTab(theme, week),
+                    2 => _goalsTab(theme, week),
+                    _ => _operationsTab(theme, week),
+                  },
+                ),
+              ),
+            ],
           ),
-          children: switch (tab) {
-            0 => _scheduleTab(theme, week),
-            1 => _itemsTab(theme, week),
-            2 => _goalsTab(theme, week),
-            _ => _operationsTab(theme, week),
-          },
         ),
       );
 
   List<Widget> _scheduleTab(ZhixinTheme theme, PlanWeek week) {
     final summaries = week.studyPlans;
-    // 读取顺序本来就是进行中的计划在前，拆成“常驻的一段”与“展开的一段”
-    // 不改变计划的先后。
     final openPlans = summaries
         .where((summary) => summary.plan.open)
         .toList(growable: false);
@@ -1169,6 +1215,77 @@ class _PlanPageState extends State<PlanPage> {
         .where((summary) => !summary.plan.open)
         .toList(growable: false);
     final visiblePlans = _showAllPlans ? summaries : openPlans;
+    final schedule = <Object>[
+      for (final entry in _dayEntries(week.blocks)) ...[
+        entry.key,
+        ...entry.value,
+      ],
+    ];
+    return [
+      _weekOverview(theme, week),
+      SliverList.builder(
+        itemCount: schedule.length,
+        itemBuilder: (context, index) => switch (schedule[index]) {
+          final DateTime day => _dayHeading(theme, day, week.timetable),
+          final ScheduledItem entry => _blockTile(theme, entry),
+          _ => throw StateError('无效的日程行'),
+        },
+      ),
+      SliverList.builder(
+        itemCount:
+            1 + (openPlans.isEmpty && !_showAllPlans ? 1 : openPlans.length),
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return SectionHeading(
+              title: '系统学习',
+              subtitle: _showAllPlans ? '全部计划' : '进行中的计划，标出下一步与最近一次预约',
+              action: widget.onOpenMaterials == null || visiblePlans.isEmpty
+                  ? null
+                  : forui.FButton(
+                      variant: forui.FButtonVariant.ghost,
+                      size: forui.FButtonSizeVariant.sm,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: widget.onOpenMaterials,
+                      child: const Text('选择学习材料'),
+                    ),
+            );
+          }
+          if (openPlans.isNotEmpty) {
+            return _studyPlanTile(theme, openPlans[index - 1]);
+          }
+          return forui.FCard(
+            child: EmptyState(
+              icon: FLucideIcons.route,
+              title: summaries.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
+              description: summaries.isEmpty
+                  ? '选择教材或课件，按页码建立学习顺序。'
+                  : '已暂停或已完成的计划默认收起，可以展开查看。',
+              action: widget.onOpenMaterials == null
+                  ? null
+                  : forui.FButton(
+                      variant: forui.FButtonVariant.outline,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: widget.onOpenMaterials,
+                      child: const Text('选择学习材料'),
+                    ),
+            ),
+          );
+        },
+      ),
+      ExpandReveal.sliver(
+        key: const ValueKey('closed-study-plans'),
+        visible: _showAllPlans,
+        child: SliverList.builder(
+          itemCount: closedPlans.length,
+          itemBuilder: (context, index) =>
+              _studyPlanTile(theme, closedPlans[index]),
+        ),
+      ),
+      _timetableList(theme, week, showPlanToggle: closedPlans.isNotEmpty),
+    ];
+  }
+
+  Widget _weekOverview(ZhixinTheme theme, PlanWeek week) {
     final policy = AppScope.of(context).timePolicy;
     final range = policy.naturalWeekRange(_shownAnchor!);
     final currentWeek =
@@ -1179,8 +1296,10 @@ class _PlanPageState extends State<PlanPage> {
       range.start.day + 6,
     );
     final planned = week.blocks.where((entry) => entry.block.planned).length;
-    return [
-      forui.FCard(
+    const gridKey = ValueKey('week-grid');
+    final showGridToggle = week.blocks.isNotEmpty || week.timetable.isNotEmpty;
+    final rows = <WidgetBuilder>[
+      (_) => forui.FCard(
         child: Padding(
           padding: EdgeInsets.all(theme.space.sm),
           child: Row(
@@ -1226,7 +1345,7 @@ class _PlanPageState extends State<PlanPage> {
         ),
       ),
       if (!currentWeek)
-        Center(
+        (_) => Center(
           child: forui.FButton(
             variant: forui.FButtonVariant.ghost,
             size: forui.FButtonSizeVariant.sm,
@@ -1236,9 +1355,9 @@ class _PlanPageState extends State<PlanPage> {
             child: const Text('回到本周'),
           ),
         ),
-      SizedBox(height: theme.space.md),
-      if (week.blocks.isNotEmpty || week.timetable.isNotEmpty)
-        Center(
+      (_) => SizedBox(height: theme.space.md),
+      if (showGridToggle)
+        (_) => Center(
           child: forui.FButton(
             variant: forui.FButtonVariant.ghost,
             size: forui.FButtonSizeVariant.sm,
@@ -1249,11 +1368,11 @@ class _PlanPageState extends State<PlanPage> {
           ),
         ),
       if (_showWeekGrid) ...[
-        _weekGrid(theme, week),
-        SizedBox(height: theme.space.md),
+        (_) => _WeekGridKeepAlive(key: gridKey, child: _weekGrid(theme, week)),
+        (_) => SizedBox(height: theme.space.md),
       ],
       if (week.blocks.isEmpty)
-        forui.FCard(
+        (_) => forui.FCard(
           child: EmptyState(
             icon: FLucideIcons.calendarCheck,
             title: currentWeek ? '本周暂无预约' : '这一周暂无预约',
@@ -1266,53 +1385,24 @@ class _PlanPageState extends State<PlanPage> {
             ),
           ),
         ),
-      for (final entry in _dayEntries(week.blocks))
-        _daySection(theme, entry.key, entry.value),
-      SectionHeading(
-        title: '系统学习',
-        subtitle: _showAllPlans ? '全部计划' : '进行中的计划，标出下一步与最近一次预约',
-        action: widget.onOpenMaterials == null || visiblePlans.isEmpty
-            ? null
-            : forui.FButton(
-                variant: forui.FButtonVariant.ghost,
-                size: forui.FButtonSizeVariant.sm,
-                mainAxisSize: MainAxisSize.min,
-                onPress: widget.onOpenMaterials,
-                child: const Text('选择学习材料'),
-              ),
-      ),
-      for (final summary in openPlans) _studyPlanTile(theme, summary),
-      if (openPlans.isEmpty && !_showAllPlans)
-        forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.route,
-            title: week.studyPlans.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
-            description: week.studyPlans.isEmpty
-                ? '选择教材或课件，按页码建立学习顺序。'
-                : '已暂停或已完成的计划默认收起，可以展开查看。',
-            action: widget.onOpenMaterials == null
-                ? null
-                : forui.FButton(
-                    variant: forui.FButtonVariant.outline,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: widget.onOpenMaterials,
-                    child: const Text('选择学习材料'),
-                  ),
-          ),
-        ),
-      // 已暂停与已完成的计划展开而不是逐帧改整组高度：只有这一块在做高度
-      // 过渡，后面的固定课表整体平移，不再跟着逐项重新排位。
-      ExpandReveal(
-        visible: _showAllPlans,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final summary in closedPlans) _studyPlanTile(theme, summary),
-          ],
-        ),
-      ),
-      if (closedPlans.isNotEmpty)
-        Center(
+    ];
+    return SliverList.builder(
+      itemCount: rows.length,
+      findChildIndexCallback: (key) => _showWeekGrid && key == gridKey
+          ? 2 + (currentWeek ? 0 : 1) + (showGridToggle ? 1 : 0)
+          : null,
+      itemBuilder: (context, index) => rows[index](context),
+    );
+  }
+
+  Widget _timetableList(
+    ZhixinTheme theme,
+    PlanWeek week, {
+    required bool showPlanToggle,
+  }) {
+    final header = <WidgetBuilder>[
+      if (showPlanToggle)
+        (_) => Center(
           child: forui.FButton(
             variant: forui.FButtonVariant.ghost,
             size: forui.FButtonSizeVariant.sm,
@@ -1323,7 +1413,7 @@ class _PlanPageState extends State<PlanPage> {
             ),
           ),
         ),
-      SectionHeading(
+      (_) => SectionHeading(
         title: '固定课表',
         subtitle: '安排学习时自动避开这些时段',
         action: forui.FButton(
@@ -1336,14 +1426,19 @@ class _PlanPageState extends State<PlanPage> {
         ),
       ),
       if (week.timetable.isEmpty)
-        Text(
+        (_) => Text(
           '添加课程时间后，安排学习时会自动检查冲突。',
           style: theme.text.bodySmall.copyWith(
             color: theme.colors.onSurfaceVariant,
           ),
         ),
-      for (final entry in week.timetable)
-        Padding(
+    ];
+    return SliverList.builder(
+      itemCount: header.length + week.timetable.length,
+      itemBuilder: (context, index) {
+        if (index < header.length) return header[index](context);
+        final entry = week.timetable[index - header.length];
+        return Padding(
           padding: EdgeInsets.only(bottom: theme.space.sm),
           child: forui.FTile(
             prefix: const LeadingIcon(
@@ -1361,8 +1456,9 @@ class _PlanPageState extends State<PlanPage> {
               onPressed: () => _deleteTimetable(entry),
             ),
           ),
-        ),
-    ];
+        );
+      },
+    );
   }
 
   Widget _weekGrid(ZhixinTheme theme, PlanWeek week) {
@@ -1463,131 +1559,173 @@ class _PlanPageState extends State<PlanPage> {
     }
   }
 
-  List<Widget> _itemsTab(ZhixinTheme theme, PlanWeek week) => [
-    SectionHeading(
-      first: true,
-      title: '学习事项',
-      subtitle: '默认列出未完成的事项，已完成的按页查看',
-      action: forui.FButton(
-        variant: forui.FButtonVariant.ghost,
-        size: forui.FButtonSizeVariant.sm,
-        mainAxisSize: MainAxisSize.min,
-        onPress: _addItem,
-        prefix: const Icon(FLucideIcons.plus),
-        child: const Text('新建'),
-      ),
-    ),
-    if (week.items.isEmpty && week.doneItemCount == 0)
-      const forui.FCard(
-        child: EmptyState(
-          icon: FLucideIcons.listChecks,
-          title: '暂无学习事项',
-          description: '接受讨论中的下一步建议，或直接新建一项。',
-        ),
-      ),
-    if (week.items.isEmpty && week.doneItemCount > 0)
-      forui.FCard(
-        child: EmptyState(
-          icon: FLucideIcons.circleCheck,
-          title: '没有未完成的学习事项',
-          description: '已完成的 ${week.doneItemCount} 项可以展开查看。',
-        ),
-      ),
-    for (final item in week.items) _itemTile(theme, item),
-    if (week.doneItemCount > 0) ...[
-      SizedBox(height: theme.space.sm),
-      Center(
-        child: forui.FButton(
+  List<Widget> _itemsTab(ZhixinTheme theme, PlanWeek week) {
+    final header = <Widget>[
+      SectionHeading(
+        first: true,
+        title: '学习事项',
+        subtitle: '默认列出未完成的事项，已完成的按页查看',
+        action: forui.FButton(
           variant: forui.FButtonVariant.ghost,
           size: forui.FButtonSizeVariant.sm,
           mainAxisSize: MainAxisSize.min,
-          onPress: _loadingDone
-              ? null
-              : () {
-                  if (!_doneLoaded) {
-                    _loadDone(reset: true);
-                    return;
-                  }
-                  // 只合上，不清空：收起动画期间仍显示原来的事项，
-                  // 再次展开时从第一页重新读取。
-                  setState(() {
-                    _doneLoaded = false;
-                    _hasMoreDone = false;
-                  });
-                },
-          suffix: Icon(
-            _doneLoaded ? FLucideIcons.chevronUp : FLucideIcons.chevronDown,
-          ),
-          child: Text(_doneLoaded ? '收起已完成' : '显示已完成（${week.doneItemCount}）'),
+          onPress: _addItem,
+          prefix: const Icon(FLucideIcons.plus),
+          child: const Text('新建'),
         ),
       ),
-      ExpandReveal(
+      if (week.items.isEmpty && week.doneItemCount == 0)
+        const forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.listChecks,
+            title: '暂无学习事项',
+            description: '接受讨论中的下一步建议，或直接新建一项。',
+          ),
+        ),
+      if (week.items.isEmpty && week.doneItemCount > 0)
+        forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.circleCheck,
+            title: '没有未完成的学习事项',
+            description: '已完成的 ${week.doneItemCount} 项可以展开查看。',
+          ),
+        ),
+    ];
+    return [
+      SliverList.builder(
+        itemCount: header.length + week.items.length,
+        itemBuilder: (context, index) => index < header.length
+            ? header[index]
+            : _itemTile(theme, week.items[index - header.length]),
+      ),
+      if (week.doneItemCount > 0) ..._doneSection(theme, week),
+    ];
+  }
+
+  List<Widget> _doneSection(ZhixinTheme theme, PlanWeek week) {
+    final items = _doneItems;
+    final hasFooter = _loadingDone || _doneLoadFailed;
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.only(top: theme.space.sm),
+          child: Center(
+            child: forui.FButton(
+              variant: forui.FButtonVariant.ghost,
+              size: forui.FButtonSizeVariant.sm,
+              mainAxisSize: MainAxisSize.min,
+              onPress: _loadingDone
+                  ? null
+                  : () {
+                      if (!_doneLoaded) {
+                        _loadDone(reset: true);
+                        return;
+                      }
+                      // 保留本页用于收起动画，下次展开时重新读第一页。
+                      setState(() {
+                        _doneLoaded = false;
+                        _hasMoreDone = false;
+                        _doneLoadFailed = false;
+                      });
+                    },
+              suffix: Icon(
+                _doneLoaded ? FLucideIcons.chevronUp : FLucideIcons.chevronDown,
+              ),
+              child: Text(
+                _doneLoaded ? '收起已完成' : '显示已完成（${week.doneItemCount}）',
+              ),
+            ),
+          ),
+        ),
+      ),
+      ExpandReveal.sliver(
+        key: const ValueKey('done-items'),
         visible: _doneLoaded,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SectionHeading(title: '已完成', subtitle: '按完成时间从近到远'),
-            for (final item in _doneItems) _itemTile(theme, item),
-            if (_loadingDone)
-              const Padding(
+        child: SliverList.builder(
+          itemCount: 1 + items.length + (hasFooter ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return const SectionHeading(title: '已完成', subtitle: '按完成时间从近到远');
+            }
+            if (index <= items.length) {
+              return _itemTile(theme, items[index - 1]);
+            }
+            if (_loadingDone) {
+              return const Padding(
                 padding: EdgeInsets.all(12),
                 child: Center(child: forui.FCircularProgress()),
-              )
-            else if (_hasMoreDone)
-              LoadMoreFooter(
-                label:
-                    '读取更早的已完成事项'
-                    '（还剩 ${week.doneItemCount - _doneItems.length} 项）',
-                loading: false,
-                onPressed: () => _loadDone(),
-              ),
-          ],
+              );
+            }
+            return LoadMoreFooter(
+              label: '重试读取更早的已完成事项',
+              loading: false,
+              onPressed: () => _loadDone(),
+            );
+          },
         ),
       ),
-    ],
-  ];
+    ];
+  }
 
-  List<Widget> _goalsTab(ZhixinTheme theme, PlanWeek week) => [
-    SectionHeading(
-      first: true,
-      title: '学习目标',
-      subtitle: '多个目标可以同时进行',
-      action: forui.FButton(
-        variant: forui.FButtonVariant.ghost,
-        size: forui.FButtonSizeVariant.sm,
-        mainAxisSize: MainAxisSize.min,
-        onPress: _addGoal,
-        prefix: const Icon(FLucideIcons.plus),
-        child: const Text('新建'),
-      ),
-    ),
-    if (week.goals.isEmpty)
-      const forui.FCard(
-        child: EmptyState(
-          icon: FLucideIcons.flag,
-          title: '按需要建立目标',
-          description: '持续学习的相关事项可以归入目标，独立问题单独保留。',
+  List<Widget> _goalsTab(ZhixinTheme theme, PlanWeek week) {
+    final header = <Widget>[
+      SectionHeading(
+        first: true,
+        title: '学习目标',
+        subtitle: '多个目标可以同时进行',
+        action: forui.FButton(
+          variant: forui.FButtonVariant.ghost,
+          size: forui.FButtonSizeVariant.sm,
+          mainAxisSize: MainAxisSize.min,
+          onPress: _addGoal,
+          prefix: const Icon(FLucideIcons.plus),
+          child: const Text('新建'),
         ),
       ),
-    for (final goal in week.goals) _goalTile(theme, goal),
-  ];
+      if (week.goals.isEmpty)
+        const forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.flag,
+            title: '按需要建立目标',
+            description: '持续学习的相关事项可以归入目标，独立问题单独保留。',
+          ),
+        ),
+    ];
+    return [
+      SliverList.builder(
+        itemCount: header.length + week.goals.length,
+        itemBuilder: (context, index) => index < header.length
+            ? header[index]
+            : _goalTile(theme, week.goals[index - header.length]),
+      ),
+    ];
+  }
 
-  List<Widget> _operationsTab(ZhixinTheme theme, PlanWeek week) => [
-    const SectionHeading(
-      first: true,
-      title: 'AI 的改动',
-      subtitle: '搭子执行过的变更，可以逐条撤销',
-    ),
-    if (week.operations.isEmpty)
-      const forui.FCard(
-        child: EmptyState(
-          icon: FLucideIcons.history,
-          title: '暂无 AI 改动',
-          description: '这里记录搭子已执行的变更。',
-        ),
+  List<Widget> _operationsTab(ZhixinTheme theme, PlanWeek week) {
+    final header = <Widget>[
+      const SectionHeading(
+        first: true,
+        title: 'AI 的改动',
+        subtitle: '搭子执行过的变更，可以逐条撤销',
       ),
-    for (final commit in week.operations) _operationTile(theme, commit),
-  ];
+      if (week.operations.isEmpty)
+        const forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.history,
+            title: '暂无 AI 改动',
+            description: '这里记录搭子已执行的变更。',
+          ),
+        ),
+    ];
+    return [
+      SliverList.builder(
+        itemCount: header.length + week.operations.length,
+        itemBuilder: (context, index) => index < header.length
+            ? header[index]
+            : _operationTile(theme, week.operations[index - header.length]),
+      ),
+    ];
+  }
 
   String _goalName(int? id) {
     if (id == null) return '无归属';
@@ -1788,20 +1926,13 @@ class _PlanPageState extends State<PlanPage> {
     );
   }
 
-  /// 一天的日程：日期标题、当天的课，再按时间列出预约。
-  ///
-  /// 预约左侧是开始与结束时刻，等宽数字上下对齐；待开始的预约用主色竖条，
-  /// 已结束或已取消的竖条暗淡。来源、固定与否和状态拆成标签，不再连成一串。
-  Widget _daySection(
+  /// 日期与当天的课程单独占一行，预约按条目延迟构建。
+  Widget _dayHeading(
     ZhixinTheme theme,
     DateTime day,
-    List<ScheduledItem> blocks,
+    List<TimetableEntry> timetable,
   ) {
-    final entries =
-        _week?.timetable
-            .where((entry) => entry.weekday == day.weekday)
-            .toList() ??
-        const <TimetableEntry>[];
+    final entries = timetable.where((entry) => entry.weekday == day.weekday);
     final now = AppScope.of(context).timePolicy.now;
     final today = DateTime(now.year, now.month, now.day);
     final isToday = day == today;
@@ -1849,7 +1980,6 @@ class _PlanPageState extends State<PlanPage> {
                 ],
               ),
             ),
-          for (final block in blocks) _blockTile(theme, block),
         ],
       ),
     );
@@ -2164,5 +2294,27 @@ class _PlanPageState extends State<PlanPage> {
         ),
       ),
     );
+  }
+}
+
+/// 周视图展开后保留自己的横向周数和纵向滚动位置。
+class _WeekGridKeepAlive extends StatefulWidget {
+  const _WeekGridKeepAlive({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<_WeekGridKeepAlive> createState() => _WeekGridKeepAliveState();
+}
+
+class _WeekGridKeepAliveState extends State<_WeekGridKeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }

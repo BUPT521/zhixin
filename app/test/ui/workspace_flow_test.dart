@@ -363,6 +363,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final reduceMotion in [false, true]) {
+    testWidgets('材料页签首读按动效设置回填（减少动态效果：$reduceMotion）', (tester) async {
+      tester.binding.platformDispatcher.accessibilityFeaturesTestValue =
+          FakeAccessibilityFeatures(disableAnimations: reduceMotion);
+      addTearDown(
+        tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await openApp(tester);
+      const title = '待阅讲义';
+      await tester.runAsync(
+        () => scope!.library.material.create(title: title, kind: 'text'),
+      );
+      await tester.tap(find.text('记录').last);
+      await settle(tester);
+
+      final tab = find.widgetWithText(ZhixinSegmented<RecordsTab>, '材料');
+      final materials = find.byType(MaterialList);
+      final skeleton = find.descendant(
+        of: materials,
+        matching: find.byType(ListSkeleton),
+      );
+      final importButton = find.widgetWithText(forui.FButton, '导入材料');
+      await tester.tap(tab.hitTestable());
+      await tester.runAsync(() async {
+        await tester.pump();
+        // 等数据库读取结束，保持页签动画的测试时钟停在起点。
+        await scope!.gate.exclusive(() async {});
+      });
+      expect(skeleton, findsOneWidget);
+      expect(find.byType(forui.FCircularProgress), findsNothing);
+      expect(tester.widget<forui.FButton>(importButton).onPress, isNull);
+      final headingPosition = tester.getTopLeft(importButton);
+      final state = tester.state<MaterialListState>(materials);
+      expect(
+        state.widget.tabTransition.status,
+        reduceMotion ? AnimationStatus.completed : AnimationStatus.forward,
+      );
+
+      await tester.pump();
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      if (!reduceMotion) {
+        await tester.pump(const Duration(milliseconds: 80));
+        expect(skeleton, findsOneWidget);
+        expect(find.text(title), findsNothing);
+        await tester.pump(const ZhixinMotion().standard);
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      }
+      await tester.pump();
+      expect(skeleton, findsNothing);
+      expect(state.widget.tabTransition.status, AnimationStatus.completed);
+      expect(find.text(title), findsOneWidget);
+      expect(tester.widget<forui.FButton>(importButton).onPress, isNotNull);
+      if (reduceMotion) {
+        expect(tester.getTopLeft(importButton), headingPosition);
+      }
+
+      await tester.tap(find.text('学习记录'));
+      await tester.pumpAndSettle();
+      await tester.tap(tab.hitTestable());
+      await tester.pumpAndSettle();
+      expect(tester.state<MaterialListState>(materials), same(state));
+      expect(skeleton, findsNothing);
+      expect(find.text(title), findsOneWidget);
+    });
+  }
+
   testWidgets('底栏按下时图标位置固定，选中胶囊连续滑动', (tester) async {
     await openApp(tester);
     final bar = find.byType(forui.FBottomNavigationBar);
@@ -953,6 +1019,61 @@ void main() {
     await settle(tester);
     expect(find.text('导数描述函数在一点附近的变化率。'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('已完成事项滚动时自动续读，切回事项页签时保留滚动位置', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(() async {
+      for (var i = 0; i < 32; i++) {
+        final id = await scope!.tasks.createItem(title: '已完成事项 $i');
+        await scope!.study.plan.setStatus(id, PlanItemStatus.done);
+      }
+    });
+
+    await tester.tap(find.text('安排').last);
+    await settle(tester);
+    await tester.tap(find.text('事项'));
+    await tester.pumpAndSettle();
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const PageStorageKey<String>('plan-tab-1')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final toggle = find.text('显示已完成（32）');
+    await tester.tap(toggle);
+    await settle(tester);
+    expect(find.text('已完成事项 31'), findsOneWidget);
+    expect(find.text('已完成事项 2'), findsNothing);
+    expect(find.byType(LoadMoreFooter), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('已完成事项 2'),
+      350,
+      scrollable: scrollable,
+    );
+    await settle(tester);
+    await tester.drag(scrollable, const Offset(0, -350));
+    await tester.pumpAndSettle();
+    expect(find.text('已完成事项 0').hitTestable(), findsOneWidget);
+    expect(find.text('已完成事项 1').hitTestable(), findsOneWidget);
+    expect(find.byType(LoadMoreFooter), findsNothing);
+
+    final offset = tester.state<ScrollableState>(scrollable).position.pixels;
+    expect(offset, greaterThan(0));
+    await tester.tap(find.text('目标'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('事项'));
+    await tester.pumpAndSettle();
+    expect(tester.state<ScrollableState>(scrollable).position.pixels, offset);
+    expect(find.text('已完成事项 0').hitTestable(), findsOneWidget);
+
+    final collapse = find.text('收起已完成');
+    await tester.scrollUntilVisible(collapse, -350, scrollable: scrollable);
+    await tester.tap(collapse);
+    await tester.pumpAndSettle();
+    expect(toggle, findsOneWidget);
+    expect(find.text('已完成事项 31'), findsNothing);
   });
 
   testWidgets('窄屏、放大文字与键盘下核心页面没有布局溢出', (tester) async {

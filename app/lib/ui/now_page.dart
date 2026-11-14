@@ -254,6 +254,57 @@ class _NowPageState extends State<NowPage> {
     final theme = context.zhixin;
     final activity = _activity;
     final showActivity = !_loading && activity != null && !activity.isEmpty;
+    final sections = <WidgetBuilder>[
+      // 当前活动置于输入区之前，让开始按钮留在首屏。
+      (_) => ExpandReveal(
+        visible: showActivity,
+        child: showActivity
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: _activitySections(theme, activity),
+              )
+            : const SizedBox.shrink(),
+      ),
+      (_) => Padding(
+        padding: EdgeInsets.only(
+          top: showActivity ? theme.space.section - 4 : 0,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '提出一个问题',
+              style: showActivity
+                  ? theme.text.titleMedium
+                  : theme.text.headlineMedium,
+            ),
+            SizedBox(height: theme.space.xs),
+            Text(
+              '可以直接输入文字，也可以添加题目照片。',
+              style: theme.text.bodyMedium.copyWith(
+                color: theme.colors.onSurfaceVariant,
+              ),
+            ),
+            SizedBox(height: theme.space.lg),
+          ],
+        ),
+      ),
+      (_) => _composer(theme),
+      (_) => Padding(
+        padding: EdgeInsets.only(top: theme.space.md),
+        child: _shortcuts(theme),
+      ),
+      (_) => SectionHeading(
+        title: '继续上次',
+        action: forui.FButton(
+          variant: forui.FButtonVariant.ghost,
+          size: forui.FButtonSizeVariant.sm,
+          mainAxisSize: MainAxisSize.min,
+          onPress: widget.onOpenRecords,
+          child: const Text('查看记录'),
+        ),
+      ),
+    ];
     return forui.FScaffold(
       header: ZhixinHeader(
         nested: false,
@@ -277,87 +328,41 @@ class _NowPageState extends State<NowPage> {
       child: PageWidth(
         child: RefreshIndicator(
           onRefresh: _load,
-          child: ListView(
+          child: CustomScrollView(
             key: const PageStorageKey('now-scroll'),
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: theme.space.pageInsets(),
-            children: [
-              // 已有预约或待办时，当前活动排在输入区之前：02 第 5 节要求首屏
-              // 给出可开始的内容、预计时长与开始按钮，原来它在两张入口卡之后，
-              // 手机上常常落到第二屏。
-              if (_activityError != null)
-                InlineNotice(
-                  message: _activityError!,
-                  onRetry: () => _loadActivity(),
-                ),
-              // 活动卡在读完之后才插到输入区上方；展开而不是直接出现，
-              // 输入区随之平滑下移，用户不会以为点错了地方。
-              ExpandReveal(
-                visible: showActivity,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: showActivity
-                      ? _activitySections(theme, activity)
-                      : const [],
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.only(
-                  top: showActivity ? theme.space.section - 4 : 0,
-                ),
-                child: Text(
-                  '提出一个问题',
-                  style: showActivity
-                      ? theme.text.titleMedium
-                      : theme.text.headlineMedium,
-                ),
-              ),
-              SizedBox(height: theme.space.xs),
-              Text(
-                '可以直接输入文字，也可以添加题目照片。',
-                style: theme.text.bodyMedium.copyWith(
-                  color: theme.colors.onSurfaceVariant,
-                ),
-              ),
-              SizedBox(height: theme.space.lg),
-              _composer(theme),
-              SizedBox(height: theme.space.md),
-              _shortcuts(theme),
-              SectionHeading(
-                title: '继续上次',
-                action: forui.FButton(
-                  variant: forui.FButtonVariant.ghost,
-                  size: forui.FButtonSizeVariant.sm,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: widget.onOpenRecords,
-                  child: const Text('查看记录'),
-                ),
-              ),
-              if (_continueError != null)
-                InlineNotice(
-                  message: _continueError!,
-                  onRetry: () => _loadContinue(),
-                ),
-              // 读完之后整段淡入一次；之后返回首页的重读只换内容，不再闪动。
-              // 首读的静态骨架就放在卡片将要出现的位置，读完原位替换，页面不跳。
-              FadeIn(
-                trigger: _loading,
-                playOnInit: false,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (_loading) const ListSkeleton(rows: 2, rowHeight: 76),
-                    for (final entry in _continue) _continueCard(theme, entry),
-                    if (!_loading &&
-                        _continueError == null &&
-                        _continue.isEmpty)
-                      const forui.FCard(
-                        child: EmptyState(
-                          icon: FLucideIcons.bookmark,
-                          title: '随时回来继续学习',
-                          description: '开始提问后，讨论和材料位置会保存在这里。',
+            slivers: [
+              SliverPadding(
+                padding: theme.space.pageInsets(),
+                sliver: SliverMainAxisGroup(
+                  slivers: [
+                    if (_activityError case final message?)
+                      SliverToBoxAdapter(
+                        key: const ValueKey('activity-error'),
+                        child: InlineNotice(
+                          message: message,
+                          onRetry: _loadActivity,
                         ),
                       ),
+                    SliverList.builder(
+                      key: const ValueKey('now-actions'),
+                      itemCount: sections.length,
+                      itemBuilder: (context, index) => sections[index](context),
+                    ),
+                    if (_continueError case final message?)
+                      SliverToBoxAdapter(
+                        key: const ValueKey('continue-error'),
+                        child: InlineNotice(
+                          message: message,
+                          onRetry: _loadContinue,
+                        ),
+                      ),
+                    FadeIn.sliver(
+                      key: const ValueKey('continue-content'),
+                      trigger: _loading,
+                      playOnInit: false,
+                      child: _continueList(theme),
+                    ),
                   ],
                 ),
               ),
@@ -365,6 +370,30 @@ class _NowPageState extends State<NowPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _continueList(ZhixinTheme theme) {
+    final entries = _continue;
+    if (!_loading && _continueError == null && entries.isEmpty) {
+      return const SliverToBoxAdapter(
+        child: forui.FCard(
+          child: EmptyState(
+            icon: FLucideIcons.bookmark,
+            title: '随时回来继续学习',
+            description: '开始提问后，讨论和材料位置会保存在这里。',
+          ),
+        ),
+      );
+    }
+    return SliverList.builder(
+      itemCount: entries.length + (_loading ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (_loading && index == 0) {
+          return const ListSkeleton(rows: 2, rowHeight: 76);
+        }
+        return _continueCard(theme, entries[index - (_loading ? 1 : 0)]);
+      },
     );
   }
 
