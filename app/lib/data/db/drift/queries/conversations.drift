@@ -1,0 +1,90 @@
+-- 对话与题目的读查询（ADR-0011 第二批）。
+--
+-- 语句原来拼在 conversation_repository.dart 里，`_questionSelect` 与
+-- `_questionUserMessage` 这类列常量一并展开成静态 SQL。可选的筛选与分页用开关
+-- 参数关掉，可变个数的记录标识用 json_each 传 JSON 数组。
+
+import '../tables.dart';
+
+-- 一条记录，带材料标题与是否有作答、是否有草稿。
+conversationById:
+SELECT c.*,
+  (SELECT title FROM material WHERE id = c.material_id) AS material_title,
+  (SELECT source_file_name FROM material WHERE id = c.material_id)
+    AS source_file_name,
+  EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)
+    AS has_attempts,
+  EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id
+    AND a.submitted_at IS NULL) AS has_draft
+FROM conversation c
+WHERE c.id = :conversationId
+LIMIT 1;
+
+-- 一条记录对应的题目视图：题干与图片取开始作答时确定的用户消息。
+conversationQuestion:
+SELECT c.id, c.source_ref, c.context_text, c.page_no,
+  c.created_at, c.updated_at,
+  (SELECT title FROM material WHERE id = c.material_id) AS material_title,
+  (SELECT source_file_name FROM material WHERE id = c.material_id)
+    AS source_file_name,
+  (SELECT m.content FROM message m WHERE m.conversation_id = c.id
+    AND m.role = 'user' AND m.id = (
+      COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1))
+    ) LIMIT 1) AS stem,
+  (SELECT m.image_paths_json FROM message m WHERE m.conversation_id = c.id
+    AND m.role = 'user' AND m.id = (
+      COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1))
+    ) LIMIT 1) AS image_paths_json
+FROM conversation c
+WHERE c.id = :conversationId
+LIMIT 1;
+
+-- 有作答记录的学习记录，带最近一次已提交作答；记录页按页读取时用
+-- `conversationIds` 限制在当前这一页。
+questionRows:
+SELECT c.id, c.source_ref, c.context_text, c.page_no,
+  c.created_at, c.updated_at,
+  (SELECT title FROM material WHERE id = c.material_id) AS material_title,
+  (SELECT source_file_name FROM material WHERE id = c.material_id)
+    AS source_file_name,
+  (SELECT m.content FROM message m WHERE m.conversation_id = c.id
+    AND m.role = 'user' AND m.id = (
+      COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1))
+    ) LIMIT 1) AS stem,
+  (SELECT m.image_paths_json FROM message m WHERE m.conversation_id = c.id
+    AND m.role = 'user' AND m.id = (
+      COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1))
+    ) LIMIT 1) AS image_paths_json,
+  a.id AS last_attempt_id,
+  a.session_id AS last_attempt_session_id,
+  a.user_answer AS last_attempt_user_answer,
+  a.solution AS last_attempt_solution,
+  a.is_correct AS last_attempt_is_correct,
+  a.independent AS last_attempt_independent,
+  a.help_json AS last_attempt_help_json,
+  a.feedback AS last_attempt_feedback,
+  a.delayed AS last_attempt_delayed,
+  a.submitted_at AS last_attempt_submitted_at,
+  a.created_at AS last_attempt_created_at,
+  EXISTS (SELECT 1 FROM attempt a3 WHERE a3.conversation_id = c.id
+    AND a3.submitted_at IS NULL) AS has_draft
+FROM conversation c
+LEFT JOIN attempt a ON a.id = (
+  SELECT a2.id FROM attempt a2
+  WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL
+  ORDER BY a2.submitted_at DESC, a2.id DESC
+  LIMIT 1
+)
+WHERE EXISTS (SELECT 1 FROM attempt a3 WHERE a3.conversation_id = c.id)
+  AND (:conversationIds = '[]'
+    OR c.id IN (SELECT value FROM json_each(:conversationIds)))
+ORDER BY c.updated_at DESC, c.id DESC
+LIMIT :rowLimit;

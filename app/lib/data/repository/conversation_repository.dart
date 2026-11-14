@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/chat_message.dart';
@@ -37,13 +38,6 @@ class ConversationRepository {
       "AND m.role = 'user' AND m.id = $_questionUserMessage LIMIT 1)";
   static const String _materialFileName =
       '(SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name';
-  static const String _questionSelect =
-      'SELECT c.id, c.source_ref, c.context_text, c.page_no, '
-      'c.created_at, c.updated_at, '
-      '(SELECT title FROM material WHERE id = c.material_id) AS material_title, '
-      '$_materialFileName, '
-      '$_firstUserContent AS stem, '
-      '$_firstUserImages AS image_paths_json';
 
   /// 未提交草稿的保存时间；写草稿不改 `conversation.updated_at`。
   static const String _draftUpdatedAt =
@@ -71,6 +65,109 @@ class ConversationRepository {
           AS has_attempts,
         EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id
           AND a.submitted_at IS NULL) AS has_draft''';
+
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect([RawExecutor? executor]) {
+    final connection = (executor ?? _db).driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  /// 按标识取的那条不读消息条数与草稿内容，未读的列按空值还原，与原来一致。
+  static ConversationRecord _recordOf(ConversationByIdResult r) =>
+      ConversationRecord(
+        id: r.id,
+        title: r.title,
+        goalId: r.goalId,
+        materialId: r.materialId,
+        pageNo: r.pageNo,
+        materialTitle: r.materialTitle,
+        materialIsDocx: isDocxFile(r.sourceFileName),
+        entryKind: r.entryKind,
+        status: r.status,
+        endedAt: DateTime.tryParse(r.endedAt ?? ''),
+        lastMessageAt: DateTime.tryParse(r.lastMessageAt ?? ''),
+        createdAt: DateTime.tryParse(r.createdAt),
+        updatedAt: DateTime.tryParse(r.updatedAt),
+        hasAttempts: r.hasAttempts,
+        hasDraft: r.hasDraft,
+      );
+
+  Question _questionOf(ConversationQuestionResult r) => _question(
+    id: r.id,
+    stem: r.stem ?? '',
+    sourceRef: r.sourceRef,
+    contextText: r.contextText,
+    materialTitle: r.materialTitle,
+    pageNo: r.pageNo,
+    sourceFileName: r.sourceFileName,
+    imagePathsJson: r.imagePathsJson,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  );
+
+  QuestionRow _questionRowOf(QuestionRowsResult r) {
+    final question = _question(
+      id: r.id,
+      stem: r.stem ?? '',
+      sourceRef: r.sourceRef,
+      contextText: r.contextText,
+      materialTitle: r.materialTitle,
+      pageNo: r.pageNo,
+      sourceFileName: r.sourceFileName,
+      imagePathsJson: r.imagePathsJson,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    );
+    final attemptId = r.lastAttemptId;
+    return QuestionRow(
+      question: question,
+      hasDraft: r.hasDraft,
+      lastAttempt: attemptId == null
+          ? null
+          : Attempt.fromRow({
+              'id': attemptId,
+              'conversation_id': question.id,
+              'session_id': r.lastAttemptSessionId,
+              'user_answer': r.lastAttemptUserAnswer,
+              'solution': r.lastAttemptSolution,
+              'is_correct': r.lastAttemptIsCorrect,
+              'independent': r.lastAttemptIndependent,
+              'help_json': r.lastAttemptHelpJson,
+              'feedback': r.lastAttemptFeedback,
+              'delayed': r.lastAttemptDelayed,
+              'submitted_at': r.lastAttemptSubmittedAt,
+              'created_at': r.lastAttemptCreatedAt,
+            }),
+    );
+  }
+
+  /// 题目的出处缺省时按材料标题与页码补一条，口径与原实现相同。
+  Question _question({
+    required int id,
+    required String stem,
+    required String? sourceRef,
+    required String? contextText,
+    required String? materialTitle,
+    required int? pageNo,
+    required String? sourceFileName,
+    required String? imagePathsJson,
+    required String createdAt,
+    required String updatedAt,
+  }) {
+    return _recordQuestion({
+      'id': id,
+      'stem': stem,
+      'source_ref': sourceRef,
+      'context_text': contextText,
+      'image_paths_json': imagePathsJson,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+      'material_title': materialTitle,
+      'page_no': pageNo,
+      'source_file_name': sourceFileName,
+    });
+  }
 
   Question _recordQuestion(Map<String, Object?> row) {
     final question = Question.fromRow(row);
@@ -120,18 +217,11 @@ class ConversationRepository {
     int conversationId, {
     WriteTransaction? transaction,
   }) async {
-    final rows = await writeExecutor(transaction, _db).rawQuery(
-      'SELECT c.*, (SELECT title FROM material WHERE id = c.material_id) '
-      'AS material_title, '
-      '$_materialFileName, '
-      'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id) '
-      'AS has_attempts, '
-      'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id '
-      'AND a.submitted_at IS NULL) AS has_draft '
-      'FROM conversation c WHERE c.id = ? LIMIT 1',
-      [conversationId],
-    );
-    return rows.isEmpty ? null : ConversationRecord.fromRow(rows.first);
+    final executor = writeExecutor(transaction, _db);
+    final rows = await _connect(executor)
+        .conversationById(conversationId)
+        .get();
+    return rows.isEmpty ? null : _recordOf(rows.first);
   }
 
   /// 记录列表，按最近更新时间倒序，并带出消息条数、最后一条消息的摘要、
@@ -241,11 +331,8 @@ class ConversationRepository {
 
   /// 一条学习记录对应的题目视图：题干与图片取开始作答时确定的用户消息。
   Future<Question?> question(int conversationId) async {
-    final rows = await _db.rawQuery(
-      '$_questionSelect FROM conversation c WHERE c.id = ? LIMIT 1',
-      [conversationId],
-    );
-    return rows.isEmpty ? null : _recordQuestion(rows.first);
+    final rows = await _connect().conversationQuestion(conversationId).get();
+    return rows.isEmpty ? null : _questionOf(rows.first);
   }
 
   /// 有作答记录的学习记录，按最近更新倒序。
@@ -258,67 +345,10 @@ class ConversationRepository {
   }) async {
     final ids = conversationIds?.toSet().toList(growable: false);
     if (ids != null && ids.isEmpty) return const [];
-    final idFilter = ids == null
-        ? ''
-        : 'AND c.id IN (${List.filled(ids.length, '?').join(', ')})';
-    final rows = await _db.rawQuery(
-      '''
-      $_questionSelect,
-        a.id AS last_attempt_id,
-        a.session_id AS last_attempt_session_id,
-        a.user_answer AS last_attempt_user_answer,
-        a.solution AS last_attempt_solution,
-        a.is_correct AS last_attempt_is_correct,
-        a.independent AS last_attempt_independent,
-        a.help_json AS last_attempt_help_json,
-        a.feedback AS last_attempt_feedback,
-        a.delayed AS last_attempt_delayed,
-        a.submitted_at AS last_attempt_submitted_at,
-        a.created_at AS last_attempt_created_at,
-        EXISTS (SELECT 1 FROM attempt a3 WHERE a3.conversation_id = c.id
-          AND a3.submitted_at IS NULL) AS has_draft
-      FROM conversation c
-      LEFT JOIN attempt a ON a.id = (
-        SELECT a2.id FROM attempt a2
-        WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL
-        ORDER BY a2.submitted_at DESC, a2.id DESC
-        LIMIT 1
-      )
-      WHERE EXISTS (SELECT 1 FROM attempt a3 WHERE a3.conversation_id = c.id)
-        $idFilter
-      ORDER BY c.updated_at DESC, c.id DESC
-      ${limit == null ? '' : 'LIMIT ?'}
-      ''',
-      [...?ids, ?limit],
-    );
-    final result = <QuestionRow>[];
-    for (final row in rows) {
-      final question = _recordQuestion(row);
-      final attemptId = row['last_attempt_id'] as int?;
-      result.add(
-        QuestionRow(
-          question: question,
-          hasDraft: row['has_draft'] == 1,
-          lastAttempt: attemptId == null
-              ? null
-              : Attempt.fromRow({
-                  'id': attemptId,
-                  'conversation_id': question.id,
-                  'session_id': row['last_attempt_session_id'],
-                  'user_answer': row['last_attempt_user_answer'],
-                  'solution': row['last_attempt_solution'],
-                  'is_correct': row['last_attempt_is_correct'],
-                  'independent': row['last_attempt_independent'],
-                  'help_json': row['last_attempt_help_json'],
-                  'feedback': row['last_attempt_feedback'],
-                  'delayed': row['last_attempt_delayed'],
-                  'submitted_at': row['last_attempt_submitted_at'],
-                  'created_at': row['last_attempt_created_at'],
-                }),
-        ),
-      );
-    }
-    return result;
+    final rows = await _connect()
+        .questionRows(jsonEncode(ids ?? const <int>[]), limit ?? (1 << 30))
+        .get();
+    return [for (final row in rows) _questionRowOf(row)];
   }
 
   /// 最近提交的作答，带上所属记录，给首页与模型上下文用。
@@ -882,4 +912,3 @@ class ConversationRepository {
     return text == null || text.isEmpty ? null : text;
   }
 }
-
