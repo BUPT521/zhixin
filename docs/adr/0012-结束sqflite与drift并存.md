@@ -10,7 +10,7 @@
 
 ## 背景
 
-[ADR-0004](0004-数据层改用drift与自带sqlite.md) 把主库换成 drift 与随包 SQLite，理由是固定设备上的 SQLite 版本、取消系统库差异。主库已经按这个决定打开，但库副本的打开方式没有跟着换：`DataPackageService`、`StagedRestoreValidator` 与 `RevisionPackageService` 仍接收 sqflite 的 `DatabaseFactory`，用它打开数据包里的数据库与版本库快照，共 6 处 `factory.openDatabase`；`raw_executor.dart` 里还保留着 `SqfliteRawExecutor` 与两个扩展方法，40 个测试文件通过 `sqflite_common_ffi` 建库。同一份库文件因此在恢复路径上被另一套驱动打开，而这个驱动在 Android 上用的是系统 SQLite，ADR-0004 要消除的版本差异在恢复与打包路径上仍然存在。
+[ADR-0004](0004-数据层改用drift与自带sqlite.md) 将主库改为 drift 与随包 SQLite，理由是固定设备上的 SQLite 版本、取消系统库差异。主库已经按这个决定打开，但库副本的打开方式没有跟着换：`DataPackageService`、`StagedRestoreValidator` 与 `RevisionPackageService` 仍接收 sqflite 的 `DatabaseFactory`，用它打开数据包里的数据库与版本库快照，共 6 处 `factory.openDatabase`；`raw_executor.dart` 里还保留着 `SqfliteRawExecutor` 与两个扩展方法，40 个测试文件通过 `sqflite_common_ffi` 建库。同一份库文件因此在恢复路径上被另一套驱动打开，而这个驱动在 Android 上用的是系统 SQLite，ADR-0004 要消除的版本差异在恢复与打包路径上仍然存在。
 
 评估见 [轮子与技术选型评估第 2.2 节](../轮子与技术选型评估.md#22-结束-sqflite-与-drift-并存)。
 
