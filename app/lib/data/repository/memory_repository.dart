@@ -1,3 +1,4 @@
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/memory.dart';
@@ -12,14 +13,31 @@ class MemoryRepository {
   final RawDatabase _db;
   final Clock _clock;
 
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect([WriteTransaction? transaction]) {
+    final executor = writeExecutor(transaction, _db);
+    final connection = executor.driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  /// 记忆表的字段与领域模型同名，只补枚举与时间解析。
+  static Memory _memoryOf(MemoryRow row) => Memory(
+    id: row.id,
+    kind: MemoryKind.fromValue(row.kind),
+    content: row.content,
+    scope: row.scope,
+    sourceKind: row.sourceKind,
+    sourceId: row.sourceId,
+    validUntil: DateTime.tryParse(row.validUntil ?? ''),
+    status: row.status,
+    createdAt: DateTime.tryParse(row.createdAt),
+    updatedAt: DateTime.tryParse(row.updatedAt),
+  );
+
   Future<List<Memory>> list({bool includeInactive = false}) async {
-    final rows = await _db.query(
-      'memory',
-      where: includeInactive ? null : 'status = ?',
-      whereArgs: includeInactive ? null : ['active'],
-      orderBy: 'status, updated_at DESC, id DESC',
-    );
-    return rows.map(Memory.fromRow).toList(growable: false);
+    final rows = await _connect().listMemories(includeInactive ? 0 : 1).get();
+    return rows.map(_memoryOf).toList(growable: false);
   }
 
   /// 同一范围里仍然有效的困难记忆；同一困难再次出现时只比较这些条目。
@@ -28,41 +46,27 @@ class MemoryRepository {
   Future<List<({int id, String content})>> activeDifficulties(
     String? scope,
   ) async {
-    final rows = await _db.query(
-      'memory',
-      columns: ['id', 'content'],
-      where: "status = 'active' AND kind = ? AND scope IS ?",
-      whereArgs: [MemoryKind.difficulty.value, scope?.trim()],
-      orderBy: 'id DESC',
-    );
-    return [
-      for (final row in rows)
-        (id: row['id']! as int, content: row['content']! as String),
-    ];
+    final rows = await _connect()
+        .activeDifficulties(MemoryKind.difficulty.value, scope?.trim() ?? '')
+        .get();
+    return [for (final row in rows) (id: row.id, content: row.content)];
   }
 
   Future<Memory?> byId(int id) async {
-    final rows = await _db.query('memory', where: 'id = ?', whereArgs: [id]);
-    return rows.isEmpty ? null : Memory.fromRow(rows.first);
+    final row = await _connect().memoryById(id).getSingleOrNull();
+    return row == null ? null : _memoryOf(row);
   }
 
   Future<List<({String kind, String? scope, String content})>> activeIdentities(
     DateTime now, {
     required WriteTransaction transaction,
   }) async {
-    final rows = await writeExecutor(transaction, _db).query(
-      'memory',
-      columns: ['kind', 'scope', 'content'],
-      where: "status = 'active' AND (valid_until IS NULL OR valid_until >= ?)",
-      whereArgs: [formatDateTime(now)],
-    );
+    final rows = await _connect(transaction)
+        .activeMemoryIdentities(formatDateTime(now))
+        .get();
     return [
       for (final row in rows)
-        (
-          kind: row['kind']! as String,
-          scope: row['scope'] as String?,
-          content: row['content']! as String,
-        ),
+        (kind: row.kind, scope: row.scope, content: row.content),
     ];
   }
 
@@ -77,27 +81,14 @@ class MemoryRepository {
     String? scope,
     int? limit = 40,
   }) async {
-    final activeScope = scope?.trim();
-    final scopeWhere = activeScope == null || activeScope.isEmpty
-        ? 'scope IS NULL'
-        : '(scope IS NULL OR scope = ?)';
-    final rows = await _db.query(
-      'memory',
-      where:
-          "status = 'active' AND (valid_until IS NULL OR valid_until >= ?) "
-          'AND $scopeWhere',
-      whereArgs: [
-        formatDateTime(now),
-        if (activeScope != null && activeScope.isNotEmpty) activeScope,
-      ],
-      orderBy:
-          'CASE WHEN scope IS NULL THEN 1 ELSE 0 END, '
-          "CASE kind WHEN 'constraint' THEN 0 WHEN 'preference' THEN 1 "
-          "WHEN 'difficulty' THEN 2 ELSE 3 END, "
-          'updated_at DESC, id DESC',
-      limit: limit,
-    );
-    return rows.map(Memory.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .memoriesForContext(
+          formatDateTime(now),
+          scope?.trim() ?? '',
+          limit ?? (1 << 30),
+        )
+        .get();
+    return rows.map(_memoryOf).toList(growable: false);
   }
 
   Future<int> create({
@@ -170,14 +161,10 @@ class MemoryRepository {
     int sourceId, {
     WriteTransaction? transaction,
   }) async {
-    final rows = await writeExecutor(transaction, _db).query(
-      'memory',
-      columns: ['id'],
-      where: 'source_kind = ? AND source_id = ?',
-      whereArgs: [sourceKind, sourceId],
-      limit: 1,
-    );
-    return rows.isNotEmpty;
+    final row = await _connect(transaction)
+        .hasMemoryFromSource(sourceKind, sourceId)
+        .getSingleOrNull();
+    return row != null;
   }
 
   /// 撤销删除或纠正时恢复为 active。

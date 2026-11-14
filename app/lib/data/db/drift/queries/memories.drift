@@ -1,0 +1,50 @@
+-- 记忆的读查询（ADR-0011 第二批）。
+--
+-- 写入仍走 GuardedDatabase 的命令事务。
+
+import '../tables.dart';
+
+-- 全部记忆；只看有效条目时传 1。
+listMemories:
+SELECT * FROM memory
+WHERE (:activeOnly = 0 OR status = 'active')
+ORDER BY status, updated_at DESC, id DESC;
+
+-- 同一范围里仍然有效的困难记忆；范围用空串表示无归属。
+activeDifficulties:
+SELECT id, content FROM memory
+WHERE status = 'active' AND kind = :kind
+  AND ((:scope = '' AND scope IS NULL) OR (:scope <> '' AND scope = :scope))
+ORDER BY id DESC;
+
+-- 按编号取一条。
+memoryById:
+SELECT * FROM memory WHERE id = :id;
+
+-- 当前有效记忆的类型、范围与正文，用于去重判断。
+activeMemoryIdentities:
+SELECT kind, scope, content FROM memory
+WHERE status = 'active'
+  AND (valid_until IS NULL OR valid_until >= :now);
+
+-- 生成回答时取用的记忆：本次范围的排在前面，再按类型与更新时间。
+memoriesForContext:
+SELECT * FROM memory
+WHERE status = 'active'
+  AND (valid_until IS NULL OR valid_until >= :now)
+  AND (
+    (:scope = '' AND scope IS NULL)
+    OR (:scope <> '' AND (scope IS NULL OR scope = :scope))
+  )
+ORDER BY
+  CASE WHEN scope IS NULL THEN 1 ELSE 0 END,
+  CASE kind WHEN 'constraint' THEN 0 WHEN 'preference' THEN 1
+    WHEN 'difficulty' THEN 2 ELSE 3 END,
+  updated_at DESC, id DESC
+LIMIT :rowLimit;
+
+-- 某条来源是否已经写进记忆。
+hasMemoryFromSource:
+SELECT id FROM memory
+WHERE source_kind = :sourceKind AND source_id = :sourceId
+LIMIT 1;
