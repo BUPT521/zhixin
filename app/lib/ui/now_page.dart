@@ -305,7 +305,7 @@ class _NowPageState extends State<NowPage> {
         ),
       ),
     ];
-    return forui.FScaffold(
+    return TabScaffold(
       header: ZhixinHeader(
         nested: false,
         title: const Row(

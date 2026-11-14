@@ -319,7 +319,7 @@ class _RecordsPageState extends State<RecordsPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final learning = _tab == RecordsTab.learning;
-    return forui.FScaffold(
+    return TabScaffold(
       header: ZhixinHeader(
         nested: false,
         title: const Text('记录'),

@@ -1048,7 +1048,7 @@ class _PlanPageState extends State<PlanPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final week = _week;
-    return forui.FScaffold(
+    return TabScaffold(
       header: ZhixinHeader(
         nested: false,
         title: const Text('安排'),

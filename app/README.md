@@ -89,7 +89,7 @@ lib/
 
 ## 界面
 
-界面组件与主题由 Forui 0.27.7 提供，三栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
+界面组件与主题由 Forui 0.27.7 提供，三栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。三栏页面（现在、记录、安排）使用 `TabScaffold`：三栏外面已经有一层带底栏的 `FScaffold`（见 `home_shell.dart`），键盘弹出时由它让出一次键盘高度，页面自己的骨架不再按键盘缩放，否则内容会被扣掉两个键盘高度，输入区与发送按钮被裁掉，键盘上方只剩一条空白。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
 
 按钮、输入框、列表、卡片与表单优先使用 Forui，对话框和短提示分别通过 `showZhixinDialog` 和 `showToast` 打开。底部面板、日期时间选择器和下拉刷新使用 Material，其中底部面板和日期时间选择分别通过 `showZhixinSheet`、`showZhixinDatePicker` 与 `showZhixinTimePicker` 打开，样式由同一主题提供。筛选使用 `ZhixinChip`，互斥的视图切换使用 `ZhixinSegmented`，业务图标统一从 [Lucide 图标库](https://lucide.dev/icons/) 选取，通过 `FLucideIcons` 引用。
 

@@ -33,6 +33,26 @@ class DetailScaffold extends StatelessWidget {
   );
 }
 
+/// 三栏页面（现在、记录、安排）的骨架。
+///
+/// 三栏外面还有一层带底栏的 [forui.FScaffold]，键盘弹出时它已经按键盘高度把
+/// 内容区缩小了一次；页面自己的骨架若再缩一次，内容高度会被扣掉两个键盘高度，
+/// 输入区与发送按钮因此被裁掉，键盘上方只剩一条空白。所以这里固定不再按键盘
+/// 缩放，需要弹出键盘的详情页仍用 [DetailScaffold] 的默认行为。
+class TabScaffold extends StatelessWidget {
+  const TabScaffold({super.key, this.header, required this.child});
+
+  final Widget? header;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => forui.FScaffold(
+    header: header,
+    resizeToAvoidBottomInset: false,
+    child: child,
+  );
+}
+
 /// 一节内容的标题：左侧标题与一句说明，右侧可放一个文字动作。
 ///
 /// [first] 为真时去掉上方留白，用在页面第一节。说明只写这一节为什么这样

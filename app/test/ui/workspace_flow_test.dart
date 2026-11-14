@@ -35,6 +35,7 @@ import 'package:zhixin/ui/study_plan_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
 import 'package:zhixin/ui/zhixin_chip.dart';
+import 'package:zhixin/ui/zhixin_header.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
 Finder _editableFields() => find.byWidgetPredicate(
@@ -1106,6 +1107,31 @@ void main() {
     tester.view.viewInsets = const FakeViewPadding(bottom: 300);
     addTearDown(tester.view.resetViewInsets);
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('键盘弹出时首页只缩小一次，输入区完整显示在键盘上方', (tester) async {
+    const keyboard = 364.0;
+    const screenHeight = 924.0;
+    await openApp(tester, size: const Size(424, screenHeight));
+    await tester.tap(_editableFields().first);
+    await settle(tester);
+    tester.view.viewInsets = const FakeViewPadding(bottom: keyboard);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+
+    // 外层的底栏骨架让出一次键盘高度之后，页面高度是屏幕减一次键盘。
+    final page = tester.getRect(find.byType(NowPage));
+    expect(page.height, closeTo(screenHeight - keyboard, 1));
+    // 页面自己的骨架不再让一次：滚动区域是页面去掉标题栏之后的全部高度。
+    final header = tester.getSize(find.byType(ZhixinHeader));
+    final scroll = tester.getRect(
+      find.byKey(const PageStorageKey('now-scroll')),
+    );
+    expect(scroll.height, closeTo(page.height - header.height, 1));
+    // 输入区的发送按钮落在滚动区域之内，没有被裁掉。
+    final send = tester.getRect(find.text('发送问题'));
+    expect(send.bottom, lessThanOrEqualTo(scroll.bottom));
     expect(tester.takeException(), isNull);
   });
 
