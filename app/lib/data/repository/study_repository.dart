@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
@@ -36,48 +39,43 @@ class StudyRepository {
     );
   }
 
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect([WriteTransaction? transaction]) {
+    final executor = writeExecutor(transaction, _db);
+    final connection = executor.driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  /// 场次表的字段与领域模型同名，只补时间解析。
+  static StudySession _sessionOf(StudySessionRow row) => StudySession(
+    id: row.id,
+    goalId: row.goalId,
+    planItemId: row.planItemId,
+    conversationId: row.conversationId,
+    summary: row.summary,
+    outcome: row.outcome,
+    startedAt: parseDateTime(row.startedAt),
+    endedAt: DateTime.tryParse(row.endedAt ?? ''),
+  );
+
   Future<StudySession?> openFor({
-    int? planItemId,
     int? goalId,
+    int? planItemId,
     int? conversationId,
     WriteTransaction? transaction,
   }) async {
-    final where = <String>['ended_at IS NULL'];
-    final args = <Object?>[];
-    if (conversationId != null) {
-      where.add('conversation_id = ?');
-      args.add(conversationId);
-    } else {
-      where.add('conversation_id IS NULL');
-      if (planItemId != null) {
-        where.add('plan_item_id = ?');
-        args.add(planItemId);
-      } else {
-        where.add('plan_item_id IS NULL');
-        if (goalId == null) {
-          where.add('goal_id IS NULL');
-        } else {
-          where.add('goal_id = ?');
-          args.add(goalId);
-        }
-      }
-    }
-    final rows = await writeExecutor(transaction, _db).query(
-      'study_session',
-      where: where.join(' AND '),
-      whereArgs: args,
-      orderBy: 'id DESC',
-      limit: 1,
-    );
-    return rows.isEmpty ? null : StudySession.fromRow(rows.first);
+    final row = await _connect(transaction)
+        .openStudySession(conversationId ?? 0, planItemId ?? 0, goalId ?? 0)
+        .getSingleOrNull();
+    return row == null ? null : _sessionOf(row);
   }
 
   Future<StudySession?> byId(int id, {WriteTransaction? transaction}) async {
-    final rows = await writeExecutor(
-      transaction,
-      _db,
-    ).query('study_session', where: 'id = ?', whereArgs: [id]);
-    return rows.isEmpty ? null : StudySession.fromRow(rows.first);
+    final row = await _connect(transaction)
+        .studySessionById(id)
+        .getSingleOrNull();
+    return row == null ? null : _sessionOf(row);
   }
 
   Future<void> end(
@@ -101,12 +99,8 @@ class StudyRepository {
   }
 
   Future<List<StudySession>> recent({int limit = 10}) async {
-    final rows = await _db.query(
-      'study_session',
-      orderBy: 'id DESC',
-      limit: limit,
-    );
-    return rows.map(StudySession.fromRow).toList(growable: false);
+    final rows = await _connect().recentStudySessions(limit).get();
+    return rows.map(_sessionOf).toList(growable: false);
   }
 
   /// 同一目标下已经结束的场次，按结束时间倒序；用于比较困难是否重复出现。
@@ -117,14 +111,10 @@ class StudyRepository {
     int goalId, {
     int? limit = 20,
   }) async {
-    final rows = await _db.query(
-      'study_session',
-      where: 'goal_id = ? AND ended_at IS NOT NULL',
-      whereArgs: [goalId],
-      orderBy: 'ended_at DESC, id DESC',
-      limit: limit,
-    );
-    return rows.map(StudySession.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .endedStudySessionsForGoal(goalId, limit ?? (1 << 30))
+        .get();
+    return rows.map(_sessionOf).toList(growable: false);
   }
 
   /// 每个学习步骤最近一次已经结束的场次，一次查询取回。
@@ -136,16 +126,12 @@ class StudyRepository {
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
     if (ids.isEmpty) return const {};
-    final placeholders = List.filled(ids.length, '?').join(', ');
-    final rows = await _db.query(
-      'study_session',
-      where: 'plan_item_id IN ($placeholders) AND ended_at IS NOT NULL',
-      whereArgs: ids,
-      orderBy: 'ended_at ASC, id ASC',
-    );
+    final rows = await _connect()
+        .endedStudySessionsForPlanItems(jsonEncode(ids))
+        .get();
     final result = <int, StudySession>{};
     for (final row in rows) {
-      final session = StudySession.fromRow(row);
+      final session = _sessionOf(row);
       final planItemId = session.planItemId;
       if (planItemId != null) result[planItemId] = session;
     }
