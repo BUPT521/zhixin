@@ -14,7 +14,7 @@
 
 ## 当前状态
 
-2026 年 11 月完成可用版：底部为“现在、记录、安排”三栏，讨论与题目共用一条学习记录，材料按页或 Word 片段导入，系统学习保存顺序与继续位置，记忆、撤销、数据版本与导出恢复可用，表结构与当前版本见 [01](docs/01-ER数据模型.md)。格式检查、`flutter analyze` 与自动化测试通过；V1–V11 在模拟器上按 [02 第 8 章](docs/02-产品与交互.md#8-验收标准)验收，真实模型下的结果另行记录，内测定在 2027.01，先做一轮两周。当前版本为 `0.1.0+1`，开发包在版本名后加 `-dev`，命名、递增与标签规则见 [03 第 3 节](docs/03-团队分工与协作.md#3-交付节奏)。
+2026 年 11 月完成可用版：底部为“现在、记录、安排”三栏，讨论与题目共用一条学习记录，材料按页或 Word 片段导入，系统学习保存顺序与继续位置，记忆、撤销、数据版本与导出恢复可用，表结构与当前版本见 [01](docs/01-ER数据模型.md)。格式检查、`flutter analyze` 与自动化测试通过；V1–V11 在模拟器上按 [02 第 8 章](docs/02-产品与交互.md#8-验收标准)验收，真实模型下的结果另行记录，内测定在 2027.01，先做一轮两周。版本号只写在 `app/pubspec.yaml` 的 `version` 一行，本文不另存，开发包在版本名后加 `-dev`，命名、递增与标签规则见 [03 第 3 节](docs/03-团队分工与协作.md#3-交付节奏)。
 
 ## 技术栈与开发环境
 
@@ -25,7 +25,7 @@
 | 最低系统 | Android 11（API 30）；只出 arm64 包，不兼容 32 位设备 |
 | 本地数据 | SQLite 单文件（drift，连接使用随包的 sqlite3），业务表、提交历史与附件同库，表结构与当前版本见 [01](docs/01-ER数据模型.md) |
 | 模型 | 用户自填 key，默认 `deepseek-flash`，接口地址与模型名可配置；登录后可改用服务端代理 |
-| 服务端 | Go 1.27 单个可执行文件 `zhixin-api`，标准库 `net/http`，PostgreSQL 与 S3 兼容对象存储，代码在 `server/`，见 [server/README](server/README.md)、[ADR-0009](docs/adr/0009-API后端采用Go与分层框架.md) 与 [ADR-0015](docs/adr/0015-服务端引入代码生成与限流依赖.md) |
+| 服务端 | Go 1.27 单个可执行文件 `zhixin-api`，标准库 `net/http`；账号、提交序列、整库备份与模型代理按契约实现，存储目前是内存实现，PostgreSQL 与对象存储尚未实现，限制见 [server/README](server/README.md)，取舍见 [ADR-0009](docs/adr/0009-API后端采用Go与分层框架.md) 与 [ADR-0015](docs/adr/0015-服务端引入代码生成与限流依赖.md) |
 | 构建 | JDK 21 + Android SDK 36，命令 `flutter build apk --debug`（内测包用 `--release`），见 [app/README](app/README.md) |
 
 应用代码在 `app/` 目录，先 `cd app`，再执行 `flutter pub get` 和 `flutter run` 就能装到真机上。CI 配置见 [ci.yml](.github/workflows/ci.yml)：代码推送和 PR 都会跑生成代码核对、格式检查、`flutter analyze` 与 `flutter test`，纯文档的提交跳过这几项；`main` 的 push 和每个 PR 都会构建 debug APK。正式包在 Actions 里手动运行“CI 与发版”生成。
