@@ -430,7 +430,7 @@ class SemanticIndexService {
     return SemanticIndexStats(
       configured: true,
       entries: index.entryCount,
-      sources: index.indexedSources().length,
+      sources: index.sourceCount,
       modelKey: index.meta('model_key') ?? '',
       builtAt: index.meta('built_at'),
       lastRefresh: _lastRefresh,

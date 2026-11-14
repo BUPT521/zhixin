@@ -390,6 +390,9 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       final material = await scope.library.material.byId(widget.materialId);
       final pages = await scope.library.material.pages(widget.materialId);
       if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填，免得滑入途中整页重建。
+      await context.afterTransition();
+      if (!mounted) return;
       setState(() {
         _material = material;
         _pages = pages;

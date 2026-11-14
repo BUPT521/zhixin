@@ -128,6 +128,14 @@ CREATE TABLE IF NOT EXISTS vector_entry (
     return rows.first['n'] as int;
   }
 
+  /// 来源条数：只取一个数，不把每个来源的版本与片段数读进内存。
+  int get sourceCount {
+    final rows = _db.select(
+      'SELECT COUNT(DISTINCT source_key) AS n FROM vector_entry',
+    );
+    return rows.first['n'] as int;
+  }
+
   /// 当前索引里每个来源的版本与片段数，用于跳过没有变化的来源。
   Map<String, IndexedSource> indexedSources() {
     final rows = _db.select(

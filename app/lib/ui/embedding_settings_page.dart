@@ -64,6 +64,10 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final scope = AppScope.of(context);
     final config = await scope.settings.embedding.read();
     final materials = await scope.materials.list();
+    if (!mounted) return;
+    // 打开向量库与统计规模都在界面线程上同步执行，要等推入动画结束再做：
+    // 放在这里会让滑动停在原地，第一次打开时尤其明显。
+    await context.afterTransition();
     final stats = await scope.library.semanticIndex.stats();
     if (!mounted) return;
     setState(() {

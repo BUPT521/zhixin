@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/ui/motion.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
 /// 记录页的查找范围选择器：切换全部、目标与材料之后，结果随范围收窄并在
@@ -288,6 +289,43 @@ void main() {
     await tester.tap(find.text('加载更多结果'));
     await pumpUntil(tester, find.text('已经到最后一条'));
     expect(find.text('加载更多结果'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('查找页滑入结束后才要焦点，键盘不跟推入动画一起弹出', (tester) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const ZhixinApp());
+      scope = tester.state<AppScopeState>(find.byType(AppScope));
+      await scope!.ready;
+    });
+    await settle(tester);
+
+    await tester.tap(find.text('记录').last);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('records-search-entry')));
+
+    // 推入动画中途：输入框已经建出来，但还没有要焦点。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final searchField = find.descendant(
+      of: find.byType(RecordsSearchPage),
+      matching: find.byType(EditableText),
+    );
+    expect(searchField, findsOneWidget);
+    expect(
+      tester.widget<EditableText>(searchField).focusNode.hasFocus,
+      isFalse,
+    );
+
+    // 动画走完之后才要焦点，软键盘这时才弹出。
+    await tester.pump(const ZhixinMotion().emphasized);
+    await tester.pump();
+    expect(tester.widget<EditableText>(searchField).focusNode.hasFocus, isTrue);
     expect(tester.takeException(), isNull);
   });
 }
