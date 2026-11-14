@@ -6,7 +6,6 @@ import '../../domain/models/chat_message.dart';
 import '../../domain/models/conversation.dart';
 import '../../domain/models/material.dart';
 import '../../domain/models/question.dart';
-import '../../domain/rules/search_terms.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 
@@ -320,37 +319,6 @@ class ConversationRepository {
       );
     }
     return result;
-  }
-
-  /// 按题干、出处与材料摘录找有作答记录的学习记录；用户主动检索时不按目标筛选。
-  Future<List<Question>> searchQuestions(
-    String query, {
-    int? limit = 10,
-  }) async {
-    final terms = searchTerms(query);
-    if (terms.isEmpty) return const [];
-    final where = <String>[];
-    final args = <Object?>[];
-    for (final term in terms) {
-      where.add(
-        '($_firstUserContent LIKE ? OR c.source_ref LIKE ? '
-        'OR c.context_text LIKE ?)',
-      );
-      args
-        ..add('%$term%')
-        ..add('%$term%')
-        ..add('%$term%');
-    }
-    final rows = await _db.rawQuery(
-      '$_questionSelect FROM conversation c '
-      'WHERE EXISTS '
-      '(SELECT 1 FROM attempt a WHERE a.conversation_id = c.id) '
-      'AND (${where.join(' OR ')}) '
-      'ORDER BY c.updated_at DESC, c.id DESC '
-      '${limit == null ? '' : 'LIMIT ?'}',
-      limit == null ? args : [...args, limit],
-    );
-    return rows.map(_recordQuestion).toList(growable: false);
   }
 
   /// 最近提交的作答，带上所属记录，给首页与模型上下文用。
@@ -673,78 +641,6 @@ class ConversationRepository {
     );
   }
 
-  /// 按关键词找较早的相关消息。
-  ///
-  /// 回答上下文默认只取同一目标或同样无归属的讨论；用户主动检索时把
-  /// `restrictToGoal` 设为 false，搜索结果覆盖全部讨论。
-  Future<List<RelatedRecord>> searchMessages(
-    String query, {
-    int? goalId,
-    bool restrictToGoal = true,
-    int? excludeConversationId,
-    int? limit = 6,
-  }) async {
-    final terms = searchTerms(query);
-    if (terms.isEmpty) return const [];
-    final where = <String>[];
-    final args = <Object?>[];
-    if (excludeConversationId != null) {
-      where.add('c.id != ?');
-      args.add(excludeConversationId);
-    }
-    if (restrictToGoal) {
-      if (goalId == null) {
-        where.add('c.goal_id IS NULL');
-      } else {
-        where.add('(c.goal_id = ? OR c.goal_id IS NULL)');
-        args.add(goalId);
-      }
-    }
-    where.add("m.role IN ('user', 'assistant') AND m.content != ''");
-    where.add(
-      '(${List.filled(terms.length, 'm.content LIKE ?').join(' OR ')})',
-    );
-    args.addAll(terms.map((term) => '%$term%'));
-    final nestedMatch =
-        '(${List.filled(terms.length, 'm2.content LIKE ?').join(' OR ')})';
-    final relevance = terms
-        .map((_) => '(CASE WHEN m2.content LIKE ? THEN 1 ELSE 0 END)')
-        .join(' + ');
-    final outerRelevance = terms
-        .map((_) => '(CASE WHEN m.content LIKE ? THEN 1 ELSE 0 END)')
-        .join(' + ');
-    args.addAll(terms.map((term) => '%$term%'));
-    args.addAll(terms.map((term) => '%$term%'));
-    args.addAll(terms.map((term) => '%$term%'));
-    final rows = await _db.rawQuery('''
-      SELECT m.conversation_id, m.content, m.created_at,
-        c.title AS conversation_title
-      FROM message m JOIN conversation c ON c.id = m.conversation_id
-      WHERE ${where.join(' AND ')}
-        AND m.id = (
-          SELECT m2.id FROM message m2
-          WHERE m2.conversation_id = c.id
-            AND m2.role IN ('user', 'assistant') AND m2.content != ''
-            AND $nestedMatch
-          ORDER BY $relevance DESC, m2.id DESC
-          LIMIT 1
-        )
-      ORDER BY $outerRelevance DESC, m.id DESC
-      ${limit == null ? '' : 'LIMIT ?'}
-      ''', limit == null ? args : [...args, limit]);
-    return rows
-        .map(
-          (row) => RelatedRecord(
-            conversationId: row['conversation_id']! as int,
-            content: row['content']! as String,
-            title: row['conversation_title'] as String?,
-            createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-            snippetText: searchSnippet(row['content']! as String, terms),
-          ),
-        )
-        .toList(growable: false);
-  }
-
   /// 结束一次求助；之后再发消息会重新打开同一条讨论。
   Future<void> end(int conversationId) async {
     final now = formatDateTime(_clock());
@@ -986,3 +882,4 @@ class ConversationRepository {
     return text == null || text.isEmpty ? null : text;
   }
 }
+
