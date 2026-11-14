@@ -448,17 +448,13 @@ class _Harness {
           await repository.literal(normalized, scope: scope, limitPerKind: 40),
         ).hits;
       case 'bm25':
+        // 关键词候选已经由 FTS5 索引按 bm25() 排好，这里只折成分数。
         final keywordHits = await repository.keyword(
           normalized,
           scope: scope,
           limitPerKind: 40,
         );
-        final ranked = await rankKeywordCandidates(keywordHits, normalized);
-
-        return [
-          for (var index = 0; index < ranked.length; index++)
-            ranked[index].copyWith(score: 40 - index * 0.1),
-        ];
+        return scoreKeywordCandidates(keywordHits);
       case 'hybrid':
         final service = EvidenceService(repository: repository);
         return (await service.forAnswer(

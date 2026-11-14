@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/data/db/fts.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/schema.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
@@ -22,16 +23,27 @@ void main() {
     );
     final names = {for (final row in tables) row['name']! as String};
     expect(names, containsAll(schemaTableNames()));
-    final businessNames = names.where((name) => !name.startsWith('rev_stage_'));
+    // 关键词索引表与影子表不进业务表计数，也不参与版本采集。
+    final businessNames = names.where(
+      (name) =>
+          !name.startsWith('rev_stage_') && !ftsTableNames().contains(name),
+    );
     expect(businessNames.length, schemaTableNames().length);
+    expect(names, containsAll(ftsTableNames()));
     final classified = {
       ...versionedTableNames,
       ...revisionMetadataTables,
       ...nonVersionedPersistentTables,
     };
-    for (final table in names) {
-      if (table.startsWith('rev_stage_')) continue;
+    for (final table in businessNames) {
       expect(classified, contains(table), reason: '表 $table 没有登记版本分类');
+    }
+    for (final table in versionedTableNames) {
+      expect(
+        ftsTableNames(),
+        isNot(contains(table)),
+        reason: '关键词索引表 $table 不能登记为业务表',
+      );
     }
     final triggers = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'trigger'",

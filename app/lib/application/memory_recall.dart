@@ -1,8 +1,6 @@
-import 'package:bm25/bm25.dart';
-
 import '../data/repository/memory_repository.dart';
 import '../domain/models/memory.dart';
-import '../domain/rules/chinese_tokens.dart';
+import '../domain/rules/binary_bigrams.dart';
 
 /// 按本次用途挑选记忆，给回答提示词使用。
 ///
@@ -39,7 +37,7 @@ class MemoryRecallService {
       for (final memory in candidates)
         if (memory.kind != MemoryKind.constraint) memory,
     ];
-    final ranks = await _relevanceRanks(rest, query);
+    final ranks = _relevanceRanks(rest, query);
     final preferred = _preferredKinds(purpose);
     final positions = {
       for (var index = 0; index < rest.length; index++) rest[index].id: index,
@@ -88,27 +86,28 @@ class MemoryRecallService {
     };
   }
 
-  /// 按记忆正文的 BM25 名次；没有查询或只有一个候选时保持原顺序。
-  static Future<Map<int, int>> _relevanceRanks(
-    List<Memory> memories,
-    String query,
-  ) async {
+  /// 按记忆正文的相关性给候选排名次；没有查询或只有一个候选时保持原顺序。
+  ///
+  /// 记忆条数远小于材料页与消息，因此不另建索引表（ADR-0013 第 7 条）：用
+  /// 与关键词索引同一套二元组切分，按命中的词数打分，命中的词越多名次越前。
+  static Map<int, int> _relevanceRanks(List<Memory> memories, String query) {
     if (memories.length < 2 || query.trim().isEmpty) return const {};
-    final docs = [for (final memory in memories) bm25IndexText(memory.content)];
-    final engine = await BM25.build(docs);
-    try {
-      final results = await engine.search(
-        bm25IndexText(query),
-        limit: docs.length,
-      );
-      return {
-        for (final (rank, result) in results.indexed)
-          if (result.doc.id >= 0 && result.doc.id < memories.length)
-            result.doc.id: rank,
-      };
-    } finally {
-      await engine.dispose();
-    }
+    final wanted = bigrams(query).toSet();
+    if (wanted.isEmpty) return const {};
+    final scores = <int, int>{
+      for (var index = 0; index < memories.length; index++)
+        index: bigrams(memories[index].content)
+            .toSet()
+            .intersection(wanted)
+            .length,
+    };
+    // 并列时按原有顺序，名次因此稳定。
+    final order = List<int>.generate(memories.length, (index) => index);
+    order.sort((left, right) {
+      final byScore = scores[right]!.compareTo(scores[left]!);
+      return byScore != 0 ? byScore : left.compareTo(right);
+    });
+    return {for (final (rank, index) in order.indexed) index: rank};
   }
 
   static int _compareUpdated(Memory left, Memory right) {

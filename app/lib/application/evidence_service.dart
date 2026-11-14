@@ -28,20 +28,12 @@ class SearchWindow {
 /// 索引提供，读取时另行核对版本与范围。关键词候选交给 BM25 排序，字面命中
 /// 固定在前面，题号、页码与原句不会因为排序被挤掉。
 class EvidenceService {
-  EvidenceService({
-    required this.repository,
-    this.semantic,
-    this.crossSession,
-    this.bm25Ranking = true,
-  });
+  EvidenceService({required this.repository, this.semantic, this.crossSession});
 
   final EvidenceRepository repository;
 
   /// 语义检索；没有配置或暂不可用时只使用原文与关键词。
   final SemanticIndexService? semantic;
-
-  /// 是否用 BM25 重排关键词候选；对照结果不通过时可以关掉。
-  final bool bm25Ranking;
 
   /// 跨次综合；查询带有显式时间或回看意图时补齐同题的各次作答。
   final CrossSessionService? crossSession;
@@ -166,15 +158,11 @@ class EvidenceService {
                   excludePage: excludePage,
                 )
         : <EvidenceHit>[];
-    var rankMs = 0;
-    if (bm25Ranking && keywordHits.length > 1) {
-      final started = Stopwatch()..start();
-      final ranked = await rankKeywordCandidates(keywordHits, shape.text);
-      rankMs = started.elapsedMilliseconds;
-      keywordHits = [
-        for (var index = 0; index < ranked.length; index++)
-          ranked[index].copyWith(score: 40 - index * 0.1),
-      ];
+    // 关键词候选已经由索引按 bm25() 排好，这里只折成分数；排序耗时算在查询里，
+    // 不再单独计时。
+    final rankMs = 0;
+    if (keywordHits.isNotEmpty) {
+      keywordHits = scoreKeywordCandidates(keywordHits);
     }
 
     // 语义候选只在回答前检索时加入；失败或超时只记为不可用，不阻断本次回答。

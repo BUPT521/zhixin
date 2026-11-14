@@ -1,4 +1,6 @@
+import '../db/fts.dart';
 import '../db/raw_executor.dart';
+import '../../domain/rules/binary_bigrams.dart';
 
 import '../../domain/models/evidence.dart';
 import '../../domain/models/material.dart';
@@ -879,7 +881,7 @@ class EvidenceRepository {
     }
     final (match, matchArgs) = literal
         ? _literalMatch(['m.content'], shape.text)
-        : _likeMatch('m.content', shape.terms);
+        : _ftsMatch('message_fts', shape.terms, 'm.id');
     where.add(match);
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
@@ -942,7 +944,7 @@ class EvidenceRepository {
             "COALESCE(c.source_ref, '')",
             "COALESCE(c.context_text, '')",
           ], shape.text)
-        : _questionLikeMatch(shape.terms);
+        : _ftsMatch('message_fts', shape.terms, _questionMessageId);
     where.add('($match)');
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
@@ -1024,7 +1026,7 @@ class EvidenceRepository {
             "COALESCE(a.solution, '')",
             "COALESCE(a.feedback, '')",
           ], shape.text)
-        : _answerLikeMatch(shape.terms);
+        : _ftsMatch('attempt_fts', shape.terms, 'a.id');
     where.add('($match)');
     args.addAll(matchArgs);
     final rows = await _db.rawQuery(
@@ -1141,17 +1143,8 @@ class EvidenceRepository {
         'm.title',
       ], shape.text);
     }
-    final match = <String>[];
-    final args = <Object?>[];
-    for (final term in shape.terms) {
-      match.add(
-        '(mp.content LIKE ? ESCAPE \'\\\' OR mp.label LIKE ? ESCAPE \'\\\' '
-        'OR m.title LIKE ? ESCAPE \'\\\')',
-      );
-      final pattern = '%${_escapeLike(term)}%';
-      args.addAll([pattern, pattern, pattern]);
-    }
-    return ('(${match.join(' OR ')})', args);
+    // 关键词走 FTS5 索引：词与索引的写法共用一套二元组切分。
+    return _ftsMatch('material_page_fts', shape.terms, 'mp.id');
   }
 
   /// 字面匹配：命中之后不能紧接数字、字母或下划线，避免 `例 3-2` 命中
@@ -1175,45 +1168,27 @@ class EvidenceRepository {
     return ('(${parts.join(' OR ')})', args);
   }
 
-  static (String, List<Object?>) _likeMatch(String column, List<String> terms) {
-    final match = terms.map((_) => '$column LIKE ? ESCAPE \'\\\'').join(' OR ');
-    return ('($match)', [for (final term in terms) '%${_escapeLike(term)}%']);
-  }
-
-  static (String, List<Object?>) _questionLikeMatch(List<String> terms) {
-    final match = <String>[];
-    final args = <Object?>[];
+  /// 关键词命中：交给 FTS5 的 `MATCH`，[keyColumn] 是业务表的行号列。
+  ///
+  /// 查询词与索引列用同一套二元组切分，重复的词只留一个，避免拼出很长的
+  /// `MATCH` 表达式；标点与引号一并去掉，不会成为 FTS5 的语法。
+  static (String, List<Object?>) _ftsMatch(
+    String table,
+    List<String> terms,
+    String keyColumn,
+  ) {
+    final tokens = <String>[];
     for (final term in terms) {
-      match.add(
-        '$_firstUserContent LIKE ? ESCAPE \'\\\' '
-        'OR c.source_ref LIKE ? ESCAPE \'\\\' '
-        'OR c.context_text LIKE ? ESCAPE \'\\\'',
-      );
-      final pattern = '%${_escapeLike(term)}%';
-      args.addAll([pattern, pattern, pattern]);
+      for (final token in bigrams(term)) {
+        if (!tokens.contains(token)) tokens.add(token);
+      }
     }
-    return ('(${match.join(' OR ')})', args);
+    if (tokens.isEmpty) return ('(0)', const []);
+    return (
+      '$keyColumn IN (SELECT rowid FROM "$table" WHERE "$table" MATCH ?)',
+      [ftsQuery(tokens)],
+    );
   }
-
-  static (String, List<Object?>) _answerLikeMatch(List<String> terms) {
-    final match = <String>[];
-    final args = <Object?>[];
-    for (final term in terms) {
-      match.add(
-        'a.user_answer LIKE ? ESCAPE \'\\\' '
-        'OR a.solution LIKE ? ESCAPE \'\\\' '
-        'OR a.feedback LIKE ? ESCAPE \'\\\'',
-      );
-      final pattern = '%${_escapeLike(term)}%';
-      args.addAll([pattern, pattern, pattern]);
-    }
-    return ('(${match.join(' OR ')})', args);
-  }
-
-  static String _escapeLike(String term) => term
-      .replaceAll('\\', '\\\\')
-      .replaceAll('%', '\\%')
-      .replaceAll('_', '\\_');
 
   static ({String where, List<Object?> args}) _conversationScope(
     EvidenceScope scope, {

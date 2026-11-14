@@ -26,9 +26,6 @@ dependencies:
   sqlite3: ^3.9.1
   sqlite3_vec: ^0.1.2
 
-  # 关键词排序：与原文一致的切词之后作为候选排序的对照路径。
-  bm25: ^2.2.3
-
   # 接模型：HTTP 直连，key 存 Android Keystore。
   http: ^1.6.0
   flutter_secure_storage: ^11.2.0

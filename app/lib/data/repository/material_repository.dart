@@ -1,7 +1,9 @@
 import 'dart:typed_data';
 
 import '../../domain/models/material.dart';
+import '../../domain/rules/binary_bigrams.dart';
 import '../../domain/rules/search_terms.dart';
+import '../db/fts.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/write_transactions.dart';
@@ -364,7 +366,8 @@ class MaterialRepository {
   /// 按关键词找材料页。
   ///
   /// 回答上下文默认只取同一目标或未归属的材料；用户主动检索时把
-  /// `restrictToGoal` 设为 false，搜索结果覆盖全部材料。
+  /// `restrictToGoal` 设为 false，搜索结果覆盖全部材料。关键词命中与排序都
+  /// 交给 FTS5 索引：候选由 `MATCH` 选出，先后按 `bm25()` 排。
   Future<List<MaterialHit>> search(
     String query, {
     int? goalId,
@@ -375,6 +378,13 @@ class MaterialRepository {
   }) async {
     final terms = searchTerms(query);
     if (terms.isEmpty) return const [];
+    final tokens = <String>[];
+    for (final term in terms) {
+      for (final token in bigrams(term)) {
+        if (!tokens.contains(token)) tokens.add(token);
+      }
+    }
+    if (tokens.isEmpty) return const [];
     final where = <String>[];
     final args = <Object?>[];
     if (restrictToGoal) {
@@ -391,36 +401,24 @@ class MaterialRepository {
         ..add(excludeMaterialId)
         ..add(excludePageNo ?? -1);
     }
-    final match = <String>[];
-    for (final term in terms) {
-      match.add('(mp.content LIKE ? OR mp.label LIKE ? OR m.title LIKE ?)');
-      args
-        ..add('%$term%')
-        ..add('%$term%')
-        ..add('%$term%');
-    }
-    where.add('(${match.join(' OR ')})');
-    final ranking = terms
-        .map(
-          (_) =>
-              '(CASE WHEN mp.content LIKE ? OR mp.label LIKE ? OR m.title LIKE ? '
-              'THEN 1 ELSE 0 END)',
-        )
-        .join(' + ');
-    for (final term in terms) {
-      args
-        ..add('%$term%')
-        ..add('%$term%')
-        ..add('%$term%');
-    }
-    final rows = await _db.rawQuery('''
+    where.add(
+      'mp.id IN (SELECT rowid FROM material_page_fts '
+      'WHERE material_page_fts MATCH ?)',
+    );
+    args.add(ftsQuery(tokens));
+    final rows = await _db.rawQuery(
+      '''
       SELECT mp.material_id, mp.page_no, mp.label, mp.content,
         m.title AS material_title, m.source_file_name
       FROM material_page mp JOIN material m ON m.id = mp.material_id
       WHERE ${where.join(' AND ')}
-      ORDER BY $ranking DESC, mp.material_id DESC, mp.page_no
+      ORDER BY (SELECT bm25(material_page_fts) FROM material_page_fts
+        WHERE material_page_fts MATCH ? AND rowid = mp.id),
+        mp.material_id DESC, mp.page_no
       ${limit == null ? '' : 'LIMIT ?'}
-      ''', limit == null ? args : [...args, limit]);
+      ''',
+      [...args, ftsQuery(tokens), ?limit],
+    );
     return rows
         .map(
           (row) => MaterialHit(

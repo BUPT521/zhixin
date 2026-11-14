@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../db/fts.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
@@ -844,6 +845,9 @@ class RevisionEngine {
       final current = await readProjection(txn);
       await _replaceProjection(txn, targetProjection);
       await _verifyProjection(txn, targetProjection);
+      // 整版恢复期间采集触发器处于暂停状态，关键词索引的同步触发器同样不会
+      // 生效，因此在这里按业务行整份重建三张索引（ADR-0013 第 6 条）。
+      await _rebuildSearchIndexes(txn);
       final changes = _changesFromDiff(current, targetProjection, commitId);
       final parent = await commitById(txn, head);
       final now = formatDateTime(clock());
@@ -897,6 +901,16 @@ class RevisionEngine {
     final violations = await txn.rawQuery('PRAGMA foreign_key_check');
     if (violations.isNotEmpty) {
       throw RevisionCorruption('恢复后的数据存在外键错误');
+    }
+  }
+
+  /// 按业务行整份重建关键词索引；恢复、导入与撤销之后调用。
+  ///
+  /// FTS5 的 rebuild 命令会从外部内容表重新读一遍业务行，因此索引与业务数据
+  /// 永远一致，不需要逐个对比。索引表在恢复时被清空，这里一并补回来。
+  Future<void> _rebuildSearchIndexes(RawExecutor txn) async {
+    for (final index in ftsIndexes) {
+      await rebuildFtsIndex(txn, index);
     }
   }
 
@@ -1430,10 +1444,13 @@ Future<void> installRevisionSchema(RawDatabase db) async {
     columns: ['name'],
     where: "type = 'trigger' AND name NOT LIKE 'sqlite_%'",
   );
+  // 本程序自己装的关键词索引触发器保留，由 fts.dart 在再次打开时重建；
+  // 随库带来的其他触发器一律清掉，不给恢复后的第一次写入留下执行机会。
+  final indexTriggers = ftsTriggerNames();
   for (final row in existing) {
-    // 打开库时只保留本程序重建的采集触发器；随库带来的其他触发器一律清掉，
-    // 不给恢复后的第一次写入留下执行机会。
-    await db.execute('DROP TRIGGER IF EXISTS "${row['name']}"');
+    final name = row['name']! as String;
+    if (indexTriggers.contains(name)) continue;
+    await db.execute('DROP TRIGGER IF EXISTS "$name"');
   }
   for (final table in schema.values) {
     final stage = table.stageTable;

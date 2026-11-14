@@ -7,6 +7,7 @@ import '../../domain/rules/time_policy.dart';
 import '../revisions/revision_engine.dart';
 import 'drift/app_database.dart';
 import 'drift/drift_raw.dart';
+import 'fts.dart';
 import 'raw_executor.dart';
 
 /// 库文件与 schema 版本。库文件放在应用私有目录，导出时整份复制。
@@ -20,7 +21,9 @@ const List<String> zhixinDbSideFiles = ['-journal', '-wal', '-shm'];
 ///
 /// 表结构由 drift 的 [AppDatabase] 建立；版本与当前结构不一致时清空所有表
 /// 并按当前结构重建：开发期只有可丢弃的测试数据，旧库整体重建，不进入升级
-/// 路径（ADR-0002）。打开成功后安装采集暂存表与触发器，并写入 schema 版本。
+/// 路径（ADR-0002）。打开成功后先建关键词索引与同步触发器，再安装采集暂存表
+/// 与触发器：版本引擎会删掉库里所有非 `sqlite_` 前缀的触发器，索引的触发器
+/// 因此必须在它之前装好（ADR-0013），最后写入 schema 版本。
 Future<RawDatabase> openZhixinDatabase({
   required String path,
   Clock clock = systemClock,
@@ -30,6 +33,7 @@ Future<RawDatabase> openZhixinDatabase({
   // 触发一次查询，让 drift 完成建表与迁移。
   await raw.rawQuery('PRAGMA user_version');
   await _seed(raw, zhixinSchemaVersion, clock);
+  await installFtsSchema(raw);
   await RevisionEngine(clock: clock).initialize(raw);
   return raw;
 }

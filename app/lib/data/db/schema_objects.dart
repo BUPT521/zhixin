@@ -1,17 +1,19 @@
 import 'raw_executor.dart';
 
 import '../revisions/revision_engine.dart';
+import 'fts.dart';
 import 'schema.dart';
 
 /// 当前数据库允许出现的对象；恢复预检与版本库备份共用这一份清单。
 ///
 /// 版本库备份是整库快照，除了业务表和版本元数据，还会带上打开库时重建的采集
-/// 暂存表、索引与触发器。允许随包进入的只有这份清单里的对象；名称不在其中的
-/// 表、索引、触发器或视图一律拒绝，避免包在恢复后的第一次写入时执行它带来的
-/// SQL。
+/// 暂存表、索引与触发器，以及按业务表结构重算的 FTS5 索引表与同步触发器。
+/// 允许随包进入的只有这份清单里的对象；名称不在其中的表、索引、触发器或视图
+/// 一律拒绝，避免包在恢复后的第一次写入时执行它带来的 SQL。
 Set<String> allowedDatabaseTableNames() => {
   ...schemaTableNames(),
   for (final table in versionedTableNames) 'rev_stage_$table',
+  ...ftsTableNames(),
 };
 
 Set<String> allowedDatabaseIndexNames() {
@@ -33,6 +35,7 @@ Set<String> allowedDatabaseTriggerNames() => {
   for (final table in versionedTableNames)
     for (final operation in const ['insert', 'update', 'delete'])
       'rev_capture_${table}_$operation',
+  ...ftsTriggerNames(),
 };
 
 /// 列出不在允许清单里的数据库对象；空表示结构与当前程序一致。
