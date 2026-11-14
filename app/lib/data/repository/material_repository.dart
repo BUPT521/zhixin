@@ -63,11 +63,20 @@ class MaterialRepository {
   }
 
   /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect() {
-    final connection = _db.driftConnection;
+  AppDatabase _connect([RawExecutor? executor]) {
+    final connection = (executor ?? _db).driftConnection;
     if (connection is AppDatabase) return connection;
     throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
+
+  /// 页码行的字段与领域模型同名，只补时间解析。
+  static MaterialPage _pageOf(MaterialPageRow row) => MaterialPage(
+    id: row.id,
+    materialId: row.materialId,
+    pageNo: row.pageNo,
+    content: row.content,
+    label: row.label,
+  );
 
   /// 材料的两条查询挑的列相同，按同一组字段还原成领域模型。
   static Material _material(
@@ -137,13 +146,8 @@ class MaterialRepository {
   }
 
   Future<List<MaterialPage>> pages(int materialId) async {
-    final rows = await _db.query(
-      'material_page',
-      where: 'material_id = ?',
-      whereArgs: [materialId],
-      orderBy: 'page_no',
-    );
-    return rows.map(MaterialPage.fromRow).toList(growable: false);
+    final rows = await _connect().pagesOfMaterial(materialId).get();
+    return rows.map(_pageOf).toList(growable: false);
   }
 
   /// 材料里某一页范围；做学习计划与带入原文时只读选中范围。
@@ -154,23 +158,10 @@ class MaterialRepository {
     int? pageFrom,
     int? pageTo,
   }) async {
-    final where = <String>['material_id = ?'];
-    final args = <Object?>[materialId];
-    if (pageFrom != null) {
-      where.add('page_no >= ?');
-      args.add(pageFrom);
-    }
-    if (pageTo != null) {
-      where.add('page_no <= ?');
-      args.add(pageTo);
-    }
-    final rows = await _db.query(
-      'material_page',
-      where: where.join(' AND '),
-      whereArgs: args,
-      orderBy: 'page_no',
-    );
-    return rows.map(MaterialPage.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .pagesInRange(materialId, pageFrom ?? 0, pageTo ?? 0)
+        .get();
+    return rows.map(_pageOf).toList(growable: false);
   }
 
   Future<({int? first, int? last})> pageBounds(int materialId) async {
@@ -180,13 +171,10 @@ class MaterialRepository {
   }
 
   Future<MaterialPage?> page(int materialId, int pageNo) async {
-    final rows = await _db.query(
-      'material_page',
-      where: 'material_id = ? AND page_no = ?',
-      whereArgs: [materialId, pageNo],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : MaterialPage.fromRow(rows.first);
+    final row = await _connect()
+        .materialPageByNumber(materialId, pageNo)
+        .getSingleOrNull();
+    return row == null ? null : _pageOf(row);
   }
 
   /// 按页编号取这一页；更正时在同一个事务里读修改前的整行。
@@ -194,11 +182,9 @@ class MaterialRepository {
     int pageId, {
     WriteTransaction? transaction,
   }) async {
-    final rows = await writeExecutor(
-      transaction,
-      _db,
-    ).query('material_page', where: 'id = ?', whereArgs: [pageId], limit: 1);
-    return rows.isEmpty ? null : MaterialPage.fromRow(rows.first);
+    final executor = writeExecutor(transaction, _db);
+    final row = await _connect(executor).pageById(pageId).getSingleOrNull();
+    return row == null ? null : _pageOf(row);
   }
 
   /// 新增一页；同一材料同一页码已有原文时抛出 [PageNumberTaken]，不覆盖。
@@ -239,13 +225,10 @@ class MaterialRepository {
     if (pageNo <= 0) throw ArgumentError('页码从 1 开始');
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('这一页还没有内容');
-    final rows = await executor.query(
-      'material_page',
-      where: 'material_id = ? AND page_no = ?',
-      whereArgs: [materialId, pageNo],
-      limit: 1,
-    );
-    if (rows.isNotEmpty) throw PageNumberTaken(pageNo);
+    final existing = await _connect(executor)
+        .materialPageByNumber(materialId, pageNo)
+        .getSingleOrNull();
+    if (existing != null) throw PageNumberTaken(pageNo);
     final now = formatDateTime(_clock());
     final id = await executor.insert('material_page', {
       'material_id': materialId,
@@ -292,14 +275,10 @@ class MaterialRepository {
   }) async {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('这一页还没有内容');
-    final rows = await executor.query(
-      'material_page',
-      columns: ['material_id'],
-      where: 'id = ?',
-      whereArgs: [pageId],
-      limit: 1,
-    );
-    if (rows.isEmpty) throw StateError('这一页已不存在');
+    final materialId = await _connect(executor)
+        .pageMaterialId(pageId)
+        .getSingleOrNull();
+    if (materialId == null) throw StateError('这一页已不存在');
     final now = formatDateTime(_clock());
     await executor.update(
       'material_page',
@@ -307,7 +286,7 @@ class MaterialRepository {
       where: 'id = ?',
       whereArgs: [pageId],
     );
-    await _touch(rows.first['material_id']! as int, now, executor: executor);
+    await _touch(materialId, now, executor: executor);
   }
 
   /// 在同一事务内创建材料及导入的全部页码。
@@ -358,13 +337,9 @@ class MaterialRepository {
   }
 
   Future<Uint8List?> sourceFileBytes(int materialId) async {
-    final rows = await _db.query(
-      'material',
-      columns: ['source_file_hash'],
-      where: 'id = ?',
-      whereArgs: [materialId],
-    );
-    final hash = rows.firstOrNull?['source_file_hash'] as String?;
+    final hash = await _connect()
+        .materialFileHash(materialId)
+        .getSingleOrNull();
     return hash == null ? null : AssetStore().readBytes(_db, hash);
   }
 
@@ -380,16 +355,12 @@ class MaterialRepository {
   }
 
   Future<void> deletePage(int pageId) async {
-    final rows = await _db.query(
-      'material_page',
-      columns: ['material_id'],
-      where: 'id = ?',
-      whereArgs: [pageId],
-      limit: 1,
-    );
+    final materialId = await _connect()
+        .pageMaterialId(pageId)
+        .getSingleOrNull();
     await _db.delete('material_page', where: 'id = ?', whereArgs: [pageId]);
-    if (rows.isNotEmpty) {
-      await _touch(rows.first['material_id']! as int, formatDateTime(_clock()));
+    if (materialId != null) {
+      await _touch(materialId, formatDateTime(_clock()));
     }
   }
 
