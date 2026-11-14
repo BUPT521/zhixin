@@ -955,7 +955,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('已完成事项按需构建并分页，切回事项页签时保留滚动位置', (tester) async {
+  testWidgets('已完成事项滚动时自动续读，切回事项页签时保留滚动位置', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
       for (var i = 0; i < 32; i++) {
@@ -979,18 +979,19 @@ void main() {
     await settle(tester);
     expect(find.text('已完成事项 31'), findsOneWidget);
     expect(find.text('已完成事项 2'), findsNothing);
+    expect(find.byType(LoadMoreFooter), findsNothing);
 
-    final more = find.text('读取更早的已完成事项（还剩 2 项）');
-    await tester.scrollUntilVisible(more, 350, scrollable: scrollable);
-    await tester.ensureVisible(more);
-    await tester.pumpAndSettle();
-    await tester.tap(more.hitTestable());
-    await settle(tester);
     await tester.scrollUntilVisible(
-      find.text('已完成事项 0'),
-      150,
+      find.text('已完成事项 2'),
+      350,
       scrollable: scrollable,
     );
+    await settle(tester);
+    await tester.drag(scrollable, const Offset(0, -350));
+    await tester.pumpAndSettle();
+    expect(find.text('已完成事项 0').hitTestable(), findsOneWidget);
+    expect(find.text('已完成事项 1').hitTestable(), findsOneWidget);
+    expect(find.byType(LoadMoreFooter), findsNothing);
 
     final offset = tester.state<ScrollableState>(scrollable).position.pixels;
     expect(offset, greaterThan(0));
@@ -999,6 +1000,7 @@ void main() {
     await tester.tap(find.text('事项'));
     await tester.pumpAndSettle();
     expect(tester.state<ScrollableState>(scrollable).position.pixels, offset);
+    expect(find.text('已完成事项 0').hitTestable(), findsOneWidget);
 
     final collapse = find.text('收起已完成');
     await tester.scrollUntilVisible(collapse, -350, scrollable: scrollable);

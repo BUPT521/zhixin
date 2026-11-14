@@ -87,6 +87,8 @@ class _PlanPageState extends State<PlanPage> {
   bool _doneLoaded = false;
   bool _loadingDone = false;
   bool _hasMoreDone = false;
+  bool _doneLoadFailed = false;
+  bool _doneLoadScheduled = false;
   static const int _donePageSize = 30;
 
   bool get _active =>
@@ -199,6 +201,7 @@ class _PlanPageState extends State<PlanPage> {
         _doneLoaded = false;
         _loadingDone = false;
         _hasMoreDone = false;
+        _doneLoadFailed = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || request != _weekRequest) return;
@@ -269,9 +272,12 @@ class _PlanPageState extends State<PlanPage> {
   /// 展开或继续读取已完成事项；一次读一页，顺序按最近完成时间。
   Future<void> _loadDone({bool reset = false}) async {
     final week = _week;
-    if (week == null || _loadingDone) return;
+    if (week == null || _loadingDone || (!reset && !_hasMoreDone)) return;
     final offset = reset ? 0 : _doneItems.length;
-    setState(() => _loadingDone = true);
+    setState(() {
+      _loadingDone = true;
+      _doneLoadFailed = false;
+    });
     try {
       final page = await AppScope.of(context).study.plan
           .doneItems(limit: _donePageSize, offset: offset);
@@ -279,7 +285,9 @@ class _PlanPageState extends State<PlanPage> {
       setState(() {
         _doneItems = reset ? page : [..._doneItems, ...page];
         _doneLoaded = true;
-        _hasMoreDone = _doneItems.length < week.doneItemCount;
+        _hasMoreDone =
+            page.length == _donePageSize &&
+            _doneItems.length < week.doneItemCount;
         _loadingDone = false;
       });
     } catch (error, stack) {
@@ -291,15 +299,46 @@ class _PlanPageState extends State<PlanPage> {
         action: '读取已完成事项',
         kind: 'plan_done_read',
         kept: '已经读出的内容保持不变',
-        next: '可以合上已完成再展开重试',
+        next: reset ? '可以再次展开已完成事项' : '可以在列表底部重试',
       );
       setState(() {
         _loadingDone = false;
-        _error = message;
+        _doneLoadFailed = !reset;
       });
       showToast(context, message);
     }
   }
+
+  /// 事项页签滚到距底部一屏以内时续读，收起列表或刷新后丢弃已排队的请求。
+  bool _onItemsScroll(ScrollNotification notification) {
+    final metrics = notification.metrics;
+    if (notification.depth != 0 ||
+        (notification is! ScrollUpdateNotification &&
+            notification is! OverscrollNotification) ||
+        metrics.extentAfter > metrics.viewportDimension ||
+        _doneLoadScheduled ||
+        !_canLoadMoreDone) {
+      return false;
+    }
+    final items = _doneItems;
+    _doneLoadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _doneLoadScheduled = false;
+      if (mounted && _canLoadMoreDone && identical(items, _doneItems)) {
+        _loadDone();
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+    return false;
+  }
+
+  bool get _canLoadMoreDone =>
+      _active &&
+      _tab == 1 &&
+      _doneLoaded &&
+      _hasMoreDone &&
+      !_loadingDone &&
+      !_doneLoadFailed;
 
   Future<void> _addGoal() async {
     final draft = await showGoalDialog(context);
@@ -1140,27 +1179,30 @@ class _PlanPageState extends State<PlanPage> {
   Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
       RefreshIndicator(
         onRefresh: _load,
-        child: CustomScrollView(
-          key: PageStorageKey<String>('plan-tab-$tab'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                theme.space.page,
-                theme.space.xs,
-                theme.space.page,
-                theme.space.section + 4,
+        child: NotificationListener<ScrollNotification>(
+          onNotification: tab == 1 ? _onItemsScroll : null,
+          child: CustomScrollView(
+            key: PageStorageKey<String>('plan-tab-$tab'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  theme.space.page,
+                  theme.space.xs,
+                  theme.space.page,
+                  theme.space.section + 4,
+                ),
+                sliver: SliverMainAxisGroup(
+                  slivers: switch (tab) {
+                    0 => _scheduleTab(theme, week),
+                    1 => _itemsTab(theme, week),
+                    2 => _goalsTab(theme, week),
+                    _ => _operationsTab(theme, week),
+                  },
+                ),
               ),
-              sliver: SliverMainAxisGroup(
-                slivers: switch (tab) {
-                  0 => _scheduleTab(theme, week),
-                  1 => _itemsTab(theme, week),
-                  2 => _goalsTab(theme, week),
-                  _ => _operationsTab(theme, week),
-                },
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
 
@@ -1562,7 +1604,7 @@ class _PlanPageState extends State<PlanPage> {
 
   List<Widget> _doneSection(ZhixinTheme theme, PlanWeek week) {
     final items = _doneItems;
-    final hasFooter = _loadingDone || _hasMoreDone;
+    final hasFooter = _loadingDone || _doneLoadFailed;
     return [
       SliverToBoxAdapter(
         child: Padding(
@@ -1583,6 +1625,7 @@ class _PlanPageState extends State<PlanPage> {
                       setState(() {
                         _doneLoaded = false;
                         _hasMoreDone = false;
+                        _doneLoadFailed = false;
                       });
                     },
               suffix: Icon(
@@ -1614,7 +1657,7 @@ class _PlanPageState extends State<PlanPage> {
               );
             }
             return LoadMoreFooter(
-              label: '读取更早的已完成事项（还剩 ${week.doneItemCount - items.length} 项）',
+              label: '重试读取更早的已完成事项',
               loading: false,
               onPressed: () => _loadDone(),
             );
