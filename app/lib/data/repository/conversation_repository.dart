@@ -39,39 +39,105 @@ class ConversationRepository {
   static const String _materialFileName =
       '(SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name';
 
-  /// 未提交草稿的保存时间；写草稿不改 `conversation.updated_at`。
-  static const String _draftUpdatedAt =
-      '(SELECT a.updated_at FROM attempt a WHERE a.conversation_id = c.id '
-      'AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1)';
-
-  /// 记录列表共用的列：列表展示与“继续上次”判断都读这一份。
-  static const String _recordColumns =
-      '''
-      SELECT c.*,
-        (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id)
-          AS message_count,
-        (SELECT m.content FROM message m WHERE m.conversation_id = c.id
-          ORDER BY m.id DESC LIMIT 1) AS preview,
-        (SELECT m.content FROM message m WHERE m.conversation_id = c.id
-          AND m.role = 'user' ORDER BY m.id DESC LIMIT 1) AS last_user_message,
-        (SELECT a.user_answer FROM attempt a WHERE a.conversation_id = c.id
-          AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1)
-          AS draft_answer,
-        $_draftUpdatedAt AS draft_updated_at,
-        (SELECT title FROM material WHERE id = c.material_id)
-          AS material_title,
-        $_materialFileName,
-        EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)
-          AS has_attempts,
-        EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id
-          AND a.submitted_at IS NULL) AS has_draft''';
-
   /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
   AppDatabase _connect([RawExecutor? executor]) {
     final connection = (executor ?? _db).driftConnection;
     if (connection is AppDatabase) return connection;
     throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
+
+  /// 列表与“继续上次”挑的列相同，按同一组字段还原成领域模型。
+  static ConversationRecord _record(
+    int id,
+    String? title,
+    int? goalId,
+    int? materialId,
+    int? pageNo,
+    String? materialTitle,
+    String? sourceFileName,
+    String entryKind,
+    String status,
+    String? endedAt,
+    String? lastMessageAt,
+    String createdAt,
+    String updatedAt,
+    int messageCount,
+    String? preview,
+    String? lastUserMessage,
+    String? draftAnswer,
+    String? draftUpdatedAt,
+    bool hasAttempts,
+    bool hasDraft,
+  ) => ConversationRecord(
+    id: id,
+    title: title,
+    goalId: goalId,
+    materialId: materialId,
+    pageNo: pageNo,
+    materialTitle: materialTitle,
+    materialIsDocx: isDocxFile(sourceFileName),
+    entryKind: entryKind,
+    status: status,
+    endedAt: DateTime.tryParse(endedAt ?? ''),
+    lastMessageAt: DateTime.tryParse(lastMessageAt ?? ''),
+    createdAt: DateTime.tryParse(createdAt),
+    updatedAt: DateTime.tryParse(updatedAt),
+    messageCount: messageCount,
+    preview: preview,
+    lastUserMessage: lastUserMessage,
+    draftAnswer: draftAnswer,
+    draftUpdatedAt: DateTime.tryParse(draftUpdatedAt ?? ''),
+    hasAttempts: hasAttempts,
+    hasDraft: hasDraft,
+  );
+
+  static ConversationRecord _recordOfList(ConversationRecordsResult r) =>
+      _record(
+        r.id,
+        r.title,
+        r.goalId,
+        r.materialId,
+        r.pageNo,
+        r.materialTitle,
+        r.sourceFileName,
+        r.entryKind,
+        r.status,
+        r.endedAt,
+        r.lastMessageAt,
+        r.createdAt,
+        r.updatedAt,
+        r.messageCount,
+        r.preview,
+        r.lastUserMessage,
+        r.draftAnswer,
+        r.draftUpdatedAt,
+        r.hasAttempts,
+        r.hasDraft,
+      );
+
+  static ConversationRecord _recordOfRecent(RecentlyActiveRecordsResult r) =>
+      _record(
+        r.id,
+        r.title,
+        r.goalId,
+        r.materialId,
+        r.pageNo,
+        r.materialTitle,
+        r.sourceFileName,
+        r.entryKind,
+        r.status,
+        r.endedAt,
+        r.lastMessageAt,
+        r.createdAt,
+        r.updatedAt,
+        r.messageCount,
+        r.preview,
+        r.lastUserMessage,
+        r.draftAnswer,
+        r.draftUpdatedAt,
+        r.hasAttempts,
+        r.hasDraft,
+      );
 
   /// 按标识取的那条不读消息条数与草稿内容，未读的列按空值还原，与原来一致。
   static ConversationRecord _recordOf(ConversationByIdResult r) =>
@@ -240,28 +306,16 @@ class ConversationRepository {
     int? limit = 200,
     int offset = 0,
   }) async {
-    final where = <String>[];
-    final args = <Object?>[];
-    if (goalId != null) {
-      where.add('c.goal_id = ?');
-      args.add(goalId);
-    }
-    if (unassignedOnly) {
-      where.add('c.goal_id IS NULL');
-    }
-    final statusWhere = _answerStatusWhere(answerStatus);
-    if (statusWhere != null) where.add(statusWhere);
-    final rows = await _db.rawQuery(
-      '''
-      $_recordColumns
-      FROM conversation c
-      ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
-      ORDER BY c.updated_at DESC, c.id DESC
-      ${limit == null ? '' : 'LIMIT ? OFFSET ?'}
-      ''',
-      [...args, ?limit, if (limit != null) offset],
-    );
-    return rows.map(ConversationRecord.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .conversationRecords(
+          goalId ?? 0,
+          unassignedOnly ? 1 : 0,
+          answerStatus ?? '',
+          limit ?? (1 << 30),
+          limit == null ? 0 : offset,
+        )
+        .get();
+    return rows.map(_recordOfList).toList(growable: false);
   }
 
   /// “继续上次”的候选记录：按最近一次学习行为取前 [limit] 条。
@@ -273,60 +327,8 @@ class ConversationRepository {
   /// 再排序相同，读取量只跟 [limit] 有关，不随记录总数增长。
   Future<List<ConversationRecord>> listRecentlyActive({int limit = 4}) async {
     if (limit <= 0) return const [];
-    final rows = await _db.rawQuery(
-      '''
-      WITH candidates AS (
-        SELECT id FROM (
-          SELECT c.id AS id FROM conversation c
-          ORDER BY c.updated_at DESC, c.id DESC LIMIT ?
-        )
-        UNION
-        SELECT conversation_id FROM (
-          SELECT a.conversation_id AS conversation_id FROM attempt a
-          WHERE a.submitted_at IS NULL
-          ORDER BY a.updated_at DESC, a.id DESC LIMIT ?
-        )
-      )
-      $_recordColumns
-      FROM conversation c
-      JOIN candidates ON candidates.id = c.id
-      ORDER BY max(c.updated_at, coalesce($_draftUpdatedAt, c.updated_at)) DESC,
-        c.id DESC
-      LIMIT ?
-      ''',
-      [limit, limit, limit],
-    );
-    return rows.map(ConversationRecord.fromRow).toList(growable: false);
-  }
-
-  /// 记录页的作答状态筛选；没有筛选时返回空。
-  ///
-  /// 状态由最近一次已提交的作答推出，与 [questionRows] 的 `last_attempt` 是
-  /// 同一条记录；没有提交过的记录算 `open`，与界面上的“未作答”一致。
-  static String? _answerStatusWhere(String? status) {
-    const latestSubmitted =
-        'a.id = (SELECT a2.id FROM attempt a2 WHERE a2.conversation_id = c.id '
-        'AND a2.submitted_at IS NOT NULL '
-        'ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1)';
-    switch (status) {
-      case 'open':
-        return 'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id) '
-            'AND NOT EXISTS (SELECT 1 FROM attempt a '
-            'WHERE a.conversation_id = c.id AND a.submitted_at IS NOT NULL)';
-      case 'correct':
-        return 'EXISTS (SELECT 1 FROM attempt a '
-            'WHERE a.conversation_id = c.id AND $latestSubmitted '
-            'AND a.is_correct = 1)';
-      case 'wrong':
-        return 'EXISTS (SELECT 1 FROM attempt a '
-            'WHERE a.conversation_id = c.id AND $latestSubmitted '
-            'AND a.is_correct = 0)';
-      case 'unjudged':
-        return 'EXISTS (SELECT 1 FROM attempt a '
-            'WHERE a.conversation_id = c.id AND $latestSubmitted '
-            'AND a.is_correct IS NULL)';
-    }
-    return null;
+    final rows = await _connect().recentlyActiveRecords(limit).get();
+    return rows.map(_recordOfRecent).toList(growable: false);
   }
 
   /// 一条学习记录对应的题目视图：题干与图片取开始作答时确定的用户消息。

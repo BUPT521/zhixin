@@ -11607,6 +11607,96 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<ConversationRecordsResult> conversationRecords(
+    int? goalId,
+    int unassignedOnly,
+    String answerStatus,
+    int rowLimit,
+    int rowOffset,
+  ) {
+    return customSelect(
+      'SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c WHERE(?1 = 0 OR c.goal_id = ?1)AND(?2 = 0 OR c.goal_id IS NULL)AND(?3 = \'\' OR(?3 = \'open\' AND EXISTS (SELECT 1 AS _c2 FROM attempt AS a WHERE a.conversation_id = c.id) AND NOT EXISTS (SELECT 1 AS _c3 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NOT NULL))OR(?3 = \'correct\' AND EXISTS (SELECT 1 AS _c4 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 1))OR(?3 = \'wrong\' AND EXISTS (SELECT 1 AS _c5 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 0))OR(?3 = \'unjudged\' AND EXISTS (SELECT 1 AS _c6 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct IS NULL)))ORDER BY c.updated_at DESC, c.id DESC LIMIT ?4 OFFSET ?5',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(unassignedOnly),
+        Variable<String>(answerStatus),
+        Variable<int>(rowLimit),
+        Variable<int>(rowOffset),
+      ],
+      readsFrom: {
+        this.messages,
+        this.conversations,
+        this.attempts,
+        this.materials,
+      },
+    ).map(
+      (QueryRow row) => ConversationRecordsResult(
+        id: row.read<int>('id'),
+        title: row.readNullable<String>('title'),
+        goalId: row.readNullable<int>('goal_id'),
+        materialId: row.readNullable<int>('material_id'),
+        pageNo: row.readNullable<int>('page_no'),
+        sourceRef: row.readNullable<String>('source_ref'),
+        contextText: row.readNullable<String>('context_text'),
+        questionMessageId: row.readNullable<int>('question_message_id'),
+        entryKind: row.read<String>('entry_kind'),
+        status: row.read<String>('status'),
+        endedAt: row.readNullable<String>('ended_at'),
+        lastMessageAt: row.readNullable<String>('last_message_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        messageCount: row.read<int>('message_count'),
+        preview: row.readNullable<String>('preview'),
+        lastUserMessage: row.readNullable<String>('last_user_message'),
+        draftAnswer: row.readNullable<String>('draft_answer'),
+        draftUpdatedAt: row.readNullable<String>('draft_updated_at'),
+        materialTitle: row.readNullable<String>('material_title'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        hasAttempts: row.read<bool>('has_attempts'),
+        hasDraft: row.read<bool>('has_draft'),
+      ),
+    );
+  }
+
+  Selectable<RecentlyActiveRecordsResult> recentlyActiveRecords(int limit) {
+    return customSelect(
+      'WITH candidates AS (SELECT id FROM (SELECT c.id AS id FROM conversation AS c ORDER BY c.updated_at DESC, c.id DESC LIMIT ?1) UNION SELECT conversation_id FROM (SELECT a.conversation_id AS conversation_id FROM attempt AS a WHERE a.submitted_at IS NULL ORDER BY a.updated_at DESC, a.id DESC LIMIT ?1)) SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c JOIN candidates ON candidates.id = c.id ORDER BY max(c.updated_at, coalesce((SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1), c.updated_at)) DESC, c.id DESC LIMIT ?1',
+      variables: [Variable<int>(limit)],
+      readsFrom: {
+        this.conversations,
+        this.attempts,
+        this.messages,
+        this.materials,
+      },
+    ).map(
+      (QueryRow row) => RecentlyActiveRecordsResult(
+        id: row.read<int>('id'),
+        title: row.readNullable<String>('title'),
+        goalId: row.readNullable<int>('goal_id'),
+        materialId: row.readNullable<int>('material_id'),
+        pageNo: row.readNullable<int>('page_no'),
+        sourceRef: row.readNullable<String>('source_ref'),
+        contextText: row.readNullable<String>('context_text'),
+        questionMessageId: row.readNullable<int>('question_message_id'),
+        entryKind: row.read<String>('entry_kind'),
+        status: row.read<String>('status'),
+        endedAt: row.readNullable<String>('ended_at'),
+        lastMessageAt: row.readNullable<String>('last_message_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        messageCount: row.read<int>('message_count'),
+        preview: row.readNullable<String>('preview'),
+        lastUserMessage: row.readNullable<String>('last_user_message'),
+        draftAnswer: row.readNullable<String>('draft_answer'),
+        draftUpdatedAt: row.readNullable<String>('draft_updated_at'),
+        materialTitle: row.readNullable<String>('material_title'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        hasAttempts: row.read<bool>('has_attempts'),
+        hasDraft: row.read<bool>('has_draft'),
+      ),
+    );
+  }
+
   Selectable<BlocksOverlappingResult> blocksOverlapping(
     String endAt,
     String startAt,
@@ -12550,6 +12640,108 @@ class QuestionRowsResult {
     this.lastAttemptDelayed,
     this.lastAttemptSubmittedAt,
     this.lastAttemptCreatedAt,
+    required this.hasDraft,
+  });
+}
+
+class ConversationRecordsResult {
+  final int id;
+  final String? title;
+  final int? goalId;
+  final int? materialId;
+  final int? pageNo;
+  final String? sourceRef;
+  final String? contextText;
+  final int? questionMessageId;
+  final String entryKind;
+  final String status;
+  final String? endedAt;
+  final String? lastMessageAt;
+  final String createdAt;
+  final String updatedAt;
+  final int messageCount;
+  final String? preview;
+  final String? lastUserMessage;
+  final String? draftAnswer;
+  final String? draftUpdatedAt;
+  final String? materialTitle;
+  final String? sourceFileName;
+  final bool hasAttempts;
+  final bool hasDraft;
+  ConversationRecordsResult({
+    required this.id,
+    this.title,
+    this.goalId,
+    this.materialId,
+    this.pageNo,
+    this.sourceRef,
+    this.contextText,
+    this.questionMessageId,
+    required this.entryKind,
+    required this.status,
+    this.endedAt,
+    this.lastMessageAt,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.messageCount,
+    this.preview,
+    this.lastUserMessage,
+    this.draftAnswer,
+    this.draftUpdatedAt,
+    this.materialTitle,
+    this.sourceFileName,
+    required this.hasAttempts,
+    required this.hasDraft,
+  });
+}
+
+class RecentlyActiveRecordsResult {
+  final int id;
+  final String? title;
+  final int? goalId;
+  final int? materialId;
+  final int? pageNo;
+  final String? sourceRef;
+  final String? contextText;
+  final int? questionMessageId;
+  final String entryKind;
+  final String status;
+  final String? endedAt;
+  final String? lastMessageAt;
+  final String createdAt;
+  final String updatedAt;
+  final int messageCount;
+  final String? preview;
+  final String? lastUserMessage;
+  final String? draftAnswer;
+  final String? draftUpdatedAt;
+  final String? materialTitle;
+  final String? sourceFileName;
+  final bool hasAttempts;
+  final bool hasDraft;
+  RecentlyActiveRecordsResult({
+    required this.id,
+    this.title,
+    this.goalId,
+    this.materialId,
+    this.pageNo,
+    this.sourceRef,
+    this.contextText,
+    this.questionMessageId,
+    required this.entryKind,
+    required this.status,
+    this.endedAt,
+    this.lastMessageAt,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.messageCount,
+    this.preview,
+    this.lastUserMessage,
+    this.draftAnswer,
+    this.draftUpdatedAt,
+    this.materialTitle,
+    this.sourceFileName,
+    required this.hasAttempts,
     required this.hasDraft,
   });
 }
