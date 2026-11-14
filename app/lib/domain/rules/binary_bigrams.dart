@@ -31,9 +31,6 @@ List<String> bigrams(String text) {
   return tokens;
 }
 
-/// 交给 FTS5 索引列的文本：片段之间用空格分开，分词器因此把每个片段当成一个词。
-String bigramIndexText(String text) => bigrams(text).join(' ');
-
 /// SQL 侧判断字母数字用的码位区间。
 ///
 /// 覆盖 ASCII、拉丁扩展、希腊、西里尔、希伯来、阿拉伯、天城文等南亚文字、

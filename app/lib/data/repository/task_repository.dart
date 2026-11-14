@@ -212,6 +212,26 @@ class TaskRepository {
     r.sourceFileName,
   );
 
+  static PlanItem _itemOfByStep(ItemByConversationAndStepResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
   static PlanItem _itemOfNextDue(NextDueItemResult r) => _item(
     r.id,
     r.goalId,
@@ -340,13 +360,10 @@ class TaskRepository {
     int conversationId,
     String stepId,
   ) async {
-    final rows = await _db.rawQuery(
-      "SELECT * FROM plan_item WHERE conversation_id = ? "
-      "AND json_extract(origin_json, '\$.step_id') = ? "
-      "ORDER BY id DESC LIMIT 1",
-      [conversationId, stepId],
-    );
-    return rows.isEmpty ? null : PlanItem.fromRow(rows.first);
+    final rows = await _connect()
+        .itemByConversationAndStep(conversationId, stepId)
+        .get();
+    return rows.isEmpty ? null : _itemOfByStep(rows.first);
   }
 
   /// 从讨论里接受建议后按标题找回刚才建立的事项，供重复请求返回原结果。

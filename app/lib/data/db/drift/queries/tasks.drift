@@ -54,6 +54,18 @@ WHERE p.conversation_id = :conversationId
 ORDER BY p.id DESC
 LIMIT 1;
 
+-- 这条讨论里同一个建议编号对应的事项；重复请求据此返回原结果。
+itemByConversationAndStep:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.conversation_id = :conversationId
+  AND json_extract(p.origin_json, '$.step_id') = :stepId
+ORDER BY p.id DESC
+LIMIT 1;
+
 -- 已完成事项，按最近完成时间从新到旧逐页读。
 doneItems:
 SELECT p.*,

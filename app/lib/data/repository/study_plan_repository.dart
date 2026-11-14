@@ -103,12 +103,10 @@ class StudyPlanRepository {
     if (plan == null) throw StateError('未找到这份学习计划');
     final now = formatDateTime(_clock());
     await _db.transaction((txn) async {
-      final rows = await txn.rawQuery(
-        'SELECT COALESCE(MAX(seq), 0) AS last FROM plan_item '
-        'WHERE study_plan_id = ?',
-        [planId],
-      );
-      var seq = ((rows.first['last'] as int?) ?? 0) + 1;
+      final lastSeq = await _connect(txn)
+          .lastPlanStepSeq(planId)
+          .getSingleOrNull();
+      var seq = (lastSeq ?? 0) + 1;
       for (final draft in drafts) {
         final title = draft.title.trim();
         if (title.isEmpty) continue;
@@ -134,8 +132,8 @@ class StudyPlanRepository {
   }
 
   /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect() {
-    final connection = _db.driftConnection;
+  AppDatabase _connect([RawExecutor? executor]) {
+    final connection = (executor ?? _db).driftConnection;
     if (connection is AppDatabase) return connection;
     throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
@@ -385,15 +383,8 @@ class StudyPlanRepository {
     if (status == PlanItemStatus.done) {
       // 只有确实发生过学习的预约才记为结束：场次与这段时间有重叠才算完成。
       // 到过开始时间却没有场次的旧预约按取消处理，不再把没学的那几次写成完成。
-      await txn.rawUpdate(
-        'UPDATE schedule_block SET status = CASE WHEN EXISTS ('
-        'SELECT 1 FROM study_session s WHERE s.plan_item_id = schedule_block.plan_item_id '
-        'AND s.started_at < schedule_block.end_at '
-        'AND COALESCE(s.ended_at, ?) > schedule_block.start_at'
-        ') THEN ? ELSE ? END, updated_at = ? '
-        'WHERE plan_item_id = ? AND status = ?',
-        [now, 'done', 'cancelled', now, itemId, 'planned'],
-      );
+      await _connect(txn)
+          .settleBlocksOnStepDone(now, 'done', 'cancelled', itemId, 'planned');
     }
     if (status == PlanItemStatus.deferred) {
       await txn.update(

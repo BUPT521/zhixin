@@ -11665,6 +11665,39 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<ItemByConversationAndStepResult> itemByConversationAndStep(
+    int? conversationId,
+    String stepId,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND json_extract(p.origin_json, \'\$.step_id\') = ?2 ORDER BY p.id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId), Variable<String>(stepId)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => ItemByConversationAndStepResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
   Selectable<DoneItemsResult> doneItems(
     String doneStatus,
     int rowLimit,
@@ -11894,6 +11927,35 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         updatedAt: row.read<String>('updated_at'),
         sourceFileName: row.readNullable<String>('source_file_name'),
       ),
+    );
+  }
+
+  Selectable<int> lastPlanStepSeq(int? planId) {
+    return customSelect(
+      'SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item WHERE study_plan_id = ?1',
+      variables: [Variable<int>(planId)],
+      readsFrom: {this.planItems},
+    ).map((QueryRow row) => row.read<int>('last_seq'));
+  }
+
+  Future<int> settleBlocksOnStepDone(
+    String now,
+    String doneStatus,
+    String cancelledStatus,
+    int itemId,
+    String plannedStatus,
+  ) {
+    return customUpdate(
+      'UPDATE schedule_block SET status = CASE WHEN EXISTS (SELECT 1 FROM study_session AS s WHERE s.plan_item_id = schedule_block.plan_item_id AND s.started_at < schedule_block.end_at AND COALESCE(s.ended_at, ?1) > schedule_block.start_at) THEN ?2 ELSE ?3 END, updated_at = ?1 WHERE plan_item_id = ?4 AND status = ?5',
+      variables: [
+        Variable<String>(now),
+        Variable<String>(doneStatus),
+        Variable<String>(cancelledStatus),
+        Variable<int>(itemId),
+        Variable<String>(plannedStatus),
+      ],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
     );
   }
 
@@ -12245,6 +12307,49 @@ class ItemByConversationResult {
   final String updatedAt;
   final String? sourceFileName;
   ItemByConversationResult({
+    required this.id,
+    this.goalId,
+    this.conversationId,
+    this.studyPlanId,
+    this.seq,
+    required this.title,
+    this.note,
+    this.pageFrom,
+    this.pageTo,
+    this.dueAt,
+    this.estMinutes,
+    required this.priority,
+    required this.status,
+    required this.source,
+    this.originJson,
+    this.completedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sourceFileName,
+  });
+}
+
+class ItemByConversationAndStepResult {
+  final int id;
+  final int? goalId;
+  final int? conversationId;
+  final int? studyPlanId;
+  final int? seq;
+  final String title;
+  final String? note;
+  final int? pageFrom;
+  final int? pageTo;
+  final String? dueAt;
+  final int? estMinutes;
+  final int priority;
+  final String status;
+  final String source;
+  final String? originJson;
+  final String? completedAt;
+  final String createdAt;
+  final String updatedAt;
+  final String? sourceFileName;
+  ItemByConversationAndStepResult({
     required this.id,
     this.goalId,
     this.conversationId,

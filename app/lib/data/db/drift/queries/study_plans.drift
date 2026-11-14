@@ -57,5 +57,16 @@ ORDER BY p.study_plan_id, p.seq, p.id;
 
 -- 计划下方的步骤里最大的顺序号；没有步骤时返回 0。
 lastPlanStepSeq:
-SELECT COALESCE(MAX(seq), 0) AS last FROM plan_item
+SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item
 WHERE study_plan_id = :planId;
+-- 完成一步时按是否真的学过回写预约状态：与场次有重叠的记为完成，
+-- 到过开始时间却没有场次的按取消处理。
+settleBlocksOnStepDone:
+UPDATE schedule_block SET status = CASE WHEN EXISTS (
+  SELECT 1 FROM study_session s
+  WHERE s.plan_item_id = schedule_block.plan_item_id
+    AND s.started_at < schedule_block.end_at
+    AND COALESCE(s.ended_at, :now) > schedule_block.start_at
+) THEN :doneStatus ELSE :cancelledStatus END,
+  updated_at = :now
+WHERE plan_item_id = :itemId AND status = :plannedStatus;
