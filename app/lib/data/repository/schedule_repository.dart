@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
@@ -98,11 +100,8 @@ class ScheduleRepository {
   final Clock _clock;
 
   Future<List<TimetableEntry>> timetable() async {
-    final rows = await _db.query(
-      'timetable_entry',
-      orderBy: 'weekday, start_time',
-    );
-    return rows.map(TimetableEntry.fromRow).toList(growable: false);
+    final rows = await _connect().allTimetableEntries().get();
+    return rows.map(_timetableOf).toList(growable: false);
   }
 
   /// 新增固定课表；先核对这条每周时段与既有预约是否重叠，再写入。
@@ -220,11 +219,9 @@ class ScheduleRepository {
         throw ArgumentError('结束时间要晚于开始时间');
       }
     }
-    final existing = await executor.query(
-      'schedule_block',
-      where: 'id IN (${List.filled(ids.length, '?').join(', ')})',
-      whereArgs: ids.toList(),
-    );
+    final existing = await _connect(executor)
+        .blocksByIds(jsonEncode(ids.toList()))
+        .get();
     if (existing.length != ids.length) {
       throw StateError('部分时间安排已被删除');
     }
@@ -311,14 +308,10 @@ class ScheduleRepository {
         (txn) => moveBlock(id, start: start, end: end, executor: txn),
       );
     }
-    final current = await executor.query(
-      'schedule_block',
-      columns: ['id'],
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    if (current.isEmpty) throw StateError('未找到这条时间安排');
+    final current = await _connect(executor)
+        .scheduleBlockById(id)
+        .getSingleOrNull();
+    if (current == null) throw StateError('未找到这条时间安排');
     await _ensureNoConflict(
       executor,
       start: start,
@@ -378,13 +371,10 @@ class ScheduleRepository {
     DateTime now, {
     RawExecutor? executor,
   }) async {
-    final rows = await (executor ?? _db).query(
-      'schedule_block',
-      where: "plan_item_id = ? AND status = 'planned' AND start_at >= ?",
-      whereArgs: [planItemId, formatDateTime(now)],
-      orderBy: 'start_at',
-    );
-    return rows.map(ScheduleBlock.fromRow).toList(growable: false);
+    final rows = await _connect(executor)
+        .upcomingBlocksForItem(planItemId, formatDateTime(now))
+        .get();
+    return rows.map(_blockOfRow).toList(growable: false);
   }
 
   /// 每个事项最近一次尚未结束的预约；正在进行的预约也在结果里。
@@ -397,17 +387,12 @@ class ScheduleRepository {
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
     if (ids.isEmpty) return const {};
-    final placeholders = List.filled(ids.length, '?').join(', ');
-    final rows = await _db.query(
-      'schedule_block',
-      where:
-          "plan_item_id IN ($placeholders) AND status = 'planned' AND end_at > ?",
-      whereArgs: [...ids, formatDateTime(now)],
-      orderBy: 'start_at, id',
-    );
+    final rows = await _connect()
+        .firstLiveBlockPerItem(jsonEncode(ids), formatDateTime(now))
+        .get();
     final result = <int, ScheduleBlock>{};
     for (final row in rows) {
-      final block = ScheduleBlock.fromRow(row);
+      final block = _blockOfRow(row);
       result.putIfAbsent(block.planItemId, () => block);
     }
     return result;
@@ -419,17 +404,12 @@ class ScheduleRepository {
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
     if (ids.isEmpty) return const {};
-    final placeholders = List.filled(ids.length, '?').join(', ');
-    final rows = await _db.query(
-      'schedule_block',
-      where:
-          "plan_item_id IN ($placeholders) AND status = 'planned' AND start_at >= ?",
-      whereArgs: [...ids, formatDateTime(now)],
-      orderBy: 'start_at',
-    );
+    final rows = await _connect()
+        .upcomingBlocksForItems(jsonEncode(ids), formatDateTime(now))
+        .get();
     final result = <int, List<ScheduleBlock>>{};
     for (final row in rows) {
-      final block = ScheduleBlock.fromRow(row);
+      final block = _blockOfRow(row);
       result.putIfAbsent(block.planItemId, () => []).add(block);
     }
     return result;
@@ -495,20 +475,14 @@ class ScheduleRepository {
       );
     }
     if (status == 'planned') {
-      final rows = await executor.query(
-        'schedule_block',
-        columns: ['start_at', 'end_at'],
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      if (rows.isEmpty) throw StateError('未找到这条时间安排');
-      final start = DateTime.parse(rows.first['start_at']! as String);
-      final end = DateTime.parse(rows.first['end_at']! as String);
+      final block = await _connect(executor)
+          .scheduleBlockById(id)
+          .getSingleOrNull();
+      if (block == null) throw StateError('未找到这条时间安排');
       await _ensureNoConflict(
         executor,
-        start: start,
-        end: end,
+        start: DateTime.parse(block.startAt),
+        end: DateTime.parse(block.endAt),
         excludeBlockId: id,
       );
     }
@@ -529,21 +503,33 @@ class ScheduleRepository {
   }
 
   Future<ScheduleBlock?> blockById(int id) async {
-    final rows = await _db.query(
-      'schedule_block',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    return rows.isEmpty ? null : ScheduleBlock.fromRow(rows.first);
+    final row = await _connect().scheduleBlockById(id).getSingleOrNull();
+    return row == null ? null : _blockOfRow(row);
   }
 
   Future<List<ScheduleBlock>> blocksForItem(int planItemId) async {
-    final rows = await _db.query(
-      'schedule_block',
-      where: 'plan_item_id = ?',
-      whereArgs: [planItemId],
-      orderBy: 'start_at',
-    );
-    return rows.map(ScheduleBlock.fromRow).toList(growable: false);
+    final rows = await _connect().blocksForItem(planItemId).get();
+    return rows.map(_blockOfRow).toList(growable: false);
   }
+
+  /// 时间安排表的字段与领域模型同名，只补时间解析与锁定标记。
+  static ScheduleBlock _blockOfRow(ScheduleBlockRow row) => ScheduleBlock(
+    id: row.id,
+    planItemId: row.planItemId,
+    startAt: parseDateTime(row.startAt),
+    endAt: parseDateTime(row.endAt),
+    source: row.source,
+    status: row.status,
+    locked: row.locked == 1,
+  );
+
+  /// 课表行的字段与领域模型同名，只补地点。
+  static TimetableEntry _timetableOf(TimetableEntryRow row) => TimetableEntry(
+    id: row.id,
+    weekday: row.weekday,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    title: row.title,
+    location: row.location,
+  );
 }

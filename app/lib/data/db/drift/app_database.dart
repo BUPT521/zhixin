@@ -31,6 +31,7 @@ part 'app_database.g.dart';
     'queries/goals.drift',
     'queries/attempt_rows.drift',
     'queries/study_plan_steps.drift',
+    'queries/schedule_blocks.drift',
   },
   tables: [
     AppMeta,
