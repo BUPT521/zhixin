@@ -38,16 +38,20 @@ extension ZhixinMotionContext on BuildContext {
   Duration motionOf(Duration duration) =>
       reduceMotion ? Duration.zero : duration;
 
-  /// 过渡结束后再回填：读取可以立刻发起，结果回来时若还在切栏或推入页面，
-  /// 等这段动画走完再把结果交给界面，回填不会打断动画。
+  /// 过渡结束后再回填：读取可以立刻发起，结果要等路由、底栏与调用方传入的
+  /// 页签动画结束后再交给界面。
   ///
   /// 先等过当前这一帧再判断：切栏动画在状态变化之后的下一帧才开始，直接读
   /// 状态会读到“已经结束”，回填于是又落进动画里。读不到过渡时不多等。
-  Future<void> afterTransition() async {
+  Future<void> afterTransition({Animation<double>? contentTransition}) async {
     final route = ModalRoute.of(this)?.animation;
     final tab = TabTransition.maybeOf(this);
     await SchedulerBinding.instance.endOfFrame;
-    final pending = <Animation<double>>[?_running(route), ?_running(tab)];
+    final pending = <Animation<double>>[
+      ?_running(route),
+      ?_running(tab),
+      ?_running(contentTransition),
+    ];
     if (pending.isEmpty) return;
     await Future.wait(pending.map(_settled));
   }
@@ -151,13 +155,23 @@ class ZhixinPageTransitionsBuilder extends PageTransitionsBuilder {
 class FadeIn extends StatefulWidget {
   const FadeIn({
     super.key,
-    required this.child,
+    required Widget this.child,
     this.trigger,
     this.playOnInit = true,
     this.rise = true,
-  });
+  }) : builder = null;
 
-  final Widget child;
+  /// 子组件需要等本次淡入结束后回填时，可通过 [builder] 取得动画。
+  const FadeIn.withTransition({
+    super.key,
+    required Widget Function(Animation<double>) this.builder,
+    this.trigger,
+    this.playOnInit = true,
+    this.rise = true,
+  }) : child = null;
+
+  final Widget? child;
+  final Widget Function(Animation<double>)? builder;
   final Object? trigger;
   final bool playOnInit;
 
@@ -216,7 +230,9 @@ class _FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
     const motion = ZhixinMotion();
     final curved = _curved;
     // 位移只移动这一层；内容放在重绘边界里，动画期间不重画文字与卡片。
-    final content = RepaintBoundary(child: widget.child);
+    final content = RepaintBoundary(
+      child: widget.builder?.call(_controller) ?? widget.child!,
+    );
     final fade = FadeTransition(opacity: curved, child: content);
     if (!widget.rise) return fade;
     return AnimatedBuilder(

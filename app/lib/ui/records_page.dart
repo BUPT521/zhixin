@@ -412,16 +412,19 @@ class _RecordsPageState extends State<RecordsPage> {
               // 两个页签常驻，切换只换显示：材料列表的滚动位置与已经读到的
               // 数据都留住，切回来不再整棵重建、不再重读。首次进入某页签时
               // 才把它建出来。换页签与读完第一页时，新内容淡入一次。
-              child: FadeIn(
-                trigger: (_tab, _loading),
+              child: FadeIn.withTransition(
+                trigger: (_tab, learning && _loading),
                 playOnInit: false,
-                child: IndexedStack(
+                builder: (transition) => IndexedStack(
                   sizing: StackFit.expand,
                   index: learning ? 0 : 1,
                   children: [
                     _learningRecords(theme),
                     if (_visited.contains(RecordsTab.materials))
-                      MaterialList(key: _materialsKey, isActive: true)
+                      MaterialList(
+                        key: _materialsKey,
+                        tabTransition: transition,
+                      )
                     else
                       const SizedBox.shrink(),
                   ],
