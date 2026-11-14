@@ -10,7 +10,7 @@
 
 ## 数据与用户控制
 
-学习记录默认保存在本机，可以离线查看、导出与恢复，调用模型时只发送当次所需内容。记忆带来源和适用范围，用户可以查看、纠正或删除；AI 执行的变更有回执和撤销入口，涉及删除原始记录或调整固定安排时由用户决定。
+学习记录默认保存在本机，可以离线查看、导出与恢复，调用模型时只发送当次所需内容。账号是可选项：登录之后，记录可以备份并同步到项目组自建的服务端，模型也可以改用服务端代理，不登录时应用照常在本机运行，决定见 [ADR-0008](docs/adr/0008-取消单机边界引入账号同步与模型代理.md)。记忆带来源和适用范围，用户可以查看、纠正或删除；AI 执行的变更有回执和撤销入口，涉及删除原始记录或调整固定安排时由用户决定。
 
 ## 当前状态
 
@@ -24,7 +24,8 @@
 | 界面组件 | Forui 0.27.7 承担页面骨架、按钮、表单、列表、对话框、提示、进度与主题；底部面板与日期时间选择用 `material_ui` 的对应控件，基础控件、路由、Markdown、本地化，以及 Forui 没有的控件（如下拉刷新）也用 `material_ui`，图标统一用 Lucide（`forui_lucide`） |
 | 最低系统 | Android 11（API 30）；只出 arm64 包，不兼容 32 位设备 |
 | 本地数据 | SQLite 单文件（drift，连接使用随包的 sqlite3），业务表、提交历史与附件同库，表结构与当前版本见 [01](docs/01-ER数据模型.md) |
-| 模型 | 用户自填 key，默认 `deepseek-flash`，接口地址与模型名可配置 |
+| 模型 | 用户自填 key，默认 `deepseek-flash`，接口地址与模型名可配置；登录后可改用服务端代理 |
+| 服务端 | Go 1.27 单个可执行文件 `zhixin-api`，标准库 `net/http`，PostgreSQL 与 S3 兼容对象存储，代码在 `server/`，见 [server/README](server/README.md) 与 [ADR-0009](docs/adr/0009-API后端采用Go与分层框架.md) |
 | 构建 | JDK 21 + Android SDK 36，命令 `flutter build apk --debug`（内测包用 `--release`），见 [app/README](app/README.md) |
 
 应用代码在 `app/` 目录，先 `cd app`，再执行 `flutter pub get` 和 `flutter run` 就能装到真机上。CI 配置见 [ci.yml](.github/workflows/ci.yml)：代码推送和 PR 都会跑生成代码核对、格式检查、`flutter analyze` 与 `flutter test`，纯文档的提交跳过这几项；`main` 的 push 和每个 PR 都会构建 debug APK。正式包在 Actions 里手动运行“CI 与发版”生成。
@@ -37,6 +38,7 @@
 - [03-团队分工与协作](docs/03-团队分工与协作.md)：角色、交付节奏、成功标准与风险
 - [ADR 记录](docs/adr/README.md)：跨模块取舍的编号、名称、状态与索引
 - [app/README](app/README.md)：工程结构、界面口径、模型接入与发布
+- [server/README](server/README.md)：API 后端的工程结构、接口约定与本地运行
 - [提交约定](CONTRIBUTING.md)、[AI 协作约定](AGENTS.md)
 
 ## 文档维护
