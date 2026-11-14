@@ -132,5 +132,23 @@ lib/
 
 ## 发布
 
+### 签名
+
+正式包只在 Actions 里出，本机不出。CI 用仓库 Secrets 里的四项配置还原 keystore，
+再生成 `android/key.properties`；四项缺一项，发版任务会在“检查签名 secrets”一步直接失败，
+不会悄悄打出一个 debug 签名的包。
+
+| Secret | 内容 |
+|---|---|
+| `RELEASE_KEYSTORE_BASE64` | keystore 文件的 base64，用 `base64 -w0 release.jks`（macOS 用 `base64 -i release.jks`）生成 |
+| `RELEASE_KEYSTORE_PASSWORD` | keystore 口令 |
+| `RELEASE_KEY_ALIAS` | 密钥别名 |
+| `RELEASE_KEY_PASSWORD` | 密钥口令 |
+
+keystore 与口令由发版人保管，仓库与本机工程目录都不放：CI 把还原出来的 keystore 写到 runner 的临时目录，
+`key.properties` 里用绝对路径引用它，发版结束随 runner 一起销毁。发版任务的最后一步用 `apksigner` 核对证书
+不是 debug 证书，并对包体记录版本、提交与 SHA-256。
+
+
 正式包在 Actions 里手动运行“CI 与发版”，用仓库 Secrets 里的签名配置生成；本机不出正式包。版本号按 [03 第 3 节](../docs/03-团队分工与协作.md#3-交付节奏)递增，取值以本目录 `pubspec.yaml` 的 `version` 一行为准，只由发版人（见 [03 第 2 节](../docs/03-团队分工与协作.md#2-角色)）在发包前修改；开发包的版本名带 `-dev` 且按 `com.zhixin.app.dev` 另装一个应用，设置页的“关于”显示构建时写入的构建名与构建号，不另存版本常量；许可页同时列出知新自身的 MIT 许可与第三方组件许可，知新自身的许可从 `platform/app_license.dart` 读取，测试会核对它与仓库根目录的 `LICENSE` 同文。
 
