@@ -155,7 +155,15 @@ class FadeIn extends StatefulWidget {
     this.trigger,
     this.playOnInit = true,
     this.rise = true,
-  });
+  }) : _sliver = false;
+
+  const FadeIn.sliver({
+    super.key,
+    required this.child,
+    this.trigger,
+    this.playOnInit = true,
+  }) : rise = false,
+       _sliver = true;
 
   final Widget child;
   final Object? trigger;
@@ -163,6 +171,7 @@ class FadeIn extends StatefulWidget {
 
   /// 为假时只淡入，不移动；用在居中的转圈与空态这类位置固定的内容。
   final bool rise;
+  final bool _sliver;
 
   @override
   State<FadeIn> createState() => _FadeInState();
@@ -215,6 +224,9 @@ class _FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     const motion = ZhixinMotion();
     final curved = _curved;
+    if (widget._sliver) {
+      return SliverFadeTransition(opacity: curved, sliver: widget.child);
+    }
     // 位移只移动这一层；内容放在重绘边界里，动画期间不重画文字与卡片。
     final content = RepaintBoundary(child: widget.child);
     final fade = FadeTransition(opacity: curved, child: content);
@@ -240,10 +252,18 @@ class ExpandReveal extends StatefulWidget {
     required this.visible,
     required this.child,
     this.animateOnInit = false,
-  });
+  }) : _sliver = false;
+
+  const ExpandReveal.sliver({
+    super.key,
+    required this.visible,
+    required this.child,
+  }) : animateOnInit = false,
+       _sliver = true;
 
   final bool visible;
   final Widget child;
+  final bool _sliver;
 
   /// 为真时首次以展开状态出现也播放一次展开。
   final bool animateOnInit;
@@ -303,6 +323,22 @@ class _ExpandRevealState extends State<ExpandReveal>
 
   @override
   Widget build(BuildContext context) {
+    if (widget._sliver) {
+      return AnimatedBuilder(
+        animation: _controller,
+        child: SliverFadeTransition(
+          opacity: _fade,
+          sliver: SliverIgnorePointer(
+            ignoring: !widget.visible,
+            sliver: widget.child,
+          ),
+        ),
+        // 每一行从正常高度开始布局，避免展开初期一次构建大量被压缩的行。
+        builder: (context, child) => _controller.isDismissed && !widget.visible
+            ? const SliverToBoxAdapter()
+            : child!,
+      );
+    }
     return AnimatedBuilder(
       animation: _controller,
       // 收起之后把内容移出树，不再参与布局与语义。

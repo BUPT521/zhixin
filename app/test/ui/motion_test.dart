@@ -130,6 +130,48 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
+  testWidgets('展开列表按视口构建，收起后移除，减少动态效果时直接展开', (tester) async {
+    final built = <int>{};
+    Widget reveal(bool visible, {bool reduce = false}) => _host(
+      CustomScrollView(
+        slivers: [
+          ExpandReveal.sliver(
+            visible: visible,
+            child: SliverList.builder(
+              itemCount: 100,
+              itemBuilder: (context, index) {
+                built.add(index);
+                return SizedBox(height: 80, child: Text('事项 $index'));
+              },
+            ),
+          ),
+        ],
+      ),
+      reduce: reduce,
+    );
+
+    await tester.pumpWidget(reveal(false));
+    expect(built, isEmpty);
+    await tester.pumpWidget(reveal(true));
+    await tester.pump(const Duration(milliseconds: 70));
+    final fade = find.byType(SliverFadeTransition);
+    expect(
+      tester.widget<SliverFadeTransition>(fade).opacity.value,
+      lessThan(1),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<SliverFadeTransition>(fade).opacity.value, 1);
+    expect(built, contains(0));
+    expect(built, isNot(contains(99)));
+
+    await tester.pumpWidget(reveal(false));
+    await tester.pumpAndSettle();
+    expect(find.text('事项 0'), findsNothing);
+
+    await tester.pumpWidget(reveal(true, reduce: true));
+    expect(tester.widget<SliverFadeTransition>(fade).opacity.value, 1);
+  });
+
   testWidgets('切栏淡入不重建其他栏目的状态', (tester) async {
     Widget stack(int index) => _host(
       FadeIndexedStack(
