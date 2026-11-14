@@ -3770,1463 +3770,6 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
   }
 }
 
-class $StudySessionsTable extends StudySessions
-    with TableInfo<$StudySessionsTable, StudySessionRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $StudySessionsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
-  );
-  static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
-  @override
-  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
-    'goal_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES learning_goal (id) ON DELETE SET NULL',
-    ),
-  );
-  static const VerificationMeta _planItemIdMeta = const VerificationMeta(
-    'planItemId',
-  );
-  @override
-  late final GeneratedColumn<int> planItemId = GeneratedColumn<int>(
-    'plan_item_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES plan_item (id) ON DELETE SET NULL',
-    ),
-  );
-  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
-    'conversationId',
-  );
-  @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
-    'conversation_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES conversation (id) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _summaryMeta = const VerificationMeta(
-    'summary',
-  );
-  @override
-  late final GeneratedColumn<String> summary = GeneratedColumn<String>(
-    'summary',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _outcomeMeta = const VerificationMeta(
-    'outcome',
-  );
-  @override
-  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
-    'outcome',
-    aliasedName,
-    true,
-    check: () => outcome.isIn(['done', 'partial', 'not_done']),
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _startedAtMeta = const VerificationMeta(
-    'startedAt',
-  );
-  @override
-  late final GeneratedColumn<String> startedAt = GeneratedColumn<String>(
-    'started_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _endedAtMeta = const VerificationMeta(
-    'endedAt',
-  );
-  @override
-  late final GeneratedColumn<String> endedAt = GeneratedColumn<String>(
-    'ended_at',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    goalId,
-    planItemId,
-    conversationId,
-    summary,
-    outcome,
-    startedAt,
-    endedAt,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'study_session';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<StudySessionRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('goal_id')) {
-      context.handle(
-        _goalIdMeta,
-        goalId.isAcceptableOrUnknown(data['goal_id']!, _goalIdMeta),
-      );
-    }
-    if (data.containsKey('plan_item_id')) {
-      context.handle(
-        _planItemIdMeta,
-        planItemId.isAcceptableOrUnknown(
-          data['plan_item_id']!,
-          _planItemIdMeta,
-        ),
-      );
-    }
-    if (data.containsKey('conversation_id')) {
-      context.handle(
-        _conversationIdMeta,
-        conversationId.isAcceptableOrUnknown(
-          data['conversation_id']!,
-          _conversationIdMeta,
-        ),
-      );
-    }
-    if (data.containsKey('summary')) {
-      context.handle(
-        _summaryMeta,
-        summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
-      );
-    }
-    if (data.containsKey('outcome')) {
-      context.handle(
-        _outcomeMeta,
-        outcome.isAcceptableOrUnknown(data['outcome']!, _outcomeMeta),
-      );
-    }
-    if (data.containsKey('started_at')) {
-      context.handle(
-        _startedAtMeta,
-        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_startedAtMeta);
-    }
-    if (data.containsKey('ended_at')) {
-      context.handle(
-        _endedAtMeta,
-        endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  StudySessionRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return StudySessionRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      goalId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}goal_id'],
-      ),
-      planItemId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}plan_item_id'],
-      ),
-      conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}conversation_id'],
-      ),
-      summary: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}summary'],
-      ),
-      outcome: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}outcome'],
-      ),
-      startedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}started_at'],
-      )!,
-      endedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}ended_at'],
-      ),
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $StudySessionsTable createAlias(String alias) {
-    return $StudySessionsTable(attachedDatabase, alias);
-  }
-}
-
-class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
-  final int id;
-  final int? goalId;
-  final int? planItemId;
-  final int? conversationId;
-  final String? summary;
-  final String? outcome;
-  final String startedAt;
-  final String? endedAt;
-  final String createdAt;
-  final String updatedAt;
-  const StudySessionRow({
-    required this.id,
-    this.goalId,
-    this.planItemId,
-    this.conversationId,
-    this.summary,
-    this.outcome,
-    required this.startedAt,
-    this.endedAt,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    if (!nullToAbsent || goalId != null) {
-      map['goal_id'] = Variable<int>(goalId);
-    }
-    if (!nullToAbsent || planItemId != null) {
-      map['plan_item_id'] = Variable<int>(planItemId);
-    }
-    if (!nullToAbsent || conversationId != null) {
-      map['conversation_id'] = Variable<int>(conversationId);
-    }
-    if (!nullToAbsent || summary != null) {
-      map['summary'] = Variable<String>(summary);
-    }
-    if (!nullToAbsent || outcome != null) {
-      map['outcome'] = Variable<String>(outcome);
-    }
-    map['started_at'] = Variable<String>(startedAt);
-    if (!nullToAbsent || endedAt != null) {
-      map['ended_at'] = Variable<String>(endedAt);
-    }
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  StudySessionsCompanion toCompanion(bool nullToAbsent) {
-    return StudySessionsCompanion(
-      id: Value(id),
-      goalId: goalId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(goalId),
-      planItemId: planItemId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(planItemId),
-      conversationId: conversationId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(conversationId),
-      summary: summary == null && nullToAbsent
-          ? const Value.absent()
-          : Value(summary),
-      outcome: outcome == null && nullToAbsent
-          ? const Value.absent()
-          : Value(outcome),
-      startedAt: Value(startedAt),
-      endedAt: endedAt == null && nullToAbsent
-          ? const Value.absent()
-          : Value(endedAt),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory StudySessionRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return StudySessionRow(
-      id: serializer.fromJson<int>(json['id']),
-      goalId: serializer.fromJson<int?>(json['goalId']),
-      planItemId: serializer.fromJson<int?>(json['planItemId']),
-      conversationId: serializer.fromJson<int?>(json['conversationId']),
-      summary: serializer.fromJson<String?>(json['summary']),
-      outcome: serializer.fromJson<String?>(json['outcome']),
-      startedAt: serializer.fromJson<String>(json['startedAt']),
-      endedAt: serializer.fromJson<String?>(json['endedAt']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'goalId': serializer.toJson<int?>(goalId),
-      'planItemId': serializer.toJson<int?>(planItemId),
-      'conversationId': serializer.toJson<int?>(conversationId),
-      'summary': serializer.toJson<String?>(summary),
-      'outcome': serializer.toJson<String?>(outcome),
-      'startedAt': serializer.toJson<String>(startedAt),
-      'endedAt': serializer.toJson<String?>(endedAt),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  StudySessionRow copyWith({
-    int? id,
-    Value<int?> goalId = const Value.absent(),
-    Value<int?> planItemId = const Value.absent(),
-    Value<int?> conversationId = const Value.absent(),
-    Value<String?> summary = const Value.absent(),
-    Value<String?> outcome = const Value.absent(),
-    String? startedAt,
-    Value<String?> endedAt = const Value.absent(),
-    String? createdAt,
-    String? updatedAt,
-  }) => StudySessionRow(
-    id: id ?? this.id,
-    goalId: goalId.present ? goalId.value : this.goalId,
-    planItemId: planItemId.present ? planItemId.value : this.planItemId,
-    conversationId: conversationId.present
-        ? conversationId.value
-        : this.conversationId,
-    summary: summary.present ? summary.value : this.summary,
-    outcome: outcome.present ? outcome.value : this.outcome,
-    startedAt: startedAt ?? this.startedAt,
-    endedAt: endedAt.present ? endedAt.value : this.endedAt,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  StudySessionRow copyWithCompanion(StudySessionsCompanion data) {
-    return StudySessionRow(
-      id: data.id.present ? data.id.value : this.id,
-      goalId: data.goalId.present ? data.goalId.value : this.goalId,
-      planItemId: data.planItemId.present
-          ? data.planItemId.value
-          : this.planItemId,
-      conversationId: data.conversationId.present
-          ? data.conversationId.value
-          : this.conversationId,
-      summary: data.summary.present ? data.summary.value : this.summary,
-      outcome: data.outcome.present ? data.outcome.value : this.outcome,
-      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
-      endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('StudySessionRow(')
-          ..write('id: $id, ')
-          ..write('goalId: $goalId, ')
-          ..write('planItemId: $planItemId, ')
-          ..write('conversationId: $conversationId, ')
-          ..write('summary: $summary, ')
-          ..write('outcome: $outcome, ')
-          ..write('startedAt: $startedAt, ')
-          ..write('endedAt: $endedAt, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    goalId,
-    planItemId,
-    conversationId,
-    summary,
-    outcome,
-    startedAt,
-    endedAt,
-    createdAt,
-    updatedAt,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is StudySessionRow &&
-          other.id == this.id &&
-          other.goalId == this.goalId &&
-          other.planItemId == this.planItemId &&
-          other.conversationId == this.conversationId &&
-          other.summary == this.summary &&
-          other.outcome == this.outcome &&
-          other.startedAt == this.startedAt &&
-          other.endedAt == this.endedAt &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
-  final Value<int> id;
-  final Value<int?> goalId;
-  final Value<int?> planItemId;
-  final Value<int?> conversationId;
-  final Value<String?> summary;
-  final Value<String?> outcome;
-  final Value<String> startedAt;
-  final Value<String?> endedAt;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  const StudySessionsCompanion({
-    this.id = const Value.absent(),
-    this.goalId = const Value.absent(),
-    this.planItemId = const Value.absent(),
-    this.conversationId = const Value.absent(),
-    this.summary = const Value.absent(),
-    this.outcome = const Value.absent(),
-    this.startedAt = const Value.absent(),
-    this.endedAt = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-  });
-  StudySessionsCompanion.insert({
-    this.id = const Value.absent(),
-    this.goalId = const Value.absent(),
-    this.planItemId = const Value.absent(),
-    this.conversationId = const Value.absent(),
-    this.summary = const Value.absent(),
-    this.outcome = const Value.absent(),
-    required String startedAt,
-    this.endedAt = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-  }) : startedAt = Value(startedAt),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<StudySessionRow> custom({
-    Expression<int>? id,
-    Expression<int>? goalId,
-    Expression<int>? planItemId,
-    Expression<int>? conversationId,
-    Expression<String>? summary,
-    Expression<String>? outcome,
-    Expression<String>? startedAt,
-    Expression<String>? endedAt,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (goalId != null) 'goal_id': goalId,
-      if (planItemId != null) 'plan_item_id': planItemId,
-      if (conversationId != null) 'conversation_id': conversationId,
-      if (summary != null) 'summary': summary,
-      if (outcome != null) 'outcome': outcome,
-      if (startedAt != null) 'started_at': startedAt,
-      if (endedAt != null) 'ended_at': endedAt,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-    });
-  }
-
-  StudySessionsCompanion copyWith({
-    Value<int>? id,
-    Value<int?>? goalId,
-    Value<int?>? planItemId,
-    Value<int?>? conversationId,
-    Value<String?>? summary,
-    Value<String?>? outcome,
-    Value<String>? startedAt,
-    Value<String?>? endedAt,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-  }) {
-    return StudySessionsCompanion(
-      id: id ?? this.id,
-      goalId: goalId ?? this.goalId,
-      planItemId: planItemId ?? this.planItemId,
-      conversationId: conversationId ?? this.conversationId,
-      summary: summary ?? this.summary,
-      outcome: outcome ?? this.outcome,
-      startedAt: startedAt ?? this.startedAt,
-      endedAt: endedAt ?? this.endedAt,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (goalId.present) {
-      map['goal_id'] = Variable<int>(goalId.value);
-    }
-    if (planItemId.present) {
-      map['plan_item_id'] = Variable<int>(planItemId.value);
-    }
-    if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
-    }
-    if (summary.present) {
-      map['summary'] = Variable<String>(summary.value);
-    }
-    if (outcome.present) {
-      map['outcome'] = Variable<String>(outcome.value);
-    }
-    if (startedAt.present) {
-      map['started_at'] = Variable<String>(startedAt.value);
-    }
-    if (endedAt.present) {
-      map['ended_at'] = Variable<String>(endedAt.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('StudySessionsCompanion(')
-          ..write('id: $id, ')
-          ..write('goalId: $goalId, ')
-          ..write('planItemId: $planItemId, ')
-          ..write('conversationId: $conversationId, ')
-          ..write('summary: $summary, ')
-          ..write('outcome: $outcome, ')
-          ..write('startedAt: $startedAt, ')
-          ..write('endedAt: $endedAt, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $AttemptsTable extends Attempts
-    with TableInfo<$AttemptsTable, AttemptRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $AttemptsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
-  );
-  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
-    'conversationId',
-  );
-  @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
-    'conversation_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES conversation (id) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _sessionIdMeta = const VerificationMeta(
-    'sessionId',
-  );
-  @override
-  late final GeneratedColumn<int> sessionId = GeneratedColumn<int>(
-    'session_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES study_session (id) ON DELETE SET NULL',
-    ),
-  );
-  static const VerificationMeta _redoOfAttemptIdMeta = const VerificationMeta(
-    'redoOfAttemptId',
-  );
-  @override
-  late final GeneratedColumn<int> redoOfAttemptId = GeneratedColumn<int>(
-    'redo_of_attempt_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES attempt (id) ON DELETE SET NULL',
-    ),
-  );
-  static const VerificationMeta _userAnswerMeta = const VerificationMeta(
-    'userAnswer',
-  );
-  @override
-  late final GeneratedColumn<String> userAnswer = GeneratedColumn<String>(
-    'user_answer',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _solutionMeta = const VerificationMeta(
-    'solution',
-  );
-  @override
-  late final GeneratedColumn<String> solution = GeneratedColumn<String>(
-    'solution',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _isCorrectMeta = const VerificationMeta(
-    'isCorrect',
-  );
-  @override
-  late final GeneratedColumn<int> isCorrect = GeneratedColumn<int>(
-    'is_correct',
-    aliasedName,
-    true,
-    check: () => isCorrect.isIn([0, 1]),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _independentMeta = const VerificationMeta(
-    'independent',
-  );
-  @override
-  late final GeneratedColumn<int> independent = GeneratedColumn<int>(
-    'independent',
-    aliasedName,
-    true,
-    check: () => independent.isIn([0, 1]),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _delayedMeta = const VerificationMeta(
-    'delayed',
-  );
-  @override
-  late final GeneratedColumn<int> delayed = GeneratedColumn<int>(
-    'delayed',
-    aliasedName,
-    false,
-    check: () => delayed.isIn([0, 1]),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
-  );
-  static const VerificationMeta _helpJsonMeta = const VerificationMeta(
-    'helpJson',
-  );
-  @override
-  late final GeneratedColumn<String> helpJson = GeneratedColumn<String>(
-    'help_json',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _feedbackMeta = const VerificationMeta(
-    'feedback',
-  );
-  @override
-  late final GeneratedColumn<String> feedback = GeneratedColumn<String>(
-    'feedback',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _submittedAtMeta = const VerificationMeta(
-    'submittedAt',
-  );
-  @override
-  late final GeneratedColumn<String> submittedAt = GeneratedColumn<String>(
-    'submitted_at',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    conversationId,
-    sessionId,
-    redoOfAttemptId,
-    userAnswer,
-    solution,
-    isCorrect,
-    independent,
-    delayed,
-    helpJson,
-    feedback,
-    submittedAt,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'attempt';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<AttemptRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('conversation_id')) {
-      context.handle(
-        _conversationIdMeta,
-        conversationId.isAcceptableOrUnknown(
-          data['conversation_id']!,
-          _conversationIdMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_conversationIdMeta);
-    }
-    if (data.containsKey('session_id')) {
-      context.handle(
-        _sessionIdMeta,
-        sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
-      );
-    }
-    if (data.containsKey('redo_of_attempt_id')) {
-      context.handle(
-        _redoOfAttemptIdMeta,
-        redoOfAttemptId.isAcceptableOrUnknown(
-          data['redo_of_attempt_id']!,
-          _redoOfAttemptIdMeta,
-        ),
-      );
-    }
-    if (data.containsKey('user_answer')) {
-      context.handle(
-        _userAnswerMeta,
-        userAnswer.isAcceptableOrUnknown(data['user_answer']!, _userAnswerMeta),
-      );
-    }
-    if (data.containsKey('solution')) {
-      context.handle(
-        _solutionMeta,
-        solution.isAcceptableOrUnknown(data['solution']!, _solutionMeta),
-      );
-    }
-    if (data.containsKey('is_correct')) {
-      context.handle(
-        _isCorrectMeta,
-        isCorrect.isAcceptableOrUnknown(data['is_correct']!, _isCorrectMeta),
-      );
-    }
-    if (data.containsKey('independent')) {
-      context.handle(
-        _independentMeta,
-        independent.isAcceptableOrUnknown(
-          data['independent']!,
-          _independentMeta,
-        ),
-      );
-    }
-    if (data.containsKey('delayed')) {
-      context.handle(
-        _delayedMeta,
-        delayed.isAcceptableOrUnknown(data['delayed']!, _delayedMeta),
-      );
-    }
-    if (data.containsKey('help_json')) {
-      context.handle(
-        _helpJsonMeta,
-        helpJson.isAcceptableOrUnknown(data['help_json']!, _helpJsonMeta),
-      );
-    }
-    if (data.containsKey('feedback')) {
-      context.handle(
-        _feedbackMeta,
-        feedback.isAcceptableOrUnknown(data['feedback']!, _feedbackMeta),
-      );
-    }
-    if (data.containsKey('submitted_at')) {
-      context.handle(
-        _submittedAtMeta,
-        submittedAt.isAcceptableOrUnknown(
-          data['submitted_at']!,
-          _submittedAtMeta,
-        ),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  AttemptRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return AttemptRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}conversation_id'],
-      )!,
-      sessionId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}session_id'],
-      ),
-      redoOfAttemptId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}redo_of_attempt_id'],
-      ),
-      userAnswer: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}user_answer'],
-      ),
-      solution: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}solution'],
-      ),
-      isCorrect: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}is_correct'],
-      ),
-      independent: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}independent'],
-      ),
-      delayed: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}delayed'],
-      )!,
-      helpJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}help_json'],
-      ),
-      feedback: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}feedback'],
-      ),
-      submittedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}submitted_at'],
-      ),
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $AttemptsTable createAlias(String alias) {
-    return $AttemptsTable(attachedDatabase, alias);
-  }
-}
-
-class AttemptRow extends DataClass implements Insertable<AttemptRow> {
-  final int id;
-  final int conversationId;
-  final int? sessionId;
-  final int? redoOfAttemptId;
-  final String? userAnswer;
-  final String? solution;
-  final int? isCorrect;
-  final int? independent;
-  final int delayed;
-  final String? helpJson;
-  final String? feedback;
-  final String? submittedAt;
-  final String createdAt;
-  final String updatedAt;
-  const AttemptRow({
-    required this.id,
-    required this.conversationId,
-    this.sessionId,
-    this.redoOfAttemptId,
-    this.userAnswer,
-    this.solution,
-    this.isCorrect,
-    this.independent,
-    required this.delayed,
-    this.helpJson,
-    this.feedback,
-    this.submittedAt,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['conversation_id'] = Variable<int>(conversationId);
-    if (!nullToAbsent || sessionId != null) {
-      map['session_id'] = Variable<int>(sessionId);
-    }
-    if (!nullToAbsent || redoOfAttemptId != null) {
-      map['redo_of_attempt_id'] = Variable<int>(redoOfAttemptId);
-    }
-    if (!nullToAbsent || userAnswer != null) {
-      map['user_answer'] = Variable<String>(userAnswer);
-    }
-    if (!nullToAbsent || solution != null) {
-      map['solution'] = Variable<String>(solution);
-    }
-    if (!nullToAbsent || isCorrect != null) {
-      map['is_correct'] = Variable<int>(isCorrect);
-    }
-    if (!nullToAbsent || independent != null) {
-      map['independent'] = Variable<int>(independent);
-    }
-    map['delayed'] = Variable<int>(delayed);
-    if (!nullToAbsent || helpJson != null) {
-      map['help_json'] = Variable<String>(helpJson);
-    }
-    if (!nullToAbsent || feedback != null) {
-      map['feedback'] = Variable<String>(feedback);
-    }
-    if (!nullToAbsent || submittedAt != null) {
-      map['submitted_at'] = Variable<String>(submittedAt);
-    }
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  AttemptsCompanion toCompanion(bool nullToAbsent) {
-    return AttemptsCompanion(
-      id: Value(id),
-      conversationId: Value(conversationId),
-      sessionId: sessionId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(sessionId),
-      redoOfAttemptId: redoOfAttemptId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(redoOfAttemptId),
-      userAnswer: userAnswer == null && nullToAbsent
-          ? const Value.absent()
-          : Value(userAnswer),
-      solution: solution == null && nullToAbsent
-          ? const Value.absent()
-          : Value(solution),
-      isCorrect: isCorrect == null && nullToAbsent
-          ? const Value.absent()
-          : Value(isCorrect),
-      independent: independent == null && nullToAbsent
-          ? const Value.absent()
-          : Value(independent),
-      delayed: Value(delayed),
-      helpJson: helpJson == null && nullToAbsent
-          ? const Value.absent()
-          : Value(helpJson),
-      feedback: feedback == null && nullToAbsent
-          ? const Value.absent()
-          : Value(feedback),
-      submittedAt: submittedAt == null && nullToAbsent
-          ? const Value.absent()
-          : Value(submittedAt),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory AttemptRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return AttemptRow(
-      id: serializer.fromJson<int>(json['id']),
-      conversationId: serializer.fromJson<int>(json['conversationId']),
-      sessionId: serializer.fromJson<int?>(json['sessionId']),
-      redoOfAttemptId: serializer.fromJson<int?>(json['redoOfAttemptId']),
-      userAnswer: serializer.fromJson<String?>(json['userAnswer']),
-      solution: serializer.fromJson<String?>(json['solution']),
-      isCorrect: serializer.fromJson<int?>(json['isCorrect']),
-      independent: serializer.fromJson<int?>(json['independent']),
-      delayed: serializer.fromJson<int>(json['delayed']),
-      helpJson: serializer.fromJson<String?>(json['helpJson']),
-      feedback: serializer.fromJson<String?>(json['feedback']),
-      submittedAt: serializer.fromJson<String?>(json['submittedAt']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'conversationId': serializer.toJson<int>(conversationId),
-      'sessionId': serializer.toJson<int?>(sessionId),
-      'redoOfAttemptId': serializer.toJson<int?>(redoOfAttemptId),
-      'userAnswer': serializer.toJson<String?>(userAnswer),
-      'solution': serializer.toJson<String?>(solution),
-      'isCorrect': serializer.toJson<int?>(isCorrect),
-      'independent': serializer.toJson<int?>(independent),
-      'delayed': serializer.toJson<int>(delayed),
-      'helpJson': serializer.toJson<String?>(helpJson),
-      'feedback': serializer.toJson<String?>(feedback),
-      'submittedAt': serializer.toJson<String?>(submittedAt),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  AttemptRow copyWith({
-    int? id,
-    int? conversationId,
-    Value<int?> sessionId = const Value.absent(),
-    Value<int?> redoOfAttemptId = const Value.absent(),
-    Value<String?> userAnswer = const Value.absent(),
-    Value<String?> solution = const Value.absent(),
-    Value<int?> isCorrect = const Value.absent(),
-    Value<int?> independent = const Value.absent(),
-    int? delayed,
-    Value<String?> helpJson = const Value.absent(),
-    Value<String?> feedback = const Value.absent(),
-    Value<String?> submittedAt = const Value.absent(),
-    String? createdAt,
-    String? updatedAt,
-  }) => AttemptRow(
-    id: id ?? this.id,
-    conversationId: conversationId ?? this.conversationId,
-    sessionId: sessionId.present ? sessionId.value : this.sessionId,
-    redoOfAttemptId: redoOfAttemptId.present
-        ? redoOfAttemptId.value
-        : this.redoOfAttemptId,
-    userAnswer: userAnswer.present ? userAnswer.value : this.userAnswer,
-    solution: solution.present ? solution.value : this.solution,
-    isCorrect: isCorrect.present ? isCorrect.value : this.isCorrect,
-    independent: independent.present ? independent.value : this.independent,
-    delayed: delayed ?? this.delayed,
-    helpJson: helpJson.present ? helpJson.value : this.helpJson,
-    feedback: feedback.present ? feedback.value : this.feedback,
-    submittedAt: submittedAt.present ? submittedAt.value : this.submittedAt,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  AttemptRow copyWithCompanion(AttemptsCompanion data) {
-    return AttemptRow(
-      id: data.id.present ? data.id.value : this.id,
-      conversationId: data.conversationId.present
-          ? data.conversationId.value
-          : this.conversationId,
-      sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
-      redoOfAttemptId: data.redoOfAttemptId.present
-          ? data.redoOfAttemptId.value
-          : this.redoOfAttemptId,
-      userAnswer: data.userAnswer.present
-          ? data.userAnswer.value
-          : this.userAnswer,
-      solution: data.solution.present ? data.solution.value : this.solution,
-      isCorrect: data.isCorrect.present ? data.isCorrect.value : this.isCorrect,
-      independent: data.independent.present
-          ? data.independent.value
-          : this.independent,
-      delayed: data.delayed.present ? data.delayed.value : this.delayed,
-      helpJson: data.helpJson.present ? data.helpJson.value : this.helpJson,
-      feedback: data.feedback.present ? data.feedback.value : this.feedback,
-      submittedAt: data.submittedAt.present
-          ? data.submittedAt.value
-          : this.submittedAt,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AttemptRow(')
-          ..write('id: $id, ')
-          ..write('conversationId: $conversationId, ')
-          ..write('sessionId: $sessionId, ')
-          ..write('redoOfAttemptId: $redoOfAttemptId, ')
-          ..write('userAnswer: $userAnswer, ')
-          ..write('solution: $solution, ')
-          ..write('isCorrect: $isCorrect, ')
-          ..write('independent: $independent, ')
-          ..write('delayed: $delayed, ')
-          ..write('helpJson: $helpJson, ')
-          ..write('feedback: $feedback, ')
-          ..write('submittedAt: $submittedAt, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    conversationId,
-    sessionId,
-    redoOfAttemptId,
-    userAnswer,
-    solution,
-    isCorrect,
-    independent,
-    delayed,
-    helpJson,
-    feedback,
-    submittedAt,
-    createdAt,
-    updatedAt,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is AttemptRow &&
-          other.id == this.id &&
-          other.conversationId == this.conversationId &&
-          other.sessionId == this.sessionId &&
-          other.redoOfAttemptId == this.redoOfAttemptId &&
-          other.userAnswer == this.userAnswer &&
-          other.solution == this.solution &&
-          other.isCorrect == this.isCorrect &&
-          other.independent == this.independent &&
-          other.delayed == this.delayed &&
-          other.helpJson == this.helpJson &&
-          other.feedback == this.feedback &&
-          other.submittedAt == this.submittedAt &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
-  final Value<int> id;
-  final Value<int> conversationId;
-  final Value<int?> sessionId;
-  final Value<int?> redoOfAttemptId;
-  final Value<String?> userAnswer;
-  final Value<String?> solution;
-  final Value<int?> isCorrect;
-  final Value<int?> independent;
-  final Value<int> delayed;
-  final Value<String?> helpJson;
-  final Value<String?> feedback;
-  final Value<String?> submittedAt;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  const AttemptsCompanion({
-    this.id = const Value.absent(),
-    this.conversationId = const Value.absent(),
-    this.sessionId = const Value.absent(),
-    this.redoOfAttemptId = const Value.absent(),
-    this.userAnswer = const Value.absent(),
-    this.solution = const Value.absent(),
-    this.isCorrect = const Value.absent(),
-    this.independent = const Value.absent(),
-    this.delayed = const Value.absent(),
-    this.helpJson = const Value.absent(),
-    this.feedback = const Value.absent(),
-    this.submittedAt = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-  });
-  AttemptsCompanion.insert({
-    this.id = const Value.absent(),
-    required int conversationId,
-    this.sessionId = const Value.absent(),
-    this.redoOfAttemptId = const Value.absent(),
-    this.userAnswer = const Value.absent(),
-    this.solution = const Value.absent(),
-    this.isCorrect = const Value.absent(),
-    this.independent = const Value.absent(),
-    this.delayed = const Value.absent(),
-    this.helpJson = const Value.absent(),
-    this.feedback = const Value.absent(),
-    this.submittedAt = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-  }) : conversationId = Value(conversationId),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<AttemptRow> custom({
-    Expression<int>? id,
-    Expression<int>? conversationId,
-    Expression<int>? sessionId,
-    Expression<int>? redoOfAttemptId,
-    Expression<String>? userAnswer,
-    Expression<String>? solution,
-    Expression<int>? isCorrect,
-    Expression<int>? independent,
-    Expression<int>? delayed,
-    Expression<String>? helpJson,
-    Expression<String>? feedback,
-    Expression<String>? submittedAt,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (conversationId != null) 'conversation_id': conversationId,
-      if (sessionId != null) 'session_id': sessionId,
-      if (redoOfAttemptId != null) 'redo_of_attempt_id': redoOfAttemptId,
-      if (userAnswer != null) 'user_answer': userAnswer,
-      if (solution != null) 'solution': solution,
-      if (isCorrect != null) 'is_correct': isCorrect,
-      if (independent != null) 'independent': independent,
-      if (delayed != null) 'delayed': delayed,
-      if (helpJson != null) 'help_json': helpJson,
-      if (feedback != null) 'feedback': feedback,
-      if (submittedAt != null) 'submitted_at': submittedAt,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-    });
-  }
-
-  AttemptsCompanion copyWith({
-    Value<int>? id,
-    Value<int>? conversationId,
-    Value<int?>? sessionId,
-    Value<int?>? redoOfAttemptId,
-    Value<String?>? userAnswer,
-    Value<String?>? solution,
-    Value<int?>? isCorrect,
-    Value<int?>? independent,
-    Value<int>? delayed,
-    Value<String?>? helpJson,
-    Value<String?>? feedback,
-    Value<String?>? submittedAt,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-  }) {
-    return AttemptsCompanion(
-      id: id ?? this.id,
-      conversationId: conversationId ?? this.conversationId,
-      sessionId: sessionId ?? this.sessionId,
-      redoOfAttemptId: redoOfAttemptId ?? this.redoOfAttemptId,
-      userAnswer: userAnswer ?? this.userAnswer,
-      solution: solution ?? this.solution,
-      isCorrect: isCorrect ?? this.isCorrect,
-      independent: independent ?? this.independent,
-      delayed: delayed ?? this.delayed,
-      helpJson: helpJson ?? this.helpJson,
-      feedback: feedback ?? this.feedback,
-      submittedAt: submittedAt ?? this.submittedAt,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
-    }
-    if (sessionId.present) {
-      map['session_id'] = Variable<int>(sessionId.value);
-    }
-    if (redoOfAttemptId.present) {
-      map['redo_of_attempt_id'] = Variable<int>(redoOfAttemptId.value);
-    }
-    if (userAnswer.present) {
-      map['user_answer'] = Variable<String>(userAnswer.value);
-    }
-    if (solution.present) {
-      map['solution'] = Variable<String>(solution.value);
-    }
-    if (isCorrect.present) {
-      map['is_correct'] = Variable<int>(isCorrect.value);
-    }
-    if (independent.present) {
-      map['independent'] = Variable<int>(independent.value);
-    }
-    if (delayed.present) {
-      map['delayed'] = Variable<int>(delayed.value);
-    }
-    if (helpJson.present) {
-      map['help_json'] = Variable<String>(helpJson.value);
-    }
-    if (feedback.present) {
-      map['feedback'] = Variable<String>(feedback.value);
-    }
-    if (submittedAt.present) {
-      map['submitted_at'] = Variable<String>(submittedAt.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AttemptsCompanion(')
-          ..write('id: $id, ')
-          ..write('conversationId: $conversationId, ')
-          ..write('sessionId: $sessionId, ')
-          ..write('redoOfAttemptId: $redoOfAttemptId, ')
-          ..write('userAnswer: $userAnswer, ')
-          ..write('solution: $solution, ')
-          ..write('isCorrect: $isCorrect, ')
-          ..write('independent: $independent, ')
-          ..write('delayed: $delayed, ')
-          ..write('helpJson: $helpJson, ')
-          ..write('feedback: $feedback, ')
-          ..write('submittedAt: $submittedAt, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-}
-
 class $AppMetaTable extends AppMeta with TableInfo<$AppMetaTable, AppMetaRow> {
   @override
   final GeneratedDatabase attachedDatabase;
@@ -8033,6 +6576,1463 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
           ..write('source: $source, ')
           ..write('status: $status, ')
           ..write('locked: $locked, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $StudySessionsTable extends StudySessions
+    with TableInfo<$StudySessionsTable, StudySessionRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StudySessionsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
+  @override
+  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
+    'goal_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES learning_goal (id) ON DELETE SET NULL',
+    ),
+  );
+  static const VerificationMeta _planItemIdMeta = const VerificationMeta(
+    'planItemId',
+  );
+  @override
+  late final GeneratedColumn<int> planItemId = GeneratedColumn<int>(
+    'plan_item_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES plan_item (id) ON DELETE SET NULL',
+    ),
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
+  @override
+  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+    'conversation_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES conversation (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _summaryMeta = const VerificationMeta(
+    'summary',
+  );
+  @override
+  late final GeneratedColumn<String> summary = GeneratedColumn<String>(
+    'summary',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _outcomeMeta = const VerificationMeta(
+    'outcome',
+  );
+  @override
+  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
+    'outcome',
+    aliasedName,
+    true,
+    check: () => outcome.isIn(['done', 'partial', 'not_done']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
+  @override
+  late final GeneratedColumn<String> startedAt = GeneratedColumn<String>(
+    'started_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _endedAtMeta = const VerificationMeta(
+    'endedAt',
+  );
+  @override
+  late final GeneratedColumn<String> endedAt = GeneratedColumn<String>(
+    'ended_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    goalId,
+    planItemId,
+    conversationId,
+    summary,
+    outcome,
+    startedAt,
+    endedAt,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'study_session';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<StudySessionRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('goal_id')) {
+      context.handle(
+        _goalIdMeta,
+        goalId.isAcceptableOrUnknown(data['goal_id']!, _goalIdMeta),
+      );
+    }
+    if (data.containsKey('plan_item_id')) {
+      context.handle(
+        _planItemIdMeta,
+        planItemId.isAcceptableOrUnknown(
+          data['plan_item_id']!,
+          _planItemIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
+          _conversationIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('summary')) {
+      context.handle(
+        _summaryMeta,
+        summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
+      );
+    }
+    if (data.containsKey('outcome')) {
+      context.handle(
+        _outcomeMeta,
+        outcome.isAcceptableOrUnknown(data['outcome']!, _outcomeMeta),
+      );
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('ended_at')) {
+      context.handle(
+        _endedAtMeta,
+        endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StudySessionRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StudySessionRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      goalId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}goal_id'],
+      ),
+      planItemId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}plan_item_id'],
+      ),
+      conversationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}conversation_id'],
+      ),
+      summary: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}summary'],
+      ),
+      outcome: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}outcome'],
+      ),
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}started_at'],
+      )!,
+      endedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}ended_at'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $StudySessionsTable createAlias(String alias) {
+    return $StudySessionsTable(attachedDatabase, alias);
+  }
+}
+
+class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
+  final int id;
+  final int? goalId;
+  final int? planItemId;
+  final int? conversationId;
+  final String? summary;
+  final String? outcome;
+  final String startedAt;
+  final String? endedAt;
+  final String createdAt;
+  final String updatedAt;
+  const StudySessionRow({
+    required this.id,
+    this.goalId,
+    this.planItemId,
+    this.conversationId,
+    this.summary,
+    this.outcome,
+    required this.startedAt,
+    this.endedAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    if (!nullToAbsent || goalId != null) {
+      map['goal_id'] = Variable<int>(goalId);
+    }
+    if (!nullToAbsent || planItemId != null) {
+      map['plan_item_id'] = Variable<int>(planItemId);
+    }
+    if (!nullToAbsent || conversationId != null) {
+      map['conversation_id'] = Variable<int>(conversationId);
+    }
+    if (!nullToAbsent || summary != null) {
+      map['summary'] = Variable<String>(summary);
+    }
+    if (!nullToAbsent || outcome != null) {
+      map['outcome'] = Variable<String>(outcome);
+    }
+    map['started_at'] = Variable<String>(startedAt);
+    if (!nullToAbsent || endedAt != null) {
+      map['ended_at'] = Variable<String>(endedAt);
+    }
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  StudySessionsCompanion toCompanion(bool nullToAbsent) {
+    return StudySessionsCompanion(
+      id: Value(id),
+      goalId: goalId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(goalId),
+      planItemId: planItemId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(planItemId),
+      conversationId: conversationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(conversationId),
+      summary: summary == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summary),
+      outcome: outcome == null && nullToAbsent
+          ? const Value.absent()
+          : Value(outcome),
+      startedAt: Value(startedAt),
+      endedAt: endedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(endedAt),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory StudySessionRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StudySessionRow(
+      id: serializer.fromJson<int>(json['id']),
+      goalId: serializer.fromJson<int?>(json['goalId']),
+      planItemId: serializer.fromJson<int?>(json['planItemId']),
+      conversationId: serializer.fromJson<int?>(json['conversationId']),
+      summary: serializer.fromJson<String?>(json['summary']),
+      outcome: serializer.fromJson<String?>(json['outcome']),
+      startedAt: serializer.fromJson<String>(json['startedAt']),
+      endedAt: serializer.fromJson<String?>(json['endedAt']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'goalId': serializer.toJson<int?>(goalId),
+      'planItemId': serializer.toJson<int?>(planItemId),
+      'conversationId': serializer.toJson<int?>(conversationId),
+      'summary': serializer.toJson<String?>(summary),
+      'outcome': serializer.toJson<String?>(outcome),
+      'startedAt': serializer.toJson<String>(startedAt),
+      'endedAt': serializer.toJson<String?>(endedAt),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  StudySessionRow copyWith({
+    int? id,
+    Value<int?> goalId = const Value.absent(),
+    Value<int?> planItemId = const Value.absent(),
+    Value<int?> conversationId = const Value.absent(),
+    Value<String?> summary = const Value.absent(),
+    Value<String?> outcome = const Value.absent(),
+    String? startedAt,
+    Value<String?> endedAt = const Value.absent(),
+    String? createdAt,
+    String? updatedAt,
+  }) => StudySessionRow(
+    id: id ?? this.id,
+    goalId: goalId.present ? goalId.value : this.goalId,
+    planItemId: planItemId.present ? planItemId.value : this.planItemId,
+    conversationId: conversationId.present
+        ? conversationId.value
+        : this.conversationId,
+    summary: summary.present ? summary.value : this.summary,
+    outcome: outcome.present ? outcome.value : this.outcome,
+    startedAt: startedAt ?? this.startedAt,
+    endedAt: endedAt.present ? endedAt.value : this.endedAt,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  StudySessionRow copyWithCompanion(StudySessionsCompanion data) {
+    return StudySessionRow(
+      id: data.id.present ? data.id.value : this.id,
+      goalId: data.goalId.present ? data.goalId.value : this.goalId,
+      planItemId: data.planItemId.present
+          ? data.planItemId.value
+          : this.planItemId,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      summary: data.summary.present ? data.summary.value : this.summary,
+      outcome: data.outcome.present ? data.outcome.value : this.outcome,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StudySessionRow(')
+          ..write('id: $id, ')
+          ..write('goalId: $goalId, ')
+          ..write('planItemId: $planItemId, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('summary: $summary, ')
+          ..write('outcome: $outcome, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    goalId,
+    planItemId,
+    conversationId,
+    summary,
+    outcome,
+    startedAt,
+    endedAt,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StudySessionRow &&
+          other.id == this.id &&
+          other.goalId == this.goalId &&
+          other.planItemId == this.planItemId &&
+          other.conversationId == this.conversationId &&
+          other.summary == this.summary &&
+          other.outcome == this.outcome &&
+          other.startedAt == this.startedAt &&
+          other.endedAt == this.endedAt &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
+  final Value<int> id;
+  final Value<int?> goalId;
+  final Value<int?> planItemId;
+  final Value<int?> conversationId;
+  final Value<String?> summary;
+  final Value<String?> outcome;
+  final Value<String> startedAt;
+  final Value<String?> endedAt;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  const StudySessionsCompanion({
+    this.id = const Value.absent(),
+    this.goalId = const Value.absent(),
+    this.planItemId = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.summary = const Value.absent(),
+    this.outcome = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.endedAt = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  StudySessionsCompanion.insert({
+    this.id = const Value.absent(),
+    this.goalId = const Value.absent(),
+    this.planItemId = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.summary = const Value.absent(),
+    this.outcome = const Value.absent(),
+    required String startedAt,
+    this.endedAt = const Value.absent(),
+    required String createdAt,
+    required String updatedAt,
+  }) : startedAt = Value(startedAt),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<StudySessionRow> custom({
+    Expression<int>? id,
+    Expression<int>? goalId,
+    Expression<int>? planItemId,
+    Expression<int>? conversationId,
+    Expression<String>? summary,
+    Expression<String>? outcome,
+    Expression<String>? startedAt,
+    Expression<String>? endedAt,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (goalId != null) 'goal_id': goalId,
+      if (planItemId != null) 'plan_item_id': planItemId,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (summary != null) 'summary': summary,
+      if (outcome != null) 'outcome': outcome,
+      if (startedAt != null) 'started_at': startedAt,
+      if (endedAt != null) 'ended_at': endedAt,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  StudySessionsCompanion copyWith({
+    Value<int>? id,
+    Value<int?>? goalId,
+    Value<int?>? planItemId,
+    Value<int?>? conversationId,
+    Value<String?>? summary,
+    Value<String?>? outcome,
+    Value<String>? startedAt,
+    Value<String?>? endedAt,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+  }) {
+    return StudySessionsCompanion(
+      id: id ?? this.id,
+      goalId: goalId ?? this.goalId,
+      planItemId: planItemId ?? this.planItemId,
+      conversationId: conversationId ?? this.conversationId,
+      summary: summary ?? this.summary,
+      outcome: outcome ?? this.outcome,
+      startedAt: startedAt ?? this.startedAt,
+      endedAt: endedAt ?? this.endedAt,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (goalId.present) {
+      map['goal_id'] = Variable<int>(goalId.value);
+    }
+    if (planItemId.present) {
+      map['plan_item_id'] = Variable<int>(planItemId.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<int>(conversationId.value);
+    }
+    if (summary.present) {
+      map['summary'] = Variable<String>(summary.value);
+    }
+    if (outcome.present) {
+      map['outcome'] = Variable<String>(outcome.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<String>(startedAt.value);
+    }
+    if (endedAt.present) {
+      map['ended_at'] = Variable<String>(endedAt.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StudySessionsCompanion(')
+          ..write('id: $id, ')
+          ..write('goalId: $goalId, ')
+          ..write('planItemId: $planItemId, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('summary: $summary, ')
+          ..write('outcome: $outcome, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $AttemptsTable extends Attempts
+    with TableInfo<$AttemptsTable, AttemptRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AttemptsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
+  @override
+  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES conversation (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _sessionIdMeta = const VerificationMeta(
+    'sessionId',
+  );
+  @override
+  late final GeneratedColumn<int> sessionId = GeneratedColumn<int>(
+    'session_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES study_session (id) ON DELETE SET NULL',
+    ),
+  );
+  static const VerificationMeta _redoOfAttemptIdMeta = const VerificationMeta(
+    'redoOfAttemptId',
+  );
+  @override
+  late final GeneratedColumn<int> redoOfAttemptId = GeneratedColumn<int>(
+    'redo_of_attempt_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES attempt (id) ON DELETE SET NULL',
+    ),
+  );
+  static const VerificationMeta _userAnswerMeta = const VerificationMeta(
+    'userAnswer',
+  );
+  @override
+  late final GeneratedColumn<String> userAnswer = GeneratedColumn<String>(
+    'user_answer',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _solutionMeta = const VerificationMeta(
+    'solution',
+  );
+  @override
+  late final GeneratedColumn<String> solution = GeneratedColumn<String>(
+    'solution',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _isCorrectMeta = const VerificationMeta(
+    'isCorrect',
+  );
+  @override
+  late final GeneratedColumn<int> isCorrect = GeneratedColumn<int>(
+    'is_correct',
+    aliasedName,
+    true,
+    check: () => isCorrect.isIn([0, 1]),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _independentMeta = const VerificationMeta(
+    'independent',
+  );
+  @override
+  late final GeneratedColumn<int> independent = GeneratedColumn<int>(
+    'independent',
+    aliasedName,
+    true,
+    check: () => independent.isIn([0, 1]),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _delayedMeta = const VerificationMeta(
+    'delayed',
+  );
+  @override
+  late final GeneratedColumn<int> delayed = GeneratedColumn<int>(
+    'delayed',
+    aliasedName,
+    false,
+    check: () => delayed.isIn([0, 1]),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _helpJsonMeta = const VerificationMeta(
+    'helpJson',
+  );
+  @override
+  late final GeneratedColumn<String> helpJson = GeneratedColumn<String>(
+    'help_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _feedbackMeta = const VerificationMeta(
+    'feedback',
+  );
+  @override
+  late final GeneratedColumn<String> feedback = GeneratedColumn<String>(
+    'feedback',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _submittedAtMeta = const VerificationMeta(
+    'submittedAt',
+  );
+  @override
+  late final GeneratedColumn<String> submittedAt = GeneratedColumn<String>(
+    'submitted_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    conversationId,
+    sessionId,
+    redoOfAttemptId,
+    userAnswer,
+    solution,
+    isCorrect,
+    independent,
+    delayed,
+    helpJson,
+    feedback,
+    submittedAt,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'attempt';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AttemptRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
+          _conversationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('session_id')) {
+      context.handle(
+        _sessionIdMeta,
+        sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
+      );
+    }
+    if (data.containsKey('redo_of_attempt_id')) {
+      context.handle(
+        _redoOfAttemptIdMeta,
+        redoOfAttemptId.isAcceptableOrUnknown(
+          data['redo_of_attempt_id']!,
+          _redoOfAttemptIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('user_answer')) {
+      context.handle(
+        _userAnswerMeta,
+        userAnswer.isAcceptableOrUnknown(data['user_answer']!, _userAnswerMeta),
+      );
+    }
+    if (data.containsKey('solution')) {
+      context.handle(
+        _solutionMeta,
+        solution.isAcceptableOrUnknown(data['solution']!, _solutionMeta),
+      );
+    }
+    if (data.containsKey('is_correct')) {
+      context.handle(
+        _isCorrectMeta,
+        isCorrect.isAcceptableOrUnknown(data['is_correct']!, _isCorrectMeta),
+      );
+    }
+    if (data.containsKey('independent')) {
+      context.handle(
+        _independentMeta,
+        independent.isAcceptableOrUnknown(
+          data['independent']!,
+          _independentMeta,
+        ),
+      );
+    }
+    if (data.containsKey('delayed')) {
+      context.handle(
+        _delayedMeta,
+        delayed.isAcceptableOrUnknown(data['delayed']!, _delayedMeta),
+      );
+    }
+    if (data.containsKey('help_json')) {
+      context.handle(
+        _helpJsonMeta,
+        helpJson.isAcceptableOrUnknown(data['help_json']!, _helpJsonMeta),
+      );
+    }
+    if (data.containsKey('feedback')) {
+      context.handle(
+        _feedbackMeta,
+        feedback.isAcceptableOrUnknown(data['feedback']!, _feedbackMeta),
+      );
+    }
+    if (data.containsKey('submitted_at')) {
+      context.handle(
+        _submittedAtMeta,
+        submittedAt.isAcceptableOrUnknown(
+          data['submitted_at']!,
+          _submittedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  AttemptRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AttemptRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      conversationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      sessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}session_id'],
+      ),
+      redoOfAttemptId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}redo_of_attempt_id'],
+      ),
+      userAnswer: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}user_answer'],
+      ),
+      solution: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}solution'],
+      ),
+      isCorrect: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}is_correct'],
+      ),
+      independent: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}independent'],
+      ),
+      delayed: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}delayed'],
+      )!,
+      helpJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}help_json'],
+      ),
+      feedback: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}feedback'],
+      ),
+      submittedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}submitted_at'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $AttemptsTable createAlias(String alias) {
+    return $AttemptsTable(attachedDatabase, alias);
+  }
+}
+
+class AttemptRow extends DataClass implements Insertable<AttemptRow> {
+  final int id;
+  final int conversationId;
+  final int? sessionId;
+  final int? redoOfAttemptId;
+  final String? userAnswer;
+  final String? solution;
+  final int? isCorrect;
+  final int? independent;
+  final int delayed;
+  final String? helpJson;
+  final String? feedback;
+  final String? submittedAt;
+  final String createdAt;
+  final String updatedAt;
+  const AttemptRow({
+    required this.id,
+    required this.conversationId,
+    this.sessionId,
+    this.redoOfAttemptId,
+    this.userAnswer,
+    this.solution,
+    this.isCorrect,
+    this.independent,
+    required this.delayed,
+    this.helpJson,
+    this.feedback,
+    this.submittedAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['conversation_id'] = Variable<int>(conversationId);
+    if (!nullToAbsent || sessionId != null) {
+      map['session_id'] = Variable<int>(sessionId);
+    }
+    if (!nullToAbsent || redoOfAttemptId != null) {
+      map['redo_of_attempt_id'] = Variable<int>(redoOfAttemptId);
+    }
+    if (!nullToAbsent || userAnswer != null) {
+      map['user_answer'] = Variable<String>(userAnswer);
+    }
+    if (!nullToAbsent || solution != null) {
+      map['solution'] = Variable<String>(solution);
+    }
+    if (!nullToAbsent || isCorrect != null) {
+      map['is_correct'] = Variable<int>(isCorrect);
+    }
+    if (!nullToAbsent || independent != null) {
+      map['independent'] = Variable<int>(independent);
+    }
+    map['delayed'] = Variable<int>(delayed);
+    if (!nullToAbsent || helpJson != null) {
+      map['help_json'] = Variable<String>(helpJson);
+    }
+    if (!nullToAbsent || feedback != null) {
+      map['feedback'] = Variable<String>(feedback);
+    }
+    if (!nullToAbsent || submittedAt != null) {
+      map['submitted_at'] = Variable<String>(submittedAt);
+    }
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  AttemptsCompanion toCompanion(bool nullToAbsent) {
+    return AttemptsCompanion(
+      id: Value(id),
+      conversationId: Value(conversationId),
+      sessionId: sessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sessionId),
+      redoOfAttemptId: redoOfAttemptId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(redoOfAttemptId),
+      userAnswer: userAnswer == null && nullToAbsent
+          ? const Value.absent()
+          : Value(userAnswer),
+      solution: solution == null && nullToAbsent
+          ? const Value.absent()
+          : Value(solution),
+      isCorrect: isCorrect == null && nullToAbsent
+          ? const Value.absent()
+          : Value(isCorrect),
+      independent: independent == null && nullToAbsent
+          ? const Value.absent()
+          : Value(independent),
+      delayed: Value(delayed),
+      helpJson: helpJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(helpJson),
+      feedback: feedback == null && nullToAbsent
+          ? const Value.absent()
+          : Value(feedback),
+      submittedAt: submittedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(submittedAt),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory AttemptRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AttemptRow(
+      id: serializer.fromJson<int>(json['id']),
+      conversationId: serializer.fromJson<int>(json['conversationId']),
+      sessionId: serializer.fromJson<int?>(json['sessionId']),
+      redoOfAttemptId: serializer.fromJson<int?>(json['redoOfAttemptId']),
+      userAnswer: serializer.fromJson<String?>(json['userAnswer']),
+      solution: serializer.fromJson<String?>(json['solution']),
+      isCorrect: serializer.fromJson<int?>(json['isCorrect']),
+      independent: serializer.fromJson<int?>(json['independent']),
+      delayed: serializer.fromJson<int>(json['delayed']),
+      helpJson: serializer.fromJson<String?>(json['helpJson']),
+      feedback: serializer.fromJson<String?>(json['feedback']),
+      submittedAt: serializer.fromJson<String?>(json['submittedAt']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'conversationId': serializer.toJson<int>(conversationId),
+      'sessionId': serializer.toJson<int?>(sessionId),
+      'redoOfAttemptId': serializer.toJson<int?>(redoOfAttemptId),
+      'userAnswer': serializer.toJson<String?>(userAnswer),
+      'solution': serializer.toJson<String?>(solution),
+      'isCorrect': serializer.toJson<int?>(isCorrect),
+      'independent': serializer.toJson<int?>(independent),
+      'delayed': serializer.toJson<int>(delayed),
+      'helpJson': serializer.toJson<String?>(helpJson),
+      'feedback': serializer.toJson<String?>(feedback),
+      'submittedAt': serializer.toJson<String?>(submittedAt),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  AttemptRow copyWith({
+    int? id,
+    int? conversationId,
+    Value<int?> sessionId = const Value.absent(),
+    Value<int?> redoOfAttemptId = const Value.absent(),
+    Value<String?> userAnswer = const Value.absent(),
+    Value<String?> solution = const Value.absent(),
+    Value<int?> isCorrect = const Value.absent(),
+    Value<int?> independent = const Value.absent(),
+    int? delayed,
+    Value<String?> helpJson = const Value.absent(),
+    Value<String?> feedback = const Value.absent(),
+    Value<String?> submittedAt = const Value.absent(),
+    String? createdAt,
+    String? updatedAt,
+  }) => AttemptRow(
+    id: id ?? this.id,
+    conversationId: conversationId ?? this.conversationId,
+    sessionId: sessionId.present ? sessionId.value : this.sessionId,
+    redoOfAttemptId: redoOfAttemptId.present
+        ? redoOfAttemptId.value
+        : this.redoOfAttemptId,
+    userAnswer: userAnswer.present ? userAnswer.value : this.userAnswer,
+    solution: solution.present ? solution.value : this.solution,
+    isCorrect: isCorrect.present ? isCorrect.value : this.isCorrect,
+    independent: independent.present ? independent.value : this.independent,
+    delayed: delayed ?? this.delayed,
+    helpJson: helpJson.present ? helpJson.value : this.helpJson,
+    feedback: feedback.present ? feedback.value : this.feedback,
+    submittedAt: submittedAt.present ? submittedAt.value : this.submittedAt,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  AttemptRow copyWithCompanion(AttemptsCompanion data) {
+    return AttemptRow(
+      id: data.id.present ? data.id.value : this.id,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
+      redoOfAttemptId: data.redoOfAttemptId.present
+          ? data.redoOfAttemptId.value
+          : this.redoOfAttemptId,
+      userAnswer: data.userAnswer.present
+          ? data.userAnswer.value
+          : this.userAnswer,
+      solution: data.solution.present ? data.solution.value : this.solution,
+      isCorrect: data.isCorrect.present ? data.isCorrect.value : this.isCorrect,
+      independent: data.independent.present
+          ? data.independent.value
+          : this.independent,
+      delayed: data.delayed.present ? data.delayed.value : this.delayed,
+      helpJson: data.helpJson.present ? data.helpJson.value : this.helpJson,
+      feedback: data.feedback.present ? data.feedback.value : this.feedback,
+      submittedAt: data.submittedAt.present
+          ? data.submittedAt.value
+          : this.submittedAt,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AttemptRow(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('sessionId: $sessionId, ')
+          ..write('redoOfAttemptId: $redoOfAttemptId, ')
+          ..write('userAnswer: $userAnswer, ')
+          ..write('solution: $solution, ')
+          ..write('isCorrect: $isCorrect, ')
+          ..write('independent: $independent, ')
+          ..write('delayed: $delayed, ')
+          ..write('helpJson: $helpJson, ')
+          ..write('feedback: $feedback, ')
+          ..write('submittedAt: $submittedAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    conversationId,
+    sessionId,
+    redoOfAttemptId,
+    userAnswer,
+    solution,
+    isCorrect,
+    independent,
+    delayed,
+    helpJson,
+    feedback,
+    submittedAt,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AttemptRow &&
+          other.id == this.id &&
+          other.conversationId == this.conversationId &&
+          other.sessionId == this.sessionId &&
+          other.redoOfAttemptId == this.redoOfAttemptId &&
+          other.userAnswer == this.userAnswer &&
+          other.solution == this.solution &&
+          other.isCorrect == this.isCorrect &&
+          other.independent == this.independent &&
+          other.delayed == this.delayed &&
+          other.helpJson == this.helpJson &&
+          other.feedback == this.feedback &&
+          other.submittedAt == this.submittedAt &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
+  final Value<int> id;
+  final Value<int> conversationId;
+  final Value<int?> sessionId;
+  final Value<int?> redoOfAttemptId;
+  final Value<String?> userAnswer;
+  final Value<String?> solution;
+  final Value<int?> isCorrect;
+  final Value<int?> independent;
+  final Value<int> delayed;
+  final Value<String?> helpJson;
+  final Value<String?> feedback;
+  final Value<String?> submittedAt;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  const AttemptsCompanion({
+    this.id = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.sessionId = const Value.absent(),
+    this.redoOfAttemptId = const Value.absent(),
+    this.userAnswer = const Value.absent(),
+    this.solution = const Value.absent(),
+    this.isCorrect = const Value.absent(),
+    this.independent = const Value.absent(),
+    this.delayed = const Value.absent(),
+    this.helpJson = const Value.absent(),
+    this.feedback = const Value.absent(),
+    this.submittedAt = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  AttemptsCompanion.insert({
+    this.id = const Value.absent(),
+    required int conversationId,
+    this.sessionId = const Value.absent(),
+    this.redoOfAttemptId = const Value.absent(),
+    this.userAnswer = const Value.absent(),
+    this.solution = const Value.absent(),
+    this.isCorrect = const Value.absent(),
+    this.independent = const Value.absent(),
+    this.delayed = const Value.absent(),
+    this.helpJson = const Value.absent(),
+    this.feedback = const Value.absent(),
+    this.submittedAt = const Value.absent(),
+    required String createdAt,
+    required String updatedAt,
+  }) : conversationId = Value(conversationId),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<AttemptRow> custom({
+    Expression<int>? id,
+    Expression<int>? conversationId,
+    Expression<int>? sessionId,
+    Expression<int>? redoOfAttemptId,
+    Expression<String>? userAnswer,
+    Expression<String>? solution,
+    Expression<int>? isCorrect,
+    Expression<int>? independent,
+    Expression<int>? delayed,
+    Expression<String>? helpJson,
+    Expression<String>? feedback,
+    Expression<String>? submittedAt,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (sessionId != null) 'session_id': sessionId,
+      if (redoOfAttemptId != null) 'redo_of_attempt_id': redoOfAttemptId,
+      if (userAnswer != null) 'user_answer': userAnswer,
+      if (solution != null) 'solution': solution,
+      if (isCorrect != null) 'is_correct': isCorrect,
+      if (independent != null) 'independent': independent,
+      if (delayed != null) 'delayed': delayed,
+      if (helpJson != null) 'help_json': helpJson,
+      if (feedback != null) 'feedback': feedback,
+      if (submittedAt != null) 'submitted_at': submittedAt,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  AttemptsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? conversationId,
+    Value<int?>? sessionId,
+    Value<int?>? redoOfAttemptId,
+    Value<String?>? userAnswer,
+    Value<String?>? solution,
+    Value<int?>? isCorrect,
+    Value<int?>? independent,
+    Value<int>? delayed,
+    Value<String?>? helpJson,
+    Value<String?>? feedback,
+    Value<String?>? submittedAt,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+  }) {
+    return AttemptsCompanion(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      sessionId: sessionId ?? this.sessionId,
+      redoOfAttemptId: redoOfAttemptId ?? this.redoOfAttemptId,
+      userAnswer: userAnswer ?? this.userAnswer,
+      solution: solution ?? this.solution,
+      isCorrect: isCorrect ?? this.isCorrect,
+      independent: independent ?? this.independent,
+      delayed: delayed ?? this.delayed,
+      helpJson: helpJson ?? this.helpJson,
+      feedback: feedback ?? this.feedback,
+      submittedAt: submittedAt ?? this.submittedAt,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<int>(conversationId.value);
+    }
+    if (sessionId.present) {
+      map['session_id'] = Variable<int>(sessionId.value);
+    }
+    if (redoOfAttemptId.present) {
+      map['redo_of_attempt_id'] = Variable<int>(redoOfAttemptId.value);
+    }
+    if (userAnswer.present) {
+      map['user_answer'] = Variable<String>(userAnswer.value);
+    }
+    if (solution.present) {
+      map['solution'] = Variable<String>(solution.value);
+    }
+    if (isCorrect.present) {
+      map['is_correct'] = Variable<int>(isCorrect.value);
+    }
+    if (independent.present) {
+      map['independent'] = Variable<int>(independent.value);
+    }
+    if (delayed.present) {
+      map['delayed'] = Variable<int>(delayed.value);
+    }
+    if (helpJson.present) {
+      map['help_json'] = Variable<String>(helpJson.value);
+    }
+    if (feedback.present) {
+      map['feedback'] = Variable<String>(feedback.value);
+    }
+    if (submittedAt.present) {
+      map['submitted_at'] = Variable<String>(submittedAt.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AttemptsCompanion(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('sessionId: $sessionId, ')
+          ..write('redoOfAttemptId: $redoOfAttemptId, ')
+          ..write('userAnswer: $userAnswer, ')
+          ..write('solution: $solution, ')
+          ..write('isCorrect: $isCorrect, ')
+          ..write('independent: $independent, ')
+          ..write('delayed: $delayed, ')
+          ..write('helpJson: $helpJson, ')
+          ..write('feedback: $feedback, ')
+          ..write('submittedAt: $submittedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -11479,8 +11479,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $ConversationsTable conversations = $ConversationsTable(this);
   late final $StudyPlansTable studyPlans = $StudyPlansTable(this);
   late final $PlanItemsTable planItems = $PlanItemsTable(this);
-  late final $StudySessionsTable studySessions = $StudySessionsTable(this);
-  late final $AttemptsTable attempts = $AttemptsTable(this);
   late final $AppMetaTable appMeta = $AppMetaTable(this);
   late final $ProfilesTable profiles = $ProfilesTable(this);
   late final $AssetChunksTable assetChunks = $AssetChunksTable(this);
@@ -11490,6 +11488,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     this,
   );
   late final $ScheduleBlocksTable scheduleBlocks = $ScheduleBlocksTable(this);
+  late final $StudySessionsTable studySessions = $StudySessionsTable(this);
+  late final $AttemptsTable attempts = $AttemptsTable(this);
   late final $AssessmentsTable assessments = $AssessmentsTable(this);
   late final $MemoriesTable memories = $MemoriesTable(this);
   late final $RevisionCommitsTable revisionCommits = $RevisionCommitsTable(
@@ -11506,6 +11506,35 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $RevisionSequencesTable revisionSequences =
       $RevisionSequencesTable(this);
+  Selectable<ItemPlanResult> itemPlan(int itemId) {
+    return customSelect(
+      'SELECT id, study_plan_id FROM plan_item WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(itemId)],
+      readsFrom: {this.planItems},
+    ).map(
+      (QueryRow row) => ItemPlanResult(
+        id: row.read<int>('id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+      ),
+    );
+  }
+
+  Selectable<PlanItemRow> stepsOfPlan(int? planId) {
+    return customSelect(
+      'SELECT * FROM plan_item WHERE study_plan_id = ?1 ORDER BY seq, id',
+      variables: [Variable<int>(planId)],
+      readsFrom: {this.planItems},
+    ).asyncMap(this.planItems.mapFromRow);
+  }
+
+  Selectable<StudyPlanRow> studyPlanById(int id) {
+    return customSelect(
+      'SELECT * FROM study_plan WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.studyPlans},
+    ).asyncMap(this.studyPlans.mapFromRow);
+  }
+
   Selectable<AttemptRow> attemptsForConversation(int conversationId) {
     return customSelect(
       'SELECT * FROM attempt WHERE conversation_id = ?1 ORDER BY id DESC',
@@ -12679,8 +12708,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     conversations,
     studyPlans,
     planItems,
-    studySessions,
-    attempts,
     appMeta,
     profiles,
     assetChunks,
@@ -12688,6 +12715,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     messages,
     timetableEntries,
     scheduleBlocks,
+    studySessions,
+    attempts,
     assessments,
     memories,
     revisionCommits,
@@ -12764,6 +12793,34 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
+        'asset_object',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('asset_chunk', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'material',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('material_page', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'conversation',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('message', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'plan_item',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('schedule_block', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
         'learning_goal',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -12806,34 +12863,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
-        'asset_object',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('asset_chunk', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'material',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('material_page', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'plan_item',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('schedule_block', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
         'attempt',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -12854,6 +12883,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       result: [TableUpdate('revision_change', kind: UpdateKind.delete)],
     ),
   ]);
+}
+
+class ItemPlanResult {
+  final int id;
+  final int? studyPlanId;
+  ItemPlanResult({required this.id, this.studyPlanId});
 }
 
 class ItemByConversationAndTitleResult {

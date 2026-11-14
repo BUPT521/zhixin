@@ -320,15 +320,9 @@ class StudyPlanRepository {
     int? expectedPlanId,
   }) async {
     await _db.transaction((txn) async {
-      final rows = await txn.query(
-        'plan_item',
-        columns: ['study_plan_id'],
-        where: 'id = ?',
-        whereArgs: [stepId],
-        limit: 1,
-      );
-      if (rows.isEmpty) return;
-      final planId = rows.first['study_plan_id'] as int?;
+      final item = await _connect(txn).itemPlan(stepId).getSingleOrNull();
+      if (item == null) return;
+      final planId = item.studyPlanId;
       if (planId == null) return;
       if (expectedPlanId != null && expectedPlanId != planId) {
         throw StateError('这一步不属于当前学习计划');
@@ -341,15 +335,9 @@ class StudyPlanRepository {
   /// 所有事项状态入口共用计划步骤的唯一进行中规则。
   Future<void> setItemStatus(int itemId, PlanItemStatus status) async {
     await _db.transaction((txn) async {
-      final rows = await txn.query(
-        'plan_item',
-        columns: ['study_plan_id'],
-        where: 'id = ?',
-        whereArgs: [itemId],
-        limit: 1,
-      );
-      if (rows.isEmpty) return;
-      final planId = rows.single['study_plan_id'] as int?;
+      final item = await _connect(txn).itemPlan(itemId).getSingleOrNull();
+      if (item == null) return;
+      final planId = item.studyPlanId;
       await _setItemStatus(txn, itemId, status, planId);
       if (planId != null) await _recompute(txn, planId);
     });
@@ -408,13 +396,8 @@ class StudyPlanRepository {
   Future<void> _recompute(RawExecutor executor, int planId) async {
     final plan = await _plainPlan(planId, executor: executor);
     if (plan == null) return;
-    final rows = await executor.query(
-      'plan_item',
-      where: 'study_plan_id = ?',
-      whereArgs: [planId],
-      orderBy: 'seq, id',
-    );
-    final allSteps = rows.map(PlanItem.fromRow).toList(growable: false);
+    final rows = await _connect(executor).stepsOfPlan(planId).get();
+    final allSteps = rows.map(_stepOfRow).toList(growable: false);
     final current = currentStudyStep(allSteps);
     final donePages = allSteps
         .where((step) => step.done && step.pageTo != null)
@@ -443,12 +426,44 @@ class StudyPlanRepository {
   }
 
   Future<StudyPlan?> _plainPlan(int id, {RawExecutor? executor}) async {
-    final rows = await (executor ?? _db).query(
-      'study_plan',
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : StudyPlan.fromRow(rows.first);
+    final row = await _connect(executor).studyPlanById(id).getSingleOrNull();
+    return row == null ? null : _planOfRow(row);
   }
+
+  /// 计划表的字段与领域模型同名，只补状态与时间解析。
+  static StudyPlan _planOfRow(StudyPlanRow row) => StudyPlan(
+    id: row.id,
+    title: row.title,
+    materialId: row.materialId,
+    goalId: row.goalId,
+    conversationId: row.conversationId,
+    pageFrom: row.pageFrom,
+    pageTo: row.pageTo,
+    currentPage: row.currentPage,
+    status: StudyPlanStatus.fromCode(row.status),
+    createdAt: DateTime.tryParse(row.createdAt),
+    updatedAt: DateTime.tryParse(row.updatedAt),
+  );
+
+  /// 步骤整行与其它查询挑的列不同名，走同一个 _stepItem 组装。
+  static PlanItem _stepOfRow(PlanItemRow row) => _stepItem(
+    id: row.id,
+    goalId: row.goalId,
+    conversationId: row.conversationId,
+    studyPlanId: row.studyPlanId,
+    seq: row.seq,
+    title: row.title,
+    note: row.note,
+    pageFrom: row.pageFrom,
+    pageTo: row.pageTo,
+    sourceFileName: null,
+    dueAt: row.dueAt,
+    estMinutes: row.estMinutes,
+    priority: row.priority,
+    status: row.status,
+    source: row.source,
+    completedAt: row.completedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  );
 }

@@ -1,0 +1,20 @@
+-- 系统学习计划与步骤的补充读查询（ADR-0011 第二批）。
+--
+-- 主查询在 study_plans.drift 与 tasks.drift；这里补上按条件筛选的几条。
+
+import '../tables.dart';
+
+-- 某个事项所属的计划编号。取整行而不是只取 study_plan_id：
+-- 这一列本身可空，“没有这个事项”与“事项不属于任何计划”是两回事。
+itemPlan:
+SELECT id, study_plan_id FROM plan_item WHERE id = :itemId LIMIT 1;
+
+-- 一份计划下的全部步骤，按次序。
+stepsOfPlan:
+SELECT * FROM plan_item
+WHERE study_plan_id = :planId
+ORDER BY seq, id;
+
+-- 按编号取一份计划。
+studyPlanById:
+SELECT * FROM study_plan WHERE id = :id LIMIT 1;
