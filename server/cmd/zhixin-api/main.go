@@ -15,6 +15,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/server"
+	"github.com/BUPT521/zhixin/server/internal/store/pg"
 )
 
 func main() {
@@ -36,10 +37,24 @@ func run(log *slog.Logger) error {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
 	} else {
-		// PostgreSQL and object-storage stores follow internal/store/schema.sql
-		// and are the next step (ADR-0009); refuse to start rather than
-		// silently dropping data into memory.
-		return errors.New("PostgreSQL stores are not implemented yet; unset ZHIXIN_DATABASE_URL for local development")
+		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{BlobDir: cfg.BlobDir})
+		if err != nil {
+			return err
+		}
+		defer pgStore.Close()
+		if cfg.ApplySchema {
+			if err := pgStore.ApplySchema(context.Background()); err != nil {
+				return err
+			}
+		}
+		log.Info("using PostgreSQL stores", slog.String("blob_dir", cfg.BlobDir))
+		stores = server.Stores{
+			Auth:    pgStore,
+			Sync:    pgStore,
+			Backups: pgStore,
+			Quota:   pgStore,
+			Ready:   pgStore.Ping,
+		}
 	}
 	if cfg.LLM.APIKey == "" {
 		log.Warn("ZHIXIN_LLM_API_KEY is empty: the model proxy answers 503")

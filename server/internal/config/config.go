@@ -31,6 +31,11 @@ type Config struct {
 	MaxBackupBytes int64
 	// BackupsKept is how many snapshots are retained per account.
 	BackupsKept int
+	// BlobDir stores backup bytes on disk until S3-compatible object storage
+	// lands. Only used when DatabaseURL is set.
+	BlobDir string
+	// ApplySchema runs schema.sql on startup; meant for a fresh database.
+	ApplySchema bool
 
 	LLM LLMConfig
 }
@@ -95,6 +100,8 @@ func Load(getenv func(string) string) (Config, error) {
 		MaxJSONBytes:   num("ZHIXIN_MAX_JSON_BYTES", "1048576"),
 		MaxBackupBytes: num("ZHIXIN_MAX_BACKUP_BYTES", "268435456"),
 		BackupsKept:    int(num("ZHIXIN_BACKUPS_KEPT", "5")),
+		BlobDir:        get("ZHIXIN_BLOB_DIR", "data/blobs"),
+		ApplySchema:    get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
 		LLM: LLMConfig{
 			BaseURL:         strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:          get("ZHIXIN_LLM_API_KEY", ""),

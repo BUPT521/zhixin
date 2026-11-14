@@ -4,9 +4,11 @@
 
 ## 当前状态
 
-骨架可以编译、启动并通过测试，全部存储目前是内存实现，进程退出后数据丢失，所以只能用于本地开发与联调。账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、模型代理的转发与额度都已经按契约实现；附件对象的 `/v1/blobs` 在契约里，处理函数返回 501。设置 `ZHIXIN_DATABASE_URL` 时服务拒绝启动，因为 PostgreSQL 与对象存储的实现还没有写，这样做是为了避免以为数据已经落库而实际留在内存里。
+账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、模型代理的转发与额度都已经按契约实现。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时用内存实现，进程退出后数据丢失，只能用于本地开发与联调；设置之后用 PostgreSQL（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），账号、会话、提交序列、备份元数据与用量入库，备份字节写到 `ZHIXIN_BLOB_DIR`，进程重启不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件对象的 `/v1/blobs` 仍在契约里但处理函数返回 501。
 
-接下来的顺序是：PostgreSQL 存储（按 [schema.sql](internal/store/schema.sql)），对象存储与 `/v1/blobs`，部署到与自建 Sentry 相同的服务器，然后接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
+PostgreSQL 的用例要连真库，设置 `ZHIXIN_TEST_DATABASE_URL` 才会跑，否则跳过；这个仓库的开发机与当前 CI 都没有数据库，因此这条路径只做过编译与静态检查。
+
+接下来的顺序是：对象存储与 `/v1/blobs`（把备份字节从 `ZHIXIN_BLOB_DIR` 换到 S3 兼容存储，并实现附件三件套），部署到与自建 Sentry 相同的服务器，然后接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
 
 PostgreSQL 存取用 `pgx` 加 `sqlc` 生成，契约用 `oapi-codegen` 生成并挂到标准库路由上，登录与刷新令牌用 `golang.org/x/time/rate` 限流，依赖清单与理由见 [ADR-0015](../docs/adr/0015-服务端引入代码生成与限流依赖.md)。生成代码与客户端一样提交入库，提交前重新生成并核对没有差异。
 
@@ -24,7 +26,8 @@ server/
 │   ├── backup/                 ← 整库备份快照
 │   ├── llmproxy/               ← Chat Completions 代理与每日额度
 │   ├── server/                 ← 装配路由与中间件，端到端测试
-│   └── store/schema.sql        ← PostgreSQL 表结构草案
+│   ├── store/                  ← 表结构（schema.sql，唯一真相）与 sqlc 查询
+│   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、用量
 └── Dockerfile
 ```
 
@@ -53,7 +56,9 @@ server/
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `ZHIXIN_ADDR` | `:8080` | 监听地址 |
-| `ZHIXIN_DATABASE_URL` | 空 | 空表示内存存储；PostgreSQL 实现完成前设置会拒绝启动 |
+| `ZHIXIN_DATABASE_URL` | 空 | 空表示内存存储；设置之后用 PostgreSQL |
+| `ZHIXIN_BLOB_DIR` | `data/blobs` | 备份字节的落盘目录，仅在使用 PostgreSQL 时读取 |
+| `ZHIXIN_APPLY_SCHEMA` | `0` | 设为 `1` 时启动按 `schema.sql` 建表，用于空库 |
 | `ZHIXIN_TIMEZONE` | `Asia/Shanghai` | 额度按这个时区的自然日计 |
 | `ZHIXIN_ACCESS_TTL` | `1h` | 访问令牌有效期 |
 | `ZHIXIN_REFRESH_TTL` | `720h` | 刷新令牌有效期，必须长于访问令牌 |

@@ -21,7 +21,7 @@ CREATE TABLE session (
   refresh_expires  TIMESTAMPTZ NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX session_user ON session(user_id);
+CREATE INDEX session_by_user ON session(user_id);
 
 -- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
 -- 锁住 sync_head，核对 base_seq = head 之后再追加。
@@ -73,3 +73,4 @@ CREATE TABLE llm_usage (
   tokens   BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+
