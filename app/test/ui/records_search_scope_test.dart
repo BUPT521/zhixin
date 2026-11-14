@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
 /// 记录页的查找范围选择器：切换全部、目标与材料之后，结果随范围收窄并在
@@ -288,6 +289,75 @@ void main() {
     await tester.tap(find.text('加载更多结果'));
     await pumpUntil(tester, find.text('已经到最后一条'));
     expect(find.text('加载更多结果'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('页面推入的过渡里打开查找范围，不再请求输入焦点', (tester) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const ZhixinApp());
+      scope = tester.state<AppScopeState>(find.byType(AppScope));
+      await scope!.ready;
+    });
+    await settle(tester);
+
+    await tester.tap(find.text('记录').last);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('records-search-entry')));
+    // 路由推入共 260 毫秒；在过渡结束前打开范围菜单，焦点不应再被请求。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byIcon(FLucideIcons.slidersHorizontal));
+    await tester.pumpAndSettle();
+
+    expect(find.text('本机全部记录'), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+    final field = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byType(RecordsSearchPage),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(field.focusNode.hasFocus, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('索引打不开时设置页说明状态读取失败', (tester) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const ZhixinApp());
+      scope = tester.state<AppScopeState>(find.byType(AppScope));
+      await scope!.ready;
+    });
+    await settle(tester);
+
+    // 已经配置了嵌入来源，但向量库路径被一个目录占住，打开就会失败。
+    await tester.runAsync(() async {
+      scope!.applyEmbeddingConfig(
+        const EmbeddingConfig(enabled: true, provider: 'local', dim: 4),
+        refresh: false,
+      );
+      final path = scope!.paths.vectorIndexPath;
+      final file = File(path);
+      if (file.existsSync()) file.deleteSync();
+      Directory(path).createSync(recursive: true);
+    });
+
+    await tester.tap(find.text('记录').last);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byIcon(FLucideIcons.network));
+    await pumpUntil(tester, find.text('索引状态'));
+    await pumpUntil(tester, find.textContaining('索引状态暂时无法读取'));
+
+    expect(find.textContaining('读取索引状态没有完成'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

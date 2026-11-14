@@ -404,6 +404,8 @@ class AppScopeState extends State<AppScope> {
     _restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
     embeddingConfig = await _embeddingStore.read();
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
+    // 向量库的打开、加载 sqlite-vec 与建表都在后台 isolate 里进行，首帧只发起
+    // 请求，不等待它完成。
     applyEmbeddingConfig(embeddingConfig);
     // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
     // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
@@ -449,7 +451,7 @@ class AppScopeState extends State<AppScope> {
     final runtime = embeddingRuntime(config);
     _semantic.configure(client: runtime.client, canSend: runtime.canSend);
     if (refresh && _semantic.configured) {
-      unawaited(_semantic.refresh());
+      _refreshSemanticIndexNow();
     }
   }
 
@@ -508,15 +510,28 @@ class AppScopeState extends State<AppScope> {
     _semanticRefreshTimer?.cancel();
     _semanticRefreshTimer = Timer(_semanticQuietPeriod, () {
       _semanticRefreshTimer = null;
-      unawaited(_semantic.refresh());
+      _refreshSemanticIndexNow();
     });
+  }
+
+  /// 后台补建索引；失败只写诊断记录，不打断界面，回答继续使用原文与关键词。
+  ///
+  /// 设置页的手动“更新索引”直接调用服务并捕获异常，看到的是就地说明。
+  void _refreshSemanticIndexNow() {
+    unawaited(
+      _semantic.refresh().catchError((Object error, StackTrace stack) {
+        crashLog.record(error, stack, kind: 'semantic_index');
+        return const IndexRefreshResult(failure: SemanticFailure.error);
+      }),
+    );
   }
 
   @override
   void dispose() {
     _semanticRefreshTimer?.cancel();
     _configuredAi?.dispose();
-    __semantic?.close();
+    final semantic = __semantic;
+    if (semantic != null) unawaited(semantic.close());
     __semantic = null;
     if (_connection != null) db.close();
     dataVersion.dispose();

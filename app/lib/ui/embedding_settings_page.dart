@@ -36,6 +36,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   final Set<int> _selectedMaterials = {};
   List<Material> _materials = const [];
   SemanticIndexStats? _stats;
+  bool _statsFailed = false;
   bool _busy = false;
   String? _status;
   String? _notice;
@@ -60,15 +61,60 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     super.dispose();
   }
 
+  /// 读取设置、材料与索引状态。
+  ///
+  /// 索引状态与设置分开读：向量库打不开时仍显示已经保存的设置，并把失败原因
+  /// 写在页面上；不能因为没有状态就把页面一直停在“还没有读取索引状态”。
   Future<void> _load() async {
     final scope = AppScope.of(context);
-    final config = await scope.settings.embedding.read();
-    final materials = await scope.materials.list();
-    final stats = await scope.library.semanticIndex.stats();
+    EmbeddingConfig? config;
+    var materials = const <Material>[];
+    Object? loadFailure;
+    StackTrace? loadStack;
+    try {
+      config = await scope.settings.embedding.read();
+      materials = await scope.materials.list();
+    } catch (error, stack) {
+      loadFailure = error;
+      loadStack = stack;
+    }
+    SemanticIndexStats? stats;
+    Object? statsFailure;
+    StackTrace? statsStack;
+    try {
+      stats = await scope.library.semanticIndex.stats();
+    } catch (error, stack) {
+      statsFailure = error;
+      statsStack = stack;
+    }
     if (!mounted) return;
+    String? notice;
+    if (loadFailure != null) {
+      notice = describeFailure(
+        context,
+        loadFailure,
+        loadStack!,
+        action: '读取语义索引设置',
+        kind: 'embedding_config',
+        kept: '已经保存的设置没有改动',
+        next: '可以稍后再打开这一页',
+      );
+    } else if (statsFailure != null) {
+      notice = describeFailure(
+        context,
+        statsFailure,
+        statsStack!,
+        action: '读取索引状态',
+        kind: 'semantic_index',
+        kept: '已经保存的设置没有改动',
+        next: '可以点“更新索引”再试',
+      );
+    }
     setState(() {
       _materials = materials;
       _stats = stats;
+      _statsFailed = statsFailure != null;
+      _notice = notice;
       if (config != null) {
         _enabled = config.enabled;
         _provider = config.provider;
@@ -146,6 +192,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       setState(() {
         _busy = false;
         _stats = stats;
+        _statsFailed = false;
         _status = _describeRefresh(result);
       });
     } catch (error, stack) {
@@ -223,6 +270,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       setState(() {
         _busy = false;
         _stats = stats;
+        _statsFailed = false;
         _status = '向量索引已经清空，可以按当前数据重新更新。';
       });
     } catch (error, stack) {
@@ -380,7 +428,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
           Text('索引状态', style: theme.text.titleSmall),
           const SizedBox(height: 4),
           if (stats == null)
-            const Text('还没有读取索引状态。')
+            Text(_statsFailed ? '索引状态暂时无法读取；可以点“更新索引”再试。' : '还没有读取索引状态。')
           else if (!stats.configured)
             const Text('语义索引没有启用；回答只使用原文与关键词检索。')
           else
