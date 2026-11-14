@@ -10,24 +10,29 @@
 /// 码位区间表判断字母数字与空白，测试用同一段文本比对两边结果。
 library;
 
-final RegExp _stripMarks = RegExp(r'[^\p{L}\p{N}_]+', unicode: true);
+bool _isWord(int rune) =>
+    bigramRanges.any((range) => rune >= range.$1 && rune <= range.$2);
 
 List<String> bigrams(String text) {
   final tokens = <String>[];
-  for (final segment in text.toLowerCase().split(RegExp(r'\s+'))) {
-    final clean = segment.replaceAll(_stripMarks, '');
-    if (clean.isEmpty) continue;
-    final chars = clean.runes.toList(growable: false);
-    if (chars.length >= 2) {
-      for (var index = 0; index + 1 < chars.length; index++) {
-        tokens.add(
-          '${String.fromCharCode(chars[index])}'
-          '${String.fromCharCode(chars[index + 1])}',
-        );
-      }
-      tokens.add(clean);
+  final segment = <int>[];
+  void flush() {
+    for (var i = 0; i + 1 < segment.length; i++) {
+      tokens.add(String.fromCharCodes(segment.getRange(i, i + 2)));
+    }
+    if (segment.isNotEmpty) tokens.add(String.fromCharCodes(segment));
+    segment.clear();
+  }
+
+  for (final rune in text.split('\u0000').first.runes.take(maxInputLength)) {
+    if (bigramSpaces.contains(rune)) {
+      flush();
+    } else if (_isWord(rune)) {
+      // SQLite lower() lowercases ASCII. FTS5 handles Unicode case folding.
+      segment.add(rune >= 0x41 && rune <= 0x5a ? rune + 0x20 : rune);
     }
   }
+  flush();
   return tokens;
 }
 
@@ -92,17 +97,9 @@ String _buildExpression() {
   // 字符的码位表达式；字母数字与空白按区间判断，其余是标点。
   const code = 'unicode(substr(w.x, w.i, 1))';
   final isWord = [
-    '$code BETWEEN 48 AND 57',
-    '$code BETWEEN 65 AND 90',
-    '$code = 95',
-    '$code BETWEEN 97 AND 122',
-    for (final (start, end) in bigramRanges)
-      if (start > 0x7f) '$code BETWEEN $start AND $end',
+    for (final (start, end) in bigramRanges) '$code BETWEEN $start AND $end',
   ].join(' OR ');
-  final isSpace =
-      '$code < 33 OR $code BETWEEN 133 AND 160 OR $code = 1680 OR '
-      '$code BETWEEN 8192 AND 8202 OR '
-      '$code IN (8232, 8233, 8239, 8287, 12288)';
+  final isSpace = '$code IN (${bigramSpaces.join(', ')})';
   // 窗口都显式写 ROWS 帧：默认的 RANGE 帧要按值逐个回扫，正文一长就变成平方级。
   const frame = 'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW';
   // 片段号：空白处加一。标点不断段，它与 Dart 侧“片段内先去标点”的口径一致。
@@ -134,6 +131,6 @@ String _buildExpression() {
       'UNION ALL '
       // 整段本身：只在片段末字处补一次。
       'SELECT g.i, whole.txt FROM g JOIN whole ON whole.seg = g.seg '
-      'WHERE g.tot >= 2 AND g.pn = g.tot) '
+      'WHERE g.pn = g.tot) '
       'SELECT v FROM tok ORDER BY i))';
 }
