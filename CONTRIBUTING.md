@@ -54,6 +54,7 @@
 2. `git diff --cached`：确认没有个人信息、API key、真实学习记录与未脱敏截图；申报材料与访谈原文不随仓库提交。
 3. 标题读一遍：三个月后还认得出吗。
 4. 动了 `app/`：`cd app` 后执行 CI 的同一组三条命令，全部通过之后再推送，即 `dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。CI（[ci.yml](.github/workflows/ci.yml)）跑的就是这三条，本地检查不通过，推上去也不会通过，`main` 红着不算“能构建”。
+5. 动了 `server/`：`cd server` 后执行 `gofmt -l .`（应当没有输出）、`go vet ./...`、`go test ./...`，与 CI 的服务端任务一致。改了 [api/openapi.yaml](server/api/openapi.yaml) 时，服务端处理函数与客户端调用放进同一个 push。
 
 ## 8. 行尾与编码
 
