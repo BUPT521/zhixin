@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../domain/models/material.dart';
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
@@ -103,12 +104,10 @@ class StudyPlanRepository {
     if (plan == null) throw StateError('未找到这份学习计划');
     final now = formatDateTime(_clock());
     await _db.transaction((txn) async {
-      final rows = await txn.rawQuery(
-        'SELECT COALESCE(MAX(seq), 0) AS last FROM plan_item '
-        'WHERE study_plan_id = ?',
-        [planId],
+      final last = await txn.selectGenerated(
+        (db) => db.lastPlanStepSeq(planId).getSingle(),
       );
-      var seq = ((rows.first['last'] as int?) ?? 0) + 1;
+      var seq = (last ?? 0) + 1;
       for (final draft in drafts) {
         final title = draft.title.trim();
         if (title.isEmpty) continue;
@@ -131,13 +130,6 @@ class StudyPlanRepository {
         });
       }
     });
-  }
-
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect() {
-    final connection = _db.driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
 
   static StudyPlan _planOf(PlanRowsResult row) => StudyPlan(
@@ -269,24 +261,26 @@ class StudyPlanRepository {
     bool statusFirst = true,
     int rowLimit = 1 << 30,
   }) async {
-    final rows = await _connect()
-        .planRows(
-          PlanItemStatus.done.code,
-          id ?? 0,
-          openOnly ? 1 : 0,
-          StudyPlanStatus.active.code,
-          StudyPlanStatus.paused.code,
-          activeOnly ? 1 : 0,
-          statusFirst ? 1 : 0,
-          rowLimit,
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .planRows(
+            PlanItemStatus.done.code,
+            id ?? 0,
+            openOnly ? 1 : 0,
+            StudyPlanStatus.active.code,
+            StudyPlanStatus.paused.code,
+            activeOnly ? 1 : 0,
+            statusFirst ? 1 : 0,
+            rowLimit,
+          )
+          .get(),
+    );
     return rows.map(_planOf).toList(growable: false);
   }
 
   /// 计划里的步骤，按顺序返回；每一步都是 `plan_item`。
   Future<List<PlanItem>> steps(int planId) async {
-    final rows = await _connect().planSteps(planId).get();
+    final rows = await _db.selectGenerated((db) => db.planSteps(planId).get());
     return rows.map(_stepOf).toList(growable: false);
   }
 
@@ -294,9 +288,10 @@ class StudyPlanRepository {
   Future<List<PlanItem>> stepsForPlans(Iterable<int> planIds) async {
     final ids = {...planIds};
     if (ids.isEmpty) return const [];
-    final rows = await _connect()
-        .planStepsForPlans(jsonEncode(ids.toList(growable: false)))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) =>
+          db.planStepsForPlans(jsonEncode(ids.toList(growable: false))).get(),
+    );
     return rows.map(_stepOfForPlans).toList(growable: false);
   }
 

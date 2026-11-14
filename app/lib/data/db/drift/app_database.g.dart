@@ -11611,6 +11611,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<int?> lastPlanStepSeq(int? planId) {
+    return customSelect(
+      'SELECT MAX(seq) AS last_seq FROM plan_item WHERE study_plan_id = ?1',
+      variables: [Variable<int>(planId)],
+      readsFrom: {this.planItems},
+    ).map((QueryRow row) => row.readNullable<int>('last_seq'));
+  }
+
   Selectable<FindOverlappingBlocksResult> findOverlappingBlocks(
     String endAt,
     String startAt,

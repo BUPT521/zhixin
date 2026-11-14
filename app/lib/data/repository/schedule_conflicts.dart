@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/rules/time_format.dart';
@@ -54,9 +54,9 @@ Future<ScheduleConflict?> findTimetableConflict(
     final segmentStart = start.isAfter(day) ? start : day;
     final segmentEnd = end.isBefore(nextDay) ? end : nextDay;
     if (segmentEnd.isAfter(segmentStart)) {
-      final entries = await _connect(executor)
-          .timetableEntriesOnWeekday(day.weekday)
-          .get();
+      final entries = await executor.selectGenerated(
+        (db) => db.timetableEntriesOnWeekday(day.weekday).get(),
+      );
       for (final entry in entries) {
         final from = _clockMinutes(entry.startTime);
         final to = _clockMinutes(entry.endTime);
@@ -111,9 +111,9 @@ Future<ScheduleConflict?> findRecurringTimetableConflict(
   final from = _clockMinutes(startTime);
   final to = _clockMinutes(endTime);
   if (from == null || to == null || to <= from) return null;
-  final rows = await _connect(executor)
-      .plannedBlocksAfter(formatDateTime(now))
-      .get();
+  final rows = await executor.selectGenerated(
+    (db) => db.plannedBlocksAfter(formatDateTime(now)).get(),
+  );
   for (final row in rows) {
     final blockStart = DateTime.parse(row.startAt);
     final blockEnd = DateTime.parse(row.endAt);
@@ -156,13 +156,15 @@ Future<ScheduleConflict?> _findBlockConflict(
   required DateTime end,
   required Set<int> ignoredBlockIds,
 }) async {
-  final rows = await _connect(executor)
-      .findOverlappingBlocks(
-        formatDateTime(end),
-        formatDateTime(start),
-        jsonEncode(ignoredBlockIds.toList(growable: false)),
-      )
-      .get();
+  final rows = await executor.selectGenerated(
+    (db) => db
+        .findOverlappingBlocks(
+          formatDateTime(end),
+          formatDateTime(start),
+          jsonEncode(ignoredBlockIds.toList(growable: false)),
+        )
+        .get(),
+  );
   if (rows.isEmpty) return null;
   final row = rows.first;
   final conflictStart = DateTime.parse(row.startAt);
@@ -174,13 +176,6 @@ Future<ScheduleConflict?> _findBlockConflict(
         '预约“${row.title}”'
         '（${formatDateTime(conflictStart)}–${formatDateTime(conflictEnd)}）',
   );
-}
-
-/// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-AppDatabase _connect(RawExecutor executor) {
-  final connection = executor.driftConnection;
-  if (connection is AppDatabase) return connection;
-  throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
 }
 
 void _requireInterval(DateTime start, DateTime end) {

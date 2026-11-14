@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 
+import '../guarded_database.dart';
 import '../raw_executor.dart';
 import 'app_database.dart';
 
@@ -261,3 +262,28 @@ String _updatePrefix(ConflictAction? action) => switch (action) {
   ConflictAction.ignore => 'UPDATE OR IGNORE ',
   ConflictAction.replace => 'UPDATE OR REPLACE ',
 };
+
+/// Run generated statements through the same gate and transaction as raw SQL.
+extension GeneratedRepositoryStatements on RawExecutor {
+  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase) query) {
+    final executor = this;
+    if (executor is GuardedDatabase) {
+      return executor.readGenerated((active) => active.selectGenerated(query));
+    }
+    return query(_generatedDatabase);
+  }
+
+  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase) query) {
+    final executor = this;
+    if (executor is GuardedDatabase) {
+      return executor.transaction((active) => query(active._generatedDatabase));
+    }
+    return query(_generatedDatabase);
+  }
+
+  AppDatabase get _generatedDatabase {
+    final database = driftConnection;
+    if (database is AppDatabase) return database;
+    throw StateError('仓库查询需要 drift 主库连接');
+  }
+}

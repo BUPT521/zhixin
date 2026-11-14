@@ -55,7 +55,7 @@ FROM plan_item p
 WHERE p.study_plan_id IN (SELECT value FROM json_each(:planIds))
 ORDER BY p.study_plan_id, p.seq, p.id;
 
--- 计划下方的步骤里最大的顺序号；没有步骤时返回 0。
+-- 计划下方的步骤里最大的顺序号；没有步骤时返回空值。
 lastPlanStepSeq:
-SELECT COALESCE(MAX(seq), 0) AS last FROM plan_item
+SELECT MAX(seq) AS last_seq FROM plan_item
 WHERE study_plan_id = :planId;
