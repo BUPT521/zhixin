@@ -1,3 +1,4 @@
+import '../db/drift/app_database.dart';
 import '../db/fts.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/binary_bigrams.dart';
@@ -89,6 +90,16 @@ class EvidenceRepository {
   EvidenceRepository(this._db);
 
   final RawDatabase _db;
+
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  ///
+  /// 检索本身仍用 `MATCH` 与 `bm25()` 直接写 SQL（ADR-0013 第 8 条），
+  /// 这里只接范围核对这类普通读。
+  AppDatabase _connect() {
+    final connection = _db.driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
 
   /// 按原样查找字面文本；`limitPerKind` 限制每类来源的条数，结果合并后再排序。
   Future<List<EvidenceHit>> literal(
@@ -724,35 +735,25 @@ class EvidenceRepository {
   Future<bool> inScope(EvidenceHit hit, EvidenceScope scope) async {
     final conversationId = hit.location.conversationId;
     if (conversationId != null) {
-      final rows = await _db.query(
-        'conversation',
-        columns: ['goal_id', 'material_id'],
-        where: 'id = ?',
-        whereArgs: [conversationId],
-        limit: 1,
-      );
-      if (rows.isEmpty) return false;
+      final row = await _connect()
+          .conversationScope(conversationId)
+          .getSingleOrNull();
+      if (row == null) return false;
       return _conversationInScope(
         conversationId,
-        rows.first['goal_id'] as int?,
-        rows.first['material_id'] as int?,
+        row.goalId,
+        row.materialId,
         scope,
         identity: hit.identity,
       );
     }
     final materialId = hit.location.materialId;
     if (materialId != null) {
-      final rows = await _db.query(
-        'material',
-        columns: ['goal_id'],
-        where: 'id = ?',
-        whereArgs: [materialId],
-        limit: 1,
-      );
-      if (rows.isEmpty) return false;
+      final row = await _connect().materialScope(materialId).getSingleOrNull();
+      if (row == null) return false;
       return _materialInScope(
         materialId,
-        rows.first['goal_id'] as int?,
+        row.goalId,
         scope,
         identity: hit.identity,
       );

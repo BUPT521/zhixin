@@ -34,6 +34,7 @@ part 'app_database.g.dart';
     'queries/schedule_blocks.drift',
     'queries/material_pages.drift',
     'queries/messages.drift',
+    'queries/evidence_scope.drift',
   },
   tables: [
     AppMeta,
