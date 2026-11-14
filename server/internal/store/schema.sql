@@ -1,4 +1,4 @@
--- 知新 API 后端 · PostgreSQL 表结构草案（ADR-0009）
+-- 知新 API 后端 · PostgreSQL 表结构（ADR-0009）
 --
 -- 开发阶段不写迁移（ADR-0001）：结构变化时直接按本文件重建库。
 -- 服务端不解析学习内容：同步变更与备份按客户端提交原样保存。
@@ -21,7 +21,7 @@ CREATE TABLE session (
   refresh_expires  TIMESTAMPTZ NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX session_user ON session(user_id);
+CREATE INDEX session_by_user ON session(user_id);
 
 -- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
 -- 锁住 sync_head，核对 base_seq = head 之后再追加。
@@ -54,7 +54,7 @@ CREATE TABLE blob (
   PRIMARY KEY (user_id, sha256)
 );
 
--- 整库备份：字节在对象存储的 backups/<user_id>/<id>.zip。
+-- 整库备份元数据：备份字节单独保存，由 id 定位。
 CREATE TABLE backup (
   id              TEXT PRIMARY KEY,
   user_id         TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,

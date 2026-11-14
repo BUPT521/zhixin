@@ -29,7 +29,15 @@ paths:
       security: []
       summary: 进程存活
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
   /readyz:
     get:
       tags: [meta]
@@ -69,6 +77,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/login:
     post:
       tags: [auth]
@@ -90,6 +99,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/refresh:
     post:
       tags: [auth]
@@ -112,6 +122,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tokens" }
         "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/logout:
     post:
       tags: [auth]
@@ -348,6 +359,15 @@ components:
       scheme: bearer
       description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。
   responses:
+    RateLimited:
+      description: 认证请求过于频繁，按 Retry-After 等待
+      headers:
+        Retry-After:
+          required: true
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
     Problem:
       description: 错误
       content:
@@ -372,6 +392,7 @@ components:
             - conflict
             - payload_too_large
             - model_not_allowed
+            - rate_limited
             - quota_exceeded
             - upstream_failed
             - unavailable
@@ -405,8 +426,16 @@ components:
         table: { type: string }
         row_key: { type: string }
         op: { type: string, enum: [insert, update, delete] }
-        before: { description: "update 与 delete 必填" }
-        after: { description: "insert 与 update 必填" }
+        before:
+          description: "update 与 delete 必填"
+          x-go-type: rawjson.RawMessage
+          x-go-type-import: { path: encoding/json, name: rawjson }
+          x-go-type-skip-optional-pointer: true
+        after:
+          description: "insert 与 update 必填"
+          x-go-type: rawjson.RawMessage
+          x-go-type-import: { path: encoding/json, name: rawjson }
+          x-go-type-skip-optional-pointer: true
     Commit:
       type: object
       required: [request_id, device_id, schema_version, actor, action, created_at, changes]

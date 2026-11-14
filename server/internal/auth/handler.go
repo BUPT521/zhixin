@@ -55,10 +55,11 @@ type Handler struct {
 	svc      *Service
 	log      *slog.Logger
 	maxBytes int64
+	limits   rateLimits
 }
 
 func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
-	return &Handler{svc: svc, log: log, maxBytes: maxBytes}
+	return &Handler{svc: svc, log: log, maxBytes: maxBytes, limits: newRateLimits()}
 }
 
 // Register mounts the routes on mux.
@@ -78,6 +79,9 @@ type credentials struct {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+	if !allowRate(w, r, h.limits.register.wait(sourceAddress(r), h.limits.now())) {
+		return
+	}
 	var in credentials
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -96,6 +100,9 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	if !allowRate(w, r, h.limits.login.wait(sourceAddress(r), h.limits.now())) {
+		return
+	}
 	var in credentials
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -112,13 +119,23 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
+	if !allowRate(w, r, h.limits.refreshAddress.wait(sourceAddress(r), h.limits.now())) {
+		return
+	}
 	var in struct {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	t, err := h.svc.Refresh(r.Context(), in.RefreshToken)
+	var accountWait time.Duration
+	t, err := h.svc.refresh(r.Context(), in.RefreshToken, func(userID string) bool {
+		accountWait = h.limits.refreshAccount.wait(userID, h.limits.now())
+		return accountWait == 0
+	})
+	if !allowRate(w, r, accountWait) {
+		return
+	}
 	switch {
 	case errors.Is(err, ErrInvalidToken):
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "refresh token is invalid, expired or already used")

@@ -20,6 +20,7 @@ const (
 	CodeConflict           Code = "conflict"
 	CodePayloadTooLarge    Code = "payload_too_large"
 	CodeModelNotAllowed    Code = "model_not_allowed"
+	CodeRateLimited        Code = "rate_limited"
 	CodeQuotaExceeded      Code = "quota_exceeded"
 	CodeUpstreamFailed     Code = "upstream_failed"
 	CodeUnavailable        Code = "unavailable"
