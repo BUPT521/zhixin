@@ -43,6 +43,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   static const int _semanticLimit = 40;
 
   final TextEditingController _query = TextEditingController();
+  final FocusNode _focus = FocusNode();
   final ScrollController _scroll = ScrollController();
   SearchResults? _results;
   bool _loading = false;
@@ -75,14 +76,25 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     if (_scopeOptionsRequested) return;
     _scopeOptionsRequested = true;
     _loadScopeOptions();
+    _focusAfterTransition();
   }
 
   @override
   void dispose() {
     _semanticToken?.cancel();
     _query.dispose();
+    _focus.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// 页面推入之后再要焦点：输入框一开始就拿到焦点，软键盘会跟着推入动画一起
+  /// 弹出，键盘高度每变一帧整页就重新排版一次，正好落在滑入的 260 毫秒里。
+  /// 先让页面滑完，再弹键盘。
+  Future<void> _focusAfterTransition() async {
+    await context.afterTransition();
+    if (!mounted) return;
+    _focus.requestFocus();
   }
 
   Future<void> _loadScopeOptions() async {
@@ -90,6 +102,9 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       final scope = AppScope.of(context);
       final goals = await scope.tasks.activeGoals();
       final materials = await scope.materials.list();
+      if (!mounted) return;
+      // 结果回来时若还在推入动画里，等动画结束再填，免得滑入途中整页重建。
+      await context.afterTransition();
       if (!mounted) return;
       setState(() {
         _goals = goals;
@@ -416,7 +431,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
             ),
             child: forui.FTextField(
               control: .managed(controller: _query),
-              autofocus: true,
+              focusNode: _focus,
               textInputAction: TextInputAction.search,
               onSubmit: _search,
               hint: '搜索讨论、题目、作答或材料原文',
