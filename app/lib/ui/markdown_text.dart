@@ -23,6 +23,8 @@ class MarkdownText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 保持同一个 GptMarkdown 在树中，让它复用已排版的段落并更新尾段。
+    // 整份原文一次传入，跨行列表、围栏和全篇引用定义由同一个解析器处理。
     final markdown = GptMarkdown(
       text,
       style: context.zhixin.text.bodyMedium,
