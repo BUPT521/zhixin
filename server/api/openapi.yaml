@@ -1,0 +1,434 @@
+openapi: 3.1.0
+info:
+  title: 知新 API
+  version: 0.1.0
+  description: |
+    知新的自建后端。职责与边界见 docs/adr/0008，技术框架见 docs/adr/0009。
+    本文件是接口的唯一真相；改动时服务端处理函数与客户端调用放进同一个 push。
+    1.0.0 之前不承诺兼容（ADR-0001），客户端与服务端同时升级。
+
+    所有错误都是 application/problem+json，客户端按 `code` 分支，不解析 `detail`。
+servers:
+  - url: http://localhost:8080
+    description: 本地开发（内存存储）
+
+security:
+  - bearer: []
+
+tags:
+  - name: meta
+  - name: auth
+  - name: sync
+  - name: backup
+  - name: llm
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      security: []
+      summary: 进程存活
+      responses:
+        "200": { description: OK }
+  /readyz:
+    get:
+      tags: [meta]
+      security: []
+      summary: 依赖可用，并返回服务端接受的客户端 schema 版本
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ready }
+                  schema_version: { type: integer, examples: [26] }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      security: []
+      summary: 注册并登录当前设备
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "201":
+          description: 已注册
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: "`email_taken`"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: 登录，每台设备一个会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200":
+          description: 已登录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401":
+          description: "`invalid_credentials`，不区分邮箱不存在与密码错误"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: 用刷新令牌换一组新令牌，旧的两枚立即失效
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              additionalProperties: false
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: 已轮换
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 退出当前设备
+      responses:
+        "204": { description: 已退出 }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me:
+    get:
+      tags: [auth]
+      summary: 当前账号
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string }
+                  email: { type: string }
+                  created_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [auth]
+      summary: 删除账号，连同同步序列、附件、备份与用量一并删除
+      responses:
+        "204": { description: 已删除 }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/sync/head:
+    get:
+      tags: [sync]
+      summary: 服务端序列的最新位置
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  head: { type: integer, format: int64 }
+                  schema_version: { type: integer }
+  /v1/sync/commits:
+    get:
+      tags: [sync]
+      summary: 拉取 seq 大于 after 的提交
+      parameters:
+        - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commits:
+                    type: array
+                    items: { $ref: "#/components/schemas/Commit" }
+                  head: { type: integer, format: int64 }
+                  has_more: { type: boolean }
+    post:
+      tags: [sync]
+      summary: 推送本机提交
+      description: |
+        `base_seq` 必须等于服务端当前 head，否则返回 409，`extra.head` 给出最新位置；
+        客户端先拉取、在本机应用为新的提交，再重新推送。已经收到过的 `request_id`
+        会被跳过，因此丢失响应后原样重试是安全的。每次 1 到 200 条。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_seq, commits]
+              properties:
+                base_seq: { type: integer, format: int64 }
+                commits:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items: { $ref: "#/components/schemas/Commit" }
+      responses:
+        "200":
+          description: 已追加
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  head: { type: integer, format: int64 }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /v1/blobs/{sha256}:
+    parameters:
+      - { name: sha256, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
+    head:
+      tags: [sync]
+      summary: 附件是否已上传（未实现，返回 501）
+      responses:
+        "200": { description: 已存在 }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+    get:
+      tags: [sync]
+      summary: 下载附件（未实现，返回 501）
+      responses:
+        "200":
+          description: 原始字节
+          content:
+            application/octet-stream: {}
+        "501": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [sync]
+      summary: 上传附件，服务端核对哈希（未实现，返回 501）
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: {}
+      responses:
+        "201": { description: 已保存 }
+        "501": { $ref: "#/components/responses/Problem" }
+
+  /v1/backups:
+    get:
+      tags: [backup]
+      summary: 列出整库备份，新的在前
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backups:
+                    type: array
+                    items: { $ref: "#/components/schemas/Backup" }
+    post:
+      tags: [backup]
+      summary: 上传一份版本库备份 zip，超过保留份数时删最旧的
+      parameters:
+        - { name: X-Content-SHA256, in: header, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
+        - { name: X-Schema-Version, in: header, required: true, schema: { type: integer } }
+        - { name: X-Device-Name, in: header, schema: { type: string, maxLength: 64 } }
+      requestBody:
+        required: true
+        content:
+          application/zip: {}
+      responses:
+        "201":
+          description: 已保存
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Backup" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+  /v1/backups/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [backup]
+      summary: 下载备份；客户端按现有的版本库恢复流程预检
+      responses:
+        "200":
+          description: zip 原样返回，响应头带 X-Content-SHA256 与 X-Schema-Version
+          content:
+            application/zip: {}
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [backup]
+      summary: 删除一份备份
+      responses:
+        "204": { description: 已删除 }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/llm/models:
+    get:
+      tags: [llm]
+      summary: 代理允许的模型，OpenAI 列表格式
+      responses:
+        "200": { description: OK }
+  /v1/llm/quota:
+    get:
+      tags: [llm]
+      summary: 今日用量与额度
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  day: { type: string, format: date }
+                  used_tokens: { type: integer, format: int64 }
+                  daily_tokens: { type: integer, format: int64 }
+  /v1/llm/chat/completions:
+    post:
+      tags: [llm]
+      summary: OpenAI Chat Completions 代理
+      description: |
+        请求体按 Chat Completions 原样转发，服务端只读取 `model` 与 `stream`。
+        流式请求应带 `stream_options.include_usage`，服务端据此记录用量。
+        提供方的状态码与响应体原样返回；代理自身的拒绝用 problem+json：
+        `model_not_allowed`（400）、`quota_exceeded`（429）、`unavailable`（503，未配置提供方 key）、
+        `upstream_failed`（502）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model]
+              properties:
+                model: { type: string }
+                stream: { type: boolean }
+      responses:
+        "200":
+          description: 提供方的响应，流式时为 text/event-stream
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。
+  responses:
+    Problem:
+      description: 错误
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, examples: ["urn:zhixin:problem:conflict"] }
+        title: { type: string }
+        status: { type: integer }
+        code:
+          type: string
+          enum:
+            - invalid_request
+            - unauthorized
+            - invalid_credentials
+            - email_taken
+            - not_found
+            - conflict
+            - payload_too_large
+            - model_not_allowed
+            - quota_exceeded
+            - upstream_failed
+            - unavailable
+            - not_implemented
+            - internal
+        detail: { type: string, description: 只给开发者看，不含学习内容 }
+        request_id: { type: string }
+        extra: { type: object, additionalProperties: true }
+    Credentials:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        device_name: { type: string, maxLength: 64 }
+    Tokens:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        access_expires_at: { type: string, format: date-time }
+        refresh_expires_at: { type: string, format: date-time }
+        user_id: { type: string }
+    Change:
+      type: object
+      description: 对应客户端 revision_change 的一行（docs/01 第 7 章）
+      required: [table, row_key, op]
+      properties:
+        table: { type: string }
+        row_key: { type: string }
+        op: { type: string, enum: [insert, update, delete] }
+        before: { description: "update 与 delete 必填" }
+        after: { description: "insert 与 update 必填" }
+    Commit:
+      type: object
+      required: [request_id, device_id, schema_version, actor, action, created_at, changes]
+      properties:
+        seq: { type: integer, format: int64, readOnly: true }
+        request_id: { type: string, maxLength: 64 }
+        device_id: { type: string, maxLength: 64 }
+        schema_version: { type: integer }
+        actor: { type: string, enum: [user, ai, system] }
+        action: { type: string }
+        created_at: { type: string, description: "客户端时间，YYYY-MM-DD HH:MM:SS" }
+        received_at: { type: string, format: date-time, readOnly: true }
+        changes:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Change" }
+    Backup:
+      type: object
+      properties:
+        id: { type: string }
+        sha256: { type: string }
+        size: { type: integer, format: int64 }
+        schema_version: { type: integer }
+        device_name: { type: string }
+        created_at: { type: string, format: date-time }
