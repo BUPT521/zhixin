@@ -1,0 +1,11 @@
+-- 本地设置与内部状态的读查询（ADR-0011 第二批）。
+
+import '../tables.dart';
+
+-- 每日截止小时；档案只有一行。
+cutoffHour:
+SELECT day_cutoff_hour FROM profile WHERE id = 1;
+
+-- 内部状态里的一项；没有记录时返回空。
+appMetaValue:
+SELECT a."value" AS meta_value FROM app_meta a WHERE a."key" = :metaKey LIMIT 1;

@@ -24,6 +24,7 @@ part 'app_database.g.dart';
     'queries/schedules.drift',
     'queries/conversations.drift',
     'queries/recent_attempts.drift',
+    'queries/settings.drift',
   },
   tables: [
     AppMeta,

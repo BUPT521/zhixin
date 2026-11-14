@@ -1,3 +1,4 @@
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/rules/time_format.dart';
@@ -9,13 +10,15 @@ class SettingsRepository {
 
   final RawDatabase _db;
 
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect() {
+    final connection = _db.driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
   Future<int?> cutoffHour() async {
-    final rows = await _db.query(
-      'profile',
-      columns: ['day_cutoff_hour'],
-      where: 'id = 1',
-    );
-    return rows.isEmpty ? null : rows.single['day_cutoff_hour'] as int?;
+    return _connect().cutoffHour().getSingleOrNull();
   }
 
   Future<void> setCutoffHour(
@@ -30,14 +33,7 @@ class SettingsRepository {
   }
 
   Future<String?> metadata(String key) async {
-    final rows = await _db.query(
-      'app_meta',
-      columns: ['value'],
-      where: 'key = ?',
-      whereArgs: [key],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : rows.single['value'] as String?;
+    return _connect().appMetaValue(key).getSingleOrNull();
   }
 
   Future<void> setMetadata(String key, String value, DateTime now) async {
