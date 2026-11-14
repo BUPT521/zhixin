@@ -111,7 +111,7 @@ lib/
 
 ## 模型
 
-设置页填接口风格、接口地址、模型名与 API Key，默认 `Chat Completions`、`https://api.deepseek.com/v1` 与 `deepseek-flash`。key 存在 Android Keystore，不进仓库、不写日志；应用不内置密钥，~~也不提供代管服务~~（2026-11-14 改为：登录用户可以选择“知新服务”作为模型来源，接口风格固定为 Chat Completions，地址为服务端的 `/v1/llm`，访问令牌代替 key，客户端入口尚未实现，见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)）。接口风格由用户显式选择，不按域名猜：同一家服务商的不同地址可能只支持其中一种，猜错时只能看到 404 或 400。
+设置页填接口风格、接口地址、模型名与 API Key，默认 `Chat Completions`、`https://api.deepseek.com/v1` 与 `deepseek-flash`。key 存在 Android Keystore，不进仓库、不写日志；应用不内置密钥。登录用户可以选择“知新服务”作为模型来源，接口风格固定为 Chat Completions，地址为服务端的 `/v1/llm`，访问令牌代替 key，客户端入口尚未实现，见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)。接口风格由用户显式选择，不按域名猜：同一家服务商的不同地址可能只支持其中一种，猜错时只能看到 404 或 400。
 
 三种风格共用一个传输层。地址只填域名时补 `/v1`，Anthropic 按 `base/v1/messages` 拼接（`https://api.deepseek.com/anthropic` 因此得到 `/anthropic/v1/messages`）。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限在 OpenAI 官方用 `max_completion_tokens`、其余实现用 `max_tokens`，指向 DeepSeek 时带 `{"thinking":{"type":"disabled"}}`；Responses 发顶层 `instructions`、`input`（`input_text`、`output_text`、`input_image` 的 data URL，工具用 `{type:function,name,parameters,strict:false}`）与 `max_output_tokens`，指向 DeepSeek 时带 `{"reasoning":{"effort":"none"}}`；Anthropic Messages 用 `x-api-key` 与 `anthropic-version: 2023-06-01` 鉴权，system 放顶层，工具用 `input_schema`，图片是 `{type:image,source:{type:base64,…}}` 块，指定工具时 `tool_choice` 取 `{"type":"tool","name":…}`。
 
