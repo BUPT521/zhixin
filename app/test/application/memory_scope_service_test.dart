@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -25,8 +24,6 @@ class _CountingConversations extends ConversationRepository {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('传入已读记录时不按编号再读一次', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

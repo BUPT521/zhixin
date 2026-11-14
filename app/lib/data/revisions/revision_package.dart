@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
 
 import '../../domain/rules/time_policy.dart';
 import '../backup/backup_manifest.dart';
@@ -25,7 +24,6 @@ class RevisionPackageService {
   RevisionPackageService({
     required this.engine,
     required this.assets,
-    required this.factory,
     required this.schemaVersion,
     required this.appVersion,
     this.chunkSize = 64 * 1024,
@@ -34,7 +32,6 @@ class RevisionPackageService {
 
   final RevisionEngine engine;
   final AssetStore assets;
-  final DatabaseFactory factory;
   final int schemaVersion;
   final String appVersion;
   final int chunkSize;
@@ -172,13 +169,10 @@ class RevisionPackageService {
       '${output.path}.partial-${clock().millisecondsSinceEpoch}.db',
     );
     if (await temporaryDb.exists()) await temporaryDb.delete();
-    Database? copy;
+    RawDatabase? copy;
     try {
       await db.execute('VACUUM INTO ?', [temporaryDb.path]);
-      copy = await factory.openDatabase(
-        temporaryDb.path,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
+      copy = openReadOnlyDatabase(temporaryDb.path);
       final integrity = await copy.rawQuery('PRAGMA integrity_check');
       if (integrity.isEmpty ||
           integrity.first.values.first?.toString() != 'ok') {
@@ -188,17 +182,15 @@ class RevisionPackageService {
       if (version.first.values.first != schemaVersion) {
         throw StateError('版本库备份的 schema 与当前不一致');
       }
-      final unexpected = await unexpectedDatabaseObjects(
-        SqfliteRawExecutor(copy),
-      );
+      final unexpected = await unexpectedDatabaseObjects(copy);
       if (unexpected.isNotEmpty) {
         throw StateError(
           '备份中止：数据库带有当前程序不认识的'
           '${unexpected.take(5).join('、')}${unexpected.length > 5 ? ' 等' : ''}',
         );
       }
-      final head = await engine.headId(SqfliteRawExecutor(copy));
-      final missing = await engine.verifyAssets(SqfliteRawExecutor(copy));
+      final head = await engine.headId(copy);
+      final missing = await engine.verifyAssets(copy);
       if (missing.isNotEmpty) {
         throw StateError(
           '备份中止：数据库引用的 ${missing.length} 个附件缺失或校验失败'
@@ -300,13 +292,10 @@ class RevisionPackageService {
       'zhixin_repository_check_',
     );
     final path = p.join(dir.path, 'backup.db');
-    Database? copy;
+    RawDatabase? copy;
     try {
       await File(path).writeAsBytes(data, flush: true);
-      copy = await factory.openDatabase(
-        path,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
+      copy = openReadOnlyDatabase(path);
       final integrity = await copy.rawQuery('PRAGMA integrity_check');
       if (integrity.isEmpty ||
           integrity.first.values.first?.toString() != 'ok') {
@@ -316,22 +305,20 @@ class RevisionPackageService {
       if (userVersion.first.values.first != schemaVersion) {
         throw const FormatException('版本库备份的 schema 与当前不一致');
       }
-      final unexpected = await unexpectedDatabaseObjects(
-        SqfliteRawExecutor(copy),
-      );
+      final unexpected = await unexpectedDatabaseObjects(copy);
       if (unexpected.isNotEmpty) {
         throw FormatException(
           '版本库备份带有当前程序不认识的'
           '${unexpected.take(5).join('、')}${unexpected.length > 5 ? ' 等' : ''}',
         );
       }
-      final head = await engine.headId(SqfliteRawExecutor(copy));
+      final head = await engine.headId(copy);
       final declaredHead = manifest['head'];
       if (declaredHead is int && declaredHead != head) {
         throw const FormatException('版本库备份声明的 HEAD 与数据库不一致');
       }
-      await engine.projectionAt(SqfliteRawExecutor(copy), head);
-      final missing = await engine.verifyAssets(SqfliteRawExecutor(copy));
+      await engine.projectionAt(copy, head);
+      final missing = await engine.verifyAssets(copy);
       if (missing.isNotEmpty) {
         throw FormatException(
           '版本库备份的 ${missing.length} 个附件缺失或校验失败'

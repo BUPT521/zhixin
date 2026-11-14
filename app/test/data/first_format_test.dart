@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/backup/backup_manifest.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/restore_journal.dart';
@@ -13,8 +12,6 @@ import 'package:zhixin/domain/rules/attachments.dart';
 
 /// V7 的恢复用例覆盖同格式重开、恢复失败与中断回滚。
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('V7：恢复失败时当前库保持可用', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_v7_fail_');
     addTearDown(() => dir.delete(recursive: true));
@@ -44,7 +41,6 @@ void main() {
       )
       ..addFile(ArchiveFile.bytes(dbEntryName, Uint8List.fromList([1, 2, 3])));
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -103,7 +99,6 @@ void main() {
     );
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',

@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/search_service.dart';
@@ -30,8 +29,6 @@ Iterable<int?> _materialPages(SearchResults results) =>
         .map((hit) => hit.location.pageNo);
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('记录检索覆盖全部目标的讨论、题目与材料', () async {
     final db = await openTestDb();
     addTearDown(db.close);

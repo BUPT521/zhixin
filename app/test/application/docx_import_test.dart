@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
@@ -193,7 +192,6 @@ void main() {
     expect((await service.page(id, 2))!.content, second.content);
 
     final packages = RevisionPackageService(
-      factory: databaseFactoryFfi,
       engine: rig.engine,
       assets: rig.engine.assets,
       schemaVersion: zhixinSchemaVersion,

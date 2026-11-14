@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/memory_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
@@ -8,8 +7,6 @@ import 'package:zhixin/domain/models/memory.dart';
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('修改记忆后回答检索使用新内容', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

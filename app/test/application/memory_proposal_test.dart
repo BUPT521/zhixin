@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/memory_proposal_service.dart';
 import 'package:zhixin/application/memory_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -124,8 +123,6 @@ _seed(TestRig rig) async {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('按 R2 区分提示下完成、独立完成与延迟后的独立表现', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

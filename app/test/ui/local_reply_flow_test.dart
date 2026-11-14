@@ -5,7 +5,6 @@ import 'package:forui/forui.dart' as forui;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ui/settings_page.dart';
@@ -17,10 +16,7 @@ void main() {
   AppScopeState? scope;
   String? storedSecret;
 
-  setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  });
+  setUpAll(() {});
 
   setUp(() async {
     storedSecret = null;

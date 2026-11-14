@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/domain/rules/attachments.dart';
 import 'package:zhixin/data/backup/backup_manifest.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
@@ -33,8 +32,6 @@ Future<String?> _recordStem(RawDatabase db, int id) async =>
     (await ConversationRepository(db.rawDb).question(id))?.stem;
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('当前格式的包导出后能在新目录恢复，讨论与归属一起带回', () async {
     final dir1 = await Directory.systemTemp.createTemp('zhixin_export_');
     final dir2 = await Directory.systemTemp.createTemp('zhixin_restore_');
@@ -101,7 +98,6 @@ void main() {
     await File('${images.path}/orphan.jpg').writeAsBytes([9, 9, 9]);
 
     final service1 = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir1.path,
       dbPath: path1,
       appVersion: 'test',
@@ -126,7 +122,6 @@ void main() {
     final path2 = '${dir2.path}/zhixin.db';
     final db2 = await openZhixinDatabase(path: path2);
     final service2 = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir2.path,
       dbPath: path2,
       appVersion: 'test',
@@ -214,7 +209,6 @@ void main() {
     );
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -245,7 +239,6 @@ void main() {
     await File('$path.incoming').writeAsBytes([4, 5, 6]);
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -279,7 +272,6 @@ void main() {
     await File('$path.incoming').writeAsBytes([1, 2, 3]);
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -324,7 +316,6 @@ void main() {
       ),
     );
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -368,7 +359,6 @@ void main() {
     );
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -401,7 +391,6 @@ void main() {
     await Directory('${dir.path}/question_images').create(recursive: true);
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -429,7 +418,6 @@ void main() {
     addTearDown(db.close);
 
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: path,
       appVersion: 'test',
@@ -475,7 +463,6 @@ void main() {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
     final service = DataPackageService(
-      factory: databaseFactoryFfi,
       filesDir: dir.path,
       dbPath: '${dir.path}/zhixin.db',
       appVersion: 'test',

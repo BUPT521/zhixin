@@ -1,13 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/revisions/revision_actions.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('每日截止小时更新形成提交，撤销后恢复原值', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

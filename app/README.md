@@ -32,7 +32,7 @@ flutter analyze
 flutter test
 ```
 
-CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同一套表结构，不必起模拟器；备份与恢复预检的只读副本仍由 sqflite 打开。
+CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同一套表结构，不必起模拟器；备份与恢复预检的只读副本用 `package:sqlite3` 打开，和执行器是同一个实现。
 
 ## 目录
 

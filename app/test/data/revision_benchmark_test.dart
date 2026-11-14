@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
@@ -14,8 +13,6 @@ import 'package:zhixin/data/revisions/revision_engine.dart';
 ///
 /// 运行：`cd app && flutter test test/data/revision_benchmark_test.dart -r expanded`
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('Dart VM 基准：提交、图片写入与整版恢复', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_benchmark_');
     addTearDown(() async {

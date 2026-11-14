@@ -23,7 +23,7 @@ void main() {
         if (entry.key == 'application') {
           expect(
             _directives(source)
-                .where((uri) => uri.startsWith('package:sqflite')),
+                .where((uri) => uri.startsWith('package:sqlite3')),
             isEmpty,
             reason: '${source.path} 应通过数据层访问数据库',
           );

@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/cross_session_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -175,8 +174,6 @@ Future<_Corpus> _seed(RawDatabase db) async {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('时间条件解析：完整日期、月日、今天与没有日期', () {
     final now = DateTime(2026, 10, 12, 20);
     final full = TimeCondition.parse('2026-10-01 那次的作答', now)!;

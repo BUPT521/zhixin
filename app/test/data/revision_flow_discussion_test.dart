@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
@@ -123,8 +122,6 @@ class _Rig {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('带图讨论提交、重复图片去重、删除、重启与整版恢复', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_flow_discussion');
     addTearDown(() async {

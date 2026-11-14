@@ -11,9 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # 数据层：单文件 SQLite，DDL 来自 docs/01 第 4 章。
-  sqflite: ^2.4.6
-  # 数据层迁移中：drift 负责表结构与类型化查询，连接走下面 sqlite3 的自带库。
+  # 数据层：单文件 SQLite，DDL 来自 docs/01 第 4 章；表结构与查询由 drift 负责，连接走下面 sqlite3 的自带库。
   drift: ^2.35.4
   path: ^1.9.1
   path_provider: ^2.1.6
@@ -66,8 +64,6 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  # 在 Dart VM 里跑同一套 DDL 与查询，CI 不必起模拟器。
-  sqflite_common_ffi: ^2.4.5
   flutter_lints: ^6.0.0
   # drift 表类与数据类的代码生成。
   drift_dev: ^2.35.0

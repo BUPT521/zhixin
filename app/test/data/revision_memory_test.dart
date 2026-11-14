@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
@@ -38,8 +37,6 @@ class _NoAi implements BuddyAi {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('确认推断记忆后消息状态与回执一起提交', () async {
     final rig = await openTestRig(clock: () => DateTime(2026, 11, 10, 10));
     addTearDown(rig.close);

@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
 
 import '../attachment_store.dart';
 import '../db/app_database.dart';
@@ -23,13 +22,12 @@ const String imagesEntryDir = questionImagesDirName;
 
 /// 导出与恢复本地库及其仍被引用的图片；格式规则见 01 第 7 章。
 ///
-/// 只碰文件与传入的数据库连接，不依赖 Flutter，测试里用 `databaseFactoryFfi` 就能跑。
+/// 只碰文件与传入的数据库连接，不依赖 Flutter，测试里用 `openTestDb` 一类入口就能跑。
 /// 导出与恢复都只处理当前 schema：恢复入口不接受其他版本的包。
 class DataPackageService {
   DataPackageService({
     required this.filesDir,
     required this.dbPath,
-    required this.factory,
     required this.appVersion,
     required this.schemaVersion,
     this.clock = systemClock,
@@ -37,7 +35,6 @@ class DataPackageService {
 
   final String filesDir;
   final String dbPath;
-  final DatabaseFactory factory;
   final String appVersion;
   final int schemaVersion;
   final Clock clock;
@@ -126,10 +123,7 @@ class DataPackageService {
     try {
       final stagedDbPath = p.join(workDir.path, 'staged.db');
       await File(stagedDbPath).writeAsBytes(dbBytes, flush: true);
-      await StagedRestoreValidator(
-        factory: factory,
-        schemaVersion: schemaVersion,
-      ).validate(
+      await StagedRestoreValidator(schemaVersion: schemaVersion).validate(
         path: stagedDbPath,
         manifestSchemaVersion: manifest.schemaVersion,
       );
@@ -192,10 +186,7 @@ class DataPackageService {
         rollbackDir,
         manifest.schemaVersion,
       );
-      await StagedRestoreValidator(
-        factory: factory,
-        schemaVersion: schemaVersion,
-      ).validate(
+      await StagedRestoreValidator(schemaVersion: schemaVersion).validate(
         path: stagedDbPath,
         manifestSchemaVersion: manifest.schemaVersion,
       );
@@ -493,15 +484,11 @@ class DataPackageService {
   ];
 
   Future<Map<String, int>> _countRows(String path) async {
-    Database? db;
+    final db = openReadOnlyDatabase(path);
     try {
-      db = await factory.openDatabase(
-        path,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
-      return await _countRowsOf(SqfliteRawExecutor(db));
+      return await _countRowsOf(db);
     } finally {
-      await db?.close();
+      await db.close();
     }
   }
 

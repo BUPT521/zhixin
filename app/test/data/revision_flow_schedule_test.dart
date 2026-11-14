@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
@@ -12,8 +11,6 @@ import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   late TestRig rig;
 
   late ScheduleRepository schedule;

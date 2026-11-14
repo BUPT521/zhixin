@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -7,8 +6,6 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('区间查询包含跨越查询起点的时间块', () async {
     final db = await openTestDb();
     addTearDown(db.close);

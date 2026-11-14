@@ -1,15 +1,12 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   late TestRig rig;
 
   setUp(() async {

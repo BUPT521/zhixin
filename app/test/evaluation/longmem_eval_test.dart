@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
@@ -612,8 +611,6 @@ String _report(
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('LongMemEval 式固定用例：关键词、原文与混合检索的对照', () async {
     final db = await openTestDb();
     addTearDown(db.close);

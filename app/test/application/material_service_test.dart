@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
@@ -16,8 +15,6 @@ MaterialService _service(TestRig rig, {Clock? clock}) => MaterialService(
 );
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('材料和全部页码在同一事务内导入', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
@@ -136,8 +135,6 @@ class _Harness {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('Word 片段生成学习步骤，开始讨论时保留材料位置', () async {
     final h = _Harness();
     await h.open();

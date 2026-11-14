@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
@@ -221,8 +220,6 @@ class _MutatingClient implements EmbeddingClient {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('固定测试向量验证扩展注册、写入与查询', () {
     final spec = _spec;
     final index = VectorIndex.open(inMemory: true, spec: spec);

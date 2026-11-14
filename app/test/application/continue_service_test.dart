@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/continue_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -11,8 +10,6 @@ import 'package:zhixin/domain/models/study_plan.dart';
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('继续入口按最近一次学习统一排序，草稿取保存时间', () async {
     final db = await openTestDb();
     addTearDown(db.close);

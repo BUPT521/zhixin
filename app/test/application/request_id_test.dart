@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
@@ -46,8 +45,6 @@ class _SilentAi implements BuddyAi {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('同一请求编号的模型判断只写一次', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

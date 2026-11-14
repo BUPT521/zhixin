@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
@@ -15,8 +15,6 @@ import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('当前数据包导出与导入只含业务投影和附件', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_package');
     addTearDown(() async {
@@ -31,7 +29,6 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
-      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
       schemaVersion: zhixinSchemaVersion,
@@ -104,7 +101,6 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
-      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
       schemaVersion: zhixinSchemaVersion,
@@ -162,7 +158,6 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
-      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
       schemaVersion: zhixinSchemaVersion,
@@ -242,7 +237,6 @@ void main() {
     addTearDown(raw.close);
     final engine = RevisionEngine();
     final packages = RevisionPackageService(
-      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
       schemaVersion: zhixinSchemaVersion,
@@ -267,12 +261,12 @@ void main() {
     final originalDb = archive.findFile('zhixin.db')!.content as List<int>;
     final tamperedPath = '${dir.path}/tampered.db';
     await File(tamperedPath).writeAsBytes(originalDb);
-    final tampered = await databaseFactoryFfi.openDatabase(tamperedPath);
-    await tampered.execute(
+    final tampered = sqlite3.sqlite3.open(tamperedPath);
+    tampered.execute(
       'CREATE TRIGGER evil_on_insert AFTER INSERT ON learning_goal '
       'BEGIN UPDATE app_meta SET value = value; END',
     );
-    await tampered.close();
+    tampered.close();
     final tamperedBytes = await File(tamperedPath).readAsBytes();
     final manifest = jsonDecode(
       utf8.decode(archive.findFile('manifest.json')!.content as List<int>),
@@ -315,7 +309,6 @@ void main() {
       revisions: engine,
     );
     final packages = RevisionPackageService(
-      factory: databaseFactoryFfi,
       engine: engine,
       assets: engine.assets,
       schemaVersion: zhixinSchemaVersion,

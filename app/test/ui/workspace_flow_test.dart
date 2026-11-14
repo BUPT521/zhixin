@@ -9,7 +9,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
@@ -93,8 +92,6 @@ void main() {
   final previewKey = GlobalKey();
 
   setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
     WidgetController.hitTestWarningShouldBeFatal = true;
   });
 

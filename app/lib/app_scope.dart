@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
-import 'package:sqflite/sqflite.dart';
 
 import 'ai/ai_chat_service.dart';
 import 'app_services.dart';
@@ -372,7 +371,6 @@ class AppScopeState extends State<AppScope> {
     _dataPackages = DataPackageService(
       filesDir: paths.filesDir,
       dbPath: paths.dbPath,
-      factory: databaseFactory,
       appVersion: appVersion,
       schemaVersion: zhixinSchemaVersion,
       clock: clock,
@@ -396,7 +394,6 @@ class AppScopeState extends State<AppScope> {
     _revisionPackages = RevisionPackageService(
       engine: _engine,
       assets: _engine.assets,
-      factory: databaseFactory,
       schemaVersion: zhixinSchemaVersion,
       appVersion: appVersion,
       clock: clock,

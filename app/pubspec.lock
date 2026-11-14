@@ -1018,54 +1018,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.1"
-  sqflite:
-    dependency: "direct main"
-    description:
-      name: sqflite
-      sha256: ed2ff27268e051bde8f0848d6ab86e0f6c01566484d3d358a46ff5e842b36216
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.6"
-  sqflite_android:
-    dependency: transitive
-    description:
-      name: sqflite_android
-      sha256: e75917dbfe721e6938fc4ff18d3e61549f17cf88a4eba189e2b270290d0c9be3
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.6"
-  sqflite_common:
-    dependency: transitive
-    description:
-      name: sqflite_common
-      sha256: "35a65713b6695fbc5f3596921c8af1dfe767942c96b6c5c80a739b16a10d47eb"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.5.17"
-  sqflite_common_ffi:
-    dependency: "direct dev"
-    description:
-      name: sqflite_common_ffi
-      sha256: "119d730460264a1f11f414d9eaa43fb686789357e81ce35f9e8ccb66ddd040e4"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.5"
-  sqflite_darwin:
-    dependency: transitive
-    description:
-      name: sqflite_darwin
-      sha256: "6ef57df819b502e306d0b58ba6cb614952d294b825c003feba3c47764c20a825"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.6"
-  sqflite_platform_interface:
-    dependency: transitive
-    description:
-      name: sqflite_platform_interface
-      sha256: "7bfeb7f9e09761147e8e3a4ff3f1d8979fe46a736f03f3805f572599ade69308"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.4"
   sqlite3:
     dependency: "direct main"
     description:
@@ -1130,14 +1082,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.0.0"
-  synchronized:
-    dependency: transitive
-    description:
-      name: synchronized
-      sha256: "0ce4712bd3be1fccfab14458059baebb400ba6c6239b65398e3464945fabbae7"
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.6.1"
   term_glyph:
     dependency: transitive
     description:

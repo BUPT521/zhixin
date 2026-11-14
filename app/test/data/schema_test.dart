@@ -1,16 +1,15 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/schema.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('新库是 v26，15 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
     addTearDown(db.close);
@@ -139,35 +138,32 @@ void main() {
   });
 
   test('库版本不一致时清空旧表并重建', () async {
-    sqfliteFfiInit();
     final dir = await Directory.systemTemp.createTemp('zhixin_schema_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/old.db';
 
-    final old = await databaseFactoryFfi.openDatabase(
-      path,
-      options: OpenDatabaseOptions(
-        version: 9,
-        onCreate: (db, version) async {
-          await db.execute(
-            'CREATE TABLE knowledge_node (id INTEGER PRIMARY KEY, name TEXT)',
-          );
-          await db.execute(
-            'CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT)',
-          );
-        },
-      ),
-    );
-    await old.insert('knowledge_node', {'name': '极限'});
-    await old.close();
+    final legacy = sqlite3.sqlite3.open(path);
+    try {
+      legacy.execute('PRAGMA user_version = 9');
+      final old = SqliteRawDatabase(legacy);
+      await old.execute(
+        'CREATE TABLE knowledge_node (id INTEGER PRIMARY KEY, name TEXT)',
+      );
+      await old.execute(
+        'CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT)',
+      );
+      await old.insert('knowledge_node', {'name': '极限'});
+    } finally {
+      legacy.close();
+    }
 
     final upgraded = await openZhixinDatabase(path: path);
     addTearDown(upgraded.close);
 
-    final legacy = await upgraded.rawQuery(
+    final removed = await upgraded.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_node'",
     );
-    expect(legacy, isEmpty);
+    expect(removed, isEmpty);
     expect(
       await upgraded
           .rawQuery('PRAGMA user_version')
@@ -181,32 +177,29 @@ void main() {
   });
 
   test('v11 开发库按新结构重建，不保留旧材料结构', () async {
-    sqfliteFfiInit();
     final dir = await Directory.systemTemp.createTemp('zhixin_v11_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/old.db';
 
-    final old = await databaseFactoryFfi.openDatabase(
-      path,
-      options: OpenDatabaseOptions(
-        version: 11,
-        onCreate: (db, version) async {
-          await db.execute(
-            'CREATE TABLE conversation ('
-            'id INTEGER PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT)',
-          );
-          await db.execute(
-            'CREATE TABLE material (id INTEGER PRIMARY KEY, title TEXT)',
-          );
-        },
-      ),
-    );
-    await old.insert('conversation', {
-      'title': '旧讨论',
-      'created_at': '2026-11-06 09:00:00',
-      'updated_at': '2026-11-06 09:00:00',
-    });
-    await old.close();
+    final legacy = sqlite3.sqlite3.open(path);
+    try {
+      legacy.execute('PRAGMA user_version = 11');
+      final old = SqliteRawDatabase(legacy);
+      await old.execute(
+        'CREATE TABLE conversation ('
+        'id INTEGER PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT)',
+      );
+      await old.execute(
+        'CREATE TABLE material (id INTEGER PRIMARY KEY, title TEXT)',
+      );
+      await old.insert('conversation', {
+        'title': '旧讨论',
+        'created_at': '2026-11-06 09:00:00',
+        'updated_at': '2026-11-06 09:00:00',
+      });
+    } finally {
+      legacy.close();
+    }
 
     final rebuilt = await openZhixinDatabase(path: path);
     addTearDown(rebuilt.close);
@@ -224,37 +217,35 @@ void main() {
   });
 
   test('旧库按当前结构重建，不迁移旧步骤与旧状态', () async {
-    sqfliteFfiInit();
     final dir = await Directory.systemTemp.createTemp('zhixin_v16_');
     addTearDown(() => dir.delete(recursive: true));
     final path = '${dir.path}/old.db';
 
-    final old = await databaseFactoryFfi.openDatabase(
-      path,
-      options: OpenDatabaseOptions(
-        version: 16,
-        onCreate: (db, version) async {
-          await db.execute('''
+    final legacy = sqlite3.sqlite3.open(path);
+    try {
+      legacy.execute('PRAGMA user_version = 16');
+      final old = SqliteRawDatabase(legacy);
+      await old.execute('''
             CREATE TABLE app_meta (
               key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
             )
           ''');
-          await db.execute(
-            'CREATE TABLE learning_goal ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, '
-            'status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
-          );
-          await db.execute(
-            'CREATE TABLE conversation ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, '
-            'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
-          );
-          await db.execute(
-            'CREATE TABLE study_plan ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, '
-            'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
-          );
-          await db.execute('''
+      await old.execute(
+        'CREATE TABLE learning_goal ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, '
+        'status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      );
+      await old.execute(
+        'CREATE TABLE conversation ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, '
+        'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      );
+      await old.execute(
+        'CREATE TABLE study_plan ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, '
+        'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      );
+      await old.execute('''
             CREATE TABLE plan_item (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               goal_id INTEGER REFERENCES learning_goal(id) ON DELETE SET NULL,
@@ -266,7 +257,7 @@ void main() {
               updated_at TEXT NOT NULL
             )
           ''');
-          await db.execute('''
+      await old.execute('''
             CREATE TABLE schedule_block (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               plan_item_id INTEGER NOT NULL REFERENCES plan_item(id) ON DELETE CASCADE,
@@ -277,12 +268,12 @@ void main() {
               updated_at TEXT NOT NULL
             )
           ''');
-          await db.execute(
-            'CREATE TABLE question ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT, stem TEXT NOT NULL, '
-            'origin TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
-          );
-          await db.execute('''
+      await old.execute(
+        'CREATE TABLE question ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, stem TEXT NOT NULL, '
+        'origin TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      );
+      await old.execute('''
             CREATE TABLE attempt (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               question_id INTEGER NOT NULL REFERENCES question(id) ON DELETE CASCADE,
@@ -290,78 +281,76 @@ void main() {
               updated_at TEXT NOT NULL
             )
           ''');
-          await db.execute(
-            'CREATE TABLE memory ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, '
-            'content TEXT NOT NULL, scope TEXT, source_kind TEXT NOT NULL)',
-          );
-          await db.execute(
-            'CREATE TABLE study_step ('
-            'id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, '
-            'seq INTEGER NOT NULL, title TEXT NOT NULL, '
-            'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
-          );
-        },
-      ),
-    );
-
-    const stamp = '2026-11-07 09:00:00';
-    final goalId = await old.insert('learning_goal', {
-      'title': '暂缓的目标',
-      'status': 'deferred',
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    final planId = await old.insert('study_plan', {
-      'title': '旧计划',
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    final itemId = await old.insert('plan_item', {
-      'goal_id': goalId,
-      'study_plan_id': planId,
-      'title': '暂缓的事项',
-      'status': 'moved',
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    await old.insert('schedule_block', {
-      'plan_item_id': itemId,
-      'start_at': '2026-11-08 09:00:00',
-      'end_at': '2026-11-08 10:00:00',
-      'status': 'moved',
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    final questionId = await old.insert('question', {
-      'stem': '从照片识别的题目',
-      'origin': 'ocr',
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    await old.insert('attempt', {
-      'question_id': questionId,
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    await old.insert('memory', {
-      'kind': 'difficulty',
-      'content': '旧的场次困难',
-      'source_kind': 'session',
-    });
-    await old.insert('study_step', {
-      'plan_id': planId,
-      'seq': 1,
-      'title': '旧的步骤',
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
-    await old.insert('app_meta', {
-      'key': 'schema_version',
-      'value': '16',
-      'updated_at': stamp,
-    });
-    await old.close();
+      await old.execute(
+        'CREATE TABLE memory ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, '
+        'content TEXT NOT NULL, scope TEXT, source_kind TEXT NOT NULL)',
+      );
+      await old.execute(
+        'CREATE TABLE study_step ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, '
+        'seq INTEGER NOT NULL, title TEXT NOT NULL, '
+        'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      );
+      const stamp = '2026-11-07 09:00:00';
+      final goalId = await old.insert('learning_goal', {
+        'title': '暂缓的目标',
+        'status': 'deferred',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      final planId = await old.insert('study_plan', {
+        'title': '旧计划',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      final itemId = await old.insert('plan_item', {
+        'goal_id': goalId,
+        'study_plan_id': planId,
+        'title': '暂缓的事项',
+        'status': 'moved',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      await old.insert('schedule_block', {
+        'plan_item_id': itemId,
+        'start_at': '2026-11-08 09:00:00',
+        'end_at': '2026-11-08 10:00:00',
+        'status': 'moved',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      final questionId = await old.insert('question', {
+        'stem': '从照片识别的题目',
+        'origin': 'ocr',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      await old.insert('attempt', {
+        'question_id': questionId,
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      await old.insert('memory', {
+        'kind': 'difficulty',
+        'content': '旧的场次困难',
+        'source_kind': 'session',
+      });
+      await old.insert('study_step', {
+        'plan_id': planId,
+        'seq': 1,
+        'title': '旧的步骤',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      await old.insert('app_meta', {
+        'key': 'schema_version',
+        'value': '16',
+        'updated_at': stamp,
+      });
+    } finally {
+      legacy.close();
+    }
 
     final rebuilt = await openZhixinDatabase(path: path);
     addTearDown(rebuilt.close);

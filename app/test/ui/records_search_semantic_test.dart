@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/application/embedding_client.dart';
@@ -32,10 +31,7 @@ void main() {
   late Directory directory;
   AppScopeState? scope;
 
-  setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  });
+  setUpAll(() {});
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-search-meaning-');

@@ -1,5 +1,3 @@
-import 'package:sqflite/sqflite.dart';
-
 import '../db/app_database.dart';
 import '../db/schema.dart';
 import '../db/schema_objects.dart';
@@ -12,9 +10,8 @@ import 'backup_manifest.dart';
 /// 当前版本；这里再核对物理完整性、表与字段、外键，以及应用真正会跑的
 /// 几条查询。
 class StagedRestoreValidator {
-  StagedRestoreValidator({required this.factory, required this.schemaVersion});
+  StagedRestoreValidator({required this.schemaVersion});
 
-  final DatabaseFactory factory;
   final int schemaVersion;
 
   Future<void> validate({
@@ -49,32 +46,24 @@ class StagedRestoreValidator {
   }
 
   Future<int> _readUserVersion(String path) async {
-    Database? db;
+    final db = openReadOnlyDatabase(path);
     try {
-      db = await factory.openDatabase(
-        path,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
       final rows = await db.rawQuery('PRAGMA user_version');
       final value = rows.isEmpty ? 0 : rows.first.values.first;
       return value is int ? value : 0;
     } catch (error) {
       throw BackupException('恢复校验未通过（版本）：数据包中的数据库无法读取。', detail: '$error');
     } finally {
-      await db?.close();
+      await db.close();
     }
   }
 
   /// 在按当前程序打开之前核对对象；打开时的初始化会重建触发器，若这时才查，
   /// 包带来的额外对象已经被清理，预检就发现不了。
   Future<void> _verifyReadOnlyObjects(String path) async {
-    Database? db;
+    final db = openReadOnlyDatabase(path);
     try {
-      db = await factory.openDatabase(
-        path,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
-      final unexpected = await unexpectedDatabaseObjects(db.raw);
+      final unexpected = await unexpectedDatabaseObjects(db);
       if (unexpected.isNotEmpty) {
         throw BackupException(
           '恢复校验未通过（对象）：数据包带有当前程序不认识的'
@@ -82,24 +71,20 @@ class StagedRestoreValidator {
         );
       }
     } finally {
-      await db?.close();
+      await db.close();
     }
   }
 
   Future<void> _quickCheck(String path) async {
-    Database? db;
+    final db = openReadOnlyDatabase(path);
     try {
-      db = await factory.openDatabase(
-        path,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
       final rows = await db.rawQuery('PRAGMA quick_check');
       final result = rows.isEmpty ? null : rows.first.values.first;
       if (result != 'ok') {
         throw BackupException('恢复校验未通过（完整性）：数据库检查返回 $result');
       }
     } finally {
-      await db?.close();
+      await db.close();
     }
   }
 

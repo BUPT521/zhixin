@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/data/vector/vector_store_isolate.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
@@ -19,8 +18,6 @@ const _locator = SemanticLocator(
 /// 不经过界面线程；打不开时把可捕获的异常交回调用方。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(sqfliteFfiInit);
-
   test('后台 isolate 打开、写入与查询索引', () async {
     final directory = await Directory.systemTemp.createTemp('zhixin-vec-iso-');
     addTearDown(() => directory.delete(recursive: true));

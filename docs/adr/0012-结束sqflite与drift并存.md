@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳
+已采纳。2026-11-14 完成：`sqflite` 与 `sqflite_common_ffi` 已从依赖里删除，库副本统一由 [raw_executor.dart](../../app/lib/data/db/raw_executor.dart) 的 `SqliteRawDatabase` 打开，40 个测试文件的建库准备同步改完。
 
 ## 日期
 

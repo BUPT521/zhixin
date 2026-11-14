@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
@@ -120,8 +119,6 @@ class _Harness {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('V6：用了帮助时自评记为辅助完成，核对依据单独保存', () async {
     final h = _Harness(reply: const BuddyReply(text: '先看定义，再检查这一步'));
     await h.open();

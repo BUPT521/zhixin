@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/capacity_service.dart';
 import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -31,8 +30,6 @@ PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('V2：暂停目标可以只取消该目标的弹性安排', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

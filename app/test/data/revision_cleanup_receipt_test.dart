@@ -1,15 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/revisions/revision_actions.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   Future<int> addMemory(TestRig rig, String content) async {
     await rig.db.insert('memory', {
       'kind': 'preference',

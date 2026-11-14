@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/application/capacity_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -39,8 +38,6 @@ class _Harness {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('V5：按优先级与截止排顺序，给出粗略预算', () async {
     final h = _Harness();
     await h.open();

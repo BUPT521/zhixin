@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 
@@ -17,8 +16,6 @@ class _FailingCache extends AttachmentCache {
 }
 
 void main() {
-  setUpAll(sqfliteFfiInit);
-
   test('版本已经恢复后，图片缓存失败不把恢复报成失败', () async {
     var dataChanges = 0;
     final cacheDir = await Directory.systemTemp.createTemp('zhixin_cache_');
