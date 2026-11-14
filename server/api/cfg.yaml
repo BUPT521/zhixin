@@ -1,0 +1,12 @@
+# oapi-codegen 配置：从 api/openapi.yaml 生成类型与标准库路由接口。
+#
+# 生成代码入库，CI 重新生成后比对（ADR-0015 第 4 条）。用生成的路由而不是严格
+# 服务接口：模型代理按 SSE 边收边发、附件与备份按字节流下载，严格接口要先把整个
+# 响应体交给 Visit 方法才能写出，做不到中途 flush。
+package: api
+output: ../internal/api/api.gen.go
+generate:
+  models: true
+  std-http-server: true
+output-options:
+  skip-prune: false

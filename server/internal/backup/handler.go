@@ -33,13 +33,6 @@ func NewHandler(store Store, log *slog.Logger, maxBytes int64, keep, schemaVersi
 	return &Handler{store: store, log: log, maxBytes: maxBytes, keep: keep, schemaVersion: schemaVersion, now: time.Now}
 }
 
-func (h *Handler) Register(mux *http.ServeMux, require func(http.Handler) http.Handler) {
-	mux.Handle("POST /v1/backups", require(http.HandlerFunc(h.upload)))
-	mux.Handle("GET /v1/backups", require(http.HandlerFunc(h.list)))
-	mux.Handle("GET /v1/backups/{id}", require(http.HandlerFunc(h.download)))
-	mux.Handle("DELETE /v1/backups/{id}", require(http.HandlerFunc(h.remove)))
-}
-
 var hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // upload takes the raw zip as the body. Headers carry what the server checks:

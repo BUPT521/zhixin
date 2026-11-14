@@ -43,12 +43,6 @@ func New(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger
 	return &Proxy{cfg: cfg, quota: quota, client: &http.Client{}, loc: loc, now: time.Now, log: log}
 }
 
-func (p *Proxy) Register(mux *http.ServeMux, require func(http.Handler) http.Handler) {
-	mux.Handle("GET /v1/llm/models", require(http.HandlerFunc(p.models)))
-	mux.Handle("GET /v1/llm/quota", require(http.HandlerFunc(p.quotaStatus)))
-	mux.Handle("POST /v1/llm/chat/completions", require(http.HandlerFunc(p.chat)))
-}
-
 func (p *Proxy) day() string { return p.now().In(p.loc).Format("2006-01-02") }
 
 // models answers in the OpenAI list shape so the client's connection test works unchanged.

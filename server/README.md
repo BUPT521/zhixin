@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、模型代理的转发与额度都已经按契约实现。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时用内存实现，进程退出后数据丢失，只能用于本地开发与联调；设置之后用 PostgreSQL（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），账号、会话、提交序列、备份元数据与用量入库，备份字节写到 `ZHIXIN_BLOB_DIR`，进程重启不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件对象的 `/v1/blobs` 仍在契约里但处理函数返回 501。
+路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、模型代理的转发与额度都已经按契约实现。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时用内存实现，进程退出后数据丢失，只能用于本地开发与联调；设置之后用 PostgreSQL（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），账号、会话、提交序列、备份元数据与用量入库，备份字节写到 `ZHIXIN_BLOB_DIR`，进程重启不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件对象的 `/v1/blobs` 仍在契约里但处理函数返回 501。
 
 PostgreSQL 的用例要连真库，设置 `ZHIXIN_TEST_DATABASE_URL` 才会跑，否则跳过；这个仓库的开发机与当前 CI 都没有数据库，因此这条路径只做过编译与静态检查。
 
@@ -25,6 +25,7 @@ server/
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
 │   ├── llmproxy/               ← Chat Completions 代理与每日额度
+│   ├── api/                    ← 生成的路由与类型（来自 api/openapi.yaml）
 │   ├── server/                 ← 装配路由与中间件，端到端测试
 │   ├── store/                  ← 表结构（schema.sql，唯一真相）与 sqlc 查询
 │   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、用量

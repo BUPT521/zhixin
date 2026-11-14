@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/config"
@@ -53,19 +54,8 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	authSvc.OnAccountDelete(st.Backups.DeleteUser)
 	authSvc.OnAccountDelete(st.Quota.DeleteUser)
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if st.Ready != nil {
-			if err := st.Ready(r.Context()); err != nil {
-				httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "a dependency is not reachable")
-				return
-			}
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_version": ClientSchemaVersion})
-	})
-
+	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
+	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
 	var byAddr, byAccount *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
@@ -73,18 +63,22 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	if cfg.RefreshRatePerSecond > 0 {
 		byAccount = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute)
 	}
-	auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, byAccount).Register(mux)
-	// Push bodies carry row snapshots, so they get a larger cap than ordinary JSON.
-	syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion).Register(mux, authSvc.Require)
-	backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion).Register(mux, authSvc.Require)
-	llmproxy.New(cfg.LLM, st.Quota, cfg.Location, log).Register(mux, authSvc.Require)
+	handlers := routes{
+		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, byAccount),
+		sync:          syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion),
+		backups:       backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion),
+		llm:           llmproxy.New(cfg.LLM, st.Quota, cfg.Location, log),
+		schemaVersion: ClientSchemaVersion,
+		ready:         st.Ready,
+	}
 
-	// Anything outside the contract gets a problem body, not the default text 404.
+	// 契约之外的路径给 problem 体，而不是默认的文本 404。
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
+	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{BaseRouter: mux})
 
-	return httpx.Chain(mux,
+	return httpx.Chain(withAuth(mux, authSvc, log),
 		httpx.Recover(log),
 		httpx.RequestID,
 		httpx.AccessLog(log),

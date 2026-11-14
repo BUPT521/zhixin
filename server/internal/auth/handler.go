@@ -89,16 +89,6 @@ func tooMany(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts, retry later")
 }
 
-// Register mounts the routes on mux.
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/auth/register", h.register)
-	mux.HandleFunc("POST /v1/auth/login", h.login)
-	mux.HandleFunc("POST /v1/auth/refresh", h.refresh)
-	mux.Handle("POST /v1/auth/logout", h.svc.Require(http.HandlerFunc(h.logout)))
-	mux.Handle("GET /v1/me", h.svc.Require(http.HandlerFunc(h.me)))
-	mux.Handle("DELETE /v1/me", h.svc.Require(http.HandlerFunc(h.deleteMe)))
-}
-
 type credentials struct {
 	Email      string `json:"email"`
 	Password   string `json:"password"`

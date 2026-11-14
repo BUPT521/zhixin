@@ -72,12 +72,19 @@ jobs:
       - run: go mod tidy -diff
       - run: go vet ./...
 
-      # 生成代码与客户端 drift 一样提交入库；重新生成后比对，避免查询改了却没更新
-      # 生成文件（ADR-0015 第 2 条）。sqlc 只作开发期工具，版本钉在这条命令里。
+      # 生成代码与客户端 drift 一样提交入库；重新生成后比对，避免契约或查询改了
+      # 却没更新生成文件（ADR-0015 第 2、4 条）。两个生成器都只作开发期工具，
+      # 版本钉在这里。
       - name: 核对 sqlc 生成
         run: |
           go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
           git diff --exit-code -- internal/store/db
+
+      - name: 核对契约生成
+        run: |
+          go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2 \
+            -config api/cfg.yaml api/openapi.yaml
+          git diff --exit-code -- internal/api
 
       - run: go test -race ./...
 

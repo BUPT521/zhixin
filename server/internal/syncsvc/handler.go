@@ -30,17 +30,6 @@ func NewHandler(store Store, log *slog.Logger, maxBytes int64, schemaVersion int
 	return &Handler{store: store, log: log, maxBytes: maxBytes, schemaVersion: schemaVersion}
 }
 
-// Register mounts the routes; require wraps each with authentication.
-func (h *Handler) Register(mux *http.ServeMux, require func(http.Handler) http.Handler) {
-	mux.Handle("GET /v1/sync/head", require(http.HandlerFunc(h.head)))
-	mux.Handle("GET /v1/sync/commits", require(http.HandlerFunc(h.pull)))
-	mux.Handle("POST /v1/sync/commits", require(http.HandlerFunc(h.push)))
-	// Attachment objects addressed by SHA-256. In the contract, not built yet.
-	mux.Handle("HEAD /v1/blobs/{sha256}", require(http.HandlerFunc(httpx.NotImplemented)))
-	mux.Handle("GET /v1/blobs/{sha256}", require(http.HandlerFunc(httpx.NotImplemented)))
-	mux.Handle("PUT /v1/blobs/{sha256}", require(http.HandlerFunc(httpx.NotImplemented)))
-}
-
 type headResponse struct {
 	Head          int64 `json:"head"`
 	SchemaVersion int   `json:"schema_version"`
