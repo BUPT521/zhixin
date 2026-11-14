@@ -11506,6 +11506,60 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $RevisionSequencesTable revisionSequences =
       $RevisionSequencesTable(this);
+  Selectable<RecentSubmittedResult> recentSubmitted(
+    int goalId,
+    int materialId,
+    int conversationId,
+    String broughtIds,
+    int rowLimit,
+  ) {
+    return customSelect(
+      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 <> 0 AND c.goal_id = ?1)OR(?2 <> 0 AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 <> 0 OR ?2 <> 0 OR(?3 <> 0 AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 <> 0 OR ?2 <> 0)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?5',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(materialId),
+        Variable<int>(conversationId),
+        Variable<String>(broughtIds),
+        Variable<int>(rowLimit),
+      ],
+      readsFrom: {
+        this.attempts,
+        this.conversations,
+        this.materials,
+        this.messages,
+      },
+    ).map(
+      (QueryRow row) => RecentSubmittedResult(
+        attemptId: row.read<int>('attempt_id'),
+        attemptConversationId: row.read<int>('attempt_conversation_id'),
+        attemptSessionId: row.readNullable<int>('attempt_session_id'),
+        attemptUserAnswer: row.readNullable<String>('attempt_user_answer'),
+        attemptSolution: row.readNullable<String>('attempt_solution'),
+        attemptIsCorrect: row.readNullable<int>('attempt_is_correct'),
+        attemptIndependent: row.readNullable<int>('attempt_independent'),
+        attemptHelpJson: row.readNullable<String>('attempt_help_json'),
+        attemptFeedback: row.readNullable<String>('attempt_feedback'),
+        attemptDelayed: row.read<int>('attempt_delayed'),
+        attemptSubmittedAt: row.readNullable<String>('attempt_submitted_at'),
+        attemptCreatedAt: row.read<String>('attempt_created_at'),
+        questionId: row.read<int>('question_id'),
+        questionSourceRef: row.readNullable<String>('question_source_ref'),
+        questionContextText: row.readNullable<String>('question_context_text'),
+        questionPageNo: row.readNullable<int>('question_page_no'),
+        questionCreatedAt: row.read<String>('question_created_at'),
+        questionUpdatedAt: row.read<String>('question_updated_at'),
+        questionMaterialTitle: row.readNullable<String>(
+          'question_material_title',
+        ),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        questionStem: row.readNullable<String>('question_stem'),
+        questionImagePathsJson: row.readNullable<String>(
+          'question_image_paths_json',
+        ),
+      ),
+    );
+  }
+
   Selectable<ConversationByIdResult> conversationById(int conversationId) {
     return customSelect(
       'SELECT c.*, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
@@ -12527,6 +12581,55 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       result: [TableUpdate('revision_change', kind: UpdateKind.delete)],
     ),
   ]);
+}
+
+class RecentSubmittedResult {
+  final int attemptId;
+  final int attemptConversationId;
+  final int? attemptSessionId;
+  final String? attemptUserAnswer;
+  final String? attemptSolution;
+  final int? attemptIsCorrect;
+  final int? attemptIndependent;
+  final String? attemptHelpJson;
+  final String? attemptFeedback;
+  final int attemptDelayed;
+  final String? attemptSubmittedAt;
+  final String attemptCreatedAt;
+  final int questionId;
+  final String? questionSourceRef;
+  final String? questionContextText;
+  final int? questionPageNo;
+  final String questionCreatedAt;
+  final String questionUpdatedAt;
+  final String? questionMaterialTitle;
+  final String? sourceFileName;
+  final String? questionStem;
+  final String? questionImagePathsJson;
+  RecentSubmittedResult({
+    required this.attemptId,
+    required this.attemptConversationId,
+    this.attemptSessionId,
+    this.attemptUserAnswer,
+    this.attemptSolution,
+    this.attemptIsCorrect,
+    this.attemptIndependent,
+    this.attemptHelpJson,
+    this.attemptFeedback,
+    required this.attemptDelayed,
+    this.attemptSubmittedAt,
+    required this.attemptCreatedAt,
+    required this.questionId,
+    this.questionSourceRef,
+    this.questionContextText,
+    this.questionPageNo,
+    required this.questionCreatedAt,
+    required this.questionUpdatedAt,
+    this.questionMaterialTitle,
+    this.sourceFileName,
+    this.questionStem,
+    this.questionImagePathsJson,
+  });
 }
 
 class ConversationByIdResult {

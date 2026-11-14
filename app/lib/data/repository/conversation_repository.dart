@@ -26,24 +26,43 @@ class ConversationRepository {
   final RawDatabase _db;
   final Clock _clock;
 
-  static const String _questionUserMessage =
-      "COALESCE(c.question_message_id, (SELECT m.id FROM message m "
-      "WHERE m.conversation_id = c.id AND m.role = 'user' "
-      "ORDER BY m.id LIMIT 1))";
-  static const String _firstUserContent =
-      "(SELECT m.content FROM message m WHERE m.conversation_id = c.id "
-      "AND m.role = 'user' AND m.id = $_questionUserMessage LIMIT 1)";
-  static const String _firstUserImages =
-      "(SELECT m.image_paths_json FROM message m WHERE m.conversation_id = c.id "
-      "AND m.role = 'user' AND m.id = $_questionUserMessage LIMIT 1)";
-  static const String _materialFileName =
-      '(SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name';
-
   /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
   AppDatabase _connect([RawExecutor? executor]) {
     final connection = (executor ?? _db).driftConnection;
     if (connection is AppDatabase) return connection;
     throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  AttemptWithQuestion _attemptWithQuestionOf(RecentSubmittedResult r) {
+    final attempt = Attempt.fromRow({
+      'id': r.attemptId,
+      'conversation_id': r.attemptConversationId,
+      'session_id': r.attemptSessionId,
+      'user_answer': r.attemptUserAnswer,
+      'solution': r.attemptSolution,
+      'is_correct': r.attemptIsCorrect,
+      'independent': r.attemptIndependent,
+      'help_json': r.attemptHelpJson,
+      'feedback': r.attemptFeedback,
+      'delayed': r.attemptDelayed,
+      'submitted_at': r.attemptSubmittedAt,
+      'created_at': r.attemptCreatedAt,
+    });
+    return AttemptWithQuestion(
+      attempt: attempt,
+      question: _question(
+        id: r.questionId,
+        stem: r.questionStem ?? '',
+        sourceRef: r.questionSourceRef,
+        contextText: r.questionContextText,
+        materialTitle: r.questionMaterialTitle,
+        pageNo: r.questionPageNo,
+        sourceFileName: r.sourceFileName,
+        imagePathsJson: r.questionImagePathsJson,
+        createdAt: r.questionCreatedAt,
+        updatedAt: r.questionUpdatedAt,
+      ),
+    );
   }
 
   /// 列表与“继续上次”挑的列相同，按同一组字段还原成领域模型。
@@ -366,107 +385,16 @@ class ConversationRepository {
     int? conversationId,
     Set<int> broughtAttemptIds = const {},
   }) async {
-    final where = <String>['a.submitted_at IS NOT NULL'];
-    final args = <Object?>[];
-    final scopes = <String>[];
-    if (goalId != null) {
-      scopes.add('c.goal_id = ?');
-      args.add(goalId);
-    }
-    if (materialId != null) {
-      scopes.add('c.material_id = ?');
-      args.add(materialId);
-    }
-    if (goalId == null && materialId == null) {
-      final restricted = <String>[];
-      if (conversationId != null) {
-        restricted.add('c.id = ?');
-        args.add(conversationId);
-      }
-      if (broughtAttemptIds.isNotEmpty) {
-        restricted.add(
-          'a.id IN (${List.filled(broughtAttemptIds.length, '?').join(', ')})',
-        );
-        args.addAll(broughtAttemptIds);
-      }
-      scopes.add(
-        '(c.goal_id IS NULL AND c.material_id IS NULL '
-        'AND (${restricted.isEmpty ? '0' : restricted.join(' OR ')}))',
-      );
-    } else {
-      // 有目标或材料时仍取同目标、同材料与无归属的记录，再放行本轮带入的作答。
-      scopes.add('(c.goal_id IS NULL AND c.material_id IS NULL)');
-      if (broughtAttemptIds.isNotEmpty) {
-        scopes.add(
-          'a.id IN (${List.filled(broughtAttemptIds.length, '?').join(', ')})',
-        );
-        args.addAll(broughtAttemptIds);
-      }
-    }
-    where.add('(${scopes.join(' OR ')})');
-    if (limit != null) args.add(limit);
-    final rows = await _db.rawQuery('''
-      SELECT
-        a.id AS attempt_id,
-        a.conversation_id AS attempt_conversation_id,
-        a.session_id AS attempt_session_id,
-        a.user_answer AS attempt_user_answer,
-        a.solution AS attempt_solution,
-        a.is_correct AS attempt_is_correct,
-        a.independent AS attempt_independent,
-        a.help_json AS attempt_help_json,
-        a.feedback AS attempt_feedback,
-        a.delayed AS attempt_delayed,
-        a.submitted_at AS attempt_submitted_at,
-        a.created_at AS attempt_created_at,
-        c.id AS question_id,
-        c.source_ref AS question_source_ref,
-        c.context_text AS question_context_text,
-        c.page_no AS question_page_no,
-        c.created_at AS question_created_at,
-        c.updated_at AS question_updated_at,
-        (SELECT title FROM material WHERE id = c.material_id)
-          AS question_material_title,
-        $_materialFileName,
-        $_firstUserContent AS question_stem,
-        $_firstUserImages AS question_image_paths_json
-      FROM attempt a
-      JOIN conversation c ON c.id = a.conversation_id
-      WHERE ${where.join(' AND ')}
-      ORDER BY a.submitted_at DESC, a.id DESC
-      ${limit == null ? '' : 'LIMIT ?'}
-      ''', args);
-    return rows
-        .map((row) {
-          final attempt = Attempt.fromRow({
-            'id': row['attempt_id'],
-            'conversation_id': row['attempt_conversation_id'],
-            'session_id': row['attempt_session_id'],
-            'user_answer': row['attempt_user_answer'],
-            'solution': row['attempt_solution'],
-            'is_correct': row['attempt_is_correct'],
-            'independent': row['attempt_independent'],
-            'help_json': row['attempt_help_json'],
-            'feedback': row['attempt_feedback'],
-            'delayed': row['attempt_delayed'],
-            'submitted_at': row['attempt_submitted_at'],
-            'created_at': row['attempt_created_at'],
-          });
-          final question = _recordQuestion({
-            'id': row['question_id'],
-            'source_ref': row['question_source_ref'],
-            'context_text': row['question_context_text'],
-            'page_no': row['question_page_no'],
-            'created_at': row['question_created_at'],
-            'updated_at': row['question_updated_at'],
-            'material_title': row['question_material_title'],
-            'source_file_name': row['source_file_name'],
-            'stem': row['question_stem'],
-            'image_paths_json': row['question_image_paths_json'],
-          });
-          return AttemptWithQuestion(attempt: attempt, question: question);
-        })
-        .toList(growable: false);
+    final rows = await _connect()
+        .recentSubmitted(
+          goalId ?? 0,
+          materialId ?? 0,
+          conversationId ?? 0,
+          jsonEncode(broughtAttemptIds.toList(growable: false)),
+          limit ?? (1 << 30),
+        )
+        .get();
+    return [for (final row in rows) _attemptWithQuestionOf(row)];
   }
 
   Future<Attempt?> latestSubmitted(int conversationId) async {

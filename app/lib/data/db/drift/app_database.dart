@@ -23,6 +23,7 @@ part 'app_database.g.dart';
     'queries/materials.drift',
     'queries/schedules.drift',
     'queries/conversations.drift',
+    'queries/recent_attempts.drift',
   },
   tables: [
     AppMeta,
