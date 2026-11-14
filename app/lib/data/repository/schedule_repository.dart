@@ -1,3 +1,4 @@
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
@@ -35,6 +36,62 @@ class ScheduleAdjustment {
 
 /// 课表与时间块（01 `timetable_entry` / `schedule_block`）。
 class ScheduleRepository {
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect([RawExecutor? executor]) {
+    final connection = (executor ?? _db).driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  static ScheduleBlock _blockOf({
+    required int id,
+    required int planItemId,
+    required String startAt,
+    required String endAt,
+    required String source,
+    required String status,
+    required int locked,
+  }) => ScheduleBlock(
+    id: id,
+    planItemId: planItemId,
+    startAt: parseDateTime(startAt),
+    endAt: parseDateTime(endAt),
+    source: source,
+    status: status,
+    locked: locked == 1,
+  );
+
+  static ScheduledItem _scheduledOf(BlocksOverlappingResult r) => ScheduledItem(
+    block: _blockOf(
+      id: r.id,
+      planItemId: r.planItemId,
+      startAt: r.startAt,
+      endAt: r.endAt,
+      source: r.source,
+      status: r.status,
+      locked: r.locked,
+    ),
+    itemTitle: r.pTitle,
+    itemNote: r.pNote,
+    itemStatus: PlanItemStatus.fromCode(r.pStatus),
+  );
+
+  static ScheduledItem _scheduledOfNext(NextPlannedBlockResult r) =>
+      ScheduledItem(
+        block: _blockOf(
+          id: r.id,
+          planItemId: r.planItemId,
+          startAt: r.startAt,
+          endAt: r.endAt,
+          source: r.source,
+          status: r.status,
+          locked: r.locked,
+        ),
+        itemTitle: r.pTitle,
+        itemNote: r.pNote,
+        itemStatus: PlanItemStatus.fromCode(r.pStatus),
+      );
+
   ScheduleRepository(this._db, {this._clock = systemClock});
 
   final RawDatabase _db;
@@ -94,40 +151,16 @@ class ScheduleRepository {
     DateTime start,
     DateTime end,
   ) async {
-    final rows = await _db.rawQuery(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status '
-      'FROM schedule_block b JOIN plan_item p ON p.id = b.plan_item_id '
-      'WHERE b.start_at < ? AND b.end_at > ? '
-      'ORDER BY b.start_at',
-      [formatDateTime(end), formatDateTime(start)],
-    );
-    return [
-      for (final row in rows)
-        ScheduledItem(
-          block: ScheduleBlock.fromRow(row),
-          itemTitle: row['p_title']! as String,
-          itemNote: row['p_note'] as String?,
-          itemStatus: PlanItemStatus.fromCode(row['p_status'] as String?),
-        ),
-    ];
+    final rows = await _connect()
+        .blocksOverlapping(formatDateTime(end), formatDateTime(start))
+        .get();
+    return [for (final row in rows) _scheduledOf(row)];
   }
 
   Future<ScheduledItem?> nextAfter(DateTime now) async {
-    final rows = await _db.rawQuery(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status '
-      'FROM schedule_block b JOIN plan_item p ON p.id = b.plan_item_id '
-      'WHERE b.status = ? AND b.start_at >= ? '
-      'ORDER BY b.start_at LIMIT 1',
-      ['planned', formatDateTime(now)],
-    );
+    final rows = await _connect().nextPlannedBlock(formatDateTime(now)).get();
     if (rows.isEmpty) return null;
-    final row = rows.first;
-    return ScheduledItem(
-      block: ScheduleBlock.fromRow(row),
-      itemTitle: row['p_title'] as String,
-      itemNote: row['p_note'] as String?,
-      itemStatus: PlanItemStatus.fromCode(row['p_status'] as String?),
-    );
+    return _scheduledOfNext(rows.first);
   }
 
   Future<int> addBlock({
@@ -209,18 +242,12 @@ class ScheduleRepository {
       }
     }
 
-    final planned = await executor.rawQuery('''
-      SELECT b.id, b.start_at, b.end_at, p.title
-      FROM schedule_block b
-      JOIN plan_item p ON p.id = b.plan_item_id
-      WHERE b.status = 'planned'
-      ORDER BY b.start_at
-      ''');
+    final planned = await _connect(executor).plannedBlockSpans().get();
     for (final row in planned) {
-      final id = row['id']! as int;
+      final id = row.id;
       if (ids.contains(id)) continue;
-      final blockStart = DateTime.parse(row['start_at']! as String);
-      final blockEnd = DateTime.parse(row['end_at']! as String);
+      final blockStart = DateTime.parse(row.startAt);
+      final blockEnd = DateTime.parse(row.endAt);
       for (final adjustment in adjustments) {
         if (blockStart.isBefore(adjustment.end) &&
             blockEnd.isAfter(adjustment.start)) {
@@ -229,7 +256,7 @@ class ScheduleRepository {
                 ? blockStart
                 : adjustment.start,
             end: blockEnd.isBefore(adjustment.end) ? blockEnd : adjustment.end,
-            description: '“${row['title']}”的安排',
+            description: '“${row.title}”的安排',
           );
         }
       }
@@ -417,17 +444,21 @@ class ScheduleRepository {
     DateTime now, {
     RawExecutor? executor,
   }) async {
-    final rows = await (executor ?? _db).rawQuery(
-      '''
-      SELECT b.* FROM schedule_block b
-      JOIN plan_item p ON p.id = b.plan_item_id
-      WHERE p.goal_id = ? AND b.status = 'planned' AND b.locked = 0
-        AND b.start_at >= ?
-      ORDER BY b.start_at
-      ''',
-      [goalId, formatDateTime(now)],
-    );
-    return rows.map(ScheduleBlock.fromRow).toList(growable: false);
+    final rows = await _connect(executor)
+        .adjustableBlocksForGoal(goalId, formatDateTime(now))
+        .get();
+    return [
+      for (final row in rows)
+        ScheduleBlock(
+          id: row.id,
+          planItemId: row.planItemId,
+          startAt: parseDateTime(row.startAt),
+          endAt: parseDateTime(row.endAt),
+          source: row.source,
+          status: row.status,
+          locked: row.locked == 1,
+        ),
+    ];
   }
 
   /// 一次取消多条预约；只写一条语句，与同一次业务操作的其他改动一起提交。

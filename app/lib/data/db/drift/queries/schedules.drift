@@ -1,0 +1,40 @@
+-- 预约的读查询（ADR-0011 第二批）。
+--
+-- 语句原来拼在 schedule_repository.dart 里。带 `p_` 前缀的三列是事项侧的
+-- 标题、说明与状态，结果行按生成类型还原，不再逐列 as 类型。
+
+import '../tables.dart';
+
+-- 与给定区间重叠的预约，按开始时间排序。
+blocksOverlapping:
+SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE b.start_at < :endAt AND b.end_at > :startAt
+ORDER BY b.start_at;
+
+-- 最近一条还没开始的待开始预约。
+nextPlannedBlock:
+SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE b.status = 'planned' AND b.start_at >= :now
+ORDER BY b.start_at
+LIMIT 1;
+
+-- 全部待开始预约的时间，整组顺延时用来核对重叠。
+plannedBlockSpans:
+SELECT b.id, b.start_at, b.end_at, p.title
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE b.status = 'planned'
+ORDER BY b.start_at;
+
+-- 某个目标下可以自动调整的预约：待开始、未固定、且还没到开始时间。
+adjustableBlocksForGoal:
+SELECT b.*
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE p.goal_id = :goalId AND b.status = 'planned' AND b.locked = 0
+  AND b.start_at >= :now
+ORDER BY b.start_at;

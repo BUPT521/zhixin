@@ -21,6 +21,7 @@ part 'app_database.g.dart';
     'queries/tasks.drift',
     'queries/attempts.drift',
     'queries/materials.drift',
+    'queries/schedules.drift',
   },
   tables: [
     AppMeta,
