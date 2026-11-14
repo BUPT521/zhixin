@@ -6,6 +6,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/oapi-codegen/runtime v1.9.0
 	golang.org/x/crypto v0.59.0
+	golang.org/x/time v0.16.0
 )
 
 require (
