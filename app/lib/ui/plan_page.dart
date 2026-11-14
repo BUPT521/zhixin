@@ -1,9 +1,4 @@
-import 'package:calendar_view/calendar_view.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart'
-    as flutter_material
-    show Material, MaterialType;
-
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -13,6 +8,7 @@ import 'theme.dart';
 import '../app_scope.dart';
 import 'plan_dialogs.dart';
 import '../application/plan_service.dart';
+import '../application/plan_week_reader.dart';
 import '../data/repository/schedule_repository.dart';
 import '../data/revisions/revision_models.dart';
 import '../domain/models/study.dart';
@@ -21,6 +17,7 @@ import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_dialog.dart';
 import 'discussion_page.dart';
+import 'plan_week_view.dart';
 import 'study_entry.dart';
 import 'study_plan_page.dart';
 import 'workspace_widgets.dart';
@@ -42,6 +39,7 @@ class PlanPage extends StatefulWidget {
     this.request,
     this.initialItemId,
     this.onOpenMaterials,
+    this.reader,
   });
 
   final int? initialItemId;
@@ -54,13 +52,17 @@ class PlanPage extends StatefulWidget {
   final ValueListenable<int>? request;
   final VoidCallback? onOpenMaterials;
 
+  /// 换周读取的入口；为空时读取应用根里的安排服务。
+  ///
+  /// 测试传入可控的读取，用来让旧周的数据晚于新周返回。
+  final PlanWeekReader? reader;
+
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
 
 class _PlanPageState extends State<PlanPage> {
   PlanWeek? _week;
-  late DateTime _anchor;
   bool _loading = true;
   bool _started = false;
   bool _openedInitial = false;
@@ -68,8 +70,9 @@ class _PlanPageState extends State<PlanPage> {
   bool _showAllPlans = false;
 
   bool _showWeekGrid = false;
-  final _weekGridKey = GlobalKey<WeekViewState<Object>>();
-  int _weekRequest = 0;
+
+  /// 选周、刷新与过期结果的判定都走它；页面只按最新一次请求回填。
+  PlanWeekReader? _reader;
   String? _error;
 
   /// 进过的页签常驻：切回来不再重建，滚动位置一并保住。
@@ -125,13 +128,16 @@ class _PlanPageState extends State<PlanPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _watchDataVersion(AppScope.of(context).dataVersion);
+    final scope = AppScope.of(context);
+    _watchDataVersion(scope.dataVersion);
     if (_started) return;
     _started = true;
-    final policy = AppScope.of(context).timePolicy;
-    _anchor = policy.naturalWeekStart(policy.now);
-    // 未显示的页面不提前读取，也不在后台保留转圈；切到安排时再加载。
-    if (_active) _load();
+    final policy = scope.timePolicy;
+    _reader ??=
+        widget.reader ?? PlanWeekReader(read: scope.study.plan.loadWeek);
+    // 未显示的页面不提前读取，也不在后台保留转圈；先记下这一周，切到安排时再读。
+    final target = _reader!.select(policy.naturalWeekStart(policy.now));
+    if (target != null && _active) _load(target);
   }
 
   @override
@@ -182,31 +188,28 @@ class _PlanPageState extends State<PlanPage> {
     _load();
   }
 
-  Future<void> _load() async {
-    final scope = AppScope.of(context);
-    final anchor = _anchor;
-    final request = ++_weekRequest;
+  /// 读取一个目标周；只有最新一次请求的结果会写回界面。
+  ///
+  /// 结果回来之后先等切栏、返回或推入动画结束，再确认这次请求仍然有效：
+  /// 期间又选了别的周、又刷新过或页面已经卸载，旧结果、旧错误与旧分页
+  /// 都不再写回，标题、日历、预约与课表始终对应同一个目标周。
+  Future<void> _load([PlanWeekTarget? target]) async {
+    final reader = _reader;
+    if (reader == null) return;
+    final request = target ?? reader.refresh();
+    if (request == null) return;
     try {
-      final week = await scope.study.plan.loadWeek(anchor);
-      if (!mounted || request != _weekRequest) return;
+      final week = await reader.read(request.weekStart);
+      if (!mounted || !reader.isCurrent(request)) return;
       // 结果回来时若还在切栏或返回动画里，等动画走完再填。
       await context.afterTransition();
-      if (!mounted || request != _weekRequest) return;
+      if (!mounted || !reader.isCurrent(request)) return;
       setState(() {
         _week = week;
-        _shownAnchor = anchor;
+        _shownAnchor = request.weekStart;
         _loading = false;
         _error = null;
-        _doneItems = const [];
-        _doneLoaded = false;
-        _loadingDone = false;
-        _hasMoreDone = false;
-        _doneLoadFailed = false;
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || request != _weekRequest) return;
-        final grid = _weekGridKey.currentState;
-        if (grid != null && grid.currentDate != anchor) grid.jumpToWeek(anchor);
+        _resetDonePages();
       });
       if (!_openedInitial && widget.initialItemId != null) {
         final item =
@@ -214,16 +217,18 @@ class _PlanPageState extends State<PlanPage> {
                 .where((item) => item.id == widget.initialItemId)
                 .firstOrNull ??
             await _itemById(widget.initialItemId!);
-        if (mounted && request == _weekRequest && item != null) {
+        if (mounted && reader.isCurrent(request) && item != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || request != _weekRequest || _openedInitial) return;
+            if (!mounted || !reader.isCurrent(request) || _openedInitial) {
+              return;
+            }
             _openedInitial = true;
             _showItem(item);
           });
         }
       }
     } catch (error, stack) {
-      if (!mounted || request != _weekRequest) return;
+      if (!mounted || !reader.isCurrent(request)) return;
       final message = describeFailure(
         context,
         error,
@@ -233,6 +238,8 @@ class _PlanPageState extends State<PlanPage> {
         kept: '已经保存的安排没有改动',
         next: '可以点右上角刷新，或切换页面再回来',
       );
+      await context.afterTransition();
+      if (!mounted || !reader.isCurrent(request)) return;
       setState(() {
         _loading = false;
         _error = message;
@@ -241,11 +248,29 @@ class _PlanPageState extends State<PlanPage> {
     }
   }
 
+  /// 所有选周入口都走这里：上一周、下一周、横滑与回到本周。
   void _selectWeek(DateTime date) {
-    final anchor = AppScope.of(context).timePolicy.naturalWeekStart(date);
-    if (anchor == _anchor) return;
-    _anchor = anchor;
-    _load();
+    final reader = _reader;
+    if (reader == null) return;
+    final weekStart = AppScope.of(context).timePolicy.naturalWeekStart(date);
+    final target = reader.select(weekStart);
+    if (target == null) return;
+    _load(target);
+  }
+
+  /// 从当前目标周前后移动；连续点按时按目标周累加，不等上一次读回。
+  void _stepWeek(int weeks) {
+    final from = _reader?.weekStart ?? _shownAnchor;
+    if (from == null) return;
+    _selectWeek(DateTime(from.year, from.month, from.day + 7 * weeks));
+  }
+
+  void _resetDonePages() {
+    _doneItems = const [];
+    _doneLoaded = false;
+    _loadingDone = false;
+    _hasMoreDone = false;
+    _doneLoadFailed = false;
   }
 
   /// 已完成列表目前读回的事项；日程里点到的已完成事项可能还不在这一页里。
@@ -263,7 +288,7 @@ class _PlanPageState extends State<PlanPage> {
     final cached = _cachedItem(id);
     if (cached != null) return cached;
     try {
-      return await AppScope.of(context).tasks.byId(id);
+      return await AppScope.of(context).study.plan.itemById(id);
     } catch (_) {
       return null;
     }
@@ -1306,9 +1331,7 @@ class _PlanPageState extends State<PlanPage> {
             children: [
               ZhixinIconButton(
                 tooltip: '上一周',
-                onPressed: () => _selectWeek(
-                  DateTime(_anchor.year, _anchor.month, _anchor.day - 7),
-                ),
+                onPressed: () => _stepWeek(-1),
                 icon: FLucideIcons.chevronLeft,
               ),
               Expanded(
@@ -1335,9 +1358,7 @@ class _PlanPageState extends State<PlanPage> {
               ),
               ZhixinIconButton(
                 tooltip: '下一周',
-                onPressed: () => _selectWeek(
-                  DateTime(_anchor.year, _anchor.month, _anchor.day + 7),
-                ),
+                onPressed: () => _stepWeek(1),
                 icon: FLucideIcons.chevronRight,
               ),
             ],
@@ -1368,7 +1389,17 @@ class _PlanPageState extends State<PlanPage> {
           ),
         ),
       if (_showWeekGrid) ...[
-        (_) => _WeekGridKeepAlive(key: gridKey, child: _weekGrid(theme, week)),
+        (_) => _WeekGridKeepAlive(
+          key: gridKey,
+          child: PlanWeekView(
+            weekStart: _shownAnchor!,
+            blocks: week.blocks,
+            timetable: week.timetable,
+            onWeekSelected: _selectWeek,
+            onBlockTap: _openGridBlock,
+            onTimetableTap: _openGridTimetable,
+          ),
+        ),
         (_) => SizedBox(height: theme.space.md),
       ],
       if (week.blocks.isEmpty)
@@ -1461,102 +1492,21 @@ class _PlanPageState extends State<PlanPage> {
     );
   }
 
-  Widget _weekGrid(ZhixinTheme theme, PlanWeek week) {
-    final weekStart = _shownAnchor!;
-    final events = <CalendarEventData<Object>>[];
-    for (final entry in week.blocks) {
-      final start = entry.block.startAt;
-      final end = entry.block.endAt;
-      events.add(
-        CalendarEventData<Object>(
-          date: DateTime(start.year, start.month, start.day),
-          startTime: start,
-          endTime: end,
-          title: entry.itemTitle,
-          color: theme.colors.primary,
-          event: entry,
-        ),
-      );
-    }
-    for (final entry in week.timetable) {
-      for (var offset = 0; offset < 7; offset++) {
-        final day = DateTime(
-          weekStart.year,
-          weekStart.month,
-          weekStart.day + offset,
-        );
-        if (day.weekday != entry.weekday) continue;
-        final start = _atTime(day, entry.startTime);
-        final end = _atTime(day, entry.endTime);
-        if (start == null || end == null || !end.isAfter(start)) continue;
-        events.add(
-          CalendarEventData<Object>(
-            date: DateTime(day.year, day.month, day.day),
-            startTime: start,
-            endTime: end,
-            title: entry.title,
-            color: theme.colors.outlineVariant,
-            event: entry,
-          ),
-        );
-      }
-    }
-    final controller = EventController<Object>();
-    controller.addAll(events);
-    return Container(
-      height: 420,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius: theme.radius.card,
-        border: Border.all(color: theme.colors.outlineVariant),
-      ),
-      child: flutter_material.Material(
-        type: flutter_material.MaterialType.transparency,
-        child: WeekView<Object>(
-          key: _weekGridKey,
-          controller: controller,
-          initialDay: weekStart,
-          startHour: 6,
-          endHour: 24,
-          heightPerMinute: 0.55,
-          showVerticalLines: true,
-          weekPageHeaderBuilder: (start, end) => const SizedBox.shrink(),
-          weekDayStringBuilder: (index) {
-            const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-            return index >= 1 && index <= 7 ? labels[index - 1] : '';
-          },
-          timeLineStringBuilder: (date, {secondaryDate}) => '${date.hour}:00',
-          onPageChange: (date, _) => _selectWeek(date),
-          onEventTap: (events, date) =>
-              _openGridEvent(events.firstOrNull?.event),
-        ),
-      ),
-    );
-  }
-
-  DateTime? _atTime(DateTime day, String text) {
-    final parts = text.split(':');
-    if (parts.length < 2) return null;
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    if (hour == null || minute == null) return null;
-    return DateTime(day.year, day.month, day.day, hour, minute);
-  }
-
-  Future<void> _openGridEvent(Object? event) async {
-    if (event is ScheduledItem) {
-      final item = await _itemById(event.block.planItemId);
-      if (!mounted) return;
-      if (item != null) {
-        await _showItem(item);
-        return;
-      }
-      showToast(context, event.itemTitle);
+  /// 周视图里点到一段预约：按编号补读事项，再打开它的操作面板。
+  Future<void> _openGridBlock(ScheduledItem entry) async {
+    final item = await _itemById(entry.block.planItemId);
+    if (!mounted) return;
+    if (item != null) {
+      await _showItem(item);
       return;
     }
-    if (event is TimetableEntry && mounted) {
-      showToast(context, '${event.title} ${event.startTime}–${event.endTime}');
-    }
+    showToast(context, entry.itemTitle);
+  }
+
+  /// 周视图里点到一节课：只读出这一节的时间，不改数据。
+  void _openGridTimetable(TimetableEntry entry) {
+    if (!mounted) return;
+    showToast(context, '${entry.title} ${entry.startTime}–${entry.endTime}');
   }
 
   List<Widget> _itemsTab(ZhixinTheme theme, PlanWeek week) {

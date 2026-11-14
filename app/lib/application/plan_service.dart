@@ -157,6 +157,9 @@ class PlanService {
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) =>
       tasks.doneItems(limit: limit, offset: offset);
 
+  /// 按编号读一项事项；周视图点到的预约可能不在本页读回的事项里。
+  Future<PlanItem?> itemById(int id) => tasks.byId(id);
+
   /// 安排页只展示真正写入了记忆或学习事项的提交；只有卡片状态变化、没有
   /// 数据写入的提交不算改动。其他写入在数据版本页按完整历史查看。
   ///
