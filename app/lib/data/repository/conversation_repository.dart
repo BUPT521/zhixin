@@ -33,6 +33,36 @@ class ConversationRepository {
     throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
 
+  /// 消息整行转成与列同名的键值，交给既有的 [ChatMessage.fromRow]。
+  ///
+  /// 图片路径的解码在 fromRow 里已有一份，这里不重复实现。
+  static ChatMessage _messageOf(MessageRow row) => ChatMessage.fromRow({
+    'id': row.id,
+    'conversation_id': row.conversationId,
+    'role': row.role,
+    'content': row.content,
+    'image_paths_json': row.imagePathsJson,
+    'created_at': row.createdAt,
+    'structured_json': row.structuredJson,
+  });
+
+  /// 作答整行转成与列同名的键值，交给既有的 [Attempt.fromRow]。
+  static Attempt _attemptOf(AttemptRow row) => Attempt.fromRow({
+    'id': row.id,
+    'conversation_id': row.conversationId,
+    'session_id': row.sessionId,
+    'redo_of_attempt_id': row.redoOfAttemptId,
+    'user_answer': row.userAnswer,
+    'solution': row.solution,
+    'is_correct': row.isCorrect,
+    'independent': row.independent,
+    'help_json': row.helpJson,
+    'feedback': row.feedback,
+    'delayed': row.delayed,
+    'submitted_at': row.submittedAt,
+    'created_at': row.createdAt,
+  });
+
   AttemptWithQuestion _attemptWithQuestionOf(RecentSubmittedResult r) {
     final attempt = Attempt.fromRow({
       'id': r.attemptId,
@@ -398,14 +428,10 @@ class ConversationRepository {
   }
 
   Future<Attempt?> latestSubmitted(int conversationId) async {
-    final rows = await _db.query(
-      'attempt',
-      where: 'conversation_id = ? AND submitted_at IS NOT NULL',
-      whereArgs: [conversationId],
-      orderBy: 'submitted_at DESC, id DESC',
-      limit: 1,
-    );
-    return rows.isEmpty ? null : Attempt.fromRow(rows.first);
+    final row = await _connect()
+        .latestSubmittedOfConversation(conversationId)
+        .getSingleOrNull();
+    return row == null ? null : _attemptOf(row);
   }
 
   /// 最近的消息，按编号升序返回；[limit] 为空时返回全部。
@@ -417,15 +443,12 @@ class ConversationRepository {
     int? limit = 100,
     WriteTransaction? transaction,
   }) async {
-    final rows = await writeExecutor(transaction, _db).query(
-      'message',
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-      orderBy: 'id DESC',
-      limit: limit,
-    );
+    final executor = writeExecutor(transaction, _db);
+    final rows = await _connect(executor)
+        .recentMessages(conversationId, limit ?? (1 << 30))
+        .get();
     return rows
-        .map(ChatMessage.fromRow)
+        .map(_messageOf)
         .toList(growable: false)
         .reversed
         .toList(growable: false);
@@ -436,21 +459,11 @@ class ConversationRepository {
     int? beforeMessageId,
     int limit = 50,
   }) async {
-    final where = <String>['conversation_id = ?'];
-    final args = <Object?>[conversationId];
-    if (beforeMessageId != null) {
-      where.add('id < ?');
-      args.add(beforeMessageId);
-    }
-    final rows = await _db.query(
-      'message',
-      where: where.join(' AND '),
-      whereArgs: args,
-      orderBy: 'id DESC',
-      limit: limit + 1,
-    );
+    final rows = await _connect()
+        .messagesPage(conversationId, beforeMessageId ?? 0, limit + 1)
+        .get();
     final hasOlder = rows.length > limit;
-    final page = rows.take(limit).map(ChatMessage.fromRow).toList()
+    final page = rows.take(limit).map(_messageOf).toList()
       ..sort((a, b) => a.id.compareTo(b.id));
     return (messages: page, hasOlder: hasOlder);
   }
@@ -477,35 +490,24 @@ class ConversationRepository {
     required bool first,
     int? beforeMessageId,
   }) async {
-    final where = <String>[
-      'conversation_id = ?',
-      "role = 'user'",
-      "(TRIM(content) != '' OR image_paths_json IS NOT NULL)",
-    ];
-    final args = <Object?>[conversationId];
-    if (beforeMessageId != null) {
-      where.add('id < ?');
-      args.add(beforeMessageId);
-    }
-    final rows = await _db.query(
-      'message',
-      where: where.join(' AND '),
-      whereArgs: args,
-      orderBy: first ? 'id' : 'id DESC',
-      limit: 1,
-    );
-    return rows.isEmpty ? null : ChatMessage.fromRow(rows.first);
+    final db = _connect();
+    final row = first
+        ? await db
+              .firstUserMessage(conversationId, beforeMessageId ?? 0)
+              .getSingleOrNull()
+        : await db.lastUserMessage(conversationId).getSingleOrNull();
+    return row == null ? null : _messageOf(row);
   }
 
   Future<ChatMessage?> messageById(
     int messageId, {
     WriteTransaction? transaction,
   }) async {
-    final rows = await writeExecutor(
-      transaction,
-      _db,
-    ).query('message', where: 'id = ?', whereArgs: [messageId], limit: 1);
-    return rows.isEmpty ? null : ChatMessage.fromRow(rows.single);
+    final executor = writeExecutor(transaction, _db);
+    final row = await _connect(executor)
+        .messageById(messageId)
+        .getSingleOrNull();
+    return row == null ? null : _messageOf(row);
   }
 
   /// 追加一条消息；只有图片时 `content` 可以为空。
@@ -618,24 +620,17 @@ class ConversationRepository {
   /// 已经没有其他作答，就一起删掉，避免留下永远不结束的后台场次。
   Future<List<String>> clear(int conversationId) async {
     return _db.transaction((txn) async {
-      final sessionRows = await txn.query(
-        'attempt',
-        columns: ['session_id'],
-        where: 'conversation_id = ? AND session_id IS NOT NULL',
-        whereArgs: [conversationId],
-      );
+      final db = _connect(txn);
       final sessionIds = <int>{
-        for (final row in sessionRows) row['session_id']! as int,
+        for (final id
+            in await db.sessionIdsOfConversation(conversationId).get())
+          ?id,
       };
-      final rows = await txn.query(
-        'message',
-        columns: ['image_paths_json'],
-        where: 'conversation_id = ? AND image_paths_json IS NOT NULL',
-        whereArgs: [conversationId],
-      );
+      final encodedPaths = await db
+          .imagePathsOfConversation(conversationId)
+          .get();
       final imagePaths = <String>{};
-      for (final row in rows) {
-        final encoded = row['image_paths_json'] as String?;
+      for (final encoded in encodedPaths) {
         if (encoded == null || encoded.isEmpty) continue;
         try {
           final decoded = jsonDecode(encoded);
@@ -655,14 +650,10 @@ class ConversationRepository {
         whereArgs: [conversationId],
       );
       for (final sessionId in sessionIds) {
-        final remaining = await txn.query(
-          'attempt',
-          columns: ['id'],
-          where: 'session_id = ?',
-          whereArgs: [sessionId],
-          limit: 1,
-        );
-        if (remaining.isEmpty) {
+        final remainingId = await db
+            .attemptsInSession(sessionId)
+            .getSingleOrNull();
+        if (remainingId == null) {
           await txn.delete(
             'study_session',
             where: 'id = ?',
@@ -743,15 +734,13 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    final rows = await executor.query(
-      'message',
-      columns: ['structured_json'],
-      where: 'id = ?',
-      whereArgs: [messageId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return;
-    final structured = _decodeStructured(rows.single['structured_json']);
+    // 取整行而不是只取 structured_json：这一列本身可空，
+    // “没有这条消息”与“消息上没有结构化内容”要分开。
+    final message = await _connect(executor)
+        .messageById(messageId)
+        .getSingleOrNull();
+    if (message == null) return;
+    final structured = _decodeStructured(message.structuredJson);
     final raw = structured['memory_items'];
     if (raw is! List) return;
     final items = <Map<String, Object?>>[];
@@ -789,15 +778,11 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final database = writeExecutor(transaction, _db);
-    final rows = await database.query(
-      'message',
-      columns: ['structured_json'],
-      where: 'id = ?',
-      whereArgs: [messageId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return;
-    final structured = _decodeStructured(rows.single['structured_json']);
+    final message = await _connect(database)
+        .messageById(messageId)
+        .getSingleOrNull();
+    if (message == null) return;
+    final structured = _decodeStructured(message.structuredJson);
     final titles = _stringList(structured[state]);
     if (!titles.contains(title)) titles.add(title);
     structured[state] = titles;

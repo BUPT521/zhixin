@@ -33,6 +33,7 @@ part 'app_database.g.dart';
     'queries/study_plan_steps.drift',
     'queries/schedule_blocks.drift',
     'queries/material_pages.drift',
+    'queries/messages.drift',
   },
   tables: [
     AppMeta,

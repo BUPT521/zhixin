@@ -1,0 +1,67 @@
+-- 消息与作答的补充读查询（ADR-0011 第二批）。
+--
+-- 主查询在 conversations.drift 与 recent_attempts.drift；这里补上按条件筛选的几条。
+
+import '../tables.dart';
+
+-- 一条记录里最近一次已提交的作答。
+latestSubmittedOfConversation:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId AND submitted_at IS NOT NULL
+ORDER BY submitted_at DESC, id DESC
+LIMIT 1;
+
+-- 最近的若干条消息，按编号倒序；调用方再反转成升序。
+recentMessages:
+SELECT * FROM message
+WHERE conversation_id = :conversationId
+ORDER BY id DESC
+LIMIT :rowLimit;
+
+-- 讨论历史的一页：编号小于等于游标，按编号倒序多取一条判断是否还有更早的。
+messagesPage:
+SELECT * FROM message
+WHERE conversation_id = :conversationId
+  AND (:beforeId = 0 OR id < :beforeId)
+ORDER BY id DESC
+LIMIT :rowLimit;
+
+-- 第一条或最后一条用户消息（带正文或图片）；游标传 0 表示不限。
+firstUserMessage:
+SELECT * FROM message
+WHERE conversation_id = :conversationId
+  AND role = 'user'
+  AND (TRIM(content) <> '' OR image_paths_json IS NOT NULL)
+  AND (:beforeId = 0 OR id < :beforeId)
+ORDER BY id
+LIMIT 1;
+
+lastUserMessage:
+SELECT * FROM message
+WHERE conversation_id = :conversationId
+  AND role = 'user'
+  AND (TRIM(content) <> '' OR image_paths_json IS NOT NULL)
+ORDER BY id DESC
+LIMIT 1;
+
+-- 按编号取一条消息。
+messageById:
+SELECT * FROM message WHERE id = :id LIMIT 1;
+
+-- 这条记录里出现过的场次编号，清空记录时逐个核对是否还被别的记录引用。
+sessionIdsOfConversation:
+SELECT DISTINCT session_id FROM attempt
+WHERE conversation_id = :conversationId AND session_id IS NOT NULL;
+
+-- 这条记录的消息里带过的图片路径，清空记录时一并删除附件。
+imagePathsOfConversation:
+SELECT image_paths_json FROM message
+WHERE conversation_id = :conversationId AND image_paths_json IS NOT NULL;
+
+-- 这个场次里还剩下几条作答，清空记录时决定要不要一起删场次。
+attemptsInSession:
+SELECT id FROM attempt WHERE session_id = :sessionId LIMIT 1;
+
+-- 消息上的结构化内容，改记忆状态时读写这一列。
+messageStructuredJson:
+SELECT structured_json FROM message WHERE id = :messageId LIMIT 1;
