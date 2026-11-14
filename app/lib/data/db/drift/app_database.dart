@@ -15,7 +15,11 @@ part 'app_database.g.dart';
 /// 仓库层的查询写在 `queries/` 下的 `.drift` 文件里，由 [include] 挂进来：
 /// 表名、列名、参数与结果列的可空性在生成阶段检查（ADR-0011）。
 @DriftDatabase(
-  include: {'queries/schedule_conflicts.drift', 'queries/study_plans.drift'},
+  include: {
+    'queries/schedule_conflicts.drift',
+    'queries/study_plans.drift',
+    'queries/tasks.drift',
+  },
   tables: [
     AppMeta,
     Profiles,

@@ -1,0 +1,99 @@
+-- 目标与事项的读查询（ADR-0011 第一批）。
+--
+-- 语句原来拼在 task_repository.dart 里，`itemColumns` 与按调用点拼的 WHERE
+-- 一并合并进下面的静态语句：`openOnly`、`onlyActiveGoals`、`statusFirst` 这类
+-- 开关由参数关掉对应条件，可变个数的 IN 用 json_each 传 JSON 数组。
+
+import '../tables.dart';
+
+-- 全部目标，当前有效的排在最前，其余按新建时间倒序。
+goals:
+SELECT * FROM learning_goal
+ORDER BY CASE status WHEN :activeStatus THEN 0 WHEN :pausedStatus THEN 1
+  WHEN :doneStatus THEN 2 ELSE 3 END, id DESC;
+
+-- 事项列表：进行中的排在前面，再按截止时间排。
+--
+-- 不带材料来源文件名，是因为事项列表页不显示它；需要的地方用下面的
+-- 单条查询与批量查询。
+items:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+LEFT JOIN learning_goal g ON g.id = p.goal_id
+WHERE (:openOnly = 0 OR p.status IN (:todoStatus, :doingStatus))
+  AND (:onlyActiveGoals = 0 OR p.goal_id IS NULL OR g.status = :activeStatus)
+ORDER BY
+  CASE WHEN :statusFirst = 0 THEN 0
+    WHEN p.status = :doingStatus THEN 0
+    WHEN p.status = :todoStatus THEN 1
+    WHEN p.status = :deferredStatus THEN 2
+    WHEN p.status = :doneStatus THEN 3
+    ELSE 4 END,
+  p.due_at IS NULL, p.due_at, p.id DESC;
+
+-- 单条事项，带材料来源文件名。
+itemById:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.id = :id;
+
+-- 这条讨论绑定的事项；同一条讨论可能留下多条，取最新一条。
+itemByConversation:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.conversation_id = :conversationId
+ORDER BY p.id DESC
+LIMIT 1;
+
+-- 已完成事项，按最近完成时间从新到旧逐页读。
+doneItems:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.status = :doneStatus
+ORDER BY p.completed_at DESC, p.id DESC
+LIMIT :rowLimit OFFSET :rowOffset;
+
+-- 已完成事项总数。
+countDoneItems:
+SELECT COUNT(*) AS n FROM plan_item WHERE status = :doneStatus;
+
+-- 按编号批量取事项。
+itemsByIds:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.id IN (SELECT value FROM json_each(:itemIds));
+
+-- 这条事项是否已经排过时间或学过。
+itemHasScheduleOrSession:
+SELECT 1 FROM schedule_block WHERE plan_item_id = :itemId
+UNION ALL
+SELECT 1 FROM study_session WHERE plan_item_id = :itemId
+LIMIT 1;
+
+-- 待办里截止最近的一条；所属目标已暂停的事项不参与推荐。
+nextDueItem:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+LEFT JOIN learning_goal g ON g.id = p.goal_id
+WHERE p.status IN (:todoStatus, :doingStatus)
+  AND (p.goal_id IS NULL OR g.status = :activeStatus)
+ORDER BY p.due_at IS NULL, p.due_at, p.id
+LIMIT 1;

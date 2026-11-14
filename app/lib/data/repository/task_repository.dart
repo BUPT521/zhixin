@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../../domain/models/material.dart';
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
@@ -35,18 +37,201 @@ class TaskRepository {
 
   /// 全部目标，当前有效的排在最前，其余按新建时间倒序。
   Future<List<LearningGoal>> goals() async {
-    final rows = await _db.rawQuery(
-      'SELECT * FROM learning_goal '
-      'ORDER BY CASE status WHEN ? THEN 0 WHEN ? THEN 1 '
-      'WHEN ? THEN 2 ELSE 3 END, id DESC',
-      [
-        LearningGoalStatus.active.code,
-        LearningGoalStatus.paused.code,
-        LearningGoalStatus.done.code,
-      ],
-    );
-    return rows.map(LearningGoal.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .goals(
+          LearningGoalStatus.active.code,
+          LearningGoalStatus.paused.code,
+          LearningGoalStatus.done.code,
+        )
+        .get();
+    return rows
+        .map(
+          (row) => LearningGoal(
+            id: row.id,
+            title: row.title,
+            scopeText: row.scopeText,
+            dueDate: row.dueDate,
+            status: LearningGoalStatus.fromCode(row.status),
+            createdAt: DateTime.tryParse(row.createdAt),
+            updatedAt: DateTime.tryParse(row.updatedAt),
+          ),
+        )
+        .toList(growable: false);
   }
+
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect([RawExecutor? executor]) {
+    final connection = (executor ?? _db).driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  /// 六条查询挑的列相同，结果行按同一组字段还原成领域模型。
+  static PlanItem _item(
+    int id,
+    int? goalId,
+    int? conversationId,
+    int? studyPlanId,
+    int? seq,
+    String title,
+    String? note,
+    int? pageFrom,
+    int? pageTo,
+    String? dueAt,
+    int? estMinutes,
+    int priority,
+    String status,
+    String source,
+    String? completedAt,
+    String createdAt,
+    String updatedAt,
+    String? sourceFileName,
+  ) => PlanItem(
+    id: id,
+    goalId: goalId,
+    conversationId: conversationId,
+    studyPlanId: studyPlanId,
+    seq: seq,
+    title: title,
+    note: note,
+    pageFrom: pageFrom,
+    pageTo: pageTo,
+    materialIsDocx: isDocxFile(sourceFileName),
+    dueAt: DateTime.tryParse(dueAt ?? ''),
+    estMinutes: estMinutes,
+    priority: priority,
+    status: PlanItemStatus.fromCode(status),
+    source: source,
+    completedAt: DateTime.tryParse(completedAt ?? ''),
+    createdAt: DateTime.tryParse(createdAt),
+    updatedAt: DateTime.tryParse(updatedAt),
+  );
+
+  static PlanItem _itemOfItems(ItemsResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
+  static PlanItem _itemOfById(ItemByIdResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
+  static PlanItem _itemOfConversation(ItemByConversationResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
+  static PlanItem _itemOfDone(DoneItemsResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
+  static PlanItem _itemOfByIds(ItemsByIdsResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
+  static PlanItem _itemOfNextDue(NextDueItemResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
 
   Future<LearningGoal?> goalById(
     int id, {
@@ -106,37 +291,25 @@ class TaskRepository {
     bool openOnly = false,
     bool onlyActiveGoals = false,
   }) async {
-    final where = <String>[];
-    if (openOnly) where.add('p.status IN (?, ?)');
-    if (onlyActiveGoals) where.add('(p.goal_id IS NULL OR g.status = ?)');
-    final rows = await _db.rawQuery(
-      '''
-      SELECT $itemColumns FROM plan_item p
-      LEFT JOIN learning_goal g ON g.id = p.goal_id
-      ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
-      ORDER BY
-        CASE p.status WHEN ? THEN 0 WHEN ? THEN 1
-          WHEN ? THEN 2 WHEN ? THEN 3 ELSE 4 END,
-        p.due_at IS NULL, p.due_at, p.id DESC
-      ''',
-      [
-        if (openOnly) ...[PlanItemStatus.todo.code, PlanItemStatus.doing.code],
-        if (onlyActiveGoals) LearningGoalStatus.active.code,
-        PlanItemStatus.doing.code,
-        PlanItemStatus.todo.code,
-        PlanItemStatus.deferred.code,
-        PlanItemStatus.done.code,
-      ],
-    );
-    return rows.map(PlanItem.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .items(
+          openOnly ? 1 : 0,
+          PlanItemStatus.todo.code,
+          PlanItemStatus.doing.code,
+          onlyActiveGoals ? 1 : 0,
+          LearningGoalStatus.active.code,
+          1,
+          PlanItemStatus.deferred.code,
+          PlanItemStatus.done.code,
+        )
+        .get();
+    return rows.map(_itemOfItems).toList(growable: false);
   }
 
   Future<PlanItem?> byId(int id, {WriteTransaction? transaction}) async {
-    final rows = await writeExecutor(
-      transaction,
-      _db,
-    ).rawQuery('SELECT $itemColumns FROM plan_item p WHERE p.id = ?', [id]);
-    return rows.isEmpty ? null : PlanItem.fromRow(rows.first);
+    final executor = writeExecutor(transaction, _db);
+    final rows = await _connect(executor).itemById(id).get();
+    return rows.isEmpty ? null : _itemOfById(rows.first);
   }
 
   /// 把从这一步带入的讨论记回事项；已有讨论时不覆盖，避免把继续位置改乱。
@@ -158,14 +331,8 @@ class TaskRepository {
 
   /// 这条讨论绑定的学习步骤；普通入口从讨论开始作答时用它补上场次的事项。
   Future<PlanItem?> byConversation(int conversationId) async {
-    final rows = await _db.query(
-      'plan_item',
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-      orderBy: 'id DESC',
-      limit: 1,
-    );
-    return rows.isEmpty ? null : PlanItem.fromRow(rows.first);
+    final rows = await _connect().itemByConversation(conversationId).get();
+    return rows.isEmpty ? null : _itemOfConversation(rows.first);
   }
 
   /// 同一条讨论里同一个建议编号对应的事项；重复请求据此返回原结果。
@@ -197,27 +364,20 @@ class TaskRepository {
     return rows.isEmpty ? null : PlanItem.fromRow(rows.first);
   }
 
-  /// 已完成事项按页读取，给安排页的“已完成”列表用。
-  ///
-  /// 已完成事项只增不减地积累，安排页默认不读；用户展开时按最近完成时间
-  /// 从新到旧逐页读取，读取量只跟这一页有关。
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) async {
     if (limit <= 0) return const [];
-    final rows = await _db.rawQuery(
-      'SELECT $itemColumns FROM plan_item p WHERE p.status = ? '
-      'ORDER BY p.completed_at DESC, p.id DESC LIMIT ? OFFSET ?',
-      [PlanItemStatus.done.code, limit, offset],
-    );
-    return rows.map(PlanItem.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .doneItems(PlanItemStatus.done.code, limit, offset)
+        .get();
+    return rows.map(_itemOfDone).toList(growable: false);
   }
 
   /// 已完成事项总数，用于“显示已完成（N）”与是否还有下一页。
   Future<int> countDone() async {
-    final rows = await _db.rawQuery(
-      'SELECT COUNT(*) AS n FROM plan_item WHERE status = ?',
-      [PlanItemStatus.done.code],
-    );
-    return (rows.first['n'] as int?) ?? 0;
+    final rows = await _connect()
+        .countDoneItems(PlanItemStatus.done.code)
+        .get();
+    return rows.isEmpty ? 0 : rows.first;
   }
 
   /// 按编号批量读取事项，按编号索引返回。
@@ -227,48 +387,33 @@ class TaskRepository {
   Future<Map<int, PlanItem>> byIds(Iterable<int> ids) async {
     final keys = {...ids};
     if (keys.isEmpty) return const {};
-    final placeholders = List.filled(keys.length, '?').join(', ');
-    final rows = await _db.rawQuery(
-      'SELECT $itemColumns FROM plan_item p WHERE p.id IN ($placeholders)',
-      keys.toList(growable: false),
-    );
-    return {for (final row in rows) row['id']! as int: PlanItem.fromRow(row)};
+    final rows = await _connect()
+        .itemsByIds(jsonEncode(keys.toList(growable: false)))
+        .get();
+    return {for (final row in rows) row.id: _itemOfByIds(row)};
   }
 
   Future<bool> hasScheduleOrSession(
     int itemId, {
     required WriteTransaction transaction,
   }) async {
-    final rows = await writeExecutor(transaction, _db).rawQuery(
-      '''
-      SELECT 1 FROM schedule_block WHERE plan_item_id = ?
-      UNION ALL
-      SELECT 1 FROM study_session WHERE plan_item_id = ?
-      LIMIT 1
-      ''',
-      [itemId, itemId],
-    );
+    final executor = writeExecutor(transaction, _db);
+    final rows = await _connect(executor)
+        .itemHasScheduleOrSession(itemId)
+        .get();
     return rows.isNotEmpty;
   }
 
   /// 待办里截止最近的一条；所属目标已暂停的事项不参与“现在”页推荐。
   Future<PlanItem?> nextDue() async {
-    final rows = await _db.rawQuery(
-      '''
-      SELECT p.* FROM plan_item p
-      LEFT JOIN learning_goal g ON g.id = p.goal_id
-      WHERE p.status IN (?, ?)
-        AND (p.goal_id IS NULL OR g.status = ?)
-      ORDER BY p.due_at IS NULL, p.due_at, p.id
-      LIMIT 1
-      ''',
-      [
-        PlanItemStatus.todo.code,
-        PlanItemStatus.doing.code,
-        LearningGoalStatus.active.code,
-      ],
-    );
-    return rows.isEmpty ? null : PlanItem.fromRow(rows.first);
+    final rows = await _connect()
+        .nextDueItem(
+          PlanItemStatus.todo.code,
+          PlanItemStatus.doing.code,
+          LearningGoalStatus.active.code,
+        )
+        .get();
+    return rows.isEmpty ? null : _itemOfNextDue(rows.first);
   }
 
   /// 新建事项只保留一段说明。
