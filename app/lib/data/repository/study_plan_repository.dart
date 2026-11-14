@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import '../../domain/models/material.dart';
+import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
@@ -5,7 +9,6 @@ import '../../domain/models/study_plan.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/write_transactions.dart';
-import 'task_repository.dart';
 
 /// 系统学习计划与它的步骤（01 `study_plan` / `plan_item`）。
 ///
@@ -17,25 +20,6 @@ class StudyPlanRepository {
 
   final RawDatabase _db;
   final Clock _clock;
-
-  /// 计划里下一个要做的一步：进行中的优先，其次按步骤顺序取第一个待学。
-  static const String _nextStepTitle =
-      "(SELECT pi.title FROM plan_item pi WHERE pi.study_plan_id = sp.id "
-      "AND pi.status IN ('doing', 'todo') "
-      "ORDER BY CASE pi.status WHEN 'doing' THEN 0 ELSE 1 END, pi.seq, pi.id "
-      'LIMIT 1) AS next_step_title';
-
-  /// 计划列表共用的列：进度、材料标题与下一步都从这里带出。
-  static const String _planColumns = '''
-      SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id)
-        AS material_title,
-        (SELECT source_file_name FROM material WHERE id = sp.material_id)
-          AS source_file_name,
-        (SELECT COUNT(*) FROM plan_item pi
-          WHERE pi.study_plan_id = sp.id AND pi.status = ?) AS steps_done,
-        (SELECT COUNT(*) FROM plan_item pi WHERE pi.study_plan_id = sp.id)
-          AS steps_total,
-        $_nextStepTitle''';
 
   Future<int> create({
     required String title,
@@ -149,38 +133,122 @@ class StudyPlanRepository {
     });
   }
 
+  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
+  AppDatabase _connect() {
+    final connection = _db.driftConnection;
+    if (connection is AppDatabase) return connection;
+    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
+  }
+
+  static StudyPlan _planOf(PlanRowsResult row) => StudyPlan(
+    id: row.id,
+    title: row.title,
+    materialId: row.materialId,
+    goalId: row.goalId,
+    conversationId: row.conversationId,
+    pageFrom: row.pageFrom,
+    pageTo: row.pageTo,
+    currentPage: row.currentPage,
+    status: StudyPlanStatus.fromCode(row.status),
+    materialTitle: row.materialTitle,
+    materialIsDocx: isDocxFile(row.sourceFileName),
+    stepsDone: row.stepsDone,
+    stepsTotal: row.stepsTotal,
+    nextStepTitle: row.nextStepTitle,
+    createdAt: DateTime.tryParse(row.createdAt),
+    updatedAt: DateTime.tryParse(row.updatedAt),
+  );
+
+  static PlanItem _stepOf(PlanStepsResult row) => _stepItem(
+    id: row.id,
+    goalId: row.goalId,
+    conversationId: row.conversationId,
+    studyPlanId: row.studyPlanId,
+    seq: row.seq,
+    title: row.title,
+    note: row.note,
+    pageFrom: row.pageFrom,
+    pageTo: row.pageTo,
+    sourceFileName: row.sourceFileName,
+    dueAt: row.dueAt,
+    estMinutes: row.estMinutes,
+    priority: row.priority,
+    status: row.status,
+    source: row.source,
+    completedAt: row.completedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  );
+
+  static PlanItem _stepOfForPlans(PlanStepsForPlansResult row) => _stepItem(
+    id: row.id,
+    goalId: row.goalId,
+    conversationId: row.conversationId,
+    studyPlanId: row.studyPlanId,
+    seq: row.seq,
+    title: row.title,
+    note: row.note,
+    pageFrom: row.pageFrom,
+    pageTo: row.pageTo,
+    sourceFileName: row.sourceFileName,
+    dueAt: row.dueAt,
+    estMinutes: row.estMinutes,
+    priority: row.priority,
+    status: row.status,
+    source: row.source,
+    completedAt: row.completedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  );
+
+  static PlanItem _stepItem({
+    required int id,
+    required int? goalId,
+    required int? conversationId,
+    required int? studyPlanId,
+    required int? seq,
+    required String title,
+    required String? note,
+    required int? pageFrom,
+    required int? pageTo,
+    required String? sourceFileName,
+    required String? dueAt,
+    required int? estMinutes,
+    required int priority,
+    required String status,
+    required String source,
+    required String? completedAt,
+    required String createdAt,
+    required String updatedAt,
+  }) => PlanItem(
+    id: id,
+    goalId: goalId,
+    conversationId: conversationId,
+    studyPlanId: studyPlanId,
+    seq: seq,
+    title: title,
+    note: note,
+    pageFrom: pageFrom,
+    pageTo: pageTo,
+    materialIsDocx: isDocxFile(sourceFileName),
+    dueAt: DateTime.tryParse(dueAt ?? ''),
+    estMinutes: estMinutes,
+    priority: priority,
+    status: PlanItemStatus.fromCode(status),
+    source: source,
+    completedAt: DateTime.tryParse(completedAt ?? ''),
+    createdAt: DateTime.tryParse(createdAt),
+    updatedAt: DateTime.tryParse(updatedAt),
+  );
+
   Future<StudyPlan?> byId(int id) async {
-    final rows = await _db.rawQuery(
-      '''
-      $_planColumns
-      FROM study_plan sp WHERE sp.id = ?
-      ''',
-      [PlanItemStatus.done.code, id],
-    );
-    return rows.isEmpty ? null : StudyPlan.fromRow(rows.first);
+    final rows = await _planRows(id: id, rowLimit: 1);
+    return rows.isEmpty ? null : rows.first;
   }
 
   /// 计划列表：进行中的排在前面，再按更新时间倒序。
   Future<List<StudyPlan>> list({bool openOnly = false}) async {
-    final rows = await _db.rawQuery(
-      '''
-      $_planColumns
-      FROM study_plan sp
-      ${openOnly ? 'WHERE sp.status IN (?, ?)' : ''}
-      ORDER BY CASE sp.status WHEN ? THEN 0 WHEN ? THEN 1
-        ELSE 2 END, sp.updated_at DESC, sp.id DESC
-      ''',
-      [
-        PlanItemStatus.done.code,
-        if (openOnly) ...[
-          StudyPlanStatus.active.code,
-          StudyPlanStatus.paused.code,
-        ],
-        StudyPlanStatus.active.code,
-        StudyPlanStatus.paused.code,
-      ],
-    );
-    return rows.map(StudyPlan.fromRow).toList(growable: false);
+    return _planRows(openOnly: openOnly);
   }
 
   /// 最近推进过的进行中计划，只按更新时间倒序，取前 [limit] 份。
@@ -190,40 +258,46 @@ class StudyPlanRepository {
   /// 真正最近的几条。暂停的计划不进入首页，因此这里直接不读，不占名额。
   Future<List<StudyPlan>> listRecentlyAdvanced({int limit = 4}) async {
     if (limit <= 0) return const [];
-    final rows = await _db.rawQuery(
-      '''
-      $_planColumns
-      FROM study_plan sp
-      WHERE sp.status = ?
-      ORDER BY sp.updated_at DESC, sp.id DESC
-      LIMIT ?
-      ''',
-      [PlanItemStatus.done.code, StudyPlanStatus.active.code, limit],
-    );
-    return rows.map(StudyPlan.fromRow).toList(growable: false);
+    return _planRows(activeOnly: true, statusFirst: false, rowLimit: limit);
+  }
+
+  /// 一条语句覆盖按标识取、按状态筛与按时间排：不生效的条件由参数关掉。
+  Future<List<StudyPlan>> _planRows({
+    int? id,
+    bool openOnly = false,
+    bool activeOnly = false,
+    bool statusFirst = true,
+    int rowLimit = 1 << 30,
+  }) async {
+    final rows = await _connect()
+        .planRows(
+          PlanItemStatus.done.code,
+          id ?? 0,
+          openOnly ? 1 : 0,
+          StudyPlanStatus.active.code,
+          StudyPlanStatus.paused.code,
+          activeOnly ? 1 : 0,
+          statusFirst ? 1 : 0,
+          rowLimit,
+        )
+        .get();
+    return rows.map(_planOf).toList(growable: false);
   }
 
   /// 计划里的步骤，按顺序返回；每一步都是 `plan_item`。
   Future<List<PlanItem>> steps(int planId) async {
-    final rows = await _db.rawQuery(
-      'SELECT ${TaskRepository.itemColumns} FROM plan_item p '
-      'WHERE p.study_plan_id = ? ORDER BY p.seq, p.id',
-      [planId],
-    );
-    return rows.map(PlanItem.fromRow).toList(growable: false);
+    final rows = await _connect().planSteps(planId).get();
+    return rows.map(_stepOf).toList(growable: false);
   }
 
   /// 多份计划的全部步骤，按计划与顺序返回；安排页的下一步与进度都从这里算。
   Future<List<PlanItem>> stepsForPlans(Iterable<int> planIds) async {
     final ids = {...planIds};
     if (ids.isEmpty) return const [];
-    final placeholders = List.filled(ids.length, '?').join(', ');
-    final rows = await _db.rawQuery(
-      'SELECT ${TaskRepository.itemColumns} FROM plan_item p '
-      'WHERE p.study_plan_id IN ($placeholders) ORDER BY p.study_plan_id, p.seq, p.id',
-      ids.toList(growable: false),
-    );
-    return rows.map(PlanItem.fromRow).toList(growable: false);
+    final rows = await _connect()
+        .planStepsForPlans(jsonEncode(ids.toList(growable: false)))
+        .get();
+    return rows.map(_stepOfForPlans).toList(growable: false);
   }
 
   Future<void> bindDiscussionToStep({
