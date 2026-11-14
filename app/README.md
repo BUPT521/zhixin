@@ -43,7 +43,8 @@ lib/
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
 ├── application/                            ← 用例：对话、学习、计划、记忆、设置
 ├── data/
-│   ├── db/                                 ← drift 表结构（docs/01）、开库、访问协调
+│   ├── db/                                 ← drift 表结构（docs/01）、开库、访问协调、关键词索引
+│   │   └── drift/queries/                  ← 各仓库的查询（.drift），由 build_runner 生成类型化方法
 │   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
 │   ├── backup/                             ← zip 导出、旧数据版本与分阶段恢复
 │   ├── diagnostics/                        ← 本机崩溃记录与自建 Sentry 上报
