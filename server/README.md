@@ -26,8 +26,8 @@ server/
 ├── cmd/zhixin-api/             ← 入口：读配置、选存储、启动与优雅退出
 ├── internal/
 │   ├── config/                 ← ZHIXIN_* 环境变量
-│   ├── httpx/                  ← problem+json、JSON 解码与大小上限、请求编号、访问日志、异常恢复
-│   ├── auth/                   ← 账号、argon2id 密码与不透明令牌
+│   ├── httpx/                  ← problem+json、JSON 解码与大小上限、请求编号、访问日志、异常恢复、请求体落盘校验
+│   ├── auth/                   ← 账号、argon2id 密码与不透明令牌、鉴权中间件
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
 │   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
@@ -35,17 +35,20 @@ server/
 │   ├── objectstore/            ← 字节存储：S3 兼容、本地目录与内存三种实现
 │   ├── api/                    ← 生成的路由与类型（来自 api/openapi.yaml）
 │   ├── server/                 ← 装配路由与中间件，端到端测试
+│   ├── testutil/               ← 各包处理器测试共用的进程内客户端与 problem 解码
 │   ├── store/                  ← 表结构（schema.sql，唯一真相）与 sqlc 查询
 │   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、用量
 └── Dockerfile
 ```
 
-每个业务包自己定义存储接口并带一份内存实现，`server.Stores` 把它们收在一起，`main` 只在一处决定用内存还是 PostgreSQL、对象存储还是本地目录。业务包之间只通过 `auth.PrincipalFrom` 取得当前账号，不互相引用存储；删除账号时，各业务包通过 `auth.Service.OnAccountDelete` 登记的清理函数先删自己的数据，任何一步失败都保留账号，以便重试。
+每个业务包自己定义存储接口并带一份内存实现，`server.Stores` 把它们收在一起，`main` 只在一处决定用内存还是 PostgreSQL、对象存储还是本地目录。业务包之间只通过 `auth.MustPrincipal` 取得当前账号，不互相引用存储；鉴权由 `auth.Middleware` 在路由层统一安装，令牌无效返回 401，读取令牌时存储故障走统一的 500 problem，两者都带 `request_id`。删除账号时 `server.DeleteAccountData` 把各存储的清理合成一次操作，任何一步失败都保留账号，以便重试。四个业务包各自带处理器测试，共用 `internal/testutil` 的进程内客户端；`server_test.go` 只留装配、中间件顺序、鉴权、限流与 404 这类横切用例。
 
 ## 约定
 
 - 路径带 `/v1` 前缀，请求与响应用 JSON。错误一律是 `application/problem+json`，`code` 取 [契约](api/openapi.yaml) 里的 `ProblemCode` 枚举，客户端按 `code` 分支，`detail` 只给开发者看，不能写入学习内容、SQL、令牌或路径。
 - JSON 请求体拒绝未知字段与多余内容，超过上限返回 413。
+- 中间件顺序固定为 request_id、访问日志、异常恢复、鉴权、上传限流、业务；401 与 429 都带 `request_id` 并进访问日志。
+- 契约绑定的参数由生成的路由解析后传入处理器，缺 header 或参数不是整数由统一的错误处理函数返回 problem+json，处理器不再自己解析一遍；存储查询的参数统一用 `sqlc.arg`，日期与时间解析失败直接报错。
 - 访问日志只记录路由模式、状态码、字节数与耗时，不记录请求体、查询串与请求头；模型代理不保存请求与回答正文，只记 token 数。
 - 服务端接受的客户端数据版本是 `server.ClientSchemaVersion`，必须与 [01](../docs/01-ER数据模型.md) 开头的 schema 编号一致。客户端升 schema 时同一个 push 里改这个常量；其他版本的提交与备份一律拒绝，与 [ADR-0002](../docs/adr/0002-本地数据不做迁移.md) 相同。
 - 1.0.0 之前接口与表结构都可以直接改，不写迁移，客户端与服务端一起升级（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)）。
