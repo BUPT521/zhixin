@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/request_gate.dart';
 import '../application/search_service.dart';
 import '../application/semantic_index_service.dart';
 import '../domain/models/evidence.dart';
@@ -53,7 +54,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   bool _scopeMenuOpen = false;
 
   /// 每次查询或筛选变化都换一个编号，晚到的旧结果直接丢弃。
-  final SearchRequestGate _requests = SearchRequestGate();
+  final RequestGate _requests = RequestGate();
   String _appliedQuery = '';
 
   /// 本次融合使用的语义命中；查询或范围变化时清空，需要重新按。

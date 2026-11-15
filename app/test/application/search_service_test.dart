@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
+import 'package:zhixin/application/request_gate.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
@@ -460,7 +461,7 @@ void main() {
   });
 
   test('快速切换查询或筛选时只有最后一次请求生效', () {
-    final gate = SearchRequestGate();
+    final gate = RequestGate();
     final first = gate.start();
     final second = gate.start();
     expect(gate.isCurrent(first), isFalse);

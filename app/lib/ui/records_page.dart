@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/request_gate.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/question.dart';
@@ -85,7 +86,7 @@ class _RecordsPageState extends State<RecordsPage> {
   Map<int, QuestionRow> _questions = const {};
   Map<int, List<Assessment>> _assessments = const {};
   String? _answerFilter;
-  int _loadRequest = 0;
+  final RequestGate _gate = RequestGate();
 
   List<ConversationRecord> _records = const [];
   List<LearningGoal> _goals = const [];
@@ -241,7 +242,7 @@ class _RecordsPageState extends State<RecordsPage> {
     if (!mounted) return;
     _started = true;
     final scope = AppScope.of(context);
-    final request = ++_loadRequest;
+    final request = _gate.start();
     final filter = (_goalFilter, _unassignedOnly, _answerFilter);
     if (append) setState(() => _loadingMore = true);
     try {
@@ -270,10 +271,10 @@ class _RecordsPageState extends State<RecordsPage> {
       final assessments = lastAttempts.isEmpty
           ? const <int, List<Assessment>>{}
           : await scope.chat.learning.assessmentsFor(lastAttempts);
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       // 结果回来时若还在切栏或返回动画里，等动画走完再填，回填不打断动画。
       await context.afterTransition();
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       final loaded = <int, QuestionRow>{if (append) ..._questions};
       for (final row in questions) {
         loaded[row.question.id] = row;
@@ -293,7 +294,7 @@ class _RecordsPageState extends State<RecordsPage> {
         if (!append) _shownFilter = filter;
       });
     } catch (error, stack) {
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       setState(() {
         _loading = false;
         _loadingMore = false;

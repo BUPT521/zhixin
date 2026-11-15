@@ -3,15 +3,6 @@ import '../domain/models/evidence.dart';
 import '../domain/models/search.dart';
 import '../domain/rules/search_fusion.dart';
 
-/// 查找请求的先后编号：快速切换查询或筛选时，只让最后一次请求写入页面。
-class SearchRequestGate {
-  int _current = 0;
-
-  int start() => ++_current;
-
-  bool isCurrent(int request) => request == _current;
-}
-
 /// 用户主动检索的结果；一条学习记录占一个 [SearchEntry]，材料页按页各占一个。
 ///
 /// 查找范围单独记录：用户可以在全部记录、一个目标或一份材料里查找，这个

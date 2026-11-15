@@ -1,4 +1,5 @@
 import 'plan_service.dart';
+import 'request_gate.dart';
 
 /// 安排页的一次换周读取：编号辨认结果是否仍然有效，周一是这次要读的目标周。
 class PlanWeekTarget {
@@ -22,7 +23,7 @@ class PlanWeekReader {
   /// 读取一个自然周的数据；换周与刷新都走这里。
   final Future<PlanWeek> Function(DateTime weekStart) read;
 
-  int _request = 0;
+  final RequestGate _requests = RequestGate();
   DateTime? _weekStart;
 
   /// 当前目标周的周一；还没有选过周时为空。
@@ -32,7 +33,7 @@ class PlanWeekReader {
   PlanWeekTarget? select(DateTime weekStart) {
     if (weekStart == _weekStart) return null;
     _weekStart = weekStart;
-    return PlanWeekTarget(request: ++_request, weekStart: weekStart);
+    return PlanWeekTarget(request: _requests.start(), weekStart: weekStart);
   }
 
   /// 重新读取当前目标周；写入之后与下拉刷新都用它。
@@ -41,9 +42,9 @@ class PlanWeekReader {
   PlanWeekTarget? refresh() {
     final weekStart = _weekStart;
     if (weekStart == null) return null;
-    return PlanWeekTarget(request: ++_request, weekStart: weekStart);
+    return PlanWeekTarget(request: _requests.start(), weekStart: weekStart);
   }
 
   /// 这次请求的结果是否仍然要写回界面。
-  bool isCurrent(PlanWeekTarget target) => target.request == _request;
+  bool isCurrent(PlanWeekTarget target) => _requests.isCurrent(target.request);
 }

@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/request_gate.dart';
 import '../application/docx_import.dart';
 import '../domain/models/material.dart';
 import 'discussion_page.dart';
@@ -39,7 +40,7 @@ class MaterialListState extends State<MaterialList> {
   bool _loading = true;
   bool _started = false;
   bool _importingWord = false;
-  int _loadRequest = 0;
+  final RequestGate _gate = RequestGate();
 
   @override
   void didChangeDependencies() {
@@ -52,15 +53,15 @@ class MaterialListState extends State<MaterialList> {
   Future<void> reload() async {
     if (!mounted) return;
     final scope = AppScope.of(context);
-    final request = ++_loadRequest;
+    final request = _gate.start();
     try {
       final (materials, goals) = await (
         scope.library.material.list(),
         scope.tasks.goals(),
       ).wait;
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       await context.afterTransition(contentTransition: widget.tabTransition);
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       setState(() {
         _materials = materials;
         _goals = [
@@ -70,9 +71,9 @@ class MaterialListState extends State<MaterialList> {
         _loading = false;
       });
     } catch (error, stack) {
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       await context.afterTransition(contentTransition: widget.tabTransition);
-      if (!mounted || request != _loadRequest) return;
+      if (!mounted || !_gate.isCurrent(request)) return;
       setState(() => _loading = false);
       final message = describeFailure(
         context,
