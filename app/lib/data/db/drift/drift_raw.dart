@@ -1,6 +1,5 @@
 import 'package:drift/drift.dart';
 
-import '../guarded_database.dart';
 import '../raw_executor.dart';
 import 'app_database.dart';
 
@@ -30,14 +29,18 @@ class DriftRawDatabase implements RawDatabase {
       _executor.execute(sql, arguments);
 
   @override
-  Future<int> rawInsert(String sql, [List<Object?>? arguments]) =>
-      _executor.rawInsert(sql, arguments);
-
-  @override
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
     List<Object?>? arguments,
   ]) => _executor.rawQuery(sql, arguments);
+
+  @override
+  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      query(database);
+
+  @override
+  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      database.transaction(() => query(database));
 }
 
 /// 单条语句与事务共用的执行器；事务内的对象由 drift 的 Transaction 提供。
@@ -54,10 +57,6 @@ class DriftRawExecutor implements RawExecutor {
       _db.customStatement(sql, arguments);
 
   @override
-  Future<int> rawInsert(String sql, [List<Object?>? arguments]) =>
-      _db.customInsert(sql, variables: _variables(arguments));
-
-  @override
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
     List<Object?>? arguments,
@@ -65,33 +64,17 @@ class DriftRawExecutor implements RawExecutor {
       .customSelect(sql, variables: _variables(arguments))
       .get()
       .then((rows) => [for (final row in rows) row.data]);
+
+  @override
+  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      query(requireAppDatabase(this));
+
+  @override
+  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      query(requireAppDatabase(this));
 }
 
 List<Variable> _variables(List<Object?>? values) => [
   for (final value in values ?? const <Object?>[]) Variable(value),
 ];
 
-/// Run generated statements through the same gate and transaction as raw SQL.
-extension GeneratedRepositoryStatements on RawExecutor {
-  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase) query) {
-    final executor = this;
-    if (executor is GuardedDatabase) {
-      return executor.readGenerated((active) => active.selectGenerated(query));
-    }
-    return query(_generatedDatabase);
-  }
-
-  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase) query) {
-    final executor = this;
-    if (executor is GuardedDatabase) {
-      return executor.transaction((active) => query(active._generatedDatabase));
-    }
-    return query(_generatedDatabase);
-  }
-
-  AppDatabase get _generatedDatabase {
-    final database = driftConnection;
-    if (database is AppDatabase) return database;
-    throw StateError('仓库查询需要 drift 主库连接');
-  }
-}

@@ -45,7 +45,7 @@ Future<int> insertRow(
   Map<String, Object?> values, {
   bool replace = false,
   bool ignore = false,
-}) {
+}) async {
   final name = quoteSqlName(table);
   final prefix = replace
       ? 'INSERT OR REPLACE'
@@ -53,13 +53,18 @@ Future<int> insertRow(
       ? 'INSERT OR IGNORE'
       : 'INSERT';
   if (values.isEmpty) {
-    return executor.rawInsert('$prefix INTO $name DEFAULT VALUES');
+    await executor.execute('$prefix INTO $name DEFAULT VALUES');
+  } else {
+    final columns = values.keys.map(quoteSqlName).join(', ');
+    await executor.execute(
+      '$prefix INTO $name ($columns) VALUES (${_placeholders(values.length)})',
+      values.values.toList(growable: false),
+    );
   }
-  final columns = values.keys.map(quoteSqlName).join(', ');
-  return executor.rawInsert(
-    '$prefix INTO $name ($columns) VALUES (${_placeholders(values.length)})',
-    values.values.toList(growable: false),
-  );
+  // 行号从同一个连接读回；被忽略的插入返回上一条插入的行号，与原来的
+  // rawInsert 语义一致。
+  final rows = await executor.rawQuery('SELECT last_insert_rowid() AS id');
+  return rows.first['id'] as int;
 }
 
 /// 按条件更新若干字段；[where] 为空时更新整表，占位符由 [whereArgs] 提供。

@@ -5,6 +5,7 @@ import 'package:drift/drift.dart' show DatabaseConnectionUser;
 import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
 import 'database_gate.dart';
+import 'drift/app_database.dart';
 import 'raw_executor.dart';
 
 /// 把整库访问收进 [DatabaseGate]：读共享，写、事务与关闭独占（01 第 7 章）。
@@ -42,8 +43,14 @@ class GuardedDatabase implements RawDatabase {
   DatabaseConnectionUser? get driftConnection => _currentTxn?.driftConnection;
 
   /// 等共享访问获准后再取连接，恢复期间排队的读取会访问新库。
-  Future<T> readGenerated<T>(Future<T> Function(RawExecutor) action) =>
-      gate.shared(() => action(_currentTxn ?? _db));
+  @override
+  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      gate.shared(() => query(requireAppDatabase(_currentTxn ?? _db)));
+
+  /// 独立写语句形成一个提交；事务里的写直接使用本次事务。
+  @override
+  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      _write((executor) => query(requireAppDatabase(executor)));
 
   RawExecutor? get _currentTxn => Zone.current[_txnScope] as RawExecutor?;
 
@@ -144,14 +151,6 @@ class GuardedDatabase implements RawDatabase {
       throw ArgumentError('版本化表不能使用 REPLACE，请改用 insert、update 或 UPSERT');
     }
     return _write((executor) => executor.execute(sql, arguments));
-  }
-
-  @override
-  Future<int> rawInsert(String sql, [List<Object?>? arguments]) {
-    if (_rawReplaceOnVersioned(sql)) {
-      throw ArgumentError('版本化表不能使用 REPLACE，请改用 insert、update 或 UPSERT');
-    }
-    return _write((executor) => executor.rawInsert(sql, arguments));
   }
 
   @override

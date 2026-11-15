@@ -1,4 +1,6 @@
 import 'package:drift/drift.dart' show DatabaseConnectionUser;
+
+import 'drift/app_database.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 /// 版本引擎、备份与撤销使用的最小 SQL 执行器。
@@ -14,12 +16,23 @@ abstract class RawExecutor {
 
   Future<void> execute(String sql, [List<Object?>? arguments]);
 
-  Future<int> rawInsert(String sql, [List<Object?>? arguments]);
-
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
     List<Object?>? arguments,
   ]);
+
+  /// 在同一个连接上执行 drift 生成查询；只读副本不支持，使用时抛错。
+  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase db) query);
+
+  /// 在同一个连接上执行生成查询，并形成一个提交。
+  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase db) query);
+}
+
+/// 取执行器背后的 drift 主库；只读副本没有这个连接。
+AppDatabase requireAppDatabase(RawExecutor executor) {
+  final connection = executor.driftConnection;
+  if (connection is AppDatabase) return connection;
+  throw StateError('仓库查询需要 drift 主库连接');
 }
 
 /// 可以自己开事务的执行器；引擎的整版恢复、命名版本与裁剪用到这里。
@@ -64,11 +77,6 @@ class SqliteRawDatabase implements RawDatabase {
     }
   }
 
-  int _insert(String sql, List<Object?>? arguments) {
-    _run(sql, arguments);
-    return _db.lastInsertRowId;
-  }
-
   List<Map<String, Object?>> _select(String sql, List<Object?>? arguments) {
     final statement = _db.prepare(sql);
     try {
@@ -90,8 +98,12 @@ class SqliteRawDatabase implements RawDatabase {
       Future.sync(() => _run(sql, arguments));
 
   @override
-  Future<int> rawInsert(String sql, [List<Object?>? arguments]) =>
-      Future.sync(() => _insert(sql, arguments));
+  Future<T> selectGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      throw StateError('只读副本不执行仓库查询');
+
+  @override
+  Future<T> writeGenerated<T>(Future<T> Function(AppDatabase db) query) =>
+      throw StateError('只读副本不执行仓库查询');
 
   @override
   Future<List<Map<String, Object?>>> rawQuery(

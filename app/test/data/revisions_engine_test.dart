@@ -114,7 +114,7 @@ void main() {
       throwsArgumentError,
     );
     expect(
-      () => rig.db.rawInsert(
+      () => rig.db.execute(
         'INSERT OR REPLACE INTO learning_goal '
         '(id, title, status, created_at, updated_at) VALUES (1, ?, ?, ?, ?)',
         ['替换', 'active', '2026-11-10T09:00:00', '2026-11-10T09:00:00'],
