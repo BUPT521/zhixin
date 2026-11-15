@@ -1066,7 +1066,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: forui.FCircularProgress());
+      return const PageLoading();
     }
     final theme = context.zhixin;
     return Column(

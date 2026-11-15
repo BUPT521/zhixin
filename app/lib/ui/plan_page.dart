@@ -1575,7 +1575,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
             if (_loadingDone) {
               return const Padding(
                 padding: EdgeInsets.all(12),
-                child: Center(child: forui.FCircularProgress()),
+                child: PageLoading(),
               );
             }
             return LoadMoreFooter(

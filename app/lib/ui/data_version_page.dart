@@ -627,7 +627,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     return DetailScaffold(
       header: const ZhixinHeader(title: Text('数据版本'), showBack: true),
       child: _loading || history == null
-          ? const Center(child: forui.FCircularProgress())
+          ? const PageLoading()
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(

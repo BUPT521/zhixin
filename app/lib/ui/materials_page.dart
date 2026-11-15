@@ -266,7 +266,7 @@ class MaterialListState extends State<MaterialList> {
             ],
           ),
         ),
-        if (_importingWord) const LinearProgressIndicator(),
+        if (_importingWord) const forui.FProgress(),
         Expanded(
           child: _loading
               ? SingleChildScrollView(
@@ -637,9 +637,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     final theme = context.zhixin;
     final material = _material;
     if (_loading) {
-      return const DetailScaffold(
-        child: Center(child: forui.FCircularProgress()),
-      );
+      return const DetailScaffold(child: PageLoading());
     }
     if (material == null) {
       return DetailScaffold(

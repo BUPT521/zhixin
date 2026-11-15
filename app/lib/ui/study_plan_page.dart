@@ -287,9 +287,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     final theme = context.zhixin;
     final view = _view;
     if (_loading) {
-      return const DetailScaffold(
-        child: Center(child: forui.FCircularProgress()),
-      );
+      return const DetailScaffold(child: PageLoading());
     }
     if (view == null) {
       return DetailScaffold(

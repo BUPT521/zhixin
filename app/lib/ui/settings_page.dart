@@ -325,9 +325,7 @@ class _SettingsPageState extends State<SettingsPage>
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const DetailScaffold(
-        child: Center(child: forui.FCircularProgress()),
-      );
+      return const DetailScaffold(child: PageLoading());
     }
     final theme = context.zhixin;
     final configured = _config?.isConfigured ?? false;

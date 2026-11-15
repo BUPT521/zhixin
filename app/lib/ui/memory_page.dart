@@ -207,7 +207,7 @@ class _MemoryPageState extends State<MemoryPage> {
       child: Stack(
         children: [
           _loading
-              ? const Center(child: forui.FCircularProgress())
+              ? const PageLoading()
               : ListView(
                   padding: theme.space.pageInsets(bottom: 96),
                   children: [

@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 
 import 'failure_feedback.dart';
 import 'theme.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
 
@@ -248,7 +249,7 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
     }
     final bytes = _bytes;
     if (bytes == null) {
-      return const Center(child: forui.FCircularProgress());
+      return const PageLoading();
     }
     return Crop(
       image: bytes,

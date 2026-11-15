@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'zhixin_icon_button.dart';
 import 'zhixin_toast.dart';
+import 'workspace_widgets.dart';
 
 /// 应用内拍照：按下快门直接回到框选页，不再经过系统相机的确认界面。
 ///
@@ -323,7 +324,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) {
-      return const Center(child: forui.FCircularProgress());
+      return const PageLoading();
     }
     // 预览按比例铺满整屏：相机给的比例与屏幕比例通常不同，缩放之后才不留黑边。
     var scale =

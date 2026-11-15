@@ -429,6 +429,15 @@ class LoadMoreFooter extends StatelessWidget {
   );
 }
 
+/// 整页首读时的等待指示；列表页用 [ListSkeleton]，其余页面用这一个。
+class PageLoading extends StatelessWidget {
+  const PageLoading({super.key});
+
+  @override
+  Widget build(BuildContext context) =>
+      const Center(child: forui.FCircularProgress());
+}
+
 /// 首读时的占位骨架：几条与真实卡片同高的静态块，读完原位换成内容。
 ///
 /// 不做闪光或呼吸动画：动效口径里不循环，而且不断变化的占位更妨碍阅读。

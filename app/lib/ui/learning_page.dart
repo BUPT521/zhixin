@@ -666,9 +666,7 @@ class _LearningPageState extends State<LearningPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     if (_loading) {
-      return const DetailScaffold(
-        child: Center(child: forui.FCircularProgress()),
-      );
+      return const DetailScaffold(child: PageLoading());
     }
     final view = _view;
     if (view == null) {

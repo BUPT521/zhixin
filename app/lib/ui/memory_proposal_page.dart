@@ -159,7 +159,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
     return DetailScaffold(
       header: const ZhixinHeader(title: Text('从作答整理记忆'), showBack: true),
       child: _loading
-          ? const Center(child: forui.FCircularProgress())
+          ? const PageLoading()
           : ListView(
               padding: theme.space.pageInsets(),
               children: [

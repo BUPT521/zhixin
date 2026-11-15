@@ -257,10 +257,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
         bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
       ),
       child: _loading
-          ? const SizedBox(
-              height: 240,
-              child: Center(child: forui.FCircularProgress()),
-            )
+          ? const SizedBox(height: 240, child: PageLoading())
           : plan == null
           ? _failureView(theme)
           : SingleChildScrollView(
