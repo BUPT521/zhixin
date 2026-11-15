@@ -50,6 +50,11 @@ type Config struct {
 	RefreshRatePerSecond float64
 	RefreshBurst         int
 
+	// UploadRatePerSecond 与 UploadBurst 限制备份与附件上传按账号的速率；
+	// 这两类请求会先落临时文件，设 0 关闭。
+	UploadRatePerSecond float64
+	UploadBurst         int
+
 	LLM LLMConfig
 }
 
@@ -152,6 +157,8 @@ func Load(getenv func(string) string) (Config, error) {
 		AuthBurst:            int(num("ZHIXIN_AUTH_BURST", "10")),
 		RefreshRatePerSecond: fnum("ZHIXIN_REFRESH_RATE", "1"),
 		RefreshBurst:         int(num("ZHIXIN_REFRESH_BURST", "30")),
+		UploadRatePerSecond:  fnum("ZHIXIN_UPLOAD_RATE", "0.5"),
+		UploadBurst:          int(num("ZHIXIN_UPLOAD_BURST", "5")),
 		LLM: LLMConfig{
 			BaseURL:         strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:          get("ZHIXIN_LLM_API_KEY", ""),

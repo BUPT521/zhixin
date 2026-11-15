@@ -25,10 +25,11 @@ type harness struct {
 func newHarness(t *testing.T, env map[string]string) *harness {
 	t.Helper()
 	// 用例都从同一个来源地址发请求，默认关掉限流，免得相互干扰；
-	// 专门测限流的用例自己把这两个变量打开。
+	// 专门测限流的用例自己把这些变量打开。
 	merged := map[string]string{
 		"ZHIXIN_AUTH_RATE":    "0",
 		"ZHIXIN_REFRESH_RATE": "0",
+		"ZHIXIN_UPLOAD_RATE":  "0",
 	}
 	for k, v := range env {
 		merged[k] = v
@@ -608,6 +609,32 @@ func TestBindingErrorsAreProblems(t *testing.T) {
 		if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
 			t.Fatalf("%s %s: content type %q", tc.method, tc.path, ct)
 		}
+	}
+}
+
+func TestUploadRateLimitReturns429(t *testing.T) {
+	// 每秒 0.0001 个令牌、初始 1 个：第二次上传必定被拒。
+	h := newHarness(t, map[string]string{
+		"ZHIXIN_UPLOAD_RATE":  "0.0001",
+		"ZHIXIN_UPLOAD_BURST": "1",
+	})
+	token := h.signUp("upload@b.cn")
+	if resp := upload(h, token, []byte("first"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first backup: %d", resp.StatusCode)
+	}
+
+	// Backups and attachments share one per-account bucket.
+	body := []byte("attachment")
+	resp := h.do("PUT", "/v1/blobs/"+blobSHA(body), token, bytes.NewReader(body), nil)
+	var p problem
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StatusCode != http.StatusTooManyRequests || p.Code != "rate_limited" {
+		t.Fatalf("second upload: %d %+v", resp.StatusCode, p)
+	}
+	if got := resp.Header.Get("Retry-After"); got == "" {
+		t.Fatal("429 must carry Retry-After")
 	}
 }
 

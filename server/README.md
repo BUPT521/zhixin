@@ -87,6 +87,8 @@ server/
 | `ZHIXIN_AUTH_BURST` | `10` | 注册与登录的桶容量，两者共用一个桶 |
 | `ZHIXIN_REFRESH_RATE` | `1` | 刷新令牌按账号与来源地址的补充速率，设 `0` 关闭 |
 | `ZHIXIN_REFRESH_BURST` | `30` | 刷新令牌的桶容量 |
+| `ZHIXIN_UPLOAD_RATE` | `0.5` | 备份与附件上传按账号的补充速率，设 `0` 关闭 |
+| `ZHIXIN_UPLOAD_BURST` | `5` | 备份与附件上传的桶容量，两类请求共用一个桶 |
 | `ZHIXIN_MAX_JSON_BYTES` | `1048576` | 普通 JSON 请求体上限；同步推送为它的 16 倍 |
 | `ZHIXIN_MAX_BACKUP_BYTES` | `268435456` | 单份备份上限，与客户端历史的 256 MB 容量预算一致 |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |

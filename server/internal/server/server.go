@@ -77,12 +77,15 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
-	var byAddr, refreshLimits *ratelimit.Limiter
+	var byAddr, refreshLimits, uploadLimits *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
 	}
 	if cfg.RefreshRatePerSecond > 0 {
 		refreshLimits = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute)
+	}
+	if cfg.UploadRatePerSecond > 0 {
+		uploadLimits = ratelimit.New(rate.Limit(cfg.UploadRatePerSecond), cfg.UploadBurst, 15*time.Minute)
 	}
 	handlers := routes{
 		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits),
@@ -106,8 +109,9 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/429 也
 	// 因此有编号并进日志），然后恢复 panic，最后鉴权。鉴权放在访问日志之内，
-	// 被拒绝的请求仍然会留下一行记录。
-	return httpx.Chain(withAuth(mux, authSvc, log),
+	// 被拒绝的请求仍然会留下一行记录。上传限流在鉴权之后，按账号计。
+	secured := withUploadLimit(mux, uploadLimits)
+	return httpx.Chain(withAuth(secured, authSvc, log),
 		httpx.RequestID,
 		httpx.AccessLog(log),
 		httpx.Recover(log),
