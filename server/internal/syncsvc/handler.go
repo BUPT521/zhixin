@@ -11,7 +11,9 @@ import (
 )
 
 // Handler exposes /v1/sync. It parses HTTP and maps service errors; validation
-// and page bounds live in Service.
+// and page bounds live in Service. Responses are the contract's generated
+// types, so a field added to api/openapi.yaml reaches the client without a
+// second definition here.
 type Handler struct {
 	svc      *Service
 	log      *slog.Logger
@@ -23,11 +25,6 @@ func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
 	return &Handler{svc: svc, log: log, maxBytes: maxBytes}
 }
 
-type headResponse struct {
-	Head          int64 `json:"head"`
-	SchemaVersion int   `json:"schema_version"`
-}
-
 func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	head, err := h.svc.Head(r.Context(), p.UserID)
@@ -35,13 +32,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, headResponse{Head: head, SchemaVersion: h.svc.SchemaVersion()})
-}
-
-type pullResponse struct {
-	Commits []Commit `json:"commits"`
-	Head    int64    `json:"head"`
-	HasMore bool     `json:"has_more"`
+	httpx.WriteJSON(w, http.StatusOK, api.SyncHead{Head: head, SchemaVersion: h.svc.SchemaVersion()})
 }
 
 func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
@@ -55,27 +46,16 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pullResponse{
+	httpx.WriteJSON(w, http.StatusOK, api.CommitPage{
 		Commits: result.Commits,
 		Head:    result.Head,
 		HasMore: result.HasMore,
 	})
 }
 
-// pushRequest 保留 Change 的原始 JSON。服务端不解释学习内容，也不经过
-// 契约模型里的 interface{}，否则大整数会被解码成 float64 而改变数值。
-type pushRequest struct {
-	BaseSeq int64    `json:"base_seq"`
-	Commits []Commit `json:"commits"`
-}
-
-type pushResponse struct {
-	Head int64 `json:"head"`
-}
-
 func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	var in pushRequest
+	var in api.PostV1SyncCommitsJSONBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
@@ -94,5 +74,5 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pushResponse{Head: head})
+	httpx.WriteJSON(w, http.StatusOK, api.PushResult{Head: head})
 }

@@ -215,6 +215,35 @@ func TestSyncIsLinearAndIdempotent(t *testing.T) {
 	}
 }
 
+// TestSyncPreservesLargeIntegers 守护契约对 before/after 的声明：行内容按
+// json.RawMessage 原样转发。若退回 interface{}，这里的大整数会经 float64
+// 往返变成 9007199254740992。
+func TestSyncPreservesLargeIntegers(t *testing.T) {
+	h := newHarness(t, nil)
+	token := h.signUp("big@b.cn")
+	const big = "9007199254740993"
+	body := fmt.Sprintf(`{"base_seq":0,"commits":[{
+		"request_id":"big-1","device_id":"device-a","schema_version":%d,
+		"actor":"user","action":"create","created_at":"2026-11-15 10:00:00",
+		"changes":[{"table":"memory","row_key":"1","op":"insert","after":{"id":%s}}]}]}`,
+		ClientSchemaVersion, big)
+	if code := h.json("POST", "/v1/sync/commits", token, json.RawMessage(body), nil); code != http.StatusOK {
+		t.Fatalf("push: %d", code)
+	}
+
+	var pulled struct {
+		Commits []struct {
+			Changes json.RawMessage `json:"changes"`
+		} `json:"commits"`
+	}
+	if code := h.json("GET", "/v1/sync/commits?after=0", token, nil, &pulled); code != http.StatusOK || len(pulled.Commits) != 1 {
+		t.Fatalf("pull: %d %+v", code, pulled)
+	}
+	if !strings.Contains(string(pulled.Commits[0].Changes), big) {
+		t.Fatalf("large integer was rewritten: %s", pulled.Commits[0].Changes)
+	}
+}
+
 func upload(h *harness, token string, data []byte, schema int) *http.Response {
 	sum := sha256.Sum256(data)
 	return h.do("POST", "/v1/backups", token, bytes.NewReader(data), map[string]string{

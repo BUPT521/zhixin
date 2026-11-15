@@ -5,21 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/BUPT521/zhixin/server/internal/api"
 )
 
 func testCommit(id string, schema int) Commit {
+	after := json.RawMessage(`{"content":"x"}`)
 	return Commit{
-		RequestID:     id,
-		DeviceID:      "device-a",
+		RequestId:     id,
+		DeviceId:      "device-a",
 		SchemaVersion: schema,
-		Actor:         "user",
+		Actor:         api.User,
 		Action:        "create",
 		CreatedAt:     "2026-11-15 10:00:00",
 		Changes: []Change{{
 			Table:  "memory",
 			RowKey: "1",
-			Op:     "insert",
-			After:  json.RawMessage(`{"content":"x"}`),
+			Op:     api.Insert,
+			After:  &after,
 		}},
 	}
 }

@@ -29,7 +29,11 @@ paths:
       security: []
       summary: 进程存活
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
   /readyz:
     get:
       tags: [meta]
@@ -40,11 +44,7 @@ paths:
           description: Ready
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string, const: ready }
-                  schema_version: { type: integer, examples: [26] }
+              schema: { $ref: "#/components/schemas/Ready" }
         "503": { $ref: "#/components/responses/Problem" }
 
   /v1/auth/register:
@@ -131,12 +131,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  user_id: { type: string }
-                  email: { type: string }
-                  created_at: { type: string, format: date-time }
+              schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Problem" }
     delete:
       tags: [auth]
@@ -154,11 +149,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  head: { type: integer, format: int64 }
-                  schema_version: { type: integer }
+              schema: { $ref: "#/components/schemas/SyncHead" }
   /v1/sync/commits:
     get:
       tags: [sync]
@@ -171,14 +162,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  commits:
-                    type: array
-                    items: { $ref: "#/components/schemas/Commit" }
-                  head: { type: integer, format: int64 }
-                  has_more: { type: boolean }
+              schema: { $ref: "#/components/schemas/CommitPage" }
     post:
       tags: [sync]
       summary: 推送本机提交
@@ -205,10 +189,7 @@ paths:
           description: 已追加
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  head: { type: integer, format: int64 }
+              schema: { $ref: "#/components/schemas/PushResult" }
         "400": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
 
@@ -261,12 +242,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  backups:
-                    type: array
-                    items: { $ref: "#/components/schemas/Backup" }
+              schema: { $ref: "#/components/schemas/BackupList" }
     post:
       tags: [backup]
       summary: 上传一份版本库备份 zip，超过保留份数时删最旧的
@@ -310,7 +286,11 @@ paths:
       tags: [llm]
       summary: 代理允许的模型，OpenAI 列表格式
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelList" }
   /v1/llm/quota:
     get:
       tags: [llm]
@@ -320,12 +300,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  day: { type: string, format: date }
-                  used_tokens: { type: integer, format: int64 }
-                  daily_tokens: { type: integer, format: int64 }
+              schema: { $ref: "#/components/schemas/LLMQuota" }
   /v1/llm/chat/completions:
     post:
       tags: [llm]
@@ -429,8 +404,14 @@ components:
         table: { type: string }
         row_key: { type: string }
         op: { type: string, enum: [insert, update, delete] }
-        before: { description: "update 与 delete 必填" }
-        after: { description: "insert 与 update 必填" }
+        # 行内容原样转发，服务端不解释。用 json.RawMessage 而不是 interface{}，
+        # 否则大整数会被解码成 float64 而改变数值。
+        before:
+          description: "update 与 delete 必填"
+          x-go-type: json.RawMessage
+        after:
+          description: "insert 与 update 必填"
+          x-go-type: json.RawMessage
     Commit:
       type: object
       required: [request_id, device_id, schema_version, actor, action, created_at, changes]
@@ -456,3 +437,70 @@ components:
         schema_version: { type: integer }
         device_name: { type: string }
         created_at: { type: string, format: date-time }
+    BackupList:
+      type: object
+      required: [backups]
+      properties:
+        backups:
+          type: array
+          items: { $ref: "#/components/schemas/Backup" }
+    CommitPage:
+      type: object
+      required: [commits, head, has_more]
+      properties:
+        commits:
+          type: array
+          items: { $ref: "#/components/schemas/Commit" }
+        head: { type: integer, format: int64 }
+        has_more: { type: boolean }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, const: ok }
+    LLMQuota:
+      type: object
+      required: [day, used_tokens, daily_tokens]
+      properties:
+        day: { type: string, format: date }
+        used_tokens: { type: integer, format: int64 }
+        daily_tokens: { type: integer, format: int64 }
+    Me:
+      type: object
+      required: [user_id, email, created_at]
+      properties:
+        user_id: { type: string }
+        email: { type: string }
+        created_at: { type: string, format: date-time }
+    Model:
+      type: object
+      required: [id, object, owned_by]
+      properties:
+        id: { type: string }
+        object: { type: string, examples: [model] }
+        owned_by: { type: string }
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object: { type: string, examples: [list] }
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Model" }
+    PushResult:
+      type: object
+      required: [head]
+      properties:
+        head: { type: integer, format: int64 }
+    Ready:
+      type: object
+      required: [status, schema_version]
+      properties:
+        status: { type: string, const: ready }
+        schema_version: { type: integer, examples: [26] }
+    SyncHead:
+      type: object
+      required: [head, schema_version]
+      properties:
+        head: { type: integer, format: int64 }
+        schema_version: { type: integer }

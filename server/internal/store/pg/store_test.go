@@ -3,6 +3,7 @@ package pg
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -129,10 +130,11 @@ func TestPostgresSyncSequence(t *testing.T) {
 	}
 
 	mk := func(id string) syncsvc.Commit {
+		after := json.RawMessage(`{}`)
 		return syncsvc.Commit{
-			RequestID: id, DeviceID: "d1", SchemaVersion: 26,
+			RequestId: id, DeviceId: "d1", SchemaVersion: 26,
 			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
-			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: []byte(`{}`)}},
+			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
 	head, err = st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")})
@@ -152,7 +154,7 @@ func TestPostgresSyncSequence(t *testing.T) {
 	if err != nil || len(commits) != 2 {
 		t.Fatalf("拉取应有两条，得到 %d %v", len(commits), err)
 	}
-	if commits[0].Seq != 1 || commits[0].RequestID != "r1" || len(commits[0].Changes) != 1 {
+	if commits[0].Seq == nil || *commits[0].Seq != 1 || commits[0].RequestId != "r1" || len(commits[0].Changes) != 1 {
 		t.Fatalf("第一条不符合预期: %+v", commits[0])
 	}
 }

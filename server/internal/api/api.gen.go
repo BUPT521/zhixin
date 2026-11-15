@@ -6,6 +6,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -51,6 +52,21 @@ func (e CommitActor) Valid() bool {
 	case System:
 		return true
 	case User:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HealthStatus.
+const (
+	Ok HealthStatus = "ok"
+)
+
+// Valid indicates whether the value is a known member of the HealthStatus enum.
+func (e HealthStatus) Valid() bool {
+	switch e {
+	case Ok:
 		return true
 	default:
 		return false
@@ -111,6 +127,21 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for ReadyStatus.
+const (
+	ReadyStatusReady ReadyStatus = "ready"
+)
+
+// Valid indicates whether the value is a known member of the ReadyStatus enum.
+func (e ReadyStatus) Valid() bool {
+	switch e {
+	case ReadyStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TokensTokenType.
 const (
 	Bearer TokensTokenType = "Bearer"
@@ -120,21 +151,6 @@ const (
 func (e TokensTokenType) Valid() bool {
 	switch e {
 	case Bearer:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for GetReadyz200JSONResponseBodyStatus.
-const (
-	Ready GetReadyz200JSONResponseBodyStatus = "ready"
-)
-
-// Valid indicates whether the value is a known member of the GetReadyz200JSONResponseBodyStatus enum.
-func (e GetReadyz200JSONResponseBodyStatus) Valid() bool {
-	switch e {
-	case Ready:
 		return true
 	default:
 		return false
@@ -151,16 +167,21 @@ type Backup struct {
 	Size          *int64     `json:"size,omitempty"`
 }
 
+// BackupList defines model for BackupList.
+type BackupList struct {
+	Backups []Backup `json:"backups"`
+}
+
 // Change 对应客户端 revision_change 的一行（docs/01 第 7 章）
 type Change struct {
 	// After insert 与 update 必填
-	After interface{} `json:"after,omitempty"`
+	After *json.RawMessage `json:"after,omitempty"`
 
 	// Before update 与 delete 必填
-	Before interface{} `json:"before,omitempty"`
-	Op     ChangeOp    `json:"op"`
-	RowKey string      `json:"row_key"`
-	Table  string      `json:"table"`
+	Before *json.RawMessage `json:"before,omitempty"`
+	Op     ChangeOp         `json:"op"`
+	RowKey string           `json:"row_key"`
+	Table  string           `json:"table"`
 }
 
 // ChangeOp defines model for Change.Op.
@@ -184,11 +205,57 @@ type Commit struct {
 // CommitActor defines model for Commit.Actor.
 type CommitActor string
 
+// CommitPage defines model for CommitPage.
+type CommitPage struct {
+	Commits []Commit `json:"commits"`
+	HasMore bool     `json:"has_more"`
+	Head    int64    `json:"head"`
+}
+
 // Credentials defines model for Credentials.
 type Credentials struct {
 	DeviceName *string             `json:"device_name,omitempty"`
 	Email      openapi_types.Email `json:"email"`
 	Password   string              `json:"password"`
+}
+
+// Health defines model for Health.
+type Health struct {
+	Status HealthStatus `json:"status"`
+}
+
+// HealthStatus defines model for Health.Status.
+type HealthStatus string
+
+// LLMQuota defines model for LLMQuota.
+type LLMQuota struct {
+	DailyTokens int64              `json:"daily_tokens"`
+	Day         openapi_types.Date `json:"day"`
+	UsedTokens  int64              `json:"used_tokens"`
+}
+
+// Me defines model for Me.
+type Me struct {
+	CreatedAt time.Time `json:"created_at"`
+	Email     string    `json:"email"`
+	UserId    string    `json:"user_id"`
+}
+
+// Model defines model for Model.
+type Model struct {
+	Id string `json:"id"`
+
+	// Object Examples: model
+	Object  string `json:"object"`
+	OwnedBy string `json:"owned_by"`
+}
+
+// ModelList defines model for ModelList.
+type ModelList struct {
+	Data []Model `json:"data"`
+
+	// Object Examples: list
+	Object string `json:"object"`
 }
 
 // Problem defines model for Problem.
@@ -209,6 +276,27 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
+// PushResult defines model for PushResult.
+type PushResult struct {
+	Head int64 `json:"head"`
+}
+
+// Ready defines model for Ready.
+type Ready struct {
+	// SchemaVersion Examples: 26
+	SchemaVersion int         `json:"schema_version"`
+	Status        ReadyStatus `json:"status"`
+}
+
+// ReadyStatus defines model for Ready.Status.
+type ReadyStatus string
+
+// SyncHead defines model for SyncHead.
+type SyncHead struct {
+	Head          int64 `json:"head"`
+	SchemaVersion int   `json:"schema_version"`
+}
+
 // Tokens defines model for Tokens.
 type Tokens struct {
 	AccessExpiresAt  *time.Time       `json:"access_expires_at,omitempty"`
@@ -224,9 +312,6 @@ type TokensTokenType string
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
-
-// GetReadyz200JSONResponseBodyStatus defines parameters for GetReadyz.
-type GetReadyz200JSONResponseBodyStatus string
 
 // PostV1AuthRefreshJSONBody defines parameters for PostV1AuthRefresh.
 type PostV1AuthRefreshJSONBody struct {

@@ -34,7 +34,7 @@ type routes struct {
 var _ api.ServerInterface = routes{}
 
 func (rt routes) GetHealthz(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, api.Health{Status: api.Ok})
 }
 
 func (rt routes) GetReadyz(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +44,7 @@ func (rt routes) GetReadyz(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_version": rt.schemaVersion})
+	httpx.WriteJSON(w, http.StatusOK, api.Ready{Status: api.ReadyStatusReady, SchemaVersion: rt.schemaVersion})
 }
 
 func (rt routes) PostV1AuthRegister(w http.ResponseWriter, r *http.Request) { rt.auth.Register(w, r) }

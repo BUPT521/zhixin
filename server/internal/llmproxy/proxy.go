@@ -22,6 +22,9 @@ import (
 	"slices"
 	"time"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
@@ -43,20 +46,19 @@ func New(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger
 	return &Proxy{cfg: cfg, quota: quota, client: &http.Client{}, loc: loc, now: time.Now, log: log}
 }
 
-func (p *Proxy) day() string { return p.now().In(p.loc).Format("2006-01-02") }
+// dayTime 返回配置时区下的当前时间；自然日只从它取，响应里的 date 与用量
+// 记录的字符串因此不会落到不同的一天。
+func (p *Proxy) dayTime() time.Time { return p.now().In(p.loc) }
+
+func (p *Proxy) day() string { return p.dayTime().Format("2006-01-02") }
 
 // models answers in the OpenAI list shape so the client's connection test works unchanged.
 func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
-	type model struct {
-		ID      string `json:"id"`
-		Object  string `json:"object"`
-		OwnedBy string `json:"owned_by"`
-	}
-	data := make([]model, 0, len(p.cfg.Models))
+	data := make([]api.Model, 0, len(p.cfg.Models))
 	for _, m := range p.cfg.Models {
-		data = append(data, model{ID: m, Object: "model", OwnedBy: "zhixin"})
+		data = append(data, api.Model{Id: m, Object: "model", OwnedBy: "zhixin"})
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+	httpx.WriteJSON(w, http.StatusOK, api.ModelList{Object: "list", Data: data})
 }
 
 func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +69,11 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"day": day, "used_tokens": used, "daily_tokens": p.cfg.DailyTokens})
+	httpx.WriteJSON(w, http.StatusOK, api.LLMQuota{
+		Day:         openapi_types.Date{Time: p.dayTime()},
+		UsedTokens:  used,
+		DailyTokens: p.cfg.DailyTokens,
+	})
 }
 
 // requestHead is the only part of the body the proxy reads.

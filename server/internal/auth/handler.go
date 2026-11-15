@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
@@ -164,12 +163,6 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type meResponse struct {
-	UserID    string    `json:"user_id"`
-	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
 	u, err := h.svc.User(r.Context(), p)
@@ -177,7 +170,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, meResponse{UserID: u.ID, Email: u.Email, CreatedAt: u.CreatedAt})
+	httpx.WriteJSON(w, http.StatusOK, api.Me{UserId: u.ID, Email: u.Email, CreatedAt: u.CreatedAt})
 }
 
 func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {

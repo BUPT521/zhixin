@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -42,7 +43,7 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 
 	ids := make([]string, 0, len(commits))
 	for _, c := range commits {
-		ids = append(ids, c.RequestID)
+		ids = append(ids, c.RequestId)
 	}
 	existing, err := q.ExistingRequestIDs(ctx, db.ExistingRequestIDsParams{
 		UserID:     userID,
@@ -71,10 +72,10 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 		if err := q.InsertSyncCommit(ctx, db.InsertSyncCommitParams{
 			UserID:        userID,
 			Seq:           head + int64(i) + 1,
-			RequestID:     c.RequestID,
-			DeviceID:      c.DeviceID,
+			RequestID:     c.RequestId,
+			DeviceID:      c.DeviceId,
 			SchemaVersion: int32(c.SchemaVersion),
-			Actor:         c.Actor,
+			Actor:         string(c.Actor),
 			Action:        c.Action,
 			CreatedAt:     c.CreatedAt,
 			Changes:       changes,
@@ -109,15 +110,17 @@ func (s *Store) After(ctx context.Context, userID string, after int64, limit int
 				return nil, err
 			}
 		}
+		seq := row.Seq
+		received := row.ReceivedAt.Time
 		out = append(out, syncsvc.Commit{
-			Seq:           row.Seq,
-			RequestID:     row.RequestID,
-			DeviceID:      row.DeviceID,
+			Seq:           &seq,
+			RequestId:     row.RequestID,
+			DeviceId:      row.DeviceID,
 			SchemaVersion: int(row.SchemaVersion),
-			Actor:         row.Actor,
+			Actor:         api.CommitActor(row.Actor),
 			Action:        row.Action,
 			CreatedAt:     row.CreatedAt,
-			ReceivedAt:    row.ReceivedAt.Time,
+			ReceivedAt:    &received,
 			Changes:       changes,
 		})
 	}

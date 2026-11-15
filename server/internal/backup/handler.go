@@ -128,7 +128,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for _, m := range items {
 		out = append(out, backupJSON(m))
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"backups": out})
+	httpx.WriteJSON(w, http.StatusOK, api.BackupList{Backups: out})
 }
 
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request, id string) {

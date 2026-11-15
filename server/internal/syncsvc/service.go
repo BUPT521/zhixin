@@ -69,7 +69,9 @@ func (s *Service) Pull(
 	}
 	last := position
 	if n := len(commits); n > 0 {
-		last = commits[n-1].Seq
+		if seq := commits[n-1].Seq; seq != nil {
+			last = *seq
+		}
 	}
 	return PullResult{Commits: commits, Head: head, HasMore: last < head}, nil
 }
@@ -85,7 +87,8 @@ func (s *Service) Push(
 		return 0, ErrInvalid
 	}
 	for i := range commits {
-		commits[i].Seq = 0
+		// seq 由服务端分配（契约里是 readOnly），客户端带上来的值一律作废。
+		commits[i].Seq = nil
 		if err := Validate(commits[i], s.schemaVersion); err != nil {
 			return 0, err
 		}

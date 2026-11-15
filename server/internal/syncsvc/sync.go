@@ -10,33 +10,21 @@ package syncsvc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/api"
 )
 
-// Change mirrors one row of the client's revision_change table (docs/01 §7).
-type Change struct {
-	Table  string          `json:"table"`
-	RowKey string          `json:"row_key"`
-	Op     string          `json:"op"`
-	Before json.RawMessage `json:"before,omitempty"`
-	After  json.RawMessage `json:"after,omitempty"`
-}
-
-// Commit is one business write. Seq and ReceivedAt are assigned by the server.
-type Commit struct {
-	Seq           int64     `json:"seq"`
-	RequestID     string    `json:"request_id"`
-	DeviceID      string    `json:"device_id"`
-	SchemaVersion int       `json:"schema_version"`
-	Actor         string    `json:"actor"`
-	Action        string    `json:"action"`
-	CreatedAt     string    `json:"created_at"`
-	ReceivedAt    time.Time `json:"received_at"`
-	Changes       []Change  `json:"changes"`
-}
+// Change 与 Commit 直接使用契约生成的类型，服务端不再维护手写镜像。
+//
+// Change 的 before/after 在契约里声明为 json.RawMessage（x-go-type），行内容
+// 原样转发：既不经 interface{} 解码，也不会把大整数变成 float64 而改变数值。
+type (
+	Change = api.Change
+	Commit = api.Commit
+)
 
 var (
 	// ErrHeadMoved means the push was not based on the current server head.
@@ -82,10 +70,10 @@ func PlanAppend(
 	seen map[string]bool,
 ) (fresh []Commit, newHead int64, err error) {
 	for _, c := range commits {
-		if seen[c.RequestID] {
+		if seen[c.RequestId] {
 			continue
 		}
-		seen[c.RequestID] = true
+		seen[c.RequestId] = true
 		fresh = append(fresh, c)
 	}
 	// A fully replayed push succeeds whatever its base: the client simply did
@@ -105,7 +93,7 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	log := m.logs[userID]
 	seen := make(map[string]bool, len(log))
 	for _, c := range log {
-		seen[c.RequestID] = true
+		seen[c.RequestId] = true
 	}
 	fresh, newHead, err := PlanAppend(int64(len(log)), base, commits, seen)
 	if err != nil {
@@ -114,10 +102,11 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	if len(fresh) == 0 {
 		return int64(len(log)), nil
 	}
-	now := m.now()
+	received := m.now()
 	for _, c := range fresh {
-		c.Seq = int64(len(log)) + 1
-		c.ReceivedAt = now
+		seq := int64(len(log)) + 1
+		c.Seq = &seq
+		c.ReceivedAt = &received
 		log = append(log, c)
 	}
 	m.logs[userID] = log
@@ -145,27 +134,25 @@ func (m *MemoryStore) DeleteUser(_ context.Context, userID string) error {
 	return nil
 }
 
-var validOps = map[string]bool{"insert": true, "update": true, "delete": true}
-var validActors = map[string]bool{"user": true, "ai": true, "system": true}
-
 // Validate checks the shape of a commit, not its business meaning: the server
-// never interprets learning content.
+// never interprets learning content. Op and Actor are checked through the
+// generated enum validators, so the contract stays the only value list.
 func Validate(c Commit, schemaVersion int) error {
 	switch {
-	case c.RequestID == "" || len(c.RequestID) > 64,
-		c.DeviceID == "" || len(c.DeviceID) > 64,
+	case c.RequestId == "" || len(c.RequestId) > 64,
+		c.DeviceId == "" || len(c.DeviceId) > 64,
 		c.SchemaVersion != schemaVersion,
-		!validActors[c.Actor],
+		!c.Actor.Valid(),
 		c.Action == "",
 		len(c.Changes) == 0:
 		return ErrInvalid
 	}
 	for _, ch := range c.Changes {
-		if ch.Table == "" || ch.RowKey == "" || !validOps[ch.Op] {
+		if ch.Table == "" || ch.RowKey == "" || !ch.Op.Valid() {
 			return ErrInvalid
 		}
-		needBefore := ch.Op == "update" || ch.Op == "delete"
-		needAfter := ch.Op == "insert" || ch.Op == "update"
+		needBefore := ch.Op == api.Update || ch.Op == api.Delete
+		needAfter := ch.Op == api.Insert || ch.Op == api.Update
 		if (needBefore && ch.Before == nil) || (needAfter && ch.After == nil) {
 			return ErrInvalid
 		}
