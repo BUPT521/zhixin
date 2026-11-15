@@ -10,6 +10,7 @@ import '../../domain/models/material.dart';
 import '../../domain/models/question.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/text.dart';
 
 export '../../domain/models/chat_message.dart';
 export '../../domain/models/conversation.dart';
@@ -310,12 +311,12 @@ class ConversationRepository {
     final now = formatDateTime(_clock());
     return writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertConversationRecord(
-        _clean(title),
+        nullableText(title),
         goalId,
         materialId,
         pageNo,
-        _clean(sourceRef),
-        _clean(contextText),
+        nullableText(sourceRef),
+        nullableText(contextText),
         entryKind,
         now,
       ),
@@ -799,9 +800,4 @@ class ConversationRepository {
             'text': item['text'] as String,
           },
   ];
-
-  static String? _clean(String? value) {
-    final text = value?.trim();
-    return text == null || text.isEmpty ? null : text;
-  }
 }

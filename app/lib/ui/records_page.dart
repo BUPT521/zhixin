@@ -27,6 +27,8 @@ import 'zhixin_menu.dart';
 import 'zhixin_segmented.dart';
 import 'zhixin_toast.dart';
 
+import '../domain/rules/text.dart';
+
 enum RecordsTab { learning, materials }
 
 /// 从别的栏目跳到记录时的意图：切到哪个页签，以及这是第几次请求。
@@ -754,8 +756,7 @@ class _RecordsPageState extends State<RecordsPage> {
 
   String _clip(String text) {
     final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (flat.length <= 60) return flat;
-    return '${flat.substring(0, 60)}…';
+    return truncateCodePoints(flat, 60);
   }
 
   /// 一条学习记录：标题下先列类型与状态标签，再给最近一次提问或作答，最后

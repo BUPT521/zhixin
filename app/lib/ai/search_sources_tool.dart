@@ -5,6 +5,8 @@ import 'agent_read_budget.dart';
 import 'agent_tools.dart';
 import 'llm_client.dart';
 
+import '../domain/rules/text.dart';
+
 const searchSourcesTool = 'search_sources';
 
 /// 首轮证据不足时才开放补搜：既没有检索摘录，也没有其他材料页可读。
@@ -136,9 +138,7 @@ class _SourceReader {
   }
 
   static String _excerpt(String text) {
-    final runes = text.runes.toList(growable: false);
-    if (runes.length <= excerptLength) return text;
-    return '${String.fromCharCodes(runes.take(excerptLength))}…';
+    return truncateCodePoints(text, excerptLength);
   }
 
   static String _materialTitle(String title) {

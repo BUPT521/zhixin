@@ -5,6 +5,7 @@ import '../db/raw_executor.dart';
 import '../../domain/models/question.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/text.dart';
 import '../db/write_transactions.dart';
 
 /// 作答记录（01 `attempt`）：直接挂在一条学习记录上。
@@ -165,11 +166,11 @@ class AttemptRepository {
     await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.saveOpenAttemptDraft(
         text.isEmpty ? null : text,
-        _clean(solution),
+        nullableText(solution),
         isCorrect == null ? null : (isCorrect ? 1 : 0),
         independent == null ? null : (independent ? 1 : 0),
         delayed ? 1 : 0,
-        _clean(feedback),
+        nullableText(feedback),
         stamp,
         attemptId,
       ),
@@ -240,19 +241,14 @@ class AttemptRepository {
     return writeExecutor(transaction, _db).writeGenerated(
       (db) => db.submitOpenAttempt(
         answer.trim(),
-        _clean(solution),
+        nullableText(solution),
         isCorrect == null ? null : (isCorrect ? 1 : 0),
         independent == null ? null : (independent ? 1 : 0),
         delayed ? 1 : 0,
-        _clean(feedback),
+        nullableText(feedback),
         now,
         attemptId,
       ),
     );
-  }
-
-  static String? _clean(String? value) {
-    final text = value?.trim();
-    return text == null || text.isEmpty ? null : text;
   }
 }

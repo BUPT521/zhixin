@@ -2,6 +2,8 @@ import '../data/repository/evidence_repository.dart';
 import '../domain/models/evidence.dart';
 import '../domain/rules/time_condition.dart';
 
+import '../domain/rules/text.dart';
+
 /// 一次跨次综合的结果：按时间顺序的作答、缺少证据时待确认的内容与可直接进入
 /// 回答上下文的命中。
 class CrossSessionSummary {
@@ -270,9 +272,7 @@ class CrossSessionService {
               '${at.hour.toString().padLeft(2, '0')}:'
               '${at.minute.toString().padLeft(2, '0')}';
     final answer = (attempt.userAnswer ?? '').replaceAll(RegExp(r'\s+'), ' ');
-    final shortAnswer = answer.length <= 60
-        ? answer
-        : '${answer.substring(0, 60)}…';
+    final shortAnswer = truncateCodePoints(answer, 60);
     final parts = <String>[
       '$when 提交',
       attempt.selfResult,

@@ -4,6 +4,8 @@ import '../domain/rules/time_format.dart';
 import 'material_page_tool.dart';
 import 'search_sources_tool.dart';
 
+import '../domain/rules/text.dart';
+
 /// 系统提示：只依据给定上下文回答；正文用 Markdown，需要附带数据时调用工具。
 ///
 /// 工具与上下文按本次请求类型裁剪：普通问答只要回答、记忆、引用与下一步建议，
@@ -280,9 +282,7 @@ String buildBuddySystemPrompt(BuddyContext context) {
 
 /// 单条记忆进入提示词时最多 200 字；超出部分截断，避免一条长记忆挤占上下文。
 String _memoryText(String content) {
-  final runes = content.runes.toList(growable: false);
-  if (runes.length <= 200) return content;
-  return '${String.fromCharCodes(runes.take(200))}…';
+  return truncateCodePoints(content, 200);
 }
 
 String _modeLabel(BuddyMode mode) => switch (mode) {

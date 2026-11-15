@@ -1,4 +1,5 @@
 import '../domain/models/buddy_protocol.dart';
+import '../domain/rules/text.dart';
 
 /// 没有模型时的本地回答与下一步（06 第 5 章 R3 的兜底）。
 ///
@@ -344,7 +345,5 @@ String _askedText(BuddyContext context, String text) {
 String _excerpt(String text) {
   const limit = 32;
   final line = text.split('\n').first.replaceAll(RegExp(r'\s+'), ' ').trim();
-  final runes = line.runes.toList(growable: false);
-  if (runes.length <= limit) return line;
-  return '${String.fromCharCodes(runes.take(limit))}…';
+  return truncateCodePoints(line, limit);
 }

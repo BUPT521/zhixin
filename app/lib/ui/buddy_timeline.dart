@@ -13,6 +13,8 @@ import 'discussion_message.dart';
 import 'markdown_text.dart';
 import 'theme.dart';
 
+import '../domain/rules/text.dart';
+
 /// 时间线里的一条内容。
 ///
 /// 讨论页从记录消息生成，学习页从这次作答的帮助与最近讨论生成；两页的数据
@@ -267,7 +269,7 @@ class ChatMessagePreview extends StatelessWidget {
     final text = message.content.replaceAll(RegExp(r'\s+'), ' ').trim();
     final preview = text.isEmpty
         ? (message.hasImages ? '[图片]' : '[空消息]')
-        : (text.length <= 80 ? text : '${text.substring(0, 80)}…');
+        : truncateCodePoints(text, 80);
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Text(

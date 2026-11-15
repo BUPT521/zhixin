@@ -6,6 +6,8 @@ import '../data/revisions/revision_actions.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 
+import '../domain/rules/text.dart';
+
 /// 一条待确认的记忆提案。
 ///
 /// 提案带来源（哪次作答）、适用范围（目标或材料）与判断依据；依据按 R2 写明
@@ -206,7 +208,7 @@ class MemoryProposalService {
       final stuck = (attempt.feedback ?? attempt.userAnswer ?? '这一步')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
-      final short = stuck.length <= 40 ? stuck : '${stuck.substring(0, 40)}…';
+      final short = truncateCodePoints(stuck, 40);
       return '$stem：在「$short」处卡住；${_conditionLabel(attempt)}。';
     }
     final time = attempt.submittedAt == null

@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import '../domain/rules/content_identity.dart';
 import 'llm_config.dart';
 
+import '../domain/rules/text.dart';
+
 /// 一次模型调用的失败类型；界面只显示一句人话，不把 key 或响应体带出去。
 enum LlmFailure {
   notConfigured,
@@ -755,8 +757,7 @@ String? _errorMessage(String body) {
   return _clip(text);
 }
 
-String _clip(String text) =>
-    text.length <= 200 ? text : '${text.substring(0, 200)}…';
+String _clip(String text) => truncateCodePoints(text, 200);
 
 /// 正文可能是字符串，也可能是内容块数组：多模态的兼容实现会按 OpenAI 的
 /// 新格式发 `[{"type":"text","text":"…"}]`。

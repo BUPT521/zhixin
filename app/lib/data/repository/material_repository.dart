@@ -6,6 +6,7 @@ import '../../domain/rules/search_terms.dart';
 import '../db/fts.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/text.dart';
 import '../db/write_transactions.dart';
 import '../db/drift/app_database.dart';
 import '../db/drift/drift_raw.dart';
@@ -55,7 +56,7 @@ class MaterialRepository {
       (db) => db.insertMaterial(
         text,
         kind,
-        _clean(sourceRef),
+        nullableText(sourceRef),
         sourceFileName,
         sourceFileHash,
         goalId,
@@ -226,8 +227,13 @@ class MaterialRepository {
     if (existing != null) throw PageNumberTaken(pageNo);
     final now = formatDateTime(_clock());
     final id = await executor.writeGenerated(
-      (db) =>
-          db.insertMaterialPage(materialId, pageNo, _clean(label), text, now),
+      (db) => db.insertMaterialPage(
+        materialId,
+        pageNo,
+        nullableText(label),
+        text,
+        now,
+      ),
     );
     await _touch(materialId, now, executor: executor);
     return id;
@@ -262,7 +268,7 @@ class MaterialRepository {
     if (materialId == null) throw StateError('这一页已不存在');
     final now = formatDateTime(_clock());
     await executor.writeGenerated(
-      (db) => db.updateMaterialPage(text, _clean(label), now, pageId),
+      (db) => db.updateMaterialPage(text, nullableText(label), now, pageId),
     );
     await _touch(materialId, now, executor: executor);
   }
@@ -409,10 +415,5 @@ class MaterialRepository {
     await (executor ?? _db).writeGenerated(
       (db) => db.touchMaterial(stamp, materialId),
     );
-  }
-
-  static String? _clean(String? value) {
-    final text = value?.trim();
-    return text == null || text.isEmpty ? null : text;
   }
 }

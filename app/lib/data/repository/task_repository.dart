@@ -8,6 +8,7 @@ import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/text.dart';
 import '../db/write_transactions.dart';
 
 /// 目标与学习事项（01 `learning_goal` / `plan_item`）。
@@ -463,7 +464,7 @@ class TaskRepository {
         goalId,
         conversationId,
         title.trim(),
-        _clean(note),
+        nullableText(note),
         dueAt == null ? null : formatDateTime(dueAt),
         estMinutes,
         PlanItemStatus.todo.code,
@@ -483,10 +484,5 @@ class TaskRepository {
 
   Future<void> deleteItem(int id) async {
     await _db.writeGenerated((db) => db.deletePlanItem(id));
-  }
-
-  static String? _clean(String? value) {
-    final text = value?.trim();
-    return text == null || text.isEmpty ? null : text;
   }
 }

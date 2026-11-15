@@ -3,6 +3,8 @@ library;
 
 import '../rules/search_terms.dart';
 
+import '../rules/text.dart';
+
 typedef MaterialPageDraft = ({int pageNo, String content, String? label});
 
 bool isDocxFile(String? name) => name?.toLowerCase().endsWith('.docx') ?? false;
@@ -85,8 +87,7 @@ class MaterialPage {
 
   String get preview {
     final text = content.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.length <= 60) return text;
-    return '${text.substring(0, 60)}…';
+    return truncateCodePoints(text, 60);
   }
 }
 

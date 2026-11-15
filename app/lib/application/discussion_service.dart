@@ -29,6 +29,8 @@ import 'memory_view.dart';
 import 'reply_outcome.dart';
 import 'service_runtime.dart';
 
+import '../domain/rules/text.dart';
+
 /// 一次求助的结果：两条消息、引用与要展示的下一步建议。
 ///
 /// 记忆写入后的卡片状态与可撤销回执都从消息里读，不在结果里另带一份。
@@ -1181,9 +1183,7 @@ class DiscussionService {
   static String _titleFor(String text) {
     final line = text.split('\n').first.trim();
     if (line.isEmpty) return '图片求助';
-    final runes = line.runes.toList(growable: false);
-    if (runes.length <= 24) return line;
-    return '${String.fromCharCodes(runes.take(24))}…';
+    return truncateCodePoints(line, 24);
   }
 
   static List<String> _cleanPaths(List<String> paths) => {
