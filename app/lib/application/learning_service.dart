@@ -54,7 +54,6 @@ class HelpResult {
     this.stopped = false,
     this.interrupted = false,
     this.notice,
-    this.changes = const [],
   });
 
   final String text;
@@ -67,7 +66,6 @@ class HelpResult {
   /// 生成中断；[text] 是中断前已经显示的部分。
   final bool interrupted;
   final String? notice;
-  final List<AppliedChange> changes;
 }
 
 /// 按本次最新的有判断的已提交尝试推出场次结果；没有提交或都没判断时留空。
@@ -330,7 +328,6 @@ class LearningService {
     var fromModel = false;
     var stopped = false;
     var interrupted = false;
-    const changes = <AppliedChange>[];
 
     final run = await askBuddyModel(
       ai: ai,
@@ -419,7 +416,6 @@ class LearningService {
       stopped: stopped,
       interrupted: interrupted,
       notice: notice,
-      changes: changes,
     );
   }
 

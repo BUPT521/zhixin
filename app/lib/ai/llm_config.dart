@@ -131,12 +131,6 @@ class LlmConfig {
           : defaultContextWindowTokens,
     );
   }
-
-  /// 设置页只显示是哪一档，不回显 key。
-  String get summary {
-    if (!isConfigured) return '模型尚未配置，当前使用本地规则';
-    return '$model · ${api.label} · API Key 已保存在本机';
-  }
 }
 
 /// 本次操作已读取的配置，允许明确区分“已读取但未配置”和“尚未读取”。

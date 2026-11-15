@@ -11613,14 +11613,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).map((QueryRow row) => row.read<int>('id'));
   }
 
-  Selectable<String?> messageStructuredJson(int messageId) {
-    return customSelect(
-      'SELECT structured_json FROM message WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(messageId)],
-      readsFrom: {this.messages},
-    ).map((QueryRow row) => row.readNullable<String>('structured_json'));
-  }
-
   Future<int> insertConversationMessage(
     int conversationId,
     String role,

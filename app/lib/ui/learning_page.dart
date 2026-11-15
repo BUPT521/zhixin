@@ -10,7 +10,6 @@ import 'theme.dart';
 import '../ai/llm_client.dart';
 import '../app_scope.dart';
 import '../domain/models/buddy_protocol.dart';
-import '../application/buddy_actions.dart';
 import '../application/learning_service.dart';
 import '../application/memory_view.dart';
 import '../domain/models/assessment.dart';
@@ -21,7 +20,6 @@ import 'buddy_timeline.dart';
 import 'discussion_page.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
-import 'undo_feedback.dart';
 import 'zhixin_chip.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
@@ -51,7 +49,6 @@ class _LearningPageState extends State<LearningPage> {
   bool _busy = false;
   String? _help;
   String? _notice;
-  List<AppliedChange> _changeItems = const [];
 
   /// 当前未提交尝试上的记忆建议：待确认的可以「记下」，已写入的可以撤销。
   List<MemoryItemView> _memoryItems = const [];
@@ -333,7 +330,6 @@ class _LearningPageState extends State<LearningPage> {
     setState(() {
       _busy = true;
       _notice = null;
-      _changeItems = const [];
       _help = null;
       _lastInterrupted = false;
       _generating = true;
@@ -371,7 +367,6 @@ class _LearningPageState extends State<LearningPage> {
         _generating = false;
         _help = result.text.trim().isEmpty ? null : result.text;
         _notice = result.notice;
-        _changeItems = result.changes;
         _lastMode = mode;
         _lastFromModel = result.fromModel;
         _lastInterrupted = result.interrupted;
@@ -406,18 +401,6 @@ class _LearningPageState extends State<LearningPage> {
   void _stopHelp() {
     _cancelToken?.cancel();
   }
-
-  /// 撤销与安排页、讨论卡片、记忆页走同一条入口：提示、重读与失败说明一致。
-  Future<void> _undoChange(int commitId) => undoCommitWithFeedback(
-    context,
-    commitId,
-    onUndone: () => setState(
-      () => _changeItems = _changeItems
-          .where((change) => change.commitId != commitId)
-          .toList(growable: false),
-    ),
-    reload: _load,
-  );
 
   /// 帮助里的记忆建议要用户点“记下”才写入，与讨论的确认卡片一致。
   Future<void> _acceptMemory(MemoryItemView item) async {
@@ -1277,7 +1260,6 @@ class _LearningTimeline extends BuddyTimelineAdapter {
               ),
           ],
         ),
-      if (state._changeItems.isNotEmpty) BuddyChangesEntry(state._changeItems),
     ];
   }
 
@@ -1293,7 +1275,4 @@ class _LearningTimeline extends BuddyTimelineAdapter {
 
   @override
   void undoMemory(MemoryItemView item) => _state._undoMemory(item);
-
-  @override
-  void undoChange(AppliedChange change) => _state._undoChange(change.commitId);
 }

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
@@ -160,35 +159,4 @@ class RemoteEmbeddingClient implements EmbeddingClient {
 
   @override
   void dispose() => _http.close();
-}
-
-/// 固定向量里没有出现、也没有配置远程服务时的本地向量：只用于让索引保持
-/// 可用，不承诺语义效果。
-EmbeddingClient fallbackEmbeddingClient({int dim = 256}) =>
-    HashingEmbeddingClient(dim: dim);
-
-/// 把向量里最大的分量拉平，用于调试与打印；不参与检索。
-String describeVector(List<double> vector, {int limit = 4}) {
-  final values = vector.take(limit).map((value) => value.toStringAsFixed(3));
-  return '[$values…]';
-}
-
-/// 距离比较：两个向量的余弦距离，测试与界面提示共用。
-double vectorDistance(List<double> left, List<double> right) =>
-    cosineDistance(left, right);
-
-/// 取前 k 个候选的辅助函数；测试用它核对检索顺序。
-List<int> nearestSlots(
-  List<List<double>> vectors,
-  List<double> query, {
-  int k = 3,
-}) {
-  final distances = <(int, double)>[
-    for (var index = 0; index < vectors.length; index++)
-      (index, cosineDistance(query, vectors[index])),
-  ]..sort((left, right) => left.$2.compareTo(right.$2));
-  return distances
-      .take(math.min(k, distances.length))
-      .map((item) => item.$1)
-      .toList();
 }

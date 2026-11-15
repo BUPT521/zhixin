@@ -1,5 +1,3 @@
-import '../rules/time_format.dart';
-
 /// 查询里的显式时间条件；没有写日期时为空。
 ///
 /// 目前支持年月日、月日、今天、昨天、前天与前天；只有相对日期时按自然日
@@ -73,9 +71,3 @@ class TimeCondition {
 DateTime _naturalDay(DateTime now) => DateTime(now.year, now.month, now.day);
 
 String _two(int value) => value.toString().padLeft(2, '0');
-
-/// 时间条件的展示文字；没有条件时返回空串。
-String describeTimeCondition(TimeCondition? condition) =>
-    condition == null ? '' : condition.label;
-
-String formatMoment(DateTime moment) => formatDateTime(moment);

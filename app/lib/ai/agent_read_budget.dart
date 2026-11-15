@@ -13,7 +13,4 @@ class AgentReadBudget {
     remaining -= chars;
     return true;
   }
-
-  /// 本次最多能返回多少字符。
-  int cap(int chars) => chars < remaining ? chars : remaining;
 }

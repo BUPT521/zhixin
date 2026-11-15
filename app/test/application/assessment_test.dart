@@ -281,13 +281,9 @@ void main() {
     addTearDown(h.db.close);
 
     final questionId = await h.service.capture(stem: '求条件概率');
-    final result = await h.service.help(
-      questionId: questionId,
-      mode: BuddyMode.hint,
-    );
+    await h.service.help(questionId: questionId, mode: BuddyMode.hint);
 
     // 帮助照常保存，记忆建议留在帮助里等用户确认，没有直接落库。
-    expect(result.changes, isEmpty);
     expect(await h.memories.list(), isEmpty);
     final stored = (await h.attempts.attemptsFor(questionId)).single;
     expect(stored.helps.single.content, '先看定义');

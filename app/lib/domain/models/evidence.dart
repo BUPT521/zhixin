@@ -264,7 +264,6 @@ class EvidenceTimings {
     this.totalMs = 0,
     this.verifiedOut = 0,
     this.candidates = 0,
-    this.rankMs = 0,
   });
 
   final int embedMs;
@@ -274,18 +273,6 @@ class EvidenceTimings {
   /// 因版本、删除或范围变化被排除的候选条数。
   final int verifiedOut;
   final int candidates;
-
-  /// 关键词候选的 BM25 排序耗时。
-  final int rankMs;
-
-  Map<String, Object?> toJson() => {
-    'embed_ms': embedMs,
-    'index_ms': indexMs,
-    'total_ms': totalMs,
-    'verified_out': verifiedOut,
-    'candidates': candidates,
-    'rank_ms': rankMs,
-  };
 }
 
 /// 一次检索的结果；[dropped] 记录因范围、版本或记录已删除而被排除的条数。

@@ -122,7 +122,6 @@ class BuddyReply {
     this.studySteps = const [],
     this.assessment,
     this.providedSources = const [],
-    this.fromModel = true,
     this.stopped = false,
     this.interrupted = false,
     this.interruptedReason,
@@ -152,7 +151,6 @@ class BuddyReply {
 
   /// 本轮工具真正返回过的材料页原文；引用核验只认这些来源。
   final List<CitationSource> providedSources;
-  final bool fromModel;
 }
 
 /// 记忆是用户明确说的，还是模型根据记录推断的；两者进入卡片的方式不同。
