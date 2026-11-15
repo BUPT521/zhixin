@@ -81,6 +81,7 @@ class LlmTool {
 // ---------------------------------------------------------------------------
 // 公共小工具
 // ---------------------------------------------------------------------------
+
 /// 服务端在响应体或流式片段里带的错误说明；没有说明时给一句通用的话。
 String errorTextOf(Object? error) {
   if (error is Map) {
@@ -135,6 +136,45 @@ String _textOf(Object? content) {
 
 String _dataUrl(LlmImage image) =>
     'data:${image.mimeType};base64,${image._base64}';
+
+// ---------------------------------------------------------------------------
+// 整段响应的收尾判定
+// ---------------------------------------------------------------------------
+
+/// 三种协议整段响应共用的收尾：空回答按格式错误，因输出上限截断且没有留下
+/// 有效内容时按截断失败，其余情况返回同一份回复。
+///
+/// [toolCallsCountAsOutput] 表达协议差异：Chat Completions 的截断只要正文为空
+/// 就算失败，工具调用不能替代被截断的正文；Responses 与 Anthropic 把工具调用
+/// 也算作内容，正文与工具都为空才按截断失败。
+LlmReply _replyFromParts({
+  required String text,
+  required List<LlmToolCall> toolCalls,
+  required bool truncated,
+  required bool toolCallsCountAsOutput,
+  required String emptyDetail,
+  required int tokensIn,
+  required int tokensOut,
+  List<Map<String, Object?>> reasoningItems = const [],
+}) {
+  final empty = text.isEmpty && toolCalls.isEmpty;
+  final blank = truncated && (toolCallsCountAsOutput ? empty : text.isEmpty);
+  if (blank) {
+    throw const LlmException(LlmFailure.truncated, '达到输出上限');
+  }
+  if (empty) {
+    throw FormatException(emptyDetail);
+  }
+  return LlmReply(
+    text: text,
+    toolCalls: truncated ? const [] : toolCalls,
+    tokensIn: tokensIn,
+    tokensOut: tokensOut,
+    truncated: truncated,
+    reasoningItems: truncated ? const [] : reasoningItems,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 三种线格式
 // ---------------------------------------------------------------------------
@@ -447,6 +487,7 @@ final class _AnthropicWire extends LlmWire {
   @override
   LlmDecoder decoder() => _AnthropicDecoder();
 }
+
 // ---------------------------------------------------------------------------
 // 流式解码
 // ---------------------------------------------------------------------------
@@ -571,19 +612,16 @@ final class _ChatDecoder extends LlmDecoder {
         throw const LlmException(LlmFailure.server, '回答被内容过滤');
       }
       final truncated = finish != null && _incomplete(finish);
-      if (truncated && text.isEmpty) {
-        throw const LlmException(LlmFailure.truncated, '达到输出上限');
-      }
       final calls = message is Map<String, Object?>
           ? _toolCalls(message['tool_calls'])
           : const <LlmToolCall>[];
-      if (text.isEmpty && calls.isEmpty) {
-        throw const FormatException('message.content 为空');
-      }
       final usage = decoded['usage'];
-      return LlmReply(
+      return _replyFromParts(
         text: text,
-        toolCalls: truncated ? const [] : calls,
+        toolCalls: calls,
+        truncated: truncated,
+        toolCallsCountAsOutput: false,
+        emptyDetail: 'message.content 为空',
         tokensIn:
             _intOf(usage, 'prompt_tokens') ??
             _intOf(usage, 'input_tokens') ??
@@ -592,7 +630,6 @@ final class _ChatDecoder extends LlmDecoder {
             _intOf(usage, 'completion_tokens') ??
             _intOf(usage, 'output_tokens') ??
             0,
-        truncated: truncated,
       );
     } on FormatException catch (error) {
       throw LlmException(LlmFailure.badResponse, error.message);
@@ -841,20 +878,16 @@ final class _ResponsesDecoder extends LlmDecoder {
           : null;
       final truncated = status == 'incomplete' || reason != null;
       final bodyText = text.toString().trim();
-      if (truncated && bodyText.isEmpty && calls.isEmpty) {
-        throw const LlmException(LlmFailure.truncated, '达到输出上限');
-      }
-      if (bodyText.isEmpty && calls.isEmpty) {
-        throw const FormatException('output 为空');
-      }
       final usage = decoded['usage'];
-      return LlmReply(
+      return _replyFromParts(
         text: bodyText,
-        toolCalls: truncated ? const [] : calls,
-        reasoningItems: truncated ? const [] : _reasoningItems(output),
+        toolCalls: calls,
+        truncated: truncated,
+        toolCallsCountAsOutput: true,
+        emptyDetail: 'output 为空',
+        reasoningItems: _reasoningItems(output),
         tokensIn: _intOf(usage, 'input_tokens') ?? 0,
         tokensOut: _intOf(usage, 'output_tokens') ?? 0,
-        truncated: truncated,
       );
     } on FormatException catch (error) {
       throw LlmException(LlmFailure.badResponse, error.message);
@@ -1019,25 +1052,22 @@ final class _AnthropicDecoder extends LlmDecoder {
       final reason = decoded['stop_reason'];
       final truncated = reason == 'max_tokens' || reason == 'pause_turn';
       final bodyText = text.toString().trim();
-      if (truncated && bodyText.isEmpty && calls.isEmpty) {
-        throw const LlmException(LlmFailure.truncated, '达到输出上限');
-      }
-      if (bodyText.isEmpty && calls.isEmpty) {
-        throw const FormatException('content 为空');
-      }
       final usage = decoded['usage'];
-      return LlmReply(
+      return _replyFromParts(
         text: bodyText,
-        toolCalls: truncated ? const [] : calls,
+        toolCalls: calls,
+        truncated: truncated,
+        toolCallsCountAsOutput: true,
+        emptyDetail: 'content 为空',
         tokensIn: _intOf(usage, 'input_tokens') ?? 0,
         tokensOut: _intOf(usage, 'output_tokens') ?? 0,
-        truncated: truncated,
       );
     } on FormatException catch (error) {
       throw LlmException(LlmFailure.badResponse, error.message);
     }
   }
 }
+
 // ---------------------------------------------------------------------------
 // 片段与工具调用
 // ---------------------------------------------------------------------------
