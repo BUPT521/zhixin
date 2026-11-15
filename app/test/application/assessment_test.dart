@@ -312,6 +312,15 @@ void main() {
       MemoryCardStatus.accepted,
     );
 
+    // 同一张卡再点一次是按编号重试，不重复写记忆。
+    final again = await h.service.acceptMemory(
+      attemptId: stored.id,
+      helpIndex: 0,
+      itemId: items.single.itemId,
+    );
+    expect(again.applied, isTrue);
+    expect(await h.memories.list(), hasLength(1));
+
     // 撤销这次写入：记忆删除，帮助里的建议回到待确认。
     final undone = await h.revisions.undoCommit(accepted.change!.commitId);
     expect(undone.applied, isTrue, reason: undone.message);
@@ -321,6 +330,15 @@ void main() {
       reverted.helps.single.memories.single.status,
       MemoryCardStatus.pending,
     );
+
+    // 撤销之后重新记下同一张卡是新动作，按新的提交写入。
+    final reaccepted = await h.service.acceptMemory(
+      attemptId: stored.id,
+      helpIndex: 0,
+      itemId: items.single.itemId,
+    );
+    expect(reaccepted.applied, isTrue);
+    expect(await h.memories.list(), hasLength(1));
   });
 
   test('记忆写入失败时帮助照常保存，建议留作待确认', () async {

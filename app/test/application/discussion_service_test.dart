@@ -710,15 +710,16 @@ void main() {
     expect(second.item.goalId, goalId);
     expect(await h.tasks.items(), hasLength(2));
 
-    await expectLater(
-      h.service.acceptNextStep(
-        conversationId: id,
-        messageId: pending.first.messageId,
-        draft: pending.first.draft,
-        goalId: null,
-      ),
-      throwsStateError,
+    // 同一条建议再点一次是按编号重试，不创建第二个事项，也不形成第二条提交。
+    final again = await h.service.acceptNextStep(
+      conversationId: id,
+      messageId: pending.first.messageId,
+      draft: pending.first.draft,
+      goalId: null,
     );
+    expect(again.item.id, accepted.item.id);
+    expect(again.commitId, accepted.commitId);
+    expect(await h.tasks.items(), hasLength(2));
 
     // 撤销第二条，这一条建议回到消息里；第一条仍然是已接受状态。
     await h.rig.revisions.undoCommit(second.commitId);
@@ -734,6 +735,16 @@ void main() {
       changes.map((change) => change.commitId),
       isNot(contains(second.commitId)),
     );
+
+    // 撤销之后重新接受同一条建议，按新的动作写入。
+    final restoredAccept = await h.service.acceptNextStep(
+      conversationId: id,
+      messageId: pending.last.messageId,
+      draft: pending.last.draft,
+      goalId: goalId,
+    );
+    expect(restoredAccept.commitId, isNot(second.commitId));
+    expect(await h.tasks.items(), hasLength(2));
   });
 
   test('暂不安排的建议在重读历史后仍保持隐藏', () async {

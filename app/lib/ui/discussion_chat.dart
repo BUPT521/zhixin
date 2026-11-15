@@ -760,7 +760,6 @@ class DiscussionChatState extends State<DiscussionChat>
         draft: suggestion.draft,
         stepId: suggestion.stepId,
         goalId: choice.goalId,
-        requestId: 'accept-step-${suggestion.messageId}-${suggestion.stepId}',
       );
       if (!mounted) return;
       var scheduled = false;

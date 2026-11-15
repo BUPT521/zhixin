@@ -8,6 +8,7 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../domain/models/study_plan.dart';
+import 'command_ids.dart';
 import 'service_runtime.dart';
 
 /// 一份系统学习计划的摘要：下一步与最近一次预约，给日程页直接展示。
@@ -182,31 +183,58 @@ class PlanService {
   );
 
   /// 新建事项只写用户明确选择的归属与一段说明；没有选择时就不归属任何目标。
-  Future<int> addItem({
+  ///
+  /// 编号按草稿内容生成，同一份草稿连点两次只形成一条提交。
+  Future<WriteResult> addItem({
     required String title,
     int? goalId,
     String? note,
     DateTime? dueAt,
     int? minutes,
   }) {
-    return tasks.createItem(
-      title: title,
-      goalId: goalId,
-      note: note,
-      dueAt: dueAt,
-      estMinutes: minutes,
+    return transactions.run(
+      (txn) async {
+        await tasks.createItem(
+          title: title,
+          goalId: goalId,
+          note: note,
+          dueAt: dueAt,
+          estMinutes: minutes,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: '新建学习事项',
+      requestId: commandId('create-item', [
+        title,
+        goalId,
+        note,
+        dueAt,
+        minutes,
+      ]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
 
-  Future<int> addGoal({
+  /// 新建目标；编号按标题、范围与截止日期生成，同一份草稿连点两次只写一次。
+  Future<WriteResult> addGoal({
     required String title,
     String? scopeText,
     DateTime? dueDate,
   }) {
-    return tasks.createGoal(
-      title: title,
-      scopeText: scopeText,
-      dueDate: dueDate,
+    return transactions.run(
+      (txn) async {
+        await tasks.createGoal(
+          title: title,
+          scopeText: scopeText,
+          dueDate: dueDate,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: '新建目标',
+      requestId: commandId('create-goal', [title, scopeText, dueDate]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
 
@@ -257,8 +285,18 @@ class PlanService {
     return blocks.length;
   }
 
+  /// 完成、改回或暂停一个事项；事务内先看当前状态，已经是目标状态时直接跳过，
+  /// 同一按钮连点两次只形成一条提交。
+  ///
+  /// 状态迁移不用请求编号去重：同一个目标状态可能被多次进入（完成后改回、
+  /// 再完成），按编号去重会把后续动作误判成重试。
   Future<WriteResult> setStatus(int id, PlanItemStatus status) =>
       transactions.run((txn) async {
+        final current = await tasks.byId(id, transaction: txn);
+        if (current == null) return const WriteResult.skipped('这项事项已不存在');
+        if (current.status == status) {
+          return const WriteResult.skipped('事项已经是这个状态');
+        }
         await studyPlans.setItemStatus(id, status, transaction: txn);
         return txn.result();
       }, label: '更新事项状态');
@@ -279,16 +317,21 @@ class PlanService {
     required DateTime end,
     String source = 'user',
   }) {
-    return transactions.run((txn) async {
-      await schedule.addBlock(
-        planItemId: planItemId,
-        start: start,
-        end: end,
-        source: source,
-        transaction: txn,
-      );
-      return txn.result();
-    }, label: '安排学习时间');
+    return transactions.run(
+      (txn) async {
+        await schedule.addBlock(
+          planItemId: planItemId,
+          start: start,
+          end: end,
+          source: source,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: '安排学习时间',
+      requestId: commandId('schedule-item', [planItemId, start, end]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 改一次预约的时间；与单条预约一样返回写结果。
@@ -347,17 +390,28 @@ class PlanService {
     required String title,
     String? location,
   }) {
-    return transactions.run((txn) async {
-      await schedule.addTimetable(
-        weekday: weekday,
-        startTime: startTime,
-        endTime: endTime,
-        title: title,
-        location: location,
-        transaction: txn,
-      );
-      return txn.result();
-    }, label: '新增课表');
+    return transactions.run(
+      (txn) async {
+        await schedule.addTimetable(
+          weekday: weekday,
+          startTime: startTime,
+          endTime: endTime,
+          title: title,
+          location: location,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: '新增课表',
+      requestId: commandId('create-timetable', [
+        weekday,
+        startTime,
+        endTime,
+        title,
+        location,
+      ]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 删除一节课；返回写结果，提示条据此提供撤销。

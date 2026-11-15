@@ -10,6 +10,7 @@ import '../domain/models/write_result.dart';
 
 import '../domain/rules/time_format.dart';
 import '../domain/rules/text.dart';
+import 'command_ids.dart';
 
 /// 一条待确认的记忆提案。
 ///
@@ -181,25 +182,30 @@ class MemoryProposalService {
     )) {
       return const WriteResult.skipped('这条记忆已经存在');
     }
-    return transactions.run((txn) async {
-      // 事务内再核对一次，两个确认同时到达时也只写入一条。
-      if (await memories.hasSource(
-        MemorySourceKind.attempt,
-        proposal.sourceId,
-        transaction: txn,
-      )) {
-        return const WriteResult.skipped('这条记忆已经存在');
-      }
-      await memories.create(
-        kind: proposal.kind,
-        content: proposal.content,
-        scope: proposal.scope,
-        sourceKind: MemorySourceKind.attempt,
-        sourceId: proposal.sourceId,
-        transaction: txn,
-      );
-      return txn.result();
-    }, label: addMemoryAction);
+    return transactions.run(
+      (txn) async {
+        // 事务内再核对一次，两个确认同时到达时也只写入一条。
+        if (await memories.hasSource(
+          MemorySourceKind.attempt,
+          proposal.sourceId,
+          transaction: txn,
+        )) {
+          return const WriteResult.skipped('这条记忆已经存在');
+        }
+        await memories.create(
+          kind: proposal.kind,
+          content: proposal.content,
+          scope: proposal.scope,
+          sourceKind: MemorySourceKind.attempt,
+          sourceId: proposal.sourceId,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: addMemoryAction,
+      requestId: commandId('accept-memory-proposal', [proposal.id]),
+      onDuplicate: (_) => const WriteResult.skipped('这条记忆已经存在'),
+    );
   }
 
   MemoryKind? _kindFor(Attempt attempt) {

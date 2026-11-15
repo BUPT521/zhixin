@@ -53,6 +53,9 @@ class CapacityService {
   }
 
   /// 保存常用学习时段；两项设置写在同一个提交里，界面回执可整体撤销。
+  ///
+  /// 内部设置不参与数据版本采集，保存不形成提交，因此这里不生成命令编号；
+  /// 重复保存同样的时段只是把同一份设置再写一遍。
   Future<WriteResult> setWindow({
     required ClockTime start,
     required ClockTime end,

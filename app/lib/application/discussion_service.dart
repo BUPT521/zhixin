@@ -25,6 +25,7 @@ import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
+import 'command_ids.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
@@ -716,7 +717,8 @@ class DiscussionService {
   /// 接受一条下一步建议：创建学习事项，记下回执，并在原消息里标记已接受。
   ///
   /// 归属只取用户在选择表里明确选中的目标，未选择时 `goalId` 为空；
-  /// 这里不写时间块，安排由用户在“安排”页自己排。
+  /// 这里不写时间块，安排由用户在“安排”页自己排。编号按消息与建议生成，
+  /// 同一条建议连点两次只形成一条提交。
   Future<AcceptedSuggestion> acceptNextStep({
     required int conversationId,
     required int messageId,
@@ -731,7 +733,13 @@ class DiscussionService {
       draft: draft,
       stepId: stepId,
       goalId: goalId,
-      requestId: requestId,
+      requestId:
+          requestId ??
+          commandId('accept-suggestion', [
+            conversationId,
+            messageId,
+            stepId ?? draft.title,
+          ]),
     );
   }
 
@@ -906,49 +914,74 @@ class DiscussionService {
   }
 
   /// 用户点“记下”后才写入推断的记忆；重复或过长时不写，卡片随之收起。
+  ///
+  /// 编号按消息与卡片编号生成，同一张卡连点两次只形成一条提交。
   Future<AcceptedMemory> acceptMemoryItem({
     required int conversationId,
     required int messageId,
     required String itemId,
+    String? requestId,
   }) async {
     // 范围在事务外按同一条规则解析；写入时不再读一次记录上的归属。
     final resolved = await memoryScope.resolve(conversationId);
-    return transactions.run((txn) async {
-      final record = await conversations.byId(conversationId, transaction: txn);
-      if (record == null) throw StateError('未找到这条讨论');
-      final message = await conversations.messageById(
-        messageId,
-        transaction: txn,
-      );
-      if (message == null || message.conversationId != conversationId) {
-        throw StateError('未找到这条记忆');
-      }
-      final item = message.payload?.memoryItem(itemId);
-      if (item == null) throw StateError('未找到这条记忆');
-      if (item.status != MemoryCardStatus.pending) {
-        throw StateError('这条记忆已经处理');
-      }
+    try {
+      return await transactions.run(
+        (txn) async {
+          final record = await conversations.byId(
+            conversationId,
+            transaction: txn,
+          );
+          if (record == null) throw StateError('未找到这条讨论');
+          final message = await conversations.messageById(
+            messageId,
+            transaction: txn,
+          );
+          if (message == null || message.conversationId != conversationId) {
+            throw StateError('未找到这条记忆');
+          }
+          final item = message.payload?.memoryItem(itemId);
+          if (item == null) throw StateError('未找到这条记忆');
+          if (item.status == MemoryCardStatus.accepted) {
+            // 同一张卡连点两次：上一次已经写入，按重试返回，不再形成提交。
+            return const AcceptedMemory(applied: true, notice: '这条记忆已经处理。');
+          }
+          if (item.status != MemoryCardStatus.pending) {
+            throw StateError('这条记忆已经处理');
+          }
 
-      return confirmMemoryDraft(
-        transaction: txn,
-        transactions: transactions,
-        memories: memories,
-        draft: item,
-        sourceKind: item.source == MemorySource.user
-            ? MemorySourceKind.user
-            : MemorySourceKind.message,
-        sourceId: messageId,
-        scope: resolved.scope,
-        clock: runtime.policy.clock,
-        recordStatus: (status, commitId) => conversations.setMemoryItemStatus(
-          messageId,
-          itemId,
-          status: status,
-          commitId: commitId,
-          transaction: txn,
-        ),
+          return confirmMemoryDraft(
+            transaction: txn,
+            transactions: transactions,
+            memories: memories,
+            draft: item,
+            sourceKind: item.source == MemorySource.user
+                ? MemorySourceKind.user
+                : MemorySourceKind.message,
+            sourceId: messageId,
+            scope: resolved.scope,
+            clock: runtime.policy.clock,
+            recordStatus: (status, commitId) =>
+                conversations.setMemoryItemStatus(
+                  messageId,
+                  itemId,
+                  status: status,
+                  commitId: commitId,
+                  transaction: txn,
+                ),
+          );
+        },
+        label: confirmMemoryAction,
+        requestId: requestId ?? commandId('accept-memory', [messageId, itemId]),
       );
-    }, label: confirmMemoryAction);
+    } on RevisionDuplicateRequest {
+      // 同一张卡已经写入；重试按库里的状态返回，不再重复写记忆。
+      final message = await conversations.messageById(messageId);
+      final item = message?.payload?.memoryItem(itemId);
+      return AcceptedMemory(
+        applied: item?.status == MemoryCardStatus.accepted,
+        notice: '这条记忆已经处理。',
+      );
+    }
   }
 
   /// 用户点“不记”后收起卡片；记忆没有写入，不需要撤销。

@@ -6,6 +6,7 @@ import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/learning_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
+import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/assessment_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -13,8 +14,10 @@ import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
+import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
+import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
@@ -186,4 +189,130 @@ void main() {
     expect(stored.submitted, isTrue);
     expect(stored.userAnswer, '写完了');
   });
+
+  test('新建目标与事项连点两次只形成一条提交，不同内容各自提交', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final service = _planService(
+      rig,
+      TimePolicy(clock: () => DateTime(2026, 11, 12, 9)),
+    );
+    final before = await rig.engine.headId(rig.raw);
+
+    final goal = await service.addGoal(title: '概率论期末');
+    expect(goal.changed, isTrue);
+    final afterGoal = await rig.engine.headId(rig.raw);
+    expect(afterGoal, greaterThan(before));
+    final goalAgain = await service.addGoal(title: '概率论期末');
+    expect(goalAgain.commitId, goal.commitId);
+    expect(await rig.engine.headId(rig.raw), afterGoal);
+    expect(await tasks.goals(), hasLength(1));
+
+    final item = await service.addItem(title: '做一组练习', minutes: 20);
+    expect(item.changed, isTrue);
+    final afterItem = await rig.engine.headId(rig.raw);
+    final itemAgain = await service.addItem(title: '做一组练习', minutes: 20);
+    expect(itemAgain.commitId, item.commitId);
+    expect(await rig.engine.headId(rig.raw), afterItem);
+    expect(await tasks.items(), hasLength(1));
+
+    // 内容不同是另一个动作，不会被当成重试。
+    final other = await service.addItem(title: '再做一组', minutes: 20);
+    expect(other.changed, isTrue);
+    expect(other.commitId, isNot(item.commitId));
+    expect(await tasks.items(), hasLength(2));
+  });
+
+  test('完成步骤连点两次只形成一条提交，改回后再完成仍能写入', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final service = _planService(
+      rig,
+      TimePolicy(clock: () => DateTime(2026, 11, 12, 9)),
+    );
+    final itemId = await tasks.createItem(title: '看完一节');
+
+    final first = await service.setStatus(itemId, PlanItemStatus.done);
+    expect(first.changed, isTrue);
+    final head = await rig.engine.headId(rig.raw);
+    final again = await service.setStatus(itemId, PlanItemStatus.done);
+    expect(again.changed, isFalse);
+    expect(await rig.engine.headId(rig.raw), head);
+
+    // 改回待办再完成是新的状态迁移，不能被当成上一次动作的重试。
+    expect(
+      (await service.setStatus(itemId, PlanItemStatus.todo)).changed,
+      isTrue,
+    );
+    final redo = await service.setStatus(itemId, PlanItemStatus.done);
+    expect(redo.changed, isTrue);
+    expect((await tasks.byId(itemId))!.status, PlanItemStatus.done);
+  });
+
+  test('保存预约时间连点两次只形成一条提交', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final schedule = ScheduleRepository(rig.db);
+    final policy = TimePolicy(clock: () => DateTime(2026, 11, 12, 9));
+    final service = _planService(rig, policy);
+    final itemId = await tasks.createItem(title: '看材料');
+    final start = DateTime(2026, 11, 13, 19);
+    final end = start.add(const Duration(minutes: 30));
+
+    final scheduled = await service.scheduleItem(
+      planItemId: itemId,
+      start: start,
+      end: end,
+    );
+    expect(scheduled.changed, isTrue);
+    final head = await rig.engine.headId(rig.raw);
+    final scheduledAgain = await service.scheduleItem(
+      planItemId: itemId,
+      start: start,
+      end: end,
+    );
+    expect(scheduledAgain.commitId, scheduled.commitId);
+    expect(await rig.engine.headId(rig.raw), head);
+    expect(await schedule.nextBlocksForItems([itemId], start), hasLength(1));
+
+    // 换一个时间是新动作，不会因为同一事项而被当成重试。
+    final later = await service.scheduleItem(
+      planItemId: itemId,
+      start: start.add(const Duration(hours: 2)),
+      end: end.add(const Duration(hours: 2)),
+    );
+    expect(later.commitId, isNot(scheduled.commitId));
+  });
+
+  test('撤销之后同一个动作可以重新提交', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final service = _planService(
+      rig,
+      TimePolicy(clock: () => DateTime(2026, 11, 12, 9)),
+    );
+    final goal = await service.addGoal(title: '暂停后重开');
+    expect(goal.changed, isTrue);
+    final undone = await rig.revisions.undoCommit(goal.commitId!);
+    expect(undone.applied, isTrue);
+    expect(await tasks.goals(), isEmpty);
+
+    final again = await service.addGoal(title: '暂停后重开');
+    expect(again.changed, isTrue);
+    expect(again.commitId, isNot(goal.commitId));
+    expect(await tasks.goals(), hasLength(1));
+  });
 }
+
+PlanService _planService(TestRig rig, TimePolicy policy) => PlanService(
+  tasks: TaskRepository(rig.db),
+  schedule: ScheduleRepository(rig.db),
+  revisions: rig.revisions,
+  runtime: testRuntime(policy: () => policy),
+  studyPlans: StudyPlanRepository(rig.db),
+  transactions: WriteTransactions(rig.db),
+);

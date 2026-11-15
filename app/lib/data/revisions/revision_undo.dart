@@ -101,6 +101,17 @@ class RevisionUndoService {
         where: 'id = ?',
         whereArgs: [commit.id],
       );
+      // 撤销之后这次动作不再是有效提交，释放它的请求编号：用户重新做同一个
+      // 动作时按新动作处理，不会被当成重试，也不会撞上 request_id 的唯一索引。
+      if (target.requestId != null) {
+        await updateRow(
+          txn,
+          'revision_commit',
+          {'request_id': null},
+          where: 'id = ?',
+          whereArgs: [commitId],
+        );
+      }
       return RevisionUndoResult(
         applied: true,
         message: '已撤销这次操作',

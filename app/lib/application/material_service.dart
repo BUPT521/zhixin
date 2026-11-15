@@ -3,6 +3,7 @@ import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../domain/models/material.dart';
 import '../domain/models/write_result.dart';
+import 'command_ids.dart';
 import 'docx_import.dart';
 import 'service_runtime.dart';
 
@@ -131,25 +132,36 @@ class MaterialService {
   ///
   /// 内容没有变化时不形成提交，返回 skipped 并带上原因；修改前后都在提交
   /// 历史里，旧引用因此对不上。
+  /// 更正一页材料；编号按页、标题与更正后的原文生成，同一份更正连点两次
+  /// 只形成一条提交。
   Future<WriteResult> correctPage({
     required MaterialPage page,
     required String corrected,
   }) {
     final text = corrected.trim();
     if (text.isEmpty) throw ArgumentError('这一页还没有内容');
-    return transactions.run((txn) async {
-      final current = await materials.pageById(page.id, transaction: txn);
-      if (current == null) throw StateError('这一页已不存在');
-      if (current.content == text && current.label == page.label) {
-        return const WriteResult.skipped('这一页的内容没有变化');
-      }
-      await materials.correctPage(
-        pageId: page.id,
-        content: text,
-        label: page.label,
-        transaction: txn,
-      );
-      return txn.result();
-    }, label: correctMaterialPageAction);
+    return transactions.run(
+      (txn) async {
+        final current = await materials.pageById(page.id, transaction: txn);
+        if (current == null) throw StateError('这一页已不存在');
+        if (current.content == text && current.label == page.label) {
+          return const WriteResult.skipped('这一页的内容没有变化');
+        }
+        await materials.correctPage(
+          pageId: page.id,
+          content: text,
+          label: page.label,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: correctMaterialPageAction,
+      requestId: commandId('correct-material-page', [
+        page.id,
+        page.label,
+        text,
+      ]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 }

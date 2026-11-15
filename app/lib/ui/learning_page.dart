@@ -427,7 +427,6 @@ class _LearningPageState extends State<LearningPage>
         attemptId: attempt.id,
         helpIndex: item.ownerId,
         itemId: item.itemId,
-        requestId: 'memory-${attempt.id}-${item.ownerId}-${item.itemId}',
       ),
       reload: _load,
       scope: 'learning',

@@ -282,10 +282,11 @@ class TaskRepository {
     required String title,
     String? scopeText,
     DateTime? dueDate,
+    WriteTransaction? transaction,
   }) async {
     final now = _clock();
     final stamp = formatDateTime(now);
-    return _db.writeGenerated(
+    return writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertLearningGoal(
         title.trim(),
         scopeText?.trim(),

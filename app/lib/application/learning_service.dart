@@ -25,6 +25,7 @@ import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
 import 'attachment_service.dart';
+import 'command_ids.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
@@ -483,6 +484,10 @@ class LearningService {
     if (attempt == null) throw StateError('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
     if (item == null) throw StateError('未找到这条记忆');
+    if (item.status == MemoryCardStatus.accepted) {
+      // 同一张卡连点两次：上一次已经写入，按重试返回，不再形成提交。
+      return const AcceptedMemory(applied: true, notice: '这条记忆已经处理。');
+    }
     if (item.status != MemoryCardStatus.pending) {
       throw StateError('这条记忆已经处理');
     }
@@ -511,7 +516,9 @@ class LearningService {
           );
         },
         label: confirmAttemptMemoryAction,
-        requestId: requestId,
+        requestId:
+            requestId ??
+            commandId('accept-help-memory', [attemptId, helpIndex, itemId]),
       );
     } on RevisionDuplicateRequest {
       // 同一次确认已经写入；重试按库里的状态返回，不再重复写记忆。
