@@ -7,6 +7,7 @@ import '../data/vector/vector_store.dart';
 import '../data/vector/vector_store_isolate.dart';
 import '../domain/models/evidence.dart';
 import '../domain/rules/embedding.dart';
+import '../domain/rules/score_weights.dart';
 import '../domain/rules/search_terms.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
@@ -449,7 +450,7 @@ class SemanticIndexService {
       matchedText: candidate.content,
       literal: false,
       semantic: true,
-      score: 10 + (1 - candidate.distance).clamp(0, 1) * 3,
+      score: semanticMatchScore(candidate.distance),
       location: EvidenceLocation(
         conversationId: locator.conversationId,
         messageId: locator.messageId,

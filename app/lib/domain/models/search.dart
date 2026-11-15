@@ -1,4 +1,5 @@
 import 'evidence.dart';
+import 'score.dart';
 
 /// 一条记录出现在查找结果里的原因；同一记录命中多路时按原样、关键词、语义的
 /// 顺序取第一个，界面只区分有没有原样命中与是否只来自语义。
@@ -34,7 +35,10 @@ class SearchEntry {
   /// 只有语义一路找到这条记录；界面据此加“按意思”标签。
   bool get semanticOnly => reason == SearchReason.semantic;
 
-  double get fusionScore => _rrf(localRank) + _rrf(semanticRank);
+  /// 融合分数：两路名次的倒数相加，仍是 0–1 的 [Score]，排序用
+  /// [Score.compareTo] 比较。
+  Score get fusionScore =>
+      Score.clamp(_rrf(localRank).value + _rrf(semanticRank).value);
 
   SearchEntry withLocalRank(int rank) => SearchEntry(
     key: key,
@@ -50,5 +54,10 @@ class SearchEntry {
     semanticRank: rank,
   );
 
-  static double _rrf(int? rank) => rank == null ? 0 : 1 / (60 + rank);
+  /// RRF 的平滑常数；名次越靠前分越高，两路都命中的记录自然高于只被一路
+  /// 命中的记录。
+  static const int _rrfSmoothing = 60;
+
+  static Score _rrf(int? rank) =>
+      rank == null ? Score.zero : Score.clamp(1 / (_rrfSmoothing + rank));
 }

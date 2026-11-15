@@ -1,6 +1,7 @@
 import '../data/repository/evidence_repository.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/evidence_id.dart';
+import '../domain/rules/score_weights.dart';
 import '../domain/rules/time_condition.dart';
 
 import '../domain/rules/text.dart';
@@ -289,7 +290,7 @@ class CrossSessionService {
       snippet: parts.join('；'),
       matchedText: answer,
       literal: false,
-      score: 60 - index * 0.1,
+      score: crossSessionScore(index),
       location: EvidenceLocation(
         conversationId: entry.conversationId,
         attemptId: attempt.id,

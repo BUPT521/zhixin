@@ -13,6 +13,7 @@ import 'package:zhixin/ai/llm_config_store.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/material.dart';
+import 'package:zhixin/domain/models/score.dart';
 
 class _MemorySecrets implements SecretStore {
   String? value;
@@ -1475,7 +1476,7 @@ void main() {
             snippet: '条件概率 P(A|B)=P(AB)/P(B)。',
             matchedText: '条件概率',
             literal: false,
-            score: 10,
+            score: Score.clamp(0.5),
             location: const EvidenceLocation(materialId: 1, pageNo: 3),
             text: '条件概率 P(A|B)=P(AB)/P(B)。',
           ),

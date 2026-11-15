@@ -9,6 +9,7 @@ import '../../domain/models/question.dart';
 import '../../domain/rules/embedding.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/query_shape.dart';
+import '../../domain/rules/score_weights.dart';
 
 /// 一条跨次作答：作答本身、所属记录与题目出处。
 class ThreadAttempt {
@@ -856,8 +857,8 @@ class EvidenceRepository {
             matchedText: _matchedText(content, shape, literal, offset),
             literal: literal,
             score: fts == null
-                ? _score(shape, literal, offset, content)
-                : _keywordScore(row['keyword_rank'] as num?),
+                ? literalMatchScore(offset: offset, textLength: content.length)
+                : keywordMatchScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               materialId: row['material_id']! as int,
               pageNo: pageNo,
@@ -925,8 +926,8 @@ class EvidenceRepository {
             matchedText: _matchedText(content, shape, literal, offset),
             literal: literal,
             score: fts == null
-                ? _score(shape, literal, offset, content)
-                : _keywordScore(row['keyword_rank'] as num?),
+                ? literalMatchScore(offset: offset, textLength: content.length)
+                : keywordMatchScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               conversationId: row['conversation_id']! as int,
               messageId: row['id']! as int,
@@ -1004,8 +1005,12 @@ class EvidenceRepository {
             matchedText: _matchedText(text, shape, literal, offset),
             literal: literal,
             score: fts == null
-                ? _score(shape, literal, offset, text) + 2
-                : _keywordScore(row['keyword_rank'] as num?),
+                ? literalMatchScore(
+                    offset: offset,
+                    textLength: text.length,
+                    kindPriority: 2,
+                  )
+                : keywordMatchScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               conversationId: row['conversation_id']! as int,
               messageId: row['question_message_id'] as int?,
@@ -1084,8 +1089,12 @@ class EvidenceRepository {
             matchedText: _matchedText(text, shape, literal, offset),
             literal: literal,
             score: fts == null
-                ? _score(shape, literal, offset, text) + 1
-                : _keywordScore(row['keyword_rank'] as num?),
+                ? literalMatchScore(
+                    offset: offset,
+                    textLength: text.length,
+                    kindPriority: 1,
+                  )
+                : keywordMatchScore(row['keyword_rank'] as num?),
             location: EvidenceLocation(
               conversationId: row['conversation_id']! as int,
               attemptId: row['id']! as int,
@@ -1123,26 +1132,6 @@ class EvidenceRepository {
       if (content.toLowerCase().contains(term.toLowerCase())) return term;
     }
     return shape.text;
-  }
-
-  static double _score(
-    QueryShape shape,
-    bool literal,
-    int offset,
-    String text,
-  ) {
-    if (literal) {
-      if (offset <= 0) return 0;
-      final length = text.isEmpty ? 1 : text.length;
-      return 100 + (1 - (offset - 1) / length) * 10;
-    }
-    final lower = text.toLowerCase();
-    var hits = 0;
-    for (final term in shape.terms) {
-      if (lower.contains(term.toLowerCase())) hits++;
-    }
-    final denominator = shape.terms.isEmpty ? 1 : shape.terms.length;
-    return 10 + hits / denominator;
   }
 
   static List<String> _termsFor(QueryShape shape, bool literal) =>
@@ -1201,13 +1190,6 @@ class EvidenceRepository {
           'WHERE "$table" MATCH ? AND rowid = $keyColumn)',
       query: query.isEmpty ? '""' : query,
     );
-  }
-
-  // FTS5 给相关性较高的结果更小的值。变换后的分数随相关性增加，且与
-  // 读取窗口的大小无关。
-  static double _keywordScore(num? rank) {
-    final relevance = -(rank ?? 0);
-    return 14 + relevance / (1 + relevance);
   }
 
   static ({String where, List<Object?> args}) _conversationScope(

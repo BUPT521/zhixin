@@ -182,7 +182,7 @@ void main() {
     final paged = await evidence.allKeyword(query, scope: scope, batchSize: 1);
     expect(paged.map((hit) => hit.location.messageId), [2, 1]);
     expect(paged.last.score, hits.single.score);
-    expect(paged.last.score, greaterThan(paged.first.score));
+    expect(paged.last.score.compareTo(paged.first.score), greaterThan(0));
   });
 
   test('恢复整版数据之后索引与业务行一致', () async {

@@ -1,4 +1,5 @@
 import '../rules/content_identity.dart';
+import 'score.dart';
 
 /// 检索命中的来源种类；界面分组、回答引用与范围核对都按它区分。
 enum EvidenceKind {
@@ -192,7 +193,10 @@ class EvidenceHit {
   /// 这条命中来自语义检索；关键词与原文命中为假。同一来源同时被两路命中时
   /// 合并保留关键词那条，界面据此只给语义独有的记录加标签。
   final bool semantic;
-  final double score;
+
+  /// 相关度分数；四类来源已由 `domain/rules/score_weights.dart` 换算成同一把
+  /// 尺子，跨来源比较只看它。
+  final Score score;
   final EvidenceLocation location;
   final String? sourceVersion;
   final DateTime? createdAt;
@@ -211,7 +215,7 @@ class EvidenceHit {
   EvidenceHit copyWith({
     bool? literal,
     bool? semantic,
-    double? score,
+    Score? score,
     String? snippet,
     String? sourceVersion,
     EvidenceLocation? location,
@@ -339,7 +343,7 @@ class EvidenceBundle {
     // 同一来源同时被关键词和语义命中时保留关键词那条：它的片段里有用户
     // 输入的词，可以直接核对，语义分数只用来排序。
     if (candidate.semantic != current.semantic) return !candidate.semantic;
-    return candidate.score > current.score;
+    return candidate.score.compareTo(current.score) > 0;
   }
 
   static int _compare(EvidenceHit left, EvidenceHit right) {

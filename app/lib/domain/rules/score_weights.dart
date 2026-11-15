@@ -70,7 +70,8 @@ enum ScoreSource {
   Score normalize(double raw) {
     final span = rawUpper - rawLower;
     if (span <= 0) return Score.zero;
-    return Score.clamp((raw - rawLower) / span * weight);
+    final unit = ((raw - rawLower) / span).clamp(0.0, 1.0);
+    return Score.clamp(unit * weight);
   }
 }
 

@@ -10,6 +10,7 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/search_terms.dart';
 import 'package:zhixin/domain/rules/time_format.dart';
 import 'package:zhixin/domain/models/evidence.dart';
+import 'package:zhixin/domain/models/score.dart';
 import 'package:zhixin/domain/models/search.dart';
 
 import '../support/test_db.dart';
@@ -500,7 +501,7 @@ void main() {
           matchedText: '线性无关 $index',
           literal: false,
           semantic: true,
-          score: 10,
+          score: Score.clamp(0.5),
           location: EvidenceLocation(
             conversationId: semanticIds[index],
             messageId: 1000 + index,
@@ -551,7 +552,7 @@ void main() {
       snippet: '矩阵记录 $id',
       matchedText: '矩阵记录 $id',
       literal: false,
-      score: 10,
+      score: Score.clamp(0.5),
       location: EvidenceLocation(conversationId: id, messageId: id),
     );
     SearchEntry entry(int id) =>

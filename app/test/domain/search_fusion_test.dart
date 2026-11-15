@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/domain/models/evidence.dart';
+import 'package:zhixin/domain/models/score.dart';
 import 'package:zhixin/domain/models/search.dart';
 import 'package:zhixin/domain/rules/search_fusion.dart';
 
@@ -8,7 +9,7 @@ EvidenceHit _hit({
   int? conversationId,
   bool literal = false,
   bool semantic = false,
-  double score = 10,
+  Score? score,
 }) {
   return EvidenceHit(
     kind: EvidenceKind.message,
@@ -18,7 +19,7 @@ EvidenceHit _hit({
     matchedText: '片段 $identity',
     literal: literal,
     semantic: semantic,
-    score: score,
+    score: score ?? Score.clamp(0.5),
     location: EvidenceLocation(conversationId: conversationId),
   );
 }
@@ -88,7 +89,7 @@ void main() {
         matchedText: '矩阵的秩',
         literal: false,
         semantic: true,
-        score: 10,
+        score: Score.clamp(0.5),
         location: const EvidenceLocation(materialId: 3, pageNo: 7),
       ),
     ]);
@@ -123,15 +124,15 @@ void main() {
     );
     expect(
       searchEntryKey(
-        const EvidenceHit(
+        EvidenceHit(
           kind: EvidenceKind.materialPage,
           identity: 'material_page:3:7',
           title: '第 7 页',
           snippet: '矩阵',
           matchedText: '矩阵',
           literal: false,
-          score: 10,
-          location: EvidenceLocation(materialId: 3, pageNo: 7),
+          score: Score.clamp(0.5),
+          location: const EvidenceLocation(materialId: 3, pageNo: 7),
         ),
       ),
       'material_page:3:7',

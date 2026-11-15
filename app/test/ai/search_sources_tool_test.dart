@@ -8,6 +8,7 @@ import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/search_sources_tool.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/material.dart';
+import 'package:zhixin/domain/models/score.dart';
 
 EvidenceHit _page(int pageNo, String content) {
   return EvidenceHit(
@@ -17,7 +18,7 @@ EvidenceHit _page(int pageNo, String content) {
     snippet: content,
     matchedText: content,
     literal: false,
-    score: 10,
+    score: Score.clamp(0.5),
     location: EvidenceLocation(materialId: 1, pageNo: pageNo),
     sourceVersion: 'v$pageNo',
     text: content,
