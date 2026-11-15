@@ -9,6 +9,7 @@ import '../db/sql.dart';
 
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/content_identity.dart';
+import '../../domain/rules/time_format.dart';
 import 'revision_models.dart';
 
 /// 附件对象：字节按内容哈希去重，分块保存在同一个 SQLite 文件里。
@@ -40,7 +41,7 @@ class AssetStore {
     await executor.execute(
       'INSERT INTO asset_object (hash, byte_length, created_at) '
       'VALUES (?, ?, ?)',
-      [hash, bytes.length, DateTime.now().toIso8601String()],
+      [hash, bytes.length, formatDateTime(DateTime.now())],
     );
     for (var offset = 0, seq = 0; offset < bytes.length; seq++) {
       final end = (offset + chunkSize).clamp(0, bytes.length);

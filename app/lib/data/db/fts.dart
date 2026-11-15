@@ -9,6 +9,7 @@
 library;
 
 import '../../domain/rules/binary_bigrams.dart';
+import '../../domain/rules/time_format.dart';
 import 'raw_executor.dart';
 
 /// 一张索引表：索引表名、业务表名，以及参与索引的业务列。
@@ -107,7 +108,7 @@ Future<void> installFtsSchema(RawDatabase db) async {
       await txn.execute(
         'INSERT OR REPLACE INTO app_meta (key, value, updated_at) '
         'VALUES (?, ?, ?)',
-        [key, version, DateTime.now().toUtc().toIso8601String()],
+        [key, version, formatDateTime(DateTime.now())],
       );
     }
   });
