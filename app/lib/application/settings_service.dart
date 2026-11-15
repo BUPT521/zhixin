@@ -6,6 +6,7 @@ import '../ai/llm_config_store.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/settings_repository.dart';
 import '../data/revisions/revision_actions.dart';
+import '../domain/models/write_result.dart';
 import '../domain/rules/day_key.dart';
 import '../domain/rules/time_policy.dart';
 import 'service_runtime.dart';
@@ -61,25 +62,32 @@ class SettingsService {
 
   /// 截止小时保存成一条提交，数据版本页可以撤销；保存成功后立即刷新应用
   /// 根缓存的时间口径。
-  Future<void> saveCutoffHour(int hour) async {
+  Future<WriteResult> saveCutoffHour(int hour) async {
     if (hour < 0 || hour > maxDayCutoffHour) {
       throw RangeError.range(hour, 0, maxDayCutoffHour, 'hour');
     }
-    await transactions.run((txn) async {
+    final result = await transactions.run((txn) async {
       await settings.setCutoffHour(hour, runtime.policy.now, transaction: txn);
+      return txn.result();
     }, label: changeCutoffHourAction);
     await onPolicyChanged();
+    return result;
   }
 
   /// 拍照是否走系统相机；默认用应用内相机，快门之后直接进框选。
   Future<bool> useSystemCamera() async =>
       await settings.metadata(systemCameraKey) == '1';
 
-  Future<void> setUseSystemCamera(bool value) => settings.setMetadata(
-    systemCameraKey,
-    value ? '1' : '0',
-    runtime.policy.now,
-  );
+  Future<WriteResult> setUseSystemCamera(bool value) =>
+      transactions.run((txn) async {
+        await settings.setMetadata(
+          systemCameraKey,
+          value ? '1' : '0',
+          runtime.policy.now,
+          transaction: txn,
+        );
+        return txn.result();
+      }, label: '设置拍照方式');
 
   String exportFileName() {
     final current = runtime.policy;

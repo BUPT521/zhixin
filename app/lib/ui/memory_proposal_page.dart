@@ -110,7 +110,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
   Future<void> _accept(MemoryProposal proposal) async {
     setState(() => _busy = true);
     try {
-      final commitId = await AppScope.of(context).memory.proposals
+      final result = await AppScope.of(context).memory.proposals
           .accept(proposal);
       if (!mounted) return;
       setState(() {
@@ -120,8 +120,8 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
             .toList(growable: false);
         _notes = const [];
       });
-      if (commitId == null) {
-        showToast(context, '这条来源已经处理过，没有重复写入。');
+      if (!result.changed) {
+        showToast(context, result.skippedReason ?? '这条来源已经处理过，没有重复写入。');
         return;
       }
       showActionToast(
@@ -129,7 +129,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
         '已记下这条记忆',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _reload),
+            undoCommitWithFeedback(context, result.commitId!, reload: _reload),
       );
     } catch (error, stack) {
       if (!mounted) return;

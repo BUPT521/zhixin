@@ -180,8 +180,8 @@ void main() {
     final progress = outcome.proposals.firstWhere(
       (proposal) => proposal.kind == MemoryKind.progress,
     );
-    final commitId = await service.accept(progress);
-    expect(commitId, isNotNull);
+    final acceptResult = await service.accept(progress);
+    expect(acceptResult.commitId, isNotNull);
 
     final written = await MemoryRepository(rig.db.rawDb)
         .list(includeInactive: true);
@@ -195,7 +195,7 @@ void main() {
     expect(memory.content, contains('独立完成'));
 
     // 再次确认同一条提案不再写入。
-    expect(await service.accept(progress), isNull);
+    expect((await service.accept(progress)).changed, isFalse);
     expect(
       (await MemoryRepository(rig.db.rawDb).list(includeInactive: true)).length,
       written.length,

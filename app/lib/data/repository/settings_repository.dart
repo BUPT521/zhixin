@@ -28,8 +28,13 @@ class SettingsRepository {
     return _db.selectGenerated((db) => db.appMetaValue(key).getSingleOrNull());
   }
 
-  Future<void> setMetadata(String key, String value, DateTime now) async {
-    await _db.writeGenerated(
+  Future<void> setMetadata(
+    String key,
+    String value,
+    DateTime now, {
+    WriteTransaction? transaction,
+  }) async {
+    await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.saveAppMetadata(key, value, formatDateTime(now)),
     );
   }

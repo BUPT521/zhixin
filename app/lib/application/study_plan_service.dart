@@ -10,6 +10,7 @@ import '../data/repository/study_repository.dart';
 import '../domain/models/material.dart';
 import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
+import '../domain/models/write_result.dart';
 import '../domain/rules/study_plan_steps.dart';
 import 'context_service.dart';
 
@@ -414,26 +415,29 @@ class StudyPlanService {
     return view(planId);
   }
 
-  Future<void> setStepStatus(int planId, int stepId, PlanItemStatus status) =>
-      transactions.run(
-        (txn) => plans.setStepStatus(
-          stepId,
-          status,
-          expectedPlanId: planId,
-          transaction: txn,
-        ),
-        label: '更新学习步骤',
-      );
+  Future<WriteResult> setStepStatus(
+    int planId,
+    int stepId,
+    PlanItemStatus status,
+  ) => transactions.run((txn) async {
+    await plans.setStepStatus(
+      stepId,
+      status,
+      expectedPlanId: planId,
+      transaction: txn,
+    );
+    return txn.result();
+  }, label: '更新学习步骤');
 
-  Future<void> pause(int planId) => transactions.run(
-    (txn) => plans.setStatus(planId, StudyPlanStatus.paused, transaction: txn),
-    label: '暂停学习计划',
-  );
+  Future<WriteResult> pause(int planId) => transactions.run((txn) async {
+    await plans.setStatus(planId, StudyPlanStatus.paused, transaction: txn);
+    return txn.result();
+  }, label: '暂停学习计划');
 
-  Future<void> resume(int planId) => transactions.run(
-    (txn) => plans.setStatus(planId, StudyPlanStatus.active, transaction: txn),
-    label: '继续学习计划',
-  );
+  Future<WriteResult> resume(int planId) => transactions.run((txn) async {
+    await plans.setStatus(planId, StudyPlanStatus.active, transaction: txn);
+    return txn.result();
+  }, label: '继续学习计划');
 
   /// 从当前步骤打开一次讨论；正式学习会把这一步标为进行中。
   Future<int> startAtCurrent(

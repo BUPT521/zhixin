@@ -5,6 +5,7 @@ import '../data/repository/memory_repository.dart';
 import '../data/revisions/revision_actions.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
+import '../domain/models/write_result.dart';
 
 import '../domain/rules/text.dart';
 
@@ -158,16 +159,18 @@ class MemoryProposalService {
     );
   }
 
-  /// 用户确认之后写入记忆，返回提交编号供撤销；重复确认同一条提案不再写入。
-  Future<int?> accept(MemoryProposal proposal) async {
+  /// 用户确认之后写入记忆，返回写结果供撤销；重复确认同一条提案不再写入。
+  Future<WriteResult> accept(MemoryProposal proposal) async {
     final known = await memories.hasSource('attempt', proposal.sourceId);
-    if (known) return null;
+    if (known) {
+      return const WriteResult.skipped('这条作答已经写成记忆');
+    }
     final existing = await memories.list(includeInactive: true);
     final key = _contentKey(proposal.kind, proposal.content);
     if (existing.any(
       (memory) => _contentKey(memory.kind, memory.content) == key,
     )) {
-      return null;
+      return const WriteResult.skipped('这条记忆已经存在');
     }
     return transactions.run((txn) async {
       // 事务内再核对一次，两个确认同时到达时也只写入一条。
@@ -176,7 +179,7 @@ class MemoryProposalService {
         proposal.sourceId,
         transaction: txn,
       )) {
-        return null;
+        return const WriteResult.skipped('这条记忆已经存在');
       }
       await memories.create(
         kind: proposal.kind,
@@ -186,7 +189,7 @@ class MemoryProposalService {
         sourceId: proposal.sourceId,
         transaction: txn,
       );
-      return txn.requireCommitId();
+      return txn.result();
     }, label: addMemoryAction);
   }
 
