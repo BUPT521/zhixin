@@ -1,12 +1,20 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/drift/tables.dart' show checkValueSets;
+import 'package:zhixin/domain/models/assessment.dart';
+import 'package:zhixin/domain/models/memory.dart';
+import 'package:zhixin/domain/models/study.dart';
+import 'package:zhixin/domain/models/study_plan.dart';
 
 /// 列取值集合只有一份：`tables.dart` 的 [checkValueSets]。
 ///
 /// 表类的 CHECK 约束引用这份常量，建库结果与 01 文档由 `schema_doc_test` 比对。
 /// 这里核对建库结果里的字符串值集合与常量逐列相同，并保证没有第二份没有登记
 /// 的 CHECK 取值集合；新增或删除取值时三处一起改，测试不会替任何一处兜底。
+///
+/// 有对应枚举的列再与枚举值比对一次：枚举是领域侧的取值来源，常量是建库侧的
+/// 表示，两边顺序与内容都必须相同；`unknown` 的取值为空串，只用于读取回落，
+/// 不写进库，因此不参与比对。
 void main() {
   late Map<String, Map<String, List<String>>> actual;
 
@@ -47,7 +55,57 @@ void main() {
       reason: '有字符串值集合没有登记到 checkValueSets',
     );
   });
+
+  test('有对应枚举的取值集合与枚举值相同', () {
+    final enumSets = <String, List<String>>{
+      'learning_goal.status': _enumValues<LearningGoalStatus>(
+        LearningGoalStatus.values,
+        (value) => value.value,
+      ),
+      'study_plan.status': _enumValues<StudyPlanStatus>(
+        StudyPlanStatus.values,
+        (value) => value.value,
+      ),
+      'plan_item.status': _enumValues<PlanItemStatus>(
+        PlanItemStatus.values,
+        (value) => value.value,
+      ),
+      'study_session.outcome': _enumValues<SessionOutcome>(
+        SessionOutcome.values,
+        (value) => value.value,
+      ),
+      'assessment.kind': _enumValues<AssessmentKind>(
+        AssessmentKind.values,
+        (value) => value.value,
+      ),
+      'memory.kind': _enumValues<MemoryKind>(
+        MemoryKind.values,
+        (value) => value.value,
+      ),
+      'memory.source_kind': _enumValues<MemorySourceKind>(
+        MemorySourceKind.values,
+        (value) => value.value,
+      ),
+      'memory.status': _enumValues<MemoryStatus>(
+        MemoryStatus.values,
+        (value) => value.value,
+      ),
+    };
+    for (final entry in enumSets.entries) {
+      expect(
+        checkValueSets[entry.key],
+        entry.value,
+        reason: '${entry.key} 的常量与枚举取值不一致，改枚举时同步改 tables.dart',
+      );
+    }
+  });
 }
+
+/// 枚举值集合，去掉只用于读取回落的空串。
+List<String> _enumValues<T>(Iterable<T> values, String Function(T) valueOf) => [
+  for (final value in values)
+    if (valueOf(value).isNotEmpty) valueOf(value),
+];
 
 /// 从建表语句里读 `CHECK("列" IN ('值', ...))` 的字符串值集合。
 ///
