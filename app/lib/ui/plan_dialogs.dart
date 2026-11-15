@@ -5,6 +5,7 @@ import '../app_scope.dart';
 import '../domain/models/study.dart';
 import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
+import 'copy.dart';
 import 'format.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_select.dart';
@@ -216,7 +217,7 @@ class _BlockDialogState extends State<BlockDialog> {
         children: [
           ZhixinSelect<int>(
             value: _itemId,
-            label: '学习事项',
+            label: planItemName,
             options: {for (final item in widget.items) item.id: item.title},
             onChange: (value) {
               if (value != null) setState(() => _itemId = value);

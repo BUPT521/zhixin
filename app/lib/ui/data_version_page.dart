@@ -14,6 +14,7 @@ import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
 import '../platform/data_package_export.dart';
+import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'restore_flow.dart';
@@ -904,7 +905,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
   String _timeText(DateTime? time) => time == null ? '时间未知' : shortTime(time);
 
   String _actorLabel(String actor) => switch (actor) {
-    'ai' => 'AI',
+    'ai' => buddyName,
     'system' => '系统',
     _ => '你',
   };
@@ -916,7 +917,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     'conversation' => '讨论',
     'message' => '消息',
     'study_plan' => '学习计划',
-    'plan_item' => '学习事项',
+    'plan_item' => planItemName,
     'timetable_entry' => '课表',
     'schedule_block' => '预约',
     'study_session' => '学习场次',

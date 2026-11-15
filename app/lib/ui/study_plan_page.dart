@@ -11,6 +11,7 @@ import '../domain/models/material.dart';
 import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
 import 'discussion_page.dart';
+import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'plan_dialogs.dart';
@@ -493,7 +494,7 @@ Future<void> showStudyPlanSetup(
     final focus = selected
         .map(
           (message) =>
-              '${message.role == 'user' ? '用户' : '搭子'}：${message.content.trim()}',
+              '${message.role == 'user' ? '用户' : buddyName}：${message.content.trim()}',
         )
         .join('\n');
     if (focus.isNotEmpty) conversationFocus = focus;

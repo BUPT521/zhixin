@@ -3,6 +3,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import 'discussion_page.dart';
+import 'copy.dart';
 import 'learning_page.dart';
 import 'memory_page.dart';
 import 'now_page.dart';
@@ -149,9 +150,9 @@ class _BottomBar extends StatelessWidget {
   const _BottomBar({required this.index, required this.onChange});
 
   static const _items = [
-    (FLucideIcons.house, '现在'),
-    (FLucideIcons.history, '记录'),
-    (FLucideIcons.calendarClock, '安排'),
+    (FLucideIcons.house, tabNow),
+    (FLucideIcons.history, tabRecords),
+    (FLucideIcons.calendarClock, tabPlan),
   ];
   static const _itemPadding = 5.0;
   static const _iconHeight = 30.0;

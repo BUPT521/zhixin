@@ -9,6 +9,7 @@ import 'theme.dart';
 import '../application/discussion_service.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/material.dart' show Citation;
+import 'copy.dart';
 import 'markdown_text.dart';
 
 class DiscussionMessage extends StatelessWidget {
@@ -202,7 +203,7 @@ Widget _replyCard({String? status, required List<Widget> children}) {
   return DiscussionCard(
     margin: const EdgeInsets.only(bottom: 12),
     icon: FLucideIcons.bookOpenText,
-    title: '知新搭子',
+    title: '知新$buddyName',
     status: status,
     children: [
       const Divider(height: 16),

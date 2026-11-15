@@ -14,6 +14,7 @@ import '../domain/models/conversation.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
 import 'discussion_activity.dart';
+import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
@@ -321,7 +322,7 @@ class _RecordsPageState extends State<RecordsPage>
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
-        title: const Text('记录'),
+        title: const Text(tabRecords),
         actions: [
           ZhixinHeaderAction(
             icon: FLucideIcons.network,
@@ -390,12 +391,12 @@ class _RecordsPageState extends State<RecordsPage>
                 segments: const [
                   ZhixinSegment(
                     value: RecordsTab.learning,
-                    label: '学习记录',
+                    label: recordsTabLearning,
                     icon: FLucideIcons.history,
                   ),
                   ZhixinSegment(
                     value: RecordsTab.materials,
-                    label: '材料',
+                    label: recordsTabMaterials,
                     icon: FLucideIcons.bookOpen,
                   ),
                 ],
@@ -566,7 +567,7 @@ class _RecordsPageState extends State<RecordsPage>
                             icon: _filtered
                                 ? FLucideIcons.filterX
                                 : FLucideIcons.messageCircle,
-                            title: _filtered ? '没有符合筛选的记录' : '暂无学习记录',
+                            title: _filtered ? '没有符合筛选的记录' : emptyRecords,
                             description: _filtered
                                 ? '可以调整筛选条件，查看其他记录。'
                                 : '讨论和题目的作答都会保存在这里。',

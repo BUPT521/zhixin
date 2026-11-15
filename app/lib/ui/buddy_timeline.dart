@@ -8,6 +8,7 @@ import '../application/memory_view.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/material.dart' show Citation;
 import 'buddy_flows.dart';
+import 'copy.dart';
 import 'discussion_cards.dart';
 import 'discussion_message.dart';
 import 'markdown_text.dart';
@@ -283,7 +284,7 @@ class ChatMessagePreview extends StatelessWidget {
 
   String _roleLabel(String role) => switch (role) {
     'user' => '你',
-    'assistant' => '搭子',
+    'assistant' => buddyName,
     _ => '系统',
   };
 }

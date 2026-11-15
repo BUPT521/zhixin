@@ -15,6 +15,7 @@ import '../data/revisions/revision_models.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import 'capacity_sheet.dart';
+import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_dialog.dart';
@@ -569,14 +570,14 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         })
         .toList(growable: false);
     if (movable.isEmpty) {
-      showToast(context, '本周没有可顺延的搭子预约；固定的、自己排的与已经开始的预约保持原时间。');
+      showToast(context, '本周没有可顺延的$buddyName预约；固定的、自己排的与已经开始的预约保持原时间。');
       return;
     }
     final minutes = await showZhixinAlert<int>(
       context: context,
       title: '整组顺延',
       content: Text(
-        '把本周 ${movable.length} 条尚未开始、由搭子排的预约一起向后移动。'
+        '把本周 ${movable.length} 条尚未开始、由$buddyName排的预约一起向后移动。'
         '固定的、自己排的与已经开始的预约保持原时间。',
       ),
       actions: [
@@ -1048,7 +1049,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
-        title: const Text('安排'),
+        title: const Text(tabPlan),
         actions: [
           if (week != null) ...[
             Padding(
@@ -1078,7 +1079,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
                 ),
                 ZhixinMenuItem(
                   label: '整组顺延',
-                  subtitle: '本周搭子排的弹性预约一起向后移',
+                  subtitle: '本周$buddyName排的弹性预约一起向后移',
                   onSelected: _shiftWeek,
                 ),
                 ZhixinMenuItem(label: '新建目标', onSelected: _addGoal),
@@ -1159,10 +1160,10 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     ),
     child: ZhixinSegmented<int>(
       segments: const [
-        ZhixinSegment(value: 0, label: '日程'),
-        ZhixinSegment(value: 1, label: '事项'),
-        ZhixinSegment(value: 2, label: '目标'),
-        ZhixinSegment(value: 3, label: 'AI 改动'),
+        ZhixinSegment(value: 0, label: planTabSchedule),
+        ZhixinSegment(value: 1, label: planTabItems),
+        ZhixinSegment(value: 2, label: planTabGoals),
+        ZhixinSegment(value: 3, label: aiChanges),
       ],
       selected: _tab,
       onChanged: (tab) => setState(() {
@@ -1485,7 +1486,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final header = <Widget>[
       SectionHeading(
         first: true,
-        title: '学习事项',
+        title: planItemName,
         subtitle: '默认列出未完成的事项，已完成的按页查看',
         action: forui.FButton(
           variant: forui.FButtonVariant.ghost,
@@ -1500,7 +1501,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         const forui.FCard(
           child: EmptyState(
             icon: FLucideIcons.listChecks,
-            title: '暂无学习事项',
+            title: emptyPlanItems,
             description: '接受讨论中的下一步建议，或直接新建一项。',
           ),
         ),
@@ -1508,7 +1509,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         forui.FCard(
           child: EmptyState(
             icon: FLucideIcons.circleCheck,
-            title: '没有未完成的学习事项',
+            title: emptyPlanItemsNoneOpen,
             description: '已完成的 ${week.doneItemCount} 项可以展开查看。',
           ),
         ),
@@ -1627,15 +1628,15 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final header = <Widget>[
       const SectionHeading(
         first: true,
-        title: 'AI 的改动',
-        subtitle: '搭子执行过的变更，可以逐条撤销',
+        title: aiChanges,
+        subtitle: '$buddyName执行过的变更，可以逐条撤销',
       ),
       if (week.operations.isEmpty)
         const forui.FCard(
           child: EmptyState(
             icon: FLucideIcons.history,
-            title: '暂无 AI 改动',
-            description: '这里记录搭子已执行的变更。',
+            title: emptyChangesTitle,
+            description: emptyChangesDescription,
           ),
         ),
     ];
@@ -1976,7 +1977,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
                     ? const StatusTag('已固定', icon: FLucideIcons.lock)
                     : const StatusTag('弹性', tone: TagTone.muted),
                 if (block.source == 'ai')
-                  const StatusTag('搭子排的', icon: FLucideIcons.sparkles),
+                  const StatusTag('$buddyName排的', icon: FLucideIcons.sparkles),
               ],
             ),
           ],
