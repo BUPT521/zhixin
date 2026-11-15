@@ -253,7 +253,7 @@ void main() {
       expect(restoredBytes.isSuccess, isTrue);
 
       expect((await scope!.testing.tasks.goalById(beforeId))?.title, '恢复前保留目标');
-      final points = await scope!.data.restorePoints.list();
+      final points = await scope!.data.versions.restorePoints();
       expect(points, hasLength(1));
       expect(await File(points.single.path).exists(), isTrue);
       expect(points.single.head, await scope!.data.versions.currentHead());

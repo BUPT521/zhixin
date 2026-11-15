@@ -14,7 +14,6 @@ import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'application/undo_service.dart';
 import 'data/backup/data_version_service.dart';
-import 'data/backup/restore_point_store.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/vector/embedding_config_store.dart';
 
@@ -109,17 +108,15 @@ class SettingsServices {
   BuddyAi get ai => aiFactory();
 }
 
-/// 数据版本、数据包与附件缓存。
+/// 数据版本、数据包、恢复点与附件缓存。
 class DataServices {
   const DataServices({
     required this.revisions,
-    required this.restorePoints,
     required this.versions,
     required this.undo,
   });
 
   final RevisionService revisions;
-  final RestorePointStore restorePoints;
 
   /// 数据包、整库恢复、恢复点与清空；页面只从这里做写路径操作。
   final DataVersionService versions;

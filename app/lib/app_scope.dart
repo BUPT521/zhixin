@@ -212,7 +212,6 @@ class AppScopeState extends State<AppScope> {
     ),
     data: DataServices(
       revisions: _revisions,
-      restorePoints: _restorePoints,
       versions: _dataVersions,
       undo: _undo,
     ),
@@ -360,7 +359,7 @@ class AppScopeState extends State<AppScope> {
     revisions: _revisions,
     revisionPackages: _revisionPackages,
     dataPackages: _dataPackages,
-    restorePoints: _restorePoints,
+    restorePointStore: _restorePoints,
     engine: _engine,
     cache: _attachmentCache,
     connection: () => _connection!,

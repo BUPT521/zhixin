@@ -30,7 +30,7 @@ DataVersionService _service(TestRig rig) {
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     ),
-    restorePoints: RestorePointStore(filesDir: rig.filesDir),
+    restorePointStore: RestorePointStore(filesDir: rig.filesDir),
     engine: rig.engine,
     cache: AttachmentCache(filesDir: () => rig.filesDir),
     connection: () => rig.raw,

@@ -18,14 +18,15 @@ import 'restore_point_store.dart';
 ///
 /// 这些操作共用同一个独占写入区与数据代次，并且会换掉当前的库连接；连接的
 /// 打开、换库之后的通知与平台路径仍由应用根负责，服务通过构造参数拿到它们，
-/// 页面只调服务，不再经应用根的扩展方法。
+/// 页面只调服务，不再经应用根的扩展方法。恢复点也归这里：列表、保留份数与
+/// 删除都由服务给出，页面不再直接读文件存储。
 class DataVersionService {
   DataVersionService({
     required this.gate,
     required this.revisions,
     required this.revisionPackages,
     required this.dataPackages,
-    required this.restorePoints,
+    required this.restorePointStore,
     required this.engine,
     required this.cache,
     required this.connection,
@@ -41,7 +42,7 @@ class DataVersionService {
   final RevisionService revisions;
   final RevisionPackageService revisionPackages;
   final DataPackageService dataPackages;
-  final RestorePointStore restorePoints;
+  final RestorePointStore restorePointStore;
   final RevisionEngine engine;
   final AttachmentCache cache;
 
@@ -82,7 +83,7 @@ class DataVersionService {
       await revisionPackages.validateRepositoryBytes(bytes);
       final summary = await currentRestoreSummary();
       try {
-        await restorePoints.capture(
+        await restorePointStore.capture(
           head: summary.head,
           commitCount: summary.commitCount,
           namedCount: summary.namedCount,
@@ -150,9 +151,22 @@ class DataVersionService {
     );
   }
 
+  /// 恢复点按保存时间倒序；数据版本页用它列出恢复前自动保存的状态。
+  Future<List<RestorePoint>> restorePoints() => restorePointStore.list();
+
+  /// 恢复点最多保留的份数；超出时由存储按时间删掉最早的，页面只读这个数。
+  int get restorePointKeep => restorePointStore.keep;
+
+  /// 读出某份恢复点的版本库备份，交给同一条整库恢复流程。
+  Future<Uint8List> readRestorePoint(RestorePoint point) =>
+      restorePointStore.read(point);
+
+  /// 删除一份恢复点；文件与同名说明一起删除。
+  Future<void> deleteRestorePoint(RestorePoint point) =>
+      restorePointStore.delete(point);
+
   /// 清空本机学习数据，并按当前结构重开一个空库。
-  Future<void> resetAllData() async {
-    markPendingWorkInvalidated();
+  Future<void> resetAllData() async {    markPendingWorkInvalidated();
     await gate.exclusive(resetStudyData);
     notifyDataChanged();
   }

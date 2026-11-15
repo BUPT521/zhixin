@@ -73,7 +73,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
       final undoReasons = await scope.data.revisions.undoBlockReasons(
         history.commits,
       );
-      final points = await scope.data.restorePoints.list();
+      final points = await scope.data.versions.restorePoints();
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填。
       await context.afterTransition();
@@ -82,7 +82,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
         _history = history;
         _undoReasons = undoReasons;
         _restorePoints = points;
-        _pointKeep = scope.data.restorePoints.keep;
+        _pointKeep = scope.data.versions.restorePointKeep;
         _usage = usage;
         _bytes = usage.databaseBytes;
         _loading = false;
@@ -508,7 +508,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final scope = AppScope.of(context);
     final Uint8List bytes;
     try {
-      bytes = await scope.data.restorePoints.read(point);
+      bytes = await scope.data.versions.readRestorePoint(point);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -543,7 +543,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).data.restorePoints.delete(point);
+      await AppScope.of(context).data.versions.deleteRestorePoint(point);
       _report('已删除恢复点');
       await _load();
     } catch (error, stack) {
