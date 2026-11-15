@@ -4,6 +4,7 @@ import '../db/raw_executor.dart';
 import '../db/sql.dart';
 
 import '../repository/schedule_conflicts.dart';
+import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import 'revision_actions.dart';
 import 'revision_engine.dart';
@@ -346,8 +347,14 @@ class RevisionUndoService {
     }
     if (status != 'planned') return null;
 
-    final startAt = DateTime.tryParse(start);
-    final endAt = DateTime.tryParse(end);
+    final DateTime? startAt;
+    final DateTime? endAt;
+    try {
+      startAt = optionalDateTime(start);
+      endAt = optionalDateTime(end);
+    } on FormatException {
+      return '预约时间不完整，不能撤销';
+    }
     if (startAt == null || endAt == null || !endAt.isAfter(startAt)) {
       return '预约时间不完整，不能撤销';
     }

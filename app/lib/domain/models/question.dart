@@ -241,11 +241,17 @@ class HelpMemory {
     if (status is! String || content.trim().isEmpty) return null;
     final validUntil = value['valid_until'];
     final commitId = value['commit_id'];
+    final DateTime? parsedUntil;
+    try {
+      parsedUntil = validUntil is String ? optionalDateTime(validUntil) : null;
+    } on FormatException {
+      return null;
+    }
     return HelpMemory(
       id: id,
       kind: MemoryKind.fromValue(kind),
       content: content.trim(),
-      validUntil: validUntil is String ? DateTime.tryParse(validUntil) : null,
+      validUntil: parsedUntil,
       status: status,
       commitId: commitId is int ? commitId : null,
     );
@@ -286,7 +292,12 @@ class HelpEntry {
     final content = value['content'];
     final at = value['at'];
     if (kind is! String || content is! String) return null;
-    final parsedAt = at is String ? DateTime.tryParse(at) : null;
+    final DateTime? parsedAt;
+    try {
+      parsedAt = at is String ? optionalDateTime(at) : null;
+    } on FormatException {
+      return null;
+    }
     final rawMemories = value['memories'];
     final memories = rawMemories is List
         ? rawMemories

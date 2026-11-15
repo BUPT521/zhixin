@@ -1280,7 +1280,12 @@ class DiscussionService {
     if (value is! String || value.trim().isEmpty || value == 'null') {
       return null;
     }
-    return DateTime.tryParse(value.trim());
+    try {
+      return optionalDateTime(value);
+    } on FormatException {
+      // 模型给出的时刻坏了只当作没有期限，不让整条回答失败。
+      return null;
+    }
   }
 }
 

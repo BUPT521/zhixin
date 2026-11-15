@@ -115,8 +115,8 @@ Future<ScheduleConflict?> findRecurringTimetableConflict(
     (db) => db.plannedBlocksAfter(formatDateTime(now)).get(),
   );
   for (final row in rows) {
-    final blockStart = DateTime.parse(row.startAt);
-    final blockEnd = DateTime.parse(row.endAt);
+    final blockStart = requiredDateTime(row.startAt);
+    final blockEnd = requiredDateTime(row.endAt);
     var day = DateTime(blockStart.year, blockStart.month, blockStart.day);
     while (day.isBefore(blockEnd)) {
       if (day.weekday == weekday) {
@@ -167,8 +167,8 @@ Future<ScheduleConflict?> _findBlockConflict(
   );
   if (rows.isEmpty) return null;
   final row = rows.first;
-  final conflictStart = DateTime.parse(row.startAt);
-  final conflictEnd = DateTime.parse(row.endAt);
+  final conflictStart = requiredDateTime(row.startAt);
+  final conflictEnd = requiredDateTime(row.endAt);
   return ScheduleConflict(
     start: conflictStart.isAfter(start) ? conflictStart : start,
     end: conflictEnd.isBefore(end) ? conflictEnd : end,

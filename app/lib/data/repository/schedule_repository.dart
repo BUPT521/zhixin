@@ -231,8 +231,8 @@ class ScheduleRepository {
     for (final row in planned) {
       final id = row.id;
       if (ids.contains(id)) continue;
-      final blockStart = DateTime.parse(row.startAt);
-      final blockEnd = DateTime.parse(row.endAt);
+      final blockStart = requiredDateTime(row.startAt);
+      final blockEnd = requiredDateTime(row.endAt);
       for (final adjustment in adjustments) {
         if (blockStart.isBefore(adjustment.end) &&
             blockEnd.isAfter(adjustment.start)) {
@@ -459,8 +459,8 @@ class ScheduleRepository {
       if (block == null) throw StateError('未找到这条时间安排');
       await _ensureNoConflict(
         executor,
-        start: DateTime.parse(block.startAt),
-        end: DateTime.parse(block.endAt),
+        start: requiredDateTime(block.startAt),
+        end: requiredDateTime(block.endAt),
         excludeBlockId: id,
       );
     }
