@@ -93,8 +93,14 @@ server/
 | `ZHIXIN_LLM_BASE_URL` | `https://api.deepseek.com/v1` | 提供方的 Chat Completions 基础地址 |
 | `ZHIXIN_LLM_API_KEY` | 空 | 提供方 key；为空时代理返回 503 |
 | `ZHIXIN_LLM_MODELS` | `deepseek-flash` | 允许的模型名，逗号分隔 |
-| `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日 token 额度，待定 |
+| `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日 token 额度；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
+
+## 部署与凭据
+
+部署目标是与自建 Sentry 相同的服务器：TLS 在反向代理或负载均衡上终结，`zhixin-api` 只监听内网地址；数据库用 PostgreSQL，备份与附件的字节走 MinIO。需要注入的环境变量就是上面配置表里的那些，仓库里不写地址、口令与 key。
+
+服务器只有一位管理员（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D7），不设第二位。数据库口令、对象存储密钥、TLS 证书与备份介质的存放位置，以及主机失联、数据库损坏、对象存储不可用三种情况下的恢复步骤，由管理员写在仓库之外的私有目录；仓库只保留需要哪些变量与恢复的先后顺序。公测准备阶段做一次恢复演练，用备份重建一台可用实例，演练日期与结果写进结题材料。
 
 ## 本地运行与检查
 
