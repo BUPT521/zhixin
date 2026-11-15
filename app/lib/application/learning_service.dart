@@ -1,5 +1,6 @@
 import '../ai/ai_chat_service.dart';
 import '../ai/llm_client.dart';
+import '../ai/buddy_prompts.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/revision_actions.dart';
@@ -23,6 +24,7 @@ import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
 import 'attachment_service.dart';
+import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
@@ -73,17 +75,17 @@ class HelpResult {
 ///
 /// 最新的答对为完成；最新的答错但本次有答对为部分完成；都有判断且都没答对
 /// 为没做成。暂不判断的作答不参与推出，也不当成答错。
-String? deriveSessionOutcome(Iterable<Attempt> attempts) {
+SessionOutcome? deriveSessionOutcome(Iterable<Attempt> attempts) {
   final submitted =
       attempts
           .where((attempt) => attempt.submitted && attempt.isCorrect != null)
           .toList()
         ..sort((a, b) => b.id.compareTo(a.id));
   if (submitted.isEmpty) return null;
-  if (submitted.first.isCorrect == true) return 'done';
+  if (submitted.first.isCorrect == true) return SessionOutcome.done;
   return submitted.any((attempt) => attempt.isCorrect == true)
-      ? 'partial'
-      : 'not_done';
+      ? SessionOutcome.partial
+      : SessionOutcome.notDone;
 }
 
 /// 取本次最新写下的困难，作为场次摘要。
@@ -305,25 +307,21 @@ class LearningService {
             createdAt: storedAttempt.createdAt,
           );
     final facts = await context.load(
-      question: question,
-      attempt: attempt,
-      assessmentRecords: await assessments.forAttempt(storedAttempt.id),
-      mode: mode,
-      goalId: goalId,
-      materialId: conversation?.materialId,
-      pageNo: conversation?.pageNo,
-      conversationId: questionId,
-      query: question.stem,
-      broughtIdentities: broughtIdentities,
-      includeEarlier: !independentRedo,
+      ContextRequest(
+        question: question,
+        attempt: attempt,
+        assessmentRecords: await assessments.forAttempt(storedAttempt.id),
+        mode: mode,
+        goalId: goalId,
+        materialId: conversation?.materialId,
+        pageNo: conversation?.pageNo,
+        conversationId: questionId,
+        query: question.stem,
+        broughtIdentities: broughtIdentities,
+        includeEarlier: !independentRedo,
+      ),
     );
-    final prompt = switch (mode) {
-      BuddyMode.hint => '给我一个提示，不直接给答案。',
-      BuddyMode.explain => '完整讲这道题，讲清依据。',
-      BuddyMode.check => '检查我的做法，指出第一个需要改的地方。',
-      BuddyMode.chat => '看看这道题，告诉我现在最该做的一步。',
-      BuddyMode.plan => '按材料范围提出学习顺序。',
-    };
+    final prompt = modePrompt(mode);
 
     var text = '';
     var fromModel = false;
@@ -652,16 +650,18 @@ class LearningService {
     }
     final goalId = conversation?.goalId;
     final facts = await context.load(
-      question: question,
-      attempt: attempt,
-      assessmentRecords: await assessments.forAttempt(attemptId),
-      mode: BuddyMode.check,
-      goalId: goalId,
-      materialId: conversation?.materialId,
-      pageNo: conversation?.pageNo,
-      conversationId: questionId,
-      query: question.stem,
-      broughtIdentities: broughtIdentities,
+      ContextRequest(
+        question: question,
+        attempt: attempt,
+        assessmentRecords: await assessments.forAttempt(attemptId),
+        mode: BuddyMode.check,
+        goalId: goalId,
+        materialId: conversation?.materialId,
+        pageNo: conversation?.pageNo,
+        conversationId: questionId,
+        query: question.stem,
+        broughtIdentities: broughtIdentities,
+      ),
     );
     final config = await ai.config();
     final prepared = await AttachmentService(filesDir: () => runtime.filesDir)
@@ -832,7 +832,7 @@ class LearningService {
   /// 记住，或同一困难在同一目标下反复出现时才写成独立记忆（00 第 4 章）。
   Future<void> end({
     required StudySession session,
-    String? outcome,
+    SessionOutcome? outcome,
     String? summary,
   }) async {
     final requestEpoch = runtime.dataEpoch;

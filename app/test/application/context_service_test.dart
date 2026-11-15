@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/application/context_request.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -45,7 +46,7 @@ void main() {
       end: DateTime(2026, 11, 8, 1),
     );
 
-    final context = await service.load();
+    final context = await service.load(const ContextRequest());
 
     expect(context.todayBlocks.map((block) => block.block.id), [today]);
   });
@@ -78,7 +79,7 @@ void main() {
       end: DateTime(2026, 11, 7, 11),
     );
 
-    final context = await service.load();
+    final context = await service.load(const ContextRequest());
 
     expect(context.todayBlocks.map((block) => block.block.id), [today]);
   });
@@ -132,7 +133,9 @@ void main() {
       );
     }
 
-    final context = await service.load(goalId: goal, query: '矩阵');
+    final context = await service.load(
+      ContextRequest(goalId: goal, query: '矩阵'),
+    );
 
     expect(context.recentAttempts, hasLength(6));
     expect(
@@ -180,8 +183,7 @@ void main() {
     }
 
     final context = await service.load(
-      mode: BuddyMode.chat,
-      conversationId: id,
+      ContextRequest(mode: BuddyMode.chat, conversationId: id),
     );
 
     // 同一道题不按记录去重：独立性、帮助次数与延迟都记在各次尝试上。
@@ -232,7 +234,9 @@ void main() {
     final otherGoal = await submit(goalB, '矩阵相似的题');
     final unassigned = await submit(null, '独立的一道题');
 
-    final context = await service.load(mode: BuddyMode.chat, goalId: goalA);
+    final context = await service.load(
+      ContextRequest(mode: BuddyMode.chat, goalId: goalA),
+    );
     final ids = {for (final entry in context.recentAttempts) entry.question.id};
     expect(ids, containsAll([inGoal, unassigned]));
     expect(ids, isNot(contains(otherGoal)));
@@ -292,8 +296,7 @@ void main() {
             as int;
 
     final onlyCurrent = await service.load(
-      query: '条件概率',
-      conversationId: current,
+      ContextRequest(query: '条件概率', conversationId: current),
     );
     // 当前讨论本身通过历史消息带入，不重复列进“较早的相关记录”。
     expect(onlyCurrent.relatedRecords, isEmpty);
@@ -305,9 +308,14 @@ void main() {
     expect(onlyCurrent.materialHits, isEmpty);
 
     final brought = await service.load(
-      query: '条件概率',
-      conversationId: current,
-      broughtIdentities: {'message:$otherMessage', 'material_page:$material:1'},
+      ContextRequest(
+        query: '条件概率',
+        conversationId: current,
+        broughtIdentities: {
+          'message:$otherMessage',
+          'material_page:$material:1',
+        },
+      ),
     );
     expect(
       brought.relatedRecords.map((record) => record.conversationId),
@@ -319,7 +327,9 @@ void main() {
     );
 
     // 下一轮没有带入时，只读当前记录。
-    final nextTurn = await service.load(query: '条件概率', conversationId: current);
+    final nextTurn = await service.load(
+      ContextRequest(query: '条件概率', conversationId: current),
+    );
     expect(
       nextTurn.relatedRecords.map((record) => record.conversationId),
       isNot(contains(other)),
@@ -361,9 +371,11 @@ void main() {
     final linearRecord = await record(linear, '独立性在向量组里的含义');
 
     final context = await service.load(
-      goalId: probability,
-      query: '独立性',
-      conversationId: probabilityRecord,
+      ContextRequest(
+        goalId: probability,
+        query: '独立性',
+        conversationId: probabilityRecord,
+      ),
     );
     final seen = context.relatedRecords
         .map((record) => record.conversationId)

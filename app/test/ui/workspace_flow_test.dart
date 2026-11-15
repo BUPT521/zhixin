@@ -10,6 +10,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/app.dart';
+import 'package:zhixin/application/context_request.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
@@ -1841,7 +1842,8 @@ void main() {
     expect(find.text('已过期'), findsOneWidget);
     expect(find.text('本周只有半小时可用于复习'), findsOneWidget);
     final memories = await tester.runAsync(
-      () async => (await scope!.chat.context.load()).memories,
+      () async =>
+          (await scope!.chat.context.load(const ContextRequest())).memories,
     );
     expect(
       memories!.any((memory) => memory.content == '本周只有半小时可用于复习'),

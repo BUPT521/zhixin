@@ -7,6 +7,7 @@ import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/context_service.dart';
+import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/application/learning_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -667,7 +668,7 @@ void main() {
 
     await h.service.closeForQuestion(questionId);
     final session = (await h.study.recent()).single;
-    expect(session.outcome, 'not_done');
+    expect(session.outcome, SessionOutcome.notDone);
     expect(session.summary, '放缩方向还不确定');
     expect(session.endedAt, isNotNull);
 
@@ -764,7 +765,7 @@ void main() {
 
     final latest = await h.study.latestEndedByPlanItem([step.id]);
     expect(latest[step.id], isNotNull);
-    expect(latest[step.id]!.outcome, 'done');
+    expect(latest[step.id]!.outcome, SessionOutcome.done);
   });
 
   test('两条无归属记录各自建立场次，结束一题不影响另一题', () async {
@@ -801,7 +802,7 @@ void main() {
       independent: true,
     );
     await h.service.closeForQuestion(second);
-    expect((await h.study.byId(secondAttempt.sessionId!))!.outcome, 'done');
+    expect((await h.study.byId(secondAttempt.sessionId!))!.outcome, SessionOutcome.done);
   });
 
   test('清空记录目标后新生次不再继承旧场次目标', () async {

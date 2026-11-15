@@ -24,6 +24,7 @@ import 'buddy_fallback.dart';
 import '../domain/rules/time_format.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
+import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
@@ -435,13 +436,15 @@ class DiscussionService {
     // 目标，与作答求助一致。
     final resolved = await memoryScope.resolve(conversationId, record: record);
     final facts = await context.load(
-      mode: BuddyMode.chat,
-      goalId: resolved.goalId,
-      materialId: record.materialId,
-      pageNo: record.pageNo,
-      conversationId: conversationId,
-      query: text,
-      broughtIdentities: broughtIdentities,
+      ContextRequest(
+        mode: BuddyMode.chat,
+        goalId: resolved.goalId,
+        materialId: record.materialId,
+        pageNo: record.pageNo,
+        conversationId: conversationId,
+        query: text,
+        broughtIdentities: broughtIdentities,
+      ),
     );
     // 用户只追问文字时，把这条讨论里最近一次带图消息的原图一起发给模型；
     // 历史消息本身没有图片字段，只放占位符会让模型看不到题目原图。

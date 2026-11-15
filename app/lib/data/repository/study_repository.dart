@@ -47,7 +47,7 @@ class StudyRepository {
     planItemId: row.planItemId,
     conversationId: row.conversationId,
     summary: row.summary,
-    outcome: row.outcome,
+    outcome: SessionOutcome.fromValue(row.outcome),
     startedAt: requiredDateTime(row.startedAt),
     endedAt: optionalDateTime(row.endedAt ?? ''),
   );
@@ -76,13 +76,13 @@ class StudyRepository {
 
   Future<void> end(
     int id, {
-    String? outcome,
+    SessionOutcome? outcome,
     String? summary,
     WriteTransaction? transaction,
   }) async {
     final now = formatDateTime(_clock());
     await writeExecutor(transaction, _db).writeGenerated(
-      (db) => db.finishStudySession(outcome, summary?.trim(), now, id),
+      (db) => db.finishStudySession(outcome?.value, summary?.trim(), now, id),
     );
   }
 

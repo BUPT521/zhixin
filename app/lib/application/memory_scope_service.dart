@@ -22,13 +22,9 @@ class MemoryScopeService {
   }) async {
     final current = record ?? await conversations.byId(conversationId);
     final goalId = current?.goalId;
-    if (goalId != null) {
-      return (goalId: goalId, scope: memoryGoalScope(goalId));
-    }
-    final materialId = current?.materialId;
-    if (materialId != null) {
-      return (goalId: null, scope: memoryMaterialScope(materialId));
-    }
-    return (goalId: null, scope: null);
+    return (
+      goalId: goalId,
+      scope: memoryScopeFor(goalId: goalId, materialId: current?.materialId),
+    );
   }
 }

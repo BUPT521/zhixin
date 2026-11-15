@@ -12,6 +12,7 @@ import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/study_plan_steps.dart';
+import 'context_request.dart';
 import 'context_service.dart';
 
 /// 一份学习计划与它的步骤。
@@ -306,13 +307,15 @@ class StudyPlanService {
     final batchFrom = batch.first.pageNo;
     final batchTo = batch.last.pageNo;
     final facts = await context.load(
-      mode: BuddyMode.plan,
-      goalId: goalId,
-      materialId: materialId,
-      pageNo: batchFrom,
-      pageFrom: batchFrom,
-      pageTo: batchTo,
-      conversationFocus: conversationFocus,
+      ContextRequest(
+        mode: BuddyMode.plan,
+        goalId: goalId,
+        materialId: materialId,
+        pageNo: batchFrom,
+        pageFrom: batchFrom,
+        pageTo: batchTo,
+        conversationFocus: conversationFocus,
+      ),
     );
     final isDocx = facts.material?.isDocx ?? false;
     final range = isDocx

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/learning_service.dart';
 import 'package:zhixin/domain/models/question.dart';
+import 'package:zhixin/domain/models/study.dart';
 
 Attempt _attempt(
   int id, {
@@ -21,20 +22,20 @@ void main() {
   test('场次结果按最新的已提交尝试推出', () {
     expect(deriveSessionOutcome(const []), isNull);
     expect(deriveSessionOutcome([_attempt(1, submitted: false)]), isNull);
-    expect(deriveSessionOutcome([_attempt(1, correct: true)]), 'done');
+    expect(deriveSessionOutcome([_attempt(1, correct: true)]), SessionOutcome.done);
     expect(
       deriveSessionOutcome([
         _attempt(2, correct: false),
         _attempt(1, correct: true),
       ]),
-      'partial',
+      SessionOutcome.partial,
     );
     expect(
       deriveSessionOutcome([
         _attempt(2, correct: false),
         _attempt(1, correct: false),
       ]),
-      'not_done',
+      SessionOutcome.notDone,
     );
   });
 
@@ -45,19 +46,19 @@ void main() {
         _attempt(2, correct: true),
         _attempt(1, correct: false),
       ]),
-      'done',
+      SessionOutcome.done,
     );
   });
 
   test('暂不判断的作答不推出结果，也不当成答错', () {
     expect(
       deriveSessionOutcome([_attempt(2), _attempt(1, correct: false)]),
-      'not_done',
+      SessionOutcome.notDone,
     );
     expect(deriveSessionOutcome([_attempt(1)]), isNull);
     expect(
       deriveSessionOutcome([_attempt(2), _attempt(1, correct: true)]),
-      'done',
+      SessionOutcome.done,
     );
   });
 

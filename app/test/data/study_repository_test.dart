@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 
@@ -30,9 +31,13 @@ void main() {
     final stepId = await tasks.createItem(title: '第 1 步');
 
     final first = await study.start(planItemId: stepId);
-    await study.end(first.id, outcome: 'not_done', summary: '先做了一半');
+    await study.end(
+      first.id,
+      outcome: SessionOutcome.notDone,
+      summary: '先做了一半',
+    );
     final second = await study.start(planItemId: stepId);
-    await study.end(second.id, outcome: 'done', summary: '这次独立完成');
+    await study.end(second.id, outcome: SessionOutcome.done, summary: '这次独立完成');
 
     final latest = await study.latestEndedByPlanItem([stepId]);
     expect(latest[stepId]!.id, second.id);

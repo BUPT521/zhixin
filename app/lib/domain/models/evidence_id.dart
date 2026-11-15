@@ -18,7 +18,7 @@ class EvidenceId {
   factory EvidenceId.conversation(int conversationId) =>
       EvidenceId('conversation:$conversationId');
 
-/// 解析标识；格式不对或编号不是整数时返回空。
+  /// 解析标识；格式不对或编号不是整数时返回空。
   static EvidenceId? tryParse(String value) {
     final text = value.trim();
     final parts = text.split(':');

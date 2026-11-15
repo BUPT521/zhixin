@@ -157,20 +157,15 @@ class StudySession {
   final int? conversationId;
   final String? summary;
 
-  /// `done` / `partial` / `not_done`；未结束时为空。
-  final String? outcome;
+  /// 场次结果；未结束时为空。
+  final SessionOutcome? outcome;
   final DateTime startedAt;
   final DateTime? endedAt;
 
   bool get open => endedAt == null;
 
   /// 场次结果的界面说法；没有提交或都没有判断时为空。
-  String? get outcomeLabel => switch (outcome) {
-    'done' => '完成',
-    'partial' => '部分完成',
-    'not_done' => '没做成',
-    _ => null,
-  };
+  String? get outcomeLabel => outcome?.label;
 }
 
 /// 学习事项占用的时间块（01 `schedule_block`）。
@@ -236,4 +231,24 @@ class TimetableEntry {
   final String endTime;
   final String title;
   final String? location;
+}
+
+/// 一次学习的最终结果；数据库里存的是 [value]。
+enum SessionOutcome {
+  done('done', '完成'),
+  partial('partial', '部分完成'),
+  notDone('not_done', '没做成');
+
+  const SessionOutcome(this.value, this.label);
+
+  final String value;
+  final String label;
+
+  /// 未知或空值按没有结果处理，不把坏数据当成完成。
+  static SessionOutcome? fromValue(String? value) {
+    for (final outcome in values) {
+      if (outcome.value == value) return outcome;
+    }
+    return null;
+  }
 }

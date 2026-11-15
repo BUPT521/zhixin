@@ -40,6 +40,16 @@ String memoryGoalScope(int goalId) => 'goal:$goalId';
 
 String memoryMaterialScope(int materialId) => 'material:$materialId';
 
+/// 一次回答或一条记忆的适用范围：目标优先，其次材料，都没有时是全局。
+///
+/// 讨论、作答、上下文组装与建议草案原先各写一遍同样的判定，放宽或收紧只在
+/// 这里改；全局范围用空值表示。
+String? memoryScopeFor({int? goalId, int? materialId}) {
+  if (goalId != null) return memoryGoalScope(goalId);
+  if (materialId != null) return memoryMaterialScope(materialId);
+  return null;
+}
+
 /// 搭子记得的一条内容（01 `memory`）。
 ///
 /// 带来源、有效期与状态；纠正是新增或改写后把旧的标为 `superseded`，

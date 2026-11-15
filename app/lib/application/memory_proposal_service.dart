@@ -87,7 +87,10 @@ class MemoryProposalService {
     }
     final question = await conversations.question(conversationId);
     final stem = question?.displayStem ?? conversation.title ?? '这道题';
-    final scope = _scopeFor(conversation.goalId, conversation.materialId);
+    final scope = memoryScopeFor(
+      goalId: conversation.goalId,
+      materialId: conversation.materialId,
+    );
     final existing = await memories.list(includeInactive: true);
     final processed = <int>{
       for (final memory in existing)
@@ -259,10 +262,4 @@ class MemoryProposalService {
 
   static String _contentKey(MemoryKind kind, String content) =>
       '${kind.value}|${content.replaceAll(RegExp(r'[\s，。；、,.;:：]+'), '')}';
-
-  static String? _scopeFor(int? goalId, int? materialId) {
-    if (goalId != null) return memoryGoalScope(goalId);
-    if (materialId != null) return memoryMaterialScope(materialId);
-    return null;
-  }
 }

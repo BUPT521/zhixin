@@ -8,10 +8,10 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/evidence_id.dart';
 import '../domain/models/material.dart';
-import '../domain/models/assessment.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
+import 'context_request.dart';
 import 'evidence_service.dart';
 import 'memory_recall.dart';
 import 'service_runtime.dart';
@@ -55,22 +55,21 @@ class ContextService {
   /// 回答前的原文检索；为空时只使用关键词检索，行为与之前一致。
   final EvidenceService? evidence;
 
-  Future<BuddyContext> load({
-    Question? question,
-    Attempt? attempt,
-    List<Assessment> assessmentRecords = const [],
-    BuddyMode mode = BuddyMode.chat,
-    int? goalId,
-    int? materialId,
-    int? pageNo,
-    int? pageFrom,
-    int? pageTo,
-    int? conversationId,
-    String query = '',
-    Set<String> broughtIdentities = const {},
-    String? conversationFocus,
-    bool includeEarlier = true,
-  }) async {
+  Future<BuddyContext> load(ContextRequest request) async {
+    final question = request.question;
+    final attempt = request.attempt;
+    final assessmentRecords = request.assessmentRecords;
+    final mode = request.mode;
+    final goalId = request.goalId;
+    final materialId = request.materialId;
+    final pageNo = request.pageNo;
+    final pageFrom = request.pageFrom;
+    final pageTo = request.pageTo;
+    final conversationId = request.conversationId;
+    final query = request.query;
+    final broughtIdentities = request.broughtIdentities;
+    final conversationFocus = request.conversationFocus;
+    final includeEarlier = request.includeEarlier;
     final current = runtime.policy;
     final now = current.now;
     final range = current.naturalDayRange(now);
@@ -94,7 +93,7 @@ class ContextService {
             broughtAttemptIds: _broughtAttemptIds(broughtIdentities),
           )
         : const <AttemptWithQuestion>[];
-    final scope = _scopeFor(goalId: goalId, materialId: materialId);
+    final scope = memoryScopeFor(goalId: goalId, materialId: materialId);
     // 记忆先按有效性与范围筛选，再按这次请求的用途与问题相关性取用。
     final purpose = switch (mode) {
       BuddyMode.plan => MemoryRecallPurpose.plan,
@@ -267,15 +266,6 @@ class ContextService {
       if (id != null) ids.add(id);
     }
     return ids;
-  }
-
-  /// 本次回答的适用范围：调用方给出的目标优先，其次材料；都没有时只取全局
-  /// 记忆。讨论与作答的归属由 `MemoryScopeService` 先解析，这里不再读一次
-  /// 记录上的归属。
-  String? _scopeFor({required int? goalId, required int? materialId}) {
-    if (goalId != null) return memoryGoalScope(goalId);
-    if (materialId != null) return memoryMaterialScope(materialId);
-    return null;
   }
 
   /// 给首页活动卡用：正在进行的预约、今天的下一次预约，或没有排期的待办。
