@@ -48,6 +48,5 @@ WHERE refresh_hash = sqlc.arg(refresh_hash);
 DELETE FROM session
 WHERE id = sqlc.arg(id);
 
--- name: DeleteUserSessions :exec
-DELETE FROM session
-WHERE user_id = sqlc.arg(user_id);
+-- 删账号不单独删会话：schema.sql 的 session.user_id 上是 ON DELETE CASCADE，
+-- 删掉 app_user 那一行时一起消失，所以这里没有 DeleteUserSessions。

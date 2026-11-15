@@ -38,13 +38,14 @@ type Store interface {
 	CreateUser(ctx context.Context, u User) error
 	UserByEmail(ctx context.Context, email string) (User, error)
 	UserByID(ctx context.Context, id string) (User, error)
+	// DeleteUser removes the account and, like the schema's ON DELETE CASCADE,
+	// its sessions.
 	DeleteUser(ctx context.Context, id string) error
 
 	CreateSession(ctx context.Context, s Session) error
 	SessionByAccessHash(ctx context.Context, hash string) (Session, error)
 	SessionByRefreshHash(ctx context.Context, hash string) (Session, error)
 	DeleteSession(ctx context.Context, id string) error
-	DeleteUserSessions(ctx context.Context, userID string) error
 }
 
 // MemoryStore is a Store kept in process memory.
@@ -90,6 +91,7 @@ func (m *MemoryStore) UserByID(_ context.Context, id string) (User, error) {
 	return u, nil
 }
 
+// DeleteUser 删除账号及其会话，与 schema.sql 的 ON DELETE CASCADE 一致。
 func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -99,6 +101,11 @@ func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 	}
 	delete(m.users, id)
 	delete(m.byEmail, u.Email)
+	for sid, s := range m.sessions {
+		if s.UserID == id {
+			delete(m.sessions, sid)
+		}
+	}
 	return nil
 }
 
@@ -135,16 +142,5 @@ func (m *MemoryStore) DeleteSession(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.sessions, id)
-	return nil
-}
-
-func (m *MemoryStore) DeleteUserSessions(_ context.Context, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for id, s := range m.sessions {
-		if s.UserID == userID {
-			delete(m.sessions, id)
-		}
-	}
 	return nil
 }

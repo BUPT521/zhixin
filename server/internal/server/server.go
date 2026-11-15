@@ -55,14 +55,25 @@ func MemoryStores() Stores {
 		Backups: backupStore,
 		Blobs:   blobStore,
 		Quota:   quotaStore,
-		DeleteAccount: func(ctx context.Context, userID string) error {
-			return errors.Join(
-				syncStore.DeleteUser(ctx, userID),
-				backupStore.DeleteUser(ctx, userID),
-				blobStore.DeleteUser(ctx, userID),
-				quotaStore.DeleteUser(ctx, userID),
-			)
-		},
+		DeleteAccount: DeleteAccountData(
+			syncStore.DeleteUser,
+			backupStore.DeleteUser,
+			blobStore.DeleteUser,
+			quotaStore.DeleteUser,
+		),
+	}
+}
+
+// DeleteAccountData 把各存储的账号清理合成一次操作：auth.Service 在删除账号行
+// 之前调用它，任何一步失败都返回错误，整体可以重试。内存装配与 PostgreSQL
+// 装配都从这里生成，扇出只登记一次。
+func DeleteAccountData(deleters ...func(ctx context.Context, userID string) error) auth.AccountDeleter {
+	return func(ctx context.Context, userID string) error {
+		errs := make([]error, len(deleters))
+		for i, delete := range deleters {
+			errs[i] = delete(ctx, userID)
+		}
+		return errors.Join(errs...)
 	}
 }
 

@@ -197,16 +197,14 @@ func (s *Service) User(ctx context.Context, p Principal) (User, error) {
 }
 
 // DeleteAccount removes every piece of server-side data for the account: the
-// caller-supplied data first, then the sessions and the user row. Any cleanup
-// failure stops before the user row is removed, so the request can be retried.
+// caller-supplied data first, then the user row. Sessions, sync log, backups and
+// usage go with it through the schema's ON DELETE CASCADE. Any cleanup failure
+// stops before the user row is removed, so the request can be retried.
 func (s *Service) DeleteAccount(ctx context.Context, p Principal) error {
 	if s.deleteAccountData != nil {
 		if err := s.deleteAccountData(ctx, p.UserID); err != nil {
 			return err
 		}
-	}
-	if err := s.store.DeleteUserSessions(ctx, p.UserID); err != nil {
-		return err
 	}
 	return s.store.DeleteUser(ctx, p.UserID)
 }

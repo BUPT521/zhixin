@@ -61,12 +61,12 @@ func run(log *slog.Logger) error {
 			Backups: pgStore,
 			Blobs:   blobStore,
 			Quota:   pgStore,
-			DeleteAccount: func(ctx context.Context, userID string) error {
-				return errors.Join(
-					pgStore.DeleteUserObjects(ctx, userID),
-					blobStore.DeleteUser(ctx, userID),
-				)
-			},
+			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
+			// 由这里按前缀清理。
+			DeleteAccount: server.DeleteAccountData(
+				pgStore.DeleteUserObjects,
+				blobStore.DeleteUser,
+			),
 			Ready: func(ctx context.Context) error {
 				if err := pgStore.Ping(ctx); err != nil {
 					return err

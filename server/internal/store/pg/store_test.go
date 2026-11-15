@@ -76,11 +76,13 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	if err != nil || byAccess.ID != "s1" {
 		t.Fatalf("by access: %v %+v", err, byAccess)
 	}
-	if err := st.DeleteUserSessions(ctx, u.ID); err != nil {
-		t.Fatalf("delete sessions: %v", err)
+	// 会话随账号行级联删除（schema.sql 的 ON DELETE CASCADE），服务层不再单独
+	// 调一次删会话。
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatalf("delete user: %v", err)
 	}
 	if _, err := st.SessionByRefreshHash(ctx, "rh"); err != auth.ErrNotFound {
-		t.Fatalf("清掉会话之后应找不到，得到 %v", err)
+		t.Fatalf("清掉账号之后应找不到会话，得到 %v", err)
 	}
 }
 

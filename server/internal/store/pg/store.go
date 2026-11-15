@@ -18,6 +18,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/store"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
@@ -36,6 +37,7 @@ var (
 	_ auth.Store           = (*Store)(nil)
 	_ syncsvc.Store        = (*Store)(nil)
 	_ backup.Store         = (*Store)(nil)
+	_ llmproxy.Quota       = (*Store)(nil)
 	_ interface{ Close() } = (*Store)(nil)
 )
 
@@ -207,10 +209,6 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 		return auth.ErrNotFound
 	}
 	return err
-}
-
-func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
-	return s.q.DeleteUserSessions(ctx, userID)
 }
 
 // pgTime 把时间转成 PostgreSQL 的 timestamptz。零值说明调用方漏了赋值，直接

@@ -93,16 +93,6 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
-const deleteUserSessions = `-- name: DeleteUserSessions :exec
-DELETE FROM session
-WHERE user_id = $1
-`
-
-func (q *Queries) DeleteUserSessions(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, deleteUserSessions, userID)
-	return err
-}
-
 const sessionByAccessHash = `-- name: SessionByAccessHash :one
 SELECT id, user_id, device_name, access_hash, refresh_hash,
   access_expires, refresh_expires, created_at
