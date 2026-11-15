@@ -55,19 +55,12 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 	for _, id := range existing {
 		seen[id] = true
 	}
-	fresh := make([]syncsvc.Commit, 0, len(commits))
-	for _, c := range commits {
-		if seen[c.RequestID] {
-			continue
-		}
-		seen[c.RequestID] = true
-		fresh = append(fresh, c)
+	fresh, newHead, err := syncsvc.PlanAppend(head, base, commits, seen)
+	if err != nil {
+		return head, err
 	}
 	if len(fresh) == 0 {
 		return head, nil
-	}
-	if base != head {
-		return head, syncsvc.ErrHeadMoved
 	}
 
 	for i, c := range fresh {
@@ -89,7 +82,6 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 			return 0, err
 		}
 	}
-	newHead := head + int64(len(fresh))
 	if err := q.SetSyncHead(ctx, db.SetSyncHeadParams{UserID: userID, Head: newHead}); err != nil {
 		return 0, err
 	}

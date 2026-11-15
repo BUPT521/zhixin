@@ -73,6 +73,32 @@ func (m *MemoryStore) Head(_ context.Context, userID string) (int64, error) {
 	return int64(len(m.logs[userID])), nil
 }
 
+// PlanAppend filters request IDs the account has already stored and checks that
+// a non-empty batch is based on the current head. Both the in-memory and the
+// PostgreSQL store call this, so the rules live in one place.
+func PlanAppend(
+	head, base int64,
+	commits []Commit,
+	seen map[string]bool,
+) (fresh []Commit, newHead int64, err error) {
+	for _, c := range commits {
+		if seen[c.RequestID] {
+			continue
+		}
+		seen[c.RequestID] = true
+		fresh = append(fresh, c)
+	}
+	// A fully replayed push succeeds whatever its base: the client simply did
+	// not see the previous response.
+	if len(fresh) == 0 {
+		return nil, head, nil
+	}
+	if base != head {
+		return nil, head, ErrHeadMoved
+	}
+	return fresh, head + int64(len(fresh)), nil
+}
+
 func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commits []Commit) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -81,20 +107,12 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	for _, c := range log {
 		seen[c.RequestID] = true
 	}
-	var fresh []Commit
-	for _, c := range commits {
-		if !seen[c.RequestID] {
-			seen[c.RequestID] = true
-			fresh = append(fresh, c)
-		}
+	fresh, newHead, err := PlanAppend(int64(len(log)), base, commits, seen)
+	if err != nil {
+		return int64(len(log)), err
 	}
-	// A fully replayed push succeeds whatever its base: the client simply
-	// did not see the previous response.
 	if len(fresh) == 0 {
 		return int64(len(log)), nil
-	}
-	if base != int64(len(log)) {
-		return int64(len(log)), ErrHeadMoved
 	}
 	now := m.now()
 	for _, c := range fresh {
@@ -103,7 +121,7 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 		log = append(log, c)
 	}
 	m.logs[userID] = log
-	return int64(len(log)), nil
+	return newHead, nil
 }
 
 func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int) ([]Commit, error) {
