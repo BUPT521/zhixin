@@ -15,6 +15,72 @@ const List<String> revisionMetadataTablePrefixes = ['revision_', 'asset_'];
 
 /// 保留在库里、但不参与版本采集的内部设置表。
 const Set<String> nonVersionedPersistentTableNames = {'app_meta'};
+
+// 列取值集合：表类的 CHECK 约束只引用这里的常量，值集合测试按表与列核对建库
+// 结果。新增或删除取值只改这一处；模型枚举的文案与解码在 domain/models 各自
+// 保留，这里只约束数据库接受的字符串。
+//
+// 常量必须是公开的：drift 生成代码（`app_database.g.dart`）会直接引用这些名字，
+// 私有常量在生成文件里解析不到。
+
+/// 学习目标与系统学习计划的状态取值。
+const List<String> learningGoalStatuses = ['active', 'paused', 'done'];
+const List<String> materialKinds = ['text', 'slides', 'book', 'other'];
+const List<String> entryKinds = ['text', 'photo', 'text_photo'];
+const List<String> conversationStatuses = ['open', 'ended'];
+const List<String> messageRoles = ['user', 'assistant', 'system'];
+const List<String> studyPlanStatuses = ['active', 'paused', 'done'];
+const List<String> planItemStatuses = ['todo', 'doing', 'done', 'deferred'];
+
+/// 事项与时间块的来源取值。
+const List<String> sourceValues = ['user', 'ai'];
+const List<String> scheduleBlockStatuses = ['planned', 'done', 'cancelled'];
+const List<String> sessionOutcomes = ['done', 'partial', 'not_done'];
+const List<String> assessmentKinds = ['model', 'user'];
+const List<String> memoryKinds = [
+  'preference',
+  'constraint',
+  'difficulty',
+  'progress',
+];
+const List<String> memorySourceKinds = [
+  'user',
+  'message',
+  'attempt',
+  'session',
+];
+const List<String> memoryStatuses = ['active', 'superseded', 'deleted'];
+const List<String> revisionActors = ['user', 'ai', 'system'];
+const List<String> changeOperations = ['insert', 'update', 'delete'];
+const List<String> checkpointKinds = [
+  'initial',
+  'periodic',
+  'trimmed',
+  'named',
+];
+
+/// 各列允许的取值集合；键是“表名.列名”。
+const Map<String, List<String>> checkValueSets = {
+  'learning_goal.status': learningGoalStatuses,
+  'material.kind': materialKinds,
+  'conversation.entry_kind': entryKinds,
+  'conversation.status': conversationStatuses,
+  'message.role': messageRoles,
+  'study_plan.status': studyPlanStatuses,
+  'plan_item.status': planItemStatuses,
+  'plan_item.source': sourceValues,
+  'schedule_block.source': sourceValues,
+  'schedule_block.status': scheduleBlockStatuses,
+  'study_session.outcome': sessionOutcomes,
+  'assessment.kind': assessmentKinds,
+  'memory.kind': memoryKinds,
+  'memory.source_kind': memorySourceKinds,
+  'memory.status': memoryStatuses,
+  'revision_commit.actor': revisionActors,
+  'revision_change.op': changeOperations,
+  'revision_checkpoint.kind': checkpointKinds,
+};
+
 @DataClassName('AppMetaRow')
 class AppMeta extends Table {
   @override
@@ -52,7 +118,7 @@ class LearningGoals extends Table {
   TextColumn get dueDate => text().nullable()();
   TextColumn get status => text()
       .withDefault(const Constant('active'))
-      .check(status.isIn(['active', 'paused', 'done']))();
+      .check(status.isIn(learningGoalStatuses))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
 }
@@ -93,7 +159,7 @@ class Materials extends Table {
   TextColumn get title => text()();
   TextColumn get kind => text()
       .withDefault(const Constant('text'))
-      .check(kind.isIn(['text', 'slides', 'book', 'other']))();
+      .check(kind.isIn(materialKinds))();
   TextColumn get sourceRef => text().nullable()();
   TextColumn get sourceFileName => text().nullable()();
   TextColumn get sourceFileHash =>
@@ -157,10 +223,10 @@ class Conversations extends Table {
   IntColumn get questionMessageId => integer().nullable()();
   TextColumn get entryKind => text()
       .withDefault(const Constant('text'))
-      .check(entryKind.isIn(['text', 'photo', 'text_photo']))();
+      .check(entryKind.isIn(entryKinds))();
   TextColumn get status => text()
       .withDefault(const Constant('open'))
-      .check(status.isIn(['open', 'ended']))();
+      .check(status.isIn(conversationStatuses))();
   TextColumn get endedAt => text().nullable()();
   TextColumn get lastMessageAt => text().nullable()();
   TextColumn get createdAt => text()();
@@ -178,8 +244,7 @@ class Messages extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get conversationId =>
       integer().references(Conversations, #id, onDelete: KeyAction.cascade)();
-  TextColumn get role =>
-      text().check(role.isIn(['user', 'assistant', 'system']))();
+  TextColumn get role => text().check(role.isIn(messageRoles))();
   TextColumn get content => text()();
   TextColumn get imagePathsJson => text().nullable()();
   TextColumn get structuredJson => text().nullable()();
@@ -213,7 +278,7 @@ class StudyPlans extends Table {
   IntColumn get currentPage => integer().nullable()();
   TextColumn get status => text()
       .withDefault(const Constant('active'))
-      .check(status.isIn(['active', 'paused', 'done']))();
+      .check(status.isIn(studyPlanStatuses))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
 }
@@ -265,10 +330,10 @@ class PlanItems extends Table {
       .check(priority.isBetweenValues(0, 2))();
   TextColumn get status => text()
       .withDefault(const Constant('todo'))
-      .check(status.isIn(['todo', 'doing', 'done', 'deferred']))();
+      .check(status.isIn(planItemStatuses))();
   TextColumn get source => text()
       .withDefault(const Constant('user'))
-      .check(source.isIn(['user', 'ai']))();
+      .check(source.isIn(sourceValues))();
   TextColumn get originJson => text().nullable()();
   TextColumn get completedAt => text().nullable()();
   TextColumn get createdAt => text()();
@@ -305,10 +370,10 @@ class ScheduleBlocks extends Table {
   TextColumn get endAt => text()();
   TextColumn get source => text()
       .withDefault(const Constant('user'))
-      .check(source.isIn(['user', 'ai']))();
+      .check(source.isIn(sourceValues))();
   TextColumn get status => text()
       .withDefault(const Constant('planned'))
-      .check(status.isIn(['planned', 'done', 'cancelled']))();
+      .check(status.isIn(scheduleBlockStatuses))();
   IntColumn get locked =>
       integer().withDefault(const Constant(0)).check(locked.isIn([0, 1]))();
   TextColumn get createdAt => text()();
@@ -345,7 +410,7 @@ class StudySessions extends Table {
   )();
   TextColumn get summary => text().nullable()();
   TextColumn get outcome =>
-      text().nullable().check(outcome.isIn(['done', 'partial', 'not_done']))();
+      text().nullable().check(outcome.isIn(sessionOutcomes))();
   TextColumn get startedAt => text()();
   TextColumn get endedAt => text().nullable()();
   TextColumn get createdAt => text()();
@@ -398,7 +463,7 @@ class Assessments extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get attemptId =>
       integer().references(Attempts, #id, onDelete: KeyAction.cascade)();
-  TextColumn get kind => text().check(kind.isIn(['model', 'user']))();
+  TextColumn get kind => text().check(kind.isIn(assessmentKinds))();
   TextColumn get result => text()();
   TextColumn get basis => text().nullable()();
   TextColumn get createdAt => text()();
@@ -412,19 +477,16 @@ class Memories extends Table {
   @override
   String get tableName => 'memory';
   IntColumn get id => integer().autoIncrement()();
-  TextColumn get kind => text().check(
-    kind.isIn(['preference', 'constraint', 'difficulty', 'progress']),
-  )();
+  TextColumn get kind => text().check(kind.isIn(memoryKinds))();
   TextColumn get content => text()();
   TextColumn get scope => text().nullable()();
-  TextColumn get sourceKind => text().check(
-    sourceKind.isIn(['user', 'message', 'attempt', 'session']),
-  )();
+  TextColumn get sourceKind =>
+      text().check(sourceKind.isIn(memorySourceKinds))();
   IntColumn get sourceId => integer().nullable()();
   TextColumn get validUntil => text().nullable()();
   TextColumn get status => text()
       .withDefault(const Constant('active'))
-      .check(status.isIn(['active', 'superseded', 'deleted']))();
+      .check(status.isIn(memoryStatuses))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
 }
@@ -445,7 +507,7 @@ class RevisionCommits extends Table {
     onDelete: KeyAction.setNull,
   )();
   IntColumn get generation => integer()();
-  TextColumn get actor => text().check(actor.isIn(['user', 'ai', 'system']))();
+  TextColumn get actor => text().check(actor.isIn(revisionActors))();
   TextColumn get action => text()();
   TextColumn get requestId => text().nullable()();
   IntColumn get restoredCommitId => integer().nullable()();
@@ -468,7 +530,7 @@ class RevisionChanges extends Table {
   IntColumn get seq => integer()();
   TextColumn get targetTable => text().named('table_name')();
   TextColumn get rowKey => text()();
-  TextColumn get op => text().check(op.isIn(['insert', 'update', 'delete']))();
+  TextColumn get op => text().check(op.isIn(changeOperations))();
   TextColumn get beforeJson => text().nullable()();
   TextColumn get afterJson => text().nullable()();
 
@@ -496,8 +558,7 @@ class RevisionCheckpoints extends Table {
   @override
   String get tableName => 'revision_checkpoint';
   IntColumn get id => integer().autoIncrement()();
-  TextColumn get kind =>
-      text().check(kind.isIn(['initial', 'periodic', 'trimmed', 'named']))();
+  TextColumn get kind => text().check(kind.isIn(checkpointKinds))();
   IntColumn get commitId => integer()();
   TextColumn get projectionJson => text()();
   TextColumn get assetHashesJson => text()();

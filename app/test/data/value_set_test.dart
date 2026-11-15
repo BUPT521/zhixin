@@ -1,0 +1,67 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/drift/app_database.dart';
+import 'package:zhixin/data/db/drift/tables.dart' show checkValueSets;
+
+/// 列取值集合只有一份：`tables.dart` 的 [checkValueSets]。
+///
+/// 表类的 CHECK 约束引用这份常量，建库结果与 01 文档由 `schema_doc_test` 比对。
+/// 这里核对建库结果里的字符串值集合与常量逐列相同，并保证没有第二份没有登记
+/// 的 CHECK 取值集合；新增或删除取值时三处一起改，测试不会替任何一处兜底。
+void main() {
+  late Map<String, Map<String, List<String>>> actual;
+
+  setUpAll(() async {
+    final db = AppDatabase.memory();
+    try {
+      final rows = await db
+          .customSelect(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+          )
+          .get();
+      actual = {
+        for (final row in rows)
+          row.read<String>('name'): _checkValueSets(row.read<String>('sql')),
+      };
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('每张表的 CHECK 值集合与 tables.dart 逐列相同', () {
+    final found = <String>{};
+    for (final table in actual.entries) {
+      for (final column in table.value.entries) {
+        final key = '${table.key}.${column.key}';
+        expect(
+          checkValueSets[key],
+          column.value,
+          reason: '$key 的 CHECK 取值与 checkValueSets 不一致',
+        );
+        found.add(key);
+      }
+    }
+    expect(
+      found,
+      checkValueSets.keys.toSet(),
+      reason: '有字符串值集合没有登记到 checkValueSets',
+    );
+  });
+}
+
+/// 从建表语句里读 `CHECK("列" IN ('值', ...))` 的字符串值集合。
+///
+/// 只收带引号的字符串值；布尔列的 `IN (0, 1)` 与范围、空值条件不属于值集合。
+Map<String, List<String>> _checkValueSets(String sql) {
+  final pattern = RegExp(r'CHECK\("(\w+)" IN \(([^)]*)\)\)');
+  final sets = <String, List<String>>{};
+  for (final match in pattern.allMatches(sql)) {
+    final values = RegExp(r"'([^']*)'")
+        .allMatches(match.group(2)!)
+        .map((value) => value.group(1)!)
+        .toList();
+    if (values.isEmpty) continue;
+    sets[match.group(1)!] = values;
+  }
+  return sets;
+}
