@@ -24,25 +24,22 @@ class AttemptRepository {
     return rows.map(_attemptOf).toList(growable: false);
   }
 
-  /// 表行转成与列同名的键值，交给既有的 [Attempt.fromRow]。
-  ///
-  /// `is_correct`、`independent` 这类零一标记与提示条目的解码在 fromRow 里已有
-  /// 一份，这里不重复实现，避免两处判定走岔。
-  static Attempt _attemptOf(AttemptRow row) => Attempt.fromRow({
-    'id': row.id,
-    'conversation_id': row.conversationId,
-    'session_id': row.sessionId,
-    'redo_of_attempt_id': row.redoOfAttemptId,
-    'user_answer': row.userAnswer,
-    'solution': row.solution,
-    'is_correct': row.isCorrect,
-    'independent': row.independent,
-    'help_json': row.helpJson,
-    'feedback': row.feedback,
-    'delayed': row.delayed,
-    'submitted_at': row.submittedAt,
-    'created_at': row.createdAt,
-  });
+  /// 表行直接还原成模型；布尔列已经是 bool，提示条目统一走 [HelpEntry.decodeList]。
+  static Attempt _attemptOf(AttemptRow row) => Attempt(
+    id: row.id,
+    conversationId: row.conversationId,
+    sessionId: row.sessionId,
+    redoOfAttemptId: row.redoOfAttemptId,
+    userAnswer: row.userAnswer,
+    solution: row.solution,
+    isCorrect: row.isCorrect,
+    independent: row.independent,
+    helps: HelpEntry.decodeList(row.helpJson),
+    feedback: row.feedback,
+    delayed: row.delayed,
+    submittedAt: optionalDateTime(row.submittedAt),
+    createdAt: optionalDateTime(row.createdAt),
+  );
 
   /// 这条记录最近一次学习场次的目标。
   ///

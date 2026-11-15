@@ -83,24 +83,6 @@ class Attempt {
     this.createdAt,
   });
 
-  factory Attempt.fromRow(Map<String, Object?> row) {
-    return Attempt(
-      id: row['id']! as int,
-      conversationId: row['conversation_id']! as int,
-      sessionId: row['session_id'] as int?,
-      redoOfAttemptId: row['redo_of_attempt_id'] as int?,
-      userAnswer: row['user_answer'] as String?,
-      solution: row['solution'] as String?,
-      isCorrect: _boolOrNull(row['is_correct']),
-      independent: _boolOrNull(row['independent']),
-      helps: HelpEntry.decodeList(row['help_json'] as String?),
-      feedback: row['feedback'] as String?,
-      delayed: _boolOrNull(row['delayed']) ?? false,
-      submittedAt: optionalDateTime(row['submitted_at'] as String? ?? ''),
-      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
 
   /// 这次作答属于哪条学习记录。
@@ -165,28 +147,6 @@ class Attempt {
       : isCorrect!
       ? '自评做对'
       : '自评做错';
-
-  static bool? _boolOrNull(Object? value) {
-    if (value is int) return value == 1;
-    if (value is bool) return value;
-    return null;
-  }
-
-  Map<String, Object?> toInsertRow(DateTime now) => {
-    'conversation_id': conversationId,
-    'session_id': sessionId,
-    'redo_of_attempt_id': redoOfAttemptId,
-    'user_answer': userAnswer,
-    'solution': solution,
-    'is_correct': isCorrect == null ? null : (isCorrect! ? 1 : 0),
-    'independent': independent == null ? null : (independent! ? 1 : 0),
-    'delayed': delayed ? 1 : 0,
-    'help_json': helps.isEmpty ? null : HelpEntry.encodeList(helps),
-    'feedback': feedback,
-    'submitted_at': submittedAt == null ? null : formatDateTime(submittedAt!),
-    'created_at': formatDateTime(createdAt ?? now),
-    'updated_at': formatDateTime(now),
-  };
 }
 
 /// 最近一次已提交尝试与它所属的学习记录，给首页与模型上下文用。

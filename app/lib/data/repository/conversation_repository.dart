@@ -39,38 +39,38 @@ class ConversationRepository {
     structuredJson: row.structuredJson,
   );
 
-  /// 作答整行转成与列同名的键值，交给既有的 [Attempt.fromRow]。
-  static Attempt _attemptOf(AttemptRow row) => Attempt.fromRow({
-    'id': row.id,
-    'conversation_id': row.conversationId,
-    'session_id': row.sessionId,
-    'redo_of_attempt_id': row.redoOfAttemptId,
-    'user_answer': row.userAnswer,
-    'solution': row.solution,
-    'is_correct': row.isCorrect,
-    'independent': row.independent,
-    'help_json': row.helpJson,
-    'feedback': row.feedback,
-    'delayed': row.delayed,
-    'submitted_at': row.submittedAt,
-    'created_at': row.createdAt,
-  });
+  /// 作答整行直接还原成模型；布尔列已经是 bool，提示条目统一走 [HelpEntry.decodeList]。
+  static Attempt _attemptOf(AttemptRow row) => Attempt(
+    id: row.id,
+    conversationId: row.conversationId,
+    sessionId: row.sessionId,
+    redoOfAttemptId: row.redoOfAttemptId,
+    userAnswer: row.userAnswer,
+    solution: row.solution,
+    isCorrect: row.isCorrect,
+    independent: row.independent,
+    helps: HelpEntry.decodeList(row.helpJson),
+    feedback: row.feedback,
+    delayed: row.delayed,
+    submittedAt: optionalDateTime(row.submittedAt),
+    createdAt: optionalDateTime(row.createdAt),
+  );
 
   AttemptWithQuestion _attemptWithQuestionOf(RecentSubmittedResult r) {
-    final attempt = Attempt.fromRow({
-      'id': r.attemptId,
-      'conversation_id': r.attemptConversationId,
-      'session_id': r.attemptSessionId,
-      'user_answer': r.attemptUserAnswer,
-      'solution': r.attemptSolution,
-      'is_correct': r.attemptIsCorrect,
-      'independent': r.attemptIndependent,
-      'help_json': r.attemptHelpJson,
-      'feedback': r.attemptFeedback,
-      'delayed': r.attemptDelayed,
-      'submitted_at': r.attemptSubmittedAt,
-      'created_at': r.attemptCreatedAt,
-    });
+    final attempt = Attempt(
+      id: r.attemptId,
+      conversationId: r.attemptConversationId,
+      sessionId: r.attemptSessionId,
+      userAnswer: r.attemptUserAnswer,
+      solution: r.attemptSolution,
+      isCorrect: r.attemptIsCorrect,
+      independent: r.attemptIndependent,
+      helps: HelpEntry.decodeList(r.attemptHelpJson),
+      feedback: r.attemptFeedback,
+      delayed: r.attemptDelayed,
+      submittedAt: optionalDateTime(r.attemptSubmittedAt),
+      createdAt: optionalDateTime(r.attemptCreatedAt),
+    );
     return AttemptWithQuestion(
       attempt: attempt,
       question: _question(
@@ -233,20 +233,21 @@ class ConversationRepository {
       hasDraft: r.hasDraft,
       lastAttempt: attemptId == null
           ? null
-          : Attempt.fromRow({
-              'id': attemptId,
-              'conversation_id': question.id,
-              'session_id': r.lastAttemptSessionId,
-              'user_answer': r.lastAttemptUserAnswer,
-              'solution': r.lastAttemptSolution,
-              'is_correct': r.lastAttemptIsCorrect,
-              'independent': r.lastAttemptIndependent,
-              'help_json': r.lastAttemptHelpJson,
-              'feedback': r.lastAttemptFeedback,
-              'delayed': r.lastAttemptDelayed,
-              'submitted_at': r.lastAttemptSubmittedAt,
-              'created_at': r.lastAttemptCreatedAt,
-            }),
+          : Attempt(
+              id: attemptId,
+              conversationId: question.id,
+              sessionId: r.lastAttemptSessionId,
+              userAnswer: r.lastAttemptUserAnswer,
+              solution: r.lastAttemptSolution,
+              isCorrect: r.lastAttemptIsCorrect,
+              independent: r.lastAttemptIndependent,
+              helps: HelpEntry.decodeList(r.lastAttemptHelpJson),
+              feedback: r.lastAttemptFeedback,
+              // 左连接没有作答时这一列也是空，按未标记处理。
+              delayed: r.lastAttemptDelayed ?? false,
+              submittedAt: optionalDateTime(r.lastAttemptSubmittedAt),
+              createdAt: optionalDateTime(r.lastAttemptCreatedAt),
+            ),
     );
   }
 
