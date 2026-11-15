@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
@@ -38,13 +39,6 @@ class ScheduleAdjustment {
 
 /// 课表与时间块（01 `timetable_entry` / `schedule_block`）。
 class ScheduleRepository {
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([RawExecutor? executor]) {
-    final connection = (executor ?? _db).driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
-  }
-
   static ScheduleBlock _blockOf({
     required int id,
     required int planItemId,
@@ -100,7 +94,9 @@ class ScheduleRepository {
   final Clock _clock;
 
   Future<List<TimetableEntry>> timetable() async {
-    final rows = await _connect().allTimetableEntries().get();
+    final rows = await _db.selectGenerated(
+      (db) => db.allTimetableEntries().get(),
+    );
     return rows.map(_timetableOf).toList(growable: false);
   }
 
@@ -150,14 +146,18 @@ class ScheduleRepository {
     DateTime start,
     DateTime end,
   ) async {
-    final rows = await _connect()
-        .blocksOverlapping(formatDateTime(end), formatDateTime(start))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .blocksOverlapping(formatDateTime(end), formatDateTime(start))
+          .get(),
+    );
     return [for (final row in rows) _scheduledOf(row)];
   }
 
   Future<ScheduledItem?> nextAfter(DateTime now) async {
-    final rows = await _connect().nextPlannedBlock(formatDateTime(now)).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.nextPlannedBlock(formatDateTime(now)).get(),
+    );
     if (rows.isEmpty) return null;
     return _scheduledOfNext(rows.first);
   }
@@ -219,9 +219,9 @@ class ScheduleRepository {
         throw ArgumentError('结束时间要晚于开始时间');
       }
     }
-    final existing = await _connect(executor)
-        .blocksByIds(jsonEncode(ids.toList()))
-        .get();
+    final existing = await executor.selectGenerated(
+      (db) => db.blocksByIds(jsonEncode(ids.toList())).get(),
+    );
     if (existing.length != ids.length) {
       throw StateError('部分时间安排已被删除');
     }
@@ -239,7 +239,9 @@ class ScheduleRepository {
       }
     }
 
-    final planned = await _connect(executor).plannedBlockSpans().get();
+    final planned = await executor.selectGenerated(
+      (db) => db.plannedBlockSpans().get(),
+    );
     for (final row in planned) {
       final id = row.id;
       if (ids.contains(id)) continue;
@@ -308,9 +310,9 @@ class ScheduleRepository {
         (txn) => moveBlock(id, start: start, end: end, executor: txn),
       );
     }
-    final current = await _connect(executor)
-        .scheduleBlockById(id)
-        .getSingleOrNull();
+    final current = await executor.selectGenerated(
+      (db) => db.scheduleBlockById(id).getSingleOrNull(),
+    );
     if (current == null) throw StateError('未找到这条时间安排');
     await _ensureNoConflict(
       executor,
@@ -371,9 +373,9 @@ class ScheduleRepository {
     DateTime now, {
     RawExecutor? executor,
   }) async {
-    final rows = await _connect(executor)
-        .upcomingBlocksForItem(planItemId, formatDateTime(now))
-        .get();
+    final rows = await (executor ?? _db).selectGenerated(
+      (db) => db.upcomingBlocksForItem(planItemId, formatDateTime(now)).get(),
+    );
     return rows.map(_blockOfRow).toList(growable: false);
   }
 
@@ -387,9 +389,10 @@ class ScheduleRepository {
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
     if (ids.isEmpty) return const {};
-    final rows = await _connect()
-        .firstLiveBlockPerItem(jsonEncode(ids), formatDateTime(now))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) =>
+          db.firstLiveBlockPerItem(jsonEncode(ids), formatDateTime(now)).get(),
+    );
     final result = <int, ScheduleBlock>{};
     for (final row in rows) {
       final block = _blockOfRow(row);
@@ -404,9 +407,10 @@ class ScheduleRepository {
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
     if (ids.isEmpty) return const {};
-    final rows = await _connect()
-        .upcomingBlocksForItems(jsonEncode(ids), formatDateTime(now))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) =>
+          db.upcomingBlocksForItems(jsonEncode(ids), formatDateTime(now)).get(),
+    );
     final result = <int, List<ScheduleBlock>>{};
     for (final row in rows) {
       final block = _blockOfRow(row);
@@ -424,9 +428,9 @@ class ScheduleRepository {
     DateTime now, {
     RawExecutor? executor,
   }) async {
-    final rows = await _connect(executor)
-        .adjustableBlocksForGoal(goalId, formatDateTime(now))
-        .get();
+    final rows = await (executor ?? _db).selectGenerated(
+      (db) => db.adjustableBlocksForGoal(goalId, formatDateTime(now)).get(),
+    );
     return [
       for (final row in rows)
         ScheduleBlock(
@@ -475,9 +479,9 @@ class ScheduleRepository {
       );
     }
     if (status == 'planned') {
-      final block = await _connect(executor)
-          .scheduleBlockById(id)
-          .getSingleOrNull();
+      final block = await executor.selectGenerated(
+        (db) => db.scheduleBlockById(id).getSingleOrNull(),
+      );
       if (block == null) throw StateError('未找到这条时间安排');
       await _ensureNoConflict(
         executor,
@@ -503,12 +507,16 @@ class ScheduleRepository {
   }
 
   Future<ScheduleBlock?> blockById(int id) async {
-    final row = await _connect().scheduleBlockById(id).getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) => db.scheduleBlockById(id).getSingleOrNull(),
+    );
     return row == null ? null : _blockOfRow(row);
   }
 
   Future<List<ScheduleBlock>> blocksForItem(int planItemId) async {
-    final rows = await _connect().blocksForItem(planItemId).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.blocksForItem(planItemId).get(),
+    );
     return rows.map(_blockOfRow).toList(growable: false);
   }
 

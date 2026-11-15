@@ -5,8 +5,7 @@
 /// 业务表上的触发器写入；`content=` 仍指向业务表，索引的行号用业务表主键。
 /// 查询用 [bigrams] 切出同一套词，交给 `MATCH`，排序用 FTS5 自带的 `bm25()`。
 ///
-/// 触发器必须在版本引擎安装采集触发器之前建立：打开库时引擎会删掉库里所有非
-/// `sqlite_` 前缀的触发器再重建，装晚了会被清掉。
+/// 版本引擎清除随库保留的触发器后，再按本文件安装同步触发器。
 library;
 
 import '../../domain/rules/binary_bigrams.dart';
@@ -71,16 +70,49 @@ Set<String> ftsTriggerNames() => {
 List<String> ftsStatements() => [
   for (final index in ftsIndexes) ...[
     'CREATE VIRTUAL TABLE IF NOT EXISTS "${index.table}" USING fts5('
-        'idx, content="${index.source}", content_rowid="id")',
+        'idx, content="${index.source}", content_rowid="id", '
+        'tokenize="unicode61 tokenchars \'_\'")',
     ..._triggers(index),
   ],
 ];
 
-/// 安装三张索引表与触发器；打开库时在建版本采集触发器之前调用。
-Future<void> installFtsSchema(RawExecutor db) async {
-  for (final statement in ftsStatements()) {
-    await db.execute(statement);
-  }
+/// 安装同步触发器，索引定义变化或索引表缺失时从业务行重建。
+Future<void> installFtsSchema(RawDatabase db) async {
+  const key = 'fts_index_version';
+  const version = '2';
+  await db.transaction((txn) async {
+    final versions = await txn.query(
+      'app_meta',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [key],
+    );
+    final stale = versions.isEmpty || versions.single['value'] != version;
+    final tables = await txn.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    );
+    final present = {for (final row in tables) row['name']};
+    if (stale) {
+      for (final index in ftsIndexes) {
+        await txn.execute('DROP TABLE IF EXISTS "${index.table}"');
+      }
+    }
+    for (final statement in ftsStatements()) {
+      await txn.execute(statement);
+    }
+    for (final index in ftsIndexes) {
+      if (stale || !present.contains(index.table)) {
+        await rebuildFtsIndex(txn, index);
+      }
+    }
+    if (stale) {
+      await txn.insert('app_meta', {
+        'key': key,
+        'value': version,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAction.replace);
+    }
+  });
 }
 
 /// 重建索引：删掉索引内容，再按业务表逐行重算。
@@ -88,7 +120,7 @@ Future<void> installFtsSchema(RawExecutor db) async {
 /// FTS5 自带的 rebuild 会按内容表的原列重算，而这里的索引列存的是切好的二元组，
 /// 因此只能自己重放一遍：清空索引，再用同样的切词表达式从业务表写回去。
 Future<void> rebuildFtsIndex(RawExecutor db, FtsIndex index) async {
-  final value = bigramsExpression('s.${index.columns.first}');
+  final value = _indexExpression(index, 's');
   // 外部内容表不认识普通的 DELETE，用 delete-all 命令清空。
   await db.execute(
     'INSERT INTO "${index.table}"("${index.table}") VALUES(\'delete-all\')',
@@ -103,23 +135,29 @@ Future<void> rebuildFtsIndex(RawExecutor db, FtsIndex index) async {
 String ftsQuery(Iterable<String> tokens) =>
     tokens.map((token) => '"${token.replaceAll('"', '""')}"').join(' OR ');
 
+String _indexExpression(FtsIndex index, String row) => index.columns
+    .map((column) => bigramsExpression('$row.$column'))
+    .join(" || ' ' || ");
+
 List<String> _triggers(FtsIndex index) {
-  final value = bigramsExpression('NEW.${index.columns.first}');
-  final old = bigramsExpression('OLD.${index.columns.first}');
+  final value = _indexExpression(index, 'NEW');
+  final old = _indexExpression(index, 'OLD');
   final table = index.table;
+  const enabled =
+      'WHEN (SELECT suppress FROM revision_context WHERE id = 1) = 0 ';
   return [
     'CREATE TRIGGER IF NOT EXISTS "${index.insertTrigger}" '
-        'AFTER INSERT ON "${index.source}" BEGIN '
+        'AFTER INSERT ON "${index.source}" $enabled BEGIN '
         'INSERT INTO "$table"(rowid, idx) VALUES (NEW.id, $value); END',
     // 先按旧值删掉索引行，再按新值写入；外部内容表不认识普通的 DELETE，
     // 只能用 FTS5 的 delete 命令，否则会去业务表核对旧值。
     'CREATE TRIGGER IF NOT EXISTS "${index.updateTrigger}" '
-        'AFTER UPDATE OF ${index.columns.join(', ')} ON "${index.source}" '
+        'AFTER UPDATE OF ${index.columns.join(', ')} ON "${index.source}" $enabled'
         'BEGIN INSERT INTO "$table"("$table", rowid, idx) '
         "VALUES('delete', OLD.id, $old); "
         'INSERT INTO "$table"(rowid, idx) VALUES (NEW.id, $value); END',
     'CREATE TRIGGER IF NOT EXISTS "${index.deleteTrigger}" '
-        'AFTER DELETE ON "${index.source}" BEGIN '
+        'AFTER DELETE ON "${index.source}" $enabled BEGIN '
         'INSERT INTO "$table"("$table", rowid, idx) '
         "VALUES('delete', OLD.id, $old); END",
   ];

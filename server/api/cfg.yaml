@@ -4,7 +4,7 @@
 # 服务接口：模型代理按 SSE 边收边发、附件与备份按字节流下载，严格接口要先把整个
 # 响应体交给 Visit 方法才能写出，做不到中途 flush。
 package: api
-output: ../internal/api/api.gen.go
+output: internal/api/api.gen.go
 generate:
   models: true
   std-http-server: true

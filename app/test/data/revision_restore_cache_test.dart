@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/database_gate.dart';
+import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/repository/settings_repository.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 
@@ -16,6 +20,33 @@ class _FailingCache extends AttachmentCache {
 }
 
 void main() {
+  test('恢复期间排队的生成查询读取替换后的连接', () async {
+    final original = await openTestDb();
+    final replacement = await openTestDb();
+    addTearDown(replacement.close);
+    await replacement.update('profile', {'day_cutoff_hour': 6});
+
+    final gate = DatabaseGate();
+    var active = original;
+    final repository = SettingsRepository(
+      GuardedDatabase(gate: gate, resolve: () => active),
+    );
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final swap = gate.exclusive(() async {
+      entered.complete();
+      await release.future;
+      await original.close();
+      active = replacement;
+    });
+    await entered.future;
+    final read = repository.cutoffHour();
+    release.complete();
+
+    await swap;
+    expect(await read, 6);
+  });
+
   test('版本已经恢复后，图片缓存失败不把恢复报成失败', () async {
     var dataChanges = 0;
     final cacheDir = await Directory.systemTemp.createTemp('zhixin_cache_');

@@ -355,7 +355,8 @@ components:
       description: 尝试过于频繁，`code` 为 `rate_limited`；`Retry-After` 给出建议的等待秒数
       headers:
         Retry-After:
-          schema: { type: string }
+          required: true
+          schema: { type: integer, minimum: 1 }
           description: 建议的重试间隔，秒
       content:
         application/problem+json:
@@ -384,6 +385,7 @@ components:
             - conflict
             - payload_too_large
             - model_not_allowed
+            - rate_limited
             - quota_exceeded
             - upstream_failed
             - unavailable

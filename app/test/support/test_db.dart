@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/drift/drift_raw.dart';
-import 'package:zhixin/data/db/fts.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
@@ -14,7 +13,7 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 
 /// 在 Dart VM 上开一份 drift 内存库；每个用例各自一份，互不影响。
 ///
-/// 与生产打开流程一致：先建关键词索引与触发器，再由版本引擎安装采集触发器。
+/// 与生产打开流程一致，由版本引擎安装采集和关键词索引的触发器。
 Future<RawDatabase> openTestDb() async {
   final app = AppDatabase.memory();
   final raw = DriftRawDatabase(app);
@@ -29,7 +28,6 @@ Future<RawDatabase> openTestDb() async {
     'created_at': '2026-11-10 10:00:00',
     'updated_at': '2026-11-10 10:00:00',
   }, conflictAlgorithm: ConflictAction.ignore);
-  await installFtsSchema(raw);
   await RevisionEngine().initialize(raw);
   return raw;
 }

@@ -136,8 +136,14 @@ func (s *Service) Login(ctx context.Context, email, password, device string) (To
 
 var dummyHash, _ = HashPassword("zhixin-dummy-password")
 
+var errRefreshLimited = errors.New("refresh rate limited")
+
 // Refresh rotates the session: the old refresh token stops working at once.
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (Tokens, error) {
+	return s.refresh(ctx, refreshToken, nil)
+}
+
+func (s *Service) refresh(ctx context.Context, refreshToken string, allowed func(string) bool) (Tokens, error) {
 	old, err := s.store.SessionByRefreshHash(ctx, hashToken(refreshToken))
 	if errors.Is(err, ErrNotFound) {
 		return Tokens{}, ErrInvalidToken
@@ -145,12 +151,17 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Tokens, err
 	if err != nil {
 		return Tokens{}, err
 	}
-	if err := s.store.DeleteSession(ctx, old.ID); err != nil {
-		// Lost a race with another refresh using the same token.
-		return Tokens{}, ErrInvalidToken
-	}
 	if !s.now().Before(old.RefreshExpires) {
 		return Tokens{}, ErrInvalidToken
+	}
+	if allowed != nil && !allowed(old.UserID) {
+		return Tokens{}, errRefreshLimited
+	}
+	if err := s.store.DeleteSession(ctx, old.ID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Tokens{}, ErrInvalidToken
+		}
+		return Tokens{}, err
 	}
 	return s.issue(ctx, old.UserID, old.DeviceName)
 }

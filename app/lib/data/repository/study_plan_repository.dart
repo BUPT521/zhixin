@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../domain/models/material.dart';
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
@@ -103,9 +104,9 @@ class StudyPlanRepository {
     if (plan == null) throw StateError('未找到这份学习计划');
     final now = formatDateTime(_clock());
     await _db.transaction((txn) async {
-      final lastSeq = await _connect(txn)
-          .lastPlanStepSeq(planId)
-          .getSingleOrNull();
+      final lastSeq = await txn.selectGenerated(
+        (db) => db.lastPlanStepSeq(planId).getSingleOrNull(),
+      );
       var seq = (lastSeq ?? 0) + 1;
       for (final draft in drafts) {
         final title = draft.title.trim();
@@ -129,13 +130,6 @@ class StudyPlanRepository {
         });
       }
     });
-  }
-
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([RawExecutor? executor]) {
-    final connection = (executor ?? _db).driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
 
   static StudyPlan _planOf(PlanRowsResult row) => StudyPlan(
@@ -267,24 +261,26 @@ class StudyPlanRepository {
     bool statusFirst = true,
     int rowLimit = 1 << 30,
   }) async {
-    final rows = await _connect()
-        .planRows(
-          PlanItemStatus.done.code,
-          id ?? 0,
-          openOnly ? 1 : 0,
-          StudyPlanStatus.active.code,
-          StudyPlanStatus.paused.code,
-          activeOnly ? 1 : 0,
-          statusFirst ? 1 : 0,
-          rowLimit,
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .planRows(
+            PlanItemStatus.done.code,
+            id ?? 0,
+            openOnly ? 1 : 0,
+            StudyPlanStatus.active.code,
+            StudyPlanStatus.paused.code,
+            activeOnly ? 1 : 0,
+            statusFirst ? 1 : 0,
+            rowLimit,
+          )
+          .get(),
+    );
     return rows.map(_planOf).toList(growable: false);
   }
 
   /// 计划里的步骤，按顺序返回；每一步都是 `plan_item`。
   Future<List<PlanItem>> steps(int planId) async {
-    final rows = await _connect().planSteps(planId).get();
+    final rows = await _db.selectGenerated((db) => db.planSteps(planId).get());
     return rows.map(_stepOf).toList(growable: false);
   }
 
@@ -292,9 +288,10 @@ class StudyPlanRepository {
   Future<List<PlanItem>> stepsForPlans(Iterable<int> planIds) async {
     final ids = {...planIds};
     if (ids.isEmpty) return const [];
-    final rows = await _connect()
-        .planStepsForPlans(jsonEncode(ids.toList(growable: false)))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) =>
+          db.planStepsForPlans(jsonEncode(ids.toList(growable: false))).get(),
+    );
     return rows.map(_stepOfForPlans).toList(growable: false);
   }
 
@@ -320,7 +317,9 @@ class StudyPlanRepository {
     int? expectedPlanId,
   }) async {
     await _db.transaction((txn) async {
-      final item = await _connect(txn).itemPlan(stepId).getSingleOrNull();
+      final item = await txn.selectGenerated(
+        (db) => db.itemPlan(stepId).getSingleOrNull(),
+      );
       if (item == null) return;
       final planId = item.studyPlanId;
       if (planId == null) return;
@@ -335,7 +334,9 @@ class StudyPlanRepository {
   /// 所有事项状态入口共用计划步骤的唯一进行中规则。
   Future<void> setItemStatus(int itemId, PlanItemStatus status) async {
     await _db.transaction((txn) async {
-      final item = await _connect(txn).itemPlan(itemId).getSingleOrNull();
+      final item = await txn.selectGenerated(
+        (db) => db.itemPlan(itemId).getSingleOrNull(),
+      );
       if (item == null) return;
       final planId = item.studyPlanId;
       await _setItemStatus(txn, itemId, status, planId);
@@ -371,8 +372,15 @@ class StudyPlanRepository {
     if (status == PlanItemStatus.done) {
       // 只有确实发生过学习的预约才记为结束：场次与这段时间有重叠才算完成。
       // 到过开始时间却没有场次的旧预约按取消处理，不再把没学的那几次写成完成。
-      await _connect(txn)
-          .settleBlocksOnStepDone(now, 'done', 'cancelled', itemId, 'planned');
+      await txn.writeGenerated(
+        (db) => db.settleBlocksOnStepDone(
+          now,
+          'done',
+          'cancelled',
+          itemId,
+          'planned',
+        ),
+      );
     }
     if (status == PlanItemStatus.deferred) {
       await txn.update(
@@ -396,7 +404,9 @@ class StudyPlanRepository {
   Future<void> _recompute(RawExecutor executor, int planId) async {
     final plan = await _plainPlan(planId, executor: executor);
     if (plan == null) return;
-    final rows = await _connect(executor).stepsOfPlan(planId).get();
+    final rows = await executor.selectGenerated(
+      (db) => db.stepsOfPlan(planId).get(),
+    );
     final allSteps = rows.map(_stepOfRow).toList(growable: false);
     final current = currentStudyStep(allSteps);
     final donePages = allSteps
@@ -426,7 +436,9 @@ class StudyPlanRepository {
   }
 
   Future<StudyPlan?> _plainPlan(int id, {RawExecutor? executor}) async {
-    final row = await _connect(executor).studyPlanById(id).getSingleOrNull();
+    final row = await (executor ?? _db).selectGenerated(
+      (db) => db.studyPlanById(id).getSingleOrNull(),
+    );
     return row == null ? null : _planOfRow(row);
   }
 

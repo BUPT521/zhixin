@@ -1,4 +1,5 @@
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/memory.dart';
@@ -12,14 +13,6 @@ class MemoryRepository {
 
   final RawDatabase _db;
   final Clock _clock;
-
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([WriteTransaction? transaction]) {
-    final executor = writeExecutor(transaction, _db);
-    final connection = executor.driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
-  }
 
   /// 记忆表的字段与领域模型同名，只补枚举与时间解析。
   static Memory _memoryOf(MemoryRow row) => Memory(
@@ -36,7 +29,9 @@ class MemoryRepository {
   );
 
   Future<List<Memory>> list({bool includeInactive = false}) async {
-    final rows = await _connect().listMemories(includeInactive ? 0 : 1).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.listMemories(includeInactive ? 0 : 1).get(),
+    );
     return rows.map(_memoryOf).toList(growable: false);
   }
 
@@ -46,14 +41,18 @@ class MemoryRepository {
   Future<List<({int id, String content})>> activeDifficulties(
     String? scope,
   ) async {
-    final rows = await _connect()
-        .activeDifficulties(MemoryKind.difficulty.value, scope?.trim() ?? '')
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .activeDifficulties(MemoryKind.difficulty.value, scope?.trim() ?? '')
+          .get(),
+    );
     return [for (final row in rows) (id: row.id, content: row.content)];
   }
 
   Future<Memory?> byId(int id) async {
-    final row = await _connect().memoryById(id).getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) => db.memoryById(id).getSingleOrNull(),
+    );
     return row == null ? null : _memoryOf(row);
   }
 
@@ -61,9 +60,9 @@ class MemoryRepository {
     DateTime now, {
     required WriteTransaction transaction,
   }) async {
-    final rows = await _connect(transaction)
-        .activeMemoryIdentities(formatDateTime(now))
-        .get();
+    final rows = await writeExecutor(transaction, _db).selectGenerated(
+      (db) => db.activeMemoryIdentities(formatDateTime(now)).get(),
+    );
     return [
       for (final row in rows)
         (kind: row.kind, scope: row.scope, content: row.content),
@@ -81,13 +80,15 @@ class MemoryRepository {
     String? scope,
     int? limit = 40,
   }) async {
-    final rows = await _connect()
-        .memoriesForContext(
-          formatDateTime(now),
-          scope?.trim() ?? '',
-          limit ?? (1 << 30),
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .memoriesForContext(
+            formatDateTime(now),
+            scope?.trim() ?? '',
+            limit ?? (1 << 30),
+          )
+          .get(),
+    );
     return rows.map(_memoryOf).toList(growable: false);
   }
 
@@ -161,9 +162,9 @@ class MemoryRepository {
     int sourceId, {
     WriteTransaction? transaction,
   }) async {
-    final row = await _connect(transaction)
-        .hasMemoryFromSource(sourceKind, sourceId)
-        .getSingleOrNull();
+    final row = await writeExecutor(transaction, _db).selectGenerated(
+      (db) => db.hasMemoryFromSource(sourceKind, sourceId).getSingleOrNull(),
+    );
     return row != null;
   }
 

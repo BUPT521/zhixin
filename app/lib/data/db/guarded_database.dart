@@ -40,10 +40,12 @@ class GuardedDatabase implements RawDatabase {
 
   RawDatabase get _db => resolve();
 
-  /// 生成查询用的 drift 连接：事务里取事务连接，否则取当前库连接。
   @override
-  DatabaseConnectionUser? get driftConnection =>
-      _currentTxn?.driftConnection ?? _db.driftConnection;
+  DatabaseConnectionUser? get driftConnection => _currentTxn?.driftConnection;
+
+  /// 等共享访问获准后再取连接，恢复期间排队的读取会访问新库。
+  Future<T> readGenerated<T>(Future<T> Function(RawExecutor) action) =>
+      gate.shared(() => action(_currentTxn ?? _db));
 
   RawExecutor? get _currentTxn => Zone.current[_txnScope] as RawExecutor?;
 
@@ -96,6 +98,7 @@ class GuardedDatabase implements RawDatabase {
           (txn) => runZoned(
             () => action(txn),
             zoneValues: {
+              _txnScope: txn,
               _labelScope: label ?? defaultAction,
               _actorScope: actor,
             },

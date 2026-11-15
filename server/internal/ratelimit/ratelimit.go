@@ -5,6 +5,7 @@
 package ratelimit
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -49,8 +50,13 @@ func Disabled() *Limiter { return New(rate.Inf, 1, 0) }
 // 多个键同时检查时，先检查全部再扣减，避免前一个键被扣掉而后面拒绝，
 // 让同一个请求里的几个桶走得一致。
 func (l *Limiter) Allow(keys ...string) bool {
+	return l.Take(keys...) == 0
+}
+
+// Take consumes a token per key, or returns the seconds until a retry.
+func (l *Limiter) Take(keys ...string) int64 {
 	if len(keys) == 0 {
-		return true
+		return 0
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -65,8 +71,12 @@ func (l *Limiter) Allow(keys ...string) bool {
 		}
 		e.seen = now
 		// TokensAt 按传入时间算，时钟因此可控，测试可以模拟令牌补充。
-		if e.bucket.TokensAt(now) < 1 {
-			return false
+		if tokens := e.bucket.TokensAt(now); tokens < 1 {
+			seconds := math.Ceil((1 - tokens) / float64(l.limit))
+			if seconds >= math.MaxInt64 {
+				return math.MaxInt64
+			}
+			return int64(seconds)
 		}
 		buckets = append(buckets, e.bucket)
 	}
@@ -74,7 +84,7 @@ func (l *Limiter) Allow(keys ...string) bool {
 		// 上一步已经确认都还有令牌，这里一定成功；非阻塞，不占请求时间。
 		_ = b.AllowN(now, 1)
 	}
-	return true
+	return 0
 }
 
 // reap 回收长时间没用的键，避免按地址限流时表无限增长。

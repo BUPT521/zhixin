@@ -16,8 +16,8 @@ import (
 
 // newTestStore 连一个真实的 PostgreSQL 并整份建表。
 //
-// 没有设置 ZHIXIN_TEST_DATABASE_URL 时跳过：本仓库的开发机与 CI 都没有数据库，
-// 强行跑会把“没验证”混成“通过了”。连接串指向一个可以清空的库，用例会先删表。
+// CI 提供临时 PostgreSQL，开发机可设置 ZHIXIN_TEST_DATABASE_URL。
+// 连接串必须指向专用测试库，因为用例会删除其中的业务表。
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("ZHIXIN_TEST_DATABASE_URL"))

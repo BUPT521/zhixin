@@ -59,49 +59,52 @@ func (e CommitActor) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	Conflict           ProblemCode = "conflict"
-	EmailTaken         ProblemCode = "email_taken"
-	Internal           ProblemCode = "internal"
-	InvalidCredentials ProblemCode = "invalid_credentials"
-	InvalidRequest     ProblemCode = "invalid_request"
-	ModelNotAllowed    ProblemCode = "model_not_allowed"
-	NotFound           ProblemCode = "not_found"
-	NotImplemented     ProblemCode = "not_implemented"
-	PayloadTooLarge    ProblemCode = "payload_too_large"
-	QuotaExceeded      ProblemCode = "quota_exceeded"
-	Unauthorized       ProblemCode = "unauthorized"
-	Unavailable        ProblemCode = "unavailable"
-	UpstreamFailed     ProblemCode = "upstream_failed"
+	ProblemCodeConflict           ProblemCode = "conflict"
+	ProblemCodeEmailTaken         ProblemCode = "email_taken"
+	ProblemCodeInternal           ProblemCode = "internal"
+	ProblemCodeInvalidCredentials ProblemCode = "invalid_credentials"
+	ProblemCodeInvalidRequest     ProblemCode = "invalid_request"
+	ProblemCodeModelNotAllowed    ProblemCode = "model_not_allowed"
+	ProblemCodeNotFound           ProblemCode = "not_found"
+	ProblemCodeNotImplemented     ProblemCode = "not_implemented"
+	ProblemCodePayloadTooLarge    ProblemCode = "payload_too_large"
+	ProblemCodeQuotaExceeded      ProblemCode = "quota_exceeded"
+	ProblemCodeRateLimited        ProblemCode = "rate_limited"
+	ProblemCodeUnauthorized       ProblemCode = "unauthorized"
+	ProblemCodeUnavailable        ProblemCode = "unavailable"
+	ProblemCodeUpstreamFailed     ProblemCode = "upstream_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
-	case Conflict:
+	case ProblemCodeConflict:
 		return true
-	case EmailTaken:
+	case ProblemCodeEmailTaken:
 		return true
-	case Internal:
+	case ProblemCodeInternal:
 		return true
-	case InvalidCredentials:
+	case ProblemCodeInvalidCredentials:
 		return true
-	case InvalidRequest:
+	case ProblemCodeInvalidRequest:
 		return true
-	case ModelNotAllowed:
+	case ProblemCodeModelNotAllowed:
 		return true
-	case NotFound:
+	case ProblemCodeNotFound:
 		return true
-	case NotImplemented:
+	case ProblemCodeNotImplemented:
 		return true
-	case PayloadTooLarge:
+	case ProblemCodePayloadTooLarge:
 		return true
-	case QuotaExceeded:
+	case ProblemCodeQuotaExceeded:
 		return true
-	case Unauthorized:
+	case ProblemCodeRateLimited:
 		return true
-	case Unavailable:
+	case ProblemCodeUnauthorized:
 		return true
-	case UpstreamFailed:
+	case ProblemCodeUnavailable:
+		return true
+	case ProblemCodeUpstreamFailed:
 		return true
 	default:
 		return false

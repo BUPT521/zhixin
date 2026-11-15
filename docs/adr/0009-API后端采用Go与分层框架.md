@@ -14,10 +14,10 @@ ADR-0008 决定增加一个自建 API 服务，第一期承担账号与登录、
 
 ## 决定
 
-1. 服务端用 Go 1.27 编写，代码放在仓库根目录的 `server/`，构建为单个可执行文件 `zhixin-api`。HTTP 层只用标准库 `net/http` 的方法路由、`log/slog` 与 `httptest`，不引入 Web 框架；第三方依赖只在标准库没有对应能力时加入，目前只有 `golang.org/x/crypto` 的 argon2id。
+1. 服务端用 Go 1.27 编写，代码放在仓库根目录的 `server/`，构建为单个可执行文件 `zhixin-api`。HTTP 层只用标准库 `net/http` 的方法路由、`log/slog` 与 `httptest`，不引入 Web 框架；第三方依赖用于 argon2id、PostgreSQL 连接、生成接口的运行时及认证限流，依赖清单与选型见 ADR-0015。
 2. 工程按职责分包：`cmd/zhixin-api` 只负责读取配置与启动；`internal/config` 从环境变量读取配置；`internal/httpx` 放请求编号、访问日志、异常恢复、请求体上限与统一错误格式；`internal/auth`、`internal/backup`、`internal/syncsvc`、`internal/llmproxy` 各自包含处理函数、业务服务与存储接口；`internal/server` 只负责装配路由与中间件。业务包之间不互相引用存储实现，测试用内存实现替换。
 3. 接口契约以 [`server/api/openapi.yaml`](../../server/api/openapi.yaml) 为准。路径统一带 `/v1` 前缀，请求与响应用 JSON，错误用 RFC 9457 的 `application/problem+json`，`type` 字段取程序定义的错误分类，客户端按分类给出提示，不解析错误文字。写入接口接受 `Idempotency-Key` 请求头，同步推送直接复用客户端提交的 `request_id`，重试不重复写入。
-4. 数据存放分两处。账号、会话、提交序列与模型用量放 PostgreSQL；附件对象与整库备份按 SHA-256 放 S3 兼容的对象存储，自建时用 MinIO。骨架阶段只有内存实现，PostgreSQL 与对象存储的实现按存储接口补上。服务端数据库同样适用 [ADR-0001](0001-开发阶段不向下兼容.md)，1.0.0 之前表结构直接按 `schema.sql` 重建，不写迁移。
+4. 数据存放分两处。账号、会话、提交序列与模型用量放 PostgreSQL；附件对象与整库备份按 SHA-256 放 S3 兼容的对象存储，自建时用 MinIO。PostgreSQL 已由存储接口接入，备份文件在接入对象存储之前写入配置的持久目录。服务端数据库同样适用 [ADR-0001](0001-开发阶段不向下兼容.md)，1.0.0 之前表结构直接按 `schema.sql` 重建，不写迁移。
 5. 账号用邮箱与密码登录，密码以 argon2id 加盐保存。登录返回不透明的访问令牌与刷新令牌，访问令牌一小时过期，刷新令牌三十天过期并在每次刷新时轮换；服务端只保存令牌的 SHA-256，退出登录或删除账号时立即作废。邮箱验证与找回密码列为待定，内测前确定是否需要。
 6. 模型代理兼容 OpenAI Chat Completions：服务端在 `/v1/llm/chat/completions` 接收请求，校验模型名是否在允许列表内，检查当日额度，替换为服务端持有的提供方 key 之后原样转发，流式响应逐块刷新给客户端。客户端因此只需把接口地址设为 `<服务地址>/v1/llm`、把访问令牌当作 key，现有的请求构造与 SSE 解析不必改。Responses 与 Anthropic Messages 的代理留到有需要时再加。
 7. 服务以容器镜像部署，前面放一个负责 TLS 的反向代理；健康检查为 `/healthz`（进程存活）与 `/readyz`（依赖可用）。CI 增加一个任务，在 `server/` 下执行 `gofmt`、`go vet` 与 `go test`。

@@ -54,7 +54,7 @@
 2. `git diff --cached`：确认没有个人信息、API key、真实学习记录与未脱敏截图；申报材料与访谈原文不随仓库提交。
 3. 标题读一遍：三个月后还认得出吗。
 4. 动了 `app/`：先 `cd app` 执行 `dart run build_runner build`，把 `app_database.g.dart` 与 `.drift` 文件的生成结果一起提交；再执行 CI 的同一组三条命令，全部通过之后再推送，即 `dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。CI（[ci.yml](.github/workflows/ci.yml)）先跑生成并用 `git diff --exit-code` 核对生成结果与提交一致，再跑这三条，本地检查不通过，推上去也不会通过，`main` 红着不算“能构建”。改了表结构或 `lib/data/db/drift/queries/` 下的 `.drift` 文件却没有重新生成，CI 会在生成核对这一步失败。
-5. 动了 `server/`：`cd server` 后执行 `gofmt -l .`（应当没有输出）、`go vet ./...`、`go test ./...`，与 CI 的服务端任务一致。改了 [api/openapi.yaml](server/api/openapi.yaml) 时，服务端处理函数与客户端调用放进同一个 push。
+5. 动了 `server/`：`cd server` 后执行 `gofmt -l .`（应当没有输出）、`go vet ./...`、`go test ./...`，与 CI 的服务端任务一致。改动 `schema.sql` 或查询文件后按 CI 的版本重新运行 `sqlc`，改动 OpenAPI 后重新运行 `oapi-codegen`，生成文件随对应的源文件提交。改了 [api/openapi.yaml](server/api/openapi.yaml) 时，服务端处理函数与客户端调用放进同一个 push。
 
 ## 8. 行尾与编码
 

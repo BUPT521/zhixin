@@ -393,6 +393,50 @@ func TestRefreshRateLimitReturns429(t *testing.T) {
 	}
 }
 
+func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
+	cfg, err := config.Load(func(key string) string {
+		return map[string]string{
+			"ZHIXIN_REFRESH_RATE":  "0.0001",
+			"ZHIXIN_REFRESH_BURST": "1",
+		}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(cfg, MemoryStores(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	post := func(path, address string, body any) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(mustJSON(t, body)))
+		req.RemoteAddr = address
+		req.Header.Set("Content-Type", "application/json")
+		result := httptest.NewRecorder()
+		handler.ServeHTTP(result, req)
+		return result
+	}
+	credentials := map[string]string{"email": "devices@example.com", "password": "password1"}
+	first := post("/v1/auth/register", "192.0.2.1:1234", credentials)
+	second := post("/v1/auth/login", "192.0.2.2:1234", credentials)
+	if first.Code != http.StatusCreated || second.Code != http.StatusOK {
+		t.Fatalf("register and login: %d, %d", first.Code, second.Code)
+	}
+	refresh := func(session *httptest.ResponseRecorder, addr string) int {
+		t.Helper()
+		var tokens struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(session.Body).Decode(&tokens); err != nil {
+			t.Fatal(err)
+		}
+		return post("/v1/auth/refresh", addr, map[string]string{"refresh_token": tokens.RefreshToken}).Code
+	}
+	if status := refresh(first, "192.0.2.1:1234"); status != http.StatusOK {
+		t.Fatalf("first device refresh: %d", status)
+	}
+	if status := refresh(second, "192.0.2.2:1234"); status != http.StatusTooManyRequests {
+		t.Fatalf("second device on another address: got %d, want 429", status)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

@@ -2,7 +2,6 @@ import '../data/repository/evidence_repository.dart';
 import '../domain/models/evidence.dart';
 import '../domain/rules/query_shape.dart';
 import 'cross_session_service.dart';
-import 'keyword_ranker.dart';
 import 'semantic_index_service.dart';
 
 /// 用户查找读到的一段候选；[more] 为真表示还有更早的命中没有读进来。
@@ -60,9 +59,7 @@ class EvidenceService {
   /// 分批读取的候选窗口：最多读到 [maxHits] 条，超出时 [SearchWindow.more]
   /// 为真，调用方据此扩大窗口或停止翻页。
   ///
-  /// 与 [userSearch] 的区别是这里不按 BM25 重排关键词候选：分页要求排序只由
-  /// 命中本身决定，同一批候选在不同窗口下应得到同样的先后，窗口扩大时已翻到
-  /// 的命中不会因此换位。
+  /// 关键词得分来自 FTS5，同一命中的得分与读取窗口的大小无关。
   Future<SearchWindow> userSearchWindow(
     String query, {
     EvidenceScope scope = const EvidenceScope.userAll(),
@@ -158,18 +155,9 @@ class EvidenceService {
                   excludePage: excludePage,
                 )
         : <EvidenceHit>[];
-    // 关键词候选已经由索引按 bm25() 排好，这里只折成分数；排序耗时算在查询里，
-    // 不再单独计时。
-    final rankMs = 0;
-    if (keywordHits.isNotEmpty) {
-      keywordHits = scoreKeywordCandidates(keywordHits);
-    }
-
     // 语义候选只在回答前检索时加入；失败或超时只记为不可用，不阻断本次回答。
     var semanticFailed = false;
-    EvidenceTimings? timings = rankMs == 0
-        ? null
-        : EvidenceTimings(rankMs: rankMs);
+    EvidenceTimings? timings;
     final semanticService = semantic;
     if (semanticService != null &&
         scope.isAnswerContext &&
@@ -186,7 +174,6 @@ class EvidenceService {
         totalMs: semanticTimings.totalMs,
         verifiedOut: semanticTimings.verifiedOut,
         candidates: semanticTimings.candidates,
-        rankMs: rankMs,
       );
       if (result.usable) {
         keywordHits = [...keywordHits, ...result.hits];
