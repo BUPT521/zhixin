@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -6,7 +5,6 @@ import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
-import '../attachment_store.dart';
 import '../db/app_database.dart';
 import '../../domain/rules/attachments.dart';
 import '../db/raw_executor.dart';
@@ -38,62 +36,6 @@ class DataPackageService {
   final String appVersion;
   final int schemaVersion;
   final Clock clock;
-
-  /// 将数据包按文件流写入目标路径，供自动备份和手动导出暂存使用。
-  Future<void> exportPackageToFile(RawDatabase db, String outputPath) async {
-    final output = File(outputPath);
-    final encoder = ZipFileEncoder();
-    var opened = false;
-    try {
-      await output.parent.create(recursive: true);
-      if (await output.exists()) await output.delete();
-      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
-      final imagePaths = await _referencedImageFiles(db);
-      final manifestImages = <String, String>{};
-      for (final entry in imagePaths) {
-        final digest = await sha256.bind(entry.openRead()).first;
-        manifestImages[_imageEntryPath(entry)] = digest.toString();
-      }
-      final manifest = BackupManifest(
-        schemaVersion: schemaVersion,
-        appVersion: appVersion,
-        exportedAt: clock().toUtc().toIso8601String(),
-        imageCount: manifestImages.length,
-        images: manifestImages,
-      );
-      encoder.create(output.path, level: 6);
-      opened = true;
-      encoder.addArchiveFile(
-        ArchiveFile.bytes(
-          manifestEntryName,
-          utf8.encode(
-            const JsonEncoder.withIndent('  ').convert(manifest.toJson()),
-          ),
-        ),
-      );
-      await encoder.addFile(File(dbPath), dbEntryName);
-      for (final entry in imagePaths) {
-        await encoder.addFile(entry, _imageEntryPath(entry));
-      }
-      await encoder.close();
-      opened = false;
-    } catch (error) {
-      if (opened) {
-        try {
-          await encoder.close();
-        } catch (_) {
-          // 保留原始写入错误。
-        }
-      }
-      try {
-        if (await output.exists()) await output.delete();
-      } catch (_) {
-        // 未完成文件使用临时后缀，不会显示为有效备份。
-      }
-      if (error is BackupException) rethrow;
-      throw BackupException('文件流导出没有完成，文件没有生成。', detail: '$error');
-    }
-  }
 
   /// 预检旧格式的数据包：核对 manifest、schema、图片与暂存库，返回导出信息。
   ///
@@ -432,39 +374,6 @@ class DataPackageService {
         throw BackupException('图片校验失败：${entry.key}');
       }
     }
-  }
-
-  /// 数据库仍引用的图片文件；缺文件时中止导出，而不是悄悄少打包一张。
-  Future<List<File>> _referencedImageFiles(RawExecutor db) async {
-    final imageRoot = p.normalize(p.absolute(p.join(filesDir, imagesEntryDir)));
-    final paths = await AttachmentStore(filesDir: filesDir).referencedPaths(db);
-    final files = <File>[];
-    final missing = <String>[];
-    for (final path in paths) {
-      if (!p.isWithin(imageRoot, path)) continue;
-      if (await FileSystemEntity.type(path, followLinks: false) !=
-          FileSystemEntityType.file) {
-        missing.add(p.relative(path, from: imageRoot).replaceAll('\\', '/'));
-        continue;
-      }
-      files.add(File(path));
-    }
-    if (missing.isNotEmpty) {
-      throw BackupException(
-        '导出中止：数据库引用的 ${missing.length} 张图片文件已缺失'
-        '（${missing.take(3).join('、')}${missing.length > 3 ? ' 等' : ''}）',
-      );
-    }
-    files.sort((a, b) => a.path.compareTo(b.path));
-    return files;
-  }
-
-  String _imageEntryPath(File file) {
-    final imageRoot = p.normalize(p.absolute(p.join(filesDir, imagesEntryDir)));
-    return p.posix.join(
-      imagesEntryDir,
-      p.relative(file.path, from: imageRoot).replaceAll('\\', '/'),
-    );
   }
 
   /// 恢复时要核对的核心表；只比行数，不比内容。

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/domain/rules/attachments.dart';
 import 'package:zhixin/data/backup/backup_manifest.dart';
@@ -33,8 +34,44 @@ Future<int> _captureRecord(
 Future<String?> _recordStem(RawDatabase db, int id) async =>
     (await ConversationRepository(db.rawDb).question(id))?.stem;
 
+/// 按旧格式造一份数据包：清单、库文件与被引用的图片。
+Future<Uint8List> _packageBytes(
+  String dbPath,
+  Map<String, List<int>> images,
+) async {
+  final manifest = BackupManifest(
+    schemaVersion: zhixinSchemaVersion,
+    appVersion: 'test',
+    exportedAt: DateTime.utc(2026, 11, 6).toIso8601String(),
+    imageCount: images.length,
+    images: {
+      for (final entry in images.entries)
+        '$questionImagesDirName/${entry.key}': sha256
+            .convert(entry.value)
+            .toString(),
+    },
+  );
+  final archive = Archive()
+    ..addFile(
+      ArchiveFile.bytes(
+        manifestEntryName,
+        utf8.encode(jsonEncode(manifest.toJson())),
+      ),
+    )
+    ..addFile(ArchiveFile.bytes(dbEntryName, await File(dbPath).readAsBytes()));
+  for (final entry in images.entries) {
+    archive.addFile(
+      ArchiveFile.bytes(
+        '$questionImagesDirName/${entry.key}',
+        Uint8List.fromList(entry.value),
+      ),
+    );
+  }
+  return Uint8List.fromList(ZipEncoder().encodeBytes(archive));
+}
+
 void main() {
-  test('当前格式的包导出后能在新目录恢复，讨论与归属一起带回', () async {
+  test('旧格式数据包能在新目录恢复，讨论与归属一起带回', () async {
     final dir1 = await Directory.systemTemp.createTemp('zhixin_export_');
     final dir2 = await Directory.systemTemp.createTemp('zhixin_restore_');
     addTearDown(() async {
@@ -105,16 +142,10 @@ void main() {
       appVersion: 'test',
       schemaVersion: zhixinSchemaVersion,
     );
-    final exported = File('${dir1.path}/export.zip');
-    await service1.exportPackageToFile(db1, exported.path);
-    final bytes = await exported.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes);
-    final manifest = BackupManifest.parse(
-      archive.findFile(manifestEntryName)!.readBytes()!,
-    );
-    expect(manifest.imageCount, 1);
-    expect(archive.findFile('question_images/orphan.jpg'), isNull);
-    expect(archive.findFile('question_images/m-1.jpg'), isNotNull);
+    await db1.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    final bytes = await _packageBytes(path1, {
+      'm-1.jpg': [4, 5, 6],
+    });
     final inspection = await service1.inspectPackage(bytes);
     expect(inspection.schemaVersion, zhixinSchemaVersion);
     expect(inspection.exportedAt, isNotEmpty);
@@ -371,46 +402,6 @@ void main() {
     final reopened = await openZhixinDatabase(path: path);
     addTearDown(reopened.close);
     expect(await _recordStem(reopened, recordId), '已提交的新数据');
-  });
-
-  test('数据库仍引用图片但文件缺失时，导出中止并报告缺项', () async {
-    final dir = await Directory.systemTemp.createTemp('zhixin_missing_image_');
-    addTearDown(() async {
-      if (await dir.exists()) await dir.delete(recursive: true);
-    });
-    final path = '${dir.path}/zhixin.db';
-    final db = await openZhixinDatabase(path: path);
-    addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
-    final conversationId = await conversations.create();
-    await conversations.append(conversationId, role: 'user', content: '带图的题');
-    await updateRow(
-      db,
-      'message',
-      {'image_paths_json': '["lost.jpg"]'},
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-    );
-    await Directory('${dir.path}/question_images').create(recursive: true);
-
-    final service = DataPackageService(
-      filesDir: dir.path,
-      dbPath: path,
-      appVersion: 'test',
-      schemaVersion: zhixinSchemaVersion,
-    );
-    final exported = File('${dir.path}/export.zip');
-    await expectLater(
-      service.exportPackageToFile(db, exported.path),
-      throwsA(
-        isA<BackupException>().having(
-          (error) => error.message,
-          'message',
-          contains('lost.jpg'),
-        ),
-      ),
-    );
-    expect(await exported.exists(), isFalse);
   });
 
   test('其他版本的备份都在恢复入口拒绝，且不碰当前库', () async {
