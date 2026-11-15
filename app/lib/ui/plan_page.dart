@@ -1190,7 +1190,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
                   theme.space.page,
                   theme.space.xs,
                   theme.space.page,
-                  theme.space.section + 4,
+                  theme.space.section,
                 ),
                 sliver: SliverMainAxisGroup(
                   slivers: switch (tab) {
@@ -1726,7 +1726,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final paused = goal.status == LearningGoalStatus.paused;
     final scope = goal.scopeText?.trim();
     return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm - 2),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         prefix: LeadingIcon(
           FLucideIcons.flag,
@@ -1790,7 +1790,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
       color: theme.colors.onSurfaceVariant,
     );
     return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm - 2),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         prefix: LeadingIcon(
           plan.done ? FLucideIcons.circleCheck : FLucideIcons.route,
@@ -1899,7 +1899,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final planTitle = _scheduledPlanTitle(entry);
     final figures = theme.text.figures;
     return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm - 2),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         prefix: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1991,7 +1991,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         item.dueAt != null &&
         item.dueAt!.isBefore(AppScope.of(context).timePolicy.now);
     return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm - 2),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         onPress: () => _showItem(item),
         prefix: LeadingIcon(
@@ -2185,7 +2185,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         ? '1 项变化'
         : '${commit.changeCount} 项变化';
     return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm - 2),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         prefix: const LeadingIcon(FLucideIcons.sparkles),
         title: Text(commit.action),

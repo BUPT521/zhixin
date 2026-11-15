@@ -761,7 +761,7 @@ class _LearningPageState extends State<LearningPage> {
             ),
             const SizedBox(height: 12),
             _draftCard(theme),
-            const SizedBox(height: 8),
+            SizedBox(height: theme.space.gap),
             if (AppScope.of(context).broughtSources.length > 0) ...[
               Row(
                 children: [
@@ -788,7 +788,7 @@ class _LearningPageState extends State<LearningPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: theme.space.gap),
             ],
             Wrap(
               spacing: 8,
@@ -920,7 +920,7 @@ class _LearningPageState extends State<LearningPage> {
               label: const Text('答案或关键步骤'),
               hint: '先写已知条件与推到的步骤，再点「检查」请搭子看第一步',
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: theme.space.gap),
             forui.FTextField(
               control: .managed(controller: _solutionDraft),
               enabled: !_busy,
@@ -1021,7 +1021,7 @@ class _LearningPageState extends State<LearningPage> {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        SizedBox(height: theme.space.gap),
                       ],
                       forui.FSwitch(
                         label: const Text('间隔后重做'),
@@ -1138,7 +1138,7 @@ class _LearningPageState extends State<LearningPage> {
                   ),
               ],
               if (attempt.submitted) ...[
-                const SizedBox(height: 8),
+                SizedBox(height: theme.space.gap),
                 Divider(height: 1, color: theme.colors.outlineVariant),
                 Padding(
                   padding: const EdgeInsets.only(top: 4),

@@ -202,7 +202,7 @@ class TagRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Wrap(
-    spacing: context.zhixin.space.xs + 2,
+    spacing: context.zhixin.space.tight,
     runSpacing: context.zhixin.space.xs,
     crossAxisAlignment: WrapCrossAlignment.center,
     children: children,

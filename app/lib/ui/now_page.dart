@@ -261,9 +261,7 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
             : const SizedBox.shrink(),
       ),
       (_) => Padding(
-        padding: EdgeInsets.only(
-          top: showActivity ? theme.space.section - 4 : 0,
-        ),
+        padding: EdgeInsets.only(top: showActivity ? theme.space.xl : 0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -730,7 +728,7 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
             Row(
               children: [
                 Icon(FLucideIcons.clock, size: 16, color: soft),
-                SizedBox(width: theme.space.xs + 2),
+                SizedBox(width: theme.space.tight),
                 Expanded(
                   child: Text(
                     label,
@@ -762,7 +760,7 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
                   ),
             ),
             if (text != null && text.isNotEmpty) ...[
-              SizedBox(height: theme.space.xs + 2),
+              SizedBox(height: theme.space.tight),
               Text(
                 '说明：$text',
                 maxLines: 3,

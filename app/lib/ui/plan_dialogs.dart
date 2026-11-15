@@ -7,6 +7,7 @@ import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
 import 'copy.dart';
 import 'format.dart';
+import 'theme.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_select.dart';
 
@@ -63,7 +64,7 @@ class _ItemDialogState extends State<ItemDialog> {
             control: .managed(controller: _title),
             label: const Text('事项名称'),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           ZhixinSelect<int>(
             value: _goalId,
             label: '目标（可选）',
@@ -73,7 +74,7 @@ class _ItemDialogState extends State<ItemDialog> {
             },
             onChange: (value) => setState(() => _goalId = value ?? 0),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: _note),
             minLines: 1,
@@ -81,13 +82,13 @@ class _ItemDialogState extends State<ItemDialog> {
             label: const Text('说明（可选）'),
             hint: '合上笔记重做第 8 题，写清放缩依据',
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: _minutes),
             keyboardType: TextInputType.number,
             label: const Text('预计时长（分钟，可选）'),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Row(
             children: [
               forui.FButton(
@@ -223,7 +224,7 @@ class _BlockDialogState extends State<BlockDialog> {
               if (value != null) setState(() => _itemId = value);
             },
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -354,7 +355,7 @@ class _TimetableDialogState extends State<TimetableDialog> {
             control: .managed(controller: _title),
             label: const Text('课程名称'),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           ZhixinSelect<int>(
             value: _weekday,
             label: '星期',

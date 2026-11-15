@@ -506,7 +506,7 @@ class _RecordsPageState extends State<RecordsPage>
               color: theme.colors.outlineVariant,
             ),
             Padding(
-              padding: EdgeInsets.only(right: theme.space.sm - 2),
+              padding: EdgeInsets.only(right: theme.space.tight),
               child: ZhixinChip(
                 label: '全部',
                 size: forui.FButtonSizeVariant.sm,
@@ -515,7 +515,7 @@ class _RecordsPageState extends State<RecordsPage>
               ),
             ),
             Padding(
-              padding: EdgeInsets.only(right: theme.space.sm - 2),
+              padding: EdgeInsets.only(right: theme.space.tight),
               child: ZhixinChip(
                 label: '无归属',
                 size: forui.FButtonSizeVariant.sm,
@@ -525,7 +525,7 @@ class _RecordsPageState extends State<RecordsPage>
             ),
             for (final goal in _goals)
               Padding(
-                padding: EdgeInsets.only(right: theme.space.sm - 2),
+                padding: EdgeInsets.only(right: theme.space.tight),
                 child: ZhixinChip(
                   label: goal.title,
                   size: forui.FButtonSizeVariant.sm,
@@ -763,7 +763,7 @@ class _RecordsPageState extends State<RecordsPage>
     ].join('，');
     final active = hasDraft || record.open;
     return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm - 2),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         prefix: LeadingIcon(
           question != null

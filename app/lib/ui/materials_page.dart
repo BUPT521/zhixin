@@ -289,7 +289,8 @@ class MaterialListState extends State<MaterialList> {
               : ListView.separated(
                   padding: theme.space.pageInsets(),
                   itemCount: _materials.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  separatorBuilder: (_, _) =>
+                      SizedBox(height: context.zhixin.space.gap),
                   itemBuilder: (context, index) {
                     final material = _materials[index];
                     return forui.FTile(
@@ -466,7 +467,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('更正内容保存后，后续引用会使用新文字；重新提问可获取更新后的引用。'),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: controller),
             minLines: 5,
@@ -560,7 +561,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('第 ${page.pageNo} 页的更正记录', style: theme.text.titleMedium),
-                const SizedBox(height: 8),
+                SizedBox(height: context.zhixin.space.gap),
                 if (history.isEmpty)
                   Text('这一页还没有更正记录。', style: theme.text.bodyMedium)
                 else
@@ -667,7 +668,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
             style: theme.text.bodySmall,
           ),
           if (_hasRange) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: context.zhixin.space.gap),
             forui.FCard(
               style: .delta(
                 decoration: .shapeDelta(color: theme.colors.secondaryContainer),
@@ -699,7 +700,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
               ),
             ),
           ],
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           if (_pages.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
@@ -835,7 +836,7 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
             label: const Text('材料名称'),
             hint: '概率论第 12 讲课件',
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           ZhixinSelect<String>(
             value: _kind,
             label: '类型',
@@ -847,13 +848,13 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
             },
             onChange: (value) => setState(() => _kind = value ?? 'slides'),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: _source),
             label: const Text('出处（可选）'),
             hint: '教材第 8 章，或文件与页码说明',
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           ZhixinSelect<int>(
             value: _goalId,
             label: '目标（可选）',

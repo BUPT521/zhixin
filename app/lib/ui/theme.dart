@@ -169,6 +169,12 @@ class ZhixinSpace {
   /// 同一张卡片里相邻两行之间。
   double get sm => 8;
 
+  /// 比 [sm] 小一点的间隔：原来散在各页的 `sm - 2` 与 `xs + 2` 都归到这一档。
+  double get tight => 6;
+
+  /// 表单里相邻两行之间；和 [sm] 同值，单独一档方便以后调整。
+  double get gap => 8;
+
   /// 列表里相邻两张卡片之间、卡片内边距的短边。
   double get md => 12;
 
