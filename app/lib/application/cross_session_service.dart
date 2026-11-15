@@ -1,5 +1,6 @@
 import '../data/repository/evidence_repository.dart';
 import '../domain/models/evidence.dart';
+import '../domain/models/evidence_id.dart';
 import '../domain/rules/time_condition.dart';
 
 import '../domain/rules/text.dart';
@@ -283,7 +284,7 @@ class CrossSessionService {
     ];
     return EvidenceHit(
       kind: EvidenceKind.answer,
-      identity: 'attempt:${attempt.id}',
+      identity: EvidenceId.attempt(attempt.id).value,
       title: '一次已提交作答 · $when',
       snippet: parts.join('；'),
       matchedText: answer,

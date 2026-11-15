@@ -4,6 +4,7 @@ import '../db/raw_executor.dart';
 import '../../domain/rules/binary_bigrams.dart';
 
 import '../../domain/models/evidence.dart';
+import '../../domain/models/evidence_id.dart';
 import '../../domain/models/material.dart';
 import '../../domain/models/question.dart';
 import '../../domain/rules/embedding.dart';
@@ -587,7 +588,7 @@ class EvidenceRepository {
         SemanticSource(
           locator: SemanticLocator(
             kind: EvidenceKind.materialPage.value,
-            sourceKey: 'material_page:$materialId:$pageNo',
+            sourceKey: EvidenceId.materialPage(materialId, pageNo).value,
             materialId: materialId,
             pageNo: pageNo,
           ),
@@ -611,7 +612,7 @@ class EvidenceRepository {
         SemanticSource(
           locator: SemanticLocator(
             kind: EvidenceKind.message.value,
-            sourceKey: 'message:$id',
+            sourceKey: EvidenceId.message(id).value,
             conversationId: row['conversation_id']! as int,
             materialId: row['material_id'] as int?,
             messageId: id,
@@ -641,7 +642,7 @@ class EvidenceRepository {
         SemanticSource(
           locator: SemanticLocator(
             kind: EvidenceKind.answer.value,
-            sourceKey: 'attempt:$id',
+            sourceKey: EvidenceId.attempt(id).value,
             conversationId: row['conversation_id']! as int,
             materialId: row['material_id'] as int?,
             attemptId: id,
@@ -846,7 +847,10 @@ class EvidenceRepository {
               : _termOffset(content, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.materialPage,
-            identity: 'material_page:${row['material_id']}:$pageNo',
+            identity: EvidenceId.materialPage(
+              row['material_id']! as int,
+              pageNo,
+            ).value,
             title:
                 '《${row['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(row['source_file_name'] as String?))}',
             snippet: searchSnippet(content, _termsFor(shape, literal)),
@@ -916,7 +920,7 @@ class EvidenceRepository {
               : _termOffset(content, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.message,
-            identity: 'message:${row['id']}',
+            identity: EvidenceId.message(row['id']! as int).value,
             title: (row['title'] as String?) ?? '一次讨论',
             snippet: searchSnippet(content, _termsFor(shape, literal)),
             text: content,
@@ -995,7 +999,7 @@ class EvidenceRepository {
               : _termOffset(text, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.question,
-            identity: 'question:${row['conversation_id']}',
+            identity: EvidenceId.question(row['conversation_id']! as int).value,
             title: _conversationTitle(row),
             snippet: searchSnippet(text, _termsFor(shape, literal)),
             text: text,
@@ -1075,7 +1079,7 @@ class EvidenceRepository {
               : _termOffset(text, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.answer,
-            identity: 'attempt:${row['id']}',
+            identity: EvidenceId.attempt(row['id']! as int).value,
             title: _answerTitle(row['id']! as int),
             snippet: searchSnippet(text, _termsFor(shape, literal)),
             text: text,

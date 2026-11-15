@@ -1,4 +1,5 @@
 import '../models/evidence.dart';
+import '../models/evidence_id.dart';
 import '../models/search.dart';
 
 /// 结果按学习记录汇总时使用的键：有讨论标识时按记录，材料页按页。
@@ -7,7 +8,9 @@ import '../models/search.dart';
 /// 一行。
 String searchEntryKey(EvidenceHit hit) {
   final conversationId = hit.location.conversationId;
-  return conversationId == null ? hit.identity : 'conversation:$conversationId';
+  return conversationId == null
+      ? hit.identity
+      : EvidenceId.conversation(conversationId).value;
 }
 
 /// 把本地记录顺序与语义命中合成为一份排序后的记录列表。
