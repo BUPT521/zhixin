@@ -1,6 +1,4 @@
--- 目标与事项的补充读查询（ADR-0011 第一批与第二批）。
---
--- 主查询在 tasks.drift；这里补上按条件筛选的几条。
+-- 学习目标的读写查询：一张表一个文件。
 
 import '../tables.dart';
 
@@ -14,17 +12,6 @@ ORDER BY due_date IS NULL, due_date, id DESC;
 goalById:
 SELECT * FROM learning_goal WHERE id = :id LIMIT 1;
 
--- 从讨论里接受建议后按标题找回刚建立的事项，供重复请求返回原结果。
-itemByConversationAndTitle:
-SELECT p.*,
-  (SELECT m.source_file_name FROM study_plan sp
-    JOIN material m ON m.id = sp.material_id
-    WHERE sp.id = p.study_plan_id) AS source_file_name
-FROM plan_item p
-WHERE p.conversation_id = :conversationId AND p.title = :title
-ORDER BY p.id DESC
-LIMIT 1;
-
 insertLearningGoal:
 INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at)
 VALUES (:title, :scopeText, :dueDate, :status, :stamp, :stamp);
@@ -33,3 +20,9 @@ setLearningGoalStatus:
 UPDATE learning_goal SET status = :status,
   updated_at = :stamp
 WHERE id = :goalId;
+
+-- 全部目标，当前有效的排在最前，其余按新建时间倒序。
+goals:
+SELECT * FROM learning_goal
+ORDER BY CASE status WHEN :activeStatus THEN 0 WHEN :pausedStatus THEN 1
+  WHEN :doneStatus THEN 2 ELSE 3 END, id DESC;

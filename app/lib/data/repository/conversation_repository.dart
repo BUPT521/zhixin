@@ -269,9 +269,11 @@ class ConversationRepository {
     return Question(
       id: id,
       stem: stem,
-      sourceRef: sourceRef ?? (title == null || page == null
-          ? null
-          : '《$title》${materialPosition(page, isDocx: isDocxFile(sourceFileName))}'),
+      sourceRef:
+          sourceRef ??
+          (title == null || page == null
+              ? null
+              : '《$title》${materialPosition(page, isDocx: isDocxFile(sourceFileName))}'),
       contextText: contextText,
       imagePaths: decodeStoredAttachmentPaths(imagePathsJson),
       createdAt: optionalDateTime(createdAt),
@@ -416,8 +418,7 @@ class ConversationRepository {
 
   Future<Attempt?> latestSubmitted(int conversationId) async {
     final row = await _db.selectGenerated(
-      (db) =>
-          db.latestSubmittedOfConversation(conversationId).getSingleOrNull(),
+      (db) => db.latestSubmittedAttempt(conversationId).getSingleOrNull(),
     );
     return row == null ? null : _attemptOf(row);
   }

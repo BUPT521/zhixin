@@ -1,13 +1,10 @@
--- 学习计划的读查询（ADR-0011 第一批）。
---
--- 列与子查询原来拼在 study_plan_repository.dart 的 _planColumns 与
--- _nextStepTitle 里。原来按调用点拼 WHERE 与 ORDER BY，这里合并成一条带开关
--- 参数的语句：`id`、`openOnly`、`activeOnly`、`statusFirst` 为空或零时对应条件
--- 不生效，仍然是一条可读的静态 SQL，由 drift 生成一个结果类型。
---
--- 步骤查询的 IN 用 json_each 传 JSON 数组，不再按个数拼占位符。
+-- 系统学习计划的读写查询：一张表一个文件。
 
 import '../tables.dart';
+
+-- 按编号取一份计划。
+studyPlanById:
+SELECT * FROM study_plan WHERE id = :id LIMIT 1;
 
 -- 计划列表；参数按调用点传，不生效的条件由参数关掉。
 planRows:
@@ -34,42 +31,6 @@ ORDER BY
     ELSE 2 END,
   sp.updated_at DESC, sp.id DESC
 LIMIT :rowLimit;
-
--- 一份计划的步骤，按顺序。
-planSteps:
-SELECT p.*,
-  (SELECT m.source_file_name FROM study_plan sp
-    JOIN material m ON m.id = sp.material_id
-    WHERE sp.id = p.study_plan_id) AS source_file_name
-FROM plan_item p
-WHERE p.study_plan_id = :planId
-ORDER BY p.seq, p.id;
-
--- 多份计划的步骤，按计划与顺序。
-planStepsForPlans:
-SELECT p.*,
-  (SELECT m.source_file_name FROM study_plan sp
-    JOIN material m ON m.id = sp.material_id
-    WHERE sp.id = p.study_plan_id) AS source_file_name
-FROM plan_item p
-WHERE p.study_plan_id IN (SELECT value FROM json_each(:planIds))
-ORDER BY p.study_plan_id, p.seq, p.id;
-
--- 计划下方的步骤里最大的顺序号；没有步骤时返回 0。
-lastPlanStepSeq:
-SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item
-WHERE study_plan_id = :planId;
--- 完成一步时按是否真的学过回写预约状态：与场次有重叠的记为完成，
--- 到过开始时间却没有场次的按取消处理。
-settleBlocksOnStepDone:
-UPDATE schedule_block SET status = CASE WHEN EXISTS (
-  SELECT 1 FROM study_session s
-  WHERE s.plan_item_id = schedule_block.plan_item_id
-    AND s.started_at < schedule_block.end_at
-    AND COALESCE(s.ended_at, :now) > schedule_block.start_at
-) THEN :doneStatus ELSE :cancelledStatus END,
-  updated_at = :now
-WHERE plan_item_id = :itemId AND status = :plannedStatus;
 
 insertStudyPlan:
 INSERT INTO study_plan (material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at)

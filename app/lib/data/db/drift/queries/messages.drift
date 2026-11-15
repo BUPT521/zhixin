@@ -1,15 +1,6 @@
--- 消息与作答的补充读查询（ADR-0011 第二批）。
---
--- 主查询在 conversations.drift 与 recent_attempts.drift；这里补上按条件筛选的几条。
+-- 讨论消息的读写查询：一张表一个文件。
 
 import '../tables.dart';
-
--- 一条记录里最近一次已提交的作答。
-latestSubmittedOfConversation:
-SELECT * FROM attempt
-WHERE conversation_id = :conversationId AND submitted_at IS NOT NULL
-ORDER BY submitted_at DESC, id DESC
-LIMIT 1;
 
 -- 最近的若干条消息，按编号倒序；调用方再反转成升序。
 recentMessages:
@@ -48,20 +39,10 @@ LIMIT 1;
 messageById:
 SELECT * FROM message WHERE id = :id LIMIT 1;
 
--- 这条记录里出现过的场次编号，清空记录时逐个核对是否还被别的记录引用。
-sessionIdsOfConversation:
-SELECT DISTINCT session_id FROM attempt
-WHERE conversation_id = :conversationId AND session_id IS NOT NULL;
-
 -- 这条记录的消息里带过的图片路径，清空记录时一并删除附件。
 imagePathsOfConversation:
 SELECT image_paths_json FROM message
 WHERE conversation_id = :conversationId AND image_paths_json IS NOT NULL;
-
--- 这个场次里还剩下几条作答，清空记录时决定要不要一起删场次。
-attemptsInSession:
-SELECT id FROM attempt WHERE session_id = :sessionId LIMIT 1;
-
 
 insertConversationMessage:
 INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at)
@@ -73,4 +54,3 @@ DELETE FROM message WHERE conversation_id = :conversationId;
 setMessageStructuredState:
 UPDATE message SET structured_json = :structuredJson
 WHERE id = :messageId;
-

@@ -1,8 +1,4 @@
--- 对话与题目的读查询（ADR-0011 第二批）。
---
--- 语句原来拼在 conversation_repository.dart 里，`_questionSelect` 与
--- `_questionUserMessage` 这类列常量一并展开成静态 SQL。可选的筛选与分页用开关
--- 参数关掉，可变个数的记录标识用 json_each 传 JSON 数组。
+-- 讨论与题目的读写查询：一张表一个文件。
 
 import '../tables.dart';
 
@@ -226,3 +222,6 @@ UPDATE conversation SET status = 'open',
   ended_at = NULL,
   updated_at = :stamp
 WHERE id = :conversationId;
+
+conversationScope:
+SELECT id, goal_id, material_id FROM conversation WHERE id = :id LIMIT 1;

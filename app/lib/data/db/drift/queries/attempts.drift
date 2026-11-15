@@ -1,6 +1,44 @@
--- 作答的读查询与建草稿语句（ADR-0011 第二批）。
+-- 作答与草稿的读写查询：一张表一个文件。
 
 import '../tables.dart';
+
+-- 这次作答的提交时间；没有这一行表示作答不存在，提交时间为空表示还没提交。
+-- 取整行而不是只取 submitted_at，否则「有草稿未提交」与「没有这一行」区分不开。
+attemptSubmission:
+SELECT id, submitted_at FROM attempt WHERE id = :attemptId LIMIT 1;
+
+-- 一条学习记录的全部作答，按编号倒序。
+attemptsForConversation:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId
+ORDER BY id DESC;
+
+-- 同一道题以前写下的困难：已提交且有非空反馈，最多取若干条。
+priorFeedback:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId
+  AND submitted_at IS NOT NULL
+  AND feedback IS NOT NULL AND TRIM(feedback) <> ''
+ORDER BY submitted_at DESC, id DESC
+LIMIT :rowLimit;
+
+-- 最近一次已提交的作答。
+latestSubmittedAttempt:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId AND submitted_at IS NOT NULL
+ORDER BY submitted_at DESC, id DESC
+LIMIT 1;
+
+-- 按编号取一条作答。
+attemptById:
+SELECT * FROM attempt WHERE id = :id LIMIT 1;
+
+-- 这条记录里未提交的尝试，没有就建一条时用来查已有草稿。
+openAttempt:
+SELECT * FROM attempt
+WHERE conversation_id = :conversationId AND submitted_at IS NULL
+ORDER BY id DESC
+LIMIT 1;
 
 -- 这条讨论最近一次作答所属场次的目标；目标为空表示没有归属。
 sessionGoalOfConversation:
@@ -58,3 +96,71 @@ UPDATE attempt SET user_answer = :answer,
   submitted_at = :stamp,
   updated_at = :stamp
 WHERE id = :attemptId AND submitted_at IS NULL;
+
+-- 这条记录里出现过的场次编号，清空记录时逐个核对是否还被别的记录引用。
+sessionIdsOfConversation:
+SELECT DISTINCT session_id FROM attempt
+WHERE conversation_id = :conversationId AND session_id IS NOT NULL;
+
+-- 这个场次里还剩下几条作答，清空记录时决定要不要一起删场次。
+attemptsInSession:
+SELECT id FROM attempt WHERE session_id = :sessionId LIMIT 1;
+
+recentSubmitted:
+SELECT
+  a.id AS attempt_id,
+  a.conversation_id AS attempt_conversation_id,
+  a.session_id AS attempt_session_id,
+  a.user_answer AS attempt_user_answer,
+  a.solution AS attempt_solution,
+  a.is_correct AS attempt_is_correct,
+  a.independent AS attempt_independent,
+  a.help_json AS attempt_help_json,
+  a.feedback AS attempt_feedback,
+  a.delayed AS attempt_delayed,
+  a.submitted_at AS attempt_submitted_at,
+  a.created_at AS attempt_created_at,
+  c.id AS question_id,
+  c.source_ref AS question_source_ref,
+  c.context_text AS question_context_text,
+  c.page_no AS question_page_no,
+  c.created_at AS question_created_at,
+  c.updated_at AS question_updated_at,
+  (SELECT title FROM material WHERE id = c.material_id)
+    AS question_material_title,
+  (SELECT source_file_name FROM material WHERE id = c.material_id)
+    AS source_file_name,
+  (SELECT m.content FROM message m WHERE m.conversation_id = c.id
+    AND m.role = 'user' AND m.id = (
+      COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1))
+    ) LIMIT 1) AS question_stem,
+  (SELECT m.image_paths_json FROM message m WHERE m.conversation_id = c.id
+    AND m.role = 'user' AND m.id = (
+      COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1))
+    ) LIMIT 1) AS question_image_paths_json
+FROM attempt a
+JOIN conversation c ON c.id = a.conversation_id
+WHERE a.submitted_at IS NOT NULL
+  AND (
+    (:goalId <> 0 AND c.goal_id = :goalId)
+    OR (:materialId <> 0 AND c.material_id = :materialId)
+    OR (
+      c.goal_id IS NULL AND c.material_id IS NULL
+      AND (
+        :goalId <> 0
+        OR :materialId <> 0
+        OR (:conversationId <> 0 AND c.id = :conversationId)
+        OR a.id IN (SELECT value FROM json_each(:broughtIds))
+      )
+    )
+    OR (
+      (:goalId <> 0 OR :materialId <> 0)
+      AND a.id IN (SELECT value FROM json_each(:broughtIds))
+    )
+  )
+ORDER BY a.submitted_at DESC, a.id DESC
+LIMIT :rowLimit;

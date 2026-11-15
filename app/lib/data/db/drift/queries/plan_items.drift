@@ -1,16 +1,83 @@
--- 目标与事项的读查询（ADR-0011 第一批）。
---
--- 语句原来拼在 task_repository.dart 里，`itemColumns` 与按调用点拼的 WHERE
--- 一并合并进下面的静态语句：`openOnly`、`onlyActiveGoals`、`statusFirst` 这类
--- 开关由参数关掉对应条件，可变个数的 IN 用 json_each 传 JSON 数组。
+-- 事项与计划步骤的读写查询：一张表一个文件。
 
 import '../tables.dart';
 
--- 全部目标，当前有效的排在最前，其余按新建时间倒序。
-goals:
-SELECT * FROM learning_goal
-ORDER BY CASE status WHEN :activeStatus THEN 0 WHEN :pausedStatus THEN 1
-  WHEN :doneStatus THEN 2 ELSE 3 END, id DESC;
+-- 从讨论里接受建议后按标题找回刚建立的事项，供重复请求返回原结果。
+itemByConversationAndTitle:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.conversation_id = :conversationId AND p.title = :title
+ORDER BY p.id DESC
+LIMIT 1;
+
+-- 某个事项所属的计划编号。取整行而不是只取 study_plan_id：
+-- 这一列本身可空，“没有这个事项”与“事项不属于任何计划”是两回事。
+itemPlan:
+SELECT id, study_plan_id FROM plan_item WHERE id = :itemId LIMIT 1;
+
+-- 一份计划下的全部步骤，按次序。
+stepsOfPlan:
+SELECT * FROM plan_item
+WHERE study_plan_id = :planId
+ORDER BY seq, id;
+
+insertStudyPlanStep:
+INSERT INTO plan_item (goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at)
+VALUES (:goalId, NULL, :planId, :seq, :title, :note, :pageFrom, :pageTo, 0, :status, 'user', :stamp, :stamp);
+
+setStudyStepConversation:
+UPDATE plan_item SET conversation_id = :conversationId
+WHERE id = :stepId AND study_plan_id = :planId;
+
+setStudyStepStatus:
+UPDATE plan_item SET status = :status,
+  completed_at = :completedAt,
+  updated_at = :stamp
+WHERE id = :itemId;
+
+resetOtherActiveStudySteps:
+UPDATE plan_item SET status = :todoStatus,
+  updated_at = :stamp
+WHERE study_plan_id = :planId AND id != :itemId AND status = :doingStatus;
+
+-- 一份计划的步骤，按顺序。
+planSteps:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.study_plan_id = :planId
+ORDER BY p.seq, p.id;
+
+-- 多份计划的步骤，按计划与顺序。
+planStepsForPlans:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE p.study_plan_id IN (SELECT value FROM json_each(:planIds))
+ORDER BY p.study_plan_id, p.seq, p.id;
+
+-- 计划下方的步骤里最大的顺序号；没有步骤时返回 0。
+lastPlanStepSeq:
+SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item
+WHERE study_plan_id = :planId;
+-- 完成一步时按是否真的学过回写预约状态：与场次有重叠的记为完成，
+-- 到过开始时间却没有场次的按取消处理。
+settleBlocksOnStepDone:
+UPDATE schedule_block SET status = CASE WHEN EXISTS (
+  SELECT 1 FROM study_session s
+  WHERE s.plan_item_id = schedule_block.plan_item_id
+    AND s.started_at < schedule_block.end_at
+    AND COALESCE(s.ended_at, :now) > schedule_block.start_at
+) THEN :doneStatus ELSE :cancelledStatus END,
+  updated_at = :now
+WHERE plan_item_id = :itemId AND status = :plannedStatus;
 
 -- 事项列表：进行中的排在前面，再按截止时间排。
 --
@@ -89,13 +156,6 @@ SELECT p.*,
     WHERE sp.id = p.study_plan_id) AS source_file_name
 FROM plan_item p
 WHERE p.id IN (SELECT value FROM json_each(:itemIds));
-
--- 这条事项是否已经排过时间或学过。
-itemHasScheduleOrSession:
-SELECT 1 FROM schedule_block WHERE plan_item_id = :itemId
-UNION ALL
-SELECT 1 FROM study_session WHERE plan_item_id = :itemId
-LIMIT 1;
 
 -- 待办里截止最近的一条；所属目标已暂停的事项不参与推荐。
 nextDueItem:

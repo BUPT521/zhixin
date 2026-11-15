@@ -3,6 +3,1076 @@
 part of 'app_database.dart';
 
 // ignore_for_file: type=lint
+class $TimetableEntriesTable extends TimetableEntries
+    with TableInfo<$TimetableEntriesTable, TimetableEntryRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TimetableEntriesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _weekdayMeta = const VerificationMeta(
+    'weekday',
+  );
+  @override
+  late final GeneratedColumn<int> weekday = GeneratedColumn<int>(
+    'weekday',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(weekday).isBetweenValues(1, 7),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _startTimeMeta = const VerificationMeta(
+    'startTime',
+  );
+  @override
+  late final GeneratedColumn<String> startTime = GeneratedColumn<String>(
+    'start_time',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _endTimeMeta = const VerificationMeta(
+    'endTime',
+  );
+  @override
+  late final GeneratedColumn<String> endTime = GeneratedColumn<String>(
+    'end_time',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+    'title',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _locationMeta = const VerificationMeta(
+    'location',
+  );
+  @override
+  late final GeneratedColumn<String> location = GeneratedColumn<String>(
+    'location',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    weekday,
+    startTime,
+    endTime,
+    title,
+    location,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'timetable_entry';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TimetableEntryRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('weekday')) {
+      context.handle(
+        _weekdayMeta,
+        weekday.isAcceptableOrUnknown(data['weekday']!, _weekdayMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_weekdayMeta);
+    }
+    if (data.containsKey('start_time')) {
+      context.handle(
+        _startTimeMeta,
+        startTime.isAcceptableOrUnknown(data['start_time']!, _startTimeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_startTimeMeta);
+    }
+    if (data.containsKey('end_time')) {
+      context.handle(
+        _endTimeMeta,
+        endTime.isAcceptableOrUnknown(data['end_time']!, _endTimeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_endTimeMeta);
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_titleMeta);
+    }
+    if (data.containsKey('location')) {
+      context.handle(
+        _locationMeta,
+        location.isAcceptableOrUnknown(data['location']!, _locationMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  TimetableEntryRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TimetableEntryRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      weekday: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}weekday'],
+      )!,
+      startTime: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}start_time'],
+      )!,
+      endTime: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}end_time'],
+      )!,
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      )!,
+      location: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}location'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $TimetableEntriesTable createAlias(String alias) {
+    return $TimetableEntriesTable(attachedDatabase, alias);
+  }
+}
+
+class TimetableEntryRow extends DataClass
+    implements Insertable<TimetableEntryRow> {
+  final int id;
+  final int weekday;
+  final String startTime;
+  final String endTime;
+  final String title;
+  final String? location;
+  final String createdAt;
+  final String updatedAt;
+  const TimetableEntryRow({
+    required this.id,
+    required this.weekday,
+    required this.startTime,
+    required this.endTime,
+    required this.title,
+    this.location,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['weekday'] = Variable<int>(weekday);
+    map['start_time'] = Variable<String>(startTime);
+    map['end_time'] = Variable<String>(endTime);
+    map['title'] = Variable<String>(title);
+    if (!nullToAbsent || location != null) {
+      map['location'] = Variable<String>(location);
+    }
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  TimetableEntriesCompanion toCompanion(bool nullToAbsent) {
+    return TimetableEntriesCompanion(
+      id: Value(id),
+      weekday: Value(weekday),
+      startTime: Value(startTime),
+      endTime: Value(endTime),
+      title: Value(title),
+      location: location == null && nullToAbsent
+          ? const Value.absent()
+          : Value(location),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory TimetableEntryRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TimetableEntryRow(
+      id: serializer.fromJson<int>(json['id']),
+      weekday: serializer.fromJson<int>(json['weekday']),
+      startTime: serializer.fromJson<String>(json['startTime']),
+      endTime: serializer.fromJson<String>(json['endTime']),
+      title: serializer.fromJson<String>(json['title']),
+      location: serializer.fromJson<String?>(json['location']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'weekday': serializer.toJson<int>(weekday),
+      'startTime': serializer.toJson<String>(startTime),
+      'endTime': serializer.toJson<String>(endTime),
+      'title': serializer.toJson<String>(title),
+      'location': serializer.toJson<String?>(location),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  TimetableEntryRow copyWith({
+    int? id,
+    int? weekday,
+    String? startTime,
+    String? endTime,
+    String? title,
+    Value<String?> location = const Value.absent(),
+    String? createdAt,
+    String? updatedAt,
+  }) => TimetableEntryRow(
+    id: id ?? this.id,
+    weekday: weekday ?? this.weekday,
+    startTime: startTime ?? this.startTime,
+    endTime: endTime ?? this.endTime,
+    title: title ?? this.title,
+    location: location.present ? location.value : this.location,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  TimetableEntryRow copyWithCompanion(TimetableEntriesCompanion data) {
+    return TimetableEntryRow(
+      id: data.id.present ? data.id.value : this.id,
+      weekday: data.weekday.present ? data.weekday.value : this.weekday,
+      startTime: data.startTime.present ? data.startTime.value : this.startTime,
+      endTime: data.endTime.present ? data.endTime.value : this.endTime,
+      title: data.title.present ? data.title.value : this.title,
+      location: data.location.present ? data.location.value : this.location,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TimetableEntryRow(')
+          ..write('id: $id, ')
+          ..write('weekday: $weekday, ')
+          ..write('startTime: $startTime, ')
+          ..write('endTime: $endTime, ')
+          ..write('title: $title, ')
+          ..write('location: $location, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    weekday,
+    startTime,
+    endTime,
+    title,
+    location,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TimetableEntryRow &&
+          other.id == this.id &&
+          other.weekday == this.weekday &&
+          other.startTime == this.startTime &&
+          other.endTime == this.endTime &&
+          other.title == this.title &&
+          other.location == this.location &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
+  final Value<int> id;
+  final Value<int> weekday;
+  final Value<String> startTime;
+  final Value<String> endTime;
+  final Value<String> title;
+  final Value<String?> location;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  const TimetableEntriesCompanion({
+    this.id = const Value.absent(),
+    this.weekday = const Value.absent(),
+    this.startTime = const Value.absent(),
+    this.endTime = const Value.absent(),
+    this.title = const Value.absent(),
+    this.location = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  TimetableEntriesCompanion.insert({
+    this.id = const Value.absent(),
+    required int weekday,
+    required String startTime,
+    required String endTime,
+    required String title,
+    this.location = const Value.absent(),
+    required String createdAt,
+    required String updatedAt,
+  }) : weekday = Value(weekday),
+       startTime = Value(startTime),
+       endTime = Value(endTime),
+       title = Value(title),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<TimetableEntryRow> custom({
+    Expression<int>? id,
+    Expression<int>? weekday,
+    Expression<String>? startTime,
+    Expression<String>? endTime,
+    Expression<String>? title,
+    Expression<String>? location,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (weekday != null) 'weekday': weekday,
+      if (startTime != null) 'start_time': startTime,
+      if (endTime != null) 'end_time': endTime,
+      if (title != null) 'title': title,
+      if (location != null) 'location': location,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  TimetableEntriesCompanion copyWith({
+    Value<int>? id,
+    Value<int>? weekday,
+    Value<String>? startTime,
+    Value<String>? endTime,
+    Value<String>? title,
+    Value<String?>? location,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+  }) {
+    return TimetableEntriesCompanion(
+      id: id ?? this.id,
+      weekday: weekday ?? this.weekday,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      title: title ?? this.title,
+      location: location ?? this.location,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (weekday.present) {
+      map['weekday'] = Variable<int>(weekday.value);
+    }
+    if (startTime.present) {
+      map['start_time'] = Variable<String>(startTime.value);
+    }
+    if (endTime.present) {
+      map['end_time'] = Variable<String>(endTime.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (location.present) {
+      map['location'] = Variable<String>(location.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TimetableEntriesCompanion(')
+          ..write('id: $id, ')
+          ..write('weekday: $weekday, ')
+          ..write('startTime: $startTime, ')
+          ..write('endTime: $endTime, ')
+          ..write('title: $title, ')
+          ..write('location: $location, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $AppMetaTable extends AppMeta with TableInfo<$AppMetaTable, AppMetaRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AppMetaTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _keyMeta = const VerificationMeta('key');
+  @override
+  late final GeneratedColumn<String> key = GeneratedColumn<String>(
+    'key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _valueMeta = const VerificationMeta('value');
+  @override
+  late final GeneratedColumn<String> value = GeneratedColumn<String>(
+    'value',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [key, value, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'app_meta';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AppMetaRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('key')) {
+      context.handle(
+        _keyMeta,
+        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyMeta);
+    }
+    if (data.containsKey('value')) {
+      context.handle(
+        _valueMeta,
+        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_valueMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {key};
+  @override
+  AppMetaRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AppMetaRow(
+      key: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}key'],
+      )!,
+      value: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}value'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $AppMetaTable createAlias(String alias) {
+    return $AppMetaTable(attachedDatabase, alias);
+  }
+}
+
+class AppMetaRow extends DataClass implements Insertable<AppMetaRow> {
+  final String key;
+  final String value;
+  final String updatedAt;
+  const AppMetaRow({
+    required this.key,
+    required this.value,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['key'] = Variable<String>(key);
+    map['value'] = Variable<String>(value);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  AppMetaCompanion toCompanion(bool nullToAbsent) {
+    return AppMetaCompanion(
+      key: Value(key),
+      value: Value(value),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory AppMetaRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AppMetaRow(
+      key: serializer.fromJson<String>(json['key']),
+      value: serializer.fromJson<String>(json['value']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'key': serializer.toJson<String>(key),
+      'value': serializer.toJson<String>(value),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  AppMetaRow copyWith({String? key, String? value, String? updatedAt}) =>
+      AppMetaRow(
+        key: key ?? this.key,
+        value: value ?? this.value,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  AppMetaRow copyWithCompanion(AppMetaCompanion data) {
+    return AppMetaRow(
+      key: data.key.present ? data.key.value : this.key,
+      value: data.value.present ? data.value.value : this.value,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AppMetaRow(')
+          ..write('key: $key, ')
+          ..write('value: $value, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(key, value, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AppMetaRow &&
+          other.key == this.key &&
+          other.value == this.value &&
+          other.updatedAt == this.updatedAt);
+}
+
+class AppMetaCompanion extends UpdateCompanion<AppMetaRow> {
+  final Value<String> key;
+  final Value<String> value;
+  final Value<String> updatedAt;
+  final Value<int> rowid;
+  const AppMetaCompanion({
+    this.key = const Value.absent(),
+    this.value = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AppMetaCompanion.insert({
+    required String key,
+    required String value,
+    required String updatedAt,
+    this.rowid = const Value.absent(),
+  }) : key = Value(key),
+       value = Value(value),
+       updatedAt = Value(updatedAt);
+  static Insertable<AppMetaRow> custom({
+    Expression<String>? key,
+    Expression<String>? value,
+    Expression<String>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (key != null) 'key': key,
+      if (value != null) 'value': value,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AppMetaCompanion copyWith({
+    Value<String>? key,
+    Value<String>? value,
+    Value<String>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return AppMetaCompanion(
+      key: key ?? this.key,
+      value: value ?? this.value,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (key.present) {
+      map['key'] = Variable<String>(key.value);
+    }
+    if (value.present) {
+      map['value'] = Variable<String>(value.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AppMetaCompanion(')
+          ..write('key: $key, ')
+          ..write('value: $value, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ProfilesTable extends Profiles
+    with TableInfo<$ProfilesTable, ProfileRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ProfilesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    check: () => id.equals(1),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _dayCutoffHourMeta = const VerificationMeta(
+    'dayCutoffHour',
+  );
+  @override
+  late final GeneratedColumn<int> dayCutoffHour = GeneratedColumn<int>(
+    'day_cutoff_hour',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(dayCutoffHour).isBetweenValues(0, 6),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(4),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    dayCutoffHour,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'profile';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ProfileRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('day_cutoff_hour')) {
+      context.handle(
+        _dayCutoffHourMeta,
+        dayCutoffHour.isAcceptableOrUnknown(
+          data['day_cutoff_hour']!,
+          _dayCutoffHourMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  ProfileRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ProfileRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      dayCutoffHour: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}day_cutoff_hour'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $ProfilesTable createAlias(String alias) {
+    return $ProfilesTable(attachedDatabase, alias);
+  }
+}
+
+class ProfileRow extends DataClass implements Insertable<ProfileRow> {
+  final int id;
+  final int dayCutoffHour;
+  final String createdAt;
+  final String updatedAt;
+  const ProfileRow({
+    required this.id,
+    required this.dayCutoffHour,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['day_cutoff_hour'] = Variable<int>(dayCutoffHour);
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  ProfilesCompanion toCompanion(bool nullToAbsent) {
+    return ProfilesCompanion(
+      id: Value(id),
+      dayCutoffHour: Value(dayCutoffHour),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory ProfileRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ProfileRow(
+      id: serializer.fromJson<int>(json['id']),
+      dayCutoffHour: serializer.fromJson<int>(json['dayCutoffHour']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'dayCutoffHour': serializer.toJson<int>(dayCutoffHour),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  ProfileRow copyWith({
+    int? id,
+    int? dayCutoffHour,
+    String? createdAt,
+    String? updatedAt,
+  }) => ProfileRow(
+    id: id ?? this.id,
+    dayCutoffHour: dayCutoffHour ?? this.dayCutoffHour,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  ProfileRow copyWithCompanion(ProfilesCompanion data) {
+    return ProfileRow(
+      id: data.id.present ? data.id.value : this.id,
+      dayCutoffHour: data.dayCutoffHour.present
+          ? data.dayCutoffHour.value
+          : this.dayCutoffHour,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProfileRow(')
+          ..write('id: $id, ')
+          ..write('dayCutoffHour: $dayCutoffHour, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, dayCutoffHour, createdAt, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ProfileRow &&
+          other.id == this.id &&
+          other.dayCutoffHour == this.dayCutoffHour &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class ProfilesCompanion extends UpdateCompanion<ProfileRow> {
+  final Value<int> id;
+  final Value<int> dayCutoffHour;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  const ProfilesCompanion({
+    this.id = const Value.absent(),
+    this.dayCutoffHour = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  ProfilesCompanion.insert({
+    this.id = const Value.absent(),
+    this.dayCutoffHour = const Value.absent(),
+    required String createdAt,
+    required String updatedAt,
+  }) : createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<ProfileRow> custom({
+    Expression<int>? id,
+    Expression<int>? dayCutoffHour,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (dayCutoffHour != null) 'day_cutoff_hour': dayCutoffHour,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  ProfilesCompanion copyWith({
+    Value<int>? id,
+    Value<int>? dayCutoffHour,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+  }) {
+    return ProfilesCompanion(
+      id: id ?? this.id,
+      dayCutoffHour: dayCutoffHour ?? this.dayCutoffHour,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (dayCutoffHour.present) {
+      map['day_cutoff_hour'] = Variable<int>(dayCutoffHour.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProfilesCompanion(')
+          ..write('id: $id, ')
+          ..write('dayCutoffHour: $dayCutoffHour, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $LearningGoalsTable extends LearningGoals
     with TableInfo<$LearningGoalsTable, LearningGoalRow> {
   @override
@@ -714,6 +1784,270 @@ class AssetObjectsCompanion extends UpdateCompanion<AssetObjectRow> {
   }
 }
 
+class $AssetChunksTable extends AssetChunks
+    with TableInfo<$AssetChunksTable, AssetChunkRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AssetChunksTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
+  @override
+  late final GeneratedColumn<String> hash = GeneratedColumn<String>(
+    'hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES asset_object (hash) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _seqMeta = const VerificationMeta('seq');
+  @override
+  late final GeneratedColumn<int> seq = GeneratedColumn<int>(
+    'seq',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(seq).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _dataMeta = const VerificationMeta('data');
+  @override
+  late final GeneratedColumn<Uint8List> data = GeneratedColumn<Uint8List>(
+    'data',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [hash, seq, data];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_chunk';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AssetChunkRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('hash')) {
+      context.handle(
+        _hashMeta,
+        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_hashMeta);
+    }
+    if (data.containsKey('seq')) {
+      context.handle(
+        _seqMeta,
+        seq.isAcceptableOrUnknown(data['seq']!, _seqMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_seqMeta);
+    }
+    if (data.containsKey('data')) {
+      context.handle(
+        _dataMeta,
+        this.data.isAcceptableOrUnknown(data['data']!, _dataMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_dataMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {hash, seq};
+  @override
+  AssetChunkRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AssetChunkRow(
+      hash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}hash'],
+      )!,
+      seq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}seq'],
+      )!,
+      data: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}data'],
+      )!,
+    );
+  }
+
+  @override
+  $AssetChunksTable createAlias(String alias) {
+    return $AssetChunksTable(attachedDatabase, alias);
+  }
+}
+
+class AssetChunkRow extends DataClass implements Insertable<AssetChunkRow> {
+  final String hash;
+  final int seq;
+  final Uint8List data;
+  const AssetChunkRow({
+    required this.hash,
+    required this.seq,
+    required this.data,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['hash'] = Variable<String>(hash);
+    map['seq'] = Variable<int>(seq);
+    map['data'] = Variable<Uint8List>(data);
+    return map;
+  }
+
+  AssetChunksCompanion toCompanion(bool nullToAbsent) {
+    return AssetChunksCompanion(
+      hash: Value(hash),
+      seq: Value(seq),
+      data: Value(data),
+    );
+  }
+
+  factory AssetChunkRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AssetChunkRow(
+      hash: serializer.fromJson<String>(json['hash']),
+      seq: serializer.fromJson<int>(json['seq']),
+      data: serializer.fromJson<Uint8List>(json['data']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'hash': serializer.toJson<String>(hash),
+      'seq': serializer.toJson<int>(seq),
+      'data': serializer.toJson<Uint8List>(data),
+    };
+  }
+
+  AssetChunkRow copyWith({String? hash, int? seq, Uint8List? data}) =>
+      AssetChunkRow(
+        hash: hash ?? this.hash,
+        seq: seq ?? this.seq,
+        data: data ?? this.data,
+      );
+  AssetChunkRow copyWithCompanion(AssetChunksCompanion data) {
+    return AssetChunkRow(
+      hash: data.hash.present ? data.hash.value : this.hash,
+      seq: data.seq.present ? data.seq.value : this.seq,
+      data: data.data.present ? data.data.value : this.data,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AssetChunkRow(')
+          ..write('hash: $hash, ')
+          ..write('seq: $seq, ')
+          ..write('data: $data')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(hash, seq, $driftBlobEquality.hash(data));
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AssetChunkRow &&
+          other.hash == this.hash &&
+          other.seq == this.seq &&
+          $driftBlobEquality.equals(other.data, this.data));
+}
+
+class AssetChunksCompanion extends UpdateCompanion<AssetChunkRow> {
+  final Value<String> hash;
+  final Value<int> seq;
+  final Value<Uint8List> data;
+  final Value<int> rowid;
+  const AssetChunksCompanion({
+    this.hash = const Value.absent(),
+    this.seq = const Value.absent(),
+    this.data = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AssetChunksCompanion.insert({
+    required String hash,
+    required int seq,
+    required Uint8List data,
+    this.rowid = const Value.absent(),
+  }) : hash = Value(hash),
+       seq = Value(seq),
+       data = Value(data);
+  static Insertable<AssetChunkRow> custom({
+    Expression<String>? hash,
+    Expression<int>? seq,
+    Expression<Uint8List>? data,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (hash != null) 'hash': hash,
+      if (seq != null) 'seq': seq,
+      if (data != null) 'data': data,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AssetChunksCompanion copyWith({
+    Value<String>? hash,
+    Value<int>? seq,
+    Value<Uint8List>? data,
+    Value<int>? rowid,
+  }) {
+    return AssetChunksCompanion(
+      hash: hash ?? this.hash,
+      seq: seq ?? this.seq,
+      data: data ?? this.data,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (hash.present) {
+      map['hash'] = Variable<String>(hash.value);
+    }
+    if (seq.present) {
+      map['seq'] = Variable<int>(seq.value);
+    }
+    if (data.present) {
+      map['data'] = Variable<Uint8List>(data.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AssetChunksCompanion(')
+          ..write('hash: $hash, ')
+          ..write('seq: $seq, ')
+          ..write('data: $data, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $MaterialsTable extends Materials
     with TableInfo<$MaterialsTable, MaterialRow> {
   @override
@@ -1274,6 +2608,460 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
           ..write('sourceFileName: $sourceFileName, ')
           ..write('sourceFileHash: $sourceFileHash, ')
           ..write('goalId: $goalId, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MaterialPagesTable extends MaterialPages
+    with TableInfo<$MaterialPagesTable, MaterialPageRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MaterialPagesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _materialIdMeta = const VerificationMeta(
+    'materialId',
+  );
+  @override
+  late final GeneratedColumn<int> materialId = GeneratedColumn<int>(
+    'material_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES material (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _pageNoMeta = const VerificationMeta('pageNo');
+  @override
+  late final GeneratedColumn<int> pageNo = GeneratedColumn<int>(
+    'page_no',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(pageNo).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _labelMeta = const VerificationMeta('label');
+  @override
+  late final GeneratedColumn<String> label = GeneratedColumn<String>(
+    'label',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _contentMeta = const VerificationMeta(
+    'content',
+  );
+  @override
+  late final GeneratedColumn<String> content = GeneratedColumn<String>(
+    'content',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    materialId,
+    pageNo,
+    label,
+    content,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'material_page';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MaterialPageRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('material_id')) {
+      context.handle(
+        _materialIdMeta,
+        materialId.isAcceptableOrUnknown(data['material_id']!, _materialIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_materialIdMeta);
+    }
+    if (data.containsKey('page_no')) {
+      context.handle(
+        _pageNoMeta,
+        pageNo.isAcceptableOrUnknown(data['page_no']!, _pageNoMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pageNoMeta);
+    }
+    if (data.containsKey('label')) {
+      context.handle(
+        _labelMeta,
+        label.isAcceptableOrUnknown(data['label']!, _labelMeta),
+      );
+    }
+    if (data.containsKey('content')) {
+      context.handle(
+        _contentMeta,
+        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_contentMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {materialId, pageNo},
+  ];
+  @override
+  MaterialPageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MaterialPageRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      materialId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}material_id'],
+      )!,
+      pageNo: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}page_no'],
+      )!,
+      label: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}label'],
+      ),
+      content: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MaterialPagesTable createAlias(String alias) {
+    return $MaterialPagesTable(attachedDatabase, alias);
+  }
+}
+
+class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
+  final int id;
+  final int materialId;
+  final int pageNo;
+  final String? label;
+  final String content;
+  final String createdAt;
+  final String updatedAt;
+  const MaterialPageRow({
+    required this.id,
+    required this.materialId,
+    required this.pageNo,
+    this.label,
+    required this.content,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['material_id'] = Variable<int>(materialId);
+    map['page_no'] = Variable<int>(pageNo);
+    if (!nullToAbsent || label != null) {
+      map['label'] = Variable<String>(label);
+    }
+    map['content'] = Variable<String>(content);
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  MaterialPagesCompanion toCompanion(bool nullToAbsent) {
+    return MaterialPagesCompanion(
+      id: Value(id),
+      materialId: Value(materialId),
+      pageNo: Value(pageNo),
+      label: label == null && nullToAbsent
+          ? const Value.absent()
+          : Value(label),
+      content: Value(content),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory MaterialPageRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MaterialPageRow(
+      id: serializer.fromJson<int>(json['id']),
+      materialId: serializer.fromJson<int>(json['materialId']),
+      pageNo: serializer.fromJson<int>(json['pageNo']),
+      label: serializer.fromJson<String?>(json['label']),
+      content: serializer.fromJson<String>(json['content']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'materialId': serializer.toJson<int>(materialId),
+      'pageNo': serializer.toJson<int>(pageNo),
+      'label': serializer.toJson<String?>(label),
+      'content': serializer.toJson<String>(content),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  MaterialPageRow copyWith({
+    int? id,
+    int? materialId,
+    int? pageNo,
+    Value<String?> label = const Value.absent(),
+    String? content,
+    String? createdAt,
+    String? updatedAt,
+  }) => MaterialPageRow(
+    id: id ?? this.id,
+    materialId: materialId ?? this.materialId,
+    pageNo: pageNo ?? this.pageNo,
+    label: label.present ? label.value : this.label,
+    content: content ?? this.content,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  MaterialPageRow copyWithCompanion(MaterialPagesCompanion data) {
+    return MaterialPageRow(
+      id: data.id.present ? data.id.value : this.id,
+      materialId: data.materialId.present
+          ? data.materialId.value
+          : this.materialId,
+      pageNo: data.pageNo.present ? data.pageNo.value : this.pageNo,
+      label: data.label.present ? data.label.value : this.label,
+      content: data.content.present ? data.content.value : this.content,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MaterialPageRow(')
+          ..write('id: $id, ')
+          ..write('materialId: $materialId, ')
+          ..write('pageNo: $pageNo, ')
+          ..write('label: $label, ')
+          ..write('content: $content, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, materialId, pageNo, label, content, createdAt, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MaterialPageRow &&
+          other.id == this.id &&
+          other.materialId == this.materialId &&
+          other.pageNo == this.pageNo &&
+          other.label == this.label &&
+          other.content == this.content &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
+  final Value<int> id;
+  final Value<int> materialId;
+  final Value<int> pageNo;
+  final Value<String?> label;
+  final Value<String> content;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  const MaterialPagesCompanion({
+    this.id = const Value.absent(),
+    this.materialId = const Value.absent(),
+    this.pageNo = const Value.absent(),
+    this.label = const Value.absent(),
+    this.content = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  MaterialPagesCompanion.insert({
+    this.id = const Value.absent(),
+    required int materialId,
+    required int pageNo,
+    this.label = const Value.absent(),
+    required String content,
+    required String createdAt,
+    required String updatedAt,
+  }) : materialId = Value(materialId),
+       pageNo = Value(pageNo),
+       content = Value(content),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<MaterialPageRow> custom({
+    Expression<int>? id,
+    Expression<int>? materialId,
+    Expression<int>? pageNo,
+    Expression<String>? label,
+    Expression<String>? content,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (materialId != null) 'material_id': materialId,
+      if (pageNo != null) 'page_no': pageNo,
+      if (label != null) 'label': label,
+      if (content != null) 'content': content,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  MaterialPagesCompanion copyWith({
+    Value<int>? id,
+    Value<int>? materialId,
+    Value<int>? pageNo,
+    Value<String?>? label,
+    Value<String>? content,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+  }) {
+    return MaterialPagesCompanion(
+      id: id ?? this.id,
+      materialId: materialId ?? this.materialId,
+      pageNo: pageNo ?? this.pageNo,
+      label: label ?? this.label,
+      content: content ?? this.content,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (materialId.present) {
+      map['material_id'] = Variable<int>(materialId.value);
+    }
+    if (pageNo.present) {
+      map['page_no'] = Variable<int>(pageNo.value);
+    }
+    if (label.present) {
+      map['label'] = Variable<String>(label.value);
+    }
+    if (content.present) {
+      map['content'] = Variable<String>(content.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MaterialPagesCompanion(')
+          ..write('id: $id, ')
+          ..write('materialId: $materialId, ')
+          ..write('pageNo: $pageNo, ')
+          ..write('label: $label, ')
+          ..write('content: $content, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -2090,1291 +3878,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
           ..write('status: $status, ')
           ..write('endedAt: $endedAt, ')
           ..write('lastMessageAt: $lastMessageAt, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $AppMetaTable extends AppMeta with TableInfo<$AppMetaTable, AppMetaRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $AppMetaTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _keyMeta = const VerificationMeta('key');
-  @override
-  late final GeneratedColumn<String> key = GeneratedColumn<String>(
-    'key',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _valueMeta = const VerificationMeta('value');
-  @override
-  late final GeneratedColumn<String> value = GeneratedColumn<String>(
-    'value',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [key, value, updatedAt];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'app_meta';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<AppMetaRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('key')) {
-      context.handle(
-        _keyMeta,
-        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_keyMeta);
-    }
-    if (data.containsKey('value')) {
-      context.handle(
-        _valueMeta,
-        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_valueMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {key};
-  @override
-  AppMetaRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return AppMetaRow(
-      key: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}key'],
-      )!,
-      value: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}value'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $AppMetaTable createAlias(String alias) {
-    return $AppMetaTable(attachedDatabase, alias);
-  }
-}
-
-class AppMetaRow extends DataClass implements Insertable<AppMetaRow> {
-  final String key;
-  final String value;
-  final String updatedAt;
-  const AppMetaRow({
-    required this.key,
-    required this.value,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['key'] = Variable<String>(key);
-    map['value'] = Variable<String>(value);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  AppMetaCompanion toCompanion(bool nullToAbsent) {
-    return AppMetaCompanion(
-      key: Value(key),
-      value: Value(value),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory AppMetaRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return AppMetaRow(
-      key: serializer.fromJson<String>(json['key']),
-      value: serializer.fromJson<String>(json['value']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'key': serializer.toJson<String>(key),
-      'value': serializer.toJson<String>(value),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  AppMetaRow copyWith({String? key, String? value, String? updatedAt}) =>
-      AppMetaRow(
-        key: key ?? this.key,
-        value: value ?? this.value,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
-  AppMetaRow copyWithCompanion(AppMetaCompanion data) {
-    return AppMetaRow(
-      key: data.key.present ? data.key.value : this.key,
-      value: data.value.present ? data.value.value : this.value,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AppMetaRow(')
-          ..write('key: $key, ')
-          ..write('value: $value, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(key, value, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is AppMetaRow &&
-          other.key == this.key &&
-          other.value == this.value &&
-          other.updatedAt == this.updatedAt);
-}
-
-class AppMetaCompanion extends UpdateCompanion<AppMetaRow> {
-  final Value<String> key;
-  final Value<String> value;
-  final Value<String> updatedAt;
-  final Value<int> rowid;
-  const AppMetaCompanion({
-    this.key = const Value.absent(),
-    this.value = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  AppMetaCompanion.insert({
-    required String key,
-    required String value,
-    required String updatedAt,
-    this.rowid = const Value.absent(),
-  }) : key = Value(key),
-       value = Value(value),
-       updatedAt = Value(updatedAt);
-  static Insertable<AppMetaRow> custom({
-    Expression<String>? key,
-    Expression<String>? value,
-    Expression<String>? updatedAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (key != null) 'key': key,
-      if (value != null) 'value': value,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  AppMetaCompanion copyWith({
-    Value<String>? key,
-    Value<String>? value,
-    Value<String>? updatedAt,
-    Value<int>? rowid,
-  }) {
-    return AppMetaCompanion(
-      key: key ?? this.key,
-      value: value ?? this.value,
-      updatedAt: updatedAt ?? this.updatedAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (key.present) {
-      map['key'] = Variable<String>(key.value);
-    }
-    if (value.present) {
-      map['value'] = Variable<String>(value.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AppMetaCompanion(')
-          ..write('key: $key, ')
-          ..write('value: $value, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $ProfilesTable extends Profiles
-    with TableInfo<$ProfilesTable, ProfileRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $ProfilesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    check: () => id.equals(1),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _dayCutoffHourMeta = const VerificationMeta(
-    'dayCutoffHour',
-  );
-  @override
-  late final GeneratedColumn<int> dayCutoffHour = GeneratedColumn<int>(
-    'day_cutoff_hour',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(dayCutoffHour).isBetweenValues(0, 6),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(4),
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    dayCutoffHour,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'profile';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<ProfileRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('day_cutoff_hour')) {
-      context.handle(
-        _dayCutoffHourMeta,
-        dayCutoffHour.isAcceptableOrUnknown(
-          data['day_cutoff_hour']!,
-          _dayCutoffHourMeta,
-        ),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  ProfileRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return ProfileRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      dayCutoffHour: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}day_cutoff_hour'],
-      )!,
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $ProfilesTable createAlias(String alias) {
-    return $ProfilesTable(attachedDatabase, alias);
-  }
-}
-
-class ProfileRow extends DataClass implements Insertable<ProfileRow> {
-  final int id;
-  final int dayCutoffHour;
-  final String createdAt;
-  final String updatedAt;
-  const ProfileRow({
-    required this.id,
-    required this.dayCutoffHour,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['day_cutoff_hour'] = Variable<int>(dayCutoffHour);
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  ProfilesCompanion toCompanion(bool nullToAbsent) {
-    return ProfilesCompanion(
-      id: Value(id),
-      dayCutoffHour: Value(dayCutoffHour),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory ProfileRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return ProfileRow(
-      id: serializer.fromJson<int>(json['id']),
-      dayCutoffHour: serializer.fromJson<int>(json['dayCutoffHour']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'dayCutoffHour': serializer.toJson<int>(dayCutoffHour),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  ProfileRow copyWith({
-    int? id,
-    int? dayCutoffHour,
-    String? createdAt,
-    String? updatedAt,
-  }) => ProfileRow(
-    id: id ?? this.id,
-    dayCutoffHour: dayCutoffHour ?? this.dayCutoffHour,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  ProfileRow copyWithCompanion(ProfilesCompanion data) {
-    return ProfileRow(
-      id: data.id.present ? data.id.value : this.id,
-      dayCutoffHour: data.dayCutoffHour.present
-          ? data.dayCutoffHour.value
-          : this.dayCutoffHour,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ProfileRow(')
-          ..write('id: $id, ')
-          ..write('dayCutoffHour: $dayCutoffHour, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(id, dayCutoffHour, createdAt, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is ProfileRow &&
-          other.id == this.id &&
-          other.dayCutoffHour == this.dayCutoffHour &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class ProfilesCompanion extends UpdateCompanion<ProfileRow> {
-  final Value<int> id;
-  final Value<int> dayCutoffHour;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  const ProfilesCompanion({
-    this.id = const Value.absent(),
-    this.dayCutoffHour = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-  });
-  ProfilesCompanion.insert({
-    this.id = const Value.absent(),
-    this.dayCutoffHour = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<ProfileRow> custom({
-    Expression<int>? id,
-    Expression<int>? dayCutoffHour,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (dayCutoffHour != null) 'day_cutoff_hour': dayCutoffHour,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-    });
-  }
-
-  ProfilesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? dayCutoffHour,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-  }) {
-    return ProfilesCompanion(
-      id: id ?? this.id,
-      dayCutoffHour: dayCutoffHour ?? this.dayCutoffHour,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (dayCutoffHour.present) {
-      map['day_cutoff_hour'] = Variable<int>(dayCutoffHour.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ProfilesCompanion(')
-          ..write('id: $id, ')
-          ..write('dayCutoffHour: $dayCutoffHour, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $AssetChunksTable extends AssetChunks
-    with TableInfo<$AssetChunksTable, AssetChunkRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $AssetChunksTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
-  @override
-  late final GeneratedColumn<String> hash = GeneratedColumn<String>(
-    'hash',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES asset_object (hash) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _seqMeta = const VerificationMeta('seq');
-  @override
-  late final GeneratedColumn<int> seq = GeneratedColumn<int>(
-    'seq',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(seq).isBiggerOrEqualValue(0),
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _dataMeta = const VerificationMeta('data');
-  @override
-  late final GeneratedColumn<Uint8List> data = GeneratedColumn<Uint8List>(
-    'data',
-    aliasedName,
-    false,
-    type: DriftSqlType.blob,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [hash, seq, data];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'asset_chunk';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<AssetChunkRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('hash')) {
-      context.handle(
-        _hashMeta,
-        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_hashMeta);
-    }
-    if (data.containsKey('seq')) {
-      context.handle(
-        _seqMeta,
-        seq.isAcceptableOrUnknown(data['seq']!, _seqMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_seqMeta);
-    }
-    if (data.containsKey('data')) {
-      context.handle(
-        _dataMeta,
-        this.data.isAcceptableOrUnknown(data['data']!, _dataMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_dataMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {hash, seq};
-  @override
-  AssetChunkRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return AssetChunkRow(
-      hash: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}hash'],
-      )!,
-      seq: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}seq'],
-      )!,
-      data: attachedDatabase.typeMapping.read(
-        DriftSqlType.blob,
-        data['${effectivePrefix}data'],
-      )!,
-    );
-  }
-
-  @override
-  $AssetChunksTable createAlias(String alias) {
-    return $AssetChunksTable(attachedDatabase, alias);
-  }
-}
-
-class AssetChunkRow extends DataClass implements Insertable<AssetChunkRow> {
-  final String hash;
-  final int seq;
-  final Uint8List data;
-  const AssetChunkRow({
-    required this.hash,
-    required this.seq,
-    required this.data,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['hash'] = Variable<String>(hash);
-    map['seq'] = Variable<int>(seq);
-    map['data'] = Variable<Uint8List>(data);
-    return map;
-  }
-
-  AssetChunksCompanion toCompanion(bool nullToAbsent) {
-    return AssetChunksCompanion(
-      hash: Value(hash),
-      seq: Value(seq),
-      data: Value(data),
-    );
-  }
-
-  factory AssetChunkRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return AssetChunkRow(
-      hash: serializer.fromJson<String>(json['hash']),
-      seq: serializer.fromJson<int>(json['seq']),
-      data: serializer.fromJson<Uint8List>(json['data']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'hash': serializer.toJson<String>(hash),
-      'seq': serializer.toJson<int>(seq),
-      'data': serializer.toJson<Uint8List>(data),
-    };
-  }
-
-  AssetChunkRow copyWith({String? hash, int? seq, Uint8List? data}) =>
-      AssetChunkRow(
-        hash: hash ?? this.hash,
-        seq: seq ?? this.seq,
-        data: data ?? this.data,
-      );
-  AssetChunkRow copyWithCompanion(AssetChunksCompanion data) {
-    return AssetChunkRow(
-      hash: data.hash.present ? data.hash.value : this.hash,
-      seq: data.seq.present ? data.seq.value : this.seq,
-      data: data.data.present ? data.data.value : this.data,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AssetChunkRow(')
-          ..write('hash: $hash, ')
-          ..write('seq: $seq, ')
-          ..write('data: $data')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(hash, seq, $driftBlobEquality.hash(data));
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is AssetChunkRow &&
-          other.hash == this.hash &&
-          other.seq == this.seq &&
-          $driftBlobEquality.equals(other.data, this.data));
-}
-
-class AssetChunksCompanion extends UpdateCompanion<AssetChunkRow> {
-  final Value<String> hash;
-  final Value<int> seq;
-  final Value<Uint8List> data;
-  final Value<int> rowid;
-  const AssetChunksCompanion({
-    this.hash = const Value.absent(),
-    this.seq = const Value.absent(),
-    this.data = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  AssetChunksCompanion.insert({
-    required String hash,
-    required int seq,
-    required Uint8List data,
-    this.rowid = const Value.absent(),
-  }) : hash = Value(hash),
-       seq = Value(seq),
-       data = Value(data);
-  static Insertable<AssetChunkRow> custom({
-    Expression<String>? hash,
-    Expression<int>? seq,
-    Expression<Uint8List>? data,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (hash != null) 'hash': hash,
-      if (seq != null) 'seq': seq,
-      if (data != null) 'data': data,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  AssetChunksCompanion copyWith({
-    Value<String>? hash,
-    Value<int>? seq,
-    Value<Uint8List>? data,
-    Value<int>? rowid,
-  }) {
-    return AssetChunksCompanion(
-      hash: hash ?? this.hash,
-      seq: seq ?? this.seq,
-      data: data ?? this.data,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (hash.present) {
-      map['hash'] = Variable<String>(hash.value);
-    }
-    if (seq.present) {
-      map['seq'] = Variable<int>(seq.value);
-    }
-    if (data.present) {
-      map['data'] = Variable<Uint8List>(data.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AssetChunksCompanion(')
-          ..write('hash: $hash, ')
-          ..write('seq: $seq, ')
-          ..write('data: $data, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $MaterialPagesTable extends MaterialPages
-    with TableInfo<$MaterialPagesTable, MaterialPageRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $MaterialPagesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
-  );
-  static const VerificationMeta _materialIdMeta = const VerificationMeta(
-    'materialId',
-  );
-  @override
-  late final GeneratedColumn<int> materialId = GeneratedColumn<int>(
-    'material_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES material (id) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _pageNoMeta = const VerificationMeta('pageNo');
-  @override
-  late final GeneratedColumn<int> pageNo = GeneratedColumn<int>(
-    'page_no',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(pageNo).isBiggerThanValue(0),
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _labelMeta = const VerificationMeta('label');
-  @override
-  late final GeneratedColumn<String> label = GeneratedColumn<String>(
-    'label',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _contentMeta = const VerificationMeta(
-    'content',
-  );
-  @override
-  late final GeneratedColumn<String> content = GeneratedColumn<String>(
-    'content',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    materialId,
-    pageNo,
-    label,
-    content,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'material_page';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<MaterialPageRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('material_id')) {
-      context.handle(
-        _materialIdMeta,
-        materialId.isAcceptableOrUnknown(data['material_id']!, _materialIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_materialIdMeta);
-    }
-    if (data.containsKey('page_no')) {
-      context.handle(
-        _pageNoMeta,
-        pageNo.isAcceptableOrUnknown(data['page_no']!, _pageNoMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_pageNoMeta);
-    }
-    if (data.containsKey('label')) {
-      context.handle(
-        _labelMeta,
-        label.isAcceptableOrUnknown(data['label']!, _labelMeta),
-      );
-    }
-    if (data.containsKey('content')) {
-      context.handle(
-        _contentMeta,
-        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_contentMeta);
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  List<Set<GeneratedColumn>> get uniqueKeys => [
-    {materialId, pageNo},
-  ];
-  @override
-  MaterialPageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return MaterialPageRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      materialId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}material_id'],
-      )!,
-      pageNo: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}page_no'],
-      )!,
-      label: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}label'],
-      ),
-      content: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}content'],
-      )!,
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $MaterialPagesTable createAlias(String alias) {
-    return $MaterialPagesTable(attachedDatabase, alias);
-  }
-}
-
-class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
-  final int id;
-  final int materialId;
-  final int pageNo;
-  final String? label;
-  final String content;
-  final String createdAt;
-  final String updatedAt;
-  const MaterialPageRow({
-    required this.id,
-    required this.materialId,
-    required this.pageNo,
-    this.label,
-    required this.content,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['material_id'] = Variable<int>(materialId);
-    map['page_no'] = Variable<int>(pageNo);
-    if (!nullToAbsent || label != null) {
-      map['label'] = Variable<String>(label);
-    }
-    map['content'] = Variable<String>(content);
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  MaterialPagesCompanion toCompanion(bool nullToAbsent) {
-    return MaterialPagesCompanion(
-      id: Value(id),
-      materialId: Value(materialId),
-      pageNo: Value(pageNo),
-      label: label == null && nullToAbsent
-          ? const Value.absent()
-          : Value(label),
-      content: Value(content),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory MaterialPageRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return MaterialPageRow(
-      id: serializer.fromJson<int>(json['id']),
-      materialId: serializer.fromJson<int>(json['materialId']),
-      pageNo: serializer.fromJson<int>(json['pageNo']),
-      label: serializer.fromJson<String?>(json['label']),
-      content: serializer.fromJson<String>(json['content']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'materialId': serializer.toJson<int>(materialId),
-      'pageNo': serializer.toJson<int>(pageNo),
-      'label': serializer.toJson<String?>(label),
-      'content': serializer.toJson<String>(content),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  MaterialPageRow copyWith({
-    int? id,
-    int? materialId,
-    int? pageNo,
-    Value<String?> label = const Value.absent(),
-    String? content,
-    String? createdAt,
-    String? updatedAt,
-  }) => MaterialPageRow(
-    id: id ?? this.id,
-    materialId: materialId ?? this.materialId,
-    pageNo: pageNo ?? this.pageNo,
-    label: label.present ? label.value : this.label,
-    content: content ?? this.content,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  MaterialPageRow copyWithCompanion(MaterialPagesCompanion data) {
-    return MaterialPageRow(
-      id: data.id.present ? data.id.value : this.id,
-      materialId: data.materialId.present
-          ? data.materialId.value
-          : this.materialId,
-      pageNo: data.pageNo.present ? data.pageNo.value : this.pageNo,
-      label: data.label.present ? data.label.value : this.label,
-      content: data.content.present ? data.content.value : this.content,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('MaterialPageRow(')
-          ..write('id: $id, ')
-          ..write('materialId: $materialId, ')
-          ..write('pageNo: $pageNo, ')
-          ..write('label: $label, ')
-          ..write('content: $content, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode =>
-      Object.hash(id, materialId, pageNo, label, content, createdAt, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is MaterialPageRow &&
-          other.id == this.id &&
-          other.materialId == this.materialId &&
-          other.pageNo == this.pageNo &&
-          other.label == this.label &&
-          other.content == this.content &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
-  final Value<int> id;
-  final Value<int> materialId;
-  final Value<int> pageNo;
-  final Value<String?> label;
-  final Value<String> content;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  const MaterialPagesCompanion({
-    this.id = const Value.absent(),
-    this.materialId = const Value.absent(),
-    this.pageNo = const Value.absent(),
-    this.label = const Value.absent(),
-    this.content = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-  });
-  MaterialPagesCompanion.insert({
-    this.id = const Value.absent(),
-    required int materialId,
-    required int pageNo,
-    this.label = const Value.absent(),
-    required String content,
-    required String createdAt,
-    required String updatedAt,
-  }) : materialId = Value(materialId),
-       pageNo = Value(pageNo),
-       content = Value(content),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<MaterialPageRow> custom({
-    Expression<int>? id,
-    Expression<int>? materialId,
-    Expression<int>? pageNo,
-    Expression<String>? label,
-    Expression<String>? content,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (materialId != null) 'material_id': materialId,
-      if (pageNo != null) 'page_no': pageNo,
-      if (label != null) 'label': label,
-      if (content != null) 'content': content,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-    });
-  }
-
-  MaterialPagesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? materialId,
-    Value<int>? pageNo,
-    Value<String?>? label,
-    Value<String>? content,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-  }) {
-    return MaterialPagesCompanion(
-      id: id ?? this.id,
-      materialId: materialId ?? this.materialId,
-      pageNo: pageNo ?? this.pageNo,
-      label: label ?? this.label,
-      content: content ?? this.content,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (materialId.present) {
-      map['material_id'] = Variable<int>(materialId.value);
-    }
-    if (pageNo.present) {
-      map['page_no'] = Variable<int>(pageNo.value);
-    }
-    if (label.present) {
-      map['label'] = Variable<String>(label.value);
-    }
-    if (content.present) {
-      map['content'] = Variable<String>(content.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('MaterialPagesCompanion(')
-          ..write('id: $id, ')
-          ..write('materialId: $materialId, ')
-          ..write('pageNo: $pageNo, ')
-          ..write('label: $label, ')
-          ..write('content: $content, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -5525,509 +6028,6 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
           ..write('source: $source, ')
           ..write('originJson: $originJson, ')
           ..write('completedAt: $completedAt, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $TimetableEntriesTable extends TimetableEntries
-    with TableInfo<$TimetableEntriesTable, TimetableEntryRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $TimetableEntriesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
-  );
-  static const VerificationMeta _weekdayMeta = const VerificationMeta(
-    'weekday',
-  );
-  @override
-  late final GeneratedColumn<int> weekday = GeneratedColumn<int>(
-    'weekday',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(weekday).isBetweenValues(1, 7),
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _startTimeMeta = const VerificationMeta(
-    'startTime',
-  );
-  @override
-  late final GeneratedColumn<String> startTime = GeneratedColumn<String>(
-    'start_time',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _endTimeMeta = const VerificationMeta(
-    'endTime',
-  );
-  @override
-  late final GeneratedColumn<String> endTime = GeneratedColumn<String>(
-    'end_time',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _titleMeta = const VerificationMeta('title');
-  @override
-  late final GeneratedColumn<String> title = GeneratedColumn<String>(
-    'title',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _locationMeta = const VerificationMeta(
-    'location',
-  );
-  @override
-  late final GeneratedColumn<String> location = GeneratedColumn<String>(
-    'location',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    weekday,
-    startTime,
-    endTime,
-    title,
-    location,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'timetable_entry';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<TimetableEntryRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('weekday')) {
-      context.handle(
-        _weekdayMeta,
-        weekday.isAcceptableOrUnknown(data['weekday']!, _weekdayMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_weekdayMeta);
-    }
-    if (data.containsKey('start_time')) {
-      context.handle(
-        _startTimeMeta,
-        startTime.isAcceptableOrUnknown(data['start_time']!, _startTimeMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_startTimeMeta);
-    }
-    if (data.containsKey('end_time')) {
-      context.handle(
-        _endTimeMeta,
-        endTime.isAcceptableOrUnknown(data['end_time']!, _endTimeMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_endTimeMeta);
-    }
-    if (data.containsKey('title')) {
-      context.handle(
-        _titleMeta,
-        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_titleMeta);
-    }
-    if (data.containsKey('location')) {
-      context.handle(
-        _locationMeta,
-        location.isAcceptableOrUnknown(data['location']!, _locationMeta),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  TimetableEntryRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return TimetableEntryRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      weekday: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}weekday'],
-      )!,
-      startTime: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}start_time'],
-      )!,
-      endTime: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}end_time'],
-      )!,
-      title: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}title'],
-      )!,
-      location: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}location'],
-      ),
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $TimetableEntriesTable createAlias(String alias) {
-    return $TimetableEntriesTable(attachedDatabase, alias);
-  }
-}
-
-class TimetableEntryRow extends DataClass
-    implements Insertable<TimetableEntryRow> {
-  final int id;
-  final int weekday;
-  final String startTime;
-  final String endTime;
-  final String title;
-  final String? location;
-  final String createdAt;
-  final String updatedAt;
-  const TimetableEntryRow({
-    required this.id,
-    required this.weekday,
-    required this.startTime,
-    required this.endTime,
-    required this.title,
-    this.location,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['weekday'] = Variable<int>(weekday);
-    map['start_time'] = Variable<String>(startTime);
-    map['end_time'] = Variable<String>(endTime);
-    map['title'] = Variable<String>(title);
-    if (!nullToAbsent || location != null) {
-      map['location'] = Variable<String>(location);
-    }
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  TimetableEntriesCompanion toCompanion(bool nullToAbsent) {
-    return TimetableEntriesCompanion(
-      id: Value(id),
-      weekday: Value(weekday),
-      startTime: Value(startTime),
-      endTime: Value(endTime),
-      title: Value(title),
-      location: location == null && nullToAbsent
-          ? const Value.absent()
-          : Value(location),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory TimetableEntryRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return TimetableEntryRow(
-      id: serializer.fromJson<int>(json['id']),
-      weekday: serializer.fromJson<int>(json['weekday']),
-      startTime: serializer.fromJson<String>(json['startTime']),
-      endTime: serializer.fromJson<String>(json['endTime']),
-      title: serializer.fromJson<String>(json['title']),
-      location: serializer.fromJson<String?>(json['location']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'weekday': serializer.toJson<int>(weekday),
-      'startTime': serializer.toJson<String>(startTime),
-      'endTime': serializer.toJson<String>(endTime),
-      'title': serializer.toJson<String>(title),
-      'location': serializer.toJson<String?>(location),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  TimetableEntryRow copyWith({
-    int? id,
-    int? weekday,
-    String? startTime,
-    String? endTime,
-    String? title,
-    Value<String?> location = const Value.absent(),
-    String? createdAt,
-    String? updatedAt,
-  }) => TimetableEntryRow(
-    id: id ?? this.id,
-    weekday: weekday ?? this.weekday,
-    startTime: startTime ?? this.startTime,
-    endTime: endTime ?? this.endTime,
-    title: title ?? this.title,
-    location: location.present ? location.value : this.location,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  TimetableEntryRow copyWithCompanion(TimetableEntriesCompanion data) {
-    return TimetableEntryRow(
-      id: data.id.present ? data.id.value : this.id,
-      weekday: data.weekday.present ? data.weekday.value : this.weekday,
-      startTime: data.startTime.present ? data.startTime.value : this.startTime,
-      endTime: data.endTime.present ? data.endTime.value : this.endTime,
-      title: data.title.present ? data.title.value : this.title,
-      location: data.location.present ? data.location.value : this.location,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('TimetableEntryRow(')
-          ..write('id: $id, ')
-          ..write('weekday: $weekday, ')
-          ..write('startTime: $startTime, ')
-          ..write('endTime: $endTime, ')
-          ..write('title: $title, ')
-          ..write('location: $location, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    weekday,
-    startTime,
-    endTime,
-    title,
-    location,
-    createdAt,
-    updatedAt,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is TimetableEntryRow &&
-          other.id == this.id &&
-          other.weekday == this.weekday &&
-          other.startTime == this.startTime &&
-          other.endTime == this.endTime &&
-          other.title == this.title &&
-          other.location == this.location &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
-  final Value<int> id;
-  final Value<int> weekday;
-  final Value<String> startTime;
-  final Value<String> endTime;
-  final Value<String> title;
-  final Value<String?> location;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  const TimetableEntriesCompanion({
-    this.id = const Value.absent(),
-    this.weekday = const Value.absent(),
-    this.startTime = const Value.absent(),
-    this.endTime = const Value.absent(),
-    this.title = const Value.absent(),
-    this.location = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-  });
-  TimetableEntriesCompanion.insert({
-    this.id = const Value.absent(),
-    required int weekday,
-    required String startTime,
-    required String endTime,
-    required String title,
-    this.location = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-  }) : weekday = Value(weekday),
-       startTime = Value(startTime),
-       endTime = Value(endTime),
-       title = Value(title),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<TimetableEntryRow> custom({
-    Expression<int>? id,
-    Expression<int>? weekday,
-    Expression<String>? startTime,
-    Expression<String>? endTime,
-    Expression<String>? title,
-    Expression<String>? location,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (weekday != null) 'weekday': weekday,
-      if (startTime != null) 'start_time': startTime,
-      if (endTime != null) 'end_time': endTime,
-      if (title != null) 'title': title,
-      if (location != null) 'location': location,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-    });
-  }
-
-  TimetableEntriesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? weekday,
-    Value<String>? startTime,
-    Value<String>? endTime,
-    Value<String>? title,
-    Value<String?>? location,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-  }) {
-    return TimetableEntriesCompanion(
-      id: id ?? this.id,
-      weekday: weekday ?? this.weekday,
-      startTime: startTime ?? this.startTime,
-      endTime: endTime ?? this.endTime,
-      title: title ?? this.title,
-      location: location ?? this.location,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (weekday.present) {
-      map['weekday'] = Variable<int>(weekday.value);
-    }
-    if (startTime.present) {
-      map['start_time'] = Variable<String>(startTime.value);
-    }
-    if (endTime.present) {
-      map['end_time'] = Variable<String>(endTime.value);
-    }
-    if (title.present) {
-      map['title'] = Variable<String>(title.value);
-    }
-    if (location.present) {
-      map['location'] = Variable<String>(location.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('TimetableEntriesCompanion(')
-          ..write('id: $id, ')
-          ..write('weekday: $weekday, ')
-          ..write('startTime: $startTime, ')
-          ..write('endTime: $endTime, ')
-          ..write('title: $title, ')
-          ..write('location: $location, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -11473,20 +11473,20 @@ class RevisionSequencesCompanion extends UpdateCompanion<RevisionSequenceRow> {
 
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
-  late final $LearningGoalsTable learningGoals = $LearningGoalsTable(this);
-  late final $AssetObjectsTable assetObjects = $AssetObjectsTable(this);
-  late final $MaterialsTable materials = $MaterialsTable(this);
-  late final $ConversationsTable conversations = $ConversationsTable(this);
-  late final $AppMetaTable appMeta = $AppMetaTable(this);
-  late final $ProfilesTable profiles = $ProfilesTable(this);
-  late final $AssetChunksTable assetChunks = $AssetChunksTable(this);
-  late final $MaterialPagesTable materialPages = $MaterialPagesTable(this);
-  late final $MessagesTable messages = $MessagesTable(this);
-  late final $StudyPlansTable studyPlans = $StudyPlansTable(this);
-  late final $PlanItemsTable planItems = $PlanItemsTable(this);
   late final $TimetableEntriesTable timetableEntries = $TimetableEntriesTable(
     this,
   );
+  late final $AppMetaTable appMeta = $AppMetaTable(this);
+  late final $ProfilesTable profiles = $ProfilesTable(this);
+  late final $LearningGoalsTable learningGoals = $LearningGoalsTable(this);
+  late final $AssetObjectsTable assetObjects = $AssetObjectsTable(this);
+  late final $AssetChunksTable assetChunks = $AssetChunksTable(this);
+  late final $MaterialsTable materials = $MaterialsTable(this);
+  late final $MaterialPagesTable materialPages = $MaterialPagesTable(this);
+  late final $ConversationsTable conversations = $ConversationsTable(this);
+  late final $MessagesTable messages = $MessagesTable(this);
+  late final $StudyPlansTable studyPlans = $StudyPlansTable(this);
+  late final $PlanItemsTable planItems = $PlanItemsTable(this);
   late final $ScheduleBlocksTable scheduleBlocks = $ScheduleBlocksTable(this);
   late final $StudySessionsTable studySessions = $StudySessionsTable(this);
   late final $AttemptsTable attempts = $AttemptsTable(this);
@@ -11506,245 +11506,33 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $RevisionSequencesTable revisionSequences =
       $RevisionSequencesTable(this);
-  Selectable<ConversationScopeResult> conversationScope(int id) {
-    return customSelect(
-      'SELECT id, goal_id, material_id FROM conversation WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.conversations},
-    ).map(
-      (QueryRow row) => ConversationScopeResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        materialId: row.readNullable<int>('material_id'),
-      ),
-    );
-  }
-
-  Selectable<MaterialScopeResult> materialScope(int id) {
-    return customSelect(
-      'SELECT id, goal_id FROM material WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.materials},
-    ).map(
-      (QueryRow row) => MaterialScopeResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-      ),
-    );
-  }
-
-  Selectable<AttemptRow> latestSubmittedOfConversation(int conversationId) {
-    return customSelect(
-      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL ORDER BY submitted_at DESC, id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.attempts},
-    ).asyncMap(this.attempts.mapFromRow);
-  }
-
-  Selectable<MessageRow> recentMessages(int conversationId, int rowLimit) {
-    return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 ORDER BY id DESC LIMIT ?2',
-      variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
-      readsFrom: {this.messages},
-    ).asyncMap(this.messages.mapFromRow);
-  }
-
-  Selectable<MessageRow> messagesPage(
-    int conversationId,
-    int beforeId,
-    int rowLimit,
-  ) {
-    return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND(?2 = 0 OR id < ?2)ORDER BY id DESC LIMIT ?3',
-      variables: [
-        Variable<int>(conversationId),
-        Variable<int>(beforeId),
-        Variable<int>(rowLimit),
-      ],
-      readsFrom: {this.messages},
-    ).asyncMap(this.messages.mapFromRow);
-  }
-
-  Selectable<MessageRow> firstUserMessage(int conversationId, int beforeId) {
-    return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)AND(?2 = 0 OR id < ?2)ORDER BY id LIMIT 1',
-      variables: [Variable<int>(conversationId), Variable<int>(beforeId)],
-      readsFrom: {this.messages},
-    ).asyncMap(this.messages.mapFromRow);
-  }
-
-  Selectable<MessageRow> lastUserMessage(int conversationId) {
-    return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)ORDER BY id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.messages},
-    ).asyncMap(this.messages.mapFromRow);
-  }
-
-  Selectable<MessageRow> messageById(int id) {
-    return customSelect(
-      'SELECT * FROM message WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.messages},
-    ).asyncMap(this.messages.mapFromRow);
-  }
-
-  Selectable<int?> sessionIdsOfConversation(int conversationId) {
-    return customSelect(
-      'SELECT DISTINCT session_id FROM attempt WHERE conversation_id = ?1 AND session_id IS NOT NULL',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.attempts},
-    ).map((QueryRow row) => row.readNullable<int>('session_id'));
-  }
-
-  Selectable<String?> imagePathsOfConversation(int conversationId) {
-    return customSelect(
-      'SELECT image_paths_json FROM message WHERE conversation_id = ?1 AND image_paths_json IS NOT NULL',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.messages},
-    ).map((QueryRow row) => row.readNullable<String>('image_paths_json'));
-  }
-
-  Selectable<int> attemptsInSession(int? sessionId) {
-    return customSelect(
-      'SELECT id FROM attempt WHERE session_id = ?1 LIMIT 1',
-      variables: [Variable<int>(sessionId)],
-      readsFrom: {this.attempts},
-    ).map((QueryRow row) => row.read<int>('id'));
-  }
-
-  Future<int> insertConversationMessage(
-    int conversationId,
-    String role,
-    String content,
-    String? imagePaths,
-    String? structuredJson,
+  Future<int> insertTimetableEntry(
+    int weekday,
+    String startTime,
+    String endTime,
+    String title,
+    String? location,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+      'INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
       variables: [
-        Variable<int>(conversationId),
-        Variable<String>(role),
-        Variable<String>(content),
-        Variable<String>(imagePaths),
-        Variable<String>(structuredJson),
+        Variable<int>(weekday),
+        Variable<String>(startTime),
+        Variable<String>(endTime),
+        Variable<String>(title),
+        Variable<String>(location),
         Variable<String>(stamp),
       ],
-      updates: {this.messages},
+      updates: {this.timetableEntries},
     );
   }
 
-  Future<int> deleteConversationMessages(int conversationId) {
+  Future<int> deleteTimetableEntry(int entryId) {
     return customUpdate(
-      'DELETE FROM message WHERE conversation_id = ?1',
-      variables: [Variable<int>(conversationId)],
-      updates: {this.messages},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
-  Future<int> setMessageStructuredState(String? structuredJson, int messageId) {
-    return customUpdate(
-      'UPDATE message SET structured_json = ?1 WHERE id = ?2',
-      variables: [Variable<String>(structuredJson), Variable<int>(messageId)],
-      updates: {this.messages},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Selectable<MaterialPageRow> pagesOfMaterial(int materialId) {
-    return customSelect(
-      'SELECT * FROM material_page WHERE material_id = ?1 ORDER BY page_no',
-      variables: [Variable<int>(materialId)],
-      readsFrom: {this.materialPages},
-    ).asyncMap(this.materialPages.mapFromRow);
-  }
-
-  Selectable<MaterialPageRow> pagesInRange(
-    int materialId,
-    int pageFrom,
-    int pageTo,
-  ) {
-    return customSelect(
-      'SELECT * FROM material_page WHERE material_id = ?1 AND(?2 = 0 OR page_no >= ?2)AND(?3 = 0 OR page_no <= ?3)ORDER BY page_no',
-      variables: [
-        Variable<int>(materialId),
-        Variable<int>(pageFrom),
-        Variable<int>(pageTo),
-      ],
-      readsFrom: {this.materialPages},
-    ).asyncMap(this.materialPages.mapFromRow);
-  }
-
-  Selectable<MaterialPageRow> pageById(int pageId) {
-    return customSelect(
-      'SELECT * FROM material_page WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(pageId)],
-      readsFrom: {this.materialPages},
-    ).asyncMap(this.materialPages.mapFromRow);
-  }
-
-  Selectable<String?> materialFileHash(int materialId) {
-    return customSelect(
-      'SELECT source_file_hash FROM material WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(materialId)],
-      readsFrom: {this.materials},
-    ).map((QueryRow row) => row.readNullable<String>('source_file_hash'));
-  }
-
-  Selectable<int> pageMaterialId(int pageId) {
-    return customSelect(
-      'SELECT material_id FROM material_page WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(pageId)],
-      readsFrom: {this.materialPages},
-    ).map((QueryRow row) => row.read<int>('material_id'));
-  }
-
-  Future<int> insertMaterialPage(
-    int materialId,
-    int pageNo,
-    String? label,
-    String content,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO material_page (material_id, page_no, label, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
-      variables: [
-        Variable<int>(materialId),
-        Variable<int>(pageNo),
-        Variable<String>(label),
-        Variable<String>(content),
-        Variable<String>(stamp),
-      ],
-      updates: {this.materialPages},
-    );
-  }
-
-  Future<int> updateMaterialPage(
-    String content,
-    String? label,
-    String stamp,
-    int pageId,
-  ) {
-    return customUpdate(
-      'UPDATE material_page SET content = ?1, label = ?2, updated_at = ?3 WHERE id = ?4',
-      variables: [
-        Variable<String>(content),
-        Variable<String>(label),
-        Variable<String>(stamp),
-        Variable<int>(pageId),
-      ],
-      updates: {this.materialPages},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> deleteMaterialPage(int pageId) {
-    return customUpdate(
-      'DELETE FROM material_page WHERE id = ?1',
-      variables: [Variable<int>(pageId)],
-      updates: {this.materialPages},
+      'DELETE FROM timetable_entry WHERE id = ?1',
+      variables: [Variable<int>(entryId)],
+      updates: {this.timetableEntries},
       updateKind: UpdateKind.delete,
     );
   }
@@ -11755,6 +11543,347 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [],
       readsFrom: {this.timetableEntries},
     ).asyncMap(this.timetableEntries.mapFromRow);
+  }
+
+  Selectable<TimetableEntriesOnWeekdayResult> timetableEntriesOnWeekday(
+    int weekday,
+  ) {
+    return customSelect(
+      'SELECT start_time, end_time, title, location FROM timetable_entry WHERE weekday = ?1 ORDER BY start_time',
+      variables: [Variable<int>(weekday)],
+      readsFrom: {this.timetableEntries},
+    ).map(
+      (QueryRow row) => TimetableEntriesOnWeekdayResult(
+        startTime: row.read<String>('start_time'),
+        endTime: row.read<String>('end_time'),
+        title: row.read<String>('title'),
+        location: row.readNullable<String>('location'),
+      ),
+    );
+  }
+
+  Selectable<StudySessionRow> openStudySession(
+    int conversationId,
+    int planItemId,
+    int? goalId,
+  ) {
+    return customSelect(
+      'SELECT * FROM study_session WHERE ended_at IS NULL AND((?1 <> 0 AND conversation_id = ?1)OR(?1 = 0 AND conversation_id IS NULL AND((?2 <> 0 AND plan_item_id = ?2)OR(?2 = 0 AND plan_item_id IS NULL AND((?3 = 0 AND goal_id IS NULL)OR(?3 <> 0 AND goal_id = ?3))))))ORDER BY id DESC LIMIT 1',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<int>(planItemId),
+        Variable<int>(goalId),
+      ],
+      readsFrom: {this.studySessions},
+    ).asyncMap(this.studySessions.mapFromRow);
+  }
+
+  Selectable<StudySessionRow> studySessionById(int id) {
+    return customSelect(
+      'SELECT * FROM study_session WHERE id = ?1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.studySessions},
+    ).asyncMap(this.studySessions.mapFromRow);
+  }
+
+  Selectable<StudySessionRow> recentStudySessions(int rowLimit) {
+    return customSelect(
+      'SELECT * FROM study_session ORDER BY id DESC LIMIT ?1',
+      variables: [Variable<int>(rowLimit)],
+      readsFrom: {this.studySessions},
+    ).asyncMap(this.studySessions.mapFromRow);
+  }
+
+  Selectable<StudySessionRow> endedStudySessionsForGoal(
+    int? goalId,
+    int rowLimit,
+  ) {
+    return customSelect(
+      'SELECT * FROM study_session WHERE goal_id = ?1 AND ended_at IS NOT NULL ORDER BY ended_at DESC, id DESC LIMIT ?2',
+      variables: [Variable<int>(goalId), Variable<int>(rowLimit)],
+      readsFrom: {this.studySessions},
+    ).asyncMap(this.studySessions.mapFromRow);
+  }
+
+  Selectable<StudySessionRow> endedStudySessionsForPlanItems(
+    String planItemIds,
+  ) {
+    return customSelect(
+      'SELECT * FROM study_session WHERE plan_item_id IN (SELECT value FROM json_each(?1)) AND ended_at IS NOT NULL ORDER BY ended_at ASC, id ASC',
+      variables: [Variable<String>(planItemIds)],
+      readsFrom: {this.studySessions},
+    ).asyncMap(this.studySessions.mapFromRow);
+  }
+
+  Future<int> insertStudySession(
+    int? goalId,
+    int? itemId,
+    int? conversationId,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO study_session (goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(itemId),
+        Variable<int>(conversationId),
+        Variable<String>(stamp),
+      ],
+      updates: {this.studySessions},
+    );
+  }
+
+  Future<int> finishStudySession(
+    String? outcome,
+    String? summary,
+    String? stamp,
+    int sessionId,
+  ) {
+    return customUpdate(
+      'UPDATE study_session SET outcome = ?1, summary = ?2, ended_at = ?3, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(outcome),
+        Variable<String>(summary),
+        Variable<String>(stamp),
+        Variable<int>(sessionId),
+      ],
+      updates: {this.studySessions},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteStudySession(int sessionId) {
+    return customUpdate(
+      'DELETE FROM study_session WHERE id = ?1',
+      variables: [Variable<int>(sessionId)],
+      updates: {this.studySessions},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Selectable<StudyPlanRow> studyPlanById(int id) {
+    return customSelect(
+      'SELECT * FROM study_plan WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.studyPlans},
+    ).asyncMap(this.studyPlans.mapFromRow);
+  }
+
+  Selectable<PlanRowsResult> planRows(
+    String doneStatus,
+    int id,
+    int openOnly,
+    String activeStatus,
+    String pausedStatus,
+    int activeOnly,
+    int statusFirst,
+    int rowLimit,
+  ) {
+    return customSelect(
+      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title FROM study_plan AS sp WHERE(?2 = 0 OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT ?8',
+      variables: [
+        Variable<String>(doneStatus),
+        Variable<int>(id),
+        Variable<int>(openOnly),
+        Variable<String>(activeStatus),
+        Variable<String>(pausedStatus),
+        Variable<int>(activeOnly),
+        Variable<int>(statusFirst),
+        Variable<int>(rowLimit),
+      ],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => PlanRowsResult(
+        id: row.read<int>('id'),
+        materialId: row.readNullable<int>('material_id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        title: row.read<String>('title'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        currentPage: row.readNullable<int>('current_page'),
+        status: row.read<String>('status'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        materialTitle: row.readNullable<String>('material_title'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        stepsDone: row.read<int>('steps_done'),
+        stepsTotal: row.read<int>('steps_total'),
+        nextStepTitle: row.readNullable<String>('next_step_title'),
+      ),
+    );
+  }
+
+  Future<int> insertStudyPlan(
+    int? materialId,
+    int? goalId,
+    int? conversationId,
+    String title,
+    int? pageFrom,
+    int? pageTo,
+    int? currentPage,
+    String status,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO study_plan (material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)',
+      variables: [
+        Variable<int>(materialId),
+        Variable<int>(goalId),
+        Variable<int>(conversationId),
+        Variable<String>(title),
+        Variable<int>(pageFrom),
+        Variable<int>(pageTo),
+        Variable<int>(currentPage),
+        Variable<String>(status),
+        Variable<String>(stamp),
+      ],
+      updates: {this.studyPlans},
+    );
+  }
+
+  Future<int> setStudyPlanStatus(String status, String stamp, int planId) {
+    return customUpdate(
+      'UPDATE study_plan SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(planId),
+      ],
+      updates: {this.studyPlans},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> updateStudyPlanProgress(
+    int? currentPage,
+    String? status,
+    String stamp,
+    int planId,
+  ) {
+    return customUpdate(
+      'UPDATE study_plan SET current_page = ?1, status = COALESCE(?2, status), updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<int>(currentPage),
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(planId),
+      ],
+      updates: {this.studyPlans},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Selectable<int> cutoffHour() {
+    return customSelect(
+      'SELECT day_cutoff_hour FROM profile WHERE id = 1',
+      variables: [],
+      readsFrom: {this.profiles},
+    ).map((QueryRow row) => row.read<int>('day_cutoff_hour'));
+  }
+
+  Selectable<String> appMetaValue(String metaKey) {
+    return customSelect(
+      'SELECT a.value AS meta_value FROM app_meta AS a WHERE a."key" = ?1 LIMIT 1',
+      variables: [Variable<String>(metaKey)],
+      readsFrom: {this.appMeta},
+    ).map((QueryRow row) => row.read<String>('meta_value'));
+  }
+
+  Future<int> setProfileCutoffHour(int hour, String stamp) {
+    return customUpdate(
+      'UPDATE profile SET day_cutoff_hour = ?1, updated_at = ?2 WHERE id = 1',
+      variables: [Variable<int>(hour), Variable<String>(stamp)],
+      updates: {this.profiles},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> saveAppMetadata(String metaKey, String metaValue, String stamp) {
+    return customInsert(
+      'INSERT INTO app_meta ("key", value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT ("key") DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      variables: [
+        Variable<String>(metaKey),
+        Variable<String>(metaValue),
+        Variable<String>(stamp),
+      ],
+      updates: {this.appMeta},
+    );
+  }
+
+  Selectable<BlocksOverlappingResult> blocksOverlapping(
+    String endAt,
+    String startAt,
+  ) {
+    return customSelect(
+      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.start_at < ?1 AND b.end_at > ?2 ORDER BY b.start_at',
+      variables: [Variable<String>(endAt), Variable<String>(startAt)],
+      readsFrom: {this.planItems, this.scheduleBlocks},
+    ).map(
+      (QueryRow row) => BlocksOverlappingResult(
+        id: row.read<int>('id'),
+        planItemId: row.read<int>('plan_item_id'),
+        startAt: row.read<String>('start_at'),
+        endAt: row.read<String>('end_at'),
+        source: row.read<String>('source'),
+        status: row.read<String>('status'),
+        locked: row.read<int>('locked'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        pTitle: row.read<String>('p_title'),
+        pNote: row.readNullable<String>('p_note'),
+        pStatus: row.read<String>('p_status'),
+      ),
+    );
+  }
+
+  Selectable<NextPlannedBlockResult> nextPlannedBlock(String now) {
+    return customSelect(
+      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at >= ?1 ORDER BY b.start_at LIMIT 1',
+      variables: [Variable<String>(now)],
+      readsFrom: {this.planItems, this.scheduleBlocks},
+    ).map(
+      (QueryRow row) => NextPlannedBlockResult(
+        id: row.read<int>('id'),
+        planItemId: row.read<int>('plan_item_id'),
+        startAt: row.read<String>('start_at'),
+        endAt: row.read<String>('end_at'),
+        source: row.read<String>('source'),
+        status: row.read<String>('status'),
+        locked: row.read<int>('locked'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        pTitle: row.read<String>('p_title'),
+        pNote: row.readNullable<String>('p_note'),
+        pStatus: row.read<String>('p_status'),
+      ),
+    );
+  }
+
+  Selectable<PlannedBlockSpansResult> plannedBlockSpans() {
+    return customSelect(
+      'SELECT b.id, b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' ORDER BY b.start_at',
+      variables: [],
+      readsFrom: {this.scheduleBlocks, this.planItems},
+    ).map(
+      (QueryRow row) => PlannedBlockSpansResult(
+        id: row.read<int>('id'),
+        startAt: row.read<String>('start_at'),
+        endAt: row.read<String>('end_at'),
+        title: row.read<String>('title'),
+      ),
+    );
+  }
+
+  Selectable<ScheduleBlockRow> adjustableBlocksForGoal(
+    int? goalId,
+    String now,
+  ) {
+    return customSelect(
+      'SELECT b.* FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE p.goal_id = ?1 AND b.status = \'planned\' AND b.locked = 0 AND b.start_at >= ?2 ORDER BY b.start_at',
+      variables: [Variable<int>(goalId), Variable<String>(now)],
+      readsFrom: {this.scheduleBlocks, this.planItems},
+    ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
 
   Selectable<ScheduleBlockRow> blocksByIds(String ids) {
@@ -11908,6 +12037,83 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<FindOverlappingBlocksResult> findOverlappingBlocks(
+    String endAt,
+    String startAt,
+    String ignoredBlockIds,
+  ) {
+    return customSelect(
+      'SELECT b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at < ?1 AND b.end_at > ?2 AND b.id NOT IN (SELECT value FROM json_each(?3)) ORDER BY b.start_at LIMIT 1',
+      variables: [
+        Variable<String>(endAt),
+        Variable<String>(startAt),
+        Variable<String>(ignoredBlockIds),
+      ],
+      readsFrom: {this.scheduleBlocks, this.planItems},
+    ).map(
+      (QueryRow row) => FindOverlappingBlocksResult(
+        startAt: row.read<String>('start_at'),
+        endAt: row.read<String>('end_at'),
+        title: row.read<String>('title'),
+      ),
+    );
+  }
+
+  Selectable<PlannedBlocksAfterResult> plannedBlocksAfter(String after) {
+    return customSelect(
+      'SELECT b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.end_at > ?1 ORDER BY b.start_at',
+      variables: [Variable<String>(after)],
+      readsFrom: {this.scheduleBlocks, this.planItems},
+    ).map(
+      (QueryRow row) => PlannedBlocksAfterResult(
+        startAt: row.read<String>('start_at'),
+        endAt: row.read<String>('end_at'),
+        title: row.read<String>('title'),
+      ),
+    );
+  }
+
+  Selectable<int> itemHasScheduleOrSession(int? itemId) {
+    return customSelect(
+      'SELECT 1 AS _c0 FROM schedule_block WHERE plan_item_id = ?1 UNION ALL SELECT 1 FROM study_session WHERE plan_item_id = ?1 LIMIT 1',
+      variables: [Variable<int>(itemId)],
+      readsFrom: {this.scheduleBlocks, this.studySessions},
+    ).map((QueryRow row) => row.read<int>('_c0'));
+  }
+
+  Selectable<ItemByConversationAndTitleResult> itemByConversationAndTitle(
+    int? conversationId,
+    String title,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND p.title = ?2 ORDER BY p.id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId), Variable<String>(title)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => ItemByConversationAndTitleResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
   Selectable<ItemPlanResult> itemPlan(int itemId) {
     return customSelect(
       'SELECT id, study_plan_id FROM plan_item WHERE id = ?1 LIMIT 1',
@@ -11927,14 +12133,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [Variable<int>(planId)],
       readsFrom: {this.planItems},
     ).asyncMap(this.planItems.mapFromRow);
-  }
-
-  Selectable<StudyPlanRow> studyPlanById(int id) {
-    return customSelect(
-      'SELECT * FROM study_plan WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.studyPlans},
-    ).asyncMap(this.studyPlans.mapFromRow);
   }
 
   Future<int> insertStudyPlanStep(
@@ -12022,72 +12220,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<AttemptRow> attemptsForConversation(int conversationId) {
+  Selectable<PlanStepsResult> planSteps(int? planId) {
     return customSelect(
-      'SELECT * FROM attempt WHERE conversation_id = ?1 ORDER BY id DESC',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.attempts},
-    ).asyncMap(this.attempts.mapFromRow);
-  }
-
-  Selectable<AttemptRow> priorFeedback(int conversationId, int rowLimit) {
-    return customSelect(
-      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL AND feedback IS NOT NULL AND TRIM(feedback) <> \'\' ORDER BY submitted_at DESC, id DESC LIMIT ?2',
-      variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
-      readsFrom: {this.attempts},
-    ).asyncMap(this.attempts.mapFromRow);
-  }
-
-  Selectable<AttemptRow> latestSubmittedAttempt(int conversationId) {
-    return customSelect(
-      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL ORDER BY submitted_at DESC, id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.attempts},
-    ).asyncMap(this.attempts.mapFromRow);
-  }
-
-  Selectable<AttemptRow> attemptById(int id) {
-    return customSelect(
-      'SELECT * FROM attempt WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.attempts},
-    ).asyncMap(this.attempts.mapFromRow);
-  }
-
-  Selectable<AttemptRow> openAttempt(int conversationId) {
-    return customSelect(
-      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NULL ORDER BY id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
-      readsFrom: {this.attempts},
-    ).asyncMap(this.attempts.mapFromRow);
-  }
-
-  Selectable<LearningGoalRow> activeGoals(String status) {
-    return customSelect(
-      'SELECT * FROM learning_goal WHERE status = ?1 ORDER BY due_date IS NULL, due_date, id DESC',
-      variables: [Variable<String>(status)],
-      readsFrom: {this.learningGoals},
-    ).asyncMap(this.learningGoals.mapFromRow);
-  }
-
-  Selectable<LearningGoalRow> goalById(int id) {
-    return customSelect(
-      'SELECT * FROM learning_goal WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.learningGoals},
-    ).asyncMap(this.learningGoals.mapFromRow);
-  }
-
-  Selectable<ItemByConversationAndTitleResult> itemByConversationAndTitle(
-    int? conversationId,
-    String title,
-  ) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND p.title = ?2 ORDER BY p.id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId), Variable<String>(title)],
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.study_plan_id = ?1 ORDER BY p.seq, p.id',
+      variables: [Variable<int>(planId)],
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
-      (QueryRow row) => ItemByConversationAndTitleResult(
+      (QueryRow row) => PlanStepsResult(
         id: row.read<int>('id'),
         goalId: row.readNullable<int>('goal_id'),
         conversationId: row.readNullable<int>('conversation_id'),
@@ -12111,35 +12250,491 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> insertLearningGoal(
-    String title,
-    String? scopeText,
-    String? dueDate,
-    String status,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
-      variables: [
-        Variable<String>(title),
-        Variable<String>(scopeText),
-        Variable<String>(dueDate),
-        Variable<String>(status),
-        Variable<String>(stamp),
-      ],
-      updates: {this.learningGoals},
+  Selectable<PlanStepsForPlansResult> planStepsForPlans(String planIds) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.study_plan_id IN (SELECT value FROM json_each(?1)) ORDER BY p.study_plan_id, p.seq, p.id',
+      variables: [Variable<String>(planIds)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => PlanStepsForPlansResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
     );
   }
 
-  Future<int> setLearningGoalStatus(String status, String stamp, int goalId) {
+  Selectable<int> lastPlanStepSeq(int? planId) {
+    return customSelect(
+      'SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item WHERE study_plan_id = ?1',
+      variables: [Variable<int>(planId)],
+      readsFrom: {this.planItems},
+    ).map((QueryRow row) => row.read<int>('last_seq'));
+  }
+
+  Future<int> settleBlocksOnStepDone(
+    String now,
+    String doneStatus,
+    String cancelledStatus,
+    int itemId,
+    String plannedStatus,
+  ) {
     return customUpdate(
-      'UPDATE learning_goal SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      'UPDATE schedule_block SET status = CASE WHEN EXISTS (SELECT 1 FROM study_session AS s WHERE s.plan_item_id = schedule_block.plan_item_id AND s.started_at < schedule_block.end_at AND COALESCE(s.ended_at, ?1) > schedule_block.start_at) THEN ?2 ELSE ?3 END, updated_at = ?1 WHERE plan_item_id = ?4 AND status = ?5',
       variables: [
-        Variable<String>(status),
-        Variable<String>(stamp),
-        Variable<int>(goalId),
+        Variable<String>(now),
+        Variable<String>(doneStatus),
+        Variable<String>(cancelledStatus),
+        Variable<int>(itemId),
+        Variable<String>(plannedStatus),
       ],
-      updates: {this.learningGoals},
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Selectable<ItemsResult> items(
+    int openOnly,
+    String todoStatus,
+    String doingStatus,
+    int onlyActiveGoals,
+    String? activeStatus,
+    int statusFirst,
+    String deferredStatus,
+    String doneStatus,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p LEFT JOIN learning_goal AS g ON g.id = p.goal_id WHERE(?1 = 0 OR p.status IN (?2, ?3))AND(?4 = 0 OR p.goal_id IS NULL OR g.status = ?5)ORDER BY CASE WHEN ?6 = 0 THEN 0 WHEN p.status = ?3 THEN 0 WHEN p.status = ?2 THEN 1 WHEN p.status = ?7 THEN 2 WHEN p.status = ?8 THEN 3 ELSE 4 END, p.due_at IS NULL, p.due_at, p.id DESC',
+      variables: [
+        Variable<int>(openOnly),
+        Variable<String>(todoStatus),
+        Variable<String>(doingStatus),
+        Variable<int>(onlyActiveGoals),
+        Variable<String>(activeStatus),
+        Variable<int>(statusFirst),
+        Variable<String>(deferredStatus),
+        Variable<String>(doneStatus),
+      ],
+      readsFrom: {
+        this.materials,
+        this.studyPlans,
+        this.planItems,
+        this.learningGoals,
+      },
+    ).map(
+      (QueryRow row) => ItemsResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<ItemByIdResult> itemById(int id) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.id = ?1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => ItemByIdResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<ItemByConversationResult> itemByConversation(int? conversationId) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 ORDER BY p.id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => ItemByConversationResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<ItemByConversationAndStepResult> itemByConversationAndStep(
+    int? conversationId,
+    String stepId,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND json_extract(p.origin_json, \'\$.step_id\') = ?2 ORDER BY p.id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId), Variable<String>(stepId)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => ItemByConversationAndStepResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<DoneItemsResult> doneItems(
+    String doneStatus,
+    int rowLimit,
+    int rowOffset,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.status = ?1 ORDER BY p.completed_at DESC, p.id DESC LIMIT ?2 OFFSET ?3',
+      variables: [
+        Variable<String>(doneStatus),
+        Variable<int>(rowLimit),
+        Variable<int>(rowOffset),
+      ],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => DoneItemsResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<int> countDoneItems(String doneStatus) {
+    return customSelect(
+      'SELECT COUNT(*) AS n FROM plan_item WHERE status = ?1',
+      variables: [Variable<String>(doneStatus)],
+      readsFrom: {this.planItems},
+    ).map((QueryRow row) => row.read<int>('n'));
+  }
+
+  Selectable<ItemsByIdsResult> itemsByIds(String itemIds) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.id IN (SELECT value FROM json_each(?1))',
+      variables: [Variable<String>(itemIds)],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => ItemsByIdsResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<NextDueItemResult> nextDueItem(
+    String todoStatus,
+    String doingStatus,
+    String? activeStatus,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p LEFT JOIN learning_goal AS g ON g.id = p.goal_id WHERE p.status IN (?1, ?2) AND(p.goal_id IS NULL OR g.status = ?3)ORDER BY p.due_at IS NULL, p.due_at, p.id LIMIT 1',
+      variables: [
+        Variable<String>(todoStatus),
+        Variable<String>(doingStatus),
+        Variable<String>(activeStatus),
+      ],
+      readsFrom: {
+        this.materials,
+        this.studyPlans,
+        this.planItems,
+        this.learningGoals,
+      },
+    ).map(
+      (QueryRow row) => NextDueItemResult(
+        id: row.read<int>('id'),
+        goalId: row.readNullable<int>('goal_id'),
+        conversationId: row.readNullable<int>('conversation_id'),
+        studyPlanId: row.readNullable<int>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Future<int> bindTaskConversation(
+    int? conversationId,
+    String stamp,
+    int itemId,
+  ) {
+    return customUpdate(
+      'UPDATE plan_item SET conversation_id = ?1, updated_at = ?2 WHERE id = ?3 AND conversation_id IS NULL',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<String>(stamp),
+        Variable<int>(itemId),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> insertPlanItem(
+    int? goalId,
+    int? conversationId,
+    String title,
+    String? note,
+    String? dueAt,
+    int? estMinutes,
+    String status,
+    String source,
+    String? origin,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO plan_item (goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(conversationId),
+        Variable<String>(title),
+        Variable<String>(note),
+        Variable<String>(dueAt),
+        Variable<int>(estMinutes),
+        Variable<String>(status),
+        Variable<String>(source),
+        Variable<String>(origin),
+        Variable<String>(stamp),
+      ],
+      updates: {this.planItems},
+    );
+  }
+
+  Future<int> setPlanItemPriority(int priority, String stamp, int itemId) {
+    return customUpdate(
+      'UPDATE plan_item SET priority = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<int>(priority),
+        Variable<String>(stamp),
+        Variable<int>(itemId),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deletePlanItem(int itemId) {
+    return customUpdate(
+      'DELETE FROM plan_item WHERE id = ?1',
+      variables: [Variable<int>(itemId)],
+      updates: {this.planItems},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Selectable<MessageRow> recentMessages(int conversationId, int rowLimit) {
+    return customSelect(
+      'SELECT * FROM message WHERE conversation_id = ?1 ORDER BY id DESC LIMIT ?2',
+      variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
+      readsFrom: {this.messages},
+    ).asyncMap(this.messages.mapFromRow);
+  }
+
+  Selectable<MessageRow> messagesPage(
+    int conversationId,
+    int beforeId,
+    int rowLimit,
+  ) {
+    return customSelect(
+      'SELECT * FROM message WHERE conversation_id = ?1 AND(?2 = 0 OR id < ?2)ORDER BY id DESC LIMIT ?3',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<int>(beforeId),
+        Variable<int>(rowLimit),
+      ],
+      readsFrom: {this.messages},
+    ).asyncMap(this.messages.mapFromRow);
+  }
+
+  Selectable<MessageRow> firstUserMessage(int conversationId, int beforeId) {
+    return customSelect(
+      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)AND(?2 = 0 OR id < ?2)ORDER BY id LIMIT 1',
+      variables: [Variable<int>(conversationId), Variable<int>(beforeId)],
+      readsFrom: {this.messages},
+    ).asyncMap(this.messages.mapFromRow);
+  }
+
+  Selectable<MessageRow> lastUserMessage(int conversationId) {
+    return customSelect(
+      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)ORDER BY id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.messages},
+    ).asyncMap(this.messages.mapFromRow);
+  }
+
+  Selectable<MessageRow> messageById(int id) {
+    return customSelect(
+      'SELECT * FROM message WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.messages},
+    ).asyncMap(this.messages.mapFromRow);
+  }
+
+  Selectable<String?> imagePathsOfConversation(int conversationId) {
+    return customSelect(
+      'SELECT image_paths_json FROM message WHERE conversation_id = ?1 AND image_paths_json IS NOT NULL',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.messages},
+    ).map((QueryRow row) => row.readNullable<String>('image_paths_json'));
+  }
+
+  Future<int> insertConversationMessage(
+    int conversationId,
+    String role,
+    String content,
+    String? imagePaths,
+    String? structuredJson,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<String>(role),
+        Variable<String>(content),
+        Variable<String>(imagePaths),
+        Variable<String>(structuredJson),
+        Variable<String>(stamp),
+      ],
+      updates: {this.messages},
+    );
+  }
+
+  Future<int> deleteConversationMessages(int conversationId) {
+    return customUpdate(
+      'DELETE FROM message WHERE conversation_id = ?1',
+      variables: [Variable<int>(conversationId)],
+      updates: {this.messages},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Future<int> setMessageStructuredState(String? structuredJson, int messageId) {
+    return customUpdate(
+      'UPDATE message SET structured_json = ?1 WHERE id = ?2',
+      variables: [Variable<String>(structuredJson), Variable<int>(messageId)],
+      updates: {this.messages},
       updateKind: UpdateKind.update,
     );
   }
@@ -12270,294 +12865,287 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<StudySessionRow> openStudySession(
-    int conversationId,
-    int planItemId,
-    int? goalId,
-  ) {
+  Selectable<MaterialScopeResult> materialScope(int id) {
     return customSelect(
-      'SELECT * FROM study_session WHERE ended_at IS NULL AND((?1 <> 0 AND conversation_id = ?1)OR(?1 = 0 AND conversation_id IS NULL AND((?2 <> 0 AND plan_item_id = ?2)OR(?2 = 0 AND plan_item_id IS NULL AND((?3 = 0 AND goal_id IS NULL)OR(?3 <> 0 AND goal_id = ?3))))))ORDER BY id DESC LIMIT 1',
-      variables: [
-        Variable<int>(conversationId),
-        Variable<int>(planItemId),
-        Variable<int>(goalId),
-      ],
-      readsFrom: {this.studySessions},
-    ).asyncMap(this.studySessions.mapFromRow);
-  }
-
-  Selectable<StudySessionRow> studySessionById(int id) {
-    return customSelect(
-      'SELECT * FROM study_session WHERE id = ?1',
+      'SELECT id, goal_id FROM material WHERE id = ?1 LIMIT 1',
       variables: [Variable<int>(id)],
-      readsFrom: {this.studySessions},
-    ).asyncMap(this.studySessions.mapFromRow);
-  }
-
-  Selectable<StudySessionRow> recentStudySessions(int rowLimit) {
-    return customSelect(
-      'SELECT * FROM study_session ORDER BY id DESC LIMIT ?1',
-      variables: [Variable<int>(rowLimit)],
-      readsFrom: {this.studySessions},
-    ).asyncMap(this.studySessions.mapFromRow);
-  }
-
-  Selectable<StudySessionRow> endedStudySessionsForGoal(
-    int? goalId,
-    int rowLimit,
-  ) {
-    return customSelect(
-      'SELECT * FROM study_session WHERE goal_id = ?1 AND ended_at IS NOT NULL ORDER BY ended_at DESC, id DESC LIMIT ?2',
-      variables: [Variable<int>(goalId), Variable<int>(rowLimit)],
-      readsFrom: {this.studySessions},
-    ).asyncMap(this.studySessions.mapFromRow);
-  }
-
-  Selectable<StudySessionRow> endedStudySessionsForPlanItems(
-    String planItemIds,
-  ) {
-    return customSelect(
-      'SELECT * FROM study_session WHERE plan_item_id IN (SELECT value FROM json_each(?1)) AND ended_at IS NOT NULL ORDER BY ended_at ASC, id ASC',
-      variables: [Variable<String>(planItemIds)],
-      readsFrom: {this.studySessions},
-    ).asyncMap(this.studySessions.mapFromRow);
-  }
-
-  Future<int> insertStudySession(
-    int? goalId,
-    int? itemId,
-    int? conversationId,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO study_session (goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)',
-      variables: [
-        Variable<int>(goalId),
-        Variable<int>(itemId),
-        Variable<int>(conversationId),
-        Variable<String>(stamp),
-      ],
-      updates: {this.studySessions},
-    );
-  }
-
-  Future<int> finishStudySession(
-    String? outcome,
-    String? summary,
-    String? stamp,
-    int sessionId,
-  ) {
-    return customUpdate(
-      'UPDATE study_session SET outcome = ?1, summary = ?2, ended_at = ?3, updated_at = ?3 WHERE id = ?4',
-      variables: [
-        Variable<String>(outcome),
-        Variable<String>(summary),
-        Variable<String>(stamp),
-        Variable<int>(sessionId),
-      ],
-      updates: {this.studySessions},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> deleteStudySession(int sessionId) {
-    return customUpdate(
-      'DELETE FROM study_session WHERE id = ?1',
-      variables: [Variable<int>(sessionId)],
-      updates: {this.studySessions},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
-  Selectable<AssessmentRow> assessmentsForAttempt(int attemptId) {
-    return customSelect(
-      'SELECT * FROM assessment WHERE attempt_id = ?1 ORDER BY id',
-      variables: [Variable<int>(attemptId)],
-      readsFrom: {this.assessments},
-    ).asyncMap(this.assessments.mapFromRow);
-  }
-
-  Selectable<AssessmentRow> assessmentsForAttempts(String attemptIds) {
-    return customSelect(
-      'SELECT * FROM assessment WHERE attempt_id IN (SELECT value FROM json_each(?1)) ORDER BY id',
-      variables: [Variable<String>(attemptIds)],
-      readsFrom: {this.assessments},
-    ).asyncMap(this.assessments.mapFromRow);
-  }
-
-  Selectable<AssessmentRow> latestAssessmentOfKind(int attemptId, String kind) {
-    return customSelect(
-      'SELECT * FROM assessment WHERE attempt_id = ?1 AND kind = ?2 ORDER BY id DESC LIMIT 1',
-      variables: [Variable<int>(attemptId), Variable<String>(kind)],
-      readsFrom: {this.assessments},
-    ).asyncMap(this.assessments.mapFromRow);
-  }
-
-  Selectable<int> assessmentIdsOfKind(int attemptId, String kind) {
-    return customSelect(
-      'SELECT id FROM assessment WHERE attempt_id = ?1 AND kind = ?2 ORDER BY id DESC',
-      variables: [Variable<int>(attemptId), Variable<String>(kind)],
-      readsFrom: {this.assessments},
-    ).map((QueryRow row) => row.read<int>('id'));
-  }
-
-  Selectable<AttemptSubmissionResult> attemptSubmission(int attemptId) {
-    return customSelect(
-      'SELECT id, submitted_at FROM attempt WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(attemptId)],
-      readsFrom: {this.attempts},
+      readsFrom: {this.materials},
     ).map(
-      (QueryRow row) => AttemptSubmissionResult(
+      (QueryRow row) => MaterialScopeResult(
         id: row.read<int>('id'),
-        submittedAt: row.readNullable<String>('submitted_at'),
+        goalId: row.readNullable<int>('goal_id'),
       ),
     );
   }
 
-  Future<int> deleteAssessmentsOfKind(int attemptId, String kind) {
-    return customUpdate(
-      'DELETE FROM assessment WHERE attempt_id = ?1 AND kind = ?2',
-      variables: [Variable<int>(attemptId), Variable<String>(kind)],
-      updates: {this.assessments},
-      updateKind: UpdateKind.delete,
+  Selectable<String?> materialFileHash(int materialId) {
+    return customSelect(
+      'SELECT source_file_hash FROM material WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(materialId)],
+      readsFrom: {this.materials},
+    ).map((QueryRow row) => row.readNullable<String>('source_file_hash'));
+  }
+
+  Selectable<MaterialByIdResult> materialById(int id) {
+    return customSelect(
+      'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE m.id = ?1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.materialPages, this.materials},
+    ).map(
+      (QueryRow row) => MaterialByIdResult(
+        id: row.read<int>('id'),
+        title: row.read<String>('title'),
+        kind: row.read<String>('kind'),
+        sourceRef: row.readNullable<String>('source_ref'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        sourceFileHash: row.readNullable<String>('source_file_hash'),
+        goalId: row.readNullable<int>('goal_id'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        pageCount: row.read<int>('page_count'),
+      ),
     );
   }
 
-  Future<int> insertAssessment(
-    int attemptId,
+  Selectable<MaterialListResult> materialList(int? goalId) {
+    return customSelect(
+      'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE(?1 = 0 OR m.goal_id = ?1 OR m.goal_id IS NULL)ORDER BY m.updated_at DESC, m.id DESC',
+      variables: [Variable<int>(goalId)],
+      readsFrom: {this.materialPages, this.materials},
+    ).map(
+      (QueryRow row) => MaterialListResult(
+        id: row.read<int>('id'),
+        title: row.read<String>('title'),
+        kind: row.read<String>('kind'),
+        sourceRef: row.readNullable<String>('source_ref'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        sourceFileHash: row.readNullable<String>('source_file_hash'),
+        goalId: row.readNullable<int>('goal_id'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        pageCount: row.read<int>('page_count'),
+      ),
+    );
+  }
+
+  Future<int> insertMaterial(
+    String title,
     String kind,
-    String result,
-    String? basis,
+    String? sourceRef,
+    String? fileName,
+    String? fileHash,
+    int? goalId,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO assessment (attempt_id, kind, result, basis, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      'INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)',
       variables: [
-        Variable<int>(attemptId),
+        Variable<String>(title),
         Variable<String>(kind),
-        Variable<String>(result),
-        Variable<String>(basis),
+        Variable<String>(sourceRef),
+        Variable<String>(fileName),
+        Variable<String>(fileHash),
+        Variable<int>(goalId),
         Variable<String>(stamp),
       ],
-      updates: {this.assessments},
+      updates: {this.materials},
     );
   }
 
-  Future<int> updateAssessmentResult(
-    String result,
-    String stamp,
-    int assessmentId,
-  ) {
+  Future<int> setMaterialGoal(int? goalId, String stamp, int materialId) {
     return customUpdate(
-      'UPDATE assessment SET result = ?1, updated_at = ?2 WHERE id = ?3',
-      variables: [
-        Variable<String>(result),
-        Variable<String>(stamp),
-        Variable<int>(assessmentId),
-      ],
-      updates: {this.assessments},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> deleteAssessmentIds(String ids) {
-    return customUpdate(
-      'DELETE FROM assessment WHERE id IN (SELECT value FROM json_each(?1))',
-      variables: [Variable<String>(ids)],
-      updates: {this.assessments},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
-  Selectable<int> cutoffHour() {
-    return customSelect(
-      'SELECT day_cutoff_hour FROM profile WHERE id = 1',
-      variables: [],
-      readsFrom: {this.profiles},
-    ).map((QueryRow row) => row.read<int>('day_cutoff_hour'));
-  }
-
-  Selectable<String> appMetaValue(String metaKey) {
-    return customSelect(
-      'SELECT a.value AS meta_value FROM app_meta AS a WHERE a."key" = ?1 LIMIT 1',
-      variables: [Variable<String>(metaKey)],
-      readsFrom: {this.appMeta},
-    ).map((QueryRow row) => row.read<String>('meta_value'));
-  }
-
-  Future<int> setProfileCutoffHour(int hour, String stamp) {
-    return customUpdate(
-      'UPDATE profile SET day_cutoff_hour = ?1, updated_at = ?2 WHERE id = 1',
-      variables: [Variable<int>(hour), Variable<String>(stamp)],
-      updates: {this.profiles},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> saveAppMetadata(String metaKey, String metaValue, String stamp) {
-    return customInsert(
-      'INSERT INTO app_meta ("key", value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT ("key") DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
-      variables: [
-        Variable<String>(metaKey),
-        Variable<String>(metaValue),
-        Variable<String>(stamp),
-      ],
-      updates: {this.appMeta},
-    );
-  }
-
-  Selectable<RecentSubmittedResult> recentSubmitted(
-    int goalId,
-    int materialId,
-    int conversationId,
-    String broughtIds,
-    int rowLimit,
-  ) {
-    return customSelect(
-      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 <> 0 AND c.goal_id = ?1)OR(?2 <> 0 AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 <> 0 OR ?2 <> 0 OR(?3 <> 0 AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 <> 0 OR ?2 <> 0)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?5',
+      'UPDATE material SET goal_id = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<int>(goalId),
+        Variable<String>(stamp),
         Variable<int>(materialId),
-        Variable<int>(conversationId),
-        Variable<String>(broughtIds),
-        Variable<int>(rowLimit),
       ],
-      readsFrom: {
-        this.attempts,
-        this.conversations,
-        this.materials,
-        this.messages,
-      },
+      updates: {this.materials},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> touchMaterial(String stamp, int materialId) {
+    return customUpdate(
+      'UPDATE material SET updated_at = ?1 WHERE id = ?2',
+      variables: [Variable<String>(stamp), Variable<int>(materialId)],
+      updates: {this.materials},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Selectable<MaterialPageRow> pagesOfMaterial(int materialId) {
+    return customSelect(
+      'SELECT * FROM material_page WHERE material_id = ?1 ORDER BY page_no',
+      variables: [Variable<int>(materialId)],
+      readsFrom: {this.materialPages},
+    ).asyncMap(this.materialPages.mapFromRow);
+  }
+
+  Selectable<MaterialPageRow> pagesInRange(
+    int materialId,
+    int pageFrom,
+    int pageTo,
+  ) {
+    return customSelect(
+      'SELECT * FROM material_page WHERE material_id = ?1 AND(?2 = 0 OR page_no >= ?2)AND(?3 = 0 OR page_no <= ?3)ORDER BY page_no',
+      variables: [
+        Variable<int>(materialId),
+        Variable<int>(pageFrom),
+        Variable<int>(pageTo),
+      ],
+      readsFrom: {this.materialPages},
+    ).asyncMap(this.materialPages.mapFromRow);
+  }
+
+  Selectable<MaterialPageRow> pageById(int pageId) {
+    return customSelect(
+      'SELECT * FROM material_page WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(pageId)],
+      readsFrom: {this.materialPages},
+    ).asyncMap(this.materialPages.mapFromRow);
+  }
+
+  Selectable<int> pageMaterialId(int pageId) {
+    return customSelect(
+      'SELECT material_id FROM material_page WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(pageId)],
+      readsFrom: {this.materialPages},
+    ).map((QueryRow row) => row.read<int>('material_id'));
+  }
+
+  Future<int> insertMaterialPage(
+    int materialId,
+    int pageNo,
+    String? label,
+    String content,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO material_page (material_id, page_no, label, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      variables: [
+        Variable<int>(materialId),
+        Variable<int>(pageNo),
+        Variable<String>(label),
+        Variable<String>(content),
+        Variable<String>(stamp),
+      ],
+      updates: {this.materialPages},
+    );
+  }
+
+  Future<int> updateMaterialPage(
+    String content,
+    String? label,
+    String stamp,
+    int pageId,
+  ) {
+    return customUpdate(
+      'UPDATE material_page SET content = ?1, label = ?2, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(content),
+        Variable<String>(label),
+        Variable<String>(stamp),
+        Variable<int>(pageId),
+      ],
+      updates: {this.materialPages},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteMaterialPage(int pageId) {
+    return customUpdate(
+      'DELETE FROM material_page WHERE id = ?1',
+      variables: [Variable<int>(pageId)],
+      updates: {this.materialPages},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Selectable<MaterialPageBoundsResult> materialPageBounds(int materialId) {
+    return customSelect(
+      'SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page FROM material_page WHERE material_id = ?1',
+      variables: [Variable<int>(materialId)],
+      readsFrom: {this.materialPages},
     ).map(
-      (QueryRow row) => RecentSubmittedResult(
-        attemptId: row.read<int>('attempt_id'),
-        attemptConversationId: row.read<int>('attempt_conversation_id'),
-        attemptSessionId: row.readNullable<int>('attempt_session_id'),
-        attemptUserAnswer: row.readNullable<String>('attempt_user_answer'),
-        attemptSolution: row.readNullable<String>('attempt_solution'),
-        attemptIsCorrect: row.readNullable<int>('attempt_is_correct'),
-        attemptIndependent: row.readNullable<int>('attempt_independent'),
-        attemptHelpJson: row.readNullable<String>('attempt_help_json'),
-        attemptFeedback: row.readNullable<String>('attempt_feedback'),
-        attemptDelayed: row.read<int>('attempt_delayed'),
-        attemptSubmittedAt: row.readNullable<String>('attempt_submitted_at'),
-        attemptCreatedAt: row.read<String>('attempt_created_at'),
-        questionId: row.read<int>('question_id'),
-        questionSourceRef: row.readNullable<String>('question_source_ref'),
-        questionContextText: row.readNullable<String>('question_context_text'),
-        questionPageNo: row.readNullable<int>('question_page_no'),
-        questionCreatedAt: row.read<String>('question_created_at'),
-        questionUpdatedAt: row.read<String>('question_updated_at'),
-        questionMaterialTitle: row.readNullable<String>(
-          'question_material_title',
-        ),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-        questionStem: row.readNullable<String>('question_stem'),
-        questionImagePathsJson: row.readNullable<String>(
-          'question_image_paths_json',
-        ),
+      (QueryRow row) => MaterialPageBoundsResult(
+        firstPage: row.readNullable<int>('first_page'),
+        lastPage: row.readNullable<int>('last_page'),
       ),
     );
+  }
+
+  Selectable<MaterialPageRow> materialPageByNumber(int materialId, int pageNo) {
+    return customSelect(
+      'SELECT * FROM material_page WHERE material_id = ?1 AND page_no = ?2 LIMIT 1',
+      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
+      readsFrom: {this.materialPages},
+    ).asyncMap(this.materialPages.mapFromRow);
+  }
+
+  Selectable<LearningGoalRow> activeGoals(String status) {
+    return customSelect(
+      'SELECT * FROM learning_goal WHERE status = ?1 ORDER BY due_date IS NULL, due_date, id DESC',
+      variables: [Variable<String>(status)],
+      readsFrom: {this.learningGoals},
+    ).asyncMap(this.learningGoals.mapFromRow);
+  }
+
+  Selectable<LearningGoalRow> goalById(int id) {
+    return customSelect(
+      'SELECT * FROM learning_goal WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.learningGoals},
+    ).asyncMap(this.learningGoals.mapFromRow);
+  }
+
+  Future<int> insertLearningGoal(
+    String title,
+    String? scopeText,
+    String? dueDate,
+    String status,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      variables: [
+        Variable<String>(title),
+        Variable<String>(scopeText),
+        Variable<String>(dueDate),
+        Variable<String>(status),
+        Variable<String>(stamp),
+      ],
+      updates: {this.learningGoals},
+    );
+  }
+
+  Future<int> setLearningGoalStatus(String status, String stamp, int goalId) {
+    return customUpdate(
+      'UPDATE learning_goal SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(goalId),
+      ],
+      updates: {this.learningGoals},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Selectable<LearningGoalRow> goals(
+    String activeStatus,
+    String pausedStatus,
+    String doneStatus,
+  ) {
+    return customSelect(
+      'SELECT * FROM learning_goal ORDER BY CASE status WHEN ?1 THEN 0 WHEN ?2 THEN 1 WHEN ?3 THEN 2 ELSE 3 END, id DESC',
+      variables: [
+        Variable<String>(activeStatus),
+        Variable<String>(pausedStatus),
+        Variable<String>(doneStatus),
+      ],
+      readsFrom: {this.learningGoals},
+    ).asyncMap(this.learningGoals.mapFromRow);
   }
 
   Selectable<ConversationByIdResult> conversationById(int conversationId) {
@@ -12858,219 +13446,71 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<BlocksOverlappingResult> blocksOverlapping(
-    String endAt,
-    String startAt,
-  ) {
+  Selectable<ConversationScopeResult> conversationScope(int id) {
     return customSelect(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.start_at < ?1 AND b.end_at > ?2 ORDER BY b.start_at',
-      variables: [Variable<String>(endAt), Variable<String>(startAt)],
-      readsFrom: {this.planItems, this.scheduleBlocks},
-    ).map(
-      (QueryRow row) => BlocksOverlappingResult(
-        id: row.read<int>('id'),
-        planItemId: row.read<int>('plan_item_id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        source: row.read<String>('source'),
-        status: row.read<String>('status'),
-        locked: row.read<int>('locked'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pTitle: row.read<String>('p_title'),
-        pNote: row.readNullable<String>('p_note'),
-        pStatus: row.read<String>('p_status'),
-      ),
-    );
-  }
-
-  Selectable<NextPlannedBlockResult> nextPlannedBlock(String now) {
-    return customSelect(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at >= ?1 ORDER BY b.start_at LIMIT 1',
-      variables: [Variable<String>(now)],
-      readsFrom: {this.planItems, this.scheduleBlocks},
-    ).map(
-      (QueryRow row) => NextPlannedBlockResult(
-        id: row.read<int>('id'),
-        planItemId: row.read<int>('plan_item_id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        source: row.read<String>('source'),
-        status: row.read<String>('status'),
-        locked: row.read<int>('locked'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pTitle: row.read<String>('p_title'),
-        pNote: row.readNullable<String>('p_note'),
-        pStatus: row.read<String>('p_status'),
-      ),
-    );
-  }
-
-  Selectable<PlannedBlockSpansResult> plannedBlockSpans() {
-    return customSelect(
-      'SELECT b.id, b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' ORDER BY b.start_at',
-      variables: [],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).map(
-      (QueryRow row) => PlannedBlockSpansResult(
-        id: row.read<int>('id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        title: row.read<String>('title'),
-      ),
-    );
-  }
-
-  Selectable<ScheduleBlockRow> adjustableBlocksForGoal(
-    int? goalId,
-    String now,
-  ) {
-    return customSelect(
-      'SELECT b.* FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE p.goal_id = ?1 AND b.status = \'planned\' AND b.locked = 0 AND b.start_at >= ?2 ORDER BY b.start_at',
-      variables: [Variable<int>(goalId), Variable<String>(now)],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Future<int> insertTimetableEntry(
-    int weekday,
-    String startTime,
-    String endTime,
-    String title,
-    String? location,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
-      variables: [
-        Variable<int>(weekday),
-        Variable<String>(startTime),
-        Variable<String>(endTime),
-        Variable<String>(title),
-        Variable<String>(location),
-        Variable<String>(stamp),
-      ],
-      updates: {this.timetableEntries},
-    );
-  }
-
-  Future<int> deleteTimetableEntry(int entryId) {
-    return customUpdate(
-      'DELETE FROM timetable_entry WHERE id = ?1',
-      variables: [Variable<int>(entryId)],
-      updates: {this.timetableEntries},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
-  Selectable<MaterialByIdResult> materialById(int id) {
-    return customSelect(
-      'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE m.id = ?1',
+      'SELECT id, goal_id, material_id FROM conversation WHERE id = ?1 LIMIT 1',
       variables: [Variable<int>(id)],
-      readsFrom: {this.materialPages, this.materials},
+      readsFrom: {this.conversations},
     ).map(
-      (QueryRow row) => MaterialByIdResult(
+      (QueryRow row) => ConversationScopeResult(
         id: row.read<int>('id'),
-        title: row.read<String>('title'),
-        kind: row.read<String>('kind'),
-        sourceRef: row.readNullable<String>('source_ref'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-        sourceFileHash: row.readNullable<String>('source_file_hash'),
         goalId: row.readNullable<int>('goal_id'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pageCount: row.read<int>('page_count'),
+        materialId: row.readNullable<int>('material_id'),
       ),
     );
   }
 
-  Selectable<MaterialListResult> materialList(int? goalId) {
+  Selectable<AttemptSubmissionResult> attemptSubmission(int attemptId) {
     return customSelect(
-      'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE(?1 = 0 OR m.goal_id = ?1 OR m.goal_id IS NULL)ORDER BY m.updated_at DESC, m.id DESC',
-      variables: [Variable<int>(goalId)],
-      readsFrom: {this.materialPages, this.materials},
+      'SELECT id, submitted_at FROM attempt WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(attemptId)],
+      readsFrom: {this.attempts},
     ).map(
-      (QueryRow row) => MaterialListResult(
+      (QueryRow row) => AttemptSubmissionResult(
         id: row.read<int>('id'),
-        title: row.read<String>('title'),
-        kind: row.read<String>('kind'),
-        sourceRef: row.readNullable<String>('source_ref'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-        sourceFileHash: row.readNullable<String>('source_file_hash'),
-        goalId: row.readNullable<int>('goal_id'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pageCount: row.read<int>('page_count'),
+        submittedAt: row.readNullable<String>('submitted_at'),
       ),
     );
   }
 
-  Selectable<MaterialPageBoundsResult> materialPageBounds(int materialId) {
+  Selectable<AttemptRow> attemptsForConversation(int conversationId) {
     return customSelect(
-      'SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page FROM material_page WHERE material_id = ?1',
-      variables: [Variable<int>(materialId)],
-      readsFrom: {this.materialPages},
-    ).map(
-      (QueryRow row) => MaterialPageBoundsResult(
-        firstPage: row.readNullable<int>('first_page'),
-        lastPage: row.readNullable<int>('last_page'),
-      ),
-    );
+      'SELECT * FROM attempt WHERE conversation_id = ?1 ORDER BY id DESC',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.attempts},
+    ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Selectable<MaterialPageRow> materialPageByNumber(int materialId, int pageNo) {
+  Selectable<AttemptRow> priorFeedback(int conversationId, int rowLimit) {
     return customSelect(
-      'SELECT * FROM material_page WHERE material_id = ?1 AND page_no = ?2 LIMIT 1',
-      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
-      readsFrom: {this.materialPages},
-    ).asyncMap(this.materialPages.mapFromRow);
+      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL AND feedback IS NOT NULL AND TRIM(feedback) <> \'\' ORDER BY submitted_at DESC, id DESC LIMIT ?2',
+      variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
+      readsFrom: {this.attempts},
+    ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Future<int> insertMaterial(
-    String title,
-    String kind,
-    String? sourceRef,
-    String? fileName,
-    String? fileHash,
-    int? goalId,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)',
-      variables: [
-        Variable<String>(title),
-        Variable<String>(kind),
-        Variable<String>(sourceRef),
-        Variable<String>(fileName),
-        Variable<String>(fileHash),
-        Variable<int>(goalId),
-        Variable<String>(stamp),
-      ],
-      updates: {this.materials},
-    );
+  Selectable<AttemptRow> latestSubmittedAttempt(int conversationId) {
+    return customSelect(
+      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL ORDER BY submitted_at DESC, id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.attempts},
+    ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Future<int> setMaterialGoal(int? goalId, String stamp, int materialId) {
-    return customUpdate(
-      'UPDATE material SET goal_id = ?1, updated_at = ?2 WHERE id = ?3',
-      variables: [
-        Variable<int>(goalId),
-        Variable<String>(stamp),
-        Variable<int>(materialId),
-      ],
-      updates: {this.materials},
-      updateKind: UpdateKind.update,
-    );
+  Selectable<AttemptRow> attemptById(int id) {
+    return customSelect(
+      'SELECT * FROM attempt WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(id)],
+      readsFrom: {this.attempts},
+    ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Future<int> touchMaterial(String stamp, int materialId) {
-    return customUpdate(
-      'UPDATE material SET updated_at = ?1 WHERE id = ?2',
-      variables: [Variable<String>(stamp), Variable<int>(materialId)],
-      updates: {this.materials},
-      updateKind: UpdateKind.update,
-    );
+  Selectable<AttemptRow> openAttempt(int conversationId) {
+    return customSelect(
+      'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NULL ORDER BY id DESC LIMIT 1',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.attempts},
+    ).asyncMap(this.attempts.mapFromRow);
   }
 
   Selectable<int?> sessionGoalOfConversation(int conversationId) {
@@ -13191,608 +13631,160 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<LearningGoalRow> goals(
-    String activeStatus,
-    String pausedStatus,
-    String doneStatus,
-  ) {
+  Selectable<int?> sessionIdsOfConversation(int conversationId) {
     return customSelect(
-      'SELECT * FROM learning_goal ORDER BY CASE status WHEN ?1 THEN 0 WHEN ?2 THEN 1 WHEN ?3 THEN 2 ELSE 3 END, id DESC',
-      variables: [
-        Variable<String>(activeStatus),
-        Variable<String>(pausedStatus),
-        Variable<String>(doneStatus),
-      ],
-      readsFrom: {this.learningGoals},
-    ).asyncMap(this.learningGoals.mapFromRow);
-  }
-
-  Selectable<ItemsResult> items(
-    int openOnly,
-    String todoStatus,
-    String doingStatus,
-    int onlyActiveGoals,
-    String? activeStatus,
-    int statusFirst,
-    String deferredStatus,
-    String doneStatus,
-  ) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p LEFT JOIN learning_goal AS g ON g.id = p.goal_id WHERE(?1 = 0 OR p.status IN (?2, ?3))AND(?4 = 0 OR p.goal_id IS NULL OR g.status = ?5)ORDER BY CASE WHEN ?6 = 0 THEN 0 WHEN p.status = ?3 THEN 0 WHEN p.status = ?2 THEN 1 WHEN p.status = ?7 THEN 2 WHEN p.status = ?8 THEN 3 ELSE 4 END, p.due_at IS NULL, p.due_at, p.id DESC',
-      variables: [
-        Variable<int>(openOnly),
-        Variable<String>(todoStatus),
-        Variable<String>(doingStatus),
-        Variable<int>(onlyActiveGoals),
-        Variable<String>(activeStatus),
-        Variable<int>(statusFirst),
-        Variable<String>(deferredStatus),
-        Variable<String>(doneStatus),
-      ],
-      readsFrom: {
-        this.materials,
-        this.studyPlans,
-        this.planItems,
-        this.learningGoals,
-      },
-    ).map(
-      (QueryRow row) => ItemsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Selectable<ItemByIdResult> itemById(int id) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.id = ?1',
-      variables: [Variable<int>(id)],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => ItemByIdResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Selectable<ItemByConversationResult> itemByConversation(int? conversationId) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 ORDER BY p.id DESC LIMIT 1',
+      'SELECT DISTINCT session_id FROM attempt WHERE conversation_id = ?1 AND session_id IS NOT NULL',
       variables: [Variable<int>(conversationId)],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => ItemByConversationResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
+      readsFrom: {this.attempts},
+    ).map((QueryRow row) => row.readNullable<int>('session_id'));
   }
 
-  Selectable<ItemByConversationAndStepResult> itemByConversationAndStep(
-    int? conversationId,
-    String stepId,
-  ) {
+  Selectable<int> attemptsInSession(int? sessionId) {
     return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND json_extract(p.origin_json, \'\$.step_id\') = ?2 ORDER BY p.id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId), Variable<String>(stepId)],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => ItemByConversationAndStepResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
+      'SELECT id FROM attempt WHERE session_id = ?1 LIMIT 1',
+      variables: [Variable<int>(sessionId)],
+      readsFrom: {this.attempts},
+    ).map((QueryRow row) => row.read<int>('id'));
   }
 
-  Selectable<DoneItemsResult> doneItems(
-    String doneStatus,
+  Selectable<RecentSubmittedResult> recentSubmitted(
+    int goalId,
+    int materialId,
+    int conversationId,
+    String broughtIds,
     int rowLimit,
-    int rowOffset,
   ) {
     return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.status = ?1 ORDER BY p.completed_at DESC, p.id DESC LIMIT ?2 OFFSET ?3',
-      variables: [
-        Variable<String>(doneStatus),
-        Variable<int>(rowLimit),
-        Variable<int>(rowOffset),
-      ],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => DoneItemsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Selectable<int> countDoneItems(String doneStatus) {
-    return customSelect(
-      'SELECT COUNT(*) AS n FROM plan_item WHERE status = ?1',
-      variables: [Variable<String>(doneStatus)],
-      readsFrom: {this.planItems},
-    ).map((QueryRow row) => row.read<int>('n'));
-  }
-
-  Selectable<ItemsByIdsResult> itemsByIds(String itemIds) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.id IN (SELECT value FROM json_each(?1))',
-      variables: [Variable<String>(itemIds)],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => ItemsByIdsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Selectable<int> itemHasScheduleOrSession(int? itemId) {
-    return customSelect(
-      'SELECT 1 AS _c0 FROM schedule_block WHERE plan_item_id = ?1 UNION ALL SELECT 1 FROM study_session WHERE plan_item_id = ?1 LIMIT 1',
-      variables: [Variable<int>(itemId)],
-      readsFrom: {this.scheduleBlocks, this.studySessions},
-    ).map((QueryRow row) => row.read<int>('_c0'));
-  }
-
-  Selectable<NextDueItemResult> nextDueItem(
-    String todoStatus,
-    String doingStatus,
-    String? activeStatus,
-  ) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p LEFT JOIN learning_goal AS g ON g.id = p.goal_id WHERE p.status IN (?1, ?2) AND(p.goal_id IS NULL OR g.status = ?3)ORDER BY p.due_at IS NULL, p.due_at, p.id LIMIT 1',
-      variables: [
-        Variable<String>(todoStatus),
-        Variable<String>(doingStatus),
-        Variable<String>(activeStatus),
-      ],
-      readsFrom: {
-        this.materials,
-        this.studyPlans,
-        this.planItems,
-        this.learningGoals,
-      },
-    ).map(
-      (QueryRow row) => NextDueItemResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Future<int> bindTaskConversation(
-    int? conversationId,
-    String stamp,
-    int itemId,
-  ) {
-    return customUpdate(
-      'UPDATE plan_item SET conversation_id = ?1, updated_at = ?2 WHERE id = ?3 AND conversation_id IS NULL',
-      variables: [
-        Variable<int>(conversationId),
-        Variable<String>(stamp),
-        Variable<int>(itemId),
-      ],
-      updates: {this.planItems},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> insertPlanItem(
-    int? goalId,
-    int? conversationId,
-    String title,
-    String? note,
-    String? dueAt,
-    int? estMinutes,
-    String status,
-    String source,
-    String? origin,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO plan_item (goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)',
+      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 <> 0 AND c.goal_id = ?1)OR(?2 <> 0 AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 <> 0 OR ?2 <> 0 OR(?3 <> 0 AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 <> 0 OR ?2 <> 0)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?5',
       variables: [
         Variable<int>(goalId),
+        Variable<int>(materialId),
         Variable<int>(conversationId),
-        Variable<String>(title),
-        Variable<String>(note),
-        Variable<String>(dueAt),
-        Variable<int>(estMinutes),
-        Variable<String>(status),
-        Variable<String>(source),
-        Variable<String>(origin),
-        Variable<String>(stamp),
+        Variable<String>(broughtIds),
+        Variable<int>(rowLimit),
       ],
-      updates: {this.planItems},
+      readsFrom: {
+        this.attempts,
+        this.conversations,
+        this.materials,
+        this.messages,
+      },
+    ).map(
+      (QueryRow row) => RecentSubmittedResult(
+        attemptId: row.read<int>('attempt_id'),
+        attemptConversationId: row.read<int>('attempt_conversation_id'),
+        attemptSessionId: row.readNullable<int>('attempt_session_id'),
+        attemptUserAnswer: row.readNullable<String>('attempt_user_answer'),
+        attemptSolution: row.readNullable<String>('attempt_solution'),
+        attemptIsCorrect: row.readNullable<int>('attempt_is_correct'),
+        attemptIndependent: row.readNullable<int>('attempt_independent'),
+        attemptHelpJson: row.readNullable<String>('attempt_help_json'),
+        attemptFeedback: row.readNullable<String>('attempt_feedback'),
+        attemptDelayed: row.read<int>('attempt_delayed'),
+        attemptSubmittedAt: row.readNullable<String>('attempt_submitted_at'),
+        attemptCreatedAt: row.read<String>('attempt_created_at'),
+        questionId: row.read<int>('question_id'),
+        questionSourceRef: row.readNullable<String>('question_source_ref'),
+        questionContextText: row.readNullable<String>('question_context_text'),
+        questionPageNo: row.readNullable<int>('question_page_no'),
+        questionCreatedAt: row.read<String>('question_created_at'),
+        questionUpdatedAt: row.read<String>('question_updated_at'),
+        questionMaterialTitle: row.readNullable<String>(
+          'question_material_title',
+        ),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        questionStem: row.readNullable<String>('question_stem'),
+        questionImagePathsJson: row.readNullable<String>(
+          'question_image_paths_json',
+        ),
+      ),
     );
   }
 
-  Future<int> setPlanItemPriority(int priority, String stamp, int itemId) {
-    return customUpdate(
-      'UPDATE plan_item SET priority = ?1, updated_at = ?2 WHERE id = ?3',
-      variables: [
-        Variable<int>(priority),
-        Variable<String>(stamp),
-        Variable<int>(itemId),
-      ],
-      updates: {this.planItems},
-      updateKind: UpdateKind.update,
-    );
+  Selectable<AssessmentRow> assessmentsForAttempt(int attemptId) {
+    return customSelect(
+      'SELECT * FROM assessment WHERE attempt_id = ?1 ORDER BY id',
+      variables: [Variable<int>(attemptId)],
+      readsFrom: {this.assessments},
+    ).asyncMap(this.assessments.mapFromRow);
   }
 
-  Future<int> deletePlanItem(int itemId) {
+  Selectable<AssessmentRow> assessmentsForAttempts(String attemptIds) {
+    return customSelect(
+      'SELECT * FROM assessment WHERE attempt_id IN (SELECT value FROM json_each(?1)) ORDER BY id',
+      variables: [Variable<String>(attemptIds)],
+      readsFrom: {this.assessments},
+    ).asyncMap(this.assessments.mapFromRow);
+  }
+
+  Selectable<AssessmentRow> latestAssessmentOfKind(int attemptId, String kind) {
+    return customSelect(
+      'SELECT * FROM assessment WHERE attempt_id = ?1 AND kind = ?2 ORDER BY id DESC LIMIT 1',
+      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      readsFrom: {this.assessments},
+    ).asyncMap(this.assessments.mapFromRow);
+  }
+
+  Selectable<int> assessmentIdsOfKind(int attemptId, String kind) {
+    return customSelect(
+      'SELECT id FROM assessment WHERE attempt_id = ?1 AND kind = ?2 ORDER BY id DESC',
+      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      readsFrom: {this.assessments},
+    ).map((QueryRow row) => row.read<int>('id'));
+  }
+
+  Future<int> deleteAssessmentsOfKind(int attemptId, String kind) {
     return customUpdate(
-      'DELETE FROM plan_item WHERE id = ?1',
-      variables: [Variable<int>(itemId)],
-      updates: {this.planItems},
+      'DELETE FROM assessment WHERE attempt_id = ?1 AND kind = ?2',
+      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      updates: {this.assessments},
       updateKind: UpdateKind.delete,
     );
   }
 
-  Selectable<PlanRowsResult> planRows(
-    String doneStatus,
-    int id,
-    int openOnly,
-    String activeStatus,
-    String pausedStatus,
-    int activeOnly,
-    int statusFirst,
-    int rowLimit,
-  ) {
-    return customSelect(
-      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title FROM study_plan AS sp WHERE(?2 = 0 OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT ?8',
-      variables: [
-        Variable<String>(doneStatus),
-        Variable<int>(id),
-        Variable<int>(openOnly),
-        Variable<String>(activeStatus),
-        Variable<String>(pausedStatus),
-        Variable<int>(activeOnly),
-        Variable<int>(statusFirst),
-        Variable<int>(rowLimit),
-      ],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => PlanRowsResult(
-        id: row.read<int>('id'),
-        materialId: row.readNullable<int>('material_id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        title: row.read<String>('title'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        currentPage: row.readNullable<int>('current_page'),
-        status: row.read<String>('status'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        materialTitle: row.readNullable<String>('material_title'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-        stepsDone: row.read<int>('steps_done'),
-        stepsTotal: row.read<int>('steps_total'),
-        nextStepTitle: row.readNullable<String>('next_step_title'),
-      ),
-    );
-  }
-
-  Selectable<PlanStepsResult> planSteps(int? planId) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.study_plan_id = ?1 ORDER BY p.seq, p.id',
-      variables: [Variable<int>(planId)],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => PlanStepsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Selectable<PlanStepsForPlansResult> planStepsForPlans(String planIds) {
-    return customSelect(
-      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.study_plan_id IN (SELECT value FROM json_each(?1)) ORDER BY p.study_plan_id, p.seq, p.id',
-      variables: [Variable<String>(planIds)],
-      readsFrom: {this.materials, this.studyPlans, this.planItems},
-    ).map(
-      (QueryRow row) => PlanStepsForPlansResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
-        seq: row.readNullable<int>('seq'),
-        title: row.read<String>('title'),
-        note: row.readNullable<String>('note'),
-        pageFrom: row.readNullable<int>('page_from'),
-        pageTo: row.readNullable<int>('page_to'),
-        dueAt: row.readNullable<String>('due_at'),
-        estMinutes: row.readNullable<int>('est_minutes'),
-        priority: row.read<int>('priority'),
-        status: row.read<String>('status'),
-        source: row.read<String>('source'),
-        originJson: row.readNullable<String>('origin_json'),
-        completedAt: row.readNullable<String>('completed_at'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        sourceFileName: row.readNullable<String>('source_file_name'),
-      ),
-    );
-  }
-
-  Selectable<int> lastPlanStepSeq(int? planId) {
-    return customSelect(
-      'SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item WHERE study_plan_id = ?1',
-      variables: [Variable<int>(planId)],
-      readsFrom: {this.planItems},
-    ).map((QueryRow row) => row.read<int>('last_seq'));
-  }
-
-  Future<int> settleBlocksOnStepDone(
-    String now,
-    String doneStatus,
-    String cancelledStatus,
-    int itemId,
-    String plannedStatus,
-  ) {
-    return customUpdate(
-      'UPDATE schedule_block SET status = CASE WHEN EXISTS (SELECT 1 FROM study_session AS s WHERE s.plan_item_id = schedule_block.plan_item_id AND s.started_at < schedule_block.end_at AND COALESCE(s.ended_at, ?1) > schedule_block.start_at) THEN ?2 ELSE ?3 END, updated_at = ?1 WHERE plan_item_id = ?4 AND status = ?5',
-      variables: [
-        Variable<String>(now),
-        Variable<String>(doneStatus),
-        Variable<String>(cancelledStatus),
-        Variable<int>(itemId),
-        Variable<String>(plannedStatus),
-      ],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> insertStudyPlan(
-    int? materialId,
-    int? goalId,
-    int? conversationId,
-    String title,
-    int? pageFrom,
-    int? pageTo,
-    int? currentPage,
-    String status,
+  Future<int> insertAssessment(
+    int attemptId,
+    String kind,
+    String result,
+    String? basis,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO study_plan (material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)',
+      'INSERT INTO assessment (attempt_id, kind, result, basis, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
       variables: [
-        Variable<int>(materialId),
-        Variable<int>(goalId),
-        Variable<int>(conversationId),
-        Variable<String>(title),
-        Variable<int>(pageFrom),
-        Variable<int>(pageTo),
-        Variable<int>(currentPage),
-        Variable<String>(status),
+        Variable<int>(attemptId),
+        Variable<String>(kind),
+        Variable<String>(result),
+        Variable<String>(basis),
         Variable<String>(stamp),
       ],
-      updates: {this.studyPlans},
+      updates: {this.assessments},
     );
   }
 
-  Future<int> setStudyPlanStatus(String status, String stamp, int planId) {
-    return customUpdate(
-      'UPDATE study_plan SET status = ?1, updated_at = ?2 WHERE id = ?3',
-      variables: [
-        Variable<String>(status),
-        Variable<String>(stamp),
-        Variable<int>(planId),
-      ],
-      updates: {this.studyPlans},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> updateStudyPlanProgress(
-    int? currentPage,
-    String? status,
+  Future<int> updateAssessmentResult(
+    String result,
     String stamp,
-    int planId,
+    int assessmentId,
   ) {
     return customUpdate(
-      'UPDATE study_plan SET current_page = ?1, status = COALESCE(?2, status), updated_at = ?3 WHERE id = ?4',
+      'UPDATE assessment SET result = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
-        Variable<int>(currentPage),
-        Variable<String>(status),
+        Variable<String>(result),
         Variable<String>(stamp),
-        Variable<int>(planId),
+        Variable<int>(assessmentId),
       ],
-      updates: {this.studyPlans},
+      updates: {this.assessments},
       updateKind: UpdateKind.update,
     );
   }
 
-  Selectable<FindOverlappingBlocksResult> findOverlappingBlocks(
-    String endAt,
-    String startAt,
-    String ignoredBlockIds,
-  ) {
-    return customSelect(
-      'SELECT b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at < ?1 AND b.end_at > ?2 AND b.id NOT IN (SELECT value FROM json_each(?3)) ORDER BY b.start_at LIMIT 1',
-      variables: [
-        Variable<String>(endAt),
-        Variable<String>(startAt),
-        Variable<String>(ignoredBlockIds),
-      ],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).map(
-      (QueryRow row) => FindOverlappingBlocksResult(
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        title: row.read<String>('title'),
-      ),
-    );
-  }
-
-  Selectable<TimetableEntriesOnWeekdayResult> timetableEntriesOnWeekday(
-    int weekday,
-  ) {
-    return customSelect(
-      'SELECT start_time, end_time, title, location FROM timetable_entry WHERE weekday = ?1 ORDER BY start_time',
-      variables: [Variable<int>(weekday)],
-      readsFrom: {this.timetableEntries},
-    ).map(
-      (QueryRow row) => TimetableEntriesOnWeekdayResult(
-        startTime: row.read<String>('start_time'),
-        endTime: row.read<String>('end_time'),
-        title: row.read<String>('title'),
-        location: row.readNullable<String>('location'),
-      ),
-    );
-  }
-
-  Selectable<PlannedBlocksAfterResult> plannedBlocksAfter(String after) {
-    return customSelect(
-      'SELECT b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.end_at > ?1 ORDER BY b.start_at',
-      variables: [Variable<String>(after)],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).map(
-      (QueryRow row) => PlannedBlocksAfterResult(
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        title: row.read<String>('title'),
-      ),
+  Future<int> deleteAssessmentIds(String ids) {
+    return customUpdate(
+      'DELETE FROM assessment WHERE id IN (SELECT value FROM json_each(?1))',
+      variables: [Variable<String>(ids)],
+      updates: {this.assessments},
+      updateKind: UpdateKind.delete,
     );
   }
 
@@ -13801,18 +13793,18 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
-    learningGoals,
-    assetObjects,
-    materials,
-    conversations,
+    timetableEntries,
     appMeta,
     profiles,
+    learningGoals,
+    assetObjects,
     assetChunks,
+    materials,
     materialPages,
+    conversations,
     messages,
     studyPlans,
     planItems,
-    timetableEntries,
     scheduleBlocks,
     studySessions,
     attempts,
@@ -13829,27 +13821,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
     WritePropagation(
       on: TableUpdateQuery.onTableName(
-        'learning_goal',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('material', kind: UpdateKind.update)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'learning_goal',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('conversation', kind: UpdateKind.update)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'material',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('conversation', kind: UpdateKind.update)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
         'asset_object',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -13857,10 +13828,31 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
+        'learning_goal',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('material', kind: UpdateKind.update)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
         'material',
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('material_page', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'learning_goal',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('conversation', kind: UpdateKind.update)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'material',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('conversation', kind: UpdateKind.update)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -13984,354 +13976,53 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   ]);
 }
 
-class ConversationScopeResult {
+class TimetableEntriesOnWeekdayResult {
+  final String startTime;
+  final String endTime;
+  final String title;
+  final String? location;
+  TimetableEntriesOnWeekdayResult({
+    required this.startTime,
+    required this.endTime,
+    required this.title,
+    this.location,
+  });
+}
+
+class PlanRowsResult {
   final int id;
-  final int? goalId;
   final int? materialId;
-  ConversationScopeResult({required this.id, this.goalId, this.materialId});
-}
-
-class MaterialScopeResult {
-  final int id;
-  final int? goalId;
-  MaterialScopeResult({required this.id, this.goalId});
-}
-
-class ItemPlanResult {
-  final int id;
-  final int? studyPlanId;
-  ItemPlanResult({required this.id, this.studyPlanId});
-}
-
-class ItemByConversationAndTitleResult {
-  final int id;
   final int? goalId;
   final int? conversationId;
-  final int? studyPlanId;
-  final int? seq;
   final String title;
-  final String? note;
   final int? pageFrom;
   final int? pageTo;
-  final String? dueAt;
-  final int? estMinutes;
-  final int priority;
+  final int? currentPage;
   final String status;
-  final String source;
-  final String? originJson;
-  final String? completedAt;
   final String createdAt;
   final String updatedAt;
+  final String? materialTitle;
   final String? sourceFileName;
-  ItemByConversationAndTitleResult({
+  final int stepsDone;
+  final int stepsTotal;
+  final String? nextStepTitle;
+  PlanRowsResult({
     required this.id,
+    this.materialId,
     this.goalId,
     this.conversationId,
-    this.studyPlanId,
-    this.seq,
     required this.title,
-    this.note,
     this.pageFrom,
     this.pageTo,
-    this.dueAt,
-    this.estMinutes,
-    required this.priority,
+    this.currentPage,
     required this.status,
-    required this.source,
-    this.originJson,
-    this.completedAt,
-    required this.createdAt,
-    required this.updatedAt,
-    this.sourceFileName,
-  });
-}
-
-class ActiveDifficultiesResult {
-  final int id;
-  final String content;
-  ActiveDifficultiesResult({required this.id, required this.content});
-}
-
-class ActiveMemoryIdentitiesResult {
-  final String kind;
-  final String? scope;
-  final String content;
-  ActiveMemoryIdentitiesResult({
-    required this.kind,
-    this.scope,
-    required this.content,
-  });
-}
-
-class AttemptSubmissionResult {
-  final int id;
-  final String? submittedAt;
-  AttemptSubmissionResult({required this.id, this.submittedAt});
-}
-
-class RecentSubmittedResult {
-  final int attemptId;
-  final int attemptConversationId;
-  final int? attemptSessionId;
-  final String? attemptUserAnswer;
-  final String? attemptSolution;
-  final int? attemptIsCorrect;
-  final int? attemptIndependent;
-  final String? attemptHelpJson;
-  final String? attemptFeedback;
-  final int attemptDelayed;
-  final String? attemptSubmittedAt;
-  final String attemptCreatedAt;
-  final int questionId;
-  final String? questionSourceRef;
-  final String? questionContextText;
-  final int? questionPageNo;
-  final String questionCreatedAt;
-  final String questionUpdatedAt;
-  final String? questionMaterialTitle;
-  final String? sourceFileName;
-  final String? questionStem;
-  final String? questionImagePathsJson;
-  RecentSubmittedResult({
-    required this.attemptId,
-    required this.attemptConversationId,
-    this.attemptSessionId,
-    this.attemptUserAnswer,
-    this.attemptSolution,
-    this.attemptIsCorrect,
-    this.attemptIndependent,
-    this.attemptHelpJson,
-    this.attemptFeedback,
-    required this.attemptDelayed,
-    this.attemptSubmittedAt,
-    required this.attemptCreatedAt,
-    required this.questionId,
-    this.questionSourceRef,
-    this.questionContextText,
-    this.questionPageNo,
-    required this.questionCreatedAt,
-    required this.questionUpdatedAt,
-    this.questionMaterialTitle,
-    this.sourceFileName,
-    this.questionStem,
-    this.questionImagePathsJson,
-  });
-}
-
-class ConversationByIdResult {
-  final int id;
-  final String? title;
-  final int? goalId;
-  final int? materialId;
-  final int? pageNo;
-  final String? sourceRef;
-  final String? contextText;
-  final int? questionMessageId;
-  final String entryKind;
-  final String status;
-  final String? endedAt;
-  final String? lastMessageAt;
-  final String createdAt;
-  final String updatedAt;
-  final String? materialTitle;
-  final String? sourceFileName;
-  final bool hasAttempts;
-  final bool hasDraft;
-  ConversationByIdResult({
-    required this.id,
-    this.title,
-    this.goalId,
-    this.materialId,
-    this.pageNo,
-    this.sourceRef,
-    this.contextText,
-    this.questionMessageId,
-    required this.entryKind,
-    required this.status,
-    this.endedAt,
-    this.lastMessageAt,
     required this.createdAt,
     required this.updatedAt,
     this.materialTitle,
     this.sourceFileName,
-    required this.hasAttempts,
-    required this.hasDraft,
-  });
-}
-
-class ConversationQuestionResult {
-  final int id;
-  final String? sourceRef;
-  final String? contextText;
-  final int? pageNo;
-  final String createdAt;
-  final String updatedAt;
-  final String? materialTitle;
-  final String? sourceFileName;
-  final String? stem;
-  final String? imagePathsJson;
-  ConversationQuestionResult({
-    required this.id,
-    this.sourceRef,
-    this.contextText,
-    this.pageNo,
-    required this.createdAt,
-    required this.updatedAt,
-    this.materialTitle,
-    this.sourceFileName,
-    this.stem,
-    this.imagePathsJson,
-  });
-}
-
-class QuestionRowsResult {
-  final int id;
-  final String? sourceRef;
-  final String? contextText;
-  final int? pageNo;
-  final String createdAt;
-  final String updatedAt;
-  final String? materialTitle;
-  final String? sourceFileName;
-  final String? stem;
-  final String? imagePathsJson;
-  final int? lastAttemptId;
-  final int? lastAttemptSessionId;
-  final String? lastAttemptUserAnswer;
-  final String? lastAttemptSolution;
-  final int? lastAttemptIsCorrect;
-  final int? lastAttemptIndependent;
-  final String? lastAttemptHelpJson;
-  final String? lastAttemptFeedback;
-  final int? lastAttemptDelayed;
-  final String? lastAttemptSubmittedAt;
-  final String? lastAttemptCreatedAt;
-  final bool hasDraft;
-  QuestionRowsResult({
-    required this.id,
-    this.sourceRef,
-    this.contextText,
-    this.pageNo,
-    required this.createdAt,
-    required this.updatedAt,
-    this.materialTitle,
-    this.sourceFileName,
-    this.stem,
-    this.imagePathsJson,
-    this.lastAttemptId,
-    this.lastAttemptSessionId,
-    this.lastAttemptUserAnswer,
-    this.lastAttemptSolution,
-    this.lastAttemptIsCorrect,
-    this.lastAttemptIndependent,
-    this.lastAttemptHelpJson,
-    this.lastAttemptFeedback,
-    this.lastAttemptDelayed,
-    this.lastAttemptSubmittedAt,
-    this.lastAttemptCreatedAt,
-    required this.hasDraft,
-  });
-}
-
-class ConversationRecordsResult {
-  final int id;
-  final String? title;
-  final int? goalId;
-  final int? materialId;
-  final int? pageNo;
-  final String? sourceRef;
-  final String? contextText;
-  final int? questionMessageId;
-  final String entryKind;
-  final String status;
-  final String? endedAt;
-  final String? lastMessageAt;
-  final String createdAt;
-  final String updatedAt;
-  final int messageCount;
-  final String? preview;
-  final String? lastUserMessage;
-  final String? draftAnswer;
-  final String? draftUpdatedAt;
-  final String? materialTitle;
-  final String? sourceFileName;
-  final bool hasAttempts;
-  final bool hasDraft;
-  ConversationRecordsResult({
-    required this.id,
-    this.title,
-    this.goalId,
-    this.materialId,
-    this.pageNo,
-    this.sourceRef,
-    this.contextText,
-    this.questionMessageId,
-    required this.entryKind,
-    required this.status,
-    this.endedAt,
-    this.lastMessageAt,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.messageCount,
-    this.preview,
-    this.lastUserMessage,
-    this.draftAnswer,
-    this.draftUpdatedAt,
-    this.materialTitle,
-    this.sourceFileName,
-    required this.hasAttempts,
-    required this.hasDraft,
-  });
-}
-
-class RecentlyActiveRecordsResult {
-  final int id;
-  final String? title;
-  final int? goalId;
-  final int? materialId;
-  final int? pageNo;
-  final String? sourceRef;
-  final String? contextText;
-  final int? questionMessageId;
-  final String entryKind;
-  final String status;
-  final String? endedAt;
-  final String? lastMessageAt;
-  final String createdAt;
-  final String updatedAt;
-  final int messageCount;
-  final String? preview;
-  final String? lastUserMessage;
-  final String? draftAnswer;
-  final String? draftUpdatedAt;
-  final String? materialTitle;
-  final String? sourceFileName;
-  final bool hasAttempts;
-  final bool hasDraft;
-  RecentlyActiveRecordsResult({
-    required this.id,
-    this.title,
-    this.goalId,
-    this.materialId,
-    this.pageNo,
-    this.sourceRef,
-    this.contextText,
-    this.questionMessageId,
-    required this.entryKind,
-    required this.status,
-    this.endedAt,
-    this.lastMessageAt,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.messageCount,
-    this.preview,
-    this.lastUserMessage,
-    this.draftAnswer,
-    this.draftUpdatedAt,
-    this.materialTitle,
-    this.sourceFileName,
-    required this.hasAttempts,
-    required this.hasDraft,
+    required this.stepsDone,
+    required this.stepsTotal,
+    this.nextStepTitle,
   });
 }
 
@@ -14406,60 +14097,161 @@ class PlannedBlockSpansResult {
   });
 }
 
-class MaterialByIdResult {
-  final int id;
+class FindOverlappingBlocksResult {
+  final String startAt;
+  final String endAt;
   final String title;
-  final String kind;
-  final String? sourceRef;
-  final String? sourceFileName;
-  final String? sourceFileHash;
-  final int? goalId;
-  final String createdAt;
-  final String updatedAt;
-  final int pageCount;
-  MaterialByIdResult({
-    required this.id,
+  FindOverlappingBlocksResult({
+    required this.startAt,
+    required this.endAt,
     required this.title,
-    required this.kind,
-    this.sourceRef,
-    this.sourceFileName,
-    this.sourceFileHash,
-    this.goalId,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.pageCount,
   });
 }
 
-class MaterialListResult {
-  final int id;
+class PlannedBlocksAfterResult {
+  final String startAt;
+  final String endAt;
   final String title;
-  final String kind;
-  final String? sourceRef;
-  final String? sourceFileName;
-  final String? sourceFileHash;
-  final int? goalId;
-  final String createdAt;
-  final String updatedAt;
-  final int pageCount;
-  MaterialListResult({
-    required this.id,
+  PlannedBlocksAfterResult({
+    required this.startAt,
+    required this.endAt,
     required this.title,
-    required this.kind,
-    this.sourceRef,
-    this.sourceFileName,
-    this.sourceFileHash,
-    this.goalId,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.pageCount,
   });
 }
 
-class MaterialPageBoundsResult {
-  final int? firstPage;
-  final int? lastPage;
-  MaterialPageBoundsResult({this.firstPage, this.lastPage});
+class ItemByConversationAndTitleResult {
+  final int id;
+  final int? goalId;
+  final int? conversationId;
+  final int? studyPlanId;
+  final int? seq;
+  final String title;
+  final String? note;
+  final int? pageFrom;
+  final int? pageTo;
+  final String? dueAt;
+  final int? estMinutes;
+  final int priority;
+  final String status;
+  final String source;
+  final String? originJson;
+  final String? completedAt;
+  final String createdAt;
+  final String updatedAt;
+  final String? sourceFileName;
+  ItemByConversationAndTitleResult({
+    required this.id,
+    this.goalId,
+    this.conversationId,
+    this.studyPlanId,
+    this.seq,
+    required this.title,
+    this.note,
+    this.pageFrom,
+    this.pageTo,
+    this.dueAt,
+    this.estMinutes,
+    required this.priority,
+    required this.status,
+    required this.source,
+    this.originJson,
+    this.completedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sourceFileName,
+  });
+}
+
+class ItemPlanResult {
+  final int id;
+  final int? studyPlanId;
+  ItemPlanResult({required this.id, this.studyPlanId});
+}
+
+class PlanStepsResult {
+  final int id;
+  final int? goalId;
+  final int? conversationId;
+  final int? studyPlanId;
+  final int? seq;
+  final String title;
+  final String? note;
+  final int? pageFrom;
+  final int? pageTo;
+  final String? dueAt;
+  final int? estMinutes;
+  final int priority;
+  final String status;
+  final String source;
+  final String? originJson;
+  final String? completedAt;
+  final String createdAt;
+  final String updatedAt;
+  final String? sourceFileName;
+  PlanStepsResult({
+    required this.id,
+    this.goalId,
+    this.conversationId,
+    this.studyPlanId,
+    this.seq,
+    required this.title,
+    this.note,
+    this.pageFrom,
+    this.pageTo,
+    this.dueAt,
+    this.estMinutes,
+    required this.priority,
+    required this.status,
+    required this.source,
+    this.originJson,
+    this.completedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sourceFileName,
+  });
+}
+
+class PlanStepsForPlansResult {
+  final int id;
+  final int? goalId;
+  final int? conversationId;
+  final int? studyPlanId;
+  final int? seq;
+  final String title;
+  final String? note;
+  final int? pageFrom;
+  final int? pageTo;
+  final String? dueAt;
+  final int? estMinutes;
+  final int priority;
+  final String status;
+  final String source;
+  final String? originJson;
+  final String? completedAt;
+  final String createdAt;
+  final String updatedAt;
+  final String? sourceFileName;
+  PlanStepsForPlansResult({
+    required this.id,
+    this.goalId,
+    this.conversationId,
+    this.studyPlanId,
+    this.seq,
+    required this.title,
+    this.note,
+    this.pageFrom,
+    this.pageTo,
+    this.dueAt,
+    this.estMinutes,
+    required this.priority,
+    required this.status,
+    required this.source,
+    this.originJson,
+    this.completedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sourceFileName,
+  });
 }
 
 class ItemsResult {
@@ -14763,160 +14555,360 @@ class NextDueItemResult {
   });
 }
 
-class PlanRowsResult {
+class ActiveDifficultiesResult {
   final int id;
-  final int? materialId;
+  final String content;
+  ActiveDifficultiesResult({required this.id, required this.content});
+}
+
+class ActiveMemoryIdentitiesResult {
+  final String kind;
+  final String? scope;
+  final String content;
+  ActiveMemoryIdentitiesResult({
+    required this.kind,
+    this.scope,
+    required this.content,
+  });
+}
+
+class MaterialScopeResult {
+  final int id;
   final int? goalId;
-  final int? conversationId;
+  MaterialScopeResult({required this.id, this.goalId});
+}
+
+class MaterialByIdResult {
+  final int id;
   final String title;
-  final int? pageFrom;
-  final int? pageTo;
-  final int? currentPage;
+  final String kind;
+  final String? sourceRef;
+  final String? sourceFileName;
+  final String? sourceFileHash;
+  final int? goalId;
+  final String createdAt;
+  final String updatedAt;
+  final int pageCount;
+  MaterialByIdResult({
+    required this.id,
+    required this.title,
+    required this.kind,
+    this.sourceRef,
+    this.sourceFileName,
+    this.sourceFileHash,
+    this.goalId,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.pageCount,
+  });
+}
+
+class MaterialListResult {
+  final int id;
+  final String title;
+  final String kind;
+  final String? sourceRef;
+  final String? sourceFileName;
+  final String? sourceFileHash;
+  final int? goalId;
+  final String createdAt;
+  final String updatedAt;
+  final int pageCount;
+  MaterialListResult({
+    required this.id,
+    required this.title,
+    required this.kind,
+    this.sourceRef,
+    this.sourceFileName,
+    this.sourceFileHash,
+    this.goalId,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.pageCount,
+  });
+}
+
+class MaterialPageBoundsResult {
+  final int? firstPage;
+  final int? lastPage;
+  MaterialPageBoundsResult({this.firstPage, this.lastPage});
+}
+
+class ConversationByIdResult {
+  final int id;
+  final String? title;
+  final int? goalId;
+  final int? materialId;
+  final int? pageNo;
+  final String? sourceRef;
+  final String? contextText;
+  final int? questionMessageId;
+  final String entryKind;
   final String status;
+  final String? endedAt;
+  final String? lastMessageAt;
   final String createdAt;
   final String updatedAt;
   final String? materialTitle;
   final String? sourceFileName;
-  final int stepsDone;
-  final int stepsTotal;
-  final String? nextStepTitle;
-  PlanRowsResult({
+  final bool hasAttempts;
+  final bool hasDraft;
+  ConversationByIdResult({
     required this.id,
-    this.materialId,
+    this.title,
     this.goalId,
-    this.conversationId,
-    required this.title,
-    this.pageFrom,
-    this.pageTo,
-    this.currentPage,
+    this.materialId,
+    this.pageNo,
+    this.sourceRef,
+    this.contextText,
+    this.questionMessageId,
+    required this.entryKind,
     required this.status,
+    this.endedAt,
+    this.lastMessageAt,
     required this.createdAt,
     required this.updatedAt,
     this.materialTitle,
     this.sourceFileName,
-    required this.stepsDone,
-    required this.stepsTotal,
-    this.nextStepTitle,
+    required this.hasAttempts,
+    required this.hasDraft,
   });
 }
 
-class PlanStepsResult {
+class ConversationQuestionResult {
   final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
-  final int? seq;
-  final String title;
-  final String? note;
-  final int? pageFrom;
-  final int? pageTo;
-  final String? dueAt;
-  final int? estMinutes;
-  final int priority;
-  final String status;
-  final String source;
-  final String? originJson;
-  final String? completedAt;
+  final String? sourceRef;
+  final String? contextText;
+  final int? pageNo;
   final String createdAt;
   final String updatedAt;
+  final String? materialTitle;
   final String? sourceFileName;
-  PlanStepsResult({
+  final String? stem;
+  final String? imagePathsJson;
+  ConversationQuestionResult({
     required this.id,
-    this.goalId,
-    this.conversationId,
-    this.studyPlanId,
-    this.seq,
-    required this.title,
-    this.note,
-    this.pageFrom,
-    this.pageTo,
-    this.dueAt,
-    this.estMinutes,
-    required this.priority,
-    required this.status,
-    required this.source,
-    this.originJson,
-    this.completedAt,
+    this.sourceRef,
+    this.contextText,
+    this.pageNo,
     required this.createdAt,
     required this.updatedAt,
+    this.materialTitle,
     this.sourceFileName,
+    this.stem,
+    this.imagePathsJson,
   });
 }
 
-class PlanStepsForPlansResult {
+class QuestionRowsResult {
   final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
-  final int? seq;
-  final String title;
-  final String? note;
-  final int? pageFrom;
-  final int? pageTo;
-  final String? dueAt;
-  final int? estMinutes;
-  final int priority;
-  final String status;
-  final String source;
-  final String? originJson;
-  final String? completedAt;
+  final String? sourceRef;
+  final String? contextText;
+  final int? pageNo;
   final String createdAt;
   final String updatedAt;
+  final String? materialTitle;
   final String? sourceFileName;
-  PlanStepsForPlansResult({
+  final String? stem;
+  final String? imagePathsJson;
+  final int? lastAttemptId;
+  final int? lastAttemptSessionId;
+  final String? lastAttemptUserAnswer;
+  final String? lastAttemptSolution;
+  final int? lastAttemptIsCorrect;
+  final int? lastAttemptIndependent;
+  final String? lastAttemptHelpJson;
+  final String? lastAttemptFeedback;
+  final int? lastAttemptDelayed;
+  final String? lastAttemptSubmittedAt;
+  final String? lastAttemptCreatedAt;
+  final bool hasDraft;
+  QuestionRowsResult({
     required this.id,
-    this.goalId,
-    this.conversationId,
-    this.studyPlanId,
-    this.seq,
-    required this.title,
-    this.note,
-    this.pageFrom,
-    this.pageTo,
-    this.dueAt,
-    this.estMinutes,
-    required this.priority,
-    required this.status,
-    required this.source,
-    this.originJson,
-    this.completedAt,
+    this.sourceRef,
+    this.contextText,
+    this.pageNo,
     required this.createdAt,
     required this.updatedAt,
+    this.materialTitle,
     this.sourceFileName,
+    this.stem,
+    this.imagePathsJson,
+    this.lastAttemptId,
+    this.lastAttemptSessionId,
+    this.lastAttemptUserAnswer,
+    this.lastAttemptSolution,
+    this.lastAttemptIsCorrect,
+    this.lastAttemptIndependent,
+    this.lastAttemptHelpJson,
+    this.lastAttemptFeedback,
+    this.lastAttemptDelayed,
+    this.lastAttemptSubmittedAt,
+    this.lastAttemptCreatedAt,
+    required this.hasDraft,
   });
 }
 
-class FindOverlappingBlocksResult {
-  final String startAt;
-  final String endAt;
-  final String title;
-  FindOverlappingBlocksResult({
-    required this.startAt,
-    required this.endAt,
-    required this.title,
+class ConversationRecordsResult {
+  final int id;
+  final String? title;
+  final int? goalId;
+  final int? materialId;
+  final int? pageNo;
+  final String? sourceRef;
+  final String? contextText;
+  final int? questionMessageId;
+  final String entryKind;
+  final String status;
+  final String? endedAt;
+  final String? lastMessageAt;
+  final String createdAt;
+  final String updatedAt;
+  final int messageCount;
+  final String? preview;
+  final String? lastUserMessage;
+  final String? draftAnswer;
+  final String? draftUpdatedAt;
+  final String? materialTitle;
+  final String? sourceFileName;
+  final bool hasAttempts;
+  final bool hasDraft;
+  ConversationRecordsResult({
+    required this.id,
+    this.title,
+    this.goalId,
+    this.materialId,
+    this.pageNo,
+    this.sourceRef,
+    this.contextText,
+    this.questionMessageId,
+    required this.entryKind,
+    required this.status,
+    this.endedAt,
+    this.lastMessageAt,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.messageCount,
+    this.preview,
+    this.lastUserMessage,
+    this.draftAnswer,
+    this.draftUpdatedAt,
+    this.materialTitle,
+    this.sourceFileName,
+    required this.hasAttempts,
+    required this.hasDraft,
   });
 }
 
-class TimetableEntriesOnWeekdayResult {
-  final String startTime;
-  final String endTime;
-  final String title;
-  final String? location;
-  TimetableEntriesOnWeekdayResult({
-    required this.startTime,
-    required this.endTime,
-    required this.title,
-    this.location,
+class RecentlyActiveRecordsResult {
+  final int id;
+  final String? title;
+  final int? goalId;
+  final int? materialId;
+  final int? pageNo;
+  final String? sourceRef;
+  final String? contextText;
+  final int? questionMessageId;
+  final String entryKind;
+  final String status;
+  final String? endedAt;
+  final String? lastMessageAt;
+  final String createdAt;
+  final String updatedAt;
+  final int messageCount;
+  final String? preview;
+  final String? lastUserMessage;
+  final String? draftAnswer;
+  final String? draftUpdatedAt;
+  final String? materialTitle;
+  final String? sourceFileName;
+  final bool hasAttempts;
+  final bool hasDraft;
+  RecentlyActiveRecordsResult({
+    required this.id,
+    this.title,
+    this.goalId,
+    this.materialId,
+    this.pageNo,
+    this.sourceRef,
+    this.contextText,
+    this.questionMessageId,
+    required this.entryKind,
+    required this.status,
+    this.endedAt,
+    this.lastMessageAt,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.messageCount,
+    this.preview,
+    this.lastUserMessage,
+    this.draftAnswer,
+    this.draftUpdatedAt,
+    this.materialTitle,
+    this.sourceFileName,
+    required this.hasAttempts,
+    required this.hasDraft,
   });
 }
 
-class PlannedBlocksAfterResult {
-  final String startAt;
-  final String endAt;
-  final String title;
-  PlannedBlocksAfterResult({
-    required this.startAt,
-    required this.endAt,
-    required this.title,
+class ConversationScopeResult {
+  final int id;
+  final int? goalId;
+  final int? materialId;
+  ConversationScopeResult({required this.id, this.goalId, this.materialId});
+}
+
+class AttemptSubmissionResult {
+  final int id;
+  final String? submittedAt;
+  AttemptSubmissionResult({required this.id, this.submittedAt});
+}
+
+class RecentSubmittedResult {
+  final int attemptId;
+  final int attemptConversationId;
+  final int? attemptSessionId;
+  final String? attemptUserAnswer;
+  final String? attemptSolution;
+  final int? attemptIsCorrect;
+  final int? attemptIndependent;
+  final String? attemptHelpJson;
+  final String? attemptFeedback;
+  final int attemptDelayed;
+  final String? attemptSubmittedAt;
+  final String attemptCreatedAt;
+  final int questionId;
+  final String? questionSourceRef;
+  final String? questionContextText;
+  final int? questionPageNo;
+  final String questionCreatedAt;
+  final String questionUpdatedAt;
+  final String? questionMaterialTitle;
+  final String? sourceFileName;
+  final String? questionStem;
+  final String? questionImagePathsJson;
+  RecentSubmittedResult({
+    required this.attemptId,
+    required this.attemptConversationId,
+    this.attemptSessionId,
+    this.attemptUserAnswer,
+    this.attemptSolution,
+    this.attemptIsCorrect,
+    this.attemptIndependent,
+    this.attemptHelpJson,
+    this.attemptFeedback,
+    required this.attemptDelayed,
+    this.attemptSubmittedAt,
+    required this.attemptCreatedAt,
+    required this.questionId,
+    this.questionSourceRef,
+    this.questionContextText,
+    this.questionPageNo,
+    required this.questionCreatedAt,
+    required this.questionUpdatedAt,
+    this.questionMaterialTitle,
+    this.sourceFileName,
+    this.questionStem,
+    this.questionImagePathsJson,
   });
 }

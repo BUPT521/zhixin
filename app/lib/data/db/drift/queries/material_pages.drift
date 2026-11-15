@@ -1,6 +1,4 @@
--- 材料与页码的补充读查询（ADR-0011 第二批）。
---
--- 主查询在 materials.drift；这里补上按条件筛选的几条。
+-- 材料页的读写查询：一张表一个文件。
 
 import '../tables.dart';
 
@@ -22,10 +20,6 @@ ORDER BY page_no;
 pageById:
 SELECT * FROM material_page WHERE id = :pageId LIMIT 1;
 
--- 材料原文件的哈希，用于取回附件字节。
-materialFileHash:
-SELECT source_file_hash FROM material WHERE id = :materialId LIMIT 1;
-
 -- 这一页属于哪份材料；删除后仍按它更新材料的修改时间。
 pageMaterialId:
 SELECT material_id FROM material_page WHERE id = :pageId LIMIT 1;
@@ -42,3 +36,15 @@ WHERE id = :pageId;
 
 deleteMaterialPage:
 DELETE FROM material_page WHERE id = :pageId;
+
+-- 一份材料的页码范围；没有页时两列都是空。
+materialPageBounds:
+SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page
+FROM material_page
+WHERE material_id = :materialId;
+
+-- 一份材料的一页。
+materialPageByNumber:
+SELECT * FROM material_page
+WHERE material_id = :materialId AND page_no = :pageNo
+LIMIT 1;

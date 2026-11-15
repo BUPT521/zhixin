@@ -1,0 +1,21 @@
+-- 固定课表的读写查询：一张表一个文件。
+
+import '../tables.dart';
+
+insertTimetableEntry:
+INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at)
+VALUES (:weekday, :startTime, :endTime, :title, :location, :stamp, :stamp);
+
+deleteTimetableEntry:
+DELETE FROM timetable_entry WHERE id = :entryId;
+
+-- 全部固定课表，按星期与开始时间。
+allTimetableEntries:
+SELECT * FROM timetable_entry ORDER BY weekday, start_time;
+
+-- 按星期取固定课表。
+timetableEntriesOnWeekday:
+SELECT start_time, end_time, title, location
+FROM timetable_entry
+WHERE weekday = :weekday
+ORDER BY start_time;

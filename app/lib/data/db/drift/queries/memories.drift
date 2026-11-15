@@ -1,6 +1,4 @@
--- 记忆的读查询（ADR-0011 第二批）。
---
--- 写入仍走 GuardedDatabase 的命令事务。
+-- 记忆的读写查询：一张表一个文件。
 
 import '../tables.dart';
 

@@ -1,10 +1,13 @@
--- 材料与材料页的读查询（ADR-0011 第二批）。
---
--- 语句原来拼在 material_repository.dart 里。材料列表的 `goalId` 条件用开关参数
--- 关掉；关键词检索的语句依赖 FTS5 的 MATCH 与 bm25()，按 ADR-0013 第 8 条留在
--- 检索路径上，这里只搬不涉及 MATCH 的部分。
+-- 材料的读写查询：一张表一个文件。
 
 import '../tables.dart';
+
+materialScope:
+SELECT id, goal_id FROM material WHERE id = :id LIMIT 1;
+
+-- 材料原文件的哈希，用于取回附件字节。
+materialFileHash:
+SELECT source_file_hash FROM material WHERE id = :materialId LIMIT 1;
 
 -- 单份材料，带页数。
 materialById:
@@ -20,18 +23,6 @@ SELECT m.*,
 FROM material m
 WHERE (:goalId = 0 OR m.goal_id = :goalId OR m.goal_id IS NULL)
 ORDER BY m.updated_at DESC, m.id DESC;
-
--- 一份材料的页码范围；没有页时两列都是空。
-materialPageBounds:
-SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page
-FROM material_page
-WHERE material_id = :materialId;
-
--- 一份材料的一页。
-materialPageByNumber:
-SELECT * FROM material_page
-WHERE material_id = :materialId AND page_no = :pageNo
-LIMIT 1;
 
 insertMaterial:
 INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at)
