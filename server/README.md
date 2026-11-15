@@ -110,12 +110,15 @@ curl localhost:8080/healthz
 
 2026 年 11 月 15 日用 PostgreSQL 17 与从 `RELEASE.2025-10-15T17-29-55Z` 构建的 MinIO 本地联调，服务端为 `9bf7474`。附件校验哈希，重复上传只保留一个对象，另一账号无法读取。约 18 MiB 的备份可上传并逐字节下载，保留两份时最旧对象会清理。删除备份和删除账号后直接列出 bucket，确认相应对象已清除。
 
-提交前执行与 CI 相同的三条命令：
+提交前执行与 CI 相同的四条命令：
 
 ```bash
 gofmt -l .        # 应当没有输出
+go mod tidy -diff
 go vet ./...
 go test ./...
 ```
+
+改了 `schema.sql` 或 `internal/store/queries/` 下的查询要先重新运行 `sqlc`，改了 `openapi.yaml` 要先重新运行 `oapi-codegen`，生成结果随源文件一起提交；CI 会重新生成并用 `git diff --exit-code` 核对，本地少了这一步时编译与测试仍可能通过，推上去却会在生成核对上失败。
 
 端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限、删除账号时清理数据，以及模型代理的转发、key 替换、用量记录与额度拒绝。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。
