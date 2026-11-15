@@ -433,28 +433,16 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final expectedHead = await scope.currentHead();
     final bytes = await File(path).readAsBytes();
     if (!mounted) return;
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '导入当前数据',
       content: const Text(
         '数据包里的业务数据与附件会追加为一条提交，现有历史仍保留。'
         '导入前会重新核对当前版本，期间有新的写入时停止。确定导入？',
       ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('导入'),
-        ),
-      ],
+      confirmLabel: '导入',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
       final cacheWarning = await scope.importCurrentData(
@@ -535,25 +523,14 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   Future<void> _deletePoint(RestorePoint point) async {
     if (_busy) return;
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '删除这份恢复点',
       content: const Text('删除后不能再从这份恢复点回到当时的数据；当前记录不受影响。'),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('删除'),
-        ),
-      ],
+      confirmLabel: '删除',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
       await AppScope.of(context).data.restorePoints.delete(point);
@@ -609,28 +586,17 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   Future<void> _clearHistory() async {
     if (_busy) return;
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '清理历史',
       content: const Text(
         '将以当前数据为新基线，删除全部提交明细、检查点与命名版本；'
         '当前记录、附件与之后的提交保留。更早的回执会失去撤销入口。确定清理？',
       ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('清理'),
-        ),
-      ],
+      confirmLabel: '清理',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
       await AppScope.of(context).data.revisions.clearHistory();
