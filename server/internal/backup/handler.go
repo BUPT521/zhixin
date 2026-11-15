@@ -9,26 +9,21 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
-	"unicode/utf8"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
-// Handler exposes /v1/backups.
+// Handler exposes /v1/backups. It only translates HTTP into service calls;
+// schema, size and retention rules live in Service.
 type Handler struct {
-	store         Store
-	log           *slog.Logger
-	maxBytes      int64
-	keep          int
-	schemaVersion int
-	now           func() time.Time
+	svc *Service
+	log *slog.Logger
 }
 
-func NewHandler(store Store, log *slog.Logger, maxBytes int64, keep, schemaVersion int) *Handler {
-	return &Handler{store: store, log: log, maxBytes: maxBytes, keep: keep, schemaVersion: schemaVersion, now: time.Now}
+func NewHandler(svc *Service, log *slog.Logger) *Handler {
+	return &Handler{svc: svc, log: log}
 }
 
 var hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -57,24 +52,24 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "X-Content-SHA256 must be 64 lowercase hex characters")
 		return
 	}
-	if params.XSchemaVersion != h.schemaVersion {
+	if params.XSchemaVersion != h.svc.SchemaVersion() {
 		// Same rule as the client restore entry: only the current version (ADR-0002).
 		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"schema version does not match the server", map[string]any{"schema_version": h.schemaVersion})
+			"schema version does not match the server", map[string]any{"schema_version": h.svc.SchemaVersion()})
 		return
 	}
-	if r.ContentLength > h.maxBytes {
-		httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.maxBytes))
+	if r.ContentLength > h.svc.MaxBytes() {
+		httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes()))
 		return
 	}
 
 	// The body goes to a temporary file while its hash is computed: a 256 MB
 	// snapshot must not sit in memory, and the store needs the exact size.
-	spool, err := httpx.SpoolBody(w, r, h.maxBytes)
+	spool, err := httpx.SpoolBody(w, r, h.svc.MaxBytes())
 	if err != nil {
 		switch {
 		case errors.Is(err, httpx.ErrBodyTooLarge):
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.maxBytes))
+			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes()))
 		case errors.Is(err, httpx.ErrBodyRead):
 			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
 		default:
@@ -92,16 +87,30 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 	if params.XDeviceName != nil {
 		device = strings.TrimSpace(*params.XDeviceName)
 	}
-	if !utf8.ValidString(device) || utf8.RuneCountInString(device) > 64 {
-		device = ""
-	}
-	meta := Meta{ID: newID(), SHA256: want, Size: spool.Size, SchemaVersion: params.XSchemaVersion, DeviceName: device, CreatedAt: h.now().UTC()}
 	body, err := spool.Reader()
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	if err := h.store.Put(r.Context(), p.UserID, meta, body, h.keep); err != nil {
+	meta, err := h.svc.Upload(
+		r.Context(),
+		p.UserID,
+		want,
+		params.XSchemaVersion,
+		device,
+		spool.Size,
+		body,
+	)
+	if err != nil {
+		if errors.Is(err, ErrSchemaVersion) {
+			httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
+				"schema version does not match the server", map[string]any{"schema_version": h.svc.SchemaVersion()})
+			return
+		}
+		if errors.Is(err, ErrTooLarge) {
+			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes()))
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
@@ -110,7 +119,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	items, err := h.store.List(r.Context(), p.UserID)
+	items, err := h.svc.List(r.Context(), p.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
@@ -124,7 +133,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request, id string) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	meta, rc, err := h.store.Open(r.Context(), p.UserID, id)
+	meta, rc, err := h.svc.Open(r.Context(), p.UserID, id)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
@@ -143,7 +152,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request, id string) {
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request, id string) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	err := h.store.Delete(r.Context(), p.UserID, id)
+	err := h.svc.Delete(r.Context(), p.UserID, id)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
