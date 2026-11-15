@@ -9,6 +9,7 @@ import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../app_scope.dart';
 import 'data_version_watcher.dart';
+import 'format.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
 import '../platform/data_package_export.dart';
@@ -241,10 +242,8 @@ class _SettingsPageState extends State<SettingsPage>
     setState(() => _busy = true);
     try {
       final now = DateTime.now();
-      String two(int value) => value.toString().padLeft(2, '0');
       final uri = await saveDataPackage(
-        fileName:
-            'zhixin-repository-${now.year}${two(now.month)}${two(now.day)}.zip',
+        fileName: 'zhixin-repository-${compactDate(now)}.zip',
         writePackage: AppScope.of(context).backupRepository,
       );
       if (!mounted) return;

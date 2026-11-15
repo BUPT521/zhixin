@@ -1,3 +1,4 @@
+import '../domain/models/time_values.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/weekdays.dart';
 
@@ -11,16 +12,15 @@ String shortTime(DateTime time, {DateTime? now}) {
       time.year == current.year &&
       time.month == current.month &&
       time.day == current.day;
-  String two(int value) => value.toString().padLeft(2, '0');
-  final clock = '${two(time.hour)}:${two(time.minute)}';
+  final clock = clockOf(time);
   if (sameDay) return clock;
   return '${time.month}月${time.day}日 $clock';
 }
 
-String clockOf(DateTime time) {
-  String two(int value) => value.toString().padLeft(2, '0');
-  return '${two(time.hour)}:${two(time.minute)}';
-}
+String clockOf(DateTime time) => ClockTime(time.hour, time.minute).format();
+
+/// 文件名里的紧凑日期：`YYYYMMDD`，与界面日期分开，不带分隔符。
+String compactDate(DateTime time) => formatDate(time).replaceAll('-', '');
 
 String dayLabel(DateTime time) =>
     '${time.month}月${time.day}日 ${weekdayLabel(time.weekday)}';

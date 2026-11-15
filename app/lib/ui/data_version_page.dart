@@ -368,8 +368,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (_busy) return;
     final scope = AppScope.of(context);
     final day = DateTime.now();
-    final fileName =
-        'zhixin-current-${day.year}${_two(day.month)}${_two(day.day)}.zip';
+    final fileName = 'zhixin-current-${compactDate(day)}.zip';
     setState(() => _busy = true);
     try {
       final uri = await saveDataPackage(
@@ -399,8 +398,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (_busy) return;
     final scope = AppScope.of(context);
     final day = DateTime.now();
-    final fileName =
-        'zhixin-repository-${day.year}${_two(day.month)}${_two(day.day)}.zip';
+    final fileName = 'zhixin-repository-${compactDate(day)}.zip';
     setState(() => _busy = true);
     try {
       final uri = await saveDataPackage(
@@ -980,6 +978,4 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
-
-  String _two(int value) => value.toString().padLeft(2, '0');
 }
