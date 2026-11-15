@@ -10,24 +10,17 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
-const (
-	maxPushCommits = 200
-	defaultPull    = 200
-	maxPull        = 1000
-)
-
-// Handler exposes /v1/sync.
+// Handler exposes /v1/sync. It parses HTTP and maps service errors; validation
+// and page bounds live in Service.
 type Handler struct {
-	store         Store
-	log           *slog.Logger
-	maxBytes      int64
-	schemaVersion int
+	svc      *Service
+	log      *slog.Logger
+	maxBytes int64
 }
 
-// NewHandler wires the handler. schemaVersion is the client data schema the
-// server accepts; commits from any other version are rejected (ADR-0002).
-func NewHandler(store Store, log *slog.Logger, maxBytes int64, schemaVersion int) *Handler {
-	return &Handler{store: store, log: log, maxBytes: maxBytes, schemaVersion: schemaVersion}
+// NewHandler wires the handler.
+func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
+	return &Handler{svc: svc, log: log, maxBytes: maxBytes}
 }
 
 type headResponse struct {
@@ -37,12 +30,12 @@ type headResponse struct {
 
 func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	head, err := h.store.Head(r.Context(), p.UserID)
+	head, err := h.svc.Head(r.Context(), p.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, headResponse{Head: head, SchemaVersion: h.schemaVersion})
+	httpx.WriteJSON(w, http.StatusOK, headResponse{Head: head, SchemaVersion: h.svc.SchemaVersion()})
 }
 
 type pullResponse struct {
@@ -53,40 +46,20 @@ type pullResponse struct {
 
 func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	after := int64(0)
-	if params.After != nil {
-		after = *params.After
-	}
-	if after < 0 {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "after must be a non-negative integer")
-		return
-	}
-	limit := defaultPull
-	if params.Limit != nil {
-		if *params.Limit < 1 || *params.Limit > maxPull {
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "limit must be between 1 and 1000")
+	result, err := h.svc.Pull(r.Context(), p.UserID, params.After, params.Limit)
+	if err != nil {
+		if errors.Is(err, ErrInvalid) {
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "after must be non-negative and limit between 1 and 1000")
 			return
 		}
-		limit = *params.Limit
-	}
-	head, err := h.store.Head(r.Context(), p.UserID)
-	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	commits, err := h.store.After(r.Context(), p.UserID, after, limit)
-	if err != nil {
-		httpx.WriteInternal(w, r, h.log, err)
-		return
-	}
-	if commits == nil {
-		commits = []Commit{}
-	}
-	last := after
-	if n := len(commits); n > 0 {
-		last = commits[n-1].Seq
-	}
-	httpx.WriteJSON(w, http.StatusOK, pullResponse{Commits: commits, Head: head, HasMore: last < head})
+	httpx.WriteJSON(w, http.StatusOK, pullResponse{
+		Commits: result.Commits,
+		Head:    result.Head,
+		HasMore: result.HasMore,
+	})
 }
 
 // pushRequest 保留 Change 的原始 JSON。服务端不解释学习内容，也不经过
@@ -106,22 +79,15 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	if len(in.Commits) == 0 || len(in.Commits) > maxPushCommits {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "push 1 to 200 commits at a time")
-		return
-	}
-	for i := range in.Commits {
-		in.Commits[i].Seq = 0
-		if err := Validate(in.Commits[i], h.schemaVersion); err != nil {
-			httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-				"commit failed validation", map[string]any{"index": i, "schema_version": h.schemaVersion})
-			return
-		}
-	}
-	head, err := h.store.Append(r.Context(), p.UserID, in.BaseSeq, in.Commits)
+	head, err := h.svc.Push(r.Context(), p.UserID, in.BaseSeq, in.Commits)
 	if errors.Is(err, ErrHeadMoved) {
 		httpx.WriteProblemExtra(w, r, http.StatusConflict, httpx.CodeConflict,
 			"pull and apply remote commits first", map[string]any{"head": head})
+		return
+	}
+	if errors.Is(err, ErrInvalid) {
+		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
+			"commit failed validation", map[string]any{"schema_version": h.svc.SchemaVersion()})
 		return
 	}
 	if err != nil {

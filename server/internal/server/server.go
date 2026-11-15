@@ -86,7 +86,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	}
 	handlers := routes{
 		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits),
-		sync:          syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion),
+		sync:          syncsvc.NewHandler(syncsvc.NewService(st.Sync, ClientSchemaVersion), log, 16*cfg.MaxJSONBytes),
 		backups:       backup.NewHandler(backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log),
 		blobs:         blobs.NewHandler(blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes), log),
 		llm:           llmproxy.New(cfg.LLM, st.Quota, cfg.Location, log),
