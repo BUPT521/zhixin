@@ -1,9 +1,6 @@
 package backup
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -56,22 +53,22 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The memory store needs the bytes anyway; the object-storage store will
-	// stream to a temporary key and promote it after the hash matches.
-	body := http.MaxBytesReader(w, r.Body, h.maxBytes)
-	hash := sha256.New()
-	var buf bytes.Buffer
-	n, err := io.Copy(io.MultiWriter(&buf, hash), body)
+	// The body goes to a temporary file while its hash is computed: a 256 MB
+	// snapshot must not sit in memory, and the store needs the exact size.
+	spool, err := httpx.SpoolBody(w, r, h.maxBytes)
 	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
+		switch {
+		case errors.Is(err, httpx.ErrBodyTooLarge):
 			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.maxBytes))
-			return
+		case errors.Is(err, httpx.ErrBodyRead):
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
+		default:
+			h.internal(w, r, err)
 		}
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
 		return
 	}
-	if got := hex.EncodeToString(hash.Sum(nil)); got != want {
+	defer spool.Close()
+	if spool.SHA256 != want {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "body does not match X-Content-SHA256")
 		return
 	}
@@ -80,8 +77,13 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	if !utf8.ValidString(device) || utf8.RuneCountInString(device) > 64 {
 		device = ""
 	}
-	meta := Meta{ID: newID(), SHA256: want, Size: n, SchemaVersion: schema, DeviceName: device, CreatedAt: h.now().UTC()}
-	if err := h.store.Put(r.Context(), p.UserID, meta, &buf, h.keep); err != nil {
+	meta := Meta{ID: newID(), SHA256: want, Size: spool.Size, SchemaVersion: schema, DeviceName: device, CreatedAt: h.now().UTC()}
+	body, err := spool.Reader()
+	if err != nil {
+		h.internal(w, r, err)
+		return
+	}
+	if err := h.store.Put(r.Context(), p.UserID, meta, body, h.keep); err != nil {
 		h.internal(w, r, err)
 		return
 	}

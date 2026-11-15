@@ -11,28 +11,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 )
 
 // Put 先落字节再写元数据；写完按 keep 裁掉更旧的备份并删掉它们的字节。
 //
 // 顺序是有意的：元数据在字节之后写，进程在中间退出时只会留下没有元数据的孤儿
-// 文件，不会出现“列表里有、下载失败”的记录。
+// 对象，不会出现“列表里有、下载失败”的记录。
 func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.Reader, keep int) error {
-	size, err := s.blobs.Put(ctx, userID, m.ID, data)
-	if err != nil {
+	if err := s.objects.Put(ctx, backupKey(userID, m.ID), data, objectstore.Info{
+		Size:        m.Size,
+		ContentType: "application/zip",
+	}); err != nil {
 		return err
 	}
 	if err := s.q.InsertBackup(ctx, db.InsertBackupParams{
 		ID:            m.ID,
 		UserID:        userID,
 		Sha256:        m.SHA256,
-		Size:          size,
+		Size:          m.Size,
 		SchemaVersion: int32(m.SchemaVersion),
 		DeviceName:    m.DeviceName,
 		CreatedAt:     pgTime(m.CreatedAt),
 	}); err != nil {
-		_ = s.blobs.Remove(ctx, userID, m.ID)
+		_ = s.objects.Remove(ctx, backupKey(userID, m.ID))
 		return err
 	}
 	if keep <= 0 {
@@ -46,7 +49,7 @@ func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.R
 		return err
 	}
 	for _, id := range stale {
-		if err := s.blobs.Remove(ctx, userID, id); err != nil {
+		if err := s.objects.Remove(ctx, backupKey(userID, id)); err != nil {
 			return err
 		}
 	}
@@ -82,7 +85,7 @@ func (s *Store) Open(ctx context.Context, userID, id string) (backup.Meta, io.Re
 	if err != nil {
 		return backup.Meta{}, nil, err
 	}
-	rc, err := s.blobs.Open(ctx, userID, id)
+	rc, _, err := s.objects.Open(ctx, backupKey(userID, id))
 	if err != nil {
 		return backup.Meta{}, nil, err
 	}
@@ -101,8 +104,14 @@ func (s *Store) Delete(ctx context.Context, userID, id string) error {
 	if err := s.q.DeleteBackup(ctx, db.DeleteBackupParams{UserID: userID, ID: id}); err != nil {
 		return err
 	}
-	return s.blobs.Remove(ctx, userID, id)
+	return s.objects.Remove(ctx, backupKey(userID, id))
 }
+
+// backupKey 是整库备份在对象存储里的键；backupPrefix 用来一次清掉账号名下的
+// 全部备份，两处写法必须一致。
+func backupKey(userID, id string) string { return backupPrefix(userID) + id + ".zip" }
+
+func backupPrefix(userID string) string { return "backups/" + userID + "/" }
 
 // Used 返回当天已用的 token 数；没有记录时是 0。
 func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {

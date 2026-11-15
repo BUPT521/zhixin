@@ -16,7 +16,7 @@ const (
 	maxPull        = 1000
 )
 
-// Handler exposes /v1/sync and /v1/blobs.
+// Handler exposes /v1/sync.
 type Handler struct {
 	store         Store
 	log           *slog.Logger

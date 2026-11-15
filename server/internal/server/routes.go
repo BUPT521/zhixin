@@ -10,6 +10,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -23,6 +24,7 @@ type routes struct {
 	auth    *auth.Handler
 	sync    *syncsvc.Handler
 	backups *backup.Handler
+	blobs   *blobs.Handler
 	llm     *llmproxy.Proxy
 
 	schemaVersion int
@@ -62,14 +64,14 @@ func (rt routes) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 	rt.sync.PushHTTP(w, r)
 }
 
-func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, _ string) {
-	rt.sync.BlobsHTTP(w, r)
+func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
+	rt.blobs.GetHTTP(w, r, sha256)
 }
-func (rt routes) HeadV1BlobsSha256(w http.ResponseWriter, r *http.Request, _ string) {
-	rt.sync.BlobsHTTP(w, r)
+func (rt routes) HeadV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
+	rt.blobs.HeadHTTP(w, r, sha256)
 }
-func (rt routes) PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, _ string) {
-	rt.sync.BlobsHTTP(w, r)
+func (rt routes) PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
+	rt.blobs.PutHTTP(w, r, sha256)
 }
 
 func (rt routes) GetV1Backups(w http.ResponseWriter, r *http.Request) { rt.backups.ListHTTP(w, r) }

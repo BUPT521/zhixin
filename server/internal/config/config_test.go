@@ -48,6 +48,41 @@ func TestLoadRequiresAccessShorterThanRefresh(t *testing.T) {
 	}
 }
 
+func TestLoadS3(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"ZHIXIN_S3_ENDPOINT":   "minio:9000",
+		"ZHIXIN_S3_ACCESS_KEY": "ak",
+		"ZHIXIN_S3_SECRET_KEY": "sk",
+		"ZHIXIN_S3_USE_SSL":    "1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.S3.Configured() || cfg.S3.Bucket != "zhixin" || !cfg.S3.UseSSL {
+		t.Fatalf("s3 = %+v", cfg.S3)
+	}
+	if cfg.MaxAttachmentBytes != 33554432 {
+		t.Fatalf("attachment limit = %d", cfg.MaxAttachmentBytes)
+	}
+}
+
+func TestLoadS3RejectsPartialConfig(t *testing.T) {
+	_, err := Load(env(map[string]string{
+		"ZHIXIN_S3_ENDPOINT": "minio:9000",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "ZHIXIN_S3_ACCESS_KEY") {
+		t.Fatalf("want a missing credential error, got %v", err)
+	}
+	_, err = Load(env(map[string]string{
+		"ZHIXIN_S3_ENDPOINT":   "https://minio:9000",
+		"ZHIXIN_S3_ACCESS_KEY": "ak",
+		"ZHIXIN_S3_SECRET_KEY": "sk",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "ZHIXIN_S3_ENDPOINT") {
+		t.Fatalf("want a scheme error, got %v", err)
+	}
+}
+
 func TestLoadTrimsModelList(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
 		"ZHIXIN_LLM_MODELS":   " a , ,b ",

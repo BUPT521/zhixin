@@ -11,6 +11,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -25,8 +26,7 @@ func newTestStore(t *testing.T) *Store {
 		t.Skip("未设置 ZHIXIN_TEST_DATABASE_URL，跳过 PostgreSQL 用例")
 	}
 	ctx := context.Background()
-	blobDir := t.TempDir()
-	st, err := Open(ctx, dsn, Options{BlobDir: blobDir})
+	st, err := Open(ctx, dsn, Options{Objects: objectstore.NewMemory()})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -131,11 +131,12 @@ func TestPostgresBackupsAndQuota(t *testing.T) {
 	}
 
 	for _, id := range []string{"b1", "b2", "b3"} {
+		body := []byte("zip-" + id)
 		meta := backup.Meta{
-			ID: id, SHA256: "sha-" + id, SchemaVersion: 26,
+			ID: id, SHA256: "sha-" + id, Size: int64(len(body)), SchemaVersion: 26,
 			DeviceName: "phone", CreatedAt: time.Now().UTC().Add(time.Duration(len(id)) * time.Second),
 		}
-		if err := st.Put(ctx, "u1", meta, bytes.NewReader([]byte("zip-"+id)), 2); err != nil {
+		if err := st.Put(ctx, "u1", meta, bytes.NewReader(body), 2); err != nil {
 			t.Fatalf("put %s: %v", id, err)
 		}
 	}

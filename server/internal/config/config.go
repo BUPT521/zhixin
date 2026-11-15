@@ -29,11 +29,16 @@ type Config struct {
 	MaxJSONBytes int64
 	// MaxBackupBytes caps a single uploaded backup snapshot.
 	MaxBackupBytes int64
+	// MaxAttachmentBytes caps one uploaded attachment object.
+	MaxAttachmentBytes int64
 	// BackupsKept is how many snapshots are retained per account.
 	BackupsKept int
-	// BlobDir stores backup bytes on disk until S3-compatible object storage
-	// lands. Only used when DatabaseURL is set.
+	// BlobDir is the local directory for backup and attachment bytes. Used
+	// when S3 is not configured.
 	BlobDir string
+	// S3 configures S3-compatible object storage; an empty endpoint means the
+	// local directory is used instead (ADR-0016).
+	S3 S3Config
 	// ApplySchema runs schema.sql on startup; meant for a fresh database.
 	ApplySchema bool
 
@@ -47,6 +52,20 @@ type Config struct {
 
 	LLM LLMConfig
 }
+
+// S3Config configures S3-compatible object storage. Endpoint is host[:port]
+// without a scheme; the scheme follows UseSSL.
+type S3Config struct {
+	Endpoint  string
+	Bucket    string
+	AccessKey string
+	SecretKey string
+	Region    string
+	UseSSL    bool
+}
+
+// Configured reports whether object storage is configured at all.
+func (c S3Config) Configured() bool { return c.Endpoint != "" }
 
 // LLMConfig configures the model proxy.
 type LLMConfig struct {
@@ -109,16 +128,25 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		Addr:           get("ZHIXIN_ADDR", ":8080"),
-		DatabaseURL:    get("ZHIXIN_DATABASE_URL", ""),
-		Location:       loc,
-		AccessTTL:      dur("ZHIXIN_ACCESS_TTL", "1h"),
-		RefreshTTL:     dur("ZHIXIN_REFRESH_TTL", "720h"),
-		MaxJSONBytes:   num("ZHIXIN_MAX_JSON_BYTES", "1048576"),
-		MaxBackupBytes: num("ZHIXIN_MAX_BACKUP_BYTES", "268435456"),
-		BackupsKept:    int(num("ZHIXIN_BACKUPS_KEPT", "5")),
-		BlobDir:        get("ZHIXIN_BLOB_DIR", "data/blobs"),
-		ApplySchema:    get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
+		Addr:               get("ZHIXIN_ADDR", ":8080"),
+		DatabaseURL:        get("ZHIXIN_DATABASE_URL", ""),
+		Location:           loc,
+		AccessTTL:          dur("ZHIXIN_ACCESS_TTL", "1h"),
+		RefreshTTL:         dur("ZHIXIN_REFRESH_TTL", "720h"),
+		MaxJSONBytes:       num("ZHIXIN_MAX_JSON_BYTES", "1048576"),
+		MaxBackupBytes:     num("ZHIXIN_MAX_BACKUP_BYTES", "268435456"),
+		MaxAttachmentBytes: num("ZHIXIN_MAX_ATTACHMENT_BYTES", "33554432"),
+		BackupsKept:        int(num("ZHIXIN_BACKUPS_KEPT", "5")),
+		BlobDir:            get("ZHIXIN_BLOB_DIR", "data/blobs"),
+		ApplySchema:        get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
+		S3: S3Config{
+			Endpoint:  get("ZHIXIN_S3_ENDPOINT", ""),
+			Bucket:    get("ZHIXIN_S3_BUCKET", "zhixin"),
+			AccessKey: get("ZHIXIN_S3_ACCESS_KEY", ""),
+			SecretKey: get("ZHIXIN_S3_SECRET_KEY", ""),
+			Region:    get("ZHIXIN_S3_REGION", ""),
+			UseSSL:    get("ZHIXIN_S3_USE_SSL", "0") == "1",
+		},
 
 		AuthRatePerSecond:    fnum("ZHIXIN_AUTH_RATE", "0.2"),
 		AuthBurst:            int(num("ZHIXIN_AUTH_BURST", "10")),
@@ -131,6 +159,14 @@ func Load(getenv func(string) string) (Config, error) {
 			DailyTokens:     num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
 			MaxRequestBytes: num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
 		},
+	}
+	if cfg.S3.Configured() {
+		if cfg.S3.AccessKey == "" || cfg.S3.SecretKey == "" {
+			errs = append(errs, errors.New("ZHIXIN_S3_ACCESS_KEY and ZHIXIN_S3_SECRET_KEY are required when ZHIXIN_S3_ENDPOINT is set"))
+		}
+		if strings.Contains(cfg.S3.Endpoint, "://") {
+			errs = append(errs, errors.New("ZHIXIN_S3_ENDPOINT: give host and port only; use ZHIXIN_S3_USE_SSL to pick https"))
+		}
 	}
 	if cfg.AccessTTL >= cfg.RefreshTTL && len(errs) == 0 {
 		errs = append(errs, errors.New("ZHIXIN_ACCESS_TTL must be shorter than ZHIXIN_REFRESH_TTL"))

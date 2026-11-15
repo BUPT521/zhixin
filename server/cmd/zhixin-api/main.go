@@ -13,7 +13,9 @@ import (
 	"time"
 	_ "time/tzdata" // the container image may not ship zoneinfo
 
+	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/server"
 	"github.com/BUPT521/zhixin/server/internal/store/pg"
 )
@@ -37,7 +39,11 @@ func run(log *slog.Logger) error {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
 	} else {
-		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{BlobDir: cfg.BlobDir})
+		objects, err := openObjects(cfg, log)
+		if err != nil {
+			return err
+		}
+		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{Objects: objects})
 		if err != nil {
 			return err
 		}
@@ -47,13 +53,19 @@ func run(log *slog.Logger) error {
 				return err
 			}
 		}
-		log.Info("using PostgreSQL stores", slog.String("blob_dir", cfg.BlobDir))
+		log.Info("using PostgreSQL stores")
 		stores = server.Stores{
 			Auth:    pgStore,
 			Sync:    pgStore,
 			Backups: pgStore,
+			Blobs:   blobs.NewStore(objects),
 			Quota:   pgStore,
-			Ready:   pgStore.Ping,
+			Ready: func(ctx context.Context) error {
+				if err := pgStore.Ping(ctx); err != nil {
+					return err
+				}
+				return objects.Ping(ctx)
+			},
 		}
 	}
 	if cfg.LLM.APIKey == "" {
@@ -93,4 +105,31 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// openObjects 选择字节的存放位置：配置了 S3 兼容存储就用它，否则用
+// ZHIXIN_BLOB_DIR 指定的本地目录，保证没有对象存储的开发环境也能跑。
+func openObjects(cfg config.Config, log *slog.Logger) (objectstore.Store, error) {
+	if cfg.S3.Configured() {
+		objects, err := objectstore.NewS3(objectstore.S3Options{
+			Endpoint:  cfg.S3.Endpoint,
+			Bucket:    cfg.S3.Bucket,
+			AccessKey: cfg.S3.AccessKey,
+			SecretKey: cfg.S3.SecretKey,
+			Region:    cfg.S3.Region,
+			UseSSL:    cfg.S3.UseSSL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		log.Info("using S3-compatible object storage",
+			slog.String("endpoint", cfg.S3.Endpoint), slog.String("bucket", cfg.S3.Bucket))
+		return objects, nil
+	}
+	objects, err := objectstore.NewDir(cfg.BlobDir)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("using a local directory for backup and attachment bytes", slog.String("blob_dir", cfg.BlobDir))
+	return objects, nil
 }

@@ -217,30 +217,40 @@ paths:
       - { name: sha256, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
     head:
       tags: [sync]
-      summary: 附件是否已上传（未实现，返回 501）
+      summary: 附件是否已上传
+      description: |
+        按内容寻址：路径里的 sha256 是附件内容的哈希，服务端按账号隔离。
+        200 表示这个账号已经存过相同的内容，`Content-Length` 给出字节数；
+        HEAD 没有响应体，未命中时只有 404。
       responses:
         "200": { description: 已存在 }
-        "404": { $ref: "#/components/responses/Problem" }
-        "501": { $ref: "#/components/responses/Problem" }
+        "400": { description: 路径里的 sha256 不是 64 位小写十六进制 }
+        "404": { description: 不存在 }
     get:
       tags: [sync]
-      summary: 下载附件（未实现，返回 501）
+      summary: 下载附件
       responses:
         "200":
-          description: 原始字节
+          description: 原始字节，`X-Content-SHA256` 与路径一致
           content:
             application/octet-stream: {}
-        "501": { $ref: "#/components/responses/Problem" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
     put:
       tags: [sync]
-      summary: 上传附件，服务端核对哈希（未实现，返回 501）
+      summary: 上传附件，服务端核对哈希
+      description: |
+        请求体是原始字节，单个附件的上限由 ZHIXIN_MAX_ATTACHMENT_BYTES 决定。
+        内容与路径里的 sha256 不一致时返回 400，超过上限返回 413。同一账号
+        重复上传相同内容写到同一个键，结果不变。
       requestBody:
         required: true
         content:
           application/octet-stream: {}
       responses:
         "201": { description: 已保存 }
-        "501": { $ref: "#/components/responses/Problem" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
 
   /v1/backups:
     get:

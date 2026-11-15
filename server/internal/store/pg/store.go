@@ -18,6 +18,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/store"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -26,9 +27,9 @@ import (
 // Store 同时实现四个存储接口；账号删除靠外键级联清理其余表，所以
 // DeleteUser 只有一份，语义是“删除这个账号”。
 type Store struct {
-	pool  *pgxpool.Pool
-	q     *db.Queries
-	blobs BlobStore
+	pool    *pgxpool.Pool
+	q       *db.Queries
+	objects objectstore.Store
 }
 
 var (
@@ -40,14 +41,17 @@ var (
 
 // Options 是打开连接时的可选项。
 type Options struct {
-	// BlobDir 存放整库备份的字节；对象存储就绪前用它落盘，保证进程重启不丢。
-	BlobDir string
+	// Objects 存放整库备份的字节；S3、本地目录与内存三种实现在 objectstore 里。
+	Objects objectstore.Store
 	// MaxConns 为空时用 pgxpool 的默认值。
 	MaxConns int32
 }
 
 // Open 连接 PostgreSQL 并返回四个接口共用的实现。
 func Open(ctx context.Context, dsn string, opts Options) (*Store, error) {
+	if opts.Objects == nil {
+		return nil, errors.New("pg: 需要 objectstore.Store 存放备份字节")
+	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("pg: 解析连接串失败: %w", err)
@@ -59,12 +63,7 @@ func Open(ctx context.Context, dsn string, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pg: 建立连接池失败: %w", err)
 	}
-	blobs, err := NewFilesystemBlobs(opts.BlobDir)
-	if err != nil {
-		pool.Close()
-		return nil, err
-	}
-	return &Store{pool: pool, q: db.New(pool), blobs: blobs}, nil
+	return &Store{pool: pool, q: db.New(pool), objects: opts.Objects}, nil
 }
 
 // Ping 报告数据库是否可达，供 /readyz 使用。
@@ -130,12 +129,8 @@ func (s *Store) UserByID(ctx context.Context, id string) (auth.User, error) {
 }
 
 // DeleteUser 删除账号；会话、提交序列、备份与用量按外键级联删除，
-// 备份字节由备份表被删之前先取出来清掉。
+// 账号名下备份对象的字节随后按前缀清掉。
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
-	ids, err := s.q.ListBackups(ctx, userID)
-	if err != nil {
-		return err
-	}
 	tag, err := s.pool.Exec(ctx, "DELETE FROM app_user WHERE id = $1", userID)
 	if err != nil {
 		return err
@@ -143,12 +138,7 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	if tag.RowsAffected() == 0 {
 		return auth.ErrNotFound
 	}
-	for _, b := range ids {
-		if err := s.blobs.Remove(ctx, userID, b.ID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.objects.RemovePrefix(ctx, backupPrefix(userID))
 }
 
 func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {

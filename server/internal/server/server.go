@@ -12,9 +12,11 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -30,6 +32,7 @@ type Stores struct {
 	Auth    auth.Store
 	Sync    syncsvc.Store
 	Backups backup.Store
+	Blobs   blobs.Store
 	Quota   llmproxy.Quota
 	// Ready reports whether external dependencies are reachable; nil means always ready.
 	Ready func(ctx context.Context) error
@@ -41,6 +44,7 @@ func MemoryStores() Stores {
 		Auth:    auth.NewMemoryStore(),
 		Sync:    syncsvc.NewMemoryStore(),
 		Backups: backup.NewMemoryStore(),
+		Blobs:   blobs.NewStore(objectstore.NewMemory()),
 		Quota:   llmproxy.NewMemoryQuota(),
 	}
 }
@@ -52,6 +56,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
 	authSvc.OnAccountDelete(st.Sync.DeleteUser)
 	authSvc.OnAccountDelete(st.Backups.DeleteUser)
+	authSvc.OnAccountDelete(st.Blobs.DeleteUser)
 	authSvc.OnAccountDelete(st.Quota.DeleteUser)
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
@@ -67,6 +72,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, byAccount),
 		sync:          syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion),
 		backups:       backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion),
+		blobs:         blobs.NewHandler(st.Blobs, log, cfg.MaxAttachmentBytes),
 		llm:           llmproxy.New(cfg.LLM, st.Quota, cfg.Location, log),
 		schemaVersion: ClientSchemaVersion,
 		ready:         st.Ready,

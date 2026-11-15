@@ -302,13 +302,13 @@ type ServerInterface interface {
 	// GetV1BackupsId 下载备份；客户端按现有的版本库恢复流程预检
 	// (GET /v1/backups/{id})
 	GetV1BackupsId(w http.ResponseWriter, r *http.Request, id string)
-	// GetV1BlobsSha256 下载附件（未实现，返回 501）
+	// GetV1BlobsSha256 下载附件
 	// (GET /v1/blobs/{sha256})
 	GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string)
-	// HeadV1BlobsSha256 附件是否已上传（未实现，返回 501）
+	// HeadV1BlobsSha256 附件是否已上传
 	// (HEAD /v1/blobs/{sha256})
 	HeadV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string)
-	// PutV1BlobsSha256 上传附件，服务端核对哈希（未实现，返回 501）
+	// PutV1BlobsSha256 上传附件，服务端核对哈希
 	// (PUT /v1/blobs/{sha256})
 	PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string)
 	// PostV1LlmChatCompletions OpenAI Chat Completions 代理

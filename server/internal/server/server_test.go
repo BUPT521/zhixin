@@ -270,6 +270,90 @@ func TestBackupRoundTripAndRetention(t *testing.T) {
 	}
 }
 
+func blobSHA(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestBlobRoundTrip(t *testing.T) {
+	h := newHarness(t, nil)
+	token := h.signUp("a@b.cn")
+	data := []byte("attachment-bytes")
+	sha := blobSHA(data)
+
+	if resp := h.do("PUT", "/v1/blobs/"+sha, token, bytes.NewReader(data), nil); resp.StatusCode != 201 {
+		t.Fatalf("upload: %d", resp.StatusCode)
+	}
+	resp := h.do("HEAD", "/v1/blobs/"+sha, token, nil, nil)
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Length") != fmt.Sprint(len(data)) {
+		t.Fatalf("head: %d length %q", resp.StatusCode, resp.Header.Get("Content-Length"))
+	}
+	resp = h.do("GET", "/v1/blobs/"+sha, token, nil, nil)
+	got, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !bytes.Equal(got, data) || resp.Header.Get("X-Content-SHA256") != sha {
+		t.Fatalf("download: %d %q", resp.StatusCode, got)
+	}
+
+	missing := blobSHA([]byte("missing"))
+	if resp := h.do("HEAD", "/v1/blobs/"+missing, token, nil, nil); resp.StatusCode != 404 {
+		t.Fatalf("head missing: %d", resp.StatusCode)
+	}
+	var p problem
+	if code := h.json("GET", "/v1/blobs/"+missing, token, nil, &p); code != 404 || p.Code != "not_found" {
+		t.Fatalf("get missing: %d %+v", code, p)
+	}
+	if code := h.json("GET", "/v1/blobs/not-a-hash", token, nil, &p); code != 400 || p.Code != "invalid_request" {
+		t.Fatalf("bad sha format: %d %+v", code, p)
+	}
+
+	// Attachments are scoped to the account that uploaded them.
+	other := h.signUp("c@d.cn")
+	if resp := h.do("HEAD", "/v1/blobs/"+sha, other, nil, nil); resp.StatusCode != 404 {
+		t.Fatalf("other account sees the attachment: %d", resp.StatusCode)
+	}
+
+	// The routes require a bearer token like the rest of /v1.
+	if resp := h.do("PUT", "/v1/blobs/"+sha, "", bytes.NewReader(data), nil); resp.StatusCode != 401 {
+		t.Fatalf("anonymous upload: %d", resp.StatusCode)
+	}
+}
+
+func TestBlobRejectsHashMismatch(t *testing.T) {
+	h := newHarness(t, nil)
+	token := h.signUp("a@b.cn")
+	data := []byte("real-bytes")
+	claimed := blobSHA([]byte("other-bytes"))
+
+	var p problem
+	if code := h.json("PUT", "/v1/blobs/"+claimed, token, nil, nil); code != 400 {
+		t.Fatalf("empty body: %d", code)
+	}
+	resp := h.do("PUT", "/v1/blobs/"+claimed, token, bytes.NewReader(data), nil)
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 || p.Code != "invalid_request" {
+		t.Fatalf("hash mismatch: %d %+v", resp.StatusCode, p)
+	}
+	if resp := h.do("HEAD", "/v1/blobs/"+claimed, token, nil, nil); resp.StatusCode != 404 {
+		t.Fatalf("a mismatched upload must not be stored: %d", resp.StatusCode)
+	}
+}
+
+func TestBlobRejectsOversize(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_MAX_ATTACHMENT_BYTES": "4"})
+	token := h.signUp("a@b.cn")
+	data := []byte("too many bytes")
+	var p problem
+	resp := h.do("PUT", "/v1/blobs/"+blobSHA(data), token, bytes.NewReader(data), nil)
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 413 || p.Code != "payload_too_large" {
+		t.Fatalf("oversize: %d %+v", resp.StatusCode, p)
+	}
+}
+
 func TestLLMProxy(t *testing.T) {
 	var gotAuth string
 	var gotBody map[string]any
