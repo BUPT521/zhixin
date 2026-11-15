@@ -21,6 +21,7 @@ import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
+import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/platform/data_package_export.dart';
 import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/discussion_page.dart';
@@ -169,6 +170,7 @@ void main() {
     WidgetTester tester, {
     Size size = const Size(390, 844),
     BuddyAi? ai,
+    Clock? clock,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -178,7 +180,7 @@ void main() {
       await tester.pumpWidget(
         RepaintBoundary(
           key: previewKey,
-          child: ZhixinApp(ai: ai),
+          child: ZhixinApp(ai: ai, clock: clock),
         ),
       );
       scope = tester.state<AppScopeState>(find.byType(AppScope));
@@ -1628,7 +1630,7 @@ void main() {
   });
 
   testWidgets('时间预算点选算出的空档直接预约', (tester) async {
-    await openApp(tester);
+    await openApp(tester, clock: () => DateTime(2026, 11, 16, 9));
     final itemId = await tester.runAsync(() async {
       await scope!.study.capacity.setWindow(start: '19:00', end: '19:30');
       return scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
@@ -1666,11 +1668,11 @@ void main() {
   });
 
   testWidgets('时间预算点选空档前说明原预约会改到的时间', (tester) async {
-    await openApp(tester);
+    await openApp(tester, clock: () => DateTime(2026, 11, 16, 9));
     final itemId = await tester.runAsync(() async {
       await scope!.study.capacity.setWindow(start: '19:00', end: '19:30');
       final id = await scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
-      final day = DateTime.now().add(const Duration(days: 1));
+      final day = DateTime(2026, 11, 17);
       await scope!.schedule.addBlock(
         planItemId: id,
         start: DateTime(day.year, day.month, day.day, 18),

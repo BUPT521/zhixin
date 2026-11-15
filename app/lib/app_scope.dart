@@ -71,6 +71,7 @@ class AppScope extends StatefulWidget {
     required this.child,
     this.crashLog,
     this.ai,
+    this.clock,
     required this.themeMode,
   });
 
@@ -82,6 +83,9 @@ class AppScope extends StatefulWidget {
 
   /// 外观由应用根部持有，页面改它之后 MaterialApp 会立即重建。
   final ThemeModeController themeMode;
+
+  /// 时间来源；为空时取系统时钟，测试传固定时钟让当天窗口不随运行时刻变化。
+  final Clock? clock;
 
   static AppScopeState of(BuildContext context) {
     final data = context.dependOnInheritedWidgetOfExactType<_AppScopeData>();
@@ -125,7 +129,7 @@ class AppScopeState extends State<AppScope> {
   late AttachmentCache _attachmentCache;
   late CrashLog crashLog;
 
-  final Clock clock = systemClock;
+  late final Clock clock = widget.clock ?? systemClock;
   int cutoffHour = defaultDayCutoffHour;
 
   /// 用户从查找结果带入本次回答的来源；发送一次后清空。
