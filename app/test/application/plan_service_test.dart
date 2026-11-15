@@ -322,7 +322,7 @@ void main() {
         await memories.create(
           kind: MemoryKind.difficulty,
           content: '第 $index 条记忆',
-          sourceKind: 'message',
+          sourceKind: MemorySourceKind.message,
           transaction: txn,
         );
       }, label: writeMemoryAction);
@@ -331,7 +331,7 @@ void main() {
     await memories.create(
       kind: MemoryKind.preference,
       content: '自己记下的一条',
-      sourceKind: 'user',
+      sourceKind: MemorySourceKind.user,
     );
 
     final week = await service.loadWeek(now);

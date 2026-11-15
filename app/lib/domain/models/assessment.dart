@@ -2,23 +2,24 @@
 /// 用户自评由作答记录推出，不再单独保存；两者都只表示来源与依据，不标记是否核对。
 library;
 
+import '../rules/coded_enum.dart';
+
 /// 判断来源。
-enum AssessmentKind {
+enum AssessmentKind implements CodedEnum {
   model('model', '模型判断'),
-  user('user', '用户提供的核对依据');
+  user('user', '用户提供的核对依据'),
+  unknown('', '来源未知');
 
   const AssessmentKind(this.value, this.label);
 
+  @override
   final String value;
+
+  @override
   final String label;
 
-  static AssessmentKind fromValue(String value) {
-    return switch (value) {
-      'model' => AssessmentKind.model,
-      'user' => AssessmentKind.user,
-      _ => throw FormatException('未知的判断来源：$value'),
-    };
-  }
+  static AssessmentKind fromValue(String? value) =>
+      codedValueOr(AssessmentKind.values, value, unknown: unknown);
 }
 
 /// 一条学习判断；只保存来源、结论与依据，不标记是否已经核对。

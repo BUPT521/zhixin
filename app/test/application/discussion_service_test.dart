@@ -971,7 +971,7 @@ void main() {
       now: DateTime(2026, 11, 6, 20, 30),
     );
     expect(memories.single.content, '放缩方向不确定');
-    expect(memories.single.sourceKind, 'message');
+    expect(memories.single.sourceKind, MemorySourceKind.message);
 
     items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
@@ -1014,7 +1014,7 @@ void main() {
       now: DateTime(2026, 11, 6, 20, 30),
     );
     expect(memories.single.content, '喜欢先看例子');
-    expect(memories.single.sourceKind, 'user');
+    expect(memories.single.sourceKind, MemorySourceKind.user);
 
     final items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
@@ -1130,7 +1130,7 @@ void main() {
     final retried = await h.memories.activeForContext(
       now: DateTime(2026, 11, 6, 20, 30),
     );
-    expect(retried.single.sourceKind, 'user');
+    expect(retried.single.sourceKind, MemorySourceKind.user);
     items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
     );
@@ -1445,7 +1445,7 @@ void main() {
     final memoryId = await h.memories.create(
       kind: MemoryKind.difficulty,
       content: '以为条件概率和独立性等价',
-      sourceKind: 'user',
+      sourceKind: MemorySourceKind.user,
     );
     await h.memories.supersede(memoryId);
 

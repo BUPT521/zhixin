@@ -34,7 +34,10 @@ void main() {
 
     final all = await repo.list(includeInactive: true);
     expect(all, hasLength(3));
-    expect(all.where((memory) => memory.status == 'superseded'), hasLength(1));
+    expect(
+      all.where((memory) => memory.status == MemoryStatus.superseded),
+      hasLength(1),
+    );
   });
 
   test('记忆不按更新时间只取最近二十条，约束优先进入上下文', () async {

@@ -1,26 +1,66 @@
+import '../rules/coded_enum.dart';
 import '../rules/time_format.dart';
 
 /// 记忆类型（01 `memory.kind`）。
-enum MemoryKind {
+enum MemoryKind implements CodedEnum {
   preference('preference', '偏好'),
   constraint('constraint', '限制'),
   difficulty('difficulty', '困难'),
-  progress('progress', '进展');
+  progress('progress', '进展'),
+  unknown('', '类别未知');
 
   const MemoryKind(this.value, this.label);
 
+  @override
   final String value;
+
+  @override
   final String label;
 
   /// 困难与进展跟目标或材料走；偏好与限制跟人走，不写范围。
   bool get followsContext => this == difficulty || this == progress;
 
-  static MemoryKind fromValue(String value) {
-    return MemoryKind.values.firstWhere(
-      (kind) => kind.value == value,
-      orElse: () => MemoryKind.progress,
-    );
-  }
+  static MemoryKind fromValue(String? value) =>
+      codedValueOr(MemoryKind.values, value, unknown: unknown);
+}
+
+/// 记忆按哪条记录或哪次学习写入（01 `memory.source_kind`）。
+enum MemorySourceKind implements CodedEnum {
+  user('user', '你说的'),
+  message('message', '推断'),
+  attempt('attempt', '来自一次作答'),
+  session('session', '来自一次学习'),
+  unknown('', '来自本机');
+
+  const MemorySourceKind(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static MemorySourceKind fromValue(String? value) =>
+      codedValueOr(MemorySourceKind.values, value, unknown: unknown);
+}
+
+/// 记忆当前状态（01 `memory.status`）；删除与取代都不物理删除。
+enum MemoryStatus implements CodedEnum {
+  active('active', '有效'),
+  superseded('superseded', '已被取代'),
+  deleted('deleted', '已删除'),
+  unknown('', '状态未知');
+
+  const MemoryStatus(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static MemoryStatus fromValue(String? value) =>
+      codedValueOr(MemoryStatus.values, value, unknown: unknown);
 }
 
 /// 记忆召回的用途：规划、讲解与检查各取不同类别的条目。
@@ -60,10 +100,10 @@ class Memory {
     required this.kind,
     required this.content,
     this.scope,
-    this.sourceKind = 'user',
+    this.sourceKind = MemorySourceKind.user,
     this.sourceId,
     this.validUntil,
-    this.status = 'active',
+    this.status = MemoryStatus.active,
     this.createdAt,
     this.updatedAt,
   });
@@ -73,15 +113,17 @@ class Memory {
   final String content;
   final String? scope;
 
-  /// `user` / `message` / `attempt` / `session`。
-  final String sourceKind;
+  /// 这条记忆从哪来；界面按 [MemorySourceKind.label] 显示。
+  final MemorySourceKind sourceKind;
   final int? sourceId;
   final DateTime? validUntil;
-  final String status;
+
+  /// 当前状态；[active] 只表示还在用，删掉的仍留在库里。
+  final MemoryStatus status;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
-  bool get active => status == 'active';
+  bool get active => status == MemoryStatus.active;
 
   bool isValidAt(DateTime now) {
     if (!active) return false;
@@ -89,15 +131,9 @@ class Memory {
     return until == null || !until.isBefore(now);
   }
 
-  bool get fromModel => sourceKind == 'message';
+  bool get fromModel => sourceKind == MemorySourceKind.message;
 
-  String get sourceLabel => switch (sourceKind) {
-    'user' => '你说的',
-    'message' => '推断',
-    'attempt' => '来自一次作答',
-    'session' => '来自一次学习',
-    _ => '来自本机',
-  };
+  String get sourceLabel => sourceKind.label;
 
   String get validLabel {
     final until = validUntil;

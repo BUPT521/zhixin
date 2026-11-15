@@ -617,7 +617,7 @@ class DiscussionService {
             transactions: transactions,
             memories: memories,
             drafts: [for (final entry in userMemoryDrafts) entry.draft],
-            sourceKind: 'user',
+            sourceKind: MemorySourceKind.user,
             scope: scope,
             transaction: txn,
             clock: runtime.policy.clock,
@@ -992,7 +992,9 @@ class DiscussionService {
           content: item.content,
           validUntil: item.validUntil,
         ),
-        sourceKind: item.source == MemorySource.user ? 'user' : 'message',
+        sourceKind: item.source == MemorySource.user
+            ? MemorySourceKind.user
+            : MemorySourceKind.message,
         sourceId: messageId,
         scope: resolved.scope,
         clock: runtime.policy.clock,

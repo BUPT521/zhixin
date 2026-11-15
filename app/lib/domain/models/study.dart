@@ -1,48 +1,46 @@
 /// 目标、学习事项、一次学习、时间块与课表（01 第 4 章）。
 library;
 
+import '../rules/coded_enum.dart';
 import 'material.dart';
 
-enum LearningGoalStatus {
+enum LearningGoalStatus implements CodedEnum {
   active('active', '进行中'),
   paused('paused', '已暂停'),
   done('done', '已结束'),
   unknown('', '状态未知');
 
-  const LearningGoalStatus(this.code, this.label);
+  const LearningGoalStatus(this.value, this.label);
 
-  final String code;
+  @override
+  final String value;
+
+  @override
   final String label;
 
-  static LearningGoalStatus fromCode(String? value) => switch (value) {
-    null || 'active' => active,
-    'paused' => paused,
-    'done' => done,
-    _ => unknown,
-  };
+  static LearningGoalStatus fromValue(String? value) =>
+      codedValueOr(LearningGoalStatus.values, value, unknown: unknown);
 }
 
-enum PlanItemStatus {
+enum PlanItemStatus implements CodedEnum {
   todo('todo', '待办'),
   doing('doing', '进行中'),
   done('done', '已完成'),
   deferred('deferred', '已暂缓'),
   unknown('', '状态未知');
 
-  const PlanItemStatus(this.code, this.label);
+  const PlanItemStatus(this.value, this.label);
 
-  final String code;
+  @override
+  final String value;
+
+  @override
   final String label;
 
   bool get open => this == todo || this == doing;
 
-  static PlanItemStatus fromCode(String? value) => switch (value) {
-    null || 'todo' => todo,
-    'doing' => doing,
-    'done' => done,
-    'deferred' => deferred,
-    _ => unknown,
-  };
+  static PlanItemStatus fromValue(String? value) =>
+      codedValueOr(PlanItemStatus.values, value, unknown: unknown);
 }
 
 /// 近期目标（01 `learning_goal`）。

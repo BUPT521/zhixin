@@ -1,6 +1,7 @@
 import '../ai/buddy_prompt.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/memory_repository.dart';
+import '../domain/models/memory.dart';
 import '../domain/rules/time_policy.dart';
 import 'memory_view.dart';
 
@@ -40,7 +41,7 @@ Future<ApplyResult> applyMemoryDrafts({
   required WriteTransactions transactions,
   required MemoryRepository memories,
   required List<MemoryDraft> drafts,
-  required String sourceKind,
+  required MemorySourceKind sourceKind,
   int? sourceId,
   String? scope,
   WriteTransaction? transaction,
@@ -114,7 +115,7 @@ Future<AcceptedMemory> confirmMemoryDraft({
   required WriteTransactions transactions,
   required MemoryRepository memories,
   required MemoryDraft draft,
-  required String sourceKind,
+  required MemorySourceKind sourceKind,
   required int sourceId,
   required String? scope,
   required Clock clock,

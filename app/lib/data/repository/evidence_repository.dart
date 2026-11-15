@@ -470,6 +470,8 @@ class EvidenceRepository {
           createdAt: optionalDateTime(row.submittedAt),
           sourceRef: row.sourceRef,
         );
+      case EvidenceKind.unknown:
+        return null;
     }
   }
 

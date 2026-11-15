@@ -51,7 +51,7 @@ class MemoryService {
       await repository.create(
         kind: kind,
         content: content,
-        sourceKind: 'user',
+        sourceKind: MemorySourceKind.user,
         validUntil: validUntil,
         transaction: txn,
       );

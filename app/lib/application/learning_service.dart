@@ -508,7 +508,7 @@ class LearningService {
               content: item.content,
               validUntil: item.validUntil,
             ),
-            sourceKind: 'attempt',
+            sourceKind: MemorySourceKind.attempt,
             sourceId: attemptId,
             scope: scope,
             clock: runtime.policy.clock,
@@ -911,7 +911,7 @@ class LearningService {
       kind: MemoryKind.difficulty,
       content: text,
       scope: scope,
-      sourceKind: 'session',
+      sourceKind: MemorySourceKind.session,
       sourceId: session.id,
       transaction: transaction,
     );

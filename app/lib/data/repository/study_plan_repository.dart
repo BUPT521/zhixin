@@ -66,7 +66,7 @@ class StudyPlanRepository {
         pageFrom,
         pageTo,
         currentPage,
-        StudyPlanStatus.active.code,
+        StudyPlanStatus.active.value,
         now,
       ),
     );
@@ -111,7 +111,7 @@ class StudyPlanRepository {
               : draft.note,
           draft.pageFrom,
           draft.pageTo,
-          PlanItemStatus.todo.code,
+          PlanItemStatus.todo.value,
           now,
         ),
       );
@@ -147,7 +147,7 @@ class StudyPlanRepository {
               : draft.note,
           draft.pageFrom,
           draft.pageTo,
-          PlanItemStatus.todo.code,
+          PlanItemStatus.todo.value,
           now,
         ),
       );
@@ -163,7 +163,7 @@ class StudyPlanRepository {
     pageFrom: row.pageFrom,
     pageTo: row.pageTo,
     currentPage: row.currentPage,
-    status: StudyPlanStatus.fromCode(row.status),
+    status: StudyPlanStatus.fromValue(row.status),
     materialTitle: row.materialTitle,
     materialIsDocx: isDocxFile(row.sourceFileName),
     stepsDone: row.stepsDone,
@@ -248,7 +248,7 @@ class StudyPlanRepository {
     dueAt: optionalDateTime(dueAt ?? ''),
     estMinutes: estMinutes,
     priority: priority,
-    status: PlanItemStatus.fromCode(status),
+    status: PlanItemStatus.fromValue(status),
     source: source,
     completedAt: optionalDateTime(completedAt ?? ''),
     createdAt: requiredDateTime(createdAt),
@@ -287,11 +287,11 @@ class StudyPlanRepository {
     final rows = await _db.selectGenerated(
       (db) => db
           .planRows(
-            PlanItemStatus.done.code,
+            PlanItemStatus.done.value,
             id,
             openOnly ? 1 : 0,
-            StudyPlanStatus.active.code,
-            StudyPlanStatus.paused.code,
+            StudyPlanStatus.active.value,
+            StudyPlanStatus.paused.value,
             activeOnly ? 1 : 0,
             statusFirst ? 1 : 0,
             rowLimit,
@@ -377,7 +377,7 @@ class StudyPlanRepository {
     final now = formatDateTime(_clock());
     await txn.writeGenerated(
       (db) => db.setStudyStepStatus(
-        change.status.code,
+        change.status.value,
         change.status == PlanItemStatus.done ? now : null,
         now,
         itemId,
@@ -386,11 +386,11 @@ class StudyPlanRepository {
     if (change.resetOtherActive) {
       await txn.writeGenerated(
         (db) => db.resetOtherActiveStudySteps(
-          PlanItemStatus.todo.code,
+          PlanItemStatus.todo.value,
           now,
           planId!,
           itemId,
-          PlanItemStatus.doing.code,
+          PlanItemStatus.doing.value,
         ),
       );
     }
@@ -420,10 +420,9 @@ class StudyPlanRepository {
     WriteTransaction? transaction,
   }) async {
     final stamp = formatDateTime(_clock());
-    await writeExecutor(
-      transaction,
-      _db,
-    ).writeGenerated((db) => db.setStudyPlanStatus(status.code, stamp, planId));
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.setStudyPlanStatus(status.value, stamp, planId),
+    );
   }
 
   Future<void> _recompute(RawExecutor executor, int planId) async {
@@ -452,7 +451,7 @@ class StudyPlanRepository {
     await executor.writeGenerated(
       (db) => db.updateStudyPlanProgress(
         currentPage,
-        status != plan.status ? status.code : null,
+        status != plan.status ? status.value : null,
         stamp,
         planId,
       ),
@@ -476,7 +475,7 @@ class StudyPlanRepository {
     pageFrom: row.pageFrom,
     pageTo: row.pageTo,
     currentPage: row.currentPage,
-    status: StudyPlanStatus.fromCode(row.status),
+    status: StudyPlanStatus.fromValue(row.status),
     createdAt: requiredDateTime(row.createdAt),
     updatedAt: requiredDateTime(row.updatedAt),
   );

@@ -28,7 +28,7 @@ class TaskRepository {
   /// 当前有效的全部目标；没有截止日期的排在后面。
   Future<List<LearningGoal>> activeGoals() async {
     final rows = await _db.selectGenerated(
-      (db) => db.activeGoals(LearningGoalStatus.active.code).get(),
+      (db) => db.activeGoals(LearningGoalStatus.active.value).get(),
     );
     return rows.map(_goalOf).toList(growable: false);
   }
@@ -38,9 +38,9 @@ class TaskRepository {
     final rows = await _db.selectGenerated(
       (db) => db
           .goals(
-            LearningGoalStatus.active.code,
-            LearningGoalStatus.paused.code,
-            LearningGoalStatus.done.code,
+            LearningGoalStatus.active.value,
+            LearningGoalStatus.paused.value,
+            LearningGoalStatus.done.value,
           )
           .get(),
     );
@@ -53,7 +53,7 @@ class TaskRepository {
     title: row.title,
     scopeText: row.scopeText,
     dueDate: row.dueDate,
-    status: LearningGoalStatus.fromCode(row.status),
+    status: LearningGoalStatus.fromValue(row.status),
     createdAt: requiredDateTime(row.createdAt),
     updatedAt: requiredDateTime(row.updatedAt),
   );
@@ -92,7 +92,7 @@ class TaskRepository {
     dueAt: optionalDateTime(dueAt ?? ''),
     estMinutes: estMinutes,
     priority: priority,
-    status: PlanItemStatus.fromCode(status),
+    status: PlanItemStatus.fromValue(status),
     source: source,
     completedAt: optionalDateTime(completedAt ?? ''),
     createdAt: requiredDateTime(createdAt),
@@ -290,7 +290,7 @@ class TaskRepository {
         title.trim(),
         scopeText?.trim(),
         dueDate == null ? null : formatDate(dueDate),
-        LearningGoalStatus.active.code,
+        LearningGoalStatus.active.value,
         stamp,
       ),
     );
@@ -315,7 +315,7 @@ class TaskRepository {
     await writeExecutor(
       transaction,
       _db,
-    ).writeGenerated((db) => db.setLearningGoalStatus(status.code, stamp, id));
+    ).writeGenerated((db) => db.setLearningGoalStatus(status.value, stamp, id));
   }
 
   /// 学习事项。`onlyActiveGoals` 只保留无归属或所属目标仍在进行的事项，
@@ -328,13 +328,13 @@ class TaskRepository {
       (db) => db
           .items(
             openOnly ? 1 : 0,
-            PlanItemStatus.todo.code,
-            PlanItemStatus.doing.code,
+            PlanItemStatus.todo.value,
+            PlanItemStatus.doing.value,
             onlyActiveGoals ? 1 : 0,
-            LearningGoalStatus.active.code,
+            LearningGoalStatus.active.value,
             1,
-            PlanItemStatus.deferred.code,
-            PlanItemStatus.done.code,
+            PlanItemStatus.deferred.value,
+            PlanItemStatus.done.value,
           )
           .get(),
     );
@@ -394,7 +394,7 @@ class TaskRepository {
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) async {
     if (limit <= 0) return const [];
     final rows = await _db.selectGenerated(
-      (db) => db.doneItems(PlanItemStatus.done.code, limit, offset).get(),
+      (db) => db.doneItems(PlanItemStatus.done.value, limit, offset).get(),
     );
     return rows.map(_itemOfDone).toList(growable: false);
   }
@@ -402,7 +402,7 @@ class TaskRepository {
   /// 已完成事项总数，用于“显示已完成（N）”与是否还有下一页。
   Future<int> countDone() async {
     final rows = await _db.selectGenerated(
-      (db) => db.countDoneItems(PlanItemStatus.done.code).get(),
+      (db) => db.countDoneItems(PlanItemStatus.done.value).get(),
     );
     return rows.isEmpty ? 0 : rows.first;
   }
@@ -436,9 +436,9 @@ class TaskRepository {
     final rows = await _db.selectGenerated(
       (db) => db
           .nextDueItem(
-            PlanItemStatus.todo.code,
-            PlanItemStatus.doing.code,
-            LearningGoalStatus.active.code,
+            PlanItemStatus.todo.value,
+            PlanItemStatus.doing.value,
+            LearningGoalStatus.active.value,
           )
           .get(),
     );
@@ -466,7 +466,7 @@ class TaskRepository {
         nullableText(note),
         dueAt == null ? null : formatDateTime(dueAt),
         estMinutes,
-        PlanItemStatus.todo.code,
+        PlanItemStatus.todo.value,
         source,
         origin == null ? null : jsonEncode(origin),
         formatDateTime(now),

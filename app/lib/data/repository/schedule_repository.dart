@@ -69,7 +69,7 @@ class ScheduleRepository {
     ),
     itemTitle: r.pTitle,
     itemNote: r.pNote,
-    itemStatus: PlanItemStatus.fromCode(r.pStatus),
+    itemStatus: PlanItemStatus.fromValue(r.pStatus),
   );
 
   static ScheduledItem _scheduledOfNext(NextPlannedBlockResult r) =>
@@ -85,7 +85,7 @@ class ScheduleRepository {
         ),
         itemTitle: r.pTitle,
         itemNote: r.pNote,
-        itemStatus: PlanItemStatus.fromCode(r.pStatus),
+        itemStatus: PlanItemStatus.fromValue(r.pStatus),
       );
 
   ScheduleRepository(this._db, {this._clock = systemClock});

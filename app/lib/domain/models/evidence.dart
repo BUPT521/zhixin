@@ -1,24 +1,25 @@
+import '../rules/coded_enum.dart';
 import '../rules/content_identity.dart';
 import 'score.dart';
 
 /// 检索命中的来源种类；界面分组、回答引用与范围核对都按它区分。
-enum EvidenceKind {
+enum EvidenceKind implements CodedEnum {
   materialPage('material_page', '材料页'),
   question('question', '题目'),
   answer('answer', '已提交作答'),
-  message('message', '讨论消息');
+  message('message', '讨论消息'),
+  unknown('', '来源未知');
 
   const EvidenceKind(this.value, this.label);
 
+  @override
   final String value;
+
+  @override
   final String label;
 
-  static EvidenceKind fromValue(String value) {
-    return EvidenceKind.values.firstWhere(
-      (kind) => kind.value == value,
-      orElse: () => EvidenceKind.message,
-    );
-  }
+  static EvidenceKind fromValue(String? value) =>
+      codedValueOr(EvidenceKind.values, value, unknown: unknown);
 }
 
 /// 查找是谁发起的：用户主动查找可以选范围，回答前检索只能使用本次请求的范围。

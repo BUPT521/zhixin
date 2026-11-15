@@ -96,7 +96,8 @@ class MemoryProposalService {
     final existing = await memories.list(includeInactive: true);
     final processed = <int>{
       for (final memory in existing)
-        if (memory.sourceKind == 'attempt' && memory.sourceId != null)
+        if (memory.sourceKind == MemorySourceKind.attempt &&
+            memory.sourceId != null)
           memory.sourceId!,
     };
 
@@ -166,7 +167,10 @@ class MemoryProposalService {
 
   /// 用户确认之后写入记忆，返回写结果供撤销；重复确认同一条提案不再写入。
   Future<WriteResult> accept(MemoryProposal proposal) async {
-    final known = await memories.hasSource('attempt', proposal.sourceId);
+    final known = await memories.hasSource(
+      MemorySourceKind.attempt,
+      proposal.sourceId,
+    );
     if (known) {
       return const WriteResult.skipped('这条作答已经写成记忆');
     }
@@ -180,7 +184,7 @@ class MemoryProposalService {
     return transactions.run((txn) async {
       // 事务内再核对一次，两个确认同时到达时也只写入一条。
       if (await memories.hasSource(
-        'attempt',
+        MemorySourceKind.attempt,
         proposal.sourceId,
         transaction: txn,
       )) {
@@ -190,7 +194,7 @@ class MemoryProposalService {
         kind: proposal.kind,
         content: proposal.content,
         scope: proposal.scope,
-        sourceKind: 'attempt',
+        sourceKind: MemorySourceKind.attempt,
         sourceId: proposal.sourceId,
         transaction: txn,
       );

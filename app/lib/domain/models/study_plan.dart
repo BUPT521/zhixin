@@ -6,25 +6,25 @@ library;
 
 import 'study.dart';
 import 'material.dart';
+import '../rules/coded_enum.dart';
 import '../rules/content_identity.dart' as identity;
 
-enum StudyPlanStatus {
+enum StudyPlanStatus implements CodedEnum {
   active('active', '进行中'),
   paused('paused', '已暂停'),
   done('done', '已完成'),
   unknown('', '状态未知');
 
-  const StudyPlanStatus(this.code, this.label);
+  const StudyPlanStatus(this.value, this.label);
 
-  final String code;
+  @override
+  final String value;
+
+  @override
   final String label;
 
-  static StudyPlanStatus fromCode(String? value) => switch (value) {
-    null || 'active' => active,
-    'paused' => paused,
-    'done' => done,
-    _ => unknown,
-  };
+  static StudyPlanStatus fromValue(String? value) =>
+      codedValueOr(StudyPlanStatus.values, value, unknown: unknown);
 }
 
 /// 系统学习的一步草案；模型建议与本地方案共用这份领域数据。

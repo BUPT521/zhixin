@@ -324,7 +324,10 @@ class _MemoryDialogState extends State<_MemoryDialog> {
           ZhixinSelect<MemoryKind>(
             value: _kind,
             label: '类型',
-            options: {for (final kind in MemoryKind.values) kind: kind.label},
+            options: {
+              for (final kind in MemoryKind.values)
+                if (kind != MemoryKind.unknown) kind: kind.label,
+            },
             onChange: (value) {
               if (value != null) setState(() => _kind = value);
             },

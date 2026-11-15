@@ -1023,7 +1023,7 @@ void main() {
     expect(memories.single.kind, MemoryKind.difficulty);
     expect(memories.single.scope, memoryGoalScope(goalId));
     expect(memories.single.content, '放缩方向还不确定');
-    expect(memories.single.sourceKind, 'session');
+    expect(memories.single.sourceKind, MemorySourceKind.session);
 
     await answer('放缩方向还不确定');
     expect(await h.memories.list(), hasLength(1));

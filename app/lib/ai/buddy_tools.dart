@@ -166,9 +166,12 @@ AgentTool _proposeMemories(_Proposals<MemoryDraft> proposals) => AgentTool(
       final validUntil = _optionalText(item, 'valid_until');
       final expiry = validUntil == null ? null : DateTime.tryParse(validUntil);
       if (validUntil != null && expiry == null) continue;
+      // 认不出的类型不写进库：记忆类型只有固定的几种，未知值落库会被 CHECK 拒绝。
+      final kind = MemoryKind.fromValue(item['kind'] as String?);
+      if (kind == MemoryKind.unknown) continue;
       drafts.add(
         MemoryDraft(
-          kind: MemoryKind.values.byName(item['kind'] as String),
+          kind: kind,
           content: (item['content'] as String).trim(),
           validUntil: expiry,
           source: MemorySource.values.byName(item['source'] as String),

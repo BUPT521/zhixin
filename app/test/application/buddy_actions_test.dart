@@ -25,7 +25,7 @@ void main() {
       transactions: WriteTransactions(rig.db),
       memories: memories,
       drafts: const [draft],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
       sourceId: 1,
     );
     expect(result.changes, hasLength(1));
@@ -47,7 +47,7 @@ void main() {
     final id = await memories.create(
       kind: MemoryKind.difficulty,
       content: '原有困难',
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
     );
     final created = (await rig.engine.undoableCommits(rig.db.raw)).last;
     await memories.updateContent(id, content: '用户修改后的困难');
@@ -100,7 +100,7 @@ void main() {
       drafts: const [
         MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
       ],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
     );
     final second = await applyMemoryDrafts(
       transactions: WriteTransactions(rig.db),
@@ -109,7 +109,7 @@ void main() {
         const MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
         MemoryDraft(kind: MemoryKind.difficulty, content: '长' * 201),
       ],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
     );
     expect(second.changes, isEmpty);
     expect(second.skipped, isNotEmpty);
@@ -134,21 +134,21 @@ void main() {
         MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容'),
         MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容'),
       ],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
       scope: 'goal:1',
     );
     final otherScope = await applyMemoryDrafts(
       transactions: WriteTransactions(rig.db),
       memories: memories,
       drafts: const [MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容')],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
       scope: 'goal:2',
     );
     final otherKind = await applyMemoryDrafts(
       transactions: WriteTransactions(rig.db),
       memories: memories,
       drafts: const [MemoryDraft(kind: MemoryKind.preference, content: '同一内容')],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
       scope: 'goal:1',
     );
 
@@ -173,7 +173,7 @@ void main() {
         MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
         MemoryDraft(kind: MemoryKind.constraint, content: '晚上只有半小时'),
       ],
-      sourceKind: 'message',
+      sourceKind: MemorySourceKind.message,
       scope: memoryGoalScope(3),
     );
     final all = await memories.list();

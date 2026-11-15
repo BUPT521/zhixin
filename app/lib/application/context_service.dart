@@ -203,6 +203,9 @@ class ContextService {
           case EvidenceKind.question || EvidenceKind.answer:
             otherHits.add(hit);
             chosen++;
+          case EvidenceKind.unknown:
+            // 认不出来源的命中不进入上下文。
+            break;
         }
       }
       materialHits = materialHitsFound

@@ -19,10 +19,10 @@ class MemoryRepository {
     kind: MemoryKind.fromValue(row.kind),
     content: row.content,
     scope: row.scope,
-    sourceKind: row.sourceKind,
+    sourceKind: MemorySourceKind.fromValue(row.sourceKind),
     sourceId: row.sourceId,
     validUntil: optionalDateTime(row.validUntil ?? ''),
-    status: row.status,
+    status: MemoryStatus.fromValue(row.status),
     createdAt: requiredDateTime(row.createdAt),
     updatedAt: requiredDateTime(row.updatedAt),
   );
@@ -91,7 +91,7 @@ class MemoryRepository {
     required MemoryKind kind,
     required String content,
     String? scope,
-    String sourceKind = 'user',
+    MemorySourceKind sourceKind = MemorySourceKind.user,
     int? sourceId,
     DateTime? validUntil,
     WriteTransaction? transaction,
@@ -104,7 +104,7 @@ class MemoryRepository {
         kind.value,
         text,
         scope?.trim(),
-        sourceKind,
+        sourceKind.value,
         sourceId,
         validUntil == null ? null : formatDateTime(validUntil),
         now,
@@ -134,27 +134,27 @@ class MemoryRepository {
   Future<void> supersede(int id) async {
     final stamp = formatDateTime(_clock());
     await _db.writeGenerated(
-      (db) => db.setMemoryStatus('superseded', stamp, id),
+      (db) => db.setMemoryStatus(MemoryStatus.superseded.value, stamp, id),
     );
   }
 
   Future<void> delete(int id, {WriteTransaction? transaction}) async {
     final stamp = formatDateTime(_clock());
-    await writeExecutor(
-      transaction,
-      _db,
-    ).writeGenerated((db) => db.setMemoryStatus('deleted', stamp, id));
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.setMemoryStatus(MemoryStatus.deleted.value, stamp, id),
+    );
   }
 
   /// 这条来源是否已经有记忆记录（包括纠正或删除过的），用于避免同一来源
   /// 重复生成记忆；可以在写入事务里核对，避免读到事务外的旧状态。
   Future<bool> hasSource(
-    String sourceKind,
+    MemorySourceKind sourceKind,
     int sourceId, {
     WriteTransaction? transaction,
   }) async {
     final row = await writeExecutor(transaction, _db).selectGenerated(
-      (db) => db.hasMemoryFromSource(sourceKind, sourceId).getSingleOrNull(),
+      (db) =>
+          db.hasMemoryFromSource(sourceKind.value, sourceId).getSingleOrNull(),
     );
     return row != null;
   }
@@ -162,6 +162,8 @@ class MemoryRepository {
   /// 撤销删除或纠正时恢复为 active。
   Future<void> restore(int id) async {
     final stamp = formatDateTime(_clock());
-    await _db.writeGenerated((db) => db.setMemoryStatus('active', stamp, id));
+    await _db.writeGenerated(
+      (db) => db.setMemoryStatus(MemoryStatus.active.value, stamp, id),
+    );
   }
 }

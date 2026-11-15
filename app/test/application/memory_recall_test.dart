@@ -156,7 +156,7 @@ void main() {
     await repo.create(
       kind: MemoryKind.progress,
       content: '来自作答的进展：第 8 题独立完成',
-      sourceKind: 'attempt',
+      sourceKind: MemorySourceKind.attempt,
       sourceId: 7,
     );
     await repo.create(kind: MemoryKind.progress, content: '手工写下的进展');
@@ -165,6 +165,6 @@ void main() {
         .recall(now: now, purpose: MemoryRecallPurpose.check);
     expect(results, hasLength(2));
     expect(results.first.content, contains('第 8 题独立完成'));
-    expect(results.last.sourceKind, 'user');
+    expect(results.last.sourceKind, MemorySourceKind.user);
   });
 }

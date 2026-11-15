@@ -444,6 +444,7 @@ class SemanticIndexService {
         EvidenceKind.answer => '一次已提交作答',
         EvidenceKind.question => '题目',
         EvidenceKind.message => '一次讨论',
+        EvidenceKind.unknown => '来源未知',
       },
       snippet: searchSnippet(candidate.content, terms, limit: 100),
       text: candidate.content,

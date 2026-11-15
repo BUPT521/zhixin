@@ -57,11 +57,13 @@ class MemoryRecallService {
       if (purpose == MemoryRecallPurpose.check) {
         // 检查优先用带来源的进展：来自作答或场次的进展比手工写下的更可核对。
         final leftSourced =
-            left.kind == MemoryKind.progress && left.sourceKind != 'user'
+            left.kind == MemoryKind.progress &&
+                left.sourceKind != MemorySourceKind.user
             ? 0
             : 1;
         final rightSourced =
-            right.kind == MemoryKind.progress && right.sourceKind != 'user'
+            right.kind == MemoryKind.progress &&
+                right.sourceKind != MemorySourceKind.user
             ? 0
             : 1;
         if (leftSourced != rightSourced) return leftSourced - rightSourced;

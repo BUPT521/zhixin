@@ -235,7 +235,7 @@ void main() {
           id: 1,
           kind: MemoryKind.difficulty,
           content: '放缩方向不确定',
-          status: 'active',
+          status: MemoryStatus.active,
         ),
       ],
       mode: BuddyMode.hint,

@@ -219,5 +219,7 @@ Future<bool> hitInScope(
         )
         ..limit(1);
       return (await query.get()).isNotEmpty;
+    case EvidenceKind.unknown:
+      return false;
   }
 }

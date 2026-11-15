@@ -187,10 +187,10 @@ void main() {
     final memory = written.singleWhere(
       (entry) => entry.sourceId == progress.sourceId,
     );
-    expect(memory.sourceKind, 'attempt');
+    expect(memory.sourceKind, MemorySourceKind.attempt);
     expect(memory.kind, MemoryKind.progress);
     expect(memory.scope, memoryGoalScope(1));
-    expect(memory.status, 'active');
+    expect(memory.status, MemoryStatus.active);
     expect(memory.content, contains('独立完成'));
 
     // 再次确认同一条提案不再写入。
@@ -210,7 +210,10 @@ void main() {
 
     // 记忆页仍可用既有入口纠正与删除；这里验证入口存在且能改变状态。
     expect((await memoryService.delete(memory.id)).commitId, isNotNull);
-    expect((await MemoryRepository(rig.db).byId(memory.id))!.status, 'deleted');
+    expect(
+      (await MemoryRepository(rig.db).byId(memory.id))!.status,
+      MemoryStatus.deleted,
+    );
   });
 
   test('同一判断来自不同作答时合并成一条提案', () async {

@@ -19,7 +19,7 @@ void main() {
     final id = await memories.create(
       kind: MemoryKind.difficulty,
       content: '以为条件概率和独立性等价',
-      sourceKind: 'user',
+      sourceKind: MemorySourceKind.user,
     );
     final memory = (await memories.byId(id))!;
     await service.save(memory, content: '条件概率不等于独立性，需要单独判断');
@@ -83,11 +83,11 @@ void main() {
 
     final result = await service.delete(id);
     expect(result.commitId, isNotNull);
-    expect((await memories.byId(id))!.status, 'deleted');
+    expect((await memories.byId(id))!.status, MemoryStatus.deleted);
 
     final undone = await rig.revisions.undoCommit(result.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
-    expect((await memories.byId(id))!.status, 'active');
+    expect((await memories.byId(id))!.status, MemoryStatus.active);
   });
 
   test('新增记忆返回提交编号，撤销后移除这一条', () async {
