@@ -25,7 +25,7 @@ void main() {
     await expectLater(
       service.importMaterial(
         title: '概率论讲义',
-        kind: 'book',
+        kind: MaterialKind.book,
         pages: const [
           (pageNo: 1, content: '第一页', label: null),
           (pageNo: 0, content: '无效页码', label: null),

@@ -6,6 +6,7 @@ import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
+import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/search_terms.dart';
 import 'package:zhixin/domain/rules/time_format.dart';
@@ -67,7 +68,7 @@ void main() {
 
     final material = await materials.create(
       title: '线性代数讲义',
-      kind: 'book',
+      kind: MaterialKind.book,
       goalId: goalB,
     );
     await materials.addPage(
@@ -118,7 +119,7 @@ void main() {
     // 目标内的检索不带出别的目标的材料页。
     final probabilityMaterial = await materials.create(
       title: '概率论讲义',
-      kind: 'text',
+      kind: MaterialKind.text,
       goalId: goalA,
     );
     await materials.addPage(

@@ -169,7 +169,10 @@ void main() {
       runtime: testRuntime(policy: () => policy),
     );
 
-    final id = await conversations.create(title: '同一道题', entryKind: 'text');
+    final id = await conversations.create(
+      title: '同一道题',
+      entryKind: EntryKind.text,
+    );
     await conversations.append(id, role: 'user', content: '求条件概率');
     for (var index = 0; index < 2; index++) {
       final attempt = await attempts.ensureOpenAttempt(id);

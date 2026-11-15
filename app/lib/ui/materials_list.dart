@@ -336,7 +336,7 @@ class _MaterialDraft {
   });
 
   final String title;
-  final String kind;
+  final MaterialKind kind;
   final int pageNo;
   final String content;
   final String? sourceRef;
@@ -368,7 +368,7 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
   final _pageNo = TextEditingController(text: '1');
   final _label = TextEditingController();
   final _content = TextEditingController();
-  String _kind = 'slides';
+  MaterialKind _kind = MaterialKind.slides;
   GoalChoice _goal = GoalChoice.unassigned;
 
   @override
@@ -394,16 +394,15 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
             hint: '概率论第 12 讲课件',
           ),
           SizedBox(height: context.zhixin.space.gap),
-          ZhixinSelect<String>(
+          ZhixinSelect<MaterialKind>(
             value: _kind,
             label: '类型',
-            options: const {
-              'slides': '课件',
-              'book': '教材',
-              'text': '文字材料',
-              'other': '其他',
+            options: {
+              for (final kind in MaterialKind.values)
+                if (kind != MaterialKind.unknown) kind: kind.label,
             },
-            onChange: (value) => setState(() => _kind = value ?? 'slides'),
+            onChange: (value) =>
+                setState(() => _kind = value ?? MaterialKind.slides),
           ),
           SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(

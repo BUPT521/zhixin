@@ -11,6 +11,7 @@ import 'package:zhixin/application/study_plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
+import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
@@ -124,7 +125,7 @@ class _Harness {
   }
 
   Future<int> materialWithPages(List<int> pageNos) async {
-    final id = await materials.create(title: '概率论讲义', kind: 'book');
+    final id = await materials.create(title: '概率论讲义', kind: MaterialKind.book);
     for (final pageNo in pageNos) {
       await materials.addPage(
         materialId: id,

@@ -76,9 +76,18 @@ void main() {
 
     expect((await tasks.goalById(goalA))!.status, LearningGoalStatus.paused);
     expect((await tasks.goalById(goalB))!.status, LearningGoalStatus.active);
-    expect((await schedule.blockById(flexible))!.status, 'cancelled');
-    expect((await schedule.blockById(fixed))!.status, 'planned');
-    expect((await schedule.blockById(other))!.status, 'planned');
+    expect(
+      (await schedule.blockById(flexible))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
+    expect(
+      (await schedule.blockById(fixed))!.status,
+      ScheduleBlockStatus.planned,
+    );
+    expect(
+      (await schedule.blockById(other))!.status,
+      ScheduleBlockStatus.planned,
+    );
     expect(
       (await tasks.items()).map((item) => item.status),
       everyElement(PlanItemStatus.todo),
@@ -104,7 +113,10 @@ void main() {
     expect(pause!.action, '暂停目标');
     final undone = await rig.revisions.undoCommit(pauseId);
     expect(undone.applied, isTrue);
-    expect((await schedule.blockById(flexible))!.status, 'planned');
+    expect(
+      (await schedule.blockById(flexible))!.status,
+      ScheduleBlockStatus.planned,
+    );
     expect((await tasks.goalById(goalA))!.status, LearningGoalStatus.active);
   });
 
@@ -137,8 +149,14 @@ void main() {
     );
     final pauseId = pauseResult.commitId!;
 
-    expect((await schedule.blockById(first))!.status, 'cancelled');
-    expect((await schedule.blockById(second))!.status, 'cancelled');
+    expect(
+      (await schedule.blockById(first))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
+    expect(
+      (await schedule.blockById(second))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
     expect((await tasks.goalById(goal))!.status, LearningGoalStatus.paused);
 
     // 目标状态与两条取消落在同一条提交里，撤销一次全部恢复。
@@ -147,8 +165,14 @@ void main() {
     expect(details.changes, hasLength(3));
     final undone = await rig.revisions.undoCommit(pauseId);
     expect(undone.applied, isTrue);
-    expect((await schedule.blockById(first))!.status, 'planned');
-    expect((await schedule.blockById(second))!.status, 'planned');
+    expect(
+      (await schedule.blockById(first))!.status,
+      ScheduleBlockStatus.planned,
+    );
+    expect(
+      (await schedule.blockById(second))!.status,
+      ScheduleBlockStatus.planned,
+    );
     expect((await tasks.goalById(goal))!.status, LearningGoalStatus.active);
   });
 
@@ -170,7 +194,10 @@ void main() {
       end: tomorrow.add(const Duration(minutes: 30)),
     );
     await service.pauseGoal(goal);
-    expect((await schedule.blockById(block))!.status, 'planned');
+    expect(
+      (await schedule.blockById(block))!.status,
+      ScheduleBlockStatus.planned,
+    );
     expect((await tasks.goalById(goal))!.status, LearningGoalStatus.paused);
   });
 
@@ -212,9 +239,18 @@ void main() {
 
     await service.setStatus(item, PlanItemStatus.done);
 
-    expect((await schedule.blockById(started))!.status, 'done');
-    expect((await schedule.blockById(missed))!.status, 'cancelled');
-    expect((await schedule.blockById(upcoming))!.status, 'cancelled');
+    expect(
+      (await schedule.blockById(started))!.status,
+      ScheduleBlockStatus.done,
+    );
+    expect(
+      (await schedule.blockById(missed))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
+    expect(
+      (await schedule.blockById(upcoming))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
   });
 
   test('安排页按自然周读取时间块，周一凌晨不回到上一周', () async {

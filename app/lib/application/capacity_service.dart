@@ -217,7 +217,7 @@ class CapacityService {
         );
       }
       for (final block in blocks) {
-        if (block.block.status != 'planned' ||
+        if (block.block.status != ScheduleBlockStatus.planned ||
             movableIds.contains(block.block.id)) {
           continue;
         }

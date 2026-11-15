@@ -5,10 +5,48 @@
 /// 记录：题目取开始作答时确定的用户消息与图片，开始作答后 `hasAttempts` 为真。
 library;
 
+import '../rules/coded_enum.dart';
 import '../rules/text.dart';
 import 'material.dart';
 
 import '../rules/search_terms.dart';
+
+/// 一次求助的入口（01 `conversation.entry_kind`）：文字、图片或两者。
+enum EntryKind implements CodedEnum {
+  text('text', '文字'),
+  photo('photo', '只有图片'),
+  textPhoto('text_photo', '文字与图片'),
+  unknown('', '类型未知');
+
+  const EntryKind(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static EntryKind fromValue(String? value) =>
+      codedValueOr(EntryKind.values, value, unknown: unknown);
+}
+
+/// 讨论当前状态（01 `conversation.status`）；结束时记录结束时间。
+enum ConversationStatus implements CodedEnum {
+  open('open', '进行中'),
+  ended('ended', '已结束'),
+  unknown('', '状态未知');
+
+  const ConversationStatus(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static ConversationStatus fromValue(String? value) =>
+      codedValueOr(ConversationStatus.values, value, unknown: unknown);
+}
 
 class ConversationRecord {
   const ConversationRecord({
@@ -19,8 +57,8 @@ class ConversationRecord {
     this.pageNo,
     this.materialTitle,
     this.materialIsDocx = false,
-    this.entryKind = 'text',
-    this.status = 'open',
+    this.entryKind = EntryKind.text,
+    this.status = ConversationStatus.open,
     this.endedAt,
     this.lastMessageAt,
     this.createdAt,
@@ -46,11 +84,11 @@ class ConversationRecord {
   final String? materialTitle;
   final bool materialIsDocx;
 
-  /// `text` / `photo` / `text_photo`。
-  final String entryKind;
+  /// 这次求助来自文字、图片还是两者。
+  final EntryKind entryKind;
 
-  /// `open` / `ended`。
-  final String status;
+  /// 讨论是否还在进行；读库时认不出的值回落到 [ConversationStatus.unknown]。
+  final ConversationStatus status;
   final DateTime? endedAt;
   final DateTime? lastMessageAt;
   final DateTime? createdAt;
@@ -71,7 +109,7 @@ class ConversationRecord {
   /// 是否有已经保存的未提交草稿；为真时列表直接给出“继续作答”。
   final bool hasDraft;
 
-  bool get open => status == 'open';
+  bool get open => status == ConversationStatus.open;
 
   /// 继续入口使用的时间：有草稿时取草稿的保存时间，因为写草稿不会改
   /// `conversation.updated_at`，只看记录更新时间会把刚写下的草稿排到后面。
@@ -93,14 +131,10 @@ class ConversationRecord {
   String get displayTitle {
     final text = nullableText(title);
     if (text != null) return text;
-    return entryKind == 'photo' ? '图片求助' : '一次求助';
+    return entryKind == EntryKind.photo ? '图片求助' : '一次求助';
   }
 
-  String get kindLabel => switch (entryKind) {
-    'photo' => '只有图片',
-    'text_photo' => '文字与图片',
-    _ => '文字',
-  };
+  String get kindLabel => entryKind.label;
 
   bool get hasMaterial => materialId != null && pageNo != null;
 

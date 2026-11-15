@@ -53,7 +53,7 @@ class ScheduleRepository {
     startAt: requiredDateTime(startAt),
     endAt: requiredDateTime(endAt),
     source: source,
-    status: status,
+    status: ScheduleBlockStatus.fromValue(status),
     locked: locked,
   );
 
@@ -418,7 +418,7 @@ class ScheduleRepository {
           startAt: requiredDateTime(row.startAt),
           endAt: requiredDateTime(row.endAt),
           source: row.source,
-          status: row.status,
+          status: ScheduleBlockStatus.fromValue(row.status),
           locked: row.locked,
         ),
     ];
@@ -447,11 +447,11 @@ class ScheduleRepository {
   /// 改预约状态；恢复为待开始时同样核对时间占用，避免绕开新建与改期的限制。
   Future<void> setBlockStatus(
     int id,
-    String status, {
+    ScheduleBlockStatus status, {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    if (status == 'planned') {
+    if (status == ScheduleBlockStatus.planned) {
       final block = await executor.selectGenerated(
         (db) => db.scheduleBlockById(id).getSingleOrNull(),
       );
@@ -465,7 +465,7 @@ class ScheduleRepository {
     }
     final stamp = formatDateTime(_clock());
     await executor.writeGenerated(
-      (db) => db.setScheduleBlockStatus(status, stamp, id),
+      (db) => db.setScheduleBlockStatus(status.value, stamp, id),
     );
   }
 
@@ -497,7 +497,7 @@ class ScheduleRepository {
     startAt: requiredDateTime(row.startAt),
     endAt: requiredDateTime(row.endAt),
     source: row.source,
-    status: row.status,
+    status: ScheduleBlockStatus.fromValue(row.status),
     locked: row.locked,
   );
 

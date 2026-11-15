@@ -3,6 +3,7 @@ import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
+import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
@@ -143,11 +144,17 @@ void main() {
 
     final cancelled = (await plan.setBlockStatus(
       blockId,
-      'cancelled',
+      ScheduleBlockStatus.cancelled,
     )).commitId!;
-    expect((await schedule.blockById(blockId))!.status, 'cancelled');
+    expect(
+      (await schedule.blockById(blockId))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
     expect((await rig.revisions.undoCommit(cancelled)).applied, isTrue);
-    expect((await schedule.blockById(blockId))!.status, 'planned');
+    expect(
+      (await schedule.blockById(blockId))!.status,
+      ScheduleBlockStatus.planned,
+    );
 
     final locked = (await plan.setBlockLocked(blockId, true)).commitId!;
     expect((await schedule.blockById(blockId))!.locked, isTrue);

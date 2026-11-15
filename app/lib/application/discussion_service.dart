@@ -295,8 +295,8 @@ class DiscussionService {
       throw ArgumentError('请输入问题或添加图片');
     }
     final entryKind = trimmed.isEmpty
-        ? 'photo'
-        : (paths.isEmpty ? 'text' : 'text_photo');
+        ? EntryKind.photo
+        : (paths.isEmpty ? EntryKind.text : EntryKind.textPhoto);
     final id = await conversations.create(
       title: _titleFor(trimmed),
       entryKind: entryKind,
@@ -792,7 +792,7 @@ class DiscussionService {
             conversationId: conversationId,
             note: _stepNote(draft),
             estMinutes: draft.minutes,
-            source: 'ai',
+            source: PlanItemSource.ai,
             origin: {
               'conversation_id': conversationId,
               'message_id': messageId,

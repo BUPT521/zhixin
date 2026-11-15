@@ -249,7 +249,7 @@ class StudyPlanRepository {
     estMinutes: estMinutes,
     priority: priority,
     status: PlanItemStatus.fromValue(status),
-    source: source,
+    source: PlanItemSource.fromValue(source),
     completedAt: optionalDateTime(completedAt ?? ''),
     createdAt: requiredDateTime(createdAt),
     updatedAt: requiredDateTime(updatedAt),

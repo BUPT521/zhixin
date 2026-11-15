@@ -17,6 +17,7 @@ import 'package:zhixin/data/repository/assessment_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
+import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
@@ -597,7 +598,7 @@ void main() {
 
     final conversationId = await h.conversations.create(
       title: '第 8 题',
-      entryKind: 'text_photo',
+      entryKind: EntryKind.textPhoto,
     );
     await h.conversations.append(
       conversationId,
@@ -646,7 +647,10 @@ void main() {
     addTearDown(h.db.close);
 
     final materials = MaterialRepository(h.db);
-    final materialId = await materials.create(title: '概率论讲义', kind: 'book');
+    final materialId = await materials.create(
+      title: '概率论讲义',
+      kind: MaterialKind.book,
+    );
     await materials.addPage(
       materialId: materialId,
       pageNo: 3,
@@ -654,7 +658,7 @@ void main() {
     );
     final conversationId = await h.conversations.create(
       title: '图片求助',
-      entryKind: 'photo',
+      entryKind: EntryKind.photo,
       materialId: materialId,
       pageNo: 3,
     );

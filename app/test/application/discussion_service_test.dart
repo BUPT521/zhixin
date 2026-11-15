@@ -19,6 +19,7 @@ import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
+import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
@@ -459,7 +460,7 @@ void main() {
     expect(result.userMessage.imagePaths, [hash]);
 
     final record = await h.service.byId(id);
-    expect(record!.entryKind, 'photo');
+    expect(record!.entryKind, EntryKind.photo);
     expect(record.displayTitle, '图片求助');
 
     final messages = await h.service.history(id);
@@ -641,7 +642,7 @@ void main() {
     final block = await h.schedule.blockById(blockId);
     expect(block!.startAt, start);
     expect(block.endAt, end);
-    expect(block.status, 'planned');
+    expect(block.status, ScheduleBlockStatus.planned);
     expect(block.source, 'user');
 
     // 建议只存在消息里，没有被接受就不写事项。
@@ -682,7 +683,7 @@ void main() {
     );
     expect(accepted.item.goalId, isNull);
     expect(accepted.item.conversationId, id);
-    expect(accepted.item.source, 'ai');
+    expect(accepted.item.source, PlanItemSource.ai);
     expect(await h.tasks.items(), hasLength(1));
 
     final afterAccept = DiscussionService.pendingSuggestions(
@@ -1259,7 +1260,7 @@ void main() {
     // 相关未来安排与已完成记录保持原样。
     final block = await h.schedule.blockById(blockId);
     expect(block!.startAt, start);
-    expect(block.status, 'planned');
+    expect(block.status, ScheduleBlockStatus.planned);
     final items = await h.tasks.items();
     expect(
       items.firstWhere((item) => item.id == doneId).status,
@@ -1329,7 +1330,7 @@ void main() {
     final goalId = await h.tasks.createGoal(title: '概率论期末');
     final materialId = await h.materials.create(
       title: '概率论课件',
-      kind: 'slides',
+      kind: MaterialKind.slides,
       sourceRef: '第 12 讲',
       goalId: goalId,
     );

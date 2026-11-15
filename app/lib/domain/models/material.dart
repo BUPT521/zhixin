@@ -1,11 +1,32 @@
 /// 材料、页码与引用（01 `material`、`material_page`）。
 library;
 
+import '../rules/coded_enum.dart';
 import '../rules/search_terms.dart';
 
 import '../rules/text.dart';
 
 typedef MaterialPageDraft = ({int pageNo, String content, String? label});
+
+/// 材料种类（01 `material.kind`）；界面按 [label] 显示。
+enum MaterialKind implements CodedEnum {
+  text('text', '文字材料'),
+  slides('slides', '课件'),
+  book('book', '教材'),
+  other('other', '其他'),
+  unknown('', '种类未知');
+
+  const MaterialKind(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static MaterialKind fromValue(String? value) =>
+      codedValueOr(MaterialKind.values, value, unknown: unknown);
+}
 
 bool isDocxFile(String? name) => name?.toLowerCase().endsWith('.docx') ?? false;
 
@@ -21,7 +42,7 @@ class Material {
   const Material({
     required this.id,
     required this.title,
-    this.kind = 'text',
+    this.kind = MaterialKind.text,
     this.sourceRef,
     this.sourceFileName,
     this.goalId,
@@ -33,8 +54,8 @@ class Material {
   final int id;
   final String title;
 
-  /// `text` / `slides` / `book` / `other`。
-  final String kind;
+  /// 材料种类；读库时认不出的值回落到 [MaterialKind.unknown]。
+  final MaterialKind kind;
   final String? sourceRef;
   final String? sourceFileName;
   final int? goalId;
@@ -42,12 +63,7 @@ class Material {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
-  String get kindLabel => switch (kind) {
-    'slides' => '课件',
-    'book' => '教材',
-    'text' => '文字材料',
-    _ => '其他',
-  };
+  String get kindLabel => kind.label;
 
   String get label => sourceRef == null ? title : '$title · $sourceRef';
 

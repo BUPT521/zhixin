@@ -24,7 +24,7 @@ class MaterialRepository {
 
   Future<int> create({
     required String title,
-    String kind = 'text',
+    MaterialKind kind = MaterialKind.text,
     String? sourceRef,
     int? goalId,
     WriteTransaction? transaction,
@@ -40,7 +40,7 @@ class MaterialRepository {
 
   Future<int> _create({
     required String title,
-    required String kind,
+    required MaterialKind kind,
     required String? sourceRef,
     required int? goalId,
     required RawExecutor executor,
@@ -53,7 +53,7 @@ class MaterialRepository {
     return executor.writeGenerated(
       (db) => db.insertMaterial(
         text,
-        kind,
+        kind.value,
         nullableText(sourceRef),
         sourceFileName,
         sourceFileHash,
@@ -86,7 +86,7 @@ class MaterialRepository {
   ) => Material(
     id: id,
     title: title,
-    kind: kind,
+    kind: MaterialKind.fromValue(kind),
     sourceRef: sourceRef,
     sourceFileName: sourceFileName,
     goalId: goalId,
@@ -277,7 +277,7 @@ class MaterialRepository {
   Future<int> createWithPages({
     required String title,
     required List<MaterialPageDraft> pages,
-    String kind = 'text',
+    MaterialKind kind = MaterialKind.text,
     String? sourceRef,
     int? goalId,
     ({String name, String hash, Uint8List bytes})? sourceFile,

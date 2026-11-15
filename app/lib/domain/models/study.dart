@@ -67,6 +67,24 @@ class LearningGoal {
   bool get active => status == LearningGoalStatus.active;
 }
 
+/// 学习事项的来源（01 `plan_item.source`）：用户自己建还是搭子建议。
+enum PlanItemSource implements CodedEnum {
+  user('user', '你'),
+  ai('ai', '搭子'),
+  unknown('', '来源未知');
+
+  const PlanItemSource(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static PlanItemSource fromValue(String? value) =>
+      codedValueOr(PlanItemSource.values, value, unknown: unknown);
+}
+
 /// 有材料、动作与结束条件的一次学习活动（01 `plan_item`）。
 ///
 /// 系统学习的步骤也是学习事项：`studyPlanId` 非空时，`seq` 是它在计划中的
@@ -88,7 +106,7 @@ class PlanItem {
     this.estMinutes,
     this.priority = 0,
     this.status = PlanItemStatus.todo,
-    this.source = 'user',
+    this.source = PlanItemSource.user,
     this.completedAt,
     this.createdAt,
     this.updatedAt,
@@ -120,8 +138,8 @@ class PlanItem {
 
   final PlanItemStatus status;
 
-  /// `user` / `ai`。
-  final String source;
+  /// 这条事项由谁建立；读库时认不出的值回落到 [PlanItemSource.unknown]。
+  final PlanItemSource source;
   final DateTime? completedAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -166,6 +184,25 @@ class StudySession {
   String? get outcomeLabel => outcome?.label;
 }
 
+/// 时间块状态（01 `schedule_block.status`）。
+enum ScheduleBlockStatus implements CodedEnum {
+  planned('planned', '待开始'),
+  done('done', '已结束'),
+  cancelled('cancelled', '已取消'),
+  unknown('', '状态未知');
+
+  const ScheduleBlockStatus(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static ScheduleBlockStatus fromValue(String? value) =>
+      codedValueOr(ScheduleBlockStatus.values, value, unknown: unknown);
+}
+
 /// 学习事项占用的时间块（01 `schedule_block`）。
 class ScheduleBlock {
   const ScheduleBlock({
@@ -174,7 +211,7 @@ class ScheduleBlock {
     required this.startAt,
     required this.endAt,
     this.source = 'user',
-    this.status = 'planned',
+    this.status = ScheduleBlockStatus.planned,
     this.locked = false,
   });
 
@@ -186,13 +223,13 @@ class ScheduleBlock {
   /// `user` / `ai`；AI 只改自己的块。
   final String source;
 
-  /// `planned` / `done` / `cancelled`。
-  final String status;
+  /// 时间块状态；读库时认不出的值回落到 [ScheduleBlockStatus.unknown]。
+  final ScheduleBlockStatus status;
 
   /// 固定安排：为真时容量规划不移动它。
   final bool locked;
 
-  bool get planned => status == 'planned';
+  bool get planned => status == ScheduleBlockStatus.planned;
 }
 
 /// 时间块及其所属事项摘要；查询结果供应用服务和界面共同使用。

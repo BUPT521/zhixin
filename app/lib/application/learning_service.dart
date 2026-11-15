@@ -184,8 +184,8 @@ class LearningService {
           : await tasks.byId(planItemId, transaction: txn);
       final conversationId = await conversations.create(
         entryKind: text.isEmpty
-            ? 'photo'
-            : (images.isEmpty ? 'text' : 'text_photo'),
+            ? EntryKind.photo
+            : (images.isEmpty ? EntryKind.text : EntryKind.textPhoto),
         goalId: item?.goalId,
         sourceRef: sourceRef,
         contextText: contextText,

@@ -16,8 +16,8 @@ Future<int> _record(
 }) async {
   final id = await conversations.create(
     entryKind: stem.isEmpty
-        ? 'photo'
-        : (images.isEmpty ? 'text' : 'text_photo'),
+        ? EntryKind.photo
+        : (images.isEmpty ? EntryKind.text : EntryKind.textPhoto),
     sourceRef: sourceRef,
   );
   await conversations.append(
@@ -93,7 +93,7 @@ void main() {
     final study = StudyRepository(db);
     final tasks = TaskRepository(db);
 
-    final id = await conversations.create(entryKind: 'text');
+    final id = await conversations.create(entryKind: EntryKind.text);
     await conversations.append(id, role: 'user', content: '再做一次');
     final goalA = await tasks.createGoal(title: '目标 A');
     final goalB = await tasks.createGoal(title: '目标 B');
@@ -113,7 +113,7 @@ void main() {
 
     expect(await attempts.recentSessionGoal(id), goalB);
 
-    final plain = await conversations.create(entryKind: 'text');
+    final plain = await conversations.create(entryKind: EntryKind.text);
     expect(await attempts.recentSessionGoal(plain), isNull);
   });
 
@@ -184,7 +184,7 @@ void main() {
     addTearDown(db.close);
     final conversations = ConversationRepository(db);
     final attempts = AttemptRepository(db);
-    final id = await conversations.create(entryKind: 'text');
+    final id = await conversations.create(entryKind: EntryKind.text);
     await conversations.append(id, role: 'user', content: '同时开始作答');
 
     final started = await Future.wait([
@@ -203,7 +203,7 @@ void main() {
     final conversations = ConversationRepository(db);
     final attempts = AttemptRepository(db);
 
-    final plain = await conversations.create(entryKind: 'text');
+    final plain = await conversations.create(entryKind: EntryKind.text);
     await conversations.append(plain, role: 'user', content: '只是讨论');
     expect(await conversations.questionRows(), isEmpty);
 

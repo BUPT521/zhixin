@@ -386,7 +386,10 @@ void main() {
       await openApp(tester);
       const title = '待阅讲义';
       await tester.runAsync(
-        () => scope!.library.material.create(title: title, kind: 'text'),
+        () => scope!.library.material.create(
+          title: title,
+          kind: MaterialKind.text,
+        ),
       );
       await tester.tap(find.text('记录').last);
       await settle(tester);
@@ -939,7 +942,7 @@ void main() {
     await tester.runAsync(() async {
       final material = await scope!.library.material.create(
         title: '概率论讲义',
-        kind: 'book',
+        kind: MaterialKind.book,
       );
       await scope!.library.material.addPage(
         materialId: material,
@@ -989,7 +992,7 @@ void main() {
     final data = await tester.runAsync(() async {
       final material = await scope!.library.material.create(
         title: '微积分讲义',
-        kind: 'text',
+        kind: MaterialKind.text,
       );
       await scope!.library.material.addPage(
         materialId: material,
@@ -1763,7 +1766,7 @@ void main() {
     await tester.runAsync(() async {
       final material = await scope!.library.material.create(
         title: '概率论讲义',
-        kind: 'text',
+        kind: MaterialKind.text,
       );
       await scope!.library.material.addPage(
         materialId: material,
@@ -1795,7 +1798,7 @@ void main() {
     await tester.runAsync(() async {
       final material = await scope!.library.material.create(
         title: '概率论讲义',
-        kind: 'text',
+        kind: MaterialKind.text,
       );
       await scope!.library.material.addPage(
         materialId: material,
@@ -1895,7 +1898,7 @@ void main() {
       final goal = await scope!.testing.tasks.createGoal(title: '高等数学 · 导数与微分');
       final material = await scope!.library.material.create(
         title: '微积分学习讲义',
-        kind: 'text',
+        kind: MaterialKind.text,
         goalId: goal,
       );
       await scope!.library.material.addPage(
@@ -1941,7 +1944,10 @@ void main() {
           await scope!.study.plan.setStatus(item, PlanItemStatus.done);
         }
         if (state == 'cancelled') {
-          await scope!.testing.schedule.setBlockStatus(block, 'cancelled');
+          await scope!.testing.schedule.setBlockStatus(
+            block,
+            ScheduleBlockStatus.cancelled,
+          );
         }
       }
       final activity = await scope!.chat.context.loadActivity();
@@ -2132,7 +2138,7 @@ void main() {
     await tester.runAsync(() async {
       final material = await scope!.library.material.create(
         title: '导数讲义',
-        kind: 'text',
+        kind: MaterialKind.text,
       );
       await scope!.library.material.addPage(
         materialId: material,
@@ -2205,7 +2211,7 @@ void main() {
     final data = await tester.runAsync(() async {
       final material = await scope!.library.material.create(
         title: '导数讲义',
-        kind: 'text',
+        kind: MaterialKind.text,
       );
       await scope!.library.material.addPage(
         materialId: material,
@@ -2268,7 +2274,7 @@ void main() {
       );
     });
     expect(after!.step!.status, PlanItemStatus.doing);
-    expect(after.block!.status, 'done');
+    expect(after.block!.status, ScheduleBlockStatus.done);
     expect(after.plan.plan.stepsDone, 0);
     // 结束预约后安排页会再读一次周日程；等这次读取收尾再关闭测试库。
     await tester.runAsync(

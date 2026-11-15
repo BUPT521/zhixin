@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
+import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 
 import '../support/test_db.dart';
@@ -100,14 +101,17 @@ void main() {
       end: end,
     );
 
-    await schedule.setBlockStatus(firstBlock, 'cancelled');
+    await schedule.setBlockStatus(firstBlock, ScheduleBlockStatus.cancelled);
     await schedule.addBlock(planItemId: secondItem, start: start, end: end);
 
     await expectLater(
-      schedule.setBlockStatus(firstBlock, 'planned'),
+      schedule.setBlockStatus(firstBlock, ScheduleBlockStatus.planned),
       throwsA(isA<ScheduleConflictException>()),
     );
-    expect((await schedule.blockById(firstBlock))!.status, 'cancelled');
+    expect(
+      (await schedule.blockById(firstBlock))!.status,
+      ScheduleBlockStatus.cancelled,
+    );
   });
 
   test('新增课表先核对既有预约，重叠时拒绝且不写入', () async {
@@ -219,7 +223,7 @@ void main() {
       start: DateTime(2026, 11, 7, 11),
       end: DateTime(2026, 11, 7, 11, 30),
     );
-    await schedule.setBlockStatus(first, 'cancelled');
+    await schedule.setBlockStatus(first, ScheduleBlockStatus.cancelled);
 
     await expectLater(
       WriteTransactions(
@@ -227,6 +231,9 @@ void main() {
       ).run((txn) => schedule.cancelBlocks([first, second], transaction: txn)),
       throwsA(isA<StateError>()),
     );
-    expect((await schedule.blockById(second))!.status, 'planned');
+    expect(
+      (await schedule.blockById(second))!.status,
+      ScheduleBlockStatus.planned,
+    );
   });
 }

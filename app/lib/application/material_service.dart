@@ -42,7 +42,7 @@ class MaterialService {
 
   Future<int> create({
     required String title,
-    String kind = 'text',
+    MaterialKind kind = MaterialKind.text,
     String? sourceRef,
     int? goalId,
   }) {
@@ -61,7 +61,7 @@ class MaterialService {
   Future<int> importMaterial({
     required String title,
     required List<MaterialPageDraft> pages,
-    String kind = 'text',
+    MaterialKind kind = MaterialKind.text,
     String? sourceRef,
     int? goalId,
   }) {

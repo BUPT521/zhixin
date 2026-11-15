@@ -1001,7 +1001,10 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
       if (action == 'complete' && item != null) {
         await service.setStatus(item.id, PlanItemStatus.done);
       } else {
-        result = await service.setBlockStatus(block.id, 'done');
+        result = await service.setBlockStatus(
+          block.id,
+          ScheduleBlockStatus.done,
+        );
       }
       await _load();
       if (!mounted) return;
@@ -1960,9 +1963,9 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
             const SizedBox(height: 4),
             TagRow(
               children: [
-                if (block.status == 'cancelled')
+                if (block.status == ScheduleBlockStatus.cancelled)
                   const StatusTag('已取消', tone: TagTone.muted),
-                if (block.status == 'done')
+                if (block.status == ScheduleBlockStatus.done)
                   const StatusTag('本次预约已结束', tone: TagTone.muted),
                 if (entry.itemStatus == PlanItemStatus.done)
                   const StatusTag('这一步已完成', tone: TagTone.accent),
@@ -2128,7 +2131,10 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     try {
       final (result, message) = switch (value) {
         'restore' => (
-          await service.setBlockStatus(block.block.id, 'planned'),
+          await service.setBlockStatus(
+            block.block.id,
+            ScheduleBlockStatus.planned,
+          ),
           '已恢复为待开始',
         ),
         'delete' => (await service.deleteBlock(block.block.id), '已取消这次预约'),

@@ -362,7 +362,7 @@ class PlanService {
   }
 
   /// 取消、恢复、固定与删除预约各自形成一次可撤销的提交。
-  Future<WriteResult> setBlockStatus(int id, String status) {
+  Future<WriteResult> setBlockStatus(int id, ScheduleBlockStatus status) {
     return transactions.run((txn) async {
       await schedule.setBlockStatus(id, status, transaction: txn);
       return txn.result();
