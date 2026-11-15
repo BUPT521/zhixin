@@ -20,18 +20,6 @@ class Question {
     this.updatedAt,
   });
 
-  factory Question.fromRow(Map<String, Object?> row) {
-    return Question(
-      id: row['id']! as int,
-      stem: (row['stem'] as String?) ?? '',
-      sourceRef: row['source_ref'] as String?,
-      contextText: row['context_text'] as String?,
-      imagePaths: _decodePaths(row['image_paths_json'] as String?),
-      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
-      updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
-    );
-  }
-
   /// 学习记录的标识。
   final int id;
   final String stem;
@@ -51,20 +39,6 @@ class Question {
     final text = stem.trim();
     if (text.isNotEmpty) return text;
     return hasImages ? '图片题目' : '未命名题目';
-  }
-
-  static List<String> _decodePaths(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return const [];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
-      return [
-        for (final item in decoded)
-          if (item is String && item.trim().isNotEmpty) item,
-      ];
-    } catch (_) {
-      return const [];
-    }
   }
 }
 

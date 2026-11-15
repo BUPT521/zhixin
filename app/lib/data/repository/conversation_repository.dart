@@ -8,6 +8,7 @@ import '../../domain/models/chat_message.dart';
 import '../../domain/models/conversation.dart';
 import '../../domain/models/material.dart';
 import '../../domain/models/question.dart';
+import '../../domain/rules/attachments.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
@@ -28,18 +29,16 @@ class ConversationRepository {
   final RawDatabase _db;
   final Clock _clock;
 
-  /// 消息整行转成与列同名的键值，交给既有的 [ChatMessage.fromRow]。
-  ///
-  /// 图片路径的解码在 fromRow 里已有一份，这里不重复实现。
-  static ChatMessage _messageOf(MessageRow row) => ChatMessage.fromRow({
-    'id': row.id,
-    'conversation_id': row.conversationId,
-    'role': row.role,
-    'content': row.content,
-    'image_paths_json': row.imagePathsJson,
-    'created_at': row.createdAt,
-    'structured_json': row.structuredJson,
-  });
+  /// 消息整行还原成模型；图片字段按文件名列表解析。
+  static ChatMessage _messageOf(MessageRow row) => ChatMessage(
+    id: row.id,
+    conversationId: row.conversationId,
+    role: row.role,
+    content: row.content,
+    imagePaths: decodeStoredAttachmentPaths(row.imagePathsJson),
+    createdAt: optionalDateTime(row.createdAt),
+    structuredJson: row.structuredJson,
+  );
 
   /// 作答整行转成与列同名的键值，交给既有的 [Attempt.fromRow]。
   static Attempt _attemptOf(AttemptRow row) => Attempt.fromRow({
@@ -265,35 +264,18 @@ class ConversationRepository {
     required String createdAt,
     required String updatedAt,
   }) {
-    return _recordQuestion({
-      'id': id,
-      'stem': stem,
-      'source_ref': sourceRef,
-      'context_text': contextText,
-      'image_paths_json': imagePathsJson,
-      'created_at': createdAt,
-      'updated_at': updatedAt,
-      'material_title': materialTitle,
-      'page_no': pageNo,
-      'source_file_name': sourceFileName,
-    });
-  }
-
-  Question _recordQuestion(Map<String, Object?> row) {
-    final question = Question.fromRow(row);
-    if (question.sourceRef != null) return question;
-    final title = row['material_title'] as String?;
-    final pageNo = row['page_no'] as int?;
-    if (title == null || pageNo == null) return question;
+    final title = materialTitle;
+    final page = pageNo;
     return Question(
-      id: question.id,
-      stem: question.stem,
-      sourceRef:
-          '《$title》${materialPosition(pageNo, isDocx: isDocxFile(row['source_file_name'] as String?))}',
-      contextText: question.contextText,
-      imagePaths: question.imagePaths,
-      createdAt: question.createdAt,
-      updatedAt: question.updatedAt,
+      id: id,
+      stem: stem,
+      sourceRef: sourceRef ?? (title == null || page == null
+          ? null
+          : '《$title》${materialPosition(page, isDocx: isDocxFile(sourceFileName))}'),
+      contextText: contextText,
+      imagePaths: decodeStoredAttachmentPaths(imagePathsJson),
+      createdAt: optionalDateTime(createdAt),
+      updatedAt: optionalDateTime(updatedAt),
     );
   }
 

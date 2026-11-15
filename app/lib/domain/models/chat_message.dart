@@ -1,7 +1,5 @@
 import 'dart:convert';
 
-import '../rules/time_format.dart';
-
 /// 一条讨论消息（01 `message`，开发期 schema 17）。
 ///
 /// 只有图片时 `content` 是空字符串；原图路径放在 `imagePaths`。结构化补充
@@ -16,18 +14,6 @@ class ChatMessage {
     this.createdAt,
     this.structuredJson,
   });
-
-  factory ChatMessage.fromRow(Map<String, Object?> row) {
-    return ChatMessage(
-      id: row['id']! as int,
-      conversationId: row['conversation_id']! as int,
-      role: row['role']! as String,
-      content: row['content']! as String,
-      imagePaths: _decodePaths(row['image_paths_json'] as String?),
-      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
-      structuredJson: row['structured_json'] as String?,
-    );
-  }
 
   final int id;
   final int conversationId;
@@ -62,20 +48,6 @@ class ChatMessage {
       return decoded is Map<String, Object?> ? decoded : null;
     } catch (_) {
       return null;
-    }
-  }
-
-  static List<String> _decodePaths(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return const [];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
-      return {
-        for (final item in decoded)
-          if (item is String && item.trim().isNotEmpty) item,
-      }.toList(growable: false);
-    } catch (_) {
-      return const [];
     }
   }
 
