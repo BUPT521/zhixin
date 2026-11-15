@@ -1,8 +1,9 @@
 /// 容量规划的结果（01 `plan_item`、`schedule_block`）。
 library;
 
-import 'study.dart';
 import 'time_values.dart';
+
+import 'study.dart';
 
 /// 本次预算里的一项候选学习事项。
 class CapacityCandidate {
@@ -79,8 +80,8 @@ class CapacityPlan {
     this.candidates = const [],
     this.skipped = const [],
     this.notes = const [],
-    this.windowStart = '19:00',
-    this.windowEnd = '21:30',
+    this.windowStart = const ClockTime(19, 0),
+    this.windowEnd = const ClockTime(21, 30),
   });
 
   final DateTime from;
@@ -92,8 +93,8 @@ class CapacityPlan {
   final List<CapacityCandidate> candidates;
   final List<CapacitySkip> skipped;
   final List<String> notes;
-  final String windowStart;
-  final String windowEnd;
+  final ClockTime windowStart;
+  final ClockTime windowEnd;
 
   bool get overCapacity => demandMinutes > availableMinutes;
   bool get hasCandidates => candidates.isNotEmpty;

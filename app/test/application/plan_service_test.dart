@@ -12,6 +12,7 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/time_format.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
+import 'package:zhixin/domain/models/time_values.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/models/study_plan.dart';
 
@@ -91,7 +92,10 @@ void main() {
       runtime: testRuntime(policy: () => policy),
       transactions: WriteTransactions(rig.db),
     );
-    await capacity.setWindow(start: '10:00', end: '11:00');
+    await capacity.setWindow(
+      start: ClockTime.parse('10:00'),
+      end: ClockTime.parse('11:00'),
+    );
     final plan = await capacity.compute(days: 2);
     expect(plan.availableMinutes, 60);
 

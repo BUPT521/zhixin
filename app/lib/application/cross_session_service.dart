@@ -1,4 +1,5 @@
 import '../data/repository/evidence_repository.dart';
+import '../domain/models/time_values.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/evidence_id.dart';
 import '../domain/rules/score_weights.dart';
@@ -270,9 +271,7 @@ class CrossSessionService {
     final at = attempt.submittedAt;
     final when = at == null
         ? '时间未记录'
-        : '${at.month} 月 ${at.day} 日 '
-              '${at.hour.toString().padLeft(2, '0')}:'
-              '${at.minute.toString().padLeft(2, '0')}';
+        : '${at.month} 月 ${at.day} 日 ${ClockTime(at.hour, at.minute).format()}';
     final answer = (attempt.userAnswer ?? '').replaceAll(RegExp(r'\s+'), ' ');
     final shortAnswer = truncateCodePoints(answer, 60);
     final parts = <String>[

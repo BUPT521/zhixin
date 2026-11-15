@@ -34,31 +34,46 @@ class CapacityService {
 
   static const String windowStartKey = 'capacity_window_start';
   static const String windowEndKey = 'capacity_window_end';
-  static const String defaultWindowStart = '19:00';
-  static const String defaultWindowEnd = '21:30';
+
+  /// 没有保存过常用时段时用的默认窗口；只有一个来源。
+  static const ClockTime defaultWindowStart = ClockTime(19, 0);
+  static const ClockTime defaultWindowEnd = ClockTime(21, 30);
   static const int defaultEstimateMinutes = 20;
 
-  Future<({String start, String end})> window() async {
-    final start = await settings.metadata(windowStartKey) ?? defaultWindowStart;
-    final end = await settings.metadata(windowEndKey) ?? defaultWindowEnd;
-    return (start: start, end: end);
+  /// 当前常用学习时段；库里的值坏了就按默认窗口处理。
+  Future<({ClockTime start, ClockTime end})> window() async {
+    final start = await settings.metadata(windowStartKey);
+    final end = await settings.metadata(windowEndKey);
+    return (
+      start:
+          (start == null ? null : ClockTime.tryParse(start)) ??
+          defaultWindowStart,
+      end: (end == null ? null : ClockTime.tryParse(end)) ?? defaultWindowEnd,
+    );
   }
 
   /// 保存常用学习时段；两项设置写在同一个提交里，界面回执可整体撤销。
   Future<WriteResult> setWindow({
-    required String start,
-    required String end,
+    required ClockTime start,
+    required ClockTime end,
   }) async {
-    if (_minutesOf(start) == null || _minutesOf(end) == null) {
-      throw ArgumentError('时间格式应为 HH:MM');
-    }
-    if (_minutesOf(end)! <= _minutesOf(start)!) {
+    if (end.compareTo(start) <= 0) {
       throw ArgumentError('结束时间要晚于开始时间');
     }
     final now = runtime.policy.now;
     return transactions.run((txn) async {
-      await settings.setMetadata(windowStartKey, start, now, transaction: txn);
-      await settings.setMetadata(windowEndKey, end, now, transaction: txn);
+      await settings.setMetadata(
+        windowStartKey,
+        start.format(),
+        now,
+        transaction: txn,
+      );
+      await settings.setMetadata(
+        windowEndKey,
+        end.format(),
+        now,
+        transaction: txn,
+      );
       return txn.result();
     }, label: '保存常用学习时段');
   }
@@ -78,16 +93,16 @@ class CapacityService {
   Future<CapacityPlan> compute({
     int days = 7,
     int? goalId,
-    String? windowStart,
-    String? windowEnd,
+    ClockTime? windowStart,
+    ClockTime? windowEnd,
   }) async {
     final current = runtime.policy;
     final now = current.now;
     final stored = await window();
     final startClock = windowStart ?? stored.start;
     final endClock = windowEnd ?? stored.end;
-    final startMinutes = _minutesOf(startClock) ?? 19 * 60;
-    final endMinutes = _minutesOf(endClock) ?? 21 * 60 + 30;
+    final startMinutes = startClock.minutesOfDay;
+    final endMinutes = endClock.minutesOfDay;
     final today = naturalDay(now);
     final rangeEnd = today.add(Duration(days: days));
 
@@ -182,8 +197,8 @@ class CapacityService {
       for (final entry in entries.where(
         (entry) => entry.weekday == day.weekday,
       )) {
-        final from = _minutesOf(entry.startTime);
-        final to = _minutesOf(entry.endTime);
+        final from = ClockTime.tryParse(entry.startTime)?.minutesOfDay;
+        final to = ClockTime.tryParse(entry.endTime)?.minutesOfDay;
         if (from == null || to == null) continue;
         occupied.add(
           TimeRange(
@@ -292,7 +307,7 @@ class CapacityService {
       notes.add('$fixedCount 项已有固定安排，时间保持原样。');
     }
     notes.add(
-      '可用时间按每天 $startClock–$endClock 估算，课表和保留的已排时间已扣除；'
+      '可用时间按每天 ${startClock.format()}–${endClock.format()} 估算，课表和保留的已排时间已扣除；'
       '预算按每项截止时间之前的空档核算，晚到期的事项不会占用早到期事项的时间；'
       '本次可调整的弹性安排会重新计算，列出的空档互不重叠，点选其中一段就是这次的预约时间。',
     );
@@ -455,7 +470,4 @@ class CapacityService {
       time.minute + add,
     );
   }
-
-  static int? _minutesOf(String clock) =>
-      ClockTime.tryParse(clock)?.minutesOfDay;
 }

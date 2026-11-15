@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/capacity_service.dart';
 import '../domain/models/capacity.dart';
 import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
@@ -39,8 +40,8 @@ class _CapacitySheetState extends State<_CapacitySheet> {
   bool _loading = true;
   bool _started = false;
   String? _notice;
-  String _windowStart = '19:00';
-  String _windowEnd = '21:30';
+  ClockTime _windowStart = CapacityService.defaultWindowStart;
+  ClockTime _windowEnd = CapacityService.defaultWindowEnd;
 
   @override
   void didChangeDependencies() {
@@ -114,18 +115,14 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     }
   }
 
-  Future<String?> _pickTime(String current) async {
-    final parsed = ClockTime.tryParse(current);
-    final initial = TimeOfDay(
-      hour: parsed?.hour ?? 19,
-      minute: parsed?.minute ?? 0,
-    );
+  Future<ClockTime?> _pickTime(ClockTime current) async {
+    final initial = TimeOfDay(hour: current.hour, minute: current.minute);
     final picked = await showZhixinTimePicker(
       context: context,
       initialTime: initial,
     );
     if (picked == null) return null;
-    return ClockTime(picked.hour, picked.minute).format();
+    return ClockTime(picked.hour, picked.minute);
   }
 
   /// 写入之前先说明这次会新建还是改期、从什么时间改到什么时间。
@@ -279,7 +276,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                     children: [
                       Expanded(
                         child: Text(
-                          '常用学习时段：${plan.windowStart}–${plan.windowEnd}',
+                          '常用学习时段：${plan.windowStart.format()}–${plan.windowEnd.format()}',
                           style: theme.text.bodyMedium,
                         ),
                       ),

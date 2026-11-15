@@ -3,10 +3,12 @@ import '../data/repository/attempt_repository.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/memory_repository.dart';
 import '../data/revisions/revision_actions.dart';
+import '../domain/models/time_values.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/write_result.dart';
 
+import '../domain/rules/time_format.dart';
 import '../domain/rules/text.dart';
 
 /// 一条待确认的记忆提案。
@@ -251,11 +253,8 @@ class MemoryProposalService {
         null => '暂未判断对错',
       },
       if (attempt.submittedAt != null)
-        '提交于 ${attempt.submittedAt!.year}-'
-            '${attempt.submittedAt!.month.toString().padLeft(2, '0')}-'
-            '${attempt.submittedAt!.day.toString().padLeft(2, '0')} '
-            '${attempt.submittedAt!.hour.toString().padLeft(2, '0')}:'
-            '${attempt.submittedAt!.minute.toString().padLeft(2, '0')}',
+        '提交于 ${formatDate(attempt.submittedAt!)} '
+            '${ClockTime(attempt.submittedAt!.hour, attempt.submittedAt!.minute).format()}',
     ];
     return parts.join('；');
   }

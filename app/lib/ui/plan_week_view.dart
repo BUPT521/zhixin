@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../domain/models/study.dart';
+import '../domain/models/time_values.dart';
 
 /// 安排页展开后的周视图：把这一周的预约与固定课表换算成日历事件。
 ///
@@ -207,11 +208,8 @@ class _PlanWeekViewState extends State<PlanWeekView> {
       left.day == right.day;
 
   static DateTime? _atTime(DateTime day, String text) {
-    final parts = text.split(':');
-    if (parts.length < 2) return null;
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    if (hour == null || minute == null) return null;
-    return DateTime(day.year, day.month, day.day, hour, minute);
+    final clock = ClockTime.tryParse(text);
+    if (clock == null) return null;
+    return DateTime(day.year, day.month, day.day, clock.hour, clock.minute);
   }
 }

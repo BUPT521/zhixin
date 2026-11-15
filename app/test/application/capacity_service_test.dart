@@ -6,6 +6,7 @@ import 'package:zhixin/data/repository/settings_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/capacity.dart';
+import 'package:zhixin/domain/models/time_values.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
@@ -42,7 +43,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '20:00');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('20:00'),
+    );
     await h.schedule.addTimetable(
       weekday: h.now.weekday,
       startTime: '19:00',
@@ -106,7 +110,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '21:00');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('21:00'),
+    );
 
     final flexible = await h.tasks.createItem(title: '重做第 8 题', estMinutes: 60);
     final fixed = await h.tasks.createItem(title: '固定复习', estMinutes: 60);
@@ -161,7 +168,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '20:00');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('20:00'),
+    );
     final first = await h.tasks.createItem(title: 'A', estMinutes: 30);
     await h.tasks.createItem(title: 'B', estMinutes: 30);
     await h.schedule.addBlock(
@@ -195,7 +205,10 @@ void main() {
       isEmpty,
     );
     expect(
-      () => h.capacity.setWindow(start: '21:00', end: '19:00'),
+      () => h.capacity.setWindow(
+        start: ClockTime.parse('21:00'),
+        end: ClockTime.parse('19:00'),
+      ),
       throwsArgumentError,
     );
     expect(
@@ -229,7 +242,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '19:30');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('19:30'),
+    );
     final urgent = await h.tasks.createItem(
       title: '明天要交的小测',
       estMinutes: 60,
@@ -260,7 +276,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '21:00');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('21:00'),
+    );
     final item = await h.tasks.createItem(title: '分三段做', estMinutes: 90);
     await h.schedule.addBlock(
       planItemId: item,
@@ -395,7 +414,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '20:00');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('20:00'),
+    );
     await h.tasks.createItem(title: '整理笔记', estMinutes: 30);
 
     final plan = await h.capacity.compute(days: 1);
@@ -417,7 +439,10 @@ void main() {
     final h = _Harness();
     await h.open();
     addTearDown(h.close);
-    await h.capacity.setWindow(start: '19:00', end: '20:00');
+    await h.capacity.setWindow(
+      start: ClockTime.parse('19:00'),
+      end: ClockTime.parse('20:00'),
+    );
     final tonight = await h.tasks.createItem(
       title: '今晚到期',
       estMinutes: 90,

@@ -5,6 +5,7 @@
 library;
 
 import 'time_policy.dart';
+import 'time_format.dart';
 
 class TimeCondition {
   const TimeCondition({
@@ -35,7 +36,7 @@ class TimeCondition {
       return TimeCondition(
         from: start,
         to: start.add(const Duration(days: 1)),
-        label: '${start.year}-${_two(start.month)}-${_two(start.day)}',
+        label: formatDate(start),
       );
     }
     final monthDay = RegExp(r'(\d{1,2})\s*月\s*(\d{1,2})\s*日?').firstMatch(text);
@@ -71,5 +72,3 @@ class TimeCondition {
   static bool wantsLaterPerformance(String query) =>
       RegExp(r'后来|之后|以后|独立|自己|掌握|学会|还会').hasMatch(query);
 }
-
-String _two(int value) => value.toString().padLeft(2, '0');

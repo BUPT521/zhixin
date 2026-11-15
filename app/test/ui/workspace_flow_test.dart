@@ -20,6 +20,7 @@ import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/models/memory.dart';
+import 'package:zhixin/domain/models/time_values.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/platform/data_package_export.dart';
@@ -1620,7 +1621,10 @@ void main() {
   testWidgets('时间预算沿用已保存的可用时段', (tester) async {
     await openApp(tester);
     await tester.runAsync(
-      () => scope!.study.capacity.setWindow(start: '19:00', end: '19:30'),
+      () => scope!.study.capacity.setWindow(
+        start: ClockTime.parse('19:00'),
+        end: ClockTime.parse('19:30'),
+      ),
     );
     await tester.tap(find.text('安排').last.hitTestable());
     await settle(tester);
@@ -1633,7 +1637,10 @@ void main() {
   testWidgets('时间预算点选算出的空档直接预约', (tester) async {
     await openApp(tester, clock: () => DateTime(2026, 11, 16, 9));
     final itemId = await tester.runAsync(() async {
-      await scope!.study.capacity.setWindow(start: '19:00', end: '19:30');
+      await scope!.study.capacity.setWindow(
+        start: ClockTime.parse('19:00'),
+        end: ClockTime.parse('19:30'),
+      );
       return scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
     });
     final window = await tester.runAsync(() async {
@@ -1671,7 +1678,10 @@ void main() {
   testWidgets('时间预算点选空档前说明原预约会改到的时间', (tester) async {
     await openApp(tester, clock: () => DateTime(2026, 11, 16, 9));
     final itemId = await tester.runAsync(() async {
-      await scope!.study.capacity.setWindow(start: '19:00', end: '19:30');
+      await scope!.study.capacity.setWindow(
+        start: ClockTime.parse('19:00'),
+        end: ClockTime.parse('19:30'),
+      );
       final id = await scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
       final day = DateTime(2026, 11, 17);
       await scope!.schedule.addBlock(
