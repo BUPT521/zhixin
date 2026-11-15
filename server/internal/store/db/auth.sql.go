@@ -16,7 +16,11 @@ INSERT INTO session (
   id, user_id, device_name, access_hash, refresh_hash,
   access_expires, refresh_expires
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES (
+  $1, $2, $3,
+  $4, $5,
+  $6, $7
+)
 `
 
 type CreateSessionParams struct {
@@ -55,6 +59,9 @@ type CreateUserParams struct {
 }
 
 // 账号与会话（internal/store/schema.sql 的 app_user 与 session）。
+//
+// 参数一律用 sqlc.arg(名字)：生成的方法按名字取参数，改一处绑定不会让另一个
+// 位置的 $n 顺序悄悄错位。
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	_, err := q.db.Exec(ctx, createUser, arg.ID, arg.Email, arg.PasswordHash)
 	return err

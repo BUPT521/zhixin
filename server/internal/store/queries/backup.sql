@@ -1,37 +1,43 @@
 -- 整库备份与模型代理用量（internal/store/schema.sql 的 backup 与 llm_usage）。
+--
+-- 参数一律用 sqlc.arg(名字)：同一个名字在一句里出现多次也只绑一次，改一处绑定
+-- 不会让另一个位置的 $n 顺序悄悄错位。
 
 -- name: InsertBackup :exec
 INSERT INTO backup (
   id, user_id, sha256, size, schema_version, device_name, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+VALUES (
+  sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(sha256), sqlc.arg(size),
+  sqlc.arg(schema_version), sqlc.arg(device_name), sqlc.arg(created_at)
+);
 
 -- name: ListBackups :many
 SELECT id, sha256, size, schema_version, device_name, created_at
 FROM backup
-WHERE user_id = $1
+WHERE user_id = sqlc.arg(user_id)
 ORDER BY created_at DESC, id DESC;
 
 -- name: BackupByID :one
 SELECT id, sha256, size, schema_version, device_name, created_at
 FROM backup
-WHERE user_id = $1 AND id = $2;
+WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: DeleteBackup :exec
 DELETE FROM backup
-WHERE user_id = $1 AND id = $2;
+WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 
 -- 只保留最新的若干份；返回被删掉的那些 id，调用方据此删除对象存储里的字节。
 -- name: TrimBackups :many
 WITH stale AS (
   SELECT id FROM backup
-  WHERE user_id = $1
+  WHERE user_id = sqlc.arg(user_id)
   ORDER BY created_at DESC, id DESC
-  OFFSET $2
+  OFFSET sqlc.arg(keep)
 )
 DELETE FROM backup
-WHERE backup.user_id = $1 AND backup.id IN (SELECT id FROM stale)
+WHERE backup.user_id = sqlc.arg(user_id) AND backup.id IN (SELECT id FROM stale)
 RETURNING id;
 
 -- name: UsedTokens :one

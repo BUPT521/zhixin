@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"time"
@@ -20,6 +21,11 @@ import (
 // 顺序是有意的：元数据在字节之后写，进程在中间退出时只会留下没有元数据的孤儿
 // 对象，不会出现“列表里有、下载失败”的记录。
 func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.Reader, keep int) error {
+	// 时间在写字节之前校验：零值直接报错，不留没有元数据的孤儿对象。
+	createdAt, err := pgTime(m.CreatedAt)
+	if err != nil {
+		return err
+	}
 	if err := s.objects.Put(ctx, objectstore.BackupKey(userID, m.ID), data, objectstore.Info{
 		Size:        m.Size,
 		ContentType: "application/zip",
@@ -33,7 +39,7 @@ func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.R
 		Size:          m.Size,
 		SchemaVersion: int32(m.SchemaVersion),
 		DeviceName:    m.DeviceName,
-		CreatedAt:     pgTime(m.CreatedAt),
+		CreatedAt:     createdAt,
 	}); err != nil {
 		_ = s.objects.Remove(ctx, objectstore.BackupKey(userID, m.ID))
 		return err
@@ -43,7 +49,7 @@ func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.R
 	}
 	stale, err := s.q.TrimBackups(ctx, db.TrimBackupsParams{
 		UserID: userID,
-		Offset: int32(keep),
+		Keep:   int32(keep),
 	})
 	if err != nil {
 		return err
@@ -109,9 +115,13 @@ func (s *Store) Delete(ctx context.Context, userID, id string) error {
 
 // Used 返回当天已用的 token 数；没有记录时是 0。
 func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
+	date, err := pgDate(day)
+	if err != nil {
+		return 0, err
+	}
 	used, err := s.q.UsedTokens(ctx, db.UsedTokensParams{
 		UserID: userID,
-		Day:    pgDate(day),
+		Day:    date,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
@@ -121,19 +131,23 @@ func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
 
 // Add 累加当天用量。
 func (s *Store) Add(ctx context.Context, userID, day string, tokens int64) error {
+	date, err := pgDate(day)
+	if err != nil {
+		return err
+	}
 	return s.q.AddTokens(ctx, db.AddTokensParams{
 		UserID: userID,
-		Day:    pgDate(day),
+		Day:    date,
 		Tokens: tokens,
 	})
 }
 
-// pgDate 把 YYYY-MM-DD 转成 PostgreSQL 的 date；解析失败时给一个不可能命中的零值，
-// 调用方拿到的用量因此是 0，而不是记到别的日子上。
-func pgDate(day string) pgtype.Date {
+// pgDate 把 YYYY-MM-DD 转成 PostgreSQL 的 date。格式不对时返回错误并由调用方
+// 上抛：以前给零值会让用量悄悄记到“没有这一天”上，查出来的数看着像 0。
+func pgDate(day string) (pgtype.Date, error) {
 	parsed, err := time.Parse("2006-01-02", day)
 	if err != nil {
-		return pgtype.Date{}
+		return pgtype.Date{}, fmt.Errorf("pg: 自然日 %q 不是 YYYY-MM-DD: %w", day, err)
 	}
-	return pgtype.Date{Time: parsed, Valid: true}
+	return pgtype.Date{Time: parsed, Valid: true}, nil
 }

@@ -142,14 +142,22 @@ func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
 }
 
 func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
+	accessExpires, err := pgTime(sess.AccessExpires)
+	if err != nil {
+		return err
+	}
+	refreshExpires, err := pgTime(sess.RefreshExpires)
+	if err != nil {
+		return err
+	}
 	return s.q.CreateSession(ctx, db.CreateSessionParams{
 		ID:             sess.ID,
 		UserID:         sess.UserID,
 		DeviceName:     sess.DeviceName,
 		AccessHash:     sess.AccessHash,
 		RefreshHash:    sess.RefreshHash,
-		AccessExpires:  pgTime(sess.AccessExpires),
-		RefreshExpires: pgTime(sess.RefreshExpires),
+		AccessExpires:  accessExpires,
+		RefreshExpires: refreshExpires,
 	})
 }
 
@@ -205,4 +213,11 @@ func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	return s.q.DeleteUserSessions(ctx, userID)
 }
 
-func pgTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: !t.IsZero()} }
+// pgTime 把时间转成 PostgreSQL 的 timestamptz。零值说明调用方漏了赋值，直接
+// 报错，不再静默写成 NULL 或 0001-01-01 这类看不见的错误数据。
+func pgTime(t time.Time) (pgtype.Timestamptz, error) {
+	if t.IsZero() {
+		return pgtype.Timestamptz{}, errors.New("pg: 时间字段为零值")
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}, nil
+}

@@ -206,3 +206,35 @@ func TestPostgresBackupsAndQuota(t *testing.T) {
 		t.Fatalf("用量应累加到 150，得到 %d %v", used, err)
 	}
 }
+
+// TestPgDateRequiresISODay 守住自然日只有一种写法：写错的日期必须报错，不能
+// 悄悄落成零值让用量看上去像 0。
+func TestPgDateRequiresISODay(t *testing.T) {
+	for _, day := range []string{"", "2026-11-15T00:00:00Z", "15/11/2026", "2026-13-01"} {
+		if _, err := pgDate(day); err == nil {
+			t.Errorf("pgDate(%q) 应当报错", day)
+		}
+	}
+	got, err := pgDate("2026-11-15")
+	if err != nil {
+		t.Fatalf("pgDate: %v", err)
+	}
+	if !got.Valid || got.Time.Format("2006-01-02") != "2026-11-15" {
+		t.Fatalf("pgDate = %+v", got)
+	}
+}
+
+// TestPgTimeRejectsZero 守住时间字段不留隐式兜底：零值说明调用方漏了赋值。
+func TestPgTimeRejectsZero(t *testing.T) {
+	if _, err := pgTime(time.Time{}); err == nil {
+		t.Fatal("零值时间应当报错")
+	}
+	at := time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
+	got, err := pgTime(at)
+	if err != nil {
+		t.Fatalf("pgTime: %v", err)
+	}
+	if !got.Valid || !got.Time.Equal(at) {
+		t.Fatalf("pgTime = %+v", got)
+	}
+}

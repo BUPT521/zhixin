@@ -83,7 +83,10 @@ const insertBackup = `-- name: InsertBackup :exec
 INSERT INTO backup (
   id, user_id, sha256, size, schema_version, device_name, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES (
+  $1, $2, $3, $4,
+  $5, $6, $7
+)
 `
 
 type InsertBackupParams struct {
@@ -97,6 +100,9 @@ type InsertBackupParams struct {
 }
 
 // 整库备份与模型代理用量（internal/store/schema.sql 的 backup 与 llm_usage）。
+//
+// 参数一律用 sqlc.arg(名字)：同一个名字在一句里出现多次也只绑一次，改一处绑定
+// 不会让另一个位置的 $n 顺序悄悄错位。
 func (q *Queries) InsertBackup(ctx context.Context, arg InsertBackupParams) error {
 	_, err := q.db.Exec(ctx, insertBackup,
 		arg.ID,
@@ -167,12 +173,12 @@ RETURNING id
 
 type TrimBackupsParams struct {
 	UserID string
-	Offset int32
+	Keep   int32
 }
 
 // 只保留最新的若干份；返回被删掉的那些 id，调用方据此删除对象存储里的字节。
 func (q *Queries) TrimBackups(ctx context.Context, arg TrimBackupsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, trimBackups, arg.UserID, arg.Offset)
+	rows, err := q.db.Query(ctx, trimBackups, arg.UserID, arg.Keep)
 	if err != nil {
 		return nil, err
 	}

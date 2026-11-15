@@ -21,9 +21,9 @@ LIMIT $3
 `
 
 type CommitsAfterParams struct {
-	UserID string
-	Seq    int64
-	Limit  int32
+	UserID    string
+	AfterSeq  int64
+	PageLimit int32
 }
 
 type CommitsAfterRow struct {
@@ -39,7 +39,7 @@ type CommitsAfterRow struct {
 }
 
 func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]CommitsAfterRow, error) {
-	rows, err := q.db.Query(ctx, commitsAfter, arg.UserID, arg.Seq, arg.Limit)
+	rows, err := q.db.Query(ctx, commitsAfter, arg.UserID, arg.AfterSeq, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +78,7 @@ ON CONFLICT (user_id) DO NOTHING
 // 每个账号的线性提交序列（internal/store/schema.sql 的 sync_head 与 sync_commit）。
 //
 // 推送时先锁住 sync_head 再核对 base_seq，整个过程在一个事务里完成（ADR-0015）。
+// 参数一律用 sqlc.arg(名字)：同一个名字在一句里出现多次也只绑一次。
 func (q *Queries) EnsureSyncHead(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, ensureSyncHead, userID)
 	return err
@@ -120,7 +121,11 @@ INSERT INTO sync_commit (
   user_id, seq, request_id, device_id, schema_version,
   actor, action, created_at, changes
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES (
+  $1, $2, $3,
+  $4, $5, $6,
+  $7, $8, $9
+)
 `
 
 type InsertSyncCommitParams struct {
@@ -166,17 +171,17 @@ func (q *Queries) LockSyncHead(ctx context.Context, userID string) (int64, error
 
 const setSyncHead = `-- name: SetSyncHead :exec
 UPDATE sync_head
-SET head = $2
-WHERE user_id = $1
+SET head = $1
+WHERE user_id = $2
 `
 
 type SetSyncHeadParams struct {
-	UserID string
 	Head   int64
+	UserID string
 }
 
 func (q *Queries) SetSyncHead(ctx context.Context, arg SetSyncHeadParams) error {
-	_, err := q.db.Exec(ctx, setSyncHead, arg.UserID, arg.Head)
+	_, err := q.db.Exec(ctx, setSyncHead, arg.Head, arg.UserID)
 	return err
 }
 

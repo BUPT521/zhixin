@@ -95,9 +95,9 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 // After 返回 seq 大于 after 的提交，按顺序最多 limit 条。
 func (s *Store) After(ctx context.Context, userID string, after int64, limit int) ([]syncsvc.Commit, error) {
 	rows, err := s.q.CommitsAfter(ctx, db.CommitsAfterParams{
-		UserID: userID,
-		Seq:    after,
-		Limit:  int32(limit),
+		UserID:    userID,
+		AfterSeq:  after,
+		PageLimit: int32(limit),
 	})
 	if err != nil {
 		return nil, err

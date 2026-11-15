@@ -1,46 +1,53 @@
 -- 账号与会话（internal/store/schema.sql 的 app_user 与 session）。
+--
+-- 参数一律用 sqlc.arg(名字)：生成的方法按名字取参数，改一处绑定不会让另一个
+-- 位置的 $n 顺序悄悄错位。
 
 -- name: CreateUser :exec
 INSERT INTO app_user (id, email, password_hash)
-VALUES ($1, $2, $3);
+VALUES (sqlc.arg(id), sqlc.arg(email), sqlc.arg(password_hash));
 
 -- name: UserByEmail :one
 SELECT id, email, password_hash, created_at
 FROM app_user
-WHERE email = $1;
+WHERE email = sqlc.arg(email);
 
 -- name: UserByID :one
 SELECT id, email, password_hash, created_at
 FROM app_user
-WHERE id = $1;
+WHERE id = sqlc.arg(id);
 
 -- name: DeleteUser :execrows
 DELETE FROM app_user
-WHERE id = $1;
+WHERE id = sqlc.arg(id);
 
 -- name: CreateSession :exec
 INSERT INTO session (
   id, user_id, device_name, access_hash, refresh_hash,
   access_expires, refresh_expires
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+VALUES (
+  sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(device_name),
+  sqlc.arg(access_hash), sqlc.arg(refresh_hash),
+  sqlc.arg(access_expires), sqlc.arg(refresh_expires)
+);
 
 -- name: SessionByAccessHash :one
 SELECT id, user_id, device_name, access_hash, refresh_hash,
   access_expires, refresh_expires, created_at
 FROM session
-WHERE access_hash = $1;
+WHERE access_hash = sqlc.arg(access_hash);
 
 -- name: SessionByRefreshHash :one
 SELECT id, user_id, device_name, access_hash, refresh_hash,
   access_expires, refresh_expires, created_at
 FROM session
-WHERE refresh_hash = $1;
+WHERE refresh_hash = sqlc.arg(refresh_hash);
 
 -- name: DeleteSession :execrows
 DELETE FROM session
-WHERE id = $1;
+WHERE id = sqlc.arg(id);
 
 -- name: DeleteUserSessions :exec
 DELETE FROM session
-WHERE user_id = $1;
+WHERE user_id = sqlc.arg(user_id);
