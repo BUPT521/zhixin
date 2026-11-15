@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
 // Config is the complete runtime configuration of zhixin-api.
@@ -38,7 +40,7 @@ type Config struct {
 	BlobDir string
 	// S3 configures S3-compatible object storage; an empty endpoint means the
 	// local directory is used instead (ADR-0016).
-	S3 S3Config
+	S3 objectstore.S3Config
 	// ApplySchema runs schema.sql on startup; meant for a fresh database.
 	ApplySchema bool
 
@@ -57,20 +59,6 @@ type Config struct {
 
 	LLM LLMConfig
 }
-
-// S3Config configures S3-compatible object storage. Endpoint is host[:port]
-// without a scheme; the scheme follows UseSSL.
-type S3Config struct {
-	Endpoint  string
-	Bucket    string
-	AccessKey string
-	SecretKey string
-	Region    string
-	UseSSL    bool
-}
-
-// Configured reports whether object storage is configured at all.
-func (c S3Config) Configured() bool { return c.Endpoint != "" }
 
 // LLMConfig configures the model proxy.
 type LLMConfig struct {
@@ -144,7 +132,7 @@ func Load(getenv func(string) string) (Config, error) {
 		BackupsKept:        int(num("ZHIXIN_BACKUPS_KEPT", "5")),
 		BlobDir:            get("ZHIXIN_BLOB_DIR", "data/blobs"),
 		ApplySchema:        get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
-		S3: S3Config{
+		S3: objectstore.S3Config{
 			Endpoint:  get("ZHIXIN_S3_ENDPOINT", ""),
 			Bucket:    get("ZHIXIN_S3_BUCKET", "zhixin"),
 			AccessKey: get("ZHIXIN_S3_ACCESS_KEY", ""),

@@ -17,8 +17,8 @@ type S3 struct {
 	bucket string
 }
 
-// S3Options 是连接对象存储需要的全部配置，来自环境变量。
-type S3Options struct {
+// S3Config 是连接对象存储需要的全部配置，来自环境变量。
+type S3Config struct {
 	// Endpoint 是 host[:port]，不带协议；UseSSL 决定用 https 还是 http。
 	Endpoint  string
 	Bucket    string
@@ -28,8 +28,11 @@ type S3Options struct {
 	UseSSL    bool
 }
 
+// Configured reports whether object storage is configured at all.
+func (c S3Config) Configured() bool { return c.Endpoint != "" }
+
 // NewS3 建立客户端。它不访问网络：连通性由 Ping 在就绪检查时确认。
-func NewS3(opts S3Options) (*S3, error) {
+func NewS3(opts S3Config) (*S3, error) {
 	if opts.Endpoint == "" || opts.Bucket == "" || opts.AccessKey == "" || opts.SecretKey == "" {
 		return nil, errors.New("objectstore: S3 需要 endpoint、bucket、access key 与 secret key")
 	}

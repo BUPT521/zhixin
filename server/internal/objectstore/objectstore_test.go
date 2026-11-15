@@ -101,7 +101,7 @@ func TestNewDirRequiresRoot(t *testing.T) {
 }
 
 func TestS3RejectsIncompleteOptions(t *testing.T) {
-	if _, err := NewS3(S3Options{Endpoint: "minio:9000", Bucket: "zhixin"}); err == nil {
+	if _, err := NewS3(S3Config{Endpoint: "minio:9000", Bucket: "zhixin"}); err == nil {
 		t.Fatal("missing credentials must be rejected")
 	}
 }

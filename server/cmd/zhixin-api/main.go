@@ -118,14 +118,7 @@ func run(log *slog.Logger) error {
 // ZHIXIN_BLOB_DIR 指定的本地目录，保证没有对象存储的开发环境也能跑。
 func openObjects(cfg config.Config, log *slog.Logger) (objectstore.Store, error) {
 	if cfg.S3.Configured() {
-		objects, err := objectstore.NewS3(objectstore.S3Options{
-			Endpoint:  cfg.S3.Endpoint,
-			Bucket:    cfg.S3.Bucket,
-			AccessKey: cfg.S3.AccessKey,
-			SecretKey: cfg.S3.SecretKey,
-			Region:    cfg.S3.Region,
-			UseSSL:    cfg.S3.UseSSL,
-		})
+		objects, err := objectstore.NewS3(cfg.S3)
 		if err != nil {
 			return nil, err
 		}
