@@ -245,9 +245,10 @@ class PlanService {
     return blocks.length;
   }
 
-  Future<void> setStatus(int id, PlanItemStatus status) async {
-    await studyPlans.setItemStatus(id, status);
-  }
+  Future<void> setStatus(int id, PlanItemStatus status) =>
+      transactions.run((txn) async {
+        await studyPlans.setItemStatus(id, status, transaction: txn);
+      }, label: '更新事项状态');
 
   Future<void> setPriority(int id, int priority) =>
       tasks.setPriority(id, priority);

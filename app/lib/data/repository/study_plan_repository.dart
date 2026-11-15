@@ -30,12 +30,34 @@ class StudyPlanRepository {
     int? pageFrom,
     int? pageTo,
     int? currentPage,
-    RawExecutor? executor,
+    WriteTransaction? transaction,
+  }) {
+    return _insertPlan(
+      title: title,
+      materialId: materialId,
+      goalId: goalId,
+      conversationId: conversationId,
+      pageFrom: pageFrom,
+      pageTo: pageTo,
+      currentPage: currentPage,
+      executor: writeExecutor(transaction, _db),
+    );
+  }
+
+  Future<int> _insertPlan({
+    required String title,
+    required int? materialId,
+    required int? goalId,
+    required int? conversationId,
+    required int? pageFrom,
+    required int? pageTo,
+    required int? currentPage,
+    required RawExecutor executor,
   }) async {
     final text = title.trim();
     if (text.isEmpty) throw ArgumentError('学习计划的标题不能为空');
     final now = formatDateTime(_clock());
-    return (executor ?? _db).writeGenerated(
+    return executor.writeGenerated(
       (db) => db.insertStudyPlan(
         materialId,
         goalId,
@@ -60,73 +82,76 @@ class StudyPlanRepository {
     int? pageFrom,
     int? pageTo,
     int? currentPage,
-  }) {
-    return _db.transaction((txn) async {
-      final planId = await create(
-        title: title,
-        materialId: materialId,
-        goalId: goalId,
-        conversationId: conversationId,
-        pageFrom: pageFrom,
-        pageTo: pageTo,
-        currentPage: currentPage,
-        executor: txn,
+    WriteTransaction? transaction,
+  }) async {
+    final txn = writeExecutor(transaction, _db);
+    final planId = await _insertPlan(
+      title: title,
+      materialId: materialId,
+      goalId: goalId,
+      conversationId: conversationId,
+      pageFrom: pageFrom,
+      pageTo: pageTo,
+      currentPage: currentPage,
+      executor: txn,
+    );
+    final now = formatDateTime(_clock());
+    var seq = 1;
+    for (final draft in drafts) {
+      final stepTitle = draft.title.trim();
+      if (stepTitle.isEmpty) continue;
+      await txn.writeGenerated(
+        (db) => db.insertStudyPlanStep(
+          goalId,
+          planId,
+          seq++,
+          stepTitle,
+          draft.isPrerequisite
+              ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
+              : draft.note,
+          draft.pageFrom,
+          draft.pageTo,
+          PlanItemStatus.todo.code,
+          now,
+        ),
       );
-      final now = formatDateTime(_clock());
-      var seq = 1;
-      for (final draft in drafts) {
-        final stepTitle = draft.title.trim();
-        if (stepTitle.isEmpty) continue;
-        await txn.writeGenerated(
-          (db) => db.insertStudyPlanStep(
-            goalId,
-            planId,
-            seq++,
-            stepTitle,
-            draft.isPrerequisite
-                ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
-                : draft.note,
-            draft.pageFrom,
-            draft.pageTo,
-            PlanItemStatus.todo.code,
-            now,
-          ),
-        );
-      }
-      return planId;
-    });
+    }
+    return planId;
   }
 
   /// 按顺序把草案写成学习事项；计划的材料、目标与来源讨论一并带上。
-  Future<void> addDrafts(int planId, List<StudyStepDraft> drafts) async {
+  Future<void> addDrafts(
+    int planId,
+    List<StudyStepDraft> drafts, {
+    WriteTransaction? transaction,
+  }) async {
     final plan = await byId(planId);
     if (plan == null) throw StateError('未找到这份学习计划');
     final now = formatDateTime(_clock());
-    await _db.transaction((txn) async {
-      final lastSeq = await txn.selectGenerated(
-        (db) => db.lastPlanStepSeq(planId).getSingleOrNull(),
+    final txn = writeExecutor(transaction, _db);
+    final lastSeq = await txn.selectGenerated(
+      (db) => db.lastPlanStepSeq(planId).getSingleOrNull(),
+    );
+    var seq = (lastSeq ?? 0) + 1;
+    for (final draft in drafts) {
+      final title = draft.title.trim();
+      if (title.isEmpty) continue;
+      await txn.writeGenerated(
+        (db) => db.insertStudyPlanStep(
+          plan.goalId,
+          planId,
+          seq++,
+          title,
+          draft.isPrerequisite
+              ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
+              : draft.note,
+          draft.pageFrom,
+          draft.pageTo,
+          PlanItemStatus.todo.code,
+          now,
+        ),
       );
-      var seq = (lastSeq ?? 0) + 1;
-      for (final draft in drafts) {
-        final title = draft.title.trim();
-        if (title.isEmpty) continue;
-        await txn.writeGenerated(
-          (db) => db.insertStudyPlanStep(
-            plan.goalId,
-            planId,
-            seq++,
-            title,
-            draft.isPrerequisite
-                ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
-                : draft.note,
-            draft.pageFrom,
-            draft.pageTo,
-            PlanItemStatus.todo.code,
-            now,
-          ),
-        );
-      }
-    });
+    }
   }
 
   static StudyPlan _planOf(PlanRowsResult row) => StudyPlan(
@@ -309,33 +334,36 @@ class StudyPlanRepository {
     int stepId,
     PlanItemStatus status, {
     int? expectedPlanId,
+    WriteTransaction? transaction,
   }) async {
-    await _db.transaction((txn) async {
-      final item = await txn.selectGenerated(
-        (db) => db.itemPlan(stepId).getSingleOrNull(),
-      );
-      if (item == null) return;
-      final planId = item.studyPlanId;
-      if (planId == null) return;
-      if (expectedPlanId != null && expectedPlanId != planId) {
-        throw StateError('这一步不属于当前学习计划');
-      }
-      await _setItemStatus(txn, stepId, status, planId);
-      await _recompute(txn, planId);
-    });
+    final txn = writeExecutor(transaction, _db);
+    final item = await txn.selectGenerated(
+      (db) => db.itemPlan(stepId).getSingleOrNull(),
+    );
+    if (item == null) return;
+    final planId = item.studyPlanId;
+    if (planId == null) return;
+    if (expectedPlanId != null && expectedPlanId != planId) {
+      throw StateError('这一步不属于当前学习计划');
+    }
+    await _setItemStatus(txn, stepId, status, planId);
+    await _recompute(txn, planId);
   }
 
   /// 所有事项状态入口共用计划步骤的唯一进行中规则。
-  Future<void> setItemStatus(int itemId, PlanItemStatus status) async {
-    await _db.transaction((txn) async {
-      final item = await txn.selectGenerated(
-        (db) => db.itemPlan(itemId).getSingleOrNull(),
-      );
-      if (item == null) return;
-      final planId = item.studyPlanId;
-      await _setItemStatus(txn, itemId, status, planId);
-      if (planId != null) await _recompute(txn, planId);
-    });
+  Future<void> setItemStatus(
+    int itemId,
+    PlanItemStatus status, {
+    WriteTransaction? transaction,
+  }) async {
+    final txn = writeExecutor(transaction, _db);
+    final item = await txn.selectGenerated(
+      (db) => db.itemPlan(itemId).getSingleOrNull(),
+    );
+    if (item == null) return;
+    final planId = item.studyPlanId;
+    await _setItemStatus(txn, itemId, status, planId);
+    if (planId != null) await _recompute(txn, planId);
   }
 
   Future<void> _setItemStatus(
@@ -384,11 +412,16 @@ class StudyPlanRepository {
     }
   }
 
-  Future<void> setStatus(int planId, StudyPlanStatus status) async {
+  Future<void> setStatus(
+    int planId,
+    StudyPlanStatus status, {
+    WriteTransaction? transaction,
+  }) async {
     final stamp = formatDateTime(_clock());
-    await _db.writeGenerated(
-      (db) => db.setStudyPlanStatus(status.code, stamp, planId),
-    );
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setStudyPlanStatus(status.code, stamp, planId));
   }
 
   Future<void> _recompute(RawExecutor executor, int planId) async {

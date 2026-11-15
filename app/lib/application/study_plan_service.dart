@@ -397,32 +397,43 @@ class StudyPlanService {
         ? title!.trim()
         : '${material.title} ${material.position(pageFrom, to: pageTo)}';
     final first = steps.first;
-    final planId = await plans.createWithDrafts(
-      title: planTitle,
-      drafts: steps,
-      materialId: materialId,
-      goalId: goalId ?? material.goalId,
-      conversationId: conversationId,
-      pageFrom: pageFrom,
-      pageTo: pageTo,
-      currentPage: first.pageFrom ?? pageFrom,
+    final planId = await transactions.run(
+      (txn) => plans.createWithDrafts(
+        title: planTitle,
+        drafts: steps,
+        materialId: materialId,
+        goalId: goalId ?? material.goalId,
+        conversationId: conversationId,
+        pageFrom: pageFrom,
+        pageTo: pageTo,
+        currentPage: first.pageFrom ?? pageFrom,
+        transaction: txn,
+      ),
+      label: '建立学习计划',
     );
     return view(planId);
   }
 
-  Future<void> setStepStatus(
-    int planId,
-    int stepId,
-    PlanItemStatus status,
-  ) async {
-    await plans.setStepStatus(stepId, status, expectedPlanId: planId);
-  }
+  Future<void> setStepStatus(int planId, int stepId, PlanItemStatus status) =>
+      transactions.run(
+        (txn) => plans.setStepStatus(
+          stepId,
+          status,
+          expectedPlanId: planId,
+          transaction: txn,
+        ),
+        label: '更新学习步骤',
+      );
 
-  Future<void> pause(int planId) =>
-      plans.setStatus(planId, StudyPlanStatus.paused);
+  Future<void> pause(int planId) => transactions.run(
+    (txn) => plans.setStatus(planId, StudyPlanStatus.paused, transaction: txn),
+    label: '暂停学习计划',
+  );
 
-  Future<void> resume(int planId) =>
-      plans.setStatus(planId, StudyPlanStatus.active);
+  Future<void> resume(int planId) => transactions.run(
+    (txn) => plans.setStatus(planId, StudyPlanStatus.active, transaction: txn),
+    label: '继续学习计划',
+  );
 
   /// 从当前步骤打开一次讨论；正式学习会把这一步标为进行中。
   Future<int> startAtCurrent(
@@ -439,10 +450,14 @@ class StudyPlanService {
         : await materials.byId(plan.materialId!);
     final pageLabel = materialPosition(page, isDocx: plan.materialIsDocx);
     if (!temporary && step != null && step.status == PlanItemStatus.todo) {
-      await plans.setStepStatus(
-        step.id,
-        PlanItemStatus.doing,
-        expectedPlanId: plan.id,
+      await transactions.run(
+        (txn) => plans.setStepStatus(
+          step.id,
+          PlanItemStatus.doing,
+          expectedPlanId: plan.id,
+          transaction: txn,
+        ),
+        label: '开始学习步骤',
       );
     }
     if (!temporary &&
