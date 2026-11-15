@@ -12162,7 +12162,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<ActiveDifficultiesResult> activeDifficulties(
     String kind,
-    String? scope,
+    String scope,
   ) {
     return customSelect(
       'SELECT id, content FROM memory WHERE status = \'active\' AND kind = ?1 AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND scope = ?2))ORDER BY id DESC',
