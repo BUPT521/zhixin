@@ -4,13 +4,19 @@
 
 ## 当前状态
 
-路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、模型代理的转发与额度都已经按契约实现。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时用内存实现，进程退出后数据丢失，只能用于本地开发与联调；设置之后用 PostgreSQL（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），账号、会话、提交序列、备份元数据与用量入库，备份字节写到 `ZHIXIN_BLOB_DIR`，进程重启不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件对象的 `/v1/blobs` 仍在契约里但处理函数返回 501。
+路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、提交序列的推送与拉取、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`。
 
 PostgreSQL 的用例要连真库，设置 `ZHIXIN_TEST_DATABASE_URL` 才会跑，否则跳过；这个仓库的开发机与当前 CI 都没有数据库，因此这条路径只做过编译与静态检查。
 
-接下来的顺序是：对象存储与 `/v1/blobs`（把备份字节从 `ZHIXIN_BLOB_DIR` 换到 S3 兼容存储，并实现附件三件套），部署到与自建 Sentry 相同的服务器，然后接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
+接下来的顺序是：部署到与自建 Sentry 相同的服务器，部署时在 MinIO 上走一遍备份与附件的上传、下载、删除与删除账号，然后接入客户端的登录、备份与“知新服务”模型来源。增量同步要等客户端业务表主键改为全局唯一之后再接，见 [01 第 8 节](../docs/01-ER数据模型.md#8-待验证与待定)。
 
-PostgreSQL 存取用 `pgx` 加 `sqlc` 生成，契约用 `oapi-codegen` 生成并挂到标准库路由上，登录与刷新令牌用 `golang.org/x/time/rate` 限流，依赖清单与理由见 [ADR-0015](../docs/adr/0015-服务端引入代码生成与限流依赖.md)。生成代码与客户端一样提交入库，提交前重新生成并核对没有差异。
+PostgreSQL 存取用 `pgx` 加 `sqlc` 生成，契约用 `oapi-codegen` 生成并挂到标准库路由上，登录与刷新令牌用 `golang.org/x/time/rate` 限流，对象存储用 `minio-go` 访问，依赖清单与理由见 [ADR-0015](../docs/adr/0015-服务端引入代码生成与限流依赖.md) 与 [ADR-0016](../docs/adr/0016-对象存储与附件接口.md)。生成代码与客户端一样提交入库，提交前重新生成并核对没有差异；生成命令在 `server/` 目录下执行，`api/cfg.yaml` 里的输出路径相对这个目录：
+
+```bash
+cd server
+go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2 -config api/cfg.yaml api/openapi.yaml
+go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
+```
 
 ## 目录
 
@@ -24,7 +30,9 @@ server/
 │   ├── auth/                   ← 账号、argon2id 密码、不透明令牌、Require 中间件
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
+│   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
 │   ├── llmproxy/               ← Chat Completions 代理与每日额度
+│   ├── objectstore/            ← 字节存储：S3 兼容、本地目录与内存三种实现
 │   ├── api/                    ← 生成的路由与类型（来自 api/openapi.yaml）
 │   ├── server/                 ← 装配路由与中间件，端到端测试
 │   ├── store/                  ← 表结构（schema.sql，唯一真相）与 sqlc 查询
@@ -32,7 +40,7 @@ server/
 └── Dockerfile
 ```
 
-每个业务包自己定义存储接口并带一份内存实现，`server.Stores` 把它们收在一起，`main` 只在一处决定用内存还是 PostgreSQL。业务包之间只通过 `auth.PrincipalFrom` 取得当前账号，不互相引用存储；删除账号时，各业务包通过 `auth.Service.OnAccountDelete` 登记的清理函数先删自己的数据，任何一步失败都保留账号，以便重试。
+每个业务包自己定义存储接口并带一份内存实现，`server.Stores` 把它们收在一起，`main` 只在一处决定用内存还是 PostgreSQL、对象存储还是本地目录。业务包之间只通过 `auth.PrincipalFrom` 取得当前账号，不互相引用存储；删除账号时，各业务包通过 `auth.Service.OnAccountDelete` 登记的清理函数先删自己的数据，任何一步失败都保留账号，以便重试。
 
 ## 约定
 
@@ -46,6 +54,12 @@ server/
 
 服务端为每个账号保存一条线性的提交序列，不合并、不解析内容。客户端推送时带上自己所知的 `base_seq`，等于服务端 head 才追加，否则返回 409 和最新 head；客户端先拉取 `after=<本机已同步位置>` 的提交，在本机按现有的净变化应用为新的本地提交（撤销与数据版本页因此照常可用），再重新推送。每条提交带客户端的 `request_id`，已经收到过的会被跳过，所以丢失响应之后原样重试是安全的。同一字段在两台设备上并发修改时，后到达服务端的覆盖先到达的，被覆盖的值留在提交历史里；这条规则是否够用，在两台设备走查之后再定。
 
+## 附件与备份的字节
+
+整库备份是客户端导出的 zip 原样保存，服务端只核对 `X-Content-SHA256` 与大小，不打开内容。附件走 `/v1/blobs/{sha256}`，路径里的 `sha256` 就是内容的哈希：`PUT` 把请求体写到临时文件并计算哈希，与路径一致才保存，`HEAD` 在同步前判断哪些附件已经上传过，`GET` 取回原始字节。两者都按账号隔离，键分别是 `backups/<账号>/<id>.zip` 与 `attachments/<账号>/<sha256>`，删除账号时按前缀清理；附件在同一个账号里按内容去重，不同账号之间不共享对象，因此 `HEAD` 也不会泄露别的账号有没有传过同样的内容。
+
+设置了 `ZHIXIN_S3_ENDPOINT` 时用 S3 兼容存储，没设时写到 `ZHIXIN_BLOB_DIR`，不设数据库时用内存实现。上传的请求体先落到系统临时目录再入库，备份上限 256 MB，附件的上限见配置表；并发上传时临时目录要放得下这些字节。预签名直传的取舍见 [ADR-0016](../docs/adr/0016-对象存储与附件接口.md)，本期仍由服务端转发字节。
+
 ## 模型代理
 
 客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端核对模型名是否在 `ZHIXIN_LLM_MODELS` 中、当日用量是否低于 `ZHIXIN_LLM_DAILY_TOKENS`，然后换上服务端持有的 key 转发，流式响应按事件边界逐块刷新，提供方的错误状态与响应体原样返回。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待定。
@@ -58,7 +72,13 @@ server/
 |---|---|---|
 | `ZHIXIN_ADDR` | `:8080` | 监听地址 |
 | `ZHIXIN_DATABASE_URL` | 空 | 空表示内存存储；设置之后用 PostgreSQL |
-| `ZHIXIN_BLOB_DIR` | `data/blobs` | 备份字节的落盘目录，仅在使用 PostgreSQL 时读取 |
+| `ZHIXIN_BLOB_DIR` | `data/blobs` | 没配置对象存储时，备份与附件字节的落盘目录；只在设置了数据库时读取 |
+| `ZHIXIN_S3_ENDPOINT` | 空 | S3 兼容存储的 `host[:port]`，不带协议；设置之后备份与附件都走对象存储 |
+| `ZHIXIN_S3_BUCKET` | `zhixin` | 对象存储的 bucket，启动时不在就报错 |
+| `ZHIXIN_S3_ACCESS_KEY` | 空 | 对象存储的 access key，设置了 endpoint 时必填 |
+| `ZHIXIN_S3_SECRET_KEY` | 空 | 对象存储的 secret key，设置了 endpoint 时必填 |
+| `ZHIXIN_S3_REGION` | 空 | 对象存储的 region，MinIO 一般留空 |
+| `ZHIXIN_S3_USE_SSL` | `0` | 设为 `1` 时用 https 访问对象存储 |
 | `ZHIXIN_APPLY_SCHEMA` | `0` | 设为 `1` 时启动按 `schema.sql` 建表，用于空库 |
 | `ZHIXIN_TIMEZONE` | `Asia/Shanghai` | 额度按这个时区的自然日计 |
 | `ZHIXIN_ACCESS_TTL` | `1h` | 访问令牌有效期 |
@@ -86,6 +106,8 @@ go run ./cmd/zhixin-api              # 内存存储，监听 :8080
 curl localhost:8080/healthz
 ```
 
+设置 `ZHIXIN_DATABASE_URL` 之后启动就用 PostgreSQL，备份与附件默认写到 `ZHIXIN_BLOB_DIR`。要连 MinIO 时设置 `ZHIXIN_S3_ENDPOINT`、`ZHIXIN_S3_BUCKET`、`ZHIXIN_S3_ACCESS_KEY` 与 `ZHIXIN_S3_SECRET_KEY`，bucket 要先建好，`/readyz` 会检查它是否存在；S3 路径没有自动化用例，第一次联调时手工走一遍上传、下载、删除与删除账号，再按结果更新 [ADR-0016](../docs/adr/0016-对象存储与附件接口.md)。
+
 提交前执行与 CI 相同的三条命令：
 
 ```bash
@@ -94,4 +116,4 @@ go vet ./...
 go test ./...
 ```
 
-端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、同步的线性与幂等、备份的哈希校验与保留份数、删除账号时清理数据，以及模型代理的转发、key 替换、用量记录与额度拒绝。
+端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限、删除账号时清理数据，以及模型代理的转发、key 替换、用量记录与额度拒绝。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 实现只做编译与配置校验，没有可用的对象存储时不跑。
