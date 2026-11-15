@@ -5,6 +5,7 @@
 /// 记录：题目取开始作答时确定的用户消息与图片，开始作答后 `hasAttempts` 为真。
 library;
 
+import '../rules/text.dart';
 import 'material.dart';
 
 import '../rules/search_terms.dart';
@@ -85,14 +86,13 @@ class ConversationRecord {
 
   /// 草稿里已经写下的内容；没有草稿或草稿为空时为空。
   String? get draftSnippet {
-    final text = draftAnswer?.trim();
-    return text == null || text.isEmpty ? null : text;
+    return nullableText(draftAnswer);
   }
 
   /// 记录列表与“现在”页展示的标题。
   String get displayTitle {
-    final text = title?.trim();
-    if (text != null && text.isNotEmpty) return text;
+    final text = nullableText(title);
+    if (text != null) return text;
     return entryKind == 'photo' ? '图片求助' : '一次求助';
   }
 

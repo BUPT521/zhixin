@@ -165,7 +165,7 @@ class AttemptRepository {
     final stamp = formatDateTime(_clock());
     await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.saveOpenAttemptDraft(
-        text.isEmpty ? null : text,
+        nullableText(text),
         nullableText(solution),
         isCorrect == null ? null : (isCorrect ? 1 : 0),
         independent == null ? null : (independent ? 1 : 0),

@@ -1,3 +1,4 @@
+import '../domain/rules/text.dart';
 import '../domain/models/buddy_protocol.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/memory.dart';
@@ -210,10 +211,8 @@ AgentTool _proposeCitations(_Proposals<CitationDraft> proposals) => AgentTool(
   ]),
 );
 
-String? _optionalText(ToolArguments args, String field) {
-  final text = (args[field] as String?)?.trim();
-  return text == null || text.isEmpty ? null : text;
-}
+String? _optionalText(ToolArguments args, String field) =>
+    nullableText(args[field] as String?);
 
 const LlmTool _memoriesSchema = LlmTool(
   name: proposeMemoriesTool,
