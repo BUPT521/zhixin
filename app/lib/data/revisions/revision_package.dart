@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../../domain/rules/time_policy.dart';
 import '../backup/backup_manifest.dart';
-import '../db/schema_objects.dart';
+import '../backup/restore_validation.dart';
 import 'asset_store.dart';
 import 'revision_engine.dart';
 import '../db/raw_executor.dart';
@@ -55,10 +55,7 @@ class RevisionPackageService {
       if (!await assets.verify(db, hash)) missing.add(hash);
     }
     if (missing.isNotEmpty) {
-      throw StateError(
-        '导出中止：数据库引用的 ${missing.length} 个附件缺失或校验失败'
-        '（${missing.take(3).join('、')}${missing.length > 3 ? ' 等' : ''}）',
-      );
+      throw StateError('导出中止：${assetProblem(missing)}');
     }
     final output = File(outputPath);
     await output.parent.create(recursive: true);
@@ -173,29 +170,12 @@ class RevisionPackageService {
     try {
       await db.execute('VACUUM INTO ?', [temporaryDb.path]);
       copy = openReadOnlyDatabase(temporaryDb.path);
-      final integrity = await copy.rawQuery('PRAGMA integrity_check');
-      if (integrity.isEmpty ||
-          integrity.first.values.first?.toString() != 'ok') {
-        throw StateError('版本库备份完整性校验失败');
-      }
-      final version = await copy.rawQuery('PRAGMA user_version');
-      if (version.first.values.first != schemaVersion) {
-        throw StateError('版本库备份的 schema 与当前不一致');
-      }
-      final unexpected = await unexpectedDatabaseObjects(copy);
-      if (unexpected.isNotEmpty) {
-        throw StateError(
-          '备份中止：数据库带有当前程序不认识的'
-          '${unexpected.take(5).join('、')}${unexpected.length > 5 ? ' 等' : ''}',
-        );
-      }
+      final stagedProblem = await _stagedProblem(temporaryDb.path);
+      if (stagedProblem != null) throw StateError('备份中止：$stagedProblem');
       final head = await engine.headId(copy);
-      final missing = await engine.verifyAssets(copy);
-      if (missing.isNotEmpty) {
-        throw StateError(
-          '备份中止：数据库引用的 ${missing.length} 个附件缺失或校验失败'
-          '（${missing.take(3).join('、')}${missing.length > 3 ? ' 等' : ''}）',
-        );
+      final assetsProblem = assetProblem(await engine.verifyAssets(copy));
+      if (assetsProblem != null) {
+        throw StateError('备份中止：$assetsProblem');
       }
       final digest = sha256.convert(await temporaryDb.readAsBytes()).toString();
       final manifest = BackupManifest(
@@ -295,35 +275,20 @@ class RevisionPackageService {
     RawDatabase? copy;
     try {
       await File(path).writeAsBytes(data, flush: true);
+      final stagedProblem = await _stagedProblem(path);
+      if (stagedProblem != null) {
+        throw FormatException('版本库备份校验失败：$stagedProblem');
+      }
       copy = openReadOnlyDatabase(path);
-      final integrity = await copy.rawQuery('PRAGMA integrity_check');
-      if (integrity.isEmpty ||
-          integrity.first.values.first?.toString() != 'ok') {
-        throw const FormatException('版本库备份完整性校验失败');
-      }
-      final userVersion = await copy.rawQuery('PRAGMA user_version');
-      if (userVersion.first.values.first != schemaVersion) {
-        throw const FormatException('版本库备份的 schema 与当前不一致');
-      }
-      final unexpected = await unexpectedDatabaseObjects(copy);
-      if (unexpected.isNotEmpty) {
-        throw FormatException(
-          '版本库备份带有当前程序不认识的'
-          '${unexpected.take(5).join('、')}${unexpected.length > 5 ? ' 等' : ''}',
-        );
-      }
       final head = await engine.headId(copy);
       final declaredHead = manifest['head'];
       if (declaredHead is int && declaredHead != head) {
         throw const FormatException('版本库备份声明的 HEAD 与数据库不一致');
       }
       await engine.projectionAt(copy, head);
-      final missing = await engine.verifyAssets(copy);
-      if (missing.isNotEmpty) {
-        throw FormatException(
-          '版本库备份的 ${missing.length} 个附件缺失或校验失败'
-          '（${missing.take(3).join('、')}${missing.length > 3 ? ' 等' : ''}）',
-        );
+      final assetsProblem = assetProblem(await engine.verifyAssets(copy));
+      if (assetsProblem != null) {
+        throw FormatException('版本库备份校验失败：$assetsProblem');
       }
       final commits = await copy.rawQuery(
         'SELECT COUNT(*) AS count FROM revision_commit',
@@ -350,6 +315,17 @@ class RevisionPackageService {
   }
 
   String assetPath(String hash) => p.join(_assetPrefix, hash);
+
+  /// 暂存库的只读校验：版本、对象白名单、物理完整性与外键。
+  ///
+  /// 与数据包恢复预检共用 [StagedDatabaseValidator]；返回问题说明，由调用方按
+  /// 自己的异常类型报告。
+  Future<String?> _stagedProblem(String path) async {
+    final problem = await StagedDatabaseValidator(schemaVersion: schemaVersion)
+        .readOnlyProblem(path, manifestSchemaVersion: schemaVersion);
+    if (problem == null) return null;
+    return '${problem.category}：${problem.detail}';
+  }
 }
 
 /// 版本库备份预检的结果：包内规模与导出信息，用于恢复前的影响说明。
