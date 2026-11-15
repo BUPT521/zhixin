@@ -54,6 +54,8 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
+	// PostgreSQL 实现同时承担提交序列与备份，DeleteUser 会登记两次；各清理函数
+	// 因此必须在数据已经删掉时直接返回成功（见 pg.Store.DeleteUser）。
 	authSvc.OnAccountDelete(st.Sync.DeleteUser)
 	authSvc.OnAccountDelete(st.Backups.DeleteUser)
 	authSvc.OnAccountDelete(st.Blobs.DeleteUser)

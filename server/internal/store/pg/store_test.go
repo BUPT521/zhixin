@@ -3,6 +3,7 @@ package pg
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -79,6 +80,33 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	}
 	if _, err := st.SessionByRefreshHash(ctx, "rh"); err != auth.ErrNotFound {
 		t.Fatalf("清掉会话之后应找不到，得到 %v", err)
+	}
+}
+
+func TestPostgresDeleteUserRunsCleanupTwice(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	body := []byte("zip-b1")
+	meta := backup.Meta{
+		ID: "b1", SHA256: "sha-b1", Size: int64(len(body)), SchemaVersion: 26,
+		DeviceName: "phone", CreatedAt: time.Now().UTC(),
+	}
+	if err := st.Put(ctx, "u1", meta, bytes.NewReader(body), 5); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	// server 装配时同一个实现会登记两次清理，第二次必须直接成功，后面的附件
+	// 清理才有机会执行。
+	for i := 0; i < 2; i++ {
+		if err := st.DeleteUser(ctx, "u1"); err != nil {
+			t.Fatalf("第 %d 次删除账号失败: %v", i+1, err)
+		}
+	}
+	if _, err := st.objects.Stat(ctx, backupKey("u1", "b1")); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("备份字节应随账号删除，得到 %v", err)
 	}
 }
 
