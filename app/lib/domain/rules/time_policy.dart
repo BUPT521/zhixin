@@ -8,6 +8,9 @@ DateTime systemClock() => DateTime.now();
 /// 01 的 `profile.day_cutoff_hour` 默认值；没有读到配置时用它。
 const int defaultDayCutoffHour = 4;
 
+/// 自然日：当天零点。页面与规则原先各写一次 DateTime(y, m, d)，统一从这里取。
+DateTime naturalDay(DateTime at) => DateTime(at.year, at.month, at.day);
+
 /// 时间口径：真实发生时刻、日程的自然日期、学习记录的归属日。
 ///
 /// 日程与课表始终按自然日期计算，凌晨 2 点的日程仍属于当天；学习记录按
@@ -25,7 +28,7 @@ class TimePolicy {
   DateTime get now => clock();
 
   /// 日程与课表用的自然日期（当天零点）。
-  DateTime naturalDate(DateTime at) => DateTime(at.year, at.month, at.day);
+  DateTime naturalDate(DateTime at) => naturalDay(at);
 
   /// 自然日覆盖的真实区间：[当天零点, 次日零点)。
   ({DateTime start, DateTime endExclusive}) naturalDayRange(DateTime at) {

@@ -19,6 +19,7 @@ import '../domain/models/evidence.dart';
 import '../domain/models/material.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/study.dart';
+import '../domain/models/write_result.dart';
 import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
 import '../domain/rules/time_format.dart';
@@ -388,7 +389,11 @@ class DiscussionService {
     final record = await conversations.byId(conversationId);
     if (record == null) throw StateError('未找到这条讨论');
     if (!record.open) await conversations.reopen(conversationId);
-    final config = await _configOrNull();
+    final read = await readModelConfig(
+      ai,
+      recordFailure: runtime.recordFailure,
+    );
+    final config = read.config;
     if (config == null || !config.isConfigured) {
       throw const LlmException(LlmFailure.notConfigured, '模型尚未配置');
     }
@@ -676,16 +681,19 @@ class DiscussionService {
   }
 
   /// 用户明确选择的归属；传空表示改回无归属。
-  Future<void> setGoal(int conversationId, int? goalId) async {
+  Future<WriteResult> setGoal(int conversationId, int? goalId) async {
     if (goalId != null) {
       final goal = await tasks.goalById(goalId);
       if (goal == null) throw ArgumentError('未找到这个目标');
     }
-    await conversations.setGoal(conversationId, goalId);
+    return transactions.run((txn) async {
+      await conversations.setGoal(conversationId, goalId);
+      return txn.result();
+    }, label: '修改讨论归属');
   }
 
   /// 这次讨论依据的材料与页码；传空表示不再带入材料。
-  Future<void> setMaterial(
+  Future<WriteResult> setMaterial(
     int conversationId, {
     required int? materialId,
     int? pageNo,
@@ -696,23 +704,30 @@ class DiscussionService {
           : await materials.page(materialId, pageNo);
       if (page == null) throw ArgumentError('未找到这份材料页面');
     }
-    await conversations.setMaterial(
-      conversationId,
-      materialId: materialId,
-      pageNo: pageNo,
-    );
+    return transactions.run((txn) async {
+      await conversations.setMaterial(
+        conversationId,
+        materialId: materialId,
+        pageNo: pageNo,
+      );
+      return txn.result();
+    }, label: '修改讨论材料');
   }
 
   /// 结束这次求助；记录保留，之后可以从“记录”重新打开。
-  Future<void> end(int conversationId) => conversations.end(conversationId);
+  Future<WriteResult> end(int conversationId) => transactions.run((txn) async {
+    await conversations.end(conversationId);
+    return txn.result();
+  }, label: '结束求助');
 
   /// 清空一条讨论：消息与讨论记录一起删掉，题目、尝试与记忆不受影响。
-  Future<void> clear(int conversationId) async {
-    final paths = await transactions.run(
-      (txn) => conversations.clear(conversationId, transaction: txn),
-      label: '清空学习记录',
-    );
-    await cleanupAttachmentPaths(paths);
+  Future<WriteResult> clear(int conversationId) async {
+    final done = await transactions.run((txn) async {
+      final paths = await conversations.clear(conversationId, transaction: txn);
+      return (paths: paths, result: await txn.result());
+    }, label: '清空学习记录');
+    await cleanupAttachmentPaths(done.paths);
+    return done.result;
   }
 
   /// 接受一条下一步建议：创建学习事项，记下回执，并在原消息里标记已接受。
@@ -1156,14 +1171,6 @@ class DiscussionService {
       );
     }
     return result;
-  }
-
-  Future<LlmConfig?> _configOrNull() async {
-    try {
-      return await ai.config();
-    } catch (_) {
-      return null;
-    }
   }
 
   /// 建议里的动作与完成条件合成一段说明；都没有时为空。

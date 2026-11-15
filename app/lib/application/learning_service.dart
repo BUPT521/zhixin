@@ -830,13 +830,13 @@ class LearningService {
   ///
   /// 困难同时留在作答记录的 `feedback` 里，场次只保留摘要；只有用户明确要求
   /// 记住，或同一困难在同一目标下反复出现时才写成独立记忆（00 第 4 章）。
-  Future<void> end({
+  Future<WriteResult> end({
     required StudySession session,
     SessionOutcome? outcome,
     String? summary,
   }) async {
     final requestEpoch = runtime.dataEpoch;
-    await transactions.run((txn) async {
+    return transactions.run((txn) async {
       _ensureCurrentEpoch(requestEpoch);
       await study.end(
         session.id,
@@ -845,6 +845,7 @@ class LearningService {
         transaction: txn,
       );
       await _promoteRepeatedDifficulty(session, summary, transaction: txn);
+      return txn.result();
     }, label: '结束学习');
   }
 

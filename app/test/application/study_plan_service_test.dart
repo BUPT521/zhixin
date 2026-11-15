@@ -119,6 +119,7 @@ class _Harness {
       conversations: conversations,
       study: study,
       transactions: WriteTransactions(db),
+      runtime: testRuntime(policy: () => policy),
     );
   }
 

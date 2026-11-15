@@ -2,6 +2,10 @@
 ///
 /// 目前支持年月日、月日、今天、昨天、前天与前天；只有相对日期时按自然日
 /// 取整天，避免把回答当天的作答混进“昨天”的范围。
+library;
+
+import 'time_policy.dart';
+
 class TimeCondition {
   const TimeCondition({
     required this.from,
@@ -18,7 +22,7 @@ class TimeCondition {
 
   static TimeCondition? parse(String query, DateTime now) {
     final text = query.trim();
-    final day = _naturalDay(now);
+    final day = naturalDay(now);
     final full = RegExp(
       r'(\d{4})\s*[-年/.]\s*(\d{1,2})\s*[-月/.]\s*(\d{1,2})\s*日?',
     ).firstMatch(text);
@@ -67,7 +71,5 @@ class TimeCondition {
   static bool wantsLaterPerformance(String query) =>
       RegExp(r'后来|之后|以后|独立|自己|掌握|学会|还会').hasMatch(query);
 }
-
-DateTime _naturalDay(DateTime now) => DateTime(now.year, now.month, now.day);
 
 String _two(int value) => value.toString().padLeft(2, '0');

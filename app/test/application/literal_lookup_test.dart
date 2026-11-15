@@ -307,6 +307,7 @@ void main() {
     final scoped = await rig.evidence.forAnswer(
       query: 'a_b',
       scope: EvidenceScope.answer(goalId: rig.corpus.goalLinear),
+      now: DateTime(2026, 11, 8),
     );
     expect(
       scoped.hits.any(
@@ -331,12 +332,14 @@ void main() {
     final withoutGoal = await rig.evidence.forAnswer(
       query: 'a_b',
       scope: const EvidenceScope.answer(),
+      now: DateTime(2026, 11, 8),
     );
     expect(withoutGoal.hits, isEmpty);
 
     final currentRecord = await rig.evidence.forAnswer(
       query: 'a_b',
       scope: EvidenceScope.answer(conversationId: rig.corpus.noise),
+      now: DateTime(2026, 11, 8),
     );
     expect(
       currentRecord.hits.every(
@@ -360,6 +363,7 @@ void main() {
       scope: EvidenceScope.answer(
         broughtIdentities: {'material_page:${rig.corpus.materialLinear}:1'},
       ),
+      now: DateTime(2026, 11, 8),
     );
     expect(
       brought.hits.any(

@@ -60,6 +60,27 @@ class BuddyAnswerRun {
 /// 配置好，已经读过一次，这里直接复用，不再读第二次；传空表示没有读过，由
 /// 这里读取，读取失败时按未配置处理。
 /// [recordFailure] 只把类型、消息与调用栈交给本机诊断记录，不参与界面说明。
+/// 读取模型配置；读取失败按“未配置”处理，并给出统一说明。
+///
+/// 讨论、作答、系统学习与重答原先各自 catch 配置读取失败，有的按未配置处理、
+/// 有的把异常抛给界面；现在从这一处取，失败一律落成未配置与同一条说明。
+Future<({LlmConfig? config, String? notice})> readModelConfig(
+  BuddyAi ai, {
+  ModelFailureRecorder? recordFailure,
+}) async {
+  try {
+    return (config: await ai.config(), notice: null);
+  } catch (error, stack) {
+    recordFailure?.call(error, stack, kind: 'model_config_read');
+    return (
+      config: null,
+      notice:
+          '模型配置读取失败，这次先用本地规则回答；问题与本地回答会保存在本机。'
+          '可以到设置里重新保存一次模型配置。',
+    );
+  }
+}
+
 Future<BuddyAnswerRun> askBuddyModel({
   required BuddyAi ai,
   required String Function() filesDir,
@@ -77,14 +98,9 @@ Future<BuddyAnswerRun> askBuddyModel({
   var current = config;
   String? notice;
   if (current == null) {
-    try {
-      current = await ai.config();
-    } catch (error, stack) {
-      recordFailure?.call(error, stack, kind: 'model_config_read');
-      notice =
-          '模型配置读取失败，这次先用本地规则回答；问题与本地回答会保存在本机。'
-          '可以到设置里重新保存一次模型配置。';
-    }
+    final read = await readModelConfig(ai, recordFailure: recordFailure);
+    current = read.config;
+    notice = read.notice;
   }
   final prepared = await AttachmentService(filesDir: filesDir)
       .prepare(imagePaths, enabled: current?.allowImages ?? false);

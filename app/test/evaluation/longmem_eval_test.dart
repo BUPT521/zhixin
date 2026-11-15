@@ -473,6 +473,7 @@ class _Harness {
           scope: scope,
           perKindLimit: 40,
           limit: null,
+          now: evalCase.queryTime,
         )).hits;
       case 'cross':
         final service = EvidenceService(

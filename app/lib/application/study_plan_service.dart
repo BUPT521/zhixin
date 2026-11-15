@@ -1,6 +1,5 @@
 import '../ai/ai_chat_service.dart';
 import '../ai/buddy_prompt.dart';
-import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/conversation_repository.dart';
@@ -12,8 +11,10 @@ import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/study_plan_steps.dart';
+import 'buddy_answer.dart';
 import 'context_request.dart';
 import 'context_service.dart';
+import 'service_runtime.dart';
 
 /// 一份学习计划与它的步骤。
 class StudyPlanView {
@@ -93,6 +94,7 @@ class StudyPlanService {
     required this.conversations,
     required this.study,
     required this.transactions,
+    required this.runtime,
   });
 
   final StudyPlanRepository plans;
@@ -102,6 +104,7 @@ class StudyPlanService {
   final ConversationRepository conversations;
   final StudyRepository study;
   final WriteTransactions transactions;
+  final ServiceRuntime runtime;
 
   Future<List<StudyPlan>> list({bool openOnly = false}) =>
       plans.list(openOnly: openOnly);
@@ -206,18 +209,17 @@ class StudyPlanService {
       throw StateError('所选范围暂无材料页面。请先添加页码和原文。');
     }
 
-    LlmConfig? config;
-    try {
-      config = await ai.config();
-    } on LlmConfigReadFailure {
-      config = null;
-    }
+    final read = await readModelConfig(
+      ai,
+      recordFailure: runtime.recordFailure,
+    );
+    final config = read.config;
     if (config == null || !config.isConfigured) {
       return StudyPlanProposal(
         steps: _localSteps(inRange, focus: conversationFocus, isDocx: isDocx),
         source: StudyPlanSource.local,
         pageCount: inRange.length,
-        notice: '模型未配置，暂按${isDocx ? '片段' : '页码'}顺序生成。',
+        notice: read.notice ?? '模型未配置，暂按${isDocx ? '片段' : '页码'}顺序生成。',
       );
     }
 
@@ -247,25 +249,8 @@ class StudyPlanService {
         if (problem != null) throw FormatException(problem);
         proposed.addAll(batchSteps);
         modelBatches++;
-      } on LlmException {
-        proposed.addAll(
-          _localSteps(
-            batch,
-            isDocx: isDocx,
-            focus: proposed.isEmpty ? conversationFocus : null,
-          ),
-        );
-        localBatches++;
       } on FormatException {
-        proposed.addAll(
-          _localSteps(
-            batch,
-            isDocx: isDocx,
-            focus: proposed.isEmpty ? conversationFocus : null,
-          ),
-        );
-        localBatches++;
-      } on LlmConfigReadFailure {
+        // 这一批模型没有给出可用步骤：按页码顺序补上，来源记为部分模型。
         proposed.addAll(
           _localSteps(
             batch,
@@ -322,48 +307,28 @@ class StudyPlanService {
         ? materialPosition(batchFrom, to: batchTo, isDocx: true)
         : '第 $batchFrom–$batchTo 页';
     final unit = isDocx ? '片段编号' : '页码';
-    final prompt = StringBuffer()
-      ..write('按本次提供的材料提出学习步骤，覆盖$range，')
-      ..write('每一步写清$unit范围与结束条件；材料里没有展开但完成目标必需的内容，')
-      ..write('标为前置内容。不得引用本次范围之外的$unit。');
-    final earlier = _previousStepsSummary(previous, isDocx: isDocx);
-    if (earlier.isNotEmpty) {
-      prompt
-        ..write('\n前面批次已经给出的步骤：\n$earlier\n')
-        ..write('不要重复这些步骤；本批次的内容如果依赖前面的步骤，在说明里写明依赖第几步。');
-    }
-    final reply = await ai.ask(
+    final earlier = previousStepsSummary(previous, isDocx: isDocx);
+    final prompt = studyStepsPrompt(range: range, unit: unit, earlier: earlier);
+    final run = await askBuddyModel(
+      ai: ai,
+      filesDir: () => runtime.filesDir,
       context: facts,
       history: const [],
-      text: prompt.toString(),
-      configSnapshot: LlmConfigSnapshot(config),
+      prompt: prompt,
+      text: prompt,
+      imagePaths: const [],
+      config: config,
+      recordFailure: runtime.recordFailure,
     );
+    final reply = run.answer;
+    if (reply == null) {
+      // 配置读取失败、调用失败或没有可发送内容：这一批退回本地顺序。
+      throw const FormatException('模型没有给出这一批的步骤');
+    }
     if (reply.studySteps.isEmpty) {
       throw const FormatException('模型没有返回学习步骤');
     }
     return reply.studySteps;
-  }
-
-  /// 前面批次已经给出的步骤摘要；只列最近若干步，控制提示长度。
-  String _previousStepsSummary(
-    List<StudyStepDraft> steps, {
-    required bool isDocx,
-  }) {
-    if (steps.isEmpty) return '';
-    final start = steps.length > 12 ? steps.length - 12 : 0;
-    final lines = <String>[if (start > 0) '前面共 ${steps.length} 步，以下只列最近 12 步。'];
-    for (var index = start; index < steps.length; index++) {
-      final step = steps[index];
-      final range = materialPosition(
-        step.pageFrom,
-        to: step.pageTo,
-        isDocx: isDocx,
-      );
-      lines.add(
-        '${index + 1}. ${step.title}${range.isEmpty ? '' : '（$range）'}',
-      );
-    }
-    return lines.join('\n');
   }
 
   /// 保存用户确认的顺序；`conversationId` 用于从已有讨论开始系统学习。

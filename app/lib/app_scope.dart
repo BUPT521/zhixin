@@ -274,6 +274,7 @@ class AppScopeState extends State<AppScope> {
     conversations: conversations,
     study: studyRecords,
     transactions: _transactions,
+    runtime: runtime,
   );
 
   late final DiscussionService _discussion = DiscussionService(

@@ -529,6 +529,7 @@ void main() {
       query: '系统混乱程度怎么衡量',
       scope: EvidenceScope.answer(goalId: rig.corpus.goalProbability),
       limit: 5,
+      now: DateTime(2026, 11, 8),
     );
     expect(bundle.hits, isNotEmpty);
     expect(bundle.semanticFailed, isFalse);

@@ -91,7 +91,7 @@ class EvidenceService {
     int perKindLimit = 6,
     int? limit,
     (int, int)? excludePage,
-    DateTime? now,
+    required DateTime now,
     String? stem,
     int? excludeAttemptId,
   }) {
@@ -187,11 +187,11 @@ class EvidenceService {
     var crossNotes = const <String>[];
     final crossService = crossSession;
     var crossHits = const <EvidenceHit>[];
-    if (crossService != null && scope.isAnswerContext) {
+    if (crossService != null && scope.isAnswerContext && now != null) {
       final summary = await crossService.resolve(
         query: shape.text,
         scope: scope,
-        now: now ?? DateTime.now(),
+        now: now,
         stem: stem,
         excludeAttemptId: excludeAttemptId,
       );

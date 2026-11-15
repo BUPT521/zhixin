@@ -5,7 +5,9 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/capacity.dart';
 import '../domain/models/study.dart';
 import '../domain/models/time_values.dart';
+import '../domain/models/write_result.dart';
 import '../domain/rules/capacity_budget.dart';
+import '../domain/rules/time_policy.dart';
 import 'service_runtime.dart';
 
 /// 容量预估：按常用时段估算可用时间，给出优先顺序、粗略预算与可预约空档。
@@ -42,22 +44,30 @@ class CapacityService {
     return (start: start, end: end);
   }
 
-  Future<void> setWindow({required String start, required String end}) async {
+  /// 保存常用学习时段；两项设置写在同一个提交里，界面回执可整体撤销。
+  Future<WriteResult> setWindow({
+    required String start,
+    required String end,
+  }) async {
     if (_minutesOf(start) == null || _minutesOf(end) == null) {
       throw ArgumentError('时间格式应为 HH:MM');
     }
     if (_minutesOf(end)! <= _minutesOf(start)!) {
       throw ArgumentError('结束时间要晚于开始时间');
     }
-    await settings.setMetadata(windowStartKey, start, runtime.policy.now);
-    await settings.setMetadata(windowEndKey, end, runtime.policy.now);
+    final now = runtime.policy.now;
+    return transactions.run((txn) async {
+      await settings.setMetadata(windowStartKey, start, now, transaction: txn);
+      await settings.setMetadata(windowEndKey, end, now, transaction: txn);
+      return txn.result();
+    }, label: '保存常用学习时段');
   }
 
   /// 按当前自然周计算：从今天到本周日，入口用“这周能做什么”时不再把
   /// 下周一以后的时间算进本周预算。
   Future<CapacityPlan> computeThisWeek({int? goalId}) {
     final now = runtime.policy.now;
-    final today = DateTime(now.year, now.month, now.day);
+    final today = naturalDay(now);
     final week = runtime.policy.naturalWeekRange(now);
     final remaining = week.endExclusive.difference(today).inDays;
     final days = remaining < 1 ? 1 : (remaining > 7 ? 7 : remaining);
@@ -78,7 +88,7 @@ class CapacityService {
     final endClock = windowEnd ?? stored.end;
     final startMinutes = _minutesOf(startClock) ?? 19 * 60;
     final endMinutes = _minutesOf(endClock) ?? 21 * 60 + 30;
-    final today = DateTime(now.year, now.month, now.day);
+    final today = naturalDay(now);
     final rangeEnd = today.add(Duration(days: days));
 
     final entries = await schedule.timetable();
