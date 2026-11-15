@@ -196,7 +196,7 @@ class _CaptureSheetState extends State<_CaptureSheet> {
               label: const Text('出处（可选）'),
               hint: '教材第 82 页第 8 题',
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: context.zhixin.space.gap),
             forui.FTextField(
               control: .managed(controller: _context),
               label: const Text('材料摘录（可选）'),
@@ -213,7 +213,7 @@ class _CaptureSheetState extends State<_CaptureSheet> {
                 ),
               ),
             ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           if (_photos.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),

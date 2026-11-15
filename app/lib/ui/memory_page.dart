@@ -215,7 +215,7 @@ class _MemoryPageState extends State<MemoryPage> {
                       '这些记忆用于关联学习背景；修改后使用新内容，删除后停止使用。',
                       style: theme.text.bodySmall,
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: context.zhixin.space.gap),
                     if (_memories.isEmpty)
                       const forui.FCard(
                         child: EmptyState(
@@ -332,14 +332,14 @@ class _MemoryDialogState extends State<_MemoryDialog> {
               if (value != null) setState(() => _kind = value);
             },
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: _content),
             minLines: 2,
             maxLines: 4,
             label: const Text('内容'),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Row(
             children: [
               forui.FButton(

@@ -171,7 +171,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
                 ),
                 if (_busy) const forui.FProgress(),
                 if (_notice != null) InlineNotice(message: _notice!),
-                const SizedBox(height: 8),
+                SizedBox(height: context.zhixin.space.gap),
                 Text('最近有作答的记录', style: theme.text.titleSmall),
                 for (final row in _questions)
                   Padding(

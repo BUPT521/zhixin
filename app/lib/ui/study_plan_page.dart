@@ -339,7 +339,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
               ),
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           for (final step in view.steps) _stepCard(theme, step, view),
           const SizedBox(height: 12),
           Wrap(

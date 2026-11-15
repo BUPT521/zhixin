@@ -304,7 +304,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
             '原文查找与关键词检索照常工作。向量索引单独保存在本机，可以按当前数据重建。',
             style: theme.text.bodyMedium,
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FSwitch(
             label: const Text('启用语义索引'),
             description: const Text('关闭时不读取向量库，也不发送任何原文'),
@@ -432,7 +432,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
               style: theme.text.bodyMedium,
             ),
           if (stats?.lastRefresh != null) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: context.zhixin.space.gap),
             Text(
               _describeRefresh(stats!.lastRefresh!),
               style: theme.text.bodySmall,

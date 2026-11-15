@@ -613,7 +613,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('下面 ${movable.length} 条预约会向后移动 $minutes 分钟，确认后才写入：'),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           for (final entry in movable)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
@@ -623,7 +623,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
                 '${_blockRange(entry.block.startAt.add(Duration(minutes: minutes)), entry.block.endAt.add(Duration(minutes: minutes)))}',
               ),
             ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Text('任一条与课表或其他预约冲突时，整组保持原样。', style: context.zhixin.text.bodySmall),
         ],
       ),
@@ -893,7 +893,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
               if (navigation.isNotEmpty)
                 Wrap(spacing: 8, runSpacing: 8, children: navigation),
               if (status.isNotEmpty) ...[
-                const SizedBox(height: 8),
+                SizedBox(height: context.zhixin.space.gap),
                 Wrap(spacing: 4, runSpacing: 4, children: status),
               ],
             ],

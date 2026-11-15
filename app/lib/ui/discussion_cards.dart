@@ -53,7 +53,7 @@ class MemoryCard extends StatelessWidget {
           '${draft.kind.label} · $source · $valid',
           style: theme.text.bodySmall,
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: context.zhixin.space.gap),
         Wrap(
           spacing: 8,
           children: [
@@ -115,7 +115,7 @@ class SuggestionCard extends StatelessWidget {
           Text('要做的事：${draft.action}', style: theme.text.bodySmall),
         if (draft.endCondition != null)
           Text('结束条件：${draft.endCondition}', style: theme.text.bodySmall),
-        const SizedBox(height: 8),
+        SizedBox(height: context.zhixin.space.gap),
         Wrap(
           spacing: 8,
           runSpacing: 4,

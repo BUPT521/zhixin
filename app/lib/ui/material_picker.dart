@@ -44,7 +44,7 @@ Future<MaterialSelection?> showMaterialPicker(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       children: [
         Text('这次依据哪份材料', style: context.zhixin.text.titleMedium),
-        const SizedBox(height: 8),
+        SizedBox(height: context.zhixin.space.gap),
         for (final item in materials)
           forui.FTile(
             prefix: Icon(
@@ -77,7 +77,7 @@ Future<MaterialSelection?> showMaterialPicker(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       children: [
         Text('《${material.title}》的哪一页', style: context.zhixin.text.titleMedium),
-        const SizedBox(height: 8),
+        SizedBox(height: context.zhixin.space.gap),
         for (final item in pages)
           forui.FTile(
             prefix: Icon(

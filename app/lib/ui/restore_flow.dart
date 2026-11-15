@@ -37,7 +37,7 @@ Future<bool> showRestoreConfirmDialog(
         const SizedBox(height: 4),
         for (final line in impactLines)
           Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(line)),
-        const SizedBox(height: 8),
+        SizedBox(height: context.zhixin.space.gap),
         Text(rollbackLine, style: theme.text.bodySmall),
       ],
     ),

@@ -157,9 +157,9 @@ class _CapacitySheetState extends State<_CapacitySheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('「${item.title}」', style: theme.text.titleMedium),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Text(change),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Text(
             hasExisting
                 ? '这次只调整这一项，课表与其他预约保持原样；'
@@ -279,7 +279,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                     '才写入这个时间。',
                     style: theme.text.bodySmall,
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   Row(
                     children: [
                       Expanded(
@@ -306,7 +306,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                         ),
                       ),
                     ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   if (movable.isNotEmpty) ...[
                     Text('这次估算会把以下弹性预约算作可调整', style: theme.text.titleSmall),
                     for (final candidate in movable)
@@ -331,7 +331,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                   for (var index = 0; index < plan.candidates.length; index++)
                     _candidateTile(theme, plan.candidates[index], index),
                   if (plan.skipped.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+                    SizedBox(height: context.zhixin.space.gap),
                     Text('本次不调整的安排', style: theme.text.titleSmall),
                     for (final skip in plan.skipped)
                       forui.FTile(

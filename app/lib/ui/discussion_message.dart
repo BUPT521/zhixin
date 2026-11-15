@@ -61,7 +61,7 @@ class DiscussionMessage extends StatelessWidget {
             ],
           ),
         if (message.content.trim().isNotEmpty) ...[
-          if (message.hasImages) const SizedBox(height: 8),
+          if (message.hasImages) SizedBox(height: context.zhixin.space.gap),
           MarkdownText(message.content),
         ],
       ],

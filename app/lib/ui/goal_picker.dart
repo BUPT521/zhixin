@@ -35,7 +35,7 @@ Future<GoalChoice?> showGoalChoice(
           Text(title, style: theme.text.titleMedium),
           const SizedBox(height: 4),
           Text(note, style: theme.text.bodySmall),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTile(
             prefix: Icon(
               initialGoalId == null

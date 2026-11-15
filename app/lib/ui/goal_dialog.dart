@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app_scope.dart';
 import 'date_time_dialogs.dart';
 import 'format.dart';
+import 'theme.dart';
 import 'zhixin_dialog.dart';
 
 /// 新建目标的一次输入。
@@ -54,13 +55,13 @@ class _GoalDialogState extends State<_GoalDialog> {
             label: const Text('目标名称'),
             hint: '周五前完成极限章节作业',
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: _scope),
             label: const Text('相关材料范围（可选）'),
             hint: '教材第 8 章',
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Row(
             children: [
               forui.FButton(

@@ -126,7 +126,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
             maxLength: 30,
             label: const Text('名称'),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
             control: .managed(controller: note),
             maxLength: 60,
@@ -195,7 +195,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
               '${commit.changeCount} 处变化',
               style: theme.text.bodySmall,
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: context.zhixin.space.gap),
             if (details.changes.isEmpty)
               const Text('这次提交没有明细。')
             else
@@ -263,7 +263,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
               '删除 ${diff.deleteCount}',
               style: theme.text.bodySmall,
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: context.zhixin.space.gap),
             if (diff.isEmpty)
               const Text('两个版本的业务数据一致。')
             else
@@ -695,7 +695,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
                       '命名 ${usage.namedCount} 个',
                       style: theme.text.bodySmall,
                     ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   Row(
                     children: [
                       Expanded(
@@ -730,7 +730,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   Align(
                     alignment: Alignment.centerLeft,
                     child: forui.FButton(

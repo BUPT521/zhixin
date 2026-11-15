@@ -394,7 +394,7 @@ class _SettingsPageState extends State<SettingsPage>
                       color: theme.colors.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   ZhixinSelect<LlmApi>(
                     value: _api,
                     label: '接口风格',
@@ -403,25 +403,25 @@ class _SettingsPageState extends State<SettingsPage>
                     onChange: (value) =>
                         setState(() => _api = value ?? LlmApi.chat),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   forui.FTextField(
                     control: .managed(controller: _baseUrl),
                     label: const Text('接口地址'),
                     hint: 'https://api.deepseek.com/v1',
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   forui.FTextField(
                     control: .managed(controller: _model),
                     label: const Text('模型名'),
                     description: const Text('需要模型支持工具调用（function calling）'),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   forui.FTextField(
                     control: .managed(controller: _key),
                     obscureText: true,
                     label: const Text('API Key'),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: context.zhixin.space.gap),
                   forui.FTextField(
                     control: .managed(controller: _contextWindow),
                     keyboardType: TextInputType.number,

@@ -40,7 +40,7 @@ class AboutPage extends StatelessWidget {
               color: theme.colors.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: context.zhixin.space.gap),
           Text(
             '一个懂你的学习搭子',
             textAlign: TextAlign.center,
