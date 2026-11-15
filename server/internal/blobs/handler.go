@@ -13,16 +13,16 @@ import (
 )
 
 // Handler 提供 /v1/blobs/{sha256} 的上传、下载与存在检查。附件按内容寻址，
-// 路径里的 sha256 就是内容的哈希；服务端在写入之前核对一遍，不符的请求不落库。
+// 路径里的 sha256 就是内容的哈希；handler 核对哈希与协议，大小与账号范围由
+// Service 负责。
 type Handler struct {
-	store    Store
-	log      *slog.Logger
-	maxBytes int64
+	svc *Service
+	log *slog.Logger
 }
 
-// NewHandler 组装附件接口；maxBytes 是单个附件的上限。
-func NewHandler(store Store, log *slog.Logger, maxBytes int64) *Handler {
-	return &Handler{store: store, log: log, maxBytes: maxBytes}
+// NewHandler 组装附件接口。
+func NewHandler(svc *Service, log *slog.Logger) *Handler {
+	return &Handler{svc: svc, log: log}
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -35,7 +35,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	size, err := h.store.Stat(r.Context(), p.UserID, sha)
+	size, err := h.svc.Stat(r.Context(), p.UserID, sha)
 	if errors.Is(err, ErrNotFound) {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -54,7 +54,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	rc, size, err := h.store.Open(r.Context(), p.UserID, sha)
+	rc, size, err := h.svc.Open(r.Context(), p.UserID, sha)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
@@ -76,11 +76,12 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "sha256 must be 64 lowercase hex characters")
 		return
 	}
-	if r.ContentLength > h.maxBytes {
+	maxBytes := h.svc.MaxBytes()
+	if r.ContentLength > maxBytes {
 		httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
 		return
 	}
-	spool, err := httpx.SpoolBody(w, r, h.maxBytes)
+	spool, err := httpx.SpoolBody(w, r, maxBytes)
 	if err != nil {
 		switch {
 		case errors.Is(err, httpx.ErrBodyTooLarge):
@@ -103,7 +104,11 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	if err := h.store.Save(r.Context(), p.UserID, sha, spool.Size, data); err != nil {
+	if err := h.svc.Put(r.Context(), p.UserID, sha, spool.Size, data); err != nil {
+		if errors.Is(err, ErrTooLarge) {
+			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
