@@ -27,8 +27,8 @@ class Question {
       sourceRef: row['source_ref'] as String?,
       contextText: row['context_text'] as String?,
       imagePaths: _decodePaths(row['image_paths_json'] as String?),
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
+      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
+      updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
     );
   }
 
@@ -122,8 +122,8 @@ class Attempt {
       helps: HelpEntry.decodeList(row['help_json'] as String?),
       feedback: row['feedback'] as String?,
       delayed: row['delayed'] == 1,
-      submittedAt: DateTime.tryParse(row['submitted_at'] as String? ?? ''),
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
+      submittedAt: optionalDateTime(row['submitted_at'] as String? ?? ''),
+      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
     );
   }
 

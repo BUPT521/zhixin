@@ -93,8 +93,8 @@ class MaterialRepository {
     sourceFileName: sourceFileName,
     goalId: goalId,
     pageCount: pageCount,
-    createdAt: DateTime.tryParse(createdAt),
-    updatedAt: DateTime.tryParse(updatedAt),
+    createdAt: requiredDateTime(createdAt),
+    updatedAt: requiredDateTime(updatedAt),
   );
 
   static Material _materialOf(MaterialByIdResult r) => _material(

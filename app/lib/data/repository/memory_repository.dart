@@ -22,10 +22,10 @@ class MemoryRepository {
     scope: row.scope,
     sourceKind: row.sourceKind,
     sourceId: row.sourceId,
-    validUntil: DateTime.tryParse(row.validUntil ?? ''),
+    validUntil: optionalDateTime(row.validUntil ?? ''),
     status: row.status,
-    createdAt: DateTime.tryParse(row.createdAt),
-    updatedAt: DateTime.tryParse(row.updatedAt),
+    createdAt: requiredDateTime(row.createdAt),
+    updatedAt: requiredDateTime(row.updatedAt),
   );
 
   Future<List<Memory>> list({bool includeInactive = false}) async {

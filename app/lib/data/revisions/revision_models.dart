@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../../domain/rules/time_format.dart';
+
 /// 数据版本里的一次提交。
 class RevisionCommit {
   const RevisionCommit({
@@ -26,7 +28,7 @@ class RevisionCommit {
     restoredCommitId: row['restored_commit_id'] as int?,
     revertedCommitId: row['reverted_commit_id'] as int?,
     changeCount: row['change_count']! as int,
-    createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
+    createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
   );
 
   final int id;
@@ -121,8 +123,8 @@ class RevisionRef {
     name: row['name']! as String,
     commitId: row['commit_id']! as int,
     note: row['note'] as String?,
-    createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-    updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
+    createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
+    updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
   );
 
   static const String headName = 'HEAD';
@@ -157,7 +159,7 @@ class RevisionCheckpoint {
       projectionJson: row['projection_json']! as String,
       assetHashes: decodeStringList(hashes),
       checksum: row['checksum']! as String,
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
+      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
     );
   }
 

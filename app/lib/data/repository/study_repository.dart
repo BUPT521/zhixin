@@ -48,8 +48,8 @@ class StudyRepository {
     conversationId: row.conversationId,
     summary: row.summary,
     outcome: row.outcome,
-    startedAt: parseDateTime(row.startedAt),
-    endedAt: DateTime.tryParse(row.endedAt ?? ''),
+    startedAt: requiredDateTime(row.startedAt),
+    endedAt: optionalDateTime(row.endedAt ?? ''),
   );
 
   Future<StudySession?> openFor({

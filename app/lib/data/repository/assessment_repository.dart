@@ -41,7 +41,7 @@ class AssessmentRepository {
     kind: AssessmentKind.fromValue(row.kind),
     result: row.result,
     basis: row.basis,
-    createdAt: DateTime.tryParse(row.createdAt),
+    createdAt: requiredDateTime(row.createdAt),
   );
 
   Future<void> saveUserBasisDraft(

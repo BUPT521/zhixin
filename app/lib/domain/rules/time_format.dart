@@ -20,8 +20,15 @@ String formatDateTime(DateTime time) {
 }
 
 /// 解析数据库中的必需时刻；坏值必须暴露，不能伪装成当前时间。
-DateTime parseDateTime(String value) {
+DateTime requiredDateTime(String value) {
   final parsed = DateTime.tryParse(value);
   if (parsed == null) throw FormatException('无效的时间值：$value');
   return parsed;
+}
+
+/// 解析可空时刻：缺失或空串返回 null，非空坏值仍抛错。
+DateTime? optionalDateTime(String? value) {
+  final text = value?.trim();
+  if (text == null || text.isEmpty) return null;
+  return requiredDateTime(text);
 }

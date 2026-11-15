@@ -55,8 +55,8 @@ class TaskRepository {
     scopeText: row.scopeText,
     dueDate: row.dueDate,
     status: LearningGoalStatus.fromCode(row.status),
-    createdAt: DateTime.tryParse(row.createdAt),
-    updatedAt: DateTime.tryParse(row.updatedAt),
+    createdAt: requiredDateTime(row.createdAt),
+    updatedAt: requiredDateTime(row.updatedAt),
   );
 
   /// 六条查询挑的列相同，结果行按同一组字段还原成领域模型。
@@ -90,14 +90,14 @@ class TaskRepository {
     pageFrom: pageFrom,
     pageTo: pageTo,
     materialIsDocx: isDocxFile(sourceFileName),
-    dueAt: DateTime.tryParse(dueAt ?? ''),
+    dueAt: optionalDateTime(dueAt ?? ''),
     estMinutes: estMinutes,
     priority: priority,
     status: PlanItemStatus.fromCode(status),
     source: source,
-    completedAt: DateTime.tryParse(completedAt ?? ''),
-    createdAt: DateTime.tryParse(createdAt),
-    updatedAt: DateTime.tryParse(updatedAt),
+    completedAt: optionalDateTime(completedAt ?? ''),
+    createdAt: requiredDateTime(createdAt),
+    updatedAt: requiredDateTime(updatedAt),
   );
 
   static PlanItem _itemOfItems(ItemsResult r) => _item(

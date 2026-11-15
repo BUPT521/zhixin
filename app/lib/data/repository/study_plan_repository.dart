@@ -169,8 +169,8 @@ class StudyPlanRepository {
     stepsDone: row.stepsDone,
     stepsTotal: row.stepsTotal,
     nextStepTitle: row.nextStepTitle,
-    createdAt: DateTime.tryParse(row.createdAt),
-    updatedAt: DateTime.tryParse(row.updatedAt),
+    createdAt: requiredDateTime(row.createdAt),
+    updatedAt: requiredDateTime(row.updatedAt),
   );
 
   static PlanItem _stepOf(PlanStepsResult row) => _stepItem(
@@ -245,14 +245,14 @@ class StudyPlanRepository {
     pageFrom: pageFrom,
     pageTo: pageTo,
     materialIsDocx: isDocxFile(sourceFileName),
-    dueAt: DateTime.tryParse(dueAt ?? ''),
+    dueAt: optionalDateTime(dueAt ?? ''),
     estMinutes: estMinutes,
     priority: priority,
     status: PlanItemStatus.fromCode(status),
     source: source,
-    completedAt: DateTime.tryParse(completedAt ?? ''),
-    createdAt: DateTime.tryParse(createdAt),
-    updatedAt: DateTime.tryParse(updatedAt),
+    completedAt: optionalDateTime(completedAt ?? ''),
+    createdAt: requiredDateTime(createdAt),
+    updatedAt: requiredDateTime(updatedAt),
   );
 
   Future<StudyPlan?> byId(int id) async {
@@ -475,8 +475,8 @@ class StudyPlanRepository {
     pageTo: row.pageTo,
     currentPage: row.currentPage,
     status: StudyPlanStatus.fromCode(row.status),
-    createdAt: DateTime.tryParse(row.createdAt),
-    updatedAt: DateTime.tryParse(row.updatedAt),
+    createdAt: requiredDateTime(row.createdAt),
+    updatedAt: requiredDateTime(row.updatedAt),
   );
 
   /// 步骤整行与其它查询挑的列不同名，走同一个 _stepItem 组装。

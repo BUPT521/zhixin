@@ -51,8 +51,8 @@ class ScheduleRepository {
   }) => ScheduleBlock(
     id: id,
     planItemId: planItemId,
-    startAt: parseDateTime(startAt),
-    endAt: parseDateTime(endAt),
+    startAt: requiredDateTime(startAt),
+    endAt: requiredDateTime(endAt),
     source: source,
     status: status,
     locked: locked == 1,
@@ -416,8 +416,8 @@ class ScheduleRepository {
         ScheduleBlock(
           id: row.id,
           planItemId: row.planItemId,
-          startAt: parseDateTime(row.startAt),
-          endAt: parseDateTime(row.endAt),
+          startAt: requiredDateTime(row.startAt),
+          endAt: requiredDateTime(row.endAt),
           source: row.source,
           status: row.status,
           locked: row.locked == 1,
@@ -495,8 +495,8 @@ class ScheduleRepository {
   static ScheduleBlock _blockOfRow(ScheduleBlockRow row) => ScheduleBlock(
     id: row.id,
     planItemId: row.planItemId,
-    startAt: parseDateTime(row.startAt),
-    endAt: parseDateTime(row.endAt),
+    startAt: requiredDateTime(row.startAt),
+    endAt: requiredDateTime(row.endAt),
     source: row.source,
     status: row.status,
     locked: row.locked == 1,

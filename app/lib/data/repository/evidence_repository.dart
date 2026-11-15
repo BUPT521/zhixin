@@ -409,7 +409,7 @@ class EvidenceRepository {
             offset: hit.location.offset,
           ),
           sourceVersion: evidenceSourceVersion(content, row['created_at']),
-          createdAt: DateTime.tryParse(row['created_at']! as String),
+          createdAt: requiredDateTime(row['created_at']! as String),
           text: content,
         );
       case EvidenceKind.question:
@@ -436,7 +436,7 @@ class EvidenceRepository {
             '$content\n${row['source_ref'] ?? ''}\n${row['context_text'] ?? ''}',
             row['updated_at'],
           ),
-          createdAt: DateTime.tryParse('${row['created_at'] ?? ''}'),
+          createdAt: optionalDateTime('${row['created_at'] ?? ''}'),
           sourceRef: row['source_ref'] as String?,
           text: content,
         );
@@ -472,7 +472,7 @@ class EvidenceRepository {
             '$answer\n${row['solution'] ?? ''}\n${row['feedback'] ?? ''}',
             row['submitted_at'],
           ),
-          createdAt: DateTime.tryParse('${row['submitted_at'] ?? ''}'),
+          createdAt: optionalDateTime('${row['submitted_at'] ?? ''}'),
           sourceRef: row['source_ref'] as String?,
         );
     }
@@ -593,7 +593,7 @@ class EvidenceRepository {
           ),
           content: content,
           sourceVersion: evidenceSourceVersion(content, row['updated_at']),
-          updatedAt: DateTime.tryParse('${row['updated_at'] ?? ''}'),
+          updatedAt: optionalDateTime('${row['updated_at'] ?? ''}'),
         ),
       );
     }
@@ -618,7 +618,7 @@ class EvidenceRepository {
           ),
           content: content,
           sourceVersion: evidenceSourceVersion(content, row['created_at']),
-          updatedAt: DateTime.tryParse('${row['created_at'] ?? ''}'),
+          updatedAt: optionalDateTime('${row['created_at'] ?? ''}'),
         ),
       );
     }
@@ -648,7 +648,7 @@ class EvidenceRepository {
           ),
           content: content,
           sourceVersion: evidenceSourceVersion(content, row['submitted_at']),
-          updatedAt: DateTime.tryParse('${row['submitted_at'] ?? ''}'),
+          updatedAt: optionalDateTime('${row['submitted_at'] ?? ''}'),
         ),
       );
     }
@@ -682,7 +682,7 @@ class EvidenceRepository {
             content,
             rows.first['updated_at'],
           ),
-          updatedAt: DateTime.tryParse('${rows.first['updated_at'] ?? ''}'),
+          updatedAt: optionalDateTime('${rows.first['updated_at'] ?? ''}'),
         );
       case 'message':
         final messageId = locator.messageId;
@@ -700,7 +700,7 @@ class EvidenceRepository {
             content,
             rows.first['created_at'],
           ),
-          updatedAt: DateTime.tryParse('${rows.first['created_at'] ?? ''}'),
+          updatedAt: optionalDateTime('${rows.first['created_at'] ?? ''}'),
         );
       case 'answer':
         final attemptId = locator.attemptId;
@@ -724,7 +724,7 @@ class EvidenceRepository {
             content,
             rows.first['submitted_at'],
           ),
-          updatedAt: DateTime.tryParse('${rows.first['submitted_at'] ?? ''}'),
+          updatedAt: optionalDateTime('${rows.first['submitted_at'] ?? ''}'),
         );
       default:
         return null;
@@ -862,7 +862,7 @@ class EvidenceRepository {
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(content, row['updated_at']),
-            createdAt: DateTime.tryParse('${row['updated_at'] ?? ''}'),
+            createdAt: optionalDateTime('${row['updated_at'] ?? ''}'),
           );
         })
         .toList(growable: false);
@@ -931,7 +931,7 @@ class EvidenceRepository {
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(content, row['created_at']),
-            createdAt: DateTime.tryParse('${row['created_at'] ?? ''}'),
+            createdAt: optionalDateTime('${row['created_at'] ?? ''}'),
           );
         })
         .toList(growable: false);
@@ -1013,7 +1013,7 @@ class EvidenceRepository {
               '$stem\n${sourceRef ?? ''}\n$context',
               row['updated_at'],
             ),
-            createdAt: DateTime.tryParse('${row['created_at'] ?? ''}'),
+            createdAt: optionalDateTime('${row['created_at'] ?? ''}'),
             sourceRef: sourceRef,
           );
         })
@@ -1090,7 +1090,7 @@ class EvidenceRepository {
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(text, row['submitted_at']),
-            createdAt: DateTime.tryParse('${row['submitted_at'] ?? ''}'),
+            createdAt: optionalDateTime('${row['submitted_at'] ?? ''}'),
             sourceRef: row['source_ref'] as String?,
           );
         })
