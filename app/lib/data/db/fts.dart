@@ -8,7 +8,7 @@
 /// 版本引擎清除随库保留的触发器后，再按本文件安装同步触发器。
 library;
 
-import '../../domain/rules/binary_bigrams.dart';
+import '../../domain/rules/search_terms.dart';
 import '../../domain/rules/time_format.dart';
 import 'raw_executor.dart';
 

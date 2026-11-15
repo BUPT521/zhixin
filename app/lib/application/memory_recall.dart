@@ -1,6 +1,6 @@
 import '../data/repository/memory_repository.dart';
 import '../domain/models/memory.dart';
-import '../domain/rules/binary_bigrams.dart';
+import '../domain/rules/search_terms.dart';
 
 /// 按本次用途挑选记忆，给回答提示词使用。
 ///

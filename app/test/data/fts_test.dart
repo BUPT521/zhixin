@@ -4,7 +4,7 @@ import 'package:zhixin/data/db/fts.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/domain/models/evidence.dart';
-import 'package:zhixin/domain/rules/binary_bigrams.dart';
+import 'package:zhixin/domain/rules/search_terms.dart';
 
 import '../support/test_db.dart';
 
