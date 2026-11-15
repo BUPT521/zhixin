@@ -164,3 +164,80 @@ WHERE a.submitted_at IS NOT NULL
   )
 ORDER BY a.submitted_at DESC, a.id DESC
 LIMIT :rowLimit;
+
+-- 检索核对：一次已提交作答命中的当前内容与所属讨论。
+evidenceAnswerCurrent:
+SELECT a.id, a.conversation_id, a.user_answer, a.solution, a.feedback,
+  a.submitted_at, c.title, c.source_ref
+FROM attempt a
+JOIN conversation c ON c.id = a.conversation_id
+WHERE a.id = :attemptId AND a.submitted_at IS NOT NULL
+LIMIT 1;
+
+-- 语义索引可用的全部已提交作答：按提交时间倒序，后台分批重建索引。
+evidenceAnswerSources:
+SELECT a.id, a.conversation_id, a.user_answer, a.solution, a.feedback,
+  a.submitted_at, c.material_id
+FROM attempt a
+JOIN conversation c ON c.id = a.conversation_id
+WHERE a.submitted_at IS NOT NULL
+ORDER BY a.submitted_at DESC, a.id DESC;
+
+-- 一次已提交作答的当前内容与更新时间；嵌入很慢，写回索引前要重新读一次。
+evidenceAnswerSource:
+SELECT user_answer, solution, feedback, submitted_at
+FROM attempt
+WHERE id = :attemptId AND submitted_at IS NOT NULL
+LIMIT 1;
+
+-- 沿同一道题、同一份材料页或用户选定的目标找最近的已提交作答。
+--
+-- 四条线索都传空表示不限；`from`、`to` 是显式时间条件。先按提交时间倒序取
+-- 最近的若干次，调用方再反转成时间正序，截断因此发生在时间正序之前，“上次”
+-- 是本轮之前最近的一次，不会退回到最早几次。
+--
+-- `includeUnassigned` 传 1 表示同时放行没有目标归属的记录，只在给了目标时
+-- 有意义；传 0 表示只取同目标的记录，与 `conversation_records` 的筛选开关
+-- 同一写法。
+evidenceThreadAttempts(
+  REQUIRED :conversationId AS INT OR NULL,
+  REQUIRED :stem AS TEXT OR NULL,
+  REQUIRED :materialId AS INT OR NULL,
+  REQUIRED :pageNo AS INT OR NULL,
+  REQUIRED :goalId AS INT OR NULL,
+  REQUIRED :includeUnassigned AS INT,
+  REQUIRED :from AS TEXT OR NULL,
+  REQUIRED :to AS TEXT OR NULL,
+  REQUIRED :rowLimit AS INT
+):
+SELECT a.*,
+  c.source_ref AS thread_source_ref,
+  c.material_id AS thread_material_id,
+  c.page_no AS thread_page_no,
+  c.goal_id AS thread_goal_id,
+  COALESCE((SELECT m.content FROM message m
+    WHERE m.conversation_id = c.id AND m.role = 'user'
+      AND m.id = COALESCE(c.question_message_id, (
+        SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1
+      )) LIMIT 1), '') AS thread_stem
+FROM attempt a
+JOIN conversation c ON c.id = a.conversation_id
+WHERE a.submitted_at IS NOT NULL
+  AND (:conversationId IS NULL OR c.id = :conversationId)
+  AND (:stem IS NULL OR (SELECT m.content FROM message m
+    WHERE m.conversation_id = c.id AND m.role = 'user'
+      AND m.id = COALESCE(c.question_message_id, (
+        SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1
+      )) LIMIT 1) = :stem)
+  AND (:materialId IS NULL OR (c.material_id = :materialId
+    AND (:pageNo IS NULL OR c.page_no = :pageNo)))
+  AND (:goalId IS NULL OR c.goal_id = :goalId
+    OR (:includeUnassigned = 1 AND c.goal_id IS NULL))
+  AND (:from IS NULL OR a.submitted_at >= :from)
+  AND (:to IS NULL OR a.submitted_at < :to)
+ORDER BY a.submitted_at DESC, a.id DESC
+LIMIT :rowLimit;

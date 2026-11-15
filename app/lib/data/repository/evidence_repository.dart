@@ -1,5 +1,8 @@
+import 'package:drift/drift.dart' show Variable;
+
 import '../db/fts.dart';
 import '../db/raw_executor.dart';
+import '../db/drift/queries/evidence_scope.dart';
 import '../../domain/rules/search_terms.dart';
 
 import '../../domain/models/evidence.dart';
@@ -85,6 +88,10 @@ class EvidenceSearchPage {
 /// 处理，因此 `a_b`、`f(x)` 只会命中同样的字符序列。读取命中之后还可以按记录
 /// 标识重新读一次当前记录，核对范围、版本与删除状态，供语义索引的迟到结果
 /// 使用。
+///
+/// 按记录编号读回的查询与语义索引的候选读取走 `queries/` 下的生成查询；四类
+/// 命中查询还要写 FTS5 的 `MATCH`、`bm25()` 与关键字排名，生成查询表达不了，
+/// 保留手写 SQL，但范围条件由 [EvidenceScopeRule] 这一份规则渲染进来。
 class EvidenceRepository {
   EvidenceRepository(this._db);
 
@@ -353,20 +360,18 @@ class EvidenceRepository {
         final materialId = scope.materialId;
         final pageNo = scope.pageNo;
         if (materialId == null || pageNo == null) return null;
-        final rows = await _db.rawQuery(
-          'SELECT mp.content, mp.label, mp.updated_at, m.title, m.source_file_name '
-          'FROM material_page mp JOIN material m ON m.id = mp.material_id '
-          'WHERE mp.material_id = ? AND mp.page_no = ? LIMIT 1',
-          [materialId, pageNo],
+        final row = await _db.selectGenerated(
+          (db) => db
+              .evidenceMaterialPageCurrent(materialId, pageNo)
+              .getSingleOrNull(),
         );
-        if (rows.isEmpty) return null;
-        final row = rows.first;
-        final content = row['content']! as String;
+        if (row == null) return null;
+        final content = row.content;
         return EvidenceHit(
           kind: EvidenceKind.materialPage,
           identity: hit.identity,
           title:
-              '《${row['title']}》${materialPosition(pageNo, isDocx: isDocxFile(row['source_file_name'] as String?))}',
+              '《${row.title}》${materialPosition(pageNo, isDocx: isDocxFile(row.sourceFileName))}',
           snippet: hit.snippet,
           matchedText: hit.matchedText,
           literal: hit.literal,
@@ -377,51 +382,48 @@ class EvidenceRepository {
             pageNo: pageNo,
             offset: hit.location.offset,
           ),
-          sourceVersion: evidenceSourceVersion(content, row['updated_at']),
+          sourceVersion: evidenceSourceVersion(content, row.updatedAt),
           createdAt: hit.createdAt,
           text: content,
         );
       case EvidenceKind.message:
         final messageId = scope.messageId;
         if (messageId == null) return null;
-        final rows = await _db.rawQuery(
-          'SELECT m.content, m.created_at, c.id AS conversation_id, '
-          'c.title, c.goal_id, c.material_id '
-          'FROM message m JOIN conversation c ON c.id = m.conversation_id '
-          'WHERE m.id = ? LIMIT 1',
-          [messageId],
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceMessageCurrent(messageId).getSingleOrNull(),
         );
-        if (rows.isEmpty) return null;
-        final row = rows.first;
-        final content = row['content']! as String;
+        if (row == null) return null;
+        final content = row.content;
         return EvidenceHit(
           kind: EvidenceKind.message,
           identity: hit.identity,
-          title: (row['title'] as String?) ?? '一次讨论',
+          title: row.title ?? '一次讨论',
           snippet: hit.snippet,
           matchedText: hit.matchedText,
           literal: hit.literal,
           semantic: hit.semantic,
           score: hit.score,
           location: EvidenceLocation(
-            conversationId: row['conversation_id']! as int,
+            conversationId: row.conversationId,
             messageId: messageId,
             offset: hit.location.offset,
           ),
-          sourceVersion: evidenceSourceVersion(content, row['created_at']),
-          createdAt: requiredDateTime(row['created_at']! as String),
+          sourceVersion: evidenceSourceVersion(content, row.createdAt),
+          createdAt: requiredDateTime(row.createdAt),
           text: content,
         );
       case EvidenceKind.question:
         final conversationId = scope.conversationId;
         if (conversationId == null) return null;
-        final row = await _questionRow(conversationId);
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceQuestionCurrent(conversationId).getSingleOrNull(),
+        );
         if (row == null) return null;
-        final content = (row['stem'] as String?) ?? '';
+        final content = row.stem ?? '';
         return EvidenceHit(
           kind: EvidenceKind.question,
           identity: hit.identity,
-          title: _conversationTitle(row),
+          title: _conversationTitle(row.sourceRef, row.title),
           snippet: hit.snippet,
           matchedText: hit.matchedText,
           literal: hit.literal,
@@ -429,51 +431,44 @@ class EvidenceRepository {
           score: hit.score,
           location: EvidenceLocation(
             conversationId: conversationId,
-            messageId: row['question_message_id'] as int?,
+            messageId: row.questionMessageId,
             offset: hit.location.offset,
           ),
           sourceVersion: evidenceSourceVersion(
-            '$content\n${row['source_ref'] ?? ''}\n${row['context_text'] ?? ''}',
-            row['updated_at'],
+            '$content\n${row.sourceRef ?? ''}\n${row.contextText ?? ''}',
+            row.updatedAt,
           ),
-          createdAt: optionalDateTime('${row['created_at'] ?? ''}'),
-          sourceRef: row['source_ref'] as String?,
+          createdAt: optionalDateTime(row.createdAt),
+          sourceRef: row.sourceRef,
           text: content,
         );
       case EvidenceKind.answer:
         final attemptId = scope.attemptId;
         if (attemptId == null) return null;
-        final rows = await _db.rawQuery(
-          'SELECT a.id, a.conversation_id, a.user_answer, a.solution, '
-          'a.feedback, a.submitted_at, c.title, c.source_ref '
-          'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
-          'WHERE a.id = ? AND a.submitted_at IS NOT NULL LIMIT 1',
-          [attemptId],
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceAnswerCurrent(attemptId).getSingleOrNull(),
         );
-        if (rows.isEmpty) return null;
-        final row = rows.first;
-        final answer = (row['user_answer'] as String?) ?? '';
+        if (row == null) return null;
+        final answer = row.userAnswer ?? '';
+        final text = '$answer\n${row.solution ?? ''}\n${row.feedback ?? ''}';
         return EvidenceHit(
           kind: EvidenceKind.answer,
           identity: hit.identity,
           title: _answerTitle(attemptId),
           snippet: hit.snippet,
-          text: '$answer\n${row['solution'] ?? ''}\n${row['feedback'] ?? ''}',
+          text: text,
           matchedText: hit.matchedText,
           literal: hit.literal,
           semantic: hit.semantic,
           score: hit.score,
           location: EvidenceLocation(
-            conversationId: row['conversation_id']! as int,
+            conversationId: row.conversationId,
             attemptId: attemptId,
             offset: hit.location.offset,
           ),
-          sourceVersion: evidenceSourceVersion(
-            '$answer\n${row['solution'] ?? ''}\n${row['feedback'] ?? ''}',
-            row['submitted_at'],
-          ),
-          createdAt: optionalDateTime('${row['submitted_at'] ?? ''}'),
-          sourceRef: row['source_ref'] as String?,
+          sourceVersion: evidenceSourceVersion(text, row.submittedAt),
+          createdAt: optionalDateTime(row.submittedAt),
+          sourceRef: row.sourceRef,
         );
     }
   }
@@ -496,73 +491,48 @@ class EvidenceRepository {
     DateTime? to,
     int limit = 8,
   }) async {
-    final where = <String>['a.submitted_at IS NOT NULL'];
-    final args = <Object?>[];
-    final thread = <String>[];
-    final threadArgs = <Object?>[];
-    if (conversationId != null) {
-      thread.add('c.id = ?');
-      threadArgs.add(conversationId);
-    }
     final trimmed = stem?.trim();
-    if (trimmed != null && trimmed.isNotEmpty) {
-      thread.add('$_firstUserContent = ?');
-      threadArgs.add(trimmed);
-    }
-    if (materialId != null) {
-      thread.add('c.material_id = ?');
-      threadArgs.add(materialId);
-      if (pageNo != null) {
-        thread.add('c.page_no = ?');
-        threadArgs.add(pageNo);
-      }
-    }
-    if (goalId != null) {
-      thread.add(
-        includeUnassigned
-            ? '(c.goal_id = ? OR c.goal_id IS NULL)'
-            : 'c.goal_id = ?',
-      );
-      threadArgs.add(goalId);
-    }
-    if (thread.isNotEmpty) {
-      // 调用方每次只传一条线索，线索内部的条件是“且”关系：材料与页码同时
-      // 成立才算同一条线索，不同线索由跨次服务分层查询。
-      where.add('(${thread.join(' AND ')})');
-      args.addAll(threadArgs);
-    }
-    if (from != null) {
-      where.add('a.submitted_at >= ?');
-      args.add(formatDateTime(from));
-    }
-    if (to != null) {
-      where.add('a.submitted_at < ?');
-      args.add(formatDateTime(to));
-    }
-    // 先取最近若干次再反转：外层只做排序，截断发生在外层之前，因此时间倒序
-    // 读到的就是本次之前最近的几次作答。
-    final rows = await _db.rawQuery(
-      'SELECT * FROM ('
-      'SELECT a.*, c.source_ref AS thread_source_ref, '
-      'c.material_id AS thread_material_id, c.page_no AS thread_page_no, '
-      'c.goal_id AS thread_goal_id, '
-      "COALESCE($_firstUserContent, '') AS thread_stem "
-      'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
-      'WHERE ${where.join(' AND ')} '
-      'ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?'
-      ') ORDER BY submitted_at ASC, id ASC',
-      [...args, limit],
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .evidenceThreadAttempts(
+            conversationId,
+            trimmed == null || trimmed.isEmpty ? null : trimmed,
+            materialId,
+            pageNo,
+            goalId,
+            includeUnassigned ? 1 : 0,
+            from == null ? null : formatDateTime(from),
+            to == null ? null : formatDateTime(to),
+            limit,
+          )
+          .get(),
     );
-    return rows
+    // 查询按提交时间倒序取最近的若干次，这里反转成时间正序；截断仍发生在
+    // 时间正序之前，调用方拿到的“上次”是本次之前最近的一次。
+    return rows.reversed
         .map(
           (row) => ThreadAttempt(
-            attempt: Attempt.fromRow(row),
-            conversationId: row['conversation_id']! as int,
-            stem: (row['thread_stem'] as String?) ?? '',
-            sourceRef: row['thread_source_ref'] as String?,
-            materialId: row['thread_material_id'] as int?,
-            pageNo: row['thread_page_no'] as int?,
-            goalId: row['thread_goal_id'] as int?,
+            attempt: Attempt(
+              id: row.id,
+              conversationId: row.conversationId,
+              sessionId: row.sessionId,
+              redoOfAttemptId: row.redoOfAttemptId,
+              userAnswer: row.userAnswer,
+              solution: row.solution,
+              isCorrect: row.isCorrect,
+              independent: row.independent,
+              helps: HelpEntry.decodeList(row.helpJson),
+              feedback: row.feedback,
+              delayed: row.delayed,
+              submittedAt: optionalDateTime(row.submittedAt),
+              createdAt: optionalDateTime(row.createdAt),
+            ),
+            conversationId: row.conversationId,
+            stem: row.threadStem,
+            sourceRef: row.threadSourceRef,
+            materialId: row.threadMaterialId,
+            pageNo: row.threadPageNo,
+            goalId: row.threadGoalId,
           ),
         )
         .toList(growable: false);
@@ -574,81 +544,71 @@ class EvidenceRepository {
   /// 范围与有效性在查询时再按业务记录核对。
   Future<List<SemanticSource>> semanticSources({int? limit}) async {
     final result = <SemanticSource>[];
-    final pages = await _db.rawQuery(
-      'SELECT mp.material_id, mp.page_no, mp.content, mp.updated_at '
-      'FROM material_page mp ORDER BY mp.updated_at DESC, mp.material_id, '
-      'mp.page_no',
+    final pages = await _db.selectGenerated(
+      (db) => db.evidenceMaterialPageSources().get(),
     );
     for (final row in pages) {
-      final content = row['content']! as String;
-      final materialId = row['material_id']! as int;
-      final pageNo = row['page_no']! as int;
+      final content = row.content;
       result.add(
         SemanticSource(
           locator: SemanticLocator(
             kind: EvidenceKind.materialPage.value,
-            sourceKey: EvidenceId.materialPage(materialId, pageNo).value,
-            materialId: materialId,
-            pageNo: pageNo,
+            sourceKey: EvidenceId.materialPage(
+              row.materialId,
+              row.pageNo,
+            ).value,
+            materialId: row.materialId,
+            pageNo: row.pageNo,
           ),
           content: content,
-          sourceVersion: evidenceSourceVersion(content, row['updated_at']),
-          updatedAt: optionalDateTime('${row['updated_at'] ?? ''}'),
+          sourceVersion: evidenceSourceVersion(content, row.updatedAt),
+          updatedAt: optionalDateTime(row.updatedAt),
         ),
       );
     }
-    final messages = await _db.rawQuery(
-      'SELECT m.id, m.conversation_id, m.content, m.created_at, '
-      'c.material_id FROM message m '
-      'JOIN conversation c ON c.id = m.conversation_id '
-      "WHERE m.role IN ('user', 'assistant') AND m.content != '' "
-      'ORDER BY m.id DESC',
+    final messages = await _db.selectGenerated(
+      (db) => db.evidenceMessageSources().get(),
     );
     for (final row in messages) {
-      final content = row['content']! as String;
-      final id = row['id']! as int;
+      final content = row.content;
       result.add(
         SemanticSource(
           locator: SemanticLocator(
             kind: EvidenceKind.message.value,
-            sourceKey: EvidenceId.message(id).value,
-            conversationId: row['conversation_id']! as int,
-            materialId: row['material_id'] as int?,
-            messageId: id,
+            sourceKey: EvidenceId.message(row.id).value,
+            conversationId: row.conversationId,
+            materialId: row.materialId,
+            messageId: row.id,
           ),
           content: content,
-          sourceVersion: evidenceSourceVersion(content, row['created_at']),
-          updatedAt: optionalDateTime('${row['created_at'] ?? ''}'),
+          sourceVersion: evidenceSourceVersion(content, row.createdAt),
+          updatedAt: optionalDateTime(row.createdAt),
         ),
       );
     }
-    final answers = await _db.rawQuery(
-      'SELECT a.id, a.conversation_id, a.user_answer, a.solution, '
-      'a.feedback, a.submitted_at, c.material_id FROM attempt a '
-      'JOIN conversation c ON c.id = a.conversation_id '
-      'WHERE a.submitted_at IS NOT NULL ORDER BY a.submitted_at DESC, a.id DESC',
+    final answers = await _db.selectGenerated(
+      (db) => db.evidenceAnswerSources().get(),
     );
     for (final row in answers) {
       final parts = [
-        row['user_answer'] as String?,
-        row['solution'] as String?,
-        row['feedback'] as String?,
+        row.userAnswer,
+        row.solution,
+        row.feedback,
       ].whereType<String>().where((part) => part.trim().isNotEmpty);
       final content = parts.join('\n');
       if (content.trim().isEmpty) continue;
-      final id = row['id']! as int;
       result.add(
         SemanticSource(
           locator: SemanticLocator(
             kind: EvidenceKind.answer.value,
-            sourceKey: EvidenceId.attempt(id).value,
-            conversationId: row['conversation_id']! as int,
-            materialId: row['material_id'] as int?,
-            attemptId: id,
+            sourceKey: EvidenceId.attempt(row.id).value,
+            conversationId: row.conversationId,
+            materialId: row.materialId,
+            attemptId: row.id,
           ),
           content: content,
-          sourceVersion: evidenceSourceVersion(content, row['submitted_at']),
-          updatedAt: optionalDateTime('${row['submitted_at'] ?? ''}'),
+          sourceVersion: evidenceSourceVersion(content, row.submittedAt),
+          updatedAt: optionalDateTime(row.submittedAt),
         ),
       );
     }
@@ -668,63 +628,49 @@ class EvidenceRepository {
         final materialId = locator.materialId;
         final pageNo = locator.pageNo;
         if (materialId == null || pageNo == null) return null;
-        final rows = await _db.rawQuery(
-          'SELECT content, updated_at FROM material_page '
-          'WHERE material_id = ? AND page_no = ? LIMIT 1',
-          [materialId, pageNo],
+        final row = await _db.selectGenerated(
+          (db) => db
+              .evidenceMaterialPageSource(materialId, pageNo)
+              .getSingleOrNull(),
         );
-        if (rows.isEmpty) return null;
-        final content = rows.first['content']! as String;
+        if (row == null) return null;
         return SemanticSource(
           locator: locator,
-          content: content,
-          sourceVersion: evidenceSourceVersion(
-            content,
-            rows.first['updated_at'],
-          ),
-          updatedAt: optionalDateTime('${rows.first['updated_at'] ?? ''}'),
+          content: row.content,
+          sourceVersion: evidenceSourceVersion(row.content, row.updatedAt),
+          updatedAt: optionalDateTime(row.updatedAt),
         );
       case 'message':
         final messageId = locator.messageId;
         if (messageId == null) return null;
-        final rows = await _db.rawQuery(
-          'SELECT content, created_at FROM message WHERE id = ? LIMIT 1',
-          [messageId],
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceMessageSource(messageId).getSingleOrNull(),
         );
-        if (rows.isEmpty) return null;
-        final content = rows.first['content']! as String;
+        if (row == null) return null;
         return SemanticSource(
           locator: locator,
-          content: content,
-          sourceVersion: evidenceSourceVersion(
-            content,
-            rows.first['created_at'],
-          ),
-          updatedAt: optionalDateTime('${rows.first['created_at'] ?? ''}'),
+          content: row.content,
+          sourceVersion: evidenceSourceVersion(row.content, row.createdAt),
+          updatedAt: optionalDateTime(row.createdAt),
         );
       case 'answer':
         final attemptId = locator.attemptId;
         if (attemptId == null) return null;
-        final rows = await _db.rawQuery(
-          'SELECT user_answer, solution, feedback, submitted_at FROM attempt '
-          'WHERE id = ? AND submitted_at IS NOT NULL LIMIT 1',
-          [attemptId],
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceAnswerSource(attemptId).getSingleOrNull(),
         );
-        if (rows.isEmpty) return null;
+        if (row == null) return null;
         final parts = [
-          rows.first['user_answer'] as String?,
-          rows.first['solution'] as String?,
-          rows.first['feedback'] as String?,
+          row.userAnswer,
+          row.solution,
+          row.feedback,
         ].whereType<String>().where((part) => part.trim().isNotEmpty);
         final content = parts.join('\n');
         return SemanticSource(
           locator: locator,
           content: content,
-          sourceVersion: evidenceSourceVersion(
-            content,
-            rows.first['submitted_at'],
-          ),
-          updatedAt: optionalDateTime('${rows.first['submitted_at'] ?? ''}'),
+          sourceVersion: evidenceSourceVersion(content, row.submittedAt),
+          updatedAt: optionalDateTime(row.submittedAt),
         );
       default:
         return null;
@@ -732,61 +678,11 @@ class EvidenceRepository {
   }
 
   /// 这条命中是否仍在给定范围内；范围变化（改归属、换材料）之后不再使用。
-  Future<bool> inScope(EvidenceHit hit, EvidenceScope scope) async {
-    final conversationId = hit.location.conversationId;
-    if (conversationId != null) {
-      final row = await _db.selectGenerated(
-        (db) => db.conversationScope(conversationId).getSingleOrNull(),
-      );
-      if (row == null) return false;
-      return _conversationInScope(
-        conversationId,
-        row.goalId,
-        row.materialId,
-        scope,
-        identity: hit.identity,
-      );
-    }
-    final materialId = hit.location.materialId;
-    if (materialId != null) {
-      final row = await _db.selectGenerated(
-        (db) => db.materialScope(materialId).getSingleOrNull(),
-      );
-      if (row == null) return false;
-      return _materialInScope(
-        materialId,
-        row.goalId,
-        scope,
-        identity: hit.identity,
-      );
-    }
-    return false;
-  }
-
-  Future<Map<String, Object?>?> _questionRow(int conversationId) async {
-    final rows = await _db.rawQuery(
-      'SELECT $_questionMessageId AS question_message_id, '
-      'COALESCE(c.source_ref, '
-      "(CASE WHEN (SELECT title FROM material WHERE id = c.material_id) "
-      "IS NOT NULL AND c.page_no IS NOT NULL THEN '《' || "
-      "(SELECT title FROM material WHERE id = c.material_id) || '》第 ' || "
-      "c.page_no || ' 页' END)) AS source_ref, "
-      "c.title, c.context_text, c.page_no, c.created_at, c.updated_at, "
-      '$_firstUserContent AS stem '
-      'FROM conversation c WHERE c.id = ? LIMIT 1',
-      [conversationId],
-    );
-    return rows.isEmpty ? null : rows.first;
-  }
-
-  static const String _questionMessageId =
-      'COALESCE(c.question_message_id, (SELECT m.id FROM message m '
-      "WHERE m.conversation_id = c.id AND m.role = 'user' "
-      'ORDER BY m.id LIMIT 1))';
-
-  static const String _firstUserContent =
-      '(SELECT m.content FROM message m WHERE m.conversation_id = c.id '
-      "AND m.role = 'user' AND m.id = $_questionMessageId LIMIT 1)";
+  ///
+  /// 判断与命中查询共用 [EvidenceScopeRule] 这一份规则：这里把表达式放进生成
+  /// 查询的 `where`，四类命中查询把同一个表达式渲染成 SQL 片段。
+  Future<bool> inScope(EvidenceHit hit, EvidenceScope scope) =>
+      _db.selectGenerated((db) => hitInScope(db, hit, scope));
 
   Future<List<EvidenceHit>> _pages(
     QueryShape shape,
@@ -797,23 +693,18 @@ class EvidenceRepository {
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
-    final where = <String>[];
-    final args = <Object?>[];
-    final scopeClause = _materialScope(scope);
-    if (scopeClause.where.isNotEmpty) {
-      where.add(scopeClause.where);
-      args.addAll(scopeClause.args);
-    }
+    final before = <String>[];
+    final beforeArgs = <Object>[];
     if (excludePage != null) {
-      where.add('NOT (mp.material_id = ? AND mp.page_no = ?)');
-      args.addAll([excludePage.$1, excludePage.$2]);
+      before.add('NOT (mp.material_id = ? AND mp.page_no = ?)');
+      beforeArgs.addAll([excludePage.$1, excludePage.$2]);
     }
     final pageAfter = after?.materialPage;
     if (pageAfter != null) {
-      where.add(
+      before.add(
         '(mp.material_id < ? OR (mp.material_id = ? AND mp.page_no > ?))',
       );
-      args.addAll([pageAfter.$1, pageAfter.$1, pageAfter.$2]);
+      beforeArgs.addAll([pageAfter.$1, pageAfter.$1, pageAfter.$2]);
     }
     final fts = literal
         ? null
@@ -825,47 +716,70 @@ class EvidenceRepository {
             'm.title',
           ], shape.text)
         : (fts.match, [fts.query]);
-    where.add(match);
-    args.addAll(matchArgs);
-    final rows = await _db.rawQuery(
-      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, mp.material_id, mp.page_no, mp.label, mp.content, '
-      'mp.updated_at, m.title AS material_title, m.source_file_name '
-      'FROM material_page mp JOIN material m ON m.id = mp.material_id '
-      'WHERE ${where.join(' AND ')} '
-      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}mp.material_id DESC, mp.page_no '
-      'LIMIT ?',
-      [if (fts != null) fts.query, ...args, limit],
-    );
+    final rows = await _db.selectGenerated((db) async {
+      final materials = db.alias(db.materials, 'm');
+      final pages = db.alias(db.materialPages, 'mp');
+      final scopeSql = renderInSql(
+        db,
+        EvidenceScopeRule(scope).material(materials, pages),
+      );
+      final where = [
+        ...before,
+        if (scopeSql != null) '(${scopeSql.sql})',
+        match,
+      ];
+      final args = [
+        ...beforeArgs,
+        if (scopeSql != null) ...scopeSql.values,
+        ...matchArgs,
+      ];
+      return db
+          .customSelect(
+            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, mp.material_id, mp.page_no, mp.label, mp.content, '
+            'mp.updated_at, m.title AS material_title, m.source_file_name '
+            'FROM material_page mp JOIN material m ON m.id = mp.material_id '
+            'WHERE ${where.join(' AND ')} '
+            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}mp.material_id DESC, mp.page_no '
+            'LIMIT ?',
+            variables: [
+              if (fts != null) Variable<String>(fts.query),
+              for (final value in args) Variable(value),
+              Variable<int>(limit),
+            ],
+          )
+          .get();
+    });
     return rows
         .map((row) {
-          final content = row['content']! as String;
-          final label = row['label'] as String?;
-          final pageNo = row['page_no']! as int;
+          final data = row.data;
+          final content = data['content']! as String;
+          final label = data['label'] as String?;
+          final pageNo = data['page_no']! as int;
           final offset = literal
               ? _literalOffset(content, label, shape.text)
               : _termOffset(content, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.materialPage,
             identity: EvidenceId.materialPage(
-              row['material_id']! as int,
+              data['material_id']! as int,
               pageNo,
             ).value,
             title:
-                '《${row['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(row['source_file_name'] as String?))}',
+                '《${data['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(data['source_file_name'] as String?))}',
             snippet: searchSnippet(content, _termsFor(shape, literal)),
             text: content,
             matchedText: _matchedText(content, shape, literal, offset),
             literal: literal,
             score: fts == null
                 ? literalMatchScore(offset: offset, textLength: content.length)
-                : keywordMatchScore(row['keyword_rank'] as num?),
+                : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              materialId: row['material_id']! as int,
+              materialId: data['material_id']! as int,
               pageNo: pageNo,
               offset: offset,
             ),
-            sourceVersion: evidenceSourceVersion(content, row['updated_at']),
-            createdAt: optionalDateTime('${row['updated_at'] ?? ''}'),
+            sourceVersion: evidenceSourceVersion(content, data['updated_at']),
+            createdAt: optionalDateTime('${data['updated_at'] ?? ''}'),
           );
         })
         .toList(growable: false);
@@ -880,61 +794,80 @@ class EvidenceRepository {
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
-    final where = <String>[
+    final before = <String>[
       "m.role IN ('user', 'assistant')",
       "m.content != ''",
     ];
-    final args = <Object?>[];
+    final beforeArgs = <Object>[];
     if (excludeConversationId != null) {
-      where.add('m.conversation_id != ?');
-      args.add(excludeConversationId);
+      before.add('m.conversation_id != ?');
+      beforeArgs.add(excludeConversationId);
     }
     if (after != null) {
-      where.add('m.id < ?');
-      args.add(after.messageId ?? 0);
-    }
-    final scopeClause = _conversationScope(scope, kind: 'message');
-    if (scopeClause.where.isNotEmpty) {
-      where.add(scopeClause.where);
-      args.addAll(scopeClause.args);
+      before.add('m.id < ?');
+      beforeArgs.add(after.messageId ?? 0);
     }
     final fts = literal ? null : _ftsSearch('message_fts', shape.terms, 'm.id');
     final (match, matchArgs) = fts == null
         ? _literalMatch(['m.content'], shape.text)
         : (fts.match, [fts.query]);
-    where.add(match);
-    args.addAll(matchArgs);
-    final rows = await _db.rawQuery(
-      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, m.id, m.conversation_id, m.content, m.created_at, c.title '
-      'FROM message m JOIN conversation c ON c.id = m.conversation_id '
-      'WHERE ${where.join(' AND ')} '
-      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}m.id DESC LIMIT ?',
-      [if (fts != null) fts.query, ...args, limit],
-    );
+    final rows = await _db.selectGenerated((db) async {
+      final conversations = db.alias(db.conversations, 'c');
+      final messages = db.alias(db.messages, 'm');
+      final scopeSql = renderInSql(
+        db,
+        EvidenceScopeRule(scope)
+            .conversation(conversations, kind: 'message', messages: messages),
+      );
+      final where = [
+        ...before,
+        if (scopeSql != null) '(${scopeSql.sql})',
+        match,
+      ];
+      final args = [
+        ...beforeArgs,
+        if (scopeSql != null) ...scopeSql.values,
+        ...matchArgs,
+      ];
+      return db
+          .customSelect(
+            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, m.id, m.conversation_id, m.content, m.created_at, c.title '
+            'FROM message m JOIN conversation c ON c.id = m.conversation_id '
+            'WHERE ${where.join(' AND ')} '
+            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}m.id DESC LIMIT ?',
+            variables: [
+              if (fts != null) Variable<String>(fts.query),
+              for (final value in args) Variable(value),
+              Variable<int>(limit),
+            ],
+          )
+          .get();
+    });
     return rows
         .map((row) {
-          final content = row['content']! as String;
+          final data = row.data;
+          final content = data['content']! as String;
           final offset = literal
               ? _literalOffset(content, null, shape.text)
               : _termOffset(content, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.message,
-            identity: EvidenceId.message(row['id']! as int).value,
-            title: (row['title'] as String?) ?? '一次讨论',
+            identity: EvidenceId.message(data['id']! as int).value,
+            title: (data['title'] as String?) ?? '一次讨论',
             snippet: searchSnippet(content, _termsFor(shape, literal)),
             text: content,
             matchedText: _matchedText(content, shape, literal, offset),
             literal: literal,
             score: fts == null
                 ? literalMatchScore(offset: offset, textLength: content.length)
-                : keywordMatchScore(row['keyword_rank'] as num?),
+                : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              conversationId: row['conversation_id']! as int,
-              messageId: row['id']! as int,
+              conversationId: data['conversation_id']! as int,
+              messageId: data['id']! as int,
               offset: offset,
             ),
-            sourceVersion: evidenceSourceVersion(content, row['created_at']),
-            createdAt: optionalDateTime('${row['created_at'] ?? ''}'),
+            sourceVersion: evidenceSourceVersion(content, data['created_at']),
+            createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
           );
         })
         .toList(growable: false);
@@ -948,18 +881,13 @@ class EvidenceRepository {
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
-    final where = <String>[
+    final before = <String>[
       'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)',
     ];
-    final args = <Object?>[];
+    final beforeArgs = <Object>[];
     if (after != null) {
-      where.add('c.id < ?');
-      args.add(after.questionId ?? 0);
-    }
-    final scopeClause = _conversationScope(scope, kind: 'question');
-    if (scopeClause.where.isNotEmpty) {
-      where.add(scopeClause.where);
-      args.addAll(scopeClause.args);
+      before.add('c.id < ?');
+      beforeArgs.add(after.questionId ?? 0);
     }
     final fts = literal
         ? null
@@ -971,23 +899,45 @@ class EvidenceRepository {
             "COALESCE(c.context_text, '')",
           ], shape.text)
         : (fts.match, [fts.query]);
-    where.add('($match)');
-    args.addAll(matchArgs);
-    final rows = await _db.rawQuery(
-      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, c.id AS conversation_id, '
-      '$_questionMessageId AS question_message_id, '
-      '$_firstUserContent AS stem, c.source_ref, c.context_text, c.title, '
-      'c.page_no, c.created_at, c.updated_at '
-      'FROM conversation c '
-      'WHERE ${where.join(' AND ')} '
-      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}c.id DESC LIMIT ?',
-      [if (fts != null) fts.query, ...args, limit],
-    );
+    final rows = await _db.selectGenerated((db) async {
+      final conversations = db.alias(db.conversations, 'c');
+      final scopeSql = renderInSql(
+        db,
+        EvidenceScopeRule(scope).conversation(conversations, kind: 'question'),
+      );
+      final where = [
+        ...before,
+        if (scopeSql != null) '(${scopeSql.sql})',
+        '($match)',
+      ];
+      final args = [
+        ...beforeArgs,
+        if (scopeSql != null) ...scopeSql.values,
+        ...matchArgs,
+      ];
+      return db
+          .customSelect(
+            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, c.id AS conversation_id, '
+            '$_questionMessageId AS question_message_id, '
+            '$_firstUserContent AS stem, c.source_ref, c.context_text, c.title, '
+            'c.page_no, c.created_at, c.updated_at '
+            'FROM conversation c '
+            'WHERE ${where.join(' AND ')} '
+            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}c.id DESC LIMIT ?',
+            variables: [
+              if (fts != null) Variable<String>(fts.query),
+              for (final value in args) Variable(value),
+              Variable<int>(limit),
+            ],
+          )
+          .get();
+    });
     return rows
         .map((row) {
-          final sourceRef = row['source_ref'] as String?;
-          final context = (row['context_text'] as String?) ?? '';
-          final stem = (row['stem'] as String?) ?? '';
+          final data = row.data;
+          final sourceRef = data['source_ref'] as String?;
+          final context = (data['context_text'] as String?) ?? '';
+          final stem = (data['stem'] as String?) ?? '';
           final text = '$stem\n${sourceRef ?? ''}';
           final offset = literal
               ? _literalOffset(
@@ -998,8 +948,9 @@ class EvidenceRepository {
               : _termOffset(text, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.question,
-            identity: EvidenceId.question(row['conversation_id']! as int).value,
-            title: _conversationTitle(row),
+            identity: EvidenceId.question(data['conversation_id']! as int)
+                .value,
+            title: _conversationTitle(sourceRef, data['title'] as String?),
             snippet: searchSnippet(text, _termsFor(shape, literal)),
             text: text,
             matchedText: _matchedText(text, shape, literal, offset),
@@ -1010,17 +961,17 @@ class EvidenceRepository {
                     textLength: text.length,
                     kindPriority: 2,
                   )
-                : keywordMatchScore(row['keyword_rank'] as num?),
+                : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              conversationId: row['conversation_id']! as int,
-              messageId: row['question_message_id'] as int?,
+              conversationId: data['conversation_id']! as int,
+              messageId: data['question_message_id'] as int?,
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(
               '$stem\n${sourceRef ?? ''}\n$context',
-              row['updated_at'],
+              data['updated_at'],
             ),
-            createdAt: optionalDateTime('${row['created_at'] ?? ''}'),
+            createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
             sourceRef: sourceRef,
           );
         })
@@ -1036,22 +987,17 @@ class EvidenceRepository {
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
-    final where = <String>['a.submitted_at IS NOT NULL'];
-    final args = <Object?>[];
+    final before = <String>['a.submitted_at IS NOT NULL'];
+    final beforeArgs = <Object>[];
     if (excludeConversationId != null) {
-      where.add('a.conversation_id != ?');
-      args.add(excludeConversationId);
+      before.add('a.conversation_id != ?');
+      beforeArgs.add(excludeConversationId);
     }
     final submittedAfter = after?.answerSubmittedAt;
     if (submittedAfter != null) {
       final answerId = after!.answerId ?? 0;
-      where.add('(a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))');
-      args.addAll([submittedAfter, submittedAfter, answerId]);
-    }
-    final scopeClause = _conversationScope(scope, kind: 'answer');
-    if (scopeClause.where.isNotEmpty) {
-      where.add(scopeClause.where);
-      args.addAll(scopeClause.args);
+      before.add('(a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))');
+      beforeArgs.addAll([submittedAfter, submittedAfter, answerId]);
     }
     final fts = literal ? null : _ftsSearch('attempt_fts', shape.terms, 'a.id');
     final (match, matchArgs) = fts == null
@@ -1061,29 +1007,53 @@ class EvidenceRepository {
             "COALESCE(a.feedback, '')",
           ], shape.text)
         : (fts.match, [fts.query]);
-    where.add('($match)');
-    args.addAll(matchArgs);
-    final rows = await _db.rawQuery(
-      'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, a.id, a.conversation_id, a.user_answer, a.solution, '
-      'a.feedback, a.submitted_at, c.title, c.source_ref '
-      'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
-      'WHERE ${where.join(' AND ')} '
-      'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}a.submitted_at DESC, a.id DESC LIMIT ?',
-      [if (fts != null) fts.query, ...args, limit],
-    );
+    final rows = await _db.selectGenerated((db) async {
+      final conversations = db.alias(db.conversations, 'c');
+      final attempts = db.alias(db.attempts, 'a');
+      final scopeSql = renderInSql(
+        db,
+        EvidenceScopeRule(scope)
+            .conversation(conversations, kind: 'answer', attempts: attempts),
+      );
+      final where = [
+        ...before,
+        if (scopeSql != null) '(${scopeSql.sql})',
+        '($match)',
+      ];
+      final args = [
+        ...beforeArgs,
+        if (scopeSql != null) ...scopeSql.values,
+        ...matchArgs,
+      ];
+      return db
+          .customSelect(
+            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, a.id, a.conversation_id, a.user_answer, a.solution, '
+            'a.feedback, a.submitted_at, c.title, c.source_ref '
+            'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
+            'WHERE ${where.join(' AND ')} '
+            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}a.submitted_at DESC, a.id DESC LIMIT ?',
+            variables: [
+              if (fts != null) Variable<String>(fts.query),
+              for (final value in args) Variable(value),
+              Variable<int>(limit),
+            ],
+          )
+          .get();
+    });
     return rows
         .map((row) {
-          final answer = (row['user_answer'] as String?) ?? '';
+          final data = row.data;
+          final answer = (data['user_answer'] as String?) ?? '';
           final text =
-              '$answer\n${row['solution'] ?? ''}\n'
-              '${row['feedback'] ?? ''}';
+              '$answer\n${data['solution'] ?? ''}\n'
+              '${data['feedback'] ?? ''}';
           final offset = literal
               ? _literalOffset(text, null, shape.text)
               : _termOffset(text, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.answer,
-            identity: EvidenceId.attempt(row['id']! as int).value,
-            title: _answerTitle(row['id']! as int),
+            identity: EvidenceId.attempt(data['id']! as int).value,
+            title: _answerTitle(data['id']! as int),
             snippet: searchSnippet(text, _termsFor(shape, literal)),
             text: text,
             matchedText: _matchedText(text, shape, literal, offset),
@@ -1094,15 +1064,15 @@ class EvidenceRepository {
                     textLength: text.length,
                     kindPriority: 1,
                   )
-                : keywordMatchScore(row['keyword_rank'] as num?),
+                : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              conversationId: row['conversation_id']! as int,
-              attemptId: row['id']! as int,
+              conversationId: data['conversation_id']! as int,
+              attemptId: data['id']! as int,
               offset: offset,
             ),
-            sourceVersion: evidenceSourceVersion(text, row['submitted_at']),
-            createdAt: optionalDateTime('${row['submitted_at'] ?? ''}'),
-            sourceRef: row['source_ref'] as String?,
+            sourceVersion: evidenceSourceVersion(text, data['submitted_at']),
+            createdAt: optionalDateTime('${data['submitted_at'] ?? ''}'),
+            sourceRef: data['source_ref'] as String?,
           );
         })
         .toList(growable: false);
@@ -1110,10 +1080,9 @@ class EvidenceRepository {
 
   static String _answerTitle(int attemptId) => '一次已提交作答 · 第 $attemptId 条';
 
-  static String _conversationTitle(Map<String, Object?> row) {
-    final sourceRef = row['source_ref'] as String?;
+  static String _conversationTitle(String? sourceRef, String? title) {
     if (sourceRef != null && sourceRef.trim().isNotEmpty) return sourceRef;
-    return (row['title'] as String?) ?? '一次讨论';
+    return title ?? '一次讨论';
   }
 
   static String _matchedText(
@@ -1158,12 +1127,12 @@ class EvidenceRepository {
   /// 字面匹配：命中之后不能紧接数字、字母或下划线，避免 `例 3-2` 命中
   /// `例 3-20`、`a_b` 命中 `a_bc` 这类近似写法；引号、括号等符号后面的
   /// 字符不受限制。
-  static (String, List<Object?>) _literalMatch(
+  static (String, List<Object>) _literalMatch(
     List<String> columns,
     String text,
   ) {
     final parts = <String>[];
-    final args = <Object?>[];
+    final args = <Object>[];
     for (final column in columns) {
       parts.add(
         'instr(lower($column), lower(?)) > 0 AND ('
@@ -1192,177 +1161,14 @@ class EvidenceRepository {
     );
   }
 
-  static ({String where, List<Object?> args}) _conversationScope(
-    EvidenceScope scope, {
-    required String kind,
-  }) {
-    switch (scope.origin) {
-      case EvidenceOrigin.user:
-        return switch (scope.kind) {
-          EvidenceScopeKind.all => (where: '', args: const []),
-          EvidenceScopeKind.goal => (
-            where: 'c.goal_id = ?',
-            args: [scope.goalId],
-          ),
-          EvidenceScopeKind.material => (
-            where: 'c.material_id = ?',
-            args: [scope.materialId],
-          ),
-        };
-      case EvidenceOrigin.answer:
-        final clauses = <String>[];
-        final args = <Object?>[];
-        if (scope.goalId == null) {
-          // 没有目标归属时只读当前这条讨论；其他无归属讨论不进入候选。
-          if (scope.conversationId != null) {
-            clauses.add('c.id = ?');
-            args.add(scope.conversationId);
-          }
-        } else {
-          clauses.add('(c.goal_id = ? OR c.goal_id IS NULL)');
-          args.add(scope.goalId);
-        }
-        final brought = _broughtClause(scope.broughtIdentities, kind);
-        if (brought != null) {
-          clauses.add(brought.where);
-          args.addAll(brought.args);
-        }
-        return clauses.isEmpty
-            ? (where: 'c.id = -1', args: const [])
-            : (where: '(${clauses.join(' OR ')})', args: args);
-    }
-  }
+  /// 题目视图的题目消息：优先取记录上记下的编号，没有时取第一条用户消息。
+  static const String _questionMessageId =
+      'COALESCE(c.question_message_id, (SELECT m.id FROM message m '
+      "WHERE m.conversation_id = c.id AND m.role = 'user' "
+      'ORDER BY m.id LIMIT 1))';
 
-  /// 本轮带入的来源只放行对应的那一条记录，不因此读取整条讨论。
-  static ({String where, List<Object?> args})? _broughtClause(
-    Set<String> identities,
-    String kind,
-  ) {
-    final clauses = <String>[];
-    final args = <Object?>[];
-    for (final identity in identities) {
-      final parsed = EvidenceId.tryParse(identity);
-      final id = parsed?.primaryId;
-      if (id == null) continue;
-      switch (parsed!.kind) {
-        case 'message':
-          if (kind == 'message') {
-            clauses.add('m.id = ?');
-            args.add(id);
-          }
-        case 'question':
-          if (kind == 'question') {
-            clauses.add('c.id = ?');
-            args.add(id);
-          }
-        case 'attempt':
-          if (kind == 'answer') {
-            clauses.add('a.id = ?');
-            args.add(id);
-          }
-      }
-    }
-    return clauses.isEmpty
-        ? null
-        : (where: '(${clauses.join(' OR ')})', args: args);
-  }
-
-  static ({String where, List<Object?> args}) _materialScope(
-    EvidenceScope scope,
-  ) {
-    switch (scope.origin) {
-      case EvidenceOrigin.user:
-        return switch (scope.kind) {
-          EvidenceScopeKind.all => (where: '', args: const []),
-          EvidenceScopeKind.goal => (
-            where: 'm.goal_id = ?',
-            args: [scope.goalId],
-          ),
-          EvidenceScopeKind.material => (
-            where: 'mp.material_id = ?',
-            args: [scope.materialId],
-          ),
-        };
-      case EvidenceOrigin.answer:
-        if (scope.goalId == null) {
-          // 没有目标归属时只放行本轮带入的材料页；当前页由回答直接给出。
-          final pages = <String>[];
-          final args = <Object?>[];
-          for (final identity in scope.broughtIdentities) {
-            final parsed = EvidenceId.tryParse(identity);
-            if (parsed?.kind != 'material_page') continue;
-            final materialId = parsed!.primaryId;
-            final pageNo = parsed.pageNo;
-            if (materialId == null || pageNo == null) continue;
-            pages.add('(mp.material_id = ? AND mp.page_no = ?)');
-            args.addAll([materialId, pageNo]);
-          }
-          return pages.isEmpty
-              ? (where: 'mp.material_id = -1', args: const [])
-              : (where: '(${pages.join(' OR ')})', args: args);
-        }
-        final clauses = <String>['(m.goal_id = ? OR m.goal_id IS NULL)'];
-        final args = <Object?>[scope.goalId];
-        final pages = <String>[];
-        for (final identity in scope.broughtIdentities) {
-          final parsed = EvidenceId.tryParse(identity);
-          if (parsed?.kind != 'material_page') continue;
-          final materialId = parsed!.primaryId;
-          final pageNo = parsed.pageNo;
-          if (materialId == null || pageNo == null) continue;
-          pages.add('(mp.material_id = ? AND mp.page_no = ?)');
-          args.addAll([materialId, pageNo]);
-        }
-        if (pages.isNotEmpty) clauses.add('(${pages.join(' OR ')})');
-        return (where: '(${clauses.join(' OR ')})', args: args);
-    }
-  }
-
-  static bool _conversationInScope(
-    int? conversationId,
-    int? goalId,
-    int? materialId,
-    EvidenceScope scope, {
-    required String identity,
-  }) {
-    switch (scope.origin) {
-      case EvidenceOrigin.user:
-        return switch (scope.kind) {
-          EvidenceScopeKind.all => true,
-          EvidenceScopeKind.goal => goalId == scope.goalId,
-          EvidenceScopeKind.material => materialId == scope.materialId,
-        };
-      case EvidenceOrigin.answer:
-        if (scope.broughtIdentities.contains(identity)) return true;
-        final wanted = scope.goalId;
-        if (wanted == null) {
-          return scope.conversationId != null &&
-              conversationId == scope.conversationId;
-        }
-        return goalId == wanted || goalId == null;
-    }
-  }
-
-  static bool _materialInScope(
-    int materialId,
-    int? goalId,
-    EvidenceScope scope, {
-    required String identity,
-  }) {
-    switch (scope.origin) {
-      case EvidenceOrigin.user:
-        return switch (scope.kind) {
-          EvidenceScopeKind.all => true,
-          EvidenceScopeKind.goal => goalId == scope.goalId,
-          // 材料范围只放行这份材料的页；比较材料标识，不能按“材料范围一律
-          // 放行”处理，否则语义候选会带出其他材料的页。
-          EvidenceScopeKind.material => materialId == scope.materialId,
-        };
-      case EvidenceOrigin.answer:
-        if (scope.broughtIdentities.contains(identity)) return true;
-        final wanted = scope.goalId;
-        if (wanted == null) return false;
-        return goalId == wanted || goalId == null;
-    }
-  }
+  /// 题干：取题目消息的正文；没有题目消息时为空。
+  static const String _firstUserContent =
+      '(SELECT m.content FROM message m WHERE m.conversation_id = c.id '
+      "AND m.role = 'user' AND m.id = $_questionMessageId LIMIT 1)";
 }

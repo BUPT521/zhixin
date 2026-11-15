@@ -12856,6 +12856,54 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<EvidenceMessageCurrentResult> evidenceMessageCurrent(
+    int messageId,
+  ) {
+    return customSelect(
+      'SELECT m.content, m.created_at, c.id AS conversation_id, c.title, c.goal_id, c.material_id FROM message AS m JOIN conversation AS c ON c.id = m.conversation_id WHERE m.id = ?1 LIMIT 1',
+      variables: [Variable<int>(messageId)],
+      readsFrom: {this.messages, this.conversations},
+    ).map(
+      (QueryRow row) => EvidenceMessageCurrentResult(
+        content: row.read<String>('content'),
+        createdAt: row.read<String>('created_at'),
+        conversationId: row.read<int>('conversation_id'),
+        title: row.readNullable<String>('title'),
+        goalId: row.readNullable<int>('goal_id'),
+        materialId: row.readNullable<int>('material_id'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceMessageSourcesResult> evidenceMessageSources() {
+    return customSelect(
+      'SELECT m.id, m.conversation_id, m.content, m.created_at, c.material_id FROM message AS m JOIN conversation AS c ON c.id = m.conversation_id WHERE m.role IN (\'user\', \'assistant\') AND m.content != \'\' ORDER BY m.id DESC',
+      variables: [],
+      readsFrom: {this.messages, this.conversations},
+    ).map(
+      (QueryRow row) => EvidenceMessageSourcesResult(
+        id: row.read<int>('id'),
+        conversationId: row.read<int>('conversation_id'),
+        content: row.read<String>('content'),
+        createdAt: row.read<String>('created_at'),
+        materialId: row.readNullable<int>('material_id'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceMessageSourceResult> evidenceMessageSource(int messageId) {
+    return customSelect(
+      'SELECT content, created_at FROM message WHERE id = ?1 LIMIT 1',
+      variables: [Variable<int>(messageId)],
+      readsFrom: {this.messages},
+    ).map(
+      (QueryRow row) => EvidenceMessageSourceResult(
+        content: row.read<String>('content'),
+        createdAt: row.read<String>('created_at'),
+      ),
+    );
+  }
+
   Selectable<MemoryRow> listMemories(int activeOnly) {
     return customSelect(
       'SELECT * FROM memory WHERE(?1 = 0 OR status = \'active\')ORDER BY status, updated_at DESC, id DESC',
@@ -13198,6 +13246,56 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [Variable<int>(materialId), Variable<int>(pageNo)],
       readsFrom: {this.materialPages},
     ).asyncMap(this.materialPages.mapFromRow);
+  }
+
+  Selectable<EvidenceMaterialPageCurrentResult> evidenceMaterialPageCurrent(
+    int materialId,
+    int pageNo,
+  ) {
+    return customSelect(
+      'SELECT mp.content, mp.label, mp.updated_at, m.title, m.source_file_name FROM material_page AS mp JOIN material AS m ON m.id = mp.material_id WHERE mp.material_id = ?1 AND mp.page_no = ?2 LIMIT 1',
+      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
+      readsFrom: {this.materialPages, this.materials},
+    ).map(
+      (QueryRow row) => EvidenceMaterialPageCurrentResult(
+        content: row.read<String>('content'),
+        label: row.readNullable<String>('label'),
+        updatedAt: row.read<String>('updated_at'),
+        title: row.read<String>('title'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceMaterialPageSourcesResult> evidenceMaterialPageSources() {
+    return customSelect(
+      'SELECT mp.material_id, mp.page_no, mp.content, mp.updated_at FROM material_page AS mp ORDER BY mp.updated_at DESC, mp.material_id, mp.page_no',
+      variables: [],
+      readsFrom: {this.materialPages},
+    ).map(
+      (QueryRow row) => EvidenceMaterialPageSourcesResult(
+        materialId: row.read<int>('material_id'),
+        pageNo: row.read<int>('page_no'),
+        content: row.read<String>('content'),
+        updatedAt: row.read<String>('updated_at'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceMaterialPageSourceResult> evidenceMaterialPageSource(
+    int materialId,
+    int pageNo,
+  ) {
+    return customSelect(
+      'SELECT content, updated_at FROM material_page WHERE material_id = ?1 AND page_no = ?2 LIMIT 1',
+      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
+      readsFrom: {this.materialPages},
+    ).map(
+      (QueryRow row) => EvidenceMaterialPageSourceResult(
+        content: row.read<String>('content'),
+        updatedAt: row.read<String>('updated_at'),
+      ),
+    );
   }
 
   Selectable<LearningGoalRow> activeGoals(String status) {
@@ -13577,6 +13675,27 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<EvidenceQuestionCurrentResult> evidenceQuestionCurrent(
+    int conversationId,
+  ) {
+    return customSelect(
+      'SELECT COALESCE(c.question_message_id, (SELECT m.id FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id LIMIT 1)) AS question_message_id, COALESCE(c.source_ref,(CASE WHEN (SELECT title FROM material WHERE id = c.material_id) IS NOT NULL AND c.page_no IS NOT NULL THEN \'《\' || (SELECT title FROM material WHERE id = c.material_id) || \'》第 \' || c.page_no || \' 页\' END)) AS source_ref, c.title, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id = COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)) LIMIT 1) AS stem FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
+      variables: [Variable<int>(conversationId)],
+      readsFrom: {this.conversations, this.messages, this.materials},
+    ).map(
+      (QueryRow row) => EvidenceQuestionCurrentResult(
+        questionMessageId: row.readNullable<int>('question_message_id'),
+        sourceRef: row.readNullable<String>('source_ref'),
+        title: row.readNullable<String>('title'),
+        contextText: row.readNullable<String>('context_text'),
+        pageNo: row.readNullable<int>('page_no'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        stem: row.readNullable<String>('stem'),
+      ),
+    );
+  }
+
   Selectable<AttemptSubmissionResult> attemptSubmission(int attemptId) {
     return customSelect(
       'SELECT id, submitted_at FROM attempt WHERE id = ?1 LIMIT 1',
@@ -13814,6 +13933,108 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         questionImagePathsJson: row.readNullable<String>(
           'question_image_paths_json',
         ),
+      ),
+    );
+  }
+
+  Selectable<EvidenceAnswerCurrentResult> evidenceAnswerCurrent(int attemptId) {
+    return customSelect(
+      'SELECT a.id, a.conversation_id, a.user_answer, a.solution, a.feedback, a.submitted_at, c.title, c.source_ref FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.id = ?1 AND a.submitted_at IS NOT NULL LIMIT 1',
+      variables: [Variable<int>(attemptId)],
+      readsFrom: {this.attempts, this.conversations},
+    ).map(
+      (QueryRow row) => EvidenceAnswerCurrentResult(
+        id: row.read<int>('id'),
+        conversationId: row.read<int>('conversation_id'),
+        userAnswer: row.readNullable<String>('user_answer'),
+        solution: row.readNullable<String>('solution'),
+        feedback: row.readNullable<String>('feedback'),
+        submittedAt: row.readNullable<String>('submitted_at'),
+        title: row.readNullable<String>('title'),
+        sourceRef: row.readNullable<String>('source_ref'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceAnswerSourcesResult> evidenceAnswerSources() {
+    return customSelect(
+      'SELECT a.id, a.conversation_id, a.user_answer, a.solution, a.feedback, a.submitted_at, c.material_id FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL ORDER BY a.submitted_at DESC, a.id DESC',
+      variables: [],
+      readsFrom: {this.attempts, this.conversations},
+    ).map(
+      (QueryRow row) => EvidenceAnswerSourcesResult(
+        id: row.read<int>('id'),
+        conversationId: row.read<int>('conversation_id'),
+        userAnswer: row.readNullable<String>('user_answer'),
+        solution: row.readNullable<String>('solution'),
+        feedback: row.readNullable<String>('feedback'),
+        submittedAt: row.readNullable<String>('submitted_at'),
+        materialId: row.readNullable<int>('material_id'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceAnswerSourceResult> evidenceAnswerSource(int attemptId) {
+    return customSelect(
+      'SELECT user_answer, solution, feedback, submitted_at FROM attempt WHERE id = ?1 AND submitted_at IS NOT NULL LIMIT 1',
+      variables: [Variable<int>(attemptId)],
+      readsFrom: {this.attempts},
+    ).map(
+      (QueryRow row) => EvidenceAnswerSourceResult(
+        userAnswer: row.readNullable<String>('user_answer'),
+        solution: row.readNullable<String>('solution'),
+        feedback: row.readNullable<String>('feedback'),
+        submittedAt: row.readNullable<String>('submitted_at'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceThreadAttemptsResult> evidenceThreadAttempts(
+    int? conversationId,
+    String? stem,
+    int? materialId,
+    int? pageNo,
+    int? goalId,
+    int includeUnassigned,
+    String? from,
+    String? to,
+    int rowLimit,
+  ) {
+    return customSelect(
+      'SELECT a.*, c.source_ref AS thread_source_ref, c.material_id AS thread_material_id, c.page_no AS thread_page_no, c.goal_id AS thread_goal_id, COALESCE((SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id = COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)) LIMIT 1), \'\') AS thread_stem FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND(?1 IS NULL OR c.id = ?1)AND(?2 IS NULL OR (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id = COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)) LIMIT 1) = ?2)AND(?3 IS NULL OR(c.material_id = ?3 AND(?4 IS NULL OR c.page_no = ?4)))AND(?5 IS NULL OR c.goal_id = ?5 OR(?6 = 1 AND c.goal_id IS NULL))AND(?7 IS NULL OR a.submitted_at >= ?7)AND(?8 IS NULL OR a.submitted_at < ?8)ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?9',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<String>(stem),
+        Variable<int>(materialId),
+        Variable<int>(pageNo),
+        Variable<int>(goalId),
+        Variable<int>(includeUnassigned),
+        Variable<String>(from),
+        Variable<String>(to),
+        Variable<int>(rowLimit),
+      ],
+      readsFrom: {this.conversations, this.messages, this.attempts},
+    ).map(
+      (QueryRow row) => EvidenceThreadAttemptsResult(
+        id: row.read<int>('id'),
+        conversationId: row.read<int>('conversation_id'),
+        sessionId: row.readNullable<int>('session_id'),
+        redoOfAttemptId: row.readNullable<int>('redo_of_attempt_id'),
+        userAnswer: row.readNullable<String>('user_answer'),
+        solution: row.readNullable<String>('solution'),
+        isCorrect: row.readNullable<bool>('is_correct'),
+        independent: row.readNullable<bool>('independent'),
+        delayed: row.read<bool>('delayed'),
+        helpJson: row.readNullable<String>('help_json'),
+        feedback: row.readNullable<String>('feedback'),
+        submittedAt: row.readNullable<String>('submitted_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        threadSourceRef: row.readNullable<String>('thread_source_ref'),
+        threadMaterialId: row.readNullable<int>('thread_material_id'),
+        threadPageNo: row.readNullable<int>('thread_page_no'),
+        threadGoalId: row.readNullable<int>('thread_goal_id'),
+        threadStem: row.read<String>('thread_stem'),
       ),
     );
   }
@@ -14699,6 +14920,44 @@ class NextDueItemResult {
   });
 }
 
+class EvidenceMessageCurrentResult {
+  final String content;
+  final String createdAt;
+  final int conversationId;
+  final String? title;
+  final int? goalId;
+  final int? materialId;
+  EvidenceMessageCurrentResult({
+    required this.content,
+    required this.createdAt,
+    required this.conversationId,
+    this.title,
+    this.goalId,
+    this.materialId,
+  });
+}
+
+class EvidenceMessageSourcesResult {
+  final int id;
+  final int conversationId;
+  final String content;
+  final String createdAt;
+  final int? materialId;
+  EvidenceMessageSourcesResult({
+    required this.id,
+    required this.conversationId,
+    required this.content,
+    required this.createdAt,
+    this.materialId,
+  });
+}
+
+class EvidenceMessageSourceResult {
+  final String content;
+  final String createdAt;
+  EvidenceMessageSourceResult({required this.content, required this.createdAt});
+}
+
 class ActiveDifficultiesResult {
   final int id;
   final String content;
@@ -14776,6 +15035,43 @@ class MaterialPageBoundsResult {
   final int? firstPage;
   final int? lastPage;
   MaterialPageBoundsResult({this.firstPage, this.lastPage});
+}
+
+class EvidenceMaterialPageCurrentResult {
+  final String content;
+  final String? label;
+  final String updatedAt;
+  final String title;
+  final String? sourceFileName;
+  EvidenceMaterialPageCurrentResult({
+    required this.content,
+    this.label,
+    required this.updatedAt,
+    required this.title,
+    this.sourceFileName,
+  });
+}
+
+class EvidenceMaterialPageSourcesResult {
+  final int materialId;
+  final int pageNo;
+  final String content;
+  final String updatedAt;
+  EvidenceMaterialPageSourcesResult({
+    required this.materialId,
+    required this.pageNo,
+    required this.content,
+    required this.updatedAt,
+  });
+}
+
+class EvidenceMaterialPageSourceResult {
+  final String content;
+  final String updatedAt;
+  EvidenceMaterialPageSourceResult({
+    required this.content,
+    required this.updatedAt,
+  });
 }
 
 class ConversationByIdResult {
@@ -15002,6 +15298,27 @@ class ConversationScopeResult {
   ConversationScopeResult({required this.id, this.goalId, this.materialId});
 }
 
+class EvidenceQuestionCurrentResult {
+  final int? questionMessageId;
+  final String? sourceRef;
+  final String? title;
+  final String? contextText;
+  final int? pageNo;
+  final String createdAt;
+  final String updatedAt;
+  final String? stem;
+  EvidenceQuestionCurrentResult({
+    this.questionMessageId,
+    this.sourceRef,
+    this.title,
+    this.contextText,
+    this.pageNo,
+    required this.createdAt,
+    required this.updatedAt,
+    this.stem,
+  });
+}
+
 class AttemptSubmissionResult {
   final int id;
   final String? submittedAt;
@@ -15054,5 +15371,101 @@ class RecentSubmittedResult {
     this.sourceFileName,
     this.questionStem,
     this.questionImagePathsJson,
+  });
+}
+
+class EvidenceAnswerCurrentResult {
+  final int id;
+  final int conversationId;
+  final String? userAnswer;
+  final String? solution;
+  final String? feedback;
+  final String? submittedAt;
+  final String? title;
+  final String? sourceRef;
+  EvidenceAnswerCurrentResult({
+    required this.id,
+    required this.conversationId,
+    this.userAnswer,
+    this.solution,
+    this.feedback,
+    this.submittedAt,
+    this.title,
+    this.sourceRef,
+  });
+}
+
+class EvidenceAnswerSourcesResult {
+  final int id;
+  final int conversationId;
+  final String? userAnswer;
+  final String? solution;
+  final String? feedback;
+  final String? submittedAt;
+  final int? materialId;
+  EvidenceAnswerSourcesResult({
+    required this.id,
+    required this.conversationId,
+    this.userAnswer,
+    this.solution,
+    this.feedback,
+    this.submittedAt,
+    this.materialId,
+  });
+}
+
+class EvidenceAnswerSourceResult {
+  final String? userAnswer;
+  final String? solution;
+  final String? feedback;
+  final String? submittedAt;
+  EvidenceAnswerSourceResult({
+    this.userAnswer,
+    this.solution,
+    this.feedback,
+    this.submittedAt,
+  });
+}
+
+class EvidenceThreadAttemptsResult {
+  final int id;
+  final int conversationId;
+  final int? sessionId;
+  final int? redoOfAttemptId;
+  final String? userAnswer;
+  final String? solution;
+  final bool? isCorrect;
+  final bool? independent;
+  final bool delayed;
+  final String? helpJson;
+  final String? feedback;
+  final String? submittedAt;
+  final String createdAt;
+  final String updatedAt;
+  final String? threadSourceRef;
+  final int? threadMaterialId;
+  final int? threadPageNo;
+  final int? threadGoalId;
+  final String threadStem;
+  EvidenceThreadAttemptsResult({
+    required this.id,
+    required this.conversationId,
+    this.sessionId,
+    this.redoOfAttemptId,
+    this.userAnswer,
+    this.solution,
+    this.isCorrect,
+    this.independent,
+    required this.delayed,
+    this.helpJson,
+    this.feedback,
+    this.submittedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    this.threadSourceRef,
+    this.threadMaterialId,
+    this.threadPageNo,
+    this.threadGoalId,
+    required this.threadStem,
   });
 }

@@ -225,3 +225,33 @@ WHERE id = :conversationId;
 
 conversationScope:
 SELECT id, goal_id, material_id FROM conversation WHERE id = :id LIMIT 1;
+
+-- 检索核对：一条题目命中的题干与出处。
+--
+-- 题干取开始作答时确定的用户消息；出处缺省时按材料标题与页码补一条，与题目的
+-- 展示口径一致。这里保留原查询的 SQL 兜底，不换成 `materialPosition`，docx 材料
+-- 的旧命中仍按“第 N 页”核对。
+evidenceQuestionCurrent:
+SELECT
+  COALESCE(c.question_message_id, (
+    SELECT m.id FROM message m
+    WHERE m.conversation_id = c.id AND m.role = 'user'
+    ORDER BY m.id LIMIT 1
+  )) AS question_message_id,
+  COALESCE(c.source_ref, (
+    CASE WHEN (SELECT title FROM material WHERE id = c.material_id) IS NOT NULL
+      AND c.page_no IS NOT NULL
+    THEN '《' || (SELECT title FROM material WHERE id = c.material_id)
+      || '》第 ' || c.page_no || ' 页' END
+  )) AS source_ref,
+  c.title, c.context_text, c.page_no, c.created_at, c.updated_at,
+  (SELECT m.content FROM message m
+    WHERE m.conversation_id = c.id AND m.role = 'user'
+      AND m.id = COALESCE(c.question_message_id, (
+        SELECT m2.id FROM message m2
+        WHERE m2.conversation_id = c.id AND m2.role = 'user'
+        ORDER BY m2.id LIMIT 1
+      )) LIMIT 1) AS stem
+FROM conversation c
+WHERE c.id = :conversationId
+LIMIT 1;

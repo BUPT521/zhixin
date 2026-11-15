@@ -48,3 +48,24 @@ materialPageByNumber:
 SELECT * FROM material_page
 WHERE material_id = :materialId AND page_no = :pageNo
 LIMIT 1;
+
+-- 检索核对：一条材料页命中的当前内容与材料标题，用来判断内容是否换过版本。
+evidenceMaterialPageCurrent:
+SELECT mp.content, mp.label, mp.updated_at, m.title, m.source_file_name
+FROM material_page mp
+JOIN material m ON m.id = mp.material_id
+WHERE mp.material_id = :materialId AND mp.page_no = :pageNo
+LIMIT 1;
+
+-- 语义索引可用的全部材料页：按最近更新倒序，后台分批重建索引。
+evidenceMaterialPageSources:
+SELECT mp.material_id, mp.page_no, mp.content, mp.updated_at
+FROM material_page mp
+ORDER BY mp.updated_at DESC, mp.material_id, mp.page_no;
+
+-- 一条材料页的当前内容与更新时间；嵌入很慢，写回索引前要重新读一次。
+evidenceMaterialPageSource:
+SELECT content, updated_at
+FROM material_page
+WHERE material_id = :materialId AND page_no = :pageNo
+LIMIT 1;
