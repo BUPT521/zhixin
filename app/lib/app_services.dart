@@ -1,25 +1,18 @@
 import 'ai/ai_chat_service.dart';
-import 'ai/llm_config_store.dart';
 import 'application/capacity_service.dart';
 import 'application/continue_service.dart';
 import 'application/context_service.dart';
 import 'application/discussion_service.dart';
-import 'application/evidence_service.dart';
 import 'application/learning_service.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
-import 'application/memory_scope_service.dart';
 import 'application/memory_service.dart';
 import 'application/plan_service.dart';
 import 'application/search_service.dart';
 import 'application/semantic_index_service.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
-import 'data/backup/data_package_service.dart';
 import 'data/backup/restore_point_store.dart';
-import 'data/revisions/asset_store.dart';
-import 'data/revisions/revision_engine.dart';
-import 'data/revisions/revision_package.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/vector/embedding_config_store.dart';
 
@@ -51,13 +44,11 @@ class ChatServices {
     required this.discussion,
     required this.learning,
     required this.context,
-    required this.memoryScope,
   });
 
   final DiscussionService discussion;
   final LearningService learning;
   final ContextService context;
-  final MemoryScopeService memoryScope;
 }
 
 /// 安排与系统学习：事项、预约、时间预算与首页的继续入口。
@@ -80,13 +71,11 @@ class LibraryServices {
   const LibraryServices({
     required this.material,
     required this.search,
-    required this.evidence,
     required this.semanticIndexFactory,
   });
 
   final MaterialService material;
   final SearchService search;
-  final EvidenceService evidence;
 
   /// 语义索引按需创建；没有配置时不打开向量库。
   final SemanticIndexService Function() semanticIndexFactory;
@@ -107,13 +96,11 @@ class SettingsServices {
   const SettingsServices({
     required this.edit,
     required this.embedding,
-    required this.llm,
     required this.aiFactory,
   });
 
   final SettingsService edit;
   final EmbeddingConfigStore embedding;
-  final LlmConfigStore llm;
 
   final BuddyAi Function() aiFactory;
 
@@ -122,19 +109,8 @@ class SettingsServices {
 
 /// 数据版本、数据包与附件缓存。
 class DataServices {
-  const DataServices({
-    required this.revisions,
-    required this.engine,
-    required this.packages,
-    required this.currentData,
-    required this.restorePoints,
-    required this.attachments,
-  });
+  const DataServices({required this.revisions, required this.restorePoints});
 
   final RevisionService revisions;
-  final RevisionEngine engine;
-  final RevisionPackageService packages;
-  final DataPackageService currentData;
   final RestorePointStore restorePoints;
-  final AttachmentCache attachments;
 }

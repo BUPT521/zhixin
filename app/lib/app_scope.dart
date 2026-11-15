@@ -185,7 +185,6 @@ class AppScopeState extends State<AppScope> {
       discussion: _discussion,
       learning: _learning,
       context: _context,
-      memoryScope: _memoryScope,
     ),
     study: StudyServices(
       plan: _plan,
@@ -196,24 +195,15 @@ class AppScopeState extends State<AppScope> {
     library: LibraryServices(
       material: _material,
       search: _search,
-      evidence: _evidence,
       semanticIndexFactory: () => _semantic,
     ),
     memory: MemoryServices(edit: _memoryEdit, proposals: _proposals),
     settings: SettingsServices(
       edit: _settingsEdit,
       embedding: _embeddingStore,
-      llm: _llmStore,
       aiFactory: () => _ai,
     ),
-    data: DataServices(
-      revisions: _revisions,
-      engine: _engine,
-      packages: _revisionPackages,
-      currentData: _dataPackages,
-      restorePoints: _restorePoints,
-      attachments: _attachmentCache,
-    ),
+    data: DataServices(revisions: _revisions, restorePoints: _restorePoints),
   );
 
   /// 讨论与作答、安排与学习、材料与检索、记忆、设置、数据版本六组服务。
@@ -381,9 +371,9 @@ class AppScopeState extends State<AppScope> {
     db.revisions = _engine;
     _attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
     _revisions = RevisionService(
+      engine: _engine,
       db: db,
       raw: () => _connection!,
-      engine: _engine,
       clock: clock,
       cache: _attachmentCache,
       onUndoApplied: _refreshDayCutoffHour,

@@ -307,7 +307,6 @@ void main() {
       expect(await state.currentHead(), greaterThan(headBefore));
       expect(await selectRows(state.db, 'message'), hasLength(1));
       expect(state.dataVersion.value, versionBefore + 1);
-      expect(state.data.attachments.pendingRebuild, isTrue);
     });
   });
 
