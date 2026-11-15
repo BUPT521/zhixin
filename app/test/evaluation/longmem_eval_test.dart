@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
-import 'package:zhixin/application/keyword_ranker.dart';
 import 'package:zhixin/application/cross_session_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
@@ -454,7 +453,7 @@ class _Harness {
           scope: scope,
           limitPerKind: 40,
         );
-        return scoreKeywordCandidates(keywordHits);
+        return keywordHits;
       case 'hybrid':
         final service = EvidenceService(repository: repository);
         return (await service.forAnswer(

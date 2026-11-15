@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/assessment.dart';
@@ -37,15 +38,6 @@ class AssessmentRepository {
 
   /// 草稿里的核对依据：有内容时写进这次尝试，清空时删掉，提交时沿用同一条。
   ///
-  /// 未提交的尝试也可以有用户填写的核对依据，它与模型判断共用一张表，
-  /// 因此提交时更新原来的行，避免同一次作答出现两条依据。
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([RawExecutor? executor]) {
-    final connection = (executor ?? _db).driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
-  }
-
   /// 生成的结果行是表行类型，字段与领域模型同名，只补派生值。
   static Assessment _assessmentOf(AssessmentRow row) => Assessment(
     id: row.id,
@@ -62,17 +54,18 @@ class AssessmentRepository {
     WriteTransaction? transaction,
   }) async {
     final writer = writeExecutor(transaction, _db);
-    final submission = await _connect(writer)
-        .attemptSubmission(attemptId)
-        .getSingleOrNull();
+    final submission = await writer.selectGenerated(
+      (db) => db.attemptSubmission(attemptId).getSingleOrNull(),
+    );
     if (submission == null) throw StateError('未找到这次作答');
     if (submission.submittedAt != null) {
       throw StateError('这次作答已经提交，核对依据不能再改');
     }
     final text = result?.trim();
-    final ids = await _connect(writer)
-        .assessmentIdsOfKind(attemptId, AssessmentKind.user.value)
-        .get();
+    final ids = await writer.selectGenerated(
+      (db) =>
+          db.assessmentIdsOfKind(attemptId, AssessmentKind.user.value).get(),
+    );
     if (text == null || text.isEmpty) {
       if (ids.isNotEmpty) {
         await writer.delete(
@@ -110,16 +103,18 @@ class AssessmentRepository {
   }
 
   Future<List<Assessment>> forAttempt(int attemptId) async {
-    final rows = await _connect().assessmentsForAttempt(attemptId).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.assessmentsForAttempt(attemptId).get(),
+    );
     return rows.map(_assessmentOf).toList(growable: false);
   }
 
   /// 一次学习里多次作答的判断，按尝试编号分组给界面用。
   Future<Map<int, List<Assessment>>> forAttempts(List<int> attemptIds) async {
     if (attemptIds.isEmpty) return const {};
-    final rows = await _connect()
-        .assessmentsForAttempts(jsonEncode(attemptIds))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.assessmentsForAttempts(jsonEncode(attemptIds)).get(),
+    );
     final result = <int, List<Assessment>>{};
     for (final row in rows) {
       final assessment = _assessmentOf(row);
@@ -129,9 +124,10 @@ class AssessmentRepository {
   }
 
   Future<Assessment?> latestOfKind(int attemptId, AssessmentKind kind) async {
-    final row = await _connect()
-        .latestAssessmentOfKind(attemptId, kind.value)
-        .getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) =>
+          db.latestAssessmentOfKind(attemptId, kind.value).getSingleOrNull(),
+    );
     return row == null ? null : _assessmentOf(row);
   }
 }

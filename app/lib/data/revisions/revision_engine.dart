@@ -155,8 +155,13 @@ class RevisionEngine {
     return result;
   }
 
-  Future<void> initialize(RawDatabase db) async {
+  Future<void> initialize(
+    RawDatabase db, {
+    Future<void> Function()? seed,
+  }) async {
     await installRevisionSchema(db);
+    await seed?.call();
+    await installFtsSchema(db);
     await _ensureMetadata(db);
   }
 
@@ -904,10 +909,7 @@ class RevisionEngine {
     }
   }
 
-  /// 按业务行整份重建关键词索引；恢复、导入与撤销之后调用。
-  ///
-  /// FTS5 的 rebuild 命令会从外部内容表重新读一遍业务行，因此索引与业务数据
-  /// 永远一致，不需要逐个对比。索引表在恢复时被清空，这里一并补回来。
+  /// 整版恢复或导入时暂停索引触发器，待业务数据写入后重算二元组。
   Future<void> _rebuildSearchIndexes(RawExecutor txn) async {
     for (final index in ftsIndexes) {
       await rebuildFtsIndex(txn, index);
@@ -1444,12 +1446,9 @@ Future<void> installRevisionSchema(RawDatabase db) async {
     columns: ['name'],
     where: "type = 'trigger' AND name NOT LIKE 'sqlite_%'",
   );
-  // 本程序自己装的关键词索引触发器保留，由 fts.dart 在再次打开时重建；
-  // 随库带来的其他触发器一律清掉，不给恢复后的第一次写入留下执行机会。
-  final indexTriggers = ftsTriggerNames();
+  // 打开库时清除原有触发器，再按当前代码重建。
   for (final row in existing) {
     final name = row['name']! as String;
-    if (indexTriggers.contains(name)) continue;
     await db.execute('DROP TRIGGER IF EXISTS "$name"');
   }
   for (final table in schema.values) {

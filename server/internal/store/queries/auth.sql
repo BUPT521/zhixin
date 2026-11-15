@@ -37,7 +37,7 @@ SELECT id, user_id, device_name, access_hash, refresh_hash,
 FROM session
 WHERE refresh_hash = $1;
 
--- name: DeleteSession :exec
+-- name: DeleteSession :execrows
 DELETE FROM session
 WHERE id = $1;
 

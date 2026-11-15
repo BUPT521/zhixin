@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../domain/models/material.dart';
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
@@ -26,21 +27,23 @@ class TaskRepository {
 
   /// 当前有效的全部目标；没有截止日期的排在后面。
   Future<List<LearningGoal>> activeGoals() async {
-    final rows = await _connect()
-        .activeGoals(LearningGoalStatus.active.code)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.activeGoals(LearningGoalStatus.active.code).get(),
+    );
     return rows.map(_goalOf).toList(growable: false);
   }
 
   /// 全部目标，当前有效的排在最前，其余按新建时间倒序。
   Future<List<LearningGoal>> goals() async {
-    final rows = await _connect()
-        .goals(
-          LearningGoalStatus.active.code,
-          LearningGoalStatus.paused.code,
-          LearningGoalStatus.done.code,
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .goals(
+            LearningGoalStatus.active.code,
+            LearningGoalStatus.paused.code,
+            LearningGoalStatus.done.code,
+          )
+          .get(),
+    );
     return rows.map(_goalOf).toList(growable: false);
   }
 
@@ -54,13 +57,6 @@ class TaskRepository {
     createdAt: DateTime.tryParse(row.createdAt),
     updatedAt: DateTime.tryParse(row.updatedAt),
   );
-
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([RawExecutor? executor]) {
-    final connection = (executor ?? _db).driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
-  }
 
   /// 六条查询挑的列相同，结果行按同一组字段还原成领域模型。
   static PlanItem _item(
@@ -275,7 +271,9 @@ class TaskRepository {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    final row = await _connect(executor).goalById(id).getSingleOrNull();
+    final row = await executor.selectGenerated(
+      (db) => db.goalById(id).getSingleOrNull(),
+    );
     return row == null ? null : _goalOf(row);
   }
 
@@ -326,24 +324,26 @@ class TaskRepository {
     bool openOnly = false,
     bool onlyActiveGoals = false,
   }) async {
-    final rows = await _connect()
-        .items(
-          openOnly ? 1 : 0,
-          PlanItemStatus.todo.code,
-          PlanItemStatus.doing.code,
-          onlyActiveGoals ? 1 : 0,
-          LearningGoalStatus.active.code,
-          1,
-          PlanItemStatus.deferred.code,
-          PlanItemStatus.done.code,
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .items(
+            openOnly ? 1 : 0,
+            PlanItemStatus.todo.code,
+            PlanItemStatus.doing.code,
+            onlyActiveGoals ? 1 : 0,
+            LearningGoalStatus.active.code,
+            1,
+            PlanItemStatus.deferred.code,
+            PlanItemStatus.done.code,
+          )
+          .get(),
+    );
     return rows.map(_itemOfItems).toList(growable: false);
   }
 
   Future<PlanItem?> byId(int id, {WriteTransaction? transaction}) async {
     final executor = writeExecutor(transaction, _db);
-    final rows = await _connect(executor).itemById(id).get();
+    final rows = await executor.selectGenerated((db) => db.itemById(id).get());
     return rows.isEmpty ? null : _itemOfById(rows.first);
   }
 
@@ -366,7 +366,9 @@ class TaskRepository {
 
   /// 这条讨论绑定的学习步骤；普通入口从讨论开始作答时用它补上场次的事项。
   Future<PlanItem?> byConversation(int conversationId) async {
-    final rows = await _connect().itemByConversation(conversationId).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.itemByConversation(conversationId).get(),
+    );
     return rows.isEmpty ? null : _itemOfConversation(rows.first);
   }
 
@@ -375,9 +377,9 @@ class TaskRepository {
     int conversationId,
     String stepId,
   ) async {
-    final rows = await _connect()
-        .itemByConversationAndStep(conversationId, stepId)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.itemByConversationAndStep(conversationId, stepId).get(),
+    );
     return rows.isEmpty ? null : _itemOfByStep(rows.first);
   }
 
@@ -386,25 +388,27 @@ class TaskRepository {
     int conversationId,
     String title,
   ) async {
-    final row = await _connect()
-        .itemByConversationAndTitle(conversationId, title.trim())
-        .getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) => db
+          .itemByConversationAndTitle(conversationId, title.trim())
+          .getSingleOrNull(),
+    );
     return row == null ? null : _itemOfTitle(row);
   }
 
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) async {
     if (limit <= 0) return const [];
-    final rows = await _connect()
-        .doneItems(PlanItemStatus.done.code, limit, offset)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.doneItems(PlanItemStatus.done.code, limit, offset).get(),
+    );
     return rows.map(_itemOfDone).toList(growable: false);
   }
 
   /// 已完成事项总数，用于“显示已完成（N）”与是否还有下一页。
   Future<int> countDone() async {
-    final rows = await _connect()
-        .countDoneItems(PlanItemStatus.done.code)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.countDoneItems(PlanItemStatus.done.code).get(),
+    );
     return rows.isEmpty ? 0 : rows.first;
   }
 
@@ -415,9 +419,9 @@ class TaskRepository {
   Future<Map<int, PlanItem>> byIds(Iterable<int> ids) async {
     final keys = {...ids};
     if (keys.isEmpty) return const {};
-    final rows = await _connect()
-        .itemsByIds(jsonEncode(keys.toList(growable: false)))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.itemsByIds(jsonEncode(keys.toList(growable: false))).get(),
+    );
     return {for (final row in rows) row.id: _itemOfByIds(row)};
   }
 
@@ -426,21 +430,23 @@ class TaskRepository {
     required WriteTransaction transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    final rows = await _connect(executor)
-        .itemHasScheduleOrSession(itemId)
-        .get();
+    final rows = await executor.selectGenerated(
+      (db) => db.itemHasScheduleOrSession(itemId).get(),
+    );
     return rows.isNotEmpty;
   }
 
   /// 待办里截止最近的一条；所属目标已暂停的事项不参与“现在”页推荐。
   Future<PlanItem?> nextDue() async {
-    final rows = await _connect()
-        .nextDueItem(
-          PlanItemStatus.todo.code,
-          PlanItemStatus.doing.code,
-          LearningGoalStatus.active.code,
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .nextDueItem(
+            PlanItemStatus.todo.code,
+            PlanItemStatus.doing.code,
+            LearningGoalStatus.active.code,
+          )
+          .get(),
+    );
     return rows.isEmpty ? null : _itemOfNextDue(rows.first);
   }
 

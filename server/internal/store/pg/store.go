@@ -194,7 +194,11 @@ func (s *Store) SessionByRefreshHash(ctx context.Context, hash string) (auth.Ses
 }
 
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
-	return s.q.DeleteSession(ctx, id)
+	deleted, err := s.q.DeleteSession(ctx, id)
+	if err == nil && deleted == 0 {
+		return auth.ErrNotFound
+	}
+	return err
 }
 
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {

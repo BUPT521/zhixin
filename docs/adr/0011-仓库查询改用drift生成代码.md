@@ -19,7 +19,7 @@
 1. 仓库层的查询写进 `.drift` 文件，不改成 Dart DSL。现有 SQL 原样放入 `app/lib/data/repository` 之外的一个目录（建议 `app/lib/data/db/drift/queries/`），一条语句一个名字，按所属仓库分文件；drift 在 `build_runner` 阶段解析每条语句，校验表名、列名、参数个数与结果列的类型和可空性，生成带类型的查询方法与结果类。
 2. 仓库对外的方法签名不变，内部改为调用生成的方法并做两次映射：生成的参数类由领域模型或调用方传入的值填充，生成的结果行映射成现有领域模型。领域模型的 `fromRow` 保留，但只在结果行与领域模型字段不同名或需要解析派生值时使用，不再逐列写 `as 类型`。
 3. 分两批迁移。第一批是检索仓库以外的读方法，包括 `schedule_conflicts.dart`、`study_plan_repository.dart` 与 `task_repository.dart` 里按周、按状态取行的查询，这一批不碰写入路径，先证明生成代码与现有查询的结果一致；第二批覆盖其余仓库的读写方法与跨表事务，按仓库逐个搬。`evidence_repository.dart` 的关键词查询依赖动态拼接的 `LIKE`，它的迁移排在 [ADR-0013](0013-关键词检索改用FTS5.md) 之后，同样归入第二批。
-4. 写入路径保留现有结构：仓库写方法仍只接收 `WriteTx` 或者经 `GuardedDatabase` 的命令事务进入，drift 只负责生成语句，不接管事务边界。跨表事务（`conversation_repository.dart`、`material_repository.dart`、`schedule_repository.dart`、`study_plan_repository.dart` 里的 14 处 `_db.transaction`）继续由 `GuardedDatabase.transaction` 独占执行，事务内需要查或改的表由生成代码的事务伴侣完成，不新开连接，也不绕过 `DatabaseGate`。
+4. 写入路径保留现有结构：仓库写方法仍只接收 `WriteTransaction` 或者经 `GuardedDatabase` 的命令事务进入，drift 只负责生成语句，不接管事务边界。跨表事务（`conversation_repository.dart`、`material_repository.dart`、`schedule_repository.dart`、`study_plan_repository.dart` 里的 14 处 `_db.transaction`）继续由 `GuardedDatabase.transaction` 独占执行，事务内的生成查询使用当前事务的执行器。事务外的生成查询取得共享访问权限之后再解析当前连接，因此整库恢复期间排队的读取会落到替换后的数据库。
 5. 版本引擎、备份、恢复校验、撤销与向量索引的原生 SQL 不动。这些代码依赖动态表名、`PRAGMA`、触发器和按表遍历，生成器表达不了，仍按 ADR-0004 留在 `RawSql` 适配器上。
 6. 生成文件与现有 `app_database.g.dart` 一样提交入库，CI 在格式检查之前重新生成并核对没有差异。
 
@@ -29,7 +29,7 @@
 - 每条查询多一层参数类与结果行的映射代码，仓库文件的行数会增加；换来的是编译期检查与后续流式查询的入口。
 - `.drift` 文件改了必须重新生成，生成量随仓库查询数量增加；`build_runner` 的耗时与 CI 的重生成核对步骤都会变长。
 - 动态拼接的查询，例如检索时按词数拼出的 `LIKE ? OR LIKE ?`，不能原样放进 `.drift` 文件。检索仓库的这类查询按 [ADR-0013](0013-关键词检索改用FTS5.md) 改写成 FTS5 的 `MATCH`，在检索仓库排进第二批之前保持手写；其余无法改写的查询留在适配器上，并在文件里注明原因。
-- “仓库层不再有 `rawQuery` 一类调用”只是完成标准的一半。表辅助方法（`query('表名', where: …)`、`insert`、`update`）按表名与字符串条件访问，列名同样没有编译期检查，到 2026-11-15 还有约 114 处。这些调用属于第 1 条“查询写进 `.drift` 文件”尚未覆盖的范围，按仓库逐个搬；搬之前先确认写入的事务边界仍只形成一个提交。
+- “仓库层不再有 `rawQuery` 一类调用”只是完成标准的一半。仓库读路径已完成迁移；保留的检索 SQL 见 ADR-0013。仓库层还有 62 处使用表名和字符串条件的写入调用（`insert`、`update`、`delete`），迁移这些语句时按仓库逐个验证一次业务动作仍只形成一个提交。
 - 生成查询的类型推断以 drift 为准。SQLite 的动态类型会让 `SUM`、`MAX` 一类聚合在生成结果里变成可空，遇到与现有手工转换不一致时修正领域模型，不为迁就旧写着保留手工转换。
 - 内测开始后如果表结构冻结，`.drift` 文件的改动与生成代码的差量仍按同一流程提交，冻结只限制表结构与 SQLite 结构。
 

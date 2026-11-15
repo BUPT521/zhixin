@@ -1,4 +1,5 @@
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/question.dart';
@@ -17,15 +18,10 @@ class AttemptRepository {
   final Clock _clock;
 
   Future<List<Attempt>> attemptsFor(int conversationId) async {
-    final rows = await _connect().attemptsForConversation(conversationId).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.attemptsForConversation(conversationId).get(),
+    );
     return rows.map(_attemptOf).toList(growable: false);
-  }
-
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([RawExecutor? executor]) {
-    final connection = (executor ?? _db).driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
   }
 
   /// 表行转成与列同名的键值，交给既有的 [Attempt.fromRow]。
@@ -53,9 +49,9 @@ class AttemptRepository {
   /// 讨论与作答原先按尝试逐条读场次，一条记录答过几次就多几次读取；这里
   /// 一次联表取最近一个有目标的场次。
   Future<int?> recentSessionGoal(int conversationId) async {
-    final rows = await _connect()
-        .sessionGoalOfConversation(conversationId)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.sessionGoalOfConversation(conversationId).get(),
+    );
     return rows.isEmpty ? null : rows.first;
   }
 
@@ -68,9 +64,9 @@ class AttemptRepository {
     int? excludeAttemptId,
     int limit = 3,
   }) async {
-    final rows = await _connect()
-        .priorFeedback(conversationId, limit + 1)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db.priorFeedback(conversationId, limit + 1).get(),
+    );
     return rows
         .map(_attemptOf)
         .where((attempt) => attempt.id != excludeAttemptId)
@@ -79,15 +75,17 @@ class AttemptRepository {
   }
 
   Future<Attempt?> latestSubmitted(int conversationId) async {
-    final row = await _connect()
-        .latestSubmittedAttempt(conversationId)
-        .getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) => db.latestSubmittedAttempt(conversationId).getSingleOrNull(),
+    );
     return row == null ? null : _attemptOf(row);
   }
 
   Future<Attempt?> attemptById(int id, {WriteTransaction? transaction}) async {
     final executor = writeExecutor(transaction, _db);
-    final row = await _connect(executor).attemptById(id).getSingleOrNull();
+    final row = await executor.selectGenerated(
+      (db) => db.attemptById(id).getSingleOrNull(),
+    );
     return row == null ? null : _attemptOf(row);
   }
 
@@ -105,22 +103,24 @@ class AttemptRepository {
   }) async {
     final writer = writeExecutor(transaction, _db);
     Future<Attempt?> find() async {
-      final row = await _connect(writer)
-          .openAttempt(conversationId)
-          .getSingleOrNull();
+      final row = await writer.selectGenerated(
+        (db) => db.openAttempt(conversationId).getSingleOrNull(),
+      );
       return row == null ? null : _attemptOf(row);
     }
 
     var attempt = await find();
     if (attempt == null) {
       final now = formatDateTime(_clock());
-      await _connect(writer).insertOpenAttempt(
-        conversationId,
-        sessionId,
-        redoOfAttemptId,
-        delayed ? 1 : 0,
-        now,
-        now,
+      await writer.writeGenerated(
+        (db) => db.insertOpenAttempt(
+          conversationId,
+          sessionId,
+          redoOfAttemptId,
+          delayed ? 1 : 0,
+          now,
+          now,
+        ),
       );
       attempt = await find();
       if (attempt == null) {
@@ -185,7 +185,9 @@ class AttemptRepository {
     final writer = writeExecutor(transaction, _db);
     // 取整行而不是只取 help_json：这一列本身可空，空表示还没有帮助，
     // 与“没有这次作答”是两回事。
-    final row = await _connect(writer).attemptById(attemptId).getSingleOrNull();
+    final row = await writer.selectGenerated(
+      (db) => db.attemptById(attemptId).getSingleOrNull(),
+    );
     if (row == null) return;
     final helps = HelpEntry.decodeList(row.helpJson);
     final updated = [...helps, help];
@@ -211,7 +213,9 @@ class AttemptRepository {
     WriteTransaction? transaction,
   }) async {
     final writer = writeExecutor(transaction, _db);
-    final row = await _connect(writer).attemptById(attemptId).getSingleOrNull();
+    final row = await writer.selectGenerated(
+      (db) => db.attemptById(attemptId).getSingleOrNull(),
+    );
     if (row == null) throw StateError('未找到这次作答');
     final helps = HelpEntry.decodeList(row.helpJson);
     if (helpIndex < 0 || helpIndex >= helps.length) {

@@ -60,14 +60,17 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	return err
 }
 
-const deleteSession = `-- name: DeleteSession :exec
+const deleteSession = `-- name: DeleteSession :execrows
 DELETE FROM session
 WHERE id = $1
 `
 
-func (q *Queries) DeleteSession(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteSession, id)
-	return err
+func (q *Queries) DeleteSession(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSession, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteUser = `-- name: DeleteUser :exec

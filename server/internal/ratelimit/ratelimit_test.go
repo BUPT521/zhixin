@@ -76,7 +76,9 @@ func TestDisabledAlwaysAllows(t *testing.T) {
 }
 
 func TestConcurrentAllowIsSafe(t *testing.T) {
+	now := time.Now()
 	l := New(rate.Limit(1000), 100, 0)
+	l.nowFn = func() time.Time { return now }
 	var wg sync.WaitGroup
 	allowed := make(chan int, 200)
 	for i := 0; i < 200; i++ {
@@ -94,7 +96,7 @@ func TestConcurrentAllowIsSafe(t *testing.T) {
 	for range allowed {
 		count++
 	}
-	if count > 100 {
-		t.Fatalf("放行次数不应超过 burst，得到 %d", count)
+	if count != 100 {
+		t.Fatalf("放行次数应等于 burst，得到 %d", count)
 	}
 }

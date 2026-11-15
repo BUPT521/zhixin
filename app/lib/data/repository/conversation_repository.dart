@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../db/drift/app_database.dart';
+import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/chat_message.dart';
@@ -25,13 +26,6 @@ class ConversationRepository {
 
   final RawDatabase _db;
   final Clock _clock;
-
-  /// 生成查询挂在 drift 连接上；只读副本没有连接，遇到时说明用法错了。
-  AppDatabase _connect([RawExecutor? executor]) {
-    final connection = (executor ?? _db).driftConnection;
-    if (connection is AppDatabase) return connection;
-    throw StateError('该查询走 drift 生成代码，需要在主库连接上执行');
-  }
 
   /// 消息整行转成与列同名的键值，交给既有的 [ChatMessage.fromRow]。
   ///
@@ -333,9 +327,9 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    final rows = await _connect(executor)
-        .conversationById(conversationId)
-        .get();
+    final rows = await executor.selectGenerated(
+      (db) => db.conversationById(conversationId).get(),
+    );
     return rows.isEmpty ? null : _recordOf(rows.first);
   }
 
@@ -355,15 +349,17 @@ class ConversationRepository {
     int? limit = 200,
     int offset = 0,
   }) async {
-    final rows = await _connect()
-        .conversationRecords(
-          goalId ?? 0,
-          unassignedOnly ? 1 : 0,
-          answerStatus ?? '',
-          limit ?? (1 << 30),
-          limit == null ? 0 : offset,
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .conversationRecords(
+            goalId ?? 0,
+            unassignedOnly ? 1 : 0,
+            answerStatus ?? '',
+            limit ?? (1 << 30),
+            limit == null ? 0 : offset,
+          )
+          .get(),
+    );
     return rows.map(_recordOfList).toList(growable: false);
   }
 
@@ -376,13 +372,17 @@ class ConversationRepository {
   /// 再排序相同，读取量只跟 [limit] 有关，不随记录总数增长。
   Future<List<ConversationRecord>> listRecentlyActive({int limit = 4}) async {
     if (limit <= 0) return const [];
-    final rows = await _connect().recentlyActiveRecords(limit).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.recentlyActiveRecords(limit).get(),
+    );
     return rows.map(_recordOfRecent).toList(growable: false);
   }
 
   /// 一条学习记录对应的题目视图：题干与图片取开始作答时确定的用户消息。
   Future<Question?> question(int conversationId) async {
-    final rows = await _connect().conversationQuestion(conversationId).get();
+    final rows = await _db.selectGenerated(
+      (db) => db.conversationQuestion(conversationId).get(),
+    );
     return rows.isEmpty ? null : _questionOf(rows.first);
   }
 
@@ -396,9 +396,11 @@ class ConversationRepository {
   }) async {
     final ids = conversationIds?.toSet().toList(growable: false);
     if (ids != null && ids.isEmpty) return const [];
-    final rows = await _connect()
-        .questionRows(jsonEncode(ids ?? const <int>[]), limit ?? (1 << 30))
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .questionRows(jsonEncode(ids ?? const <int>[]), limit ?? (1 << 30))
+          .get(),
+    );
     return [for (final row in rows) _questionRowOf(row)];
   }
 
@@ -415,22 +417,25 @@ class ConversationRepository {
     int? conversationId,
     Set<int> broughtAttemptIds = const {},
   }) async {
-    final rows = await _connect()
-        .recentSubmitted(
-          goalId ?? 0,
-          materialId ?? 0,
-          conversationId ?? 0,
-          jsonEncode(broughtAttemptIds.toList(growable: false)),
-          limit ?? (1 << 30),
-        )
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .recentSubmitted(
+            goalId ?? 0,
+            materialId ?? 0,
+            conversationId ?? 0,
+            jsonEncode(broughtAttemptIds.toList(growable: false)),
+            limit ?? (1 << 30),
+          )
+          .get(),
+    );
     return [for (final row in rows) _attemptWithQuestionOf(row)];
   }
 
   Future<Attempt?> latestSubmitted(int conversationId) async {
-    final row = await _connect()
-        .latestSubmittedOfConversation(conversationId)
-        .getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) =>
+          db.latestSubmittedOfConversation(conversationId).getSingleOrNull(),
+    );
     return row == null ? null : _attemptOf(row);
   }
 
@@ -444,9 +449,9 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    final rows = await _connect(executor)
-        .recentMessages(conversationId, limit ?? (1 << 30))
-        .get();
+    final rows = await executor.selectGenerated(
+      (db) => db.recentMessages(conversationId, limit ?? (1 << 30)).get(),
+    );
     return rows
         .map(_messageOf)
         .toList(growable: false)
@@ -459,9 +464,11 @@ class ConversationRepository {
     int? beforeMessageId,
     int limit = 50,
   }) async {
-    final rows = await _connect()
-        .messagesPage(conversationId, beforeMessageId ?? 0, limit + 1)
-        .get();
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .messagesPage(conversationId, beforeMessageId ?? 0, limit + 1)
+          .get(),
+    );
     final hasOlder = rows.length > limit;
     final page = rows.take(limit).map(_messageOf).toList()
       ..sort((a, b) => a.id.compareTo(b.id));
@@ -490,12 +497,13 @@ class ConversationRepository {
     required bool first,
     int? beforeMessageId,
   }) async {
-    final db = _connect();
-    final row = first
-        ? await db
-              .firstUserMessage(conversationId, beforeMessageId ?? 0)
-              .getSingleOrNull()
-        : await db.lastUserMessage(conversationId).getSingleOrNull();
+    final row = await _db.selectGenerated(
+      (db) => first
+          ? db
+                .firstUserMessage(conversationId, beforeMessageId ?? 0)
+                .getSingleOrNull()
+          : db.lastUserMessage(conversationId).getSingleOrNull(),
+    );
     return row == null ? null : _messageOf(row);
   }
 
@@ -504,9 +512,9 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
-    final row = await _connect(executor)
-        .messageById(messageId)
-        .getSingleOrNull();
+    final row = await executor.selectGenerated(
+      (db) => db.messageById(messageId).getSingleOrNull(),
+    );
     return row == null ? null : _messageOf(row);
   }
 
@@ -620,15 +628,13 @@ class ConversationRepository {
   /// 已经没有其他作答，就一起删掉，避免留下永远不结束的后台场次。
   Future<List<String>> clear(int conversationId) async {
     return _db.transaction((txn) async {
-      final db = _connect(txn);
-      final sessionIds = <int>{
-        for (final id
-            in await db.sessionIdsOfConversation(conversationId).get())
-          ?id,
-      };
-      final encodedPaths = await db
-          .imagePathsOfConversation(conversationId)
-          .get();
+      final linkedSessionIds = await txn.selectGenerated(
+        (db) => db.sessionIdsOfConversation(conversationId).get(),
+      );
+      final sessionIds = <int>{for (final id in linkedSessionIds) ?id};
+      final encodedPaths = await txn.selectGenerated(
+        (db) => db.imagePathsOfConversation(conversationId).get(),
+      );
       final imagePaths = <String>{};
       for (final encoded in encodedPaths) {
         if (encoded == null || encoded.isEmpty) continue;
@@ -650,9 +656,9 @@ class ConversationRepository {
         whereArgs: [conversationId],
       );
       for (final sessionId in sessionIds) {
-        final remainingId = await db
-            .attemptsInSession(sessionId)
-            .getSingleOrNull();
+        final remainingId = await txn.selectGenerated(
+          (db) => db.attemptsInSession(sessionId).getSingleOrNull(),
+        );
         if (remainingId == null) {
           await txn.delete(
             'study_session',
@@ -736,9 +742,9 @@ class ConversationRepository {
     final executor = writeExecutor(transaction, _db);
     // 取整行而不是只取 structured_json：这一列本身可空，
     // “没有这条消息”与“消息上没有结构化内容”要分开。
-    final message = await _connect(executor)
-        .messageById(messageId)
-        .getSingleOrNull();
+    final message = await executor.selectGenerated(
+      (db) => db.messageById(messageId).getSingleOrNull(),
+    );
     if (message == null) return;
     final structured = _decodeStructured(message.structuredJson);
     final raw = structured['memory_items'];
@@ -778,9 +784,9 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final database = writeExecutor(transaction, _db);
-    final message = await _connect(database)
-        .messageById(messageId)
-        .getSingleOrNull();
+    final message = await database.selectGenerated(
+      (db) => db.messageById(messageId).getSingleOrNull(),
+    );
     if (message == null) return;
     final structured = _decodeStructured(message.structuredJson);
     final titles = _stringList(structured[state]);

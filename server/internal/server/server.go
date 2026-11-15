@@ -61,15 +61,15 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
-	var byAddr, byAccount *ratelimit.Limiter
+	var byAddr, refreshLimits *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
 	}
 	if cfg.RefreshRatePerSecond > 0 {
-		byAccount = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute)
+		refreshLimits = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute)
 	}
 	handlers := routes{
-		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, byAccount),
+		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits),
 		sync:          syncsvc.NewHandler(st.Sync, log, 16*cfg.MaxJSONBytes, ClientSchemaVersion),
 		backups:       backup.NewHandler(st.Backups, log, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion),
 		blobs:         blobs.NewHandler(st.Blobs, log, cfg.MaxAttachmentBytes),
