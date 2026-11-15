@@ -4,6 +4,7 @@ import '../data/db/write_transactions.dart';
 import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../domain/models/material.dart';
+import '../domain/models/write_result.dart';
 import 'docx_import.dart';
 import 'service_runtime.dart';
 
@@ -125,16 +126,17 @@ class MaterialService {
     );
   }
 
-  Future<void> setGoal(int materialId, int? goalId) =>
+  Future<WriteResult> setGoal(int materialId, int? goalId) =>
       transactions.run((txn) async {
         await materials.setGoal(materialId, goalId, transaction: txn);
+        return txn.result();
       }, label: '调整材料目标');
 
-  /// 更正页内文字；返回这次提交的编号，界面据此显示撤销入口。
+  /// 更正页内文字；返回写结果，界面据此显示撤销入口。
   ///
-  /// 内容没有变化时不形成提交，返回空；修改前后都在提交历史里，旧引用因此
-  /// 对不上。
-  Future<int?> correctPage({
+  /// 内容没有变化时不形成提交，返回 skipped 并带上原因；修改前后都在提交
+  /// 历史里，旧引用因此对不上。
+  Future<WriteResult> correctPage({
     required MaterialPage page,
     required String corrected,
   }) {
@@ -143,14 +145,16 @@ class MaterialService {
     return transactions.run((txn) async {
       final current = await materials.pageById(page.id, transaction: txn);
       if (current == null) throw StateError('这一页已不存在');
-      if (current.content == text && current.label == page.label) return null;
+      if (current.content == text && current.label == page.label) {
+        return const WriteResult.skipped('这一页的内容没有变化');
+      }
       await materials.correctPage(
         pageId: page.id,
         content: text,
         label: page.label,
         transaction: txn,
       );
-      return txn.requireCommitId();
+      return txn.result();
     }, label: correctMaterialPageAction);
   }
 }

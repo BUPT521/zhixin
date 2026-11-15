@@ -185,12 +185,12 @@ void main() {
     expect(formulaHits.entries.single.hits.first.location.pageNo, 2);
     final second = (await service.page(id, 2))!;
     expect(second.content, contains('独立性判据 P(AB)=P(A)P(B)'));
-    final correction = await service.correctPage(
+    final correction = (await service.correctPage(
       page: second,
       corrected: '已校对的正文',
-    );
+    )).commitId!;
     expect((await service.page(id, 2))!.content, '已校对的正文');
-    await rig.revisions.undoCommit(correction!);
+    await rig.revisions.undoCommit(correction);
     expect((await service.page(id, 2))!.content, second.content);
 
     final packages = RevisionPackageService(

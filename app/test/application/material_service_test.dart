@@ -141,13 +141,14 @@ void main() {
     final page = (await service.pages(materialId)).single;
     final materialBefore = await service.byId(materialId);
 
-    final commitId = await service.correctPage(
+    final correctResult = await service.correctPage(
       page: page,
       corrected: '新原文 P(A∩B)',
     );
 
-    expect(commitId, isNotNull);
-    final changes = await rig.engine.changesFor(rig.db.raw, commitId!);
+    expect(correctResult.commitId, isNotNull);
+    final commitId = correctResult.commitId!;
+    final changes = await rig.engine.changesFor(rig.db.raw, commitId);
     expect(
       changes.map((change) => change.table),
       containsAll(['material', 'material_page']),
@@ -176,9 +177,10 @@ void main() {
     final page = (await service.pages(materialId)).single;
     final before = await rig.engine.headId(rig.db.raw);
 
-    final commitId = await service.correctPage(page: page, corrected: '旧原文');
+    final result = await service.correctPage(page: page, corrected: '旧原文');
 
-    expect(commitId, isNull);
+    expect(result.changed, isFalse);
+    expect(result.skippedReason, isNotNull);
     expect(await rig.engine.headId(rig.db.raw), before);
   });
 
@@ -193,11 +195,14 @@ void main() {
       pages: const [(pageNo: 3, content: '旧原文', label: null)],
     );
     final page = (await service.pages(materialId)).single;
-    final commitId = await service.correctPage(page: page, corrected: '第一次更正');
+    final commitId = (await service.correctPage(
+      page: page,
+      corrected: '第一次更正',
+    )).commitId!;
     final corrected = (await service.pages(materialId)).single;
     await service.correctPage(page: corrected, corrected: '第二次更正');
 
-    final result = await rig.revisions.undoCommit(commitId!);
+    final result = await rig.revisions.undoCommit(commitId);
 
     expect(result.applied, isFalse);
     expect(result.message, contains('又被修改'));
@@ -215,12 +220,15 @@ void main() {
       pages: const [(pageNo: 3, content: '旧原文', label: null)],
     );
     final page = (await service.pages(materialId)).single;
-    final first = await service.correctPage(page: page, corrected: '第一次更正');
+    final first = (await service.correctPage(
+      page: page,
+      corrected: '第一次更正',
+    )).commitId!;
     final corrected = (await service.pages(materialId)).single;
-    final second = await service.correctPage(
+    final second = (await service.correctPage(
       page: corrected,
       corrected: '第二次更正',
-    );
+    )).commitId!;
 
     final history = await rig.revisions.rowHistory(
       table: 'material_page',
@@ -232,7 +240,7 @@ void main() {
       {first, second},
     );
 
-    final result = await rig.revisions.undoCommit(second!);
+    final result = await rig.revisions.undoCommit(second);
     expect(result.applied, isTrue, reason: result.message);
     final after = await rig.revisions.rowHistory(
       table: 'material_page',

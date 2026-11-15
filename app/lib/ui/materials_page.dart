@@ -491,21 +491,21 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     if (corrected == null || corrected.trim().isEmpty || !mounted) return;
     final pageNo = page.pageNo;
     try {
-      final commitId = await scope.library.material.correctPage(
+      final result = await scope.library.material.correctPage(
         page: page,
         corrected: corrected.trim(),
       );
       await _load();
       if (!mounted) return;
-      if (commitId == null) {
-        showToast(context, '这一页的内容没有变化。');
+      if (!result.changed) {
+        showToast(context, result.skippedReason ?? '这一页的内容没有变化。');
         return;
       }
       showActionToast(
         context,
         '已更正第 $pageNo 页',
         label: '撤销',
-        onPressed: () => _undoCorrection(commitId),
+        onPressed: () => _undoCorrection(result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
