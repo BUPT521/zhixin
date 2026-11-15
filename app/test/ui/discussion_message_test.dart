@@ -43,7 +43,7 @@ void main() {
           message: const ChatMessage(
             id: 1,
             conversationId: 1,
-            role: 'assistant',
+            role: MessageRole.assistant,
             content: '## 看条件\n\n**重点**是 `P(B) > 0`。',
           ),
           imagePath: (path) => path,
@@ -95,7 +95,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
           message: const ChatMessage(
             id: 1,
             conversationId: 1,
-            role: 'assistant',
+            role: MessageRole.assistant,
             content: '先看定义，再回到这一步。',
           ),
           imagePath: (path) => path,
@@ -128,7 +128,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
             message: ChatMessage(
               id: 1,
               conversationId: 1,
-              role: 'assistant',
+              role: MessageRole.assistant,
               content: '下面两条材料的核对结果不同。',
               payload: ChatMessagePayload.decode('''
 {
@@ -170,7 +170,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
           message: const ChatMessage(
             id: 1,
             conversationId: 1,
-            role: 'assistant',
+            role: MessageRole.assistant,
             content: '先记录一道题。',
             payload: ChatMessagePayload(fromModel: false),
           ),
@@ -189,7 +189,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
           message: const ChatMessage(
             id: 1,
             conversationId: 1,
-            role: 'assistant',
+            role: MessageRole.assistant,
             content: '先看定义',
             payload: ChatMessagePayload(fromModel: false, stopped: true),
           ),
@@ -210,7 +210,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
           message: const ChatMessage(
             id: 1,
             conversationId: 1,
-            role: 'assistant',
+            role: MessageRole.assistant,
             content: '先看定义',
             payload: ChatMessagePayload(fromModel: true, interrupted: true),
           ),

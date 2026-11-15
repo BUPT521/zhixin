@@ -22,7 +22,7 @@ Future<int> _record(
   );
   await conversations.append(
     id,
-    role: 'user',
+    role: MessageRole.user,
     content: stem,
     imagePaths: images,
   );
@@ -94,7 +94,7 @@ void main() {
     final tasks = TaskRepository(db);
 
     final id = await conversations.create(entryKind: EntryKind.text);
-    await conversations.append(id, role: 'user', content: '再做一次');
+    await conversations.append(id, role: MessageRole.user, content: '再做一次');
     final goalA = await tasks.createGoal(title: '目标 A');
     final goalB = await tasks.createGoal(title: '目标 B');
     final firstSession = await study.start(goalId: goalA);
@@ -185,7 +185,7 @@ void main() {
     final conversations = ConversationRepository(db);
     final attempts = AttemptRepository(db);
     final id = await conversations.create(entryKind: EntryKind.text);
-    await conversations.append(id, role: 'user', content: '同时开始作答');
+    await conversations.append(id, role: MessageRole.user, content: '同时开始作答');
 
     final started = await Future.wait([
       attempts.ensureOpenAttempt(id),
@@ -204,7 +204,7 @@ void main() {
     final attempts = AttemptRepository(db);
 
     final plain = await conversations.create(entryKind: EntryKind.text);
-    await conversations.append(plain, role: 'user', content: '只是讨论');
+    await conversations.append(plain, role: MessageRole.user, content: '只是讨论');
     expect(await conversations.questionRows(), isEmpty);
 
     await attempts.ensureOpenAttempt(plain);

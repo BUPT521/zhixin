@@ -76,7 +76,7 @@ void main() {
     final conversationId = await conversations.create(title: '记忆');
     final message = await conversations.append(
       conversationId,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '回答',
       payload: const ChatMessagePayload(
         memoryItems: [

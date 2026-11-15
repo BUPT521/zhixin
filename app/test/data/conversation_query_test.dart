@@ -14,7 +14,11 @@ void main() {
     for (var index = 0; index < 5; index++) {
       now = DateTime(2026, 11, 10, 9, index);
       final id = await conversations.create(title: '第 $index 条');
-      await conversations.append(id, role: 'user', content: '问题 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '问题 $index',
+      );
       ids.add(id);
     }
 
@@ -42,7 +46,7 @@ void main() {
     Future<int> record(String title) async {
       now = now.add(const Duration(minutes: 1));
       final id = await conversations.create(title: title);
-      await conversations.append(id, role: 'user', content: title);
+      await conversations.append(id, role: MessageRole.user, content: title);
       return id;
     }
 
@@ -99,7 +103,11 @@ void main() {
     for (var index = 0; index < 3; index++) {
       now = DateTime(2026, 11, 10, 9, index);
       final id = await conversations.create(title: '第 $index 条');
-      await conversations.append(id, role: 'user', content: '问题 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '问题 $index',
+      );
       await attempts.ensureOpenAttempt(id);
       kept.add(id);
     }
@@ -126,7 +134,11 @@ void main() {
     for (var index = 0; index < 6; index++) {
       now = DateTime(2026, 11, 10, 9, index);
       final id = await conversations.create(title: '第 $index 条');
-      await conversations.append(id, role: 'user', content: '问题 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '问题 $index',
+      );
       ids.add(id);
     }
     // 最早的一条写草稿：它的记录更新时间最旧，但最近一次学习行为最新。

@@ -103,7 +103,7 @@ Future<_Corpus> _seed(RawDatabase db) async {
   );
   await conversations.append(
     discussion,
-    role: 'user',
+    role: MessageRole.user,
     content: _messageEntropy,
   );
 
@@ -114,7 +114,11 @@ Future<_Corpus> _seed(RawDatabase db) async {
     materialId: materialProbability,
     pageNo: 2,
   );
-  await conversations.append(question, role: 'user', content: '例 3-2 的解法');
+  await conversations.append(
+    question,
+    role: MessageRole.user,
+    content: '例 3-2 的解法',
+  );
   final attempt = await attempts.ensureOpenAttempt(question);
   await attempts.submit(
     attempt.id,
@@ -132,7 +136,7 @@ Future<_Corpus> _seed(RawDatabase db) async {
   );
   await conversations.append(
     linearDiscussion,
-    role: 'user',
+    role: MessageRole.user,
     content: _messageLinear,
   );
 
@@ -665,11 +669,15 @@ void main() {
     for (var index = 0; index < 10; index++) {
       final id = await conversations.create(title: '噪声 $index');
       await conversations.setGoal(id, other);
-      await conversations.append(id, role: 'user', content: '噪声 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '噪声 $index',
+      );
     }
     final target = await conversations.create(title: '目标记录');
     await conversations.setGoal(target, goal);
-    await conversations.append(target, role: 'user', content: '目标记录');
+    await conversations.append(target, role: MessageRole.user, content: '目标记录');
 
     final vectors = <String, List<double>>{
       '熵': [1, 0, 0, 0],

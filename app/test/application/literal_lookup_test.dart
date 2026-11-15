@@ -90,16 +90,24 @@ Future<_Corpus> _seed(RawDatabase db) async {
 
   final discussion = await conversations.create(title: '熵与时间');
   await conversations.setGoal(discussion, probability);
-  await conversations.append(discussion, role: 'user', content: '熵增和时间箭头有关系吗？');
   await conversations.append(
     discussion,
-    role: 'assistant',
+    role: MessageRole.user,
+    content: '熵增和时间箭头有关系吗？',
+  );
+  await conversations.append(
+    discussion,
+    role: MessageRole.assistant,
     content: '熵是状态函数，可逆过程才保持不变。',
   );
 
   final question = await conversations.create(sourceRef: '例 3-2');
   await conversations.setGoal(question, probability);
-  await conversations.append(question, role: 'user', content: '例 3-2 的解法是什么');
+  await conversations.append(
+    question,
+    role: MessageRole.user,
+    content: '例 3-2 的解法是什么',
+  );
   final attemptId = await attempts.ensureOpenAttempt(question);
   await attempts.submit(
     attemptId.id,
@@ -112,7 +120,7 @@ Future<_Corpus> _seed(RawDatabase db) async {
   final noise = await conversations.create(title: '符号写法');
   await conversations.append(
     noise,
-    role: 'user',
+    role: MessageRole.user,
     content: 'fx 与 f x 是两种写法，axb 也不是 a_b。',
   );
   final noiseAttempt = await attempts.ensureOpenAttempt(noise);
@@ -126,7 +134,11 @@ Future<_Corpus> _seed(RawDatabase db) async {
   // 未提交草稿：作答查找只认已提交的作答。
   final draftConversation = await conversations.create(title: '草稿');
   await conversations.setGoal(draftConversation, probability);
-  await conversations.append(draftConversation, role: 'user', content: '先写一半');
+  await conversations.append(
+    draftConversation,
+    role: MessageRole.user,
+    content: '先写一半',
+  );
   final draft = await attempts.ensureOpenAttempt(draftConversation);
   await attempts.saveDraft(draft.id, answer: '熵，还没写完');
 

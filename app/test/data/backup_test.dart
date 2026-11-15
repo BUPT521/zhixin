@@ -26,7 +26,7 @@ Future<int> _captureRecord(
 }) async {
   final conversations = ConversationRepository(db);
   final id = await conversations.create(sourceRef: sourceRef);
-  await conversations.append(id, role: 'user', content: stem);
+  await conversations.append(id, role: MessageRole.user, content: stem);
   await AttemptRepository(db).ensureOpenAttempt(id);
   return id;
 }

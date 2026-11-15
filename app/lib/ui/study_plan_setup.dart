@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 import '../ai/ai_chat_service.dart';
 import '../app_scope.dart';
 import '../application/study_plan_service.dart';
+import '../domain/models/chat_message.dart';
 import '../domain/models/material.dart';
 import '../domain/models/study_plan.dart';
 import 'copy.dart';
@@ -42,7 +43,7 @@ Future<void> showStudyPlanSetup(
     final focus = selected
         .map(
           (message) =>
-              '${message.role == 'user' ? '用户' : buddyName}：${message.content.trim()}',
+              '${message.role == MessageRole.user ? '用户' : buddyName}：${message.content.trim()}',
         )
         .join('\n');
     if (focus.isNotEmpty) conversationFocus = focus;

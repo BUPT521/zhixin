@@ -461,19 +461,19 @@ void main() {
     const first = ChatMessage(
       id: 1,
       conversationId: 2,
-      role: 'user',
+      role: MessageRole.user,
       content: '同样的问题',
     );
     const second = ChatMessage(
       id: 2,
       conversationId: 2,
-      role: 'user',
+      role: MessageRole.user,
       content: '同样的问题',
     );
     const current = ChatMessage(
       id: 3,
       conversationId: 2,
-      role: 'user',
+      role: MessageRole.user,
       content: '历史里的当前问题',
     );
     final reply = await service.ask(
@@ -1260,7 +1260,7 @@ void main() {
         ChatMessage(
           id: index + 1,
           conversationId: 1,
-          role: index.isEven ? 'user' : 'assistant',
+          role: index.isEven ? MessageRole.user : MessageRole.assistant,
           content: '第 $index 条消息',
         ),
     ];
@@ -1301,7 +1301,7 @@ void main() {
         ChatMessage(
           id: index + 1,
           conversationId: 1,
-          role: index.isEven ? 'user' : 'assistant',
+          role: index.isEven ? MessageRole.user : MessageRole.assistant,
           content: '$index $long',
         ),
     ];
@@ -1422,7 +1422,12 @@ void main() {
   });
 
   test('本地规则回答不进入模型历史，重答时只带用户说过的话', () {
-    ChatMessage message(int id, String role, String content, {bool? model}) {
+    ChatMessage message(
+      int id,
+      MessageRole role,
+      String content, {
+      bool? model,
+    }) {
       return ChatMessage(
         id: id,
         conversationId: 1,
@@ -1433,17 +1438,17 @@ void main() {
     }
 
     final history = selectBuddyHistory([
-      message(1, 'user', '第一问'),
-      message(2, 'assistant', '本地兜底的一段话', model: false),
-      message(3, 'user', '第二问'),
-      message(4, 'assistant', '模型回答', model: true),
+      message(1, MessageRole.user, '第一问'),
+      message(2, MessageRole.assistant, '本地兜底的一段话', model: false),
+      message(3, MessageRole.user, '第二问'),
+      message(4, MessageRole.assistant, '模型回答', model: true),
     ]);
 
     expect(history.map((item) => item.id), [1, 3, 4]);
     // 旧记录的助手消息没有来源标记，仍然作为历史保留。
     final legacy = selectBuddyHistory([
-      message(1, 'user', '第一问'),
-      message(2, 'assistant', '旧回答'),
+      message(1, MessageRole.user, '第一问'),
+      message(2, MessageRole.assistant, '旧回答'),
     ]);
     expect(legacy.map((item) => item.id), [1, 2]);
   });

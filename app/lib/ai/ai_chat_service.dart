@@ -48,7 +48,8 @@ List<ChatMessage> selectBuddyHistory(
 }) {
   final usable = uniqueById([
     for (final message in history)
-      if ((message.role == 'user' || message.role == 'assistant') &&
+      if ((message.role == MessageRole.user ||
+              message.role == MessageRole.assistant) &&
           message.payload?.fromModel != false &&
           (message.content.trim().isNotEmpty || message.hasImages))
         message,
@@ -67,7 +68,7 @@ List<ChatMessage> selectBuddyHistory(
     selected.add(message);
     used += length;
   }
-  final firstUser = usable.where((message) => message.role == 'user');
+  final firstUser = usable.where((message) => message.role == MessageRole.user);
   if (firstUser.isNotEmpty &&
       !selected.any(
         (message) => message.identity == firstUser.first.identity,
@@ -180,7 +181,7 @@ class AiChatService implements BuddyAi {
     ]))
       LlmMessage(
         id: message.identity,
-        role: message.role,
+        role: message.role.value,
         content: message.content.trim().isEmpty ? '[发了一张图片]' : message.content,
       ),
     LlmMessage(

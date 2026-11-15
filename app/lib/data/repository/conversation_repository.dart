@@ -34,7 +34,7 @@ class ConversationRepository {
   static ChatMessage _messageOf(MessageRow row) => ChatMessage(
     id: row.id,
     conversationId: row.conversationId,
-    role: row.role,
+    role: MessageRole.fromValue(row.role),
     content: row.content,
     imagePaths: decodeStoredAttachmentPaths(row.imagePathsJson),
     createdAt: optionalDateTime(row.createdAt),
@@ -502,16 +502,19 @@ class ConversationRepository {
   }
 
   /// 追加一条消息；只有图片时 `content` 可以为空。
+  ///
+  /// 角色只有用户、搭子与系统三种真实取值，未知值不写库，避免把坏数据留给
+  /// 后面的读取与提示词拼装。
   Future<ChatMessage> append(
     int conversationId, {
-    required String role,
+    required MessageRole role,
     String content = '',
     List<String> imagePaths = const [],
     ChatMessagePayload? payload,
     WriteTransaction? transaction,
   }) async {
-    if (role != 'user' && role != 'assistant' && role != 'system') {
-      throw ArgumentError("role 只能是 'user'、'assistant' 或 'system'");
+    if (role == MessageRole.unknown) {
+      throw ArgumentError('消息角色不能为空或未知');
     }
     final text = content.trim();
     final paths = imagePaths
@@ -527,7 +530,7 @@ class ConversationRepository {
     final id = await writer.writeGenerated(
       (db) => db.insertConversationMessage(
         conversationId,
-        role,
+        role.value,
         text,
         ChatMessage.encodePaths(paths),
         structuredJson,

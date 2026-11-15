@@ -113,7 +113,7 @@ void main() {
       );
       await conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的第 $index 个问题',
       );
       final attempt = await attempts.ensureOpenAttempt(conversation);
@@ -173,7 +173,7 @@ void main() {
       title: '同一道题',
       entryKind: EntryKind.text,
     );
-    await conversations.append(id, role: 'user', content: '求条件概率');
+    await conversations.append(id, role: MessageRole.user, content: '求条件概率');
     for (var index = 0; index < 2; index++) {
       final attempt = await attempts.ensureOpenAttempt(id);
       await attempts.submit(
@@ -222,7 +222,7 @@ void main() {
     final goalB = await tasks.createGoal(title: '线性代数');
     Future<int> submit(int? goalId, String text) async {
       final id = await conversations.create(title: text, goalId: goalId);
-      await conversations.append(id, role: 'user', content: text);
+      await conversations.append(id, role: MessageRole.user, content: text);
       final attempt = await attempts.ensureOpenAttempt(id);
       await attempts.submit(
         attempt.id,
@@ -267,7 +267,11 @@ void main() {
 
     Future<int> conversation(String title) async {
       final id = await conversations.create(title: title);
-      await conversations.append(id, role: 'user', content: '条件概率和独立性有什么区别');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '条件概率和独立性有什么区别',
+      );
       final attempt = await attempts.ensureOpenAttempt(id);
       await attempts.submit(
         attempt.id,
@@ -360,7 +364,7 @@ void main() {
     final linear = await tasks.createGoal(title: '线性代数作业');
     Future<int> record(int goalId, String text) async {
       final id = await conversations.create(goalId: goalId);
-      await conversations.append(id, role: 'user', content: text);
+      await conversations.append(id, role: MessageRole.user, content: text);
       return id;
     }
 
@@ -368,7 +372,7 @@ void main() {
     final probabilityPeer = await record(probability, '另一个概率论记录');
     await conversations.append(
       probabilityPeer,
-      role: 'user',
+      role: MessageRole.user,
       content: '独立性在概率论里的另一处说明',
     );
     final linearRecord = await record(linear, '独立性在向量组里的含义');

@@ -210,7 +210,7 @@ class ScheduleBlock {
     required this.planItemId,
     required this.startAt,
     required this.endAt,
-    this.source = 'user',
+    this.source = PlanItemSource.user,
     this.status = ScheduleBlockStatus.planned,
     this.locked = false,
   });
@@ -220,8 +220,8 @@ class ScheduleBlock {
   final DateTime startAt;
   final DateTime endAt;
 
-  /// `user` / `ai`；AI 只改自己的块。
-  final String source;
+  /// 这条预约由谁建立，AI 只改自己的块。
+  final PlanItemSource source;
 
   /// 时间块状态；读库时认不出的值回落到 [ScheduleBlockStatus.unknown]。
   final ScheduleBlockStatus status;

@@ -347,7 +347,7 @@ class DiscussionService {
       }
       return conversations.append(
         conversationId,
-        role: 'user',
+        role: MessageRole.user,
         content: trimmed,
         imagePaths: ingested.refs,
         transaction: txn,
@@ -451,7 +451,8 @@ class DiscussionService {
         ? const <String>[]
         : (history.reversed
                   .where(
-                    (message) => message.role == 'user' && message.hasImages,
+                    (message) =>
+                        message.role == MessageRole.user && message.hasImages,
                   )
                   .firstOrNull
                   ?.imagePaths ??
@@ -566,7 +567,7 @@ class DiscussionService {
       _ensureCurrentEpoch(requestEpoch);
       return conversations.append(
         conversationId,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: reply,
         payload: ChatMessagePayload(
           fromModel: fromModel,
@@ -833,7 +834,7 @@ class DiscussionService {
   ) {
     final result = <PendingSuggestion>[];
     for (final message in messages) {
-      if (message.role != 'assistant') continue;
+      if (message.role != MessageRole.assistant) continue;
       final payload = message.payload;
       if (payload == null) continue;
       for (final step in payload.nextSteps) {
@@ -881,7 +882,7 @@ class DiscussionService {
   ) async {
     final stored = <({int messageId, MemoryDraft draft})>[];
     for (final message in messages) {
-      if (message.role != 'assistant') continue;
+      if (message.role != MessageRole.assistant) continue;
       for (final item
           in message.payload?.memoryItems ?? const <MemoryDraft>[]) {
         stored.add((messageId: message.id, draft: item));

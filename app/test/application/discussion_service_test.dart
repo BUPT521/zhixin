@@ -178,7 +178,7 @@ void main() {
     await expectLater(pending, throwsA(isA<StateError>()));
     final messages = await h.conversations.recent(id);
     expect(messages, hasLength(1));
-    expect(messages.single.role, 'user');
+    expect(messages.single.role, MessageRole.user);
   });
 
   test('V1：仅凭文字开始无归属求助，结束后能从记录重新打开', () async {
@@ -201,8 +201,8 @@ void main() {
 
     final messages = await h.service.history(id);
     expect(messages, hasLength(2));
-    expect(messages.first.role, 'user');
-    expect(messages.last.role, 'assistant');
+    expect(messages.first.role, MessageRole.user);
+    expect(messages.last.role, MessageRole.assistant);
     expect(messages.last.content, '先看独立性的定义');
 
     // 结束之后仍在记录里，按同一个标识重新打开。
@@ -246,7 +246,7 @@ void main() {
     );
 
     expect(shown, isNotNull);
-    expect(shown!.role, 'user');
+    expect(shown!.role, MessageRole.user);
     expect(shown!.content, '为什么这里需要独立性？');
     expect(partials, ['先看定义，', '先看定义，再回到这一步。']);
     expect(result.reply, '先看定义，再回到这一步。');
@@ -359,7 +359,7 @@ void main() {
     for (var index = 0; index < 80; index++) {
       await h.conversations.append(
         id,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: '第 $index 条 ${'资料' * 130}',
       );
     }
@@ -388,7 +388,7 @@ void main() {
     final id = first.userMessage.conversationId;
     await h.conversations.append(
       id,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '很长的一段回答：${'内容' * 6500}',
     );
 
@@ -541,7 +541,10 @@ void main() {
     expect(h.ai.lastText, '为什么这里需要独立性？');
     final messages = await h.service.history(id);
     expect(messages, hasLength(3));
-    expect(messages.where((message) => message.role == 'user'), hasLength(1));
+    expect(
+      messages.where((message) => message.role == MessageRole.user),
+      hasLength(1),
+    );
     expect(messages.last.content, contains('独立性'));
     expect(messages.last.payload?.fromModel, isTrue);
   });
@@ -627,7 +630,7 @@ void main() {
       planItemId: itemId,
       start: start,
       end: end,
-      source: 'user',
+      source: PlanItemSource.user,
     );
 
     final result = await h.service.reply(text: '这里为什么要用期望？');
@@ -643,7 +646,7 @@ void main() {
     expect(block!.startAt, start);
     expect(block.endAt, end);
     expect(block.status, ScheduleBlockStatus.planned);
-    expect(block.source, 'user');
+    expect(block.source, PlanItemSource.user);
 
     // 建议只存在消息里，没有被接受就不写事项。
     final messages = await h.service.history(result.userMessage.conversationId);
@@ -1540,10 +1543,14 @@ void main() {
     addTearDown(h.db.close);
 
     final conversation = await h.conversations.create(title: '清空测试');
-    await h.conversations.append(conversation, role: 'user', content: '第一句');
     await h.conversations.append(
       conversation,
-      role: 'assistant',
+      role: MessageRole.user,
+      content: '第一句',
+    );
+    await h.conversations.append(
+      conversation,
+      role: MessageRole.assistant,
       content: '第二句',
     );
     final session = await h.study.start();

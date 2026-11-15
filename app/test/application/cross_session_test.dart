@@ -53,7 +53,7 @@ Future<_Corpus> _seed(RawDatabase db) async {
     final id = await conversations.create();
     await conversations.setGoal(id, goal);
     await conversations.setMaterial(id, materialId: material, pageNo: pageNo);
-    await conversations.append(id, role: 'user', content: stem);
+    await conversations.append(id, role: MessageRole.user, content: stem);
     return id;
   }
 
@@ -350,7 +350,7 @@ void main() {
     await conversations.setGoal(conversation, goal);
     await conversations.append(
       conversation,
-      role: 'user',
+      role: MessageRole.user,
       content: '例 3-2 求条件概率',
     );
 
@@ -481,7 +481,11 @@ void main() {
 
     Future<int> record() async {
       final id = await conversations.create(sourceRef: '例 3-2');
-      await conversations.append(id, role: 'user', content: '例 3-2 求条件概率');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '例 3-2 求条件概率',
+      );
       return id;
     }
 
@@ -535,7 +539,11 @@ void main() {
     Future<int> record(int? goalId, String at) async {
       final id = await conversations.create(sourceRef: '例 3-2');
       if (goalId != null) await conversations.setGoal(id, goalId);
-      await conversations.append(id, role: 'user', content: '例 3-2 求条件概率');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '例 3-2 求条件概率',
+      );
       final attempt = await attempts.ensureOpenAttempt(id);
       await attempts.submit(
         attempt.id,

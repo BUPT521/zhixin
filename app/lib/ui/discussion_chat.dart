@@ -770,7 +770,7 @@ class DiscussionChatState extends State<DiscussionChat>
             planItemId: result.item.id,
             start: timing.start,
             end: timing.start.add(Duration(minutes: timing.minutes)),
-            source: 'ai',
+            source: PlanItemSource.ai,
           );
           scheduledCommitId = scheduleResult.commitId!;
           scheduled = true;
@@ -1021,7 +1021,7 @@ class DiscussionChatState extends State<DiscussionChat>
   Widget? _localFooter(int index) {
     if (index != _messages.length - 1) return null;
     final message = _messages[index];
-    if (message.role != 'assistant') return null;
+    if (message.role != MessageRole.assistant) return null;
     final payload = message.payload;
     final fromModel = payload?.fromModel == true;
     final interrupted = message.interrupted;

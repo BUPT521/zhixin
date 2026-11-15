@@ -493,12 +493,12 @@ void main() {
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '从记录里打开这条讨论',
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: '返回之后记录仍然刷新',
       );
     });
@@ -564,7 +564,7 @@ void main() {
       for (var index = 0; index < 60; index++) {
         await scope!.testing.conversations.append(
           conversation,
-          role: index.isEven ? 'user' : 'assistant',
+          role: index.isEven ? MessageRole.user : MessageRole.assistant,
           content: '第 $index 条消息',
         );
       }
@@ -756,12 +756,12 @@ void main() {
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '为什么条件概率要除以条件事件的概率？',
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content:
             '### 先缩小范围\n\n已知 B 发生时，只在 B 的范围内看 A。'
             '分子计算两件事同时发生的概率，分母将 B 的概率重新归一化。',
@@ -889,12 +889,12 @@ void main() {
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '这条讨论要结束',
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: '结束后仍可继续',
       );
       return conversation;
@@ -1510,7 +1510,7 @@ void main() {
     await tester.runAsync(() async {
       await scope!.testing.conversations.append(
         conversationId,
-        role: 'user',
+        role: MessageRole.user,
         content: '这条记录会被清空',
         imagePaths: ['deleted-record.jpg'],
       );
@@ -2082,12 +2082,12 @@ void main() {
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '第 8 题又做错了，怎么办',
       );
       await scope!.testing.conversations.append(
         conversation,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: '先收下这条安排，再自己独立做一遍。',
         payload: const ChatMessagePayload(
           nextSteps: [

@@ -46,7 +46,7 @@ _seed(TestRig rig) async {
   );
   await conversations.append(
     conversation,
-    role: 'user',
+    role: MessageRole.user,
     content: '例 3-2 求条件概率 P(A|B)',
   );
 
@@ -227,7 +227,7 @@ void main() {
     await conversations.setGoal(conversation, goal);
     await conversations.append(
       conversation,
-      role: 'user',
+      role: MessageRole.user,
       content: '例 3-3 求期望',
     );
 

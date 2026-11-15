@@ -26,7 +26,12 @@ MemoryItemView memory({
 }
 
 ChatMessage message({String content = '条件概率怎么算？'}) {
-  return ChatMessage(id: 1, conversationId: 1, role: 'user', content: content);
+  return ChatMessage(
+    id: 1,
+    conversationId: 1,
+    role: MessageRole.user,
+    content: content,
+  );
 }
 
 class FakeTimeline extends BuddyTimelineAdapter {

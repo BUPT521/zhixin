@@ -243,13 +243,13 @@ void main() {
       final questionId = await h.service.capture(stem: '长讨论里的题目');
       await h.conversations.append(
         questionId,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: '较早的回答',
       );
       for (var index = 0; index < 200; index++) {
         await h.conversations.append(
           questionId,
-          role: 'user',
+          role: MessageRole.user,
           content: '追问 $index',
         );
       }
@@ -602,13 +602,13 @@ void main() {
     );
     await h.conversations.append(
       conversationId,
-      role: 'user',
+      role: MessageRole.user,
       content: '第 8 题怎么做',
       imagePaths: ['m-1.jpg'],
     );
     await h.conversations.append(
       conversationId,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '先写出条件概率的定义。',
     );
 
@@ -664,12 +664,12 @@ void main() {
     );
     await h.conversations.append(
       conversationId,
-      role: 'user',
+      role: MessageRole.user,
       imagePaths: ['m-2.jpg'],
     );
     await h.conversations.append(
       conversationId,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '先把已知条件列出来。',
     );
 
@@ -743,12 +743,12 @@ void main() {
     final conversationId = await h.conversations.create(title: '先问方法');
     await h.conversations.append(
       conversationId,
-      role: 'user',
+      role: MessageRole.user,
       content: '这种题一般怎么做',
     );
     await h.conversations.append(
       conversationId,
-      role: 'user',
+      role: MessageRole.user,
       content: '题目：求 P(A|B)，已知 P(AB)=0.2，P(B)=0.5',
       imagePaths: ['m-9.jpg'],
     );
@@ -773,7 +773,7 @@ void main() {
     final conversationId = await h.conversations.create(title: '第一步讨论');
     await h.conversations.append(
       conversationId,
-      role: 'user',
+      role: MessageRole.user,
       content: '第一步的题目',
     );
     await WriteTransactions(h.db).run((txn) async {
@@ -1104,7 +1104,7 @@ void main() {
     );
     await h.conversations.append(
       questionId,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '上次讨论里给过的回答',
     );
 

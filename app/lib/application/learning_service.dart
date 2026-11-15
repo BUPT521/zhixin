@@ -196,7 +196,7 @@ class LearningService {
       }
       await conversations.append(
         conversationId,
-        role: 'user',
+        role: MessageRole.user,
         content: text,
         imagePaths: images,
         transaction: txn,
@@ -294,7 +294,7 @@ class LearningService {
     if (!independentRedo) {
       final messages = await conversations.recent(questionId, limit: null);
       for (final message in messages) {
-        if (message.role != 'assistant') continue;
+        if (message.role != MessageRole.assistant) continue;
         final text = message.content.trim();
         if (text.isEmpty || !known.add(text)) continue;
         helps.add(

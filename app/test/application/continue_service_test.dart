@@ -28,11 +28,15 @@ void main() {
     );
     now = DateTime(2026, 11, 10, 10);
     final older = await conversations.create(title: '较早的讨论');
-    await conversations.append(older, role: 'user', content: '较早的问题');
+    await conversations.append(older, role: MessageRole.user, content: '较早的问题');
 
     now = DateTime(2026, 11, 10, 11);
     final draftId = await conversations.create(title: '条件概率');
-    await conversations.append(draftId, role: 'user', content: '条件概率怎么算');
+    await conversations.append(
+      draftId,
+      role: MessageRole.user,
+      content: '条件概率怎么算',
+    );
     final attempt = await attempts.ensureOpenAttempt(draftId);
     now = DateTime(2026, 11, 10, 11, 30);
     await attempts.saveDraft(attempt.id, answer: '先写出 P(A|B)=P(AB)/P(B)');
@@ -72,9 +76,13 @@ void main() {
       drafts: const [StudyStepDraft(title: '从变化率理解导数', pageFrom: 1)],
     );
     final discussion = await conversations.create(title: '一条讨论');
-    await conversations.append(discussion, role: 'user', content: '一个问题');
+    await conversations.append(
+      discussion,
+      role: MessageRole.user,
+      content: '一个问题',
+    );
     final draft = await conversations.create(title: '一道题');
-    await conversations.append(draft, role: 'user', content: '另一道题');
+    await conversations.append(draft, role: MessageRole.user, content: '另一道题');
     await AttemptRepository(db, clock: clock).ensureOpenAttempt(draft);
 
     final entries = await service.load();
@@ -105,7 +113,11 @@ void main() {
       );
       now = DateTime(2026, 11, 10, 9, index * 2);
       final id = await conversations.create(title: '讨论 $index');
-      await conversations.append(id, role: 'user', content: '问题 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '问题 $index',
+      );
       if (index == 0) {
         final attempt = await attempts.ensureOpenAttempt(id);
         now = DateTime(2026, 11, 10, 13);

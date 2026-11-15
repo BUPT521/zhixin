@@ -575,7 +575,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           final block = entry.block;
           return block.planned &&
               !block.locked &&
-              block.source == 'ai' &&
+              block.source == PlanItemSource.ai &&
               block.startAt.isAfter(now);
         })
         .toList(growable: false);
@@ -1972,7 +1972,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
                 block.locked
                     ? const StatusTag('已固定', icon: FLucideIcons.lock)
                     : const StatusTag('弹性', tone: TagTone.muted),
-                if (block.source == 'ai')
+                if (block.source == PlanItemSource.ai)
                   const StatusTag('$buddyName排的', icon: FLucideIcons.sparkles),
               ],
             ),

@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/application/embedding_client.dart';
+import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
@@ -141,13 +142,13 @@ void main() {
       final local = await scope!.testing.conversations.create(title: '矩阵讨论');
       await scope!.testing.conversations.append(
         local,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
       final meaning = await scope!.testing.conversations.create(title: '线性无关');
       await scope!.testing.conversations.append(
         meaning,
-        role: 'user',
+        role: MessageRole.user,
         content: '线性无关的行向量个数',
       );
       scope!.library.semanticIndex.configure(
@@ -182,7 +183,7 @@ void main() {
       final local = await scope!.testing.conversations.create(title: '矩阵讨论');
       await scope!.testing.conversations.append(
         local,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
       scope!.library.semanticIndex.configure(
@@ -216,7 +217,7 @@ void main() {
       final local = await scope!.testing.conversations.create(title: '矩阵讨论');
       await scope!.testing.conversations.append(
         local,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
       scope!.library.semanticIndex.configure(
@@ -247,13 +248,13 @@ void main() {
       final local = await scope!.testing.conversations.create(title: '矩阵讨论');
       await scope!.testing.conversations.append(
         local,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
       final meaning = await scope!.testing.conversations.create(title: '面积与缩放');
       await scope!.testing.conversations.append(
         meaning,
-        role: 'user',
+        role: MessageRole.user,
         content: 'det(A) 的几何意义是面积缩放',
       );
       scope!.library.semanticIndex.configure(

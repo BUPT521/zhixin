@@ -1,6 +1,26 @@
 import 'dart:convert';
 
+import '../rules/coded_enum.dart';
 import 'chat_message_payload.dart';
+
+/// 一条消息的作者角色（01 `message.role`）。
+enum MessageRole implements CodedEnum {
+  user('user', '你'),
+  assistant('assistant', '搭子'),
+  system('system', '系统'),
+  unknown('', '角色未知');
+
+  const MessageRole(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static MessageRole fromValue(String? value) =>
+      codedValueOr(MessageRole.values, value, unknown: unknown);
+}
 
 /// 一条讨论消息（01 `message`，开发期 schema 17）。
 ///
@@ -23,8 +43,8 @@ class ChatMessage {
 
   String get identity => 'message:$conversationId:$id';
 
-  /// `user` / `assistant` / `system`。
-  final String role;
+  /// 这条消息由谁写下；读库时认不出的值回落到 [MessageRole.unknown]。
+  final MessageRole role;
   final String content;
   final List<String> imagePaths;
   final DateTime? createdAt;
@@ -32,8 +52,9 @@ class ChatMessage {
   /// 结构化补充；没有时为空。
   final ChatMessagePayload? payload;
 
-  bool get isUser => role == 'user';
-  bool get isSystem => role == 'system';
+  bool get isUser => role == MessageRole.user;
+  bool get isSystem => role == MessageRole.system;
+  bool get isAssistant => role == MessageRole.assistant;
   bool get hasImages => imagePaths.isNotEmpty;
 
   /// 这条回答是否在生成中被停止；历史记录里仍要标出来。

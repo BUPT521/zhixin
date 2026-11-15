@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
+import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/motion.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
@@ -116,7 +117,7 @@ void main() {
       );
       await scope!.testing.conversations.append(
         discussionA,
-        role: 'user',
+        role: MessageRole.user,
         content: '条件概率这一章的方法有哪些',
       );
       final discussionB = await scope!.testing.conversations.create(
@@ -125,7 +126,7 @@ void main() {
       );
       await scope!.testing.conversations.append(
         discussionB,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的秩的方法是什么',
       );
       final materialA = await scope!.testing.materials.create(
@@ -254,7 +255,7 @@ void main() {
         );
         await scope!.testing.conversations.append(
           id,
-          role: 'user',
+          role: MessageRole.user,
           content: '分页关键词 $index',
         );
       }

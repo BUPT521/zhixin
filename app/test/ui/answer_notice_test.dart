@@ -134,7 +134,7 @@ void main() {
     final message = ChatMessage(
       id: 1,
       conversationId: 2,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '本地回答',
       payload: const ChatMessagePayload(
         fromModel: false,
@@ -154,7 +154,7 @@ void main() {
     final message = ChatMessage(
       id: 1,
       conversationId: 2,
-      role: 'assistant',
+      role: MessageRole.assistant,
       content: '本地回答',
       payload: const ChatMessagePayload(
         fromModel: false,

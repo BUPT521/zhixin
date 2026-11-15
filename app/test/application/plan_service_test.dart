@@ -394,10 +394,10 @@ void main() {
       planItemId: item,
       start: DateTime(2026, 11, 11, 9),
       end: DateTime(2026, 11, 11, 9, 30),
-      source: 'ai',
+      source: PlanItemSource.ai,
     );
     var blocks = await schedule.blocksForItem(item);
-    expect(blocks.single.source, 'ai');
+    expect(blocks.single.source, PlanItemSource.ai);
 
     await service.scheduleItem(
       planItemId: item,
@@ -405,7 +405,10 @@ void main() {
       end: DateTime(2026, 11, 11, 11, 30),
     );
     blocks = await schedule.blocksForItem(item);
-    expect({for (final block in blocks) block.source}, {'ai', 'user'});
+    expect(
+      {for (final block in blocks) block.source},
+      {PlanItemSource.ai, PlanItemSource.user},
+    );
   });
 
   test('固定安排冲突时单条预约与改期都拒绝，也不生成提交', () async {

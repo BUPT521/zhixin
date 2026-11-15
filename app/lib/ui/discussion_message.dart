@@ -66,7 +66,7 @@ class DiscussionMessage extends StatelessWidget {
         ],
       ],
     );
-    if (message.role != 'assistant') {
+    if (message.role != MessageRole.assistant) {
       return _bubble(context, isUser: message.isUser, child: content);
     }
 

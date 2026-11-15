@@ -315,7 +315,7 @@ class PlanService {
     required int planItemId,
     required DateTime start,
     required DateTime end,
-    String source = 'user',
+    PlanItemSource source = PlanItemSource.user,
   }) {
     return transactions.run(
       (txn) async {

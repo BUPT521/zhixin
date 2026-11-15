@@ -154,7 +154,7 @@ Future<CorpusIds> _seed(RawDatabase db) async {
   );
   await conversations.append(
     conversationQuestion,
-    role: 'user',
+    role: MessageRole.user,
     content: '例 3-2 求条件概率 P(A|B)',
   );
 
@@ -243,7 +243,7 @@ Future<CorpusIds> _seed(RawDatabase db) async {
   );
   await conversations.append(
     conversationEntropy,
-    role: 'user',
+    role: MessageRole.user,
     content: '熵和能量有什么区别？',
   );
   await updateRow(
@@ -263,7 +263,7 @@ Future<CorpusIds> _seed(RawDatabase db) async {
   );
   await conversations.append(
     conversationLinear,
-    role: 'user',
+    role: MessageRole.user,
     content: 'a_b 表示什么',
   );
   await updateRow(
@@ -277,7 +277,7 @@ Future<CorpusIds> _seed(RawDatabase db) async {
   final conversationUnassigned = await conversations.create(title: '时间箭头');
   await conversations.append(
     conversationUnassigned,
-    role: 'user',
+    role: MessageRole.user,
     content: '熵增和时间箭头有关系吗？',
   );
   await updateRow(

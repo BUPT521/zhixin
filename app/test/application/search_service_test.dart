@@ -51,17 +51,21 @@ void main() {
     await conversations.setGoal(probability, goalA);
     await conversations.append(
       probability,
-      role: 'user',
+      role: MessageRole.user,
       content: '条件概率和独立性有什么区别',
     );
     final linear = await conversations.create(title: '矩阵的秩');
     await conversations.setGoal(linear, goalB);
-    await conversations.append(linear, role: 'user', content: '矩阵的秩怎么求');
+    await conversations.append(
+      linear,
+      role: MessageRole.user,
+      content: '矩阵的秩怎么求',
+    );
 
     final question = await conversations.create(sourceRef: '第 3 章第 8 题');
     await conversations.append(
       question,
-      role: 'user',
+      role: MessageRole.user,
       content: '条件概率习题：求 P(A|B)',
     );
     await attempts.ensureOpenAttempt(question);
@@ -162,7 +166,7 @@ void main() {
       final conversation = await conversations.create(title: '矩阵讨论 $index');
       await conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的第 $index 个问题怎么算',
       );
     }
@@ -227,7 +231,7 @@ void main() {
       ids.add(conversation);
       await conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的第 $index 个问题怎么算',
       );
       final at = formatDateTime(base.add(Duration(minutes: index)));
@@ -291,7 +295,7 @@ void main() {
     final old = await conversations.create(title: '较早的矩阵讨论');
     await conversations.append(
       old,
-      role: 'user',
+      role: MessageRole.user,
       content: '矩阵与独立性需要同时核对，这里把两件事放在一起讲。',
     );
     await updateRow(
@@ -315,7 +319,7 @@ void main() {
       final conversation = await conversations.create(title: '新矩阵讨论 $index');
       await conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的第 $index 个问题怎么算',
       );
       final at = formatDateTime(
@@ -398,7 +402,7 @@ void main() {
     for (var index = 0; index < 3; index++) {
       await conversations.append(
         noisy,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵的第 $index 个问题',
       );
     }
@@ -408,12 +412,12 @@ void main() {
       ids.add(conversation);
       await conversations.append(
         conversation,
-        role: 'user',
+        role: MessageRole.user,
         content: '矩阵记录 $index',
       );
       await conversations.append(
         conversation,
-        role: 'assistant',
+        role: MessageRole.assistant,
         content: '矩阵回答 $index',
       );
       final at = formatDateTime(
@@ -484,13 +488,21 @@ void main() {
     for (var index = 0; index < 25; index++) {
       final id = await conversations.create(title: '矩阵记录 $index');
       localIds.add(id);
-      await conversations.append(id, role: 'user', content: '矩阵记录 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '矩阵记录 $index',
+      );
     }
     final semanticIds = <int>[];
     for (var index = 0; index < 3; index++) {
       final id = await conversations.create(title: '语义记录 $index');
       semanticIds.add(id);
-      await conversations.append(id, role: 'user', content: '线性无关 $index');
+      await conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '线性无关 $index',
+      );
     }
     final semanticHits = [
       for (var index = 0; index < semanticIds.length; index++)

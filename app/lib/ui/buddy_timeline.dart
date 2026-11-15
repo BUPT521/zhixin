@@ -282,9 +282,10 @@ class ChatMessagePreview extends StatelessWidget {
     );
   }
 
-  String _roleLabel(String role) => switch (role) {
-    'user' => '你',
-    'assistant' => buddyName,
-    _ => '系统',
+  String _roleLabel(MessageRole role) => switch (role) {
+    MessageRole.user => '你',
+    MessageRole.assistant => buddyName,
+    MessageRole.system => '系统',
+    MessageRole.unknown => '系统',
   };
 }
