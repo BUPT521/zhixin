@@ -54,28 +54,4 @@ void main() {
     expect(undone.message, contains('同一项内容又被修改过'));
     expect((await selectRows(rig.raw, 'profile')).single['day_cutoff_hour'], 0);
   });
-
-  test('撤销成功后通知应用根重新读取设置，失败时不通知', () async {
-    var refreshed = 0;
-    final rig = await openTestRig(onUndoApplied: () async => refreshed++);
-    addTearDown(rig.close);
-
-    await insertRow(rig.db, 'memory', {
-      'kind': 'preference',
-      'content': '晚上学习',
-      'source_kind': 'user',
-      'status': 'active',
-      'created_at': '2026-11-10T09:00:00',
-      'updated_at': '2026-11-10T09:00:00',
-    });
-    final commitId = await rig.engine.headId(rig.raw);
-
-    final undone = await rig.revisions.undoCommit(commitId);
-    expect(undone.applied, isTrue, reason: undone.message);
-    expect(refreshed, 1);
-
-    final again = await rig.revisions.undoCommit(commitId);
-    expect(again.applied, isFalse);
-    expect(refreshed, 1);
-  });
 }

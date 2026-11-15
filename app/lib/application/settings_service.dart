@@ -12,6 +12,7 @@ import '../domain/models/write_result.dart';
 import '../domain/rules/day_key.dart';
 import '../domain/rules/time_policy.dart';
 import 'service_runtime.dart';
+import 'time_policy_controller.dart';
 
 /// 设置页的读写：模型、导出恢复、清空与每日截止小时。
 class SettingsService {
@@ -21,7 +22,7 @@ class SettingsService {
     required this.llmStore,
     required this.ai,
     required this.runtime,
-    required this.onPolicyChanged,
+    required this.timePolicy,
     required this.dataVersions,
   });
 
@@ -31,8 +32,8 @@ class SettingsService {
   final AiChatService ai;
   final ServiceRuntime runtime;
 
-  /// 截止小时保存后重新读取到应用根；界面与时间口径立刻使用新值。
-  final Future<void> Function() onPolicyChanged;
+  /// 截止小时与时间口径的持有者；保存之后由它重读，界面立刻用新值。
+  final TimePolicyController timePolicy;
 
   /// 整库恢复与清空；写路径只有数据版本服务一个入口。
   final DataVersionService dataVersions;
@@ -57,15 +58,15 @@ class SettingsService {
   Future<int> cutoffHour() async =>
       requireDayCutoffHour(await settings.cutoffHour() ?? defaultDayCutoffHour);
 
-  /// 截止小时保存成一条提交，数据版本页可以撤销；保存成功后立即刷新应用
-  /// 根缓存的时间口径。
+  /// 截止小时保存成一条提交，数据版本页可以撤销；保存成功后由时间口径控制器
+  /// 重新读取，设置页与归属日立刻使用新值。
   Future<WriteResult> saveCutoffHour(int hour) async {
     requireDayCutoffHour(hour);
     final result = await transactions.run((txn) async {
       await settings.setCutoffHour(hour, runtime.policy.now, transaction: txn);
       return txn.result();
     }, label: changeCutoffHourAction);
-    await onPolicyChanged();
+    await timePolicy.refresh();
     return result;
   }
 

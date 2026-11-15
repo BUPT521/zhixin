@@ -25,6 +25,8 @@ import 'application/search_service.dart';
 import 'application/service_runtime.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
+import 'application/time_policy_controller.dart';
+import 'application/undo_service.dart';
 import 'data/backup/data_package_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
@@ -52,7 +54,6 @@ import 'data/repository/settings_repository.dart';
 import 'data/repository/study_repository.dart';
 import 'data/repository/study_plan_repository.dart';
 import 'data/repository/task_repository.dart';
-import 'domain/rules/day_key.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
 import 'platform/app_info.dart';
@@ -126,7 +127,13 @@ class AppScopeState extends State<AppScope> {
   late CrashLog crashLog;
 
   late final Clock clock = widget.clock ?? systemClock;
-  int cutoffHour = defaultDayCutoffHour;
+
+  /// 每日截止小时与时间口径的唯一持有者；保存与撤销之后都从设置仓库重读。
+  late final TimePolicyController _timePolicy = TimePolicyController(
+    settings: _settings,
+    clock: clock,
+    onChanged: _onTimePolicyChanged,
+  );
 
   /// 用户从查找结果带入本次回答的来源；发送一次后清空。
   final BroughtSources broughtSources = BroughtSources();
@@ -141,7 +148,7 @@ class AppScopeState extends State<AppScope> {
   /// 写入触发的索引刷新静默期：连续提交时等最后一次写入之后只扫一次库。
   static const Duration _semanticQuietPeriod = Duration(seconds: 3);
 
-  TimePolicy get timePolicy => TimePolicy(clock: clock, cutoffHour: cutoffHour);
+  TimePolicy get timePolicy => _timePolicy.policy;
 
   /// 服务共用的运行环境；时间口径随保存的设置换新，数据代次随恢复与清空推进。
   late final ServiceRuntime _runtime = ServiceRuntime(
@@ -207,6 +214,7 @@ class AppScopeState extends State<AppScope> {
       revisions: _revisions,
       restorePoints: _restorePoints,
       versions: _dataVersions,
+      undo: _undo,
     ),
   );
 
@@ -336,8 +344,14 @@ class AppScopeState extends State<AppScope> {
     llmStore: _llmStore,
     ai: _configuredAi!,
     runtime: _runtime,
-    onPolicyChanged: _refreshDayCutoffHour,
+    timePolicy: _timePolicy,
     dataVersions: _dataVersions,
+  );
+
+  /// 撤销的应用层入口；撤销成功之后由它刷新截止小时，数据层不引 application。
+  late final UndoService _undo = UndoService(
+    revisions: _revisions,
+    timePolicy: _timePolicy,
   );
 
   /// 数据包、整库恢复、恢复点与清空；换库之后的连接与通知仍在这里。
@@ -415,7 +429,6 @@ class AppScopeState extends State<AppScope> {
       raw: () => _connection!,
       clock: clock,
       cache: _attachmentCache,
-      onUndoApplied: _refreshDayCutoffHour,
       onDataChanged: _invalidatePendingWork,
       onCacheFailure: (error, stack) =>
           crashLog.record(error, stack, kind: 'rebuild_attachments_restore'),
@@ -493,7 +506,7 @@ class AppScopeState extends State<AppScope> {
 
   Future<void> _bind() async {
     final connection = _db;
-    await _refreshDayCutoffHour();
+    await _timePolicy.refresh();
     _conversations = ConversationRepository(connection, clock: clock);
     _attempts = AttemptRepository(connection, clock: clock);
     _tasks = TaskRepository(connection, clock: clock);
@@ -505,16 +518,9 @@ class AppScopeState extends State<AppScope> {
     _studyPlans = StudyPlanRepository(connection, clock: clock);
   }
 
-  /// 重新读取库里的每日截止小时；保存设置与撤销设置之后都走这里。
-  ///
-  /// 截止小时改变学习记录归到哪一天与导出文件名，界面分组要随数据版本
-  /// 一起刷新，不能继续用启动时缓存的值。
-  Future<void> _refreshDayCutoffHour() async {
-    final hour = requireDayCutoffHour(
-      await _settings.cutoffHour() ?? defaultDayCutoffHour,
-    );
-    if (hour == cutoffHour) return;
-    cutoffHour = hour;
+  /// 截止小时改变后推进数据代次：学习记录归到哪一天与导出文件名都随之变化，
+  /// 界面分组要重读，不能继续用旧口径。
+  void _onTimePolicyChanged() {
     dataVersion.value++;
   }
 

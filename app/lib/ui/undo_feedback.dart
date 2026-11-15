@@ -17,9 +17,9 @@ Future<void> undoCommitWithFeedback(
   required Future<void> Function() reload,
   VoidCallback? onUndone,
 }) async {
-  final revisions = AppScope.of(context).data.revisions;
+  final undo = AppScope.of(context).data.undo;
   try {
-    final result = await revisions.undoCommit(commitId);
+    final result = await undo.undoCommit(commitId);
     onUndone?.call();
     if (context.mounted) showToast(context, result.message);
     await reload();

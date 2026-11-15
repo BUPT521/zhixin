@@ -12,6 +12,7 @@ import 'application/search_service.dart';
 import 'application/semantic_index_service.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
+import 'application/undo_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
 import 'data/revisions/revision_service.dart';
@@ -114,6 +115,7 @@ class DataServices {
     required this.revisions,
     required this.restorePoints,
     required this.versions,
+    required this.undo,
   });
 
   final RevisionService revisions;
@@ -121,4 +123,7 @@ class DataServices {
 
   /// 数据包、整库恢复、恢复点与清空；页面只从这里做写路径操作。
   final DataVersionService versions;
+
+  /// 撤销一条提交；撤销成功之后由应用层刷新截止小时。
+  final UndoService undo;
 }

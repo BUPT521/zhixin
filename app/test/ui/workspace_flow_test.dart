@@ -2482,23 +2482,23 @@ void main() {
       260,
       scrollable: _settingsScrollable(),
     );
-    expect(scope!.cutoffHour, 4);
+    expect(scope!.timePolicy.cutoffHour, 4);
 
     await tester.tap(cutoffField);
     await settle(tester);
     await tester.tap(find.text('0 点').last);
     await settle(tester);
-    expect(scope!.cutoffHour, 0);
+    expect(scope!.timePolicy.cutoffHour, 0);
 
     final head = await tester.runAsync(
       () => scope!.data.versions.currentHead(),
     );
     final result = await tester.runAsync(
-      () => scope!.data.revisions.undoCommit(head!),
+      () => scope!.data.undo.undoCommit(head!),
     );
     expect(result!.applied, isTrue, reason: result.message);
     await settle(tester);
-    expect(scope!.cutoffHour, 4);
+    expect(scope!.timePolicy.cutoffHour, 4);
     expect(tester.widget<EditableText>(cutoffField).controller.text, '4 点');
     expect(tester.takeException(), isNull);
   });

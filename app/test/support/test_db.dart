@@ -62,7 +62,6 @@ class TestRig {
 Future<TestRig> openTestRig({
   Clock clock = systemClock,
   RevisionEngine? engine,
-  Future<void> Function()? onUndoApplied,
   Future<void> Function()? onDataChanged,
   AttachmentCache? cache,
 }) async {
@@ -80,7 +79,6 @@ Future<TestRig> openTestRig({
     engine: revisionEngine,
     clock: clock,
     cache: cache ?? AttachmentCache(filesDir: () => dir.path),
-    onUndoApplied: onUndoApplied,
     onDataChanged: onDataChanged,
   );
   return TestRig(

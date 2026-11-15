@@ -249,8 +249,7 @@ Future<void> undoMemoryCard({
   required void Function(String notice) showNotice,
 }) async {
   try {
-    final result = await AppScope.of(context).data.revisions
-        .undoCommit(commitId);
+    final result = await AppScope.of(context).data.undo.undoCommit(commitId);
     if (!context.mounted) return;
     await reload();
     if (!context.mounted) return;

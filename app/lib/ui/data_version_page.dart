@@ -339,8 +339,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).data.revisions
-          .undoCommit(commit.id);
+      final result = await AppScope.of(context).data.undo.undoCommit(commit.id);
       _report(result.message);
       await _load();
     } catch (error, stack) {

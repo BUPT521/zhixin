@@ -48,7 +48,6 @@ class RevisionService {
     required this.clock,
     required this.cache,
     AssetStore? assets,
-    this.onUndoApplied,
     this.onDataChanged,
     this.onCacheFailure,
   }) : assets = assets ?? AssetStore();
@@ -59,10 +58,6 @@ class RevisionService {
   final Clock clock;
   final AssetStore assets;
   final AttachmentCache cache;
-
-  /// 撤销成功后通知应用根重新读取设置；每日截止小时会改变时间口径与
-  /// 界面分组，不能用启动时缓存的值继续显示。
-  final Future<void> Function()? onUndoApplied;
 
   /// 版本恢复或单项撤销真正改了当前数据之后通知应用根推进代次：恢复前
   /// 发出的模型回答与判断不能再写回，三栏也要重读。
@@ -187,7 +182,6 @@ class RevisionService {
       final result = await undo.undo(raw(), commitId);
       if (result.applied) {
         await cache.rebuild(raw(), assets);
-        await onUndoApplied?.call();
         await onDataChanged?.call();
       }
       return result;
