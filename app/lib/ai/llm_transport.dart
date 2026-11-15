@@ -39,9 +39,9 @@ abstract class LlmClient {
 
 /// 三种线格式的 HTTP 客户端：Chat Completions、Responses 与 Anthropic Messages。
 ///
-/// 共用的部分：30 秒超时，网络错误与服务端 5xx 重试一次，SSE 按规范读事件
-/// （多行 `data:`、空行分发、注释与 `event:` 字段、首行 BOM），非 2xx 时读出
-/// 服务端自己的错误说明。
+/// 共用的部分：请求预算给出的整段、首字与空闲期限，网络错误与服务端 5xx
+/// 重试一次，SSE 按规范读事件（多行 `data:`、空行分发、注释与 `event:` 字段、
+/// 首行 BOM），非 2xx 时读出服务端自己的错误说明；超时不在这一层另设。
 ///
 /// 结束的确认方式各家不同：Chat Completions 用 `[DONE]` 或 `finish_reason`，
 /// Responses 用 `response.completed` 一类事件，Anthropic 用 `message_stop`；
@@ -50,18 +50,16 @@ class HttpLlmClient implements LlmClient {
   HttpLlmClient({
     required this.config,
     http.Client? httpClient,
-    this.timeout = const Duration(seconds: 30),
+    this.budget,
     this.retryDelay = const Duration(milliseconds: 600),
-    this.firstOutputTimeout = const Duration(seconds: 30),
-    this.streamIdleTimeout = const Duration(seconds: 20),
   }) : _http = httpClient ?? http.Client(),
        _ownsClient = httpClient == null;
 
   final LlmConfig config;
-  final Duration timeout;
+
+  /// 构造时给的期限模板；每次请求按它新建预算、从零计时。
+  final LlmRequestBudget? budget;
   final Duration retryDelay;
-  final Duration firstOutputTimeout;
-  final Duration streamIdleTimeout;
   final http.Client _http;
   final bool _ownsClient;
 
@@ -70,6 +68,15 @@ class HttpLlmClient implements LlmClient {
   /// 普通请求与流式请求各用一份判据：流式请求把首字与空闲超时算作可重试。
   static const _plainRetry = RetryPolicy();
   static const _streamRetry = RetryPolicy(retryTimeout: true);
+
+  /// 本次请求的预算：调用方给了就共用它，否则按构造时的模板新建一份。
+  LlmRequestBudget _budgetFor({LlmCancelToken? cancelToken}) {
+    final template = budget;
+    if (template == null) {
+      return LlmRequestBudget.request(cancelToken: cancelToken);
+    }
+    return template.restart(cancelToken: cancelToken ?? template.cancelToken);
+  }
 
   @override
   Future<LlmReply> complete({
@@ -84,7 +91,7 @@ class HttpLlmClient implements LlmClient {
       throw const LlmException(LlmFailure.notConfigured, '配置为空');
     }
     final wire = _wire;
-    final lifecycle = budget ?? LlmRequestBudget(timeout: timeout);
+    final lifecycle = budget ?? _budgetFor();
     for (var attempt = 0; ; attempt++) {
       try {
         final response = await lifecycle.run(
@@ -147,15 +154,10 @@ class HttpLlmClient implements LlmClient {
       throw const LlmException(LlmFailure.notConfigured, '配置为空');
     }
     final wire = _wire;
-    final lifecycle =
-        budget ?? LlmRequestBudget(timeout: timeout, cancelToken: cancelToken);
+    final lifecycle = budget ?? _budgetFor(cancelToken: cancelToken);
     for (var index = 0; ; index++) {
       lifecycle.check();
-      final attempt = _StreamAttempt(
-        lifecycle: lifecycle,
-        firstOutputTimeout: firstOutputTimeout,
-        idleTimeout: streamIdleTimeout,
-      );
+      final attempt = _StreamAttempt(lifecycle: lifecycle);
       var serverUnavailable = false;
       try {
         final response = await attempt.run(
@@ -378,14 +380,10 @@ class HttpLlmClient implements LlmClient {
 
 /// 每次流式尝试独立计时和中止，整轮截止时间与用户取消仍由回答共用。
 class _StreamAttempt {
-  _StreamAttempt({
-    required this.lifecycle,
-    required Duration firstOutputTimeout,
-    required this.idleTimeout,
-  }) : _deadline = firstOutputTimeout;
+  _StreamAttempt({required this.lifecycle})
+    : _deadline = lifecycle.firstOutputTimeout;
 
   final LlmRequestBudget lifecycle;
-  final Duration idleTimeout;
   final _clock = Stopwatch()..start();
   final _aborted = Completer<void>();
   Duration _deadline;
@@ -400,7 +398,7 @@ class _StreamAttempt {
 
   void noteOutput() {
     hasOutput = true;
-    _deadline = _clock.elapsed + idleTimeout;
+    _deadline = _clock.elapsed + lifecycle.idleTimeout;
   }
 
   void abort() {

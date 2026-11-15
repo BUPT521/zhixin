@@ -68,19 +68,58 @@ class LlmCancelToken {
   }
 }
 
-/// 同一轮回答共用的截止时间与取消信号，覆盖工具后的请求、流式回退与重试等待。
+/// 同一轮回答共用的截止时间、分阶段期限与取消信号，覆盖工具后的请求、流式
+/// 回退与重试等待。
+///
+/// 超时只在预算里定义一处：整轮回答的 [timeout]、流式响应等待首个有效事件的
+/// [firstOutputTimeout]、首个事件之后相邻事件之间的 [idleTimeout]。传输层
+/// 不再另设时限，按这一份期限执行。
 class LlmRequestBudget {
-  LlmRequestBudget({required this.timeout, this.cancelToken})
-    : _clock = Stopwatch()..start();
+  LlmRequestBudget({
+    this.timeout = defaultTimeout,
+    this.firstOutputTimeout = defaultFirstOutputTimeout,
+    this.idleTimeout = defaultIdleTimeout,
+    this.cancelToken,
+  });
+
+  /// 一次讨论回答：整段 90 秒，首字与空闲沿用默认值。
+  factory LlmRequestBudget.answer({LlmCancelToken? cancelToken}) =>
+      LlmRequestBudget(
+        timeout: const Duration(seconds: 90),
+        cancelToken: cancelToken,
+      );
+
+  /// 设置页连接测试：只发一次最小请求，15 秒内必须返回。
+  factory LlmRequestBudget.probe() =>
+      LlmRequestBudget(timeout: const Duration(seconds: 15));
+
+  /// 没有另外指定预算的一次普通请求。
+  factory LlmRequestBudget.request({LlmCancelToken? cancelToken}) =>
+      LlmRequestBudget(cancelToken: cancelToken);
+
+  static const Duration defaultTimeout = Duration(seconds: 30);
+  static const Duration defaultFirstOutputTimeout = Duration(seconds: 30);
+  static const Duration defaultIdleTimeout = Duration(seconds: 20);
 
   final Duration timeout;
+  final Duration firstOutputTimeout;
+  final Duration idleTimeout;
   final LlmCancelToken? cancelToken;
-  final Stopwatch _clock;
+  final Stopwatch _clock = Stopwatch()..start();
   final _expired = Completer<void>();
   late final Future<void> abortTrigger = Future.any<void>([
     _expired.future,
     if (cancelToken case final token?) token.whenCancelled,
   ]);
+
+  /// 按同一组期限新建一份预算，计时从零开始；构造时给的预算因此可以当作
+  /// 一份期限模板，每次请求各自计时。
+  LlmRequestBudget restart({LlmCancelToken? cancelToken}) => LlmRequestBudget(
+    timeout: timeout,
+    firstOutputTimeout: firstOutputTimeout,
+    idleTimeout: idleTimeout,
+    cancelToken: cancelToken,
+  );
 
   Duration get _remaining {
     if (cancelToken?.isCancelled ?? false) {

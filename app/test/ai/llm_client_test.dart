@@ -104,7 +104,9 @@ void main() {
       final aborted = Completer<void>();
       final client = HttpLlmClient(
         config: const LlmConfig(apiKey: 'test-key'),
-        firstOutputTimeout: const Duration(milliseconds: 150),
+        budget: LlmRequestBudget(
+          firstOutputTimeout: const Duration(milliseconds: 150),
+        ),
         retryDelay: Duration.zero,
         httpClient: MockClient.streaming((request, body) async {
           requests.add(utf8.decode(await body.toBytes()));
@@ -160,7 +162,9 @@ void main() {
       final aborted = Completer<void>();
       final client = HttpLlmClient(
         config: const LlmConfig(apiKey: 'test-key'),
-        streamIdleTimeout: const Duration(milliseconds: 120),
+        budget: LlmRequestBudget(
+          idleTimeout: const Duration(milliseconds: 120),
+        ),
         retryDelay: Duration.zero,
         httpClient: MockClient.streaming((request, body) async {
           requests++;
@@ -221,6 +225,142 @@ void main() {
       }
     });
   }
+
+  test('首字超时按超时返回，两次尝试都用同一份预算', () async {
+    var requests = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      budget: LlmRequestBudget(
+        firstOutputTimeout: const Duration(milliseconds: 60),
+      ),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, body) async {
+        requests++;
+        final stream = StreamController<List<int>>();
+        unawaited(
+          (request as http.AbortableRequest).abortTrigger!.then(
+            (_) => unawaited(stream.close()),
+          ),
+        );
+        return http.StreamedResponse(
+          stream.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.timeout)
+            .having((error) => error.detail, 'detail', contains('首个有效事件')),
+      ),
+    );
+    // 首字超时在流式判据里可重试一次，两次都超时才向调用方报错。
+    expect(requests, 2);
+  });
+
+  test('正文之后的空闲超时按超时返回，已经显示的部分保留', () async {
+    var requests = 0;
+    final aborted = Completer<void>();
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      budget: LlmRequestBudget(idleTimeout: const Duration(milliseconds: 80)),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, body) async {
+        requests++;
+        final stream = StreamController<List<int>>();
+        stream.add(utf8.encode(event(sseChunk('已经显示的正文'))));
+        unawaited(
+          (request as http.AbortableRequest).abortTrigger!.then((_) {
+            aborted.complete();
+            unawaited(stream.close());
+          }),
+        );
+        return http.StreamedResponse(
+          stream.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    final deltas = <LlmDelta>[];
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .map((delta) {
+            deltas.add(delta);
+            return delta;
+          })
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.timeout)
+            .having((error) => error.detail, 'detail', contains('有效事件之间')),
+      ),
+    );
+    await aborted.future;
+    expect(deltas.map((delta) => delta.text).join(), '已经显示的正文');
+    // 已经给出正文之后不重试。
+    expect(requests, 1);
+  });
+
+  test('用户取消时按已取消返回，不算超时也不重试', () async {
+    final cancelled = LlmCancelToken();
+    var requests = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      budget: LlmRequestBudget(cancelToken: cancelled),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, body) async {
+        requests++;
+        final stream = StreamController<List<int>>();
+        stream.add(utf8.encode(event(sseChunk('已经显示的正文'))));
+        unawaited(
+          (request as http.AbortableRequest).abortTrigger!.then(
+            (_) => unawaited(stream.close()),
+          ),
+        );
+        return http.StreamedResponse(
+          stream.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    final deltas = <LlmDelta>[];
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .map((delta) {
+            deltas.add(delta);
+            if (delta.text.isNotEmpty) cancelled.cancel();
+            return delta;
+          })
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.cancelled,
+        ),
+      ),
+    );
+    expect(deltas.map((delta) => delta.text).join(), '已经显示的正文');
+    expect(requests, 1);
+  });
 
   test('正常回答返回文本与用量', () async {
     final client = clientReturning(
@@ -973,7 +1113,7 @@ void main() {
     var calls = 0;
     final client = HttpLlmClient(
       config: const LlmConfig(apiKey: 'test-key'),
-      timeout: const Duration(milliseconds: 40),
+      budget: LlmRequestBudget(timeout: const Duration(milliseconds: 40)),
       retryDelay: Duration.zero,
       httpClient: MockClient((request) async {
         calls++;

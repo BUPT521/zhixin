@@ -133,10 +133,7 @@ class AiChatService implements BuddyAi {
         system: system,
         messages: messages,
         tools: tools.registry,
-        budget: LlmRequestBudget(
-          timeout: const Duration(seconds: 90),
-          cancelToken: cancelToken,
-        ),
+        budget: LlmRequestBudget.answer(cancelToken: cancelToken),
         contextBudget: LlmContextBudget(current),
         onText: onText,
       );
@@ -196,16 +193,13 @@ class AiChatService implements BuddyAi {
 
   http.Client get _http => _httpClient ??= http.Client();
 
-  HttpLlmClient _client(
-    LlmConfig config, {
-    Duration timeout = const Duration(seconds: 30),
-  }) {
-    return HttpLlmClient(config: config, httpClient: _http, timeout: timeout);
+  HttpLlmClient _client(LlmConfig config, {LlmRequestBudget? budget}) {
+    return HttpLlmClient(config: config, httpClient: _http, budget: budget);
   }
 
   /// 设置页的连接测试：用同一份配置发一次最小工具请求，确认地址支持工具调用。
   Future<Duration> test(LlmConfig config) async {
-    final client = _client(config, timeout: const Duration(seconds: 15));
+    final client = _client(config, budget: LlmRequestBudget.probe());
     final started = DateTime.now();
     try {
       final reply = await client.complete(
