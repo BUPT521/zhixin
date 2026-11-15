@@ -84,11 +84,18 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
-	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{BaseRouter: mux})
+	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
+		BaseRouter:       mux,
+		Middlewares:      []api.MiddlewareFunc{httpx.RecordPattern},
+		ErrorHandlerFunc: httpx.BindingErrorHandler,
+	})
 
+	// 顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/429 也
+	// 因此有编号并进日志），然后恢复 panic，最后鉴权。鉴权放在访问日志之内，
+	// 被拒绝的请求仍然会留下一行记录。
 	return httpx.Chain(withAuth(mux, authSvc, log),
-		httpx.Recover(log),
 		httpx.RequestID,
 		httpx.AccessLog(log),
+		httpx.Recover(log),
 	)
 }

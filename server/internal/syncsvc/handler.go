@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
@@ -35,11 +35,11 @@ type headResponse struct {
 	SchemaVersion int   `json:"schema_version"`
 }
 
-func (h *Handler) head(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	head, err := h.store.Head(r.Context(), p.UserID)
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, headResponse{Head: head, SchemaVersion: h.schemaVersion})
@@ -51,34 +51,32 @@ type pullResponse struct {
 	HasMore bool     `json:"has_more"`
 }
 
-func (h *Handler) pull(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	q := r.URL.Query()
-	after, err := strconv.ParseInt(q.Get("after"), 10, 64)
-	if q.Get("after") == "" {
-		after, err = 0, nil
+	after := int64(0)
+	if params.After != nil {
+		after = *params.After
 	}
-	if err != nil || after < 0 {
+	if after < 0 {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "after must be a non-negative integer")
 		return
 	}
 	limit := defaultPull
-	if s := q.Get("limit"); s != "" {
-		n, err := strconv.Atoi(s)
-		if err != nil || n < 1 || n > maxPull {
+	if params.Limit != nil {
+		if *params.Limit < 1 || *params.Limit > maxPull {
 			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "limit must be between 1 and 1000")
 			return
 		}
-		limit = n
+		limit = *params.Limit
 	}
 	head, err := h.store.Head(r.Context(), p.UserID)
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	commits, err := h.store.After(r.Context(), p.UserID, after, limit)
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	if commits == nil {
@@ -91,6 +89,8 @@ func (h *Handler) pull(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, pullResponse{Commits: commits, Head: head, HasMore: last < head})
 }
 
+// pushRequest 保留 Change 的原始 JSON。服务端不解释学习内容，也不经过
+// 契约模型里的 interface{}，否则大整数会被解码成 float64 而改变数值。
 type pushRequest struct {
 	BaseSeq int64    `json:"base_seq"`
 	Commits []Commit `json:"commits"`
@@ -100,7 +100,7 @@ type pushResponse struct {
 	Head int64 `json:"head"`
 }
 
-func (h *Handler) push(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	var in pushRequest
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
@@ -125,13 +125,8 @@ func (h *Handler) push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pushResponse{Head: head})
-}
-
-func (h *Handler) internal(w http.ResponseWriter, r *http.Request, err error) {
-	h.log.Error("sync handler failed", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
-	httpx.WriteProblem(w, r, http.StatusInternalServerError, httpx.CodeInternal, "")
 }

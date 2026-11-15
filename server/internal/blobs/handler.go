@@ -27,9 +27,9 @@ func NewHandler(store Store, log *slog.Logger, maxBytes int64) *Handler {
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// head 只回答存在与否。HEAD 不返回响应体，所以错误也只给状态码，客户端按
+// Head 只回答存在与否。HEAD 不返回响应体，所以错误也只给状态码，客户端按
 // 200 与 404 分支即可。
-func (h *Handler) head(w http.ResponseWriter, r *http.Request, sha string) {
+func (h *Handler) Head(w http.ResponseWriter, r *http.Request, sha string) {
 	if !shaPattern.MatchString(sha) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -41,14 +41,14 @@ func (h *Handler) head(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) get(w http.ResponseWriter, r *http.Request, sha string) {
+func (h *Handler) Get(w http.ResponseWriter, r *http.Request, sha string) {
 	if !shaPattern.MatchString(sha) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "sha256 must be 64 lowercase hex characters")
 		return
@@ -60,7 +60,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	defer rc.Close()
@@ -71,7 +71,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, sha string) {
 	_, _ = io.Copy(w, rc)
 }
 
-func (h *Handler) put(w http.ResponseWriter, r *http.Request, sha string) {
+func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 	if !shaPattern.MatchString(sha) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "sha256 must be 64 lowercase hex characters")
 		return
@@ -88,7 +88,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, sha string) {
 		case errors.Is(err, httpx.ErrBodyRead):
 			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
 		default:
-			h.internal(w, r, err)
+			httpx.WriteInternal(w, r, h.log, err)
 		}
 		return
 	}
@@ -100,17 +100,12 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, sha string) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	data, err := spool.Reader()
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	if err := h.store.Save(r.Context(), p.UserID, sha, spool.Size, data); err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-}
-
-func (h *Handler) internal(w http.ResponseWriter, r *http.Request, err error) {
-	h.log.Error("blob handler failed", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
-	httpx.WriteProblem(w, r, http.StatusInternalServerError, httpx.CodeInternal, "")
 }

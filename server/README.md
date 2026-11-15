@@ -27,7 +27,7 @@ server/
 ├── internal/
 │   ├── config/                 ← ZHIXIN_* 环境变量
 │   ├── httpx/                  ← problem+json、JSON 解码与大小上限、请求编号、访问日志、异常恢复
-│   ├── auth/                   ← 账号、argon2id 密码、不透明令牌、Require 中间件
+│   ├── auth/                   ← 账号、argon2id 密码与不透明令牌
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
 │   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
@@ -44,7 +44,7 @@ server/
 
 ## 约定
 
-- 路径带 `/v1` 前缀，请求与响应用 JSON。错误一律是 `application/problem+json`，`code` 取 [problem.go](internal/httpx/problem.go) 里列出的分类，客户端按 `code` 分支，`detail` 只给开发者看，不能写入学习内容、SQL、令牌或路径。
+- 路径带 `/v1` 前缀，请求与响应用 JSON。错误一律是 `application/problem+json`，`code` 取 [契约](api/openapi.yaml) 里的 `ProblemCode` 枚举，客户端按 `code` 分支，`detail` 只给开发者看，不能写入学习内容、SQL、令牌或路径。
 - JSON 请求体拒绝未知字段与多余内容，超过上限返回 413。
 - 访问日志只记录路由模式、状态码、字节数与耗时，不记录请求体、查询串与请求头；模型代理不保存请求与回答正文，只记 token 数。
 - 服务端接受的客户端数据版本是 `server.ClientSchemaVersion`，必须与 [01](../docs/01-ER数据模型.md) 开头的 schema 编号一致。客户端升 schema 时同一个 push 里改这个常量；其他版本的提交与备份一律拒绝，与 [ADR-0002](../docs/adr/0002-本地数据不做迁移.md) 相同。

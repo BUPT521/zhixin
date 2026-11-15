@@ -37,12 +37,29 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder remembers the status code and keeps http.Flusher working,
-// which the streaming model proxy depends on.
+// statusRecorder remembers the status code and the matched route, and keeps
+// http.Flusher working, which the streaming model proxy depends on.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	bytes  int64
+	status  int
+	bytes   int64
+	pattern string
+}
+
+// SetPattern records the route matched by net/http. RecordPattern runs inside
+// the generated wrapper, where r.Pattern is already set on the request.
+func (s *statusRecorder) SetPattern(pattern string) { s.pattern = pattern }
+
+// RecordPattern passes the matched route to the access log. The route handler
+// is the only place that sees r.Pattern, because net/http sets it on the
+// request after the outer middleware has cloned it.
+func RecordPattern(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rec, ok := w.(interface{ SetPattern(string) }); ok {
+			rec.SetPattern(r.Pattern)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
@@ -78,7 +95,10 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w}
 			next.ServeHTTP(rec, r)
-			pattern := r.Pattern
+			pattern := rec.pattern
+			if pattern == "" {
+				pattern = r.Pattern
+			}
 			if pattern == "" {
 				pattern = "unmatched"
 			}

@@ -521,6 +521,96 @@ func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
 	}
 }
 
+func TestAccessLogRecordsRouteAndRequestID(t *testing.T) {
+	cfg, err := config.Load(func(key string) string {
+		return map[string]string{"ZHIXIN_AUTH_RATE": "0", "ZHIXIN_REFRESH_RATE": "0"}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	handler := New(cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthz: %d", rec.Code)
+	}
+	requestID := rec.Header().Get("X-Request-Id")
+	line := logs.String()
+	for _, want := range []string{`route="GET /healthz"`, "status=200", "request_id=" + requestID} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("access log %q does not contain %q", line, want)
+		}
+	}
+}
+
+func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
+	cfg, err := config.Load(func(key string) string {
+		return map[string]string{"ZHIXIN_AUTH_RATE": "0", "ZHIXIN_REFRESH_RATE": "0"}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	handler := New(cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	var p problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if rec.Code != http.StatusUnauthorized || p.RequestID == "" {
+		t.Fatalf("anonymous /v1/me: %d %+v", rec.Code, p)
+	}
+	if got := rec.Header().Get("X-Request-Id"); got != p.RequestID {
+		t.Fatalf("problem request_id %q, header %q", p.RequestID, got)
+	}
+	line := logs.String()
+	for _, want := range []string{"status=401", "request_id=" + p.RequestID} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("access log %q does not contain %q; a rejected request must still be logged", line, want)
+		}
+	}
+}
+
+func TestBindingErrorsAreProblems(t *testing.T) {
+	h := newHarness(t, nil)
+	token := h.signUp("bind@b.cn")
+	cases := []struct {
+		method string
+		path   string
+		body   io.Reader
+		header map[string]string
+	}{
+		// Generated binding runs before the handler: a required header is missing.
+		{http.MethodPost, "/v1/backups", strings.NewReader("x"), nil},
+		// A header that is present but not an integer.
+		{http.MethodPost, "/v1/backups", strings.NewReader("x"), map[string]string{
+			"X-Content-SHA256": strings.Repeat("a", 64),
+			"X-Schema-Version": "abc",
+		}},
+		{http.MethodGet, "/v1/sync/commits?after=abc", nil, nil},
+		{http.MethodGet, "/v1/sync/commits?limit=0", nil, nil},
+	}
+	for _, tc := range cases {
+		resp := h.do(tc.method, tc.path, token, tc.body, tc.header)
+		var p problem
+		if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+			t.Fatalf("%s %s: decode: %v", tc.method, tc.path, err)
+		}
+		if resp.StatusCode != http.StatusBadRequest || p.Code != "invalid_request" {
+			t.Fatalf("%s %s: %d %+v", tc.method, tc.path, resp.StatusCode, p)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+			t.Fatalf("%s %s: content type %q", tc.method, tc.path, ct)
+		}
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

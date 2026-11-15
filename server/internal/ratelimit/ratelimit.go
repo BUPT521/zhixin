@@ -45,14 +45,6 @@ func New(limit rate.Limit, burst int, idle time.Duration) *Limiter {
 // Disabled 返回一个永远放行的限流器，用于关闭限流或测试。
 func Disabled() *Limiter { return New(rate.Inf, 1, 0) }
 
-// Allow 取一个令牌；任一键用完就返回 false。
-//
-// 多个键同时检查时，先检查全部再扣减，避免前一个键被扣掉而后面拒绝，
-// 让同一个请求里的几个桶走得一致。
-func (l *Limiter) Allow(keys ...string) bool {
-	return l.Take(keys...) == 0
-}
-
 // Take consumes a token per key, or returns the seconds until a retry.
 func (l *Limiter) Take(keys ...string) int64 {
 	if len(keys) == 0 {

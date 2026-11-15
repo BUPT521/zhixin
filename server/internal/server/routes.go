@@ -47,48 +47,46 @@ func (rt routes) GetReadyz(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_version": rt.schemaVersion})
 }
 
-func (rt routes) PostV1AuthRegister(w http.ResponseWriter, r *http.Request) {
-	rt.auth.RegisterHTTP(w, r)
-}
-func (rt routes) PostV1AuthLogin(w http.ResponseWriter, r *http.Request)   { rt.auth.LoginHTTP(w, r) }
-func (rt routes) PostV1AuthRefresh(w http.ResponseWriter, r *http.Request) { rt.auth.RefreshHTTP(w, r) }
-func (rt routes) PostV1AuthLogout(w http.ResponseWriter, r *http.Request)  { rt.auth.LogoutHTTP(w, r) }
-func (rt routes) GetV1Me(w http.ResponseWriter, r *http.Request)           { rt.auth.MeHTTP(w, r) }
-func (rt routes) DeleteV1Me(w http.ResponseWriter, r *http.Request)        { rt.auth.DeleteMeHTTP(w, r) }
+func (rt routes) PostV1AuthRegister(w http.ResponseWriter, r *http.Request) { rt.auth.Register(w, r) }
+func (rt routes) PostV1AuthLogin(w http.ResponseWriter, r *http.Request)    { rt.auth.Login(w, r) }
+func (rt routes) PostV1AuthRefresh(w http.ResponseWriter, r *http.Request)  { rt.auth.Refresh(w, r) }
+func (rt routes) PostV1AuthLogout(w http.ResponseWriter, r *http.Request)   { rt.auth.Logout(w, r) }
+func (rt routes) GetV1Me(w http.ResponseWriter, r *http.Request)            { rt.auth.Me(w, r) }
+func (rt routes) DeleteV1Me(w http.ResponseWriter, r *http.Request)         { rt.auth.DeleteMe(w, r) }
 
-func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { rt.sync.HeadHTTP(w, r) }
-func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, _ api.GetV1SyncCommitsParams) {
-	rt.sync.PullHTTP(w, r)
+func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { rt.sync.Head(w, r) }
+func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
+	rt.sync.Pull(w, r, params)
 }
 func (rt routes) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) {
-	rt.sync.PushHTTP(w, r)
+	rt.sync.Push(w, r)
 }
 
 func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
-	rt.blobs.GetHTTP(w, r, sha256)
+	rt.blobs.Get(w, r, sha256)
 }
 func (rt routes) HeadV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
-	rt.blobs.HeadHTTP(w, r, sha256)
+	rt.blobs.Head(w, r, sha256)
 }
 func (rt routes) PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
-	rt.blobs.PutHTTP(w, r, sha256)
+	rt.blobs.Put(w, r, sha256)
 }
 
-func (rt routes) GetV1Backups(w http.ResponseWriter, r *http.Request) { rt.backups.ListHTTP(w, r) }
-func (rt routes) PostV1Backups(w http.ResponseWriter, r *http.Request, _ api.PostV1BackupsParams) {
-	rt.backups.UploadHTTP(w, r)
+func (rt routes) GetV1Backups(w http.ResponseWriter, r *http.Request) { rt.backups.List(w, r) }
+func (rt routes) PostV1Backups(w http.ResponseWriter, r *http.Request, params api.PostV1BackupsParams) {
+	rt.backups.Upload(w, r, params)
 }
-func (rt routes) GetV1BackupsId(w http.ResponseWriter, r *http.Request, _ string) {
-	rt.backups.DownloadHTTP(w, r)
+func (rt routes) GetV1BackupsId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.backups.Download(w, r, id)
 }
-func (rt routes) DeleteV1BackupsId(w http.ResponseWriter, r *http.Request, _ string) {
-	rt.backups.DeleteHTTP(w, r)
+func (rt routes) DeleteV1BackupsId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.backups.Delete(w, r, id)
 }
 
-func (rt routes) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { rt.llm.ModelsHTTP(w, r) }
-func (rt routes) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { rt.llm.QuotaHTTP(w, r) }
+func (rt routes) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { rt.llm.Models(w, r) }
+func (rt routes) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { rt.llm.QuotaStatus(w, r) }
 func (rt routes) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
-	rt.llm.ChatHTTP(w, r)
+	rt.llm.Chat(w, r)
 }
 
 // securedRoutes 是契约里要求 Bearer 的路径，写法与 openapi.yaml 的分段一致：

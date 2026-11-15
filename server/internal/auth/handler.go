@@ -7,9 +7,9 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
@@ -18,8 +18,7 @@ type ctxKey int
 
 const principalKey ctxKey = iota
 
-// PrincipalFrom returns the caller set by Require. Handlers mounted behind
-// Require can rely on ok being true.
+// PrincipalFrom returns the caller set by the route-layer authentication.
 func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey).(Principal)
 	return p, ok
@@ -28,29 +27,6 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 // WithPrincipal is exposed for tests of handlers in other packages.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey, p)
-}
-
-// Require rejects requests without a valid "Authorization: Bearer" access token.
-func (s *Service) Require(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || token == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="zhixin"`)
-			httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "missing bearer token")
-			return
-		}
-		p, err := s.Authenticate(r.Context(), token)
-		if errors.Is(err, ErrInvalidToken) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="zhixin", error="invalid_token"`)
-			httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "access token is invalid or expired")
-			return
-		}
-		if err != nil {
-			httpx.WriteProblem(w, r, http.StatusInternalServerError, httpx.CodeInternal, "")
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
-	})
 }
 
 // Handler exposes the /v1/auth and /v1/me routes.
@@ -90,62 +66,75 @@ func tooMany(w http.ResponseWriter, r *http.Request, retryAfter int64) {
 	httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts, retry later")
 }
 
-type credentials struct {
-	Email      string `json:"email"`
-	Password   string `json:"password"`
-	DeviceName string `json:"device_name"`
+// tokensJSON 把服务层的令牌结果转成契约类型，响应字段只在这里出现一次。
+func tokensJSON(t Tokens) api.Tokens {
+	tokenType := api.TokensTokenType(t.TokenType)
+	return api.Tokens{
+		AccessToken:      &t.AccessToken,
+		RefreshToken:     &t.RefreshToken,
+		TokenType:        &tokenType,
+		AccessExpiresAt:  &t.AccessExpiresAt,
+		RefreshExpiresAt: &t.RefreshExpiresAt,
+		UserId:           &t.UserID,
+	}
 }
 
-func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+// optional 把契约里的可选字符串取成服务层使用的空串。
+func optional(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	if delay := h.byAddr.Take(remoteKey(r)); delay > 0 {
 		tooMany(w, r, delay)
 		return
 	}
-	var in credentials
+	var in api.Credentials
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	t, err := h.svc.Register(r.Context(), in.Email, in.Password, in.DeviceName)
+	t, err := h.svc.Register(r.Context(), string(in.Email), in.Password, optional(in.DeviceName))
 	switch {
 	case errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address and password 8 to 128 characters")
 	case errors.Is(err, ErrEmailTaken):
 		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeEmailTaken, "")
 	case err != nil:
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 	default:
-		httpx.WriteJSON(w, http.StatusCreated, t)
+		httpx.WriteJSON(w, http.StatusCreated, tokensJSON(t))
 	}
 }
 
-func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if delay := h.byAddr.Take(remoteKey(r)); delay > 0 {
 		tooMany(w, r, delay)
 		return
 	}
-	var in credentials
+	var in api.Credentials
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	t, err := h.svc.Login(r.Context(), in.Email, in.Password, in.DeviceName)
+	t, err := h.svc.Login(r.Context(), string(in.Email), in.Password, optional(in.DeviceName))
 	switch {
 	case errors.Is(err, ErrInvalidCredentials):
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeInvalidCredentials, "")
 	case err != nil:
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 	default:
-		httpx.WriteJSON(w, http.StatusOK, t)
+		httpx.WriteJSON(w, http.StatusOK, tokensJSON(t))
 	}
 }
 
-func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if delay := h.refreshLimits.Take("address:" + remoteKey(r)); delay > 0 {
 		tooMany(w, r, delay)
 		return
 	}
-	var in struct {
-		RefreshToken string `json:"refresh_token"`
-	}
+	var in api.PostV1AuthRefreshJSONRequestBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
@@ -160,16 +149,16 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrInvalidToken):
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "refresh token is invalid, expired or already used")
 	case err != nil:
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 	default:
-		httpx.WriteJSON(w, http.StatusOK, t)
+		httpx.WriteJSON(w, http.StatusOK, tokensJSON(t))
 	}
 }
 
-func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
 	if err := h.svc.Logout(r.Context(), p); err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -181,26 +170,21 @@ type meResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
 	u, err := h.svc.User(r.Context(), p)
 	if err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, meResponse{UserID: u.ID, Email: u.Email, CreatedAt: u.CreatedAt})
 }
 
-func (h *Handler) deleteMe(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
 	if err := h.svc.DeleteAccount(r.Context(), p); err != nil {
-		h.internal(w, r, err)
+		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) internal(w http.ResponseWriter, r *http.Request, err error) {
-	h.log.Error("auth handler failed", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
-	httpx.WriteProblem(w, r, http.StatusInternalServerError, httpx.CodeInternal, "")
 }

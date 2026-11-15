@@ -8,38 +8,38 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func TestAllowConsumesAndRefills(t *testing.T) {
+func TestTakeConsumesAndRefills(t *testing.T) {
 	now := time.Now()
 	l := New(rate.Limit(1), 2, 0) // 每秒 1 个，最多积 2 个
 	l.nowFn = func() time.Time { return now }
 
-	if !l.Allow("a") || !l.Allow("a") {
+	if l.Take("a") != 0 || l.Take("a") != 0 {
 		t.Fatal("前两次应当放行")
 	}
-	if l.Allow("a") {
+	if l.Take("a") == 0 {
 		t.Fatal("令牌用完应当拒绝")
 	}
-	if !l.Allow("b") {
+	if l.Take("b") != 0 {
 		t.Fatal("不同键之间互不影响")
 	}
 
 	now = now.Add(time.Second)
-	if !l.Allow("a") {
+	if l.Take("a") != 0 {
 		t.Fatal("过一秒应当补回一个令牌")
 	}
 }
 
-func TestAllowChecksAllKeysBeforeConsuming(t *testing.T) {
+func TestTakeChecksAllKeysBeforeConsuming(t *testing.T) {
 	now := time.Now()
 	// rate 0 表示不补充，只看初始的 burst 令牌，判定不受真实时钟影响。
 	l := New(rate.Limit(0), 1, 0)
 	l.nowFn = func() time.Time { return now }
 
-	if !l.Allow("y") {
+	if l.Take("y") != 0 {
 		t.Fatal("y 第一次应当放行")
 	}
 	// y 已用完；这次请求整体应当拒绝，且不能把 x 的令牌扣掉。
-	if l.Allow("x", "y") {
+	if l.Take("x", "y") == 0 {
 		t.Fatal("任一键用完时整个请求应当拒绝")
 	}
 	if got := l.buckets["x"].bucket.TokensAt(now); got < 1 {
@@ -52,12 +52,12 @@ func TestReapDropsIdleKeys(t *testing.T) {
 	l := New(rate.Limit(1), 1, time.Minute)
 	l.nowFn = func() time.Time { return now }
 
-	l.Allow("a")
+	l.Take("a")
 	if l.Len() != 1 {
 		t.Fatalf("应保留 1 个键，得到 %d", l.Len())
 	}
 	now = now.Add(2 * time.Minute)
-	l.Allow("b")
+	l.Take("b")
 	if l.Len() != 1 {
 		t.Fatalf("空闲键应被回收，只剩 b，得到 %d", l.Len())
 	}
@@ -66,16 +66,16 @@ func TestReapDropsIdleKeys(t *testing.T) {
 	}
 }
 
-func TestDisabledAlwaysAllows(t *testing.T) {
+func TestDisabledAlwaysTakes(t *testing.T) {
 	l := Disabled()
 	for i := 0; i < 100; i++ {
-		if !l.Allow("a") {
+		if l.Take("a") != 0 {
 			t.Fatal("关闭限流后应一律放行")
 		}
 	}
 }
 
-func TestConcurrentAllowIsSafe(t *testing.T) {
+func TestConcurrentTakeIsSafe(t *testing.T) {
 	now := time.Now()
 	l := New(rate.Limit(1000), 100, 0)
 	l.nowFn = func() time.Time { return now }
@@ -85,7 +85,7 @@ func TestConcurrentAllowIsSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if l.Allow("a") {
+			if l.Take("a") == 0 {
 				allowed <- 1
 			}
 		}()

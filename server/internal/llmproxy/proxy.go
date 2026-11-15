@@ -46,7 +46,7 @@ func New(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger
 func (p *Proxy) day() string { return p.now().In(p.loc).Format("2006-01-02") }
 
 // models answers in the OpenAI list shape so the client's connection test works unchanged.
-func (p *Proxy) models(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
 	type model struct {
 		ID      string `json:"id"`
 		Object  string `json:"object"`
@@ -59,12 +59,12 @@ func (p *Proxy) models(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
-func (p *Proxy) quotaStatus(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.PrincipalFrom(r.Context())
 	day := p.day()
 	used, err := p.quota.Used(r.Context(), pr.UserID, day)
 	if err != nil {
-		p.internal(w, r, err)
+		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"day": day, "used_tokens": used, "daily_tokens": p.cfg.DailyTokens})
@@ -76,7 +76,7 @@ type requestHead struct {
 	Stream bool   `json:"stream"`
 }
 
-func (p *Proxy) chat(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.PrincipalFrom(r.Context())
 	if p.cfg.APIKey == "" {
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
@@ -104,7 +104,7 @@ func (p *Proxy) chat(w http.ResponseWriter, r *http.Request) {
 	day := p.day()
 	used, err := p.quota.Used(r.Context(), pr.UserID, day)
 	if err != nil {
-		p.internal(w, r, err)
+		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
 	if used >= p.cfg.DailyTokens {
@@ -116,7 +116,7 @@ func (p *Proxy) chat(w http.ResponseWriter, r *http.Request) {
 
 	up, err := http.NewRequestWithContext(r.Context(), http.MethodPost, p.cfg.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		p.internal(w, r, err)
+		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
 	up.Header.Set("Content-Type", "application/json")
@@ -211,9 +211,4 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) int64 {
 			return tokens
 		}
 	}
-}
-
-func (p *Proxy) internal(w http.ResponseWriter, r *http.Request, err error) {
-	p.log.Error("llm proxy failed", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
-	httpx.WriteProblem(w, r, http.StatusInternalServerError, httpx.CodeInternal, "")
 }
