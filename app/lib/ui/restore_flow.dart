@@ -25,7 +25,7 @@ Future<bool> showRestoreConfirmDialog(
   required String rollbackLine,
 }) async {
   final theme = context.zhixin;
-  final confirmed = await showZhixinAlert<bool>(
+  final confirmed = await confirmZhixin(
     context: context,
     title: title,
     content: Column(
@@ -41,21 +41,9 @@ Future<bool> showRestoreConfirmDialog(
         Text(rollbackLine, style: theme.text.bodySmall),
       ],
     ),
-    actions: [
-      forui.FButton(
-        variant: forui.FButtonVariant.ghost,
-        mainAxisSize: MainAxisSize.min,
-        onPress: () => Navigator.of(context).pop(false),
-        child: const Text('取消'),
-      ),
-      forui.FButton(
-        mainAxisSize: MainAxisSize.min,
-        onPress: () => Navigator.of(context).pop(true),
-        child: const Text('恢复'),
-      ),
-    ],
+    confirmLabel: '恢复',
   );
-  return confirmed == true;
+  return confirmed;
 }
 
 /// 数据包恢复的共用流程：选包、预检、说明影响与回退，再整库替换。
