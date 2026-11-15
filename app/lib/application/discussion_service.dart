@@ -29,7 +29,7 @@ import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
-import 'reply_outcome.dart';
+import 'answer_outcome.dart';
 import 'service_runtime.dart';
 
 import '../domain/rules/text.dart';
@@ -41,36 +41,31 @@ class ChatResult {
   const ChatResult({
     required this.userMessage,
     required this.assistantMessage,
-    required this.reply,
+    required this.outcome,
     this.skipped = const [],
     this.nextSteps = const [],
     this.citations = const [],
-    this.fromModel = false,
-    this.stopped = false,
-    this.interrupted = false,
-    this.modelFailed = false,
-    this.notice,
   });
 
   final ChatMessage userMessage;
   final ChatMessage assistantMessage;
-  final String reply;
+
+  /// 这次回答的正文、来源与中断情况。
+  final AnswerOutcome outcome;
+
+  /// 正文；停止或中断时是已经生成的部分。
+  String get reply => outcome.text;
+  bool get fromModel => outcome.fromModel;
+  bool get stopped => outcome.stopped;
+  bool get interrupted => outcome.interrupted;
+  bool get modelFailed => outcome.modelFailed;
+  String? get notice => outcome.notice;
+
   final List<String> skipped;
   final List<NextStepDraft> nextSteps;
 
   /// 本次回答引用的材料页；逐字核对不上的条目为未核实。
   final List<Citation> citations;
-  final bool fromModel;
-
-  /// 用户在生成中停止；回答只保留已经显示的部分。
-  final bool stopped;
-
-  /// 生成中断；回答只保留中断前已经显示的部分。
-  final bool interrupted;
-
-  /// 模型调用失败后换成本地规则回答；界面据此给出重试入口。
-  final bool modelFailed;
-  final String? notice;
 }
 
 /// 一条还没有被接受的下一步建议，带上它所在的消息与消息内的编号。
@@ -668,15 +663,17 @@ class DiscussionService {
     return ChatResult(
       userMessage: userMessage,
       assistantMessage: assistantMessage,
-      reply: reply,
+      outcome: AnswerOutcome(
+        text: reply,
+        fromModel: fromModel,
+        stopped: stopped,
+        interrupted: interrupted,
+        modelFailed: modelFailed,
+        notice: notice,
+      ),
       skipped: skipped,
       nextSteps: nextSteps,
       citations: citations,
-      fromModel: fromModel,
-      stopped: stopped,
-      interrupted: interrupted,
-      modelFailed: modelFailed,
-      notice: notice,
     );
   }
 

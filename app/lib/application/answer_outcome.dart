@@ -1,9 +1,9 @@
 import '../ai/buddy_prompt.dart';
 import '../domain/rules/notices.dart';
 
-/// 模型回答收尾之后的正文、来源与中断情况。
-class ReplyOutcome {
-  const ReplyOutcome({
+/// 一次回答收尾之后的正文、来源与中断情况；讨论与作答的最终结果都用它。
+class AnswerOutcome {
+  const AnswerOutcome({
     required this.text,
     required this.fromModel,
     required this.stopped,
@@ -29,7 +29,7 @@ class ReplyOutcome {
 /// 讨论与作答原先各写一份相同的判断与提示语，改其中一处时另一处仍按旧规则
 /// 处理；两条路径现在都走这里，只有退回本地的正文与提示由调用方给出。
 /// [localFallback] 只在模型给出中断却没有任何正文时调用。
-ReplyOutcome interpretModelAnswer(
+AnswerOutcome interpretModelAnswer(
   BuddyReply answer, {
   required String? notice,
   required String Function() localFallback,
@@ -38,7 +38,7 @@ ReplyOutcome interpretModelAnswer(
   if (answer.stopped) {
     final partial = answer.text.trim();
     if (partial.isEmpty) {
-      return const ReplyOutcome(
+      return const AnswerOutcome(
         text: '已停止生成。',
         fromModel: false,
         stopped: true,
@@ -47,7 +47,7 @@ ReplyOutcome interpretModelAnswer(
         notice: '已停止生成。',
       );
     }
-    return ReplyOutcome(
+    return AnswerOutcome(
       text: partial,
       fromModel: true,
       stopped: true,
@@ -59,7 +59,7 @@ ReplyOutcome interpretModelAnswer(
   if (answer.interrupted) {
     final partial = answer.text.trim();
     if (partial.isEmpty) {
-      return ReplyOutcome(
+      return AnswerOutcome(
         text: localFallback(),
         fromModel: false,
         stopped: false,
@@ -68,7 +68,7 @@ ReplyOutcome interpretModelAnswer(
         notice: joinNotices(notice, fallbackNotice),
       );
     }
-    return ReplyOutcome(
+    return AnswerOutcome(
       text: partial,
       fromModel: true,
       stopped: false,
@@ -81,7 +81,7 @@ ReplyOutcome interpretModelAnswer(
       ),
     );
   }
-  return ReplyOutcome(
+  return AnswerOutcome(
     text: answer.text,
     fromModel: true,
     stopped: false,

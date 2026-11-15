@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/application/reply_outcome.dart';
+import 'package:zhixin/application/answer_outcome.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 
 void main() {

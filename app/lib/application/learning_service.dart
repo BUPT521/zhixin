@@ -28,7 +28,7 @@ import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
-import 'reply_outcome.dart';
+import 'answer_outcome.dart';
 import 'service_runtime.dart';
 
 /// 一道题的当前状态：原题、尝试与一条未提交尝试。
@@ -50,25 +50,18 @@ class QuestionView {
 }
 
 class HelpResult {
-  const HelpResult({
-    required this.text,
-    required this.attempt,
-    this.fromModel = false,
-    this.stopped = false,
-    this.interrupted = false,
-    this.notice,
-  });
+  const HelpResult({required this.outcome, required this.attempt});
 
-  final String text;
+  /// 这次讲解的正文、来源与中断情况。
+  final AnswerOutcome outcome;
   final Attempt attempt;
-  final bool fromModel;
 
-  /// 用户在生成中停止；[text] 是停下时已经显示的部分。
-  final bool stopped;
-
-  /// 生成中断；[text] 是中断前已经显示的部分。
-  final bool interrupted;
-  final String? notice;
+  /// 正文；停止或中断时是已经生成的部分。
+  String get text => outcome.text;
+  bool get fromModel => outcome.fromModel;
+  bool get stopped => outcome.stopped;
+  bool get interrupted => outcome.interrupted;
+  String? get notice => outcome.notice;
 }
 
 /// 按本次最新的有判断的已提交尝试推出场次结果；没有提交或都没判断时留空。
@@ -409,12 +402,15 @@ class LearningService {
     }
     final updated = await attempts.attemptById(attempt.id);
     return HelpResult(
-      text: text,
+      outcome: AnswerOutcome(
+        text: text,
+        fromModel: fromModel,
+        stopped: stopped,
+        interrupted: interrupted,
+        modelFailed: false,
+        notice: notice,
+      ),
       attempt: updated ?? attempt,
-      fromModel: fromModel,
-      stopped: stopped,
-      interrupted: interrupted,
-      notice: notice,
     );
   }
 
