@@ -296,28 +296,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     if (error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                FLucideIcons.videoOff,
-                color: Colors.white70,
-                size: 40,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                error,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white),
-              ),
-              const SizedBox(height: 16),
-              forui.FButton(
-                mainAxisSize: MainAxisSize.min,
-                onPress: () => Navigator.of(context).pop(),
-                child: const Text('返回'),
-              ),
-            ],
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: InlineNotice(
+            message: error,
+            onRetry: () => Navigator.of(context).pop(),
+            retryLabel: '返回',
           ),
         ),
       );

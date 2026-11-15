@@ -226,23 +226,11 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
     if (_error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: theme.text.bodyMedium,
-              ),
-              const SizedBox(height: 16),
-              forui.FButton(
-                variant: forui.FButtonVariant.ghost,
-                mainAxisSize: MainAxisSize.min,
-                onPress: () => Navigator.of(context).pop(),
-                child: const Text('返回'),
-              ),
-            ],
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: InlineNotice(
+            message: _error!,
+            onRetry: () => Navigator.of(context).pop(),
+            retryLabel: '返回',
           ),
         ),
       );

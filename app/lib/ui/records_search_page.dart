@@ -546,12 +546,10 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
           if (status != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                status,
-                style: theme.text.bodySmall.copyWith(
-                  color: _semanticFailed ? theme.colors.error : null,
-                ),
-              ),
+              // 请求失败才用 InlineNotice；“正在按意思找”与“索引为空”仍是状态行。
+              child: _semanticFailed
+                  ? InlineNotice(message: status, onRetry: _searchByMeaning)
+                  : Text(status, style: theme.text.bodySmall),
             ),
         ],
       ),

@@ -1107,15 +1107,17 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
               ),
             )
           : week == null
-          ? EmptyState(
-              icon: FLucideIcons.calendarX,
-              title: '安排读取失败',
-              description: _error ?? '请刷新本机数据后重试。',
-              action: forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _load,
-                child: const Text('重试'),
+          // 读取失败沿用 InlineNotice 一条出口，说明与重试留在同一处。
+          ? Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: theme.space.page,
+                vertical: theme.space.xl,
+              ),
+              child: Center(
+                child: InlineNotice(
+                  message: _error ?? '安排读取失败，请刷新本机数据后重试。',
+                  onRetry: _load,
+                ),
               ),
             )
           // 读完第一次之后整页淡入；之后换页签或换周只淡入列表。

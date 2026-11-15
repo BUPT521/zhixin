@@ -1017,6 +1017,8 @@ class _PageDialogState extends State<_PageDialog> {
               ),
             ],
           ),
+          // 表单字段的校验就地写红字：错误属于这一页的页码，移到 InlineNotice
+          // 会离开字段所在的位置，用户看不出是哪一项没通过。
           if (_pageNoError != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),

@@ -11,6 +11,7 @@ import '../domain/models/chat_message.dart';
 import '../domain/models/material.dart' show Citation;
 import 'copy.dart';
 import 'markdown_text.dart';
+import 'workspace_widgets.dart';
 
 class DiscussionMessage extends StatelessWidget {
   const DiscussionMessage({
@@ -150,9 +151,7 @@ class _CitationTile extends StatelessWidget {
                       Text(
                         citation.verified ? '已核对' : '未能核对',
                         style: theme.text.bodySmall.copyWith(
-                          color: citation.verified
-                              ? colors.onSurfaceVariant
-                              : colors.error,
+                          color: colors.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -160,8 +159,17 @@ class _CitationTile extends StatelessWidget {
                 ),
               ],
             ),
-            child: SelectionArea(
-              child: Text(citation.quote, style: theme.text.bodySmall),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!citation.verified)
+                  const InlineNotice(
+                    message: '这段引文与材料原文对不上，标为未能核对；可以打开原文逐字对照。',
+                  ),
+                SelectionArea(
+                  child: Text(citation.quote, style: theme.text.bodySmall),
+                ),
+              ],
             ),
           ),
           if (onOpen != null)
