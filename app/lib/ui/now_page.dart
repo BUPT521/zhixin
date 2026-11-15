@@ -9,6 +9,7 @@ import 'theme.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_scope.dart';
+import 'data_version_watcher.dart';
 import '../application/context_service.dart';
 import '../application/continue_service.dart';
 import '../domain/models/conversation.dart';
@@ -55,7 +56,7 @@ class NowPage extends StatefulWidget {
   State<NowPage> createState() => _NowPageState();
 }
 
-class _NowPageState extends State<NowPage> {
+class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
   final _input = TextEditingController();
   NowActivity? _activity;
   List<ContinueEntry> _continue = const [];
@@ -64,7 +65,6 @@ class _NowPageState extends State<NowPage> {
   bool _opening = false;
 
   /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
-  ValueListenable<int>? _dataVersion;
 
   /// 两段各自读取、各自出错；一段失败不挡住另一段。
   String? _activityError;
@@ -83,7 +83,7 @@ class _NowPageState extends State<NowPage> {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
-    _watchDataVersion(AppScope.of(context).dataVersion);
+    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     if (!_active) return;
     _started = true;
@@ -106,15 +106,11 @@ class _NowPageState extends State<NowPage> {
     _load();
   }
 
-  void _watchDataVersion(ValueListenable<int> version) {
-    if (identical(version, _dataVersion)) return;
-    _dataVersion?.removeListener(_onDataChanged);
-    _dataVersion = version;
-    version.addListener(_onDataChanged);
-  }
+  @override
+  bool get dataVersionActive => _active;
 
-  void _onDataChanged() {
-    if (!mounted || !_active) return;
+  @override
+  void onDataVersionChanged() {
     _load();
   }
 
@@ -127,7 +123,6 @@ class _NowPageState extends State<NowPage> {
   @override
   void dispose() {
     widget.activeTab.removeListener(_onActiveChanged);
-    _dataVersion?.removeListener(_onDataChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     _input.dispose();
     super.dispose();

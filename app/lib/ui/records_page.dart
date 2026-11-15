@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import 'data_version_watcher.dart';
 import '../application/request_gate.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/conversation.dart';
@@ -74,7 +75,8 @@ class RecordsPage extends StatefulWidget {
   State<RecordsPage> createState() => _RecordsPageState();
 }
 
-class _RecordsPageState extends State<RecordsPage> {
+class _RecordsPageState extends State<RecordsPage>
+    with DataVersionWatcher<RecordsPage> {
   final GlobalKey<MaterialListState> _materialsKey =
       GlobalKey<MaterialListState>();
   final TextEditingController _searchHint = TextEditingController();
@@ -103,7 +105,6 @@ class _RecordsPageState extends State<RecordsPage> {
   int _seenRequest = 0;
 
   /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
-  ValueListenable<int>? _dataVersion;
 
   /// 列表当前显示的是哪一组筛选的结果；读完新筛选之后才换，列表据此淡入，
   /// 刷新或从详情返回时筛选没变，列表不闪。
@@ -126,7 +127,7 @@ class _RecordsPageState extends State<RecordsPage> {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
-    _watchDataVersion(AppScope.of(context).dataVersion);
+    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started || !_active) return;
     _started = true;
     _load();
@@ -149,7 +150,6 @@ class _RecordsPageState extends State<RecordsPage> {
   void dispose() {
     widget.activeTab.removeListener(_onActiveChanged);
     widget.request.removeListener(_onRequestChanged);
-    _dataVersion?.removeListener(_onDataChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     _searchHint.dispose();
     super.dispose();
@@ -174,15 +174,11 @@ class _RecordsPageState extends State<RecordsPage> {
     });
   }
 
-  void _watchDataVersion(ValueListenable<int> version) {
-    if (identical(version, _dataVersion)) return;
-    _dataVersion?.removeListener(_onDataChanged);
-    _dataVersion = version;
-    version.addListener(_onDataChanged);
-  }
+  @override
+  bool get dataVersionActive => _active;
 
-  void _onDataChanged() {
-    if (!mounted || !_active) return;
+  @override
+  void onDataVersionChanged() {
     _load();
     if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
   }

@@ -8,6 +8,7 @@ import 'theme.dart';
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../app_scope.dart';
+import 'data_version_watcher.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
 import '../platform/data_package_export.dart';
@@ -31,7 +32,8 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage>
+    with DataVersionWatcher<SettingsPage> {
   final _baseUrl = TextEditingController();
   LlmApi _api = LlmApi.chat;
   final _model = TextEditingController();
@@ -57,13 +59,17 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_started) return;
     _started = true;
     _scope = AppScope.of(context);
-    _scope!.dataVersion.addListener(_load);
+    watchDataVersion(_scope!.dataVersion);
+    _load();
+  }
+
+  @override
+  void onDataVersionChanged() {
     _load();
   }
 
   @override
   void dispose() {
-    _scope?.dataVersion.removeListener(_load);
     _baseUrl.dispose();
     _model.dispose();
     _contextWindow.dispose();

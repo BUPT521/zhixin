@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import 'data_version_watcher.dart';
 import 'plan_dialogs.dart';
 import '../application/plan_service.dart';
 import '../application/plan_week_reader.dart';
@@ -61,7 +62,7 @@ class PlanPage extends StatefulWidget {
   State<PlanPage> createState() => _PlanPageState();
 }
 
-class _PlanPageState extends State<PlanPage> {
+class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   PlanWeek? _week;
   bool _loading = true;
   bool _started = false;
@@ -79,7 +80,6 @@ class _PlanPageState extends State<PlanPage> {
   final Set<int> _visited = {0};
 
   /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
-  ValueListenable<int>? _dataVersion;
 
   /// 当前显示的是哪一周；读完换周之后才更新，列表据此淡入，
   /// 同一周的刷新与从详情返回不闪。
@@ -129,7 +129,7 @@ class _PlanPageState extends State<PlanPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final scope = AppScope.of(context);
-    _watchDataVersion(scope.dataVersion);
+    watchDataVersion(scope.dataVersion);
     if (_started) return;
     _started = true;
     final policy = scope.timePolicy;
@@ -157,7 +157,6 @@ class _PlanPageState extends State<PlanPage> {
   void dispose() {
     widget.activeTab?.removeListener(_onActiveChanged);
     widget.request?.removeListener(_onRequestChanged);
-    _dataVersion?.removeListener(_onDataChanged);
     super.dispose();
   }
 
@@ -176,15 +175,11 @@ class _PlanPageState extends State<PlanPage> {
     });
   }
 
-  void _watchDataVersion(ValueListenable<int> version) {
-    if (identical(version, _dataVersion)) return;
-    _dataVersion?.removeListener(_onDataChanged);
-    _dataVersion = version;
-    version.addListener(_onDataChanged);
-  }
+  @override
+  bool get dataVersionActive => _active;
 
-  void _onDataChanged() {
-    if (!mounted || !_active) return;
+  @override
+  void onDataVersionChanged() {
     _load();
   }
 
