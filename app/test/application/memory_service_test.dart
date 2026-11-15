@@ -29,11 +29,12 @@ void main() {
 
     // 内容没变时再保存一次，仍然只有这一条记忆，也不形成新提交。
     final head = await rig.engine.headId(rig.db.raw);
-    final commitId = await service.save(
+    final result = await service.save(
       (await memories.byId(id))!,
       content: '条件概率不等于独立性，需要单独判断',
     );
-    expect(commitId, isNull);
+    expect(result.changed, isFalse);
+    expect(result.skippedReason, isNotNull);
     expect(await memories.list(), hasLength(1));
     expect(await rig.engine.headId(rig.db.raw), head);
   });
@@ -52,15 +53,15 @@ void main() {
       validUntil: DateTime(2026, 12, 1),
     );
 
-    final commitId = await service.save(
+    final result = await service.save(
       (await memories.byId(id))!,
       content: '新内容',
       validUntil: DateTime(2026, 12, 10),
     );
-    expect(commitId, isNotNull);
+    expect(result.commitId, isNotNull);
     expect((await memories.byId(id))!.content, '新内容');
 
-    final undone = await rig.revisions.undoCommit(commitId!);
+    final undone = await rig.revisions.undoCommit(result.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
     final restored = (await memories.byId(id))!;
     expect(restored.content, '旧内容');
@@ -80,11 +81,11 @@ void main() {
       content: '第 8 题独立完成',
     );
 
-    final commitId = await service.delete(id);
-    expect(commitId, isNotNull);
+    final result = await service.delete(id);
+    expect(result.commitId, isNotNull);
     expect((await memories.byId(id))!.status, 'deleted');
 
-    final undone = await rig.revisions.undoCommit(commitId!);
+    final undone = await rig.revisions.undoCommit(result.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
     expect((await memories.byId(id))!.status, 'active');
   });
@@ -98,14 +99,14 @@ void main() {
       transactions: WriteTransactions(rig.db),
     );
 
-    final commitId = await service.add(
+    final result = await service.add(
       kind: MemoryKind.preference,
       content: '晚上学习',
     );
-    expect(commitId, isNotNull);
+    expect(result.commitId, isNotNull);
     expect(await memories.list(includeInactive: true), hasLength(1));
 
-    final undone = await rig.revisions.undoCommit(commitId!);
+    final undone = await rig.revisions.undoCommit(result.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
     expect(await memories.list(includeInactive: true), isEmpty);
   });

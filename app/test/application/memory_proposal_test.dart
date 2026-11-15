@@ -210,7 +210,7 @@ void main() {
     expect(again.skipped, isNotEmpty);
 
     // 记忆页仍可用既有入口纠正与删除；这里验证入口存在且能改变状态。
-    expect(await memoryService.delete(memory.id), isNotNull);
+    expect((await memoryService.delete(memory.id)).commitId, isNotNull);
     expect(
       (await MemoryRepository(rig.db.rawDb).byId(memory.id))!.status,
       'deleted',

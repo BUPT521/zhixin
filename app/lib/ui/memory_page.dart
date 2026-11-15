@@ -83,14 +83,14 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memory.edit.add(
+      final result = await AppScope.of(context).memory.edit.add(
         kind: draft.kind,
         content: draft.content,
         validUntil: draft.validUntil,
       );
       await _load();
-      if (!mounted || commitId == null) return;
-      _receipt('已记下这条记忆', commitId);
+      if (!mounted || !result.changed) return;
+      _receipt('已记下这条记忆', result.commitId!);
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(
@@ -113,15 +113,15 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memory.edit
+      final result = await AppScope.of(context).memory.edit
           .save(memory, content: draft.content, validUntil: draft.validUntil);
       await _load();
       if (!mounted) return;
-      if (commitId == null) {
-        showToast(context, '这条记忆没有变化。');
+      if (!result.changed) {
+        showToast(context, result.skippedReason ?? '这条记忆没有变化。');
         return;
       }
-      _receipt('已修改这条记忆', commitId);
+      _receipt('已修改这条记忆', result.commitId!);
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(
@@ -147,10 +147,10 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (!confirmed || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).memory.edit.delete(memory.id);
+      final result = await AppScope.of(context).memory.edit.delete(memory.id);
       await _load();
-      if (!mounted || commitId == null) return;
-      _receipt('已删除这条记忆', commitId);
+      if (!mounted || !result.changed) return;
+      _receipt('已删除这条记忆', result.commitId!);
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(

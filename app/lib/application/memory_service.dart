@@ -2,6 +2,7 @@ import '../data/db/write_transactions.dart';
 import '../data/revisions/revision_actions.dart';
 import '../data/repository/memory_repository.dart';
 import '../domain/models/memory.dart';
+import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
 
 /// 记忆页：列出、修改、删除；修改后只碰记忆表，回答读的是新内容。
@@ -17,7 +18,7 @@ class MemoryService {
   Future<List<Memory>> list() => repository.list(includeInactive: true);
 
   /// 用户改记忆时直接更新内容；回答读的是更新后的记忆本身。
-  Future<int?> save(
+  Future<WriteResult> save(
     Memory memory, {
     required String content,
     DateTime? validUntil,
@@ -29,7 +30,7 @@ class MemoryService {
       if (current == null) throw StateError('这条记忆已不存在');
       if (current.content == text &&
           _sameValidUntil(current.validUntil, validUntil)) {
-        return null;
+        return const WriteResult.skipped('这条记忆没有变化');
       }
       await repository.updateContent(
         memory.id,
@@ -37,11 +38,11 @@ class MemoryService {
         validUntil: validUntil,
         transaction: txn,
       );
-      return txn.requireCommitId();
+      return txn.result();
     }, label: editMemoryAction);
   }
 
-  Future<int?> add({
+  Future<WriteResult> add({
     required MemoryKind kind,
     required String content,
     DateTime? validUntil,
@@ -54,15 +55,15 @@ class MemoryService {
         validUntil: validUntil,
         transaction: txn,
       );
-      return txn.requireCommitId();
+      return txn.result();
     }, label: addMemoryAction);
   }
 
   /// 删除是软删除；撤销时按反向规则把状态改回 active。
-  Future<int?> delete(int id) {
+  Future<WriteResult> delete(int id) {
     return transactions.run((txn) async {
       await repository.delete(id, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: deleteMemoryAction);
   }
 

@@ -1,5 +1,6 @@
 import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
+import '../../domain/models/write_result.dart';
 import 'guarded_database.dart';
 import 'raw_executor.dart';
 
@@ -21,6 +22,10 @@ class WriteTransaction {
     if (id == null) throw StateError('这次写入没有进入数据版本，无法生成回执');
     return id;
   }
+
+  /// 本次写入的结果：形成提交时带编号，没有净变化时按跳过返回。
+  Future<WriteResult> result({String? skippedReason}) async =>
+      WriteResult.of(await commitId(), skippedReason: skippedReason);
 }
 
 class WriteTransactions {
