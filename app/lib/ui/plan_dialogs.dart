@@ -7,6 +7,7 @@ import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
 import 'copy.dart';
 import 'format.dart';
+import 'goal_picker.dart';
 import 'theme.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_select.dart';
@@ -42,7 +43,7 @@ class _ItemDialogState extends State<ItemDialog> {
   final _title = TextEditingController();
   final _note = TextEditingController();
   final _minutes = TextEditingController();
-  int _goalId = 0;
+  GoalChoice _goal = GoalChoice.unassigned;
   DateTime? _due;
 
   @override
@@ -65,14 +66,12 @@ class _ItemDialogState extends State<ItemDialog> {
             label: const Text('事项名称'),
           ),
           SizedBox(height: context.zhixin.space.gap),
-          ZhixinSelect<int>(
-            value: _goalId,
-            label: '目标（可选）',
-            options: {
-              0: '单独记录',
-              for (final goal in widget.goals) goal.id: goal.title,
-            },
-            onChange: (value) => setState(() => _goalId = value ?? 0),
+          ZhixinSelect<GoalChoice>(
+            value: _goal,
+            label: goalSelectLabel,
+            options: goalChoiceOptions(widget.goals),
+            onChange: (value) =>
+                setState(() => _goal = value ?? GoalChoice.unassigned),
           ),
           SizedBox(height: context.zhixin.space.gap),
           forui.FTextField(
@@ -127,7 +126,7 @@ class _ItemDialogState extends State<ItemDialog> {
             Navigator.of(context).pop(
               ItemDraft(
                 title: title,
-                goalId: _goalId == 0 ? null : _goalId,
+                goalId: _goal.goalId,
                 note: _note.text.trim().isEmpty ? null : _note.text.trim(),
                 dueAt: _due,
                 minutes: int.tryParse(_minutes.text.trim()),

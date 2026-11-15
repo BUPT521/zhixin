@@ -7,12 +7,45 @@ import 'theme.dart';
 import '../domain/models/study.dart';
 import 'zhixin_sheet.dart';
 
+/// 没有归属时的统一写法；00 与 02 文档都写“无归属”，界面不再写“单独记录”。
+const goalUnassigned = '无归属';
+
+/// 表单里选择归属时的标签；选项本身见 [goalChoiceOptions]。
+const goalSelectLabel = '目标（可选）';
+
 /// 一次明确的归属选择；`goalId` 为空表示不归属任何目标。
+///
+/// 选择器、下拉与提交都用这一个容器，页面不再各自用 0 当哨兵。
 class GoalChoice {
   const GoalChoice(this.goalId);
 
+  /// 不归属任何目标。
+  static const unassigned = GoalChoice(null);
+
   final int? goalId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is GoalChoice && other.goalId == goalId;
+
+  @override
+  int get hashCode => goalId.hashCode;
 }
+
+/// 一个归属选择器的选项：未归属在前，随后是目标。
+Map<GoalChoice, String> goalChoiceOptions(Iterable<LearningGoal> goals) => {
+  GoalChoice.unassigned: goalUnassigned,
+  for (final goal in goals) GoalChoice(goal.id): goal.title,
+};
+
+/// 材料导入等处只缓存目标的编号、名称与是否有效，选项只列仍然有效的目标。
+Map<GoalChoice, String> goalChoiceOptionsFrom(
+  Iterable<({int id, String title, bool active})> goals,
+) => {
+  GoalChoice.unassigned: goalUnassigned,
+  for (final goal in goals)
+    if (goal.active) GoalChoice(goal.id): goal.title,
+};
 
 /// 让用户选择这次内容的归属；列表里始终保留“不归属任何目标”。
 ///
@@ -35,16 +68,16 @@ Future<GoalChoice?> showGoalChoice(
           Text(title, style: theme.text.titleMedium),
           const SizedBox(height: 4),
           Text(note, style: theme.text.bodySmall),
-          SizedBox(height: context.zhixin.space.gap),
+          SizedBox(height: theme.space.gap),
           forui.FTile(
             prefix: Icon(
               initialGoalId == null
                   ? FLucideIcons.circleDot
                   : FLucideIcons.circle,
             ),
-            title: const Text('单独记录'),
+            title: const Text(goalUnassigned),
             subtitle: const Text('独立问题与讨论可直接回答和继续'),
-            onPress: () => Navigator.of(context).pop(const GoalChoice(null)),
+            onPress: () => Navigator.of(context).pop(GoalChoice.unassigned),
           ),
           for (final goal in goals)
             forui.FTile(

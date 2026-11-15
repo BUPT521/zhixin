@@ -1,16 +1,25 @@
+import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:path/path.dart' as p;
 
 import '../application/docx_import.dart';
 import '../domain/models/material.dart';
+import 'goal_picker.dart';
+import 'theme.dart';
+import 'zhixin_dialog.dart';
+import 'zhixin_select.dart';
 
+/// 导入 .docx 前的确认：名称、归属目标与片段预览。
+///
+/// 整框与 [ZhixinDialogLayout] 共用标题、正文与按钮排法，名称与归属用 Forui
+/// 控件，归属选择与材料、事项用的是同一个 [goalChoiceOptionsFrom]。
 Future<({String title, int? goalId})?> showDocxReview(
   BuildContext context, {
   required DocxImport document,
   required List<({int id, String title, bool active})> goals,
-}) => showDialog<({String title, int? goalId})>(
+}) => showZhixinDialog<({String title, int? goalId})>(
   context: context,
-  builder: (_) => _DocxReviewDialog(document: document, goals: goals),
+  builder: (context) => _DocxReviewDialog(document: document, goals: goals),
 );
 
 class _DocxReviewDialog extends StatefulWidget {
@@ -27,7 +36,7 @@ class _DocxReviewDialogState extends State<_DocxReviewDialog> {
   late final _title = TextEditingController(
     text: p.basenameWithoutExtension(widget.document.fileName),
   );
-  int _goalId = 0;
+  GoalChoice _goal = GoalChoice.unassigned;
 
   @override
   void dispose() {
@@ -38,76 +47,69 @@ class _DocxReviewDialogState extends State<_DocxReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final sections = widget.document.sections;
-    final theme = Theme.of(context);
-    return AlertDialog(
+    final theme = context.zhixin;
+    return ZhixinDialogLayout(
       title: const Text('预览 Word 材料'),
-      scrollable: true,
-      content: SizedBox(
-        width: 440,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(widget.document.fileName),
-            const SizedBox(height: 12),
-            TextField(
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(widget.document.fileName),
+          SizedBox(height: theme.space.gap),
+          forui.FTextField(
+            control: .managed(
               controller: _title,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(labelText: '材料名称'),
+              onChange: (_) => setState(() {}),
             ),
-            if (widget.goals.isNotEmpty)
-              DropdownButtonFormField<int>(
-                initialValue: _goalId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: '所属目标'),
-                items: [
-                  const DropdownMenuItem(value: 0, child: Text('无归属')),
-                  for (final goal in widget.goals)
-                    DropdownMenuItem(value: goal.id, child: Text(goal.title)),
-                ],
-                onChanged: (value) => _goalId = value ?? 0,
-              ),
-            const SizedBox(height: 12),
-            Text('${sections.length} 个正文片段', style: theme.textTheme.labelLarge),
-            SizedBox(
-              height: 180,
-              child: ListView.builder(
-                primary: false,
-                itemCount: sections.length,
-                itemBuilder: (context, index) {
-                  final section = sections[index];
-                  return ExpansionTile(
-                    key: PageStorageKey(section.pageNo),
-                    tilePadding: EdgeInsets.zero,
-                    title: Text(
-                      '${materialPosition(section.pageNo, isDocx: true)}'
-                      '${section.label == null ? '' : ' · ${section.label}'}',
-                    ),
-                    children: [
-                      SelectableText(
-                        section.content,
-                        key: const PageStorageKey('word-preview-text'),
-                      ),
-                    ],
-                  );
-                },
-              ),
+            label: const Text('材料名称'),
+          ),
+          if (widget.goals.isNotEmpty) ...[
+            SizedBox(height: theme.space.gap),
+            ZhixinSelect<GoalChoice>(
+              value: _goal,
+              label: goalSelectLabel,
+              options: goalChoiceOptionsFrom(widget.goals),
+              onChange: (value) =>
+                  setState(() => _goal = value ?? GoalChoice.unassigned),
             ),
           ],
-        ),
+          SizedBox(height: theme.space.gap),
+          Text('${sections.length} 个正文片段', style: theme.text.labelLarge),
+          SizedBox(
+            height: 180,
+            child: ListView.builder(
+              primary: false,
+              itemCount: sections.length,
+              itemBuilder: (context, index) {
+                final section = sections[index];
+                return ExpansionTile(
+                  key: PageStorageKey(section.pageNo),
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(
+                    '${materialPosition(section.pageNo, isDocx: true)}'
+                    '${section.label == null ? '' : ' · ${section.label}'}',
+                  ),
+                  children: [
+                    SelectableText(
+                      section.content,
+                      key: const PageStorageKey('word-preview-text'),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _title.text.trim().isEmpty
+        cancelZhixinButton(context),
+        forui.FButton(
+          mainAxisSize: MainAxisSize.min,
+          onPress: _title.text.trim().isEmpty
               ? null
-              : () => Navigator.of(context).pop((
-                  title: _title.text.trim(),
-                  goalId: _goalId == 0 ? null : _goalId,
-                )),
+              : () =>
+                    Navigator.of(context)
+                        .pop((title: _title.text.trim(), goalId: _goal.goalId)),
           child: const Text('保存材料'),
         ),
       ],

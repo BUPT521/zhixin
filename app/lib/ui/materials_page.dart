@@ -807,7 +807,7 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
   final _label = TextEditingController();
   final _content = TextEditingController();
   String _kind = 'slides';
-  int _goalId = 0;
+  GoalChoice _goal = GoalChoice.unassigned;
 
   @override
   void dispose() {
@@ -850,15 +850,12 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
             hint: '教材第 8 章，或文件与页码说明',
           ),
           SizedBox(height: context.zhixin.space.gap),
-          ZhixinSelect<int>(
-            value: _goalId,
-            label: '目标（可选）',
-            options: {
-              0: '单独记录',
-              for (final goal in widget.goals)
-                if (goal.active) goal.id: goal.title,
-            },
-            onChange: (value) => setState(() => _goalId = value ?? 0),
+          ZhixinSelect<GoalChoice>(
+            value: _goal,
+            label: goalSelectLabel,
+            options: goalChoiceOptionsFrom(widget.goals),
+            onChange: (value) =>
+                setState(() => _goal = value ?? GoalChoice.unassigned),
           ),
           Row(
             children: [
@@ -916,7 +913,7 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
                     ? null
                     : _source.text.trim(),
                 label: _label.text.trim().isEmpty ? null : _label.text.trim(),
-                goalId: _goalId == 0 ? null : _goalId,
+                goalId: _goal.goalId,
               ),
             ]);
           },

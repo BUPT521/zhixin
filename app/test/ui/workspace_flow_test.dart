@@ -2065,7 +2065,7 @@ void main() {
     await tester.ensureVisible(find.text('保存并选时间'));
     await tester.tap(find.text('保存并选时间').hitTestable());
     await settle(tester);
-    await tester.tap(find.text('单独记录').hitTestable());
+    await tester.tap(find.text('无归属').hitTestable());
     await settle(tester);
     expect(find.text('预约学习时间'), findsOneWidget);
     await tester.tap(find.widgetWithText(forui.FButton, '预约').hitTestable());
