@@ -16,20 +16,10 @@ Set<String> allowedDatabaseTableNames() => {
   ...ftsTableNames(),
 };
 
-Set<String> allowedDatabaseIndexNames() {
-  final names = <String>{};
-  final pattern = RegExp(
-    r'CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+"?([A-Za-z0-9_]+)"?',
-  );
-  for (final statement in schemaStatements()) {
-    final match = pattern.firstMatch(statement);
-    if (match != null) names.add(match.group(1)!);
-  }
-  for (final table in versionedTableNames) {
-    names.add('idx_rev_stage_${table}_commit');
-  }
-  return names;
-}
+Set<String> allowedDatabaseIndexNames() => {
+  ...schemaIndexNames(),
+  for (final table in versionedTableNames) 'idx_rev_stage_${table}_commit',
+};
 
 Set<String> allowedDatabaseTriggerNames() => {
   for (final table in versionedTableNames)

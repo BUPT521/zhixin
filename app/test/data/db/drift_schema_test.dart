@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/schema.dart'
-    show requiredColumns, schemaIndexStatements, schemaTableNames;
+    show requiredColumns, schemaIndexNames, schemaTableNames;
 
 void main() {
   test('drift 建出的库覆盖 schema 26 的全部表与必需列', () async {
@@ -82,7 +82,7 @@ void main() {
     expect(foreignKeys.read<int>('foreign_keys'), 1);
   });
 
-  test('新库建立全部业务索引并开启 WAL', () async {
+  test('新库建立表类声明的全部业务索引并开启 WAL', () async {
     final temp = await Directory.systemTemp.createTemp('zhixin_drift_schema');
     addTearDown(() => temp.delete(recursive: true));
     final db = AppDatabase(
@@ -100,12 +100,7 @@ void main() {
                 .get())
             .map((row) => row.read<String>('name'))
             .toSet();
-    for (final statement in schemaIndexStatements()) {
-      final match = RegExp(r'INDEX\s+IF NOT EXISTS\s+(\w+)')
-          .firstMatch(statement);
-      expect(match, isNotNull, reason: statement);
-      expect(names, contains(match!.group(1)), reason: statement);
-    }
+    expect(names, schemaIndexNames());
 
     final mode = await db.customSelect('PRAGMA journal_mode').getSingle();
     expect(mode.read<String>('journal_mode'), 'wal');

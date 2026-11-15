@@ -1,46 +1,71 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/data/db/schema.dart';
+import 'package:zhixin/data/db/drift/app_database.dart';
 
-/// 01 第 4 章的 DDL 是给人看的完整结构，建表语句以 schema.dart 为准。
+/// 01 第 4 章的 DDL 与第 6 章的索引是 drift 建库结果的抄件。
 ///
-/// 两边各写一份必然漂移，所以这里按表比对建表语句、按索引比对第 6 章的索引：
-/// 代码改了而文档没改，或者文档改了而代码没跟，都会在 CI 里失败，提示改哪
-/// 一边，而不是让文档慢慢过期。
+/// 表结构与索引以 `app/lib/data/db/drift/tables.dart` 的表类为准：这里打开一份
+/// 内存库读 `sqlite_master`，再与文档比对。代码改了而文档没改，或者文档改了
+/// 而代码没跟，都会在 CI 里失败，而不是让文档慢慢过期。
 void main() {
-  test('01 第 4 章的建表语句与 schemaStatements() 一致', () {
-    final doc = File('../docs/01-ER数据模型.md').readAsStringSync();
+  late final String doc;
+  late final Map<String, String> tables;
+  late final Set<String> indexes;
+
+  setUpAll(() async {
+    doc = File('../docs/01-ER数据模型.md').readAsStringSync();
+    final db = AppDatabase.memory();
+    try {
+      final rows = await db
+          .customSelect(
+            "SELECT type, name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL",
+          )
+          .get();
+      tables = {
+        for (final row in rows)
+          if (row.read<String>('type') == 'table')
+            row.read<String>('name'): _compact(row.read<String>('sql')),
+      };
+      indexes = {
+        for (final row in rows)
+          if (row.read<String>('type') == 'index')
+            '${row.read<String>('name')} ${_indexShape(row.read<String>('sql'))}',
+      };
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('01 第 4 章的建表语句与表类建出的表一致', () {
     final documented = _byTable(_documentedStatements(doc));
-    final actual = _byTable(schemaStatements().map(_compact));
 
     expect(
       documented.keys.toSet(),
-      actual.keys.toSet(),
+      tables.keys.toSet(),
       reason: '两边建表语句覆盖的表不一致',
     );
-    for (final entry in actual.entries) {
+    for (final entry in tables.entries) {
       expect(
         documented[entry.key],
         entry.value,
-        reason: '${entry.key} 的建表语句不一致，改文档或改 schema.dart，两边只能有一份',
+        reason: '${entry.key} 的建表语句与建库结果不一致，改文档或改 tables.dart，两边只能有一份',
       );
     }
   });
 
-  test('01 第 6 章的索引与 schemaStatements() 一致', () {
-    final doc = File('../docs/01-ER数据模型.md').readAsStringSync();
+  test('01 第 6 章的索引与表类声明的索引一致', () {
     final documented = _documentedIndexes(doc);
-    final actual = _indexes(schemaStatements());
 
-    expect(documented.difference(actual), isEmpty, reason: '文档里有、代码里没有的索引');
-    expect(actual.difference(documented), isEmpty, reason: '代码里有、文档里没有的索引');
+    expect(documented.difference(indexes), isEmpty, reason: '文档里有、建库结果里没有的索引');
+    expect(indexes.difference(documented), isEmpty, reason: '建库结果里有、文档里没有的索引');
   });
 }
 
 /// 按表名归并建表语句；顺序不同不算差异，同一张表的内容不同才算。
 Map<String, String> _byTable(Iterable<String> statements) {
-  final pattern = RegExp(r'^CREATE TABLE IF NOT EXISTS (\w+)');
+  final pattern = RegExp(r'^CREATE TABLE (?:IF NOT EXISTS )?"?(\w+)"?');
   return {
     for (final statement in statements)
       if (pattern.firstMatch(statement) case final match?)
@@ -48,7 +73,7 @@ Map<String, String> _byTable(Iterable<String> statements) {
   };
 }
 
-/// 取出“## 4. 完整 DDL”下的 sql 代码块，去掉连接设置那几行。
+/// 取出“## 4. 完整 DDL”下的建表语句；连接设置与种子数据不属于结构。
 List<String> _documentedStatements(String markdown) {
   final section = RegExp(
     r'^## 4\. 完整 DDL\s*$([\s\S]*?)(?=^## )',
@@ -61,43 +86,56 @@ List<String> _documentedStatements(String markdown) {
   final statements = <String>[];
   for (final piece in block!.group(1)!.split(';')) {
     final compact = _compact(piece);
-    if (compact.isEmpty || compact.startsWith('PRAGMA')) continue;
-    statements.add(compact);
+    if (compact.startsWith('CREATE TABLE')) statements.add(compact);
   }
   return statements;
 }
 
-String _compact(String sql) =>
-    sql.replaceAll(RegExp(r'\s+'), ' ').replaceAll(RegExp(r';\s*$'), '').trim();
-
-/// 代码里的索引：表名与列名按固定写法归并，列修饰（ASC/DESC）不算差异。
-Set<String> _indexes(Iterable<String> statements) {
-  final pattern = RegExp(
-    r'CREATE (?:UNIQUE )?INDEX IF NOT EXISTS \w+\s+ON\s+(\w+)\s*\(([^)]*)\)',
-  );
-  return {
-    for (final statement in statements)
-      for (final match in pattern.allMatches(_compact(statement)))
-        '${match.group(1)}(${_columns(match.group(2)!)})',
-  };
-}
-
-/// 第 6 章表格里的索引：单元格写成 `表名(列, 列)`，一行可以写多个。
+/// 第 6 章表格里的索引：一行一个，第一格是索引名，第二格是 `表名(列, 列)`。
 Set<String> _documentedIndexes(String markdown) {
   final section = RegExp(
     r'^## 6\. 索引与典型查询\s*$([\s\S]*?)(?=^## )',
     multiLine: true,
   ).firstMatch(markdown);
   expect(section, isNotNull, reason: '找不到“## 6. 索引与典型查询”一节');
-  final table = section!.group(1)!.split('```').first;
-  return {
-    for (final match in RegExp(r'`(\w+)\(([^)]*)\)`').allMatches(table))
-      '${match.group(1)}(${_columns(match.group(2)!)})',
-  };
+  final entries = <String>{};
+  for (final line in section!.group(1)!.split('\n')) {
+    final cells = line.split('|').map((cell) => cell.trim()).toList();
+    if (cells.length < 4) continue;
+    final name = RegExp(r'^`(idx_\w+)`$').firstMatch(cells[1])?.group(1);
+    final shapeMatch = RegExp(r'^`(\w+)\(([^)]*)\)`$').firstMatch(cells[2]);
+    if (name == null || shapeMatch == null) continue;
+    final columns = shapeMatch
+        .group(2)!
+        .split(',')
+        .map((column) => column.trim())
+        .join(', ');
+    entries.add(
+      '$name ${shapeMatch.group(1)}($columns)'
+      '${line.contains('唯一') ? ' 唯一' : ''}',
+    );
+  }
+  return entries;
 }
 
-String _columns(String raw) => raw
-    .split(',')
-    .map((column) => column.replaceAll(RegExp(r'\s+(ASC|DESC)'), '').trim())
-    .where((column) => column.isNotEmpty)
-    .join(',');
+/// `CREATE [UNIQUE] INDEX <名> ON <表> (<列>)` 里的“表(列)”与唯一标记。
+String _indexShape(String sql) {
+  final match = RegExp(
+    r'CREATE (UNIQUE )?INDEX "?\w+"? ON "?(\w+)"?\s*\(([^)]*)\)',
+  ).firstMatch(_compact(sql));
+  expect(match, isNotNull, reason: '无法解析索引语句：$sql');
+  final columns = match!
+      .group(3)!
+      .replaceAll('"', '')
+      .split(',')
+      .map((column) => column.trim())
+      .join(', ');
+  return '${match.group(2)}($columns)${match.group(1) != null ? ' 唯一' : ''}';
+}
+
+String _compact(String sql) => sql
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .replaceAll(RegExp(r'\(\s+'), '(')
+    .replaceAll(RegExp(r'\s+\)'), ')')
+    .replaceAll(RegExp(r';\s*$'), '')
+    .trim();

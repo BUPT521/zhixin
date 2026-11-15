@@ -2,10 +2,10 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 26 的 23 张表，按 docs/01 第 4–5 章的 DDL 转写。
+// 当前 schema 26 的 23 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
-// 表的 SQL 名称、列名、外键动作与主要约束保持与原 DDL 一致；部分索引、
-// 采集暂存表与触发器仍由版本引擎安装，不在表类里声明。
+// 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
+// `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 
 @DataClassName('AppMetaRow')
 class AppMeta extends Table {
@@ -62,6 +62,7 @@ class AssetObjects extends Table {
   Set<Column> get primaryKey => {hash};
 }
 
+@TableIndex(name: 'idx_asset_chunk_hash', columns: {#hash, #seq})
 @DataClassName('AssetChunkRow')
 class AssetChunks extends Table {
   @override
@@ -75,6 +76,7 @@ class AssetChunks extends Table {
   Set<Column> get primaryKey => {hash, seq};
 }
 
+@TableIndex(name: 'idx_material_goal', columns: {#goalId})
 @DataClassName('MaterialRow')
 class Materials extends Table {
   @override
@@ -102,6 +104,7 @@ class Materials extends Table {
   ];
 }
 
+@TableIndex(name: 'idx_material_page_material', columns: {#materialId, #pageNo})
 @DataClassName('MaterialPageRow')
 class MaterialPages extends Table {
   @override
@@ -121,6 +124,9 @@ class MaterialPages extends Table {
   ];
 }
 
+@TableIndex(name: 'idx_conversation_status', columns: {#status, #updatedAt})
+@TableIndex(name: 'idx_conversation_goal', columns: {#goalId})
+@TableIndex(name: 'idx_conversation_material', columns: {#materialId})
 @DataClassName('ConversationRow')
 class Conversations extends Table {
   @override
@@ -153,6 +159,10 @@ class Conversations extends Table {
   TextColumn get updatedAt => text()();
 }
 
+@TableIndex(
+  name: 'idx_message_conversation',
+  columns: {#conversationId, #createdAt},
+)
 @DataClassName('MessageRow')
 class Messages extends Table {
   @override
@@ -168,6 +178,7 @@ class Messages extends Table {
   TextColumn get createdAt => text()();
 }
 
+@TableIndex(name: 'idx_study_plan_material', columns: {#materialId, #status})
 @DataClassName('StudyPlanRow')
 class StudyPlans extends Table {
   @override
@@ -199,6 +210,14 @@ class StudyPlans extends Table {
   TextColumn get updatedAt => text()();
 }
 
+@TableIndex(name: 'idx_plan_item_status_due', columns: {#status, #dueAt})
+@TableIndex(name: 'idx_plan_item_goal', columns: {#goalId})
+@TableIndex(name: 'idx_plan_item_conversation', columns: {#conversationId})
+@TableIndex(
+  name: 'idx_plan_item_study_seq',
+  columns: {#studyPlanId, #seq},
+  unique: true,
+)
 @DataClassName('PlanItemRow')
 class PlanItems extends Table {
   @override
@@ -265,6 +284,8 @@ class TimetableEntries extends Table {
   List<String> get customConstraints => const ['CHECK (end_time > start_time)'];
 }
 
+@TableIndex(name: 'idx_schedule_start', columns: {#startAt})
+@TableIndex(name: 'idx_schedule_plan', columns: {#planItemId})
 @DataClassName('ScheduleBlockRow')
 class ScheduleBlocks extends Table {
   @override
@@ -289,6 +310,11 @@ class ScheduleBlocks extends Table {
   List<String> get customConstraints => const ['CHECK (end_at > start_at)'];
 }
 
+@TableIndex(name: 'idx_session_plan', columns: {#planItemId, #startedAt})
+@TableIndex(
+  name: 'idx_session_conversation',
+  columns: {#conversationId, #endedAt},
+)
 @DataClassName('StudySessionRow')
 class StudySessions extends Table {
   @override
@@ -318,6 +344,12 @@ class StudySessions extends Table {
   TextColumn get updatedAt => text()();
 }
 
+@TableIndex(
+  name: 'idx_attempt_conversation',
+  columns: {#conversationId, #submittedAt},
+)
+@TableIndex(name: 'idx_attempt_session', columns: {#sessionId})
+@TableIndex(name: 'idx_attempt_redo', columns: {#redoOfAttemptId})
 @DataClassName('AttemptRow')
 class Attempts extends Table {
   @override
@@ -350,6 +382,7 @@ class Attempts extends Table {
   TextColumn get updatedAt => text()();
 }
 
+@TableIndex(name: 'idx_assessment_attempt', columns: {#attemptId, #kind})
 @DataClassName('AssessmentRow')
 class Assessments extends Table {
   @override
@@ -364,6 +397,8 @@ class Assessments extends Table {
   TextColumn get updatedAt => text()();
 }
 
+@TableIndex(name: 'idx_memory_status', columns: {#status, #kind})
+@TableIndex(name: 'idx_memory_valid', columns: {#validUntil})
 @DataClassName('MemoryRow')
 class Memories extends Table {
   @override
@@ -386,6 +421,11 @@ class Memories extends Table {
   TextColumn get updatedAt => text()();
 }
 
+@TableIndex.sql(
+  'CREATE UNIQUE INDEX idx_revision_request '
+  'ON revision_commit(request_id) WHERE request_id IS NOT NULL',
+)
+@TableIndex(name: 'idx_revision_commit_parent', columns: {#parentId})
 @DataClassName('RevisionCommitRow')
 class RevisionCommits extends Table {
   @override
@@ -406,6 +446,11 @@ class RevisionCommits extends Table {
   TextColumn get createdAt => text()();
 }
 
+@TableIndex(
+  name: 'idx_revision_change_target',
+  columns: {#targetTable, #rowKey},
+)
+@TableIndex(name: 'idx_revision_change_commit', columns: {#commitId, #seq})
 @DataClassName('RevisionChangeRow')
 class RevisionChanges extends Table {
   @override
@@ -437,6 +482,7 @@ class RevisionRefs extends Table {
   Set<Column> get primaryKey => {name};
 }
 
+@TableIndex(name: 'idx_revision_checkpoint_commit', columns: {#commitId, #id})
 @DataClassName('RevisionCheckpointRow')
 class RevisionCheckpoints extends Table {
   @override

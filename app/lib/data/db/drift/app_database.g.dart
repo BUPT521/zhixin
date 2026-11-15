@@ -11506,6 +11506,114 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $RevisionSequencesTable revisionSequences =
       $RevisionSequencesTable(this);
+  late final Index idxAssetChunkHash = Index(
+    'idx_asset_chunk_hash',
+    'CREATE INDEX idx_asset_chunk_hash ON asset_chunk (hash, seq)',
+  );
+  late final Index idxMaterialGoal = Index(
+    'idx_material_goal',
+    'CREATE INDEX idx_material_goal ON material (goal_id)',
+  );
+  late final Index idxMaterialPageMaterial = Index(
+    'idx_material_page_material',
+    'CREATE INDEX idx_material_page_material ON material_page (material_id, page_no)',
+  );
+  late final Index idxConversationStatus = Index(
+    'idx_conversation_status',
+    'CREATE INDEX idx_conversation_status ON conversation (status, updated_at)',
+  );
+  late final Index idxConversationGoal = Index(
+    'idx_conversation_goal',
+    'CREATE INDEX idx_conversation_goal ON conversation (goal_id)',
+  );
+  late final Index idxConversationMaterial = Index(
+    'idx_conversation_material',
+    'CREATE INDEX idx_conversation_material ON conversation (material_id)',
+  );
+  late final Index idxMessageConversation = Index(
+    'idx_message_conversation',
+    'CREATE INDEX idx_message_conversation ON message (conversation_id, created_at)',
+  );
+  late final Index idxStudyPlanMaterial = Index(
+    'idx_study_plan_material',
+    'CREATE INDEX idx_study_plan_material ON study_plan (material_id, status)',
+  );
+  late final Index idxPlanItemStatusDue = Index(
+    'idx_plan_item_status_due',
+    'CREATE INDEX idx_plan_item_status_due ON plan_item (status, due_at)',
+  );
+  late final Index idxPlanItemGoal = Index(
+    'idx_plan_item_goal',
+    'CREATE INDEX idx_plan_item_goal ON plan_item (goal_id)',
+  );
+  late final Index idxPlanItemConversation = Index(
+    'idx_plan_item_conversation',
+    'CREATE INDEX idx_plan_item_conversation ON plan_item (conversation_id)',
+  );
+  late final Index idxPlanItemStudySeq = Index(
+    'idx_plan_item_study_seq',
+    'CREATE UNIQUE INDEX idx_plan_item_study_seq ON plan_item (study_plan_id, seq)',
+  );
+  late final Index idxScheduleStart = Index(
+    'idx_schedule_start',
+    'CREATE INDEX idx_schedule_start ON schedule_block (start_at)',
+  );
+  late final Index idxSchedulePlan = Index(
+    'idx_schedule_plan',
+    'CREATE INDEX idx_schedule_plan ON schedule_block (plan_item_id)',
+  );
+  late final Index idxSessionPlan = Index(
+    'idx_session_plan',
+    'CREATE INDEX idx_session_plan ON study_session (plan_item_id, started_at)',
+  );
+  late final Index idxSessionConversation = Index(
+    'idx_session_conversation',
+    'CREATE INDEX idx_session_conversation ON study_session (conversation_id, ended_at)',
+  );
+  late final Index idxAttemptConversation = Index(
+    'idx_attempt_conversation',
+    'CREATE INDEX idx_attempt_conversation ON attempt (conversation_id, submitted_at)',
+  );
+  late final Index idxAttemptSession = Index(
+    'idx_attempt_session',
+    'CREATE INDEX idx_attempt_session ON attempt (session_id)',
+  );
+  late final Index idxAttemptRedo = Index(
+    'idx_attempt_redo',
+    'CREATE INDEX idx_attempt_redo ON attempt (redo_of_attempt_id)',
+  );
+  late final Index idxAssessmentAttempt = Index(
+    'idx_assessment_attempt',
+    'CREATE INDEX idx_assessment_attempt ON assessment (attempt_id, kind)',
+  );
+  late final Index idxMemoryStatus = Index(
+    'idx_memory_status',
+    'CREATE INDEX idx_memory_status ON memory (status, kind)',
+  );
+  late final Index idxMemoryValid = Index(
+    'idx_memory_valid',
+    'CREATE INDEX idx_memory_valid ON memory (valid_until)',
+  );
+  late final Index idxRevisionRequest = Index(
+    'idx_revision_request',
+    'CREATE UNIQUE INDEX idx_revision_request ON revision_commit (request_id) WHERE request_id IS NOT NULL',
+  );
+  late final Index idxRevisionCommitParent = Index(
+    'idx_revision_commit_parent',
+    'CREATE INDEX idx_revision_commit_parent ON revision_commit (parent_id)',
+  );
+  late final Index idxRevisionChangeTarget = Index(
+    'idx_revision_change_target',
+    'CREATE INDEX idx_revision_change_target ON revision_change (table_name, row_key)',
+  );
+  late final Index idxRevisionChangeCommit = Index(
+    'idx_revision_change_commit',
+    'CREATE INDEX idx_revision_change_commit ON revision_change (commit_id, seq)',
+  );
+  late final Index idxRevisionCheckpointCommit = Index(
+    'idx_revision_checkpoint_commit',
+    'CREATE INDEX idx_revision_checkpoint_commit ON revision_checkpoint (commit_id, id)',
+  );
   Future<int> insertTimetableEntry(
     int weekday,
     String startTime,
@@ -13816,6 +13924,33 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     revisionCheckpoints,
     revisionContexts,
     revisionSequences,
+    idxAssetChunkHash,
+    idxMaterialGoal,
+    idxMaterialPageMaterial,
+    idxConversationStatus,
+    idxConversationGoal,
+    idxConversationMaterial,
+    idxMessageConversation,
+    idxStudyPlanMaterial,
+    idxPlanItemStatusDue,
+    idxPlanItemGoal,
+    idxPlanItemConversation,
+    idxPlanItemStudySeq,
+    idxScheduleStart,
+    idxSchedulePlan,
+    idxSessionPlan,
+    idxSessionConversation,
+    idxAttemptConversation,
+    idxAttemptSession,
+    idxAttemptRedo,
+    idxAssessmentAttempt,
+    idxMemoryStatus,
+    idxMemoryValid,
+    idxRevisionRequest,
+    idxRevisionCommitParent,
+    idxRevisionChangeTarget,
+    idxRevisionChangeCommit,
+    idxRevisionCheckpointCommit,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([

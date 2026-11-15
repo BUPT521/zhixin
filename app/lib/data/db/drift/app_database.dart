@@ -2,15 +2,14 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 
 import '../app_database.dart' show zhixinSchemaVersion;
-import '../schema.dart' show schemaIndexStatements;
 import 'tables.dart';
 
 part 'app_database.g.dart';
 
-/// drift 版的本地库：表结构来自 [tables.dart]，打开时建立外键与 WAL。
+/// drift 版的本地库：表结构与索引来自 [tables.dart]，打开时建立外键与 WAL。
 ///
-/// 结构变化仍按 ADR-0002 清空重建，不写迁移函数。采集暂存表、索引与触发器
-/// 由版本引擎在打开后安装，这里只负责 23 张基础表。
+/// 结构变化仍按 ADR-0002 清空重建，不写迁移函数。采集暂存表与触发器由版本
+/// 引擎在打开后安装，这里负责 23 张基础表与表类上声明的索引。
 ///
 /// 仓库层的查询写在 `queries/` 下的 `.drift` 文件里，由 [include] 挂进来：
 /// 表名、列名、参数与结果列的可空性在生成阶段检查（ADR-0011）。
@@ -32,6 +31,8 @@ part 'app_database.g.dart';
     'queries/timetable_entries.drift',
   },
   tables: [
+    // 生成器的输入：`allTables` 与 `allSchemaEntities` 由这份清单与表类上的
+    // `@TableIndex` 生成，运行时的结构校验都从生成结果读取，不再另抄清单。
     AppMeta,
     Profiles,
     LearningGoals,
@@ -70,7 +71,6 @@ class AppDatabase extends _$AppDatabase {
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
-      await _createIndexes();
     },
     onUpgrade: (m, from, to) => _rebuild(m),
     beforeOpen: (details) async {
@@ -78,13 +78,6 @@ class AppDatabase extends _$AppDatabase {
       await customStatement('PRAGMA journal_mode = WAL');
     },
   );
-
-  /// 业务索引不在 drift 表类里声明，建表之后按旧 DDL 的清单补齐。
-  Future<void> _createIndexes() async {
-    for (final statement in schemaIndexStatements()) {
-      await customStatement(statement);
-    }
-  }
 
   /// 清空所有表并按当前结构重建；外键在删除期间延迟检查。
   Future<void> _rebuild(Migrator m) async {
@@ -98,6 +91,5 @@ class AppDatabase extends _$AppDatabase {
       await customStatement('DROP TABLE IF EXISTS "$name"');
     }
     await m.createAll();
-    await _createIndexes();
   }
 }
