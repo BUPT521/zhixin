@@ -75,7 +75,7 @@ class SectionHeading extends StatelessWidget {
     final theme = context.zhixin;
     return Padding(
       padding: EdgeInsets.only(
-        top: first ? 0 : theme.space.section - theme.space.sm,
+        top: first ? 0 : theme.space.sectionTop,
         bottom: theme.space.md,
       ),
       child: Row(

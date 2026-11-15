@@ -190,6 +190,9 @@ class ZhixinSpace {
   /// 相邻两节之间。
   double get section => 28;
 
+  /// 一节标题上方的留白：比 [section] 少一档，接在上一节内容后面。
+  double get sectionTop => 20;
+
   /// 内容区的最大宽度；平板与横屏上居中，不把一行拉得过长。
   double get maxWidth => 720;
 

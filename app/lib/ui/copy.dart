@@ -36,11 +36,13 @@ const planItemName = '学习事项';
 
 /// 空态标题的句式：写“还没有 X”，不写“暂无 X”，说明里再给下一步。
 ///
-/// 先统一了四处写法不一致的空态：记录页的学习记录、事项页的两处、安排页的
-/// [aiChanges]；安排页的“本周暂无预约”与记忆页的“暂无学习记忆”留到下一次
-/// 一起改。
+/// 记录页的学习记录、事项页的两处、安排页的 [aiChanges] 与本周预约、记忆页
+/// 都用这一组，句式一致。
 const emptyRecords = '还没有学习记录';
 const emptyPlanItems = '还没有学习事项';
 const emptyPlanItemsNoneOpen = '还没有未完成的学习事项';
+const emptyWeekAppointments = '本周还没有预约';
+const emptyOtherWeekAppointments = '这一周还没有预约';
+const emptyMemory = '还没有学习记忆';
 const emptyChangesTitle = '还没有改动';
 const emptyChangesDescription = '$buddyName执行过的变更会出现在这里。';
