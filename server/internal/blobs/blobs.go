@@ -35,13 +35,8 @@ type ObjectStore struct {
 // NewStore 用给定的对象存储实现附件存储。
 func NewStore(objects objectstore.Store) *ObjectStore { return &ObjectStore{objects: objects} }
 
-// key 是附件在对象存储里的键；prefix 与它保持同一写法，删除账号时按前缀清。
-func key(userID, sha string) string { return prefix(userID) + sha }
-
-func prefix(userID string) string { return "attachments/" + userID + "/" }
-
 func (o *ObjectStore) Stat(ctx context.Context, userID, sha string) (int64, error) {
-	info, err := o.objects.Stat(ctx, key(userID, sha))
+	info, err := o.objects.Stat(ctx, objectstore.AttachmentKey(userID, sha))
 	if err != nil {
 		return 0, mapErr(err)
 	}
@@ -49,7 +44,7 @@ func (o *ObjectStore) Stat(ctx context.Context, userID, sha string) (int64, erro
 }
 
 func (o *ObjectStore) Open(ctx context.Context, userID, sha string) (io.ReadCloser, int64, error) {
-	rc, info, err := o.objects.Open(ctx, key(userID, sha))
+	rc, info, err := o.objects.Open(ctx, objectstore.AttachmentKey(userID, sha))
 	if err != nil {
 		return nil, 0, mapErr(err)
 	}
@@ -57,14 +52,14 @@ func (o *ObjectStore) Open(ctx context.Context, userID, sha string) (io.ReadClos
 }
 
 func (o *ObjectStore) Save(ctx context.Context, userID, sha string, size int64, data io.Reader) error {
-	return o.objects.Put(ctx, key(userID, sha), data, objectstore.Info{
+	return o.objects.Put(ctx, objectstore.AttachmentKey(userID, sha), data, objectstore.Info{
 		Size:        size,
 		ContentType: "application/octet-stream",
 	})
 }
 
 func (o *ObjectStore) DeleteUser(ctx context.Context, userID string) error {
-	return o.objects.RemovePrefix(ctx, prefix(userID))
+	return o.objects.RemovePrefix(ctx, objectstore.AttachmentPrefix(userID))
 }
 
 func mapErr(err error) error {

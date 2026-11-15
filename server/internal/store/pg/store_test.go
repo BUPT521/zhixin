@@ -111,7 +111,7 @@ func TestPostgresDeleteUserAndObjects(t *testing.T) {
 	if err := st.DeleteUserObjects(ctx, "u1"); err != nil {
 		t.Fatalf("delete objects: %v", err)
 	}
-	if _, err := st.objects.Stat(ctx, backupKey("u1", "b1")); !errors.Is(err, objectstore.ErrNotFound) {
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u1", "b1")); !errors.Is(err, objectstore.ErrNotFound) {
 		t.Fatalf("备份字节应随账号清理，得到 %v", err)
 	}
 }

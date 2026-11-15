@@ -138,7 +138,7 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 // DeleteUserObjects 删除账号名下的备份字节。附件字节由 blobs 包按自己的前缀
 // 清理，两个前缀不同，服务装配时合成一次账号清理。
 func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
-	return s.objects.RemovePrefix(ctx, backupPrefix(userID))
+	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
 func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {

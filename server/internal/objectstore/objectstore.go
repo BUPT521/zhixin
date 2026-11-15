@@ -21,6 +21,24 @@ type Info struct {
 // ErrNotFound 表示键下没有对象。
 var ErrNotFound = errors.New("objectstore: 对象不存在")
 
+// BackupKey 是整库备份在对象存储里的键：backups/<账号>/<id>.zip。
+func BackupKey(userID, id string) string {
+	return BackupPrefix(userID) + id + ".zip"
+}
+
+// BackupPrefix 是一个账号全部备份的前缀，删除账号时按它清理。
+func BackupPrefix(userID string) string { return "backups/" + userID + "/" }
+
+// AttachmentKey 是附件在对象存储里的键：attachments/<账号>/<sha256>。
+func AttachmentKey(userID, sha string) string {
+	return AttachmentPrefix(userID) + sha
+}
+
+// AttachmentPrefix 是一个账号全部附件的前缀。
+func AttachmentPrefix(userID string) string {
+	return "attachments/" + userID + "/"
+}
+
 // Store 是三种实现共用的接口。
 type Store interface {
 	// Put 写入一个对象，Info.Size 必须等于 data 的字节数。

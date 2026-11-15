@@ -20,7 +20,7 @@ import (
 // 顺序是有意的：元数据在字节之后写，进程在中间退出时只会留下没有元数据的孤儿
 // 对象，不会出现“列表里有、下载失败”的记录。
 func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.Reader, keep int) error {
-	if err := s.objects.Put(ctx, backupKey(userID, m.ID), data, objectstore.Info{
+	if err := s.objects.Put(ctx, objectstore.BackupKey(userID, m.ID), data, objectstore.Info{
 		Size:        m.Size,
 		ContentType: "application/zip",
 	}); err != nil {
@@ -35,7 +35,7 @@ func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.R
 		DeviceName:    m.DeviceName,
 		CreatedAt:     pgTime(m.CreatedAt),
 	}); err != nil {
-		_ = s.objects.Remove(ctx, backupKey(userID, m.ID))
+		_ = s.objects.Remove(ctx, objectstore.BackupKey(userID, m.ID))
 		return err
 	}
 	if keep <= 0 {
@@ -49,7 +49,7 @@ func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.R
 		return err
 	}
 	for _, id := range stale {
-		if err := s.objects.Remove(ctx, backupKey(userID, id)); err != nil {
+		if err := s.objects.Remove(ctx, objectstore.BackupKey(userID, id)); err != nil {
 			return err
 		}
 	}
@@ -85,7 +85,7 @@ func (s *Store) Open(ctx context.Context, userID, id string) (backup.Meta, io.Re
 	if err != nil {
 		return backup.Meta{}, nil, err
 	}
-	rc, _, err := s.objects.Open(ctx, backupKey(userID, id))
+	rc, _, err := s.objects.Open(ctx, objectstore.BackupKey(userID, id))
 	if err != nil {
 		return backup.Meta{}, nil, err
 	}
@@ -104,14 +104,8 @@ func (s *Store) Delete(ctx context.Context, userID, id string) error {
 	if err := s.q.DeleteBackup(ctx, db.DeleteBackupParams{UserID: userID, ID: id}); err != nil {
 		return err
 	}
-	return s.objects.Remove(ctx, backupKey(userID, id))
+	return s.objects.Remove(ctx, objectstore.BackupKey(userID, id))
 }
-
-// backupKey 是整库备份在对象存储里的键；backupPrefix 用来一次清掉账号名下的
-// 全部备份，两处写法必须一致。
-func backupKey(userID, id string) string { return backupPrefix(userID) + id + ".zip" }
-
-func backupPrefix(userID string) string { return "backups/" + userID + "/" }
 
 // Used 返回当天已用的 token 数；没有记录时是 0。
 func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
