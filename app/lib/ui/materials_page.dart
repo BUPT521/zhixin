@@ -462,6 +462,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     final corrected = await showZhixinAlert<String>(
       context: context,
       title: '更正第 ${page.pageNo} 页',
+      cancelLabel: '取消',
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,12 +477,6 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
           onPress: () => Navigator.of(context).pop(controller.text),

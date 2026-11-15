@@ -19,22 +19,39 @@ Future<T?> showZhixinDialog<T>({
   );
 }
 
+/// 对话框里的取消按钮：幽灵样式、靠右排在这一组的最前面，点了返回空值。
+///
+/// 确认框与输入框都用这一份，不再各写一遍 `FButton(variant: ghost)`。
+forui.FButton cancelZhixinButton(BuildContext context, {String label = '取消'}) =>
+    forui.FButton(
+      variant: forui.FButtonVariant.ghost,
+      mainAxisSize: MainAxisSize.min,
+      onPress: () => Navigator.of(context).pop(),
+      child: Text(label),
+    );
+
 /// 只需一句标题、一段正文与几个动作的对话框。
 ///
 /// 页面里大部分确认框都按 [ZhixinDialogLayout] 排，调用方只写标题、正文与
-/// 按钮即可，不必每次都展开一遍 builder 与布局。
+/// 按钮即可，不必每次都展开一遍 builder 与布局。[cancelLabel] 非空时最前面
+/// 自动加一个默认形状的取消按钮，调用方不再自己拼。
 Future<T?> showZhixinAlert<T>({
   required BuildContext context,
   required String title,
   required Widget content,
   required List<Widget> actions,
+  String? cancelLabel,
 }) {
   return showZhixinDialog<T>(
     context: context,
     builder: (context) => ZhixinDialogLayout(
       title: Text(title),
       content: content,
-      actions: actions,
+      actions: [
+        if (cancelLabel != null)
+          cancelZhixinButton(context, label: cancelLabel),
+        ...actions,
+      ],
     ),
   );
 }
@@ -54,13 +71,8 @@ Future<bool> confirmZhixin({
     context: context,
     title: title,
     content: content,
+    cancelLabel: '取消',
     actions: [
-      forui.FButton(
-        variant: forui.FButtonVariant.ghost,
-        mainAxisSize: MainAxisSize.min,
-        onPress: () => Navigator.of(context).pop(false),
-        child: const Text('取消'),
-      ),
       if (destructive)
         forui.FButton(
           variant: forui.FButtonVariant.destructive,

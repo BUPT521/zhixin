@@ -152,6 +152,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     final action = await showZhixinAlert<_BookingAction>(
       context: context,
       title: '按这个空档预约',
+      cancelLabel: '取消',
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -170,12 +171,6 @@ class _CapacitySheetState extends State<_CapacitySheet> {
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
         if (hasExisting)
           forui.FButton(
             variant: forui.FButtonVariant.ghost,

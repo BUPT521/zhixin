@@ -576,17 +576,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final minutes = await showZhixinAlert<int>(
       context: context,
       title: '整组顺延',
+      cancelLabel: '取消',
       content: Text(
         '把本周 ${movable.length} 条尚未开始、由$buddyName排的预约一起向后移动。'
         '固定的、自己排的与已经开始的预约保持原时间。',
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
         for (final value in const [30, 60, 120])
           forui.FButton(
             variant: forui.FButtonVariant.ghost,
@@ -973,17 +968,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final action = await showZhixinAlert<String>(
       context: context,
       title: '结束本次预约',
+      cancelLabel: '取消',
       content: Text(
         '这次预约记为结束，学习进度不变，没做完的内容和草稿会保留。'
         '要把它记为完成，请选择“$completeLabel”。',
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
         forui.FButton(
           variant: forui.FButtonVariant.ghost,
           mainAxisSize: MainAxisSize.min,

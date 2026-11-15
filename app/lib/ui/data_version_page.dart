@@ -117,6 +117,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final confirmed = await showZhixinAlert<bool>(
       context: context,
       title: '保存命名版本',
+      cancelLabel: '取消',
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -135,12 +136,6 @@ class _DataVersionPageState extends State<DataVersionPage> {
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
           onPress: () => Navigator.of(context).pop(true),
