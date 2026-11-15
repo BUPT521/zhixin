@@ -22,7 +22,10 @@ void main() {
   test('场次结果按最新的已提交尝试推出', () {
     expect(deriveSessionOutcome(const []), isNull);
     expect(deriveSessionOutcome([_attempt(1, submitted: false)]), isNull);
-    expect(deriveSessionOutcome([_attempt(1, correct: true)]), SessionOutcome.done);
+    expect(
+      deriveSessionOutcome([_attempt(1, correct: true)]),
+      SessionOutcome.done,
+    );
     expect(
       deriveSessionOutcome([
         _attempt(2, correct: false),

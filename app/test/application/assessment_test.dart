@@ -802,7 +802,10 @@ void main() {
       independent: true,
     );
     await h.service.closeForQuestion(second);
-    expect((await h.study.byId(secondAttempt.sessionId!))!.outcome, SessionOutcome.done);
+    expect(
+      (await h.study.byId(secondAttempt.sessionId!))!.outcome,
+      SessionOutcome.done,
+    );
   });
 
   test('清空记录目标后新生次不再继承旧场次目标', () async {
