@@ -279,13 +279,10 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   void _jumpToEnd() {
+    final motion = context.zhixin.motion;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      _scroll.animateTo(
-        0,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
+      _scroll.animateTo(0, duration: motion.standard, curve: motion.move);
     });
   }
 
