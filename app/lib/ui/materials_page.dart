@@ -299,7 +299,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
     final material = _material;
     if (material == null) return;
     final scope = AppScope.of(context);
-    final goals = await scope.tasks.goals();
+    final goals = await scope.study.plan.goals();
     if (!mounted) return;
     final choice = await showGoalChoice(
       context,

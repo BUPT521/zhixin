@@ -12,7 +12,7 @@ extension DataPackageOperations on AppScopeState {
   /// 图片缓存重建失败只返回提醒，不再让界面把整次恢复报成失败。
   Future<String?> restore(Uint8List bytes) async {
     String? cacheWarning;
-    await gate.exclusive(() async {
+    await _gate.exclusive(() async {
       await _revisionPackages.validateRepositoryBytes(bytes);
       final summary = await currentRestoreSummary();
       try {
@@ -31,7 +31,7 @@ extension DataPackageOperations on AppScopeState {
       // 恢复过程中失败时保留刚写好的恢复点：它要么与回滚后的数据一致，
       // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
       await _attachmentCache.markPendingRebuild();
-      await _dataPackages.restorePackage(bytes, currentDb: db, openDb: _open);
+      await _dataPackages.restorePackage(bytes, currentDb: _db, openDb: _open);
       _operationEpoch++;
       cacheWarning = await _rebuildPackageAttachments('数据已恢复');
     });
@@ -79,7 +79,7 @@ extension DataPackageOperations on AppScopeState {
 
   Future<void> resetAllData() async {
     _operationEpoch++;
-    await gate.exclusive(() async {
+    await _gate.exclusive(() async {
       await _connection?.close();
       _connection = null;
       await deleteLocalStudyData(
@@ -95,7 +95,7 @@ extension DataPackageOperations on AppScopeState {
 
   /// 导出当前数据：业务投影与附件，不含历史。
   Future<void> exportCurrentData(String outputPath) {
-    return gate.exclusive(
+    return _gate.exclusive(
       () => _revisionPackages.exportCurrent(_connection!, outputPath),
     );
   }
@@ -107,7 +107,7 @@ extension DataPackageOperations on AppScopeState {
     Uint8List bytes, {
     required int expectedHead,
   }) async {
-    final cacheWarning = await gate.exclusive(() async {
+    final cacheWarning = await _gate.exclusive(() async {
       await _attachmentCache.markPendingRebuild();
       await _revisionPackages.importCurrent(
         _connection!,
@@ -135,17 +135,17 @@ extension DataPackageOperations on AppScopeState {
 
   /// 版本库备份：整库快照，包含历史、命名版本与附件。
   Future<void> backupRepository(String outputPath) {
-    return gate.exclusive(
+    return _gate.exclusive(
       () => _revisionPackages.backupRepository(_connection!, outputPath),
     );
   }
 
   Future<void> cleanupAttachmentPaths(Iterable<String> candidates) {
     final pathsToCheck = List<String>.unmodifiable(candidates);
-    return gate.shared(
+    return _gate.shared(
       () =>
           AttachmentStore(filesDir: paths.filesDir)
-              .cleanupCandidates(db, pathsToCheck),
+              .cleanupCandidates(_db, pathsToCheck),
     );
   }
 }

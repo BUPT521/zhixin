@@ -45,7 +45,7 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       final app = AppScope.of(context);
       final memories = await app.memory.edit.list();
-      final goals = await app.tasks.goals();
+      final goals = await app.study.plan.goals();
       final materials = await app.library.material.list();
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填。

@@ -35,7 +35,7 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.db.close();
+    await scope?.testing.db.close();
     scope = null;
     await directory.delete(recursive: true);
   });
@@ -108,40 +108,40 @@ void main() {
 
     // 两个目标各一条讨论与一份材料，同一个词在两个范围里都能命中。
     await tester.runAsync(() async {
-      final goalA = await scope!.tasks.createGoal(title: '概率论期末');
-      final goalB = await scope!.tasks.createGoal(title: '线性代数作业');
-      final discussionA = await scope!.conversations.create(
+      final goalA = await scope!.testing.tasks.createGoal(title: '概率论期末');
+      final goalB = await scope!.testing.tasks.createGoal(title: '线性代数作业');
+      final discussionA = await scope!.testing.conversations.create(
         title: '条件概率讨论',
         goalId: goalA,
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         discussionA,
         role: 'user',
         content: '条件概率这一章的方法有哪些',
       );
-      final discussionB = await scope!.conversations.create(
+      final discussionB = await scope!.testing.conversations.create(
         title: '矩阵的秩',
         goalId: goalB,
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         discussionB,
         role: 'user',
         content: '矩阵的秩的方法是什么',
       );
-      final materialA = await scope!.materials.create(
+      final materialA = await scope!.testing.materials.create(
         title: '概率论讲义',
         goalId: goalA,
       );
-      await scope!.materials.addPage(
+      await scope!.testing.materials.addPage(
         materialId: materialA,
         pageNo: 1,
         content: '条件概率的方法：先写出样本空间与事件。',
       );
-      final materialB = await scope!.materials.create(
+      final materialB = await scope!.testing.materials.create(
         title: '线性代数讲义',
         goalId: goalB,
       );
-      await scope!.materials.addPage(
+      await scope!.testing.materials.addPage(
         materialId: materialB,
         pageNo: 2,
         content: '矩阵秩的方法：化为行阶梯形再数非零行。',
@@ -249,8 +249,10 @@ void main() {
     // 二十一独立记录，第一页放二十条，最后一条要靠“加载更多结果”取回。
     await tester.runAsync(() async {
       for (var index = 1; index <= 21; index++) {
-        final id = await scope!.conversations.create(title: '分页题 $index');
-        await scope!.conversations.append(
+        final id = await scope!.testing.conversations.create(
+          title: '分页题 $index',
+        );
+        await scope!.testing.conversations.append(
           id,
           role: 'user',
           content: '分页关键词 $index',

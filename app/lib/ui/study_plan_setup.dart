@@ -26,7 +26,7 @@ Future<void> showStudyPlanSetup(
   int? initialPage,
 }) async {
   final scope = AppScope.of(context);
-  final bounds = await scope.materials.pageBounds(material.id);
+  final bounds = await scope.library.material.pageBounds(material.id);
   final firstPage = bounds.first;
   final lastPage = bounds.last;
   if (firstPage == null || lastPage == null) {

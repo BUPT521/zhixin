@@ -241,7 +241,7 @@ Future<void> openPlanItem(BuildContext context, PlanItem item) async {
 
     final conversationId = item.conversationId;
     if (conversationId != null) {
-      final record = await scope.conversations.byId(conversationId);
+      final record = await scope.chat.discussion.byId(conversationId);
       if (!context.mounted) return;
       if (record?.hasAttempts ?? false) {
         await openLearning(context, conversationId);

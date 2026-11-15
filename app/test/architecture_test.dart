@@ -78,7 +78,52 @@ void main() {
       );
     }
   });
+
+  test('应用根只公开服务与基础句柄，仓库、库连接与测试入口不对外', () {
+    final lib = Directory('lib').absolute;
+    final scopeLines = File(p.join(lib.path, 'app_scope.dart'))
+        .readAsLinesSync();
+    for (final name in _repositoryMembers) {
+      final declaration = RegExp(
+        '^\\s+(?:late\\s+)?(?:final\\s+)?[A-Z]\\w*'
+        '(?:<[^>]*>)?\\s+$name\\s*[;=]',
+      );
+      expect(
+        scopeLines.where(declaration.hasMatch),
+        isEmpty,
+        reason: 'AppScopeState 不能公开仓库字段 $name；页面经 services 与基础句柄取用',
+      );
+    }
+    final testingEntry = scopeLines.where(
+      RegExp(r'^\s+(?:late\s+final\s+)?AppScopeTesting\s+testing\b').hasMatch,
+    );
+    expect(testingEntry, hasLength(1), reason: '测试装配入口只能有一个');
+
+    for (final source in _dartFiles(lib)) {
+      expect(
+        source.readAsStringSync().contains('.testing.'),
+        isFalse,
+        reason: '${source.path} 不能读测试装配入口，页面与服务只经服务取数据',
+      );
+    }
+  });
 }
+
+/// 曾经公开在 [AppScopeState] 上的仓库与连接字段；现在只在测试入口里露出。
+const _repositoryMembers = [
+  'db',
+  'gate',
+  'runtime',
+  'conversations',
+  'attempts',
+  'tasks',
+  'schedule',
+  'memories',
+  'studyRecords',
+  'assessments',
+  'materials',
+  'studyPlans',
+];
 
 bool _isPlatformPackage(String uri) =>
     uri.startsWith('package:flutter') ||

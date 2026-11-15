@@ -49,7 +49,7 @@ void main() {
 
   tearDown(() async {
     await scope?.library.semanticIndex.close();
-    await scope?.db.close();
+    await scope?.testing.db.close();
     scope = null;
     await directory.delete(recursive: true);
   });
@@ -138,14 +138,14 @@ void main() {
   testWidgets('本地结果先出，语义完成后加“按意思”标签', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final local = await scope!.conversations.create(title: '矩阵讨论');
-      await scope!.conversations.append(
+      final local = await scope!.testing.conversations.create(title: '矩阵讨论');
+      await scope!.testing.conversations.append(
         local,
         role: 'user',
         content: '矩阵的秩怎么求',
       );
-      final meaning = await scope!.conversations.create(title: '线性无关');
-      await scope!.conversations.append(
+      final meaning = await scope!.testing.conversations.create(title: '线性无关');
+      await scope!.testing.conversations.append(
         meaning,
         role: 'user',
         content: '线性无关的行向量个数',
@@ -179,8 +179,8 @@ void main() {
   testWidgets('语义失败只在列表上方加一行提示', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final local = await scope!.conversations.create(title: '矩阵讨论');
-      await scope!.conversations.append(
+      final local = await scope!.testing.conversations.create(title: '矩阵讨论');
+      await scope!.testing.conversations.append(
         local,
         role: 'user',
         content: '矩阵的秩怎么求',
@@ -213,8 +213,8 @@ void main() {
   testWidgets('语义索引为空时说明还没有内容，而不是没有找到', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final local = await scope!.conversations.create(title: '矩阵讨论');
-      await scope!.conversations.append(
+      final local = await scope!.testing.conversations.create(title: '矩阵讨论');
+      await scope!.testing.conversations.append(
         local,
         role: 'user',
         content: '矩阵的秩怎么求',
@@ -244,14 +244,14 @@ void main() {
   testWidgets('只有语义命中时不显示空态', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final local = await scope!.conversations.create(title: '矩阵讨论');
-      await scope!.conversations.append(
+      final local = await scope!.testing.conversations.create(title: '矩阵讨论');
+      await scope!.testing.conversations.append(
         local,
         role: 'user',
         content: '矩阵的秩怎么求',
       );
-      final meaning = await scope!.conversations.create(title: '面积与缩放');
-      await scope!.conversations.append(
+      final meaning = await scope!.testing.conversations.create(title: '面积与缩放');
+      await scope!.testing.conversations.append(
         meaning,
         role: 'user',
         content: 'det(A) 的几何意义是面积缩放',

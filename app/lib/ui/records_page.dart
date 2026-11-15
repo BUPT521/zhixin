@@ -242,7 +242,7 @@ class _RecordsPageState extends State<RecordsPage>
       final (goals, records) = await (
         append
             ? Future<List<LearningGoal>>.value(_goals)
-            : scope.chat.discussion.goals(),
+            : scope.study.plan.goals(),
         scope.chat.discussion.records(
           goalId: _unassignedOnly ? null : _goalFilter,
           unassignedOnly: _unassignedOnly,
@@ -253,7 +253,7 @@ class _RecordsPageState extends State<RecordsPage>
       ).wait;
       final questions = records.isEmpty
           ? const <QuestionRow>[]
-          : await scope.conversations.questionRows(
+          : await scope.chat.learning.questionRows(
               conversationIds: records.map((record) => record.id),
             );
       final lastAttempts = [

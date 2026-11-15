@@ -106,8 +106,8 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   Future<void> _loadScopeOptions() async {
     try {
       final scope = AppScope.of(context);
-      final goals = await scope.tasks.activeGoals();
-      final materials = await scope.materials.list();
+      final goals = await scope.study.plan.activeGoals();
+      final materials = await scope.library.material.list();
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填，免得滑入途中整页重建。
       await context.afterTransition();

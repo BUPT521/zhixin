@@ -67,6 +67,17 @@ class PlanService {
   final TaskRepository tasks;
   final ScheduleRepository schedule;
 
+  /// 全部目标，当前有效的排在前面；不能靠 [loadWeek] 的页面从这里读。
+  Future<List<LearningGoal>> goals() => tasks.goals();
+
+  /// 当前有效的目标；记录检索与记忆建议的归属选择从这里读。
+  Future<List<LearningGoal>> activeGoals() => tasks.activeGoals();
+
+  /// 每个未完成事项接下来的一次预约；系统学习页据此显示下次安排。
+  Future<Map<int, ScheduleBlock>> nextBlocksForItems(
+    Iterable<int> planItemIds,
+  ) => schedule.nextBlocksForItems(planItemIds, runtime.policy.now);
+
   /// 回执与撤销都读提交历史，不再维护单独的操作日志。
   final RevisionService revisions;
   final ServiceRuntime runtime;

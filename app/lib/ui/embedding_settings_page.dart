@@ -73,7 +73,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     StackTrace? loadStack;
     try {
       config = await scope.settings.embedding.read();
-      materials = await scope.materials.list();
+      materials = await scope.library.material.list();
     } catch (error, stack) {
       loadFailure = error;
       loadStack = stack;

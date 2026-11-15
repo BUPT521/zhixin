@@ -61,10 +61,7 @@ class _StudyPlanPageState extends State<StudyPlanPage>
       final scope = AppScope.of(context);
       final view = await scope.study.systemPlan.view(widget.planId);
       final (blocks, sessions) = await (
-        scope.schedule.nextBlocksForItems(
-          view.steps.map((step) => step.id),
-          scope.timePolicy.now,
-        ),
+        scope.study.plan.nextBlocksForItems(view.steps.map((step) => step.id)),
         scope.study.systemPlan.latestSessionsForSteps(
           view.steps.map((step) => step.id),
         ),
@@ -109,7 +106,7 @@ class _StudyPlanPageState extends State<StudyPlanPage>
     final hasPreviousDiscussion =
         stepConversationId != null &&
         stepConversationId != sourceConversationId &&
-        await scope.conversations.byId(stepConversationId) != null;
+        await scope.chat.discussion.byId(stepConversationId) != null;
     var newDiscussion = false;
     if (hasPreviousDiscussion && mounted) {
       final choice = await showZhixinAlert<bool>(

@@ -23,9 +23,16 @@ class MaterialService {
   final WriteTransactions transactions;
   final ServiceRuntime runtime;
 
+  /// 当前数据代次：打开文件选择器之前取一次，导入时交给 [importDocx] 核对。
+  int get dataEpoch => runtime.dataEpoch;
+
   Future<List<Material>> list({int? goalId}) => materials.list(goalId: goalId);
 
   Future<Material?> byId(int id) => materials.byId(id);
+
+  /// 材料当前的最小与最大页码；做学习计划时据此决定可选范围。
+  Future<({int? first, int? last})> pageBounds(int materialId) =>
+      materials.pageBounds(materialId);
 
   Future<List<MaterialPage>> pages(int materialId) =>
       materials.pages(materialId);

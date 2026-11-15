@@ -39,7 +39,7 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.db.close();
+    await scope?.testing.db.close();
     scope = null;
     await directory.delete(recursive: true);
   });

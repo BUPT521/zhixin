@@ -145,7 +145,7 @@ class _LearningPageState extends State<LearningPage>
             ? Future<List<MemoryItemView>>.value(const [])
             : scope.chat.learning.memoryItemsFor(open),
         scope.settings.edit.config(),
-        scope.conversations.recent(widget.questionId, limit: 6),
+        scope.chat.learning.recentMessages(widget.questionId),
       ).wait;
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填，内容不会在滑动中途跳出来。

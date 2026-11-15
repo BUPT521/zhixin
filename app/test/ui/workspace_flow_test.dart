@@ -126,7 +126,7 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.db.close();
+    await scope?.testing.db.close();
     scope = null;
     await directory.delete(recursive: true);
   });
@@ -197,14 +197,14 @@ void main() {
     await tester.runAsync(() async {
       final entered = Completer<void>();
       final release = Completer<void>();
-      final lock = scope!.gate.exclusive(() async {
+      final lock = scope!.testing.gate.exclusive(() async {
         entered.complete();
         await release.future;
       });
       await entered.future;
 
       var writeFinished = false;
-      final write = scope!.tasks
+      final write = scope!.testing.tasks
           .createGoal(title: '恢复期间的新目标')
           .then((_) => writeFinished = true);
       await Future<void>.delayed(Duration.zero);
@@ -221,7 +221,7 @@ void main() {
     await openApp(tester);
 
     await tester.runAsync(() async {
-      final beforeId = await scope!.tasks.createGoal(title: '恢复前保留目标');
+      final beforeId = await scope!.testing.tasks.createGoal(title: '恢复前保留目标');
       final settings = scope!.settings.edit;
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -247,18 +247,18 @@ void main() {
 
       await settings.restoreBytes(await exported.readAsBytes());
 
-      expect((await scope!.tasks.goalById(beforeId))?.title, '恢复前保留目标');
+      expect((await scope!.testing.tasks.goalById(beforeId))?.title, '恢复前保留目标');
       final points = await scope!.data.restorePoints.list();
       expect(points, hasLength(1));
       expect(await File(points.single.path).exists(), isTrue);
       expect(points.single.head, await scope!.currentHead());
-      final afterId = await scope!.tasks.createGoal(title: '恢复后新增目标');
-      expect((await scope!.tasks.goalById(afterId))?.title, '恢复后新增目标');
+      final afterId = await scope!.testing.tasks.createGoal(title: '恢复后新增目标');
+      expect((await scope!.testing.tasks.goalById(afterId))?.title, '恢复后新增目标');
 
       // 恢复点用同一条整库恢复流程，可以真正回到保存时的数据。
       await scope!.restore(await File(points.single.path).readAsBytes());
-      expect(await scope!.tasks.goalById(afterId), isNull);
-      expect((await scope!.tasks.goalById(beforeId))?.title, '恢复前保留目标');
+      expect(await scope!.testing.tasks.goalById(afterId), isNull);
+      expect((await scope!.testing.tasks.goalById(beforeId))?.title, '恢复前保留目标');
     });
   });
 
@@ -269,7 +269,7 @@ void main() {
       final state = scope!;
       final bytes = Uint8List.fromList([1, 2, 3]);
       final hash = AssetStore.hashBytes(bytes);
-      final recordId = await state.db.transaction((txn) async {
+      final recordId = await state.testing.db.transaction((txn) async {
         final id = await insertRow(txn, 'conversation', {
           'title': '带图的学习记录',
           'entry_kind': 'photo',
@@ -290,12 +290,12 @@ void main() {
       final exported = File('${directory.path}/current.zip');
       await state.exportCurrentData(exported.path);
       await deleteRows(
-        state.db,
+        state.testing.db,
         'conversation',
         where: 'id = ?',
         whereArgs: [recordId],
       );
-      expect(await selectRows(state.db, 'message'), isEmpty);
+      expect(await selectRows(state.testing.db, 'message'), isEmpty);
 
       final images = Directory(state.paths.imagesDir);
       await images.rename('${images.path}.original');
@@ -310,7 +310,7 @@ void main() {
 
       expect(warning, contains('数据已导入'));
       expect(await state.currentHead(), greaterThan(headBefore));
-      expect(await selectRows(state.db, 'message'), hasLength(1));
+      expect(await selectRows(state.testing.db, 'message'), hasLength(1));
       expect(state.dataVersion.value, versionBefore + 1);
     });
   });
@@ -394,7 +394,7 @@ void main() {
       await tester.runAsync(() async {
         await tester.pump();
         // 等数据库读取结束，保持页签动画的测试时钟停在起点。
-        await scope!.gate.exclusive(() async {});
+        await scope!.testing.gate.exclusive(() async {});
       });
       expect(skeleton, findsOneWidget);
       expect(find.byType(forui.FCircularProgress), findsNothing);
@@ -475,17 +475,17 @@ void main() {
   testWidgets('从记录打开讨论再返回，筛选与首页输入都不重置', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      final goal = await scope!.tasks.createGoal(title: '概率练习');
-      final conversation = await scope!.conversations.create(
+      final goal = await scope!.testing.tasks.createGoal(title: '概率练习');
+      final conversation = await scope!.testing.conversations.create(
         title: '待结束的讨论',
         goalId: goal,
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         conversation,
         role: 'user',
         content: '从记录里打开这条讨论',
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         conversation,
         role: 'assistant',
         content: '返回之后记录仍然刷新',
@@ -547,9 +547,11 @@ void main() {
   testWidgets('长讨论按需构建，打开时停在最新一条', (tester) async {
     await openApp(tester);
     final id = await tester.runAsync(() async {
-      final conversation = await scope!.conversations.create(title: '长讨论');
+      final conversation = await scope!.testing.conversations.create(
+        title: '长讨论',
+      );
       for (var index = 0; index < 60; index++) {
-        await scope!.conversations.append(
+        await scope!.testing.conversations.append(
           conversation,
           role: index.isEven ? 'user' : 'assistant',
           content: '第 $index 条消息',
@@ -650,7 +652,7 @@ void main() {
       '还没保存下来的草稿',
     );
     await tester.runAsync(() async {
-      await scope!.db.execute('''
+      await scope!.testing.db.execute('''
         CREATE TRIGGER fail_attempt_update BEFORE UPDATE ON attempt
         BEGIN
           SELECT RAISE(ABORT, '模拟草稿保存失败');
@@ -738,13 +740,15 @@ void main() {
   testWidgets('回答、记忆和建议卡片保留各自的操作', (tester) async {
     await openApp(tester, size: const Size(390, 900));
     final id = await tester.runAsync(() async {
-      final conversation = await scope!.conversations.create(title: '条件概率');
-      await scope!.conversations.append(
+      final conversation = await scope!.testing.conversations.create(
+        title: '条件概率',
+      );
+      await scope!.testing.conversations.append(
         conversation,
         role: 'user',
         content: '为什么条件概率要除以条件事件的概率？',
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         conversation,
         role: 'assistant',
         content:
@@ -869,13 +873,15 @@ void main() {
   testWidgets('结束讨论只改记录状态，发消息重新打开', (tester) async {
     await openApp(tester);
     final id = await tester.runAsync(() async {
-      final conversation = await scope!.conversations.create(title: '待结束的讨论');
-      await scope!.conversations.append(
+      final conversation = await scope!.testing.conversations.create(
+        title: '待结束的讨论',
+      );
+      await scope!.testing.conversations.append(
         conversation,
         role: 'user',
         content: '这条讨论要结束',
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         conversation,
         role: 'assistant',
         content: '结束后仍可继续',
@@ -943,7 +949,7 @@ void main() {
       );
       final questionId = await scope!.chat.learning.capture(stem: '写出条件概率公式');
       final view = await scope!.chat.learning.view(questionId);
-      await scope!.attempts.saveDraft(
+      await scope!.testing.attempts.saveDraft(
         view.openAttempt!.id,
         answer: '先写出 P(A|B)=P(AB)/P(B)',
       );
@@ -987,13 +993,13 @@ void main() {
         materialId: material,
         pageNo: 3,
       );
-      final item = await scope!.tasks.createItem(
+      final item = await scope!.testing.tasks.createItem(
         title: '练习导数定义',
         conversationId: conversation,
         note: '阅读第 3 页后独立写出定义，解释差商与极限的关系',
         estMinutes: 20,
       );
-      await scope!.tasks.createItem(title: '另一项任务');
+      await scope!.testing.tasks.createItem(title: '另一项任务');
       return (conversation: conversation, item: item);
     });
     await tester.tap(find.text('安排').last);
@@ -1030,7 +1036,7 @@ void main() {
     await openApp(tester);
     await tester.runAsync(() async {
       for (var i = 0; i < 32; i++) {
-        final id = await scope!.tasks.createItem(title: '已完成事项 $i');
+        final id = await scope!.testing.tasks.createItem(title: '已完成事项 $i');
         await scope!.study.plan.setStatus(id, PlanItemStatus.done);
       }
     });
@@ -1094,7 +1100,7 @@ void main() {
     await settle(tester);
     expect(tester.takeException(), isNull);
     await tester.runAsync(
-      () => scope!.tasks.createItem(title: '整理第三章笔记', estMinutes: 30),
+      () => scope!.testing.tasks.createItem(title: '整理第三章笔记', estMinutes: 30),
     );
     await tester.tap(find.text('这周能做什么'));
     await settle(tester);
@@ -1268,7 +1274,7 @@ void main() {
     expect(draft.feedback, '卡在定义');
     expect(draft.submitted, isFalse);
     final checkables = await tester.runAsync(
-      () => scope!.assessments.forAttempt(draft.id),
+      () => scope!.testing.assessments.forAttempt(draft.id),
     );
     expect(checkables, hasLength(1));
     expect(checkables!.single.result, '与标准答案一致');
@@ -1279,7 +1285,7 @@ void main() {
     await settle(tester);
     expect(find.text('记下这次作答'), findsNothing);
     final submitted = await tester.runAsync(
-      () => scope!.attempts.attemptById(draft.id),
+      () => scope!.testing.attempts.attemptById(draft.id),
     );
     expect(submitted!.submitted, isTrue);
     expect(submitted.userAnswer, '先写出 P(A|B)=P(AB)/P(B)');
@@ -1348,7 +1354,7 @@ void main() {
     expect(find.text('恢复之后才回来的提示'), findsNothing);
     // 读库加超时：以后这条路径再出问题时应报失败，而不是把整条用例挂住。
     final attempt = await tester.runAsync(
-      () => scope!.attempts
+      () => scope!.testing.attempts
           .attemptById(attemptId)
           .timeout(const Duration(seconds: 10)),
     );
@@ -1381,7 +1387,7 @@ void main() {
 
     expect(find.byType(LearningPage), findsOneWidget);
     final attempts = await tester.runAsync(
-      () => scope!.attempts.attemptsFor(id),
+      () => scope!.testing.attempts.attemptsFor(id),
     );
     expect(attempts, hasLength(1));
     expect(attempts!.single.submitted, isFalse);
@@ -1399,7 +1405,7 @@ void main() {
         isCorrect: true,
         independent: true,
       );
-      await scope!.assessments.add(
+      await scope!.testing.assessments.add(
         attemptId: attempt.id,
         kind: AssessmentKind.model,
         result: '步骤完整，结论正确',
@@ -1489,13 +1495,13 @@ void main() {
       () => scope!.chat.discussion.createConversation(title: '要清空的记录'),
     ))!;
     await tester.runAsync(() async {
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         conversationId,
         role: 'user',
         content: '这条记录会被清空',
         imagePaths: ['deleted-record.jpg'],
       );
-      await scope!.attempts.ensureOpenAttempt(conversationId);
+      await scope!.testing.attempts.ensureOpenAttempt(conversationId);
     });
     await tester.tap(find.text('记录').last);
     await settle(tester);
@@ -1518,11 +1524,13 @@ void main() {
       isFalse,
     );
     expect(
-      await tester.runAsync(() => scope!.attempts.attemptsFor(conversationId)),
+      await tester.runAsync(
+        () => scope!.testing.attempts.attemptsFor(conversationId),
+      ),
       isEmpty,
     );
     final rows = await tester.runAsync(
-      () => scope!.conversations.questionRows(),
+      () => scope!.testing.conversations.questionRows(),
     );
     expect(rows!.single.question.stem, '保留的题目');
     expect(tester.takeException(), isNull);
@@ -1614,7 +1622,10 @@ void main() {
     await settle(tester);
 
     expect(find.text('数据结构'), findsNothing);
-    expect(await tester.runAsync(() => scope!.schedule.timetable()), isEmpty);
+    expect(
+      await tester.runAsync(() => scope!.testing.schedule.timetable()),
+      isEmpty,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -1641,7 +1652,7 @@ void main() {
         start: ClockTime.parse('19:00'),
         end: ClockTime.parse('19:30'),
       );
-      return scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
+      return scope!.testing.tasks.createItem(title: '整理笔记', estMinutes: 20);
     });
     final window = await tester.runAsync(() async {
       final plan = await scope!.study.capacity.compute();
@@ -1667,7 +1678,7 @@ void main() {
     await settle(tester);
 
     final blocks = await tester.runAsync(
-      () => scope!.schedule.blocksForItem(itemId!),
+      () => scope!.testing.schedule.blocksForItem(itemId!),
     );
     expect(blocks, hasLength(1));
     expect(blocks!.single.startAt, window.start);
@@ -1682,9 +1693,12 @@ void main() {
         start: ClockTime.parse('19:00'),
         end: ClockTime.parse('19:30'),
       );
-      final id = await scope!.tasks.createItem(title: '整理笔记', estMinutes: 20);
+      final id = await scope!.testing.tasks.createItem(
+        title: '整理笔记',
+        estMinutes: 20,
+      );
       final day = DateTime(2026, 11, 17);
-      await scope!.schedule.addBlock(
+      await scope!.testing.schedule.addBlock(
         planItemId: id,
         start: DateTime(day.year, day.month, day.day, 18),
         end: DateTime(day.year, day.month, day.day, 18, 20),
@@ -1715,7 +1729,7 @@ void main() {
     await settle(tester);
 
     final blocks = await tester.runAsync(
-      () => scope!.schedule.blocksForItem(itemId!),
+      () => scope!.testing.schedule.blocksForItem(itemId!),
     );
     expect(blocks, hasLength(1));
     expect(blocks!.single.startAt.hour, 18);
@@ -1728,7 +1742,7 @@ void main() {
     await tester.tap(find.text('再加一段'));
     await settle(tester);
     final two = await tester.runAsync(
-      () => scope!.schedule.blocksForItem(itemId!),
+      () => scope!.testing.schedule.blocksForItem(itemId!),
     );
     expect(two, hasLength(2));
     expect(tester.takeException(), isNull);
@@ -1868,7 +1882,7 @@ void main() {
   testWidgets('首页只推荐有效安排，并恢复系统学习的原位置', (tester) async {
     await openApp(tester);
     final planId = await tester.runAsync(() async {
-      final goal = await scope!.tasks.createGoal(title: '高等数学 · 导数与微分');
+      final goal = await scope!.testing.tasks.createGoal(title: '高等数学 · 导数与微分');
       final material = await scope!.library.material.create(
         title: '微积分学习讲义',
         kind: 'text',
@@ -1900,7 +1914,7 @@ void main() {
       final states = ['done', 'cancelled', 'valid'];
       for (var index = 0; index < states.length; index++) {
         final state = states[index];
-        final item = await scope!.tasks.createItem(
+        final item = await scope!.testing.tasks.createItem(
           title: state == 'valid' ? '独立推导一次差商极限' : '已结束的安排',
           goalId: goal,
           conversationId: conversation,
@@ -1908,7 +1922,7 @@ void main() {
           estMinutes: 20,
         );
         final start = base.subtract(Duration(minutes: (2 - index) * 30));
-        final block = await scope!.schedule.addBlock(
+        final block = await scope!.testing.schedule.addBlock(
           planItemId: item,
           start: start,
           end: start.add(const Duration(minutes: 20)),
@@ -1917,7 +1931,7 @@ void main() {
           await scope!.study.plan.setStatus(item, PlanItemStatus.done);
         }
         if (state == 'cancelled') {
-          await scope!.schedule.setBlockStatus(block, 'cancelled');
+          await scope!.testing.schedule.setBlockStatus(block, 'cancelled');
         }
       }
       final activity = await scope!.chat.context.loadActivity();
@@ -1934,7 +1948,7 @@ void main() {
               lastMorning.difference(now).abs()
           ? firstMorning
           : lastMorning;
-      await scope!.schedule.addBlock(
+      await scope!.testing.schedule.addBlock(
         planItemId: plan.steps.single.id,
         start: scheduledAt,
         end: scheduledAt.add(const Duration(minutes: 20)),
@@ -2047,13 +2061,15 @@ void main() {
   testWidgets('接受下一步建议时可以直接选定时间', (tester) async {
     await openApp(tester);
     final id = await tester.runAsync(() async {
-      final conversation = await scope!.conversations.create(title: '再练一次');
-      await scope!.conversations.append(
+      final conversation = await scope!.testing.conversations.create(
+        title: '再练一次',
+      );
+      await scope!.testing.conversations.append(
         conversation,
         role: 'user',
         content: '第 8 题又做错了，怎么办',
       );
-      await scope!.conversations.append(
+      await scope!.testing.conversations.append(
         conversation,
         role: 'assistant',
         content: '先收下这条安排，再自己独立做一遍。',
@@ -2085,8 +2101,10 @@ void main() {
     await settle(tester);
 
     final stored = await tester.runAsync(() async {
-      final items = await scope!.tasks.items();
-      final blocks = await scope!.schedule.blocksForItem(items.single.id);
+      final items = await scope!.testing.tasks.items();
+      final blocks = await scope!.testing.schedule.blocksForItem(
+        items.single.id,
+      );
       return (items: items, blocks: blocks);
     });
     expect(stored!.items.single.title, '再独立做一遍第 8 题');
@@ -2119,7 +2137,7 @@ void main() {
       final start = fiveMinutesAgo.isBefore(dayStart)
           ? dayStart
           : fiveMinutesAgo;
-      await scope!.schedule.addBlock(
+      await scope!.testing.schedule.addBlock(
         planItemId: plan.steps.single.id,
         start: start,
         end: start.add(const Duration(minutes: 20)),
@@ -2140,7 +2158,7 @@ void main() {
   testWidgets('首页把没有预约的待办放在接下来', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      await scope!.tasks.createItem(title: '整理错题', estMinutes: 25);
+      await scope!.testing.tasks.createItem(title: '整理错题', estMinutes: 25);
       scope!.dataVersion.value++;
     });
     await settle(tester);
@@ -2187,7 +2205,7 @@ void main() {
       );
       final step = plan.steps.single;
       final start = scope!.timePolicy.now.subtract(const Duration(minutes: 5));
-      final block = await scope!.schedule.addBlock(
+      final block = await scope!.testing.schedule.addBlock(
         planItemId: step.id,
         start: start,
         end: start.add(const Duration(minutes: 20)),
@@ -2229,8 +2247,8 @@ void main() {
 
     final after = await tester.runAsync(() async {
       return (
-        step: await scope!.tasks.byId(data!.stepId),
-        block: await scope!.schedule.blockById(data.blockId),
+        step: await scope!.testing.tasks.byId(data!.stepId),
+        block: await scope!.testing.schedule.blockById(data.blockId),
         plan: await scope!.study.systemPlan.view(data.planId),
       );
     });
@@ -2273,7 +2291,9 @@ void main() {
     await settle(tester);
     expect(find.byType(DiscussionPage), findsOneWidget);
     expect(find.text('继续作答'), findsOneWidget);
-    final sessions = await tester.runAsync(() => scope!.studyRecords.recent());
+    final sessions = await tester.runAsync(
+      () => scope!.testing.studyRecords.recent(),
+    );
     expect(sessions!.single.endedAt, isNotNull);
 
     await tester.tap(find.byKey(const ValueKey('zhixin-header-back')));
@@ -2338,7 +2358,9 @@ void main() {
 
   testWidgets('数据版本页列出提交历史、留存与两类数据包入口', (tester) async {
     await openApp(tester);
-    await tester.runAsync(() => scope!.tasks.createGoal(title: '版本页目标'));
+    await tester.runAsync(
+      () => scope!.testing.tasks.createGoal(title: '版本页目标'),
+    );
     await tester.tap(find.byIcon(FLucideIcons.settings));
     await settle(tester);
     final dataTile = find.text('数据版本');
@@ -2363,7 +2385,7 @@ void main() {
   testWidgets('数据版本页列出恢复点并标明可以回到恢复前', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
-      await scope!.tasks.createGoal(title: '恢复点目标');
+      await scope!.testing.tasks.createGoal(title: '恢复点目标');
       final backup = File('${directory.path}/restore.zip');
       await scope!.backupRepository(backup.path);
       await scope!.restore(await backup.readAsBytes());
@@ -2401,7 +2423,7 @@ void main() {
   testWidgets('数据版本页直接禁用不能撤销的提交并说明原因', (tester) async {
     await openApp(tester);
     await tester.runAsync(
-      () => insertRow(scope!.db, 'conversation', {
+      () => insertRow(scope!.testing.db, 'conversation', {
         'title': '不能撤销的讨论',
         'entry_kind': 'text',
         'status': 'open',

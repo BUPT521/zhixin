@@ -99,22 +99,22 @@ class AppScope extends StatefulWidget {
 
 class AppScopeState extends State<AppScope> {
   RawDatabase? _connection;
-  late GuardedDatabase db;
+  late GuardedDatabase _db;
   late AppPaths paths;
 
   /// 外观在应用根部，页面读它当前的值，也通过它保存。
   ThemeModeController get themeMode => widget.themeMode;
 
   // 仓库按表分组，页面直接用；服务收进 [AppServices] 的六组门面，见下面。
-  late ConversationRepository conversations;
-  late AttemptRepository attempts;
-  late TaskRepository tasks;
-  late ScheduleRepository schedule;
-  late MemoryRepository memories;
-  late StudyRepository studyRecords;
-  late AssessmentRepository assessments;
-  late MaterialRepository materials;
-  late StudyPlanRepository studyPlans;
+  late ConversationRepository _conversations;
+  late AttemptRepository _attempts;
+  late TaskRepository _tasks;
+  late ScheduleRepository _schedule;
+  late MemoryRepository _memories;
+  late StudyRepository _studyRecords;
+  late AssessmentRepository _assessments;
+  late MaterialRepository _materials;
+  late StudyPlanRepository _studyPlans;
 
   late LlmConfigStore _llmStore;
   AiChatService? _configuredAi;
@@ -138,7 +138,7 @@ class AppScopeState extends State<AppScope> {
   /// 整库恢复、清空与导入之后加一；三栏据此在原处重读数据，页面状态不重置。
   final ValueNotifier<int> dataVersion = ValueNotifier<int>(0);
 
-  final DatabaseGate gate = DatabaseGate();
+  final DatabaseGate _gate = DatabaseGate();
   int _operationEpoch = 0;
   Timer? _semanticRefreshTimer;
 
@@ -148,14 +148,14 @@ class AppScopeState extends State<AppScope> {
   TimePolicy get timePolicy => TimePolicy(clock: clock, cutoffHour: cutoffHour);
 
   /// 服务共用的运行环境；时间口径随保存的设置换新，数据代次随恢复与清空推进。
-  late final ServiceRuntime runtime = ServiceRuntime(
+  late final ServiceRuntime _runtime = ServiceRuntime(
     policySource: () => timePolicy,
     filesDirSource: () => paths.filesDir,
     dataEpochSource: () => _operationEpoch,
     recordFailure: crashLog.record,
   );
 
-  late final EvidenceRepository _evidenceRepository = EvidenceRepository(db);
+  late final EvidenceRepository _evidenceRepository = EvidenceRepository(_db);
 
   late final EmbeddingConfigStore _embeddingStore = EmbeddingConfigStore(
     SecureSecretStore(),
@@ -225,68 +225,68 @@ class AppScopeState extends State<AppScope> {
 
   DataServices get data => _services.data;
 
-  late final _transactions = WriteTransactions(db);
-  late final _settings = SettingsRepository(db);
+  late final _transactions = WriteTransactions(_db);
+  late final _settings = SettingsRepository(_db);
 
   late final ContextService _context = ContextService(
-    tasks: tasks,
-    attempts: attempts,
-    schedule: schedule,
-    memories: memories,
-    conversations: conversations,
-    materials: materials,
-    runtime: runtime,
+    tasks: _tasks,
+    attempts: _attempts,
+    schedule: _schedule,
+    memories: _memories,
+    conversations: _conversations,
+    materials: _materials,
+    runtime: _runtime,
     evidence: _evidence,
   );
 
   late final MaterialService _material = MaterialService(
-    materials: materials,
+    materials: _materials,
     transactions: _transactions,
-    runtime: runtime,
+    runtime: _runtime,
   );
 
   late final SearchService _search = SearchService(evidence: _evidence);
 
   late final CapacityService _capacity = CapacityService(
     settings: _settings,
-    tasks: tasks,
-    schedule: schedule,
-    runtime: runtime,
+    tasks: _tasks,
+    schedule: _schedule,
+    runtime: _runtime,
     transactions: _transactions,
   );
 
   late final ContinueService _continueLast = ContinueService(
-    conversations: conversations,
-    plans: studyPlans,
+    conversations: _conversations,
+    plans: _studyPlans,
   );
 
   /// 讨论与作答共用：记录归属优先，没有时沿用最近一次学习的目标。
   late final MemoryScopeService _memoryScope = MemoryScopeService(
-    conversations: conversations,
-    attempts: attempts,
+    conversations: _conversations,
+    attempts: _attempts,
   );
 
   late final StudyPlanService _systemPlan = StudyPlanService(
-    plans: studyPlans,
-    materials: materials,
+    plans: _studyPlans,
+    materials: _materials,
     ai: _ai,
     context: _context,
-    conversations: conversations,
-    study: studyRecords,
+    conversations: _conversations,
+    study: _studyRecords,
     transactions: _transactions,
-    runtime: runtime,
+    runtime: _runtime,
   );
 
   late final DiscussionService _discussion = DiscussionService(
-    conversations: conversations,
+    conversations: _conversations,
     ai: _ai,
     context: _context,
     memoryScope: _memoryScope,
-    memories: memories,
+    memories: _memories,
     revisions: _revisions,
-    tasks: tasks,
-    materials: materials,
-    runtime: runtime,
+    tasks: _tasks,
+    materials: _materials,
+    runtime: _runtime,
     transactions: _transactions,
     cleanupAttachmentPaths: cleanupAttachmentPaths,
     assets: _engine.assets,
@@ -294,39 +294,39 @@ class AppScopeState extends State<AppScope> {
   );
 
   late final LearningService _learning = LearningService(
-    attempts: attempts,
-    conversations: conversations,
-    study: studyRecords,
-    memories: memories,
+    attempts: _attempts,
+    conversations: _conversations,
+    study: _studyRecords,
+    memories: _memories,
     revisions: _revisions,
-    schedule: schedule,
-    tasks: tasks,
-    assessments: assessments,
+    schedule: _schedule,
+    tasks: _tasks,
+    assessments: _assessments,
     ai: _ai,
     context: _context,
     memoryScope: _memoryScope,
-    runtime: runtime,
+    runtime: _runtime,
     transactions: _transactions,
   );
 
   late final PlanService _plan = PlanService(
-    tasks: tasks,
-    schedule: schedule,
+    tasks: _tasks,
+    schedule: _schedule,
     revisions: _revisions,
-    runtime: runtime,
-    studyPlans: studyPlans,
+    runtime: _runtime,
+    studyPlans: _studyPlans,
     transactions: _transactions,
   );
 
   late final MemoryService _memoryEdit = MemoryService(
-    memories,
+    _memories,
     transactions: _transactions,
   );
 
   late final MemoryProposalService _proposals = MemoryProposalService(
-    attempts: attempts,
-    conversations: conversations,
-    memories: memories,
+    attempts: _attempts,
+    conversations: _conversations,
+    memories: _memories,
     transactions: _transactions,
   );
 
@@ -335,13 +335,17 @@ class AppScopeState extends State<AppScope> {
     transactions: _transactions,
     llmStore: _llmStore,
     ai: _configuredAi!,
-    runtime: runtime,
+    runtime: _runtime,
     onPolicyChanged: _refreshDayCutoffHour,
     restore: restore,
     resetAll: resetAllData,
   );
 
   late final Future<void> ready = _init();
+
+  /// 测试装配入口；生产代码与页面不读它。
+  @visibleForTesting
+  late final AppScopeTesting testing = AppScopeTesting._(this);
 
   @override
   void initState() {
@@ -360,7 +364,7 @@ class AppScopeState extends State<AppScope> {
     await paths.ensureDirectories();
     crashLog = widget.crashLog ?? CrashLog(filesDir: paths.filesDir);
     crashLog.recordLaunch();
-    db = GuardedDatabase(gate: gate, resolve: () => _connection!);
+    _db = GuardedDatabase(gate: _gate, resolve: () => _connection!);
     _llmStore = LlmConfigStore(SecureSecretStore());
     _configuredAi = AiChatService(store: _llmStore);
     _dataPackages = DataPackageService(
@@ -373,11 +377,11 @@ class AppScopeState extends State<AppScope> {
     await _dataPackages.recoverInterruptedRestore();
     await _open();
     _engine = RevisionEngine(clock: clock);
-    db.revisions = _engine;
+    _db.revisions = _engine;
     _attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
     _revisions = RevisionService(
       engine: _engine,
-      db: db,
+      db: _db,
       raw: () => _connection!,
       clock: clock,
       cache: _attachmentCache,
@@ -418,15 +422,15 @@ class AppScopeState extends State<AppScope> {
 
   Future<void> _maintainAttachments() async {
     try {
-      await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(db);
+      await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(_db);
     } catch (error, stack) {
       crashLog.record(error, stack, kind: 'cleanup_attachments');
     }
     if (!mounted) return;
     try {
-      await gate.shared(() async {
+      await _gate.shared(() async {
         if (!await _attachmentCache.needsRebuild) return;
-        await _attachmentCache.rebuild(db, _engine.assets);
+        await _attachmentCache.rebuild(_db, _engine.assets);
         await _attachmentCache.clearPendingRebuild();
       });
     } catch (error, stack) {
@@ -440,8 +444,8 @@ class AppScopeState extends State<AppScope> {
   /// 没有配置或关闭语义索引时不读向量库，回答前后的原文与关键词检索照常。
   void applyEmbeddingConfig(EmbeddingConfig? config, {bool refresh = true}) {
     embeddingConfig = config;
-    final runtime = embeddingRuntime(config);
-    _semantic.configure(client: runtime.client, canSend: runtime.canSend);
+    final embedding = embeddingRuntime(config);
+    _semantic.configure(client: embedding.client, canSend: embedding.canSend);
     if (refresh && _semantic.configured) {
       _refreshSemanticIndexNow();
     }
@@ -458,17 +462,17 @@ class AppScopeState extends State<AppScope> {
   }
 
   Future<void> _bind() async {
-    final connection = db;
+    final connection = _db;
     await _refreshDayCutoffHour();
-    conversations = ConversationRepository(connection, clock: clock);
-    attempts = AttemptRepository(connection, clock: clock);
-    tasks = TaskRepository(connection, clock: clock);
-    schedule = ScheduleRepository(connection, clock: clock);
-    memories = MemoryRepository(connection, clock: clock);
-    studyRecords = StudyRepository(connection, clock: clock);
-    assessments = AssessmentRepository(connection, clock: clock);
-    materials = MaterialRepository(connection, clock: clock);
-    studyPlans = StudyPlanRepository(connection, clock: clock);
+    _conversations = ConversationRepository(connection, clock: clock);
+    _attempts = AttemptRepository(connection, clock: clock);
+    _tasks = TaskRepository(connection, clock: clock);
+    _schedule = ScheduleRepository(connection, clock: clock);
+    _memories = MemoryRepository(connection, clock: clock);
+    _studyRecords = StudyRepository(connection, clock: clock);
+    _assessments = AssessmentRepository(connection, clock: clock);
+    _materials = MaterialRepository(connection, clock: clock);
+    _studyPlans = StudyPlanRepository(connection, clock: clock);
   }
 
   /// 重新读取库里的每日截止小时；保存设置与撤销设置之后都走这里。
@@ -524,7 +528,7 @@ class AppScopeState extends State<AppScope> {
     final semantic = __semantic;
     if (semantic != null) unawaited(semantic.close());
     __semantic = null;
-    if (_connection != null) db.close();
+    if (_connection != null) _db.close();
     dataVersion.dispose();
     super.dispose();
   }
@@ -576,4 +580,31 @@ class _AppScopeData extends InheritedWidget {
 
   @override
   bool updateShouldNotify(_AppScopeData oldWidget) => false;
+}
+
+/// 测试装配入口：库连接、独占写入区与仓库只在这里露出。
+///
+/// 页面与服务经 [AppServices] 与 [AppScopeState] 的基础句柄取数据；测试需要
+/// 建库、写种子数据或注入故障时从这一个入口取，不再把仓库与连接公开成字段。
+@visibleForTesting
+final class AppScopeTesting {
+  const AppScopeTesting._(this._state);
+
+  final AppScopeState _state;
+
+  GuardedDatabase get db => _state._db;
+
+  DatabaseGate get gate => _state._gate;
+
+  ServiceRuntime get runtime => _state._runtime;
+
+  ConversationRepository get conversations => _state._conversations;
+  AttemptRepository get attempts => _state._attempts;
+  TaskRepository get tasks => _state._tasks;
+  ScheduleRepository get schedule => _state._schedule;
+  MemoryRepository get memories => _state._memories;
+  StudyRepository get studyRecords => _state._studyRecords;
+  AssessmentRepository get assessments => _state._assessments;
+  MaterialRepository get materials => _state._materials;
+  StudyPlanRepository get studyPlans => _state._studyPlans;
 }

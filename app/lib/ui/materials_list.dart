@@ -61,7 +61,7 @@ class MaterialListState extends State<MaterialList>
     try {
       final (materials, goals) = await (
         scope.library.material.list(),
-        scope.tasks.goals(),
+        scope.study.plan.goals(),
       ).wait;
       if (!mounted || !_gate.isCurrent(request)) return;
       await context.afterTransition(contentTransition: widget.tabTransition);
@@ -130,7 +130,7 @@ class MaterialListState extends State<MaterialList>
   Future<void> _importWord() async {
     final scope = AppScope.of(context);
     final service = scope.library.material;
-    final expectedEpoch = scope.runtime.dataEpoch;
+    final expectedEpoch = service.dataEpoch;
     setState(() => _importingWord = true);
     try {
       final file = await FilePicker.pickFile(

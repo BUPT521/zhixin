@@ -48,7 +48,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
   Future<void> _load() async {
     try {
       final scope = AppScope.of(context);
-      final questions = await scope.conversations.questionRows(limit: 20);
+      final questions = await scope.chat.learning.questionRows(limit: 20);
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填。
       await context.afterTransition();

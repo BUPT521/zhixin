@@ -143,6 +143,21 @@ class LearningService {
     );
   }
 
+  /// 有作答的记录，附带每条最近一次作答；记录页与记忆建议页共用这一份读取。
+  Future<List<QuestionRow>> questionRows({
+    int? limit,
+    Iterable<int>? conversationIds,
+  }) => conversations.questionRows(
+    limit: limit,
+    conversationIds: conversationIds,
+  );
+
+  /// 这道题最近几条消息；学习页在题目下方显示刚才的对话。
+  Future<List<ChatMessage>> recentMessages(
+    int conversationId, {
+    int limit = 6,
+  }) => conversations.recent(conversationId, limit: limit);
+
   Future<int> capture({
     required String stem,
     String? sourceRef,
