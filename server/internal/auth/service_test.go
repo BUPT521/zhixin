@@ -117,7 +117,7 @@ func TestDeleteAccountRunsCleanupFirst(t *testing.T) {
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
 
 	boom := errors.New("backup store down")
-	s.OnAccountDelete(func(context.Context, string) error { return boom })
+	s.SetAccountDataDeleter(func(context.Context, string) error { return boom })
 	if err := s.DeleteAccount(ctx, p); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
 	}
@@ -125,9 +125,9 @@ func TestDeleteAccountRunsCleanupFirst(t *testing.T) {
 		t.Fatal("account must survive a failed cleanup so deletion can be retried")
 	}
 
-	s.deleters = nil
+	s.deleteAccountData = nil
 	var cleaned string
-	s.OnAccountDelete(func(_ context.Context, id string) error { cleaned = id; return nil })
+	s.SetAccountDataDeleter(func(_ context.Context, id string) error { cleaned = id; return nil })
 	if err := s.DeleteAccount(ctx, p); err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,6 @@ type Store interface {
 	List(ctx context.Context, userID string) ([]Meta, error)
 	Open(ctx context.Context, userID, id string) (Meta, io.ReadCloser, error)
 	Delete(ctx context.Context, userID, id string) error
-	DeleteUser(ctx context.Context, userID string) error
 }
 
 func newID() string {

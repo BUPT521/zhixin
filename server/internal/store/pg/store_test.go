@@ -83,7 +83,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	}
 }
 
-func TestPostgresDeleteUserRunsCleanupTwice(t *testing.T) {
+func TestPostgresDeleteUserAndObjects(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
@@ -98,15 +98,21 @@ func TestPostgresDeleteUserRunsCleanupTwice(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	// server 装配时同一个实现会登记两次清理，第二次必须直接成功，后面的附件
-	// 清理才有机会执行。
+	// 账号行删除可以重试；对象字节由独立的清理步骤负责，两步之间不会互相
+	// 依赖，因此任何一步失败都能从头再来。
 	for i := 0; i < 2; i++ {
 		if err := st.DeleteUser(ctx, "u1"); err != nil {
 			t.Fatalf("第 %d 次删除账号失败: %v", i+1, err)
 		}
 	}
+	if _, err := st.UserByID(ctx, "u1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("账号应已删除，得到 %v", err)
+	}
+	if err := st.DeleteUserObjects(ctx, "u1"); err != nil {
+		t.Fatalf("delete objects: %v", err)
+	}
 	if _, err := st.objects.Stat(ctx, backupKey("u1", "b1")); !errors.Is(err, objectstore.ErrNotFound) {
-		t.Fatalf("备份字节应随账号删除，得到 %v", err)
+		t.Fatalf("备份字节应随账号清理，得到 %v", err)
 	}
 }
 

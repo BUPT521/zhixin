@@ -10,7 +10,6 @@ import (
 type Quota interface {
 	Used(ctx context.Context, userID, day string) (int64, error)
 	Add(ctx context.Context, userID, day string, tokens int64) error
-	DeleteUser(ctx context.Context, userID string) error
 }
 
 // MemoryQuota is a Quota kept in process memory.

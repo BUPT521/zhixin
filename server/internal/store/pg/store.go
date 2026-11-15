@@ -128,17 +128,16 @@ func (s *Store) UserByID(ctx context.Context, id string) (auth.User, error) {
 	}, nil
 }
 
-// DeleteUser 删除账号；会话、提交序列、备份与用量按外键级联删除，
-// 账号名下备份对象的字节随后按前缀清掉。
-//
-// 这个方法同时是 syncsvc.Store 与 backup.Store 的 DeleteUser，server 装配时
-// 会把它登记两次；第二次调用时账号已经不在了，直接返回成功，让后面的附件与
-// 用量清理照常执行。
+// DeleteUser 删除账号行；会话、提交序列、备份元数据与用量按外键级联删除。
+// 对象存储里的字节由 DeleteUserObjects 清理，两步分开，账号删除因此可以重试。
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
-	rows, err := s.q.DeleteUser(ctx, userID)
-	if err != nil || rows == 0 {
-		return err
-	}
+	_, err := s.q.DeleteUser(ctx, userID)
+	return err
+}
+
+// DeleteUserObjects 删除账号名下的备份字节。附件字节由 blobs 包按自己的前缀
+// 清理，两个前缀不同，服务装配时合成一次账号清理。
+func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
 	return s.objects.RemovePrefix(ctx, backupPrefix(userID))
 }
 

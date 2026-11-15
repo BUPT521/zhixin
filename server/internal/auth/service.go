@@ -38,25 +38,26 @@ type Principal struct {
 	SessionID string
 }
 
-// AccountDeleter removes one kind of per-account data (sync log, backups,
-// usage). Every data-owning package registers one so account deletion
-// cannot silently leave learning data behind on the server.
+// AccountDeleter removes data owned by the other services before the account
+// row disappears. The server wires one function so deleting an account is a
+// single idempotent operation rather than one registration per package.
 type AccountDeleter func(ctx context.Context, userID string) error
 
 type Service struct {
-	store      Store
-	now        func() time.Time
-	accessTTL  time.Duration
-	refreshTTL time.Duration
-	deleters   []AccountDeleter
+	store             Store
+	now               func() time.Time
+	accessTTL         time.Duration
+	refreshTTL        time.Duration
+	deleteAccountData AccountDeleter
 }
 
 func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
 	return &Service{store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL}
 }
 
-// OnAccountDelete registers cleanup for data owned by other packages.
-func (s *Service) OnAccountDelete(d AccountDeleter) { s.deleters = append(s.deleters, d) }
+// SetAccountDataDeleter registers the one cleanup that runs before the account
+// row is removed.
+func (s *Service) SetAccountDataDeleter(d AccountDeleter) { s.deleteAccountData = d }
 
 func newID() string {
 	var b [16]byte
@@ -195,12 +196,12 @@ func (s *Service) User(ctx context.Context, p Principal) (User, error) {
 	return s.store.UserByID(ctx, p.UserID)
 }
 
-// DeleteAccount removes every piece of server-side data for the account,
-// then the sessions and the user row. Any cleanup failure stops before the
-// user row is removed, so the request can be retried.
+// DeleteAccount removes every piece of server-side data for the account: the
+// caller-supplied data first, then the sessions and the user row. Any cleanup
+// failure stops before the user row is removed, so the request can be retried.
 func (s *Service) DeleteAccount(ctx context.Context, p Principal) error {
-	for _, d := range s.deleters {
-		if err := d(ctx, p.UserID); err != nil {
+	if s.deleteAccountData != nil {
+		if err := s.deleteAccountData(ctx, p.UserID); err != nil {
 			return err
 		}
 	}

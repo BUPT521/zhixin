@@ -54,8 +54,6 @@ type Store interface {
 	Append(ctx context.Context, userID string, base int64, commits []Commit) (int64, error)
 	// After returns up to limit commits with seq > after, in order.
 	After(ctx context.Context, userID string, after int64, limit int) ([]Commit, error)
-	// DeleteUser removes the whole log of an account.
-	DeleteUser(ctx context.Context, userID string) error
 }
 
 // MemoryStore is a Store kept in process memory.

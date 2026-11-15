@@ -54,12 +54,19 @@ func run(log *slog.Logger) error {
 			}
 		}
 		log.Info("using PostgreSQL stores")
+		blobStore := blobs.NewStore(objects)
 		stores = server.Stores{
 			Auth:    pgStore,
 			Sync:    pgStore,
 			Backups: pgStore,
-			Blobs:   blobs.NewStore(objects),
+			Blobs:   blobStore,
 			Quota:   pgStore,
+			DeleteAccount: func(ctx context.Context, userID string) error {
+				return errors.Join(
+					pgStore.DeleteUserObjects(ctx, userID),
+					blobStore.DeleteUser(ctx, userID),
+				)
+			},
 			Ready: func(ctx context.Context) error {
 				if err := pgStore.Ping(ctx); err != nil {
 					return err

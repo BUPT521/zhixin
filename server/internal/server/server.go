@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -34,18 +35,34 @@ type Stores struct {
 	Backups backup.Store
 	Blobs   blobs.Store
 	Quota   llmproxy.Quota
+	// DeleteAccount removes per-account data owned outside the auth store.
+	// It runs once before the account row disappears.
+	DeleteAccount auth.AccountDeleter
 	// Ready reports whether external dependencies are reachable; nil means always ready.
 	Ready func(ctx context.Context) error
 }
 
 // MemoryStores returns in-process stores for development and tests.
 func MemoryStores() Stores {
+	authStore := auth.NewMemoryStore()
+	syncStore := syncsvc.NewMemoryStore()
+	backupStore := backup.NewMemoryStore()
+	blobStore := blobs.NewStore(objectstore.NewMemory())
+	quotaStore := llmproxy.NewMemoryQuota()
 	return Stores{
-		Auth:    auth.NewMemoryStore(),
-		Sync:    syncsvc.NewMemoryStore(),
-		Backups: backup.NewMemoryStore(),
-		Blobs:   blobs.NewStore(objectstore.NewMemory()),
-		Quota:   llmproxy.NewMemoryQuota(),
+		Auth:    authStore,
+		Sync:    syncStore,
+		Backups: backupStore,
+		Blobs:   blobStore,
+		Quota:   quotaStore,
+		DeleteAccount: func(ctx context.Context, userID string) error {
+			return errors.Join(
+				syncStore.DeleteUser(ctx, userID),
+				backupStore.DeleteUser(ctx, userID),
+				blobStore.DeleteUser(ctx, userID),
+				quotaStore.DeleteUser(ctx, userID),
+			)
+		},
 	}
 }
 
@@ -54,12 +71,9 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
-	// PostgreSQL 实现同时承担提交序列与备份，DeleteUser 会登记两次；各清理函数
-	// 因此必须在数据已经删掉时直接返回成功（见 pg.Store.DeleteUser）。
-	authSvc.OnAccountDelete(st.Sync.DeleteUser)
-	authSvc.OnAccountDelete(st.Backups.DeleteUser)
-	authSvc.OnAccountDelete(st.Blobs.DeleteUser)
-	authSvc.OnAccountDelete(st.Quota.DeleteUser)
+	// 账号删除只登记一次：调用方提供的清理先删对象与各包数据，auth 再删会话
+	// 与账号行。失败时停在账号行之前，同一个请求可以重试。
+	authSvc.SetAccountDataDeleter(st.DeleteAccount)
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
