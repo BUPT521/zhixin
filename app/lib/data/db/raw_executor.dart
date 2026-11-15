@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart' show DatabaseConnectionUser;
 
 import 'drift/app_database.dart';
+
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 /// 版本引擎、备份与撤销使用的最小 SQL 执行器。
@@ -14,7 +15,11 @@ abstract class RawExecutor {
   /// 从这里取连接，而不是另开一个 [RawExecutor]（ADR-0011 第 4 条）。
   DatabaseConnectionUser? get driftConnection => null;
 
-  Future<void> execute(String sql, [List<Object?>? arguments]);
+  /// 执行一条语句；插入返回新行编号，其他返回受影响的行数。
+  ///
+  /// 行号必须在同一条语句之后立刻读回：命令事务在提交收尾时还会写入版本
+  /// 明细，晚一步读到的就是明细行的编号。
+  Future<int> execute(String sql, [List<Object?>? arguments]);
 
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
@@ -77,6 +82,14 @@ class SqliteRawDatabase implements RawDatabase {
     }
   }
 
+  bool _isInsert(String sql) =>
+      sql.trimLeft().toUpperCase().startsWith('INSERT');
+
+  int _runAndReport(String sql, List<Object?>? arguments) {
+    final affected = _run(sql, arguments);
+    return _isInsert(sql) ? _db.lastInsertRowId : affected;
+  }
+
   List<Map<String, Object?>> _select(String sql, List<Object?>? arguments) {
     final statement = _db.prepare(sql);
     try {
@@ -94,8 +107,8 @@ class SqliteRawDatabase implements RawDatabase {
   }
 
   @override
-  Future<void> execute(String sql, [List<Object?>? arguments]) =>
-      Future.sync(() => _run(sql, arguments));
+  Future<int> execute(String sql, [List<Object?>? arguments]) =>
+      Future.sync(() => _runAndReport(sql, arguments));
 
   @override
   Future<T> selectGenerated<T>(Future<T> Function(AppDatabase db) query) =>

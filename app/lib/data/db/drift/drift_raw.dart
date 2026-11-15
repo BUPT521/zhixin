@@ -25,7 +25,7 @@ class DriftRawDatabase implements RawDatabase {
   Future<void> close() => database.close();
 
   @override
-  Future<void> execute(String sql, [List<Object?>? arguments]) =>
+  Future<int> execute(String sql, [List<Object?>? arguments]) =>
       _executor.execute(sql, arguments);
 
   @override
@@ -53,8 +53,9 @@ class DriftRawExecutor implements RawExecutor {
   DatabaseConnectionUser get driftConnection => _db;
 
   @override
-  Future<void> execute(String sql, [List<Object?>? arguments]) =>
-      _db.customStatement(sql, arguments);
+  /// drift 的 customInsert 在执行完语句后立刻读回行号；其他语句返回受影响行数。
+  Future<int> execute(String sql, [List<Object?>? arguments]) =>
+      _db.customInsert(sql, variables: _variables(arguments));
 
   @override
   Future<List<Map<String, Object?>>> rawQuery(
@@ -77,4 +78,3 @@ class DriftRawExecutor implements RawExecutor {
 List<Variable> _variables(List<Object?>? values) => [
   for (final value in values ?? const <Object?>[]) Variable(value),
 ];
-

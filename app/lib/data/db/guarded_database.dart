@@ -146,7 +146,7 @@ class GuardedDatabase implements RawDatabase {
   }
 
   @override
-  Future<void> execute(String sql, [List<Object?>? arguments]) {
+  Future<int> execute(String sql, [List<Object?>? arguments]) {
     if (_rawReplaceOnVersioned(sql)) {
       throw ArgumentError('版本化表不能使用 REPLACE，请改用 insert、update 或 UPSERT');
     }
