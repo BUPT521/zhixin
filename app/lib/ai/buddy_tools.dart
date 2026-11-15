@@ -241,8 +241,8 @@ const LlmTool _memoriesSchema = LlmTool(
             'content': {
               'type': 'string',
               'minLength': 1,
-              'maxLength': 200,
-              'description': '一句话，不超过 200 字',
+              'maxLength': memoryContentLimit,
+              'description': '一句话，不超过 $memoryContentLimit 字',
             },
             'valid_until': {
               'type': ['string', 'null'],

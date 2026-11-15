@@ -1023,11 +1023,11 @@ class DiscussionChatState extends State<DiscussionChat>
     if (index != _messages.length - 1) return null;
     final message = _messages[index];
     if (message.role != 'assistant') return null;
-    final structured = message.structured;
-    final fromModel = structured?['model'] == true;
+    final payload = message.payload;
+    final fromModel = payload?.fromModel == true;
     final interrupted = message.interrupted;
     if (fromModel && !interrupted) return null;
-    final failed = structured?['model_failed'] == true;
+    final failed = payload?.modelFailed == true;
     final label = failed || interrupted ? '重试这次回答' : '用模型重新回答';
     final saved = savedAnswerStatus(message);
     // 失败说明随回答保存，重新打开讨论时由按状态重新写出的同一句话显示。

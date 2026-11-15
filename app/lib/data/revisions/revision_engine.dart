@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import '../../domain/models/chat_message_payload.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/drift/tables.dart'
@@ -1101,75 +1102,19 @@ class RevisionEngine {
     );
     var changed = 0;
     for (final row in messages) {
-      final structured = _decodeStructuredJson(row['structured_json']);
-      if (structured == null) continue;
-      if (!_removeDeadReceipts(structured, live)) continue;
+      final payload = ChatMessagePayload.decode(
+        row['structured_json'] as String?,
+      );
+      final updated = payload?.withoutDeadReceipts(live);
+      if (updated == null) continue;
       await updateRow(
         executor,
         'message',
-        {'structured_json': jsonEncode(structured)},
+        {'structured_json': updated.encode()},
         where: 'id = ?',
         whereArgs: [row['id']],
       );
       changed++;
-    }
-    return changed;
-  }
-
-  Map<String, Object?>? _decodeStructuredJson(Object? raw) {
-    if (raw is! String || raw.trim().isEmpty) return null;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      return {
-        for (final entry in decoded.entries)
-          if (entry.key is String) entry.key as String: entry.value,
-      };
-    } on FormatException {
-      return null;
-    }
-  }
-
-  /// 回执只保留在仍能撤销的提交上；记忆卡片去掉编号后不再显示撤销入口。
-  bool _removeDeadReceipts(Map<String, Object?> structured, Set<int> live) {
-    var changed = false;
-    final operations = structured['operations'];
-    if (operations is List) {
-      final kept = [
-        for (final item in operations)
-          if (item is! Map ||
-              item['commit_id'] is! int ||
-              live.contains(item['commit_id']))
-            item,
-      ];
-      if (kept.length != operations.length) {
-        structured['operations'] = kept;
-        changed = true;
-      }
-    }
-    final memoryItems = structured['memory_items'];
-    if (memoryItems is List) {
-      final updated = <Object?>[];
-      var itemsChanged = false;
-      for (final item in memoryItems) {
-        if (item is Map &&
-            item['commit_id'] is int &&
-            !live.contains(item['commit_id'])) {
-          updated.add(
-            <String, Object?>{
-              for (final entry in item.entries)
-                if (entry.key is String) entry.key as String: entry.value,
-            }..remove('commit_id'),
-          );
-          itemsChanged = true;
-        } else {
-          updated.add(item);
-        }
-      }
-      if (itemsChanged) {
-        structured['memory_items'] = updated;
-        changed = true;
-      }
     }
     return changed;
   }

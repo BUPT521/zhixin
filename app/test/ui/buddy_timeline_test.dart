@@ -8,17 +8,20 @@ import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/ui/buddy_timeline.dart';
 import 'package:zhixin/ui/theme.dart';
 
-MemoryItemView memory({String status = 'pending', int? commitId}) {
+MemoryItemView memory({
+  MemoryCardStatus status = MemoryCardStatus.pending,
+  int? commitId,
+}) {
   return MemoryItemView(
     ownerId: 1,
-    itemId: 'memory-1',
     draft: MemoryDraft(
+      id: 'memory-1',
       kind: MemoryKind.preference,
       content: '讲解概率时先用具体例子。',
       source: MemorySource.inferred,
+      status: status,
+      commitId: commitId,
     ),
-    status: status,
-    commitId: commitId,
   );
 }
 
@@ -93,7 +96,7 @@ void main() {
 
   testWidgets('已记下的记忆卡片可以撤销', (tester) async {
     final timeline = FakeTimeline([
-      BuddyMemoryEntry(memory(status: 'accepted', commitId: 9)),
+      BuddyMemoryEntry(memory(status: MemoryCardStatus.accepted, commitId: 9)),
     ]);
     await tester.pumpWidget(wrap(BuddyTimeline(adapter: timeline)));
 

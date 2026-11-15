@@ -65,8 +65,8 @@ Future<ApplyResult> applyMemoryDrafts({
     for (final draft in drafts) {
       final content = draft.content.trim();
       if (content.isEmpty) continue;
-      if (content.length > 200) {
-        skipped.add('记忆内容超过 200 字，未保存。');
+      if (draft.tooLong) {
+        skipped.add('记忆内容超过 $memoryContentLimit 字，未保存。');
         continue;
       }
       final draftScope = draft.kind.followsContext ? scope?.trim() : null;
@@ -119,7 +119,8 @@ Future<AcceptedMemory> confirmMemoryDraft({
   required int sourceId,
   required String? scope,
   required Clock clock,
-  required Future<void> Function(String status, int? commitId) recordStatus,
+  required Future<void> Function(MemoryCardStatus status, int? commitId)
+  recordStatus,
 }) async {
   final applied = await applyMemoryDrafts(
     transactions: transactions,
@@ -132,10 +133,10 @@ Future<AcceptedMemory> confirmMemoryDraft({
     clock: clock,
   );
   if (applied.isEmpty) {
-    await recordStatus('dismissed', null);
+    await recordStatus(MemoryCardStatus.dismissed, null);
     return const AcceptedMemory(applied: false, notice: '这条记忆已经存在，没有重复保存。');
   }
   final change = applied.changes.first;
-  await recordStatus('accepted', change.commitId);
+  await recordStatus(MemoryCardStatus.accepted, change.commitId);
   return AcceptedMemory(applied: true, change: change);
 }

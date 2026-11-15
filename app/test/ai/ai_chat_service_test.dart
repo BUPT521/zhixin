@@ -11,6 +11,7 @@ import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/domain/models/score.dart';
@@ -1427,7 +1428,7 @@ void main() {
         conversationId: 1,
         role: role,
         content: content,
-        structuredJson: model == null ? null : jsonEncode({'model': model}),
+        payload: model == null ? null : ChatMessagePayload(fromModel: model),
       );
     }
 

@@ -14,20 +14,20 @@ MemoryItemView memory({
   MemoryKind kind = MemoryKind.preference,
   MemorySource source = MemorySource.inferred,
   DateTime? validUntil,
-  String status = 'pending',
+  MemoryCardStatus status = MemoryCardStatus.pending,
   int? commitId,
 }) {
   return MemoryItemView(
     ownerId: 1,
-    itemId: 'memory-1',
     draft: MemoryDraft(
+      id: 'memory-1',
       kind: kind,
       content: content,
       source: source,
       validUntil: validUntil,
+      status: status,
+      commitId: commitId,
     ),
-    status: status,
-    commitId: commitId,
   );
 }
 
@@ -97,7 +97,7 @@ void main() {
         MemoryCard(
           item: memory(
             source: MemorySource.user,
-            status: 'accepted',
+            status: MemoryCardStatus.accepted,
             commitId: 9,
           ),
           onAccept: () {},
@@ -122,7 +122,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MemoryCard(
-          item: memory(status: 'accepted'),
+          item: memory(status: MemoryCardStatus.accepted),
           onAccept: () {},
           onDismiss: () {},
           onUndo: () {},

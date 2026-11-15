@@ -289,7 +289,10 @@ void main() {
     expect(await h.memories.list(), isEmpty);
     final stored = (await h.attempts.attemptsFor(questionId)).single;
     expect(stored.helps.single.content, '先看定义');
-    expect(stored.helps.single.memories.single.status, 'pending');
+    expect(
+      stored.helps.single.memories.single.status,
+      MemoryCardStatus.pending,
+    );
 
     final items = await h.service.memoryItemsFor(stored);
     expect(items, hasLength(1));
@@ -304,14 +307,20 @@ void main() {
     final memories = await h.memories.list();
     expect(memories.single.content, '放缩方向不确定');
     final applied = (await h.attempts.attemptsFor(questionId)).single;
-    expect(applied.helps.single.memories.single.status, 'accepted');
+    expect(
+      applied.helps.single.memories.single.status,
+      MemoryCardStatus.accepted,
+    );
 
     // 撤销这次写入：记忆删除，帮助里的建议回到待确认。
     final undone = await h.revisions.undoCommit(accepted.change!.commitId);
     expect(undone.applied, isTrue, reason: undone.message);
     expect(await h.memories.list(), isEmpty);
     final reverted = (await h.attempts.attemptsFor(questionId)).single;
-    expect(reverted.helps.single.memories.single.status, 'pending');
+    expect(
+      reverted.helps.single.memories.single.status,
+      MemoryCardStatus.pending,
+    );
   });
 
   test('记忆写入失败时帮助照常保存，建议留作待确认', () async {
@@ -348,7 +357,7 @@ void main() {
     expect(await h.memories.list(), isEmpty);
     final kept = (await h.attempts.attemptsFor(questionId)).single;
     expect(kept.helps.single.content, '先看定义');
-    expect(kept.helps.single.memories.single.status, 'pending');
+    expect(kept.helps.single.memories.single.status, MemoryCardStatus.pending);
   });
 
   test('停止生成时保留已经显示的部分提示', () async {

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -280,7 +279,7 @@ void main() {
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.content, '先看定义');
-    expect(messages.last.structured?['stopped'], isTrue);
+    expect(messages.last.payload?.stopped, isTrue);
   });
 
   test('还没有正文就停止时记录一句已停止生成', () async {
@@ -296,7 +295,7 @@ void main() {
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.content, '已停止生成。');
-    expect(messages.last.structured?['stopped'], isTrue);
+    expect(messages.last.payload?.stopped, isTrue);
   });
 
   test('流中断时保留已经显示的部分并标记中断', () async {
@@ -327,9 +326,9 @@ void main() {
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.content, '先看定义');
-    expect(messages.last.structured?['model'], isTrue);
-    expect(messages.last.structured?['interrupted'], isTrue);
-    expect(messages.last.structured?['model_failed'], isNull);
+    expect(messages.last.payload?.fromModel, isTrue);
+    expect(messages.last.payload?.interrupted, isTrue);
+    expect(messages.last.payload?.modelFailed, isFalse);
 
     // 中断之后仍然可以补一条完整回答，用户消息不重复。
     h.ai
@@ -411,8 +410,8 @@ void main() {
     expect(result.notices, [Notice.modelCallFailed]);
 
     final messages = await h.service.history(result.userMessage.conversationId);
-    expect(messages.last.structured?['model'], isFalse);
-    expect(messages.last.structured?['model_failed'], isTrue);
+    expect(messages.last.payload?.fromModel, isFalse);
+    expect(messages.last.payload?.modelFailed, isTrue);
   });
 
   test('模型失败说明随回答保存，技术细节只写进诊断', () async {
@@ -429,11 +428,9 @@ void main() {
     final messages = await h.service.history(result.userMessage.conversationId);
 
     // 重新打开讨论时，失败类型与提示状态仍挂在这一次回答上；技术细节不进库。
-    expect(messages.last.structured?['model_failure'], 'auth');
-    expect(messages.last.structured?['notices'], [
-      Notice.modelCallFailed.value,
-    ]);
-    expect(jsonEncode(messages.last.structured), isNot(contains('sk-secret')));
+    expect(messages.last.payload?.failureName, 'auth');
+    expect(messages.last.payload?.notices, [Notice.modelCallFailed]);
+    expect(messages.last.payload?.encode(), isNot(contains('sk-secret')));
     expect(recorded, hasLength(1));
     expect(recorded.single.$2, 'model_call');
     expect((recorded.single.$1 as LlmException).detail, contains('sk-secret'));
@@ -545,7 +542,7 @@ void main() {
     expect(messages, hasLength(3));
     expect(messages.where((message) => message.role == 'user'), hasLength(1));
     expect(messages.last.content, contains('独立性'));
-    expect(messages.last.structured?['model'], isTrue);
+    expect(messages.last.payload?.fromModel, isTrue);
   });
 
   test('没有配置模型时不重新回答，也不写空消息', () async {
@@ -602,7 +599,7 @@ void main() {
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.content, '先看定义，再回到这一步。');
-    expect(messages.last.structured?['model'], isTrue);
+    expect(messages.last.payload?.fromModel, isTrue);
   });
 
   test('V1：普通求助不改动既有目标和预约，未接受的建议不生成待办', () async {

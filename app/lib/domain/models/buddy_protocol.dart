@@ -4,9 +4,12 @@ import 'conversation.dart';
 import 'evidence.dart';
 import 'material.dart';
 import 'memory.dart';
+import 'memory_draft.dart';
 import 'question.dart';
 import 'study.dart';
 import 'study_plan.dart';
+
+export 'memory_draft.dart';
 
 enum BuddyMode {
   chat('chat'),
@@ -151,37 +154,6 @@ class BuddyReply {
 
   /// 本轮工具真正返回过的材料页原文；引用核验只认这些来源。
   final List<CitationSource> providedSources;
-}
-
-/// 记忆是用户明确说的，还是模型根据记录推断的；两者进入卡片的方式不同。
-enum MemorySource {
-  user('user'),
-  inferred('inferred');
-
-  const MemorySource(this.value);
-
-  final String value;
-}
-
-class MemoryDraft {
-  const MemoryDraft({
-    required this.kind,
-    required this.content,
-    this.validUntil,
-    this.source = MemorySource.inferred,
-  });
-
-  final MemoryKind kind;
-  final String content;
-  final DateTime? validUntil;
-  final MemorySource source;
-
-  String get contentId => identity.contentId('memory', [
-    kind.value,
-    content.trim(),
-    validUntil?.toUtc().toIso8601String(),
-    source.value,
-  ]);
 }
 
 class NextStepDraft {

@@ -19,6 +19,8 @@ import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/models/chat_message_payload.dart';
+import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/time_values.dart';
 import 'package:zhixin/domain/models/study.dart';
@@ -756,34 +758,34 @@ void main() {
         content:
             '### 先缩小范围\n\n已知 B 发生时，只在 B 的范围内看 A。'
             '分子计算两件事同时发生的概率，分母将 B 的概率重新归一化。',
-        structured: {
-          'model': true,
-          'citations': [
-            {
-              'material_id': 1,
-              'material_title': '概率论讲义',
-              'page_no': 7,
-              'quote': '条件概率是已知一个事件发生时，另一个事件发生的概率。',
-              'verified': true,
-            },
+        payload: const ChatMessagePayload(
+          fromModel: true,
+          citations: [
+            Citation(
+              materialId: 1,
+              materialTitle: '概率论讲义',
+              pageNo: 7,
+              quote: '条件概率是已知一个事件发生时，另一个事件发生的概率。',
+              verified: true,
+            ),
           ],
-          'memory_items': [
-            {
-              'id': 'memory-1',
-              'kind': 'preference',
-              'content': '讲解概率时先用具体例子。',
-              'source': 'inferred',
-              'status': 'pending',
-            },
+          memoryItems: [
+            MemoryDraft(
+              id: 'memory-1',
+              kind: MemoryKind.preference,
+              content: '讲解概率时先用具体例子。',
+              source: MemorySource.inferred,
+            ),
           ],
-          'next_steps': [
-            {
-              'title': '用抽球问题练习条件概率',
-              'action': '分别写出已知条件与要求的事件。',
-              'minutes': 10,
-            },
+          nextSteps: [
+            ChatNextStep(
+              id: 's1',
+              title: '用抽球问题练习条件概率',
+              action: '分别写出已知条件与要求的事件。',
+              minutes: 10,
+            ),
           ],
-        },
+        ),
       );
       return conversation;
     });
@@ -819,7 +821,7 @@ void main() {
     final history = await tester.runAsync(
       () => scope!.chat.discussion.history(id!),
     );
-    expect(history!.last.structured?['dismissed'], ['用抽球问题练习条件概率']);
+    expect(history!.last.payload?.dismissedTitles, {'用抽球问题练习条件概率'});
     await tester.pumpAndSettle();
     expect(find.text('下一步建议'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -2077,11 +2079,16 @@ void main() {
         conversation,
         role: 'assistant',
         content: '先收下这条安排，再自己独立做一遍。',
-        structured: {
-          'next_steps': [
-            {'title': '再独立做一遍第 8 题', 'action': '合上笔记重新做一遍。', 'minutes': 10},
+        payload: const ChatMessagePayload(
+          nextSteps: [
+            ChatNextStep(
+              id: 's1',
+              title: '再独立做一遍第 8 题',
+              action: '合上笔记重新做一遍。',
+              minutes: 10,
+            ),
           ],
-        },
+        ),
       );
       return conversation;
     });

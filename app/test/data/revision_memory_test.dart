@@ -14,6 +14,8 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
+import 'package:zhixin/domain/models/chat_message_payload.dart';
+import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
@@ -76,17 +78,16 @@ void main() {
       conversationId,
       role: 'assistant',
       content: '回答',
-      structured: {
-        'memory_items': [
-          {
-            'id': 'memory-1',
-            'kind': 'preference',
-            'content': '讲解概率时先用具体例子。',
-            'source': 'inferred',
-            'status': 'pending',
-          },
+      payload: const ChatMessagePayload(
+        memoryItems: [
+          MemoryDraft(
+            id: 'memory-1',
+            kind: MemoryKind.preference,
+            content: '讲解概率时先用具体例子。',
+            source: MemorySource.inferred,
+          ),
         ],
-      },
+      ),
     );
     final result = await service.acceptMemoryItem(
       conversationId: conversationId,
@@ -95,17 +96,18 @@ void main() {
     );
     expect(result.applied, isTrue);
     final stored = await conversations.messageById(message.id);
-    expect(stored!.structured?['memory_items'], isA<List>());
-    final items = stored.structured!['memory_items'] as List;
-    expect((items.single as Map)['status'], 'accepted');
+    final items = stored!.payload!.memoryItems;
+    expect(items.single.status, MemoryCardStatus.accepted);
     expect(await memories.list(), hasLength(1));
-    final commitId = (items.single as Map)['commit_id'] as int;
+    final commitId = items.single.commitId!;
     expect(await rig.revisions.activeCommits([commitId]), {commitId});
     final undone = await rig.revisions.undoCommit(commitId);
     expect(undone.applied, isTrue, reason: undone.message);
     expect(await memories.list(), isEmpty);
     final restored = await conversations.messageById(message.id);
-    final restoredItems = restored!.structured!['memory_items'] as List;
-    expect((restoredItems.single as Map)['status'], 'pending');
+    expect(
+      restored!.payload!.memoryItems.single.status,
+      MemoryCardStatus.pending,
+    );
   });
 }

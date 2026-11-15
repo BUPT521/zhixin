@@ -15,6 +15,7 @@ import '../data/repository/conversation_repository.dart';
 import '../data/repository/material_repository.dart';
 import '../data/repository/memory_repository.dart';
 import '../data/repository/task_repository.dart';
+import '../domain/models/chat_message_payload.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/material.dart';
 import '../domain/models/memory.dart';
@@ -22,7 +23,6 @@ import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
-import '../domain/rules/time_format.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
 import 'context_request.dart';
@@ -536,42 +536,27 @@ class DiscussionService {
         ? (answer?.memories ?? const <MemoryDraft>[])
         : const <MemoryDraft>[];
     final scope = resolved.scope;
-    final memoryItems = <Map<String, Object?>>[];
+    final memoryItems = <MemoryDraft>[];
     final userMemoryDrafts = <({String itemId, MemoryDraft draft})>[];
     var itemIndex = 0;
     for (final draft in uniqueById(drafts, (draft) => draft.contentId)) {
-      if (draft.source == MemorySource.user) {
-        final content = draft.content.trim();
-        if (content.isEmpty) continue;
+      if (draft.content.trim().isEmpty) continue;
+      if (draft.source == MemorySource.user && draft.tooLong) {
         // 超过写入长度的记忆不会保存，也不展示卡片，与写入规则保持一致。
-        if (content.length > 200) {
-          skipped.add('记忆内容超过 200 字，未保存。');
-          continue;
-        }
-        final itemId = 'm${itemIndex++}';
-        memoryItems.add({
-          'id': itemId,
-          'kind': draft.kind.value,
-          'content': draft.content,
-          'valid_until': draft.validUntil == null
-              ? null
-              : formatDateTime(draft.validUntil!),
-          'status': 'pending',
-          'source': 'user',
-        });
-        userMemoryDrafts.add((itemId: itemId, draft: draft));
-      } else {
-        // 模型推断的记忆只留在消息里，等用户点“记下”再写入。
-        memoryItems.add({
-          'id': 'm${itemIndex++}',
-          'kind': draft.kind.value,
-          'content': draft.content,
-          'valid_until': draft.validUntil == null
-              ? null
-              : formatDateTime(draft.validUntil!),
-          'status': 'pending',
-          'source': 'inferred',
-        });
+        skipped.add('记忆内容超过 $memoryContentLimit 字，未保存。');
+        continue;
+      }
+      final itemId = 'm${itemIndex++}';
+      final card = MemoryDraft(
+        id: itemId,
+        kind: draft.kind,
+        content: draft.content,
+        validUntil: draft.validUntil,
+        source: draft.source,
+      );
+      memoryItems.add(card);
+      if (card.source == MemorySource.user) {
+        userMemoryDrafts.add((itemId: itemId, draft: card));
       }
     }
 
@@ -582,29 +567,26 @@ class DiscussionService {
         conversationId,
         role: 'assistant',
         content: reply,
-        structured: {
-          'model': fromModel,
-          if (stopped) 'stopped': true,
-          if (interrupted) 'interrupted': true,
-          if (modelFailed) 'model_failed': true,
-          if (modelFailed && failure != null) 'model_failure': failure.name,
-          if (notices.isNotEmpty)
-            'notices': [for (final notice in notices) notice.value],
-          if (memoryItems.isNotEmpty) 'memory_items': memoryItems,
-          if (nextSteps.isNotEmpty)
-            'next_steps': [
-              for (final (index, step) in nextSteps.indexed)
-                {
-                  'id': 's${index + 1}',
-                  'title': step.title,
-                  'action': step.action,
-                  'end_condition': step.endCondition,
-                  'minutes': step.minutes,
-                },
-            ],
-          if (citations.isNotEmpty)
-            'citations': [for (final citation in citations) citation.toJson()],
-        },
+        payload: ChatMessagePayload(
+          fromModel: fromModel,
+          stopped: stopped,
+          interrupted: interrupted,
+          modelFailed: modelFailed,
+          failureName: modelFailed ? failure?.name : null,
+          notices: notices,
+          memoryItems: memoryItems,
+          nextSteps: [
+            for (final (index, step) in nextSteps.indexed)
+              ChatNextStep(
+                id: 's${index + 1}',
+                title: step.title,
+                action: step.action,
+                endCondition: step.endCondition,
+                minutes: step.minutes,
+              ),
+          ],
+          citations: citations,
+        ),
         transaction: txn,
       );
     }, label: '保存回答');
@@ -635,7 +617,7 @@ class DiscussionService {
               await conversations.setMemoryItemStatus(
                 assistantMessage.id,
                 entry.itemId,
-                status: 'dismissed',
+                status: MemoryCardStatus.dismissed,
                 transaction: txn,
               );
               continue;
@@ -644,7 +626,7 @@ class DiscussionService {
             await conversations.setMemoryItemStatus(
               assistantMessage.id,
               entry.itemId,
-              status: 'accepted',
+              status: MemoryCardStatus.accepted,
               commitId: change.commitId,
               transaction: txn,
             );
@@ -782,18 +764,17 @@ class DiscussionService {
           if (message == null || message.conversationId != conversationId) {
             throw StateError('未找到这条建议');
           }
-          final accepted = _acceptedIds(message.structured);
-          final acceptedTitles = _acceptedTitles(message.structured);
-          if (stepId != null
-              ? accepted.contains(stepId)
-              : acceptedTitles.contains(draft.title)) {
+          final payload = message.payload ?? const ChatMessagePayload();
+          final accepted = stepId != null
+              ? payload.acceptedStepIds.contains(stepId)
+              : payload.acceptedTitles.contains(draft.title);
+          if (accepted) {
             throw StateError('这条建议已加入安排');
           }
-          final dismissed = _dismissedIds(message.structured);
-          final dismissedTitles = _dismissedTitles(message.structured);
-          if (stepId != null
-              ? dismissed.contains(stepId)
-              : dismissedTitles.contains(draft.title)) {
+          final dismissed = stepId != null
+              ? payload.dismissedStepIds.contains(stepId)
+              : payload.dismissedTitles.contains(draft.title);
+          if (dismissed) {
             throw StateError('这条建议已暂不安排');
           }
 
@@ -845,39 +826,19 @@ class DiscussionService {
     final result = <PendingSuggestion>[];
     for (final message in messages) {
       if (message.role != 'assistant') continue;
-      final structured = message.structured;
-      if (structured == null) continue;
-      final acceptedTitles = _acceptedTitles(structured);
-      final dismissedTitles = _dismissedTitles(structured);
-      final acceptedIds = _acceptedIds(structured);
-      final dismissedIds = _dismissedIds(structured);
-      final rawSteps = structured['next_steps'];
-      if (rawSteps is! List) continue;
-      for (final (index, item) in rawSteps.indexed) {
-        if (item is! Map) continue;
-        final title = item['title'];
-        if (title is! String || title.trim().isEmpty) continue;
-        final stepId = item['id'] is String && (item['id'] as String).isNotEmpty
-            ? item['id'] as String
-            : 's${index + 1}';
-        final handled = acceptedIds.isNotEmpty || dismissedIds.isNotEmpty
-            ? acceptedIds.contains(stepId) || dismissedIds.contains(stepId)
-            : acceptedTitles.contains(title.trim()) ||
-                  dismissedTitles.contains(title.trim());
-        if (handled) continue;
+      final payload = message.payload;
+      if (payload == null) continue;
+      for (final step in payload.nextSteps) {
+        if (payload.isStepHandled(step.id, step.title)) continue;
         result.add(
           PendingSuggestion(
             messageId: message.id,
-            stepId: stepId,
+            stepId: step.id,
             draft: NextStepDraft(
-              title: title.trim(),
-              action: item['action'] is String
-                  ? (item['action'] as String).trim()
-                  : null,
-              endCondition: item['end_condition'] is String
-                  ? (item['end_condition'] as String).trim()
-                  : null,
-              minutes: item['minutes'] is int ? item['minutes'] as int : null,
+              title: step.title,
+              action: step.action,
+              endCondition: step.endCondition,
+              minutes: step.minutes,
             ),
           ),
         );
@@ -896,9 +857,10 @@ class DiscussionService {
     if (message == null || message.conversationId != conversationId) {
       throw StateError('未找到这条建议');
     }
+    final payload = message.payload ?? const ChatMessagePayload();
     final accepted = stepId == null
-        ? _acceptedTitles(message.structured).contains(title)
-        : _acceptedIds(message.structured).contains(stepId);
+        ? payload.acceptedTitles.contains(title)
+        : payload.acceptedStepIds.contains(stepId);
     if (accepted) {
       throw StateError('这条建议已经加入安排');
     }
@@ -909,47 +871,36 @@ class DiscussionService {
   Future<List<MemoryItemView>> memoryItemsFromMessages(
     List<ChatMessage> messages,
   ) async {
-    final stored = <({int messageId, _StoredMemoryItem item})>[];
+    final stored = <({int messageId, MemoryDraft draft})>[];
     for (final message in messages) {
       if (message.role != 'assistant') continue;
-      for (final item in _storedMemoryItems(message.structured)) {
-        stored.add((messageId: message.id, item: item));
+      for (final item
+          in message.payload?.memoryItems ?? const <MemoryDraft>[]) {
+        stored.add((messageId: message.id, draft: item));
       }
     }
     if (stored.isEmpty) return const [];
     final commitIds = <int>{
       for (final entry in stored)
-        if (entry.item.status == 'accepted' && entry.item.commitId != null)
-          entry.item.commitId!,
+        if (entry.draft.status == MemoryCardStatus.accepted &&
+            entry.draft.commitId != null)
+          entry.draft.commitId!,
     };
     final active = commitIds.isEmpty
         ? const <int>{}
         : await revisions.activeCommits(commitIds);
     final result = <MemoryItemView>[];
     for (final entry in stored) {
-      final item = entry.item;
-      if (item.status == 'dismissed') continue;
-      if (item.status == 'accepted') {
+      final item = entry.draft;
+      if (item.status == MemoryCardStatus.dismissed) continue;
+      if (item.status == MemoryCardStatus.accepted) {
         if (item.commitId == null || !active.contains(item.commitId)) {
           continue;
         }
-      } else if (item.status != 'pending') {
+      } else if (item.status != MemoryCardStatus.pending) {
         continue;
       }
-      result.add(
-        MemoryItemView(
-          ownerId: entry.messageId,
-          itemId: item.id,
-          draft: MemoryDraft(
-            kind: item.kind,
-            content: item.content,
-            validUntil: item.validUntil,
-            source: item.source,
-          ),
-          status: item.status,
-          commitId: item.commitId,
-        ),
-      );
+      result.add(MemoryItemView(ownerId: entry.messageId, draft: item));
     }
     return result;
   }
@@ -972,26 +923,17 @@ class DiscussionService {
       if (message == null || message.conversationId != conversationId) {
         throw StateError('未找到这条记忆');
       }
-      final stored = _storedMemoryItems(message.structured);
-      _StoredMemoryItem? item;
-      for (final entry in stored) {
-        if (entry.id == itemId) {
-          item = entry;
-          break;
-        }
-      }
+      final item = message.payload?.memoryItem(itemId);
       if (item == null) throw StateError('未找到这条记忆');
-      if (item.status != 'pending') throw StateError('这条记忆已经处理');
+      if (item.status != MemoryCardStatus.pending) {
+        throw StateError('这条记忆已经处理');
+      }
 
       return confirmMemoryDraft(
         transaction: txn,
         transactions: transactions,
         memories: memories,
-        draft: MemoryDraft(
-          kind: item.kind,
-          content: item.content,
-          validUntil: item.validUntil,
-        ),
+        draft: item,
         sourceKind: item.source == MemorySource.user
             ? MemorySourceKind.user
             : MemorySourceKind.message,
@@ -1019,65 +961,38 @@ class DiscussionService {
     if (message == null || message.conversationId != conversationId) {
       throw StateError('未找到这条记忆');
     }
-    _StoredMemoryItem? item;
-    for (final entry in _storedMemoryItems(message.structured)) {
-      if (entry.id == itemId) {
-        item = entry;
-        break;
-      }
-    }
+    final item = message.payload?.memoryItem(itemId);
     if (item == null) throw StateError('未找到这条记忆');
-    if (item.status != 'pending') throw StateError('这条记忆已经处理');
+    if (item.status != MemoryCardStatus.pending) {
+      throw StateError('这条记忆已经处理');
+    }
     await conversations.setMemoryItemStatus(
       messageId,
       itemId,
-      status: 'dismissed',
+      status: MemoryCardStatus.dismissed,
     );
   }
 
   Future<List<AppliedChange>> changesFromMessages(
     List<ChatMessage> messages,
   ) async {
-    final changes = <AppliedChange>[];
-    final receipts = <({int commitId, String text})>[];
-    for (final message in messages) {
-      final raw = message.structured?['operations'];
-      if (raw is! List) continue;
-      for (final item in raw) {
-        if (item is! Map ||
-            item['commit_id'] is! int ||
-            item['text'] is! String) {
-          continue;
-        }
-        receipts.add((
-          commitId: item['commit_id'] as int,
-          text: item['text'] as String,
-        ));
-      }
-    }
+    final receipts = <ChatOperationReceipt>[
+      for (final message in messages) ...?message.payload?.operations,
+    ];
     if (receipts.isEmpty) return const [];
     final active = await revisions.activeCommits(
       receipts.map((item) => item.commitId),
     );
-    for (final receipt in receipts) {
-      if (!active.contains(receipt.commitId)) continue;
-      changes.add(
-        AppliedChange(commitId: receipt.commitId, text: receipt.text),
-      );
-    }
-    return changes;
+    return [
+      for (final receipt in receipts)
+        if (active.contains(receipt.commitId))
+          AppliedChange(commitId: receipt.commitId, text: receipt.text),
+    ];
   }
 
   /// 消息里展示用的引用；未核对的条目由界面标出。
-  static List<Citation> citationsOf(ChatMessage message) {
-    final structured = message.structured;
-    if (structured == null) return const [];
-    final raw = structured['citations'];
-    if (raw is! List) return const [];
-    return [
-      for (final item in raw) Citation.fromJson(item, materialTitles: const {}),
-    ];
-  }
+  static List<Citation> citationsOf(ChatMessage message) =>
+      message.payload?.citations ?? const [];
 
   /// 本轮真正提供过的材料页：当前页、检索到的其他页与工具补读到的页。
   ///
@@ -1229,97 +1144,8 @@ class DiscussionService {
     ]);
   }
 
-  static Set<String> _acceptedTitles(Map<String, Object?>? structured) =>
-      _stringState(structured, 'accepted');
-
-  static Set<String> _dismissedTitles(Map<String, Object?>? structured) =>
-      _stringState(structured, 'dismissed');
-
-  static Set<String> _acceptedIds(Map<String, Object?>? structured) =>
-      _stringState(structured, 'accepted_ids');
-
-  static Set<String> _dismissedIds(Map<String, Object?>? structured) =>
-      _stringState(structured, 'dismissed_ids');
-
-  static Set<String> _stringState(
-    Map<String, Object?>? structured,
-    String key,
-  ) {
-    if (structured == null) return const <String>{};
-    final raw = structured[key];
-    if (raw is! List) return const <String>{};
-    return {
-      for (final item in raw)
-        if (item is String && item.trim().isNotEmpty) item.trim(),
-    };
-  }
-
   static String _normalize(String text) =>
       text.replaceAll(RegExp(r'\s+'), '').trim();
-
-  static List<_StoredMemoryItem> _storedMemoryItems(
-    Map<String, Object?>? structured,
-  ) {
-    if (structured == null) return const [];
-    final raw = structured['memory_items'];
-    if (raw is! List) return const [];
-    final result = <_StoredMemoryItem>[];
-    for (final item in raw) {
-      if (item is! Map) continue;
-      final id = item['id'];
-      final kind = item['kind'];
-      final content = item['content'];
-      final status = item['status'];
-      if (id is! String || kind is! String || content is! String) continue;
-      if (status is! String || content.trim().isEmpty) continue;
-      result.add(
-        _StoredMemoryItem(
-          id: id,
-          kind: MemoryKind.fromValue(kind),
-          content: content.trim(),
-          validUntil: _parseMemoryTime(item['valid_until']),
-          status: status,
-          source: item['source'] == 'user'
-              ? MemorySource.user
-              : MemorySource.inferred,
-          commitId: item['commit_id'] is int ? item['commit_id'] as int : null,
-        ),
-      );
-    }
-    return result;
-  }
-
-  static DateTime? _parseMemoryTime(Object? value) {
-    if (value is! String || value.trim().isEmpty || value == 'null') {
-      return null;
-    }
-    try {
-      return optionalDateTime(value);
-    } on FormatException {
-      // 模型给出的时刻坏了只当作没有期限，不让整条回答失败。
-      return null;
-    }
-  }
-}
-
-class _StoredMemoryItem {
-  const _StoredMemoryItem({
-    required this.id,
-    required this.kind,
-    required this.content,
-    required this.status,
-    required this.source,
-    this.validUntil,
-    this.commitId,
-  });
-
-  final String id;
-  final MemoryKind kind;
-  final String content;
-  final String status;
-  final MemorySource source;
-  final DateTime? validUntil;
-  final int? commitId;
 }
 
 class _IngestedAttachments {

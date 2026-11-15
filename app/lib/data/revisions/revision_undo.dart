@@ -4,6 +4,7 @@ import '../db/raw_executor.dart';
 import '../db/sql.dart';
 
 import '../repository/schedule_conflicts.dart';
+import '../../domain/models/chat_message_payload.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import 'revision_actions.dart';
@@ -560,88 +561,23 @@ class RevisionUndoService {
         limit: 1,
       );
       if (rows.isEmpty) continue;
-      final structured = _decodeStructured(rows.first['structured_json']);
-      final changed = _stripReceipts(
-        structured,
-        commitId: commitId,
+      final payload = ChatMessagePayload.decode(
+        rows.first['structured_json'] as String?,
+      );
+      final updated = payload?.withoutReceipts(
+        commitId,
         unacceptedTitles: titlesByMessage[messageId] ?? const {},
         unacceptedStepIds: stepIdsByMessage[messageId] ?? const {},
       );
-      if (!changed) continue;
+      if (updated == null) continue;
       await updateRow(
         txn,
         'message',
-        {'structured_json': jsonEncode(structured)},
+        {'structured_json': updated.encode()},
         where: 'id = ?',
         whereArgs: [messageId],
       );
     }
-  }
-
-  bool _stripReceipts(
-    Map<String, Object?> structured, {
-    required int commitId,
-    required Set<String> unacceptedTitles,
-    required Set<String> unacceptedStepIds,
-  }) {
-    var changed = false;
-    final operations = structured['operations'];
-    if (operations is List) {
-      final kept = [
-        for (final item in operations)
-          if (item is! Map || item['commit_id'] != commitId) item,
-      ];
-      if (kept.length != operations.length) {
-        structured['operations'] = kept;
-        changed = true;
-      }
-    }
-    final memoryItems = structured['memory_items'];
-    if (memoryItems is List) {
-      var memoryChanged = false;
-      final updated = <Object?>[];
-      for (final item in memoryItems) {
-        if (item is! Map || item['commit_id'] != commitId) {
-          updated.add(item);
-          continue;
-        }
-        final copy = <String, Object?>{
-          for (final entry in item.entries)
-            if (entry.key is String) entry.key as String: entry.value,
-        };
-        copy['status'] = 'pending';
-        copy.remove('commit_id');
-        updated.add(copy);
-        memoryChanged = true;
-      }
-      if (memoryChanged) {
-        structured['memory_items'] = updated;
-        changed = true;
-      }
-    }
-    final accepted = structured['accepted'];
-    if (accepted is List && unacceptedTitles.isNotEmpty) {
-      final kept = [
-        for (final item in accepted)
-          if (item is! String || !unacceptedTitles.contains(item)) item,
-      ];
-      if (kept.length != accepted.length) {
-        structured['accepted'] = kept;
-        changed = true;
-      }
-    }
-    final acceptedIds = structured['accepted_ids'];
-    if (acceptedIds is List && unacceptedStepIds.isNotEmpty) {
-      final kept = [
-        for (final item in acceptedIds)
-          if (item is! String || !unacceptedStepIds.contains(item)) item,
-      ];
-      if (kept.length != acceptedIds.length) {
-        structured['accepted_ids'] = kept;
-        changed = true;
-      }
-    }
-    return changed;
   }
 
   String? _originStepId(Object? raw) {
@@ -667,20 +603,6 @@ class RevisionUndoService {
       return id is int ? id : null;
     } on FormatException {
       return null;
-    }
-  }
-
-  Map<String, Object?> _decodeStructured(Object? raw) {
-    if (raw is! String || raw.trim().isEmpty) return {};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return {};
-      return {
-        for (final entry in decoded.entries)
-          if (entry.key is String) entry.key as String: entry.value,
-      };
-    } on FormatException {
-      return {};
     }
   }
 }

@@ -149,7 +149,7 @@ void main() {
     await rig.revisions.clearHistory();
 
     final structured = await readStructured(rig, messageId);
-    expect(structured['operations'], isEmpty);
+    expect(structured['operations'], isNull);
     final items = structured['memory_items']! as List;
     expect((items.single as Map).containsKey('commit_id'), isFalse);
     expect((items.single as Map)['status'], 'accepted');

@@ -49,7 +49,7 @@ List<ChatMessage> selectBuddyHistory(
   final usable = uniqueById([
     for (final message in history)
       if ((message.role == 'user' || message.role == 'assistant') &&
-          message.structured?['model'] != false &&
+          message.payload?.fromModel != false &&
           (message.content.trim().isNotEmpty || message.hasImages))
         message,
   ], (message) => message.identity).toList(growable: false);

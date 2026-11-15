@@ -390,7 +390,7 @@ class LearningService {
 
     if (text.trim().isNotEmpty) {
       // 记住的意思要用户点“记下”才落库；建议随帮助保存，离开页面再回来仍在。
-      final suggestions = <HelpMemory>[];
+      final suggestions = <MemoryDraft>[];
       final modelAnswer = answer;
       if (modelAnswer != null &&
           !modelAnswer.stopped &&
@@ -403,7 +403,7 @@ class LearningService {
           final content = draft.content.trim();
           if (content.isEmpty) continue;
           suggestions.add(
-            HelpMemory(
+            MemoryDraft(
               id: 'm$index',
               kind: draft.kind,
               content: content,
@@ -445,17 +445,18 @@ class LearningService {
 
   /// 一条未提交尝试上的记忆建议：已写入的只保留仍可撤销的那几条。
   Future<List<MemoryItemView>> memoryItemsFor(Attempt attempt) async {
-    final stored = <({int helpIndex, HelpMemory item})>[];
+    final stored = <({int helpIndex, MemoryDraft item})>[];
     for (var index = 0; index < attempt.helps.length; index++) {
       for (final item in attempt.helps[index].memories) {
-        if (item.status == 'dismissed') continue;
+        if (item.status == MemoryCardStatus.dismissed) continue;
         stored.add((helpIndex: index, item: item));
       }
     }
     if (stored.isEmpty) return const [];
     final commitIds = <int>{
       for (final entry in stored)
-        if (entry.item.status == 'accepted' && entry.item.commitId != null)
+        if (entry.item.status == MemoryCardStatus.accepted &&
+            entry.item.commitId != null)
           entry.item.commitId!,
     };
     final active = commitIds.isEmpty
@@ -463,21 +464,10 @@ class LearningService {
         : await revisions.activeCommits(commitIds);
     return [
       for (final entry in stored)
-        if (entry.item.status != 'accepted' ||
+        if (entry.item.status != MemoryCardStatus.accepted ||
             (entry.item.commitId != null &&
                 active.contains(entry.item.commitId)))
-          MemoryItemView(
-            ownerId: entry.helpIndex,
-            itemId: entry.item.id,
-            draft: MemoryDraft(
-              kind: entry.item.kind,
-              content: entry.item.content,
-              validUntil: entry.item.validUntil,
-              source: MemorySource.inferred,
-            ),
-            status: entry.item.status,
-            commitId: entry.item.commitId,
-          ),
+          MemoryItemView(ownerId: entry.helpIndex, draft: entry.item),
     ];
   }
 
@@ -493,7 +483,9 @@ class LearningService {
     if (attempt == null) throw StateError('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
     if (item == null) throw StateError('未找到这条记忆');
-    if (item.status != 'pending') throw StateError('这条记忆已经处理');
+    if (item.status != MemoryCardStatus.pending) {
+      throw StateError('这条记忆已经处理');
+    }
     final scope = (await memoryScope.resolve(attempt.conversationId)).scope;
     try {
       return await transactions.run(
@@ -503,11 +495,7 @@ class LearningService {
             transaction: txn,
             transactions: transactions,
             memories: memories,
-            draft: MemoryDraft(
-              kind: item.kind,
-              content: item.content,
-              validUntil: item.validUntil,
-            ),
+            draft: item,
             sourceKind: MemorySourceKind.attempt,
             sourceId: attemptId,
             scope: scope,
@@ -532,7 +520,7 @@ class LearningService {
           ? null
           : _helpMemory(refreshed, helpIndex, itemId);
       return AcceptedMemory(
-        applied: current?.status == 'accepted',
+        applied: current?.status == MemoryCardStatus.accepted,
         notice: '这条记忆已经处理。',
       );
     }
@@ -549,20 +537,22 @@ class LearningService {
     if (attempt == null) throw StateError('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
     if (item == null) throw StateError('未找到这条记忆');
-    if (item.status != 'pending') throw StateError('这条记忆已经处理');
+    if (item.status != MemoryCardStatus.pending) {
+      throw StateError('这条记忆已经处理');
+    }
     await transactions.run((txn) async {
       _ensureCurrentEpoch(requestEpoch);
       await _setHelpMemoryStatus(
         attemptId,
         helpIndex,
         itemId,
-        status: 'dismissed',
+        status: MemoryCardStatus.dismissed,
         transaction: txn,
       );
     }, label: '收起作答记忆');
   }
 
-  static HelpMemory? _helpMemory(
+  static MemoryDraft? _helpMemory(
     Attempt attempt,
     int helpIndex,
     String itemId,
@@ -578,7 +568,7 @@ class LearningService {
     int attemptId,
     int helpIndex,
     String itemId, {
-    required String status,
+    required MemoryCardStatus status,
     int? commitId,
     WriteTransaction? transaction,
   }) async {
@@ -588,13 +578,10 @@ class LearningService {
       (help) => help.withMemories([
         for (final memory in help.memories)
           if (memory.id == itemId)
-            HelpMemory(
-              id: memory.id,
-              kind: memory.kind,
-              content: memory.content,
-              validUntil: memory.validUntil,
+            memory.copyWith(
               status: status,
               commitId: commitId,
+              clearCommitId: commitId == null,
             )
           else
             memory,
@@ -906,7 +893,7 @@ class LearningService {
     );
     if (known) return;
     // 超过写入长度的困难不截成半句记忆；完整内容仍留在作答记录的困难里。
-    if (text.length > 200) return;
+    if (text.length > memoryContentLimit) return;
     await memories.create(
       kind: MemoryKind.difficulty,
       content: text,

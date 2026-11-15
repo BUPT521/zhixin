@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import '../rules/time_format.dart';
-import 'memory.dart';
+import 'memory_draft.dart';
 
 /// 题目视图，由一条学习记录（conversation）与开始作答时确定的用户消息派生。
 ///
@@ -157,67 +157,6 @@ class AttemptWithQuestion {
   final Question question;
 }
 
-/// 一条帮助附带的记忆建议；用户点“记下”之后才写入记忆表。
-///
-/// 建议随帮助一起存进尝试的 `help_json`，离开学习页再回来仍然能看到；
-/// 状态只在本条帮助内记，回答正文与帮助内容不因此改写。
-class HelpMemory {
-  const HelpMemory({
-    required this.id,
-    required this.kind,
-    required this.content,
-    this.validUntil,
-    this.status = 'pending',
-    this.commitId,
-  });
-
-  final String id;
-  final MemoryKind kind;
-  final String content;
-  final DateTime? validUntil;
-
-  /// `pending` 待确认、`accepted` 已写入、`dismissed` 不记。
-  final String status;
-
-  /// 写入记忆的那次提交；撤销之后这条建议回到待确认。
-  final int? commitId;
-
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'kind': kind.value,
-    'content': content,
-    'valid_until': validUntil == null ? null : formatDateTime(validUntil!),
-    'status': status,
-    'commit_id': commitId,
-  };
-
-  static HelpMemory? fromJson(Object? value) {
-    if (value is! Map) return null;
-    final id = value['id'];
-    final kind = value['kind'];
-    final content = value['content'];
-    final status = value['status'];
-    if (id is! String || kind is! String || content is! String) return null;
-    if (status is! String || content.trim().isEmpty) return null;
-    final validUntil = value['valid_until'];
-    final commitId = value['commit_id'];
-    final DateTime? parsedUntil;
-    try {
-      parsedUntil = validUntil is String ? optionalDateTime(validUntil) : null;
-    } on FormatException {
-      return null;
-    }
-    return HelpMemory(
-      id: id,
-      kind: MemoryKind.fromValue(kind),
-      content: content.trim(),
-      validUntil: parsedUntil,
-      status: status,
-      commitId: commitId is int ? commitId : null,
-    );
-  }
-}
-
 /// 一次提示、讲解或检查；挂在尝试上，不单独算作答。
 class HelpEntry {
   const HelpEntry({
@@ -233,9 +172,9 @@ class HelpEntry {
   final DateTime? at;
 
   /// 这条帮助给出的记忆建议；没有建议时为空。
-  final List<HelpMemory> memories;
+  final List<MemoryDraft> memories;
 
-  HelpEntry withMemories(List<HelpMemory> memories) =>
+  HelpEntry withMemories(List<MemoryDraft> memories) =>
       HelpEntry(kind: kind, content: content, at: at, memories: memories);
 
   Map<String, Object?> toJson() => {
@@ -258,18 +197,11 @@ class HelpEntry {
     } on FormatException {
       return null;
     }
-    final rawMemories = value['memories'];
-    final memories = rawMemories is List
-        ? rawMemories
-              .map(HelpMemory.fromJson)
-              .whereType<HelpMemory>()
-              .toList(growable: false)
-        : const <HelpMemory>[];
     return HelpEntry(
       kind: kind,
       content: content,
       at: parsedAt,
-      memories: memories,
+      memories: MemoryDraft.decodeList(value['memories']),
     );
   }
 

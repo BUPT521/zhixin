@@ -280,9 +280,10 @@ String buildBuddySystemPrompt(BuddyContext context) {
   return lines.join('\n');
 }
 
-/// 单条记忆进入提示词时最多 200 字；超出部分截断，避免一条长记忆挤占上下文。
+/// 单条记忆进入提示词时最多 [memoryContentLimit] 字；超出部分截断，避免一条
+/// 长记忆挤占上下文。
 String _memoryText(String content) {
-  return truncateCodePoints(content, 200);
+  return truncateCodePoints(content, memoryContentLimit);
 }
 
 String _modeLabel(BuddyMode mode) => switch (mode) {

@@ -4,8 +4,10 @@ import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/chat_message.dart';
+import '../../domain/models/chat_message_payload.dart';
 import '../../domain/models/conversation.dart';
 import '../../domain/models/material.dart';
+import '../../domain/models/memory_draft.dart';
 import '../../domain/models/question.dart';
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/time_format.dart';
@@ -36,7 +38,7 @@ class ConversationRepository {
     content: row.content,
     imagePaths: decodeStoredAttachmentPaths(row.imagePathsJson),
     createdAt: optionalDateTime(row.createdAt),
-    structuredJson: row.structuredJson,
+    payload: ChatMessagePayload.decode(row.structuredJson),
   );
 
   /// 作答整行直接还原成模型；布尔列已经是 bool，提示条目统一走 [HelpEntry.decodeList]。
@@ -505,7 +507,7 @@ class ConversationRepository {
     required String role,
     String content = '',
     List<String> imagePaths = const [],
-    Map<String, Object?>? structured,
+    ChatMessagePayload? payload,
     WriteTransaction? transaction,
   }) async {
     if (role != 'user' && role != 'assistant' && role != 'system') {
@@ -520,7 +522,7 @@ class ConversationRepository {
     }
     final now = _clock();
     final stamp = formatDateTime(now);
-    final structuredJson = structured == null ? null : jsonEncode(structured);
+    final structuredJson = payload?.encode();
     final writer = writeExecutor(transaction, _db);
     final id = await writer.writeGenerated(
       (db) => db.insertConversationMessage(
@@ -542,7 +544,7 @@ class ConversationRepository {
       content: text,
       imagePaths: paths,
       createdAt: now,
-      structuredJson: structuredJson,
+      payload: payload,
     );
   }
 
@@ -655,26 +657,12 @@ class ConversationRepository {
     required int commitId,
     WriteTransaction? transaction,
   }) async {
-    await _updateSuggestionState(
+    await _updatePayload(
       messageId,
-      title,
-      stepId: stepId,
-      state: 'accepted',
-      commitId: commitId,
       transaction: transaction,
+      update: (payload) =>
+          payload.acceptedStep(title, stepId: stepId, commitId: commitId),
     );
-  }
-
-  Map<String, Object?> _decodeStructured(Object? raw) {
-    if (raw is! String || raw.trim().isEmpty) return {};
-    try {
-      final decoded = jsonDecode(raw);
-      return decoded is Map<String, Object?>
-          ? Map<String, Object?>.from(decoded)
-          : <String, Object?>{};
-    } catch (_) {
-      return {};
-    }
   }
 
   Future<void> markNextStepDismissed(
@@ -682,102 +670,47 @@ class ConversationRepository {
     String title, {
     String? stepId,
     WriteTransaction? transaction,
-  }) => _updateSuggestionState(
-    messageId,
-    title,
-    stepId: stepId,
-    state: 'dismissed',
-    transaction: transaction,
-  );
+  }) async {
+    await _updatePayload(
+      messageId,
+      transaction: transaction,
+      update: (payload) => payload.dismissedStep(title, stepId: stepId),
+    );
+  }
 
   /// 记下一条记忆卡片的处理结果：待确认、已写入或已忽略。
   Future<void> setMemoryItemStatus(
     int messageId,
     String itemId, {
-    required String status,
+    required MemoryCardStatus status,
     int? commitId,
     WriteTransaction? transaction,
   }) async {
-    final executor = writeExecutor(transaction, _db);
-    // 取整行而不是只取 structured_json：这一列本身可空，
-    // “没有这条消息”与“消息上没有结构化内容”要分开。
-    final message = await executor.selectGenerated(
-      (db) => db.messageById(messageId).getSingleOrNull(),
-    );
-    if (message == null) return;
-    final structured = _decodeStructured(message.structuredJson);
-    final raw = structured['memory_items'];
-    if (raw is! List) return;
-    final items = <Map<String, Object?>>[];
-    for (final item in raw) {
-      if (item is! Map) continue;
-      final copy = <String, Object?>{};
-      item.forEach((key, value) {
-        if (key is String) copy[key] = value;
-      });
-      items.add(copy);
-    }
-    var found = false;
-    for (final item in items) {
-      if (item['id'] != itemId) continue;
-      item['status'] = status;
-      if (commitId != null) item['commit_id'] = commitId;
-      found = true;
-    }
-    if (!found) return;
-    structured['memory_items'] = items;
-    await executor.writeGenerated(
-      (db) => db.setMessageStructuredState(jsonEncode(structured), messageId),
+    await _updatePayload(
+      messageId,
+      transaction: transaction,
+      update: (payload) =>
+          payload.memoryItemStatus(itemId, status, commitId: commitId),
     );
   }
 
-  Future<void> _updateSuggestionState(
-    int messageId,
-    String title, {
-    String? stepId,
-    required String state,
-    int? commitId,
-    WriteTransaction? transaction,
+  /// 读出消息的结构化补充，改完写回；没有这条消息或没有改动时不写。
+  Future<ChatMessagePayload?> _updatePayload(
+    int messageId, {
+    required WriteTransaction? transaction,
+    required ChatMessagePayload? Function(ChatMessagePayload payload) update,
   }) async {
     final database = writeExecutor(transaction, _db);
     final message = await database.selectGenerated(
       (db) => db.messageById(messageId).getSingleOrNull(),
     );
-    if (message == null) return;
-    final structured = _decodeStructured(message.structuredJson);
-    final titles = _stringList(structured[state]);
-    if (!titles.contains(title)) titles.add(title);
-    structured[state] = titles;
-    if (stepId != null) {
-      final key = '${state}_ids';
-      final ids = _stringList(structured[key]);
-      if (!ids.contains(stepId)) ids.add(stepId);
-      structured[key] = ids;
-    }
-    if (commitId != null) {
-      final operations = _operationList(structured['operations'])
-        ..removeWhere((item) => item['commit_id'] == commitId);
-      operations.add({'commit_id': commitId, 'text': '已添加安排：$title'});
-      structured['operations'] = operations;
-    }
+    if (message == null) return null;
+    final current = ChatMessagePayload.decode(message.structuredJson);
+    final updated = update(current ?? const ChatMessagePayload());
+    if (updated == null || updated.isEmpty) return null;
     await database.writeGenerated(
-      (db) => db.setMessageStructuredState(jsonEncode(structured), messageId),
+      (db) => db.setMessageStructuredState(updated.encode(), messageId),
     );
+    return updated;
   }
-
-  static List<String> _stringList(Object? raw) => [
-    if (raw is List)
-      for (final item in raw)
-        if (item is String && item.trim().isNotEmpty) item.trim(),
-  ];
-
-  static List<Map<String, Object?>> _operationList(Object? raw) => [
-    if (raw is List)
-      for (final item in raw)
-        if (item is Map && item['commit_id'] is int && item['text'] is String)
-          {
-            'commit_id': item['commit_id'] as int,
-            'text': item['text'] as String,
-          },
-  ];
 }

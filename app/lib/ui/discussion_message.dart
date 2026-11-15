@@ -77,7 +77,7 @@ class DiscussionMessage extends StatelessWidget {
           ? '已停止生成'
           : message.interrupted
           ? '生成中断'
-          : message.structured?['model'] == false
+          : message.payload?.fromModel == false
           ? '本地规则'
           : null,
       children: [

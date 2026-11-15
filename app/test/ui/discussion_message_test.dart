@@ -2,6 +2,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/ui/discussion_message.dart';
 import 'package:zhixin/ui/markdown_text.dart';
 import 'package:zhixin/ui/theme.dart';
@@ -124,12 +125,12 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
       app(
         SingleChildScrollView(
           child: DiscussionMessage(
-            message: const ChatMessage(
+            message: ChatMessage(
               id: 1,
               conversationId: 1,
               role: 'assistant',
               content: '下面两条材料的核对结果不同。',
-              structuredJson: '''
+              payload: ChatMessagePayload.decode('''
 {
   "citations": [
     {"material_id": 1, "material_title": "概率论", "page_no": 7,
@@ -138,7 +139,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
      "quote": "还未核对的引文。", "verified": false}
   ]
 }
-''',
+'''),
             ),
             imagePath: (path) => path,
           ),
@@ -171,7 +172,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
             conversationId: 1,
             role: 'assistant',
             content: '先记录一道题。',
-            structuredJson: '{"model":false}',
+            payload: ChatMessagePayload(fromModel: false),
           ),
           imagePath: (path) => path,
         ),
@@ -190,7 +191,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
             conversationId: 1,
             role: 'assistant',
             content: '先看定义',
-            structuredJson: '{"model":false,"stopped":true}',
+            payload: ChatMessagePayload(fromModel: false, stopped: true),
           ),
           imagePath: (path) => path,
         ),
@@ -211,7 +212,7 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
             conversationId: 1,
             role: 'assistant',
             content: '先看定义',
-            structuredJson: '{"model":true,"interrupted":true}',
+            payload: ChatMessagePayload(fromModel: true, interrupted: true),
           ),
           imagePath: (path) => path,
         ),

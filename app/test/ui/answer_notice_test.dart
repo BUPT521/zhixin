@@ -1,10 +1,9 @@
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/application/answer_outcome.dart';
 import 'package:zhixin/application/attachment_service.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/ui/answer_notice.dart';
 
@@ -137,12 +136,12 @@ void main() {
       conversationId: 2,
       role: 'assistant',
       content: '本地回答',
-      structuredJson: jsonEncode({
-        'model': false,
-        'model_failed': true,
-        'model_failure': 'auth',
-        'notices': [Notice.modelCallFailed.value],
-      }),
+      payload: const ChatMessagePayload(
+        fromModel: false,
+        modelFailed: true,
+        failureName: 'auth',
+        notices: [Notice.modelCallFailed],
+      ),
     );
     final saved = savedAnswerStatus(message);
     expect(saved.notices, [Notice.modelCallFailed]);
@@ -157,10 +156,10 @@ void main() {
       conversationId: 2,
       role: 'assistant',
       content: '本地回答',
-      structuredJson: jsonEncode({
-        'model': false,
-        'notices': [Notice.modelNotConfigured.value],
-      }),
+      payload: const ChatMessagePayload(
+        fromModel: false,
+        notices: [Notice.modelNotConfigured],
+      ),
     );
     final saved = savedAnswerStatus(message);
     expect(saved.needsConfig, isTrue);

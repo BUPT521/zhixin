@@ -122,13 +122,9 @@ class SavedAnswerStatus {
 
 /// 从回答消息的结构化字段读回提示状态；没有这一项的回答返回空状态。
 SavedAnswerStatus savedAnswerStatus(ChatMessage message) {
-  final structured = message.structured;
-  final stored = structured?['notices'];
+  final payload = message.payload;
   return SavedAnswerStatus(
-    notices: [
-      if (stored is List)
-        for (final value in stored) ?noticeFromValue(value?.toString()),
-    ],
-    failure: llmFailureFromName(structured?['model_failure']?.toString()),
+    notices: payload?.notices ?? const [],
+    failure: llmFailureFromName(payload?.failureName),
   );
 }
