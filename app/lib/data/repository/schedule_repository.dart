@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../db/drift/app_database.dart';
 import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
+import '../db/write_transactions.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
@@ -110,32 +111,35 @@ class ScheduleRepository {
     required String endTime,
     required String title,
     String? location,
+    WriteTransaction? transaction,
   }) async {
     final at = _clock();
-    return _db.transaction((txn) async {
-      final conflict = await findRecurringTimetableConflict(
-        txn,
-        weekday: weekday,
-        startTime: startTime,
-        endTime: endTime,
-        now: at,
-      );
-      if (conflict != null) throw _exceptionFor(conflict);
-      return txn.writeGenerated(
-        (db) => db.insertTimetableEntry(
-          weekday,
-          startTime,
-          endTime,
-          title.trim(),
-          location?.trim(),
-          formatDateTime(at),
-        ),
-      );
-    });
+    final txn = writeExecutor(transaction, _db);
+    final conflict = await findRecurringTimetableConflict(
+      txn,
+      weekday: weekday,
+      startTime: startTime,
+      endTime: endTime,
+      now: at,
+    );
+    if (conflict != null) throw _exceptionFor(conflict);
+    return txn.writeGenerated(
+      (db) => db.insertTimetableEntry(
+        weekday,
+        startTime,
+        endTime,
+        title.trim(),
+        location?.trim(),
+        formatDateTime(at),
+      ),
+    );
   }
 
-  Future<void> deleteTimetable(int id, {RawExecutor? executor}) async {
-    await (executor ?? _db).writeGenerated((db) => db.deleteTimetableEntry(id));
+  Future<void> deleteTimetable(int id, {WriteTransaction? transaction}) async {
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.deleteTimetableEntry(id));
   }
 
   /// 一段时间内的时间块，按开始时间排序，并带上对应事项。
@@ -165,20 +169,9 @@ class ScheduleRepository {
     required DateTime end,
     String source = 'user',
     bool locked = false,
-    RawExecutor? executor,
+    WriteTransaction? transaction,
   }) async {
-    if (executor == null) {
-      return _db.transaction(
-        (txn) => addBlock(
-          planItemId: planItemId,
-          start: start,
-          end: end,
-          source: source,
-          locked: locked,
-          executor: txn,
-        ),
-      );
-    }
+    final executor = writeExecutor(transaction, _db);
     await _ensureNoConflict(executor, start: start, end: end);
     final now = formatDateTime(_clock());
     return executor.writeGenerated(
@@ -199,14 +192,10 @@ class ScheduleRepository {
   /// 只看最终结果，既不与未参与调整的预约重叠，也不与课表重叠。
   Future<void> rescheduleGroup(
     List<ScheduleAdjustment> adjustments, {
-    RawExecutor? executor,
+    WriteTransaction? transaction,
   }) async {
     if (adjustments.isEmpty) return;
-    if (executor == null) {
-      return _db.transaction(
-        (txn) => rescheduleGroup(adjustments, executor: txn),
-      );
-    }
+    final executor = writeExecutor(transaction, _db);
     final ids = <int>{};
     for (final adjustment in adjustments) {
       if (!ids.add(adjustment.id)) {
@@ -297,13 +286,9 @@ class ScheduleRepository {
     int id, {
     required DateTime start,
     required DateTime end,
-    RawExecutor? executor,
+    WriteTransaction? transaction,
   }) async {
-    if (executor == null) {
-      return _db.transaction(
-        (txn) => moveBlock(id, start: start, end: end, executor: txn),
-      );
-    }
+    final executor = writeExecutor(transaction, _db);
     final current = await executor.selectGenerated(
       (db) => db.scheduleBlockById(id).getSingleOrNull(),
     );
@@ -350,20 +335,25 @@ class ScheduleRepository {
   }
 
   /// 用户把这次安排固定下来；固定的块不参加自动调整。
-  Future<void> setLocked(int id, bool locked, {RawExecutor? executor}) async {
+  Future<void> setLocked(
+    int id,
+    bool locked, {
+    WriteTransaction? transaction,
+  }) async {
     final stamp = formatDateTime(_clock());
-    await (executor ?? _db).writeGenerated(
-      (db) => db.setBlockLocked(locked ? 1 : 0, stamp, id),
-    );
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setBlockLocked(locked ? 1 : 0, stamp, id));
   }
 
   /// 最近仍有效的未来时间块，按开始时间排列。
   Future<List<ScheduleBlock>> futureBlocksForItem(
     int planItemId,
     DateTime now, {
-    RawExecutor? executor,
+    WriteTransaction? transaction,
   }) async {
-    final rows = await (executor ?? _db).selectGenerated(
+    final rows = await writeExecutor(transaction, _db).selectGenerated(
       (db) => db.upcomingBlocksForItem(planItemId, formatDateTime(now)).get(),
     );
     return rows.map(_blockOfRow).toList(growable: false);
@@ -412,13 +402,13 @@ class ScheduleRepository {
   /// 目标下尚未开始的弹性预约，按开始时间排列。
   ///
   /// 暂停目标前用它确定取消范围，界面也用同一份查询说明会取消几条，固定的块
-  /// 不参与；[executor] 让这段读取与后面的取消落在同一个事务里。
+  /// 不参与；[transaction] 让这段读取与后面的取消落在同一个事务里。
   Future<List<ScheduleBlock>> flexibleFutureBlocksForGoal(
     int goalId,
     DateTime now, {
-    RawExecutor? executor,
+    WriteTransaction? transaction,
   }) async {
-    final rows = await (executor ?? _db).selectGenerated(
+    final rows = await writeExecutor(transaction, _db).selectGenerated(
       (db) => db.adjustableBlocksForGoal(goalId, formatDateTime(now)).get(),
     );
     return [
@@ -439,12 +429,13 @@ class ScheduleRepository {
   ///
   /// 传入的预约里只要有一条已经取消或不再存在，就报错交给外层事务回滚，
   /// 不会只改掉其中一部分。
-  Future<void> cancelBlocks(Iterable<int> ids, {RawExecutor? executor}) async {
+  Future<void> cancelBlocks(
+    Iterable<int> ids, {
+    WriteTransaction? transaction,
+  }) async {
     final list = ids.toSet().toList(growable: false);
     if (list.isEmpty) return;
-    if (executor == null) {
-      return _db.transaction((txn) => cancelBlocks(list, executor: txn));
-    }
+    final executor = writeExecutor(transaction, _db);
     final stamp = formatDateTime(_clock());
     final changed = await executor.writeGenerated(
       (db) => db.cancelPlannedBlocks(stamp, jsonEncode(list)),
@@ -458,13 +449,9 @@ class ScheduleRepository {
   Future<void> setBlockStatus(
     int id,
     String status, {
-    RawExecutor? executor,
+    WriteTransaction? transaction,
   }) async {
-    if (executor == null) {
-      return _db.transaction(
-        (txn) => setBlockStatus(id, status, executor: txn),
-      );
-    }
+    final executor = writeExecutor(transaction, _db);
     if (status == 'planned') {
       final block = await executor.selectGenerated(
         (db) => db.scheduleBlockById(id).getSingleOrNull(),
@@ -483,8 +470,11 @@ class ScheduleRepository {
     );
   }
 
-  Future<void> deleteBlock(int id, {RawExecutor? executor}) async {
-    await (executor ?? _db).writeGenerated((db) => db.deleteScheduleBlock(id));
+  Future<void> deleteBlock(int id, {WriteTransaction? transaction}) async {
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.deleteScheduleBlock(id));
   }
 
   Future<ScheduleBlock?> blockById(int id) async {

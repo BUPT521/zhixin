@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -222,7 +223,9 @@ void main() {
     await schedule.setBlockStatus(first, 'cancelled');
 
     await expectLater(
-      schedule.cancelBlocks([first, second]),
+      WriteTransactions(
+        db,
+      ).run((txn) => schedule.cancelBlocks([first, second], transaction: txn)),
       throwsA(isA<StateError>()),
     );
     expect((await schedule.blockById(second))!.status, 'planned');

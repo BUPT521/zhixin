@@ -88,7 +88,9 @@ class GuardedDatabase implements RawDatabase {
     T Function(RevisionCommit commit)? onDuplicate,
   }) {
     final active = _currentTxn;
-    if (active != null) return action(active);
+    if (active != null) {
+      throw StateError('数据库事务不能嵌套；当前写入请使用传入的 WriteTransaction');
+    }
     return gate.exclusive(() {
       final engine = revisions;
       if (engine == null) {

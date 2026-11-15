@@ -210,11 +210,11 @@ class PlanService {
         final blocks = await schedule.flexibleFutureBlocksForGoal(
           id,
           now,
-          executor: txn.executor,
+          transaction: txn,
         );
         await schedule.cancelBlocks(
           blocks.map((block) => block.id),
-          executor: txn.executor,
+          transaction: txn,
         );
       }
       await tasks.pauseGoal(id, transaction: txn);
@@ -269,7 +269,7 @@ class PlanService {
         start: start,
         end: end,
         source: source,
-        executor: txn.executor,
+        transaction: txn,
       );
       return txn.requireCommitId();
     }, label: '安排学习时间');
@@ -282,12 +282,7 @@ class PlanService {
     required DateTime end,
   }) {
     return transactions.run((txn) async {
-      await schedule.moveBlock(
-        id,
-        start: start,
-        end: end,
-        executor: txn.executor,
-      );
+      await schedule.moveBlock(id, start: start, end: end, transaction: txn);
       return txn.requireCommitId();
     }, label: '调整预约时间');
   }
@@ -299,7 +294,7 @@ class PlanService {
   Future<int> rescheduleGroup(List<ScheduleAdjustment> adjustments) {
     return transactions.run(
       (txn) async {
-        await schedule.rescheduleGroup(adjustments, executor: txn.executor);
+        await schedule.rescheduleGroup(adjustments, transaction: txn);
         return txn.requireCommitId();
       },
       label: '调整多个预约',
@@ -310,21 +305,21 @@ class PlanService {
   /// 取消、恢复、固定与删除预约各自形成一次可撤销的提交。
   Future<int> setBlockStatus(int id, String status) {
     return transactions.run((txn) async {
-      await schedule.setBlockStatus(id, status, executor: txn.executor);
+      await schedule.setBlockStatus(id, status, transaction: txn);
       return txn.requireCommitId();
     }, label: '修改预约状态');
   }
 
   Future<int> deleteBlock(int id) {
     return transactions.run((txn) async {
-      await schedule.deleteBlock(id, executor: txn.executor);
+      await schedule.deleteBlock(id, transaction: txn);
       return txn.requireCommitId();
     }, label: '删除预约');
   }
 
   Future<int> setBlockLocked(int id, bool locked) {
     return transactions.run((txn) async {
-      await schedule.setLocked(id, locked, executor: txn.executor);
+      await schedule.setLocked(id, locked, transaction: txn);
       return txn.requireCommitId();
     }, label: locked ? '固定这次预约' : '改为弹性预约');
   }
@@ -348,7 +343,7 @@ class PlanService {
   /// 删除一节课；返回提交编号，提示条据此提供撤销。
   Future<int> deleteTimetable(int id) {
     return transactions.run((txn) async {
-      await schedule.deleteTimetable(id, executor: txn.executor);
+      await schedule.deleteTimetable(id, transaction: txn);
       return txn.requireCommitId();
     }, label: '删除课表');
   }

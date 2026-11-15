@@ -341,7 +341,7 @@ class CapacityService {
       final future = await schedule.futureBlocksForItem(
         current.id,
         now,
-        executor: txn.executor,
+        transaction: txn,
       );
       if (future.any((block) => block.locked)) {
         throw StateError('这个事项已有固定安排，请先调整原安排');
@@ -366,7 +366,7 @@ class CapacityService {
           planItemId: current.id,
           start: start,
           end: end,
-          executor: txn.executor,
+          transaction: txn,
         );
         return (blockId: blockId, commitId: await txn.requireCommitId());
       }
@@ -376,7 +376,7 @@ class CapacityService {
           movable.id,
           start: start,
           end: end,
-          executor: txn.executor,
+          transaction: txn,
         );
         return (blockId: movable.id, commitId: await txn.requireCommitId());
       }
@@ -384,7 +384,7 @@ class CapacityService {
         planItemId: current.id,
         start: start,
         end: end,
-        executor: txn.executor,
+        transaction: txn,
       );
       return (blockId: blockId, commitId: await txn.requireCommitId());
     }, label: append ? '追加一段预约' : '按空档预约');
