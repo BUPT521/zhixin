@@ -1,7 +1,6 @@
-import '../db/drift/drift_raw.dart';
 import '../db/fts.dart';
 import '../db/raw_executor.dart';
-import '../../domain/rules/binary_bigrams.dart';
+import '../../domain/rules/search_terms.dart';
 
 import '../../domain/models/evidence.dart';
 import '../../domain/models/evidence_id.dart';
@@ -10,7 +9,6 @@ import '../../domain/models/question.dart';
 import '../../domain/rules/embedding.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/query_shape.dart';
-import '../../domain/rules/search_terms.dart';
 
 /// 一条跨次作答：作答本身、所属记录与题目出处。
 class ThreadAttempt {

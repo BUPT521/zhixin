@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import '../db/drift/app_database.dart';
-import '../db/drift/drift_raw.dart';
 import '../db/raw_executor.dart';
 import '../db/write_transactions.dart';
 import '../../domain/models/study.dart';
