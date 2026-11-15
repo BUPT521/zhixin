@@ -77,12 +77,6 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requestHead is the only part of the body the proxy reads.
-type requestHead struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
-}
-
 func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	pr := auth.MustPrincipal(r.Context())
 	if p.cfg.APIKey == "" {
@@ -99,7 +93,9 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
 		return
 	}
-	var head requestHead
+	// 只解释契约里声明的 model 与 stream，其余字段按原始字节转发给提供方：请求体
+	// 是提供方的格式，服务端不重新编码。
+	var head api.PostV1LlmChatCompletionsJSONBody
 	if err := json.Unmarshal(body, &head); err != nil {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "body is not a JSON object")
 		return
@@ -108,6 +104,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeModelNotAllowed, "", map[string]any{"models": p.cfg.Models})
 		return
 	}
+	stream := head.Stream != nil && *head.Stream
 	day := p.day()
 	used, err := p.quota.Used(r.Context(), pr.UserID, day)
 	if err != nil {
@@ -128,7 +125,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	up.Header.Set("Content-Type", "application/json")
 	up.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
-	if head.Stream {
+	if stream {
 		up.Header.Set("Accept", "text/event-stream")
 	}
 	resp, err := p.client.Do(up)
@@ -152,7 +149,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 
 	var tokens int64
-	if head.Stream {
+	if stream {
 		tokens = p.copyStream(w, resp.Body)
 	} else {
 		tokens = p.copyWhole(w, resp.Body)
