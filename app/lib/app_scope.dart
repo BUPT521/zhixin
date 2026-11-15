@@ -471,10 +471,9 @@ class AppScopeState extends State<AppScope> {
   /// 截止小时改变学习记录归到哪一天与导出文件名，界面分组要随数据版本
   /// 一起刷新，不能继续用启动时缓存的值。
   Future<void> _refreshDayCutoffHour() async {
-    final hour = await _settings.cutoffHour() ?? defaultDayCutoffHour;
-    if (hour < 0 || hour > maxDayCutoffHour) {
-      throw StateError('day_cutoff_hour 数据超出 0–$maxDayCutoffHour：$hour');
-    }
+    final hour = requireDayCutoffHour(
+      await _settings.cutoffHour() ?? defaultDayCutoffHour,
+    );
     if (hour == cutoffHour) return;
     cutoffHour = hour;
     dataVersion.value++;

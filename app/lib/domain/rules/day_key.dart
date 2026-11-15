@@ -8,11 +8,17 @@ import 'time_format.dart';
 
 const int maxDayCutoffHour = 6;
 
+/// 校验截止小时；四处入口共用这一份判定与异常类型。
+int requireDayCutoffHour(int hour) {
+  if (hour < 0 || hour > maxDayCutoffHour) {
+    throw RangeError.range(hour, 0, maxDayCutoffHour, 'day_cutoff_hour');
+  }
+  return hour;
+}
+
 /// 把时刻折算成归属日，返回 `YYYY-MM-DD`。
 String dayKey(DateTime now, {int cutoffHour = 4}) {
-  if (cutoffHour < 0 || cutoffHour > maxDayCutoffHour) {
-    throw RangeError.range(cutoffHour, 0, maxDayCutoffHour, 'cutoffHour');
-  }
+  requireDayCutoffHour(cutoffHour);
   final adjusted = now.hour < cutoffHour
       ? now.subtract(const Duration(days: 1))
       : now;

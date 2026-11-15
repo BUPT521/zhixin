@@ -52,20 +52,13 @@ class SettingsService {
 
   Future<Duration> testConfig(LlmConfig config) => ai.test(config);
 
-  Future<int> cutoffHour() async {
-    final value = await settings.cutoffHour() ?? defaultDayCutoffHour;
-    if (value < 0 || value > maxDayCutoffHour) {
-      throw StateError('day_cutoff_hour 数据超出 0–$maxDayCutoffHour：$value');
-    }
-    return value;
-  }
+  Future<int> cutoffHour() async =>
+      requireDayCutoffHour(await settings.cutoffHour() ?? defaultDayCutoffHour);
 
   /// 截止小时保存成一条提交，数据版本页可以撤销；保存成功后立即刷新应用
   /// 根缓存的时间口径。
   Future<WriteResult> saveCutoffHour(int hour) async {
-    if (hour < 0 || hour > maxDayCutoffHour) {
-      throw RangeError.range(hour, 0, maxDayCutoffHour, 'hour');
-    }
+    requireDayCutoffHour(hour);
     final result = await transactions.run((txn) async {
       await settings.setCutoffHour(hour, runtime.policy.now, transaction: txn);
       return txn.result();

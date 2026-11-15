@@ -15,9 +15,7 @@ const int defaultDayCutoffHour = 4;
 /// 页面与仓库不再各自拼日期。
 class TimePolicy {
   TimePolicy({required this.clock, this.cutoffHour = 4}) {
-    if (cutoffHour < 0 || cutoffHour > maxDayCutoffHour) {
-      throw RangeError.range(cutoffHour, 0, maxDayCutoffHour, 'cutoffHour');
-    }
+    requireDayCutoffHour(cutoffHour);
   }
 
   final Clock clock;
