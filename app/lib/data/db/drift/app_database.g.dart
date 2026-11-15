@@ -6112,14 +6112,16 @@ class $ScheduleBlocksTable extends ScheduleBlocks
   );
   static const VerificationMeta _lockedMeta = const VerificationMeta('locked');
   @override
-  late final GeneratedColumn<int> locked = GeneratedColumn<int>(
+  late final GeneratedColumn<bool> locked = GeneratedColumn<bool>(
     'locked',
     aliasedName,
     false,
-    check: () => locked.isIn([0, 1]),
-    type: DriftSqlType.int,
+    type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultValue: const Constant(0),
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("locked" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
@@ -6265,7 +6267,7 @@ class $ScheduleBlocksTable extends ScheduleBlocks
         data['${effectivePrefix}status'],
       )!,
       locked: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.bool,
         data['${effectivePrefix}locked'],
       )!,
       createdAt: attachedDatabase.typeMapping.read(
@@ -6293,7 +6295,7 @@ class ScheduleBlockRow extends DataClass
   final String endAt;
   final String source;
   final String status;
-  final int locked;
+  final bool locked;
   final String createdAt;
   final String updatedAt;
   const ScheduleBlockRow({
@@ -6316,7 +6318,7 @@ class ScheduleBlockRow extends DataClass
     map['end_at'] = Variable<String>(endAt);
     map['source'] = Variable<String>(source);
     map['status'] = Variable<String>(status);
-    map['locked'] = Variable<int>(locked);
+    map['locked'] = Variable<bool>(locked);
     map['created_at'] = Variable<String>(createdAt);
     map['updated_at'] = Variable<String>(updatedAt);
     return map;
@@ -6348,7 +6350,7 @@ class ScheduleBlockRow extends DataClass
       endAt: serializer.fromJson<String>(json['endAt']),
       source: serializer.fromJson<String>(json['source']),
       status: serializer.fromJson<String>(json['status']),
-      locked: serializer.fromJson<int>(json['locked']),
+      locked: serializer.fromJson<bool>(json['locked']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
@@ -6363,7 +6365,7 @@ class ScheduleBlockRow extends DataClass
       'endAt': serializer.toJson<String>(endAt),
       'source': serializer.toJson<String>(source),
       'status': serializer.toJson<String>(status),
-      'locked': serializer.toJson<int>(locked),
+      'locked': serializer.toJson<bool>(locked),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
@@ -6376,7 +6378,7 @@ class ScheduleBlockRow extends DataClass
     String? endAt,
     String? source,
     String? status,
-    int? locked,
+    bool? locked,
     String? createdAt,
     String? updatedAt,
   }) => ScheduleBlockRow(
@@ -6456,7 +6458,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
   final Value<String> endAt;
   final Value<String> source;
   final Value<String> status;
-  final Value<int> locked;
+  final Value<bool> locked;
   final Value<String> createdAt;
   final Value<String> updatedAt;
   const ScheduleBlocksCompanion({
@@ -6492,7 +6494,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     Expression<String>? endAt,
     Expression<String>? source,
     Expression<String>? status,
-    Expression<int>? locked,
+    Expression<bool>? locked,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
   }) {
@@ -6516,7 +6518,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     Value<String>? endAt,
     Value<String>? source,
     Value<String>? status,
-    Value<int>? locked,
+    Value<bool>? locked,
     Value<String>? createdAt,
     Value<String>? updatedAt,
   }) {
@@ -6555,7 +6557,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
       map['status'] = Variable<String>(status.value);
     }
     if (locked.present) {
-      map['locked'] = Variable<int>(locked.value);
+      map['locked'] = Variable<bool>(locked.value);
     }
     if (createdAt.present) {
       map['created_at'] = Variable<String>(createdAt.value);
@@ -7294,38 +7296,44 @@ class $AttemptsTable extends Attempts
     'isCorrect',
   );
   @override
-  late final GeneratedColumn<int> isCorrect = GeneratedColumn<int>(
+  late final GeneratedColumn<bool> isCorrect = GeneratedColumn<bool>(
     'is_correct',
     aliasedName,
     true,
-    check: () => isCorrect.isIn([0, 1]),
-    type: DriftSqlType.int,
+    type: DriftSqlType.bool,
     requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_correct" IN (0, 1))',
+    ),
   );
   static const VerificationMeta _independentMeta = const VerificationMeta(
     'independent',
   );
   @override
-  late final GeneratedColumn<int> independent = GeneratedColumn<int>(
+  late final GeneratedColumn<bool> independent = GeneratedColumn<bool>(
     'independent',
     aliasedName,
     true,
-    check: () => independent.isIn([0, 1]),
-    type: DriftSqlType.int,
+    type: DriftSqlType.bool,
     requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("independent" IN (0, 1))',
+    ),
   );
   static const VerificationMeta _delayedMeta = const VerificationMeta(
     'delayed',
   );
   @override
-  late final GeneratedColumn<int> delayed = GeneratedColumn<int>(
+  late final GeneratedColumn<bool> delayed = GeneratedColumn<bool>(
     'delayed',
     aliasedName,
     false,
-    check: () => delayed.isIn([0, 1]),
-    type: DriftSqlType.int,
+    type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultValue: const Constant(0),
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("delayed" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
   );
   static const VerificationMeta _helpJsonMeta = const VerificationMeta(
     'helpJson',
@@ -7544,15 +7552,15 @@ class $AttemptsTable extends Attempts
         data['${effectivePrefix}solution'],
       ),
       isCorrect: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.bool,
         data['${effectivePrefix}is_correct'],
       ),
       independent: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.bool,
         data['${effectivePrefix}independent'],
       ),
       delayed: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.bool,
         data['${effectivePrefix}delayed'],
       )!,
       helpJson: attachedDatabase.typeMapping.read(
@@ -7591,9 +7599,9 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
   final int? redoOfAttemptId;
   final String? userAnswer;
   final String? solution;
-  final int? isCorrect;
-  final int? independent;
-  final int delayed;
+  final bool? isCorrect;
+  final bool? independent;
+  final bool delayed;
   final String? helpJson;
   final String? feedback;
   final String? submittedAt;
@@ -7633,12 +7641,12 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
       map['solution'] = Variable<String>(solution);
     }
     if (!nullToAbsent || isCorrect != null) {
-      map['is_correct'] = Variable<int>(isCorrect);
+      map['is_correct'] = Variable<bool>(isCorrect);
     }
     if (!nullToAbsent || independent != null) {
-      map['independent'] = Variable<int>(independent);
+      map['independent'] = Variable<bool>(independent);
     }
-    map['delayed'] = Variable<int>(delayed);
+    map['delayed'] = Variable<bool>(delayed);
     if (!nullToAbsent || helpJson != null) {
       map['help_json'] = Variable<String>(helpJson);
     }
@@ -7702,9 +7710,9 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
       redoOfAttemptId: serializer.fromJson<int?>(json['redoOfAttemptId']),
       userAnswer: serializer.fromJson<String?>(json['userAnswer']),
       solution: serializer.fromJson<String?>(json['solution']),
-      isCorrect: serializer.fromJson<int?>(json['isCorrect']),
-      independent: serializer.fromJson<int?>(json['independent']),
-      delayed: serializer.fromJson<int>(json['delayed']),
+      isCorrect: serializer.fromJson<bool?>(json['isCorrect']),
+      independent: serializer.fromJson<bool?>(json['independent']),
+      delayed: serializer.fromJson<bool>(json['delayed']),
       helpJson: serializer.fromJson<String?>(json['helpJson']),
       feedback: serializer.fromJson<String?>(json['feedback']),
       submittedAt: serializer.fromJson<String?>(json['submittedAt']),
@@ -7722,9 +7730,9 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
       'redoOfAttemptId': serializer.toJson<int?>(redoOfAttemptId),
       'userAnswer': serializer.toJson<String?>(userAnswer),
       'solution': serializer.toJson<String?>(solution),
-      'isCorrect': serializer.toJson<int?>(isCorrect),
-      'independent': serializer.toJson<int?>(independent),
-      'delayed': serializer.toJson<int>(delayed),
+      'isCorrect': serializer.toJson<bool?>(isCorrect),
+      'independent': serializer.toJson<bool?>(independent),
+      'delayed': serializer.toJson<bool>(delayed),
       'helpJson': serializer.toJson<String?>(helpJson),
       'feedback': serializer.toJson<String?>(feedback),
       'submittedAt': serializer.toJson<String?>(submittedAt),
@@ -7740,9 +7748,9 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
     Value<int?> redoOfAttemptId = const Value.absent(),
     Value<String?> userAnswer = const Value.absent(),
     Value<String?> solution = const Value.absent(),
-    Value<int?> isCorrect = const Value.absent(),
-    Value<int?> independent = const Value.absent(),
-    int? delayed,
+    Value<bool?> isCorrect = const Value.absent(),
+    Value<bool?> independent = const Value.absent(),
+    bool? delayed,
     Value<String?> helpJson = const Value.absent(),
     Value<String?> feedback = const Value.absent(),
     Value<String?> submittedAt = const Value.absent(),
@@ -7860,9 +7868,9 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
   final Value<int?> redoOfAttemptId;
   final Value<String?> userAnswer;
   final Value<String?> solution;
-  final Value<int?> isCorrect;
-  final Value<int?> independent;
-  final Value<int> delayed;
+  final Value<bool?> isCorrect;
+  final Value<bool?> independent;
+  final Value<bool> delayed;
   final Value<String?> helpJson;
   final Value<String?> feedback;
   final Value<String?> submittedAt;
@@ -7909,9 +7917,9 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     Expression<int>? redoOfAttemptId,
     Expression<String>? userAnswer,
     Expression<String>? solution,
-    Expression<int>? isCorrect,
-    Expression<int>? independent,
-    Expression<int>? delayed,
+    Expression<bool>? isCorrect,
+    Expression<bool>? independent,
+    Expression<bool>? delayed,
     Expression<String>? helpJson,
     Expression<String>? feedback,
     Expression<String>? submittedAt,
@@ -7943,9 +7951,9 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     Value<int?>? redoOfAttemptId,
     Value<String?>? userAnswer,
     Value<String?>? solution,
-    Value<int?>? isCorrect,
-    Value<int?>? independent,
-    Value<int>? delayed,
+    Value<bool?>? isCorrect,
+    Value<bool?>? independent,
+    Value<bool>? delayed,
     Value<String?>? helpJson,
     Value<String?>? feedback,
     Value<String?>? submittedAt,
@@ -7992,13 +8000,13 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
       map['solution'] = Variable<String>(solution.value);
     }
     if (isCorrect.present) {
-      map['is_correct'] = Variable<int>(isCorrect.value);
+      map['is_correct'] = Variable<bool>(isCorrect.value);
     }
     if (independent.present) {
-      map['independent'] = Variable<int>(independent.value);
+      map['independent'] = Variable<bool>(independent.value);
     }
     if (delayed.present) {
-      map['delayed'] = Variable<int>(delayed.value);
+      map['delayed'] = Variable<bool>(delayed.value);
     }
     if (helpJson.present) {
       map['help_json'] = Variable<String>(helpJson.value);
@@ -11040,14 +11048,16 @@ class $RevisionContextsTable extends RevisionContexts
     'suppress',
   );
   @override
-  late final GeneratedColumn<int> suppress = GeneratedColumn<int>(
+  late final GeneratedColumn<bool> suppress = GeneratedColumn<bool>(
     'suppress',
     aliasedName,
     false,
-    check: () => suppress.isIn([0, 1]),
-    type: DriftSqlType.int,
+    type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultValue: const Constant(0),
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("suppress" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
   );
   @override
   List<GeneratedColumn> get $columns => [id, activeCommit, suppress];
@@ -11099,7 +11109,7 @@ class $RevisionContextsTable extends RevisionContexts
         data['${effectivePrefix}active_commit'],
       ),
       suppress: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.bool,
         data['${effectivePrefix}suppress'],
       )!,
     );
@@ -11115,7 +11125,7 @@ class RevisionContextRow extends DataClass
     implements Insertable<RevisionContextRow> {
   final int id;
   final int? activeCommit;
-  final int suppress;
+  final bool suppress;
   const RevisionContextRow({
     required this.id,
     this.activeCommit,
@@ -11128,7 +11138,7 @@ class RevisionContextRow extends DataClass
     if (!nullToAbsent || activeCommit != null) {
       map['active_commit'] = Variable<int>(activeCommit);
     }
-    map['suppress'] = Variable<int>(suppress);
+    map['suppress'] = Variable<bool>(suppress);
     return map;
   }
 
@@ -11150,7 +11160,7 @@ class RevisionContextRow extends DataClass
     return RevisionContextRow(
       id: serializer.fromJson<int>(json['id']),
       activeCommit: serializer.fromJson<int?>(json['activeCommit']),
-      suppress: serializer.fromJson<int>(json['suppress']),
+      suppress: serializer.fromJson<bool>(json['suppress']),
     );
   }
   @override
@@ -11159,14 +11169,14 @@ class RevisionContextRow extends DataClass
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
       'activeCommit': serializer.toJson<int?>(activeCommit),
-      'suppress': serializer.toJson<int>(suppress),
+      'suppress': serializer.toJson<bool>(suppress),
     };
   }
 
   RevisionContextRow copyWith({
     int? id,
     Value<int?> activeCommit = const Value.absent(),
-    int? suppress,
+    bool? suppress,
   }) => RevisionContextRow(
     id: id ?? this.id,
     activeCommit: activeCommit.present ? activeCommit.value : this.activeCommit,
@@ -11206,7 +11216,7 @@ class RevisionContextRow extends DataClass
 class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
   final Value<int> id;
   final Value<int?> activeCommit;
-  final Value<int> suppress;
+  final Value<bool> suppress;
   const RevisionContextsCompanion({
     this.id = const Value.absent(),
     this.activeCommit = const Value.absent(),
@@ -11220,7 +11230,7 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
   static Insertable<RevisionContextRow> custom({
     Expression<int>? id,
     Expression<int>? activeCommit,
-    Expression<int>? suppress,
+    Expression<bool>? suppress,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -11232,7 +11242,7 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
   RevisionContextsCompanion copyWith({
     Value<int>? id,
     Value<int?>? activeCommit,
-    Value<int>? suppress,
+    Value<bool>? suppress,
   }) {
     return RevisionContextsCompanion(
       id: id ?? this.id,
@@ -11251,7 +11261,7 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
       map['active_commit'] = Variable<int>(activeCommit.value);
     }
     if (suppress.present) {
-      map['suppress'] = Variable<int>(suppress.value);
+      map['suppress'] = Variable<bool>(suppress.value);
     }
     return map;
   }
@@ -11934,7 +11944,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         endAt: row.read<String>('end_at'),
         source: row.read<String>('source'),
         status: row.read<String>('status'),
-        locked: row.read<int>('locked'),
+        locked: row.read<bool>('locked'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         pTitle: row.read<String>('p_title'),
@@ -11957,7 +11967,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         endAt: row.read<String>('end_at'),
         source: row.read<String>('source'),
         status: row.read<String>('status'),
-        locked: row.read<int>('locked'),
+        locked: row.read<bool>('locked'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         pTitle: row.read<String>('p_title'),
@@ -12064,7 +12074,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String startAt,
     String endAt,
     String source,
-    int locked,
+    bool locked,
     String stamp,
   ) {
     return customInsert(
@@ -12074,7 +12084,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(startAt),
         Variable<String>(endAt),
         Variable<String>(source),
-        Variable<int>(locked),
+        Variable<bool>(locked),
         Variable<String>(stamp),
       ],
       updates: {this.scheduleBlocks},
@@ -12100,11 +12110,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> setBlockLocked(int locked, String stamp, int blockId) {
+  Future<int> setBlockLocked(bool locked, String stamp, int blockId) {
     return customUpdate(
       'UPDATE schedule_block SET locked = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
-        Variable<int>(locked),
+        Variable<bool>(locked),
         Variable<String>(stamp),
         Variable<int>(blockId),
       ],
@@ -13338,13 +13348,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
           'last_attempt_user_answer',
         ),
         lastAttemptSolution: row.readNullable<String>('last_attempt_solution'),
-        lastAttemptIsCorrect: row.readNullable<int>('last_attempt_is_correct'),
-        lastAttemptIndependent: row.readNullable<int>(
+        lastAttemptIsCorrect: row.readNullable<bool>('last_attempt_is_correct'),
+        lastAttemptIndependent: row.readNullable<bool>(
           'last_attempt_independent',
         ),
         lastAttemptHelpJson: row.readNullable<String>('last_attempt_help_json'),
         lastAttemptFeedback: row.readNullable<String>('last_attempt_feedback'),
-        lastAttemptDelayed: row.readNullable<int>('last_attempt_delayed'),
+        lastAttemptDelayed: row.readNullable<bool>('last_attempt_delayed'),
         lastAttemptSubmittedAt: row.readNullable<String>(
           'last_attempt_submitted_at',
         ),
@@ -13632,7 +13642,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int conversationId,
     int? sessionId,
     int? redoOfAttemptId,
-    int delayed,
+    bool delayed,
     String createdAt,
     String updatedAt,
   ) {
@@ -13642,7 +13652,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<int>(conversationId),
         Variable<int>(sessionId),
         Variable<int>(redoOfAttemptId),
-        Variable<int>(delayed),
+        Variable<bool>(delayed),
         Variable<String>(createdAt),
         Variable<String>(updatedAt),
       ],
@@ -13653,7 +13663,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Future<int> updateOpenAttemptContext(
     int? sessionId,
     int? redoOfAttemptId,
-    int? delayed,
+    bool? delayed,
     String stamp,
     int attemptId,
   ) {
@@ -13662,7 +13672,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [
         Variable<int>(sessionId),
         Variable<int>(redoOfAttemptId),
-        Variable<int>(delayed),
+        Variable<bool>(delayed),
         Variable<String>(stamp),
         Variable<int>(attemptId),
       ],
@@ -13674,9 +13684,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Future<int> saveOpenAttemptDraft(
     String? answer,
     String? solution,
-    int? isCorrect,
-    int? independent,
-    int delayed,
+    bool? isCorrect,
+    bool? independent,
+    bool delayed,
     String? feedback,
     String stamp,
     int attemptId,
@@ -13686,9 +13696,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [
         Variable<String>(answer),
         Variable<String>(solution),
-        Variable<int>(isCorrect),
-        Variable<int>(independent),
-        Variable<int>(delayed),
+        Variable<bool>(isCorrect),
+        Variable<bool>(independent),
+        Variable<bool>(delayed),
         Variable<String>(feedback),
         Variable<String>(stamp),
         Variable<int>(attemptId),
@@ -13714,9 +13724,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Future<int> submitOpenAttempt(
     String? answer,
     String? solution,
-    int? isCorrect,
-    int? independent,
-    int delayed,
+    bool? isCorrect,
+    bool? independent,
+    bool delayed,
     String? feedback,
     String? stamp,
     int attemptId,
@@ -13726,9 +13736,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [
         Variable<String>(answer),
         Variable<String>(solution),
-        Variable<int>(isCorrect),
-        Variable<int>(independent),
-        Variable<int>(delayed),
+        Variable<bool>(isCorrect),
+        Variable<bool>(independent),
+        Variable<bool>(delayed),
         Variable<String>(feedback),
         Variable<String>(stamp),
         Variable<int>(attemptId),
@@ -13783,11 +13793,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         attemptSessionId: row.readNullable<int>('attempt_session_id'),
         attemptUserAnswer: row.readNullable<String>('attempt_user_answer'),
         attemptSolution: row.readNullable<String>('attempt_solution'),
-        attemptIsCorrect: row.readNullable<int>('attempt_is_correct'),
-        attemptIndependent: row.readNullable<int>('attempt_independent'),
+        attemptIsCorrect: row.readNullable<bool>('attempt_is_correct'),
+        attemptIndependent: row.readNullable<bool>('attempt_independent'),
         attemptHelpJson: row.readNullable<String>('attempt_help_json'),
         attemptFeedback: row.readNullable<String>('attempt_feedback'),
-        attemptDelayed: row.read<int>('attempt_delayed'),
+        attemptDelayed: row.read<bool>('attempt_delayed'),
         attemptSubmittedAt: row.readNullable<String>('attempt_submitted_at'),
         attemptCreatedAt: row.read<String>('attempt_created_at'),
         questionId: row.read<int>('question_id'),
@@ -14167,7 +14177,7 @@ class BlocksOverlappingResult {
   final String endAt;
   final String source;
   final String status;
-  final int locked;
+  final bool locked;
   final String createdAt;
   final String updatedAt;
   final String pTitle;
@@ -14196,7 +14206,7 @@ class NextPlannedBlockResult {
   final String endAt;
   final String source;
   final String status;
-  final int locked;
+  final bool locked;
   final String createdAt;
   final String updatedAt;
   final String pTitle;
@@ -14849,11 +14859,11 @@ class QuestionRowsResult {
   final int? lastAttemptSessionId;
   final String? lastAttemptUserAnswer;
   final String? lastAttemptSolution;
-  final int? lastAttemptIsCorrect;
-  final int? lastAttemptIndependent;
+  final bool? lastAttemptIsCorrect;
+  final bool? lastAttemptIndependent;
   final String? lastAttemptHelpJson;
   final String? lastAttemptFeedback;
-  final int? lastAttemptDelayed;
+  final bool? lastAttemptDelayed;
   final String? lastAttemptSubmittedAt;
   final String? lastAttemptCreatedAt;
   final bool hasDraft;
@@ -15004,11 +15014,11 @@ class RecentSubmittedResult {
   final int? attemptSessionId;
   final String? attemptUserAnswer;
   final String? attemptSolution;
-  final int? attemptIsCorrect;
-  final int? attemptIndependent;
+  final bool? attemptIsCorrect;
+  final bool? attemptIndependent;
   final String? attemptHelpJson;
   final String? attemptFeedback;
-  final int attemptDelayed;
+  final bool attemptDelayed;
   final String? attemptSubmittedAt;
   final String attemptCreatedAt;
   final int questionId;

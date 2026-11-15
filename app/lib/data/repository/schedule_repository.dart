@@ -46,7 +46,7 @@ class ScheduleRepository {
     required String endAt,
     required String source,
     required String status,
-    required int locked,
+    required bool locked,
   }) => ScheduleBlock(
     id: id,
     planItemId: planItemId,
@@ -54,7 +54,7 @@ class ScheduleRepository {
     endAt: requiredDateTime(endAt),
     source: source,
     status: status,
-    locked: locked == 1,
+    locked: locked,
   );
 
   static ScheduledItem _scheduledOf(BlocksOverlappingResult r) => ScheduledItem(
@@ -179,7 +179,7 @@ class ScheduleRepository {
         formatDateTime(start),
         formatDateTime(end),
         source,
-        locked ? 1 : 0,
+        locked,
         now,
       ),
     );
@@ -343,7 +343,7 @@ class ScheduleRepository {
     await writeExecutor(
       transaction,
       _db,
-    ).writeGenerated((db) => db.setBlockLocked(locked ? 1 : 0, stamp, id));
+    ).writeGenerated((db) => db.setBlockLocked(locked, stamp, id));
   }
 
   /// 最近仍有效的未来时间块，按开始时间排列。
@@ -419,7 +419,7 @@ class ScheduleRepository {
           endAt: requiredDateTime(row.endAt),
           source: row.source,
           status: row.status,
-          locked: row.locked == 1,
+          locked: row.locked,
         ),
     ];
   }
@@ -498,7 +498,7 @@ class ScheduleRepository {
     endAt: requiredDateTime(row.endAt),
     source: row.source,
     status: row.status,
-    locked: row.locked == 1,
+    locked: row.locked,
   );
 
   /// 课表行的字段与领域模型同名，只补地点。

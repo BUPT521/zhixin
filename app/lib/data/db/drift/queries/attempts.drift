@@ -63,7 +63,7 @@ WHERE NOT EXISTS (
 updateOpenAttemptContext(
   REQUIRED :sessionId AS INT OR NULL,
   REQUIRED :redoOfAttemptId AS INT OR NULL,
-  REQUIRED :delayed AS INT OR NULL
+  REQUIRED :delayed AS BOOL OR NULL
 ):
 UPDATE attempt SET session_id = COALESCE(:sessionId, session_id),
   redo_of_attempt_id = COALESCE(:redoOfAttemptId, redo_of_attempt_id),

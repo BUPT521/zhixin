@@ -95,7 +95,7 @@ class Attempt {
       independent: _boolOrNull(row['independent']),
       helps: HelpEntry.decodeList(row['help_json'] as String?),
       feedback: row['feedback'] as String?,
-      delayed: row['delayed'] == 1,
+      delayed: _boolOrNull(row['delayed']) ?? false,
       submittedAt: optionalDateTime(row['submitted_at'] as String? ?? ''),
       createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
     );

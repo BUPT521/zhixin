@@ -374,8 +374,7 @@ class ScheduleBlocks extends Table {
   TextColumn get status => text()
       .withDefault(const Constant('planned'))
       .check(status.isIn(scheduleBlockStatuses))();
-  IntColumn get locked =>
-      integer().withDefault(const Constant(0)).check(locked.isIn([0, 1]))();
+  BoolColumn get locked => boolean().withDefault(const Constant(false))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
 
@@ -442,12 +441,9 @@ class Attempts extends Table {
   )();
   TextColumn get userAnswer => text().nullable()();
   TextColumn get solution => text().nullable()();
-  IntColumn get isCorrect =>
-      integer().nullable().check(isCorrect.isIn([0, 1]))();
-  IntColumn get independent =>
-      integer().nullable().check(independent.isIn([0, 1]))();
-  IntColumn get delayed =>
-      integer().withDefault(const Constant(0)).check(delayed.isIn([0, 1]))();
+  BoolColumn get isCorrect => boolean().nullable()();
+  BoolColumn get independent => boolean().nullable()();
+  BoolColumn get delayed => boolean().withDefault(const Constant(false))();
   TextColumn get helpJson => text().nullable()();
   TextColumn get feedback => text().nullable()();
   TextColumn get submittedAt => text().nullable()();
@@ -572,8 +568,7 @@ class RevisionContexts extends Table {
   String get tableName => 'revision_context';
   IntColumn get id => integer().check(id.equals(1))();
   IntColumn get activeCommit => integer().nullable()();
-  IntColumn get suppress =>
-      integer().withDefault(const Constant(0)).check(suppress.isIn([0, 1]))();
+  BoolColumn get suppress => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
