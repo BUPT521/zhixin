@@ -28,20 +28,6 @@ class Material {
     this.updatedAt,
   });
 
-  factory Material.fromRow(Map<String, Object?> row) {
-    return Material(
-      id: row['id']! as int,
-      title: row['title']! as String,
-      kind: (row['kind'] as String?) ?? 'text',
-      sourceRef: row['source_ref'] as String?,
-      sourceFileName: row['source_file_name'] as String?,
-      goalId: row['goal_id'] as int?,
-      pageCount: (row['page_count'] as int?) ?? 0,
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
   final String title;
 
@@ -89,16 +75,6 @@ class MaterialPage {
     this.label,
   });
 
-  factory MaterialPage.fromRow(Map<String, Object?> row) {
-    return MaterialPage(
-      id: row['id']! as int,
-      materialId: row['material_id']! as int,
-      pageNo: row['page_no']! as int,
-      label: row['label'] as String?,
-      content: row['content']! as String,
-    );
-  }
-
   final int id;
   final int materialId;
   final int pageNo;
@@ -125,17 +101,6 @@ class MaterialHit {
     this.snippetText,
     this.isDocx = false,
   });
-
-  factory MaterialHit.fromRow(Map<String, Object?> row) {
-    return MaterialHit(
-      materialId: row['material_id']! as int,
-      materialTitle: (row['material_title'] as String?) ?? '材料',
-      pageNo: row['page_no']! as int,
-      label: row['label'] as String?,
-      content: row['content']! as String,
-      isDocx: isDocxFile(row['source_file_name'] as String?),
-    );
-  }
 
   final int materialId;
   final String materialTitle;

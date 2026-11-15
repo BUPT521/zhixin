@@ -35,8 +35,6 @@ class GuardedDatabase implements RawDatabase {
   final String defaultAction;
 
   static final Object _txnScope = Object();
-  static final Object _labelScope = Object();
-  static final Object _actorScope = Object();
 
   RawDatabase get _db => resolve();
 
@@ -95,14 +93,7 @@ class GuardedDatabase implements RawDatabase {
       final engine = revisions;
       if (engine == null) {
         return _db.transaction(
-          (txn) => runZoned(
-            () => action(txn),
-            zoneValues: {
-              _txnScope: txn,
-              _labelScope: label ?? defaultAction,
-              _actorScope: actor,
-            },
-          ),
+          (txn) => runZoned(() => action(txn), zoneValues: {_txnScope: txn}),
         );
       }
       return _db.transaction((txn) async {
@@ -114,24 +105,17 @@ class GuardedDatabase implements RawDatabase {
           }
         }
         final commitId = await engine.beginCommand(txn, requestId: requestId);
-        return runZoned(
-          () async {
-            final result = await action(txn);
-            await engine.finishCommand(
-              txn,
-              commitId,
-              action: label ?? defaultAction,
-              actor: actor,
-              requestId: requestId,
-            );
-            return result;
-          },
-          zoneValues: {
-            _txnScope: txn,
-            _labelScope: label ?? defaultAction,
-            _actorScope: actor,
-          },
-        );
+        return runZoned(() async {
+          final result = await action(txn);
+          await engine.finishCommand(
+            txn,
+            commitId,
+            action: label ?? defaultAction,
+            actor: actor,
+            requestId: requestId,
+          );
+          return result;
+        }, zoneValues: {_txnScope: txn});
       });
     });
   }

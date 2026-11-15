@@ -170,13 +170,15 @@ void main() {
     final search = SearchService(
       evidence: EvidenceService(repository: EvidenceRepository(rig.db.rawDb)),
     );
-    final hits = await search.search(
+    final hits = await _searchAll(
+      search,
       '用乘法公式检验独立性',
       scope: EvidenceScope.userMaterial(id),
     );
     expect(hits.entries.single.hits.first.title, '《概率讲义》第 2 个片段');
     expect(hits.entries.single.hits.first.location.pageNo, 2);
-    final formulaHits = await search.search(
+    final formulaHits = await _searchAll(
+      search,
       '独立性判据',
       scope: EvidenceScope.userMaterial(id),
     );
@@ -210,3 +212,10 @@ void main() {
     expect(await restored.sourceFileBytes(id), bytes);
   });
 }
+
+/// 用例要全部命中时把页大小放大，行为与原先不分页的 search 一致。
+Future<SearchResults> _searchAll(
+  SearchService service,
+  String query, {
+  EvidenceScope scope = const EvidenceScope.userAll(),
+}) => service.searchPage(query, scope: scope, pageSize: 1000);

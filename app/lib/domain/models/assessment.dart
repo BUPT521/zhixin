@@ -32,17 +32,6 @@ class Assessment {
     this.createdAt,
   });
 
-  factory Assessment.fromRow(Map<String, Object?> row) {
-    return Assessment(
-      id: row['id']! as int,
-      attemptId: row['attempt_id']! as int,
-      kind: AssessmentKind.fromValue(row['kind']! as String),
-      result: row['result']! as String,
-      basis: row['basis'] as String?,
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
   final int attemptId;
   final AssessmentKind kind;

@@ -33,33 +33,6 @@ class ConversationRecord {
     this.hasDraft = false,
   });
 
-  factory ConversationRecord.fromRow(Map<String, Object?> row) {
-    return ConversationRecord(
-      id: row['id']! as int,
-      title: row['title'] as String?,
-      goalId: row['goal_id'] as int?,
-      materialId: row['material_id'] as int?,
-      pageNo: row['page_no'] as int?,
-      materialTitle: row['material_title'] as String?,
-      materialIsDocx: isDocxFile(row['source_file_name'] as String?),
-      entryKind: (row['entry_kind'] as String?) ?? 'text',
-      status: (row['status'] as String?) ?? 'open',
-      endedAt: DateTime.tryParse(row['ended_at'] as String? ?? ''),
-      lastMessageAt: DateTime.tryParse(row['last_message_at'] as String? ?? ''),
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
-      messageCount: (row['message_count'] as int?) ?? 0,
-      preview: row['preview'] as String?,
-      lastUserMessage: row['last_user_message'] as String?,
-      draftAnswer: row['draft_answer'] as String?,
-      draftUpdatedAt: DateTime.tryParse(
-        row['draft_updated_at'] as String? ?? '',
-      ),
-      hasAttempts: row['has_attempts'] == 1,
-      hasDraft: row['has_draft'] == 1,
-    );
-  }
-
   final int id;
   final String? title;
 
@@ -145,15 +118,6 @@ class RelatedRecord {
     this.createdAt,
     this.snippetText,
   });
-
-  factory RelatedRecord.fromRow(Map<String, Object?> row) {
-    return RelatedRecord(
-      conversationId: row['conversation_id']! as int,
-      title: row['conversation_title'] as String?,
-      content: row['content']! as String,
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-    );
-  }
 
   final int conversationId;
   final String content;

@@ -73,27 +73,6 @@ class StudyPlan {
     this.updatedAt,
   });
 
-  factory StudyPlan.fromRow(Map<String, Object?> row) {
-    return StudyPlan(
-      id: row['id']! as int,
-      title: row['title']! as String,
-      materialId: row['material_id'] as int?,
-      goalId: row['goal_id'] as int?,
-      conversationId: row['conversation_id'] as int?,
-      pageFrom: row['page_from'] as int?,
-      pageTo: row['page_to'] as int?,
-      currentPage: row['current_page'] as int?,
-      status: StudyPlanStatus.fromCode(row['status'] as String?),
-      materialTitle: row['material_title'] as String?,
-      materialIsDocx: isDocxFile(row['source_file_name'] as String?),
-      stepsDone: (row['steps_done'] as int?) ?? 0,
-      stepsTotal: (row['steps_total'] as int?) ?? 0,
-      nextStepTitle: row['next_step_title'] as String?,
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
   final String title;
   final int? materialId;

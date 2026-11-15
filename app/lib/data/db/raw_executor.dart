@@ -307,6 +307,7 @@ extension RawSelf on RawExecutor {
   RawExecutor get raw => this;
 }
 
+/// 需要自己开事务的调用方继续使用 `.rawDb`。
 extension RawDatabaseSelf on RawDatabase {
   RawDatabase get rawDb => this;
 }

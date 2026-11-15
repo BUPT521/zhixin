@@ -3,8 +3,6 @@ library;
 
 import 'material.dart';
 
-import '../rules/time_format.dart';
-
 enum LearningGoalStatus {
   active('active', '进行中'),
   paused('paused', '已暂停'),
@@ -59,18 +57,6 @@ class LearningGoal {
     this.updatedAt,
   });
 
-  factory LearningGoal.fromRow(Map<String, Object?> row) {
-    return LearningGoal(
-      id: row['id']! as int,
-      title: row['title']! as String,
-      scopeText: row['scope_text'] as String?,
-      dueDate: row['due_date'] as String?,
-      status: LearningGoalStatus.fromCode(row['status'] as String?),
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
   final String title;
   final String? scopeText;
@@ -110,29 +96,6 @@ class PlanItem {
     this.updatedAt,
   });
 
-  factory PlanItem.fromRow(Map<String, Object?> row) {
-    return PlanItem(
-      id: row['id']! as int,
-      goalId: row['goal_id'] as int?,
-      conversationId: row['conversation_id'] as int?,
-      studyPlanId: row['study_plan_id'] as int?,
-      seq: row['seq'] as int?,
-      title: row['title']! as String,
-      note: row['note'] as String?,
-      pageFrom: row['page_from'] as int?,
-      pageTo: row['page_to'] as int?,
-      materialIsDocx: isDocxFile(row['source_file_name'] as String?),
-      dueAt: DateTime.tryParse(row['due_at'] as String? ?? ''),
-      estMinutes: row['est_minutes'] as int?,
-      priority: (row['priority'] as int?) ?? 0,
-      status: PlanItemStatus.fromCode(row['status'] as String?),
-      source: (row['source'] as String?) ?? 'user',
-      completedAt: DateTime.tryParse(row['completed_at'] as String? ?? ''),
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
   final int? goalId;
 
@@ -171,22 +134,6 @@ class PlanItem {
 
   String get pageLabel =>
       materialPosition(pageFrom, to: pageTo, isDocx: materialIsDocx);
-
-  Map<String, Object?> toRow() => {
-    'goal_id': goalId,
-    'conversation_id': conversationId,
-    'study_plan_id': studyPlanId,
-    'seq': seq,
-    'title': title,
-    'note': note,
-    'page_from': pageFrom,
-    'page_to': pageTo,
-    'due_at': dueAt == null ? null : formatDateTime(dueAt!),
-    'est_minutes': estMinutes,
-    'status': status.code,
-    'source': source,
-    'completed_at': completedAt == null ? null : formatDateTime(completedAt!),
-  };
 }
 
 /// 一次学习（01 `study_session`）；同一次学习里的多次尝试共用它。
@@ -201,19 +148,6 @@ class StudySession {
     required this.startedAt,
     this.endedAt,
   });
-
-  factory StudySession.fromRow(Map<String, Object?> row) {
-    return StudySession(
-      id: row['id']! as int,
-      goalId: row['goal_id'] as int?,
-      planItemId: row['plan_item_id'] as int?,
-      conversationId: row['conversation_id'] as int?,
-      summary: row['summary'] as String?,
-      outcome: row['outcome'] as String?,
-      startedAt: parseDateTime(row['started_at']! as String),
-      endedAt: DateTime.tryParse(row['ended_at'] as String? ?? ''),
-    );
-  }
 
   final int id;
   final int? goalId;
@@ -251,18 +185,6 @@ class ScheduleBlock {
     this.locked = false,
   });
 
-  factory ScheduleBlock.fromRow(Map<String, Object?> row) {
-    return ScheduleBlock(
-      id: row['id']! as int,
-      planItemId: row['plan_item_id']! as int,
-      startAt: parseDateTime(row['start_at']! as String),
-      endAt: parseDateTime(row['end_at']! as String),
-      source: (row['source'] as String?) ?? 'user',
-      status: (row['status'] as String?) ?? 'planned',
-      locked: row['locked'] == 1,
-    );
-  }
-
   final int id;
   final int planItemId;
   final DateTime startAt;
@@ -278,15 +200,6 @@ class ScheduleBlock {
   final bool locked;
 
   bool get planned => status == 'planned';
-
-  Map<String, Object?> toRow() => {
-    'plan_item_id': planItemId,
-    'start_at': formatDateTime(startAt),
-    'end_at': formatDateTime(endAt),
-    'source': source,
-    'status': status,
-    'locked': locked ? 1 : 0,
-  };
 }
 
 /// 时间块及其所属事项摘要；查询结果供应用服务和界面共同使用。
@@ -317,29 +230,10 @@ class TimetableEntry {
     this.location,
   });
 
-  factory TimetableEntry.fromRow(Map<String, Object?> row) {
-    return TimetableEntry(
-      id: row['id']! as int,
-      weekday: row['weekday']! as int,
-      startTime: row['start_time']! as String,
-      endTime: row['end_time']! as String,
-      title: row['title']! as String,
-      location: row['location'] as String?,
-    );
-  }
-
   final int id;
   final int weekday;
   final String startTime;
   final String endTime;
   final String title;
   final String? location;
-
-  Map<String, Object?> toRow() => {
-    'weekday': weekday,
-    'start_time': startTime,
-    'end_time': endTime,
-    'title': title,
-    'location': location,
-  };
 }

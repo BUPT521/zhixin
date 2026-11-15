@@ -74,7 +74,7 @@ void main() {
     );
 
     // 用户主动检索不按目标过滤，两个目标的记录都能找到。
-    final probabilityResults = await search.search('条件概率');
+    final probabilityResults = await _searchAll(search, '条件概率');
     expect(
       probabilityResults.entries.map((entry) => entry.key),
       containsAll([_conversationKey(probability), _conversationKey(question)]),
@@ -92,7 +92,7 @@ void main() {
       isFalse,
     );
 
-    final linearResults = await search.search('矩阵');
+    final linearResults = await _searchAll(search, '矩阵');
     expect(
       _singleHit(linearResults, EvidenceKind.message).location.conversationId,
       linear,
@@ -101,13 +101,13 @@ void main() {
     expect(linearMaterial.location.materialId, material);
     expect(linearMaterial.title, contains('线性代数讲义'));
 
-    final rankResults = await search.search('线性无关');
+    final rankResults = await _searchAll(search, '线性无关');
     final rankMaterial = _singleHit(rankResults, EvidenceKind.materialPage);
     expect(rankMaterial.location.materialId, material);
     expect(rankMaterial.location.pageNo, 3);
 
     // 整句提问也要能按其中的词找到材料页，而不是整句一起匹配。
-    final natural = await search.search('矩阵的秩是怎么定义的');
+    final natural = await _searchAll(search, '矩阵的秩是怎么定义的');
     final naturalMaterial = _singleHit(natural, EvidenceKind.materialPage);
     expect(naturalMaterial.location.materialId, material);
     expect(naturalMaterial.location.pageNo, 3);
@@ -131,7 +131,7 @@ void main() {
     expect(probabilityInB, isEmpty);
 
     // 单字术语也要能检索；结果仍由记录条数决定，不再被长度门槛挡掉。
-    final single = await search.search('秩');
+    final single = await _searchAll(search, '秩');
     expect(
       _singleHit(single, EvidenceKind.materialPage).location.materialId,
       material,
@@ -171,7 +171,7 @@ void main() {
       );
     }
 
-    final results = await search.search('矩阵');
+    final results = await _searchAll(search, '矩阵');
 
     expect(
       _hits(results).where((hit) => hit.kind == EvidenceKind.message),
@@ -268,7 +268,7 @@ void main() {
     expect(reached, contains(ids.first), reason: '按时间倒序排列时最早一条在最后一页，也必须能翻到');
 
     // 同一批候选分页取到的记录，和不分页时一致。
-    final all = await search.search('矩阵');
+    final all = await _searchAll(search, '矩阵');
     expect(
       _hits(all).where((hit) => hit.kind == EvidenceKind.message),
       hasLength(60),
@@ -365,14 +365,14 @@ void main() {
       evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
     );
 
-    final example = await search.search('例 3-2');
+    final example = await _searchAll(search, '例 3-2');
     expect(_materialPages(example), contains(1));
     expect(_materialPages(example), isNot(contains(2)));
 
-    final formula = await search.search('f(x)');
+    final formula = await _searchAll(search, 'f(x)');
     expect(_materialPages(formula), contains(3));
 
-    final underscore = await search.search('a_b');
+    final underscore = await _searchAll(search, 'a_b');
     expect(_materialPages(underscore), contains(4));
     expect(_materialPages(underscore), isNot(contains(5)));
   });
@@ -569,3 +569,10 @@ void main() {
     expect(merged.nextOffset, 3);
   });
 }
+
+/// 用例要全部命中时把页大小放大，行为与原先不分页的 search 一致。
+Future<SearchResults> _searchAll(
+  SearchService service,
+  String query, {
+  EvidenceScope scope = const EvidenceScope.userAll(),
+}) => service.searchPage(query, scope: scope, pageSize: 1000);

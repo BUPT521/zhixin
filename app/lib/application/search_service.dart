@@ -69,20 +69,6 @@ class SearchService {
   /// 带语义命中时本地候选的固定窗口；超过这个条数的更早记录不进入本次融合。
   static const int fusionWindow = 2000;
 
-  Future<SearchResults> search(
-    String query, {
-    EvidenceScope scope = const EvidenceScope.userAll(),
-  }) async {
-    final bundle = await evidence.userSearch(query, scope: scope, limit: null);
-    return _results(
-      query,
-      scope,
-      _entries(bundle.hits),
-      hasMore: false,
-      nextOffset: 0,
-    );
-  }
-
   /// 取去重后的第 [offset] 条学习记录起的一页；[hasMore] 表示后面还有命中。
   ///
   /// [semanticHits] 为空时按原来的窗口与放大逻辑读取，行为与没有语义检索时

@@ -346,16 +346,6 @@ class MaterialRepository {
     }
   }
 
-  Future<void> deletePage(int pageId) async {
-    final materialId = await _db.selectGenerated(
-      (db) => db.pageMaterialId(pageId).getSingleOrNull(),
-    );
-    await _db.writeGenerated((db) => db.deleteMaterialPage(pageId));
-    if (materialId != null) {
-      await _touch(materialId, formatDateTime(_clock()));
-    }
-  }
-
   /// 按关键词找材料页。
   ///
   /// 回答上下文默认只取同一目标或未归属的材料；用户主动检索时把

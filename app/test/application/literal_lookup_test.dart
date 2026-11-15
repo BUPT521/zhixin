@@ -238,7 +238,7 @@ void main() {
     final rig = await _rig();
     addTearDown(rig.db.close);
 
-    final results = await rig.search.search('P(A|B)');
+    final results = await _searchAll(rig.search, 'P(A|B)');
     final answer = results.entries
         .expand((entry) => entry.hits)
         .singleWhere((hit) => hit.kind == EvidenceKind.answer);
@@ -379,7 +379,7 @@ void main() {
     final rig = await _rig();
     addTearDown(rig.db.close);
 
-    final results = await rig.search.search('例 3-2');
+    final results = await _searchAll(rig.search, '例 3-2');
     expect(results.isEmpty, isFalse);
     expect(
       results.entries.map((entry) => entry.key),
@@ -444,3 +444,10 @@ void main() {
     expect(first.literal, isTrue);
   });
 }
+
+/// 用例要全部命中时把页大小放大，行为与原先不分页的 search 一致。
+Future<SearchResults> _searchAll(
+  SearchService service,
+  String query, {
+  EvidenceScope scope = const EvidenceScope.userAll(),
+}) => service.searchPage(query, scope: scope, pageSize: 1000);

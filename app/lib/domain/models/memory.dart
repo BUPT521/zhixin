@@ -58,21 +58,6 @@ class Memory {
     this.updatedAt,
   });
 
-  factory Memory.fromRow(Map<String, Object?> row) {
-    return Memory(
-      id: row['id']! as int,
-      kind: MemoryKind.fromValue(row['kind']! as String),
-      content: row['content']! as String,
-      scope: row['scope'] as String?,
-      sourceKind: (row['source_kind'] as String?) ?? 'user',
-      sourceId: row['source_id'] as int?,
-      validUntil: DateTime.tryParse(row['valid_until'] as String? ?? ''),
-      status: (row['status'] as String?) ?? 'active',
-      createdAt: DateTime.tryParse(row['created_at'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(row['updated_at'] as String? ?? ''),
-    );
-  }
-
   final int id;
   final MemoryKind kind;
   final String content;
@@ -109,14 +94,4 @@ class Memory {
     if (until == null) return '长期有效';
     return '有效至 ${formatDate(until)}';
   }
-
-  Map<String, Object?> toRow() => {
-    'kind': kind.value,
-    'content': content,
-    'scope': scope,
-    'source_kind': sourceKind,
-    'source_id': sourceId,
-    'valid_until': validUntil == null ? null : formatDateTime(validUntil!),
-    'status': status,
-  };
 }
