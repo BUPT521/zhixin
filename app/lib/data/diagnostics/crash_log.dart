@@ -8,6 +8,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../../domain/models/diagnostics.dart';
+import '../../domain/rules/text.dart';
 import '../../domain/rules/time_format.dart';
 
 /// 本机崩溃记录：一个 JSON 文件，记启动次数与最近几次未捕获错误；配置了 DSN 时
@@ -168,10 +169,7 @@ class CrashLog {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  String _clip(String value, int max) {
-    if (value.length <= max) return value;
-    return '${value.substring(0, max)}…';
-  }
+  String _clip(String value, int max) => truncateCodePoints(value, max);
 
   /// 诊断只用于排障：去掉 SQL 文本、参数、绑定值、本机绝对路径与密钥，避免
   /// 学习正文、用户文件位置与 API Key 进入日志。服务地址保留，`https://` 这类
