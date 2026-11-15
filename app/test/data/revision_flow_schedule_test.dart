@@ -75,7 +75,7 @@ void main() {
 
   test('一次动作调整多条预约后整组撤销', () async {
     final ids = await twoBlocks();
-    final commit = await plan.rescheduleGroup([
+    final commit = (await plan.rescheduleGroup([
       ScheduleAdjustment(
         id: ids.a,
         start: DateTime(2026, 11, 11, 13),
@@ -86,7 +86,7 @@ void main() {
         start: DateTime(2026, 11, 11, 15),
         end: DateTime(2026, 11, 11, 16),
       ),
-    ]);
+    ])).commitId!;
     // 界面拿这次写入返回的提交编号撤销，不再从历史里取最近一条。
     expect(commit, await rig.engine.headId(rig.raw));
     final moved = await schedule.blocksBetween(
@@ -112,13 +112,13 @@ void main() {
   test('事项完成之后不再撤销这次改期', () async {
     final planItemId = await item('完成后再撤销');
     final blockId = await block(planItemId, 9);
-    final commit = await plan.rescheduleGroup([
+    final commit = (await plan.rescheduleGroup([
       ScheduleAdjustment(
         id: blockId,
         start: DateTime(2026, 11, 11, 13),
         end: DateTime(2026, 11, 11, 14),
       ),
-    ]);
+    ])).commitId!;
     await updateRow(
       rig.db,
       'plan_item',
@@ -141,17 +141,20 @@ void main() {
     final planItemId = await item('预约状态可撤销');
     final blockId = await block(planItemId, 9);
 
-    final cancelled = await plan.setBlockStatus(blockId, 'cancelled');
+    final cancelled = (await plan.setBlockStatus(
+      blockId,
+      'cancelled',
+    )).commitId!;
     expect((await schedule.blockById(blockId))!.status, 'cancelled');
     expect((await rig.revisions.undoCommit(cancelled)).applied, isTrue);
     expect((await schedule.blockById(blockId))!.status, 'planned');
 
-    final locked = await plan.setBlockLocked(blockId, true);
+    final locked = (await plan.setBlockLocked(blockId, true)).commitId!;
     expect((await schedule.blockById(blockId))!.locked, isTrue);
     expect((await rig.revisions.undoCommit(locked)).applied, isTrue);
     expect((await schedule.blockById(blockId))!.locked, isFalse);
 
-    final deleted = await plan.deleteBlock(blockId);
+    final deleted = (await plan.deleteBlock(blockId)).commitId!;
     expect(await schedule.blockById(blockId), isNull);
     expect((await rig.revisions.undoCommit(deleted)).applied, isTrue);
     expect((await schedule.blockById(blockId))!.startAt.hour, 9);
@@ -166,7 +169,7 @@ void main() {
     );
     final timetableId =
         (await selectRows(rig.raw, 'timetable_entry')).single['id']! as int;
-    final commit = await plan.deleteTimetable(timetableId);
+    final commit = (await plan.deleteTimetable(timetableId)).commitId!;
     expect(await selectRows(rig.raw, 'timetable_entry'), isEmpty);
 
     final undone = await rig.revisions.undoCommit(commit);
@@ -177,7 +180,7 @@ void main() {
     );
 
     // 再次删除后，有一项待开始预约落在这一节课上，撤销删除应被拒绝。
-    final again = await plan.deleteTimetable(timetableId);
+    final again = (await plan.deleteTimetable(timetableId)).commitId!;
     final itemId = await item('与课冲突的复习');
     await schedule.addBlock(
       planItemId: itemId,
@@ -192,11 +195,11 @@ void main() {
 
   test('单条预约返回自己的提交编号，撤销后这次预约删除', () async {
     final planItemId = await item('单条预约');
-    final commit = await plan.scheduleItem(
+    final commit = (await plan.scheduleItem(
       planItemId: planItemId,
       start: DateTime(2026, 11, 11, 9),
       end: DateTime(2026, 11, 11, 10),
-    );
+    )).commitId!;
     // 提示条拿这次写入的编号撤销，不需要再从提交历史里找最近一条。
     expect(commit, await rig.engine.headId(rig.raw));
     expect(

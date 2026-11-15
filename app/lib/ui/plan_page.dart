@@ -13,6 +13,7 @@ import '../application/plan_week_reader.dart';
 import '../data/repository/schedule_repository.dart';
 import '../data/revisions/revision_models.dart';
 import '../domain/models/study.dart';
+import '../domain/models/write_result.dart';
 import 'capacity_sheet.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
@@ -429,19 +430,19 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      final commitId = await service.pauseGoal(
+      final result = await service.pauseGoal(
         goal.id,
         cancelFlexibleFuture: cancelFlexible,
       );
       await _load();
-      if (!mounted || commitId == null) return;
+      if (!mounted || !result.changed) return;
       showActionToast(
         context,
         '已暂停「${goal.title}」'
         '${cancelFlexible ? '，并取消 $flexible 项弹性安排' : ''}',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -518,7 +519,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     );
     if (draft == null || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).study.plan.scheduleItem(
+      final result = await AppScope.of(context).study.plan.scheduleItem(
         planItemId: draft.itemId,
         start: draft.start,
         end: draft.start.add(Duration(minutes: draft.minutes)),
@@ -534,7 +535,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         title == null ? '已预约学习时间' : '已预约「$title」',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -630,7 +631,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     if (!confirmed || !mounted) return;
     final scope = AppScope.of(context);
     try {
-      final commitId = await scope.study.plan.rescheduleGroup(adjustments);
+      final result = await scope.study.plan.rescheduleGroup(adjustments);
       await _load();
       if (!mounted) return;
       showActionToast(
@@ -638,7 +639,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         '已整组顺延 $minutes 分钟，共 ${movable.length} 条预约',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -703,16 +704,16 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     );
     if (!confirmed || !mounted) return;
     try {
-      final commitId = await AppScope.of(context).study.plan
+      final result = await AppScope.of(context).study.plan
           .deleteTimetable(entry.id);
       await _load();
-      if (!mounted) return;
+      if (!mounted || !result.changed) return;
       showActionToast(
         context,
         '已删除课表「${entry.title}」',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -936,7 +937,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     try {
       final service = AppScope.of(context).study.plan;
       final end = draft.start.add(Duration(minutes: draft.minutes));
-      final commitId = block == null
+      final result = block == null
           ? await service.scheduleItem(
               planItemId: item.id,
               start: draft.start,
@@ -944,13 +945,13 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
             )
           : await service.moveBlock(block.id, start: draft.start, end: end);
       await _load();
-      if (!mounted) return;
+      if (!mounted || !result.changed) return;
       showActionToast(
         context,
         block == null ? '已预约「${item.title}」' : '已改约「${item.title}」',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -999,15 +1000,15 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     if (action == null || !mounted) return;
     try {
       final service = AppScope.of(context).study.plan;
-      int? commitId;
+      WriteResult? result;
       if (action == 'complete' && item != null) {
         await service.setStatus(item.id, PlanItemStatus.done);
       } else {
-        commitId = await service.setBlockStatus(block.id, 'done');
+        result = await service.setBlockStatus(block.id, 'done');
       }
       await _load();
       if (!mounted) return;
-      if (commitId == null) {
+      if (result == null || !result.changed) {
         showToast(
           context,
           action == 'complete' ? '已$completeLabel' : '本次预约已结束',
@@ -1018,7 +1019,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           action == 'complete' ? '已$completeLabel' : '本次预约已结束',
           label: '撤销',
           onPressed: () =>
-              undoCommitWithFeedback(context, commitId!, reload: _load),
+              undoCommitWithFeedback(context, result!.commitId!, reload: _load),
         );
       }
     } catch (error, stack) {
@@ -2131,7 +2132,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     if (!mounted) return;
     final service = AppScope.of(context).study.plan;
     try {
-      final (commitId, message) = switch (value) {
+      final (result, message) = switch (value) {
         'restore' => (
           await service.setBlockStatus(block.block.id, 'planned'),
           '已恢复为待开始',
@@ -2144,13 +2145,13 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         _ => (null, ''),
       };
       await _load();
-      if (!mounted || commitId == null) return;
+      if (!mounted || result == null || !result.changed) return;
       showActionToast(
         context,
         message,
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;

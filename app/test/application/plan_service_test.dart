@@ -66,8 +66,12 @@ void main() {
 
     expect(await service.flexibleFutureCount(goalA), 1);
 
-    final pauseId = await service.pauseGoal(goalA, cancelFlexibleFuture: true);
-    expect(pauseId, isNotNull);
+    final pauseResult = await service.pauseGoal(
+      goalA,
+      cancelFlexibleFuture: true,
+    );
+    expect(pauseResult.commitId, isNotNull);
+    final pauseId = pauseResult.commitId!;
 
     expect((await tasks.goalById(goalA))!.status, LearningGoalStatus.paused);
     expect((await tasks.goalById(goalB))!.status, LearningGoalStatus.active);
@@ -92,7 +96,7 @@ void main() {
     expect(plan.availableMinutes, 60);
 
     // 暂停目标的提交同时改了目标与预约，撤销后一起回到暂停前。
-    final pause = await rig.engine.commitById(rig.db, pauseId!);
+    final pause = await rig.engine.commitById(rig.db, pauseId);
     expect(pause!.action, '暂停目标');
     final undone = await rig.revisions.undoCommit(pauseId);
     expect(undone.applied, isTrue);
@@ -123,14 +127,18 @@ void main() {
       end: tomorrow.add(const Duration(hours: 2)),
     );
 
-    final pauseId = await service.pauseGoal(goal, cancelFlexibleFuture: true);
+    final pauseResult = await service.pauseGoal(
+      goal,
+      cancelFlexibleFuture: true,
+    );
+    final pauseId = pauseResult.commitId!;
 
     expect((await schedule.blockById(first))!.status, 'cancelled');
     expect((await schedule.blockById(second))!.status, 'cancelled');
     expect((await tasks.goalById(goal))!.status, LearningGoalStatus.paused);
 
     // 目标状态与两条取消落在同一条提交里，撤销一次全部恢复。
-    final details = await rig.revisions.details(pauseId!);
+    final details = await rig.revisions.details(pauseId);
     expect(details!.commit.action, '暂停目标');
     expect(details.changes, hasLength(3));
     final undone = await rig.revisions.undoCommit(pauseId);
@@ -469,11 +477,12 @@ void main() {
       end: DateTime(2026, 11, 11, 10),
     );
 
-    final commit = await service.moveBlock(
+    final moveResult = await service.moveBlock(
       id,
       start: DateTime(2026, 11, 11, 11),
       end: DateTime(2026, 11, 11, 12),
     );
+    final commit = moveResult.commitId!;
     // 这次改期就是最新提交，提示条据此撤销，不会撤到别的动作。
     expect(commit, await rig.engine.headId(rig.raw));
     final details = await rig.revisions.details(commit);

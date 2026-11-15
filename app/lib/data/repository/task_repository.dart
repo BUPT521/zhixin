@@ -476,10 +476,17 @@ class TaskRepository {
   }
 
   /// 0 普通、1 优先、2 最高；容量不足时按它排序。
-  Future<void> setPriority(int id, int priority) async {
+  Future<void> setPriority(
+    int id,
+    int priority, {
+    WriteTransaction? transaction,
+  }) async {
     final value = priority.clamp(0, 2);
     final stamp = formatDateTime(_clock());
-    await _db.writeGenerated((db) => db.setPlanItemPriority(value, stamp, id));
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setPlanItemPriority(value, stamp, id));
   }
 
   Future<void> deleteItem(int id) async {

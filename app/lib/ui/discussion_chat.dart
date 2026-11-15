@@ -760,12 +760,13 @@ class DiscussionChatState extends State<DiscussionChat> {
       var scheduledCommitId = 0;
       if (timing != null) {
         try {
-          scheduledCommitId = await scope.study.plan.scheduleItem(
+          final scheduleResult = await scope.study.plan.scheduleItem(
             planItemId: result.item.id,
             start: timing.start,
             end: timing.start.add(Duration(minutes: timing.minutes)),
             source: 'ai',
           );
+          scheduledCommitId = scheduleResult.commitId!;
           scheduled = true;
         } catch (error, stack) {
           if (mounted) {

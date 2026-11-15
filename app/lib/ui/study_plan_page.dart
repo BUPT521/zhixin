@@ -180,7 +180,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     try {
       final service = AppScope.of(context).study.plan;
       final end = draft.start.add(Duration(minutes: draft.minutes));
-      final commitId = block == null
+      final result = block == null
           ? await service.scheduleItem(
               planItemId: step.id,
               start: draft.start,
@@ -188,13 +188,13 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
             )
           : await service.moveBlock(block.id, start: draft.start, end: end);
       await _load();
-      if (!mounted) return;
+      if (!mounted || !result.changed) return;
       showActionToast(
         context,
         block == null ? '已为这一步预约时间' : '已改约这一步的时间',
         label: '撤销',
         onPressed: () =>
-            undoCommitWithFeedback(context, commitId, reload: _load),
+            undoCommitWithFeedback(context, result.commitId!, reload: _load),
       );
     } catch (error, stack) {
       if (!mounted) return;

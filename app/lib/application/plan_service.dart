@@ -6,6 +6,7 @@ import '../data/repository/schedule_repository.dart';
 import '../data/repository/study_plan_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/study.dart';
+import '../domain/models/write_result.dart';
 import '../domain/models/study_plan.dart';
 import 'service_runtime.dart';
 
@@ -203,7 +204,7 @@ class PlanService {
   /// 待取消的预约在事务内按目标重新读取，再用一条语句一起取消，最后才改目标
   /// 状态；中途失败时这次事务整体回滚，不会留下已经取消的预约与仍在进行中的
   /// 目标。
-  Future<int?> pauseGoal(int id, {bool cancelFlexibleFuture = false}) {
+  Future<WriteResult> pauseGoal(int id, {bool cancelFlexibleFuture = false}) {
     final now = runtime.policy.now;
     return transactions.run((txn) async {
       if (cancelFlexibleFuture) {
@@ -218,22 +219,22 @@ class PlanService {
         );
       }
       await tasks.pauseGoal(id, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: '暂停目标');
   }
 
-  Future<void> resumeGoal(int id) {
-    return transactions.run(
-      (txn) => tasks.resumeGoal(id, transaction: txn),
-      label: '恢复目标',
-    );
+  Future<WriteResult> resumeGoal(int id) {
+    return transactions.run((txn) async {
+      await tasks.resumeGoal(id, transaction: txn);
+      return txn.result();
+    }, label: '恢复目标');
   }
 
-  Future<void> closeGoal(int id) {
-    return transactions.run(
-      (txn) => tasks.closeGoal(id, transaction: txn),
-      label: '结束目标',
-    );
+  Future<WriteResult> closeGoal(int id) {
+    return transactions.run((txn) async {
+      await tasks.closeGoal(id, transaction: txn);
+      return txn.result();
+    }, label: '结束目标');
   }
 
   /// 目标下未开始的弹性安排数量，暂停前用于说明会取消什么。
@@ -245,19 +246,23 @@ class PlanService {
     return blocks.length;
   }
 
-  Future<void> setStatus(int id, PlanItemStatus status) =>
+  Future<WriteResult> setStatus(int id, PlanItemStatus status) =>
       transactions.run((txn) async {
         await studyPlans.setItemStatus(id, status, transaction: txn);
+        return txn.result();
       }, label: '更新事项状态');
 
-  Future<void> setPriority(int id, int priority) =>
-      tasks.setPriority(id, priority);
+  Future<WriteResult> setPriority(int id, int priority) =>
+      transactions.run((txn) async {
+        await tasks.setPriority(id, priority, transaction: txn);
+        return txn.result();
+      }, label: '调整事项优先级');
 
   /// 为一项安排一次时间；返回提交编号，界面据此提供撤销。
   ///
   /// 单条预约原先只写时间块，不回到提示条，也不出现在提交历史之外的入口；
   /// 现在与整组顺延一样在事务里写入并带回编号，撤销时按提交回放。
-  Future<int> scheduleItem({
+  Future<WriteResult> scheduleItem({
     required int planItemId,
     required DateTime start,
     required DateTime end,
@@ -271,31 +276,31 @@ class PlanService {
         source: source,
         transaction: txn,
       );
-      return txn.requireCommitId();
+      return txn.result();
     }, label: '安排学习时间');
   }
 
-  /// 改一次预约的时间；与单条预约一样返回提交编号。
-  Future<int> moveBlock(
+  /// 改一次预约的时间；与单条预约一样返回写结果。
+  Future<WriteResult> moveBlock(
     int id, {
     required DateTime start,
     required DateTime end,
   }) {
     return transactions.run((txn) async {
       await schedule.moveBlock(id, start: start, end: end, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: '调整预约时间');
   }
 
   /// 一次业务动作调整多条预约；要么全部写入，要么整组保持原样。
   ///
-  /// 返回这次写入的提交编号，界面据此提供撤销，不再从提交历史里取最近一条：
+  /// 返回这次写入的结果，界面据此提供撤销，不再从提交历史里取最近一条：
   /// 取到的可能不是这次调整，撤销就成了别的动作。
-  Future<int> rescheduleGroup(List<ScheduleAdjustment> adjustments) {
+  Future<WriteResult> rescheduleGroup(List<ScheduleAdjustment> adjustments) {
     return transactions.run(
       (txn) async {
         await schedule.rescheduleGroup(adjustments, transaction: txn);
-        return txn.requireCommitId();
+        return txn.result();
       },
       label: '调整多个预约',
       actor: 'user',
@@ -303,48 +308,52 @@ class PlanService {
   }
 
   /// 取消、恢复、固定与删除预约各自形成一次可撤销的提交。
-  Future<int> setBlockStatus(int id, String status) {
+  Future<WriteResult> setBlockStatus(int id, String status) {
     return transactions.run((txn) async {
       await schedule.setBlockStatus(id, status, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: '修改预约状态');
   }
 
-  Future<int> deleteBlock(int id) {
+  Future<WriteResult> deleteBlock(int id) {
     return transactions.run((txn) async {
       await schedule.deleteBlock(id, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: '删除预约');
   }
 
-  Future<int> setBlockLocked(int id, bool locked) {
+  Future<WriteResult> setBlockLocked(int id, bool locked) {
     return transactions.run((txn) async {
       await schedule.setLocked(id, locked, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: locked ? '固定这次预约' : '改为弹性预约');
   }
 
-  Future<void> addTimetable({
+  Future<WriteResult> addTimetable({
     required int weekday,
     required String startTime,
     required String endTime,
     required String title,
     String? location,
   }) {
-    return schedule.addTimetable(
-      weekday: weekday,
-      startTime: startTime,
-      endTime: endTime,
-      title: title,
-      location: location,
-    );
+    return transactions.run((txn) async {
+      await schedule.addTimetable(
+        weekday: weekday,
+        startTime: startTime,
+        endTime: endTime,
+        title: title,
+        location: location,
+        transaction: txn,
+      );
+      return txn.result();
+    }, label: '新增课表');
   }
 
-  /// 删除一节课；返回提交编号，提示条据此提供撤销。
-  Future<int> deleteTimetable(int id) {
+  /// 删除一节课；返回写结果，提示条据此提供撤销。
+  Future<WriteResult> deleteTimetable(int id) {
     return transactions.run((txn) async {
       await schedule.deleteTimetable(id, transaction: txn);
-      return txn.requireCommitId();
+      return txn.result();
     }, label: '删除课表');
   }
 
