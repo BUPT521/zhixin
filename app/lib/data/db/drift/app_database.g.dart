@@ -11713,10 +11713,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<StudySessionRow> endedStudySessionsForGoal(
     int? goalId,
-    int rowLimit,
+    int? rowLimit,
   ) {
     return customSelect(
-      'SELECT * FROM study_session WHERE goal_id = ?1 AND ended_at IS NOT NULL ORDER BY ended_at DESC, id DESC LIMIT ?2',
+      'SELECT * FROM study_session WHERE goal_id = ?1 AND ended_at IS NOT NULL ORDER BY ended_at DESC, id DESC LIMIT COALESCE(?2, -1)',
       variables: [Variable<int>(goalId), Variable<int>(rowLimit)],
       readsFrom: {this.studySessions},
     ).asyncMap(this.studySessions.mapFromRow);
@@ -11788,16 +11788,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<PlanRowsResult> planRows(
     String doneStatus,
-    int id,
+    int? id,
     int openOnly,
     String activeStatus,
     String pausedStatus,
     int activeOnly,
     int statusFirst,
-    int rowLimit,
+    int? rowLimit,
   ) {
     return customSelect(
-      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title FROM study_plan AS sp WHERE(?2 = 0 OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT ?8',
+      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title FROM study_plan AS sp WHERE(?2 IS NULL OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT COALESCE(?8, -1)',
       variables: [
         Variable<String>(doneStatus),
         Variable<int>(id),
@@ -12760,9 +12760,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<MessageRow> recentMessages(int conversationId, int rowLimit) {
+  Selectable<MessageRow> recentMessages(int conversationId, int? rowLimit) {
     return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 ORDER BY id DESC LIMIT ?2',
+      'SELECT * FROM message WHERE conversation_id = ?1 ORDER BY id DESC LIMIT COALESCE(?2, -1)',
       variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
@@ -12770,11 +12770,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<MessageRow> messagesPage(
     int conversationId,
-    int beforeId,
+    int? beforeId,
     int rowLimit,
   ) {
     return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND(?2 = 0 OR id < ?2)ORDER BY id DESC LIMIT ?3',
+      'SELECT * FROM message WHERE conversation_id = ?1 AND(?2 IS NULL OR id < ?2)ORDER BY id DESC LIMIT ?3',
       variables: [
         Variable<int>(conversationId),
         Variable<int>(beforeId),
@@ -12784,9 +12784,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.messages.mapFromRow);
   }
 
-  Selectable<MessageRow> firstUserMessage(int conversationId, int beforeId) {
+  Selectable<MessageRow> firstUserMessage(int conversationId, int? beforeId) {
     return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)AND(?2 = 0 OR id < ?2)ORDER BY id LIMIT 1',
+      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)AND(?2 IS NULL OR id < ?2)ORDER BY id LIMIT 1',
       variables: [Variable<int>(conversationId), Variable<int>(beforeId)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
@@ -12953,10 +12953,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Selectable<MemoryRow> memoriesForContext(
     String? now,
     String? scope,
-    int rowLimit,
+    int? rowLimit,
   ) {
     return customSelect(
-      'SELECT * FROM memory WHERE status = \'active\' AND(valid_until IS NULL OR valid_until >= ?1)AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND(scope IS NULL OR scope = ?2)))ORDER BY CASE WHEN scope IS NULL THEN 1 ELSE 0 END, CASE kind WHEN \'constraint\' THEN 0 WHEN \'preference\' THEN 1 WHEN \'difficulty\' THEN 2 ELSE 3 END, updated_at DESC, id DESC LIMIT ?3',
+      'SELECT * FROM memory WHERE status = \'active\' AND(valid_until IS NULL OR valid_until >= ?1)AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND(scope IS NULL OR scope = ?2)))ORDER BY CASE WHEN scope IS NULL THEN 1 ELSE 0 END, CASE kind WHEN \'constraint\' THEN 0 WHEN \'preference\' THEN 1 WHEN \'difficulty\' THEN 2 ELSE 3 END, updated_at DESC, id DESC LIMIT COALESCE(?3, -1)',
       variables: [
         Variable<String>(now),
         Variable<String>(scope),
@@ -13074,7 +13074,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<MaterialListResult> materialList(int? goalId) {
     return customSelect(
-      'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE(?1 = 0 OR m.goal_id = ?1 OR m.goal_id IS NULL)ORDER BY m.updated_at DESC, m.id DESC',
+      'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE(?1 IS NULL OR m.goal_id = ?1 OR m.goal_id IS NULL)ORDER BY m.updated_at DESC, m.id DESC',
       variables: [Variable<int>(goalId)],
       readsFrom: {this.materialPages, this.materials},
     ).map(
@@ -13149,11 +13149,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<MaterialPageRow> pagesInRange(
     int materialId,
-    int pageFrom,
-    int pageTo,
+    int? pageFrom,
+    int? pageTo,
   ) {
     return customSelect(
-      'SELECT * FROM material_page WHERE material_id = ?1 AND(?2 = 0 OR page_no >= ?2)AND(?3 = 0 OR page_no <= ?3)ORDER BY page_no',
+      'SELECT * FROM material_page WHERE material_id = ?1 AND(?2 IS NULL OR page_no >= ?2)AND(?3 IS NULL OR page_no <= ?3)ORDER BY page_no',
       variables: [
         Variable<int>(materialId),
         Variable<int>(pageFrom),
@@ -13416,11 +13416,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<QuestionRowsResult> questionRows(
-    String conversationIds,
-    int rowLimit,
+    String? conversationIds,
+    int? rowLimit,
   ) {
     return customSelect(
-      'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_paths_json, a.id AS last_attempt_id, a.session_id AS last_attempt_session_id, a.user_answer AS last_attempt_user_answer, a.solution AS last_attempt_solution, a.is_correct AS last_attempt_is_correct, a.independent AS last_attempt_independent, a.help_json AS last_attempt_help_json, a.feedback AS last_attempt_feedback, a.delayed AS last_attempt_delayed, a.submitted_at AS last_attempt_submitted_at, a.created_at AS last_attempt_created_at, EXISTS (SELECT 1 AS _c0 FROM attempt AS a3 WHERE a3.conversation_id = c.id AND a3.submitted_at IS NULL) AS has_draft FROM conversation AS c LEFT JOIN attempt AS a ON a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) WHERE EXISTS (SELECT 1 AS _c1 FROM attempt AS a3 WHERE a3.conversation_id = c.id) AND(?1 = \'[]\' OR c.id IN (SELECT value FROM json_each(?1)))ORDER BY c.updated_at DESC, c.id DESC LIMIT ?2',
+      'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_paths_json, a.id AS last_attempt_id, a.session_id AS last_attempt_session_id, a.user_answer AS last_attempt_user_answer, a.solution AS last_attempt_solution, a.is_correct AS last_attempt_is_correct, a.independent AS last_attempt_independent, a.help_json AS last_attempt_help_json, a.feedback AS last_attempt_feedback, a.delayed AS last_attempt_delayed, a.submitted_at AS last_attempt_submitted_at, a.created_at AS last_attempt_created_at, EXISTS (SELECT 1 AS _c0 FROM attempt AS a3 WHERE a3.conversation_id = c.id AND a3.submitted_at IS NULL) AS has_draft FROM conversation AS c LEFT JOIN attempt AS a ON a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) WHERE EXISTS (SELECT 1 AS _c1 FROM attempt AS a3 WHERE a3.conversation_id = c.id) AND(?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1)))ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(?2, -1)',
       variables: [Variable<String>(conversationIds), Variable<int>(rowLimit)],
       readsFrom: {
         this.conversations,
@@ -13467,12 +13467,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Selectable<ConversationRecordsResult> conversationRecords(
     int? goalId,
     int unassignedOnly,
-    String answerStatus,
-    int rowLimit,
+    String? answerStatus,
+    int? rowLimit,
     int rowOffset,
   ) {
     return customSelect(
-      'SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c WHERE(?1 = 0 OR c.goal_id = ?1)AND(?2 = 0 OR c.goal_id IS NULL)AND(?3 = \'\' OR(?3 = \'open\' AND EXISTS (SELECT 1 AS _c2 FROM attempt AS a WHERE a.conversation_id = c.id) AND NOT EXISTS (SELECT 1 AS _c3 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NOT NULL))OR(?3 = \'correct\' AND EXISTS (SELECT 1 AS _c4 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 1))OR(?3 = \'wrong\' AND EXISTS (SELECT 1 AS _c5 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 0))OR(?3 = \'unjudged\' AND EXISTS (SELECT 1 AS _c6 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct IS NULL)))ORDER BY c.updated_at DESC, c.id DESC LIMIT ?4 OFFSET ?5',
+      'SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c WHERE(?1 IS NULL OR c.goal_id = ?1)AND(?2 = 0 OR c.goal_id IS NULL)AND(?3 IS NULL OR(?3 = \'open\' AND EXISTS (SELECT 1 AS _c2 FROM attempt AS a WHERE a.conversation_id = c.id) AND NOT EXISTS (SELECT 1 AS _c3 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NOT NULL))OR(?3 = \'correct\' AND EXISTS (SELECT 1 AS _c4 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 1))OR(?3 = \'wrong\' AND EXISTS (SELECT 1 AS _c5 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 0))OR(?3 = \'unjudged\' AND EXISTS (SELECT 1 AS _c6 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct IS NULL)))ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(?4, -1) OFFSET ?5',
       variables: [
         Variable<int>(goalId),
         Variable<int>(unassignedOnly),
@@ -13515,9 +13515,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<RecentlyActiveRecordsResult> recentlyActiveRecords(int limit) {
+  Selectable<RecentlyActiveRecordsResult> recentlyActiveRecords(int? limit) {
     return customSelect(
-      'WITH candidates AS (SELECT id FROM (SELECT c.id AS id FROM conversation AS c ORDER BY c.updated_at DESC, c.id DESC LIMIT ?1) UNION SELECT conversation_id FROM (SELECT a.conversation_id AS conversation_id FROM attempt AS a WHERE a.submitted_at IS NULL ORDER BY a.updated_at DESC, a.id DESC LIMIT ?1)) SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c JOIN candidates ON candidates.id = c.id ORDER BY max(c.updated_at, coalesce((SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1), c.updated_at)) DESC, c.id DESC LIMIT ?1',
+      'WITH candidates AS (SELECT id FROM (SELECT c.id AS id FROM conversation AS c ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(?1, -1)) UNION SELECT conversation_id FROM (SELECT a.conversation_id AS conversation_id FROM attempt AS a WHERE a.submitted_at IS NULL ORDER BY a.updated_at DESC, a.id DESC LIMIT COALESCE(?1, -1))) SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c JOIN candidates ON candidates.id = c.id ORDER BY max(c.updated_at, coalesce((SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1), c.updated_at)) DESC, c.id DESC LIMIT COALESCE(?1, -1)',
       variables: [Variable<int>(limit)],
       readsFrom: {
         this.conversations,
@@ -13884,14 +13884,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<RecentSubmittedResult> recentSubmitted(
-    int goalId,
-    int materialId,
-    int conversationId,
+    int? goalId,
+    int? materialId,
+    int? conversationId,
     String broughtIds,
-    int rowLimit,
+    int? rowLimit,
   ) {
     return customSelect(
-      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 <> 0 AND c.goal_id = ?1)OR(?2 <> 0 AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 <> 0 OR ?2 <> 0 OR(?3 <> 0 AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 <> 0 OR ?2 <> 0)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?5',
+      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 IS NOT NULL AND c.goal_id = ?1)OR(?2 IS NOT NULL AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 IS NOT NULL OR ?2 IS NOT NULL OR(?3 IS NOT NULL AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 IS NOT NULL OR ?2 IS NOT NULL)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT COALESCE(?5, -1)',
       variables: [
         Variable<int>(goalId),
         Variable<int>(materialId),

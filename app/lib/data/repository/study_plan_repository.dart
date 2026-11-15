@@ -274,19 +274,20 @@ class StudyPlanRepository {
     return _planRows(activeOnly: true, statusFirst: false, rowLimit: limit);
   }
 
-  /// 一条语句覆盖按标识取、按状态筛与按时间排：不生效的条件由参数关掉。
+  /// 一条语句覆盖按标识取、按状态筛与按时间排：不生效的条件由空参数关掉；
+  /// `rowLimit` 传空表示不截断。
   Future<List<StudyPlan>> _planRows({
     int? id,
     bool openOnly = false,
     bool activeOnly = false,
     bool statusFirst = true,
-    int rowLimit = 1 << 30,
+    int? rowLimit,
   }) async {
     final rows = await _db.selectGenerated(
       (db) => db
           .planRows(
             PlanItemStatus.done.code,
-            id ?? 0,
+            id,
             openOnly ? 1 : 0,
             StudyPlanStatus.active.code,
             StudyPlanStatus.paused.code,

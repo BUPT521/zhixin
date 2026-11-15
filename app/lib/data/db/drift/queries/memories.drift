@@ -26,7 +26,7 @@ WHERE status = 'active'
   AND (valid_until IS NULL OR valid_until >= :now);
 
 -- 生成回答时取用的记忆：本次范围的排在前面，再按类型与更新时间。
-memoriesForContext:
+memoriesForContext(REQUIRED :rowLimit AS INT OR NULL):
 SELECT * FROM memory
 WHERE status = 'active'
   AND (valid_until IS NULL OR valid_until >= :now)
@@ -39,7 +39,7 @@ ORDER BY
   CASE kind WHEN 'constraint' THEN 0 WHEN 'preference' THEN 1
     WHEN 'difficulty' THEN 2 ELSE 3 END,
   updated_at DESC, id DESC
-LIMIT :rowLimit;
+LIMIT COALESCE(:rowLimit, -1);
 
 -- 某条来源是否已经写进记忆。
 hasMemoryFromSource:

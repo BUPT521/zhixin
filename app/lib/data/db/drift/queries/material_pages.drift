@@ -8,12 +8,16 @@ SELECT * FROM material_page
 WHERE material_id = :materialId
 ORDER BY page_no;
 
--- 材料里选中的一段页；起止传 0 表示这一端不限。
-pagesInRange:
+-- 材料里选中的一段页；起止传空表示这一端不限。
+pagesInRange(
+  REQUIRED :materialId AS INT,
+  REQUIRED :pageFrom AS INT OR NULL,
+  REQUIRED :pageTo AS INT OR NULL
+):
 SELECT * FROM material_page
 WHERE material_id = :materialId
-  AND (:pageFrom = 0 OR page_no >= :pageFrom)
-  AND (:pageTo = 0 OR page_no <= :pageTo)
+  AND (:pageFrom IS NULL OR page_no >= :pageFrom)
+  AND (:pageTo IS NULL OR page_no <= :pageTo)
 ORDER BY page_no;
 
 -- 按编号取一页。

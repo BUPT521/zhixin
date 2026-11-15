@@ -106,7 +106,14 @@ WHERE conversation_id = :conversationId AND session_id IS NOT NULL;
 attemptsInSession:
 SELECT id FROM attempt WHERE session_id = :sessionId LIMIT 1;
 
-recentSubmitted:
+-- 最近提交的作答，带上所属记录；目标、材料与讨论三个条件传空表示不限。
+recentSubmitted(
+  REQUIRED :goalId AS INT OR NULL,
+  REQUIRED :materialId AS INT OR NULL,
+  REQUIRED :conversationId AS INT OR NULL,
+  REQUIRED :broughtIds AS TEXT,
+  REQUIRED :rowLimit AS INT OR NULL
+):
 SELECT
   a.id AS attempt_id,
   a.conversation_id AS attempt_conversation_id,
@@ -146,24 +153,24 @@ FROM attempt a
 JOIN conversation c ON c.id = a.conversation_id
 WHERE a.submitted_at IS NOT NULL
   AND (
-    (:goalId <> 0 AND c.goal_id = :goalId)
-    OR (:materialId <> 0 AND c.material_id = :materialId)
+    (:goalId IS NOT NULL AND c.goal_id = :goalId)
+    OR (:materialId IS NOT NULL AND c.material_id = :materialId)
     OR (
       c.goal_id IS NULL AND c.material_id IS NULL
       AND (
-        :goalId <> 0
-        OR :materialId <> 0
-        OR (:conversationId <> 0 AND c.id = :conversationId)
+        :goalId IS NOT NULL
+        OR :materialId IS NOT NULL
+        OR (:conversationId IS NOT NULL AND c.id = :conversationId)
         OR a.id IN (SELECT value FROM json_each(:broughtIds))
       )
     )
     OR (
-      (:goalId <> 0 OR :materialId <> 0)
+      (:goalId IS NOT NULL OR :materialId IS NOT NULL)
       AND a.id IN (SELECT value FROM json_each(:broughtIds))
     )
   )
 ORDER BY a.submitted_at DESC, a.id DESC
-LIMIT :rowLimit;
+LIMIT COALESCE(:rowLimit, -1);
 
 -- 检索核对：一次已提交作答命中的当前内容与所属讨论。
 evidenceAnswerCurrent:

@@ -101,7 +101,7 @@ class StudyRepository {
     int? limit = 20,
   }) async {
     final rows = await _db.selectGenerated(
-      (db) => db.endedStudySessionsForGoal(goalId, limit ?? (1 << 30)).get(),
+      (db) => db.endedStudySessionsForGoal(goalId, limit).get(),
     );
     return rows.map(_sessionOf).toList(growable: false);
   }

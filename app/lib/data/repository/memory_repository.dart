@@ -81,11 +81,7 @@ class MemoryRepository {
   }) async {
     final rows = await _db.selectGenerated(
       (db) => db
-          .memoriesForContext(
-            formatDateTime(now),
-            scope?.trim() ?? '',
-            limit ?? (1 << 30),
-          )
+          .memoriesForContext(formatDateTime(now), scope?.trim() ?? '', limit)
           .get(),
     );
     return rows.map(_memoryOf).toList(growable: false);

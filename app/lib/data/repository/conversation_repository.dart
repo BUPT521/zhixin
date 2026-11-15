@@ -337,10 +337,10 @@ class ConversationRepository {
     final rows = await _db.selectGenerated(
       (db) => db
           .conversationRecords(
-            goalId ?? 0,
+            goalId,
             unassignedOnly ? 1 : 0,
-            answerStatus ?? '',
-            limit ?? (1 << 30),
+            answerStatus,
+            limit,
             limit == null ? 0 : offset,
           )
           .get(),
@@ -382,9 +382,8 @@ class ConversationRepository {
     final ids = conversationIds?.toSet().toList(growable: false);
     if (ids != null && ids.isEmpty) return const [];
     final rows = await _db.selectGenerated(
-      (db) => db
-          .questionRows(jsonEncode(ids ?? const <int>[]), limit ?? (1 << 30))
-          .get(),
+      (db) =>
+          db.questionRows(ids == null ? null : jsonEncode(ids), limit).get(),
     );
     return [for (final row in rows) _questionRowOf(row)];
   }
@@ -405,11 +404,11 @@ class ConversationRepository {
     final rows = await _db.selectGenerated(
       (db) => db
           .recentSubmitted(
-            goalId ?? 0,
-            materialId ?? 0,
-            conversationId ?? 0,
+            goalId,
+            materialId,
+            conversationId,
             jsonEncode(broughtAttemptIds.toList(growable: false)),
-            limit ?? (1 << 30),
+            limit,
           )
           .get(),
     );
@@ -434,7 +433,7 @@ class ConversationRepository {
   }) async {
     final executor = writeExecutor(transaction, _db);
     final rows = await executor.selectGenerated(
-      (db) => db.recentMessages(conversationId, limit ?? (1 << 30)).get(),
+      (db) => db.recentMessages(conversationId, limit).get(),
     );
     return rows
         .map(_messageOf)
@@ -449,9 +448,7 @@ class ConversationRepository {
     int limit = 50,
   }) async {
     final rows = await _db.selectGenerated(
-      (db) => db
-          .messagesPage(conversationId, beforeMessageId ?? 0, limit + 1)
-          .get(),
+      (db) => db.messagesPage(conversationId, beforeMessageId, limit + 1).get(),
     );
     final hasOlder = rows.length > limit;
     final page = rows.take(limit).map(_messageOf).toList()
@@ -484,7 +481,7 @@ class ConversationRepository {
     final row = await _db.selectGenerated(
       (db) => first
           ? db
-                .firstUserMessage(conversationId, beforeMessageId ?? 0)
+                .firstUserMessage(conversationId, beforeMessageId)
                 .getSingleOrNull()
           : db.lastUserMessage(conversationId).getSingleOrNull(),
     );

@@ -16,12 +16,12 @@ SELECT m.*,
 FROM material m
 WHERE m.id = :id;
 
--- 材料列表；`goalId` 传 0 表示不限目标。
-materialList:
+-- 材料列表；`goalId` 传空表示不限目标，非空时取该目标与没有归属的材料。
+materialList(REQUIRED :goalId AS INT OR NULL):
 SELECT m.*,
   (SELECT COUNT(*) FROM material_page p WHERE p.material_id = m.id) AS page_count
 FROM material m
-WHERE (:goalId = 0 OR m.goal_id = :goalId OR m.goal_id IS NULL)
+WHERE (:goalId IS NULL OR m.goal_id = :goalId OR m.goal_id IS NULL)
 ORDER BY m.updated_at DESC, m.id DESC;
 
 insertMaterial:

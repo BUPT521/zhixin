@@ -127,7 +127,7 @@ class MaterialRepository {
   Future<List<Material>> list({int? goalId}) async {
     // 传 0 表示不限目标：材料标识从 1 开始，0 不会命中任何一条。
     final rows = await _db.selectGenerated(
-      (db) => db.materialList(goalId ?? 0).get(),
+      (db) => db.materialList(goalId).get(),
     );
     return rows.map(_materialOfList).toList(growable: false);
   }
@@ -160,7 +160,7 @@ class MaterialRepository {
     int? pageTo,
   }) async {
     final rows = await _db.selectGenerated(
-      (db) => db.pagesInRange(materialId, pageFrom ?? 0, pageTo ?? 0).get(),
+      (db) => db.pagesInRange(materialId, pageFrom, pageTo).get(),
     );
     return rows.map(_pageOf).toList(growable: false);
   }

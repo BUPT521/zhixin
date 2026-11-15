@@ -34,12 +34,12 @@ SELECT * FROM study_session WHERE id = :id;
 recentStudySessions:
 SELECT * FROM study_session ORDER BY id DESC LIMIT :rowLimit;
 
--- 同一目标下已经结束的场次，按结束时间倒序。
-endedStudySessionsForGoal:
+-- 同一目标下已经结束的场次，按结束时间倒序；`rowLimit` 传空表示不截断。
+endedStudySessionsForGoal(REQUIRED :rowLimit AS INT OR NULL):
 SELECT * FROM study_session
 WHERE goal_id = :goalId AND ended_at IS NOT NULL
 ORDER BY ended_at DESC, id DESC
-LIMIT :rowLimit;
+LIMIT COALESCE(:rowLimit, -1);
 
 -- 多个学习步骤已结束的场次，按结束时间升序；调用方取每个步骤最后一条。
 endedStudySessionsForPlanItems:

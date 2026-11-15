@@ -40,8 +40,11 @@ WHERE c.id = :conversationId
 LIMIT 1;
 
 -- 有作答记录的学习记录，带最近一次已提交作答；记录页按页读取时用
--- `conversationIds` 限制在当前这一页。
-questionRows:
+-- `conversationIds` 限制在当前这一页，传空表示不限制。
+questionRows(
+  REQUIRED :conversationIds AS TEXT OR NULL,
+  REQUIRED :rowLimit AS INT OR NULL
+):
 SELECT c.id, c.source_ref, c.context_text, c.page_no,
   c.created_at, c.updated_at,
   (SELECT title FROM material WHERE id = c.material_id) AS material_title,
@@ -80,16 +83,22 @@ LEFT JOIN attempt a ON a.id = (
   LIMIT 1
 )
 WHERE EXISTS (SELECT 1 FROM attempt a3 WHERE a3.conversation_id = c.id)
-  AND (:conversationIds = '[]'
+  AND (:conversationIds IS NULL
     OR c.id IN (SELECT value FROM json_each(:conversationIds)))
 ORDER BY c.updated_at DESC, c.id DESC
-LIMIT :rowLimit;
+LIMIT COALESCE(:rowLimit, -1);
 
 -- 记录列表：按最近更新时间倒序，带消息条数、摘要、最后一条用户消息与草稿。
 --
--- 目标、只看无归属与作答状态三种筛选用开关参数关掉；`answerStatus` 传空串表示
--- 不筛选，其余取值按最近一次已提交作答的判定过滤，口径与界面的作答状态一致。
-conversationRecords:
+-- 目标、只看无归属与作答状态三种筛选用可空参数关掉，传空表示不筛选；作答状态
+-- 的取值按最近一次已提交作答的判定过滤，口径与界面的作答状态一致。
+conversationRecords(
+  REQUIRED :goalId AS INT OR NULL,
+  REQUIRED :unassignedOnly AS INT,
+  REQUIRED :answerStatus AS TEXT OR NULL,
+  REQUIRED :rowLimit AS INT OR NULL,
+  REQUIRED :rowOffset AS INT
+):
 SELECT c.*,
   (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id)
     AS message_count,
@@ -109,10 +118,10 @@ SELECT c.*,
   EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id
     AND a.submitted_at IS NULL) AS has_draft
 FROM conversation c
-WHERE (:goalId = 0 OR c.goal_id = :goalId)
+WHERE (:goalId IS NULL OR c.goal_id = :goalId)
   AND (:unassignedOnly = 0 OR c.goal_id IS NULL)
   AND (
-    :answerStatus = ''
+    :answerStatus IS NULL
     OR (:answerStatus = 'open'
       AND EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)
       AND NOT EXISTS (SELECT 1 FROM attempt a
@@ -137,24 +146,24 @@ WHERE (:goalId = 0 OR c.goal_id = :goalId)
         AND a.is_correct IS NULL))
   )
 ORDER BY c.updated_at DESC, c.id DESC
-LIMIT :rowLimit OFFSET :rowOffset;
+LIMIT COALESCE(:rowLimit, -1) OFFSET :rowOffset;
 
 -- “继续上次”的候选：按最近一次学习行为取前若干条。
 --
 -- 草稿的保存时间也算一次学习行为，写草稿不改 `conversation.updated_at`，只看
 -- 后者会把刚写下的草稿排到后面。两类时间各自取前若干名再取并集，任何一条进入
 -- 全局前几名时，它至少在某一类的前几名里，因此结果与读全库再排序相同。
-recentlyActiveRecords:
+recentlyActiveRecords(REQUIRED :limit AS INT OR NULL):
 WITH candidates AS (
   SELECT id FROM (
     SELECT c.id AS id FROM conversation c
-    ORDER BY c.updated_at DESC, c.id DESC LIMIT :limit
+    ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(:limit, -1)
   )
   UNION
   SELECT conversation_id FROM (
     SELECT a.conversation_id AS conversation_id FROM attempt a
     WHERE a.submitted_at IS NULL
-    ORDER BY a.updated_at DESC, a.id DESC LIMIT :limit
+    ORDER BY a.updated_at DESC, a.id DESC LIMIT COALESCE(:limit, -1)
   )
 )
 SELECT c.*,
@@ -182,7 +191,7 @@ ORDER BY max(c.updated_at,
     WHERE a.conversation_id = c.id AND a.submitted_at IS NULL
     ORDER BY a.id DESC LIMIT 1), c.updated_at)) DESC,
   c.id DESC
-LIMIT :limit;
+LIMIT COALESCE(:limit, -1);
 
 insertConversationRecord:
 INSERT INTO conversation (title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at)
