@@ -53,18 +53,13 @@ Future<int> insertRow(
       ? 'INSERT OR IGNORE'
       : 'INSERT';
   if (values.isEmpty) {
-    await executor.execute('$prefix INTO $name DEFAULT VALUES');
-  } else {
-    final columns = values.keys.map(quoteSqlName).join(', ');
-    await executor.execute(
-      '$prefix INTO $name ($columns) VALUES (${_placeholders(values.length)})',
-      values.values.toList(growable: false),
-    );
+    return executor.execute('$prefix INTO $name DEFAULT VALUES');
   }
-  // 行号从同一个连接读回；被忽略的插入返回上一条插入的行号，与原来的
-  // rawInsert 语义一致。
-  final rows = await executor.rawQuery('SELECT last_insert_rowid() AS id');
-  return rows.first['id'] as int;
+  final columns = values.keys.map(quoteSqlName).join(', ');
+  return executor.execute(
+    '$prefix INTO $name ($columns) VALUES (${_placeholders(values.length)})',
+    values.values.toList(growable: false),
+  );
 }
 
 /// 按条件更新若干字段；[where] 为空时更新整表，占位符由 [whereArgs] 提供。
