@@ -603,7 +603,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           end: entry.block.endAt.add(Duration(minutes: minutes)),
         ),
     ];
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '整组顺延预览',
       content: Column(
@@ -625,21 +625,9 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           Text('任一条与课表或其他预约冲突时，整组保持原样。', style: context.zhixin.text.bodySmall),
         ],
       ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('确认顺延'),
-        ),
-      ],
+      confirmLabel: '确认顺延',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     final scope = AppScope.of(context);
     try {
       final commitId = await scope.study.plan.rescheduleGroup(adjustments);
@@ -702,7 +690,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
 
   /// 删除一节课之前先说明影响；删除后从提示条撤销，撤销会重新核对预约冲突。
   Future<void> _deleteTimetable(TimetableEntry entry) async {
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '删除这节课',
       content: Text(
@@ -710,22 +698,10 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         '${weekdayLabel(entry.weekday)} ${entry.startTime}–${entry.endTime} '
         '不再参与学习安排的冲突检查。确定删除？',
       ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          variant: forui.FButtonVariant.destructive,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('删除'),
-        ),
-      ],
+      confirmLabel: '删除',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       final commitId = await AppScope.of(context).study.plan
           .deleteTimetable(entry.id);
@@ -1679,25 +1655,13 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   }
 
   Future<void> _closeGoal(LearningGoal goal) async {
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '结束「${goal.title}」',
       content: const Text('结束目标后，已有讨论、事项和学习结果会继续保留。'),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('结束'),
-        ),
-      ],
+      confirmLabel: '结束',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).study.plan.closeGoal(goal.id);
       await _load();
