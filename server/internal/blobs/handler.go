@@ -34,7 +34,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request, sha string) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	size, err := h.svc.Stat(r.Context(), p.UserID, sha)
 	if errors.Is(err, ErrNotFound) {
 		w.WriteHeader(http.StatusNotFound)
@@ -53,7 +53,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, sha string) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "sha256 must be 64 lowercase hex characters")
 		return
 	}
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	rc, size, err := h.svc.Open(r.Context(), p.UserID, sha)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
@@ -98,7 +98,7 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "body does not match the sha256 in the path")
 		return
 	}
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	data, err := spool.Reader()
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)

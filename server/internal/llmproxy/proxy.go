@@ -62,7 +62,7 @@ func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
-	pr, _ := auth.PrincipalFrom(r.Context())
+	pr := auth.MustPrincipal(r.Context())
 	day := p.day()
 	used, err := p.quota.Used(r.Context(), pr.UserID, day)
 	if err != nil {
@@ -83,7 +83,7 @@ type requestHead struct {
 }
 
 func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
-	pr, _ := auth.PrincipalFrom(r.Context())
+	pr := auth.MustPrincipal(r.Context())
 	if p.cfg.APIKey == "" {
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
 		return

@@ -26,7 +26,7 @@ func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
 }
 
 func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	head, err := h.svc.Head(r.Context(), p.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
@@ -36,7 +36,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	result, err := h.svc.Pull(r.Context(), p.UserID, params.After, params.Limit)
 	if err != nil {
 		if errors.Is(err, ErrInvalid) {
@@ -54,7 +54,7 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 }
 
 func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	var in api.PostV1SyncCommitsJSONBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return

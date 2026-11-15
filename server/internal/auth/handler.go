@@ -17,14 +17,26 @@ type ctxKey int
 
 const principalKey ctxKey = iota
 
-// PrincipalFrom returns the caller set by the route-layer authentication.
+// PrincipalFrom returns the caller set by Middleware, or false when the handler
+// runs on a public route.
 func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey).(Principal)
 	return p, ok
 }
 
-// WithPrincipal is exposed for tests of handlers in other packages.
-func WithPrincipal(ctx context.Context, p Principal) context.Context {
+// MustPrincipal returns the caller set by Middleware. It panics when a protected
+// handler runs without the middleware in front of it: that is a wiring defect,
+// and httpx.Recover turns it into a 500 rather than serving another account.
+func MustPrincipal(ctx context.Context) Principal {
+	p, ok := PrincipalFrom(ctx)
+	if !ok {
+		panic("auth: protected handler ran without the authentication middleware")
+	}
+	return p
+}
+
+// withPrincipal stores the caller for PrincipalFrom.
+func withPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey, p)
 }
 
@@ -155,7 +167,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	p, _ := PrincipalFrom(r.Context())
+	p := MustPrincipal(r.Context())
 	if err := h.svc.Logout(r.Context(), p); err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
@@ -164,7 +176,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-	p, _ := PrincipalFrom(r.Context())
+	p := MustPrincipal(r.Context())
 	u, err := h.svc.User(r.Context(), p)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
@@ -174,7 +186,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
-	p, _ := PrincipalFrom(r.Context())
+	p := MustPrincipal(r.Context())
 	if err := h.svc.DeleteAccount(r.Context(), p); err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return

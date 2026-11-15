@@ -46,7 +46,7 @@ func backupJSON(m Meta) api.Backup {
 // Upload takes the raw zip as the body. Headers carry what the server checks:
 // X-Content-SHA256 (hex), X-Schema-Version and an optional X-Device-Name.
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.PostV1BackupsParams) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	want := params.XContentSHA256
 	if !hexSHA256.MatchString(want) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "X-Content-SHA256 must be 64 lowercase hex characters")
@@ -118,7 +118,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	items, err := h.svc.List(r.Context(), p.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
@@ -132,7 +132,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request, id string) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	meta, rc, err := h.svc.Open(r.Context(), p.UserID, id)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
@@ -151,7 +151,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request, id string) {
-	p, _ := auth.PrincipalFrom(r.Context())
+	p := auth.MustPrincipal(r.Context())
 	err := h.svc.Delete(r.Context(), p.UserID, id)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")

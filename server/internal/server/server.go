@@ -108,10 +108,10 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	})
 
 	// 顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/429 也
-	// 因此有编号并进日志），然后恢复 panic，最后鉴权。鉴权放在访问日志之内，
+	// 因此有编号并进日志），然后恢复 panic，再鉴权。鉴权放在访问日志之内，
 	// 被拒绝的请求仍然会留下一行记录。上传限流在鉴权之后，按账号计。
 	secured := withUploadLimit(mux, uploadLimits)
-	return httpx.Chain(withAuth(secured, authSvc, log),
+	return httpx.Chain(auth.Middleware(authSvc, log)(secured),
 		httpx.RequestID,
 		httpx.AccessLog(log),
 		httpx.Recover(log),
