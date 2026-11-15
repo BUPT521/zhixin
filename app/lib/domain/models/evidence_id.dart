@@ -18,6 +18,47 @@ class EvidenceId {
   factory EvidenceId.conversation(int conversationId) =>
       EvidenceId('conversation:$conversationId');
 
+/// 解析标识；格式不对或编号不是整数时返回空。
+  static EvidenceId? tryParse(String value) {
+    final text = value.trim();
+    final parts = text.split(':');
+    if (parts.isEmpty) return null;
+    final kind = parts.first;
+    if (kind == 'material_page') {
+      if (parts.length != 3) return null;
+      if (int.tryParse(parts[1]) == null || int.tryParse(parts[2]) == null) {
+        return null;
+      }
+    } else if (_singleIdKinds.contains(kind)) {
+      if (parts.length != 2 || int.tryParse(parts[1]) == null) return null;
+    } else {
+      return null;
+    }
+    return EvidenceId(text);
+  }
+
+  static const Set<String> _singleIdKinds = {
+    'message',
+    'attempt',
+    'question',
+    'conversation',
+  };
+
+  /// 类型前缀：material_page、message、ttempt、question 或 conversation。
+  String get kind => value.split(':').first;
+
+  /// 第二段编号：材料页是材料编号，其余是记录编号。
+  int? get primaryId {
+    final parts = value.split(':');
+    return parts.length < 2 ? null : int.tryParse(parts[1]);
+  }
+
+  /// 材料页的页码；其他类型为空。
+  int? get pageNo {
+    final parts = value.split(':');
+    return parts.length < 3 ? null : int.tryParse(parts[2]);
+  }
+
   final String value;
 
   @override

@@ -1261,22 +1261,22 @@ class EvidenceRepository {
     final clauses = <String>[];
     final args = <Object?>[];
     for (final identity in identities) {
-      final parts = identity.trim().split(':');
-      if (parts.length < 2) continue;
-      final id = int.tryParse(parts[1]);
-      switch (parts.first) {
+      final parsed = EvidenceId.tryParse(identity);
+      final id = parsed?.primaryId;
+      if (id == null) continue;
+      switch (parsed!.kind) {
         case 'message':
-          if (kind == 'message' && id != null) {
+          if (kind == 'message') {
             clauses.add('m.id = ?');
             args.add(id);
           }
         case 'question':
-          if (kind == 'question' && id != null) {
+          if (kind == 'question') {
             clauses.add('c.id = ?');
             args.add(id);
           }
         case 'attempt':
-          if (kind == 'answer' && id != null) {
+          if (kind == 'answer') {
             clauses.add('a.id = ?');
             args.add(id);
           }
@@ -1309,10 +1309,10 @@ class EvidenceRepository {
           final pages = <String>[];
           final args = <Object?>[];
           for (final identity in scope.broughtIdentities) {
-            final parts = identity.trim().split(':');
-            if (parts.length < 3 || parts.first != 'material_page') continue;
-            final materialId = int.tryParse(parts[1]);
-            final pageNo = int.tryParse(parts[2]);
+            final parsed = EvidenceId.tryParse(identity);
+            if (parsed?.kind != 'material_page') continue;
+            final materialId = parsed!.primaryId;
+            final pageNo = parsed.pageNo;
             if (materialId == null || pageNo == null) continue;
             pages.add('(mp.material_id = ? AND mp.page_no = ?)');
             args.addAll([materialId, pageNo]);
@@ -1325,10 +1325,10 @@ class EvidenceRepository {
         final args = <Object?>[scope.goalId];
         final pages = <String>[];
         for (final identity in scope.broughtIdentities) {
-          final parts = identity.trim().split(':');
-          if (parts.length < 3 || parts.first != 'material_page') continue;
-          final materialId = int.tryParse(parts[1]);
-          final pageNo = int.tryParse(parts[2]);
+          final parsed = EvidenceId.tryParse(identity);
+          if (parsed?.kind != 'material_page') continue;
+          final materialId = parsed!.primaryId;
+          final pageNo = parsed.pageNo;
           if (materialId == null || pageNo == null) continue;
           pages.add('(mp.material_id = ? AND mp.page_no = ?)');
           args.addAll([materialId, pageNo]);

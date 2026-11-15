@@ -6,6 +6,7 @@ import '../data/repository/memory_repository.dart';
 import '../data/repository/schedule_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/evidence.dart';
+import '../domain/models/evidence_id.dart';
 import '../domain/models/material.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/memory.dart';
@@ -260,9 +261,9 @@ class ContextService {
   static Set<int> _broughtAttemptIds(Set<String> identities) {
     final ids = <int>{};
     for (final identity in identities) {
-      final parts = identity.trim().split(':');
-      if (parts.length < 2 || parts.first != 'attempt') continue;
-      final id = int.tryParse(parts[1]);
+      final parsed = EvidenceId.tryParse(identity);
+      if (parsed?.kind != 'attempt') continue;
+      final id = parsed!.primaryId;
       if (id != null) ids.add(id);
     }
     return ids;
