@@ -9,6 +9,7 @@ import '../db/app_database.dart';
 import '../../domain/rules/attachments.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
+import '../revisions/revision_engine.dart' show versionedTableNames;
 import 'backup_manifest.dart';
 import 'restore_journal.dart';
 import 'restore_validation.dart';
@@ -377,21 +378,8 @@ class DataPackageService {
   }
 
   /// 恢复时要核对的核心表；只比行数，不比内容。
-  static const _countedTables = [
-    'profile',
-    'attempt',
-    'assessment',
-    'conversation',
-    'message',
-    'memory',
-    'learning_goal',
-    'plan_item',
-    'schedule_block',
-    'material',
-    'material_page',
-    'study_plan',
-  ];
-
+  ///
+  /// 取版本化业务表清单，与数据版本采集和撤销使用同一份表名，不再另抄一张。
   Future<Map<String, int>> _countRows(String path) async {
     final db = openReadOnlyDatabase(path);
     try {
@@ -403,7 +391,7 @@ class DataPackageService {
 
   Future<Map<String, int>> _countRowsOf(RawExecutor db) async {
     final counts = <String, int>{};
-    for (final table in _countedTables) {
+    for (final table in versionedTableNames) {
       final rows = await db.rawQuery('SELECT COUNT(*) AS n FROM $table');
       counts[table] = (rows.first['n'] as int?) ?? 0;
     }

@@ -93,3 +93,14 @@ class AppDatabase extends _$AppDatabase {
     await m.createAll();
   }
 }
+
+/// 只读取生成代码里表、列与索引定义的库实例，不打开连接。
+///
+/// drift 的结构元数据（`allTables` 与 `allSchemaEntities`）是实例成员，没有静态
+/// 入口，恢复预检与版本引擎需要一个实例来读；这个子类的执行器在构造时不打开
+/// 数据库，任何查询都会抛出。单独的运行时类型还避免 drift 把结构探针当成第二个
+/// 打开的库而告警。
+class SchemaMetadata extends AppDatabase {
+  SchemaMetadata()
+    : super(LazyDatabase(() => throw StateError('结构元数据不需要打开数据库')));
+}

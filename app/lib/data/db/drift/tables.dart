@@ -7,6 +7,14 @@ import 'package:drift/drift.dart';
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 
+/// 不参与业务变更采集的版本元数据与附件对象表名前缀。
+///
+/// 新增这类表时沿用前缀即可，版本引擎按前缀把它归入元数据；其余新表默认
+/// 参与采集，写入才会进入数据版本历史。
+const List<String> revisionMetadataTablePrefixes = ['revision_', 'asset_'];
+
+/// 保留在库里、但不参与版本采集的内部设置表。
+const Set<String> nonVersionedPersistentTableNames = {'app_meta'};
 @DataClassName('AppMetaRow')
 class AppMeta extends Table {
   @override

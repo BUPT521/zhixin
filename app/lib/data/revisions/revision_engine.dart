@@ -5,68 +5,46 @@ import 'package:crypto/crypto.dart';
 
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../db/drift/tables.dart'
+    show nonVersionedPersistentTableNames, revisionMetadataTablePrefixes;
 import '../db/fts.dart';
+import '../db/schema.dart' show schemaTableNames, schemaTables;
 import '../db/sql.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
 
-/// 参与版本采集的业务表，顺序按外键依赖排列：先被引用的表在前。
-///
-/// 新增业务表时必须在这里登记，并向 [installRevisionSchema] 提供主键；否则
-/// 写入会成功但不进入数据变更历史。版本元数据、诊断记录、缓存与密钥不登记。
-const List<String> versionedTableNames = [
-  'profile',
-  'learning_goal',
-  'material',
-  'material_page',
-  'conversation',
-  'message',
-  'study_plan',
-  'plan_item',
-  'timetable_entry',
-  'schedule_block',
-  'study_session',
-  'attempt',
-  'assessment',
-  'memory',
-];
-
-/// 每张业务表的主键；目前版本化表都是单列主键。
-const Map<String, String> versionedPrimaryKeys = {
-  'profile': 'id',
-  'learning_goal': 'id',
-  'material': 'id',
-  'material_page': 'id',
-  'conversation': 'id',
-  'message': 'id',
-  'study_plan': 'id',
-  'plan_item': 'id',
-  'timetable_entry': 'id',
-  'schedule_block': 'id',
-  'study_session': 'id',
-  'attempt': 'id',
-  'assessment': 'id',
-  'memory': 'id',
-};
-
 /// 版本元数据与附件对象；不参与触发器采集，单独分类。
-const Set<String> revisionMetadataTables = {
-  'revision_commit',
-  'revision_change',
-  'revision_ref',
-  'revision_checkpoint',
-  'revision_context',
-  'revision_sequence',
-  'asset_object',
-  'asset_chunk',
+///
+/// 由 drift 表类登记的表名单按 [revisionMetadataTablePrefixes] 派生，新增这类
+/// 表沿用前缀即可。
+final Set<String> revisionMetadataTables = {
+  for (final name in schemaTableNames())
+    if (revisionMetadataTablePrefixes.any(name.startsWith)) name,
 };
 
 /// 保留在库里、但不参与数据版本采集的持久表：内部设置。
+const Set<String> nonVersionedPersistentTables =
+    nonVersionedPersistentTableNames;
+
+/// 参与版本采集的业务表，顺序按外键依赖排列：先被引用的表在前。
 ///
-/// 新增表时必须在此、[versionedTableNames] 或 [revisionMetadataTables] 三者
-/// 之一登记，架构测试会核对；否则写入会绕过数据变更历史。
-const Set<String> nonVersionedPersistentTables = {'app_meta'};
+/// 由 drift 表类派生：元数据、附件对象与内部设置表以外的表都参与采集。新增
+/// 业务表不需要另外登记，写入会自动进入数据变更历史；版本元数据、诊断记录、
+/// 缓存与密钥不登记。
+final List<String> versionedTableNames = [
+  for (final name in schemaTableNames())
+    if (!revisionMetadataTables.contains(name) &&
+        !nonVersionedPersistentTables.contains(name))
+      name,
+];
+
+/// 每张业务表的主键；版本化表目前都是单列主键。
+final Map<String, String> versionedPrimaryKeys = {
+  for (final table in schemaTables())
+    if (versionedTableNames.contains(table.entityName))
+      table.entityName: table.$primaryKey.single.name,
+};
 
 class RevisionTable {
   const RevisionTable({
