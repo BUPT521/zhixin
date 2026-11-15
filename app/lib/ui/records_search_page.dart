@@ -13,7 +13,7 @@ import '../domain/models/search.dart';
 import '../domain/models/study.dart';
 import '../domain/models/material.dart';
 import 'failure_feedback.dart';
-import 'materials_page.dart';
+import 'navigation.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
@@ -315,15 +315,12 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   Future<void> _openMaterial(EvidenceHit hit) async {
     final materialId = hit.location.materialId;
     if (materialId == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MaterialDetailPage(
-          materialId: materialId,
-          pageFrom: hit.location.pageNo,
-          pageTo: hit.location.pageNo,
-          stepTitle: '搜索命中的原文',
-        ),
-      ),
+    await openMaterial(
+      context,
+      materialId,
+      pageFrom: hit.location.pageNo,
+      pageTo: hit.location.pageNo,
+      stepTitle: '搜索命中的原文',
     );
   }
 

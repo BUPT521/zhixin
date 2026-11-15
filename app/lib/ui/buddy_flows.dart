@@ -5,7 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app_scope.dart';
 import '../application/memory_view.dart';
 import 'failure_feedback.dart';
-import 'settings_page.dart';
+import 'navigation.dart';
 import 'theme.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_toast.dart';
@@ -139,8 +139,7 @@ Future<({bool? configured, String? notice})> openModelSettingsPage(
   required String kind,
   required String kept,
 }) async {
-  await Navigator.of(context)
-      .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+  await openSettings(context);
   if (!context.mounted) return (configured: null, notice: null);
   try {
     final config = await AppScope.of(context).settings.edit.config();

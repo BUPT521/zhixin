@@ -17,12 +17,9 @@ import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
-import 'discussion_page.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
-import 'plan_page.dart';
-import 'study_entry.dart';
-import 'study_plan_page.dart';
+import 'navigation.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
@@ -190,12 +187,6 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
     }
   }
 
-  Future<void> _open(Widget page) async {
-    await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => page));
-    if (mounted) await _load();
-  }
-
   /// 首页取图：先把图片拍好或选好，再带着文字进入新讨论。
   ///
   /// 取消取图就留在首页，输入框里的文字原样保留。如果先进页面再取图，取消
@@ -231,16 +222,15 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
     if (!mounted) return;
     setState(() => _opening = true);
     FocusManager.instance.primaryFocus?.unfocus();
-    await _open(
-      DiscussionPage(
-        initialText: text,
-        initialImages: photos,
-        startNew: true,
-        onSubmitted: () {
-          if (mounted) _input.clear();
-        },
-      ),
+    await openNewDiscussion(
+      context,
+      initialText: text,
+      initialImages: photos,
+      onSubmitted: () {
+        if (mounted) _input.clear();
+      },
     );
+    if (mounted) await _load();
     if (mounted) setState(() => _opening = false);
   }
 
@@ -489,7 +479,10 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
       ],
       time: updatedAt == null ? null : '上次推进 ${shortTime(updatedAt)}',
       clue: clue,
-      onPress: () => _open(StudyPlanPage(planId: plan.id)),
+      onPress: () async {
+        await openStudyPlan(context, plan.id);
+        if (mounted) await _load();
+      },
     );
   }
 
@@ -545,7 +538,8 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
           await widget.onOpenLearning(record.id);
           if (mounted) await _load();
         } else {
-          await _open(DiscussionPage(conversationId: record.id));
+          await openDiscussion(context, record.id);
+          if (mounted) await _load();
         }
       },
     );
@@ -792,8 +786,9 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
     if (mounted) await _load();
   }
 
-  Future<void> _openPlanItem(PlanItem item) {
-    return _open(PlanPage(initialItemId: item.id));
+  Future<void> _openPlanItem(PlanItem item) async {
+    await openPlanDetail(context, item.id);
+    if (mounted) await _load();
   }
 }
 

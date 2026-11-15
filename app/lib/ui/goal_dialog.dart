@@ -2,6 +2,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
+import '../domain/rules/text.dart';
 import 'date_time_dialogs.dart';
 import 'format.dart';
 import 'theme.dart';
@@ -107,7 +108,7 @@ class _GoalDialogState extends State<_GoalDialog> {
             Navigator.of(context).pop(
               GoalDraft(
                 title: title,
-                scope: _scope.text.trim().isEmpty ? null : _scope.text.trim(),
+                scope: nullableText(_scope.text),
                 dueDate: _due,
               ),
             );

@@ -17,15 +17,14 @@ import '../domain/models/study.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
 import 'capture_entry.dart';
+import 'data_version_watcher.dart';
 import 'discussion_activity.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
-import 'learning_page.dart';
 import 'material_picker.dart';
-import 'materials_page.dart';
+import 'navigation.dart';
 import 'plan_dialogs.dart';
-import 'plan_page.dart';
-import 'study_plan_page.dart';
+import 'study_plan_setup.dart';
 import 'undo_feedback.dart';
 import 'voice_input_button.dart';
 import 'workspace_widgets.dart';
@@ -66,7 +65,8 @@ class DiscussionChat extends StatefulWidget {
   State<DiscussionChat> createState() => DiscussionChatState();
 }
 
-class DiscussionChatState extends State<DiscussionChat> {
+class DiscussionChatState extends State<DiscussionChat>
+    with DataVersionWatcher<DiscussionChat> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
@@ -123,10 +123,20 @@ class DiscussionChatState extends State<DiscussionChat> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
     _conversationId = widget.conversationId;
     _initialize();
+  }
+
+  /// 生成中不跟着写入重读：这一轮的消息与收尾由发送流程自己合并。
+  @override
+  bool get dataVersionActive => !_sending && !_retrying && !_streaming;
+
+  @override
+  void onDataVersionChanged() {
+    _load();
   }
 
   Future<void> _initialize() async {
@@ -603,11 +613,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final questionId = await AppScope.of(context).chat.learning
           .startAnswering(conversationId: id);
       if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => LearningPage(questionId: questionId),
-        ),
-      );
+      await openLearning(context, questionId);
       if (mounted) await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -799,11 +805,7 @@ class DiscussionChatState extends State<DiscussionChat> {
                 scheduledCommitId,
                 reload: _load,
               )
-            : () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => PlanPage(initialItemId: result.item.id),
-                ),
-              ),
+            : () => openPlanDetail(context, result.item.id),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -1182,12 +1184,7 @@ class DiscussionChatState extends State<DiscussionChat> {
                 mainAxisSize: MainAxisSize.min,
                 onPress: () {
                   Navigator.of(sheetContext).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) =>
-                          MaterialDetailPage(materialId: record.materialId!),
-                    ),
-                  );
+                  openMaterial(context, record.materialId!);
                 },
                 child: const Text('打开完整材料'),
               ),
@@ -1389,15 +1386,12 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
 
   @override
   void openCitation(Citation citation) {
-    Navigator.of(_state.context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MaterialDetailPage(
-          materialId: citation.materialId,
-          pageFrom: citation.pageNo,
-          pageTo: citation.pageNo,
-          stepTitle: '引用原文',
-        ),
-      ),
+    openMaterial(
+      _state.context,
+      citation.materialId,
+      pageFrom: citation.pageNo,
+      pageTo: citation.pageNo,
+      stepTitle: '引用原文',
     );
   }
 

@@ -55,25 +55,6 @@ class QuestionCropResult {
   final bool retake;
 }
 
-/// 打开框选页；用户取消时返回 null，确认时返回裁剪后文件的路径。
-Future<QuestionCropResult?> showQuestionCropPage(
-  BuildContext context, {
-  required String sourcePath,
-  required String outputDir,
-  bool allowRetake = false,
-}) {
-  return Navigator.of(context).push<QuestionCropResult>(
-    MaterialPageRoute<QuestionCropResult>(
-      fullscreenDialog: true,
-      builder: (_) => QuestionCropPage(
-        sourcePath: sourcePath,
-        outputDir: outputDir,
-        allowRetake: allowRetake,
-      ),
-    ),
-  );
-}
-
 class _QuestionCropPageState extends State<QuestionCropPage> {
   final CropController _controller = CropController();
 

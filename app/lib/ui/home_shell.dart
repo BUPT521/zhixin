@@ -2,14 +2,11 @@ import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
-import 'discussion_page.dart';
 import 'copy.dart';
-import 'learning_page.dart';
-import 'memory_page.dart';
+import 'navigation.dart';
 import 'now_page.dart';
 import 'plan_page.dart';
 import 'records_page.dart';
-import 'settings_page.dart';
 import 'theme.dart';
 
 /// 底部三栏（02 第 10.1 节）：现在 / 记录 / 安排，设置留在次级入口。
@@ -98,40 +95,22 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _openLearning(int questionId) async {
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LearningPage(questionId: questionId),
-      ),
-    );
+    await openLearning(context, questionId);
   }
 
   Future<void> _openLearningRedo(int questionId) async {
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LearningPage(questionId: questionId, startRedo: true),
-      ),
-    );
+    await openLearningRedo(context, questionId);
   }
 
   Future<void> _openDiscussion(int conversationId) async {
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DiscussionPage(conversationId: conversationId),
-      ),
-    );
+    await openDiscussion(context, conversationId);
   }
 
-  void _openMemory() {
-    Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const MemoryPage()));
-  }
+  Future<void> _openMemory() => openMemory(context);
 
-  void _openSettings() {
-    Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
-  }
+  Future<void> _openSettings() => openSettings(context);
 
   @override
   Widget build(BuildContext context) {

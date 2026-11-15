@@ -6,10 +6,11 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../domain/models/memory.dart';
+import 'copy.dart';
 import 'date_time_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
-import 'memory_proposal_page.dart';
+import 'navigation.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
@@ -196,11 +197,7 @@ class _MemoryPageState extends State<MemoryPage> {
           ZhixinHeaderAction(
             icon: FLucideIcons.listChecks,
             tooltip: '从作答整理',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const MemoryProposalPage(),
-              ),
-            ),
+            onPressed: () => openMemoryProposal(context),
           ),
         ],
       ),
@@ -220,7 +217,7 @@ class _MemoryPageState extends State<MemoryPage> {
                       const forui.FCard(
                         child: EmptyState(
                           icon: FLucideIcons.brain,
-                          title: '暂无学习记忆',
+                          title: emptyMemory,
                           description: '可以添加一条学习偏好，例如“先给提示，再看完整解答”。',
                         ),
                       ),

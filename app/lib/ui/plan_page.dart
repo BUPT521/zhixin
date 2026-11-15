@@ -19,10 +19,8 @@ import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_dialog.dart';
-import 'discussion_page.dart';
+import 'navigation.dart';
 import 'plan_week_view.dart';
-import 'study_entry.dart';
-import 'study_plan_page.dart';
 import 'workspace_widgets.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
@@ -34,17 +32,29 @@ import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
 
 /// 安排：每周日程、系统学习、学习事项与 AI 改动的撤销。
+///
+/// 底栏页与事项详情共用这一份周视图，但入口分开：底栏页由 [HomeShell] 常驻，
+/// 切栏与跨栏跳转通过通知传进来；事项详情由 [PlanPage.detail] 独立推入，只认
+/// 一个事项编号，不看当前底栏。
 class PlanPage extends StatefulWidget {
   const PlanPage({
     super.key,
     this.activeTab,
     this.tabIndex = 2,
     this.request,
-    this.initialItemId,
     this.onOpenMaterials,
     this.reader,
-  });
+  }) : initialItemId = null;
 
+  /// 事项详情入口：推入一条事项并展开它的操作面板，不参与底栏切栏。
+  const PlanPage.detail({super.key, required int itemId, this.reader})
+    : initialItemId = itemId,
+      activeTab = null,
+      tabIndex = 2,
+      request = null,
+      onOpenMaterials = null;
+
+  /// 详情页要展开的事项；为空时按底栏页处理。
   final int? initialItemId;
 
   /// 底栏当前栏的下标；为空时按常驻当前页处理，二级入口直接打开安排。
@@ -901,11 +911,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
       await openPlanItem(context, item);
       if (mounted) await _load();
     } else if (action == 'source') {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => DiscussionPage(conversationId: item.conversationId),
-        ),
-      );
+      await openDiscussion(context, item.conversationId!);
       if (mounted) await _load();
     } else if (action == 'plan') {
       await _openStudyPlan(item.studyPlanId!);
@@ -1026,9 +1032,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   }
 
   Future<void> _openStudyPlan(int id) async {
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => StudyPlanPage(planId: id)));
+    await openStudyPlan(context, id);
     if (mounted) await _load();
   }
 
@@ -1370,7 +1374,9 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         (_) => forui.FCard(
           child: EmptyState(
             icon: FLucideIcons.calendarCheck,
-            title: currentWeek ? '本周暂无预约' : '这一周暂无预约',
+            title: currentWeek
+                ? emptyWeekAppointments
+                : emptyOtherWeekAppointments,
             description: '可以立即开始学习，也可以为已有事项预约时间。',
             action: forui.FButton(
               variant: forui.FButtonVariant.outline,

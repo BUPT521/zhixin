@@ -18,10 +18,9 @@ import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
-import 'materials_page.dart';
+import 'materials_list.dart';
+import 'navigation.dart';
 import 'question_capture_button.dart';
-import 'embedding_settings_page.dart';
-import 'records_search_page.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
@@ -181,7 +180,6 @@ class _RecordsPageState extends State<RecordsPage>
   @override
   void onDataVersionChanged() {
     _load();
-    if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
   }
 
   /// 生成开始或结束时重画记录；消息数与摘要等下次读取列表时更新。
@@ -212,13 +210,10 @@ class _RecordsPageState extends State<RecordsPage>
   }
 
   Future<void> _openSearch() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => RecordsSearchPage(
-          onOpenLearning: _openLearning,
-          onOpenDiscussion: _openDiscussion,
-        ),
-      ),
+    await openRecordsSearch(
+      context,
+      onOpenLearning: _openLearning,
+      onOpenDiscussion: _openDiscussion,
     );
     if (mounted) await _load();
   }
@@ -327,11 +322,7 @@ class _RecordsPageState extends State<RecordsPage>
           ZhixinHeaderAction(
             icon: FLucideIcons.network,
             tooltip: '语义索引',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const EmbeddingSettingsPage(),
-              ),
-            ),
+            onPressed: () => openEmbeddingSettings(context),
           ),
           ZhixinHeaderAction(
             icon: FLucideIcons.refreshCw,

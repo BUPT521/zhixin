@@ -27,6 +27,7 @@ import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/format.dart';
 import 'package:zhixin/ui/learning_page.dart';
+import 'package:zhixin/ui/materials_list.dart';
 import 'package:zhixin/ui/materials_page.dart';
 import 'package:zhixin/ui/now_page.dart';
 import 'package:zhixin/ui/plan_page.dart';

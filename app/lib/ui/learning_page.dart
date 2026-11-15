@@ -15,11 +15,13 @@ import '../application/memory_view.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
+import '../domain/rules/text.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
-import 'discussion_page.dart';
+import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'navigation.dart';
 import 'zhixin_chip.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
@@ -42,7 +44,8 @@ class LearningPage extends StatefulWidget {
   State<LearningPage> createState() => _LearningPageState();
 }
 
-class _LearningPageState extends State<LearningPage> {
+class _LearningPageState extends State<LearningPage>
+    with DataVersionWatcher<LearningPage> {
   QuestionView? _view;
   Map<int, List<Assessment>> _assessments = const {};
   bool _loading = true;
@@ -113,8 +116,18 @@ class _LearningPageState extends State<LearningPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
+    _load();
+  }
+
+  /// 保存、求助与提交都在页面里发起，动作结束会自己重读；生成中不额外重读。
+  @override
+  bool get dataVersionActive => !_busy && !_generating;
+
+  @override
+  void onDataVersionChanged() {
     _load();
   }
 
@@ -365,7 +378,7 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _generating = false;
-        _help = result.text.trim().isEmpty ? null : result.text;
+        _help = nullableText(result.text);
         _notice = result.notice;
         _lastMode = mode;
         _lastFromModel = result.fromModel;
@@ -636,11 +649,7 @@ class _LearningPageState extends State<LearningPage> {
     final saved = await _saveDraft(notify: false);
     if (mounted) setState(() => _busy = false);
     if (!saved || !mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DiscussionPage(conversationId: conversationId),
-      ),
-    );
+    await openDiscussion(context, conversationId);
     if (mounted) await _load();
   }
 
@@ -1220,9 +1229,7 @@ class _LearningPageState extends State<LearningPage> {
 
   String _shorten(String text, {int limit = 80}) {
     final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return cleaned.length <= limit
-        ? cleaned
-        : '${cleaned.substring(0, limit)}…';
+    return truncateCodePoints(cleaned, limit);
   }
 }
 

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app_scope.dart';
 import '../domain/models/study.dart';
 import '../domain/models/time_values.dart';
+import '../domain/rules/text.dart';
 import 'date_time_dialogs.dart';
 import 'copy.dart';
 import 'format.dart';
@@ -127,7 +128,7 @@ class _ItemDialogState extends State<ItemDialog> {
               ItemDraft(
                 title: title,
                 goalId: _goal.goalId,
-                note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+                note: nullableText(_note.text),
                 dueAt: _due,
                 minutes: int.tryParse(_minutes.text.trim()),
               ),
@@ -421,9 +422,7 @@ class _TimetableDialogState extends State<TimetableDialog> {
                 start: _clock(_start),
                 end: _clock(_end),
                 title: title,
-                location: _location.text.trim().isEmpty
-                    ? null
-                    : _location.text.trim(),
+                location: nullableText(_location.text),
               ),
             );
           },

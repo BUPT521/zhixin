@@ -16,22 +16,13 @@ import 'workspace_widgets.dart';
 ///
 /// 系统相机由相机应用自己决定界面，拍完之后那次确认去不掉；只有把相机换成
 /// 应用内预览，才能做到与从相册选择一样，取到图就进入框选。框选页的重拍也
-/// 回到这里，预览一直开着，不必重新拉起系统相机。
+/// 回到这里，预览一直开着，不必重新拉起系统相机。打开入口见
+/// [openCameraCapture]。
 class CameraCapturePage extends StatefulWidget {
   const CameraCapturePage({super.key});
 
   @override
   State<CameraCapturePage> createState() => _CameraCapturePageState();
-}
-
-/// 打开应用内相机；取消或没有拍到时返回 null。
-Future<XFile?> showCameraCapturePage(BuildContext context) {
-  return Navigator.of(context).push<XFile>(
-    MaterialPageRoute<XFile>(
-      fullscreenDialog: true,
-      builder: (_) => const CameraCapturePage(),
-    ),
-  );
 }
 
 /// 相机打不开时给用户看的说明。

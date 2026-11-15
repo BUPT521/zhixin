@@ -9,8 +9,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../app_scope.dart';
-import 'camera_capture_page.dart';
-import 'question_crop_page.dart';
+import 'navigation.dart';
+import 'question_crop_page.dart' show shrinkCaptureImage;
 import 'theme.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_sheet.dart';
@@ -52,7 +52,7 @@ Future<XFile?> pickQuestionImage(
     while (true) {
       final tempDir = await getTemporaryDirectory();
       if (!context.mounted) return null;
-      final result = await showQuestionCropPage(
+      final result = await openQuestionCrop(
         context,
         sourcePath: picked.path,
         outputDir: tempDir.path,
@@ -99,7 +99,7 @@ Future<XFile?> captureQuestionShot(
 }) async {
   if (source != ImageSource.camera) return pickCaptureImage(source);
   if (useSystemCamera) return pickCaptureImage(ImageSource.camera);
-  final shot = await showCameraCapturePage(context);
+  final shot = await openCameraCapture(context);
   if (shot == null) return null;
   try {
     final shrunk = await shrinkCaptureImage(await shot.readAsBytes());

@@ -14,10 +14,8 @@ import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
 import '../platform/data_package_export.dart';
 import '../platform/diagnostics_store.dart';
-import 'about_page.dart';
-import 'data_version_page.dart';
 import 'failure_feedback.dart';
-import 'memory_page.dart';
+import 'navigation.dart';
 import 'restore_flow.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
@@ -285,8 +283,7 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   void _openVersions() {
-    Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const DataVersionPage()));
+    openDataVersion(context);
   }
 
   Future<void> _resetAll() async {
@@ -539,9 +536,7 @@ class _SettingsPageState extends State<SettingsPage>
             title: const Text('学习记忆'),
             subtitle: const Text('查看、修改和删除记忆'),
             suffix: const Icon(FLucideIcons.chevronRight),
-            onPress: () => Navigator.of(
-              context,
-            ).push(MaterialPageRoute<void>(builder: (_) => const MemoryPage())),
+            onPress: () => openMemory(context),
           ),
           SizedBox(height: theme.space.md),
           ZhixinSelect<int>(
@@ -600,9 +595,7 @@ class _SettingsPageState extends State<SettingsPage>
             title: const Text('关于'),
             subtitle: Text('版本 $appVersion · 开源许可'),
             suffix: const Icon(FLucideIcons.chevronRight),
-            onPress: () => Navigator.of(
-              context,
-            ).push(MaterialPageRoute<void>(builder: (_) => const AboutPage())),
+            onPress: () => openAbout(context),
           ),
           const SizedBox(height: 12),
           Text(
