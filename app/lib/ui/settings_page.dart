@@ -241,7 +241,7 @@ class _SettingsPageState extends State<SettingsPage>
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final now = DateTime.now();
+      final now = AppScope.of(context).timePolicy.now;
       final uri = await saveDataPackage(
         fileName: 'zhixin-repository-${compactDate(now)}.zip',
         writePackage: AppScope.of(context).backupRepository,

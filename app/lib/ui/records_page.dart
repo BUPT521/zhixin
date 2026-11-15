@@ -605,9 +605,10 @@ class _RecordsPageState extends State<RecordsPage>
 
   Widget _recordList(ZhixinTheme theme, Iterable<ConversationRecord> records) {
     final groups = <String, List<ConversationRecord>>{};
+    final now = AppScope.of(context).timePolicy.now;
     for (final record in records) {
       final date = record.updatedAt ?? record.createdAt;
-      final key = date == null ? '更早' : _dayHeading(date);
+      final key = date == null ? '更早' : relativeDayHeading(date, now: now);
       groups.putIfAbsent(key, () => []).add(record);
     }
     // 列表项按“日期标题、一条记录”铺平，交给 ListView.builder 只建可视范围
@@ -661,17 +662,6 @@ class _RecordsPageState extends State<RecordsPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _loadMore();
     });
-  }
-
-  /// 日期分组的标题：今天与昨天直接写出来，其余写日期与星期。
-  String _dayHeading(DateTime date) {
-    final now = AppScope.of(context).timePolicy.now;
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(date.year, date.month, date.day);
-    final diff = today.difference(day).inDays;
-    if (diff == 0) return '今天 · ${dayLabel(date)}';
-    if (diff == 1) return '昨天 · ${dayLabel(date)}';
-    return dayLabel(date);
   }
 
   Future<void> _changeGoal(ConversationRecord record) async {

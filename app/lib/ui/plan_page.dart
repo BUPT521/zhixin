@@ -1311,8 +1311,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
                 child: Column(
                   children: [
                     Text(
-                      '${range.start.month}月${range.start.day}日 – '
-                      '${lastDay.month}月${lastDay.day}日',
+                      monthDayRange(range.start, lastDay),
                       textAlign: TextAlign.center,
                       style: theme.text.titleMedium.copyWith(
                         fontFeatures: const [FontFeature.tabularFigures()],
@@ -1837,7 +1836,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     );
   }
 
-  /// 日期与当天的课程单独占一行，预约按条目延迟构建。
+  /// 日期与当天的课程单独占一行，标题的写法与记录页共用 [relativeDayHeading]。
   Widget _dayHeading(
     ZhixinTheme theme,
     DateTime day,
@@ -1854,12 +1853,8 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         children: [
           Row(
             children: [
-              if (isToday) ...[
-                const StatusTag('今天', tone: TagTone.accent),
-                SizedBox(width: theme.space.sm),
-              ],
               Text(
-                dayLabel(day),
+                relativeDayHeading(day, now: now),
                 style: theme.text.labelLarge.copyWith(
                   color: isToday
                       ? theme.colors.onSurface

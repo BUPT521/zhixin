@@ -368,7 +368,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
   Future<void> _exportCurrent() async {
     if (_busy) return;
     final scope = AppScope.of(context);
-    final day = DateTime.now();
+    final day = scope.timePolicy.now;
     final fileName = 'zhixin-current-${compactDate(day)}.zip';
     setState(() => _busy = true);
     try {
@@ -398,7 +398,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
   Future<void> _backupRepository() async {
     if (_busy) return;
     final scope = AppScope.of(context);
-    final day = DateTime.now();
+    final day = scope.timePolicy.now;
     final fileName = 'zhixin-repository-${compactDate(day)}.zip';
     setState(() => _busy = true);
     try {
