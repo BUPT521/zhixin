@@ -20,6 +20,9 @@ class ZhixinMotion {
   /// 整栏切换这类一次换掉大半屏的变化。
   Duration get emphasized => const Duration(milliseconds: 260);
 
+  /// 生成中的三点提示走完一轮的时长；它只在生成期间循环。
+  Duration get streaming => const Duration(milliseconds: 900);
+
   /// 位置与尺寸变化：起步快、收尾慢，停下时不过冲。
   Curve get move => Curves.easeOutCubic;
 

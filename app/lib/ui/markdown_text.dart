@@ -115,8 +115,20 @@ class _StreamingHintState extends State<StreamingHint>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 900),
-  )..repeat();
+    duration: context.zhixin.motion.streaming,
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (context.reduceMotion) {
+      _controller.stop();
+      _controller.value = 0;
+      return;
+    }
+    _controller.duration = context.zhixin.motion.streaming;
+    if (!_controller.isAnimating) _controller.repeat();
+  }
 
   @override
   void dispose() {
