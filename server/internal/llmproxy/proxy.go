@@ -39,7 +39,8 @@ type Proxy struct {
 	log    *slog.Logger
 }
 
-func New(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
+// NewHandler 组装模型代理；构造函数与另外四个业务包同名。
+func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
 	// No overall client timeout: streams legitimately last minutes. The
 	// client's own per-event deadlines (docs/00 §9) cancel the request,
 	// which cancels r.Context() and with it the upstream call.

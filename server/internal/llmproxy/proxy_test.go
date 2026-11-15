@@ -38,7 +38,7 @@ func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	proxy := New(cfg, NewMemoryQuota(), time.UTC, log)
+	proxy := NewHandler(cfg, NewMemoryQuota(), time.UTC, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
 		httpx.RequestID,
