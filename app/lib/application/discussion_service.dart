@@ -8,6 +8,7 @@ import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/asset_store.dart';
 import '../data/revisions/revision_actions.dart';
+import '../domain/rules/notices.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_service.dart';
 import '../data/repository/conversation_repository.dart';
@@ -652,7 +653,7 @@ class DiscussionService {
         if (refreshed != null) assistantMessage = refreshed;
       } catch (_) {
         // 记忆可撤销，也只是回答的附带写入；失败不拖累已经保存的正文。
-        notice = _joinNotices(notice, '记忆保存失败，回答已保存。');
+        notice = joinNotices(notice, '记忆保存失败，回答已保存。');
       }
     }
 
@@ -1170,9 +1171,6 @@ class DiscussionService {
         .toList(growable: false);
     return parts.isEmpty ? null : parts.join('；');
   }
-
-  static String _joinNotices(String? first, String second) =>
-      first == null ? second : '$first $second';
 
   void _ensureCurrentEpoch(int expected) {
     if (runtime.dataEpoch != expected) {

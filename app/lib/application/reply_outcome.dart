@@ -1,4 +1,5 @@
 import '../ai/buddy_prompt.dart';
+import '../domain/rules/notices.dart';
 
 /// 模型回答收尾之后的正文、来源与中断情况。
 class ReplyOutcome {
@@ -64,7 +65,7 @@ ReplyOutcome interpretModelAnswer(
         stopped: false,
         interrupted: false,
         modelFailed: true,
-        notice: _join(notice, fallbackNotice),
+        notice: joinNotices(notice, fallbackNotice),
       );
     }
     return ReplyOutcome(
@@ -73,7 +74,7 @@ ReplyOutcome interpretModelAnswer(
       stopped: false,
       interrupted: true,
       modelFailed: false,
-      notice: _join(
+      notice: joinNotices(
         notice,
         '生成中断（${answer.interruptedReason ?? '连接中断'}），'
         '已保留已经生成的部分。',
@@ -86,9 +87,8 @@ ReplyOutcome interpretModelAnswer(
     stopped: false,
     interrupted: false,
     modelFailed: false,
-    notice: answer.truncated ? _join(notice, '回答被截断，已保留已经生成的部分。') : notice,
+    notice: answer.truncated
+        ? joinNotices(notice, '回答被截断，已保留已经生成的部分。')
+        : notice,
   );
 }
-
-String? _join(String? first, String second) =>
-    first == null ? second : '$first $second';

@@ -3,6 +3,7 @@ import '../ai/buddy_prompt.dart';
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../domain/models/chat_message.dart';
+import '../domain/rules/notices.dart';
 import 'attachment_service.dart';
 import 'service_runtime.dart';
 
@@ -87,7 +88,7 @@ Future<BuddyAnswerRun> askBuddyModel({
   }
   final prepared = await AttachmentService(filesDir: filesDir)
       .prepare(imagePaths, enabled: current?.allowImages ?? false);
-  notice = _joinNotices(notice, prepared.notice);
+  notice = joinNotices(notice, prepared.notice);
   final modelReady = current?.isConfigured ?? false;
 
   // 有图但一张都发不出去、又没有文字时没有可问的内容，不调用模型。
@@ -95,7 +96,7 @@ Future<BuddyAnswerRun> askBuddyModel({
     return BuddyAnswerRun(
       config: current,
       answer: null,
-      notice: _joinNotices(
+      notice: joinNotices(
         notice,
         modelReady
             ? '本次没有可发送的图片，未调用模型；题目与已写内容仍在本机。'
@@ -136,7 +137,7 @@ Future<BuddyAnswerRun> askBuddyModel({
     return BuddyAnswerRun(
       config: current,
       answer: null,
-      notice: _joinNotices(notice, _modelFailureNotice(error)),
+      notice: joinNotices(notice, _modelFailureNotice(error)),
       modelMissing: error.failure == LlmFailure.notConfigured,
       modelFailed: error.failure != LlmFailure.notConfigured,
       notSent: false,
@@ -147,7 +148,7 @@ Future<BuddyAnswerRun> askBuddyModel({
     return BuddyAnswerRun(
       config: current,
       answer: null,
-      notice: _joinNotices(notice, modelFallbackNotice),
+      notice: joinNotices(notice, modelFallbackNotice),
       modelMissing: false,
       modelFailed: true,
       notSent: false,
@@ -173,10 +174,4 @@ String _modelFailureNotice(LlmException error) {
   };
   return '模型调用失败（${error.shortText}），已切换为本地规则回答；'
       '问题与本地回答会保存在本机。$next';
-}
-
-String? _joinNotices(String? first, String? second) {
-  if (first == null) return second;
-  if (second == null) return first;
-  return '$first $second';
 }
