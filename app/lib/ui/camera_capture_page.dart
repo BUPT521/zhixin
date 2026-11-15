@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'theme.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_toast.dart';
 import 'workspace_widgets.dart';
@@ -278,7 +279,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   height: 64,
                   decoration: BoxDecoration(
                     border: Border.all(color: Colors.white70, width: 1.5),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: context.zhixin.radius.tag,
                   ),
                 ),
               ),

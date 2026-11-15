@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../app_scope.dart';
 import 'camera_capture_page.dart';
 import 'question_crop_page.dart';
+import 'theme.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_sheet.dart';
 
@@ -239,7 +240,7 @@ class CapturePhotoStrip extends StatelessWidget {
           Stack(
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: context.zhixin.radius.tag,
                 child: Image.file(
                   File(photos[index].path),
                   width: size,

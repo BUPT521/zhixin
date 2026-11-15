@@ -119,7 +119,7 @@ class _CitationTile extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: theme.radius.bubble,
       ),
       child: forui.FAccordion(
         style: const .delta(
@@ -259,7 +259,7 @@ class DiscussionCard extends StatelessWidget {
                   DecoratedBox(
                     decoration: BoxDecoration(
                       color: tone.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(9),
+                      borderRadius: theme.radius.tag,
                     ),
                     child: Padding(
                       padding: const EdgeInsets.all(7),
@@ -278,7 +278,7 @@ class DiscussionCard extends StatelessWidget {
                           DecoratedBox(
                             decoration: BoxDecoration(
                               color: tone.withValues(alpha: 0.10),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: theme.radius.tag,
                             ),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(

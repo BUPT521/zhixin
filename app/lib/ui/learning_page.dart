@@ -731,7 +731,7 @@ class _LearningPageState extends State<LearningPage> {
                             GestureDetector(
                               onTap: () => _showImage(path),
                               child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: theme.radius.tag,
                                 child: Image.file(
                                   File(
                                     AppScope.of(context).paths

@@ -735,7 +735,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: theme.colors.secondaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: theme.radius.tag,
       ),
       child: Text(
         '按意思',

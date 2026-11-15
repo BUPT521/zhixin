@@ -96,7 +96,7 @@ class FailureNotice extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: theme.radius.bubble,
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),

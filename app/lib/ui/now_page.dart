@@ -704,78 +704,86 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
         : null;
     return Padding(
       padding: EdgeInsets.only(bottom: theme.space.sm),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: feature ? theme.colors.primary : theme.colors.card,
-          borderRadius: feature ? theme.radius.feature : theme.radius.card,
-          border: feature
-              ? null
-              : Border.all(color: theme.colors.outlineVariant),
+      // 卡片与内边距交给 forui.FCard：首屏主角那张用主色底与 feature 圆角，
+      // 其余用主题卡片样式。Forui 0.27 的 FCard 没有 feature 变体，这里用
+      // style 的 delta 表达同一套取值，视觉与原来自绘的卡片一致。
+      child: forui.FCard(
+        style: forui.FCardStyleDelta.delta(
+          decoration: forui.DecorationDelta.shapeDelta(
+            color: feature ? theme.colors.primary : theme.colors.card,
+            shape: RoundedSuperellipseBorder(
+              borderRadius: feature ? theme.radius.feature : theme.radius.card,
+              side: feature
+                  ? BorderSide.none
+                  : BorderSide(color: theme.colors.outlineVariant),
+            ),
+          ),
+          padding: forui.EdgeInsetsGeometryDelta.value(
+            EdgeInsets.all(feature ? 20 : theme.space.lg),
+          ),
         ),
-        child: Padding(
-          padding: EdgeInsets.all(feature ? 20 : theme.space.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(FLucideIcons.clock, size: 16, color: soft),
-                  SizedBox(width: theme.space.xs + 2),
-                  Expanded(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.text.labelLarge.copyWith(
-                        color: soft,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
+        builder: (context, style, child) =>
+            Padding(padding: style.padding, child: child),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(FLucideIcons.clock, size: 16, color: soft),
+                SizedBox(width: theme.space.xs + 2),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.text.labelLarge.copyWith(
+                      color: soft,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-                  if (duration != null)
-                    Text(
-                      duration,
-                      style: theme.text.labelLarge.copyWith(color: soft),
-                    ),
-                ],
-              ),
-              SizedBox(height: theme.space.sm),
-              Text(
-                item.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    (feature ? theme.text.titleLarge : theme.text.titleMedium)
-                        .copyWith(
-                          color: ink,
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                        ),
-              ),
-              if (text != null && text.isNotEmpty) ...[
-                SizedBox(height: theme.space.xs + 2),
-                Text(
-                  '说明：$text',
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.text.bodySmall.copyWith(color: soft),
                 ),
+                if (duration != null)
+                  Text(
+                    duration,
+                    style: theme.text.labelLarge.copyWith(color: soft),
+                  ),
               ],
-              SizedBox(height: theme.space.lg),
-              if (feature) ...[
-                primaryAction,
-                if (secondaryAction != null) ...[
-                  SizedBox(height: theme.space.xs),
-                  Center(child: secondaryAction),
-                ],
-              ] else
-                Wrap(
-                  spacing: theme.space.sm,
-                  runSpacing: theme.space.sm,
-                  children: [primaryAction, ?secondaryAction],
-                ),
+            ),
+            SizedBox(height: theme.space.sm),
+            Text(
+              item.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: (feature ? theme.text.titleLarge : theme.text.titleMedium)
+                  .copyWith(
+                    color: ink,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+            ),
+            if (text != null && text.isNotEmpty) ...[
+              SizedBox(height: theme.space.xs + 2),
+              Text(
+                '说明：$text',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: theme.text.bodySmall.copyWith(color: soft),
+              ),
             ],
-          ),
+            SizedBox(height: theme.space.lg),
+            if (feature) ...[
+              primaryAction,
+              if (secondaryAction != null) ...[
+                SizedBox(height: theme.space.xs),
+                Center(child: secondaryAction),
+              ],
+            ] else
+              Wrap(
+                spacing: theme.space.sm,
+                runSpacing: theme.space.sm,
+                children: [primaryAction, ?secondaryAction],
+              ),
+          ],
         ),
       ),
     );

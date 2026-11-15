@@ -198,6 +198,9 @@ class ZhixinRadius {
   /// 标签与小按钮。
   BorderRadius get tag => const BorderRadius.all(Radius.circular(8));
 
+  /// 对话气泡与说明条：比标签圆一档，比控件小。
+  BorderRadius get bubble => const BorderRadius.all(Radius.circular(12));
+
   /// 按钮、输入框与分段控件。
   BorderRadius get control => const BorderRadius.all(_controlRadius);
 
