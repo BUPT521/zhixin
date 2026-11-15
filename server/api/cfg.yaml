@@ -4,7 +4,10 @@
 # 服务接口：模型代理按 SSE 边收边发、附件与备份按字节流下载，严格接口要先把整个
 # 响应体交给 Visit 方法才能写出，做不到中途 flush。
 package: api
-output: ../internal/api/api.gen.go
+# 输出路径相对 server/，生成命令在 server 目录下执行（CI 也是）：
+#   go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2 \
+#     -config api/cfg.yaml api/openapi.yaml
+output: internal/api/api.gen.go
 generate:
   models: true
   std-http-server: true
