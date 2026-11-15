@@ -17,6 +17,7 @@ import '../domain/models/buddy_protocol.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
+import '../domain/models/write_result.dart';
 import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
@@ -583,7 +584,7 @@ class LearningService {
   ///
   /// 自评不再单独写一条判断，作答记录里的帮助次数、独立与延迟情况已经足够
   /// 推出结果；用户填写的核对依据单独保存，只表示用户提供了一个依据。
-  Future<void> submit({
+  Future<WriteResult> submit({
     required int attemptId,
     required String answer,
     String? solution,
@@ -595,7 +596,7 @@ class LearningService {
     String? requestId,
   }) async {
     final requestEpoch = runtime.dataEpoch;
-    await transactions.run(
+    return transactions.run(
       (txn) async {
         _ensureCurrentEpoch(requestEpoch);
         final before = await attempts.attemptById(attemptId, transaction: txn);
@@ -619,10 +620,11 @@ class LearningService {
           transaction: txn,
         );
         if (changed != 1) throw StateError('这次作答已提交，请新建一次作答');
+        return txn.result();
       },
       label: '提交作答',
       requestId: requestId,
-      onDuplicate: (_) {},
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
 
