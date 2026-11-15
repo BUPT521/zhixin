@@ -109,3 +109,20 @@ WHERE p.status IN (:todoStatus, :doingStatus)
   AND (p.goal_id IS NULL OR g.status = :activeStatus)
 ORDER BY p.due_at IS NULL, p.due_at, p.id
 LIMIT 1;
+
+bindTaskConversation:
+UPDATE plan_item SET conversation_id = :conversationId,
+  updated_at = :stamp
+WHERE id = :itemId AND conversation_id IS NULL;
+
+insertPlanItem:
+INSERT INTO plan_item (goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at)
+VALUES (:goalId, :conversationId, :title, :note, :dueAt, :estMinutes, :status, :source, :origin, :stamp, :stamp);
+
+setPlanItemPriority:
+UPDATE plan_item SET priority = :priority,
+  updated_at = :stamp
+WHERE id = :itemId;
+
+deletePlanItem:
+DELETE FROM plan_item WHERE id = :itemId;

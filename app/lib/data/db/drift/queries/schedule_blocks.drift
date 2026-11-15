@@ -42,3 +42,37 @@ blocksForItem:
 SELECT * FROM schedule_block
 WHERE plan_item_id = :planItemId
 ORDER BY start_at;
+
+cancelPlannedBlocksForItem:
+UPDATE schedule_block SET status = 'cancelled',
+  updated_at = :stamp
+WHERE plan_item_id = :itemId AND status = 'planned';
+
+insertScheduleBlock:
+INSERT INTO schedule_block (plan_item_id, start_at, end_at, source, status, locked, created_at, updated_at)
+VALUES (:itemId, :startAt, :endAt, :source, 'planned', :locked, :stamp, :stamp);
+
+updatePlannedBlockTime:
+UPDATE schedule_block SET start_at = :startAt,
+  end_at = :endAt,
+  status = 'planned',
+  updated_at = :stamp
+WHERE id = :blockId;
+
+setBlockLocked:
+UPDATE schedule_block SET locked = :locked,
+  updated_at = :stamp
+WHERE id = :blockId;
+
+cancelPlannedBlocks:
+UPDATE schedule_block SET status = 'cancelled',
+  updated_at = :stamp
+WHERE id IN (SELECT value FROM json_each(:ids)) AND status = 'planned';
+
+setScheduleBlockStatus:
+UPDATE schedule_block SET status = :status,
+  updated_at = :stamp
+WHERE id = :blockId;
+
+deleteScheduleBlock:
+DELETE FROM schedule_block WHERE id = :blockId;

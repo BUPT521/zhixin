@@ -187,3 +187,42 @@ ORDER BY max(c.updated_at,
     ORDER BY a.id DESC LIMIT 1), c.updated_at)) DESC,
   c.id DESC
 LIMIT :limit;
+
+insertConversationRecord:
+INSERT INTO conversation (title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at)
+VALUES (:title, :goalId, :materialId, :pageNo, :sourceRef, :contextText, :entryKind, 'open', :stamp, :stamp);
+
+recordLastMessageTime:
+UPDATE conversation SET updated_at = :stamp,
+  last_message_at = :stamp
+WHERE id = :conversationId;
+
+setConversationGoal:
+UPDATE conversation SET goal_id = :goalId,
+  updated_at = :stamp
+WHERE id = :conversationId;
+
+setConversationMaterial:
+UPDATE conversation SET material_id = :materialId,
+  page_no = :pageNo,
+  updated_at = :stamp
+WHERE id = :conversationId;
+
+setQuestionMessage:
+UPDATE conversation SET question_message_id = :messageId
+WHERE id = :conversationId;
+
+endConversation:
+UPDATE conversation SET status = 'ended',
+  ended_at = :stamp,
+  updated_at = :stamp
+WHERE id = :conversationId;
+
+deleteConversationRecord:
+DELETE FROM conversation WHERE id = :conversationId;
+
+reopenConversation:
+UPDATE conversation SET status = 'open',
+  ended_at = NULL,
+  updated_at = :stamp
+WHERE id = :conversationId;

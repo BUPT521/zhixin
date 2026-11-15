@@ -19,10 +19,9 @@ class SettingsRepository {
     DateTime now, {
     WriteTransaction? transaction,
   }) async {
-    await writeExecutor(transaction, _db).update('profile', {
-      'day_cutoff_hour': hour,
-      'updated_at': formatDateTime(now),
-    }, where: 'id = 1');
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.setProfileCutoffHour(hour, formatDateTime(now)),
+    );
   }
 
   Future<String?> metadata(String key) async {
@@ -30,10 +29,8 @@ class SettingsRepository {
   }
 
   Future<void> setMetadata(String key, String value, DateTime now) async {
-    await _db.insert('app_meta', {
-      'key': key,
-      'value': value,
-      'updated_at': formatDateTime(now),
-    }, conflictAlgorithm: ConflictAction.replace);
+    await _db.writeGenerated(
+      (db) => db.saveAppMetadata(key, value, formatDateTime(now)),
+    );
   }
 }

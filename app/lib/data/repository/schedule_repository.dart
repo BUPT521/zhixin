@@ -121,24 +121,21 @@ class ScheduleRepository {
         now: at,
       );
       if (conflict != null) throw _exceptionFor(conflict);
-      return txn.insert('timetable_entry', {
-        'weekday': weekday,
-        'start_time': startTime,
-        'end_time': endTime,
-        'title': title.trim(),
-        'location': location?.trim(),
-        'created_at': formatDateTime(at),
-        'updated_at': formatDateTime(at),
-      });
+      return txn.writeGenerated(
+        (db) => db.insertTimetableEntry(
+          weekday,
+          startTime,
+          endTime,
+          title.trim(),
+          location?.trim(),
+          formatDateTime(at),
+        ),
+      );
     });
   }
 
   Future<void> deleteTimetable(int id, {RawExecutor? executor}) async {
-    await (executor ?? _db).delete(
-      'timetable_entry',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await (executor ?? _db).writeGenerated((db) => db.deleteTimetableEntry(id));
   }
 
   /// 一段时间内的时间块，按开始时间排序，并带上对应事项。
@@ -184,16 +181,16 @@ class ScheduleRepository {
     }
     await _ensureNoConflict(executor, start: start, end: end);
     final now = formatDateTime(_clock());
-    return executor.insert('schedule_block', {
-      'plan_item_id': planItemId,
-      'start_at': formatDateTime(start),
-      'end_at': formatDateTime(end),
-      'source': source,
-      'status': 'planned',
-      'locked': locked ? 1 : 0,
-      'created_at': now,
-      'updated_at': now,
-    });
+    return executor.writeGenerated(
+      (db) => db.insertScheduleBlock(
+        planItemId,
+        formatDateTime(start),
+        formatDateTime(end),
+        source,
+        locked ? 1 : 0,
+        now,
+      ),
+    );
   }
 
   /// 一次业务操作调整多条预约：先按目标时间整体校验，全部通过才逐条写入。
@@ -271,16 +268,13 @@ class ScheduleRepository {
 
     final now = formatDateTime(_clock());
     for (final adjustment in adjustments) {
-      final changed = await executor.update(
-        'schedule_block',
-        {
-          'start_at': formatDateTime(adjustment.start),
-          'end_at': formatDateTime(adjustment.end),
-          'status': 'planned',
-          'updated_at': now,
-        },
-        where: 'id = ?',
-        whereArgs: [adjustment.id],
+      final changed = await executor.writeGenerated(
+        (db) => db.updatePlannedBlockTime(
+          formatDateTime(adjustment.start),
+          formatDateTime(adjustment.end),
+          now,
+          adjustment.id,
+        ),
       );
       if (changed != 1) throw StateError('时间安排已被删除');
     }
@@ -320,16 +314,14 @@ class ScheduleRepository {
       end: end,
       excludeBlockId: id,
     );
-    final changed = await executor.update(
-      'schedule_block',
-      {
-        'start_at': formatDateTime(start),
-        'end_at': formatDateTime(end),
-        'status': 'planned',
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [id],
+    final stamp = formatDateTime(_clock());
+    final changed = await executor.writeGenerated(
+      (db) => db.updatePlannedBlockTime(
+        formatDateTime(start),
+        formatDateTime(end),
+        stamp,
+        id,
+      ),
     );
     if (changed != 1) throw StateError('时间安排已被删除');
   }
@@ -359,11 +351,9 @@ class ScheduleRepository {
 
   /// 用户把这次安排固定下来；固定的块不参加自动调整。
   Future<void> setLocked(int id, bool locked, {RawExecutor? executor}) async {
-    await (executor ?? _db).update(
-      'schedule_block',
-      {'locked': locked ? 1 : 0, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
+    final stamp = formatDateTime(_clock());
+    await (executor ?? _db).writeGenerated(
+      (db) => db.setBlockLocked(locked ? 1 : 0, stamp, id),
     );
   }
 
@@ -455,12 +445,9 @@ class ScheduleRepository {
     if (executor == null) {
       return _db.transaction((txn) => cancelBlocks(list, executor: txn));
     }
-    final placeholders = List.filled(list.length, '?').join(', ');
-    final changed = await executor.update(
-      'schedule_block',
-      {'status': 'cancelled', 'updated_at': formatDateTime(_clock())},
-      where: "id IN ($placeholders) AND status = 'planned'",
-      whereArgs: list,
+    final stamp = formatDateTime(_clock());
+    final changed = await executor.writeGenerated(
+      (db) => db.cancelPlannedBlocks(stamp, jsonEncode(list)),
     );
     if (changed != list.length) {
       throw StateError('部分时间安排已取消或不存在');
@@ -490,20 +477,14 @@ class ScheduleRepository {
         excludeBlockId: id,
       );
     }
-    await executor.update(
-      'schedule_block',
-      {'status': status, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
+    final stamp = formatDateTime(_clock());
+    await executor.writeGenerated(
+      (db) => db.setScheduleBlockStatus(status, stamp, id),
     );
   }
 
   Future<void> deleteBlock(int id, {RawExecutor? executor}) async {
-    await (executor ?? _db).delete(
-      'schedule_block',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await (executor ?? _db).writeGenerated((db) => db.deleteScheduleBlock(id));
   }
 
   Future<ScheduleBlock?> blockById(int id) async {

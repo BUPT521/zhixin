@@ -285,14 +285,15 @@ class TaskRepository {
   }) async {
     final now = _clock();
     final stamp = formatDateTime(now);
-    return _db.insert('learning_goal', {
-      'title': title.trim(),
-      'scope_text': scopeText?.trim(),
-      'due_date': dueDate == null ? null : formatDate(dueDate),
-      'status': LearningGoalStatus.active.code,
-      'created_at': stamp,
-      'updated_at': stamp,
-    });
+    return _db.writeGenerated(
+      (db) => db.insertLearningGoal(
+        title.trim(),
+        scopeText?.trim(),
+        dueDate == null ? null : formatDate(dueDate),
+        LearningGoalStatus.active.code,
+        stamp,
+      ),
+    );
   }
 
   /// 暂停目标只改状态；相关未来安排与已完成记录保持原样。
@@ -310,12 +311,11 @@ class TaskRepository {
     LearningGoalStatus status, {
     WriteTransaction? transaction,
   }) async {
-    await writeExecutor(transaction, _db).update(
-      'learning_goal',
-      {'status': status.code, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final stamp = formatDateTime(_clock());
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setLearningGoalStatus(status.code, stamp, id));
   }
 
   /// 学习事项。`onlyActiveGoals` 只保留无归属或所属目标仍在进行的事项，
@@ -353,14 +353,9 @@ class TaskRepository {
     int conversationId, {
     WriteTransaction? transaction,
   }) async {
-    await writeExecutor(transaction, _db).update(
-      'plan_item',
-      {
-        'conversation_id': conversationId,
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ? AND conversation_id IS NULL',
-      whereArgs: [planItemId],
+    final stamp = formatDateTime(_clock());
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.bindTaskConversation(conversationId, stamp, planItemId),
     );
   }
 
@@ -463,34 +458,31 @@ class TaskRepository {
     WriteTransaction? transaction,
   }) async {
     final now = _clock();
-    return writeExecutor(transaction, _db).insert('plan_item', {
-      'goal_id': goalId,
-      'conversation_id': conversationId,
-      'title': title.trim(),
-      'note': _clean(note),
-      'due_at': dueAt == null ? null : formatDateTime(dueAt),
-      'est_minutes': estMinutes,
-      'status': PlanItemStatus.todo.code,
-      'source': source,
-      'origin_json': origin == null ? null : jsonEncode(origin),
-      'created_at': formatDateTime(now),
-      'updated_at': formatDateTime(now),
-    });
+    return writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.insertPlanItem(
+        goalId,
+        conversationId,
+        title.trim(),
+        _clean(note),
+        dueAt == null ? null : formatDateTime(dueAt),
+        estMinutes,
+        PlanItemStatus.todo.code,
+        source,
+        origin == null ? null : jsonEncode(origin),
+        formatDateTime(now),
+      ),
+    );
   }
 
   /// 0 普通、1 优先、2 最高；容量不足时按它排序。
   Future<void> setPriority(int id, int priority) async {
     final value = priority.clamp(0, 2);
-    await _db.update(
-      'plan_item',
-      {'priority': value, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated((db) => db.setPlanItemPriority(value, stamp, id));
   }
 
   Future<void> deleteItem(int id) async {
-    await _db.delete('plan_item', where: 'id = ?', whereArgs: [id]);
+    await _db.writeGenerated((db) => db.deletePlanItem(id));
   }
 
   static String? _clean(String? value) {

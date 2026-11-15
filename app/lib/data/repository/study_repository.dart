@@ -23,14 +23,14 @@ class StudyRepository {
     WriteTransaction? transaction,
   }) async {
     final now = _clock();
-    final id = await writeExecutor(transaction, _db).insert('study_session', {
-      'goal_id': goalId,
-      'plan_item_id': planItemId,
-      'conversation_id': conversationId,
-      'started_at': formatDateTime(now),
-      'created_at': formatDateTime(now),
-      'updated_at': formatDateTime(now),
-    });
+    final id = await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.insertStudySession(
+        goalId,
+        planItemId,
+        conversationId,
+        formatDateTime(now),
+      ),
+    );
     return StudySession(
       id: id,
       goalId: goalId,
@@ -81,16 +81,8 @@ class StudyRepository {
     WriteTransaction? transaction,
   }) async {
     final now = formatDateTime(_clock());
-    await writeExecutor(transaction, _db).update(
-      'study_session',
-      {
-        'outcome': outcome,
-        'summary': summary?.trim(),
-        'ended_at': now,
-        'updated_at': now,
-      },
-      where: 'id = ?',
-      whereArgs: [id],
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.finishStudySession(outcome, summary?.trim(), now, id),
     );
   }
 

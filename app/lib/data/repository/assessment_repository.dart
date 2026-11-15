@@ -26,14 +26,10 @@ class AssessmentRepository {
     final text = result.trim();
     if (text.isEmpty) throw ArgumentError('判断内容不能为空');
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).insert('assessment', {
-      'attempt_id': attemptId,
-      'kind': kind.value,
-      'result': text,
-      'basis': basis?.trim(),
-      'created_at': now,
-      'updated_at': now,
-    });
+    return writeExecutor(transaction, _db).writeGenerated(
+      (db) =>
+          db.insertAssessment(attemptId, kind.value, text, basis?.trim(), now),
+    );
   }
 
   /// 草稿里的核对依据：有内容时写进这次尝试，清空时删掉，提交时沿用同一条。
@@ -68,36 +64,34 @@ class AssessmentRepository {
     );
     if (text == null || text.isEmpty) {
       if (ids.isNotEmpty) {
-        await writer.delete(
-          'assessment',
-          where: 'attempt_id = ? AND kind = ?',
-          whereArgs: [attemptId, AssessmentKind.user.value],
+        await writer.writeGenerated(
+          (db) =>
+              db.deleteAssessmentsOfKind(attemptId, AssessmentKind.user.value),
         );
       }
       return;
     }
     final now = formatDateTime(_clock());
     if (ids.isEmpty) {
-      await writer.insert('assessment', {
-        'attempt_id': attemptId,
-        'kind': AssessmentKind.user.value,
-        'result': text,
-        'created_at': now,
-        'updated_at': now,
-      });
+      await writer.writeGenerated(
+        (db) => db.insertAssessment(
+          attemptId,
+          AssessmentKind.user.value,
+          text,
+          null,
+          now,
+        ),
+      );
       return;
     }
-    await writer.update(
-      'assessment',
-      {'result': text, 'updated_at': now},
-      where: 'id = ?',
-      whereArgs: [ids.first],
+    await writer.writeGenerated(
+      (db) => db.updateAssessmentResult(text, now, ids.first),
     );
     if (ids.length > 1) {
-      await writer.delete(
-        'assessment',
-        where: 'id IN (${List.filled(ids.length - 1, '?').join(', ')})',
-        whereArgs: ids.skip(1).toList(growable: false),
+      await writer.writeGenerated(
+        (db) => db.deleteAssessmentIds(
+          jsonEncode(ids.skip(1).toList(growable: false)),
+        ),
       );
     }
   }

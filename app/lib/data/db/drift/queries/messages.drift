@@ -65,3 +65,14 @@ SELECT id FROM attempt WHERE session_id = :sessionId LIMIT 1;
 -- 消息上的结构化内容，改记忆状态时读写这一列。
 messageStructuredJson:
 SELECT structured_json FROM message WHERE id = :messageId LIMIT 1;
+
+insertConversationMessage:
+INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at)
+VALUES (:conversationId, :role, :content, :imagePaths, :structuredJson, :stamp);
+
+deleteConversationMessages:
+DELETE FROM message WHERE conversation_id = :conversationId;
+
+setMessageStructuredState:
+UPDATE message SET structured_json = :structuredJson
+WHERE id = :messageId;

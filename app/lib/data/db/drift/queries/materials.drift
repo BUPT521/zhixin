@@ -33,3 +33,15 @@ SELECT * FROM material_page
 WHERE material_id = :materialId AND page_no = :pageNo
 LIMIT 1;
 
+insertMaterial:
+INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at)
+VALUES (:title, :kind, :sourceRef, :fileName, :fileHash, :goalId, :stamp, :stamp);
+
+setMaterialGoal:
+UPDATE material SET goal_id = :goalId,
+  updated_at = :stamp
+WHERE id = :materialId;
+
+touchMaterial:
+UPDATE material SET updated_at = :stamp
+WHERE id = :materialId;

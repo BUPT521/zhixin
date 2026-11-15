@@ -31,3 +31,18 @@ ORDER BY id DESC;
 -- 取整行而不是只取 submitted_at，否则「有草稿未提交」与「没有这一行」区分不开。
 attemptSubmission:
 SELECT id, submitted_at FROM attempt WHERE id = :attemptId LIMIT 1;
+
+deleteAssessmentsOfKind:
+DELETE FROM assessment WHERE attempt_id = :attemptId AND kind = :kind;
+
+insertAssessment:
+INSERT INTO assessment (attempt_id, kind, result, basis, created_at, updated_at)
+VALUES (:attemptId, :kind, :result, :basis, :stamp, :stamp);
+
+updateAssessmentResult:
+UPDATE assessment SET result = :result,
+  updated_at = :stamp
+WHERE id = :assessmentId;
+
+deleteAssessmentIds:
+DELETE FROM assessment WHERE id IN (SELECT value FROM json_each(:ids));

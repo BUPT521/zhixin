@@ -49,3 +49,17 @@ SELECT * FROM study_session
 WHERE plan_item_id IN (SELECT value FROM json_each(:planItemIds))
   AND ended_at IS NOT NULL
 ORDER BY ended_at ASC, id ASC;
+
+insertStudySession:
+INSERT INTO study_session (goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at)
+VALUES (:goalId, :itemId, :conversationId, :stamp, :stamp, :stamp);
+
+finishStudySession:
+UPDATE study_session SET outcome = :outcome,
+  summary = :summary,
+  ended_at = :stamp,
+  updated_at = :stamp
+WHERE id = :sessionId;
+
+deleteStudySession:
+DELETE FROM study_session WHERE id = :sessionId;

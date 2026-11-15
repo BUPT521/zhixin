@@ -35,18 +35,19 @@ class StudyPlanRepository {
     final text = title.trim();
     if (text.isEmpty) throw ArgumentError('学习计划的标题不能为空');
     final now = formatDateTime(_clock());
-    return (executor ?? _db).insert('study_plan', {
-      'material_id': materialId,
-      'goal_id': goalId,
-      'conversation_id': conversationId,
-      'title': text,
-      'page_from': pageFrom,
-      'page_to': pageTo,
-      'current_page': currentPage,
-      'status': StudyPlanStatus.active.code,
-      'created_at': now,
-      'updated_at': now,
-    });
+    return (executor ?? _db).writeGenerated(
+      (db) => db.insertStudyPlan(
+        materialId,
+        goalId,
+        conversationId,
+        text,
+        pageFrom,
+        pageTo,
+        currentPage,
+        StudyPlanStatus.active.code,
+        now,
+      ),
+    );
   }
 
   /// 在同一事务内创建学习计划及其全部步骤。
@@ -76,23 +77,21 @@ class StudyPlanRepository {
       for (final draft in drafts) {
         final stepTitle = draft.title.trim();
         if (stepTitle.isEmpty) continue;
-        await txn.insert('plan_item', {
-          'goal_id': goalId,
-          'conversation_id': null,
-          'study_plan_id': planId,
-          'seq': seq++,
-          'title': stepTitle,
-          'note': draft.isPrerequisite
-              ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
-              : draft.note,
-          'page_from': draft.pageFrom,
-          'page_to': draft.pageTo,
-          'priority': 0,
-          'status': PlanItemStatus.todo.code,
-          'source': 'user',
-          'created_at': now,
-          'updated_at': now,
-        });
+        await txn.writeGenerated(
+          (db) => db.insertStudyPlanStep(
+            goalId,
+            planId,
+            seq++,
+            stepTitle,
+            draft.isPrerequisite
+                ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
+                : draft.note,
+            draft.pageFrom,
+            draft.pageTo,
+            PlanItemStatus.todo.code,
+            now,
+          ),
+        );
       }
       return planId;
     });
@@ -111,23 +110,21 @@ class StudyPlanRepository {
       for (final draft in drafts) {
         final title = draft.title.trim();
         if (title.isEmpty) continue;
-        await txn.insert('plan_item', {
-          'goal_id': plan.goalId,
-          'conversation_id': null,
-          'study_plan_id': planId,
-          'seq': seq++,
-          'title': title,
-          'note': draft.isPrerequisite
-              ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
-              : draft.note,
-          'page_from': draft.pageFrom,
-          'page_to': draft.pageTo,
-          'priority': 0,
-          'status': PlanItemStatus.todo.code,
-          'source': 'user',
-          'created_at': now,
-          'updated_at': now,
-        });
+        await txn.writeGenerated(
+          (db) => db.insertStudyPlanStep(
+            plan.goalId,
+            planId,
+            seq++,
+            title,
+            draft.isPrerequisite
+                ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
+                : draft.note,
+            draft.pageFrom,
+            draft.pageTo,
+            PlanItemStatus.todo.code,
+            now,
+          ),
+        );
       }
     });
   }
@@ -301,11 +298,8 @@ class StudyPlanRepository {
     required int conversationId,
     required WriteTransaction transaction,
   }) async {
-    final changed = await writeExecutor(transaction, _db).update(
-      'plan_item',
-      {'conversation_id': conversationId},
-      where: 'id = ? AND study_plan_id = ?',
-      whereArgs: [stepId, planId],
+    final changed = await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.setStudyStepConversation(conversationId, stepId, planId),
     );
     if (changed != 1) throw StateError('学习步骤已变化，无法保存讨论入口');
   }
@@ -351,22 +345,23 @@ class StudyPlanRepository {
     int? planId,
   ) async {
     final now = formatDateTime(_clock());
-    await txn.update(
-      'plan_item',
-      {
-        'status': status.code,
-        'completed_at': status == PlanItemStatus.done ? now : null,
-        'updated_at': now,
-      },
-      where: 'id = ?',
-      whereArgs: [itemId],
+    await txn.writeGenerated(
+      (db) => db.setStudyStepStatus(
+        status.code,
+        status == PlanItemStatus.done ? now : null,
+        now,
+        itemId,
+      ),
     );
     if (status == PlanItemStatus.doing && planId != null) {
-      await txn.update(
-        'plan_item',
-        {'status': PlanItemStatus.todo.code, 'updated_at': now},
-        where: 'study_plan_id = ? AND id != ? AND status = ?',
-        whereArgs: [planId, itemId, PlanItemStatus.doing.code],
+      await txn.writeGenerated(
+        (db) => db.resetOtherActiveStudySteps(
+          PlanItemStatus.todo.code,
+          now,
+          planId,
+          itemId,
+          PlanItemStatus.doing.code,
+        ),
       );
     }
     if (status == PlanItemStatus.done) {
@@ -383,21 +378,16 @@ class StudyPlanRepository {
       );
     }
     if (status == PlanItemStatus.deferred) {
-      await txn.update(
-        'schedule_block',
-        {'status': 'cancelled', 'updated_at': now},
-        where: "plan_item_id = ? AND status = 'planned'",
-        whereArgs: [itemId],
+      await txn.writeGenerated(
+        (db) => db.cancelPlannedBlocksForItem(now, itemId),
       );
     }
   }
 
   Future<void> setStatus(int planId, StudyPlanStatus status) async {
-    await _db.update(
-      'study_plan',
-      {'status': status.code, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [planId],
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated(
+      (db) => db.setStudyPlanStatus(status.code, stamp, planId),
     );
   }
 
@@ -423,15 +413,14 @@ class StudyPlanRepository {
         ? StudyPlanStatus.active
         : plan.status;
     if (currentPage == plan.currentPage && status == plan.status) return;
-    await executor.update(
-      'study_plan',
-      {
-        'current_page': currentPage,
-        if (status != plan.status) 'status': status.code,
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [planId],
+    final stamp = formatDateTime(_clock());
+    await executor.writeGenerated(
+      (db) => db.updateStudyPlanProgress(
+        currentPage,
+        status != plan.status ? status.code : null,
+        stamp,
+        planId,
+      ),
     );
   }
 

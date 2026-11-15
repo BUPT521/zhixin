@@ -38,3 +38,10 @@ JOIN plan_item p ON p.id = b.plan_item_id
 WHERE p.goal_id = :goalId AND b.status = 'planned' AND b.locked = 0
   AND b.start_at >= :now
 ORDER BY b.start_at;
+
+insertTimetableEntry:
+INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at)
+VALUES (:weekday, :startTime, :endTime, :title, :location, :stamp, :stamp);
+
+deleteTimetableEntry:
+DELETE FROM timetable_entry WHERE id = :entryId;

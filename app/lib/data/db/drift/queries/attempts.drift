@@ -21,3 +21,40 @@ WHERE NOT EXISTS (
   SELECT 1 FROM attempt
   WHERE conversation_id = :conversationId AND submitted_at IS NULL
 );
+
+updateOpenAttemptContext(
+  REQUIRED :sessionId AS INT OR NULL,
+  REQUIRED :redoOfAttemptId AS INT OR NULL,
+  REQUIRED :delayed AS INT OR NULL
+):
+UPDATE attempt SET session_id = COALESCE(:sessionId, session_id),
+  redo_of_attempt_id = COALESCE(:redoOfAttemptId, redo_of_attempt_id),
+  delayed = COALESCE(:delayed, delayed),
+  updated_at = :stamp
+WHERE id = :attemptId AND submitted_at IS NULL;
+
+saveOpenAttemptDraft:
+UPDATE attempt SET user_answer = :answer,
+  solution = :solution,
+  is_correct = :isCorrect,
+  independent = :independent,
+  delayed = :delayed,
+  feedback = :feedback,
+  updated_at = :stamp
+WHERE id = :attemptId AND submitted_at IS NULL;
+
+setAttemptHelp:
+UPDATE attempt SET help_json = :helpJson,
+  updated_at = :stamp
+WHERE id = :attemptId;
+
+submitOpenAttempt:
+UPDATE attempt SET user_answer = :answer,
+  solution = :solution,
+  is_correct = :isCorrect,
+  independent = :independent,
+  delayed = :delayed,
+  feedback = :feedback,
+  submitted_at = :stamp,
+  updated_at = :stamp
+WHERE id = :attemptId AND submitted_at IS NULL;

@@ -11621,6 +11621,46 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).map((QueryRow row) => row.readNullable<String>('structured_json'));
   }
 
+  Future<int> insertConversationMessage(
+    int conversationId,
+    String role,
+    String content,
+    String? imagePaths,
+    String? structuredJson,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<String>(role),
+        Variable<String>(content),
+        Variable<String>(imagePaths),
+        Variable<String>(structuredJson),
+        Variable<String>(stamp),
+      ],
+      updates: {this.messages},
+    );
+  }
+
+  Future<int> deleteConversationMessages(int conversationId) {
+    return customUpdate(
+      'DELETE FROM message WHERE conversation_id = ?1',
+      variables: [Variable<int>(conversationId)],
+      updates: {this.messages},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Future<int> setMessageStructuredState(String? structuredJson, int messageId) {
+    return customUpdate(
+      'UPDATE message SET structured_json = ?1 WHERE id = ?2',
+      variables: [Variable<String>(structuredJson), Variable<int>(messageId)],
+      updates: {this.messages},
+      updateKind: UpdateKind.update,
+    );
+  }
+
   Selectable<MaterialPageRow> pagesOfMaterial(int materialId) {
     return customSelect(
       'SELECT * FROM material_page WHERE material_id = ?1 ORDER BY page_no',
@@ -11667,6 +11707,54 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [Variable<int>(pageId)],
       readsFrom: {this.materialPages},
     ).map((QueryRow row) => row.read<int>('material_id'));
+  }
+
+  Future<int> insertMaterialPage(
+    int materialId,
+    int pageNo,
+    String? label,
+    String content,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO material_page (material_id, page_no, label, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      variables: [
+        Variable<int>(materialId),
+        Variable<int>(pageNo),
+        Variable<String>(label),
+        Variable<String>(content),
+        Variable<String>(stamp),
+      ],
+      updates: {this.materialPages},
+    );
+  }
+
+  Future<int> updateMaterialPage(
+    String content,
+    String? label,
+    String stamp,
+    int pageId,
+  ) {
+    return customUpdate(
+      'UPDATE material_page SET content = ?1, label = ?2, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(content),
+        Variable<String>(label),
+        Variable<String>(stamp),
+        Variable<int>(pageId),
+      ],
+      updates: {this.materialPages},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteMaterialPage(int pageId) {
+    return customUpdate(
+      'DELETE FROM material_page WHERE id = ?1',
+      variables: [Variable<int>(pageId)],
+      updates: {this.materialPages},
+      updateKind: UpdateKind.delete,
+    );
   }
 
   Selectable<TimetableEntryRow> allTimetableEntries() {
@@ -11734,6 +11822,100 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
 
+  Future<int> cancelPlannedBlocksForItem(String stamp, int itemId) {
+    return customUpdate(
+      'UPDATE schedule_block SET status = \'cancelled\', updated_at = ?1 WHERE plan_item_id = ?2 AND status = \'planned\'',
+      variables: [Variable<String>(stamp), Variable<int>(itemId)],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> insertScheduleBlock(
+    int itemId,
+    String startAt,
+    String endAt,
+    String source,
+    int locked,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO schedule_block (plan_item_id, start_at, end_at, source, status, locked, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, \'planned\', ?5, ?6, ?6)',
+      variables: [
+        Variable<int>(itemId),
+        Variable<String>(startAt),
+        Variable<String>(endAt),
+        Variable<String>(source),
+        Variable<int>(locked),
+        Variable<String>(stamp),
+      ],
+      updates: {this.scheduleBlocks},
+    );
+  }
+
+  Future<int> updatePlannedBlockTime(
+    String startAt,
+    String endAt,
+    String stamp,
+    int blockId,
+  ) {
+    return customUpdate(
+      'UPDATE schedule_block SET start_at = ?1, end_at = ?2, status = \'planned\', updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(startAt),
+        Variable<String>(endAt),
+        Variable<String>(stamp),
+        Variable<int>(blockId),
+      ],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setBlockLocked(int locked, String stamp, int blockId) {
+    return customUpdate(
+      'UPDATE schedule_block SET locked = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<int>(locked),
+        Variable<String>(stamp),
+        Variable<int>(blockId),
+      ],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> cancelPlannedBlocks(String stamp, String ids) {
+    return customUpdate(
+      'UPDATE schedule_block SET status = \'cancelled\', updated_at = ?1 WHERE id IN (SELECT value FROM json_each(?2)) AND status = \'planned\'',
+      variables: [Variable<String>(stamp), Variable<String>(ids)],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setScheduleBlockStatus(String status, String stamp, int blockId) {
+    return customUpdate(
+      'UPDATE schedule_block SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(blockId),
+      ],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteScheduleBlock(int blockId) {
+    return customUpdate(
+      'DELETE FROM schedule_block WHERE id = ?1',
+      variables: [Variable<int>(blockId)],
+      updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
   Selectable<ItemPlanResult> itemPlan(int itemId) {
     return customSelect(
       'SELECT id, study_plan_id FROM plan_item WHERE id = ?1 LIMIT 1',
@@ -11761,6 +11943,91 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [Variable<int>(id)],
       readsFrom: {this.studyPlans},
     ).asyncMap(this.studyPlans.mapFromRow);
+  }
+
+  Future<int> insertStudyPlanStep(
+    int? goalId,
+    int? planId,
+    int? seq,
+    String title,
+    String? note,
+    int? pageFrom,
+    int? pageTo,
+    String status,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO plan_item (goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, \'user\', ?9, ?9)',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(planId),
+        Variable<int>(seq),
+        Variable<String>(title),
+        Variable<String>(note),
+        Variable<int>(pageFrom),
+        Variable<int>(pageTo),
+        Variable<String>(status),
+        Variable<String>(stamp),
+      ],
+      updates: {this.planItems},
+    );
+  }
+
+  Future<int> setStudyStepConversation(
+    int? conversationId,
+    int stepId,
+    int? planId,
+  ) {
+    return customUpdate(
+      'UPDATE plan_item SET conversation_id = ?1 WHERE id = ?2 AND study_plan_id = ?3',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<int>(stepId),
+        Variable<int>(planId),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setStudyStepStatus(
+    String status,
+    String? completedAt,
+    String stamp,
+    int itemId,
+  ) {
+    return customUpdate(
+      'UPDATE plan_item SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(completedAt),
+        Variable<String>(stamp),
+        Variable<int>(itemId),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> resetOtherActiveStudySteps(
+    String todoStatus,
+    String stamp,
+    int? planId,
+    int itemId,
+    String doingStatus,
+  ) {
+    return customUpdate(
+      'UPDATE plan_item SET status = ?1, updated_at = ?2 WHERE study_plan_id = ?3 AND id != ?4 AND status = ?5',
+      variables: [
+        Variable<String>(todoStatus),
+        Variable<String>(stamp),
+        Variable<int>(planId),
+        Variable<int>(itemId),
+        Variable<String>(doingStatus),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
   }
 
   Selectable<AttemptRow> attemptsForConversation(int conversationId) {
@@ -11852,6 +12119,39 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Future<int> insertLearningGoal(
+    String title,
+    String? scopeText,
+    String? dueDate,
+    String status,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      variables: [
+        Variable<String>(title),
+        Variable<String>(scopeText),
+        Variable<String>(dueDate),
+        Variable<String>(status),
+        Variable<String>(stamp),
+      ],
+      updates: {this.learningGoals},
+    );
+  }
+
+  Future<int> setLearningGoalStatus(String status, String stamp, int goalId) {
+    return customUpdate(
+      'UPDATE learning_goal SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(goalId),
+      ],
+      updates: {this.learningGoals},
+      updateKind: UpdateKind.update,
+    );
+  }
+
   Selectable<MemoryRow> listMemories(int activeOnly) {
     return customSelect(
       'SELECT * FROM memory WHERE(?1 = 0 OR status = \'active\')ORDER BY status, updated_at DESC, id DESC',
@@ -11922,6 +12222,62 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).map((QueryRow row) => row.read<int>('id'));
   }
 
+  Future<int> insertMemory(
+    String kind,
+    String content,
+    String? scope,
+    String sourceKind,
+    int? sourceId,
+    String? validUntil,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO memory (kind, content, scope, source_kind, source_id, valid_until, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, \'active\', ?7, ?7)',
+      variables: [
+        Variable<String>(kind),
+        Variable<String>(content),
+        Variable<String>(scope),
+        Variable<String>(sourceKind),
+        Variable<int>(sourceId),
+        Variable<String>(validUntil),
+        Variable<String>(stamp),
+      ],
+      updates: {this.memories},
+    );
+  }
+
+  Future<int> updateMemoryContent(
+    String content,
+    String? validUntil,
+    String stamp,
+    int memoryId,
+  ) {
+    return customUpdate(
+      'UPDATE memory SET content = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(content),
+        Variable<String>(validUntil),
+        Variable<String>(stamp),
+        Variable<int>(memoryId),
+      ],
+      updates: {this.memories},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setMemoryStatus(String status, String stamp, int memoryId) {
+    return customUpdate(
+      'UPDATE memory SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(memoryId),
+      ],
+      updates: {this.memories},
+      updateKind: UpdateKind.update,
+    );
+  }
+
   Selectable<StudySessionRow> openStudySession(
     int conversationId,
     int planItemId,
@@ -11975,6 +12331,52 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.studySessions.mapFromRow);
   }
 
+  Future<int> insertStudySession(
+    int? goalId,
+    int? itemId,
+    int? conversationId,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO study_session (goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(itemId),
+        Variable<int>(conversationId),
+        Variable<String>(stamp),
+      ],
+      updates: {this.studySessions},
+    );
+  }
+
+  Future<int> finishStudySession(
+    String? outcome,
+    String? summary,
+    String? stamp,
+    int sessionId,
+  ) {
+    return customUpdate(
+      'UPDATE study_session SET outcome = ?1, summary = ?2, ended_at = ?3, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<String>(outcome),
+        Variable<String>(summary),
+        Variable<String>(stamp),
+        Variable<int>(sessionId),
+      ],
+      updates: {this.studySessions},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteStudySession(int sessionId) {
+    return customUpdate(
+      'DELETE FROM study_session WHERE id = ?1',
+      variables: [Variable<int>(sessionId)],
+      updates: {this.studySessions},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
   Selectable<AssessmentRow> assessmentsForAttempt(int attemptId) {
     return customSelect(
       'SELECT * FROM assessment WHERE attempt_id = ?1 ORDER BY id',
@@ -12020,6 +12422,61 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Future<int> deleteAssessmentsOfKind(int attemptId, String kind) {
+    return customUpdate(
+      'DELETE FROM assessment WHERE attempt_id = ?1 AND kind = ?2',
+      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      updates: {this.assessments},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Future<int> insertAssessment(
+    int attemptId,
+    String kind,
+    String result,
+    String? basis,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO assessment (attempt_id, kind, result, basis, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      variables: [
+        Variable<int>(attemptId),
+        Variable<String>(kind),
+        Variable<String>(result),
+        Variable<String>(basis),
+        Variable<String>(stamp),
+      ],
+      updates: {this.assessments},
+    );
+  }
+
+  Future<int> updateAssessmentResult(
+    String result,
+    String stamp,
+    int assessmentId,
+  ) {
+    return customUpdate(
+      'UPDATE assessment SET result = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(result),
+        Variable<String>(stamp),
+        Variable<int>(assessmentId),
+      ],
+      updates: {this.assessments},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteAssessmentIds(String ids) {
+    return customUpdate(
+      'DELETE FROM assessment WHERE id IN (SELECT value FROM json_each(?1))',
+      variables: [Variable<String>(ids)],
+      updates: {this.assessments},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
   Selectable<int> cutoffHour() {
     return customSelect(
       'SELECT day_cutoff_hour FROM profile WHERE id = 1',
@@ -12034,6 +12491,27 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [Variable<String>(metaKey)],
       readsFrom: {this.appMeta},
     ).map((QueryRow row) => row.read<String>('meta_value'));
+  }
+
+  Future<int> setProfileCutoffHour(int hour, String stamp) {
+    return customUpdate(
+      'UPDATE profile SET day_cutoff_hour = ?1, updated_at = ?2 WHERE id = 1',
+      variables: [Variable<int>(hour), Variable<String>(stamp)],
+      updates: {this.profiles},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> saveAppMetadata(String metaKey, String metaValue, String stamp) {
+    return customInsert(
+      'INSERT INTO app_meta ("key", value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT ("key") DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      variables: [
+        Variable<String>(metaKey),
+        Variable<String>(metaValue),
+        Variable<String>(stamp),
+      ],
+      updates: {this.appMeta},
+    );
   }
 
   Selectable<RecentSubmittedResult> recentSubmitted(
@@ -12281,6 +12759,113 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Future<int> insertConversationRecord(
+    String? title,
+    int? goalId,
+    int? materialId,
+    int? pageNo,
+    String? sourceRef,
+    String? contextText,
+    String entryKind,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO conversation (title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, \'open\', ?8, ?8)',
+      variables: [
+        Variable<String>(title),
+        Variable<int>(goalId),
+        Variable<int>(materialId),
+        Variable<int>(pageNo),
+        Variable<String>(sourceRef),
+        Variable<String>(contextText),
+        Variable<String>(entryKind),
+        Variable<String>(stamp),
+      ],
+      updates: {this.conversations},
+    );
+  }
+
+  Future<int> recordLastMessageTime(String stamp, int conversationId) {
+    return customUpdate(
+      'UPDATE conversation SET updated_at = ?1, last_message_at = ?1 WHERE id = ?2',
+      variables: [Variable<String>(stamp), Variable<int>(conversationId)],
+      updates: {this.conversations},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setConversationGoal(
+    int? goalId,
+    String stamp,
+    int conversationId,
+  ) {
+    return customUpdate(
+      'UPDATE conversation SET goal_id = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<int>(goalId),
+        Variable<String>(stamp),
+        Variable<int>(conversationId),
+      ],
+      updates: {this.conversations},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setConversationMaterial(
+    int? materialId,
+    int? pageNo,
+    String stamp,
+    int conversationId,
+  ) {
+    return customUpdate(
+      'UPDATE conversation SET material_id = ?1, page_no = ?2, updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<int>(materialId),
+        Variable<int>(pageNo),
+        Variable<String>(stamp),
+        Variable<int>(conversationId),
+      ],
+      updates: {this.conversations},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setQuestionMessage(int? messageId, int conversationId) {
+    return customUpdate(
+      'UPDATE conversation SET question_message_id = ?1 WHERE id = ?2',
+      variables: [Variable<int>(messageId), Variable<int>(conversationId)],
+      updates: {this.conversations},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> endConversation(String? stamp, int conversationId) {
+    return customUpdate(
+      'UPDATE conversation SET status = \'ended\', ended_at = ?1, updated_at = ?1 WHERE id = ?2',
+      variables: [Variable<String>(stamp), Variable<int>(conversationId)],
+      updates: {this.conversations},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteConversationRecord(int conversationId) {
+    return customUpdate(
+      'DELETE FROM conversation WHERE id = ?1',
+      variables: [Variable<int>(conversationId)],
+      updates: {this.conversations},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  Future<int> reopenConversation(String stamp, int conversationId) {
+    return customUpdate(
+      'UPDATE conversation SET status = \'open\', ended_at = NULL, updated_at = ?1 WHERE id = ?2',
+      variables: [Variable<String>(stamp), Variable<int>(conversationId)],
+      updates: {this.conversations},
+      updateKind: UpdateKind.update,
+    );
+  }
+
   Selectable<BlocksOverlappingResult> blocksOverlapping(
     String endAt,
     String startAt,
@@ -12356,6 +12941,37 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
 
+  Future<int> insertTimetableEntry(
+    int weekday,
+    String startTime,
+    String endTime,
+    String title,
+    String? location,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
+      variables: [
+        Variable<int>(weekday),
+        Variable<String>(startTime),
+        Variable<String>(endTime),
+        Variable<String>(title),
+        Variable<String>(location),
+        Variable<String>(stamp),
+      ],
+      updates: {this.timetableEntries},
+    );
+  }
+
+  Future<int> deleteTimetableEntry(int entryId) {
+    return customUpdate(
+      'DELETE FROM timetable_entry WHERE id = ?1',
+      variables: [Variable<int>(entryId)],
+      updates: {this.timetableEntries},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
   Selectable<MaterialByIdResult> materialById(int id) {
     return customSelect(
       'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE m.id = ?1',
@@ -12419,6 +13035,52 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.materialPages.mapFromRow);
   }
 
+  Future<int> insertMaterial(
+    String title,
+    String kind,
+    String? sourceRef,
+    String? fileName,
+    String? fileHash,
+    int? goalId,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)',
+      variables: [
+        Variable<String>(title),
+        Variable<String>(kind),
+        Variable<String>(sourceRef),
+        Variable<String>(fileName),
+        Variable<String>(fileHash),
+        Variable<int>(goalId),
+        Variable<String>(stamp),
+      ],
+      updates: {this.materials},
+    );
+  }
+
+  Future<int> setMaterialGoal(int? goalId, String stamp, int materialId) {
+    return customUpdate(
+      'UPDATE material SET goal_id = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<int>(goalId),
+        Variable<String>(stamp),
+        Variable<int>(materialId),
+      ],
+      updates: {this.materials},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> touchMaterial(String stamp, int materialId) {
+    return customUpdate(
+      'UPDATE material SET updated_at = ?1 WHERE id = ?2',
+      variables: [Variable<String>(stamp), Variable<int>(materialId)],
+      updates: {this.materials},
+      updateKind: UpdateKind.update,
+    );
+  }
+
   Selectable<int?> sessionGoalOfConversation(int conversationId) {
     return customSelect(
       'SELECT s.goal_id FROM attempt AS a JOIN study_session AS s ON s.id = a.session_id WHERE a.conversation_id = ?1 AND s.goal_id IS NOT NULL ORDER BY a.id DESC LIMIT 1',
@@ -12446,6 +13108,94 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(updatedAt),
       ],
       updates: {this.attempts},
+    );
+  }
+
+  Future<int> updateOpenAttemptContext(
+    int? sessionId,
+    int? redoOfAttemptId,
+    int? delayed,
+    String stamp,
+    int attemptId,
+  ) {
+    return customUpdate(
+      'UPDATE attempt SET session_id = COALESCE(?1, session_id), redo_of_attempt_id = COALESCE(?2, redo_of_attempt_id), delayed = COALESCE(?3, delayed), updated_at = ?4 WHERE id = ?5 AND submitted_at IS NULL',
+      variables: [
+        Variable<int>(sessionId),
+        Variable<int>(redoOfAttemptId),
+        Variable<int>(delayed),
+        Variable<String>(stamp),
+        Variable<int>(attemptId),
+      ],
+      updates: {this.attempts},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> saveOpenAttemptDraft(
+    String? answer,
+    String? solution,
+    int? isCorrect,
+    int? independent,
+    int delayed,
+    String? feedback,
+    String stamp,
+    int attemptId,
+  ) {
+    return customUpdate(
+      'UPDATE attempt SET user_answer = ?1, solution = ?2, is_correct = ?3, independent = ?4, delayed = ?5, feedback = ?6, updated_at = ?7 WHERE id = ?8 AND submitted_at IS NULL',
+      variables: [
+        Variable<String>(answer),
+        Variable<String>(solution),
+        Variable<int>(isCorrect),
+        Variable<int>(independent),
+        Variable<int>(delayed),
+        Variable<String>(feedback),
+        Variable<String>(stamp),
+        Variable<int>(attemptId),
+      ],
+      updates: {this.attempts},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setAttemptHelp(String? helpJson, String stamp, int attemptId) {
+    return customUpdate(
+      'UPDATE attempt SET help_json = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(helpJson),
+        Variable<String>(stamp),
+        Variable<int>(attemptId),
+      ],
+      updates: {this.attempts},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> submitOpenAttempt(
+    String? answer,
+    String? solution,
+    int? isCorrect,
+    int? independent,
+    int delayed,
+    String? feedback,
+    String? stamp,
+    int attemptId,
+  ) {
+    return customUpdate(
+      'UPDATE attempt SET user_answer = ?1, solution = ?2, is_correct = ?3, independent = ?4, delayed = ?5, feedback = ?6, submitted_at = ?7, updated_at = ?7 WHERE id = ?8 AND submitted_at IS NULL',
+      variables: [
+        Variable<String>(answer),
+        Variable<String>(solution),
+        Variable<int>(isCorrect),
+        Variable<int>(independent),
+        Variable<int>(delayed),
+        Variable<String>(feedback),
+        Variable<String>(stamp),
+        Variable<int>(attemptId),
+      ],
+      updates: {this.attempts},
+      updateKind: UpdateKind.update,
     );
   }
 
@@ -12738,6 +13488,75 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Future<int> bindTaskConversation(
+    int? conversationId,
+    String stamp,
+    int itemId,
+  ) {
+    return customUpdate(
+      'UPDATE plan_item SET conversation_id = ?1, updated_at = ?2 WHERE id = ?3 AND conversation_id IS NULL',
+      variables: [
+        Variable<int>(conversationId),
+        Variable<String>(stamp),
+        Variable<int>(itemId),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> insertPlanItem(
+    int? goalId,
+    int? conversationId,
+    String title,
+    String? note,
+    String? dueAt,
+    int? estMinutes,
+    String status,
+    String source,
+    String? origin,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO plan_item (goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)',
+      variables: [
+        Variable<int>(goalId),
+        Variable<int>(conversationId),
+        Variable<String>(title),
+        Variable<String>(note),
+        Variable<String>(dueAt),
+        Variable<int>(estMinutes),
+        Variable<String>(status),
+        Variable<String>(source),
+        Variable<String>(origin),
+        Variable<String>(stamp),
+      ],
+      updates: {this.planItems},
+    );
+  }
+
+  Future<int> setPlanItemPriority(int priority, String stamp, int itemId) {
+    return customUpdate(
+      'UPDATE plan_item SET priority = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<int>(priority),
+        Variable<String>(stamp),
+        Variable<int>(itemId),
+      ],
+      updates: {this.planItems},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deletePlanItem(int itemId) {
+    return customUpdate(
+      'DELETE FROM plan_item WHERE id = ?1',
+      variables: [Variable<int>(itemId)],
+      updates: {this.planItems},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
   Selectable<PlanRowsResult> planRows(
     String doneStatus,
     int id,
@@ -12868,6 +13687,66 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(plannedStatus),
       ],
       updates: {this.scheduleBlocks},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> insertStudyPlan(
+    int? materialId,
+    int? goalId,
+    int? conversationId,
+    String title,
+    int? pageFrom,
+    int? pageTo,
+    int? currentPage,
+    String status,
+    String stamp,
+  ) {
+    return customInsert(
+      'INSERT INTO study_plan (material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)',
+      variables: [
+        Variable<int>(materialId),
+        Variable<int>(goalId),
+        Variable<int>(conversationId),
+        Variable<String>(title),
+        Variable<int>(pageFrom),
+        Variable<int>(pageTo),
+        Variable<int>(currentPage),
+        Variable<String>(status),
+        Variable<String>(stamp),
+      ],
+      updates: {this.studyPlans},
+    );
+  }
+
+  Future<int> setStudyPlanStatus(String status, String stamp, int planId) {
+    return customUpdate(
+      'UPDATE study_plan SET status = ?1, updated_at = ?2 WHERE id = ?3',
+      variables: [
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(planId),
+      ],
+      updates: {this.studyPlans},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> updateStudyPlanProgress(
+    int? currentPage,
+    String? status,
+    String stamp,
+    int planId,
+  ) {
+    return customUpdate(
+      'UPDATE study_plan SET current_page = ?1, status = COALESCE(?2, status), updated_at = ?3 WHERE id = ?4',
+      variables: [
+        Variable<int>(currentPage),
+        Variable<String>(status),
+        Variable<String>(stamp),
+        Variable<int>(planId),
+      ],
+      updates: {this.studyPlans},
       updateKind: UpdateKind.update,
     );
   }

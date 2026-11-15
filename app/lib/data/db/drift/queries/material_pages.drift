@@ -29,3 +29,16 @@ SELECT source_file_hash FROM material WHERE id = :materialId LIMIT 1;
 -- 这一页属于哪份材料；删除后仍按它更新材料的修改时间。
 pageMaterialId:
 SELECT material_id FROM material_page WHERE id = :pageId LIMIT 1;
+
+insertMaterialPage:
+INSERT INTO material_page (material_id, page_no, label, content, created_at, updated_at)
+VALUES (:materialId, :pageNo, :label, :content, :stamp, :stamp);
+
+updateMaterialPage:
+UPDATE material_page SET content = :content,
+  label = :label,
+  updated_at = :stamp
+WHERE id = :pageId;
+
+deleteMaterialPage:
+DELETE FROM material_page WHERE id = :pageId;

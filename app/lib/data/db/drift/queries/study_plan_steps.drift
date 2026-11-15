@@ -18,3 +18,22 @@ ORDER BY seq, id;
 -- 按编号取一份计划。
 studyPlanById:
 SELECT * FROM study_plan WHERE id = :id LIMIT 1;
+
+insertStudyPlanStep:
+INSERT INTO plan_item (goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at)
+VALUES (:goalId, NULL, :planId, :seq, :title, :note, :pageFrom, :pageTo, 0, :status, 'user', :stamp, :stamp);
+
+setStudyStepConversation:
+UPDATE plan_item SET conversation_id = :conversationId
+WHERE id = :stepId AND study_plan_id = :planId;
+
+setStudyStepStatus:
+UPDATE plan_item SET status = :status,
+  completed_at = :completedAt,
+  updated_at = :stamp
+WHERE id = :itemId;
+
+resetOtherActiveStudySteps:
+UPDATE plan_item SET status = :todoStatus,
+  updated_at = :stamp
+WHERE study_plan_id = :planId AND id != :itemId AND status = :doingStatus;

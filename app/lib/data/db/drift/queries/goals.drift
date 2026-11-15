@@ -24,3 +24,12 @@ FROM plan_item p
 WHERE p.conversation_id = :conversationId AND p.title = :title
 ORDER BY p.id DESC
 LIMIT 1;
+
+insertLearningGoal:
+INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at)
+VALUES (:title, :scopeText, :dueDate, :status, :stamp, :stamp);
+
+setLearningGoalStatus:
+UPDATE learning_goal SET status = :status,
+  updated_at = :stamp
+WHERE id = :goalId;

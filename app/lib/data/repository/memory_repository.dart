@@ -104,17 +104,17 @@ class MemoryRepository {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).insert('memory', {
-      'kind': kind.value,
-      'content': text,
-      'scope': scope?.trim(),
-      'source_kind': sourceKind,
-      'source_id': sourceId,
-      'valid_until': validUntil == null ? null : formatDateTime(validUntil),
-      'status': 'active',
-      'created_at': now,
-      'updated_at': now,
-    });
+    return writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.insertMemory(
+        kind.value,
+        text,
+        scope?.trim(),
+        sourceKind,
+        sourceId,
+        validUntil == null ? null : formatDateTime(validUntil),
+        now,
+      ),
+    );
   }
 
   Future<void> updateContent(
@@ -125,34 +125,30 @@ class MemoryRepository {
   }) async {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
-    await writeExecutor(transaction, _db).update(
-      'memory',
-      {
-        'content': text,
-        'valid_until': validUntil == null ? null : formatDateTime(validUntil),
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [id],
+    final stamp = formatDateTime(_clock());
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.updateMemoryContent(
+        text,
+        validUntil == null ? null : formatDateTime(validUntil),
+        stamp,
+        id,
+      ),
     );
   }
 
   Future<void> supersede(int id) async {
-    await _db.update(
-      'memory',
-      {'status': 'superseded', 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated(
+      (db) => db.setMemoryStatus('superseded', stamp, id),
     );
   }
 
   Future<void> delete(int id, {WriteTransaction? transaction}) async {
-    await writeExecutor(transaction, _db).update(
-      'memory',
-      {'status': 'deleted', 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final stamp = formatDateTime(_clock());
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setMemoryStatus('deleted', stamp, id));
   }
 
   /// 这条来源是否已经有记忆记录（包括纠正或删除过的），用于避免同一来源
@@ -170,11 +166,7 @@ class MemoryRepository {
 
   /// 撤销删除或纠正时恢复为 active。
   Future<void> restore(int id) async {
-    await _db.update(
-      'memory',
-      {'status': 'active', 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated((db) => db.setMemoryStatus('active', stamp, id));
   }
 }

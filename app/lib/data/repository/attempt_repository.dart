@@ -132,16 +132,16 @@ class AttemptRepository {
         redoOfAttemptId != null && attempt.redoOfAttemptId != redoOfAttemptId;
     final delayedChanged = delayed && !attempt.delayed;
     if (!sessionChanged && !redoChanged && !delayedChanged) return attempt;
-    await writer.update(
-      'attempt',
-      {
-        if (sessionChanged) 'session_id': sessionId,
-        if (redoChanged) 'redo_of_attempt_id': redoOfAttemptId,
-        if (delayedChanged) 'delayed': 1,
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ? AND submitted_at IS NULL',
-      whereArgs: [attempt.id],
+    final attemptId = attempt.id;
+    final stamp = formatDateTime(_clock());
+    await writer.writeGenerated(
+      (db) => db.updateOpenAttemptContext(
+        sessionChanged ? sessionId : null,
+        redoChanged ? redoOfAttemptId : null,
+        delayedChanged ? 1 : null,
+        stamp,
+        attemptId,
+      ),
     );
     return await find() ?? attempt;
   }
@@ -161,19 +161,18 @@ class AttemptRepository {
     WriteTransaction? transaction,
   }) async {
     final text = answer.trim();
-    await writeExecutor(transaction, _db).update(
-      'attempt',
-      {
-        'user_answer': text.isEmpty ? null : text,
-        'solution': _clean(solution),
-        'is_correct': isCorrect == null ? null : (isCorrect ? 1 : 0),
-        'independent': independent == null ? null : (independent ? 1 : 0),
-        'delayed': delayed ? 1 : 0,
-        'feedback': _clean(feedback),
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ? AND submitted_at IS NULL',
-      whereArgs: [attemptId],
+    final stamp = formatDateTime(_clock());
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.saveOpenAttemptDraft(
+        text.isEmpty ? null : text,
+        _clean(solution),
+        isCorrect == null ? null : (isCorrect ? 1 : 0),
+        independent == null ? null : (independent ? 1 : 0),
+        delayed ? 1 : 0,
+        _clean(feedback),
+        stamp,
+        attemptId,
+      ),
     );
   }
 
@@ -191,14 +190,10 @@ class AttemptRepository {
     if (row == null) return;
     final helps = HelpEntry.decodeList(row.helpJson);
     final updated = [...helps, help];
-    await writer.update(
-      'attempt',
-      {
-        'help_json': HelpEntry.encodeList(updated),
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [attemptId],
+    final stamp = formatDateTime(_clock());
+    await writer.writeGenerated(
+      (db) =>
+          db.setAttemptHelp(HelpEntry.encodeList(updated), stamp, attemptId),
     );
   }
 
@@ -223,14 +218,9 @@ class AttemptRepository {
     }
     final updated = change(helps[helpIndex]);
     final list = [...helps]..[helpIndex] = updated;
-    await writer.update(
-      'attempt',
-      {
-        'help_json': HelpEntry.encodeList(list),
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [attemptId],
+    final stamp = formatDateTime(_clock());
+    await writer.writeGenerated(
+      (db) => db.setAttemptHelp(HelpEntry.encodeList(list), stamp, attemptId),
     );
     return updated;
   }
@@ -247,20 +237,17 @@ class AttemptRepository {
     WriteTransaction? transaction,
   }) async {
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).update(
-      'attempt',
-      {
-        'user_answer': answer.trim(),
-        'solution': _clean(solution),
-        'is_correct': isCorrect == null ? null : (isCorrect ? 1 : 0),
-        'independent': independent == null ? null : (independent ? 1 : 0),
-        'delayed': delayed ? 1 : 0,
-        'feedback': _clean(feedback),
-        'submitted_at': now,
-        'updated_at': now,
-      },
-      where: 'id = ? AND submitted_at IS NULL',
-      whereArgs: [attemptId],
+    return writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.submitOpenAttempt(
+        answer.trim(),
+        _clean(solution),
+        isCorrect == null ? null : (isCorrect ? 1 : 0),
+        independent == null ? null : (independent ? 1 : 0),
+        delayed ? 1 : 0,
+        _clean(feedback),
+        now,
+        attemptId,
+      ),
     );
   }
 

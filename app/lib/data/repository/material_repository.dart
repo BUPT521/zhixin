@@ -51,16 +51,17 @@ class MaterialRepository {
     final text = title.trim();
     if (text.isEmpty) throw ArgumentError('材料标题不能为空');
     final now = formatDateTime(_clock());
-    return executor.insert('material', {
-      'title': text,
-      'kind': kind,
-      'source_ref': _clean(sourceRef),
-      'source_file_name': sourceFileName,
-      'source_file_hash': sourceFileHash,
-      'goal_id': goalId,
-      'created_at': now,
-      'updated_at': now,
-    });
+    return executor.writeGenerated(
+      (db) => db.insertMaterial(
+        text,
+        kind,
+        _clean(sourceRef),
+        sourceFileName,
+        sourceFileHash,
+        goalId,
+        now,
+      ),
+    );
   }
 
   /// 页码行的字段与领域模型同名，只补时间解析。
@@ -133,12 +134,8 @@ class MaterialRepository {
   }
 
   Future<void> setGoal(int id, int? goalId) async {
-    await _db.update(
-      'material',
-      {'goal_id': goalId, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated((db) => db.setMaterialGoal(goalId, stamp, id));
   }
 
   Future<List<MaterialPage>> pages(int materialId) async {
@@ -232,14 +229,10 @@ class MaterialRepository {
     );
     if (existing != null) throw PageNumberTaken(pageNo);
     final now = formatDateTime(_clock());
-    final id = await executor.insert('material_page', {
-      'material_id': materialId,
-      'page_no': pageNo,
-      'label': _clean(label),
-      'content': text,
-      'created_at': now,
-      'updated_at': now,
-    });
+    final id = await executor.writeGenerated(
+      (db) =>
+          db.insertMaterialPage(materialId, pageNo, _clean(label), text, now),
+    );
     await _touch(materialId, now, executor: executor);
     return id;
   }
@@ -282,11 +275,8 @@ class MaterialRepository {
     );
     if (materialId == null) throw StateError('这一页已不存在');
     final now = formatDateTime(_clock());
-    await executor.update(
-      'material_page',
-      {'content': text, 'label': _clean(label), 'updated_at': now},
-      where: 'id = ?',
-      whereArgs: [pageId],
+    await executor.writeGenerated(
+      (db) => db.updateMaterialPage(text, _clean(label), now, pageId),
     );
     await _touch(materialId, now, executor: executor);
   }
@@ -360,7 +350,7 @@ class MaterialRepository {
     final materialId = await _db.selectGenerated(
       (db) => db.pageMaterialId(pageId).getSingleOrNull(),
     );
-    await _db.delete('material_page', where: 'id = ?', whereArgs: [pageId]);
+    await _db.writeGenerated((db) => db.deleteMaterialPage(pageId));
     if (materialId != null) {
       await _touch(materialId, formatDateTime(_clock()));
     }
@@ -442,11 +432,8 @@ class MaterialRepository {
     String stamp, {
     RawExecutor? executor,
   }) async {
-    await (executor ?? _db).update(
-      'material',
-      {'updated_at': stamp},
-      where: 'id = ?',
-      whereArgs: [materialId],
+    await (executor ?? _db).writeGenerated(
+      (db) => db.touchMaterial(stamp, materialId),
     );
   }
 

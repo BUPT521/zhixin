@@ -308,18 +308,18 @@ class ConversationRepository {
     WriteTransaction? transaction,
   }) async {
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).insert('conversation', {
-      'title': _clean(title),
-      'goal_id': goalId,
-      'material_id': materialId,
-      'page_no': pageNo,
-      'source_ref': _clean(sourceRef),
-      'context_text': _clean(contextText),
-      'entry_kind': entryKind,
-      'status': 'open',
-      'created_at': now,
-      'updated_at': now,
-    });
+    return writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.insertConversationRecord(
+        _clean(title),
+        goalId,
+        materialId,
+        pageNo,
+        _clean(sourceRef),
+        _clean(contextText),
+        entryKind,
+        now,
+      ),
+    );
   }
 
   Future<ConversationRecord?> byId(
@@ -541,19 +541,18 @@ class ConversationRepository {
     final stamp = formatDateTime(now);
     final structuredJson = structured == null ? null : jsonEncode(structured);
     final writer = writeExecutor(transaction, _db);
-    final id = await writer.insert('message', {
-      'conversation_id': conversationId,
-      'role': role,
-      'content': text,
-      'image_paths_json': ChatMessage.encodePaths(paths),
-      'structured_json': structuredJson,
-      'created_at': stamp,
-    });
-    await writer.update(
-      'conversation',
-      {'updated_at': stamp, 'last_message_at': stamp},
-      where: 'id = ?',
-      whereArgs: [conversationId],
+    final id = await writer.writeGenerated(
+      (db) => db.insertConversationMessage(
+        conversationId,
+        role,
+        text,
+        ChatMessage.encodePaths(paths),
+        structuredJson,
+        stamp,
+      ),
+    );
+    await writer.writeGenerated(
+      (db) => db.recordLastMessageTime(stamp, conversationId),
     );
     return ChatMessage(
       id: id,
@@ -568,11 +567,9 @@ class ConversationRepository {
 
   /// 记下用户明确选择的归属；传入空值表示改回无归属。
   Future<void> setGoal(int conversationId, int? goalId) async {
-    await _db.update(
-      'conversation',
-      {'goal_id': goalId, 'updated_at': formatDateTime(_clock())},
-      where: 'id = ?',
-      whereArgs: [conversationId],
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated(
+      (db) => db.setConversationGoal(goalId, stamp, conversationId),
     );
   }
 
@@ -582,15 +579,14 @@ class ConversationRepository {
     required int? materialId,
     int? pageNo,
   }) async {
-    await _db.update(
-      'conversation',
-      {
-        'material_id': materialId,
-        'page_no': materialId == null ? null : pageNo,
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [conversationId],
+    final stamp = formatDateTime(_clock());
+    await _db.writeGenerated(
+      (db) => db.setConversationMaterial(
+        materialId,
+        materialId == null ? null : pageNo,
+        stamp,
+        conversationId,
+      ),
     );
   }
 
@@ -603,23 +599,16 @@ class ConversationRepository {
     int messageId, {
     WriteTransaction? transaction,
   }) async {
-    await writeExecutor(transaction, _db).update(
-      'conversation',
-      {'question_message_id': messageId},
-      where: 'id = ?',
-      whereArgs: [conversationId],
-    );
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setQuestionMessage(messageId, conversationId));
   }
 
   /// 结束一次求助；之后再发消息会重新打开同一条讨论。
   Future<void> end(int conversationId) async {
     final now = formatDateTime(_clock());
-    await _db.update(
-      'conversation',
-      {'status': 'ended', 'ended_at': now, 'updated_at': now},
-      where: 'id = ?',
-      whereArgs: [conversationId],
-    );
+    await _db.writeGenerated((db) => db.endConversation(now, conversationId));
   }
 
   /// 清空一条学习记录：删掉消息与记录；作答随外键级联删除。
@@ -645,26 +634,18 @@ class ConversationRepository {
           // 损坏的路径记录不应阻止清空；启动清理会回收失去引用的文件。
         }
       }
-      await txn.delete(
-        'message',
-        where: 'conversation_id = ?',
-        whereArgs: [conversationId],
+      await txn.writeGenerated(
+        (db) => db.deleteConversationMessages(conversationId),
       );
-      await txn.delete(
-        'conversation',
-        where: 'id = ?',
-        whereArgs: [conversationId],
+      await txn.writeGenerated(
+        (db) => db.deleteConversationRecord(conversationId),
       );
       for (final sessionId in sessionIds) {
         final remainingId = await txn.selectGenerated(
           (db) => db.attemptsInSession(sessionId).getSingleOrNull(),
         );
         if (remainingId == null) {
-          await txn.delete(
-            'study_session',
-            where: 'id = ?',
-            whereArgs: [sessionId],
-          );
+          await txn.writeGenerated((db) => db.deleteStudySession(sessionId));
         }
       }
       return imagePaths.toList(growable: false);
@@ -675,16 +656,11 @@ class ConversationRepository {
     int conversationId, {
     WriteTransaction? transaction,
   }) async {
-    await writeExecutor(transaction, _db).update(
-      'conversation',
-      {
-        'status': 'open',
-        'ended_at': null,
-        'updated_at': formatDateTime(_clock()),
-      },
-      where: 'id = ?',
-      whereArgs: [conversationId],
-    );
+    final stamp = formatDateTime(_clock());
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.reopenConversation(stamp, conversationId));
   }
 
   /// 接受一条下一步建议后，在原消息里记下标题与提交编号；重新打开不会重复
@@ -767,11 +743,8 @@ class ConversationRepository {
     }
     if (!found) return;
     structured['memory_items'] = items;
-    await executor.update(
-      'message',
-      {'structured_json': jsonEncode(structured)},
-      where: 'id = ?',
-      whereArgs: [messageId],
+    await executor.writeGenerated(
+      (db) => db.setMessageStructuredState(jsonEncode(structured), messageId),
     );
   }
 
@@ -804,11 +777,8 @@ class ConversationRepository {
       operations.add({'commit_id': commitId, 'text': '已添加安排：$title'});
       structured['operations'] = operations;
     }
-    await database.update(
-      'message',
-      {'structured_json': jsonEncode(structured)},
-      where: 'id = ?',
-      whereArgs: [messageId],
+    await database.writeGenerated(
+      (db) => db.setMessageStructuredState(jsonEncode(structured), messageId),
     );
   }
 
