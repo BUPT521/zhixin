@@ -11,7 +11,7 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 MaterialService _service(TestRig rig, {Clock? clock}) => MaterialService(
-  materials: MaterialRepository(rig.db.rawDb, clock: clock ?? systemClock),
+  materials: MaterialRepository(rig.db, clock: clock ?? systemClock),
   transactions: WriteTransactions(rig.db),
   runtime: testRuntime(),
 );

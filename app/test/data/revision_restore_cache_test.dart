@@ -66,7 +66,7 @@ void main() {
       'created_at': '2026-11-10 09:00:00',
       'updated_at': '2026-11-10 09:00:00',
     });
-    final target = await rig.engine.headId(rig.raw.rawDb);
+    final target = await rig.engine.headId(rig.raw);
     await updateRow(
       rig.db,
       'learning_goal',
@@ -77,7 +77,7 @@ void main() {
 
     final result = await rig.revisions.restore(
       target,
-      expectedHead: await rig.engine.headId(rig.raw.rawDb),
+      expectedHead: await rig.engine.headId(rig.raw),
     );
 
     expect(result.commit.action, contains('恢复'));

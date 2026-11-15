@@ -78,10 +78,10 @@ class CorpusIds {
 }
 
 Future<CorpusIds> _seed(RawDatabase db) async {
-  final tasks = TaskRepository(db.rawDb);
-  final materials = MaterialRepository(db.rawDb);
-  final conversations = ConversationRepository(db.rawDb);
-  final attempts = AttemptRepository(db.rawDb);
+  final tasks = TaskRepository(db);
+  final materials = MaterialRepository(db);
+  final conversations = ConversationRepository(db);
+  final attempts = AttemptRepository(db);
 
   final goalProbability = await tasks.createGoal(title: '概率论期末');
   final goalLinear = await tasks.createGoal(title: '线性代数作业');
@@ -622,10 +622,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final ids = await _seed(db);
-    final harness = _Harness(
-      repository: EvidenceRepository(db.rawDb),
-      ids: ids,
-    );
+    final harness = _Harness(repository: EvidenceRepository(db), ids: ids);
 
     final outcomes = <CaseOutcome>[];
     final report = StringBuffer();

@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/revisions/revision_actions.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
@@ -21,7 +20,7 @@ void main() {
       }, where: 'id = 1');
     }, label: changeCutoffHourAction);
 
-    final commitId = await rig.engine.headId(rig.raw.rawDb);
+    final commitId = await rig.engine.headId(rig.raw);
     final history = await rig.revisions.history();
     final reasons = await rig.revisions.undoBlockReasons(history.commits);
     expect(reasons[commitId], isNull);
@@ -44,7 +43,7 @@ void main() {
           'updated_at': at,
         }, where: 'id = 1');
       }, label: changeCutoffHourAction);
-      return rig.engine.headId(rig.raw.rawDb);
+      return rig.engine.headId(rig.raw);
     }
 
     final first = await setHour(6, '2026-11-10T12:00:00');
@@ -69,7 +68,7 @@ void main() {
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    final commitId = await rig.engine.headId(rig.raw.rawDb);
+    final commitId = await rig.engine.headId(rig.raw);
 
     final undone = await rig.revisions.undoCommit(commitId);
     expect(undone.applied, isTrue, reason: undone.message);

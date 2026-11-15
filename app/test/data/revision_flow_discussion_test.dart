@@ -78,18 +78,18 @@ class _Rig {
     );
     revisions = RevisionService(
       db: db,
-      raw: () => raw.rawDb,
+      raw: () => raw,
       engine: engine,
       clock: () => DateTime(2026, 11, 10, 10),
       cache: cache,
     );
-    final conversations = ConversationRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
     this.conversations = conversations;
-    final tasks = TaskRepository(db.rawDb);
-    final schedule = ScheduleRepository(db.rawDb);
-    final memories = MemoryRepository(db.rawDb);
-    final attempts = AttemptRepository(db.rawDb);
-    final materials = MaterialRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final schedule = ScheduleRepository(db);
+    final memories = MemoryRepository(db);
+    final attempts = AttemptRepository(db);
+    final materials = MaterialRepository(db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     discussion = DiscussionService(
       conversations: conversations,
@@ -155,7 +155,7 @@ void main() {
       ),
       hasLength(1),
     );
-    expect(await rig.engine.assets.verify(rig.raw.rawDb, hash), isTrue);
+    expect(await rig.engine.assets.verify(rig.raw, hash), isTrue);
 
     // 再发一张完全相同的图片：附件对象复用，不重复分块。
     await rig.discussion.reply(
@@ -166,8 +166,8 @@ void main() {
     expect(await selectRows(rig.raw, 'asset_object'), hasLength(1));
     expect(await selectRows(rig.raw, 'asset_chunk'), isNotEmpty);
 
-    final submittedHead = await rig.engine.headId(rig.raw.rawDb);
-    final submitted = await rig.engine.readProjection(rig.raw.rawDb);
+    final submittedHead = await rig.engine.headId(rig.raw);
+    final submitted = await rig.engine.readProjection(rig.raw);
     expect(submitted['conversation'], isNotEmpty);
     expect(submitted['message'], isNotEmpty);
 
@@ -177,18 +177,15 @@ void main() {
     await rig.close();
     await rig.open();
     expect(await selectRows(rig.raw, 'conversation'), isEmpty);
-    expect(
-      await rig.engine.projectionAt(rig.raw.rawDb, submittedHead),
-      submitted,
-    );
+    expect(await rig.engine.projectionAt(rig.raw, submittedHead), submitted);
 
     // 整版恢复到提交时的版本，逐字段比较全部业务表。
-    final currentHead = await rig.engine.headId(rig.raw.rawDb);
+    final currentHead = await rig.engine.headId(rig.raw);
     final preview = await rig.revisions.previewRestore(submittedHead);
     expect(preview.head, currentHead);
     expect(preview.diff.insertCount, greaterThan(0));
     await rig.revisions.restore(submittedHead, expectedHead: currentHead);
-    final restored = await rig.engine.readProjection(rig.raw.rawDb);
+    final restored = await rig.engine.readProjection(rig.raw);
     expect(restored, submitted);
     expect(
       await selectRows(
@@ -213,7 +210,7 @@ void main() {
           ...(jsonDecode(raw) as List).whereType<String>(),
     ];
     expect(refs, contains(hash));
-    expect(await rig.engine.assets.verify(rig.raw.rawDb, hash), isTrue);
+    expect(await rig.engine.assets.verify(rig.raw, hash), isTrue);
     expect(File(rig.cache.pathFor(hash)).existsSync(), isTrue);
     await rig.close();
   });
@@ -225,7 +222,7 @@ void main() {
     });
     final rig = _Rig(dir);
     await rig.open();
-    final head = await rig.engine.headId(rig.raw.rawDb);
+    final head = await rig.engine.headId(rig.raw);
     final bytes = Uint8List.fromList(List<int>.generate(300, (i) => i));
     final hash = AssetStore.hashBytes(bytes);
     await expectLater(
@@ -237,7 +234,7 @@ void main() {
           'created_at': '2026-11-10T10:00:00',
           'updated_at': '2026-11-10T10:00:00',
         });
-        await rig.engine.assets.putBytes(txn.raw, hash, bytes);
+        await rig.engine.assets.putBytes(txn, hash, bytes);
         await insertRow(txn, 'message', {
           'conversation_id': conversation,
           'role': 'user',
@@ -249,7 +246,7 @@ void main() {
       }),
       throwsA(isA<StateError>()),
     );
-    expect(await rig.engine.headId(rig.raw.rawDb), head);
+    expect(await rig.engine.headId(rig.raw), head);
     expect(await selectRows(rig.raw, 'conversation'), isEmpty);
     expect(await selectRows(rig.raw, 'message'), isEmpty);
     expect(await selectRows(rig.raw, 'asset_object'), isEmpty);

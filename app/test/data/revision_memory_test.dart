@@ -41,31 +41,31 @@ void main() {
     final rig = await openTestRig(clock: () => DateTime(2026, 11, 10, 10));
     addTearDown(rig.close);
 
-    final conversations = ConversationRepository(rig.db.rawDb);
-    final tasks = TaskRepository(rig.db.rawDb);
-    final schedule = ScheduleRepository(rig.db.rawDb);
-    final memories = MemoryRepository(rig.db.rawDb);
+    final conversations = ConversationRepository(rig.db);
+    final tasks = TaskRepository(rig.db);
+    final schedule = ScheduleRepository(rig.db);
+    final memories = MemoryRepository(rig.db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     final service = DiscussionService(
       conversations: conversations,
       ai: _NoAi(),
       context: ContextService(
         tasks: tasks,
-        attempts: AttemptRepository(rig.db.rawDb),
+        attempts: AttemptRepository(rig.db),
         schedule: schedule,
         memories: memories,
         conversations: conversations,
-        materials: MaterialRepository(rig.db.rawDb),
+        materials: MaterialRepository(rig.db),
         runtime: testRuntime(policy: () => policy),
       ),
       memoryScope: MemoryScopeService(
         conversations: conversations,
-        attempts: AttemptRepository(rig.db.rawDb),
+        attempts: AttemptRepository(rig.db),
       ),
       memories: memories,
       revisions: rig.revisions,
       tasks: tasks,
-      materials: MaterialRepository(rig.db.rawDb),
+      materials: MaterialRepository(rig.db),
       runtime: testRuntime(policy: () => policy),
       transactions: WriteTransactions(rig.db),
       cleanupAttachmentPaths: (_) async {},

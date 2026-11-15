@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
@@ -59,7 +58,7 @@ void main() {
       'updated_at': '2026-11-10T10:00:00',
     });
     await db.transaction((txn) async {
-      await engine.assets.putBytes(txn.raw, hash, image);
+      await engine.assets.putBytes(txn, hash, image);
       await insertRow(txn, 'message', {
         'conversation_id': conversation,
         'role': 'user',
@@ -70,9 +69,9 @@ void main() {
     });
     imageWatch.stop();
 
-    final head = await engine.headId(raw.rawDb);
+    final head = await engine.headId(raw);
     final restoreWatch = Stopwatch()..start();
-    await engine.restore(raw.rawDb, 50, expectedHead: head);
+    await engine.restore(raw, 50, expectedHead: head);
     restoreWatch.stop();
 
     final page = await raw.rawQuery('PRAGMA page_count');

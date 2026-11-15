@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 
 import '../support/test_db.dart';
@@ -10,8 +9,8 @@ void main() {
   test('区间查询包含跨越查询起点的时间块', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final schedule = ScheduleRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final schedule = ScheduleRepository(db);
     final itemId = await tasks.createItem(title: '跨夜复习');
     await schedule.addBlock(
       planItemId: itemId,
@@ -30,8 +29,8 @@ void main() {
   test('新建和改期统一拒绝重叠时间块及课表占用', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final schedule = ScheduleRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final schedule = ScheduleRepository(db);
     final firstItem = await tasks.createItem(title: '第一项');
     final secondItem = await tasks.createItem(title: '第二项');
     final start = DateTime(2026, 11, 9, 10);
@@ -89,8 +88,8 @@ void main() {
   test('恢复为待开始时同样拒绝与已有预约重叠', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final schedule = ScheduleRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final schedule = ScheduleRepository(db);
     final firstItem = await tasks.createItem(title: '原预约');
     final secondItem = await tasks.createItem(title: '新事项');
     final start = DateTime(2026, 11, 9, 10);
@@ -114,9 +113,9 @@ void main() {
   test('新增课表先核对既有预约，重叠时拒绝且不写入', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
+    final tasks = TaskRepository(db);
     final schedule = ScheduleRepository(
-      db.rawDb,
+      db,
       clock: () => DateTime(2026, 11, 6, 18),
     );
     final item = await tasks.createItem(title: '概率论作业');
@@ -156,9 +155,9 @@ void main() {
   test('跨日预约与次日凌晨的课表同样算重叠', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
+    final tasks = TaskRepository(db);
     final schedule = ScheduleRepository(
-      db.rawDb,
+      db,
       clock: () => DateTime(2026, 11, 6, 18),
     );
     final item = await tasks.createItem(title: '跨夜复习');
@@ -183,9 +182,9 @@ void main() {
   test('已经结束的预约不阻止新增课表', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
+    final tasks = TaskRepository(db);
     final schedule = ScheduleRepository(
-      db.rawDb,
+      db,
       clock: () => DateTime(2026, 11, 6, 18),
     );
     final item = await tasks.createItem(title: '上周的复习');
@@ -207,8 +206,8 @@ void main() {
   test('批量取消遇到已经取消的预约时整组不写', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final schedule = ScheduleRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final schedule = ScheduleRepository(db);
     final item = await tasks.createItem(title: '复习');
     final first = await schedule.addBlock(
       planItemId: item,

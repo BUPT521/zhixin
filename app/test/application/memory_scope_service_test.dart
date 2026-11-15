@@ -27,10 +27,10 @@ void main() {
   test('传入已读记录时不按编号再读一次', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final conversations = _CountingConversations(rig.db.rawDb);
+    final conversations = _CountingConversations(rig.db);
     final service = MemoryScopeService(
       conversations: conversations,
-      attempts: AttemptRepository(rig.db.rawDb),
+      attempts: AttemptRepository(rig.db),
     );
 
     final resolved = await service.resolve(
@@ -46,11 +46,11 @@ void main() {
   test('没有传入记录时仍按编号读取', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final conversations = _CountingConversations(rig.db.rawDb);
+    final conversations = _CountingConversations(rig.db);
     final id = await conversations.create(title: '讨论');
     final service = MemoryScopeService(
       conversations: conversations,
-      attempts: AttemptRepository(rig.db.rawDb),
+      attempts: AttemptRepository(rig.db),
     );
 
     conversations.reads = 0;

@@ -9,7 +9,6 @@ import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
@@ -47,7 +46,7 @@ void main() {
       'updated_at': '2026-11-10T10:00:00',
     });
     await db.transaction((txn) async {
-      await engine.assets.putBytes(txn.raw, hash, bytes);
+      await engine.assets.putBytes(txn, hash, bytes);
       await insertRow(txn, 'message', {
         'conversation_id': conversation,
         'role': 'user',
@@ -56,9 +55,9 @@ void main() {
         'created_at': '2026-11-10T10:00:00',
       });
     });
-    final before = await engine.headId(raw.rawDb);
+    final before = await engine.headId(raw);
     final path = '${dir.path}/current.zip';
-    await packages.exportCurrent(db.rawDb, path);
+    await packages.exportCurrent(db, path);
 
     final archive = ZipDecoder().decodeBytes(await File(path).readAsBytes());
     final manifest = jsonDecode(
@@ -80,9 +79,9 @@ void main() {
       whereArgs: [conversation],
     );
     expect(await selectRows(raw, 'message'), isEmpty);
-    final current = await engine.headId(raw.rawDb);
+    final current = await engine.headId(raw);
     final commit = await packages.importCurrent(
-      raw.rawDb,
+      raw,
       await File(path).readAsBytes(),
       expectedHead: current,
     );
@@ -90,8 +89,8 @@ void main() {
     expect(commit.generation, 1);
     expect(await selectRows(raw, 'conversation'), hasLength(1));
     expect(await selectRows(raw, 'message'), hasLength(1));
-    expect(await engine.assets.verify(raw.rawDb, hash), isTrue);
-    expect(await engine.headId(raw.rawDb), greaterThan(before));
+    expect(await engine.assets.verify(raw, hash), isTrue);
+    expect(await engine.headId(raw), greaterThan(before));
   });
 
   test('导出前核对数据库引用与附件，缺图时中止并列出缺项', () async {
@@ -132,7 +131,7 @@ void main() {
 
     final current = '${dir.path}/current.zip';
     await expectLater(
-      packages.exportCurrent(db.rawDb, current),
+      packages.exportCurrent(db, current),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -145,7 +144,7 @@ void main() {
 
     final repository = '${dir.path}/repository.zip';
     await expectLater(
-      packages.backupRepository(raw.rawDb, repository),
+      packages.backupRepository(raw, repository),
       throwsA(anything),
     );
     expect(await File(repository).exists(), isFalse);
@@ -184,14 +183,10 @@ void main() {
       where: 'id = ?',
       whereArgs: [goal],
     );
-    await engine.nameCommit(
-      raw.rawDb,
-      await engine.headId(raw.rawDb),
-      name: '命名',
-    );
-    final head = await engine.headId(raw.rawDb);
+    await engine.nameCommit(raw, await engine.headId(raw), name: '命名');
+    final head = await engine.headId(raw);
     final path = '${dir.path}/repository.zip';
-    await packages.backupRepository(raw.rawDb, path);
+    await packages.backupRepository(raw, path);
 
     final archive = ZipDecoder().decodeBytes(await File(path).readAsBytes());
     final manifest = jsonDecode(
@@ -205,7 +200,7 @@ void main() {
     await File(extracted).writeAsBytes(dbFile!.content as List<int>);
     final restored = await openZhixinDatabase(path: extracted);
     addTearDown(restored.close);
-    expect(await engine.headId(restored.rawDb), head);
+    expect(await engine.headId(restored), head);
     expect(await selectRows(restored, 'revision_commit'), hasLength(3));
     expect(
       await selectRows(
@@ -256,7 +251,7 @@ void main() {
       clock: () => DateTime(2026, 11, 10, 10),
     );
     final path = '${dir.path}/repository.zip';
-    await packages.backupRepository(raw.rawDb, path);
+    await packages.backupRepository(raw, path);
 
     // 备份完成后往库里加一条不属于本程序的触发器；备份与预检都不能把它带走。
     await raw.execute(
@@ -264,7 +259,7 @@ void main() {
       'BEGIN UPDATE app_meta SET value = value; END',
     );
     await expectLater(
-      packages.backupRepository(raw.rawDb, '${dir.path}/with-trigger.zip'),
+      packages.backupRepository(raw, '${dir.path}/with-trigger.zip'),
       throwsA(anything),
     );
     expect(await File('${dir.path}/with-trigger.zip').exists(), isFalse);
@@ -328,7 +323,7 @@ void main() {
       clock: () => DateTime(2026, 11, 10, 10),
     );
     final path = '${dir.path}/current.zip';
-    await packages.exportCurrent(db.rawDb, path);
+    await packages.exportCurrent(db, path);
 
     expect(
       await packages.inspectRepository(await File(path).readAsBytes()),

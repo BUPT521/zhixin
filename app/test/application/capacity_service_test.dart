@@ -22,11 +22,11 @@ class _Harness {
   Future<void> open() async {
     rig = await openTestRig(clock: () => now);
     db = rig.raw;
-    tasks = TaskRepository(rig.db.rawDb);
-    schedule = ScheduleRepository(rig.db.rawDb);
+    tasks = TaskRepository(rig.db);
+    schedule = ScheduleRepository(rig.db);
     final policy = TimePolicy(clock: () => now);
     capacity = CapacityService(
-      settings: SettingsRepository(rig.db.rawDb),
+      settings: SettingsRepository(rig.db),
       tasks: tasks,
       schedule: schedule,
       runtime: testRuntime(policy: () => policy),

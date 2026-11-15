@@ -40,10 +40,10 @@ class _Corpus {
 }
 
 Future<_Corpus> _seed(RawDatabase db) async {
-  final tasks = TaskRepository(db.rawDb);
-  final materials = MaterialRepository(db.rawDb);
-  final conversations = ConversationRepository(db.rawDb);
-  final attempts = AttemptRepository(db.rawDb);
+  final tasks = TaskRepository(db);
+  final materials = MaterialRepository(db);
+  final conversations = ConversationRepository(db);
+  final attempts = AttemptRepository(db);
   final goal = await tasks.createGoal(title: '概率论期末');
   final material = await materials.create(title: '概率论讲义', goalId: goal);
   await materials.addPage(materialId: material, pageNo: 7, content: '例 3-2。');
@@ -200,9 +200,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
 
     final summary = await service.resolve(
       query: '上次用了什么帮助',
@@ -234,9 +232,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
 
     final restricted = await service.resolve(
       query: '那次用了什么帮助',
@@ -287,9 +283,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
 
     final summary = await service.resolve(
       query: '10 月 1 日那次例 3-2 用了什么帮助',
@@ -309,9 +303,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
 
     final summary = await service.resolve(
       query: '上次复习到哪一步',
@@ -334,9 +326,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
 
     final summary = await service.resolve(
       query: '例 3-2 怎么做',
@@ -352,9 +342,9 @@ void main() {
   test('同一道题六次作答时取最近几次，上次与后来的独立表现都进入上下文', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final conversations = ConversationRepository(db.rawDb);
-    final attempts = AttemptRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final conversations = ConversationRepository(db);
+    final attempts = AttemptRepository(db);
     final goal = await tasks.createGoal(title: '概率论期末');
     final conversation = await conversations.create(sourceRef: '例 3-2');
     await conversations.setGoal(conversation, goal);
@@ -445,9 +435,7 @@ void main() {
       delayed: true,
     );
 
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
     final scope = EvidenceScope.answer(
       conversationId: conversation,
       goalId: goal,
@@ -488,8 +476,8 @@ void main() {
   test('无归属求助不沿同题扩到另一条无归属讨论', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
-    final attempts = AttemptRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
+    final attempts = AttemptRepository(db);
 
     Future<int> record() async {
       final id = await conversations.create(sourceRef: '例 3-2');
@@ -520,9 +508,7 @@ void main() {
     final other = await record();
     await submit(other, '2026-10-03 09:00:00');
 
-    final service = CrossSessionService(
-      repository: EvidenceRepository(db.rawDb),
-    );
+    final service = CrossSessionService(repository: EvidenceRepository(db));
     final summary = await service.resolve(
       query: '上次用了什么帮助',
       scope: EvidenceScope.answer(conversationId: current),
@@ -540,9 +526,9 @@ void main() {
   test('同题线索按目标范围限定，不串到另一门课', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final conversations = ConversationRepository(db.rawDb);
-    final attempts = AttemptRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final conversations = ConversationRepository(db);
+    final attempts = AttemptRepository(db);
     final goalA = await tasks.createGoal(title: '概率论期末');
     final goalB = await tasks.createGoal(title: '线性代数作业');
 
@@ -572,13 +558,12 @@ void main() {
     final unassigned = await record(null, '2026-10-03 09:00:00');
 
     final summary =
-        await CrossSessionService(repository: EvidenceRepository(db.rawDb))
-            .resolve(
-              query: '例 3-2 后来独立做对了吗',
-              scope: EvidenceScope.answer(goalId: goalA),
-              now: DateTime(2026, 10, 12, 20),
-              stem: '例 3-2 求条件概率',
-            );
+        await CrossSessionService(repository: EvidenceRepository(db)).resolve(
+          query: '例 3-2 后来独立做对了吗',
+          scope: EvidenceScope.answer(goalId: goalA),
+          now: DateTime(2026, 10, 12, 20),
+          stem: '例 3-2 求条件概率',
+        );
     final seen = {for (final entry in summary.attempts) entry.conversationId};
     expect(seen, contains(inGoal));
     expect(seen, contains(unassigned));

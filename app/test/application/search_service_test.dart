@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/evidence_service.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/request_gate.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -35,12 +34,12 @@ void main() {
   test('记录检索覆盖全部目标的讨论、题目与材料', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
-    final attempts = AttemptRepository(db.rawDb);
-    final materials = MaterialRepository(db.rawDb);
-    final tasks = TaskRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
+    final attempts = AttemptRepository(db);
+    final materials = MaterialRepository(db);
+    final tasks = TaskRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
 
     final goalA = await tasks.createGoal(title: '概率论期末');
@@ -151,10 +150,10 @@ void main() {
   test('记录检索返回全部命中的讨论与材料页，不再每组只取六条', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
-    final materials = MaterialRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
+    final materials = MaterialRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
 
     for (var index = 0; index < 8; index++) {
@@ -189,7 +188,7 @@ void main() {
   test('材料先按全部候选相关性排序，摘要围绕命中内容生成', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final materials = MaterialRepository(db.rawDb);
+    final materials = MaterialRepository(db);
     final oldMaterial = await materials.create(title: '较早的矩阵材料');
     final matchingText = '${List.filled(24, '背景内容。').join()}矩阵与独立性需要同时核对。';
     await materials.addPage(
@@ -215,9 +214,9 @@ void main() {
   test('同类命中超过四十条时分页在去重之后进行，最早一条可达', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
     final base = DateTime(2026, 10, 1);
     final ids = <int>[];
@@ -283,9 +282,9 @@ void main() {
   test('较早但更相关的记录排在新记录之前', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
     final old = await conversations.create(title: '较早的矩阵讨论');
     await conversations.append(
@@ -343,7 +342,7 @@ void main() {
   test('用户查找按原样区分近似写法', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final materials = MaterialRepository(db.rawDb);
+    final materials = MaterialRepository(db);
     final material = await materials.create(title: '公式与题号');
     await materials.addPage(
       materialId: material,
@@ -371,7 +370,7 @@ void main() {
       content: '另一种记法 a_bc 不是同一回事。',
     );
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
 
     final example = await _searchAll(search, '例 3-2');
@@ -389,9 +388,9 @@ void main() {
   test('同一条学习记录的多条消息只占一页里的一个位置', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
     final noisy = await conversations.create(title: '矩阵讨论');
     for (var index = 0; index < 3; index++) {
@@ -475,9 +474,9 @@ void main() {
   test('带语义命中翻页不重不漏，翻到底时结束', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final conversations = ConversationRepository(db.rawDb);
+    final conversations = ConversationRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
     final localIds = <int>[];
     for (var index = 0; index < 25; index++) {

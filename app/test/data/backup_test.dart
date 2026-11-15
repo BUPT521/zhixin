@@ -24,15 +24,15 @@ Future<int> _captureRecord(
   String stem, {
   String? sourceRef,
 }) async {
-  final conversations = ConversationRepository(db.rawDb);
+  final conversations = ConversationRepository(db);
   final id = await conversations.create(sourceRef: sourceRef);
   await conversations.append(id, role: 'user', content: stem);
-  await AttemptRepository(db.rawDb).ensureOpenAttempt(id);
+  await AttemptRepository(db).ensureOpenAttempt(id);
   return id;
 }
 
 Future<String?> _recordStem(RawDatabase db, int id) async =>
-    (await ConversationRepository(db.rawDb).question(id))?.stem;
+    (await ConversationRepository(db).question(id))?.stem;
 
 /// 按旧格式造一份数据包：清单、库文件与被引用的图片。
 Future<Uint8List> _packageBytes(
@@ -167,8 +167,7 @@ void main() {
     );
     addTearDown(restored.close);
 
-    final record = await ConversationRepository(restored.rawDb)
-        .question(recordId);
+    final record = await ConversationRepository(restored).question(recordId);
     expect(record!.stem, '导出前的题目');
     expect(record.sourceRef, '第 1 页');
 
@@ -198,7 +197,7 @@ void main() {
     expect(await restoredImage.readAsBytes(), [4, 5, 6]);
     expect(imageMessage['image_paths_json'], '["m-1.jpg"]');
 
-    final tasks = TaskRepository(restored.rawDb);
+    final tasks = TaskRepository(restored);
     expect((await tasks.goalById(goalId))?.status, LearningGoalStatus.active);
     final items = await tasks.items();
     expect(items, hasLength(1));

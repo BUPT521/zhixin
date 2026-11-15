@@ -28,8 +28,8 @@ void main() {
         dataChanges++;
       },
     );
-    schedule = ScheduleRepository(rig.db.rawDb);
-    tasks = TaskRepository(rig.db.rawDb);
+    schedule = ScheduleRepository(rig.db);
+    tasks = TaskRepository(rig.db);
     plan = PlanService(
       tasks: tasks,
       schedule: schedule,
@@ -37,7 +37,7 @@ void main() {
       runtime: testRuntime(
         policy: () => TimePolicy(clock: () => DateTime(2026, 11, 10, 10)),
       ),
-      studyPlans: StudyPlanRepository(rig.db.rawDb),
+      studyPlans: StudyPlanRepository(rig.db),
       transactions: WriteTransactions(rig.db),
     );
   });

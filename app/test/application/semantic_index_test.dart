@@ -64,10 +64,10 @@ class _Corpus {
 }
 
 Future<_Corpus> _seed(RawDatabase db) async {
-  final tasks = TaskRepository(db.rawDb);
-  final materials = MaterialRepository(db.rawDb);
-  final conversations = ConversationRepository(db.rawDb);
-  final attempts = AttemptRepository(db.rawDb);
+  final tasks = TaskRepository(db);
+  final materials = MaterialRepository(db);
+  final conversations = ConversationRepository(db);
+  final attempts = AttemptRepository(db);
   final probability = await tasks.createGoal(title: '概率论期末');
   final linear = await tasks.createGoal(title: '线性代数作业');
   final materialProbability = await materials.create(
@@ -161,7 +161,7 @@ _rig({
 }) async {
   final db = await openTestDb();
   final corpus = await _seed(db);
-  final repository = EvidenceRepository(db.rawDb);
+  final repository = EvidenceRepository(db);
   final index = VectorIndex.open(inMemory: true, spec: _spec);
   final client =
       clientFor?.call(_spec) ??
@@ -345,7 +345,7 @@ void main() {
       },
     );
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db.rawDb),
+      repository: EvidenceRepository(db),
       initialClient: client,
       indexPath: '',
       vectorStoreOpener: () async => DirectVectorStore(index),
@@ -420,7 +420,7 @@ void main() {
   test('没有配置嵌入来源时按不可用处理', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repository = EvidenceRepository(db.rawDb);
+    final repository = EvidenceRepository(db);
     final service = SemanticIndexService(repository: repository, indexPath: '');
     final refresh = await service.refresh();
     expect(refresh.failure, SemanticFailure.notConfigured);
@@ -437,7 +437,7 @@ void main() {
     addTearDown(db.close);
     await _seed(db);
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db.rawDb),
+      repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       indexPath: '',
       vectorStoreOpener: () async =>
@@ -560,7 +560,7 @@ void main() {
     final runtime = embeddingRuntime(config);
     expect(runtime.client, isNotNull);
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db.rawDb),
+      repository: EvidenceRepository(db),
       initialClient: _RecordingClient(
         inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
         sent: sent,
@@ -657,8 +657,8 @@ void main() {
   test('范围外向量占满候选时，目标范围仍找得到', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final tasks = TaskRepository(db.rawDb);
-    final conversations = ConversationRepository(db.rawDb);
+    final tasks = TaskRepository(db);
+    final conversations = ConversationRepository(db);
     final goal = await tasks.createGoal(title: '目标');
     final other = await tasks.createGoal(title: '其他目标');
     for (var index = 0; index < 10; index++) {
@@ -679,7 +679,7 @@ void main() {
     final index = VectorIndex.open(inMemory: true, spec: _spec);
     addTearDown(index.close);
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db.rawDb),
+      repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: vectors),
       indexPath: '',
       vectorStoreOpener: () async => DirectVectorStore(index),
@@ -722,7 +722,7 @@ void main() {
       FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
     );
     final service = SemanticIndexService(
-      repository: EvidenceRepository(db.rawDb),
+      repository: EvidenceRepository(db),
       initialClient: client,
       indexPath: '',
       vectorStoreOpener: () async => DirectVectorStore(index),

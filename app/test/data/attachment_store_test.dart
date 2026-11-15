@@ -43,7 +43,7 @@ void main() {
     await kept.writeAsBytes([1]);
     await orphan.writeAsBytes([2]);
 
-    await AttachmentStore(filesDir: root.path).cleanupUnreferenced(db.raw);
+    await AttachmentStore(filesDir: root.path).cleanupUnreferenced(db);
 
     expect(await kept.exists(), isTrue);
     expect(await orphan.exists(), isFalse);
@@ -73,7 +73,7 @@ void main() {
     await unrelated.writeAsBytes([3]);
 
     await AttachmentStore(filesDir: root.path)
-        .cleanupCandidates(db.raw, ['shared.jpg', 'orphan.jpg']);
+        .cleanupCandidates(db, ['shared.jpg', 'orphan.jpg']);
 
     expect(await shared.exists(), isTrue);
     expect(await orphan.exists(), isFalse);

@@ -50,9 +50,6 @@ class GuardedDatabase implements RawDatabase {
   /// 版本引擎、备份与撤销使用的执行器就是本对象本身。
   RawExecutor get raw => this;
 
-  /// 需要自己开事务的引擎方法也拿本对象；事务仍经 [gate] 独占。
-  RawDatabase get rawDb => this;
-
   /// 关闭连接：等正在进行的读写结束；恢复流程里已经在独占区，直接执行。
   @override
   Future<void> close() => gate.exclusive(() => _db.close());

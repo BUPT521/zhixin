@@ -115,13 +115,3 @@ class SqliteRawDatabase implements RawDatabase {
   @override
   Future<void> close() async => _db.close();
 }
-
-/// 已持有 [RawExecutor] 的调用方继续使用 `.raw`，不必区分实现。
-extension RawSelf on RawExecutor {
-  RawExecutor get raw => this;
-}
-
-/// 需要自己开事务的调用方继续使用 `.rawDb`。
-extension RawDatabaseSelf on RawDatabase {
-  RawDatabase get rawDb => this;
-}

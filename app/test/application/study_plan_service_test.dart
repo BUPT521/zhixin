@@ -94,14 +94,14 @@ class _Harness {
 
   Future<void> open() async {
     db = await openTestDb();
-    conversations = ConversationRepository(db.rawDb);
-    materials = MaterialRepository(db.rawDb);
-    plans = StudyPlanRepository(db.rawDb);
-    tasks = TaskRepository(db.rawDb);
-    attempts = AttemptRepository(db.rawDb);
-    schedule = ScheduleRepository(db.rawDb);
-    study = StudyRepository(db.rawDb);
-    final memories = MemoryRepository(db.rawDb);
+    conversations = ConversationRepository(db);
+    materials = MaterialRepository(db);
+    plans = StudyPlanRepository(db);
+    tasks = TaskRepository(db);
+    attempts = AttemptRepository(db);
+    schedule = ScheduleRepository(db);
+    study = StudyRepository(db);
+    final memories = MemoryRepository(db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
     service = StudyPlanService(
       plans: plans,

@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:zhixin/application/docx_import.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/application/search_service.dart';
@@ -137,7 +136,7 @@ void main() {
       }
     });
     var epoch = 0;
-    final repository = MaterialRepository(rig.db.rawDb);
+    final repository = MaterialRepository(rig.db);
     final service = MaterialService(
       materials: repository,
       transactions: WriteTransactions(rig.db),
@@ -150,7 +149,7 @@ void main() {
       service.importDocx(document: document, title: '已过期', expectedEpoch: 0),
       throwsStateError,
     );
-    expect(await rig.engine.assets.objectHashes(rig.raw.rawDb), isEmpty);
+    expect(await rig.engine.assets.objectHashes(rig.raw), isEmpty);
     await expectLater(
       service.importDocx(
         document: document,
@@ -160,7 +159,7 @@ void main() {
       ),
       throwsA(isA<SqliteException>()),
     );
-    expect(await rig.engine.assets.objectHashes(rig.raw.rawDb), isEmpty);
+    expect(await rig.engine.assets.objectHashes(rig.raw), isEmpty);
 
     final id = await service.importDocx(
       document: document,
@@ -168,7 +167,7 @@ void main() {
       expectedEpoch: epoch,
     );
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(rig.db.rawDb)),
+      evidence: EvidenceService(repository: EvidenceRepository(rig.db)),
     );
     final hits = await _searchAll(
       search,
@@ -200,13 +199,13 @@ void main() {
       appVersion: 'test',
     );
     final path = '${rig.filesDir}/current.zip';
-    await packages.exportCurrent(rig.db.rawDb, path);
+    await packages.exportCurrent(rig.db, path);
     await packages.importCurrent(
-      target.raw.rawDb,
+      target.raw,
       await File(path).readAsBytes(),
-      expectedHead: await target.engine.headId(target.raw.rawDb),
+      expectedHead: await target.engine.headId(target.raw),
     );
-    final restored = MaterialRepository(target.db.rawDb);
+    final restored = MaterialRepository(target.db);
     expect((await restored.byId(id))!.sourceFileName, '概率讲义.docx');
     expect((await restored.page(id, 2))!.content, second.content);
     expect(await restored.sourceFileBytes(id), bytes);

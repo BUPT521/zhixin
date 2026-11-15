@@ -80,14 +80,14 @@ class _Harness {
   Future<void> open() async {
     rig = await openTestRig();
     db = rig.db;
-    attempts = AttemptRepository(db.rawDb);
-    assessments = AssessmentRepository(db.rawDb);
-    conversations = ConversationRepository(db.rawDb);
-    study = StudyRepository(db.rawDb);
-    tasks = TaskRepository(db.rawDb);
-    memories = MemoryRepository(db.rawDb);
+    attempts = AttemptRepository(db);
+    assessments = AssessmentRepository(db);
+    conversations = ConversationRepository(db);
+    study = StudyRepository(db);
+    tasks = TaskRepository(db);
+    memories = MemoryRepository(db);
     revisions = rig.revisions;
-    final materials = MaterialRepository(db.rawDb);
+    final materials = MaterialRepository(db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
     service = LearningService(
       attempts: attempts,
@@ -95,14 +95,14 @@ class _Harness {
       study: study,
       memories: memories,
       revisions: rig.revisions,
-      schedule: ScheduleRepository(db.rawDb),
-      tasks: TaskRepository(db.rawDb),
+      schedule: ScheduleRepository(db),
+      tasks: TaskRepository(db),
       assessments: assessments,
       ai: ai,
       context: ContextService(
-        tasks: TaskRepository(db.rawDb),
+        tasks: TaskRepository(db),
         attempts: attempts,
-        schedule: ScheduleRepository(db.rawDb),
+        schedule: ScheduleRepository(db),
         memories: memories,
         conversations: conversations,
         materials: materials,
@@ -616,7 +616,7 @@ void main() {
     await h.open();
     addTearDown(h.db.close);
 
-    final materials = MaterialRepository(h.db.rawDb);
+    final materials = MaterialRepository(h.db);
     final materialId = await materials.create(title: '概率论讲义', kind: 'book');
     await materials.addPage(
       materialId: materialId,
@@ -731,7 +731,7 @@ void main() {
     await h.open();
     addTearDown(h.db.close);
 
-    final plans = StudyPlanRepository(h.db.rawDb);
+    final plans = StudyPlanRepository(h.db);
     final planId = await plans.createWithDrafts(
       title: '条件概率计划',
       drafts: const [StudyStepDraft(title: '第一步', pageFrom: 1, pageTo: 1)],

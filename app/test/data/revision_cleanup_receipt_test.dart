@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/revisions/revision_actions.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
@@ -18,7 +17,7 @@ void main() {
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    return rig.engine.headId(rig.raw.rawDb);
+    return rig.engine.headId(rig.raw);
   }
 
   Future<int> openConversation(TestRig rig) async {
@@ -109,8 +108,8 @@ void main() {
     expect((keptItem as Map)['commit_id'], keptCommit);
 
     // 清理回执本身是一条普通提交，可以在历史里看到，但不能反向撤销。
-    final head = await rig.engine.headId(rig.raw.rawDb);
-    final headCommit = await rig.engine.commitById(rig.raw.rawDb, head);
+    final head = await rig.engine.headId(rig.raw);
+    final headCommit = await rig.engine.commitById(rig.raw, head);
     expect(headCommit!.action, clearDeadReceiptsAction);
     final reasons = await rig.revisions.undoBlockReasons([headCommit]);
     expect(reasons[head], contains('清理回执'));
@@ -155,17 +154,17 @@ void main() {
     expect((items.single as Map).containsKey('commit_id'), isFalse);
     expect((items.single as Map)['status'], 'accepted');
 
-    final head = await rig.engine.headId(rig.raw.rawDb);
-    final headCommit = await rig.engine.commitById(rig.raw.rawDb, head);
+    final head = await rig.engine.headId(rig.raw);
+    final headCommit = await rig.engine.commitById(rig.raw, head);
     expect(headCommit!.action, clearDeadReceiptsAction);
-    final projection = await rig.engine.projectionAt(rig.raw.rawDb, head);
+    final projection = await rig.engine.projectionAt(rig.raw, head);
     final row = projection['message']![messageId.toString()]!;
     expect(
       row['structured_json']!.value,
       await _structuredText(rig, messageId),
     );
     expect(
-      await rig.engine.commitById(rig.raw.rawDb, headCommit.parentId!),
+      await rig.engine.commitById(rig.raw, headCommit.parentId!),
       isNotNull,
     );
   });

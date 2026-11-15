@@ -26,10 +26,10 @@ Future<
   )
 >
 _seed(TestRig rig) async {
-  final tasks = TaskRepository(rig.db.rawDb);
-  final materials = MaterialRepository(rig.db.rawDb);
-  final conversations = ConversationRepository(rig.db.rawDb);
-  final attempts = AttemptRepository(rig.db.rawDb);
+  final tasks = TaskRepository(rig.db);
+  final materials = MaterialRepository(rig.db);
+  final conversations = ConversationRepository(rig.db);
+  final attempts = AttemptRepository(rig.db);
   final goal = await tasks.createGoal(title: '概率论期末');
   final material = await materials.create(title: '概率论讲义', goalId: goal);
   await materials.addPage(
@@ -133,9 +133,9 @@ void main() {
     addTearDown(rig.close);
     final seeded = await _seed(rig);
     final service = MemoryProposalService(
-      attempts: AttemptRepository(rig.db.rawDb),
-      conversations: ConversationRepository(rig.db.rawDb),
-      memories: MemoryRepository(rig.db.rawDb),
+      attempts: AttemptRepository(rig.db),
+      conversations: ConversationRepository(rig.db),
+      memories: MemoryRepository(rig.db),
       transactions: WriteTransactions(rig.db),
     );
 
@@ -183,8 +183,7 @@ void main() {
     final acceptResult = await service.accept(progress);
     expect(acceptResult.commitId, isNotNull);
 
-    final written = await MemoryRepository(rig.db.rawDb)
-        .list(includeInactive: true);
+    final written = await MemoryRepository(rig.db).list(includeInactive: true);
     final memory = written.singleWhere(
       (entry) => entry.sourceId == progress.sourceId,
     );
@@ -197,7 +196,7 @@ void main() {
     // 再次确认同一条提案不再写入。
     expect((await service.accept(progress)).changed, isFalse);
     expect(
-      (await MemoryRepository(rig.db.rawDb).list(includeInactive: true)).length,
+      (await MemoryRepository(rig.db).list(includeInactive: true)).length,
       written.length,
     );
 
@@ -211,18 +210,15 @@ void main() {
 
     // 记忆页仍可用既有入口纠正与删除；这里验证入口存在且能改变状态。
     expect((await memoryService.delete(memory.id)).commitId, isNotNull);
-    expect(
-      (await MemoryRepository(rig.db.rawDb).byId(memory.id))!.status,
-      'deleted',
-    );
+    expect((await MemoryRepository(rig.db).byId(memory.id))!.status, 'deleted');
   });
 
   test('同一判断来自不同作答时合并成一条提案', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db.rawDb);
-    final conversations = ConversationRepository(rig.db.rawDb);
-    final attempts = AttemptRepository(rig.db.rawDb);
+    final tasks = TaskRepository(rig.db);
+    final conversations = ConversationRepository(rig.db);
+    final attempts = AttemptRepository(rig.db);
     final goal = await tasks.createGoal(title: '概率论期末');
     final conversation = await conversations.create(sourceRef: '例 3-3');
     await conversations.setGoal(conversation, goal);
@@ -257,7 +253,7 @@ void main() {
     final service = MemoryProposalService(
       attempts: attempts,
       conversations: conversations,
-      memories: MemoryRepository(rig.db.rawDb),
+      memories: MemoryRepository(rig.db),
       transactions: WriteTransactions(rig.db),
     );
     final outcome = await service.propose(conversation);
@@ -280,7 +276,7 @@ void main() {
     );
     await service.accept(difficulty);
     final memory = (await MemoryRepository(
-      rig.db.rawDb,
+      rig.db,
     ).list()).singleWhere((entry) => entry.sourceId == difficulty.sourceId);
 
     // 用户纠正内容：同一来源不再按旧内容重新生成提案。
@@ -312,14 +308,14 @@ class RepositorySet {
   final TestRig rig;
 
   late final MemoryProposalService proposals = MemoryProposalService(
-    attempts: AttemptRepository(rig.db.rawDb),
-    conversations: ConversationRepository(rig.db.rawDb),
-    memories: MemoryRepository(rig.db.rawDb),
+    attempts: AttemptRepository(rig.db),
+    conversations: ConversationRepository(rig.db),
+    memories: MemoryRepository(rig.db),
     transactions: WriteTransactions(rig.db),
   );
 
   late final MemoryService memoryService = MemoryService(
-    MemoryRepository(rig.db.rawDb),
+    MemoryRepository(rig.db),
     transactions: WriteTransactions(rig.db),
   );
 }

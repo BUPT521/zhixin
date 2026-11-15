@@ -37,10 +37,10 @@ class _Corpus {
 }
 
 Future<_Corpus> _seed(RawDatabase db) async {
-  final conversations = ConversationRepository(db.rawDb);
-  final attempts = AttemptRepository(db.rawDb);
-  final materials = MaterialRepository(db.rawDb);
-  final tasks = TaskRepository(db.rawDb);
+  final conversations = ConversationRepository(db);
+  final attempts = AttemptRepository(db);
+  final materials = MaterialRepository(db);
+  final tasks = TaskRepository(db);
 
   final probability = await tasks.createGoal(title: '概率论期末');
   final linear = await tasks.createGoal(title: '线性代数作业');
@@ -153,7 +153,7 @@ Future<
 _rig() async {
   final db = await openTestDb();
   final corpus = await _seed(db);
-  final repository = EvidenceRepository(db.rawDb);
+  final repository = EvidenceRepository(db);
   final evidence = EvidenceService(repository: repository);
   return (
     db: db,

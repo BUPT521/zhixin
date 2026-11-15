@@ -10,7 +10,7 @@ void main() {
   test('修改记忆后回答检索使用新内容', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db.rawDb);
+    final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
       transactions: WriteTransactions(rig.db),
@@ -42,7 +42,7 @@ void main() {
   test('修改记忆返回提交编号，撤销后恢复原内容与有效期', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db.rawDb);
+    final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
       transactions: WriteTransactions(rig.db),
@@ -71,7 +71,7 @@ void main() {
   test('删除记忆返回提交编号，撤销后状态改回 active', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db.rawDb);
+    final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
       transactions: WriteTransactions(rig.db),
@@ -93,7 +93,7 @@ void main() {
   test('新增记忆返回提交编号，撤销后移除这一条', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db.rawDb);
+    final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
       transactions: WriteTransactions(rig.db),
