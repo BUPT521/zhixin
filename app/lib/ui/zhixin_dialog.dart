@@ -39,6 +39,46 @@ Future<T?> showZhixinAlert<T>({
   );
 }
 
+/// 一次是否继续的确认：取消固定为幽灵按钮，确认按 [destructive] 选择样式。
+///
+/// 返回 true 表示用户点了确认；关闭对话框或点取消都返回 false。输入型对话框
+/// 仍直接使用 [showZhixinAlert]。
+Future<bool> confirmZhixin({
+  required BuildContext context,
+  required String title,
+  required Widget content,
+  String confirmLabel = '确定',
+  bool destructive = false,
+}) async {
+  final result = await showZhixinAlert<bool>(
+    context: context,
+    title: title,
+    content: content,
+    actions: [
+      forui.FButton(
+        variant: forui.FButtonVariant.ghost,
+        mainAxisSize: MainAxisSize.min,
+        onPress: () => Navigator.of(context).pop(false),
+        child: const Text('取消'),
+      ),
+      if (destructive)
+        forui.FButton(
+          variant: forui.FButtonVariant.destructive,
+          mainAxisSize: MainAxisSize.min,
+          onPress: () => Navigator.of(context).pop(true),
+          child: Text(confirmLabel),
+        )
+      else
+        forui.FButton(
+          mainAxisSize: MainAxisSize.min,
+          onPress: () => Navigator.of(context).pop(true),
+          child: Text(confirmLabel),
+        ),
+    ],
+  );
+  return result ?? false;
+}
+
 /// 对话框的标题、正文与操作按钮的排法。
 ///
 /// 标题用 FDialog 的标题字号，正文可以滚动，操作按钮靠右换行排列。宽度交给

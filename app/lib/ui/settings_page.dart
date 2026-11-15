@@ -290,28 +290,17 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<void> _resetAll() async {
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '清空全部记录',
       content: const Text(
         '将删除目标、题目、作答、日程、记忆、讨论记录和保存的版本，且无法撤销。'
         '模型配置会保留。确定清空？',
       ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('清空'),
-        ),
-      ],
+      confirmLabel: '清空',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).settings.edit.resetAllData();
       if (!mounted) return;

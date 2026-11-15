@@ -138,25 +138,14 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _delete(Memory memory) async {
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '删除这条记忆',
       content: Text('删除后，后续回答将不再使用这条记忆：“${memory.content}”'),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('删除'),
-        ),
-      ],
+      confirmLabel: '删除',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       final commitId = await AppScope.of(context).memory.edit.delete(memory.id);
       await _load();

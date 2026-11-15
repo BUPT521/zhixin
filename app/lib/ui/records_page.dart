@@ -708,29 +708,17 @@ class _RecordsPageState extends State<RecordsPage>
 
   /// 清空一条学习记录；消息与作答一起删除。
   Future<void> _clear(ConversationRecord record) async {
-    final confirmed = await showZhixinAlert<bool>(
+    final confirmed = await confirmZhixin(
       context: context,
       title: '清空这条记录',
       content: Text(
         '清空“${_recordTitle(record)}”后，这条记录的消息与作答将被删除且无法恢复。'
         '确定清空这条记录？',
       ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        forui.FButton(
-          variant: forui.FButtonVariant.destructive,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('清空'),
-        ),
-      ],
+      confirmLabel: '清空',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).chat.discussion.clear(record.id);
       await _load();
