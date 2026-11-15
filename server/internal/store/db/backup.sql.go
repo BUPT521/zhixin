@@ -78,26 +78,6 @@ func (q *Queries) DeleteBackup(ctx context.Context, arg DeleteBackupParams) erro
 	return err
 }
 
-const deleteUserBackups = `-- name: DeleteUserBackups :exec
-DELETE FROM backup
-WHERE user_id = $1
-`
-
-func (q *Queries) DeleteUserBackups(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, deleteUserBackups, userID)
-	return err
-}
-
-const deleteUserUsage = `-- name: DeleteUserUsage :exec
-DELETE FROM llm_usage
-WHERE user_id = $1
-`
-
-func (q *Queries) DeleteUserUsage(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, deleteUserUsage, userID)
-	return err
-}
-
 const insertBackup = `-- name: InsertBackup :exec
 
 INSERT INTO backup (

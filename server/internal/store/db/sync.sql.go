@@ -68,16 +68,6 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 	return items, nil
 }
 
-const deleteUserSync = `-- name: DeleteUserSync :exec
-DELETE FROM sync_head
-WHERE user_id = $1
-`
-
-func (q *Queries) DeleteUserSync(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, deleteUserSync, userID)
-	return err
-}
-
 const ensureSyncHead = `-- name: EnsureSyncHead :exec
 
 INSERT INTO sync_head (user_id, head)

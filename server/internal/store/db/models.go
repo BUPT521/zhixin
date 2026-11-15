@@ -25,13 +25,6 @@ type Backup struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
-type Blob struct {
-	UserID    string
-	Sha256    string
-	Size      int64
-	CreatedAt pgtype.Timestamptz
-}
-
 type LlmUsage struct {
 	UserID string
 	Day    pgtype.Date

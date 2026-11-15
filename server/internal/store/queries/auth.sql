@@ -14,7 +14,7 @@ SELECT id, email, password_hash, created_at
 FROM app_user
 WHERE id = $1;
 
--- name: DeleteUser :exec
+-- name: DeleteUser :execrows
 DELETE FROM app_user
 WHERE id = $1;
 

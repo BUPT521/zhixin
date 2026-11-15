@@ -43,7 +43,3 @@ FROM sync_commit
 WHERE user_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3;
-
--- name: DeleteUserSync :exec
-DELETE FROM sync_head
-WHERE user_id = $1;

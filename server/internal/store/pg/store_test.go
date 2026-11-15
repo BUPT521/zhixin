@@ -33,7 +33,7 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS llm_usage, backup, blob, sync_commit, sync_head, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS llm_usage, backup, sync_commit, sync_head, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}

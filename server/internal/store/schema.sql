@@ -45,15 +45,6 @@ CREATE TABLE sync_commit (
   UNIQUE (user_id, request_id)
 );
 
--- 附件对象按 SHA-256 存进对象存储，这里只记引用，按账号隔离。
-CREATE TABLE blob (
-  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  sha256      TEXT NOT NULL,
-  size        BIGINT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, sha256)
-);
-
 -- 整库备份：字节在对象存储的 backups/<user_id>/<id>.zip。
 CREATE TABLE backup (
   id              TEXT PRIMARY KEY,

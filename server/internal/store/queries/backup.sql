@@ -21,9 +21,6 @@ WHERE user_id = $1 AND id = $2;
 DELETE FROM backup
 WHERE user_id = $1 AND id = $2;
 
--- name: DeleteUserBackups :exec
-DELETE FROM backup
-WHERE user_id = $1;
 
 -- 只保留最新的若干份；返回被删掉的那些 id，调用方据此删除对象存储里的字节。
 -- name: TrimBackups :many
@@ -47,7 +44,3 @@ INSERT INTO llm_usage (user_id, day, tokens)
 VALUES (sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(tokens))
 ON CONFLICT (user_id, day)
 DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens;
-
--- name: DeleteUserUsage :exec
-DELETE FROM llm_usage
-WHERE user_id = $1;
