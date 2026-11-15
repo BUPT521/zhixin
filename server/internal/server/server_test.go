@@ -2,9 +2,11 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,8 +16,11 @@ import (
 	"testing"
 
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
+// 本文件只测装配与横切规则：契约路由是否都接上、中间件顺序、401/404/problem
+// 体、两类限流与账号删除的扇出。各模块的处理器用例在各自的包里。
 type harness struct {
 	t   *testing.T
 	srv *httptest.Server
@@ -121,129 +126,6 @@ func TestHealthAndUnknownRoute(t *testing.T) {
 	}
 }
 
-func TestAuthFlow(t *testing.T) {
-	h := newHarness(t, nil)
-	var p problem
-	if code := h.json("GET", "/v1/me", "", nil, &p); code != 401 || p.Code != "unauthorized" {
-		t.Fatalf("anonymous /v1/me: %d %+v", code, p)
-	}
-	token := h.signUp("a@b.cn")
-
-	var me struct {
-		Email string `json:"email"`
-	}
-	if code := h.json("GET", "/v1/me", token, nil, &me); code != 200 || me.Email != "a@b.cn" {
-		t.Fatalf("me: %d %+v", code, me)
-	}
-	if code := h.json("POST", "/v1/auth/register", "", map[string]string{"email": "a@b.cn", "password": "password1"}, &p); code != 409 || p.Code != "email_taken" {
-		t.Fatalf("duplicate: %d %+v", code, p)
-	}
-	if code := h.json("POST", "/v1/auth/login", "", map[string]string{"email": "a@b.cn", "password": "wrong-pass"}, &p); code != 401 || p.Code != "invalid_credentials" {
-		t.Fatalf("bad login: %d %+v", code, p)
-	}
-	if code := h.json("POST", "/v1/auth/login", "", map[string]any{"email": "a@b.cn", "password": "password1", "extra": 1}, &p); code != 400 {
-		t.Fatalf("unknown field accepted: %d", code)
-	}
-	if code := h.json("POST", "/v1/auth/logout", token, nil, nil); code != 204 {
-		t.Fatalf("logout %d", code)
-	}
-	if code := h.json("GET", "/v1/me", token, nil, nil); code != 401 {
-		t.Fatalf("token survived logout: %d", code)
-	}
-}
-
-func commit(reqID string) map[string]any {
-	return map[string]any{
-		"request_id":     reqID,
-		"device_id":      "device-a",
-		"schema_version": ClientSchemaVersion,
-		"actor":          "user",
-		"action":         "create_plan_item",
-		"created_at":     "2026-11-14 09:00:00",
-		"changes": []map[string]any{{
-			"table": "plan_item", "row_key": "01JD", "op": "insert",
-			"after": map[string]any{"title": "复习第三章"},
-		}},
-	}
-}
-
-func TestSyncIsLinearAndIdempotent(t *testing.T) {
-	h := newHarness(t, nil)
-	token := h.signUp("a@b.cn")
-
-	var push struct {
-		Head int64 `json:"head"`
-	}
-	if code := h.json("POST", "/v1/sync/commits", token, map[string]any{"base_seq": 0, "commits": []any{commit("r1"), commit("r2")}}, &push); code != 200 || push.Head != 2 {
-		t.Fatalf("first push: %d %+v", code, push)
-	}
-	// Retrying the same push after a lost response is harmless.
-	if code := h.json("POST", "/v1/sync/commits", token, map[string]any{"base_seq": 0, "commits": []any{commit("r1"), commit("r2")}}, &push); code != 200 || push.Head != 2 {
-		t.Fatalf("replayed push: %d %+v", code, push)
-	}
-	// Another device pushing on a stale base must pull first.
-	var p problem
-	if code := h.json("POST", "/v1/sync/commits", token, map[string]any{"base_seq": 1, "commits": []any{commit("r3")}}, &p); code != 409 || p.Code != "conflict" || p.Extra["head"] != float64(2) {
-		t.Fatalf("stale push: %d %+v", code, p)
-	}
-
-	var pull struct {
-		Commits []struct {
-			Seq       int64  `json:"seq"`
-			RequestID string `json:"request_id"`
-		} `json:"commits"`
-		Head    int64 `json:"head"`
-		HasMore bool  `json:"has_more"`
-	}
-	if code := h.json("GET", "/v1/sync/commits?after=0&limit=1", token, nil, &pull); code != 200 || len(pull.Commits) != 1 || !pull.HasMore || pull.Commits[0].RequestID != "r1" {
-		t.Fatalf("pull page 1: %d %+v", code, pull)
-	}
-	if h.json("GET", "/v1/sync/commits?after=1", token, nil, &pull); len(pull.Commits) != 1 || pull.HasMore || pull.Commits[0].Seq != 2 {
-		t.Fatalf("pull page 2: %+v", pull)
-	}
-
-	bad := commit("r4")
-	bad["schema_version"] = ClientSchemaVersion - 1
-	if code := h.json("POST", "/v1/sync/commits", token, map[string]any{"base_seq": 2, "commits": []any{bad}}, &p); code != 400 {
-		t.Fatalf("old schema accepted: %d", code)
-	}
-
-	// Logs are per account.
-	other := h.signUp("c@d.cn")
-	if h.json("GET", "/v1/sync/commits", other, nil, &pull); len(pull.Commits) != 0 || pull.Head != 0 {
-		t.Fatalf("leaked across accounts: %+v", pull)
-	}
-}
-
-// TestSyncPreservesLargeIntegers 守护契约对 before/after 的声明：行内容按
-// json.RawMessage 原样转发。若退回 interface{}，这里的大整数会经 float64
-// 往返变成 9007199254740992。
-func TestSyncPreservesLargeIntegers(t *testing.T) {
-	h := newHarness(t, nil)
-	token := h.signUp("big@b.cn")
-	const big = "9007199254740993"
-	body := fmt.Sprintf(`{"base_seq":0,"commits":[{
-		"request_id":"big-1","device_id":"device-a","schema_version":%d,
-		"actor":"user","action":"create","created_at":"2026-11-15 10:00:00",
-		"changes":[{"table":"memory","row_key":"1","op":"insert","after":{"id":%s}}]}]}`,
-		ClientSchemaVersion, big)
-	if code := h.json("POST", "/v1/sync/commits", token, json.RawMessage(body), nil); code != http.StatusOK {
-		t.Fatalf("push: %d", code)
-	}
-
-	var pulled struct {
-		Commits []struct {
-			Changes json.RawMessage `json:"changes"`
-		} `json:"commits"`
-	}
-	if code := h.json("GET", "/v1/sync/commits?after=0", token, nil, &pulled); code != http.StatusOK || len(pulled.Commits) != 1 {
-		t.Fatalf("pull: %d %+v", code, pulled)
-	}
-	if !strings.Contains(string(pulled.Commits[0].Changes), big) {
-		t.Fatalf("large integer was rewritten: %s", pulled.Commits[0].Changes)
-	}
-}
-
 func upload(h *harness, token string, data []byte, schema int) *http.Response {
 	sum := sha256.Sum256(data)
 	return h.do("POST", "/v1/backups", token, bytes.NewReader(data), map[string]string{
@@ -254,46 +136,24 @@ func upload(h *harness, token string, data []byte, schema int) *http.Response {
 	})
 }
 
-func TestBackupRoundTripAndRetention(t *testing.T) {
-	h := newHarness(t, map[string]string{"ZHIXIN_BACKUPS_KEPT": "2"})
+// TestDeleteAccountClearsBackupBytes 守住账号删除的扇出：备份元数据与字节在
+// auth 删除账号行之前清掉，重新注册同名账号看不到上一份账号的数据。
+func TestDeleteAccountClearsBackupBytes(t *testing.T) {
+	h := newHarness(t, nil)
 	token := h.signUp("a@b.cn")
-
-	for i := range 3 {
-		if resp := upload(h, token, []byte(fmt.Sprintf("zip-%d", i)), ClientSchemaVersion); resp.StatusCode != 201 {
-			t.Fatalf("upload %d: %d", i, resp.StatusCode)
-		}
-	}
-	if resp := upload(h, token, []byte("zip"), ClientSchemaVersion+1); resp.StatusCode != 400 {
-		t.Fatalf("other schema accepted: %d", resp.StatusCode)
-	}
-	resp := h.do("POST", "/v1/backups", token, strings.NewReader("zip"), map[string]string{
-		"X-Content-SHA256": strings.Repeat("0", 64), "X-Schema-Version": fmt.Sprint(ClientSchemaVersion),
-	})
-	if resp.StatusCode != 400 {
-		t.Fatalf("hash mismatch accepted: %d", resp.StatusCode)
+	if resp := upload(h, token, []byte("zip"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: %d", resp.StatusCode)
 	}
 
-	var list struct {
-		Backups []struct {
-			ID         string `json:"id"`
-			DeviceName string `json:"device_name"`
-		} `json:"backups"`
-	}
-	h.json("GET", "/v1/backups", token, nil, &list)
-	if len(list.Backups) != 2 || list.Backups[0].DeviceName != "PLK110" {
-		t.Fatalf("list: %+v", list)
-	}
-	resp = h.do("GET", "/v1/backups/"+list.Backups[0].ID, token, nil, nil)
-	got, _ := io.ReadAll(resp.Body)
-	if string(got) != "zip-2" {
-		t.Fatalf("newest backup = %q", got)
-	}
-
-	// Deleting the account removes the backups with it.
-	if code := h.json("DELETE", "/v1/me", token, nil, nil); code != 204 {
+	if code := h.json("DELETE", "/v1/me", token, nil, nil); code != http.StatusNoContent {
 		t.Fatalf("delete account %d", code)
 	}
 	again := h.signUp("a@b.cn")
+	var list struct {
+		Backups []struct {
+			ID string `json:"id"`
+		} `json:"backups"`
+	}
 	h.json("GET", "/v1/backups", again, nil, &list)
 	if len(list.Backups) != 0 {
 		t.Fatalf("backups survived account deletion: %+v", list)
@@ -303,146 +163,6 @@ func TestBackupRoundTripAndRetention(t *testing.T) {
 func blobSHA(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-func TestBlobRoundTrip(t *testing.T) {
-	h := newHarness(t, nil)
-	token := h.signUp("a@b.cn")
-	data := []byte("attachment-bytes")
-	sha := blobSHA(data)
-
-	if resp := h.do("PUT", "/v1/blobs/"+sha, token, bytes.NewReader(data), nil); resp.StatusCode != 201 {
-		t.Fatalf("upload: %d", resp.StatusCode)
-	}
-	resp := h.do("HEAD", "/v1/blobs/"+sha, token, nil, nil)
-	if resp.StatusCode != 200 || resp.Header.Get("Content-Length") != fmt.Sprint(len(data)) {
-		t.Fatalf("head: %d length %q", resp.StatusCode, resp.Header.Get("Content-Length"))
-	}
-	resp = h.do("GET", "/v1/blobs/"+sha, token, nil, nil)
-	got, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 || !bytes.Equal(got, data) || resp.Header.Get("X-Content-SHA256") != sha {
-		t.Fatalf("download: %d %q", resp.StatusCode, got)
-	}
-
-	missing := blobSHA([]byte("missing"))
-	if resp := h.do("HEAD", "/v1/blobs/"+missing, token, nil, nil); resp.StatusCode != 404 {
-		t.Fatalf("head missing: %d", resp.StatusCode)
-	}
-	var p problem
-	if code := h.json("GET", "/v1/blobs/"+missing, token, nil, &p); code != 404 || p.Code != "not_found" {
-		t.Fatalf("get missing: %d %+v", code, p)
-	}
-	if code := h.json("GET", "/v1/blobs/not-a-hash", token, nil, &p); code != 400 || p.Code != "invalid_request" {
-		t.Fatalf("bad sha format: %d %+v", code, p)
-	}
-
-	// Attachments are scoped to the account that uploaded them.
-	other := h.signUp("c@d.cn")
-	if resp := h.do("HEAD", "/v1/blobs/"+sha, other, nil, nil); resp.StatusCode != 404 {
-		t.Fatalf("other account sees the attachment: %d", resp.StatusCode)
-	}
-
-	// The routes require a bearer token like the rest of /v1.
-	if resp := h.do("PUT", "/v1/blobs/"+sha, "", bytes.NewReader(data), nil); resp.StatusCode != 401 {
-		t.Fatalf("anonymous upload: %d", resp.StatusCode)
-	}
-}
-
-func TestBlobRejectsHashMismatch(t *testing.T) {
-	h := newHarness(t, nil)
-	token := h.signUp("a@b.cn")
-	data := []byte("real-bytes")
-	claimed := blobSHA([]byte("other-bytes"))
-
-	var p problem
-	if code := h.json("PUT", "/v1/blobs/"+claimed, token, nil, nil); code != 400 {
-		t.Fatalf("empty body: %d", code)
-	}
-	resp := h.do("PUT", "/v1/blobs/"+claimed, token, bytes.NewReader(data), nil)
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 400 || p.Code != "invalid_request" {
-		t.Fatalf("hash mismatch: %d %+v", resp.StatusCode, p)
-	}
-	if resp := h.do("HEAD", "/v1/blobs/"+claimed, token, nil, nil); resp.StatusCode != 404 {
-		t.Fatalf("a mismatched upload must not be stored: %d", resp.StatusCode)
-	}
-}
-
-func TestBlobRejectsOversize(t *testing.T) {
-	h := newHarness(t, map[string]string{"ZHIXIN_MAX_ATTACHMENT_BYTES": "4"})
-	token := h.signUp("a@b.cn")
-	data := []byte("too many bytes")
-	var p problem
-	resp := h.do("PUT", "/v1/blobs/"+blobSHA(data), token, bytes.NewReader(data), nil)
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 413 || p.Code != "payload_too_large" {
-		t.Fatalf("oversize: %d %+v", resp.StatusCode, p)
-	}
-}
-
-func TestLLMProxy(t *testing.T) {
-	var gotAuth string
-	var gotBody map[string]any
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"total_tokens\":120}}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
-	}))
-	defer upstream.Close()
-
-	h := newHarness(t, map[string]string{
-		"ZHIXIN_LLM_BASE_URL":     upstream.URL,
-		"ZHIXIN_LLM_API_KEY":      "sk-server",
-		"ZHIXIN_LLM_DAILY_TOKENS": "100",
-	})
-	token := h.signUp("a@b.cn")
-
-	var p problem
-	if code := h.json("POST", "/v1/llm/chat/completions", token, map[string]any{"model": "gpt-x"}, &p); code != 400 || p.Code != "model_not_allowed" {
-		t.Fatalf("model check: %d %+v", code, p)
-	}
-
-	req := map[string]any{"model": "deepseek-flash", "stream": true, "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
-	b, _ := json.Marshal(req)
-	resp := h.do("POST", "/v1/llm/chat/completions", token, bytes.NewReader(b), nil)
-	stream, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 || !strings.Contains(string(stream), "你") || !strings.HasSuffix(string(stream), "data: [DONE]\n\n") {
-		t.Fatalf("stream: %d %q", resp.StatusCode, stream)
-	}
-	if gotAuth != "Bearer sk-server" {
-		t.Fatalf("upstream auth = %q; the client token must not be forwarded", gotAuth)
-	}
-	if gotBody["model"] != "deepseek-flash" {
-		t.Fatalf("body not forwarded: %+v", gotBody)
-	}
-
-	var q struct {
-		Used int64 `json:"used_tokens"`
-	}
-	h.json("GET", "/v1/llm/quota", token, nil, &q)
-	if q.Used != 120 {
-		t.Fatalf("usage = %d", q.Used)
-	}
-	if code := h.json("POST", "/v1/llm/chat/completions", token, req, &p); code != 429 || p.Code != "quota_exceeded" {
-		t.Fatalf("quota: %d %+v", code, p)
-	}
-}
-
-func TestLLMProxyDisabledWithoutKey(t *testing.T) {
-	h := newHarness(t, nil)
-	token := h.signUp("a@b.cn")
-	var p problem
-	if code := h.json("POST", "/v1/llm/chat/completions", token, map[string]any{"model": "deepseek-flash"}, &p); code != 503 || p.Code != "unavailable" {
-		t.Fatalf("got %d %+v", code, p)
-	}
 }
 
 func TestAuthRateLimitReturns429(t *testing.T) {
@@ -604,6 +324,69 @@ func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Fatalf("access log %q does not contain %q; a rejected request must still be logged", line, want)
 		}
+	}
+}
+
+// failingSyncStore 让同步存储返回错误，用来验证 500 的 problem 体、request_id
+// 与日志：handler 里的 WriteInternal 是内部错误的唯一出口。
+type failingSyncStore struct{}
+
+func (failingSyncStore) Head(context.Context, string) (int64, error) {
+	return 0, errors.New("database is down")
+}
+
+func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit) (int64, error) {
+	return 0, errors.New("database is down")
+}
+
+func (failingSyncStore) After(context.Context, string, int64, int) ([]syncsvc.Commit, error) {
+	return nil, errors.New("database is down")
+}
+
+func TestInternalErrorsAreProblems(t *testing.T) {
+	cfg, err := config.Load(func(key string) string {
+		return map[string]string{"ZHIXIN_AUTH_RATE": "0", "ZHIXIN_REFRESH_RATE": "0"}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stores := MemoryStores()
+	stores.Sync = failingSyncStore{}
+	var logs bytes.Buffer
+	handler := New(cfg, stores, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	register := httptest.NewRequest(http.MethodPost, "/v1/auth/register",
+		bytes.NewReader(mustJSON(t, map[string]string{"email": "fail@b.cn", "password": "password1"})))
+	register.Header.Set("Content-Type", "application/json")
+	registered := httptest.NewRecorder()
+	handler.ServeHTTP(registered, register)
+	if registered.Code != http.StatusCreated {
+		t.Fatalf("register: %d", registered.Code)
+	}
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &tok); err != nil {
+		t.Fatalf("decode tokens: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sync/head", nil)
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	var p problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if rec.Code != http.StatusInternalServerError || p.Code != "internal" || p.RequestID == "" {
+		t.Fatalf("store failure: %d %+v", rec.Code, p)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("content type %q", ct)
+	}
+	if !strings.Contains(logs.String(), "request failed") {
+		t.Fatalf("500 must be logged: %q", logs.String())
 	}
 }
 
