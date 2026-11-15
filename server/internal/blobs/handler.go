@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
@@ -25,12 +24,10 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
-var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // Head 只回答存在与否。HEAD 不返回响应体，所以错误也只给状态码，客户端按
 // 200 与 404 分支即可。
 func (h *Handler) Head(w http.ResponseWriter, r *http.Request, sha string) {
-	if !shaPattern.MatchString(sha) {
+	if !httpx.ValidSHA256(sha) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -49,7 +46,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request, sha string) {
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request, sha string) {
-	if !shaPattern.MatchString(sha) {
+	if !httpx.ValidSHA256(sha) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "sha256 must be 64 lowercase hex characters")
 		return
 	}
@@ -72,32 +69,21 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, sha string) {
 }
 
 func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
-	if !shaPattern.MatchString(sha) {
+	if !httpx.ValidSHA256(sha) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "sha256 must be 64 lowercase hex characters")
 		return
 	}
-	maxBytes := h.svc.MaxBytes()
-	if r.ContentLength > maxBytes {
-		httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
-		return
-	}
-	spool, err := httpx.SpoolBody(w, r, maxBytes)
-	if err != nil {
-		switch {
-		case errors.Is(err, httpx.ErrBodyTooLarge):
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
-		case errors.Is(err, httpx.ErrBodyRead):
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
-		default:
-			httpx.WriteInternal(w, r, h.log, err)
-		}
+	spool, ok := httpx.SpoolVerified(w, r, h.log, httpx.SpoolCheck{
+		Limit:    h.svc.MaxBytes(),
+		SHA256:   sha,
+		TooLarge: "attachment is too large",
+		Mismatch: "body does not match the sha256 in the path",
+	})
+	if !ok {
 		return
 	}
 	defer spool.Close()
-	if spool.SHA256 != sha {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "body does not match the sha256 in the path")
-		return
-	}
+
 	p := auth.MustPrincipal(r.Context())
 	data, err := spool.Reader()
 	if err != nil {

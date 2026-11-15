@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -25,8 +24,6 @@ type Handler struct {
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
-
-var hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // backupJSON 把存储层的元数据转成契约类型，响应字段只在这里出现一次。
 func backupJSON(m Meta) api.Backup {
@@ -48,7 +45,7 @@ func backupJSON(m Meta) api.Backup {
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.PostV1BackupsParams) {
 	p := auth.MustPrincipal(r.Context())
 	want := params.XContentSHA256
-	if !hexSHA256.MatchString(want) {
+	if !httpx.ValidSHA256(want) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "X-Content-SHA256 must be 64 lowercase hex characters")
 		return
 	}
@@ -58,30 +55,20 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 			"schema version does not match the server", map[string]any{"schema_version": h.svc.SchemaVersion()})
 		return
 	}
-	if r.ContentLength > h.svc.MaxBytes() {
-		httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes()))
-		return
-	}
 
 	// The body goes to a temporary file while its hash is computed: a 256 MB
 	// snapshot must not sit in memory, and the store needs the exact size.
-	spool, err := httpx.SpoolBody(w, r, h.svc.MaxBytes())
-	if err != nil {
-		switch {
-		case errors.Is(err, httpx.ErrBodyTooLarge):
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes()))
-		case errors.Is(err, httpx.ErrBodyRead):
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
-		default:
-			httpx.WriteInternal(w, r, h.log, err)
-		}
+	tooLarge := fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes())
+	spool, ok := httpx.SpoolVerified(w, r, h.log, httpx.SpoolCheck{
+		Limit:    h.svc.MaxBytes(),
+		SHA256:   want,
+		TooLarge: tooLarge,
+		Mismatch: "body does not match X-Content-SHA256",
+	})
+	if !ok {
 		return
 	}
 	defer spool.Close()
-	if spool.SHA256 != want {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "body does not match X-Content-SHA256")
-		return
-	}
 
 	device := ""
 	if params.XDeviceName != nil {
@@ -108,7 +95,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 			return
 		}
 		if errors.Is(err, ErrTooLarge) {
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("backup exceeds %d bytes", h.svc.MaxBytes()))
+			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, tooLarge)
 			return
 		}
 		httpx.WriteInternal(w, r, h.log, err)
