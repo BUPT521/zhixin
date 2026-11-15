@@ -20,7 +20,7 @@ void main() {
     if (await root.exists()) await root.delete(recursive: true);
   });
 
-  test('同内容图片只占一个发送名额，并说明其他图片的遗漏原因', () async {
+  test('同内容图片只占一个发送名额，并记下其他图片的遗漏原因', () async {
     await File('${images.path}/ok.jpg').writeAsBytes([1, 2, 3]);
     await File('${images.path}/copy.jpg').writeAsBytes([1, 2, 3]);
     await File('${images.path}/large.jpg')
@@ -41,21 +41,19 @@ void main() {
       [4],
     ]);
     expect(result.images.map((image) => image.id).toSet(), hasLength(2));
-    expect(result.omitted.map((item) => item.reason), [
+    expect(result.omitted, [
       AttachmentOmissionReason.tooLarge,
       AttachmentOmissionReason.tooMany,
     ]);
-    expect(result.notice, contains('超过 4 MB'));
-    expect(result.notice, contains('超过两张'));
   });
 
   test('图片上传关闭或文件缺失时返回原因，不静默略过', () async {
     final disabled = await service.prepare(['missing.jpg'], enabled: false);
     expect(disabled.images, isEmpty);
-    expect(disabled.notice, contains('图片上传已关闭'));
+    expect(disabled.omitted, [AttachmentOmissionReason.uploadDisabled]);
 
     final missing = await service.prepare(['missing.jpg'], enabled: true);
     expect(missing.images, isEmpty);
-    expect(missing.notice, contains('图片文件已找不到'));
+    expect(missing.omitted, [AttachmentOmissionReason.missing]);
   });
 }

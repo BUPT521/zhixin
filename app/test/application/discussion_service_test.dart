@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +29,8 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
+import 'package:zhixin/application/attachment_service.dart';
+import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
@@ -270,7 +273,7 @@ void main() {
     expect(result.stopped, isTrue);
     expect(result.reply, '先看定义');
     expect(result.fromModel, isTrue);
-    expect(result.notice, contains('保留已经生成的部分'));
+    expect(result.notices, [Notice.userStopped]);
     expect(partials, ['先看定义']);
     expect(result.nextSteps, isEmpty);
     expect(await h.tasks.items(), isEmpty);
@@ -289,7 +292,7 @@ void main() {
     expect(result.stopped, isTrue);
     expect(result.fromModel, isFalse);
     expect(result.reply, '已停止生成。');
-    expect(result.notice, '已停止生成。');
+    expect(result.notices, [Notice.userStopped]);
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.content, '已停止生成。');
@@ -317,8 +320,8 @@ void main() {
     expect(result.interrupted, isTrue);
     expect(result.fromModel, isTrue);
     expect(result.reply, '先看定义');
-    expect(result.notice, contains('生成中断'));
-    expect(result.notice, contains('已保留已经生成的部分'));
+    expect(result.notices, [Notice.generationInterrupted]);
+    expect(result.outcome.detail, '网络不可用');
     expect(result.nextSteps, isEmpty);
     expect(partials, ['先看定义']);
 
@@ -405,7 +408,7 @@ void main() {
     final result = await h.service.reply(text: '为什么这里需要独立性？');
     expect(result.fromModel, isFalse);
     expect(result.modelFailed, isTrue);
-    expect(result.notice, contains('已切换为本地规则回答'));
+    expect(result.notices, [Notice.modelCallFailed]);
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.structured?['model'], isFalse);
@@ -425,12 +428,12 @@ void main() {
     final result = await h.service.reply(text: '为什么这里需要独立性？');
     final messages = await h.service.history(result.userMessage.conversationId);
 
-    // 重新打开讨论时，失败原因与下一步仍挂在这一次回答上。
+    // 重新打开讨论时，失败类型与提示状态仍挂在这一次回答上；技术细节不进库。
     expect(messages.last.structured?['model_failure'], 'auth');
-    final notice = messages.last.structured?['failure_notice'] as String?;
-    expect(notice, contains('API Key 无效或没有权限'));
-    expect(notice, contains('问题与本地回答会保存在本机'));
-    expect(notice, isNot(contains('sk-secret')));
+    expect(messages.last.structured?['notices'], [
+      Notice.modelCallFailed.value,
+    ]);
+    expect(jsonEncode(messages.last.structured), isNot(contains('sk-secret')));
     expect(recorded, hasLength(1));
     expect(recorded.single.$2, 'model_call');
     expect((recorded.single.$1 as LlmException).detail, contains('sk-secret'));
@@ -480,7 +483,10 @@ void main() {
 
     final result = await h.service.reply(imagePaths: [image.path]);
     expect(h.ai.calls, 0);
-    expect(result.notice, contains('图片上传已关闭'));
+    expect(result.outcome.omittedImages, [
+      AttachmentOmissionReason.uploadDisabled,
+    ]);
+    expect(result.notices, contains(Notice.imagesUnavailable));
     expect(result.reply, contains('图片已保存在本次讨论中'));
     expect(
       (await h.service.history(result.userMessage.conversationId))
@@ -501,7 +507,7 @@ void main() {
     expect(result.fromModel, isFalse);
     // 没有配置模型不算调用失败，界面给的是配置入口而不是重试入口。
     expect(result.modelFailed, isFalse);
-    expect(result.notice, contains('本地规则'));
+    expect(result.notices, [Notice.modelNotConfigured]);
     expect(result.reply, isNotEmpty);
     expect(
       await h.service.history(result.userMessage.conversationId),
@@ -592,7 +598,7 @@ void main() {
     expect(result.fromModel, isTrue);
     expect(result.stopped, isFalse);
     expect(result.reply, '先看定义，再回到这一步。');
-    expect(result.notice, contains('回答被截断'));
+    expect(result.notices, [Notice.answerTruncated]);
 
     final messages = await h.service.history(result.userMessage.conversationId);
     expect(messages.last.content, '先看定义，再回到这一步。');
@@ -1100,7 +1106,7 @@ void main() {
 
     final result = await h.service.reply(text: '我喜欢先看例子');
     final conversationId = result.userMessage.conversationId;
-    expect(result.notice, contains('记忆保存失败'));
+    expect(result.notices, contains(Notice.memorySaveFailed));
     expect(result.assistantMessage.content, '记住了');
     final messages = await h.service.history(conversationId);
     expect(messages, hasLength(2));

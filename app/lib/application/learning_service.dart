@@ -20,6 +20,7 @@ import '../domain/models/question.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/content_identity.dart';
+import '../domain/rules/notices.dart';
 import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
@@ -61,7 +62,9 @@ class HelpResult {
   bool get fromModel => outcome.fromModel;
   bool get stopped => outcome.stopped;
   bool get interrupted => outcome.interrupted;
-  String? get notice => outcome.notice;
+
+  /// 这次帮助需要界面区分的情况；提示与恢复入口都按它决定。
+  List<Notice> get notices => outcome.notices;
 }
 
 /// 按本次最新的有判断的已提交尝试推出场次结果；没有提交或都没判断时留空。
@@ -334,24 +337,27 @@ class LearningService {
       recordFailure: runtime.recordFailure,
     );
     _ensureCurrentEpoch(requestEpoch);
-    var notice = run.notice;
+    var notices = run.notices;
+    String? detail;
     final answer = run.answer;
     if (answer != null) {
       final outcome = interpretModelAnswer(
         answer,
-        notice: notice,
+        notices: notices,
+        omittedImages: run.omittedImages,
+        failure: run.failure,
         localFallback: () => localBuddyReply(
           facts,
           modelMissing: false,
           hasImages: question.hasImages,
         ),
-        fallbackNotice: modelFallbackNotice,
       );
       text = outcome.text;
       fromModel = outcome.fromModel;
       stopped = outcome.stopped;
       interrupted = outcome.interrupted;
-      notice = outcome.notice;
+      notices = outcome.notices;
+      detail = outcome.detail;
       // 没有正文就停下时不记一条空的帮助；提示条已经说明已停止。
       if (stopped && !fromModel) text = '';
     } else {
@@ -408,7 +414,10 @@ class LearningService {
         stopped: stopped,
         interrupted: interrupted,
         modelFailed: false,
-        notice: notice,
+        notices: notices,
+        detail: detail,
+        omittedImages: run.omittedImages,
+        failure: run.failure,
       ),
       attempt: updated ?? attempt,
     );
@@ -663,7 +672,13 @@ class LearningService {
     final prepared = await AttachmentService(filesDir: () => runtime.filesDir)
         .prepare(question.imagePaths, enabled: config?.allowImages ?? false);
     if (question.stem.trim().isEmpty && prepared.images.isEmpty) {
-      throw StateError(prepared.notice ?? '没有可发送的题目图片，无法进行模型判断。');
+      throw StateError(
+        prepared.omitted.isEmpty
+            ? '没有可发送的题目图片，无法进行模型判断。'
+            : '题目图片都没有发送'
+                  '（${prepared.omitted.map((reason) => reason.name).join('、')}），'
+                  '无法进行模型判断。',
+      );
     }
     final answer = await ai.ask(
       context: facts,

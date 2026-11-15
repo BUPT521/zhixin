@@ -59,7 +59,9 @@ class ChatResult {
   bool get stopped => outcome.stopped;
   bool get interrupted => outcome.interrupted;
   bool get modelFailed => outcome.modelFailed;
-  String? get notice => outcome.notice;
+
+  /// 这次回答需要界面区分的情况；提示与恢复入口都按它决定。
+  List<Notice> get notices => outcome.notices;
 
   final List<String> skipped;
   final List<NextStepDraft> nextSteps;
@@ -485,7 +487,9 @@ class DiscussionService {
     var stopped = false;
     var interrupted = false;
     var modelFailed = run.modelFailed;
-    var notice = run.notice;
+    var notices = run.notices;
+    String? detail;
+    var failure = run.failure;
     var skipped = <String>[];
     var nextSteps = const <NextStepDraft>[];
     var citations = const <Citation>[];
@@ -500,21 +504,23 @@ class DiscussionService {
     } else if (answer != null) {
       final outcome = interpretModelAnswer(
         answer,
-        notice: notice,
+        notices: notices,
+        omittedImages: run.omittedImages,
+        failure: failure,
         localFallback: () => localBuddyReply(
           facts,
           modelMissing: false,
           text: text,
           hasImages: hasImages || earlierImages.isNotEmpty,
         ),
-        fallbackNotice: modelFallbackNotice,
       );
       reply = outcome.text;
       fromModel = outcome.fromModel;
       stopped = outcome.stopped;
       interrupted = outcome.interrupted;
       modelFailed = outcome.modelFailed;
-      notice = outcome.notice;
+      notices = outcome.notices;
+      detail = outcome.detail;
       if (fromModel && !stopped && !interrupted) {
         nextSteps = uniqueById(
           answer.nextSteps,
@@ -585,10 +591,9 @@ class DiscussionService {
           if (stopped) 'stopped': true,
           if (interrupted) 'interrupted': true,
           if (modelFailed) 'model_failed': true,
-          if (modelFailed && run.failure != null)
-            'model_failure': run.failure!.name,
-          if (modelFailed && notice != null && notice.trim().isNotEmpty)
-            'failure_notice': notice.trim(),
+          if (modelFailed && failure != null) 'model_failure': failure.name,
+          if (notices.isNotEmpty)
+            'notices': [for (final notice in notices) notice.value],
           if (memoryItems.isNotEmpty) 'memory_items': memoryItems,
           if (nextSteps.isNotEmpty)
             'next_steps': [
@@ -656,7 +661,7 @@ class DiscussionService {
         if (refreshed != null) assistantMessage = refreshed;
       } catch (_) {
         // 记忆可撤销，也只是回答的附带写入；失败不拖累已经保存的正文。
-        notice = joinNotices(notice, '记忆保存失败，回答已保存。');
+        notices = [...notices, Notice.memorySaveFailed];
       }
     }
 
@@ -669,7 +674,10 @@ class DiscussionService {
         stopped: stopped,
         interrupted: interrupted,
         modelFailed: modelFailed,
-        notice: notice,
+        notices: notices,
+        detail: detail,
+        omittedImages: run.omittedImages,
+        failure: failure,
       ),
       skipped: skipped,
       nextSteps: nextSteps,

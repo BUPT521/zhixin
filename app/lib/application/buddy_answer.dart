@@ -7,26 +7,18 @@ import '../domain/rules/notices.dart';
 import 'attachment_service.dart';
 import 'service_runtime.dart';
 
-/// 退回本地规则回答时的统一说明。
-///
-/// 讨论发送与作答求助原先各写一句，措辞还不一样（“本地规则回答”与
-/// “本地提示”），改一处时另一处仍按旧说法提示；两条路径现在都从这里取。
-/// 说明同时交代已经保留下来的内容与下一步，用户不必到别处确认这一轮是否还能
-/// 重试。
-const String modelFallbackNotice =
-    '模型调用失败，已切换为本地规则回答；问题与本地回答会保存在本机。'
-    '可以点「重试这次回答」。';
-
 /// 读配置、备图并调用模型之后的结果。
+///
+/// 状态由 [notices] 给出，界面按枚举写说明；不再用提示文案的子串判断这次
+/// 能不能重试、要不要去设置。
 class BuddyAnswerRun {
   const BuddyAnswerRun({
     required this.config,
     required this.answer,
-    required this.notice,
-    required this.modelMissing,
-    required this.modelFailed,
-    required this.notSent,
+    this.notices = const [],
+    this.omittedImages = const [],
     this.failure,
+    this.notSent = false,
   });
 
   final LlmConfig? config;
@@ -34,50 +26,40 @@ class BuddyAnswerRun {
   /// 模型给出的回答；没有可发送的内容、调用失败或模型没配置好时为空。
   final BuddyReply? answer;
 
-  /// 配置读取、图片准备与调用失败合成的一条提示。
-  final String? notice;
+  /// 配置读取、图片准备与调用失败合成的情况。
+  final List<Notice> notices;
 
-  /// 模型没有配置好：没有配置项，或配置读取失败。本地回答据此说明原因。
-  final bool modelMissing;
+  /// 没有发送的图片原因。
+  final List<AttachmentOmissionReason> omittedImages;
 
-  /// 模型已经配置、调用失败；界面据此给出重试入口。
-  final bool modelFailed;
+  /// 调用失败的类型；配置读取失败与没有可发送内容时为空。
+  final LlmFailure? failure;
 
   /// 没有可发送的内容，本次没有调用模型。
   final bool notSent;
 
-  /// 调用失败的类型；配置读取失败与没有可发送内容时为空。
-  final LlmFailure? failure;
+  /// 模型没有配置好：没有配置项，或配置读取失败。本地回答据此说明原因。
+  bool get modelMissing =>
+      notices.contains(Notice.modelNotConfigured) ||
+      notices.contains(Notice.modelConfigReadFailed);
+
+  /// 模型已经配置、调用失败；界面据此给出重试入口。
+  bool get modelFailed => notices.contains(Notice.modelCallFailed);
 }
 
-/// 读配置、备图并调用模型；讨论发送与作答求助共用这一份。
-///
-/// 讨论与作答原先各写一段读配置、备图、调用与失败提示，改其中一处时另一处
-/// 仍按旧规则处理；两条路径现在只在这里决定发送什么、失败时说什么。
-/// [text] 是用户这次自己写下的内容，图片都不可发送时用它判断是否还有事可做；
-/// [prompt] 是真正发给模型的文字，作答求助发的是按模式拼好的问题。
-/// [config] 是调用方已经读到的配置：重答要在写入任何内容之前先判断模型是否
-/// 配置好，已经读过一次，这里直接复用，不再读第二次；传空表示没有读过，由
-/// 这里读取，读取失败时按未配置处理。
-/// [recordFailure] 只把类型、消息与调用栈交给本机诊断记录，不参与界面说明。
-/// 读取模型配置；读取失败按“未配置”处理，并给出统一说明。
+/// 读取模型配置；读取失败按“未配置”处理，并给出统一的状态。
 ///
 /// 讨论、作答、系统学习与重答原先各自 catch 配置读取失败，有的按未配置处理、
-/// 有的把异常抛给界面；现在从这一处取，失败一律落成未配置与同一条说明。
-Future<({LlmConfig? config, String? notice})> readModelConfig(
+/// 有的把异常抛给界面；现在从这一处取，失败一律落成未配置与同一条状态。
+Future<({LlmConfig? config, List<Notice> notices})> readModelConfig(
   BuddyAi ai, {
   ModelFailureRecorder? recordFailure,
 }) async {
   try {
-    return (config: await ai.config(), notice: null);
+    return (config: await ai.config(), notices: const <Notice>[]);
   } catch (error, stack) {
     recordFailure?.call(error, stack, kind: 'model_config_read');
-    return (
-      config: null,
-      notice:
-          '模型配置读取失败，这次先用本地规则回答；问题与本地回答会保存在本机。'
-          '可以到设置里重新保存一次模型配置。',
-    );
+    return (config: null, notices: const [Notice.modelConfigReadFailed]);
   }
 }
 
@@ -96,32 +78,26 @@ Future<BuddyAnswerRun> askBuddyModel({
   ModelFailureRecorder? recordFailure,
 }) async {
   var current = config;
-  String? notice;
+  var notices = <Notice>[];
   if (current == null) {
     final read = await readModelConfig(ai, recordFailure: recordFailure);
     current = read.config;
-    notice = read.notice;
+    notices.addAll(read.notices);
   }
   final prepared = await AttachmentService(filesDir: filesDir)
       .prepare(imagePaths, enabled: current?.allowImages ?? false);
-  notice = joinNotices(notice, prepared.notice);
+  if (prepared.omitted.isNotEmpty) notices.add(Notice.imagesUnavailable);
   final modelReady = current?.isConfigured ?? false;
 
   // 有图但一张都发不出去、又没有文字时没有可问的内容，不调用模型。
   if (prepared.images.isEmpty && text.trim().isEmpty) {
+    if (!modelReady) notices.add(Notice.modelNotConfigured);
+    notices.add(Notice.noSendableContent);
     return BuddyAnswerRun(
       config: current,
       answer: null,
-      notice: joinNotices(
-        notice,
-        modelReady
-            ? '本次没有可发送的图片，未调用模型；题目与已写内容仍在本机。'
-                  '可以换一张可读取的图片，或补充文字后再试。'
-            : '模型尚未配置，图片没有发送；题目与已写内容仍在本机。'
-                  '配置模型后可以重新回答。',
-      ),
-      modelMissing: !modelReady,
-      modelFailed: false,
+      notices: notices,
+      omittedImages: prepared.omitted,
       notSent: true,
     );
   }
@@ -140,54 +116,35 @@ Future<BuddyAnswerRun> askBuddyModel({
     return BuddyAnswerRun(
       config: current,
       answer: answer,
-      notice: notice,
-      modelMissing: false,
-      modelFailed: false,
-      notSent: false,
+      notices: notices,
+      omittedImages: prepared.omitted,
     );
   } on LlmException catch (error, stack) {
     // 取消是用户自己停下的，不算需要排障的失败。
     if (error.failure != LlmFailure.cancelled) {
       recordFailure?.call(error, stack, kind: 'model_call');
     }
+    notices.add(
+      error.failure == LlmFailure.notConfigured
+          ? Notice.modelNotConfigured
+          : Notice.modelCallFailed,
+    );
     return BuddyAnswerRun(
       config: current,
       answer: null,
-      notice: joinNotices(notice, _modelFailureNotice(error)),
-      modelMissing: error.failure == LlmFailure.notConfigured,
-      modelFailed: error.failure != LlmFailure.notConfigured,
-      notSent: false,
+      notices: notices,
+      omittedImages: prepared.omitted,
       failure: error.failure,
     );
   } catch (error, stack) {
     recordFailure?.call(error, stack, kind: 'model_call');
+    notices.add(Notice.modelCallFailed);
     return BuddyAnswerRun(
       config: current,
       answer: null,
-      notice: joinNotices(notice, modelFallbackNotice),
-      modelMissing: false,
-      modelFailed: true,
-      notSent: false,
+      notices: notices,
+      omittedImages: prepared.omitted,
       failure: LlmFailure.unknown,
     );
   }
-}
-
-/// 模型失败的说明按类型给出下一步；不把配置、响应体或密钥带进界面。
-String _modelFailureNotice(LlmException error) {
-  if (error.failure == LlmFailure.notConfigured) {
-    return '模型尚未配置，这次先用本地规则回答；问题与本地回答会保存在本机。'
-        '先到设置里配置模型，再回来重新回答。';
-  }
-  final next = switch (error.failure) {
-    LlmFailure.auth => '请检查设置里的 API Key 与模型名，改好后再点「重试这次回答」。',
-    LlmFailure.offline || LlmFailure.timeout => '检查网络后可以点「重试这次回答」。',
-    LlmFailure.rateLimited => '请检查 API Key 的额度，稍后可以点「重试这次回答」。',
-    LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',
-    LlmFailure.badResponse ||
-    LlmFailure.toolUnsupported => '请检查设置里的接口地址与模型名，改好后再点「重试这次回答」。',
-    _ => '可以点「重试这次回答」。',
-  };
-  return '模型调用失败（${error.shortText}），已切换为本地规则回答；'
-      '问题与本地回答会保存在本机。$next';
 }

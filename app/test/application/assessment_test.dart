@@ -8,6 +8,7 @@ import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/domain/models/study.dart';
+import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/application/learning_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -365,7 +366,7 @@ void main() {
     expect(result.stopped, isTrue);
     expect(result.text, '先看定义');
     expect(result.fromModel, isTrue);
-    expect(result.notice, contains('保留已经生成的部分'));
+    expect(result.notices, [Notice.userStopped]);
     expect(result.attempt.helps, hasLength(1));
     expect(result.attempt.helps.single.content, '先看定义');
   });
@@ -391,8 +392,8 @@ void main() {
     expect(result.interrupted, isTrue);
     expect(result.text, '先看定义');
     expect(result.fromModel, isTrue);
-    expect(result.notice, contains('生成中断'));
-    expect(result.notice, contains('已保留已经生成的部分'));
+    expect(result.notices, [Notice.generationInterrupted]);
+    expect(result.outcome.detail, '网络不可用');
     expect(result.attempt.helps, hasLength(1));
     expect(result.attempt.helps.single.content, '先看定义');
   });
@@ -411,7 +412,7 @@ void main() {
 
     expect(result.text, '先看定义');
     expect(result.fromModel, isTrue);
-    expect(result.notice, contains('回答被截断'));
+    expect(result.notices, [Notice.answerTruncated]);
     expect(result.attempt.helps.single.content, '先看定义');
   });
 
@@ -429,7 +430,7 @@ void main() {
     expect(result.stopped, isTrue);
     expect(result.text, isEmpty);
     expect(result.fromModel, isFalse);
-    expect(result.notice, '已停止生成。');
+    expect(result.notices, [Notice.userStopped]);
     expect(result.attempt.helps, isEmpty);
   });
 
@@ -445,8 +446,8 @@ void main() {
     );
 
     expect(result.fromModel, isFalse);
-    expect(result.notice, contains('模型调用失败（网络不可用）'));
-    expect(result.notice, contains('已切换为本地规则回答'));
+    expect(result.notices, [Notice.modelCallFailed]);
+    expect(result.outcome.failure, LlmFailure.offline);
     expect(result.attempt.helps.single.content, isNotEmpty);
   });
 

@@ -1,0 +1,169 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/ai/llm_client.dart';
+import 'package:zhixin/application/answer_outcome.dart';
+import 'package:zhixin/application/attachment_service.dart';
+import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/rules/notices.dart';
+import 'package:zhixin/ui/answer_notice.dart';
+
+void main() {
+  AnswerOutcome outcome({
+    List<Notice> notices = const [],
+    String? detail,
+    List<AttachmentOmissionReason> omittedImages = const [],
+    LlmFailure? failure,
+    bool fromModel = false,
+  }) => AnswerOutcome(
+    text: '',
+    fromModel: fromModel,
+    stopped: false,
+    interrupted: false,
+    modelFailed: failure != null,
+    notices: notices,
+    detail: detail,
+    omittedImages: omittedImages,
+    failure: failure,
+  );
+
+  test('模型调用失败按失败类型写原因与下一步', () {
+    final text = answerNoticeText(
+      outcome(
+        notices: const [Notice.modelCallFailed],
+        failure: LlmFailure.auth,
+      ),
+    );
+    expect(
+      text,
+      '模型调用失败（API Key 无效或没有权限），已切换为本地规则回答；'
+      '问题与本地回答会保存在本机。'
+      '请检查设置里的 API Key 与模型名，改好后再点「重试这次回答」。',
+    );
+
+    final offline = answerNoticeText(
+      outcome(
+        notices: const [Notice.modelCallFailed],
+        failure: LlmFailure.offline,
+      ),
+    );
+    expect(offline, contains('检查网络后可以点「重试这次回答」。'));
+  });
+
+  test('未知失败不带原因括号，也没有重试以外的说法', () {
+    final text = answerNoticeText(
+      outcome(
+        notices: const [Notice.modelCallFailed],
+        failure: LlmFailure.unknown,
+      ),
+    );
+    expect(
+      text,
+      '模型调用失败，已切换为本地规则回答；问题与本地回答会保存在本机。'
+      '可以点「重试这次回答」。',
+    );
+  });
+
+  test('模型未配置时给配置入口的说法，没有可发送内容时只讲一遍', () {
+    expect(
+      answerNoticeText(outcome(notices: const [Notice.modelNotConfigured])),
+      '模型尚未配置，这次先用本地规则回答；问题与本地回答会保存在本机。'
+      '先到设置里配置模型，再回来重新回答。',
+    );
+    expect(
+      answerNoticeText(
+        outcome(
+          notices: const [Notice.modelNotConfigured, Notice.noSendableContent],
+        ),
+      ),
+      '模型尚未配置，图片没有发送；题目与已写内容仍在本机。配置模型后可以重新回答。',
+    );
+    expect(
+      answerNoticeText(outcome(notices: const [Notice.noSendableContent])),
+      '本次没有可发送的图片，未调用模型；题目与已写内容仍在本机。'
+      '可以换一张可读取的图片，或补充文字后再试。',
+    );
+  });
+
+  test('没有发送的图片按原因列出，顺序稳定', () {
+    final text = answerNoticeText(
+      outcome(
+        notices: const [Notice.imagesUnavailable],
+        omittedImages: const [
+          AttachmentOmissionReason.tooMany,
+          AttachmentOmissionReason.tooLarge,
+        ],
+      ),
+    );
+    expect(text, '超过两张的图片未发送；超过 4 MB 的图片未发送。');
+  });
+
+  test('停止、截断与中断各自说明保留了哪些正文', () {
+    expect(
+      answerNoticeText(outcome(notices: const [Notice.userStopped])),
+      '已停止生成。',
+    );
+    expect(
+      answerNoticeText(
+        outcome(notices: const [Notice.userStopped], fromModel: true),
+      ),
+      '已停止生成，保留已经生成的部分。',
+    );
+    expect(
+      answerNoticeText(outcome(notices: const [Notice.answerTruncated])),
+      '回答被截断，已保留已经生成的部分。',
+    );
+    expect(
+      answerNoticeText(
+        outcome(notices: const [Notice.generationInterrupted], detail: '连接中断'),
+      ),
+      '生成中断（连接中断），已保留已经生成的部分。',
+    );
+  });
+
+  test('多条提示按顺序用空格连接，记忆保存失败单独一句', () {
+    final text = answerNoticeText(
+      outcome(
+        notices: const [Notice.imagesUnavailable, Notice.memorySaveFailed],
+        omittedImages: const [AttachmentOmissionReason.uploadDisabled],
+      ),
+    );
+    expect(text, '图片上传已关闭。 记忆保存失败，回答已保存。');
+  });
+
+  test('重新打开讨论时按保存下来的值与失败类型写回同一条说明', () {
+    final message = ChatMessage(
+      id: 1,
+      conversationId: 2,
+      role: 'assistant',
+      content: '本地回答',
+      structuredJson: jsonEncode({
+        'model': false,
+        'model_failed': true,
+        'model_failure': 'auth',
+        'notices': [Notice.modelCallFailed.value],
+      }),
+    );
+    final saved = savedAnswerStatus(message);
+    expect(saved.notices, [Notice.modelCallFailed]);
+    expect(saved.failure, LlmFailure.auth);
+    expect(saved.needsConfig, isFalse);
+    expect(savedAnswerNoticeText(saved), contains('API Key 无效或没有权限'));
+  });
+
+  test('本地兜底中没有配置模型的消息需要配置入口', () {
+    final message = ChatMessage(
+      id: 1,
+      conversationId: 2,
+      role: 'assistant',
+      content: '本地回答',
+      structuredJson: jsonEncode({
+        'model': false,
+        'notices': [Notice.modelNotConfigured.value],
+      }),
+    );
+    final saved = savedAnswerStatus(message);
+    expect(saved.needsConfig, isTrue);
+    expect(saved.failure, isNull);
+  });
+}

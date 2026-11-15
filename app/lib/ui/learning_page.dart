@@ -15,7 +15,9 @@ import '../application/memory_view.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
+import '../domain/rules/notices.dart';
 import '../domain/rules/text.dart';
+import 'answer_notice.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
 import 'data_version_watcher.dart';
@@ -379,14 +381,15 @@ class _LearningPageState extends State<LearningPage>
       setState(() {
         _generating = false;
         _help = nullableText(result.text);
-        _notice = result.notice;
+        _notice = answerNoticeText(result.outcome);
         _lastMode = mode;
         _lastFromModel = result.fromModel;
         _lastInterrupted = result.interrupted;
       });
       await _load();
       if (!mounted) return;
-      if (!result.fromModel && (_notice?.contains('尚未配置') ?? false)) {
+      if (!result.fromModel &&
+          result.notices.contains(Notice.modelNotConfigured)) {
         await _showModelGuide();
       }
     } catch (error, stack) {

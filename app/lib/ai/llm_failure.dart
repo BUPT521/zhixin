@@ -18,27 +18,38 @@ enum LlmFailure {
   unknown,
 }
 
+/// 按名称读回失败类型；认不出的返回空，界面不显示未知失败。
+LlmFailure? llmFailureFromName(String? name) {
+  for (final failure in LlmFailure.values) {
+    if (failure.name == name) return failure;
+  }
+  return null;
+}
+
+/// 一种失败类型给人看的说法；界面按类型写下一步，不解析异常原文。
+String shortTextOf(LlmFailure failure) => switch (failure) {
+  LlmFailure.notConfigured => '模型尚未配置',
+  LlmFailure.offline => '网络不可用',
+  LlmFailure.timeout => '请求超时',
+  LlmFailure.auth => 'API Key 无效或没有权限',
+  LlmFailure.rateLimited => '调用额度或频率受限',
+  LlmFailure.badResponse => '模型回复格式无法识别',
+  LlmFailure.truncated => '回答被截断，请再试一次',
+  LlmFailure.toolStalled => '工具调用未能推进回答',
+  LlmFailure.contextLimit => '本轮内容超过模型上下文预算',
+  LlmFailure.cancelled => '已停止生成',
+  LlmFailure.server => '模型服务出错',
+  LlmFailure.toolUnsupported => '这个模型或地址不支持工具调用',
+  LlmFailure.unknown => '调用失败',
+};
+
 class LlmException implements Exception {
   const LlmException(this.failure, this.detail);
 
   final LlmFailure failure;
   final String detail;
 
-  String get shortText => switch (failure) {
-    LlmFailure.notConfigured => '模型尚未配置',
-    LlmFailure.offline => '网络不可用',
-    LlmFailure.timeout => '请求超时',
-    LlmFailure.auth => 'API Key 无效或没有权限',
-    LlmFailure.rateLimited => '调用额度或频率受限',
-    LlmFailure.badResponse => '模型回复格式无法识别',
-    LlmFailure.truncated => '回答被截断，请再试一次',
-    LlmFailure.toolStalled => '工具调用未能推进回答',
-    LlmFailure.contextLimit => '本轮内容超过模型上下文预算',
-    LlmFailure.cancelled => '已停止生成',
-    LlmFailure.server => '模型服务出错',
-    LlmFailure.toolUnsupported => '这个模型或地址不支持工具调用',
-    LlmFailure.unknown => '调用失败',
-  };
+  String get shortText => shortTextOf(failure);
 
   @override
   String toString() => 'LlmException($failure): $detail';

@@ -10,6 +10,7 @@ import '../domain/models/material.dart';
 import '../domain/models/study.dart';
 import '../domain/models/study_plan.dart';
 import '../domain/models/write_result.dart';
+import '../domain/rules/notices.dart';
 import '../domain/rules/study_plan_steps.dart';
 import 'buddy_answer.dart';
 import 'context_request.dart';
@@ -215,11 +216,14 @@ class StudyPlanService {
     );
     final config = read.config;
     if (config == null || !config.isConfigured) {
+      final unit = isDocx ? '片段' : '页码';
       return StudyPlanProposal(
         steps: _localSteps(inRange, focus: conversationFocus, isDocx: isDocx),
         source: StudyPlanSource.local,
         pageCount: inRange.length,
-        notice: read.notice ?? '模型未配置，暂按${isDocx ? '片段' : '页码'}顺序生成。',
+        notice: read.notices.contains(Notice.modelConfigReadFailed)
+            ? '模型配置读取失败，暂按$unit顺序生成。'
+            : '模型未配置，暂按$unit顺序生成。',
       );
     }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import '../ai/llm_client.dart';
 import '../domain/rules/attachments.dart';
 
+/// 一张图片没有随这次请求发送的原因。
 enum AttachmentOmissionReason {
   uploadDisabled,
   tooMany,
@@ -11,42 +12,13 @@ enum AttachmentOmissionReason {
   unreadable,
 }
 
-class AttachmentOmission {
-  const AttachmentOmission(this.reason);
-
-  final AttachmentOmissionReason reason;
-}
-
 class PreparedAttachments {
   const PreparedAttachments({required this.images, required this.omitted});
 
   final List<LlmImage> images;
-  final List<AttachmentOmission> omitted;
 
-  String? get notice {
-    if (omitted.isEmpty) return null;
-    final counts = <AttachmentOmissionReason, int>{};
-    for (final item in omitted) {
-      counts.update(item.reason, (count) => count + 1, ifAbsent: () => 1);
-    }
-    final details = <String>[];
-    if (counts.containsKey(AttachmentOmissionReason.uploadDisabled)) {
-      details.add('图片上传已关闭');
-    }
-    if (counts.containsKey(AttachmentOmissionReason.tooMany)) {
-      details.add('超过两张的图片未发送');
-    }
-    if (counts.containsKey(AttachmentOmissionReason.missing)) {
-      details.add('部分图片文件已找不到');
-    }
-    if (counts.containsKey(AttachmentOmissionReason.tooLarge)) {
-      details.add('超过 4 MB 的图片未发送');
-    }
-    if (counts.containsKey(AttachmentOmissionReason.unreadable)) {
-      details.add('部分图片无法读取');
-    }
-    return '${details.join('；')}。';
-  }
+  /// 没有发送的图片原因；界面按原因写说明，不再从文案反推。
+  final List<AttachmentOmissionReason> omitted;
 }
 
 /// 统一准备模型图片，并保留每张未发送图片的原因供界面说明。
@@ -60,52 +32,40 @@ class AttachmentService {
     required bool enabled,
   }) async {
     final images = <LlmImage>[];
-    final omitted = <AttachmentOmission>[];
+    final omitted = <AttachmentOmissionReason>[];
     final seenPaths = <String>{};
     final seenImages = <String>{};
     for (final storedPath in storedPaths) {
       if (!seenPaths.add(storedPath.trim())) continue;
       if (!enabled) {
-        omitted.add(
-          const AttachmentOmission(AttachmentOmissionReason.uploadDisabled),
-        );
+        omitted.add(AttachmentOmissionReason.uploadDisabled);
         continue;
       }
       try {
         final file = File(resolveAttachment(filesDir(), storedPath));
         if (!await file.exists()) {
-          omitted.add(
-            const AttachmentOmission(AttachmentOmissionReason.missing),
-          );
+          omitted.add(AttachmentOmissionReason.missing);
           continue;
         }
         const maxBytes = 4 * 1024 * 1024;
         if (await file.length() > maxBytes) {
-          omitted.add(
-            const AttachmentOmission(AttachmentOmissionReason.tooLarge),
-          );
+          omitted.add(AttachmentOmissionReason.tooLarge);
           continue;
         }
         final bytes = await file.readAsBytes();
         if (bytes.length > maxBytes) {
-          omitted.add(
-            const AttachmentOmission(AttachmentOmissionReason.tooLarge),
-          );
+          omitted.add(AttachmentOmissionReason.tooLarge);
           continue;
         }
         final image = LlmImage(bytes: bytes);
         if (!seenImages.add(image.id)) continue;
         if (images.length == 2) {
-          omitted.add(
-            const AttachmentOmission(AttachmentOmissionReason.tooMany),
-          );
+          omitted.add(AttachmentOmissionReason.tooMany);
           continue;
         }
         images.add(image);
       } catch (_) {
-        omitted.add(
-          const AttachmentOmission(AttachmentOmissionReason.unreadable),
-        );
+        omitted.add(AttachmentOmissionReason.unreadable);
       }
     }
     return PreparedAttachments(images: images, omitted: omitted);

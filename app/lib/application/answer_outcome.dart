@@ -1,7 +1,13 @@
 import '../ai/buddy_prompt.dart';
+import '../ai/llm_client.dart';
+import '../domain/models/chat_message.dart';
 import '../domain/rules/notices.dart';
+import 'attachment_service.dart';
 
 /// 一次回答收尾之后的正文、来源与中断情况；讨论与作答的最终结果都用它。
+///
+/// 收尾状态由 [notices] 给出，界面按枚举写说明；[detail] 只转达具体原因
+/// （例如生成中断的原因），不参与状态判断。
 class AnswerOutcome {
   const AnswerOutcome({
     required this.text,
@@ -9,7 +15,10 @@ class AnswerOutcome {
     required this.stopped,
     required this.interrupted,
     required this.modelFailed,
-    this.notice,
+    this.notices = const [],
+    this.detail,
+    this.omittedImages = const [],
+    this.failure,
   });
 
   final String text;
@@ -21,39 +30,43 @@ class AnswerOutcome {
 
   /// 模型回答不可用，已退回本地规则。
   final bool modelFailed;
-  final String? notice;
+
+  /// 这次回答需要界面区分的情况。
+  final List<Notice> notices;
+
+  /// 生成中断的原因等具体补充；句子由界面写。
+  final String? detail;
+
+  /// 没有发送的图片原因。
+  final List<AttachmentOmissionReason> omittedImages;
+
+  /// 模型调用失败的类型；界面据此决定下一步说法。
+  final LlmFailure? failure;
 }
 
 /// 把停止、生成中断与长度截断统一成界面要显示的结果。
 ///
 /// 讨论与作答原先各写一份相同的判断与提示语，改其中一处时另一处仍按旧规则
-/// 处理；两条路径现在都走这里，只有退回本地的正文与提示由调用方给出。
+/// 处理；两条路径现在都走这里，只有退回本地的正文与之前的状态由调用方给出。
 /// [localFallback] 只在模型给出中断却没有任何正文时调用。
 AnswerOutcome interpretModelAnswer(
   BuddyReply answer, {
-  required String? notice,
+  List<Notice> notices = const [],
+  List<AttachmentOmissionReason> omittedImages = const [],
+  LlmFailure? failure,
   required String Function() localFallback,
-  required String fallbackNotice,
 }) {
   if (answer.stopped) {
     final partial = answer.text.trim();
-    if (partial.isEmpty) {
-      return const AnswerOutcome(
-        text: '已停止生成。',
-        fromModel: false,
-        stopped: true,
-        interrupted: false,
-        modelFailed: false,
-        notice: '已停止生成。',
-      );
-    }
     return AnswerOutcome(
-      text: partial,
-      fromModel: true,
+      text: partial.isEmpty ? '已停止生成。' : partial,
+      fromModel: partial.isNotEmpty,
       stopped: true,
       interrupted: false,
       modelFailed: false,
-      notice: '已停止生成，保留已经生成的部分。',
+      notices: [...notices, Notice.userStopped],
+      omittedImages: omittedImages,
+      failure: failure,
     );
   }
   if (answer.interrupted) {
@@ -65,7 +78,9 @@ AnswerOutcome interpretModelAnswer(
         stopped: false,
         interrupted: false,
         modelFailed: true,
-        notice: joinNotices(notice, fallbackNotice),
+        notices: [...notices, Notice.modelCallFailed],
+        omittedImages: omittedImages,
+        failure: failure,
       );
     }
     return AnswerOutcome(
@@ -74,11 +89,10 @@ AnswerOutcome interpretModelAnswer(
       stopped: false,
       interrupted: true,
       modelFailed: false,
-      notice: joinNotices(
-        notice,
-        '生成中断（${answer.interruptedReason ?? '连接中断'}），'
-        '已保留已经生成的部分。',
-      ),
+      notices: [...notices, Notice.generationInterrupted],
+      detail: answer.interruptedReason,
+      omittedImages: omittedImages,
+      failure: failure,
     );
   }
   return AnswerOutcome(
@@ -87,8 +101,34 @@ AnswerOutcome interpretModelAnswer(
     stopped: false,
     interrupted: false,
     modelFailed: false,
-    notice: answer.truncated
-        ? joinNotices(notice, '回答被截断，已保留已经生成的部分。')
-        : notice,
+    notices: answer.truncated ? [...notices, Notice.answerTruncated] : notices,
+    omittedImages: omittedImages,
+    failure: failure,
+  );
+}
+
+/// 已经保存的一条回答在重新打开时要恢复的提示状态。
+class SavedAnswerStatus {
+  const SavedAnswerStatus({this.notices = const [], this.failure});
+
+  final List<Notice> notices;
+  final LlmFailure? failure;
+
+  /// 这次回答因为在设置里补配置就能继续，界面给配置入口而不是重试入口。
+  bool get needsConfig =>
+      notices.contains(Notice.modelNotConfigured) ||
+      notices.contains(Notice.modelConfigReadFailed);
+}
+
+/// 从回答消息的结构化字段读回提示状态；没有这一项的回答返回空状态。
+SavedAnswerStatus savedAnswerStatus(ChatMessage message) {
+  final structured = message.structured;
+  final stored = structured?['notices'];
+  return SavedAnswerStatus(
+    notices: [
+      if (stored is List)
+        for (final value in stored) ?noticeFromValue(value?.toString()),
+    ],
+    failure: llmFailureFromName(structured?['model_failure']?.toString()),
   );
 }

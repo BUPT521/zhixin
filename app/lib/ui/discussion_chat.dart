@@ -7,6 +7,7 @@ import 'theme.dart';
 
 import '../ai/llm_client.dart';
 import '../app_scope.dart';
+import '../application/answer_outcome.dart';
 import '../application/buddy_actions.dart';
 import '../application/discussion_service.dart';
 import '../application/memory_view.dart';
@@ -14,6 +15,8 @@ import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/material.dart' show Citation;
 import '../domain/models/study.dart';
+import '../domain/rules/notices.dart';
+import 'answer_notice.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
 import 'capture_entry.dart';
@@ -490,7 +493,7 @@ class DiscussionChatState extends State<DiscussionChat>
       // 更不能在此时清理已经被消息引用的图片。
       ConversationRecord? record;
       var memoryItems = const <MemoryItemView>[];
-      var notice = result.notice;
+      var notice = answerNoticeText(result.outcome);
       try {
         final (loadedRecord, items) = await (
           scope.chat.discussion.byId(id),
@@ -522,7 +525,8 @@ class DiscussionChatState extends State<DiscussionChat>
       _settleReply(merged, memoryItems, notice);
       // 消息已经写进库，缓存里的取图副本可以删了；发送失败时保留，用户可以再发一次。
       await deleteTemporaryCaptures(picks);
-      if (!result.fromModel && (result.notice?.contains('尚未配置') ?? false)) {
+      if (!result.fromModel &&
+          result.notices.contains(Notice.modelNotConfigured)) {
         _showModelGuide();
       }
     } catch (error, stack) {
@@ -984,7 +988,7 @@ class DiscussionChatState extends State<DiscussionChat>
         // 卡片只是展示；读不出来不影响已经保存的回答。
       }
       if (!mounted) return;
-      _settleReply(merged, memoryItems, result.notice);
+      _settleReply(merged, memoryItems, answerNoticeText(result.outcome));
     } on LlmException catch (error) {
       final next = switch (error.failure) {
         LlmFailure.notConfigured => '先到设置里配置模型后再试',
@@ -1025,18 +1029,19 @@ class DiscussionChatState extends State<DiscussionChat>
     if (fromModel && !interrupted) return null;
     final failed = structured?['model_failed'] == true;
     final label = failed || interrupted ? '重试这次回答' : '用模型重新回答';
-    final savedNotice = structured?['failure_notice']?.toString().trim();
-    final failureNotice = savedNotice == null || savedNotice.isEmpty
-        ? null
-        : savedNotice;
-    final failure = structured?['model_failure']?.toString();
+    final saved = savedAnswerStatus(message);
+    // 失败说明随回答保存，重新打开讨论时由按状态重新写出的同一句话显示。
+    final failureNotice = failed ? savedAnswerNoticeText(saved) : null;
     final needsConfig =
-        failure == 'auth' ||
-        failure == 'badResponse' ||
-        failure == 'toolUnsupported' ||
-        failure == 'rateLimited' ||
-        failure == 'unknown' ||
-        (failure == null && (failureNotice?.contains('配置') ?? false));
+        saved.needsConfig ||
+        switch (saved.failure) {
+          LlmFailure.auth ||
+          LlmFailure.badResponse ||
+          LlmFailure.toolUnsupported ||
+          LlmFailure.rateLimited ||
+          LlmFailure.unknown => true,
+          _ => false,
+        };
     final theme = context.zhixin;
     return Padding(
       padding: const EdgeInsets.only(top: 10),
