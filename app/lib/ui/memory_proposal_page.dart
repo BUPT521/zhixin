@@ -170,14 +170,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
                   style: theme.text.bodyMedium,
                 ),
                 if (_busy) const forui.FProgress(),
-                if (_notice != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      _notice!,
-                      style: TextStyle(color: theme.colors.error),
-                    ),
-                  ),
+                if (_notice != null) InlineNotice(message: _notice!),
                 const SizedBox(height: 8),
                 Text('最近有作答的记录', style: theme.text.titleSmall),
                 for (final row in _questions)

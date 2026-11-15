@@ -354,14 +354,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
               ),
             ],
           ),
-          if (_notice != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _notice!,
-                style: TextStyle(color: theme.colors.error),
-              ),
-            ),
+          if (_notice != null) InlineNotice(message: _notice!),
         ],
       ),
     );
@@ -749,14 +742,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
                 ),
               ),
           ],
-          if (_notice != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _notice!,
-                style: TextStyle(color: theme.colors.error),
-              ),
-            ),
+          if (_notice != null) InlineNotice(message: _notice!),
         ],
       ),
       actions: [

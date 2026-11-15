@@ -507,11 +507,8 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
             ),
           if (_notice != null)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Text(
-                _notice!,
-                style: TextStyle(color: theme.colors.error),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: InlineNotice(message: _notice!),
             ),
           Expanded(child: _resultsArea(theme, results)),
         ],

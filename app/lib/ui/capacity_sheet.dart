@@ -11,6 +11,7 @@ import 'date_time_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'undo_feedback.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
@@ -342,14 +343,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                         subtitle: Text(skip.reason),
                       ),
                   ],
-                  if (_notice != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        _notice!,
-                        style: TextStyle(color: theme.colors.error),
-                      ),
-                    ),
+                  if (_notice != null) InlineNotice(message: _notice!),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -388,11 +382,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     child: Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          _notice ?? '暂时无法计算可用时间。',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: theme.colors.error),
-        ),
+        InlineNotice(message: _notice ?? '暂时无法计算可用时间。'),
         const SizedBox(height: 12),
         Wrap(
           spacing: 8,

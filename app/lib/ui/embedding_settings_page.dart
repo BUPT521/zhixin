@@ -411,14 +411,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
               padding: EdgeInsets.symmetric(vertical: 8),
               child: forui.FProgress(),
             ),
-          if (_notice != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _notice!,
-                style: TextStyle(color: theme.colors.error),
-              ),
-            ),
+          if (_notice != null) InlineNotice(message: _notice!),
           if (_status != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
