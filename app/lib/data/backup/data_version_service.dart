@@ -166,7 +166,8 @@ class DataVersionService {
       restorePointStore.delete(point);
 
   /// 清空本机学习数据，并按当前结构重开一个空库。
-  Future<void> resetAllData() async {    markPendingWorkInvalidated();
+  Future<void> resetAllData() async {
+    markPendingWorkInvalidated();
     await gate.exclusive(resetStudyData);
     notifyDataChanged();
   }
