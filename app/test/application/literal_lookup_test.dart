@@ -12,6 +12,8 @@ import 'package:zhixin/domain/rules/query_shape.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 class _Corpus {
   _Corpus({
     required this.goalProbability,
@@ -397,7 +399,8 @@ void main() {
     expect(current, isNotNull);
     expect(current!.sourceVersion, hit.sourceVersion);
 
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'material_page',
       {'content': '熵的另一种表述：混乱程度的度量。', 'updated_at': '2026-11-12 09:00:00'},
       where: 'material_id = ? AND page_no = ?',
@@ -421,7 +424,8 @@ void main() {
       isFalse,
     );
 
-    await rig.db.delete(
+    await deleteRows(
+      rig.db,
       'material_page',
       where: 'material_id = ? AND page_no = ?',
       whereArgs: [rig.corpus.materialProbability, 3],

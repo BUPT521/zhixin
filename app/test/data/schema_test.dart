@@ -10,6 +10,8 @@ import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   test('新库是 v26，15 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
@@ -60,11 +62,12 @@ void main() {
     expect(names, isNot(contains('question')));
     expect(names, isNot(contains('operation_log')));
 
-    final profile = await db.query('profile');
+    final profile = await selectRows(db, 'profile');
     expect(profile, hasLength(1));
     expect(profile.first['day_cutoff_hour'], 4);
 
-    final meta = await db.query(
+    final meta = await selectRows(
+      db,
       'app_meta',
       where: 'key = ?',
       whereArgs: ['schema_version'],
@@ -134,14 +137,15 @@ void main() {
     expect(await columns('assessment'), isNot(contains('source_json')));
     expect(await columns('memory'), isNot(contains('valid_from')));
     final assessmentSql =
-        (await db.query(
+        (await selectRows(
+              db,
               'sqlite_master',
               where: "type = 'table' AND name = 'assessment'",
             )).first['sql']!
             as String;
     expect(assessmentSql, isNot(contains("'self'")));
     await expectLater(
-      db.insert('attempt', {
+      insertRow(db, 'attempt', {
         'created_at': '2026-11-07 09:00:00',
         'updated_at': '2026-11-07 09:00:00',
       }),
@@ -164,7 +168,7 @@ void main() {
       await old.execute(
         'CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT)',
       );
-      await old.insert('knowledge_node', {'name': '极限'});
+      await insertRow(old, 'knowledge_node', {'name': '极限'});
     } finally {
       legacy.close();
     }
@@ -204,7 +208,7 @@ void main() {
       await old.execute(
         'CREATE TABLE material (id INTEGER PRIMARY KEY, title TEXT)',
       );
-      await old.insert('conversation', {
+      await insertRow(old, 'conversation', {
         'title': '旧讨论',
         'created_at': '2026-11-06 09:00:00',
         'updated_at': '2026-11-06 09:00:00',
@@ -216,7 +220,7 @@ void main() {
     final rebuilt = await openZhixinDatabase(path: path);
     addTearDown(rebuilt.close);
 
-    expect(await rebuilt.query('conversation'), isEmpty);
+    expect(await selectRows(rebuilt, 'conversation'), isEmpty);
     final info = await rebuilt.rawQuery('PRAGMA table_info(conversation)');
     final columns = {for (final row in info) row['name']! as String};
     expect(columns, containsAll(['material_id', 'page_no', 'entry_kind']));
@@ -305,18 +309,18 @@ void main() {
         'created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
       );
       const stamp = '2026-11-07 09:00:00';
-      final goalId = await old.insert('learning_goal', {
+      final goalId = await insertRow(old, 'learning_goal', {
         'title': '暂缓的目标',
         'status': 'deferred',
         'created_at': stamp,
         'updated_at': stamp,
       });
-      final planId = await old.insert('study_plan', {
+      final planId = await insertRow(old, 'study_plan', {
         'title': '旧计划',
         'created_at': stamp,
         'updated_at': stamp,
       });
-      final itemId = await old.insert('plan_item', {
+      final itemId = await insertRow(old, 'plan_item', {
         'goal_id': goalId,
         'study_plan_id': planId,
         'title': '暂缓的事项',
@@ -324,7 +328,7 @@ void main() {
         'created_at': stamp,
         'updated_at': stamp,
       });
-      await old.insert('schedule_block', {
+      await insertRow(old, 'schedule_block', {
         'plan_item_id': itemId,
         'start_at': '2026-11-08 09:00:00',
         'end_at': '2026-11-08 10:00:00',
@@ -332,30 +336,30 @@ void main() {
         'created_at': stamp,
         'updated_at': stamp,
       });
-      final questionId = await old.insert('question', {
+      final questionId = await insertRow(old, 'question', {
         'stem': '从照片识别的题目',
         'origin': 'ocr',
         'created_at': stamp,
         'updated_at': stamp,
       });
-      await old.insert('attempt', {
+      await insertRow(old, 'attempt', {
         'question_id': questionId,
         'created_at': stamp,
         'updated_at': stamp,
       });
-      await old.insert('memory', {
+      await insertRow(old, 'memory', {
         'kind': 'difficulty',
         'content': '旧的场次困难',
         'source_kind': 'session',
       });
-      await old.insert('study_step', {
+      await insertRow(old, 'study_step', {
         'plan_id': planId,
         'seq': 1,
         'title': '旧的步骤',
         'created_at': stamp,
         'updated_at': stamp,
       });
-      await old.insert('app_meta', {
+      await insertRow(old, 'app_meta', {
         'key': 'schema_version',
         'value': '16',
         'updated_at': stamp,
@@ -369,13 +373,14 @@ void main() {
 
     final version = await rebuilt.rawQuery('PRAGMA user_version');
     expect(version.first.values.first, zhixinSchemaVersion);
-    final meta = await rebuilt.query(
+    final meta = await selectRows(
+      rebuilt,
       'app_meta',
       where: 'key = ?',
       whereArgs: ['schema_version'],
     );
     expect(meta.first['value'], '$zhixinSchemaVersion');
-    expect(await rebuilt.query('profile'), hasLength(1));
+    expect(await selectRows(rebuilt, 'profile'), hasLength(1));
 
     // 旧库的数据不迁移：题目、作答、事项、时间块、记忆与旧步骤都随重建丢弃。
     for (final table in [
@@ -387,7 +392,11 @@ void main() {
       'attempt',
       'memory',
     ]) {
-      expect(await rebuilt.query(table), isEmpty, reason: '$table 的旧数据应当随重建丢弃');
+      expect(
+        await selectRows(rebuilt, table),
+        isEmpty,
+        reason: '$table 的旧数据应当随重建丢弃',
+      );
     }
     final legacyStep = await rebuilt.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'study_step'",

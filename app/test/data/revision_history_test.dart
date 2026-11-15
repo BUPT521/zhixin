@@ -6,6 +6,8 @@ import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   late TestRig rig;
 
@@ -24,17 +26,17 @@ void main() {
   }
 
   test('全部业务表的新增、修改、删除与级联都进入采集', () async {
-    await rig.db.update('profile', {'day_cutoff_hour': 5}, where: 'id = 1');
+    await updateRow(rig.db, 'profile', {'day_cutoff_hour': 5}, where: 'id = 1');
     expect(await lastTables(), {'profile'});
 
-    final goal = await rig.db.insert('learning_goal', {
+    final goal = await insertRow(rig.db, 'learning_goal', {
       'title': '目标',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'learning_goal'});
-    final material = await rig.db.insert('material', {
+    final material = await insertRow(rig.db, 'material', {
       'title': '材料',
       'kind': 'text',
       'goal_id': goal,
@@ -42,7 +44,7 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'material'});
-    await rig.db.insert('material_page', {
+    await insertRow(rig.db, 'material_page', {
       'material_id': material,
       'page_no': 1,
       'content': '第一页',
@@ -50,7 +52,7 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'material_page'});
-    final conversation = await rig.db.insert('conversation', {
+    final conversation = await insertRow(rig.db, 'conversation', {
       'title': '讨论',
       'goal_id': goal,
       'material_id': material,
@@ -60,14 +62,14 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'conversation'});
-    await rig.db.insert('message', {
+    await insertRow(rig.db, 'message', {
       'conversation_id': conversation,
       'role': 'user',
       'content': '问题',
       'created_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'message'});
-    final studyPlan = await rig.db.insert('study_plan', {
+    final studyPlan = await insertRow(rig.db, 'study_plan', {
       'material_id': material,
       'goal_id': goal,
       'conversation_id': conversation,
@@ -77,7 +79,7 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'study_plan'});
-    final planItem = await rig.db.insert('plan_item', {
+    final planItem = await insertRow(rig.db, 'plan_item', {
       'goal_id': goal,
       'conversation_id': conversation,
       'study_plan_id': studyPlan,
@@ -90,7 +92,7 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'plan_item'});
-    await rig.db.insert('timetable_entry', {
+    await insertRow(rig.db, 'timetable_entry', {
       'weekday': 1,
       'start_time': '08:00',
       'end_time': '09:00',
@@ -99,7 +101,7 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'timetable_entry'});
-    final block = await rig.db.insert('schedule_block', {
+    final block = await insertRow(rig.db, 'schedule_block', {
       'plan_item_id': planItem,
       'start_at': '2026-11-10T10:00:00',
       'end_at': '2026-11-10T11:00:00',
@@ -110,7 +112,7 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'schedule_block'});
-    final session = await rig.db.insert('study_session', {
+    final session = await insertRow(rig.db, 'study_session', {
       'goal_id': goal,
       'plan_item_id': planItem,
       'started_at': '2026-11-10T10:00:00',
@@ -118,14 +120,14 @@ void main() {
       'updated_at': '2026-11-10T10:00:00',
     });
     expect(await lastTables(), {'study_session'});
-    final attempt = await rig.db.insert('attempt', {
+    final attempt = await insertRow(rig.db, 'attempt', {
       'conversation_id': conversation,
       'session_id': session,
       'created_at': '2026-11-10T10:00:00',
       'updated_at': '2026-11-10T10:00:00',
     });
     expect(await lastTables(), {'attempt'});
-    await rig.db.insert('assessment', {
+    await insertRow(rig.db, 'assessment', {
       'attempt_id': attempt,
       'kind': 'model',
       'result': '对',
@@ -133,7 +135,7 @@ void main() {
       'updated_at': '2026-11-10T10:00:00',
     });
     expect(await lastTables(), {'assessment'});
-    await rig.db.insert('memory', {
+    await insertRow(rig.db, 'memory', {
       'kind': 'preference',
       'content': '先看定义',
       'source_kind': 'user',
@@ -143,7 +145,8 @@ void main() {
     });
     expect(await lastTables(), {'memory'});
 
-    await rig.db.delete(
+    await deleteRows(
+      rig.db,
       'conversation',
       where: 'id = ?',
       whereArgs: [conversation],
@@ -156,7 +159,7 @@ void main() {
   });
 
   test('命名版本跨裁剪保留，附件不被提前回收', () async {
-    final conversation = await rig.db.insert('conversation', {
+    final conversation = await insertRow(rig.db, 'conversation', {
       'title': '图片',
       'entry_kind': 'photo',
       'status': 'open',
@@ -167,7 +170,7 @@ void main() {
     final hash = AssetStore.hashBytes(bytes);
     await rig.db.transaction((txn) async {
       await rig.engine.assets.putBytes(txn, hash, bytes);
-      await txn.insert('message', {
+      await insertRow(txn, 'message', {
         'conversation_id': conversation,
         'role': 'user',
         'content': '',
@@ -177,13 +180,14 @@ void main() {
     });
     final named = await rig.engine.headId(rig.raw);
     await rig.engine.nameCommit(rig.raw, named, name: '有图版本', note: '保留');
-    await rig.db.delete(
+    await deleteRows(
+      rig.db,
       'conversation',
       where: 'id = ?',
       whereArgs: [conversation],
     );
     for (var index = 0; index < 6; index++) {
-      await rig.db.insert('memory', {
+      await insertRow(rig.db, 'memory', {
         'kind': 'preference',
         'content': '第 $index 条',
         'source_kind': 'user',
@@ -202,18 +206,18 @@ void main() {
     final projection = await rig.engine.projectionAt(rig.raw, named);
     expect(projection['conversation'], isNotEmpty);
     await rig.engine.restore(rig.raw, named, expectedHead: head);
-    expect(await rig.raw.query('conversation'), hasLength(1));
+    expect(await selectRows(rig.raw, 'conversation'), hasLength(1));
     expect(await rig.engine.assets.verify(rig.raw, hash), isTrue);
   });
 
   test('清理历史保留当前数据并重置为一条基线', () async {
-    final goal = await rig.db.insert('learning_goal', {
+    final goal = await insertRow(rig.db, 'learning_goal', {
       'title': '保留',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    await rig.db.insert('memory', {
+    await insertRow(rig.db, 'memory', {
       'kind': 'preference',
       'content': '保留记忆',
       'source_kind': 'user',
@@ -228,10 +232,11 @@ void main() {
     );
     final projection = await rig.engine.readProjection(rig.raw);
     await rig.engine.clearHistory(rig.raw);
-    expect(await rig.raw.query('revision_commit'), hasLength(1));
-    expect(await rig.raw.query('revision_change'), isEmpty);
+    expect(await selectRows(rig.raw, 'revision_commit'), hasLength(1));
+    expect(await selectRows(rig.raw, 'revision_change'), isEmpty);
     expect(
-      await rig.raw.query(
+      await selectRows(
+        rig.raw,
         'revision_ref',
         where: 'name != ?',
         whereArgs: ['HEAD'],
@@ -242,7 +247,12 @@ void main() {
     final head = await rig.engine.headId(rig.raw);
     expect(await rig.engine.projectionAt(rig.raw, head), projection);
     expect(
-      await rig.raw.query('learning_goal', where: 'id = ?', whereArgs: [goal]),
+      await selectRows(
+        rig.raw,
+        'learning_goal',
+        where: 'id = ?',
+        whereArgs: [goal],
+      ),
       hasLength(1),
     );
   });

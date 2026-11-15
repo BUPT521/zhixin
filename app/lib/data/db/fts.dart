@@ -81,11 +81,9 @@ Future<void> installFtsSchema(RawDatabase db) async {
   const key = 'fts_index_version';
   const version = '2';
   await db.transaction((txn) async {
-    final versions = await txn.query(
-      'app_meta',
-      columns: ['value'],
-      where: 'key = ?',
-      whereArgs: [key],
+    final versions = await txn.rawQuery(
+      'SELECT value FROM app_meta WHERE key = ?',
+      [key],
     );
     final stale = versions.isEmpty || versions.single['value'] != version;
     final tables = await txn.rawQuery(
@@ -106,11 +104,11 @@ Future<void> installFtsSchema(RawDatabase db) async {
       }
     }
     if (stale) {
-      await txn.insert('app_meta', {
-        'key': key,
-        'value': version,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }, conflictAlgorithm: ConflictAction.replace);
+      await txn.execute(
+        'INSERT OR REPLACE INTO app_meta (key, value, updated_at) '
+        'VALUES (?, ?, ?)',
+        [key, version, DateTime.now().toUtc().toIso8601String()],
+      );
     }
   });
 }

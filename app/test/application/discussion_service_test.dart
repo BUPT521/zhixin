@@ -33,6 +33,8 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 /// 固定回答的模型替身；不联网，也不碰 Keystore。
 class _FakeAi implements BuddyAi {
   _FakeAi({this.reply, LlmConfig? config, this.error}) : configValue = config;
@@ -1540,10 +1542,10 @@ void main() {
     await h.service.clear(conversation);
 
     expect(await h.conversations.byId(conversation), isNull);
-    expect(await h.db.query('message'), isEmpty);
-    expect(await h.db.query('attempt'), isEmpty);
+    expect(await selectRows(h.db, 'message'), isEmpty);
+    expect(await selectRows(h.db, 'attempt'), isEmpty);
     // 场次没有指向记录的列，清空后没有其他作答引用时一起删除。
-    expect(await h.db.query('study_session'), isEmpty);
-    expect((await h.db.query('memory')).single['id'], memoryId);
+    expect(await selectRows(h.db, 'study_session'), isEmpty);
+    expect((await selectRows(h.db, 'memory')).single['id'], memoryId);
   });
 }

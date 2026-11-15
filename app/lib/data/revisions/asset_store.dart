@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import '../db/raw_executor.dart';
+import '../db/sql.dart';
 
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/content_identity.dart';
@@ -31,47 +32,37 @@ class AssetStore {
     String hash,
     Uint8List bytes,
   ) async {
-    final existing = await executor.query(
-      'asset_object',
-      columns: ['hash'],
-      where: 'hash = ?',
-      whereArgs: [hash],
-      limit: 1,
+    final existing = await executor.rawQuery(
+      'SELECT hash FROM asset_object WHERE hash = ? LIMIT 1',
+      [hash],
     );
     if (existing.isNotEmpty) return false;
-    await executor.insert('asset_object', {
-      'hash': hash,
-      'byte_length': bytes.length,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+    await executor.execute(
+      'INSERT INTO asset_object (hash, byte_length, created_at) '
+      'VALUES (?, ?, ?)',
+      [hash, bytes.length, DateTime.now().toIso8601String()],
+    );
     for (var offset = 0, seq = 0; offset < bytes.length; seq++) {
       final end = (offset + chunkSize).clamp(0, bytes.length);
-      await executor.insert('asset_chunk', {
-        'hash': hash,
-        'seq': seq,
-        'data': bytes.sublist(offset, end),
-      });
+      await executor.execute(
+        'INSERT INTO asset_chunk (hash, seq, data) VALUES (?, ?, ?)',
+        [hash, seq, bytes.sublist(offset, end)],
+      );
       offset = end;
     }
     return true;
   }
 
   Future<Uint8List?> readBytes(RawExecutor executor, String hash) async {
-    final object = await executor.query(
-      'asset_object',
-      columns: ['byte_length'],
-      where: 'hash = ?',
-      whereArgs: [hash],
-      limit: 1,
+    final object = await executor.rawQuery(
+      'SELECT byte_length FROM asset_object WHERE hash = ? LIMIT 1',
+      [hash],
     );
     if (object.isEmpty) return null;
     final length = object.first['byte_length']! as int;
-    final chunks = await executor.query(
-      'asset_chunk',
-      columns: ['data'],
-      where: 'hash = ?',
-      whereArgs: [hash],
-      orderBy: 'seq',
+    final chunks = await executor.rawQuery(
+      'SELECT data FROM asset_chunk WHERE hash = ? ORDER BY seq',
+      [hash],
     );
     final builder = BytesBuilder(copy: false);
     for (final row in chunks) {
@@ -100,7 +91,7 @@ class AssetStore {
   }
 
   Future<Set<String>> objectHashes(RawExecutor executor) async {
-    final rows = await executor.query('asset_object', columns: ['hash']);
+    final rows = await executor.rawQuery('SELECT hash FROM asset_object');
     return {for (final row in rows) row['hash']! as String};
   }
 
@@ -113,11 +104,7 @@ class AssetStore {
     var removed = 0;
     for (final hash in hashes) {
       if (keep.contains(hash)) continue;
-      await executor.delete(
-        'asset_object',
-        where: 'hash = ?',
-        whereArgs: [hash],
-      );
+      await executor.execute('DELETE FROM asset_object WHERE hash = ?', [hash]);
       removed++;
     }
     return removed;
@@ -255,7 +242,8 @@ class AttachmentCache {
 
   /// 把当前数据引用到的图片补回临时目录；缺失的对象会抛错。
   Future<void> rebuild(RawExecutor executor, AssetStore assets) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'message',
       columns: ['image_paths_json'],
       where: "image_paths_json IS NOT NULL AND image_paths_json != ''",

@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/fts.dart';
+import '../db/sql.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
@@ -167,7 +168,8 @@ class RevisionEngine {
 
   Future<void> _ensureMetadata(RawDatabase db) async {
     await db.transaction((txn) async {
-      final heads = await txn.query(
+      final heads = await selectRows(
+        txn,
         'revision_commit',
         columns: ['id', 'generation'],
         orderBy: 'id',
@@ -175,7 +177,7 @@ class RevisionEngine {
       if (heads.isEmpty) {
         final projection = await readProjection(txn);
         final now = formatDateTime(clock());
-        await txn.insert('revision_commit', {
+        await insertRow(txn, 'revision_commit', {
           'id': 0,
           'parent_id': null,
           'generation': 0,
@@ -184,27 +186,28 @@ class RevisionEngine {
           'change_count': 0,
           'created_at': now,
         });
-        await txn.insert('revision_sequence', {
+        await insertRow(txn, 'revision_sequence', {
           'id': 1,
           'next_commit': 1,
-        }, conflictAlgorithm: ConflictAction.replace);
+        }, replace: true);
         await _writeCheckpoint(
           txn,
           commitId: 0,
           kind: 'initial',
           projection: projection,
         );
-        await txn.insert('revision_ref', {
+        await insertRow(txn, 'revision_ref', {
           'name': RevisionRef.headName,
           'commit_id': 0,
           'note': null,
           'created_at': now,
           'updated_at': now,
-        }, conflictAlgorithm: ConflictAction.replace);
+        }, replace: true);
         return;
       }
 
-      final headRows = await txn.query(
+      final headRows = await selectRows(
+        txn,
         'revision_ref',
         where: 'name = ?',
         whereArgs: [RevisionRef.headName],
@@ -212,7 +215,7 @@ class RevisionEngine {
       if (headRows.isEmpty) {
         final maxId = heads.last['id']! as int;
         final now = formatDateTime(clock());
-        await txn.insert('revision_ref', {
+        await insertRow(txn, 'revision_ref', {
           'name': RevisionRef.headName,
           'commit_id': maxId,
           'note': null,
@@ -220,16 +223,16 @@ class RevisionEngine {
           'updated_at': now,
         });
       }
-      final sequence = await txn.query('revision_sequence', limit: 1);
+      final sequence = await selectRows(txn, 'revision_sequence', limit: 1);
       if (sequence.isEmpty) {
-        await txn.insert('revision_sequence', {
+        await insertRow(txn, 'revision_sequence', {
           'id': 1,
           'next_commit': (heads.last['id']! as int) + 1,
         });
       }
-      final context = await txn.query('revision_context', limit: 1);
+      final context = await selectRows(txn, 'revision_context', limit: 1);
       if (context.isEmpty) {
-        await txn.insert('revision_context', {
+        await insertRow(txn, 'revision_context', {
           'id': 1,
           'active_commit': null,
           'suppress': 0,
@@ -237,7 +240,7 @@ class RevisionEngine {
       } else if (context.first['active_commit'] != null) {
         // 上次进程中断留下的上下文不跨事务保留；打开时清掉，避免新写入
         // 被记到一个并不存在的提交上。
-        await txn.update('revision_context', {
+        await updateRow(txn, 'revision_context', {
           'active_commit': null,
           'suppress': 0,
         }, where: 'id = 1');
@@ -246,7 +249,8 @@ class RevisionEngine {
   }
 
   Future<int> headId(RawExecutor executor) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_ref',
       columns: ['commit_id'],
       where: 'name = ?',
@@ -257,7 +261,8 @@ class RevisionEngine {
   }
 
   Future<RevisionCommit?> commitById(RawExecutor executor, int id) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_commit',
       where: 'id = ?',
       whereArgs: [id],
@@ -270,7 +275,8 @@ class RevisionEngine {
     RawExecutor executor,
     String requestId,
   ) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_commit',
       where: 'request_id = ?',
       whereArgs: [requestId],
@@ -283,7 +289,8 @@ class RevisionEngine {
     RawExecutor executor, {
     int? limit,
   }) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_commit',
       orderBy: 'id DESC',
       limit: limit,
@@ -295,7 +302,8 @@ class RevisionEngine {
     RawExecutor executor,
     int commitId,
   ) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_change',
       where: 'commit_id = ?',
       whereArgs: [commitId],
@@ -306,7 +314,8 @@ class RevisionEngine {
 
   /// 当前命令在事务里分配的提交编号；没有进行中的命令时为空。
   Future<int?> activeCommit(RawExecutor executor) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_context',
       columns: ['active_commit'],
       limit: 1,
@@ -394,7 +403,8 @@ class RevisionEngine {
   }
 
   Future<List<RevisionRef>> refs(RawExecutor executor) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_ref',
       where: 'name != ?',
       whereArgs: [RevisionRef.headName],
@@ -407,7 +417,8 @@ class RevisionEngine {
     RawExecutor executor, {
     int? limit,
   }) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_checkpoint',
       orderBy: 'commit_id DESC, id DESC',
       limit: limit,
@@ -421,13 +432,13 @@ class RevisionEngine {
       final existing = await commitByRequest(txn, requestId);
       if (existing != null) throw RevisionDuplicateRequest(existing);
     }
-    final rows = await txn.query('revision_sequence', limit: 1);
+    final rows = await selectRows(txn, 'revision_sequence', limit: 1);
     if (rows.isEmpty) throw StateError('数据版本缺少提交编号');
     final id = rows.first['next_commit']! as int;
-    await txn.update('revision_sequence', {
+    await updateRow(txn, 'revision_sequence', {
       'next_commit': id + 1,
     }, where: 'id = 1');
-    await txn.update('revision_context', {
+    await updateRow(txn, 'revision_context', {
       'active_commit': id,
       'suppress': 0,
     }, where: 'id = 1');
@@ -464,7 +475,7 @@ class RevisionEngine {
       changeCount: net.length,
       createdAt: clock(),
     );
-    await txn.insert('revision_commit', {
+    await insertRow(txn, 'revision_commit', {
       'id': commit.id,
       'parent_id': commit.parentId,
       'generation': commit.generation,
@@ -477,7 +488,8 @@ class RevisionEngine {
       'created_at': now,
     });
     await _insertChanges(txn, commit.id, net);
-    await txn.update(
+    await updateRow(
+      txn,
       'revision_ref',
       {'commit_id': commit.id, 'updated_at': now},
       where: 'name = ?',
@@ -498,7 +510,7 @@ class RevisionEngine {
   }
 
   Future<void> _clearContext(RawExecutor txn) async {
-    await txn.update('revision_context', {
+    await updateRow(txn, 'revision_context', {
       'active_commit': null,
       'suppress': 0,
     }, where: 'id = 1');
@@ -507,7 +519,8 @@ class RevisionEngine {
   Future<void> _clearStage(RawExecutor txn, int commitId) async {
     final schema = await tables(txn);
     for (final table in schema.values) {
-      await txn.delete(
+      await deleteRows(
+        txn,
         table.stageTable,
         where: 'commit_id = ?',
         whereArgs: [commitId],
@@ -520,7 +533,8 @@ class RevisionEngine {
     final result = <RevisionChange>[];
     var seq = 1;
     for (final table in schema.values) {
-      final rows = await txn.query(
+      final rows = await selectRows(
+        txn,
         table.stageTable,
         where: 'commit_id = ?',
         whereArgs: [commitId],
@@ -594,7 +608,7 @@ class RevisionEngine {
     List<RevisionChange> changes,
   ) async {
     for (final change in changes) {
-      await txn.insert('revision_change', change.toRow());
+      await insertRow(txn, 'revision_change', change.toRow());
     }
   }
 
@@ -603,7 +617,7 @@ class RevisionEngine {
     final schema = await tables(executor);
     final projection = <String, Map<String, TypedRow>>{};
     for (final table in schema.values) {
-      final rows = await executor.query(table.name);
+      final rows = await selectRows(executor, table.name);
       final tableRows = <String, TypedRow>{};
       for (final row in rows) {
         final key = '${row[table.primaryKey]}';
@@ -630,7 +644,8 @@ class RevisionEngine {
     if (expected != checkpoint.checksum) {
       throw RevisionCorruption('检查点 ${checkpoint.id} 校验值不一致');
     }
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_change',
       where: 'commit_id > ? AND commit_id <= ?',
       whereArgs: [checkpoint.commitId, target],
@@ -646,7 +661,8 @@ class RevisionEngine {
     RawExecutor executor,
     int target,
   ) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_checkpoint',
       where: 'commit_id <= ?',
       whereArgs: [target],
@@ -840,7 +856,7 @@ class RevisionEngine {
         throw RevisionStaleHead(expected: expectedHead, actual: head);
       }
       final commitId = await beginCommand(txn);
-      await txn.update('revision_context', {
+      await updateRow(txn, 'revision_context', {
         'active_commit': commitId,
         'suppress': 1,
       }, where: 'id = 1');
@@ -866,7 +882,7 @@ class RevisionEngine {
         changeCount: changes.length,
         createdAt: clock(),
       );
-      await txn.insert('revision_commit', {
+      await insertRow(txn, 'revision_commit', {
         'id': commit.id,
         'parent_id': commit.parentId,
         'generation': commit.generation,
@@ -879,7 +895,8 @@ class RevisionEngine {
         'created_at': now,
       });
       await _insertChanges(txn, commit.id, changes);
-      await txn.update(
+      await updateRow(
+        txn,
         'revision_ref',
         {'commit_id': commit.id, 'updated_at': now},
         where: 'name = ?',
@@ -895,12 +912,12 @@ class RevisionEngine {
     Projection projection,
   ) async {
     for (final table in versionedTableNames.reversed) {
-      await txn.delete(table);
+      await deleteRows(txn, table);
     }
     for (final table in versionedTableNames) {
       final rows = projection[table] ?? const <String, TypedRow>{};
       for (final row in rows.values) {
-        await txn.insert(table, sqliteRow(row));
+        await insertRow(txn, table, sqliteRow(row));
       }
     }
     final violations = await txn.rawQuery('PRAGMA foreign_key_check');
@@ -1000,7 +1017,7 @@ class RevisionEngine {
   }) async {
     final projectionJson = encodeProjection(projection);
     final hashes = AssetStore.hashesInProjection(projection).toList()..sort();
-    await txn.insert('revision_checkpoint', {
+    await insertRow(txn, 'revision_checkpoint', {
       'kind': kind,
       'commit_id': commitId,
       'projection_json': projectionJson,
@@ -1029,13 +1046,13 @@ class RevisionEngine {
     if (commit == null) throw RevisionCorruption('提交 $commitId 不存在');
     return db.transaction((txn) async {
       final now = formatDateTime(clock());
-      await txn.insert('revision_ref', {
+      await insertRow(txn, 'revision_ref', {
         'name': trimmed,
         'commit_id': commitId,
         'note': note?.trim(),
         'created_at': now,
         'updated_at': now,
-      }, conflictAlgorithm: ConflictAction.replace);
+      }, replace: true);
       final projection = await projectionAt(txn, commitId);
       await _writeCheckpoint(
         txn,
@@ -1056,21 +1073,29 @@ class RevisionEngine {
   Future<void> deleteName(RawDatabase db, String name) async {
     if (name == RevisionRef.headName) throw ArgumentError('不能删除 HEAD');
     await db.transaction((txn) async {
-      final rows = await txn.query(
+      final rows = await selectRows(
+        txn,
         'revision_ref',
         where: 'name = ?',
         whereArgs: [name],
       );
       if (rows.isEmpty) return;
       final commitId = rows.first['commit_id']! as int;
-      await txn.delete('revision_ref', where: 'name = ?', whereArgs: [name]);
-      final others = await txn.query(
+      await deleteRows(
+        txn,
+        'revision_ref',
+        where: 'name = ?',
+        whereArgs: [name],
+      );
+      final others = await selectRows(
+        txn,
         'revision_ref',
         where: 'commit_id = ?',
         whereArgs: [commitId],
       );
       if (others.isEmpty) {
-        await txn.delete(
+        await deleteRows(
+          txn,
           'revision_checkpoint',
           where: 'kind = ? AND commit_id = ?',
           whereArgs: ['named', commitId],
@@ -1090,7 +1115,8 @@ class RevisionEngine {
       'SELECT DISTINCT commit_id FROM revision_change',
     );
     final live = {for (final row in rows) row['commit_id']! as int};
-    final messages = await executor.query(
+    final messages = await selectRows(
+      executor,
       'message',
       columns: ['id', 'structured_json'],
       where: "structured_json LIKE '%commit_id%'",
@@ -1100,7 +1126,8 @@ class RevisionEngine {
       final structured = _decodeStructuredJson(row['structured_json']);
       if (structured == null) continue;
       if (!_removeDeadReceipts(structured, live)) continue;
-      await executor.update(
+      await updateRow(
+        executor,
         'message',
         {'structured_json': jsonEncode(structured)},
         where: 'id = ?',
@@ -1176,16 +1203,23 @@ class RevisionEngine {
       final projection = await readProjection(txn);
       final commit = await commitById(txn, head);
       if (commit == null) throw RevisionCorruption('HEAD $head 不存在');
-      await txn.delete('revision_change');
-      await txn.delete('revision_checkpoint');
-      await txn.delete('revision_commit', where: 'id != ?', whereArgs: [head]);
-      await txn.delete(
+      await deleteRows(txn, 'revision_change');
+      await deleteRows(txn, 'revision_checkpoint');
+      await deleteRows(
+        txn,
+        'revision_commit',
+        where: 'id != ?',
+        whereArgs: [head],
+      );
+      await deleteRows(
+        txn,
         'revision_ref',
         where: 'name != ?',
         whereArgs: [RevisionRef.headName],
       );
       final now = formatDateTime(clock());
-      await txn.update(
+      await updateRow(
+        txn,
         'revision_commit',
         {
           'parent_id': null,
@@ -1198,7 +1232,8 @@ class RevisionEngine {
         where: 'id = ?',
         whereArgs: [head],
       );
-      await txn.update(
+      await updateRow(
+        txn,
         'revision_ref',
         {'commit_id': head, 'updated_at': now},
         where: 'name = ?',
@@ -1210,7 +1245,7 @@ class RevisionEngine {
         kind: 'initial',
         projection: projection,
       );
-      await txn.update('revision_sequence', {
+      await updateRow(txn, 'revision_sequence', {
         'next_commit': head + 1,
       }, where: 'id = 1');
       await _collectGarbage(txn, projection, currentHead: head);
@@ -1284,14 +1319,16 @@ class RevisionEngine {
       if (!_sameProjection(projection, verified)) {
         throw RevisionCorruption('裁剪前的新基线校验失败，已取消本次清理');
       }
-      final beforeCommits = await txn.query('revision_commit');
-      final beforeCheckpoints = await txn.query('revision_checkpoint');
-      await txn.delete(
+      final beforeCommits = await selectRows(txn, 'revision_commit');
+      final beforeCheckpoints = await selectRows(txn, 'revision_checkpoint');
+      await deleteRows(
+        txn,
         'revision_change',
         where: 'commit_id < ?',
         whereArgs: [oldest],
       );
-      await txn.delete(
+      await deleteRows(
+        txn,
         'revision_checkpoint',
         where: 'commit_id < ? AND kind != ?',
         whereArgs: [oldest, 'named'],
@@ -1300,19 +1337,26 @@ class RevisionEngine {
       for (final commit in beforeCommits) {
         final id = commit['id']! as int;
         if (id >= oldest || id == head || namedCommits.contains(id)) continue;
-        await txn.delete('revision_commit', where: 'id = ?', whereArgs: [id]);
+        await deleteRows(
+          txn,
+          'revision_commit',
+          where: 'id = ?',
+          whereArgs: [id],
+        );
         removed.add(id);
       }
       // 被删掉的中间提交不再作为父提交；保留提交的父指针置空。
       if (removed.isEmpty) {
-        await txn.update(
+        await updateRow(
+          txn,
           'revision_commit',
           {'parent_id': null},
           where: 'id = ?',
           whereArgs: [oldest],
         );
       } else {
-        await txn.update(
+        await updateRow(
+          txn,
           'revision_commit',
           {'parent_id': null},
           where:
@@ -1330,7 +1374,7 @@ class RevisionEngine {
         removedCommits: removed.length,
         removedCheckpoints:
             beforeCheckpoints.length -
-            (await txn.query('revision_checkpoint')).length,
+            (await selectRows(txn, 'revision_checkpoint')).length,
         removedAssets: removedAssets,
         keptFrom: oldest,
         databaseBytes: await databaseBytes(txn),
@@ -1357,7 +1401,8 @@ class RevisionEngine {
     required int currentHead,
   }) async {
     final keep = <String>{...AssetStore.hashesInProjection(current)};
-    final checkpoints = await executor.query(
+    final checkpoints = await selectRows(
+      executor,
       'revision_checkpoint',
       columns: ['asset_hashes_json'],
     );
@@ -1366,7 +1411,8 @@ class RevisionEngine {
         decodeStringList(row['asset_hashes_json'] as String? ?? '[]'),
       );
     }
-    final changes = await executor.query(
+    final changes = await selectRows(
+      executor,
       'revision_change',
       columns: ['before_json', 'after_json'],
     );
@@ -1403,14 +1449,16 @@ class RevisionEngine {
   Future<List<String>> verifyAssets(RawExecutor executor) async {
     final missing = <String>[];
     final all = <String>{};
-    final checkpoints = await executor.query(
+    final checkpoints = await selectRows(
+      executor,
       'revision_checkpoint',
       columns: ['asset_hashes_json'],
     );
     for (final row in checkpoints) {
       all.addAll(decodeStringList(row['asset_hashes_json'] as String? ?? '[]'));
     }
-    final changes = await executor.query(
+    final changes = await selectRows(
+      executor,
       'revision_change',
       columns: ['before_json', 'after_json'],
     );
@@ -1441,7 +1489,8 @@ class RevisionEngine {
 Future<void> installRevisionSchema(RawDatabase db) async {
   final engine = RevisionEngine();
   final schema = await engine.tables(db);
-  final existing = await db.query(
+  final existing = await selectRows(
+    db,
     'sqlite_master',
     columns: ['name'],
     where: "type = 'trigger' AND name NOT LIKE 'sqlite_%'",
@@ -1473,15 +1522,15 @@ Future<void> installRevisionSchema(RawDatabase db) async {
     await _createTriggers(db, table);
   }
 
-  await db.insert('revision_context', {
+  await insertRow(db, 'revision_context', {
     'id': 1,
     'active_commit': null,
     'suppress': 0,
-  }, conflictAlgorithm: ConflictAction.ignore);
-  await db.insert('revision_sequence', {
+  }, ignore: true);
+  await insertRow(db, 'revision_sequence', {
     'id': 1,
     'next_commit': 1,
-  }, conflictAlgorithm: ConflictAction.ignore);
+  }, ignore: true);
 }
 
 Future<void> _createTriggers(RawDatabase db, RevisionTable table) async {

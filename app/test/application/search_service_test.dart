@@ -14,6 +14,8 @@ import 'package:zhixin/domain/models/search.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 List<EvidenceHit> _hits(SearchResults results) => [
   for (final entry in results.entries) ...entry.hits,
 ];
@@ -227,13 +229,15 @@ void main() {
         content: '矩阵的第 $index 个问题怎么算',
       );
       final at = formatDateTime(base.add(Duration(minutes: index)));
-      await db.update(
+      await updateRow(
+        db,
         'message',
         {'created_at': at},
         where: 'conversation_id = ?',
         whereArgs: [conversation],
       );
-      await db.update(
+      await updateRow(
+        db,
         'conversation',
         {'created_at': at, 'updated_at': at},
         where: 'id = ?',
@@ -288,13 +292,15 @@ void main() {
       role: 'user',
       content: '矩阵与独立性需要同时核对，这里把两件事放在一起讲。',
     );
-    await db.update(
+    await updateRow(
+      db,
       'message',
       {'created_at': '2026-09-01 09:00:00'},
       where: 'conversation_id = ?',
       whereArgs: [old],
     );
-    await db.update(
+    await updateRow(
+      db,
       'conversation',
       {
         'created_at': '2026-09-01 09:00:00',
@@ -313,13 +319,15 @@ void main() {
       final at = formatDateTime(
         DateTime(2026, 10, 10).add(Duration(minutes: index)),
       );
-      await db.update(
+      await updateRow(
+        db,
         'message',
         {'created_at': at},
         where: 'conversation_id = ?',
         whereArgs: [conversation],
       );
-      await db.update(
+      await updateRow(
+        db,
         'conversation',
         {'created_at': at, 'updated_at': at},
         where: 'id = ?',
@@ -409,13 +417,15 @@ void main() {
       final at = formatDateTime(
         DateTime(2026, 10, 1).add(Duration(minutes: index)),
       );
-      await db.update(
+      await updateRow(
+        db,
         'message',
         {'created_at': at},
         where: 'conversation_id = ?',
         whereArgs: [conversation],
       );
-      await db.update(
+      await updateRow(
+        db,
         'conversation',
         {'created_at': at, 'updated_at': at},
         where: 'id = ?',

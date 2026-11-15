@@ -9,6 +9,8 @@ import 'package:zhixin/domain/models/memory.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   test('模型给的记忆落库，并留下可按提交撤销的回执', () async {
     final rig = await openTestRig();
@@ -75,7 +77,12 @@ void main() {
     expect(undone.applied, isFalse);
     expect(undone.message, '这项任务已有预约，不能撤销');
     expect(
-      await rig.db.query('plan_item', where: 'id = ?', whereArgs: [itemId]),
+      await selectRows(
+        rig.db,
+        'plan_item',
+        where: 'id = ?',
+        whereArgs: [itemId],
+      ),
       hasLength(1),
     );
     expect(await schedule.blockById(blockId), isNotNull);
@@ -148,7 +155,7 @@ void main() {
     expect(first.changes, hasLength(1));
     expect(otherScope.changes, hasLength(1));
     expect(otherKind.changes, hasLength(1));
-    expect(await rig.db.query('memory'), hasLength(4));
+    expect(await selectRows(rig.db, 'memory'), hasLength(4));
     expect(await rig.engine.undoableCommits(rig.db.raw), hasLength(4));
   });
 

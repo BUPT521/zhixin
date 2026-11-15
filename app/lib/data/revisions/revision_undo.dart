@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../db/raw_executor.dart';
+import '../db/sql.dart';
 
 import '../repository/schedule_conflicts.dart';
 import '../../domain/rules/time_policy.dart';
@@ -91,7 +92,8 @@ class RevisionUndoService {
       if (commit == null) {
         return const RevisionUndoResult(applied: false, message: '没有产生需要写入的变化');
       }
-      await txn.update(
+      await updateRow(
+        txn,
         'revision_commit',
         {'reverted_commit_id': commitId},
         where: 'id = ?',
@@ -145,7 +147,8 @@ class RevisionUndoService {
   }
 
   Future<Set<int>> _revertedTargets(RawExecutor executor) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'revision_commit',
       columns: ['reverted_commit_id'],
       where: 'reverted_commit_id IS NOT NULL',
@@ -247,7 +250,8 @@ class RevisionUndoService {
     int commitId,
     RevisionChange target,
   ) async {
-    final rows = await txn.query(
+    final rows = await selectRows(
+      txn,
       'revision_change',
       where: 'commit_id > ? AND table_name = ? AND row_key = ?',
       whereArgs: [commitId, target.table, target.rowKey],
@@ -276,9 +280,10 @@ class RevisionUndoService {
     final schema = await engine.tables(txn);
     final table = schema[change.table];
     if (table == null) return null;
-    final rows = await txn.query(
+    final rows = await selectRows(
+      txn,
       table.name,
-      where: '${table.primaryKey} = ?',
+      where: '${quoteSqlName(table.primaryKey)} = ?',
       whereArgs: [_keyValue(change.rowKey)],
       limit: 1,
     );
@@ -306,7 +311,8 @@ class RevisionUndoService {
     if (start == null || end == null || planItemId == null) {
       return '预约内容不完整，不能撤销';
     }
-    final item = await txn.query(
+    final item = await selectRows(
+      txn,
       'plan_item',
       columns: ['id', 'status', 'goal_id'],
       where: 'id = ?',
@@ -321,7 +327,8 @@ class RevisionUndoService {
     }
     final goalId = item.first['goal_id'] as int?;
     if (goalId != null) {
-      final goals = await txn.query(
+      final goals = await selectRows(
+        txn,
         'learning_goal',
         columns: ['status'],
         where: 'id = ?',
@@ -429,7 +436,8 @@ class RevisionUndoService {
       if (planId != null && !planId.isNull) {
         return '这项任务已归入系统学习计划，不能撤销';
       }
-      final blocks = await txn.query(
+      final blocks = await selectRows(
+        txn,
         'schedule_block',
         columns: ['id'],
         where: 'plan_item_id = ?',
@@ -437,7 +445,8 @@ class RevisionUndoService {
         limit: 1,
       );
       if (blocks.isNotEmpty) return '这项任务已有预约，不能撤销';
-      final sessions = await txn.query(
+      final sessions = await selectRows(
+        txn,
         'study_session',
         columns: ['id'],
         where: 'plan_item_id = ?',
@@ -456,7 +465,8 @@ class RevisionUndoService {
       ];
       for (final (table, value) in references) {
         if (value == null || value.isNull) continue;
-        final rows = await txn.query(
+        final rows = await selectRows(
+          txn,
           table,
           columns: ['id'],
           where: 'id = ?',
@@ -480,20 +490,23 @@ class RevisionUndoService {
     final schema = await engine.tables(txn);
     final table = schema[change.table]!;
     final key = _keyValue(change.rowKey);
+    final primaryKey = quoteSqlName(table.primaryKey);
     switch (change.op) {
       case 'insert':
-        await txn.delete(
+        await deleteRows(
+          txn,
           table.name,
-          where: '${table.primaryKey} = ?',
+          where: '$primaryKey = ?',
           whereArgs: [key],
         );
       case 'delete':
-        await txn.insert(table.name, sqliteRow(change.before!));
+        await insertRow(txn, table.name, sqliteRow(change.before!));
       case 'update':
-        await txn.update(
+        await updateRow(
+          txn,
           table.name,
           sqliteRow(change.before!),
-          where: '${table.primaryKey} = ?',
+          where: '$primaryKey = ?',
           whereArgs: [key],
         );
     }
@@ -531,7 +544,8 @@ class RevisionUndoService {
       ...titlesByMessage.keys,
     };
     for (final messageId in messageIds) {
-      final rows = await txn.query(
+      final rows = await selectRows(
+        txn,
         'message',
         columns: ['structured_json'],
         where: 'id = ?',
@@ -547,7 +561,8 @@ class RevisionUndoService {
         unacceptedStepIds: stepIdsByMessage[messageId] ?? const {},
       );
       if (!changed) continue;
-      await txn.update(
+      await updateRow(
+        txn,
         'message',
         {'structured_json': jsonEncode(structured)},
         where: 'id = ?',

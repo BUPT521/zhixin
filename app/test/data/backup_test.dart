@@ -15,6 +15,8 @@ import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 /// 造一条有作答的学习记录，用作导出与恢复的数据标记。
 Future<int> _captureRecord(
   RawDatabase db,
@@ -43,13 +45,13 @@ void main() {
     final path1 = '${dir1.path}/zhixin.db';
     final db1 = await openZhixinDatabase(path: path1);
     final recordId = await _captureRecord(db1, '导出前的题目', sourceRef: '第 1 页');
-    final goalId = await db1.insert('learning_goal', {
+    final goalId = await insertRow(db1, 'learning_goal', {
       'title': '概率论期末',
       'status': 'active',
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:00:00',
     });
-    final materialId = await db1.insert('material', {
+    final materialId = await insertRow(db1, 'material', {
       'title': '概率论课件',
       'kind': 'slides',
       'source_ref': '第 12 讲',
@@ -57,7 +59,7 @@ void main() {
       'created_at': '2026-11-06 08:00:00',
       'updated_at': '2026-11-06 08:00:00',
     });
-    await db1.insert('material_page', {
+    await insertRow(db1, 'material_page', {
       'material_id': materialId,
       'page_no': 12,
       'label': '条件概率',
@@ -65,7 +67,7 @@ void main() {
       'created_at': '2026-11-06 08:00:00',
       'updated_at': '2026-11-06 08:00:00',
     });
-    final conversationId = await db1.insert('conversation', {
+    final conversationId = await insertRow(db1, 'conversation', {
       'title': '为什么这里需要独立性',
       'goal_id': goalId,
       'material_id': materialId,
@@ -76,14 +78,14 @@ void main() {
       'updated_at': '2026-11-06 09:05:00',
       'last_message_at': '2026-11-06 09:05:00',
     });
-    await db1.insert('message', {
+    await insertRow(db1, 'message', {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '为什么这里需要独立性',
       'image_paths_json': '["m-1.jpg"]',
       'created_at': '2026-11-06 09:00:00',
     });
-    await db1.insert('plan_item', {
+    await insertRow(db1, 'plan_item', {
       'goal_id': goalId,
       'conversation_id': conversationId,
       'title': '重做第 8 题',
@@ -139,7 +141,7 @@ void main() {
     expect(record!.stem, '导出前的题目');
     expect(record.sourceRef, '第 1 页');
 
-    final conversations = await restored.query('conversation');
+    final conversations = await selectRows(restored, 'conversation');
     expect(conversations, hasLength(2));
     final discussion = conversations.firstWhere(
       (row) => row['id'] == conversationId,
@@ -149,11 +151,11 @@ void main() {
     expect(discussion['material_id'], materialId);
     expect(discussion['page_no'], 12);
 
-    final pages = await restored.query('material_page');
+    final pages = await selectRows(restored, 'material_page');
     expect(pages, hasLength(1));
     expect(pages.first['content'], '条件概率的定义与乘法公式。');
 
-    final messages = await restored.query('message');
+    final messages = await selectRows(restored, 'message');
     expect(messages, hasLength(2));
     final imageMessage = messages.firstWhere(
       (row) => row['conversation_id'] == conversationId,
@@ -382,7 +384,8 @@ void main() {
     final conversations = ConversationRepository(db.rawDb);
     final conversationId = await conversations.create();
     await conversations.append(conversationId, role: 'user', content: '带图的题');
-    await db.update(
+    await updateRow(
+      db,
       'message',
       {'image_paths_json': '["lost.jpg"]'},
       where: 'conversation_id = ?',
@@ -452,7 +455,7 @@ void main() {
         reason: 'v$oldVersion 的包应当在替换前被拒绝',
       );
     }
-    expect(await db.query('conversation'), isEmpty);
+    expect(await selectRows(db, 'conversation'), isEmpty);
     final version = await db.rawQuery('PRAGMA user_version');
     expect(version.first.values.first, zhixinSchemaVersion);
   });

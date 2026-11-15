@@ -1,12 +1,10 @@
 import 'package:drift/drift.dart' show DatabaseConnectionUser;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
-/// 写入冲突策略；语义与 SQLite 的 `OR ...` 一致。
-enum ConflictAction { rollback, abort, fail, ignore, replace }
-
 /// 版本引擎、备份与撤销使用的最小 SQL 执行器。
 ///
-/// 方法名与参数沿用原来的 sqflite 形态，切换执行引擎时只换实现，不改 SQL。
+/// 只保留执行语句、读回行与开事务三件事；按表名读写由 [sql.dart] 的辅助函数
+/// 组装语句，仓库读写走 drift 生成查询（ADR-0021）。
 abstract class RawExecutor {
   /// 生成代码使用的 drift 连接；只读副本等实现返回空。
   ///
@@ -18,40 +16,10 @@ abstract class RawExecutor {
 
   Future<int> rawInsert(String sql, [List<Object?>? arguments]);
 
-  Future<int> insert(
-    String table,
-    Map<String, Object?> values, {
-    ConflictAction? conflictAlgorithm,
-  });
-
-  Future<List<Map<String, Object?>>> query(
-    String table, {
-    List<String>? columns,
-    String? where,
-    List<Object?>? whereArgs,
-    String? orderBy,
-    int? limit,
-    int? offset,
-  });
-
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
     List<Object?>? arguments,
   ]);
-
-  Future<int> update(
-    String table,
-    Map<String, Object?> values, {
-    String? where,
-    List<Object?>? whereArgs,
-    ConflictAction? conflictAlgorithm,
-  });
-
-  Future<int> rawUpdate(String sql, [List<Object?>? arguments]);
-
-  Future<int> delete(String table, {String? where, List<Object?>? whereArgs});
-
-  Future<int> rawDelete(String sql, [List<Object?>? arguments]);
 }
 
 /// 可以自己开事务的执行器；引擎的整版恢复、命名版本与裁剪用到这里。
@@ -126,75 +94,10 @@ class SqliteRawDatabase implements RawDatabase {
       Future.sync(() => _insert(sql, arguments));
 
   @override
-  Future<int> insert(
-    String table,
-    Map<String, Object?> values, {
-    ConflictAction? conflictAlgorithm,
-  }) => Future.sync(
-    () => _insert(_insertSql(table, values, conflictAlgorithm), [
-      ...values.values,
-    ]),
-  );
-
-  @override
-  Future<List<Map<String, Object?>>> query(
-    String table, {
-    List<String>? columns,
-    String? where,
-    List<Object?>? whereArgs,
-    String? orderBy,
-    int? limit,
-    int? offset,
-  }) => Future.sync(
-    () => _select(
-      _querySql(
-        table,
-        columns: columns,
-        where: where,
-        orderBy: orderBy,
-        limit: limit,
-        offset: offset,
-      ),
-      whereArgs,
-    ),
-  );
-
-  @override
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
     List<Object?>? arguments,
   ]) => Future.sync(() => _select(sql, arguments));
-
-  @override
-  Future<int> update(
-    String table,
-    Map<String, Object?> values, {
-    String? where,
-    List<Object?>? whereArgs,
-    ConflictAction? conflictAlgorithm,
-  }) => Future.sync(
-    () => _run(
-      _updateSql(
-        table,
-        values,
-        where: where,
-        conflictAlgorithm: conflictAlgorithm,
-      ),
-      [...values.values, ...?whereArgs],
-    ),
-  );
-
-  @override
-  Future<int> rawUpdate(String sql, [List<Object?>? arguments]) =>
-      Future.sync(() => _run(sql, arguments));
-
-  @override
-  Future<int> delete(String table, {String? where, List<Object?>? whereArgs}) =>
-      Future.sync(() => _run(_deleteSql(table, where: where), whereArgs));
-
-  @override
-  Future<int> rawDelete(String sql, [List<Object?>? arguments]) =>
-      Future.sync(() => _run(sql, arguments));
 
   @override
   Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action) async {
@@ -211,74 +114,6 @@ class SqliteRawDatabase implements RawDatabase {
 
   @override
   Future<void> close() async => _db.close();
-}
-
-String _quote(String identifier) => '"${identifier.replaceAll('"', '""')}"';
-
-String _insertSql(
-  String table,
-  Map<String, Object?> values,
-  ConflictAction? conflictAlgorithm,
-) {
-  final prefix = switch (conflictAlgorithm) {
-    null || ConflictAction.abort => 'INSERT',
-    ConflictAction.rollback => 'INSERT OR ROLLBACK',
-    ConflictAction.fail => 'INSERT OR FAIL',
-    ConflictAction.ignore => 'INSERT OR IGNORE',
-    ConflictAction.replace => 'INSERT OR REPLACE',
-  };
-  if (values.isEmpty) return '$prefix INTO ${_quote(table)} DEFAULT VALUES';
-  final columns = values.keys.map(_quote).join(', ');
-  final placeholders = List.filled(values.length, '?').join(', ');
-  return '$prefix INTO ${_quote(table)} ($columns) VALUES ($placeholders)';
-}
-
-String _updateSql(
-  String table,
-  Map<String, Object?> values, {
-  String? where,
-  ConflictAction? conflictAlgorithm,
-}) {
-  final prefix = switch (conflictAlgorithm) {
-    null || ConflictAction.abort => 'UPDATE',
-    ConflictAction.rollback => 'UPDATE OR ROLLBACK',
-    ConflictAction.fail => 'UPDATE OR FAIL',
-    ConflictAction.ignore => 'UPDATE OR IGNORE',
-    ConflictAction.replace => 'UPDATE OR REPLACE',
-  };
-  final assignments = values.keys.map((key) => '${_quote(key)} = ?').join(', ');
-  final buffer = StringBuffer('$prefix ${_quote(table)} SET $assignments');
-  if (where != null && where.trim().isNotEmpty) buffer.write(' WHERE $where');
-  return buffer.toString();
-}
-
-String _deleteSql(String table, {String? where}) {
-  final buffer = StringBuffer('DELETE FROM ${_quote(table)}');
-  if (where != null && where.trim().isNotEmpty) buffer.write(' WHERE $where');
-  return buffer.toString();
-}
-
-String _querySql(
-  String table, {
-  List<String>? columns,
-  String? where,
-  String? orderBy,
-  int? limit,
-  int? offset,
-}) {
-  final buffer = StringBuffer('SELECT ');
-  buffer.write(columns == null ? '*' : columns.map(_quote).join(', '));
-  buffer.write(' FROM ${_quote(table)}');
-  if (where != null && where.trim().isNotEmpty) buffer.write(' WHERE $where');
-  if (orderBy != null && orderBy.trim().isNotEmpty) {
-    buffer.write(' ORDER BY $orderBy');
-  }
-  if (limit != null) buffer.write(' LIMIT $limit');
-  if (offset != null) {
-    if (limit == null) buffer.write(' LIMIT -1');
-    buffer.write(' OFFSET $offset');
-  }
-  return buffer.toString();
 }
 
 /// 已持有 [RawExecutor] 的调用方继续使用 `.raw`，不必区分实现。

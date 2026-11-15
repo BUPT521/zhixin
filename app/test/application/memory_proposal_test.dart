@@ -13,6 +13,8 @@ import 'package:zhixin/domain/models/memory.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 Future<
   (
     TestRig rig,
@@ -56,7 +58,8 @@ _seed(TestRig rig) async {
     independent: false,
     feedback: '看过提示才写对。',
   );
-  await rig.db.update(
+  await updateRow(
+    rig.db,
     'attempt',
     {
       'help_json': jsonEncode([
@@ -80,7 +83,8 @@ _seed(TestRig rig) async {
     independent: false,
     feedback: '把分子分母记反了。',
   );
-  await rig.db.update(
+  await updateRow(
+    rig.db,
     'attempt',
     {
       'help_json': jsonEncode([
@@ -104,7 +108,8 @@ _seed(TestRig rig) async {
     independent: true,
     delayed: true,
   );
-  await rig.db.update(
+  await updateRow(
+    rig.db,
     'attempt',
     {'submitted_at': '2026-10-03 20:00:00'},
     where: 'id = ?',
@@ -236,7 +241,8 @@ void main() {
         independent: false,
         feedback: '总是漏乘概率。',
       );
-      await rig.db.update(
+      await updateRow(
+        rig.db,
         'attempt',
         {
           'submitted_at': '2026-10-0${index + 1} 20:00:00',

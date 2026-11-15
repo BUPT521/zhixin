@@ -8,6 +8,8 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 MaterialService _service(TestRig rig, {Clock? clock}) => MaterialService(
   materials: MaterialRepository(rig.db.rawDb, clock: clock ?? systemClock),
   transactions: WriteTransactions(rig.db),
@@ -31,8 +33,8 @@ void main() {
       ),
       throwsArgumentError,
     );
-    expect(await rig.db.query('material'), isEmpty);
-    expect(await rig.db.query('material_page'), isEmpty);
+    expect(await selectRows(rig.db, 'material'), isEmpty);
+    expect(await selectRows(rig.db, 'material_page'), isEmpty);
   });
 
   test('同一批导入出现重复页码时整批拒绝，不覆盖前一页', () async {
@@ -50,8 +52,8 @@ void main() {
       ),
       throwsArgumentError,
     );
-    expect(await rig.db.query('material'), isEmpty);
-    expect(await rig.db.query('material_page'), isEmpty);
+    expect(await selectRows(rig.db, 'material'), isEmpty);
+    expect(await selectRows(rig.db, 'material_page'), isEmpty);
   });
 
   test('添加一页遇到已有页码时拒绝写入，原正文保持不变', () async {
@@ -261,6 +263,6 @@ void main() {
       ),
       throwsStateError,
     );
-    expect(await rig.db.query('material_page'), isEmpty);
+    expect(await selectRows(rig.db, 'material_page'), isEmpty);
   });
 }

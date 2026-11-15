@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/drift/drift_raw.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
+import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
 void main() {
@@ -16,7 +16,7 @@ void main() {
 
     final commitId = await raw.transaction((txn) async {
       final id = await engine.beginCommand(txn);
-      await txn.insert('learning_goal', {
+      await insertRow(txn, 'learning_goal', {
         'title': '测试目标',
         'created_at': '2026-11-14 10:00:00',
         'updated_at': '2026-11-14 10:00:00',
@@ -27,7 +27,7 @@ void main() {
 
     expect(commitId, greaterThan(0));
     expect(await engine.headId(raw), commitId);
-    final goals = await raw.query('learning_goal');
+    final goals = await selectRows(raw, 'learning_goal');
     expect(goals.single['title'], '测试目标');
 
     final changes = await engine.changesFor(raw, commitId);
@@ -40,41 +40,41 @@ void main() {
     addTearDown(app.close);
     final raw = DriftRawDatabase(app);
 
-    final id = await raw.insert('app_meta', {
+    final id = await insertRow(raw, 'app_meta', {
       'key': 'schema_version',
       'value': '26',
       'updated_at': '2026-11-14 10:00:00',
     });
     expect(id, greaterThan(0));
 
-    await raw.update(
+    await updateRow(
+      raw,
       'app_meta',
       {'value': '27'},
       where: 'key = ?',
       whereArgs: ['schema_version'],
     );
-    final rows = await raw.query(
+    final rows = await selectRows(
+      raw,
       'app_meta',
       where: 'key = ?',
       whereArgs: ['schema_version'],
     );
     expect(rows.single['value'], '27');
 
-    await raw.insert('app_meta', {
+    await insertRow(raw, 'app_meta', {
       'key': 'schema_version',
       'value': '28',
       'updated_at': '2026-11-14 10:00:00',
-    }, conflictAlgorithm: ConflictAction.replace);
-    expect((await raw.query('app_meta')).single['value'], '28');
+    }, replace: true);
+    expect((await selectRows(raw, 'app_meta')).single['value'], '28');
 
-    expect(
-      await raw.delete(
-        'app_meta',
-        where: 'key = ?',
-        whereArgs: ['schema_version'],
-      ),
-      1,
+    await deleteRows(
+      raw,
+      'app_meta',
+      where: 'key = ?',
+      whereArgs: ['schema_version'],
     );
-    expect(await raw.query('app_meta'), isEmpty);
+    expect(await selectRows(raw, 'app_meta'), isEmpty);
   });
 }

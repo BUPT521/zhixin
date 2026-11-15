@@ -9,6 +9,8 @@ import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 /// Dart VM 上的粗略计时，只作为 Android 真机测量的参照，不设通过阈值。
 ///
 /// 运行：`cd app && flutter test test/data/revision_benchmark_test.dart -r expanded`
@@ -32,7 +34,7 @@ void main() {
     const commits = 200;
     final watch = Stopwatch()..start();
     for (var index = 0; index < commits; index++) {
-      await db.insert('memory', {
+      await insertRow(db, 'memory', {
         'kind': 'preference',
         'content': '第 $index 条记忆',
         'source_kind': 'user',
@@ -49,7 +51,7 @@ void main() {
     );
     final hash = AssetStore.hashBytes(image);
     final imageWatch = Stopwatch()..start();
-    final conversation = await db.insert('conversation', {
+    final conversation = await insertRow(db, 'conversation', {
       'title': '基准图片',
       'entry_kind': 'photo',
       'status': 'open',
@@ -58,7 +60,7 @@ void main() {
     });
     await db.transaction((txn) async {
       await engine.assets.putBytes(txn.raw, hash, image);
-      await txn.insert('message', {
+      await insertRow(txn, 'message', {
         'conversation_id': conversation,
         'role': 'user',
         'content': '',

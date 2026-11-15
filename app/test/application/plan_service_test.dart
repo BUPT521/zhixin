@@ -18,6 +18,8 @@ import 'package:zhixin/domain/models/study_plan.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
   return PlanService(
     tasks: TaskRepository(rig.db.rawDb),
@@ -188,7 +190,8 @@ void main() {
     );
     // 只有第二段预约期间真的开过场次，第一段虽然到过开始时间却没有学习。
     final session = await study.start(planItemId: item, goalId: null);
-    await rig.raw.update(
+    await updateRow(
+      rig.raw,
       'study_session',
       {'started_at': formatDateTime(now.subtract(const Duration(minutes: 20)))},
       where: 'id = ?',

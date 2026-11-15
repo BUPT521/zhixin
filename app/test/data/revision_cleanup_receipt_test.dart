@@ -6,9 +6,11 @@ import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   Future<int> addMemory(TestRig rig, String content) async {
-    await rig.db.insert('memory', {
+    await insertRow(rig.db, 'memory', {
       'kind': 'preference',
       'content': content,
       'source_kind': 'user',
@@ -20,14 +22,14 @@ void main() {
   }
 
   Future<int> openConversation(TestRig rig) async {
-    final conversationId = await rig.db.insert('conversation', {
+    final conversationId = await insertRow(rig.db, 'conversation', {
       'title': '回执',
       'entry_kind': 'text',
       'status': 'open',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    return rig.db.insert('message', {
+    return insertRow(rig.db, 'message', {
       'conversation_id': conversationId,
       'role': 'assistant',
       'content': '回答',
@@ -40,7 +42,8 @@ void main() {
     TestRig rig,
     int messageId,
   ) async {
-    final rows = await rig.raw.query(
+    final rows = await selectRows(
+      rig.raw,
       'message',
       columns: ['structured_json'],
       where: 'id = ?',
@@ -59,7 +62,8 @@ void main() {
       await addMemory(rig, '后续 $index');
     }
     final keptCommit = await addMemory(rig, '保留记忆');
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'message',
       {
         'structured_json': jsonEncode({
@@ -119,7 +123,8 @@ void main() {
     addTearDown(rig.close);
     final messageId = await openConversation(rig);
     final commitId = await addMemory(rig, '一条记忆');
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'message',
       {
         'structured_json': jsonEncode({
@@ -172,7 +177,7 @@ void main() {
 
     await rig.revisions.clearHistory();
 
-    final commits = await rig.raw.query('revision_commit');
+    final commits = await selectRows(rig.raw, 'revision_commit');
     expect(commits, hasLength(1));
     expect(commits.single['action'], '清理后保留');
     expect(commits.single['change_count'], 0);
@@ -180,7 +185,8 @@ void main() {
 }
 
 Future<String> _structuredText(TestRig rig, int messageId) async {
-  final rows = await rig.raw.query(
+  final rows = await selectRows(
+    rig.raw,
     'message',
     columns: ['structured_json'],
     where: 'id = ?',

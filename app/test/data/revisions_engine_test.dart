@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
-import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
@@ -15,7 +15,7 @@ void main() {
   tearDown(() => rig.close());
 
   test('普通写入形成一次带类型的净变化提交', () async {
-    final id = await rig.db.insert('learning_goal', {
+    final id = await insertRow(rig.db, 'learning_goal', {
       'title': '复习线代',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
@@ -33,7 +33,8 @@ void main() {
     expect(changes.first.after!['id']!.type, 'integer');
     expect(changes.first.after!['title']!.value, '复习线代');
 
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'learning_goal',
       {'title': '复习线性代数', 'updated_at': '2026-11-10T09:05:00'},
       where: 'id = ?',
@@ -49,19 +50,21 @@ void main() {
   });
 
   test('同一字段改走又改回仍保留两次提交', () async {
-    final id = await rig.db.insert('learning_goal', {
+    final id = await insertRow(rig.db, 'learning_goal', {
       'title': 'A',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'learning_goal',
       {'title': 'B'},
       where: 'id = ?',
       whereArgs: [id],
     );
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'learning_goal',
       {'title': 'A'},
       where: 'id = ?',
@@ -76,7 +79,7 @@ void main() {
     final before = await rig.engine.headId(rig.db);
     await expectLater(
       rig.db.transaction((txn) async {
-        await txn.insert('learning_goal', {
+        await insertRow(txn, 'learning_goal', {
           'title': '不会保留',
           'status': 'active',
           'created_at': '2026-11-10T09:00:00',
@@ -87,22 +90,27 @@ void main() {
       throwsA(isA<StateError>()),
     );
     expect(await rig.engine.headId(rig.db), before);
-    expect(await rig.db.query('learning_goal'), isEmpty);
+    expect(await selectRows(rig.db, 'learning_goal'), isEmpty);
     expect(
-      await rig.db.query('revision_commit', where: 'id > ?', whereArgs: [0]),
+      await selectRows(
+        rig.db,
+        'revision_commit',
+        where: 'id > ?',
+        whereArgs: [0],
+      ),
       isEmpty,
     );
   });
 
   test('版本化表拒绝 REPLACE，避免旧行绕过删除采集', () async {
     expect(
-      () => rig.db.insert('learning_goal', {
+      () => insertRow(rig.db, 'learning_goal', {
         'id': 1,
         'title': '替换',
         'status': 'active',
         'created_at': '2026-11-10T09:00:00',
         'updated_at': '2026-11-10T09:00:00',
-      }, conflictAlgorithm: ConflictAction.replace),
+      }, replace: true),
       throwsArgumentError,
     );
     expect(
@@ -113,7 +121,7 @@ void main() {
       ),
       throwsArgumentError,
     );
-    expect(await rig.db.query('learning_goal'), isEmpty);
+    expect(await selectRows(rig.db, 'learning_goal'), isEmpty);
   });
 
   test('同一请求编号重复提交返回原提交', () async {
@@ -121,7 +129,7 @@ void main() {
     final first = await rig.db.command(
       (txn) async {
         calls++;
-        await txn.insert('memory', {
+        await insertRow(txn, 'memory', {
           'kind': 'preference',
           'content': '重试一次',
           'source_kind': 'user',
@@ -146,7 +154,7 @@ void main() {
     expect(first, 'first');
     expect(replay, startsWith('replay:'));
     expect(calls, 1);
-    expect(await rig.raw.query('memory'), hasLength(1));
+    expect(await selectRows(rig.raw, 'memory'), hasLength(1));
     final commit = await rig.engine.commitByRequest(rig.raw, 'retry-1');
     expect(commit, isNotNull);
     expect(await rig.engine.headId(rig.raw), commit!.id);
@@ -157,7 +165,7 @@ void main() {
     int? insideId;
     await transactions.run((txn) async {
       insideId = await txn.commitId();
-      await txn.executor.insert('memory', {
+      await insertRow(txn.executor, 'memory', {
         'kind': 'preference',
         'content': '带回执',
         'source_kind': 'user',
@@ -180,14 +188,15 @@ void main() {
   });
 
   test('从检查点重建并与当前数据逐字段一致', () async {
-    final id = await rig.db.insert('learning_goal', {
+    final id = await insertRow(rig.db, 'learning_goal', {
       'title': '目标',
       'scope_text': '第一章',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'learning_goal',
       {'scope_text': '第二章'},
       where: 'id = ?',
@@ -199,14 +208,15 @@ void main() {
   });
 
   test('整版恢复追加提交，预览后 HEAD 变化会拒绝', () async {
-    final id = await rig.db.insert('learning_goal', {
+    final id = await insertRow(rig.db, 'learning_goal', {
       'title': '恢复前',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
     final first = await rig.engine.headId(rig.db);
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'learning_goal',
       {'title': '恢复后'},
       where: 'id = ?',
@@ -224,7 +234,7 @@ void main() {
     );
     expect(commit.restoredCommitId, first);
     expect(commit.generation, 1);
-    final rows = await rig.db.query('learning_goal');
+    final rows = await selectRows(rig.db, 'learning_goal');
     expect(rows.single['title'], '恢复前');
     expect(await rig.engine.headId(rig.db), commit.id);
   });

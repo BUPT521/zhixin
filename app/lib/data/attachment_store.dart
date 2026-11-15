@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'db/raw_executor.dart';
+import 'db/sql.dart';
 
 import '../domain/rules/attachments.dart';
 
@@ -14,7 +15,8 @@ class AttachmentStore {
   final String filesDir;
 
   Future<Set<String>> referencedPaths(RawExecutor executor) async {
-    final rows = await executor.query(
+    final rows = await selectRows(
+      executor,
       'message',
       columns: ['image_paths_json'],
       where: 'image_paths_json IS NOT NULL',

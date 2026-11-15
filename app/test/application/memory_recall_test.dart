@@ -7,6 +7,8 @@ import 'package:zhixin/domain/models/memory.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   test('规划、讲解与检查按用途取不同类别的记忆，约束始终先占预算', () async {
     final db = await openTestDb();
@@ -65,7 +67,8 @@ void main() {
       kind: MemoryKind.progress,
       content: '条件概率与独立性可以一起判断：P(AB)=P(A)P(B)。',
     );
-    await db.update(
+    await updateRow(
+      db,
       'memory',
       {'updated_at': '2026-10-01 09:00:00'},
       where: 'kind = ?',

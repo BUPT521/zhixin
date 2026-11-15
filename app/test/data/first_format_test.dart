@@ -10,6 +10,8 @@ import 'package:zhixin/data/backup/restore_journal.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/domain/rules/attachments.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 /// V7 的恢复用例覆盖同格式重开、恢复失败与中断回滚。
 void main() {
   test('V7：恢复失败时当前库保持可用', () async {
@@ -18,7 +20,7 @@ void main() {
     final path = '${dir.path}/zhixin.db';
     final db = await openZhixinDatabase(path: path);
     addTearDown(db.close);
-    await db.insert('material', {
+    await insertRow(db, 'material', {
       'title': '当前材料',
       'kind': 'book',
       'created_at': '2026-11-06 09:00:00',
@@ -55,7 +57,7 @@ void main() {
       ),
       throwsA(isA<BackupException>()),
     );
-    final materials = await db.query('material');
+    final materials = await selectRows(db, 'material');
     expect(materials.single['title'], '当前材料');
   });
 
@@ -65,7 +67,7 @@ void main() {
     final path = '${dir.path}/zhixin.db';
 
     final before = await openZhixinDatabase(path: path);
-    await before.insert('material', {
+    await insertRow(before, 'material', {
       'title': '恢复前',
       'kind': 'book',
       'created_at': '2026-11-06 09:00:00',
@@ -81,7 +83,7 @@ void main() {
     // 模拟已经替换成另一份数据，但还没重新打开完成恢复。
     await File(path).delete();
     final replaced = await openZhixinDatabase(path: path);
-    await replaced.insert('material', {
+    await insertRow(replaced, 'material', {
       'title': '恢复后',
       'kind': 'book',
       'created_at': '2026-11-06 10:00:00',
@@ -107,7 +109,7 @@ void main() {
     expect(await service.recoverInterruptedRestore(), isTrue);
     final restored = await openZhixinDatabase(path: path);
     addTearDown(restored.close);
-    final materials = await restored.query('material');
+    final materials = await selectRows(restored, 'material');
     expect(materials.single['title'], '恢复前');
     expect(await RestoreJournal(dir.path).read(), isNull);
   });
@@ -121,13 +123,13 @@ void main() {
     await File('${images.path}/m-1.jpg').writeAsBytes([9, 8, 7]);
 
     final first = await openZhixinDatabase(path: path);
-    final materialId = await first.insert('material', {
+    final materialId = await insertRow(first, 'material', {
       'title': '概率论讲义',
       'kind': 'book',
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:00:00',
     });
-    await first.insert('material_page', {
+    await insertRow(first, 'material_page', {
       'material_id': materialId,
       'page_no': 3,
       'label': '条件概率',
@@ -135,7 +137,7 @@ void main() {
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:00:00',
     });
-    final conversationId = await first.insert('conversation', {
+    final conversationId = await insertRow(first, 'conversation', {
       'title': '条件概率讨论',
       'material_id': materialId,
       'page_no': 3,
@@ -144,7 +146,7 @@ void main() {
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:05:00',
     });
-    await first.insert('message', {
+    await insertRow(first, 'message', {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',
@@ -160,9 +162,9 @@ void main() {
       (await reopened.rawQuery('PRAGMA user_version')).first.values.first,
       zhixinSchemaVersion,
     );
-    expect(await reopened.query('material'), hasLength(1));
-    expect(await reopened.query('material_page'), hasLength(1));
-    final messages = await reopened.query('message');
+    expect(await selectRows(reopened, 'material'), hasLength(1));
+    expect(await selectRows(reopened, 'material_page'), hasLength(1));
+    final messages = await selectRows(reopened, 'message');
     expect(messages, hasLength(1));
     expect(messages.single['content'], '');
     final stored = jsonDecode(messages.single['image_paths_json']! as String);

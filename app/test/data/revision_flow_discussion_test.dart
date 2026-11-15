@@ -29,6 +29,8 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 class _FixedAi implements BuddyAi {
   @override
   Future<LlmConfig?> config() async => null;
@@ -145,7 +147,12 @@ void main() {
     final conversationId = result.userMessage.conversationId;
     expect(result.userMessage.imagePaths, [hash]);
     expect(
-      await rig.raw.query('asset_object', where: 'hash = ?', whereArgs: [hash]),
+      await selectRows(
+        rig.raw,
+        'asset_object',
+        where: 'hash = ?',
+        whereArgs: [hash],
+      ),
       hasLength(1),
     );
     expect(await rig.engine.assets.verify(rig.raw.rawDb, hash), isTrue);
@@ -156,8 +163,8 @@ void main() {
       text: '再贴一次',
       imagePaths: [image.path],
     );
-    expect(await rig.raw.query('asset_object'), hasLength(1));
-    expect(await rig.raw.query('asset_chunk'), isNotEmpty);
+    expect(await selectRows(rig.raw, 'asset_object'), hasLength(1));
+    expect(await selectRows(rig.raw, 'asset_chunk'), isNotEmpty);
 
     final submittedHead = await rig.engine.headId(rig.raw.rawDb);
     final submitted = await rig.engine.readProjection(rig.raw.rawDb);
@@ -166,10 +173,10 @@ void main() {
 
     // 删除讨论后重启：业务行和版本历史都还在，当前数据没有这条讨论。
     await rig.discussion.clear(conversationId);
-    expect(await rig.raw.query('conversation'), isEmpty);
+    expect(await selectRows(rig.raw, 'conversation'), isEmpty);
     await rig.close();
     await rig.open();
-    expect(await rig.raw.query('conversation'), isEmpty);
+    expect(await selectRows(rig.raw, 'conversation'), isEmpty);
     expect(
       await rig.engine.projectionAt(rig.raw.rawDb, submittedHead),
       submitted,
@@ -184,14 +191,16 @@ void main() {
     final restored = await rig.engine.readProjection(rig.raw.rawDb);
     expect(restored, submitted);
     expect(
-      await rig.raw.query(
+      await selectRows(
+        rig.raw,
         'conversation',
         where: 'id = ?',
         whereArgs: [conversationId],
       ),
       hasLength(1),
     );
-    final messages = await rig.raw.query(
+    final messages = await selectRows(
+      rig.raw,
       'message',
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
@@ -221,7 +230,7 @@ void main() {
     final hash = AssetStore.hashBytes(bytes);
     await expectLater(
       rig.db.transaction((txn) async {
-        final conversation = await txn.insert('conversation', {
+        final conversation = await insertRow(txn, 'conversation', {
           'title': '中断',
           'entry_kind': 'photo',
           'status': 'open',
@@ -229,7 +238,7 @@ void main() {
           'updated_at': '2026-11-10T10:00:00',
         });
         await rig.engine.assets.putBytes(txn.raw, hash, bytes);
-        await txn.insert('message', {
+        await insertRow(txn, 'message', {
           'conversation_id': conversation,
           'role': 'user',
           'content': '',
@@ -241,10 +250,10 @@ void main() {
       throwsA(isA<StateError>()),
     );
     expect(await rig.engine.headId(rig.raw.rawDb), head);
-    expect(await rig.raw.query('conversation'), isEmpty);
-    expect(await rig.raw.query('message'), isEmpty);
-    expect(await rig.raw.query('asset_object'), isEmpty);
-    expect(await rig.raw.query('asset_chunk'), isEmpty);
+    expect(await selectRows(rig.raw, 'conversation'), isEmpty);
+    expect(await selectRows(rig.raw, 'message'), isEmpty);
+    expect(await selectRows(rig.raw, 'asset_object'), isEmpty);
+    expect(await selectRows(rig.raw, 'asset_chunk'), isEmpty);
     await rig.close();
   });
 }

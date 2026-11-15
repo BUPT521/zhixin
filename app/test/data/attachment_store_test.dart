@@ -6,6 +6,8 @@ import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   late RawDatabase db;
   late Directory root;
@@ -21,13 +23,13 @@ void main() {
   });
 
   test('启动清理仅删除数据库不再引用的图片', () async {
-    final conversationId = await db.insert('conversation', {
+    final conversationId = await insertRow(db, 'conversation', {
       'entry_kind': 'photo',
       'status': 'open',
       'created_at': '2026-11-08 09:00:00',
       'updated_at': '2026-11-08 09:00:00',
     });
-    await db.insert('message', {
+    await insertRow(db, 'message', {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',
@@ -48,13 +50,13 @@ void main() {
   });
 
   test('候选回收保留仍被引用的图片且不扫描其他文件', () async {
-    final conversationId = await db.insert('conversation', {
+    final conversationId = await insertRow(db, 'conversation', {
       'entry_kind': 'photo',
       'status': 'open',
       'created_at': '2026-11-08 09:00:00',
       'updated_at': '2026-11-08 09:00:00',
     });
-    await db.insert('message', {
+    await insertRow(db, 'message', {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',

@@ -6,6 +6,7 @@ import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/drift/drift_raw.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
+import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
@@ -17,17 +18,17 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 Future<RawDatabase> openTestDb() async {
   final app = AppDatabase.memory();
   final raw = DriftRawDatabase(app);
-  await raw.insert('app_meta', {
+  await insertRow(raw, 'app_meta', {
     'key': 'schema_version',
     'value': '26',
     'updated_at': '2026-11-10 10:00:00',
-  }, conflictAlgorithm: ConflictAction.replace);
-  await raw.insert('profile', {
+  }, replace: true);
+  await insertRow(raw, 'profile', {
     'id': 1,
     'day_cutoff_hour': 4,
     'created_at': '2026-11-10 10:00:00',
     'updated_at': '2026-11-10 10:00:00',
-  }, conflictAlgorithm: ConflictAction.ignore);
+  }, ignore: true);
   await RevisionEngine().initialize(raw);
   return raw;
 }

@@ -37,6 +37,8 @@ import 'package:zhixin/ui/zhixin_chip.dart';
 import 'package:zhixin/ui/zhixin_header.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 Finder _editableFields() => find.byWidgetPredicate(
   (widget) => widget is EditableText && !widget.readOnly,
 );
@@ -263,7 +265,7 @@ void main() {
       final bytes = Uint8List.fromList([1, 2, 3]);
       final hash = AssetStore.hashBytes(bytes);
       final recordId = await state.db.transaction((txn) async {
-        final id = await txn.insert('conversation', {
+        final id = await insertRow(txn, 'conversation', {
           'title': '带图的学习记录',
           'entry_kind': 'photo',
           'status': 'open',
@@ -271,7 +273,7 @@ void main() {
           'updated_at': '2026-11-10T10:00:00',
         });
         await AssetStore().putBytes(txn, hash, bytes);
-        await txn.insert('message', {
+        await insertRow(txn, 'message', {
           'conversation_id': id,
           'role': 'user',
           'content': '',
@@ -282,12 +284,13 @@ void main() {
       });
       final exported = File('${directory.path}/current.zip');
       await state.exportCurrentData(exported.path);
-      await state.db.delete(
+      await deleteRows(
+        state.db,
         'conversation',
         where: 'id = ?',
         whereArgs: [recordId],
       );
-      expect(await state.db.query('message'), isEmpty);
+      expect(await selectRows(state.db, 'message'), isEmpty);
 
       final images = Directory(state.paths.imagesDir);
       await images.rename('${images.path}.original');
@@ -302,7 +305,7 @@ void main() {
 
       expect(warning, contains('数据已导入'));
       expect(await state.currentHead(), greaterThan(headBefore));
-      expect(await state.db.query('message'), hasLength(1));
+      expect(await selectRows(state.db, 'message'), hasLength(1));
       expect(state.dataVersion.value, versionBefore + 1);
       expect(state.data.attachments.pendingRebuild, isTrue);
     });
@@ -2384,7 +2387,7 @@ void main() {
   testWidgets('数据版本页直接禁用不能撤销的提交并说明原因', (tester) async {
     await openApp(tester);
     await tester.runAsync(
-      () => scope!.db.insert('conversation', {
+      () => insertRow(scope!.db, 'conversation', {
         'title': '不能撤销的讨论',
         'entry_kind': 'text',
         'status': 'open',

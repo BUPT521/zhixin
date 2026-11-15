@@ -129,16 +129,6 @@ class GuardedDatabase implements RawDatabase {
     return transaction(action);
   }
 
-  /// 版本化表不接受 `REPLACE`：它会隐式删除冲突行，旧行可能不触发删除采集。
-  void _guardReplace(String table, ConflictAction? algorithm) {
-    if (algorithm != ConflictAction.replace) return;
-    if (versionedTableNames.contains(table)) {
-      throw ArgumentError(
-        '版本化表 $table 不能使用 REPLACE，请改用 insert、update 或 UPSERT',
-      );
-    }
-  }
-
   bool _rawReplaceOnVersioned(String sql) {
     final normalized = sql.trimLeft().toUpperCase();
     final replace =
@@ -166,75 +156,6 @@ class GuardedDatabase implements RawDatabase {
     }
     return _write((executor) => executor.rawInsert(sql, arguments));
   }
-
-  @override
-  Future<int> insert(
-    String table,
-    Map<String, Object?> values, {
-    ConflictAction? conflictAlgorithm,
-  }) {
-    _guardReplace(table, conflictAlgorithm);
-    return _write(
-      (executor) =>
-          executor.insert(table, values, conflictAlgorithm: conflictAlgorithm),
-    );
-  }
-
-  @override
-  Future<int> rawUpdate(String sql, [List<Object?>? arguments]) =>
-      _write((executor) => executor.rawUpdate(sql, arguments));
-
-  @override
-  Future<int> update(
-    String table,
-    Map<String, Object?> values, {
-    String? where,
-    List<Object?>? whereArgs,
-    ConflictAction? conflictAlgorithm,
-  }) {
-    _guardReplace(table, conflictAlgorithm);
-    return _write(
-      (executor) => executor.update(
-        table,
-        values,
-        where: where,
-        whereArgs: whereArgs,
-        conflictAlgorithm: conflictAlgorithm,
-      ),
-    );
-  }
-
-  @override
-  Future<int> rawDelete(String sql, [List<Object?>? arguments]) =>
-      _write((executor) => executor.rawDelete(sql, arguments));
-
-  @override
-  Future<int> delete(String table, {String? where, List<Object?>? whereArgs}) =>
-      _write(
-        (executor) =>
-            executor.delete(table, where: where, whereArgs: whereArgs),
-      );
-
-  @override
-  Future<List<Map<String, Object?>>> query(
-    String table, {
-    List<String>? columns,
-    String? where,
-    List<Object?>? whereArgs,
-    String? orderBy,
-    int? limit,
-    int? offset,
-  }) => gate.shared(
-    () => _db.query(
-      table,
-      columns: columns,
-      where: where,
-      whereArgs: whereArgs,
-      orderBy: orderBy,
-      limit: limit,
-      offset: offset,
-    ),
-  );
 
   @override
   Future<List<Map<String, Object?>>> rawQuery(

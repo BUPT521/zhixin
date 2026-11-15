@@ -4,16 +4,18 @@ import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   test('每日截止小时更新形成提交，撤销后恢复原值', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
-    final before = (await rig.raw.query('profile')).single;
+    final before = (await selectRows(rig.raw, 'profile')).single;
     final hourBefore = before['day_cutoff_hour'];
     final updatedBefore = before['updated_at'];
 
     await rig.db.command((txn) async {
-      await txn.update('profile', {
+      await updateRow(txn, 'profile', {
         'day_cutoff_hour': 6,
         'updated_at': '2026-11-10T12:00:00',
       }, where: 'id = 1');
@@ -26,7 +28,7 @@ void main() {
 
     final undone = await rig.revisions.undoCommit(commitId);
     expect(undone.applied, isTrue, reason: undone.message);
-    final after = (await rig.raw.query('profile')).single;
+    final after = (await selectRows(rig.raw, 'profile')).single;
     expect(after['day_cutoff_hour'], hourBefore);
     expect(after['updated_at'], updatedBefore);
   });
@@ -37,7 +39,7 @@ void main() {
 
     Future<int> setHour(int hour, String at) async {
       await rig.db.command((txn) async {
-        await txn.update('profile', {
+        await updateRow(txn, 'profile', {
           'day_cutoff_hour': hour,
           'updated_at': at,
         }, where: 'id = 1');
@@ -51,7 +53,7 @@ void main() {
     final undone = await rig.revisions.undoCommit(first);
     expect(undone.applied, isFalse);
     expect(undone.message, contains('同一项内容又被修改过'));
-    expect((await rig.raw.query('profile')).single['day_cutoff_hour'], 0);
+    expect((await selectRows(rig.raw, 'profile')).single['day_cutoff_hour'], 0);
   });
 
   test('撤销成功后通知应用根重新读取设置，失败时不通知', () async {
@@ -59,7 +61,7 @@ void main() {
     final rig = await openTestRig(onUndoApplied: () async => refreshed++);
     addTearDown(rig.close);
 
-    await rig.db.insert('memory', {
+    await insertRow(rig.db, 'memory', {
       'kind': 'preference',
       'content': '晚上学习',
       'source_kind': 'user',

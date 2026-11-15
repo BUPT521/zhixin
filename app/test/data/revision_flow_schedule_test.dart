@@ -10,6 +10,8 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   late TestRig rig;
 
@@ -45,7 +47,7 @@ void main() {
   });
 
   Future<int> item(String title, {int? planId, int? seq}) async {
-    return rig.db.insert('plan_item', {
+    return insertRow(rig.db, 'plan_item', {
       'study_plan_id': planId,
       'seq': seq,
       'title': title,
@@ -117,7 +119,8 @@ void main() {
         end: DateTime(2026, 11, 11, 14),
       ),
     ]);
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'plan_item',
       {'status': 'done', 'updated_at': '2026-11-10T12:00:00'},
       where: 'id = ?',
@@ -162,13 +165,16 @@ void main() {
       title: '数据结构',
     );
     final timetableId =
-        (await rig.raw.query('timetable_entry')).single['id']! as int;
+        (await selectRows(rig.raw, 'timetable_entry')).single['id']! as int;
     final commit = await plan.deleteTimetable(timetableId);
-    expect(await rig.raw.query('timetable_entry'), isEmpty);
+    expect(await selectRows(rig.raw, 'timetable_entry'), isEmpty);
 
     final undone = await rig.revisions.undoCommit(commit);
     expect(undone.applied, isTrue, reason: undone.message);
-    expect((await rig.raw.query('timetable_entry')).single['title'], '数据结构');
+    expect(
+      (await selectRows(rig.raw, 'timetable_entry')).single['title'],
+      '数据结构',
+    );
 
     // 再次删除后，有一项待开始预约落在这一节课上，撤销删除应被拒绝。
     final again = await plan.deleteTimetable(timetableId);
@@ -181,7 +187,7 @@ void main() {
     final blocked = await rig.revisions.undoCommit(again);
     expect(blocked.applied, isFalse);
     expect(blocked.message, contains('冲突'));
-    expect(await rig.raw.query('timetable_entry'), isEmpty);
+    expect(await selectRows(rig.raw, 'timetable_entry'), isEmpty);
   });
 
   test('单条预约返回自己的提交编号，撤销后这次预约删除', () async {
@@ -289,7 +295,8 @@ void main() {
     ]);
     final target = await rig.engine.headId(rig.raw);
     final blockA = await schedule.blockById(ids.a);
-    await rig.raw.delete(
+    await deleteRows(
+      rig.raw,
       'plan_item',
       where: 'id = ?',
       whereArgs: [blockA!.planItemId],
@@ -303,7 +310,7 @@ void main() {
   });
 
   test('整版恢复处理唯一键交换', () async {
-    final planId = await rig.db.insert('study_plan', {
+    final planId = await insertRow(rig.db, 'study_plan', {
       'title': '交换顺序',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
@@ -314,19 +321,22 @@ void main() {
     final before = await rig.engine.headId(rig.raw);
     await rig.db.transaction((txn) async {
       // 用临时序号避开唯一键，模拟用户把两步顺序互换。
-      await txn.update(
+      await updateRow(
+        txn,
         'plan_item',
         {'seq': 99},
         where: 'id = ?',
         whereArgs: [first],
       );
-      await txn.update(
+      await updateRow(
+        txn,
         'plan_item',
         {'seq': 1},
         where: 'id = ?',
         whereArgs: [second],
       );
-      await txn.update(
+      await updateRow(
+        txn,
         'plan_item',
         {'seq': 2},
         where: 'id = ?',
@@ -338,7 +348,7 @@ void main() {
     await rig.revisions.restore(before, expectedHead: current);
     // 版本恢复同样换了当前数据，代次与三栏要跟着推进。
     expect(dataChanges, 1);
-    final rows = await rig.raw.query('plan_item', orderBy: 'seq');
+    final rows = await selectRows(rig.raw, 'plan_item', orderBy: 'seq');
     expect(rows.map((row) => row['id']), [first, second]);
     expect(rows.map((row) => row['seq']), [1, 2]);
   });

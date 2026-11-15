@@ -25,6 +25,8 @@ import '../support/docx_fixture.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 class _FakeAi implements BuddyAi {
   _FakeAi({
     this.reply,
@@ -223,9 +225,9 @@ void main() {
       ),
       throwsA(anything),
     );
-    expect(await h.db.query('study_plan'), isEmpty);
+    expect(await selectRows(h.db, 'study_plan'), isEmpty);
     expect(
-      await h.db.query('plan_item', where: 'study_plan_id IS NOT NULL'),
+      await selectRows(h.db, 'plan_item', where: 'study_plan_id IS NOT NULL'),
       isEmpty,
     );
 
@@ -235,14 +237,16 @@ void main() {
       pageTo: 2,
       steps: const [StudyStepDraft(title: '阅读材料', pageFrom: 1, pageTo: 2)],
     );
-    final before = (await h.db.query(
+    final before = (await selectRows(
+      h.db,
       'study_plan',
       where: 'id = ?',
       whereArgs: [view.plan.id],
     )).single['updated_at'];
     await h.service.list();
     await h.service.view(view.plan.id);
-    final after = (await h.db.query(
+    final after = (await selectRows(
+      h.db,
       'study_plan',
       where: 'id = ?',
       whereArgs: [view.plan.id],
@@ -417,7 +421,7 @@ void main() {
       ),
       throwsA(isA<ArgumentError>()),
     );
-    expect(await h.db.query('study_plan'), isEmpty);
+    expect(await selectRows(h.db, 'study_plan'), isEmpty);
   });
 
   test('V4：继续位置由讨论与是否开始作答决定', () async {

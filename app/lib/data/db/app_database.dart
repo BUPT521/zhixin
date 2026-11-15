@@ -8,6 +8,7 @@ import '../revisions/revision_engine.dart';
 import 'drift/app_database.dart';
 import 'drift/drift_raw.dart';
 import 'raw_executor.dart';
+import 'sql.dart';
 
 /// 库文件与 schema 版本。库文件放在应用私有目录，导出时整份复制。
 const String zhixinDbFileName = 'zhixin.db';
@@ -36,15 +37,15 @@ Future<RawDatabase> openZhixinDatabase({
 
 Future<void> _seed(RawDatabase db, int version, Clock clock) async {
   final now = formatDateTime(clock());
-  await db.insert('app_meta', {
+  await insertRow(db, 'app_meta', {
     'key': 'schema_version',
     'value': '$version',
     'updated_at': now,
-  }, conflictAlgorithm: ConflictAction.replace);
-  await db.insert('profile', {
+  }, replace: true);
+  await insertRow(db, 'profile', {
     'id': 1,
     'day_cutoff_hour': 4,
     'created_at': now,
     'updated_at': now,
-  }, conflictAlgorithm: ConflictAction.ignore);
+  }, ignore: true);
 }

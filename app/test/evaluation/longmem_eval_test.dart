@@ -17,6 +17,8 @@ import 'package:zhixin/domain/rules/time_format.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 /// 固定的合成历史；时间、作答条件与更正都写死在用例里，重跑得到同一组结果。
 class LongMemCase {
   const LongMemCase({
@@ -108,7 +110,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
         '条件概率与贝叶斯公式：P(A|B)=P(AB)/P(B)，'
         '贝叶斯公式用于条件概率的反推，条件概率与贝叶斯公式互为补充。',
   );
-  await db.update(
+  await updateRow(
+    db,
     'material_page',
     {'updated_at': '2026-10-01 09:00:00'},
     where: 'material_id = ? AND page_no = ?',
@@ -122,7 +125,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
           '条件概率用于描述事件之间的关系，贝叶斯公式用于在已知结果时'
           '反推原因，这一页只是简介，没有展开推导过程。',
     );
-    await db.update(
+    await updateRow(
+      db,
       'material_page',
       {'updated_at': '2026-10-08 0${page - 19}:00:00'},
       where: 'material_id = ? AND page_no = ?',
@@ -161,7 +165,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     independent: false,
     feedback: '看过提示之后才写对。',
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {
       'submitted_at': '2026-10-01 09:20:00',
@@ -178,7 +183,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     where: 'id = ?',
     whereArgs: [helped.id],
   );
-  await db.update(
+  await updateRow(
+    db,
     'conversation',
     {'created_at': '2026-10-01 09:00:00', 'updated_at': '2026-10-01 09:20:00'},
     where: 'id = ?',
@@ -192,7 +198,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     isCorrect: false,
     independent: null,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {
       'submitted_at': '2026-10-02 21:00:00',
@@ -214,7 +221,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     isCorrect: true,
     independent: true,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {
       'submitted_at': '2026-10-03 20:00:00',
@@ -237,7 +245,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     role: 'user',
     content: '熵和能量有什么区别？',
   );
-  await db.update(
+  await updateRow(
+    db,
     'conversation',
     {'created_at': '2026-10-05 19:00:00', 'updated_at': '2026-10-05 19:00:00'},
     where: 'id = ?',
@@ -256,7 +265,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     role: 'user',
     content: 'a_b 表示什么',
   );
-  await db.update(
+  await updateRow(
+    db,
     'conversation',
     {'created_at': '2026-10-06 10:00:00', 'updated_at': '2026-10-06 10:00:00'},
     where: 'id = ?',
@@ -269,7 +279,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
     role: 'user',
     content: '熵增和时间箭头有关系吗？',
   );
-  await db.update(
+  await updateRow(
+    db,
     'conversation',
     {'created_at': '2026-10-07 08:00:00', 'updated_at': '2026-10-07 08:00:00'},
     where: 'id = ?',
@@ -277,7 +288,8 @@ Future<CorpusIds> _seed(RawDatabase db) async {
   );
 
   // 材料页在 2026-10-11 被更正：更正前的旧说法不再作为当前原文。
-  await db.update(
+  await updateRow(
+    db,
     'material_page',
     {
       'content': '熵衡量系统的混乱程度，不等于能量，也不能直接换算成能量。',

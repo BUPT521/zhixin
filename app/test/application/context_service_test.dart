@@ -15,6 +15,8 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   test('深夜的当天时间块只取自然日之内的安排', () async {
     final db = await openTestDb();
@@ -279,7 +281,8 @@ void main() {
       content: '条件概率 P(A|B)=P(AB)/P(B)。',
     );
     final otherMessage =
-        (await db.query(
+        (await selectRows(
+              db,
               'message',
               columns: ['id'],
               where: 'conversation_id = ?',

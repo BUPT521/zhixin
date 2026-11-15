@@ -14,6 +14,8 @@ import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 void main() {
   test('当前数据包导出与导入只含业务投影和附件', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_package');
@@ -37,7 +39,7 @@ void main() {
     );
     final bytes = Uint8List.fromList(List<int>.generate(500, (i) => i % 251));
     final hash = AssetStore.hashBytes(bytes);
-    final conversation = await db.insert('conversation', {
+    final conversation = await insertRow(db, 'conversation', {
       'title': '带图',
       'entry_kind': 'photo',
       'status': 'open',
@@ -46,7 +48,7 @@ void main() {
     });
     await db.transaction((txn) async {
       await engine.assets.putBytes(txn.raw, hash, bytes);
-      await txn.insert('message', {
+      await insertRow(txn, 'message', {
         'conversation_id': conversation,
         'role': 'user',
         'content': '',
@@ -71,8 +73,13 @@ void main() {
       isEmpty,
     );
 
-    await db.delete('conversation', where: 'id = ?', whereArgs: [conversation]);
-    expect(await raw.query('message'), isEmpty);
+    await deleteRows(
+      db,
+      'conversation',
+      where: 'id = ?',
+      whereArgs: [conversation],
+    );
+    expect(await selectRows(raw, 'message'), isEmpty);
     final current = await engine.headId(raw.rawDb);
     final commit = await packages.importCurrent(
       raw.rawDb,
@@ -81,8 +88,8 @@ void main() {
     );
     expect(commit.action, '导入数据');
     expect(commit.generation, 1);
-    expect(await raw.query('conversation'), hasLength(1));
-    expect(await raw.query('message'), hasLength(1));
+    expect(await selectRows(raw, 'conversation'), hasLength(1));
+    expect(await selectRows(raw, 'message'), hasLength(1));
     expect(await engine.assets.verify(raw.rawDb, hash), isTrue);
     expect(await engine.headId(raw.rawDb), greaterThan(before));
   });
@@ -107,7 +114,7 @@ void main() {
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
     );
-    final conversation = await db.insert('conversation', {
+    final conversation = await insertRow(db, 'conversation', {
       'title': '缺图',
       'entry_kind': 'photo',
       'status': 'open',
@@ -115,7 +122,7 @@ void main() {
       'updated_at': '2026-11-10T10:00:00',
     });
     final missingHash = 'a' * 64;
-    await db.insert('message', {
+    await insertRow(db, 'message', {
       'conversation_id': conversation,
       'role': 'user',
       'content': '',
@@ -164,13 +171,14 @@ void main() {
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
     );
-    final goal = await db.insert('learning_goal', {
+    final goal = await insertRow(db, 'learning_goal', {
       'title': '备份目标',
       'status': 'active',
       'created_at': '2026-11-10T10:00:00',
       'updated_at': '2026-11-10T10:00:00',
     });
-    await db.update(
+    await updateRow(
+      db,
       'learning_goal',
       {'title': '备份目标二'},
       where: 'id = ?',
@@ -198,16 +206,20 @@ void main() {
     final restored = await openZhixinDatabase(path: extracted);
     addTearDown(restored.close);
     expect(await engine.headId(restored.rawDb), head);
-    expect(await restored.query('revision_commit'), hasLength(3));
+    expect(await selectRows(restored, 'revision_commit'), hasLength(3));
     expect(
-      await restored.query(
+      await selectRows(
+        restored,
         'revision_ref',
         where: 'name = ?',
         whereArgs: ['命名'],
       ),
       hasLength(1),
     );
-    expect((await restored.query('learning_goal')).single['title'], '备份目标二');
+    expect(
+      (await selectRows(restored, 'learning_goal')).single['title'],
+      '备份目标二',
+    );
     expect(
       await packages.validateRepositoryBytes(await File(path).readAsBytes()),
       isTrue,

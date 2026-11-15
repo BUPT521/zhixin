@@ -8,6 +8,8 @@ import 'package:zhixin/domain/rules/binary_bigrams.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 /// ADR-0013 的关键约定：索引与查询用同一套二元组，索引跟着业务行同步更新。
 void main() {
   test('SQL 切词与 Dart 切词切出同一批词', () {
@@ -45,7 +47,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     const stamp = '2026-11-14 10:00:00';
-    await db.insert('conversation', {
+    await insertRow(db, 'conversation', {
       'id': 1,
       'title': '讨论',
       'entry_kind': 'text',
@@ -53,7 +55,7 @@ void main() {
       'created_at': stamp,
       'updated_at': stamp,
     });
-    await db.insert('message', {
+    await insertRow(db, 'message', {
       'id': 1,
       'conversation_id': 1,
       'role': 'user',
@@ -72,7 +74,8 @@ void main() {
     expect(await hits('矩阵的秩'), {1});
     expect(await hits('概率论'), isEmpty);
 
-    await db.update(
+    await updateRow(
+      db,
       'message',
       {'content': '条件概率与独立性'},
       where: 'id = ?',
@@ -81,7 +84,7 @@ void main() {
     expect(await hits('矩阵'), isEmpty, reason: '改过之后旧词不应再命中');
     expect(await hits('条件概率'), {1});
 
-    await db.delete('message', where: 'id = ?', whereArgs: [1]);
+    await deleteRows(db, 'message', where: 'id = ?', whereArgs: [1]);
     expect(await hits('条件概率'), isEmpty, reason: '删除之后索引行也删掉');
   });
 
@@ -89,13 +92,13 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     const stamp = '2026-11-14 10:00:00';
-    await db.insert('material', {
+    await insertRow(db, 'material', {
       'id': 1,
       'title': '讲义',
       'created_at': stamp,
       'updated_at': stamp,
     });
-    await db.insert('material_page', {
+    await insertRow(db, 'material_page', {
       'material_id': 1,
       'page_no': 1,
       'label': '傅里叶变换',
@@ -103,7 +106,7 @@ void main() {
       'created_at': stamp,
       'updated_at': stamp,
     });
-    await db.insert('conversation', {
+    await insertRow(db, 'conversation', {
       'id': 1,
       'title': '讨论',
       'entry_kind': 'text',
@@ -111,7 +114,7 @@ void main() {
       'created_at': stamp,
       'updated_at': stamp,
     });
-    await db.insert('attempt', {
+    await insertRow(db, 'attempt', {
       'id': 1,
       'conversation_id': 1,
       'user_answer': '试答',
@@ -136,7 +139,8 @@ void main() {
       (await evidence.keyword('齐次化步骤', scope: scope)).single.identity,
       'attempt:1',
     );
-    await db.update(
+    await updateRow(
+      db,
       'attempt',
       {'feedback': '齐次化步骤已复核', 'solution': null},
       where: 'id = ?',
@@ -153,7 +157,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     const stamp = '2026-11-14 10:00:00';
-    await db.insert('conversation', {
+    await insertRow(db, 'conversation', {
       'id': 1,
       'title': '讨论',
       'entry_kind': 'text',
@@ -162,7 +166,7 @@ void main() {
       'updated_at': stamp,
     });
     for (final (id, content) in [(1, '矩阵 独立性 矩阵 独立性'), (2, '这里只讨论矩阵')]) {
-      await db.insert('message', {
+      await insertRow(db, 'message', {
         'id': id,
         'conversation_id': 1,
         'role': 'user',
@@ -188,7 +192,7 @@ void main() {
     // 先经命令写入一次，形成一条可恢复的提交。
     final transactions = WriteTransactions(rig.db);
     await transactions.run((txn) async {
-      await txn.executor.insert('conversation', {
+      await insertRow(txn.executor, 'conversation', {
         'id': 1,
         'title': '讨论',
         'entry_kind': 'text',
@@ -196,7 +200,7 @@ void main() {
         'created_at': stamp,
         'updated_at': stamp,
       });
-      await txn.executor.insert('message', {
+      await insertRow(txn.executor, 'message', {
         'id': 1,
         'conversation_id': 1,
         'role': 'user',

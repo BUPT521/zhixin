@@ -13,6 +13,8 @@ import 'package:zhixin/domain/rules/time_condition.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 class _Corpus {
   _Corpus({
     required this.goal,
@@ -63,7 +65,8 @@ Future<_Corpus> _seed(RawDatabase db) async {
     isCorrect: true,
     independent: false,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {
       'submitted_at': '2026-10-01 09:20:00',
@@ -87,7 +90,8 @@ Future<_Corpus> _seed(RawDatabase db) async {
     independent: true,
     delayed: true,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {'submitted_at': '2026-10-03 20:00:00'},
     where: 'id = ?',
@@ -103,7 +107,8 @@ Future<_Corpus> _seed(RawDatabase db) async {
     isCorrect: false,
     independent: null,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {'submitted_at': '2026-10-05 19:00:00'},
     where: 'id = ?',
@@ -119,7 +124,8 @@ Future<_Corpus> _seed(RawDatabase db) async {
     independent: true,
     delayed: true,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {'submitted_at': '2026-10-10 20:00:00'},
     where: 'id = ?',
@@ -137,7 +143,8 @@ Future<_Corpus> _seed(RawDatabase db) async {
     isCorrect: true,
     independent: null,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {'submitted_at': '2026-10-08 20:00:00'},
     where: 'id = ?',
@@ -153,7 +160,8 @@ Future<_Corpus> _seed(RawDatabase db) async {
     isCorrect: true,
     independent: true,
   );
-  await db.update(
+  await updateRow(
+    db,
     'attempt',
     {'submitted_at': '2026-10-02 10:00:00'},
     where: 'id = ?',
@@ -375,7 +383,8 @@ void main() {
         independent: independent,
         delayed: delayed,
       );
-      await db.update(
+      await updateRow(
+        db,
         'attempt',
         {
           'submitted_at': submittedAt,
@@ -496,7 +505,8 @@ void main() {
         isCorrect: true,
         independent: true,
       );
-      await db.update(
+      await updateRow(
+        db,
         'attempt',
         {'submitted_at': at, 'created_at': at, 'updated_at': at},
         where: 'id = ?',
@@ -547,7 +557,8 @@ void main() {
         isCorrect: true,
         independent: true,
       );
-      await db.update(
+      await updateRow(
+        db,
         'attempt',
         {'submitted_at': at, 'created_at': at, 'updated_at': at},
         where: 'id = ?',

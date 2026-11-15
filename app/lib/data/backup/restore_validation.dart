@@ -121,12 +121,9 @@ class StagedRestoreValidator {
       }
     }
 
-    final metaRows = await db.query(
-      'app_meta',
-      columns: ['value'],
-      where: 'key = ?',
-      whereArgs: ['schema_version'],
-      limit: 1,
+    final metaRows = await db.rawQuery(
+      'SELECT value FROM app_meta WHERE key = ? LIMIT 1',
+      ['schema_version'],
     );
     if (metaRows.isEmpty ||
         metaRows.first['value'] != schemaVersion.toString()) {

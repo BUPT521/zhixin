@@ -10,6 +10,8 @@ import 'package:zhixin/data/db/raw_executor.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 class _FailingCache extends AttachmentCache {
   _FailingCache(String filesDir) : super(filesDir: () => filesDir);
 
@@ -24,7 +26,7 @@ void main() {
     final original = await openTestDb();
     final replacement = await openTestDb();
     addTearDown(replacement.close);
-    await replacement.update('profile', {'day_cutoff_hour': 6});
+    await updateRow(replacement, 'profile', {'day_cutoff_hour': 6});
 
     final gate = DatabaseGate();
     var active = original;
@@ -58,14 +60,15 @@ void main() {
     );
     addTearDown(rig.close);
 
-    final goal = await rig.db.insert('learning_goal', {
+    final goal = await insertRow(rig.db, 'learning_goal', {
       'title': '恢复前',
       'status': 'active',
       'created_at': '2026-11-10 09:00:00',
       'updated_at': '2026-11-10 09:00:00',
     });
     final target = await rig.engine.headId(rig.raw.rawDb);
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'learning_goal',
       {'title': '恢复后'},
       where: 'id = ?',
@@ -83,7 +86,8 @@ void main() {
     // 数据事务已经提交，代次推进仍然执行；界面不能提示“当前数据没有改动”。
     expect(dataChanges, 1);
     expect(
-      (await rig.raw.query(
+      (await selectRows(
+        rig.raw,
         'learning_goal',
         where: 'id = ?',
         whereArgs: [goal],

@@ -22,6 +22,8 @@ import 'package:zhixin/domain/rules/embedding.dart';
 
 import '../support/test_db.dart';
 
+import 'package:zhixin/data/db/sql.dart';
+
 const _spec = EmbeddingModelSpec(id: 'test-embed', dim: 4, provider: 'test');
 
 const _pageEntropy = '熵是系统混乱程度的度量。';
@@ -297,7 +299,8 @@ void main() {
     expect(second.embedded, 0);
     expect(second.skipped, 7);
 
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'material_page',
       {'content': '熵衡量系统的混乱程度。', 'updated_at': '2026-11-12 11:00:00'},
       where: 'id = ?',
@@ -332,7 +335,8 @@ void main() {
       inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       onEmbed: (text) async {
         if (text != _pageDerivative) return;
-        await db.update(
+        await updateRow(
+          db,
           'material_page',
           {'content': '导数的定义改写了。', 'updated_at': '2026-11-12 12:00:00'},
           where: 'material_id = ? AND page_no = ?',
@@ -359,7 +363,8 @@ void main() {
     addTearDown(rig.index.close);
     await rig.service.refresh();
 
-    await rig.db.update(
+    await updateRow(
+      rig.db,
       'material_page',
       {'content': '熵的另一种表述。', 'updated_at': '2026-11-12 13:00:00'},
       where: 'id = ?',
