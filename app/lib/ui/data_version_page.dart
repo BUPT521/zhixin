@@ -369,7 +369,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     try {
       final uri = await saveDataPackage(
         fileName: fileName,
-        writePackage: scope.exportCurrentData,
+        writePackage: scope.data.versions.exportCurrentData,
       );
       _report(uri == null ? '已取消导出' : '已导出当前数据：$uri');
     } catch (error, stack) {
@@ -399,7 +399,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     try {
       final uri = await saveDataPackage(
         fileName: fileName,
-        writePackage: scope.backupRepository,
+        writePackage: scope.data.versions.backupRepository,
       );
       _report(uri == null ? '已取消备份' : '已备份版本库：$uri');
     } catch (error, stack) {
@@ -426,7 +426,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final path = picked?.path;
     if (path == null || !mounted) return;
     final scope = AppScope.of(context);
-    final expectedHead = await scope.currentHead();
+    final expectedHead = await scope.data.versions.currentHead();
     final bytes = await File(path).readAsBytes();
     if (!mounted) return;
     final confirmed = await confirmZhixin(
@@ -441,7 +441,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      final cacheWarning = await scope.importCurrentData(
+      final cacheWarning = await scope.data.versions.importCurrentData(
         bytes,
         expectedHead: expectedHead,
       );

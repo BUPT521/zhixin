@@ -240,7 +240,7 @@ void main() {
       });
       final uri = await saveDataPackage(
         fileName: settings.exportFileName(),
-        writePackage: scope!.backupRepository,
+        writePackage: scope!.data.versions.backupRepository,
       );
       expect(uri, 'content://test/export.zip');
       expect(await temporary.parent.exists(), isFalse);
@@ -251,12 +251,14 @@ void main() {
       final points = await scope!.data.restorePoints.list();
       expect(points, hasLength(1));
       expect(await File(points.single.path).exists(), isTrue);
-      expect(points.single.head, await scope!.currentHead());
+      expect(points.single.head, await scope!.data.versions.currentHead());
       final afterId = await scope!.testing.tasks.createGoal(title: '恢复后新增目标');
       expect((await scope!.testing.tasks.goalById(afterId))?.title, '恢复后新增目标');
 
       // 恢复点用同一条整库恢复流程，可以真正回到保存时的数据。
-      await scope!.restore(await File(points.single.path).readAsBytes());
+      await scope!.data.versions.restore(
+        await File(points.single.path).readAsBytes(),
+      );
       expect(await scope!.testing.tasks.goalById(afterId), isNull);
       expect((await scope!.testing.tasks.goalById(beforeId))?.title, '恢复前保留目标');
     });
@@ -288,7 +290,7 @@ void main() {
         return id;
       });
       final exported = File('${directory.path}/current.zip');
-      await state.exportCurrentData(exported.path);
+      await state.data.versions.exportCurrentData(exported.path);
       await deleteRows(
         state.testing.db,
         'conversation',
@@ -301,15 +303,15 @@ void main() {
       await images.rename('${images.path}.original');
       await File(images.path).writeAsString('占用缓存目录');
       final versionBefore = state.dataVersion.value;
-      final headBefore = await state.currentHead();
+      final headBefore = await state.data.versions.currentHead();
 
-      final warning = await state.importCurrentData(
+      final warning = await state.data.versions.importCurrentData(
         await exported.readAsBytes(),
         expectedHead: headBefore,
       );
 
       expect(warning, contains('数据已导入'));
-      expect(await state.currentHead(), greaterThan(headBefore));
+      expect(await state.data.versions.currentHead(), greaterThan(headBefore));
       expect(await selectRows(state.testing.db, 'message'), hasLength(1));
       expect(state.dataVersion.value, versionBefore + 1);
     });
@@ -1316,7 +1318,9 @@ void main() {
     ))!;
     // 先在提示之前留一份整库备份，恢复之后题目与作答仍回到这一份。
     final backup = File('${directory.path}/恢复前.zip');
-    await tester.runAsync(() => scope!.backupRepository(backup.path));
+    await tester.runAsync(
+      () => scope!.data.versions.backupRepository(backup.path),
+    );
     final bytes = (await tester.runAsync(backup.readAsBytes))!;
     final attemptId = (await tester.runAsync(
       () => scope!.chat.learning.view(questionId),
@@ -1339,7 +1343,7 @@ void main() {
     }
     expect(ai.entered.isCompleted, isTrue);
 
-    await tester.runAsync(() => scope!.restore(bytes));
+    await tester.runAsync(() => scope!.data.versions.restore(bytes));
     ai.resume.complete();
     for (var i = 0; i < 80; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -2387,8 +2391,8 @@ void main() {
     await tester.runAsync(() async {
       await scope!.testing.tasks.createGoal(title: '恢复点目标');
       final backup = File('${directory.path}/restore.zip');
-      await scope!.backupRepository(backup.path);
-      await scope!.restore(await backup.readAsBytes());
+      await scope!.data.versions.backupRepository(backup.path);
+      await scope!.data.versions.restore(await backup.readAsBytes());
     });
     await tester.tap(find.byIcon(FLucideIcons.settings));
     await settle(tester);
@@ -2475,7 +2479,9 @@ void main() {
     await settle(tester);
     expect(scope!.cutoffHour, 0);
 
-    final head = await tester.runAsync(() => scope!.currentHead());
+    final head = await tester.runAsync(
+      () => scope!.data.versions.currentHead(),
+    );
     final result = await tester.runAsync(
       () => scope!.data.revisions.undoCommit(head!),
     );

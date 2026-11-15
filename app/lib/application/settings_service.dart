@@ -4,6 +4,7 @@ import '../ai/ai_chat_service.dart';
 import '../ai/llm_config.dart';
 import '../ai/llm_config_store.dart';
 import '../data/db/write_transactions.dart';
+import '../data/backup/data_version_service.dart';
 import '../data/repository/settings_repository.dart';
 import '../data/revisions/revision_actions.dart';
 import '../domain/models/write_result.dart';
@@ -20,8 +21,7 @@ class SettingsService {
     required this.ai,
     required this.runtime,
     required this.onPolicyChanged,
-    required this.restore,
-    required this.resetAll,
+    required this.dataVersions,
   });
 
   final SettingsRepository settings;
@@ -32,8 +32,9 @@ class SettingsService {
 
   /// 截止小时保存后重新读取到应用根；界面与时间口径立刻使用新值。
   final Future<void> Function() onPolicyChanged;
-  final Future<String?> Function(Uint8List bytes) restore;
-  final Future<void> Function() resetAll;
+
+  /// 整库恢复与清空；写路径只有数据版本服务一个入口。
+  final DataVersionService dataVersions;
 
   /// 拍照方式的设置键；值为 '1' 表示用系统相机，其余用应用内相机。
   static const String systemCameraKey = 'capture_system_camera';
@@ -88,7 +89,7 @@ class SettingsService {
     return 'zhixin-$day.zip';
   }
 
-  Future<String?> restoreBytes(Uint8List bytes) => restore(bytes);
+  Future<String?> restoreBytes(Uint8List bytes) => dataVersions.restore(bytes);
 
-  Future<void> resetAllData() => resetAll();
+  Future<void> resetAllData() => dataVersions.resetAllData();
 }

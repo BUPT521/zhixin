@@ -532,7 +532,7 @@ class DiscussionChatState extends State<DiscussionChat>
     } catch (error, stack) {
       if (!sent && scope != null && paths.isNotEmpty) {
         try {
-          await scope.cleanupAttachmentPaths(paths);
+          await scope.data.versions.cleanupAttachmentPaths(paths);
         } catch (_) {
           // 后续启动仍会清理失去引用的图片；清理失败不替代发送错误。
         }

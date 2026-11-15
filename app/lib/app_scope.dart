@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
@@ -27,7 +26,7 @@ import 'application/service_runtime.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'data/backup/data_package_service.dart';
-import 'data/backup/restore_inspection.dart';
+import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
 import 'data/attachment_store.dart';
 import 'data/db/app_database.dart';
@@ -53,7 +52,6 @@ import 'data/repository/settings_repository.dart';
 import 'data/repository/study_repository.dart';
 import 'data/repository/study_plan_repository.dart';
 import 'data/repository/task_repository.dart';
-import 'domain/models/backup_error.dart';
 import 'domain/rules/day_key.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
@@ -61,8 +59,6 @@ import 'platform/app_info.dart';
 import 'platform/first_frame.dart';
 import 'platform/secure_secret_store.dart';
 import 'ui/theme_mode_controller.dart';
-
-part 'app_scope_data.dart';
 
 /// 打开一次库，把仓库与服务挂在这里；页面不从各自开库。
 class AppScope extends StatefulWidget {
@@ -207,7 +203,11 @@ class AppScopeState extends State<AppScope> {
       embedding: _embeddingStore,
       aiFactory: () => _ai,
     ),
-    data: DataServices(revisions: _revisions, restorePoints: _restorePoints),
+    data: DataServices(
+      revisions: _revisions,
+      restorePoints: _restorePoints,
+      versions: _dataVersions,
+    ),
   );
 
   /// 讨论与作答、安排与学习、材料与检索、记忆、设置、数据版本六组服务。
@@ -288,7 +288,7 @@ class AppScopeState extends State<AppScope> {
     materials: _materials,
     runtime: _runtime,
     transactions: _transactions,
-    cleanupAttachmentPaths: cleanupAttachmentPaths,
+    cleanupAttachmentPaths: _dataVersions.cleanupAttachmentPaths,
     assets: _engine.assets,
     cache: _attachmentCache,
   );
@@ -337,9 +337,39 @@ class AppScopeState extends State<AppScope> {
     ai: _configuredAi!,
     runtime: _runtime,
     onPolicyChanged: _refreshDayCutoffHour,
-    restore: restore,
-    resetAll: resetAllData,
+    dataVersions: _dataVersions,
   );
+
+  /// 数据包、整库恢复、恢复点与清空；换库之后的连接与通知仍在这里。
+  late final DataVersionService _dataVersions = DataVersionService(
+    gate: _gate,
+    revisions: _revisions,
+    revisionPackages: _revisionPackages,
+    dataPackages: _dataPackages,
+    restorePoints: _restorePoints,
+    engine: _engine,
+    cache: _attachmentCache,
+    connection: () => _connection!,
+    database: () => _db,
+    reopen: _open,
+    resetStudyData: _resetStudyData,
+    markPendingWorkInvalidated: () => _operationEpoch++,
+    notifyDataChanged: () {
+      dataVersion.value++;
+      _refreshSemanticIndex();
+    },
+    recordFailure: (error, stack, {required kind}) =>
+        crashLog.record(error, stack, kind: kind),
+  );
+
+  /// 清空本机学习数据：关掉连接、删库与附件，再按当前结构重开一个空库。
+  Future<void> _resetStudyData() async {
+    await _connection?.close();
+    _connection = null;
+    await deleteLocalStudyData(filesDir: paths.filesDir, dbPath: paths.dbPath);
+    await paths.ensureDirectories();
+    await _open();
+  }
 
   late final Future<void> ready = _init();
 

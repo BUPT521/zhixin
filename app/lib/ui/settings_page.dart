@@ -242,7 +242,7 @@ class _SettingsPageState extends State<SettingsPage>
       final now = AppScope.of(context).timePolicy.now;
       final uri = await saveDataPackage(
         fileName: 'zhixin-repository-${compactDate(now)}.zip',
-        writePackage: AppScope.of(context).backupRepository,
+        writePackage: AppScope.of(context).data.versions.backupRepository,
       );
       if (!mounted) return;
       _report(uri == null ? '已取消导出' : '已导出：$uri');

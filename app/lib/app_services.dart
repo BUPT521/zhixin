@@ -12,6 +12,7 @@ import 'application/search_service.dart';
 import 'application/semantic_index_service.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
+import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/vector/embedding_config_store.dart';
@@ -109,8 +110,15 @@ class SettingsServices {
 
 /// 数据版本、数据包与附件缓存。
 class DataServices {
-  const DataServices({required this.revisions, required this.restorePoints});
+  const DataServices({
+    required this.revisions,
+    required this.restorePoints,
+    required this.versions,
+  });
 
   final RevisionService revisions;
   final RestorePointStore restorePoints;
+
+  /// 数据包、整库恢复、恢复点与清空；页面只从这里做写路径操作。
+  final DataVersionService versions;
 }

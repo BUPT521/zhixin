@@ -48,7 +48,7 @@ Future<bool> showRestoreConfirmDialog(
 
 /// 数据包恢复的共用流程：选包、预检、说明影响与回退，再整库替换。
 ///
-/// 恢复前的状态由 [AppScopeState.restore] 保存为恢复点，恢复成功后仍保留。
+/// 恢复前的状态由 [DataVersionService.restore] 保存为恢复点，恢复成功后仍保留。
 /// 返回结果提示；用户取消或预检不通过时返回 null。
 Future<String?> runPackageRestore(
   BuildContext context, {
@@ -70,7 +70,7 @@ Future<String?> runPackageRestore(
   onStatus?.call('正在校验数据包…');
   final RestoreInspection inspection;
   try {
-    inspection = await scope.inspectRestorePackage(bytes);
+    inspection = await scope.data.versions.inspectRestorePackage(bytes);
   } catch (error, stack) {
     final message = context.mounted
         ? describeFailure(
@@ -90,7 +90,7 @@ Future<String?> runPackageRestore(
   }
 
   if (!context.mounted) return null;
-  final summary = await scope.currentRestoreSummary();
+  final summary = await scope.data.versions.currentRestoreSummary();
   if (!context.mounted) return null;
   final confirmed = await showRestoreConfirmDialog(
     context,
@@ -114,7 +114,7 @@ Future<String?> runPackageRestore(
 
   onStatus?.call('正在恢复…');
   try {
-    final cacheWarning = await scope.restore(bytes);
+    final cacheWarning = await scope.data.versions.restore(bytes);
     return cacheWarning == null
         ? '恢复完成；恢复前的状态已保存为恢复点，可在数据版本页回到恢复前'
         : '恢复完成；恢复前的状态已保存为恢复点。$cacheWarning';
