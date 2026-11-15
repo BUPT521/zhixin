@@ -13,6 +13,7 @@ import '../app_scope.dart';
 import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
+import '../domain/models/result.dart';
 import '../platform/data_package_export.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
@@ -441,12 +442,26 @@ class _DataVersionPageState extends State<DataVersionPage> {
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      final cacheWarning = await scope.data.versions.importCurrentData(
+      final imported = await scope.data.versions.importCurrentData(
         bytes,
         expectedHead: expectedHead,
       );
-      _report(cacheWarning ?? '已导入当前数据');
-      await _load();
+      switch (imported) {
+        case Success(:final value):
+          _report(value ?? '已导入当前数据');
+          await _load();
+        case Failure(:final reason):
+          if (!mounted) return;
+          _report(
+            describeFailureReason(
+              context,
+              reason,
+              kind: 'data_version_import',
+              kept: '当前数据没有改动',
+              next: '可以检查数据包后重试',
+            ),
+          );
+      }
     } catch (error, stack) {
       if (!mounted) return;
       _report(

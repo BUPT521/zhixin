@@ -7,6 +7,7 @@ import '../data/db/write_transactions.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/repository/settings_repository.dart';
 import '../data/revisions/revision_actions.dart';
+import '../domain/models/result.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/day_key.dart';
 import '../domain/rules/time_policy.dart';
@@ -89,7 +90,8 @@ class SettingsService {
     return 'zhixin-$day.zip';
   }
 
-  Future<String?> restoreBytes(Uint8List bytes) => dataVersions.restore(bytes);
+  Future<Result<String?>> restoreBytes(Uint8List bytes) =>
+      dataVersions.restore(bytes);
 
   Future<void> resetAllData() => dataVersions.resetAllData();
 }

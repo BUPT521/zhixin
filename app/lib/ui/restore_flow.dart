@@ -9,6 +9,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../data/backup/restore_inspection.dart';
+import '../domain/models/result.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'zhixin_dialog.dart';
@@ -68,9 +69,9 @@ Future<String?> runPackageRestore(
   }
 
   onStatus?.call('正在校验数据包…');
-  final RestoreInspection inspection;
+  final Result<RestoreInspection> inspected;
   try {
-    inspection = await scope.data.versions.inspectRestorePackage(bytes);
+    inspected = await scope.data.versions.inspectRestorePackage(bytes);
   } catch (error, stack) {
     final message = context.mounted
         ? describeFailure(
@@ -87,6 +88,26 @@ Future<String?> runPackageRestore(
     if (!context.mounted) return null;
     await _showRejectedPackage(context, message);
     return null;
+  }
+
+  final RestoreInspection inspection;
+  switch (inspected) {
+    case Success(:final value):
+      inspection = value;
+    case Failure(:final reason):
+      final message = context.mounted
+          ? describeFailureReason(
+              context,
+              reason,
+              kind: 'restore_inspect',
+              kept: '当前数据没有改动',
+              next: '可以换一个数据包再试',
+            )
+          : reason.message;
+      onStatus?.call(message);
+      if (!context.mounted) return null;
+      await _showRejectedPackage(context, message);
+      return null;
   }
 
   if (!context.mounted) return null;
@@ -113,11 +134,9 @@ Future<String?> runPackageRestore(
   }
 
   onStatus?.call('正在恢复…');
+  final Result<String?> restored;
   try {
-    final cacheWarning = await scope.data.versions.restore(bytes);
-    return cacheWarning == null
-        ? '恢复完成；恢复前的状态已保存为恢复点，可在数据版本页回到恢复前'
-        : '恢复完成；恢复前的状态已保存为恢复点。$cacheWarning';
+    restored = await scope.data.versions.restore(bytes);
   } catch (error, stack) {
     if (!context.mounted) return '恢复失败，当前数据没有改动。';
     return describeFailure(
@@ -129,6 +148,21 @@ Future<String?> runPackageRestore(
       kept: '当前数据保留',
       next: '可以检查数据包后重试',
     );
+  }
+  switch (restored) {
+    case Success(:final value):
+      return value == null
+          ? '恢复完成；恢复前的状态已保存为恢复点，可在数据版本页回到恢复前'
+          : '恢复完成；恢复前的状态已保存为恢复点。$value';
+    case Failure(:final reason):
+      if (!context.mounted) return reason.message;
+      return describeFailureReason(
+        context,
+        reason,
+        kind: 'restore_apply',
+        kept: '当前数据保留',
+        next: '可以检查数据包后重试',
+      );
   }
 }
 

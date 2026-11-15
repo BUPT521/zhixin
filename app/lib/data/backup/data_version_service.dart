@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../domain/models/backup_error.dart';
+import '../../domain/models/result.dart';
 import '../attachment_store.dart';
 import '../db/app_database.dart';
 import '../db/database_gate.dart';
@@ -70,7 +71,12 @@ class DataVersionService {
   /// 恢复点与恢复入口使用同一种版本库备份，恢复成功后仍然保留，用户可以从
   /// 数据版本页回到恢复前；恢复点写不出来时中止，当前库不动。库替换成功后
   /// 图片缓存重建失败只返回提醒，不再让界面把整次恢复报成失败。
-  Future<String?> restore(Uint8List bytes) async {
+  ///
+  /// 预检与恢复点写入是可预期失败，按 [Result] 返回；换库等程序错误仍抛出。
+  Future<Result<String?>> restore(Uint8List bytes) =>
+      _expected(() => _restore(bytes));
+
+  Future<String?> _restore(Uint8List bytes) async {
     String? cacheWarning;
     await gate.exclusive(() async {
       await revisionPackages.validateRepositoryBytes(bytes);
@@ -105,8 +111,12 @@ class DataVersionService {
 
   /// 恢复数据包前的预检：先确认包能通过校验，再返回包内规模。
   ///
-  /// 不是版本库备份时交给旧数据包的校验；校验失败会抛出，界面据此拒绝恢复。
-  Future<RestoreInspection> inspectRestorePackage(Uint8List bytes) async {
+  /// 不是版本库备份时交给旧数据包的校验；校验失败按 [Result] 返回，界面据此
+  /// 拒绝恢复。
+  Future<Result<RestoreInspection>> inspectRestorePackage(Uint8List bytes) =>
+      _expected(() => _inspectRestorePackage(bytes));
+
+  Future<RestoreInspection> _inspectRestorePackage(Uint8List bytes) async {
     final repository = await revisionPackages.inspectRepository(bytes);
     if (repository != null) {
       return RestoreInspection(
@@ -157,7 +167,15 @@ class DataVersionService {
   /// 导入当前数据包之前先取 `HEAD`，提交时重新核对。
   Future<int> currentHead() => engine.headId(connection());
 
-  Future<String?> importCurrentData(
+  /// 导入当前数据包；导入前先取 `HEAD`，提交时重新核对。
+  ///
+  /// 校验与导入的可预期失败按 [Result] 返回；版本已经前进等程序性冲突仍抛出。
+  Future<Result<String?>> importCurrentData(
+    Uint8List bytes, {
+    required int expectedHead,
+  }) => _expected(() => _importCurrentData(bytes, expectedHead: expectedHead));
+
+  Future<String?> _importCurrentData(
     Uint8List bytes, {
     required int expectedHead,
   }) async {
@@ -190,6 +208,20 @@ class DataVersionService {
           AttachmentStore(filesDir: dataPackages.filesDir)
               .cleanupCandidates(database(), pathsToCheck),
     );
+  }
+
+  /// 把可预期的备份失败换成失败结果；程序错误原样抛出。
+  ///
+  /// 包格式问题由 zip 与清单解析抛出 [FormatException]，校验与写盘失败抛出
+  /// [BackupException]，两者都是给用户看的说明，统一进 [Failure]。
+  Future<Result<T>> _expected<T>(Future<T> Function() action) async {
+    try {
+      return Success(await action());
+    } on BackupException catch (error) {
+      return Failure(FailureReason.backup(error));
+    } on FormatException catch (error) {
+      return Failure(FailureReason(error.message));
+    }
   }
 
   Future<String?> _rebuildPackageAttachments(String result) async {

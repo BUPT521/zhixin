@@ -247,7 +247,10 @@ void main() {
       expect(uri, 'content://test/export.zip');
       expect(await temporary.parent.exists(), isFalse);
 
-      await settings.restoreBytes(await exported.readAsBytes());
+      final restoredBytes = await settings.restoreBytes(
+        await exported.readAsBytes(),
+      );
+      expect(restoredBytes.isSuccess, isTrue);
 
       expect((await scope!.testing.tasks.goalById(beforeId))?.title, '恢复前保留目标');
       final points = await scope!.data.restorePoints.list();
@@ -258,9 +261,10 @@ void main() {
       expect((await scope!.testing.tasks.goalById(afterId))?.title, '恢复后新增目标');
 
       // 恢复点用同一条整库恢复流程，可以真正回到保存时的数据。
-      await scope!.data.versions.restore(
+      final restoredPoint = await scope!.data.versions.restore(
         await File(points.single.path).readAsBytes(),
       );
+      expect(restoredPoint.isSuccess, isTrue);
       expect(await scope!.testing.tasks.goalById(afterId), isNull);
       expect((await scope!.testing.tasks.goalById(beforeId))?.title, '恢复前保留目标');
     });
@@ -307,12 +311,12 @@ void main() {
       final versionBefore = state.dataVersion.value;
       final headBefore = await state.data.versions.currentHead();
 
-      final warning = await state.data.versions.importCurrentData(
+      final imported = await state.data.versions.importCurrentData(
         await exported.readAsBytes(),
         expectedHead: headBefore,
       );
 
-      expect(warning, contains('数据已导入'));
+      expect(imported.valueOrNull, contains('数据已导入'));
       expect(await state.data.versions.currentHead(), greaterThan(headBefore));
       expect(await selectRows(state.testing.db, 'message'), hasLength(1));
       expect(state.dataVersion.value, versionBefore + 1);
