@@ -422,7 +422,7 @@ class TaskRepository {
 
   Future<bool> hasScheduleOrSession(
     int itemId, {
-    required WriteTransaction transaction,
+    WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
     final rows = await executor.selectGenerated(

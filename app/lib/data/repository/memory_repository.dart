@@ -58,7 +58,7 @@ class MemoryRepository {
 
   Future<List<({String kind, String? scope, String content})>> activeIdentities(
     DateTime now, {
-    required WriteTransaction transaction,
+    WriteTransaction? transaction,
   }) async {
     final rows = await writeExecutor(transaction, _db).selectGenerated(
       (db) => db.activeMemoryIdentities(formatDateTime(now)).get(),

@@ -321,7 +321,7 @@ class StudyPlanRepository {
     required int planId,
     required int stepId,
     required int conversationId,
-    required WriteTransaction transaction,
+    WriteTransaction? transaction,
   }) async {
     final changed = await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.setStudyStepConversation(conversationId, stepId, planId),
