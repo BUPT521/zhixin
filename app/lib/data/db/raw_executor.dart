@@ -21,18 +21,14 @@ abstract class RawExecutor {
   Future<int> insert(
     String table,
     Map<String, Object?> values, {
-    String? nullColumnHack,
     ConflictAction? conflictAlgorithm,
   });
 
   Future<List<Map<String, Object?>>> query(
     String table, {
-    bool? distinct,
     List<String>? columns,
     String? where,
     List<Object?>? whereArgs,
-    String? groupBy,
-    String? having,
     String? orderBy,
     int? limit,
     int? offset,
@@ -133,7 +129,6 @@ class SqliteRawDatabase implements RawDatabase {
   Future<int> insert(
     String table,
     Map<String, Object?> values, {
-    String? nullColumnHack,
     ConflictAction? conflictAlgorithm,
   }) => Future.sync(
     () => _insert(_insertSql(table, values, conflictAlgorithm), [
@@ -144,12 +139,9 @@ class SqliteRawDatabase implements RawDatabase {
   @override
   Future<List<Map<String, Object?>>> query(
     String table, {
-    bool? distinct,
     List<String>? columns,
     String? where,
     List<Object?>? whereArgs,
-    String? groupBy,
-    String? having,
     String? orderBy,
     int? limit,
     int? offset,
@@ -157,11 +149,8 @@ class SqliteRawDatabase implements RawDatabase {
     () => _select(
       _querySql(
         table,
-        distinct: distinct,
         columns: columns,
         where: where,
-        groupBy: groupBy,
-        having: having,
         orderBy: orderBy,
         limit: limit,
         offset: offset,
@@ -271,26 +260,16 @@ String _deleteSql(String table, {String? where}) {
 
 String _querySql(
   String table, {
-  bool? distinct,
   List<String>? columns,
   String? where,
-  String? groupBy,
-  String? having,
   String? orderBy,
   int? limit,
   int? offset,
 }) {
   final buffer = StringBuffer('SELECT ');
-  if (distinct == true) buffer.write('DISTINCT ');
   buffer.write(columns == null ? '*' : columns.map(_quote).join(', '));
   buffer.write(' FROM ${_quote(table)}');
   if (where != null && where.trim().isNotEmpty) buffer.write(' WHERE $where');
-  if (groupBy != null && groupBy.trim().isNotEmpty) {
-    buffer.write(' GROUP BY $groupBy');
-  }
-  if (having != null && having.trim().isNotEmpty) {
-    buffer.write(' HAVING $having');
-  }
   if (orderBy != null && orderBy.trim().isNotEmpty) {
     buffer.write(' ORDER BY $orderBy');
   }

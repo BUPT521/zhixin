@@ -702,7 +702,10 @@ class DiscussionService {
 
   /// 清空一条讨论：消息与讨论记录一起删掉，题目、尝试与记忆不受影响。
   Future<void> clear(int conversationId) async {
-    final paths = await conversations.clear(conversationId);
+    final paths = await transactions.run(
+      (txn) => conversations.clear(conversationId, transaction: txn),
+      label: '清空学习记录',
+    );
     await cleanupAttachmentPaths(paths);
   }
 

@@ -37,35 +37,23 @@ class DriftRawDatabase implements RawDatabase {
   Future<int> insert(
     String table,
     Map<String, Object?> values, {
-    String? nullColumnHack,
     ConflictAction? conflictAlgorithm,
-  }) => _executor.insert(
-    table,
-    values,
-    nullColumnHack: nullColumnHack,
-    conflictAlgorithm: conflictAlgorithm,
-  );
+  }) => _executor.insert(table, values, conflictAlgorithm: conflictAlgorithm);
 
   @override
   Future<List<Map<String, Object?>>> query(
     String table, {
-    bool? distinct,
     List<String>? columns,
     String? where,
     List<Object?>? whereArgs,
-    String? groupBy,
-    String? having,
     String? orderBy,
     int? limit,
     int? offset,
   }) => _executor.query(
     table,
-    distinct: distinct,
     columns: columns,
     where: where,
     whereArgs: whereArgs,
-    groupBy: groupBy,
-    having: having,
     orderBy: orderBy,
     limit: limit,
     offset: offset,
@@ -126,7 +114,6 @@ class DriftRawExecutor implements RawExecutor {
   Future<int> insert(
     String table,
     Map<String, Object?> values, {
-    String? nullColumnHack,
     ConflictAction? conflictAlgorithm,
   }) {
     final prefix = _insertPrefix(conflictAlgorithm);
@@ -144,28 +131,18 @@ class DriftRawExecutor implements RawExecutor {
   @override
   Future<List<Map<String, Object?>>> query(
     String table, {
-    bool? distinct,
     List<String>? columns,
     String? where,
     List<Object?>? whereArgs,
-    String? groupBy,
-    String? having,
     String? orderBy,
     int? limit,
     int? offset,
   }) {
     final buffer = StringBuffer('SELECT ');
-    if (distinct == true) buffer.write('DISTINCT ');
     buffer.write(columns == null ? '*' : columns.map(_quote).join(', '));
     buffer.write(' FROM ${_quote(table)}');
     if (where != null && where.trim().isNotEmpty) {
       buffer.write(' WHERE $where');
-    }
-    if (groupBy != null && groupBy.trim().isNotEmpty) {
-      buffer.write(' GROUP BY $groupBy');
-    }
-    if (having != null && having.trim().isNotEmpty) {
-      buffer.write(' HAVING $having');
     }
     if (orderBy != null && orderBy.trim().isNotEmpty) {
       buffer.write(' ORDER BY $orderBy');

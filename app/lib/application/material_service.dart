@@ -46,11 +46,15 @@ class MaterialService {
     String? sourceRef,
     int? goalId,
   }) {
-    return materials.create(
-      title: title,
-      kind: kind,
-      sourceRef: sourceRef,
-      goalId: goalId,
+    return transactions.run(
+      (txn) => materials.create(
+        title: title,
+        kind: kind,
+        sourceRef: sourceRef,
+        goalId: goalId,
+        transaction: txn,
+      ),
+      label: '新建材料',
     );
   }
 
@@ -61,12 +65,16 @@ class MaterialService {
     String? sourceRef,
     int? goalId,
   }) {
-    return materials.createWithPages(
-      title: title,
-      pages: pages,
-      kind: kind,
-      sourceRef: sourceRef,
-      goalId: goalId,
+    return transactions.run(
+      (txn) => materials.createWithPages(
+        title: title,
+        pages: pages,
+        kind: kind,
+        sourceRef: sourceRef,
+        goalId: goalId,
+        transaction: txn,
+      ),
+      label: '导入材料',
     );
   }
 
@@ -105,16 +113,22 @@ class MaterialService {
     required String content,
     String? label,
   }) {
-    return materials.addPage(
-      materialId: materialId,
-      pageNo: pageNo,
-      content: content,
-      label: label,
+    return transactions.run(
+      (txn) => materials.addPage(
+        materialId: materialId,
+        pageNo: pageNo,
+        content: content,
+        label: label,
+        transaction: txn,
+      ),
+      label: '添加材料页',
     );
   }
 
   Future<void> setGoal(int materialId, int? goalId) =>
-      materials.setGoal(materialId, goalId);
+      transactions.run((txn) async {
+        await materials.setGoal(materialId, goalId, transaction: txn);
+      }, label: '调整材料目标');
 
   /// 更正页内文字；返回这次提交的编号，界面据此显示撤销入口。
   ///

@@ -1,23 +1,19 @@
+import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
 import 'guarded_database.dart';
 import 'raw_executor.dart';
 
 /// 一次业务写入拿到的执行器；同一命令里的仓库共用它。
 class WriteTransaction {
-  WriteTransaction(this.executor);
+  WriteTransaction(this.executor, {RevisionEngine? revisions})
+    : _revisions = revisions ?? RevisionEngine();
 
   /// 同一事务的执行器；仓库把它传给需要 SQL 执行器的查询。
   final RawExecutor executor;
+  final RevisionEngine _revisions;
 
   /// 本次命令已分配的提交编号；界面回执用它指回提交历史。
-  Future<int?> commitId() async {
-    final rows = await executor.query(
-      'revision_context',
-      columns: ['active_commit'],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : rows.first['active_commit'] as int?;
-  }
+  Future<int?> commitId() => _revisions.activeCommit(executor);
 
   /// 写入必须落在一次提交里，没有提交编号时不能留可撤销的回执。
   Future<int> requireCommitId() async {
@@ -28,9 +24,11 @@ class WriteTransaction {
 }
 
 class WriteTransactions {
-  const WriteTransactions(this._db);
+  WriteTransactions(this._db, {RevisionEngine? revisions})
+    : _revisions = revisions ?? RevisionEngine();
 
   final RawDatabase _db;
+  final RevisionEngine _revisions;
 
   /// 一次业务动作；[label] 写进数据变更历史，[requestId] 用于重试去重。
   Future<T> run<T>(
@@ -43,14 +41,16 @@ class WriteTransactions {
     final db = _db;
     if (db is GuardedDatabase) {
       return db.command(
-        (txn) => action(WriteTransaction(txn)),
+        (executor) => action(WriteTransaction(executor, revisions: _revisions)),
         label: label,
         actor: actor,
         requestId: requestId,
         onDuplicate: onDuplicate,
       );
     }
-    return db.transaction((txn) => action(WriteTransaction(txn)));
+    return db.transaction(
+      (executor) => action(WriteTransaction(executor, revisions: _revisions)),
+    );
   }
 }
 

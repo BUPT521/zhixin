@@ -133,9 +133,16 @@ class MaterialRepository {
     return rows.map(_materialOfList).toList(growable: false);
   }
 
-  Future<void> setGoal(int id, int? goalId) async {
+  Future<void> setGoal(
+    int id,
+    int? goalId, {
+    WriteTransaction? transaction,
+  }) async {
     final stamp = formatDateTime(_clock());
-    await _db.writeGenerated((db) => db.setMaterialGoal(goalId, stamp, id));
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setMaterialGoal(goalId, stamp, id));
   }
 
   Future<List<MaterialPage>> pages(int materialId) async {
@@ -194,23 +201,12 @@ class MaterialRepository {
     String? label,
     WriteTransaction? transaction,
   }) {
-    if (transaction != null) {
-      return _addPage(
-        materialId: materialId,
-        pageNo: pageNo,
-        content: content,
-        label: label,
-        executor: writeExecutor(transaction, _db),
-      );
-    }
-    return _db.transaction(
-      (txn) => _addPage(
-        materialId: materialId,
-        pageNo: pageNo,
-        content: content,
-        label: label,
-        executor: txn,
-      ),
+    return _addPage(
+      materialId: materialId,
+      pageNo: pageNo,
+      content: content,
+      label: label,
+      executor: writeExecutor(transaction, _db),
     );
   }
 
@@ -244,21 +240,11 @@ class MaterialRepository {
     String? label,
     WriteTransaction? transaction,
   }) {
-    if (transaction != null) {
-      return _correctPage(
-        pageId: pageId,
-        content: content,
-        label: label,
-        executor: writeExecutor(transaction, _db),
-      );
-    }
-    return _db.transaction(
-      (txn) => _correctPage(
-        pageId: pageId,
-        content: content,
-        label: label,
-        executor: txn,
-      ),
+    return _correctPage(
+      pageId: pageId,
+      content: content,
+      label: label,
+      executor: writeExecutor(transaction, _db),
     );
   }
 
@@ -281,7 +267,7 @@ class MaterialRepository {
     await _touch(materialId, now, executor: executor);
   }
 
-  /// 在同一事务内创建材料及导入的全部页码。
+  /// 创建材料与导入的全部页码；传入 [transaction] 时整批落在同一个提交里。
   ///
   /// 导入前先检查页码：同一批出现重复页码时整批拒绝，不写入任何一页。
   Future<int> createWithPages({
@@ -323,9 +309,7 @@ class MaterialRepository {
       return materialId;
     }
 
-    return transaction == null
-        ? _db.transaction(save)
-        : save(transaction.executor);
+    return save(writeExecutor(transaction, _db));
   }
 
   Future<Uint8List?> sourceFileBytes(int materialId) async {

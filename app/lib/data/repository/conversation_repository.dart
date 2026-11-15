@@ -615,41 +615,43 @@ class ConversationRepository {
   ///
   /// 场次没有指向记录的列，只能从作答反查；这条记录清空后如果某个场次
   /// 已经没有其他作答，就一起删掉，避免留下永远不结束的后台场次。
-  Future<List<String>> clear(int conversationId) async {
-    return _db.transaction((txn) async {
-      final linkedSessionIds = await txn.selectGenerated(
-        (db) => db.sessionIdsOfConversation(conversationId).get(),
-      );
-      final sessionIds = <int>{for (final id in linkedSessionIds) ?id};
-      final encodedPaths = await txn.selectGenerated(
-        (db) => db.imagePathsOfConversation(conversationId).get(),
-      );
-      final imagePaths = <String>{};
-      for (final encoded in encodedPaths) {
-        if (encoded == null || encoded.isEmpty) continue;
-        try {
-          final decoded = jsonDecode(encoded);
-          if (decoded is List) imagePaths.addAll(decoded.whereType<String>());
-        } catch (_) {
-          // 损坏的路径记录不应阻止清空；启动清理会回收失去引用的文件。
-        }
+  Future<List<String>> clear(
+    int conversationId, {
+    WriteTransaction? transaction,
+  }) async {
+    final txn = writeExecutor(transaction, _db);
+    final linkedSessionIds = await txn.selectGenerated(
+      (db) => db.sessionIdsOfConversation(conversationId).get(),
+    );
+    final sessionIds = <int>{for (final id in linkedSessionIds) ?id};
+    final encodedPaths = await txn.selectGenerated(
+      (db) => db.imagePathsOfConversation(conversationId).get(),
+    );
+    final imagePaths = <String>{};
+    for (final encoded in encodedPaths) {
+      if (encoded == null || encoded.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(encoded);
+        if (decoded is List) imagePaths.addAll(decoded.whereType<String>());
+      } catch (_) {
+        // 损坏的路径记录不应阻止清空；启动清理会回收失去引用的文件。
       }
-      await txn.writeGenerated(
-        (db) => db.deleteConversationMessages(conversationId),
+    }
+    await txn.writeGenerated(
+      (db) => db.deleteConversationMessages(conversationId),
+    );
+    await txn.writeGenerated(
+      (db) => db.deleteConversationRecord(conversationId),
+    );
+    for (final sessionId in sessionIds) {
+      final remainingId = await txn.selectGenerated(
+        (db) => db.attemptsInSession(sessionId).getSingleOrNull(),
       );
-      await txn.writeGenerated(
-        (db) => db.deleteConversationRecord(conversationId),
-      );
-      for (final sessionId in sessionIds) {
-        final remainingId = await txn.selectGenerated(
-          (db) => db.attemptsInSession(sessionId).getSingleOrNull(),
-        );
-        if (remainingId == null) {
-          await txn.writeGenerated((db) => db.deleteStudySession(sessionId));
-        }
+      if (remainingId == null) {
+        await txn.writeGenerated((db) => db.deleteStudySession(sessionId));
       }
-      return imagePaths.toList(growable: false);
-    });
+    }
+    return imagePaths.toList(growable: false);
   }
 
   Future<void> reopen(

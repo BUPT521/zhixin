@@ -169,17 +169,12 @@ class GuardedDatabase implements RawDatabase {
   Future<int> insert(
     String table,
     Map<String, Object?> values, {
-    String? nullColumnHack,
     ConflictAction? conflictAlgorithm,
   }) {
     _guardReplace(table, conflictAlgorithm);
     return _write(
-      (executor) => executor.insert(
-        table,
-        values,
-        nullColumnHack: nullColumnHack,
-        conflictAlgorithm: conflictAlgorithm,
-      ),
+      (executor) =>
+          executor.insert(table, values, conflictAlgorithm: conflictAlgorithm),
     );
   }
 
@@ -221,24 +216,18 @@ class GuardedDatabase implements RawDatabase {
   @override
   Future<List<Map<String, Object?>>> query(
     String table, {
-    bool? distinct,
     List<String>? columns,
     String? where,
     List<Object?>? whereArgs,
-    String? groupBy,
-    String? having,
     String? orderBy,
     int? limit,
     int? offset,
   }) => gate.shared(
     () => _db.query(
       table,
-      distinct: distinct,
       columns: columns,
       where: where,
       whereArgs: whereArgs,
-      groupBy: groupBy,
-      having: having,
       orderBy: orderBy,
       limit: limit,
       offset: offset,
