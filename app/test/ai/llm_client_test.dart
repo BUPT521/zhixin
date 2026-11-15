@@ -860,6 +860,319 @@ void main() {
     expect(parts, ['好']);
     expect(calls, 2);
   });
+
+  test('整段请求遇到服务端错误重试一次', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        calls++;
+        if (calls == 1) return http.Response('busy', 500);
+        return http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {'content': '重试成功'},
+                'finish_reason': 'stop',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final reply = await client.complete(
+      system: 's',
+      messages: const [LlmMessage(role: 'user', content: 'hi')],
+    );
+    expect(reply.text, '重试成功');
+    expect(calls, 2);
+  });
+
+  test('整段请求只重试一次，连续两次服务端错误后报告失败', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        calls++;
+        return http.Response('busy', 503);
+      }),
+    );
+    await expectLater(
+      client.complete(
+        system: 's',
+        messages: const [LlmMessage(role: 'user', content: 'hi')],
+      ),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.server,
+        ),
+      ),
+    );
+    expect(calls, 2);
+  });
+
+  test('整段请求遇到 4xx 不重试', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        calls++;
+        return http.Response(
+          '{"error":{"message":"额度不足"}}',
+          429,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    await expectLater(
+      client.complete(
+        system: 's',
+        messages: const [LlmMessage(role: 'user', content: 'hi')],
+      ),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.rateLimited)
+            .having((error) => error.detail, 'detail', '额度不足'),
+      ),
+    );
+    expect(calls, 1);
+  });
+
+  test('整段请求遇到网络错误重试一次后报告离线', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        calls++;
+        throw http.ClientException('connection refused');
+      }),
+    );
+    await expectLater(
+      client.complete(
+        system: 's',
+        messages: const [LlmMessage(role: 'user', content: 'hi')],
+      ),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.offline)
+            .having((error) => error.detail, 'detail', 'connection refused'),
+      ),
+    );
+    expect(calls, 2);
+  });
+
+  test('整段请求超时不重试', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      timeout: const Duration(milliseconds: 40),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        calls++;
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.complete(
+        system: 's',
+        messages: const [LlmMessage(role: 'user', content: 'hi')],
+      ),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.timeout,
+        ),
+      ),
+    );
+    expect(calls, 1);
+  });
+
+  test('整段请求的内容错误不重试', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        calls++;
+        return http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {'content': '半截'},
+                'finish_reason': 'content_filter',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    await expectLater(
+      client.complete(
+        system: 's',
+        messages: const [LlmMessage(role: 'user', content: 'hi')],
+      ),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.server,
+        ),
+      ),
+    );
+    expect(calls, 1);
+  });
+
+  test('流式请求遇到 4xx 不重试', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        calls++;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('{"error":{"message":"额度不足"}}')),
+          429,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.rateLimited)
+            .having((error) => error.detail, 'detail', '额度不足'),
+      ),
+    );
+    expect(calls, 1);
+  });
+
+  test('流式请求只重试一次', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        calls++;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('busy')),
+          500,
+          headers: {'content-type': 'text/plain'},
+        );
+      }),
+    );
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.server,
+        ),
+      ),
+    );
+    expect(calls, 2);
+  });
+
+  test('流式请求在首个有效事件前结束时只重试一次', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        calls++;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('')),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.offline,
+        ),
+      ),
+    );
+    expect(calls, 2);
+  });
+
+  test('流式请求给出正文后不再重试服务端错误', () async {
+    var calls = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        calls++;
+        final body =
+            event(sseChunk('半截')) +
+            event(
+              jsonEncode({
+                'error': {'message': '服务出错'},
+              }),
+            );
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(body)),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    final deltas = <LlmDelta>[];
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .map((delta) {
+            deltas.add(delta);
+            return delta;
+          })
+          .drain<void>(),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.server,
+        ),
+      ),
+    );
+    expect(calls, 1);
+    expect(deltas.single.text, '半截');
+  });
+
   String? headerOf(Map<String, String> headers, String name) {
     for (final entry in headers.entries) {
       if (entry.key.toLowerCase() == name) return entry.value;

@@ -67,6 +67,10 @@ class HttpLlmClient implements LlmClient {
 
   LlmWire get _wire => llmWireFor(config.api);
 
+  /// 普通请求与流式请求各用一份判据：流式请求把首字与空闲超时算作可重试。
+  static const _plainRetry = RetryPolicy();
+  static const _streamRetry = RetryPolicy(retryTimeout: true);
+
   @override
   Future<LlmReply> complete({
     required String system,
@@ -81,9 +85,7 @@ class HttpLlmClient implements LlmClient {
     }
     final wire = _wire;
     final lifecycle = budget ?? LlmRequestBudget(timeout: timeout);
-    var attempt = 0;
-    while (true) {
-      attempt++;
+    for (var attempt = 0; ; attempt++) {
       try {
         final response = await lifecycle.run(
           () => _http.send(
@@ -108,27 +110,25 @@ class HttpLlmClient implements LlmClient {
           );
         }
         final failure = await _readFailure(response, lifecycle);
-        if (failure.failure == LlmFailure.server && attempt == 1) {
+        if (_plainRetry.shouldRetry(
+          failure.failure,
+          attempt: attempt,
+          serverUnavailable: failure.failure == LlmFailure.server,
+        )) {
           await lifecycle.wait(retryDelay);
           continue;
         }
         throw failure;
-      } on LlmException {
-        rethrow;
-      } on SocketException catch (error) {
-        if (attempt == 1) {
-          await lifecycle.wait(retryDelay);
-          continue;
-        }
-        throw LlmException(LlmFailure.offline, error.message);
       } on http.RequestAbortedException {
         throw _aborted(lifecycle);
-      } on http.ClientException catch (error) {
-        if (attempt == 1) {
+      } catch (error) {
+        final failure = _failureOf(error);
+        if (failure == null) rethrow;
+        if (_plainRetry.shouldRetry(failure.failure, attempt: attempt)) {
           await lifecycle.wait(retryDelay);
           continue;
         }
-        throw LlmException(LlmFailure.offline, error.message);
+        throw failure;
       }
     }
   }
@@ -188,26 +188,19 @@ class HttpLlmClient implements LlmClient {
         return;
       } catch (error) {
         final failure = switch (error) {
-          final LlmException value => value,
-          final SocketException value => LlmException(
-            LlmFailure.offline,
-            value.message,
-          ),
           http.RequestAbortedException() => _aborted(lifecycle),
-          final http.ClientException value => LlmException(
-            LlmFailure.offline,
-            value.message,
-          ),
-          _ => null,
+          _ => _failureOf(error),
         };
         if (failure == null) rethrow;
         lifecycle.check();
-        final retryable = switch (failure.failure) {
-          LlmFailure.offline || LlmFailure.timeout => true,
-          LlmFailure.server => serverUnavailable,
-          _ => false,
-        };
-        if (index != 0 || attempt.hasOutput || !retryable) throw failure;
+        if (!_streamRetry.shouldRetry(
+          failure.failure,
+          attempt: index,
+          hasOutput: attempt.hasOutput,
+          serverUnavailable: serverUnavailable,
+        )) {
+          throw failure;
+        }
       } finally {
         attempt.abort();
       }
@@ -440,6 +433,51 @@ LlmFailure _failureFor(int statusCode) {
     _ => LlmFailure.badResponse,
   };
 }
+
+/// 普通请求与流式请求共用的重试判据。
+///
+/// 两边原先各写一段判据：普通请求只看服务端 5xx 与网络异常，并且只在第一次
+/// 尝试时重试；流式请求走一份可重试集合，另外要求还没有给出过内容。这里把两个
+/// 允许集合原样合并，不因为共用一个策略而放宽或收紧：[offline] 两边都重试，
+/// 服务端错误只有这次响应确实是 5xx 时才算可重试，超时只在 [retryTimeout]
+/// 为真时重试。
+class RetryPolicy {
+  const RetryPolicy({this.retryTimeout = false});
+
+  final bool retryTimeout;
+
+  bool shouldRetry(
+    LlmFailure failure, {
+    required int attempt,
+    bool hasOutput = false,
+    bool serverUnavailable = false,
+  }) {
+    if (attempt != 0 || hasOutput) return false;
+    return switch (failure) {
+      LlmFailure.offline => true,
+      LlmFailure.timeout => retryTimeout,
+      LlmFailure.server => serverUnavailable,
+      _ => false,
+    };
+  }
+}
+
+/// 网络层异常统一成模型调用的失败。
+///
+/// 连接中断不在这里处理：普通请求不重试中断，流式请求把中断当作可重试的
+/// 网络问题，两个循环各自决定，因此保持原来的差异。
+LlmException? _failureOf(Object error) => switch (error) {
+  final LlmException value => value,
+  final SocketException value => LlmException(
+    LlmFailure.offline,
+    value.message,
+  ),
+  final http.ClientException value => LlmException(
+    LlmFailure.offline,
+    value.message,
+  ),
+  _ => null,
+};
 
 // ---------------------------------------------------------------------------
 // SSE 读行
