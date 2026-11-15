@@ -4,18 +4,9 @@ import '../data/repository/settings_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/capacity.dart';
 import '../domain/models/study.dart';
+import '../domain/models/time_values.dart';
 import '../domain/rules/capacity_budget.dart';
 import 'service_runtime.dart';
-
-/// 一段自由时间。
-class _Slot {
-  const _Slot(this.start, this.end);
-
-  final DateTime start;
-  final DateTime end;
-
-  int get minutes => end.difference(start).inMinutes;
-}
 
 /// 容量预估：按常用时段估算可用时间，给出优先顺序、粗略预算与可预约空档。
 ///
@@ -154,7 +145,7 @@ class CapacityService {
       );
     }
 
-    final slots = <_Slot>[];
+    final slots = <TimeRange>[];
     for (var offset = 0; offset < days; offset++) {
       final day = today.add(Duration(days: offset));
       var start = DateTime(
@@ -177,17 +168,23 @@ class CapacityService {
       }
       if (end.difference(start).inMinutes < 10) continue;
 
-      final occupied = <_Slot>[];
+      final occupied = <TimeRange>[];
       for (final entry in entries.where(
         (entry) => entry.weekday == day.weekday,
       )) {
-        final from = _clockMinutes(entry.startTime);
-        final to = _clockMinutes(entry.endTime);
+        final from = _minutesOf(entry.startTime);
+        final to = _minutesOf(entry.endTime);
         if (from == null || to == null) continue;
         occupied.add(
-          _Slot(
-            DateTime(day.year, day.month, day.day, from ~/ 60, from % 60),
-            DateTime(day.year, day.month, day.day, to ~/ 60, to % 60),
+          TimeRange(
+            start: DateTime(
+              day.year,
+              day.month,
+              day.day,
+              from ~/ 60,
+              from % 60,
+            ),
+            end: DateTime(day.year, day.month, day.day, to ~/ 60, to % 60),
           ),
         );
       }
@@ -202,7 +199,7 @@ class CapacityService {
             !itemStart.isBefore(day.add(const Duration(days: 1)))) {
           continue;
         }
-        occupied.add(_Slot(itemStart, itemEnd));
+        occupied.add(TimeRange(start: itemStart, end: itemEnd));
       }
       slots.addAll(_subtract(occupied, start, end));
     }
@@ -210,8 +207,7 @@ class CapacityService {
     final available = slots.fold<int>(0, (sum, slot) => sum + slot.minutes);
     final fits = fitByDeadline(
       slots: [
-        for (final slot in slots)
-          CapacitySlot(start: slot.start, end: slot.end),
+        for (final slot in slots) TimeRange(start: slot.start, end: slot.end),
       ],
       demands: [
         for (final candidate in candidates)
@@ -234,10 +230,7 @@ class CapacityService {
         scheduledMinutes: candidate.scheduledMinutes,
         hasEstimate: candidate.hasEstimate,
         withinBudget: fit != null && fit.fits,
-        windows: [
-          for (final window in fit?.windows ?? const [])
-            CapacityWindow(start: window.start, end: window.end),
-        ],
+        windows: fit?.windows ?? const [],
         movableBlockId: candidate.movableBlockId,
         movableStart: candidate.movableStart,
         movableEnd: candidate.movableEnd,
@@ -411,32 +404,32 @@ class CapacityService {
     return value.clamp(5, 240);
   }
 
-  static List<_Slot> _subtract(
-    List<_Slot> occupied,
+  static List<TimeRange> _subtract(
+    List<TimeRange> occupied,
     DateTime start,
     DateTime end,
   ) {
-    final clipped = <_Slot>[];
+    final clipped = <TimeRange>[];
     for (final slot in occupied) {
       final from = slot.start.isBefore(start) ? start : slot.start;
       final to = slot.end.isAfter(end) ? end : slot.end;
-      if (to.isAfter(from)) clipped.add(_Slot(from, to));
+      if (to.isAfter(from)) clipped.add(TimeRange(start: from, end: to));
     }
     clipped.sort((a, b) => a.start.compareTo(b.start));
-    final result = <_Slot>[];
+    final result = <TimeRange>[];
     var cursor = start;
     for (final slot in clipped) {
       if (slot.start.isAfter(cursor)) {
         final to = slot.start.isBefore(end) ? slot.start : end;
         if (to.difference(cursor).inMinutes >= 10) {
-          result.add(_Slot(cursor, to));
+          result.add(TimeRange(start: cursor, end: to));
         }
       }
       if (slot.end.isAfter(cursor)) cursor = slot.end;
       if (!cursor.isBefore(end)) break;
     }
     if (cursor.isBefore(end) && end.difference(cursor).inMinutes >= 10) {
-      result.add(_Slot(cursor, end));
+      result.add(TimeRange(start: cursor, end: end));
     }
     return result;
   }
@@ -453,15 +446,6 @@ class CapacityService {
     );
   }
 
-  static int? _minutesOf(String clock) {
-    final parts = clock.split(':');
-    if (parts.length != 2) return null;
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    if (hour == null || minute == null) return null;
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-    return hour * 60 + minute;
-  }
-
-  static int? _clockMinutes(String clock) => _minutesOf(clock);
+  static int? _minutesOf(String clock) =>
+      ClockTime.tryParse(clock)?.minutesOfDay;
 }

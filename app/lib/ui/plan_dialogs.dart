@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
 import '../domain/models/study.dart';
+import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
 import 'format.dart';
 import 'zhixin_dialog.dart';
@@ -339,8 +340,7 @@ class _TimetableDialogState extends State<TimetableDialog> {
     _weekday = AppScope.of(context).timePolicy.now.weekday;
   }
 
-  String _clock(TimeOfDay time) =>
-      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  String _clock(TimeOfDay time) => ClockTime(time.hour, time.minute).format();
 
   @override
   Widget build(BuildContext context) {

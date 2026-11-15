@@ -1,11 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/domain/models/time_values.dart';
 import 'package:zhixin/domain/rules/capacity_budget.dart';
 
 void main() {
   final now = DateTime(2026, 11, 8, 18);
   final horizon = DateTime(2026, 11, 15, 21, 30);
 
-  CapacitySlot slot(DateTime day, int hour, int minutes) => CapacitySlot(
+  TimeRange slot(DateTime day, int hour, int minutes) => TimeRange(
     start: DateTime(day.year, day.month, day.day, hour),
     end: DateTime(
       day.year,
@@ -149,7 +150,7 @@ void main() {
   test('开始时间已经过去的那一段只算剩余部分', () {
     final fits = fitByDeadline(
       slots: [
-        CapacitySlot(
+        TimeRange(
           start: DateTime(2026, 11, 8, 17),
           end: DateTime(2026, 11, 8, 19),
         ),

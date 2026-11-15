@@ -2,6 +2,7 @@
 library;
 
 import 'study.dart';
+import 'time_values.dart';
 
 /// 本次预算里的一项候选学习事项。
 class CapacityCandidate {
@@ -32,7 +33,7 @@ class CapacityCandidate {
   final bool withinBudget;
 
   /// 本次算给这项的空档，可以直接作为预约时间；为空表示截止时间之前没有空档。
-  final List<CapacityWindow> windows;
+  final List<TimeRange> windows;
 
   /// 已经存在且可调整的弹性块；为空表示预约时新建。
   final int? movableBlockId;
@@ -49,16 +50,6 @@ class CapacityCandidate {
     }
     return total;
   }
-}
-
-/// 一段可以预约的空档，来自本次容量计算。
-class CapacityWindow {
-  const CapacityWindow({required this.start, required this.end});
-
-  final DateTime start;
-  final DateTime end;
-
-  int get minutes => end.difference(start).inMinutes;
 }
 
 /// 本次没有列入可预约范围的事项与原因。

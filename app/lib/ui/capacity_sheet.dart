@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../domain/models/capacity.dart';
+import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
@@ -113,18 +114,17 @@ class _CapacitySheetState extends State<_CapacitySheet> {
   }
 
   Future<String?> _pickTime(String current) async {
-    final parts = current.split(':');
+    final parsed = ClockTime.tryParse(current);
     final initial = TimeOfDay(
-      hour: int.tryParse(parts.first) ?? 19,
-      minute: parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0,
+      hour: parsed?.hour ?? 19,
+      minute: parsed?.minute ?? 0,
     );
     final picked = await showZhixinTimePicker(
       context: context,
       initialTime: initial,
     );
     if (picked == null) return null;
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${two(picked.hour)}:${two(picked.minute)}';
+    return ClockTime(picked.hour, picked.minute).format();
   }
 
   /// 写入之前先说明这次会新建还是改期、从什么时间改到什么时间。
@@ -133,7 +133,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
   /// 预览把这一项的原时间与目标时间放在确认框里，课表与其他预约不在其中。
   Future<_BookingAction?> _confirmBooking(
     CapacityCandidate candidate,
-    CapacityWindow window,
+    TimeRange window,
   ) async {
     final item = candidate.item;
     final fromStart = candidate.movableStart;
@@ -192,10 +192,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     return action;
   }
 
-  Future<void> _bookAt(
-    CapacityCandidate candidate,
-    CapacityWindow window,
-  ) async {
+  Future<void> _bookAt(CapacityCandidate candidate, TimeRange window) async {
     final action = await _confirmBooking(candidate, window);
     if (action == null || !mounted) return;
     final append = action == _BookingAction.append;
@@ -459,7 +456,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     );
   }
 
-  String _windowText(CapacityWindow window) =>
+  String _windowText(TimeRange window) =>
       '${dayLabel(window.start)} ${clockOf(window.start)}–${clockOf(window.end)}';
 
   String _rangeText(DateTime start, DateTime end) {
