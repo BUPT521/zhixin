@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import '../data/db/write_transactions.dart';
 import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
@@ -37,16 +35,9 @@ class MaterialService {
   Future<List<MaterialPage>> pages(int materialId) =>
       materials.pages(materialId);
 
-  /// 材料里某一页；查看来源原文时只读这一页。
+  /// 材料里某一页；查看来源原文与更正后的回显都只读这一页。
   Future<MaterialPage?> page(int materialId, int pageNo) =>
       materials.page(materialId, pageNo);
-
-  /// 材料里某一页范围；做学习计划时只读选中范围。
-  Future<List<MaterialPage>> pagesBetween(
-    int materialId, {
-    int? pageFrom,
-    int? pageTo,
-  }) => materials.pagesBetween(materialId, pageFrom: pageFrom, pageTo: pageTo);
 
   Future<int> create({
     required String title,
@@ -110,9 +101,6 @@ class MaterialService {
       );
     }, label: '导入 Word 材料');
   }
-
-  Future<Uint8List?> sourceFileBytes(int materialId) =>
-      materials.sourceFileBytes(materialId);
 
   /// 添加一页；页码已存在时抛出 [PageNumberTaken]，不改动已有原文。
   Future<int> addPage({

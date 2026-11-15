@@ -173,7 +173,7 @@ class DiscussionChatState extends State<DiscussionChat>
       final id = _conversationId;
       // 目标、模型配置与记录互不依赖，同时读取。
       final (goals, config, record) = await (
-        scope.chat.discussion.activeGoals(),
+        scope.study.plan.activeGoals(),
         scope.settings.edit.config(),
         id == null
             ? Future<ConversationRecord?>.value()

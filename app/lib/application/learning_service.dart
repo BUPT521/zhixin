@@ -38,11 +38,15 @@ class QuestionView {
     required this.question,
     required this.attempts,
     this.openAttempt,
+    this.recentMessages = const [],
   });
 
   final Question question;
   final List<Attempt> attempts;
   final Attempt? openAttempt;
+
+  /// 这道题最近几条讨论消息；学习页在题目下方显示刚才的对话。
+  final List<ChatMessage> recentMessages;
 
   Attempt? get lastSubmitted => attempts
       .where((attempt) => attempt.submitted)
@@ -132,16 +136,23 @@ class LearningService {
   final WriteTransactions transactions;
 
   Future<QuestionView> view(int conversationId) async {
-    final question = await conversations.question(conversationId);
+    final (question, recordAttempts, recent) = await (
+      conversations.question(conversationId),
+      attempts.attemptsFor(conversationId),
+      conversations.recent(conversationId, limit: _recentMessageCount),
+    ).wait;
     if (question == null) throw StateError('未找到这道题');
-    final recordAttempts = await attempts.attemptsFor(conversationId);
     final open = recordAttempts.where((attempt) => attempt.isOpen).firstOrNull;
     return QuestionView(
       question: question,
       attempts: recordAttempts,
       openAttempt: open,
+      recentMessages: recent,
     );
   }
+
+  /// 学习页在题目下方显示的消息条数。
+  static const int _recentMessageCount = 6;
 
   /// 有作答的记录，附带每条最近一次作答；记录页与记忆建议页共用这一份读取。
   Future<List<QuestionRow>> questionRows({
@@ -151,12 +162,6 @@ class LearningService {
     limit: limit,
     conversationIds: conversationIds,
   );
-
-  /// 这道题最近几条消息；学习页在题目下方显示刚才的对话。
-  Future<List<ChatMessage>> recentMessages(
-    int conversationId, {
-    int limit = 6,
-  }) => conversations.recent(conversationId, limit: limit);
 
   Future<int> capture({
     required String stem,

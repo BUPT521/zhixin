@@ -138,14 +138,13 @@ class _LearningPageState extends State<LearningPage>
     try {
       final view = await scope.chat.learning.view(widget.questionId);
       final open = view.openAttempt;
-      // 判断、记忆建议、模型配置与最近讨论互不依赖，同时读取。
-      final (assessments, memoryItems, config, messages) = await (
+      // 判断、记忆建议与模型配置互不依赖，同时读取。
+      final (assessments, memoryItems, config) = await (
         scope.chat.learning.assessmentsFor(view.attempts),
         open == null
             ? Future<List<MemoryItemView>>.value(const [])
             : scope.chat.learning.memoryItemsFor(open),
         scope.settings.edit.config(),
-        scope.chat.learning.recentMessages(widget.questionId),
       ).wait;
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填，内容不会在滑动中途跳出来。
@@ -156,7 +155,7 @@ class _LearningPageState extends State<LearningPage>
         _assessments = assessments;
         _memoryItems = memoryItems;
         _configured = config?.isConfigured ?? false;
-        _recentMessages = messages;
+        _recentMessages = view.recentMessages;
         _independentRedo = open?.redoOfAttemptId != null;
         _loading = false;
         _applyDraft(view.openAttempt, force: reapplyDraft);

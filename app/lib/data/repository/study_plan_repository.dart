@@ -6,6 +6,7 @@ import '../db/raw_executor.dart';
 
 import '../../domain/models/study.dart';
 import '../../domain/models/study_plan.dart';
+import '../../domain/rules/study_plan_steps.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/write_transactions.dart';
@@ -372,27 +373,28 @@ class StudyPlanRepository {
     PlanItemStatus status,
     int? planId,
   ) async {
+    final change = studyStepStatusChange(status, planId: planId);
     final now = formatDateTime(_clock());
     await txn.writeGenerated(
       (db) => db.setStudyStepStatus(
-        status.code,
-        status == PlanItemStatus.done ? now : null,
+        change.status.code,
+        change.status == PlanItemStatus.done ? now : null,
         now,
         itemId,
       ),
     );
-    if (status == PlanItemStatus.doing && planId != null) {
+    if (change.resetOtherActive) {
       await txn.writeGenerated(
         (db) => db.resetOtherActiveStudySteps(
           PlanItemStatus.todo.code,
           now,
-          planId,
+          planId!,
           itemId,
           PlanItemStatus.doing.code,
         ),
       );
     }
-    if (status == PlanItemStatus.done) {
+    if (change.settleBlocks) {
       // 只有确实发生过学习的预约才记为结束：场次与这段时间有重叠才算完成。
       // 到过开始时间却没有场次的旧预约按取消处理，不再把没学的那几次写成完成。
       await txn.writeGenerated(
@@ -405,7 +407,7 @@ class StudyPlanRepository {
         ),
       );
     }
-    if (status == PlanItemStatus.deferred) {
+    if (change.cancelPlannedBlocks) {
       await txn.writeGenerated(
         (db) => db.cancelPlannedBlocksForItem(now, itemId),
       );

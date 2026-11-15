@@ -204,10 +204,6 @@ class DiscussionService {
     limit: limit,
   );
 
-  Future<List<LearningGoal>> activeGoals() => tasks.activeGoals();
-
-  Future<List<LearningGoal>> goals() => tasks.goals();
-
   /// 新建一条还没有消息的讨论，用于从材料页开始或从记录里手动开一条。
   Future<int> createConversation({
     String? title,

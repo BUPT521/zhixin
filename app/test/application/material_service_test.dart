@@ -93,11 +93,8 @@ void main() {
       ],
     );
 
-    final pages = await service.pagesBetween(
-      materialId,
-      pageFrom: 2,
-      pageTo: 3,
-    );
+    final pages = await MaterialRepository(rig.db)
+        .pagesBetween(materialId, pageFrom: 2, pageTo: 3);
 
     expect(pages.map((page) => page.pageNo), [2, 3]);
     expect((await service.page(materialId, 2))?.content, '第二页');
