@@ -1,0 +1,82 @@
+name: 缺陷
+description: 记录验收、内测或日常使用中发现的缺陷
+title: "[版本名][V编号] 一句话"
+labels: ["defect"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        标题按 `[版本名][V编号] 一句话` 填写，例如 `[0.1.0-dev][V10] 快速切换筛选后显示上一次结果`；与验收项无关的缺陷把 V 编号写成 `非验收`。
+        一条缺陷一个 Issue。严重程度只分“一般”与“阻断”，阻断级由缪鹏再加 `blocker`，每次发版前清零。
+  - type: input
+    id: version
+    attributes:
+      label: 版本与提交
+      description: 开发包写版本名与 Git 提交；正式包写版本名。
+      placeholder: 0.1.0-dev+1 / 61721f2
+    validations:
+      required: true
+  - type: input
+    id: scenario
+    attributes:
+      label: 验收编号
+      description: V1–V11；与验收项无关时写“非验收”。
+      placeholder: V10
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从启动或进入哪个页面开始，按顺序写操作；能稳定复现的步骤优先。
+      placeholder: |
+        1. 打开记录页
+        2. 输入关键词并快速切换筛选
+        3. 观察结果列表
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      description: 按 02 第 8 章的通过条件或界面口径写。
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 写看到的现象与提示；不要粘贴学习记录正文或 API key。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 截图或诊断记录
+      description: 脱敏截图、录屏或本机诊断记录的位置；没有就写“没有”。
+      placeholder: 已脱敏的截图文件名，或“没有”
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重程度
+      description: 阻断级会阻止核心流程或发版，由缪鹏加 `blocker` 标签。
+      options:
+        - 一般
+        - 阻断
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 发现阶段
+      options:
+        - 模拟器验收
+        - 真机补测
+        - 第一轮内测
+        - 第二轮内测
+        - 公测
+        - 日常使用
+    validations:
+      required: true

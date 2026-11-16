@@ -83,3 +83,6 @@ hooks:
 
 flutter:
   uses-material-design: true
+  # 提示词与请求文本独立成文件；改文案不需要改 Dart 代码。
+  assets:
+    - assets/prompts/

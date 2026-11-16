@@ -10,6 +10,7 @@ import 'platform/app_license.dart';
 import 'platform/app_paths.dart';
 import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
+import 'platform/prompt_assets.dart';
 import 'platform/theme_mode_store.dart';
 import 'ui/theme_mode_controller.dart';
 
@@ -29,6 +30,8 @@ Future<void> main() async {
   final paths = await _resolvePaths();
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);
   if (crashLog != null) _installErrorHandlers(crashLog);
+  // 提示词在启动时读一次；读取失败只影响模型回答，本机功能照常可用。
+  await _loadPromptText(crashLog);
   final themeMode = paths == null ? null : await _loadThemeMode(paths);
   final reporting =
       paths != null &&
@@ -73,6 +76,16 @@ Future<ThemeModeController?> _loadThemeMode(AppPaths paths) async {
     return await ThemeModeController.load(ThemeModeStore(paths.filesDir));
   } catch (_) {
     return null;
+  }
+}
+
+/// 提示词资源缺失时不让应用起不来：本机记录、检索与导出都不依赖模型，
+/// 失败记进诊断记录，回答时按本地兜底处理。
+Future<void> _loadPromptText(CrashLog? crashLog) async {
+  try {
+    await PromptAssets.load();
+  } catch (error, stack) {
+    crashLog?.record(error, stack, kind: 'prompt_text', report: false);
   }
 }
 

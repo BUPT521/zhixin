@@ -37,6 +37,7 @@ CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同�
 ## 目录
 
 ```
+assets/prompts/                              ← 系统提示、上下文说明与请求文本，按段落读取
 lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
 ├── app_services.dart                        ← 七组服务（讨论、安排、材料、记忆、设置、数据版本、插件）
@@ -59,6 +60,8 @@ lib/
 ```
 
 `ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
+
+提示词的规则、上下文说明与请求文本在 `assets/prompts/`，按 `## 键名` 分段，`pubspec.yaml` 注册为 asset；`platform/prompt_assets.dart` 在启动时读取一次，`ai/prompt_text.dart` 负责解析与取段，`ai/buddy_prompt_builder.dart` 只按请求类型选取段落并替换占位符，改文案不需要改 Dart 代码。测试在 `test/flutter_test_config.dart` 里先读取同一份文本，提示词输出与写在代码里时一致；回答质量的第一版评测样例在 `test/evaluation/answer_quality_cases.dart`，覆盖 V1、V3、V6、V11 的提示词条件，真实模型对照按 [02 第 8.4 节](../docs/02-产品与交互.md#84-回答质量对照评测) 记录。
 
 `application/service_runtime.dart` 是服务共用的运行环境：时间口径、数据代次、附件目录与模型调用失败的本机记录。应用根只装配一次，保存每日截止小时、整库恢复与清空之后，服务读到的是新值，不必给每个服务各传一个闭包；测试从 `test/support/service_runtime.dart` 取同一份装配。
 
