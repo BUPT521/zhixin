@@ -217,9 +217,12 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     if (result.failure == SemanticFailure.notConfigured) {
       return '没有启用语义索引，本次没有读写向量库。';
     }
+    if (result.failure == SemanticFailure.cancelled) {
+      return '本次索引更新已经取消。';
+    }
     return '已处理 ${result.total} 条来源：写入 ${result.embedded} 条，'
         '跳过 ${result.skipped} 条，等待期间来源已变化 ${result.lateSkipped} 条，'
-        '失败 ${result.failed} 条，清理 ${result.removed} 条；'
+        '失败 ${result.failed} 条，清理 ${result.removed} 条向量；'
         '嵌入 ${result.embedMs} ms，写索引 ${result.writeMs} ms。';
   }
 

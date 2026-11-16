@@ -62,13 +62,15 @@ CREATE TABLE IF NOT EXISTS vector_entry (
     _db.execute('PRAGMA foreign_keys=ON');
     _db.execute(_metaTable);
     _db.execute(_entryTable);
-    final stored = meta('model_key');
+    final stored = _readMeta('model_key');
     if (stored != spec.indexKey) {
       _dropVectorTables();
       _db.execute('DELETE FROM vector_entry');
-      setMeta('model_key', spec.indexKey);
-      setMeta('dim', '${spec.dim}');
-      setMeta('text_version', spec.textVersion);
+      _writeMeta('model_key', spec.indexKey);
+      _writeMeta('dim', '${spec.dim}');
+      _writeMeta('text_version', spec.textVersion);
+      _writeMeta('epoch', '0');
+      _resetRefreshStats();
     }
     if (meta('epoch') == null) setMeta('epoch', '0');
     _db.execute(
@@ -90,6 +92,11 @@ CREATE TABLE IF NOT EXISTS vector_entry (
 
   @override
   String? meta(String key) {
+    VectorIndex.validateMetaKey(key);
+    return _readMeta(key);
+  }
+
+  String? _readMeta(String key) {
     final rows = _db.select(
       'SELECT value FROM vector_index_meta WHERE key = ?',
       [key],
@@ -99,6 +106,11 @@ CREATE TABLE IF NOT EXISTS vector_entry (
 
   @override
   void setMeta(String key, String value) {
+    VectorIndex.validateMetaKey(key);
+    _writeMeta(key, value);
+  }
+
+  void _writeMeta(String key, String value) {
     _db.execute(
       'INSERT INTO vector_index_meta(key, value) VALUES (?, ?) '
       'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
@@ -107,33 +119,60 @@ CREATE TABLE IF NOT EXISTS vector_entry (
   }
 
   @override
+  void finishRefresh({
+    required String builtAt,
+    required int sourceCount,
+    required int writtenEntries,
+  }) {
+    _db.execute(
+      'INSERT INTO vector_index_meta(key, value) VALUES '
+      "('built_at', ?), ('source_count', ?) "
+      'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      [builtAt, '$sourceCount'],
+    );
+  }
+
+  void _resetRefreshStats() {
+    _db.execute("DELETE FROM vector_index_meta WHERE key = 'built_at'");
+    _writeMeta('source_count', '0');
+  }
+
+  @override
   int get entryCount {
     final rows = _db.select('SELECT COUNT(*) AS n FROM vector_entry');
     return rows.first['n'] as int;
   }
 
-  /// 来源条数：只取一个数，不把每个来源的版本与片段数读进内存。
   @override
   int get sourceCount {
+    final stored = _readMeta('source_count');
+    if (stored != null) return int.parse(stored);
+    // 已存在的索引在下一次刷新结束前仍按当前条目计数。
     final rows = _db.select(
       'SELECT COUNT(DISTINCT source_key) AS n FROM vector_entry',
     );
     return rows.first['n'] as int;
   }
 
-  /// 当前索引里每个来源的版本与片段数，用于跳过没有变化的来源。
   @override
-  Map<String, IndexedSource> indexedSources() {
-    final rows = _db.select(
-      'SELECT source_key, source_version, COUNT(*) AS n FROM vector_entry '
-      'GROUP BY source_key, source_version',
-    );
+  Map<String, IndexedSource> indexedSources(List<String> keys) {
+    const batchSize = 500;
     final result = <String, IndexedSource>{};
-    for (final row in rows) {
-      result[row['source_key'] as String] = IndexedSource(
-        sourceVersion: row['source_version'] as String,
-        chunks: row['n'] as int,
+    for (var start = 0; start < keys.length; start += batchSize) {
+      final end = (start + batchSize).clamp(start, keys.length);
+      final batch = keys.sublist(start, end);
+      final placeholders = List.filled(batch.length, '?').join(', ');
+      final rows = _db.select(
+        'SELECT source_key, source_version, COUNT(*) AS n FROM vector_entry '
+        'WHERE source_key IN ($placeholders) GROUP BY source_key, source_version',
+        batch,
       );
+      for (final row in rows) {
+        result[row['source_key'] as String] = IndexedSource(
+          sourceVersion: row['source_version'] as String,
+          chunks: row['n'] as int,
+        );
+      }
     }
     return result;
   }
@@ -152,7 +191,7 @@ CREATE TABLE IF NOT EXISTS vector_entry (
     }
     _db.execute('BEGIN IMMEDIATE');
     try {
-      removeSource(locator.sourceKey);
+      _removeSource(locator.sourceKey);
       for (var index = 0; index < chunks.length; index++) {
         final id = _insertEntry(
           locator: locator,
@@ -198,7 +237,7 @@ CREATE TABLE IF NOT EXISTS vector_entry (
     return _db.lastInsertRowId;
   }
 
-  void removeSource(String sourceKey) {
+  int _removeSource(String sourceKey) {
     final rows = _db.select(
       'SELECT id FROM vector_entry WHERE source_key = ?',
       [sourceKey],
@@ -207,25 +246,35 @@ CREATE TABLE IF NOT EXISTS vector_entry (
       _db.execute('DELETE FROM $_vecTable WHERE rowid = ?', [row['id'] as int]);
     }
     _db.execute('DELETE FROM vector_entry WHERE source_key = ?', [sourceKey]);
+    return rows.length;
   }
 
-  /// 删除已经不在业务库里的来源，返回删除的条数。
   @override
   int pruneSources(Set<String> keep) {
-    final rows = _db.select('SELECT DISTINCT source_key FROM vector_entry');
-    var removed = 0;
-    for (final row in rows) {
-      final key = row['source_key'] as String;
-      if (keep.contains(key)) continue;
-      removeSource(key);
-      removed++;
+    if (keep.isEmpty) return _clear();
+    _db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = _db.select('SELECT DISTINCT source_key FROM vector_entry');
+      var removed = 0;
+      for (final row in rows) {
+        final key = row['source_key'] as String;
+        if (!keep.contains(key)) removed += _removeSource(key);
+      }
+      _db.execute('COMMIT');
+      return removed;
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
     }
-    return removed;
   }
 
   /// 按查询向量取最近的 k 条；范围与有效性由调用方重新核对业务记录。
   @override
-  List<StoredVector> search(List<double> query, {int k = 20}) {
+  List<StoredVector> search(
+    List<double> query, {
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) {
     final candidates = _db.select(
       'SELECT rowid, distance FROM $_vecTable '
       'WHERE embedding MATCH ? AND k = $k ORDER BY distance',
@@ -256,12 +305,17 @@ CREATE TABLE IF NOT EXISTS vector_entry (
   }
 
   @override
-  void clear() {
+  void clear() => _clear();
+
+  int _clear() {
     _db.execute('BEGIN IMMEDIATE');
     try {
+      final removed = entryCount;
       _db.execute('DELETE FROM $_vecTable');
       _db.execute('DELETE FROM vector_entry');
+      _resetRefreshStats();
       _db.execute('COMMIT');
+      return removed;
     } catch (_) {
       _db.execute('ROLLBACK');
       rethrow;

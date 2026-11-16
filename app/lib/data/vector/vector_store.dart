@@ -10,11 +10,19 @@ abstract interface class VectorStore {
 
   Future<int> entryCount();
 
-  Future<Map<String, IndexedSource>> indexedSources();
+  Future<int> sourceCount();
+
+  Future<Map<String, IndexedSource>> indexedSources(List<String> keys);
 
   Future<String?> meta(String key);
 
   Future<void> setMeta(String key, String value);
+
+  Future<void> finishRefresh({
+    required String builtAt,
+    required int sourceCount,
+    required int writtenEntries,
+  });
 
   Future<void> replaceSource({
     required SemanticLocator locator,
@@ -26,7 +34,11 @@ abstract interface class VectorStore {
 
   Future<int> pruneSources(Set<String> keep);
 
-  Future<List<StoredVector>> search(List<double> query, {int k = 20});
+  Future<List<StoredVector>> search(
+    List<double> query, {
+    int k = 20,
+    VectorPrefilter? prefilter,
+  });
 
   Future<void> clear();
 
@@ -49,8 +61,11 @@ class DirectVectorStore implements VectorStore {
   Future<int> entryCount() async => index.entryCount;
 
   @override
-  Future<Map<String, IndexedSource>> indexedSources() async =>
-      index.indexedSources();
+  Future<int> sourceCount() async => index.sourceCount;
+
+  @override
+  Future<Map<String, IndexedSource>> indexedSources(List<String> keys) async =>
+      index.indexedSources(keys);
 
   @override
   Future<String?> meta(String key) async => index.meta(key);
@@ -58,6 +73,17 @@ class DirectVectorStore implements VectorStore {
   @override
   Future<void> setMeta(String key, String value) async =>
       index.setMeta(key, value);
+
+  @override
+  Future<void> finishRefresh({
+    required String builtAt,
+    required int sourceCount,
+    required int writtenEntries,
+  }) async => index.finishRefresh(
+    builtAt: builtAt,
+    sourceCount: sourceCount,
+    writtenEntries: writtenEntries,
+  );
 
   @override
   Future<void> replaceSource({
@@ -80,8 +106,11 @@ class DirectVectorStore implements VectorStore {
   Future<int> pruneSources(Set<String> keep) async => index.pruneSources(keep);
 
   @override
-  Future<List<StoredVector>> search(List<double> query, {int k = 20}) async =>
-      index.search(query, k: k);
+  Future<List<StoredVector>> search(
+    List<double> query, {
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) async => index.search(query, k: k, prefilter: prefilter);
 
   @override
   Future<void> clear() async => index.clear();

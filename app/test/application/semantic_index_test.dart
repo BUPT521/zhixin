@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -249,7 +250,7 @@ void main() {
     expect(matches.single.sourceKey, 'material_page:mat-1:1');
     expect(matches.single.distance, lessThan(0.1));
     expect(index.entryCount, 1);
-    expect(index.meta('model_key'), contains('test-embed'));
+    expect(index.spec.indexKey, contains('test-embed'));
   });
 
   test('语义查询能找回同义改写的原文，并按需求合并后带回来源', () async {
@@ -334,6 +335,188 @@ void main() {
     final stats = await rig.service.stats();
     expect(stats.entries, 7);
     expect(stats.sources, 7);
+  });
+
+  test('强制重写部分失败时保留旧来源的计数，清空时重置统计', () async {
+    final rig = await _rig();
+    addTearDown(rig.db.close);
+    addTearDown(rig.service.close);
+    expect((await rig.service.refresh()).embedded, 7);
+
+    rig.service.configure(
+      client: _MutatingClient(
+        inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+        onEmbed: (text) async {
+          if (text == _pageEntropy) {
+            throw const EmbeddingUnavailable('测试里的嵌入失败');
+          }
+        },
+      ),
+    );
+    final refresh = await rig.service.refresh(force: true);
+    expect(refresh.failed, 1);
+    expect(refresh.embedded, 6);
+    final retained = await rig.service.stats();
+    expect(retained.sources, 7);
+    expect(retained.entries, 7);
+    expect(retained.builtAt, isNotNull);
+
+    await rig.service.clear();
+    final cleared = await rig.service.stats();
+    expect(cleared.sources, 0);
+    expect(cleared.entries, 0);
+    expect(cleared.builtAt, isNull);
+  });
+
+  test('限制更新来源数时保留批次以外已有的有效索引', () async {
+    final rig = await _rig();
+    addTearDown(rig.db.close);
+    addTearDown(rig.service.close);
+    expect((await rig.service.refresh()).embedded, 7);
+
+    final refresh = await rig.service.refresh(force: true, maxSources: 1);
+    expect(refresh.embedded, 1);
+    expect(refresh.removed, 0);
+    final stats = await rig.service.stats();
+    expect(stats.sources, 7);
+    expect(stats.entries, 7);
+  });
+
+  test('清空时取消等待嵌入的刷新，之后可重新建索引', () async {
+    final embedding = Completer<void>();
+    final release = Completer<void>();
+    final rig = await _rig(
+      clientFor: (spec) => _MutatingClient(
+        inner: FixedEmbeddingClient(spec: spec, vectors: _vectors()),
+        onEmbed: (_) async {
+          if (!embedding.isCompleted) embedding.complete();
+          await release.future;
+        },
+      ),
+    );
+    addTearDown(rig.db.close);
+    addTearDown(() async {
+      if (!release.isCompleted) release.complete();
+      await rig.service.close();
+    });
+
+    final pending = rig.service.refresh();
+    await embedding.future;
+    final clearing = rig.service.clear();
+    release.complete();
+    await clearing;
+    expect((await pending).failure, SemanticFailure.cancelled);
+    expect((await rig.service.stats()).entries, 0);
+    expect((await rig.service.refresh()).embedded, 7);
+    expect((await rig.service.stats()).sources, 7);
+  });
+
+  test('模型 A→B→A 等候旧句柄关闭和过期的打开完成', () async {
+    const specB = EmbeddingModelSpec(id: 'another-embed', dim: 8);
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final closingA = Completer<void>();
+    final releaseA = Completer<void>();
+    final openingB = Completer<void>();
+    final releaseB = Completer<void>();
+    final transitions = <String>[];
+    var requestedSpec = _spec;
+    final service = SemanticIndexService(
+      repository: EvidenceRepository(db),
+      initialClient: FixedEmbeddingClient(spec: _spec, vectors: {}),
+      indexPath: '',
+      vectorStoreOpener: () async {
+        final spec = requestedSpec;
+        transitions.add('open ${spec.id}');
+        if (spec == specB) {
+          openingB.complete();
+          await releaseB.future;
+        }
+        return _TrackedStore(MemoryVectorIndex(spec), () async {
+          transitions.add('close ${spec.id}');
+          if (spec == _spec && !closingA.isCompleted) {
+            closingA.complete();
+            await releaseA.future;
+          }
+        });
+      },
+    );
+    addTearDown(() async {
+      if (!releaseA.isCompleted) releaseA.complete();
+      if (!releaseB.isCompleted) releaseB.complete();
+      await service.close();
+    });
+
+    expect((await service.stats()).modelKey, _spec.indexKey);
+    requestedSpec = specB;
+    service.configure(
+      client: FixedEmbeddingClient(spec: specB, vectors: {}),
+    );
+    final statsB = service.stats();
+    final rejectedB = expectLater(statsB, throwsA(isA<EmbeddingUnavailable>()));
+    await closingA.future;
+    expect(openingB.isCompleted, isFalse);
+    releaseA.complete();
+    await openingB.future;
+
+    requestedSpec = _spec;
+    service.configure(
+      client: FixedEmbeddingClient(spec: _spec, vectors: {}),
+    );
+    final statsA = service.stats();
+    expect(
+      transitions.where((event) => event == 'open ${_spec.id}'),
+      hasLength(1),
+    );
+    releaseB.complete();
+
+    await rejectedB;
+    expect((await statsA).modelKey, _spec.indexKey);
+    expect(transitions, [
+      'open ${_spec.id}',
+      'close ${_spec.id}',
+      'open ${specB.id}',
+      'close ${specB.id}',
+      'open ${_spec.id}',
+    ]);
+  });
+
+  test('查询嵌入期间切换模型时放弃旧查询', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final embedding = Completer<void>();
+    final release = Completer<void>();
+    const specB = EmbeddingModelSpec(id: 'another-embed', dim: 8);
+    var opened = 0;
+    final service = SemanticIndexService(
+      repository: EvidenceRepository(db),
+      initialClient: _MutatingClient(
+        inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+        onEmbed: (_) async {
+          embedding.complete();
+          await release.future;
+        },
+      ),
+      indexPath: '',
+      vectorStoreOpener: () async {
+        opened++;
+        return DirectVectorStore(MemoryVectorIndex(specB));
+      },
+    );
+    addTearDown(service.close);
+
+    final search = service.search(
+      '系统混乱程度怎么衡量',
+      scope: const EvidenceScope.userAll(),
+    );
+    await embedding.future;
+    service.configure(
+      client: FixedEmbeddingClient(spec: specB, vectors: {}),
+    );
+    release.complete();
+    expect((await search).failure, SemanticFailure.cancelled);
+    expect(opened, 0);
+    expect((await service.stats()).modelKey, specB.indexKey);
   });
 
   test('等待嵌入期间来源被更正，迟到结果不写入索引', () async {
@@ -714,6 +897,18 @@ void main() {
     expect(identical(results.first, results.last), isTrue);
     expect(client.calls, 7);
   });
+}
+
+class _TrackedStore extends DirectVectorStore {
+  _TrackedStore(super.index, this.onClose);
+
+  final Future<void> Function() onClose;
+
+  @override
+  Future<void> close() async {
+    await onClose();
+    await super.close();
+  }
 }
 
 class _CountingClient implements EmbeddingClient {

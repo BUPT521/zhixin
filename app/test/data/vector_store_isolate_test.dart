@@ -39,8 +39,9 @@ void main() {
     );
 
     expect(await store.entryCount(), 1);
-    expect(await store.meta('model_key'), contains('isolate-embed'));
-    final sources = await store.indexedSources();
+    expect(store.spec.indexKey, contains('isolate-embed'));
+    final sources = await store.indexedSources(['missing', _locator.sourceKey]);
+    expect(sources.keys, [_locator.sourceKey]);
     expect(sources['message:msg-1']?.sourceVersion, 'v1');
     expect(sources['message:msg-1']?.chunks, 1);
 
@@ -86,7 +87,7 @@ void main() {
     );
     addTearDown(second.close);
     expect(second.entryCount, 0);
-    expect(second.meta('model_key'), contains('another-embed'));
+    expect(second.spec.indexKey, contains('another-embed'));
     second.replaceSource(
       locator: const SemanticLocator(
         kind: 'message',
@@ -102,6 +103,42 @@ void main() {
       createdAt: '2026-11-12 10:00:00',
     );
     expect(second.search([1, 0, 0, 0, 0, 0, 0, 0], k: 1), hasLength(1));
+  });
+
+  test('刷新统计随索引持久化，清理返回向量数', () async {
+    final directory = await Directory.systemTemp.createTemp('zhixin-vec-iso-');
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/index.db';
+    final store = await IsolateVectorStore.open(path: path, spec: _spec);
+    addTearDown(store.close);
+
+    const builtAt = '2026-11-16 10:00:00';
+    await store.replaceSource(
+      locator: _locator,
+      sourceVersion: 'v1',
+      chunks: const ['片段一', '片段二'],
+      vectors: const [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+      ],
+      createdAt: builtAt,
+    );
+    await store.finishRefresh(
+      builtAt: builtAt,
+      sourceCount: 1,
+      writtenEntries: 2,
+    );
+    await store.close();
+
+    final reopened = await IsolateVectorStore.open(path: path, spec: _spec);
+    addTearDown(reopened.close);
+    expect(await reopened.sourceCount(), 1);
+    expect(await reopened.meta('built_at'), builtAt);
+    expect(await reopened.pruneSources({}), 2);
+    await reopened.clear();
+    expect(await reopened.entryCount(), 0);
+    expect(await reopened.sourceCount(), 0);
+    expect(await reopened.meta('built_at'), isNull);
   });
 
   test('索引打不开时把异常交回调用方', () async {

@@ -25,6 +25,7 @@ class IsolateVectorStore implements VectorStore {
   final Map<int, Completer<Object?>> _pending = {};
   int _nextId = 1;
   bool _closed = false;
+  Future<void>? _closing;
 
   /// 打开索引库；sqlite-vec 的加载与建表都在后台线程完成。
   static Future<IsolateVectorStore> open({
@@ -64,6 +65,8 @@ class IsolateVectorStore implements VectorStore {
       }
       store._failPending(const VectorStoreFailure('后台索引线程已经退出'));
       store._closed = true;
+      control.close();
+      responses.close();
     });
 
     Isolate? isolate;
@@ -99,8 +102,11 @@ class IsolateVectorStore implements VectorStore {
   Future<int> entryCount() async => await _send('entryCount') as int;
 
   @override
-  Future<Map<String, IndexedSource>> indexedSources() async {
-    final value = await _send('indexedSources') as Map;
+  Future<int> sourceCount() async => await _send('sourceCount') as int;
+
+  @override
+  Future<Map<String, IndexedSource>> indexedSources(List<String> keys) async {
+    final value = await _send('indexedSources', [keys]) as Map;
     return {
       for (final entry in value.entries)
         entry.key as String: IndexedSource(
@@ -111,12 +117,24 @@ class IsolateVectorStore implements VectorStore {
   }
 
   @override
-  Future<String?> meta(String key) async =>
-      await _send('meta', [key]) as String?;
+  Future<String?> meta(String key) async {
+    VectorIndex.validateMetaKey(key);
+    return await _send('meta', [key]) as String?;
+  }
 
   @override
   Future<void> setMeta(String key, String value) async {
+    VectorIndex.validateMetaKey(key);
     await _send('setMeta', [key, value]);
+  }
+
+  @override
+  Future<void> finishRefresh({
+    required String builtAt,
+    required int sourceCount,
+    required int writtenEntries,
+  }) async {
+    await _send('finishRefresh', [builtAt, sourceCount, writtenEntries]);
   }
 
   @override
@@ -141,8 +159,13 @@ class IsolateVectorStore implements VectorStore {
       await _send('pruneSources', [keep.toList(growable: false)]) as int;
 
   @override
-  Future<List<StoredVector>> search(List<double> query, {int k = 20}) async {
-    final value = await _send('search', [query, k]) as List;
+  Future<List<StoredVector>> search(
+    List<double> query, {
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) async {
+    final value =
+        await _send('search', [query, k, _encodePrefilter(prefilter)]) as List;
     return [
       for (final row in value.cast<Map>())
         StoredVector(
@@ -162,7 +185,9 @@ class IsolateVectorStore implements VectorStore {
   }
 
   @override
-  Future<void> close() async {
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     if (_closed) return;
     _closed = true;
     final completer = Completer<Object?>();
@@ -286,9 +311,12 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
   switch (op) {
     case 'entryCount':
       return index.entryCount;
+    case 'sourceCount':
+      return index.sourceCount;
     case 'indexedSources':
       return {
-        for (final entry in index.indexedSources().entries)
+        for (final entry
+            in index.indexedSources((args[0] as List).cast<String>()).entries)
           entry.key: {
             'sourceVersion': entry.value.sourceVersion,
             'chunks': entry.value.chunks,
@@ -298,6 +326,13 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
       return index.meta(args[0] as String);
     case 'setMeta':
       index.setMeta(args[0] as String, args[1] as String);
+      return null;
+    case 'finishRefresh':
+      index.finishRefresh(
+        builtAt: args[0] as String,
+        sourceCount: args[1] as int,
+        writtenEntries: args[2] as int,
+      );
       return null;
     case 'replaceSource':
       final locator = SemanticLocator.fromJson(args[0] as String);
@@ -321,6 +356,7 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
         for (final row in index.search(
           (args[0] as List).cast<double>(),
           k: args[1] as int,
+          prefilter: _decodePrefilter(args[2] as Map?),
         ))
           {
             'sourceKey': row.sourceKey,
@@ -339,6 +375,32 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
     default:
       throw ArgumentError('未知的向量索引操作：$op');
   }
+}
+
+Map<String, Object?>? _encodePrefilter(VectorPrefilter? prefilter) =>
+    switch (prefilter) {
+      null => null,
+      MaterialVectorPrefilter(:final materialId) => {
+        'kind': 'material',
+        'materialId': materialId,
+      },
+      ConversationVectorPrefilter(:final conversationId, :final sourceKeys) => {
+        'kind': 'conversation',
+        'conversationId': conversationId,
+        'sourceKeys': sourceKeys.toList(growable: false),
+      },
+    };
+
+VectorPrefilter? _decodePrefilter(Map? value) {
+  if (value == null) return null;
+  return switch (value['kind']) {
+    'material' => MaterialVectorPrefilter(value['materialId'] as String),
+    'conversation' => ConversationVectorPrefilter(
+      conversationId: value['conversationId'] as String?,
+      sourceKeys: (value['sourceKeys'] as List).cast<String>().toSet(),
+    ),
+    _ => throw ArgumentError('未知的向量索引预过滤类型'),
+  };
 }
 
 String _describeSpawnMessage(Object? message, String fallback) {
