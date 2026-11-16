@@ -1,6 +1,6 @@
 # 知新 · 语义索引接入 zvec 的方案
 
-> 本文保留 `sqlite3_vec` 与 zvec 的选型比较及 zvec 验证时的实施方案。PLK110 的真机测试超过常驻内存增量门槛后，项目选择第 3.1 节的 `vec0` 元数据列与辅助列做法，实测数据和决定见 [ADR-0022](adr/0022-语义索引改用zvec.md)。
+> 本文给出把语义索引的存储引擎从 `sqlite3_vec` 换成 [zvec](https://github.com/alibaba/zvec) 的做法：改哪一层、数据怎样落盘、每个操作怎样对应、构建与测试怎样调整，以及按什么顺序实施。范围是 2026-11-16 `main` 上的 `app/lib/data/vector/` 与 `semantic_index_service.dart`；关键词检索、业务库与服务端不在范围内。决定本身记在 [ADR-0022](adr/0022-语义索引改用zvec.md)（已采纳），本文是它的实施说明，两处不一致时以 ADR 为准。
 
 ## 1. 结论
 
@@ -10,7 +10,7 @@
 
 这次替换的收益主要来自检索路径。zvec 在一次调用里完成范围过滤并返回片段正文，因此可以省去逐条回表，减少材料或讨论范围的检索候选数，过渡期结束后也可去掉 `sqlite3_vec` 构建钩子对 clang 工具链的依赖。主要代价是安装包，arm64 release APK 会存放未压缩的原生库，包体实测见 [ADR-0022 代价与边界](adr/0022-语义索引改用zvec.md#代价与边界)。
 
-现有的 `sqlite3_vec`（内置 sqlite-vec 0.1.9）支持 `vec0` 元数据列与辅助列，因此真机验证后沿用第 6 节第 2、3 步的接口改动，在现有引擎中完成范围过滤与返回片段正文，比较见第 3.1 节。
+现有的 `sqlite3_vec`（内置 sqlite-vec 0.1.9）也支持 `vec0` 元数据列与辅助列，两条路线的比较见第 3.1 节，没有采纳的原因见 ADR-0022 的替代方案。
 
 ## 2. 现状
 
@@ -26,7 +26,7 @@
 
 ## 3. 测得的数据
 
-数据来自本机沙箱（x86_64，2 核），zvec 用 PyPI 上的 0.8.1，`sqlite-vec` 用 PyPI 上的 0.1.9。Dart SDK 与 Python 包调用的是同一个 C 引擎，绝对数值在 PLK110 上会不同，比例可以参考。向量为 1024 维（`embedding_config_store.dart` 的默认维度），每个来源 4 个片段，共 20000 个片段，约相当于 640 万字正文。
+数据来自本机沙箱（x86_64，2 核），zvec 用 PyPI 上的 0.8.1，`sqlite-vec` 用 PyPI 上的 0.1.9。Dart SDK 与 Python 包调用的是同一个 C 引擎。向量为 1024 维（`embedding_config_store.dart` 的默认维度），每个来源 4 个片段，共 20000 个片段，约相当于 640 万字正文。
 
 | 项目 | sqlite-vec `vec0` | zvec Flat FP32 | zvec Flat INT8 | zvec HNSW FP32 |
 |---|---|---|---|---|
@@ -122,7 +122,7 @@ zvec 0.8.0 的 Dart 接口将 `Doc.setField` 收到的整数写为 INT64，因�
 
 `indexedSources` 改成按键读取，是因为 zvec 的 Dart 包目前没有封装 C API 里的 `zvec_collection_create_iterator`，没有办法列出全部文档。按键读取反而更贴合刷新流程：`_runRefresh` 本来就先从业务库取到全部来源，再逐个比对，现在把这批键交给索引即可，不必把整个索引的清单读进内存。设置页显示的来源数改从 `sourceCount` 读。
 
-`Collection.close()` 会释放原生句柄，`Collection.destroy()` 要求句柄仍有效，并会删除 collection 数据。在 PLK110 上对已经关闭的句柄调用 `destroy()` 会使进程崩溃，所以普通关闭只释放句柄，清空按表中的目录改名流程处理。引擎随进程退出回收，模型切换时继续供同一进程内的其他 isolate 使用，见 [zvec 0.8.0 collection 接口](https://github.com/alibaba/zvec/blob/v0.8.0/src/binding/c/c_api.cc)。
+`Collection.close()` 会释放原生句柄，`Collection.destroy()` 要求句柄仍有效，并会删除 collection 数据。对已经关闭的句柄调用 `destroy()` 会使进程崩溃，所以普通关闭只释放句柄，清空按表中的目录改名流程处理。引擎随进程退出回收，模型切换时继续供同一进程内的其他 isolate 使用，见 [zvec 0.8.0 collection 接口](https://github.com/alibaba/zvec/blob/v0.8.0/src/binding/c/c_api.cc)。
 
 ### 4.5 写入顺序与中途退出
 
@@ -146,7 +146,7 @@ zvec 的一次 `upsert` 只保证这一批文档本身，删除和写入之间�
 
 ### 4.7 后台线程与引擎参数
 
-zvec 的写入是单进程独占，知新本来就只有一个后台 isolate 持有索引，这一点不需要调整。`Zvec.initialize` 传入 `ConfigData`：查询与 `optimize` 各用 1 个线程，避免和界面线程争用小核；内存上限设 128 MB，引擎要求这个值大于 100 MB，PLK110 实测后再调。日志写到缓存目录的文件里，级别为警告，原因见 ADR-0022 实施方案第 6 节。`Doc`、`VectorQuery` 持有原生内存，`ZvecVectorIndex` 内部用 `try/finally` 调用 `destroy`，不把它们传出 isolate；跨线程传递的仍是现在的 `Map` 与 `List`。
+zvec 的写入是单进程独占，知新本来就只有一个后台 isolate 持有索引，这一点不需要调整。`Zvec.initialize` 传入 `ConfigData`：查询与 `optimize` 各用 1 个线程，避免和界面线程争用小核；内存上限设 128 MB，引擎要求这个值大于 100 MB。日志写到缓存目录的文件里，级别为警告，原因见 ADR-0022 实施方案第 6 节。`Doc`、`VectorQuery` 持有原生内存，`ZvecVectorIndex` 内部用 `try/finally` 调用 `destroy`，不把它们传出 isolate；跨线程传递的仍是现在的 `Map` 与 `List`。
 
 Flat 索引不需要 `optimize` 才能检索，但段数增加后检索会变慢。一次刷新写入超过 200 个文档时，在 `flush` 之后调用一次 `optimize` 合并段，两万条的耗时约 0.1 秒。
 
@@ -168,26 +168,26 @@ CI 的 Linux 任务下载 `zvec-sdk-linux-amd64.tar.gz`（约 40 MB），按 `zv
 
 ## 6. 实施步骤
 
-第 1 步真机验证与第 2、3 步接口调整已完成。真机验证后采用第 3.1 节的 SQLite 方案，下面的第 4 至 7 步保留为 zvec 原提案的实施计划。
+每一步单独提交，提交后 `flutter analyze` 与 `flutter test` 通过。第 1、2 步已完成。
 
-1. **真机验证（不进 `main`）。** 在单独分支只加 `zvec` 依赖，打一个 release APK，记录与 `main` 的包体差；在 PLK110 上用 2000 与 20000 条 1024 维向量测打开、写入、检索与 `optimize` 的耗时。数据写进 ADR-0022 的“代价与边界”，再决定是否继续。
-2. **抽出接口。** `VectorIndex` 改成同步接口，原 SQLite 实现改名为 `SqliteVectorIndex`，新增 `MemoryVectorIndex`，服务层测试切换过去。行为不变。
-3. **调整接口。** `indexedSources` 改为接受来源键，增加 `sourceCount`，`search` 增加过滤参数；`SqliteVectorIndex` 对过滤参数直接忽略，`_runRefresh` 与 `stats()` 跟着改。
-4. **实现 `ZvecVectorIndex`。** 加入依赖，写契约测试，CI 加缓存与 `ZVEC_LIBRARY_PATH`。
-5. **切换运行时。** isolate 入口改为构造 `ZvecVectorIndex`，`AppPaths` 改目录，第一次打开时删除旧的 `vector_index.db*`。设置页的“重建索引”在真机上走一遍。
-6. **范围预过滤。** 服务层由 `EvidenceScope` 生成过滤表达式，材料与讨论范围的候选放大倍数降到 `limit × 4`，用陈英硕的检索评测集比对替换前后的前几条结果。
-7. **收尾。** 删除 `SqliteVectorIndex` 与 `sqlite3_vec`，更新 [03 第 2.1 节的模块表](03-团队分工与协作.md#21-模块主责)、[app/README 的数据一节](../app/README.md#数据)与 `pubspec.yaml` 注释，ADR-0022 改为已采纳。
+1. **抽出接口。** `VectorIndex` 改成同步接口，原 SQLite 实现改名为 `SqliteVectorIndex`，新增 `MemoryVectorIndex`，服务层测试切换过去。行为不变。
+2. **调整接口。** `indexedSources` 改为接受来源键，增加 `sourceCount`，`search` 增加过滤参数；`SqliteVectorIndex` 对过滤参数直接忽略，`_runRefresh` 与 `stats()` 跟着改。
+3. **实现 `ZvecVectorIndex`。** 加入依赖，写契约测试，CI 加缓存与 `ZVEC_LIBRARY_PATH`。
+4. **切换运行时。** isolate 入口改为构造 `ZvecVectorIndex`，`AppPaths` 改目录，第一次打开时删除旧的 `vector_index.db*`。设置页的“重建索引”走一遍。
+5. **范围预过滤。** 服务层由 `EvidenceScope` 生成过滤表达式，材料与讨论范围的候选放大倍数降到 `limit × 4`，用陈英硕的检索评测集比对替换前后的前几条结果。
+6. **收尾。** 删除 `SqliteVectorIndex` 与 `sqlite3_vec`，更新 [03 第 2.1 节的模块表](03-团队分工与协作.md#21-模块主责)、[app/README 的数据一节](../app/README.md#数据)与 `pubspec.yaml` 注释。
 
-第 2、3 步不依赖 zvec，即使第 1 步的结论是不替换，也可以单独合入：接口按键读取与范围参数对现在的实现同样成立。每一步的验收条件、负责人与第 1 步的继续门槛见 [ADR-0022 实施方案第 9 节](adr/0022-语义索引改用zvec.md#9-实施步骤与验收)。
+每一步的验收条件与负责人见 [ADR-0022 实施方案第 9 节](adr/0022-语义索引改用zvec.md#9-实施步骤与验收)。
 
 ## 7. 暂不纳入的能力
 
 zvec 0.8 内置结巴分词的中文全文检索，可以在一次 `multiQuery` 里融合向量与关键词结果。关键词索引现在由业务库的触发器在同一个事务里维护，整版恢复和导入时由版本引擎重建（ADR-0013 第 6 条）；搬到 zvec 就要在两个存储之间自己保证一致，而且未配置嵌入模型的用户也要依赖 zvec。这一项等语义检索在内测中证明有用、再评估是否值得一并迁移。
 
-HNSW 与量化在片段数超过十万之后再考虑，届时用第 1 步的真机数据重新比较 `optimize` 的耗时。zvec 的 Dart 包补上文档迭代器后，`pruneSources` 可以改为遍历，不再拼接很长的 `not in` 列表；这一项可以给上游提交 PR，C API 已经具备。
+HNSW 与量化在片段数超过十万之后再考虑。zvec 的 Dart 包补上文档迭代器后，`pruneSources` 可以改为遍历，不再拼接很长的 `not in` 列表；这一项可以给上游提交 PR，C API 已经具备。
 
 ## 8. 待定事项
 
 | 事项 | 需要的依据 | 负责人 |
 |---|---|---|
-| `vec0` 范围预过滤后的召回 | 对照材料范围与回答前检索的前六条结果 | 陈英硕 |
+| 是否在 M1 内实施，还是排到 M3 | [04 长期路线图](04-长期路线图.md) 中 M1 的剩余工作量 | 陈思源 |
+| 范围预过滤后的召回是否不低于现在 | 第 5 步的评测对比 | 陈英硕 |

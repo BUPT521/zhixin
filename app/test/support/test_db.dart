@@ -38,9 +38,9 @@ Future<RawDatabase> openTestDb() async {
 /// 与生产装配一致：仓库拿 [GuardedDatabase]，图片缓存指向临时目录。需要固定
 /// 时钟或数据变更回调时从这里传，不再各自搭一遍。
 ///
-/// 三个用例保留自己的装配，因为要用文件库而不是内存库：`revision_package_test`
-/// 与 `revision_benchmark_test` 要 `VACUUM INTO`、量库大小与整库快照，
-/// `revision_flow_discussion_test` 要在恢复时真正替换库文件。
+/// 两个用例保留自己的装配，因为要用文件库而不是内存库：`revision_package_test`
+/// 要 `VACUUM INTO` 与整库快照，`revision_flow_discussion_test` 要在恢复时
+/// 真正替换库文件。
 class TestRig {
   TestRig({
     required this.raw,
