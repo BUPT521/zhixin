@@ -39,7 +39,7 @@ CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同�
 ```
 lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
-├── app_services.dart                        ← 六组服务（讨论、安排、材料、记忆、设置、数据版本）
+├── app_services.dart                        ← 七组服务（讨论、安排、材料、记忆、设置、数据版本、插件）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
 ├── application/                            ← 用例：对话、学习、计划、记忆、设置
 ├── data/
@@ -52,7 +52,9 @@ lib/
 ├── domain/
 │   ├── models/                             ← 数据对象、值对象（ClockTime、TimeRange、Score、EvidenceId）与序列化
 │   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底与下一步
-├── plugins/                                ← 插件运行时与第一方插件，M1 建立，见 ADR-0010
+├── plugins/
+│   ├── runtime/                            ← 清单、插件接口、四个权限门面、运行时与设置读写接口
+│   └── persona/                            ← 人格插件：对象与 800 字校验、内置人格、app_meta 存储
 └── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
@@ -64,7 +66,7 @@ lib/
 
 ### 下一阶段的模块化建议
 
-建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供六组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及按 [ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 把普通保存之后的手动重读换成流式查询与版本通知。
+建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供七组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及按 [ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 把普通保存之后的手动重读换成流式查询与版本通知。
 
 1. **第一批从安排开始，周视图与读取状态已经拆开。** `plan_page.dart` 原先同时控制周视图、预约与改期、事项列表和页面刷新；现在周视图移到 `plan_week_view.dart`，只接收当前周的数据与选周、点击回调，并自己创建、更新与释放日历的事件控制器，选周、读取与过期结果的处理收进 `application/plan_week_reader.dart`，页面通过 `PlanService` 和 `CapacityService` 获取数据并执行修改。预约冲突检查、整组顺延与撤销沿用现有事务入口，首批以周切换状态、固定安排冲突和一次操作对应一条可撤销提交验收。
 2. **随后收拢讨论与作答的回答入口。** `BuddyTimeline` 已经共用消息与回执展示，讨论和作答仍分别维护模型请求、失败兜底与写回流程，可以先共用回答请求的取消、失败分类和数据代次检查，同时让两个用例继续各自保存讨论消息、作答帮助与判断。`LlmClient` 的三种请求格式与流式解码适合按协议整理，`AgentLoop` 继续统一控制整轮预算、重试和工具调用顺序；这一批以无模型可用、停止生成、工具续接及恢复后拒绝旧回答为验收场景。
@@ -137,12 +139,13 @@ lib/
 
 ## 插件
 
-插件随应用编译，代码放在 `lib/plugins/` 下，运行时只加载第一方插件，不在运行时下载或执行第三方代码。目录与运行时第一版在 M1 建立，形态与权限的取舍见 [ADR-0010](../docs/adr/0010-客户端插件的两种形态与权限.md)，页面口径见 [02 第 3.15 节](../docs/02-产品与交互.md#315-插件与人格)。
+插件随应用编译，运行时只加载第一方插件，不在运行时下载或执行第三方代码。目录与运行时第一版在 M1 建立，形态与权限的取舍见 [ADR-0010](../docs/adr/0010-客户端插件的两种形态与权限.md)，页面口径见 [02 第 3.15 节](../docs/02-产品与交互.md#315-插件与人格)，验收项见 [02 第 8.6 节](../docs/02-产品与交互.md#86-插件与人格验收)。
 
-- 能力插件放在 `lib/plugins/<插件标识>/`，实现统一的插件接口；清单声明标识、名称、版本、作用说明与四项权限，即网络访问的域名、可以读取的数据范围、可以提交的写入类型与是否调用模型。权限在调用点检查：插件只能经应用层提供的接口发起网络请求、读取数据、提交草稿与调用模型，未声明的权限返回失败，不做静默降级；清单随代码编译，用户在设置页逐个启用或停用。
-- 插件不持有数据库连接，也不拼 SQL。它产出草稿，由对应的应用服务校验之后在同一个命令事务里写入；批量导入先给预览，确认之后整批形成一条提交，回执可以撤销。课表导入的提交与撤销规则见 [01 第 5.6 节](../docs/01-ER数据模型.md#56-插件写入与撤销)。
-- 人格插件是文本配置，不含代码，由同一个运行时加载，配置存在 `app_meta`，启用状态与文本随整库备份恢复，不形成提交。人格段落拼在系统提示核心规则之后、记忆之前，位置固定，组装在 `ai/buddy_prompt_builder.dart`，提示词文本按 04 M0 的安排移到 `assets/prompts/`；提示词同时写明人格只影响语气、称呼、讲解风格与篇幅倾向，与用户本轮说明冲突时以本轮为准，与记忆里的讲解偏好冲突时以人格为准。
-- 插件不保存第三方账号的密码、Cookie 或令牌，也不把学习内容发给第三方工具服务，需要登录态的数据本期不读。第一版运行时只做加载、清单校验、设置页启停与四条调用点检查，不做沙箱与代码审核。
+- 运行时基础设施在 `lib/plugins/runtime/`。`plugin_manifest.dart` 是不可变清单，字段为标识、名称、版本、说明、类型与四项权限，`validatePluginManifest` 返回可以直接显示的错误；人格插件声明任意一项权限都算不合格。`plugin.dart` 是 `FirstPartyPlugin` 接口，暴露 `manifest`，能力插件从 `start(PluginAccess)` 进入。`plugin_access.dart` 是网络、读数据、提交草稿与调用模型四个门面，未声明的权限在调用点抛 `PluginPermissionDenied`，不做静默降级；已经声明但本期没有接入的能力抛 `PluginCapabilityUnavailable`。`plugin_runtime.dart` 注册插件、读写启停状态、拒绝未知标识，并通过 `activePersonaPrompt` 给出当前人格段落。`plugin_metadata_store.dart` 是运行时依赖的设置读写窄接口，生产实现是 `lib/data/repository/plugin_metadata_store.dart` 里的 `SettingsPluginMetadataStore`。
+- 目录规则：运行时基础设施放 `lib/plugins/runtime/`，单个插件放 `lib/plugins/<插件标识>/`。插件目录不 import `data/` 与 `ui/`，不持有数据库连接，也不依赖 Flutter；`test/architecture_test.dart` 对这三个边界逐条检查。
+- 人格插件在 `lib/plugins/persona/`。`persona.dart` 定义 `Persona` 与按码位计数的 800 字校验，超过时由 `validatePersonaText` 说明超出的字数，不静默截断；`builtin_personas.dart` 是两个内置人格；`persona_catalog.dart` 读写 `app_meta` 并切换当前启用项；`persona_plugin.dart` 是人格插件的清单与本体，清单不声明权限。人格段落由 `ai/buddy_prompt_builder.dart` 拼在核心规则之后、当前时间与记忆之前，启用人格时另有一条规则说明用户本轮说明、人格与记忆讲解偏好的顺序与边界；停用后下一次请求不再带人格段落，读取到超长文本时用 `truncateCodePoints` 兜底。
+- 设置键写在 `app_meta`：`persona.items` 保存人格 JSON 列表，`persona.active` 保存当前启用人格（空串表示未启用），`plugin.enabled.<插件标识>` 保存启停状态（`1` 或 `0`，没有写过时默认启用）。写入经 `SettingsRepository.setMetadata`，不形成提交，也不进数据版本页；整库备份包含 `app_meta`，恢复或清空之后下一轮回答与重新打开的页面都读恢复后的状态，当前数据包不包含这些设置。
+- 本期做运行时骨架、人格插件、设置页的“插件”与“人格”两个入口以及四条调用点检查；能力插件、课表导入、B 站与 ICS 读取、第三方插件、沙箱与服务端分享码留到 M3。插件不保存第三方账号的密码、Cookie 或令牌，也不把学习内容发给第三方工具服务。
 
 ## 发布
 
