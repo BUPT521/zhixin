@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import '../data/db/drift/queries/evidence_scope.dart';
 import '../data/repository/evidence_repository.dart';
 import '../data/vector/vector_index.dart';
 import '../data/vector/vector_store.dart';
@@ -12,6 +13,7 @@ import '../domain/rules/search_terms.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
 import 'embedding_client.dart';
+import 'service_runtime.dart';
 
 /// 语义检索不可用的原因；失败时调用方继续使用原文与关键词。
 enum SemanticFailure { none, notConfigured, timeout, cancelled, error }
@@ -85,11 +87,13 @@ class SemanticIndexService {
     required this.repository,
     EmbeddingClient? initialClient,
     required this.indexPath,
+    this.indexLogPath,
     this.epoch,
     this.clock = systemClock,
     bool Function(SemanticSource source)? initialShareFilter,
     this.queryTimeout = const Duration(seconds: 4),
     Future<VectorStore> Function()? vectorStoreOpener,
+    this.recordFailure,
   }) : _client = initialClient,
        _canSend = initialShareFilter,
        _openStore = vectorStoreOpener;
@@ -99,6 +103,12 @@ class SemanticIndexService {
   EmbeddingClient? _client;
   bool Function(SemanticSource source)? _canSend;
   final String indexPath;
+
+  /// zvec 引擎的警告日志目录；为空时不写文件日志。
+  final String? indexLogPath;
+
+  /// 索引结构损坏被重建时写本机诊断记录；界面不弹窗。
+  final ModelFailureRecorder? recordFailure;
 
   /// 当前嵌入来源；为空表示没有配置，语义检索与索引都不可用。
   EmbeddingClient? get client => _client;
@@ -208,13 +218,25 @@ class SemanticIndexService {
     final opener = _openStore;
     final store = opener != null
         ? await opener()
-        : await IsolateVectorStore.open(path: indexPath, spec: spec);
+        : await IsolateVectorStore.open(
+            path: indexPath,
+            spec: spec,
+            logDirectory: indexLogPath,
+            onRebuild: _recordRebuild,
+          );
     if (generation != _generation) {
       await store.close();
       _requireCurrent(generation);
     }
     _store = store;
     return store;
+  }
+
+  /// 结构损坏时重建空索引只记本机诊断，不弹窗、不打断检索。
+  void _recordRebuild(String reason) {
+    final record = recordFailure;
+    if (record == null) return;
+    record(_SemanticIndexRebuilt(reason), null, kind: 'semantic_index');
   }
 
   /// 按当前数据补建索引；可以重复执行，已经是最新版本的来源会跳过。
@@ -257,7 +279,7 @@ class SemanticIndexService {
     }
     final now = clock();
     try {
-      // 先读数据代次再打开索引：打开、加载 sqlite-vec 与建表都由后台 isolate
+      // 先读数据代次再打开索引：打开、初始化 zvec 引擎与建表都由后台 isolate
       // 承接，界面线程在这里只等一个 Future，启动首帧不再执行这些同步调用。
       final currentEpoch = await epoch?.call() ?? '0';
       final store = await _requireStore(generation);
@@ -413,6 +435,14 @@ class SemanticIndexService {
     if (cancelToken?.cancelled == true) {
       return const SemanticResult(failure: SemanticFailure.cancelled);
     }
+    // 回答前检索没有目标归属、也没有当前讨论与带入来源时，业务规则一条也
+    // 不放行，这里直接返回空结果，不再嵌入与检索。
+    if (scope.isAnswerContext &&
+        scope.goalId == null &&
+        scope.conversationId == null &&
+        scope.broughtIdentities.isEmpty) {
+      return const SemanticResult();
+    }
     final embedStarted = Stopwatch()..start();
     List<double> vector;
     try {
@@ -447,12 +477,16 @@ class SemanticIndexService {
       final store = await _requireStore(generation);
       final entries = await store.entryCount();
       _requireCurrent(generation);
-      // 全部记录的范围里，四倍候选一般够用；限定目标或材料时，范围外的向量
-      // 更容易占满候选，取二十倍并封顶 400，避免收窄范围后漏召回。
-      final candidateLimit = scope.limitsToAll ? limit * 4 : limit * 20;
+      // 范围能下推时引擎在索引内部先过滤，候选不再被范围外的向量占满，
+      // 保留四倍；不能下推的目标范围仍取二十倍并封顶 400，避免漏召回。
+      final prefilter = vectorPrefilterFor(scope);
+      final candidateLimit = prefilter == null
+          ? (scope.limitsToAll ? limit * 4 : limit * 20)
+          : limit * 4;
       final candidates = await store.search(
         vector,
         k: math.min(400, math.max(limit, candidateLimit)),
+        prefilter: prefilter,
       );
       _requireCurrent(generation);
       final indexMs = indexStarted.elapsedMilliseconds;
@@ -617,4 +651,14 @@ class SemanticIndexStats {
   final String modelKey;
   final String? builtAt;
   final IndexRefreshResult? lastRefresh;
+}
+
+/// 索引结构损坏被重建时交给本机诊断记录的说明；原文与调用栈不进入界面。
+class _SemanticIndexRebuilt implements Exception {
+  const _SemanticIndexRebuilt(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => '语义索引结构损坏，已重建空索引：$reason';
 }

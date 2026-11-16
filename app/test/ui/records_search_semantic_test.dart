@@ -14,6 +14,13 @@ import 'package:zhixin/ui/records_search_page.dart';
 /// 与只有语义命中的情况各自给出应有的状态，而不是混成一个空态。
 const _spec = EmbeddingModelSpec(id: 'ui-test-embed', dim: 4, provider: 'test');
 
+/// 这些用例走应用根创建的真实 zvec 索引，没有本机 C 库时刷新必然失败；
+/// 没有设置库路径时整组跳过，CI 与本机按同一套环境变量运行。
+final _skipWithoutZvec =
+    (Platform.environment['ZVEC_LIBRARY_PATH'] ?? '').isNotEmpty
+    ? null
+    : '未设置 ZVEC_LIBRARY_PATH，跳过真实 zvec 的界面用例';
+
 class _FailingClient implements EmbeddingClient {
   @override
   EmbeddingModelSpec get spec => _spec;
@@ -29,6 +36,7 @@ class _FailingClient implements EmbeddingClient {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  if (_skipWithoutZvec != null) stdout.writeln(_skipWithoutZvec);
   late Directory directory;
   AppScopeState? scope;
 
@@ -52,7 +60,18 @@ void main() {
     await scope?.library.semanticIndex.close();
     await scope?.testing.db.close();
     scope = null;
-    await directory.delete(recursive: true);
+    try {
+      await directory.delete(recursive: true);
+    } on FileSystemException {
+      // zvec 的原生库偶尔在 close() 返回之后还短暂占着几个索引文件，Windows
+      // 会因此拒绝删除目录；稍等再删，删不掉也只是留一个临时目录。
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      try {
+        await directory.delete(recursive: true);
+      } on FileSystemException {
+        // 留给系统清理临时目录。
+      }
+    }
   });
 
   Future<void> pumpUntil(
@@ -175,7 +194,7 @@ void main() {
     expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
-  });
+  }, skip: _skipWithoutZvec != null);
 
   testWidgets('语义失败只在列表上方加一行提示', (tester) async {
     await openApp(tester);
@@ -209,7 +228,7 @@ void main() {
     expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
-  });
+  }, skip: _skipWithoutZvec != null);
 
   testWidgets('语义索引为空时说明还没有内容，而不是没有找到', (tester) async {
     await openApp(tester);
@@ -240,7 +259,7 @@ void main() {
     expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await drain(tester);
-  });
+  }, skip: _skipWithoutZvec != null);
 
   testWidgets('只有语义命中时不显示空态', (tester) async {
     await openApp(tester);
@@ -280,5 +299,5 @@ void main() {
     expect(find.textContaining('没有找到「行列式」'), findsNothing);
     expect(tester.takeException(), isNull);
     await drain(tester);
-  });
+  }, skip: _skipWithoutZvec != null);
 }

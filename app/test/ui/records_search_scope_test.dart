@@ -376,16 +376,17 @@ void main() {
     });
     await settle(tester);
 
-    // 已经配置了嵌入来源，但向量库路径被一个目录占住，打开就会失败。
+    // 已经配置了嵌入来源，但向量索引根目录的位置被一个同名文件占住，索引打开
+    // 时无法创建目录，读取索引状态因此失败。
     await tester.runAsync(() async {
       scope!.applyEmbeddingConfig(
         const EmbeddingConfig(enabled: true, provider: 'local', dim: 4),
         refresh: false,
       );
       final path = scope!.paths.vectorIndexPath;
-      final file = File(path);
-      if (file.existsSync()) file.deleteSync();
-      Directory(path).createSync(recursive: true);
+      final existing = Directory(path);
+      if (existing.existsSync()) existing.deleteSync(recursive: true);
+      File(path).createSync(recursive: true);
     });
 
     await tester.tap(find.text('记录').last);

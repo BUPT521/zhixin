@@ -3,7 +3,7 @@ import 'vector_index.dart';
 
 /// 语义索引的异步入口。
 ///
-/// 界面线程只调用这些方法，SQLite 的打开、建表、读写都由实现放到后台
+/// 界面线程只调用这些方法，索引的打开、建表、读写都由实现放到后台
 /// isolate 里完成；句柄本身不含数据库连接，可以安全地留在界面侧。
 abstract interface class VectorStore {
   EmbeddingModelSpec get spec;

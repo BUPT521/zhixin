@@ -181,8 +181,10 @@ class AppScopeState extends State<AppScope> {
   SemanticIndexService get _semantic => __semantic ??= SemanticIndexService(
     repository: _evidenceRepository,
     indexPath: paths.vectorIndexPath,
+    indexLogPath: paths.vectorLogPath,
     epoch: () async => '${await _engine.headId(_connection!)}',
     clock: clock,
+    recordFailure: crashLog.record,
   );
 
   late final CrossSessionService _crossSession = CrossSessionService(
@@ -478,7 +480,7 @@ class AppScopeState extends State<AppScope> {
     _restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
     embeddingConfig = await _embeddingStore.read();
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
-    // 向量库的打开、加载 sqlite-vec 与建表都在后台 isolate 里进行，首帧只发起
+    // 向量库的打开、初始化 zvec 引擎与建表都在后台 isolate 里进行，首帧只发起
     // 请求，不等待它完成。
     applyEmbeddingConfig(embeddingConfig);
     // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在

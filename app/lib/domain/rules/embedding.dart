@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 /// 文本处理版本：切块方式或规范化方式改变时递增，旧索引据此失效。
 const String semanticTextVersion = 'zhixin-text-v1';
@@ -66,20 +65,6 @@ List<({int index, String text})> semanticChunks(
   return chunks;
 }
 
-/// 把向量写成小端 float32 字节；sqlite3_vec 只接受这种格式。
-Uint8List encodeVector(List<double> values) {
-  final floats = Float32List.fromList(values);
-  return floats.buffer.asUint8List(floats.offsetInBytes, floats.lengthInBytes);
-}
-
-List<double> decodeVector(Uint8List bytes) {
-  final floats = bytes.buffer.asFloat32List(
-    bytes.offsetInBytes,
-    bytes.length ~/ 4,
-  );
-  return List<double>.from(floats);
-}
-
 /// 单位化向量，避免检索结果受长度影响。
 List<double> normalizeVector(List<double> values) {
   var sum = 0.0;
@@ -91,7 +76,7 @@ List<double> normalizeVector(List<double> values) {
   return [for (final value in values) value * scale];
 }
 
-/// 余弦距离（sqlite3_vec 的 `distance_metric=cosine` 距离）越小越相似。
+/// 余弦距离越小越相似，取值 0 到 2；zvec 的 Flat 余弦距离与此口径相同。
 double cosineDistance(List<double> left, List<double> right) {
   final length = math.min(left.length, right.length);
   var dot = 0.0;

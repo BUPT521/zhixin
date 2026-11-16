@@ -2,15 +2,15 @@ import 'dart:async';
 import 'dart:isolate';
 
 import '../../domain/rules/embedding.dart';
-import 'sqlite_vector_index.dart';
 import 'vector_index.dart';
 import 'vector_store.dart';
+import 'zvec_vector_index.dart';
 
 /// 后台 isolate 里的向量索引句柄。
 ///
-/// SQLite 的连接与 sqlite-vec 扩展只存在于后台线程，界面线程发送写入与查询
-/// 请求、等待结果，因此打开索引、建表与检索都不会占用界面帧。所有请求按发送
-/// 顺序执行，同一时刻只有一个线程碰这份库。
+/// zvec 的句柄与原生内存只存在于后台线程，界面线程发送写入与查询请求、等待
+/// 结果，因此打开索引、建表与检索都不会占用界面帧。所有请求按发送顺序执行，
+/// 同一时刻只有一个线程碰这份索引。
 class IsolateVectorStore implements VectorStore {
   IsolateVectorStore._(this.spec, this._responses);
 
@@ -27,16 +27,22 @@ class IsolateVectorStore implements VectorStore {
   bool _closed = false;
   Future<void>? _closing;
 
-  /// 打开索引库；sqlite-vec 的加载与建表都在后台线程完成。
+  /// 打开索引；引擎初始化、打开 collection 与建表都在后台线程完成。
+  ///
+  /// [path] 是 `filesDir/vector_index/` 这一层目录，[logDirectory] 给出时把 zvec
+  /// 的警告日志写进缓存目录。索引结构损坏被重建时，[onRebuild] 在界面线程收到
+  /// 一次说明，用于写本机诊断记录。
   static Future<IsolateVectorStore> open({
     required String path,
     required EmbeddingModelSpec spec,
-    bool inMemory = false,
+    String? logDirectory,
+    void Function(String reason)? onRebuild,
   }) async {
     final responses = ReceivePort();
     final control = ReceivePort();
     final store = IsolateVectorStore._(spec, responses);
     final ready = Completer<void>();
+    String? rebuiltReason;
 
     final responsesSubscription = responses.listen((message) {
       if (!ready.isCompleted) {
@@ -44,6 +50,7 @@ class IsolateVectorStore implements VectorStore {
           final commands = message['commands'];
           if (commands is SendPort) {
             store._commands = commands;
+            rebuiltReason = message['rebuilt'] as String?;
             ready.complete();
             return;
           }
@@ -77,7 +84,7 @@ class IsolateVectorStore implements VectorStore {
           responses: responses.sendPort,
           path: path,
           spec: spec.toJson(),
-          inMemory: inMemory,
+          logDirectory: logDirectory,
         ),
         onError: control.sendPort,
         onExit: control.sendPort,
@@ -87,6 +94,8 @@ class IsolateVectorStore implements VectorStore {
       store._control = control;
       store._controlSubscription = controlSubscription;
       await ready.future;
+      final rebuilt = rebuiltReason;
+      if (rebuilt != null && rebuilt.isNotEmpty) onRebuild?.call(rebuilt);
       return store;
     } catch (_) {
       await responsesSubscription.cancel();
@@ -247,26 +256,28 @@ class _SpawnRequest {
     required this.responses,
     required this.path,
     required this.spec,
-    required this.inMemory,
+    required this.logDirectory,
   });
 
   final SendPort responses;
   final String path;
   final Map<String, Object?> spec;
-  final bool inMemory;
+  final String? logDirectory;
 }
 
-/// 后台线程入口：打开索引库，然后按顺序执行界面发来的请求。
+/// 后台线程入口：打开索引，然后按顺序执行界面发来的请求。
 void _vectorStoreMain(_SpawnRequest request) {
   final commands = ReceivePort();
   VectorIndex index;
+  String? rebuiltReason;
   try {
     final spec = EmbeddingModelSpec.fromJson(request.spec);
     if (spec == null) throw const FormatException('嵌入模型信息不完整');
-    index = SqliteVectorIndex.open(
-      path: request.path,
+    index = ZvecVectorIndex.open(
+      rootPath: request.path,
       spec: spec,
-      inMemory: request.inMemory,
+      logDirectory: request.logDirectory,
+      onRebuild: (reason) => rebuiltReason = reason,
     );
   } catch (error, stack) {
     request.responses.send({
@@ -277,7 +288,11 @@ void _vectorStoreMain(_SpawnRequest request) {
     commands.close();
     return;
   }
-  request.responses.send({'ready': true, 'commands': commands.sendPort});
+  request.responses.send({
+    'ready': true,
+    'commands': commands.sendPort,
+    'rebuilt': rebuiltReason,
+  });
 
   commands.listen((message) {
     if (message is! Map) return;

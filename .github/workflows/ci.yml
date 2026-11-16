@@ -45,6 +45,36 @@ jobs:
           cache: true
 
       - run: flutter pub get
+
+      # zvec 的 C 库不随 Dart 包发布：测试前下载预编译包，按 SHA-256 校验后解压，
+      # 让测试通过 ZVEC_LIBRARY_PATH 加载它（ADR-0022 实施方案第 7 节）。
+      # 缓存下载目录，命中时省掉 40 MB 下载与 GitHub Releases 偶发的 504。
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/zvec-dart
+          key: zvec-sdk-${{ runner.os }}-0.8.0
+
+      - name: 下载并校验 zvec C 库
+        run: |
+          set -euo pipefail
+          VERSION=0.8.0
+          SHA=bc7097a293ec1677ac84c46e76afef880359766cd1e1cdf2494ef669237b134a
+          CACHE="$HOME/.cache/zvec-dart"
+          ARCHIVE="$CACHE/zvec-sdk-linux-amd64-$VERSION.tar.gz"
+          SDK_DIR="$CACHE/linux-amd64-$VERSION"
+          mkdir -p "$CACHE"
+          # 缓存里的归档也可能不完整：校验不过就重新下载，解压前一定再核对一次。
+          if [ ! -f "$ARCHIVE" ] || ! echo "$SHA  $ARCHIVE" | sha256sum -c - >/dev/null 2>&1; then
+            curl --fail --location --retry 3 \
+              --output "$ARCHIVE" \
+              "https://github.com/alibaba/zvec/releases/download/v$VERSION/zvec-sdk-linux-amd64.tar.gz"
+          fi
+          echo "$SHA  $ARCHIVE" | sha256sum -c -
+          rm -rf "$SDK_DIR"
+          mkdir -p "$SDK_DIR"
+          tar -xzf "$ARCHIVE" -C "$SDK_DIR"
+          echo "ZVEC_LIBRARY_PATH=$SDK_DIR/lib/libzvec_c_api.so" >> "$GITHUB_ENV"
+
       - run: dart run build_runner build
       - run: git diff --exit-code
       - run: dart format --output=none --set-exit-if-changed lib test
@@ -139,6 +169,12 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('app/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # zvec 的 Gradle 任务从 GitHub Releases 下载 C 库；缓存归档，避免 504 时构建失败。
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/zvec-dart
+          key: zvec-sdk-${{ runner.os }}-0.8.0-android-arm64
+
       - run: flutter pub get
       # 验收用真机都是 arm64：三 ABI 一起打约 160 MB，只打 arm64 约 87 MB。
       - run: flutter build apk --debug --target-platform android-arm64
@@ -188,6 +224,12 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('app/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
+
+      # 同 build-apk：缓存 zvec 的 C 库归档，避免 GitHub Releases 偶发 504。
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/zvec-dart
+          key: zvec-sdk-${{ runner.os }}-0.8.0-android-arm64
 
       # 缺 secret 时直接红，别悄悄出一只 debug 签名的包。
       - name: 检查签名 secrets

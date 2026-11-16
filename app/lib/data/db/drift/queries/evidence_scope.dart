@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 
 import '../../../../domain/models/evidence.dart';
 import '../../../../domain/models/evidence_id.dart';
+import '../../../vector/vector_index.dart';
 import '../app_database.dart';
 import '../tables.dart';
 
@@ -129,6 +130,31 @@ class EvidenceScopeRule {
   final context = GenerationContext.fromDb(db)..hasMultipleTables = true;
   expression.writeInto(context);
   return (sql: context.sql, values: context.boundVariables.cast<Object>());
+}
+
+/// 把检索范围变成语义索引可以下推的预过滤；返回空表示不预过滤。
+///
+/// 只使用写入后不会改变的属性：材料页所属材料、消息与作答所属讨论、来源键。
+/// 目标归属可以在之后修改，写进索引会过期，所以限定目标时不预过滤。预过滤
+/// 只会放宽：[hitInScope] 判为在范围内的来源在两侧实现里都必须被放行。
+VectorPrefilter? vectorPrefilterFor(EvidenceScope scope) {
+  if (scope.isUserSearch) {
+    return switch (scope.kind) {
+      EvidenceScopeKind.all => null,
+      EvidenceScopeKind.goal => null,
+      EvidenceScopeKind.material => MaterialVectorPrefilter(scope.materialId!),
+    };
+  }
+  // 回答前检索没有目标归属时只放行当前讨论与本轮带入的来源；有目标归属时
+  // 没有可下推的条件，交给业务库按目标与无归属判断。
+  if (scope.goalId != null) return null;
+  return ConversationVectorPrefilter(
+    conversationId: scope.conversationId,
+    sourceKeys: {
+      for (final identity in scope.broughtIdentities)
+        if (identity.isNotEmpty) identity,
+    },
+  );
 }
 
 /// 这条命中是否仍在给定范围内：用 [EvidenceScopeRule] 与记录本身的编号核对。

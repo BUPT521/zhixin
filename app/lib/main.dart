@@ -12,6 +12,7 @@ import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
 import 'platform/prompt_assets.dart';
 import 'platform/theme_mode_store.dart';
+import 'platform/zvec_license.dart';
 import 'ui/theme_mode_controller.dart';
 
 /// 压住第一帧的上限：超过这个时间就露出加载页，不让用户停在一张不会动的
@@ -27,6 +28,7 @@ Future<void> main() async {
   FirstFrameGate.defer();
   Timer(firstFrameLimit, FirstFrameGate.release);
   registerAppLicense();
+  registerZvecLicense();
   final paths = await _resolvePaths();
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);
   if (crashLog != null) _installErrorHandlers(crashLog);
