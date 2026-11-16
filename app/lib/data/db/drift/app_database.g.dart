@@ -12952,7 +12952,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<MemoryRow> memoriesForContext(
     String? now,
-    String? scope,
+    String scope,
     int? rowLimit,
   ) {
     return customSelect(
