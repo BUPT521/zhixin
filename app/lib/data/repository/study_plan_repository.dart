@@ -9,6 +9,7 @@ import '../../domain/models/study_plan.dart';
 import '../../domain/rules/study_plan_steps.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 
 /// 系统学习计划与它的步骤（01 `study_plan` / `plan_item`）。
@@ -22,11 +23,11 @@ class StudyPlanRepository {
   final RawDatabase _db;
   final Clock _clock;
 
-  Future<int> create({
+  Future<String> create({
     required String title,
-    int? materialId,
-    int? goalId,
-    int? conversationId,
+    String? materialId,
+    String? goalId,
+    String? conversationId,
     int? pageFrom,
     int? pageTo,
     int? currentPage,
@@ -44,11 +45,11 @@ class StudyPlanRepository {
     );
   }
 
-  Future<int> _insertPlan({
+  Future<String> _insertPlan({
     required String title,
-    required int? materialId,
-    required int? goalId,
-    required int? conversationId,
+    required String? materialId,
+    required String? goalId,
+    required String? conversationId,
     required int? pageFrom,
     required int? pageTo,
     required int? currentPage,
@@ -57,8 +58,10 @@ class StudyPlanRepository {
     final text = title.trim();
     if (text.isEmpty) throw ArgumentError('学习计划的标题不能为空');
     final now = formatDateTime(_clock());
-    return executor.writeGenerated(
+    final id = newUuidV7();
+    await executor.writeGenerated(
       (db) => db.insertStudyPlan(
+        id,
         materialId,
         goalId,
         conversationId,
@@ -70,15 +73,16 @@ class StudyPlanRepository {
         now,
       ),
     );
+    return id;
   }
 
   /// 在同一事务内创建学习计划及其全部步骤。
-  Future<int> createWithDrafts({
+  Future<String> createWithDrafts({
     required String title,
     required List<StudyStepDraft> drafts,
-    int? materialId,
-    int? goalId,
-    int? conversationId,
+    String? materialId,
+    String? goalId,
+    String? conversationId,
     int? pageFrom,
     int? pageTo,
     int? currentPage,
@@ -102,6 +106,7 @@ class StudyPlanRepository {
       if (stepTitle.isEmpty) continue;
       await txn.writeGenerated(
         (db) => db.insertStudyPlanStep(
+          newUuidV7(),
           goalId,
           planId,
           seq++,
@@ -121,7 +126,7 @@ class StudyPlanRepository {
 
   /// 按顺序把草案写成学习事项；计划的材料、目标与来源讨论一并带上。
   Future<void> addDrafts(
-    int planId,
+    String planId,
     List<StudyStepDraft> drafts, {
     WriteTransaction? transaction,
   }) async {
@@ -138,6 +143,7 @@ class StudyPlanRepository {
       if (title.isEmpty) continue;
       await txn.writeGenerated(
         (db) => db.insertStudyPlanStep(
+          newUuidV7(),
           plan.goalId,
           planId,
           seq++,
@@ -216,10 +222,10 @@ class StudyPlanRepository {
   );
 
   static PlanItem _stepItem({
-    required int id,
-    required int? goalId,
-    required int? conversationId,
-    required int? studyPlanId,
+    required String id,
+    required String? goalId,
+    required String? conversationId,
+    required String? studyPlanId,
     required int? seq,
     required String title,
     required String? note,
@@ -255,7 +261,7 @@ class StudyPlanRepository {
     updatedAt: requiredDateTime(updatedAt),
   );
 
-  Future<StudyPlan?> byId(int id) async {
+  Future<StudyPlan?> byId(String id) async {
     final rows = await _planRows(id: id, rowLimit: 1);
     return rows.isEmpty ? null : rows.first;
   }
@@ -278,7 +284,7 @@ class StudyPlanRepository {
   /// 一条语句覆盖按标识取、按状态筛与按时间排：不生效的条件由空参数关掉；
   /// `rowLimit` 传空表示不截断。
   Future<List<StudyPlan>> _planRows({
-    int? id,
+    String? id,
     bool openOnly = false,
     bool activeOnly = false,
     bool statusFirst = true,
@@ -302,13 +308,13 @@ class StudyPlanRepository {
   }
 
   /// 计划里的步骤，按顺序返回；每一步都是 `plan_item`。
-  Future<List<PlanItem>> steps(int planId) async {
+  Future<List<PlanItem>> steps(String planId) async {
     final rows = await _db.selectGenerated((db) => db.planSteps(planId).get());
     return rows.map(_stepOf).toList(growable: false);
   }
 
   /// 多份计划的全部步骤，按计划与顺序返回；安排页的下一步与进度都从这里算。
-  Future<List<PlanItem>> stepsForPlans(Iterable<int> planIds) async {
+  Future<List<PlanItem>> stepsForPlans(Iterable<String> planIds) async {
     final ids = {...planIds};
     if (ids.isEmpty) return const [];
     final rows = await _db.selectGenerated(
@@ -319,9 +325,9 @@ class StudyPlanRepository {
   }
 
   Future<void> bindDiscussionToStep({
-    required int planId,
-    required int stepId,
-    required int conversationId,
+    required String planId,
+    required String stepId,
+    required String conversationId,
     WriteTransaction? transaction,
   }) async {
     final changed = await writeExecutor(transaction, _db).writeGenerated(
@@ -332,9 +338,9 @@ class StudyPlanRepository {
 
   /// 改一步的状态；进行中的步骤同时清掉同计划里其他进行中的步骤。
   Future<void> setStepStatus(
-    int stepId,
+    String stepId,
     PlanItemStatus status, {
-    int? expectedPlanId,
+    String? expectedPlanId,
     WriteTransaction? transaction,
   }) async {
     final txn = writeExecutor(transaction, _db);
@@ -353,7 +359,7 @@ class StudyPlanRepository {
 
   /// 所有事项状态入口共用计划步骤的唯一进行中规则。
   Future<void> setItemStatus(
-    int itemId,
+    String itemId,
     PlanItemStatus status, {
     WriteTransaction? transaction,
   }) async {
@@ -369,9 +375,9 @@ class StudyPlanRepository {
 
   Future<void> _setItemStatus(
     RawExecutor txn,
-    int itemId,
+    String itemId,
     PlanItemStatus status,
-    int? planId,
+    String? planId,
   ) async {
     final change = studyStepStatusChange(status, planId: planId);
     final now = formatDateTime(_clock());
@@ -415,7 +421,7 @@ class StudyPlanRepository {
   }
 
   Future<void> setStatus(
-    int planId,
+    String planId,
     StudyPlanStatus status, {
     WriteTransaction? transaction,
   }) async {
@@ -425,7 +431,7 @@ class StudyPlanRepository {
     );
   }
 
-  Future<void> _recompute(RawExecutor executor, int planId) async {
+  Future<void> _recompute(RawExecutor executor, String planId) async {
     final plan = await _plainPlan(planId, executor: executor);
     if (plan == null) return;
     final rows = await executor.selectGenerated(
@@ -458,7 +464,7 @@ class StudyPlanRepository {
     );
   }
 
-  Future<StudyPlan?> _plainPlan(int id, {RawExecutor? executor}) async {
+  Future<StudyPlan?> _plainPlan(String id, {RawExecutor? executor}) async {
     final row = await (executor ?? _db).selectGenerated(
       (db) => db.studyPlanById(id).getSingleOrNull(),
     );

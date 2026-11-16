@@ -41,8 +41,8 @@ void main() {
       app(
         DiscussionMessage(
           message: const ChatMessage(
-            id: 1,
-            conversationId: 1,
+            id: 'msg-1',
+            conversationId: 'conv-1',
             role: MessageRole.assistant,
             content: '## 看条件\n\n**重点**是 `P(B) > 0`。',
           ),
@@ -93,8 +93,8 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
       app(
         DiscussionMessage(
           message: const ChatMessage(
-            id: 1,
-            conversationId: 1,
+            id: 'msg-1',
+            conversationId: 'conv-1',
             role: MessageRole.assistant,
             content: '先看定义，再回到这一步。',
           ),
@@ -126,16 +126,16 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
         SingleChildScrollView(
           child: DiscussionMessage(
             message: ChatMessage(
-              id: 1,
-              conversationId: 1,
+              id: 'msg-1',
+              conversationId: 'conv-1',
               role: MessageRole.assistant,
               content: '下面两条材料的核对结果不同。',
               payload: ChatMessagePayload.decode('''
 {
   "citations": [
-    {"material_id": 1, "material_title": "概率论", "page_no": 7,
+    {"material_id": "mat-1", "material_title": "概率论", "page_no": 7,
      "quote": "概率只在所给事件中重新计算。", "verified": true},
-    {"material_id": 2, "material_title": "习题", "page_no": 9,
+    {"material_id": "mat-2", "material_title": "习题", "page_no": 9,
      "quote": "还未核对的引文。", "verified": false}
   ]
 }
@@ -168,8 +168,8 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
       app(
         DiscussionMessage(
           message: const ChatMessage(
-            id: 1,
-            conversationId: 1,
+            id: 'msg-1',
+            conversationId: 'conv-1',
             role: MessageRole.assistant,
             content: '先记录一道题。',
             payload: ChatMessagePayload(fromModel: false),
@@ -187,8 +187,8 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
       app(
         DiscussionMessage(
           message: const ChatMessage(
-            id: 1,
-            conversationId: 1,
+            id: 'msg-1',
+            conversationId: 'conv-1',
             role: MessageRole.assistant,
             content: '先看定义',
             payload: ChatMessagePayload(fromModel: false, stopped: true),
@@ -208,8 +208,8 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
       app(
         DiscussionMessage(
           message: const ChatMessage(
-            id: 1,
-            conversationId: 1,
+            id: 'msg-1',
+            conversationId: 'conv-1',
             role: MessageRole.assistant,
             content: '先看定义',
             payload: ChatMessagePayload(fromModel: true, interrupted: true),

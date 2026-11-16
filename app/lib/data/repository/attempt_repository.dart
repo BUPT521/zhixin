@@ -5,6 +5,7 @@ import '../../domain/models/question.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 
 /// 作答记录（01 `attempt`）：直接挂在一条学习记录上。
@@ -17,7 +18,7 @@ class AttemptRepository {
   final RawDatabase _db;
   final Clock _clock;
 
-  Future<List<Attempt>> attemptsFor(int conversationId) async {
+  Future<List<Attempt>> attemptsFor(String conversationId) async {
     final rows = await _db.selectGenerated(
       (db) => db.attemptsForConversation(conversationId).get(),
     );
@@ -45,7 +46,7 @@ class AttemptRepository {
   ///
   /// 讨论与作答原先按尝试逐条读场次，一条记录答过几次就多几次读取；这里
   /// 一次联表取最近一个有目标的场次。
-  Future<int?> recentSessionGoal(int conversationId) async {
+  Future<String?> recentSessionGoal(String conversationId) async {
     final rows = await _db.selectGenerated(
       (db) => db.sessionGoalOfConversation(conversationId).get(),
     );
@@ -57,8 +58,8 @@ class AttemptRepository {
   /// 只取这道题自己的作答记录，避免其他课程的卡点进入本次上下文；当前这次
   /// 尝试不重复带入。
   Future<List<Attempt>> priorFeedback(
-    int conversationId, {
-    int? excludeAttemptId,
+    String conversationId, {
+    String? excludeAttemptId,
     int limit = 3,
   }) async {
     final rows = await _db.selectGenerated(
@@ -71,14 +72,17 @@ class AttemptRepository {
         .toList(growable: false);
   }
 
-  Future<Attempt?> latestSubmitted(int conversationId) async {
+  Future<Attempt?> latestSubmitted(String conversationId) async {
     final row = await _db.selectGenerated(
       (db) => db.latestSubmittedAttempt(conversationId).getSingleOrNull(),
     );
     return row == null ? null : _attemptOf(row);
   }
 
-  Future<Attempt?> attemptById(int id, {WriteTransaction? transaction}) async {
+  Future<Attempt?> attemptById(
+    String id, {
+    WriteTransaction? transaction,
+  }) async {
     final executor = writeExecutor(transaction, _db);
     final row = await executor.selectGenerated(
       (db) => db.attemptById(id).getSingleOrNull(),
@@ -92,9 +96,9 @@ class AttemptRepository {
   /// `WHERE NOT EXISTS` 已经能看到前一个写入的草稿，因此只会留下一条。
   /// 调用方仍应把这段放进一次写入事务里，让场次与草稿属于同一条业务命令。
   Future<Attempt> ensureOpenAttempt(
-    int conversationId, {
-    int? sessionId,
-    int? redoOfAttemptId,
+    String conversationId, {
+    String? sessionId,
+    String? redoOfAttemptId,
     bool delayed = false,
     WriteTransaction? transaction,
   }) async {
@@ -111,6 +115,7 @@ class AttemptRepository {
       final now = formatDateTime(_clock());
       await writer.writeGenerated(
         (db) => db.insertOpenAttempt(
+          newUuidV7(),
           conversationId,
           sessionId,
           redoOfAttemptId,
@@ -148,7 +153,7 @@ class AttemptRepository {
   /// 草稿可以只有自评或依据而没有答案；空字段写回空值，下一次打开时不会
   /// 留下上一次已经清掉的内容。核对依据不属于尝试本身，由调用方写入判断表。
   Future<void> saveDraft(
-    int attemptId, {
+    String attemptId, {
     required String answer,
     String? solution,
     bool? isCorrect,
@@ -174,7 +179,7 @@ class AttemptRepository {
   }
 
   Future<void> appendHelp(
-    int attemptId,
+    String attemptId,
     HelpEntry help, {
     WriteTransaction? transaction,
   }) async {
@@ -199,7 +204,7 @@ class AttemptRepository {
   /// 帮助列表本身只追加，这里按整份列表写回；没有找到这条尝试或这一条帮助时
   /// 抛出，由调用方决定提示。
   Future<HelpEntry> updateHelp(
-    int attemptId,
+    String attemptId,
     int helpIndex,
     HelpEntry Function(HelpEntry help) change, {
     WriteTransaction? transaction,
@@ -224,7 +229,7 @@ class AttemptRepository {
 
   /// 提交一次作答；对错与独立性都可以留空，未提交尝试才补齐字段。
   Future<int> submit(
-    int attemptId, {
+    String attemptId, {
     required String answer,
     String? solution,
     required bool? isCorrect,

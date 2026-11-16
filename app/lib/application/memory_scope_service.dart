@@ -16,8 +16,8 @@ class MemoryScopeService {
   ///
   /// [record] 是调用方已经读到的记录：讨论发送与作答求助在进入这里之前都要
   /// 先读记录，传进来就不再按编号读一次；传空时按 [conversationId] 读取。
-  Future<({int? goalId, String? scope})> resolve(
-    int conversationId, {
+  Future<({String? goalId, String? scope})> resolve(
+    String conversationId, {
     ConversationRecord? record,
   }) async {
     final current = record ?? await conversations.byId(conversationId);

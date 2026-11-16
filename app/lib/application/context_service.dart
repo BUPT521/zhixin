@@ -167,8 +167,8 @@ class ContextService {
       // 一次检索带回各类候选，按“材料页、较早讨论、题目与作答”的顺序各取
       // 若干条，再合成五条左右的摘录；不按类别截断 SQL 候选，也不重复读表。
       final materialHitsFound = <MaterialHit>[];
-      final relatedFound = <(int, RelatedRecord)>[];
-      final relatedSeen = <int>{};
+      final relatedFound = <(String, RelatedRecord)>[];
+      final relatedSeen = <String>{};
       final otherHits = <EvidenceHit>[];
       var chosen = 0;
       for (final hit in bundle.hits) {
@@ -267,8 +267,8 @@ class ContextService {
   }
 
   /// 本轮带入的作答标识，交给“最近作答”按主键放行。
-  static Set<int> _broughtAttemptIds(Set<String> identities) {
-    final ids = <int>{};
+  static Set<String> _broughtAttemptIds(Set<String> identities) {
+    final ids = <String>{};
     for (final identity in identities) {
       final parsed = EvidenceId.tryParse(identity);
       if (parsed?.kind != 'attempt') continue;

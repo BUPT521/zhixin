@@ -23,7 +23,7 @@ class ContinueEntry {
   DateTime? get lastActiveAt => plan?.updatedAt ?? record?.lastActiveAt;
 
   int get _kindOrder => hasDraft ? 0 : (isPlan ? 1 : 2);
-  int get _id => plan?.id ?? record!.id;
+  String get _id => plan?.id ?? record!.id;
 }
 
 /// 首页顶部的一屏摘要：当前活动与继续入口。

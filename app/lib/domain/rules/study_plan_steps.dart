@@ -18,7 +18,7 @@ class StudyStepStatusChange {
   final PlanItemStatus status;
 
   /// 步骤所属的计划；为空表示不属于任何计划，只有状态本身要写。
-  final int? planId;
+  final String? planId;
 
   /// 把同计划里其他进行中的步骤改回待开始，保证只有一个进行中。
   final bool resetOtherActive;
@@ -33,7 +33,7 @@ class StudyStepStatusChange {
 /// 按步骤状态与所属计划算出要连带写入的内容。
 StudyStepStatusChange studyStepStatusChange(
   PlanItemStatus status, {
-  int? planId,
+  String? planId,
 }) => StudyStepStatusChange(
   status: status,
   planId: planId,

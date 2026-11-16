@@ -33,7 +33,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   bool _enabled = false;
   String _provider = 'remote';
   EmbeddingShareScope _shareScope = EmbeddingShareScope.off;
-  final Set<int> _selectedMaterials = {};
+  final Set<String> _selectedMaterials = {};
   List<Material> _materials = const [];
   SemanticIndexStats? _stats;
   bool _statsFailed = false;

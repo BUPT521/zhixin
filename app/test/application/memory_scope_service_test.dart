@@ -15,7 +15,7 @@ class _CountingConversations extends ConversationRepository {
 
   @override
   Future<ConversationRecord?> byId(
-    int conversationId, {
+    String conversationId, {
     WriteTransaction? transaction,
   }) {
     reads++;
@@ -34,12 +34,16 @@ void main() {
     );
 
     final resolved = await service.resolve(
-      42,
-      record: const ConversationRecord(id: 42, goalId: 7, materialId: 3),
+      'conv-42',
+      record: const ConversationRecord(
+        id: 'conv-42',
+        goalId: 'goal-7',
+        materialId: 'mat-3',
+      ),
     );
 
-    expect(resolved.goalId, 7);
-    expect(resolved.scope, memoryGoalScope(7));
+    expect(resolved.goalId, 'goal-7');
+    expect(resolved.scope, memoryGoalScope('goal-7'));
     expect(conversations.reads, 0);
   });
 

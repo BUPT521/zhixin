@@ -25,7 +25,7 @@ import (
 // ClientSchemaVersion is the client data schema this server accepts for
 // sync commits and backups. It must equal the schema number at the top of
 // docs/01; both sides move together and old versions are rejected (ADR-0002).
-const ClientSchemaVersion = 26
+const ClientSchemaVersion = 27
 
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.

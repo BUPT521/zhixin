@@ -57,7 +57,7 @@ void main() {
         }),
         call(proposeCitationsTool, {
           'citations': [
-            {'material_id': 1, 'page_no': 3, 'quote': '原文逐字摘录'},
+            {'material_id': 'mat-1', 'page_no': 3, 'quote': '原文逐字摘录'},
           ],
         }),
       ],
@@ -108,7 +108,7 @@ void main() {
         call(proposeCitationsTool, {
           'citations': [
             {'material_id': 'x'},
-            {'material_id': 1, 'page_no': 2, 'quote': '原文'},
+            {'material_id': 'mat-1', 'page_no': 2, 'quote': '原文'},
           ],
         }),
         call(proposeNextStepsTool, {
@@ -227,12 +227,12 @@ void main() {
     final context = BuddyContext(
       now: DateTime(2026, 11, 6, 20),
       goals: const [
-        LearningGoal(id: 1, title: '概率论期末'),
-        LearningGoal(id: 2, title: '线性代数作业'),
+        LearningGoal(id: 'goal-1', title: '概率论期末'),
+        LearningGoal(id: 'goal-2', title: '线性代数作业'),
       ],
       memories: const [
         Memory(
-          id: 1,
+          id: 'memory-1',
           kind: MemoryKind.difficulty,
           content: '放缩方向不确定',
           status: MemoryStatus.active,
@@ -255,11 +255,11 @@ void main() {
     final context = BuddyContext(
       now: DateTime(2026, 11, 7, 20),
       mode: BuddyMode.hint,
-      question: const Question(id: 1, stem: '求极限'),
+      question: const Question(id: 'conv-1', stem: '求极限'),
       priorFeedback: [
         Attempt(
-          id: 1,
-          conversationId: 1,
+          id: 'attempt-1',
+          conversationId: 'conv-1',
           feedback: '放缩方向还不确定',
           submittedAt: DateTime(2026, 11, 6, 20),
         ),
@@ -300,8 +300,8 @@ void main() {
   test('讨论明确选择目标时，提示里写清归属', () async {
     final context = BuddyContext(
       now: DateTime(2026, 11, 6, 20),
-      goal: const LearningGoal(id: 1, title: '概率论期末'),
-      goals: const [LearningGoal(id: 1, title: '概率论期末')],
+      goal: const LearningGoal(id: 'goal-1', title: '概率论期末'),
+      goals: const [LearningGoal(id: 'goal-1', title: '概率论期末')],
     );
     final prompt = buildBuddySystemPrompt(context);
     expect(prompt, contains('本次讨论归属：概率论期末'));
@@ -312,16 +312,16 @@ void main() {
   test('材料页带编号，模型引用时不用猜材料 id', () async {
     final context = BuddyContext(
       now: DateTime(2026, 11, 6, 20),
-      material: const Material(id: 1, title: '概率论讲义'),
+      material: const Material(id: 'mat-1', title: '概率论讲义'),
       materialPage: const MaterialPage(
-        id: 1,
-        materialId: 1,
+        id: 'page-1',
+        materialId: 'mat-1',
         pageNo: 2,
         content: '条件概率 P(A|B)=P(AB)/P(B)。',
       ),
       materialHits: const [
         MaterialHit(
-          materialId: 2,
+          materialId: 'mat-2',
           materialTitle: '线性代数笔记',
           pageNo: 1,
           content: '矩阵的秩是行向量组的极大线性无关组的向量个数。',
@@ -329,38 +329,38 @@ void main() {
       ],
     );
     final prompt = buildBuddySystemPrompt(context);
-    expect(prompt, contains('material_id=1 《概率论讲义》第 2 页'));
-    expect(prompt, contains('material_id=2 《线性代数笔记》第 1 页'));
+    expect(prompt, contains('material_id=mat-1 《概率论讲义》第 2 页'));
+    expect(prompt, contains('material_id=mat-2 《线性代数笔记》第 1 页'));
   });
 
   test('材料按材料编号与页码去重，系统学习引用已经带入的原文', () async {
     const selected = MaterialPage(
-      id: 1,
-      materialId: 1,
+      id: 'page-1',
+      materialId: 'mat-1',
       pageNo: 2,
       content: '指定页原文',
     );
     const other = MaterialPage(
-      id: 2,
-      materialId: 1,
+      id: 'page-2',
+      materialId: 'mat-1',
       pageNo: 3,
       content: '另一页原文',
     );
     final context = BuddyContext(
       now: DateTime(2026, 11, 7),
       mode: BuddyMode.plan,
-      material: const Material(id: 1, title: '讲义'),
+      material: const Material(id: 'mat-1', title: '讲义'),
       materialPage: selected,
       outlinePages: const [selected, selected, other, other],
       materialHits: const [
         MaterialHit(
-          materialId: 1,
+          materialId: 'mat-1',
           materialTitle: '讲义',
           pageNo: 2,
           content: '重复的检索摘录',
         ),
         MaterialHit(
-          materialId: 2,
+          materialId: 'mat-2',
           materialTitle: '其他讲义',
           pageNo: 2,
           content: '另一份材料的同页码',

@@ -220,7 +220,7 @@ void main() {
 
     final goalA = await tasks.createGoal(title: '概率论');
     final goalB = await tasks.createGoal(title: '线性代数');
-    Future<int> submit(int? goalId, String text) async {
+    Future<String> submit(String? goalId, String text) async {
       final id = await conversations.create(title: text, goalId: goalId);
       await conversations.append(id, role: MessageRole.user, content: text);
       final attempt = await attempts.ensureOpenAttempt(id);
@@ -265,7 +265,7 @@ void main() {
       evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
 
-    Future<int> conversation(String title) async {
+    Future<String> conversation(String title) async {
       final id = await conversations.create(title: title);
       await conversations.append(
         id,
@@ -300,7 +300,7 @@ void main() {
               orderBy: 'id DESC',
               limit: 1,
             )).single['id']!
-            as int;
+            as String;
 
     final onlyCurrent = await service.load(
       ContextRequest(query: '条件概率', conversationId: current),
@@ -362,7 +362,7 @@ void main() {
     );
     final probability = await tasks.createGoal(title: '概率论期末');
     final linear = await tasks.createGoal(title: '线性代数作业');
-    Future<int> record(int goalId, String text) async {
+    Future<String> record(String goalId, String text) async {
       final id = await conversations.create(goalId: goalId);
       await conversations.append(id, role: MessageRole.user, content: text);
       return id;

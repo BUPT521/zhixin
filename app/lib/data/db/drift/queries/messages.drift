@@ -3,7 +3,7 @@
 import '../tables.dart';
 
 -- 最近的若干条消息，按编号倒序；`rowLimit` 传空表示不截断。
-recentMessages(REQUIRED :conversationId AS INT, REQUIRED :rowLimit AS INT OR NULL):
+recentMessages(REQUIRED :conversationId AS TEXT, REQUIRED :rowLimit AS INT OR NULL):
 SELECT * FROM message
 WHERE conversation_id = :conversationId
 ORDER BY id DESC
@@ -12,8 +12,8 @@ LIMIT COALESCE(:rowLimit, -1);
 -- 讨论历史的一页：编号小于游标，按编号倒序多取一条判断是否还有更早的；
 -- `beforeId` 传空表示从最新一条开始。
 messagesPage(
-  REQUIRED :conversationId AS INT,
-  REQUIRED :beforeId AS INT OR NULL,
+  REQUIRED :conversationId AS TEXT,
+  REQUIRED :beforeId AS TEXT OR NULL,
   REQUIRED :rowLimit AS INT
 ):
 SELECT * FROM message
@@ -24,8 +24,8 @@ LIMIT :rowLimit;
 
 -- 第一条或最后一条用户消息（带正文或图片）；`beforeId` 传空表示不限。
 firstUserMessage(
-  REQUIRED :conversationId AS INT,
-  REQUIRED :beforeId AS INT OR NULL
+  REQUIRED :conversationId AS TEXT,
+  REQUIRED :beforeId AS TEXT OR NULL
 ):
 SELECT * FROM message
 WHERE conversation_id = :conversationId
@@ -53,8 +53,8 @@ SELECT image_paths_json FROM message
 WHERE conversation_id = :conversationId AND image_paths_json IS NOT NULL;
 
 insertConversationMessage:
-INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at)
-VALUES (:conversationId, :role, :content, :imagePaths, :structuredJson, :stamp);
+INSERT INTO message (id, conversation_id, role, content, image_paths_json, structured_json, created_at)
+VALUES (:id, :conversationId, :role, :content, :imagePaths, :structuredJson, :stamp);
 
 deleteConversationMessages:
 DELETE FROM message WHERE conversation_id = :conversationId;

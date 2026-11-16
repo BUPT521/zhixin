@@ -17,7 +17,7 @@ FROM material m
 WHERE m.id = :id;
 
 -- 材料列表；`goalId` 传空表示不限目标，非空时取该目标与没有归属的材料。
-materialList(REQUIRED :goalId AS INT OR NULL):
+materialList(REQUIRED :goalId AS TEXT OR NULL):
 SELECT m.*,
   (SELECT COUNT(*) FROM material_page p WHERE p.material_id = m.id) AS page_count
 FROM material m
@@ -25,8 +25,8 @@ WHERE (:goalId IS NULL OR m.goal_id = :goalId OR m.goal_id IS NULL)
 ORDER BY m.updated_at DESC, m.id DESC;
 
 insertMaterial:
-INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at)
-VALUES (:title, :kind, :sourceRef, :fileName, :fileHash, :goalId, :stamp, :stamp);
+INSERT INTO material (id, title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at)
+VALUES (:id, :title, :kind, :sourceRef, :fileName, :fileHash, :goalId, :stamp, :stamp);
 
 setMaterialGoal:
 UPDATE material SET goal_id = :goalId,

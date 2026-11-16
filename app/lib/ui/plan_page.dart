@@ -54,7 +54,7 @@ class PlanPage extends StatefulWidget {
   }) : initialItemId = null;
 
   /// 事项详情入口：推入一条事项并展开它的操作面板，不参与底栏切栏。
-  const PlanPage.detail({super.key, required int itemId, this.watchWeek})
+  const PlanPage.detail({super.key, required String itemId, this.watchWeek})
     : initialItemId = itemId,
       activeTab = null,
       tabIndex = 2,
@@ -62,7 +62,7 @@ class PlanPage extends StatefulWidget {
       onOpenMaterials = null;
 
   /// 详情页要展开的事项；为空时按底栏页处理。
-  final int? initialItemId;
+  final String? initialItemId;
 
   /// 底栏当前栏的下标；为空时按常驻当前页处理，二级入口直接打开安排。
   final ValueListenable<int>? activeTab;
@@ -325,7 +325,7 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   /// 已完成列表目前读回的事项；日程里点到的已完成事项可能还不在这一页里。
-  PlanItem? _cachedItem(int id) {
+  PlanItem? _cachedItem(String id) {
     for (final item in _week?.items ?? const <PlanItem>[]) {
       if (item.id == id) return item;
     }
@@ -335,7 +335,7 @@ class _PlanPageState extends State<PlanPage> {
     return null;
   }
 
-  Future<PlanItem?> _itemById(int id) async {
+  Future<PlanItem?> _itemById(String id) async {
     final cached = _cachedItem(id);
     if (cached != null) return cached;
     try {
@@ -1118,7 +1118,7 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   /// 打开系统学习计划；返回之后的一周数据由订阅带回。
-  Future<void> _openStudyPlan(int id) async {
+  Future<void> _openStudyPlan(String id) async {
     await openStudyPlan(context, id);
   }
 
@@ -1738,7 +1738,7 @@ class _PlanPageState extends State<PlanPage> {
     ];
   }
 
-  String _goalName(int? id) {
+  String _goalName(String? id) {
     if (id == null) return '无归属';
     final goals = _week?.goals ?? const <LearningGoal>[];
     return goals.where((goal) => goal.id == id).firstOrNull?.title ?? '目标已删除';

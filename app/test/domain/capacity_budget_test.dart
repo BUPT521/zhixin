@@ -22,34 +22,50 @@ void main() {
     final fits = fitByDeadline(
       slots: [slot(tonight, 19, 30), slot(tomorrow, 19, 30)],
       demands: [
-        CapacityDemand(id: 1, minutes: 30, dueAt: DateTime(2026, 11, 9, 20)),
-        CapacityDemand(id: 2, minutes: 45, dueAt: DateTime(2026, 11, 8, 23)),
+        CapacityDemand(
+          id: 'item-1',
+          minutes: 30,
+          dueAt: DateTime(2026, 11, 9, 20),
+        ),
+        CapacityDemand(
+          id: 'item-2',
+          minutes: 45,
+          dueAt: DateTime(2026, 11, 8, 23),
+        ),
       ],
       now: now,
       horizonEnd: horizon,
     );
 
-    expect(fits.firstWhere((fit) => fit.id == 2).allocated, 30);
-    expect(fits.firstWhere((fit) => fit.id == 2).fits, isFalse);
-    expect(fits.firstWhere((fit) => fit.id == 2).shortfall, 15);
-    expect(fits.firstWhere((fit) => fit.id == 1).allocated, 30);
-    expect(fits.firstWhere((fit) => fit.id == 1).fits, isTrue);
+    expect(fits.firstWhere((fit) => fit.id == 'item-2').allocated, 30);
+    expect(fits.firstWhere((fit) => fit.id == 'item-2').fits, isFalse);
+    expect(fits.firstWhere((fit) => fit.id == 'item-2').shortfall, 15);
+    expect(fits.firstWhere((fit) => fit.id == 'item-1').allocated, 30);
+    expect(fits.firstWhere((fit) => fit.id == 'item-1').fits, isTrue);
   });
 
   test('结果与传入顺序一致，分配按截止时间进行', () {
     final fits = fitByDeadline(
       slots: [slot(DateTime(2026, 11, 8), 19, 30)],
       demands: [
-        CapacityDemand(id: 7, minutes: 30, dueAt: DateTime(2026, 11, 9, 19)),
-        CapacityDemand(id: 9, minutes: 30, dueAt: DateTime(2026, 11, 8, 23)),
+        CapacityDemand(
+          id: 'item-7',
+          minutes: 30,
+          dueAt: DateTime(2026, 11, 9, 19),
+        ),
+        CapacityDemand(
+          id: 'item-9',
+          minutes: 30,
+          dueAt: DateTime(2026, 11, 8, 23),
+        ),
       ],
       now: now,
       horizonEnd: horizon,
     );
 
-    expect(fits.map((fit) => fit.id), [7, 9]);
-    expect(fits.firstWhere((fit) => fit.id == 9).fits, isTrue);
-    expect(fits.firstWhere((fit) => fit.id == 7).fits, isFalse);
+    expect(fits.map((fit) => fit.id), ['item-7', 'item-9']);
+    expect(fits.firstWhere((fit) => fit.id == 'item-9').fits, isTrue);
+    expect(fits.firstWhere((fit) => fit.id == 'item-7').fits, isFalse);
   });
 
   test('同一截止时间按传入顺序分配', () {
@@ -57,22 +73,22 @@ void main() {
     final fits = fitByDeadline(
       slots: [slot(DateTime(2026, 11, 8), 19, 30)],
       demands: [
-        CapacityDemand(id: 1, minutes: 20, dueAt: due),
-        CapacityDemand(id: 2, minutes: 20, dueAt: due),
+        CapacityDemand(id: 'item-1', minutes: 20, dueAt: due),
+        CapacityDemand(id: 'item-2', minutes: 20, dueAt: due),
       ],
       now: now,
       horizonEnd: horizon,
     );
 
-    expect(fits.firstWhere((fit) => fit.id == 1).fits, isTrue);
-    expect(fits.firstWhere((fit) => fit.id == 2).allocated, 10);
-    expect(fits.firstWhere((fit) => fit.id == 2).fits, isFalse);
+    expect(fits.firstWhere((fit) => fit.id == 'item-1').fits, isTrue);
+    expect(fits.firstWhere((fit) => fit.id == 'item-2').allocated, 10);
+    expect(fits.firstWhere((fit) => fit.id == 'item-2').fits, isFalse);
     expect(
-      fits.firstWhere((fit) => fit.id == 1).windows.single.end,
+      fits.firstWhere((fit) => fit.id == 'item-1').windows.single.end,
       DateTime(2026, 11, 8, 19, 20),
     );
     expect(
-      fits.firstWhere((fit) => fit.id == 2).windows.single.start,
+      fits.firstWhere((fit) => fit.id == 'item-2').windows.single.start,
       DateTime(2026, 11, 8, 19, 20),
     );
   });
@@ -81,25 +97,33 @@ void main() {
     final fits = fitByDeadline(
       slots: [slot(DateTime(2026, 11, 8), 19, 30)],
       demands: [
-        CapacityDemand(id: 1, minutes: 60, dueAt: DateTime(2026, 11, 8, 23)),
-        CapacityDemand(id: 2, minutes: 20, dueAt: DateTime(2026, 11, 9, 23)),
+        CapacityDemand(
+          id: 'item-1',
+          minutes: 60,
+          dueAt: DateTime(2026, 11, 8, 23),
+        ),
+        CapacityDemand(
+          id: 'item-2',
+          minutes: 20,
+          dueAt: DateTime(2026, 11, 9, 23),
+        ),
       ],
       now: now,
       horizonEnd: horizon,
     );
 
-    final urgent = fits.firstWhere((fit) => fit.id == 1);
+    final urgent = fits.firstWhere((fit) => fit.id == 'item-1');
     expect(urgent.fits, isFalse);
     expect(urgent.windows, hasLength(1));
     expect(urgent.windows.single.start, DateTime(2026, 11, 8, 19));
     expect(urgent.windows.single.end, DateTime(2026, 11, 8, 19, 30));
-    expect(fits.firstWhere((fit) => fit.id == 2).windows, isEmpty);
+    expect(fits.firstWhere((fit) => fit.id == 'item-2').windows, isEmpty);
   });
 
   test('没有截止时间的事项使用整个窗口', () {
     final fits = fitByDeadline(
       slots: [slot(DateTime(2026, 11, 12), 19, 40)],
-      demands: const [CapacityDemand(id: 3, minutes: 40)],
+      demands: const [CapacityDemand(id: 'item-3', minutes: 40)],
       now: now,
       horizonEnd: horizon,
     );
@@ -112,7 +136,11 @@ void main() {
     final fits = fitByDeadline(
       slots: [slot(DateTime(2026, 11, 8), 19, 60)],
       demands: [
-        CapacityDemand(id: 4, minutes: 30, dueAt: DateTime(2026, 11, 7, 23)),
+        CapacityDemand(
+          id: 'item-4',
+          minutes: 30,
+          dueAt: DateTime(2026, 11, 7, 23),
+        ),
       ],
       now: now,
       horizonEnd: horizon,
@@ -126,7 +154,7 @@ void main() {
     final fits = fitByDeadline(
       slots: [slot(DateTime(2026, 11, 10), 19, 30)],
       demands: [
-        CapacityDemand(id: 5, minutes: 30, dueAt: DateTime(2026, 12, 1)),
+        CapacityDemand(id: 'item-5', minutes: 30, dueAt: DateTime(2026, 12, 1)),
       ],
       now: now,
       horizonEnd: horizon,
@@ -138,7 +166,7 @@ void main() {
   test('没有空档时需求全部落空', () {
     final fits = fitByDeadline(
       slots: const [],
-      demands: const [CapacityDemand(id: 6, minutes: 20)],
+      demands: const [CapacityDemand(id: 'item-6', minutes: 20)],
       now: now,
       horizonEnd: horizon,
     );
@@ -155,7 +183,7 @@ void main() {
           end: DateTime(2026, 11, 8, 19),
         ),
       ],
-      demands: const [CapacityDemand(id: 8, minutes: 90)],
+      demands: const [CapacityDemand(id: 'item-8', minutes: 90)],
       now: now,
       horizonEnd: horizon,
     );

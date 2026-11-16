@@ -207,7 +207,7 @@ AgentTool _proposeCitations(_Proposals<CitationDraft> proposals) => AgentTool(
   execute: (args, _) => proposals.addAll([
     for (final item in (args['citations'] as List).cast<ToolArguments>())
       CitationDraft(
-        materialId: item['material_id'] as int,
+        materialId: item['material_id'] as String,
         pageNo: item['page_no'] as int,
         quote: (item['quote'] as String).trim(),
       ),
@@ -315,7 +315,7 @@ const LlmTool _citationsSchema = LlmTool(
         'items': {
           'type': 'object',
           'properties': {
-            'material_id': {'type': 'integer'},
+            'material_id': {'type': 'string'},
             'page_no': {'type': 'integer'},
             'quote': {
               'type': 'string',

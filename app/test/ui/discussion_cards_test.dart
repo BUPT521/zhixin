@@ -17,8 +17,8 @@ MemoryItemView memory({
   MemoryCardStatus status = MemoryCardStatus.pending,
   int? commitId,
 }) {
-  return MemoryItemView(
-    ownerId: 1,
+  return MemoryItemView.message(
+    messageId: 'msg-1',
     draft: MemoryDraft(
       id: 'memory-1',
       kind: kind,
@@ -38,7 +38,7 @@ PendingSuggestion suggestion({
   int? minutes,
 }) {
   return PendingSuggestion(
-    messageId: 2,
+    messageId: 'msg-1',
     stepId: 's1',
     draft: NextStepDraft(
       title: title,

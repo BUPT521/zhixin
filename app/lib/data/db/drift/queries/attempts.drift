@@ -51,9 +51,9 @@ LIMIT 1;
 -- 这次讨论还没提交的草稿存在时不再新建，避免连点建立两份。
 insertOpenAttempt:
 INSERT INTO attempt
-  (conversation_id, session_id, redo_of_attempt_id, delayed, created_at,
+  (id, conversation_id, session_id, redo_of_attempt_id, delayed, created_at,
    updated_at)
-SELECT :conversationId, :sessionId, :redoOfAttemptId, :delayed, :createdAt,
+SELECT :id, :conversationId, :sessionId, :redoOfAttemptId, :delayed, :createdAt,
   :updatedAt
 WHERE NOT EXISTS (
   SELECT 1 FROM attempt
@@ -61,8 +61,8 @@ WHERE NOT EXISTS (
 );
 
 updateOpenAttemptContext(
-  REQUIRED :sessionId AS INT OR NULL,
-  REQUIRED :redoOfAttemptId AS INT OR NULL,
+  REQUIRED :sessionId AS TEXT OR NULL,
+  REQUIRED :redoOfAttemptId AS TEXT OR NULL,
   REQUIRED :delayed AS BOOL OR NULL
 ):
 UPDATE attempt SET session_id = COALESCE(:sessionId, session_id),
@@ -108,9 +108,9 @@ SELECT id FROM attempt WHERE session_id = :sessionId LIMIT 1;
 
 -- 最近提交的作答，带上所属记录；目标、材料与讨论三个条件传空表示不限。
 recentSubmitted(
-  REQUIRED :goalId AS INT OR NULL,
-  REQUIRED :materialId AS INT OR NULL,
-  REQUIRED :conversationId AS INT OR NULL,
+  REQUIRED :goalId AS TEXT OR NULL,
+  REQUIRED :materialId AS TEXT OR NULL,
+  REQUIRED :conversationId AS TEXT OR NULL,
   REQUIRED :broughtIds AS TEXT,
   REQUIRED :rowLimit AS INT OR NULL
 ):
@@ -207,11 +207,11 @@ LIMIT 1;
 -- 有意义；传 0 表示只取同目标的记录，与 `conversation_records` 的筛选开关
 -- 同一写法。
 evidenceThreadAttempts(
-  REQUIRED :conversationId AS INT OR NULL,
+  REQUIRED :conversationId AS TEXT OR NULL,
   REQUIRED :stem AS TEXT OR NULL,
-  REQUIRED :materialId AS INT OR NULL,
+  REQUIRED :materialId AS TEXT OR NULL,
   REQUIRED :pageNo AS INT OR NULL,
-  REQUIRED :goalId AS INT OR NULL,
+  REQUIRED :goalId AS TEXT OR NULL,
   REQUIRED :includeUnassigned AS INT,
   REQUIRED :from AS TEXT OR NULL,
   REQUIRED :to AS TEXT OR NULL,

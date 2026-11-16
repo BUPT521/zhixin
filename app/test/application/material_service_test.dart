@@ -234,7 +234,7 @@ void main() {
 
     final history = await rig.revisions.rowHistory(
       table: 'material_page',
-      rowKey: '${page.id}',
+      rowKey: page.id,
     );
     expect(history.map((commit) => commit.id), [second, first]);
     expect(
@@ -246,7 +246,7 @@ void main() {
     expect(result.applied, isTrue, reason: result.message);
     final after = await rig.revisions.rowHistory(
       table: 'material_page',
-      rowKey: '${page.id}',
+      rowKey: page.id,
     );
     expect(after.map((commit) => commit.id), contains(first));
     expect(
@@ -264,7 +264,7 @@ void main() {
     await expectLater(
       service.correctPage(
         page: MaterialPage(
-          id: 999,
+          id: 'page-999',
           materialId: materialId,
           pageNo: 1,
           content: '旧原文',

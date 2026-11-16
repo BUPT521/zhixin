@@ -497,7 +497,7 @@ components:
       required: [status, schema_version]
       properties:
         status: { type: string, const: ready }
-        schema_version: { type: integer, examples: [26] }
+        schema_version: { type: integer, examples: [27] }
     SyncHead:
       type: object
       required: [head, schema_version]

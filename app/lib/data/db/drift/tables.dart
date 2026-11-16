@@ -112,7 +112,7 @@ class Profiles extends Table {
 class LearningGoals extends Table {
   @override
   String get tableName => 'learning_goal';
-  IntColumn get id => integer().autoIncrement()();
+  TextColumn get id => text()();
   TextColumn get title => text()();
   TextColumn get scopeText => text().nullable()();
   TextColumn get dueDate => text().nullable()();
@@ -121,6 +121,9 @@ class LearningGoals extends Table {
       .check(status.isIn(learningGoalStatuses))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @DataClassName('AssetObjectRow')
@@ -155,7 +158,7 @@ class AssetChunks extends Table {
 class Materials extends Table {
   @override
   String get tableName => 'material';
-  IntColumn get id => integer().autoIncrement()();
+  TextColumn get id => text()();
   TextColumn get title => text()();
   TextColumn get kind => text()
       .withDefault(const Constant('text'))
@@ -164,7 +167,7 @@ class Materials extends Table {
   TextColumn get sourceFileName => text().nullable()();
   TextColumn get sourceFileHash =>
       text().nullable().references(AssetObjects, #hash)();
-  IntColumn get goalId => integer().nullable().references(
+  TextColumn get goalId => text().nullable().references(
     LearningGoals,
     #id,
     onDelete: KeyAction.setNull,
@@ -176,6 +179,9 @@ class Materials extends Table {
   List<String> get customConstraints => const [
     'CHECK ((source_file_name IS NULL) = (source_file_hash IS NULL))',
   ];
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_material_page_material', columns: {#materialId, #pageNo})
@@ -183,9 +189,9 @@ class Materials extends Table {
 class MaterialPages extends Table {
   @override
   String get tableName => 'material_page';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get materialId =>
-      integer().references(Materials, #id, onDelete: KeyAction.cascade)();
+  TextColumn get id => text()();
+  TextColumn get materialId =>
+      text().references(Materials, #id, onDelete: KeyAction.cascade)();
   IntColumn get pageNo => integer().check(pageNo.isBiggerThanValue(0))();
   TextColumn get label => text().nullable()();
   TextColumn get content => text()();
@@ -196,6 +202,9 @@ class MaterialPages extends Table {
   List<Set<Column>> get uniqueKeys => [
     {materialId, pageNo},
   ];
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_conversation_status', columns: {#status, #updatedAt})
@@ -205,14 +214,14 @@ class MaterialPages extends Table {
 class Conversations extends Table {
   @override
   String get tableName => 'conversation';
-  IntColumn get id => integer().autoIncrement()();
+  TextColumn get id => text()();
   TextColumn get title => text().nullable()();
-  IntColumn get goalId => integer().nullable().references(
+  TextColumn get goalId => text().nullable().references(
     LearningGoals,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get materialId => integer().nullable().references(
+  TextColumn get materialId => text().nullable().references(
     Materials,
     #id,
     onDelete: KeyAction.setNull,
@@ -220,7 +229,7 @@ class Conversations extends Table {
   IntColumn get pageNo => integer().nullable()();
   TextColumn get sourceRef => text().nullable()();
   TextColumn get contextText => text().nullable()();
-  IntColumn get questionMessageId => integer().nullable()();
+  TextColumn get questionMessageId => text().nullable()();
   TextColumn get entryKind => text()
       .withDefault(const Constant('text'))
       .check(entryKind.isIn(entryKinds))();
@@ -231,6 +240,9 @@ class Conversations extends Table {
   TextColumn get lastMessageAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(
@@ -241,14 +253,17 @@ class Conversations extends Table {
 class Messages extends Table {
   @override
   String get tableName => 'message';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get conversationId =>
-      integer().references(Conversations, #id, onDelete: KeyAction.cascade)();
+  TextColumn get id => text()();
+  TextColumn get conversationId =>
+      text().references(Conversations, #id, onDelete: KeyAction.cascade)();
   TextColumn get role => text().check(role.isIn(messageRoles))();
   TextColumn get content => text()();
   TextColumn get imagePathsJson => text().nullable()();
   TextColumn get structuredJson => text().nullable()();
   TextColumn get createdAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_study_plan_material', columns: {#materialId, #status})
@@ -256,18 +271,18 @@ class Messages extends Table {
 class StudyPlans extends Table {
   @override
   String get tableName => 'study_plan';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get materialId => integer().nullable().references(
+  TextColumn get id => text()();
+  TextColumn get materialId => text().nullable().references(
     Materials,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get goalId => integer().nullable().references(
+  TextColumn get goalId => text().nullable().references(
     LearningGoals,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get conversationId => integer().nullable().references(
+  TextColumn get conversationId => text().nullable().references(
     Conversations,
     #id,
     onDelete: KeyAction.setNull,
@@ -281,6 +296,9 @@ class StudyPlans extends Table {
       .check(status.isIn(studyPlanStatuses))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_plan_item_status_due', columns: {#status, #dueAt})
@@ -295,18 +313,18 @@ class StudyPlans extends Table {
 class PlanItems extends Table {
   @override
   String get tableName => 'plan_item';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get goalId => integer().nullable().references(
+  TextColumn get id => text()();
+  TextColumn get goalId => text().nullable().references(
     LearningGoals,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get conversationId => integer().nullable().references(
+  TextColumn get conversationId => text().nullable().references(
     Conversations,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get studyPlanId => integer().nullable().references(
+  TextColumn get studyPlanId => text().nullable().references(
     StudyPlans,
     #id,
     onDelete: KeyAction.cascade,
@@ -338,13 +356,16 @@ class PlanItems extends Table {
   TextColumn get completedAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @DataClassName('TimetableEntryRow')
 class TimetableEntries extends Table {
   @override
   String get tableName => 'timetable_entry';
-  IntColumn get id => integer().autoIncrement()();
+  TextColumn get id => text()();
   IntColumn get weekday => integer().check(weekday.isBetweenValues(1, 7))();
   TextColumn get startTime => text()();
   TextColumn get endTime => text()();
@@ -355,6 +376,9 @@ class TimetableEntries extends Table {
 
   @override
   List<String> get customConstraints => const ['CHECK (end_time > start_time)'];
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_schedule_start', columns: {#startAt})
@@ -363,9 +387,9 @@ class TimetableEntries extends Table {
 class ScheduleBlocks extends Table {
   @override
   String get tableName => 'schedule_block';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get planItemId =>
-      integer().references(PlanItems, #id, onDelete: KeyAction.cascade)();
+  TextColumn get id => text()();
+  TextColumn get planItemId =>
+      text().references(PlanItems, #id, onDelete: KeyAction.cascade)();
   TextColumn get startAt => text()();
   TextColumn get endAt => text()();
   TextColumn get source => text()
@@ -380,6 +404,9 @@ class ScheduleBlocks extends Table {
 
   @override
   List<String> get customConstraints => const ['CHECK (end_at > start_at)'];
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_session_plan', columns: {#planItemId, #startedAt})
@@ -391,18 +418,18 @@ class ScheduleBlocks extends Table {
 class StudySessions extends Table {
   @override
   String get tableName => 'study_session';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get goalId => integer().nullable().references(
+  TextColumn get id => text()();
+  TextColumn get goalId => text().nullable().references(
     LearningGoals,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get planItemId => integer().nullable().references(
+  TextColumn get planItemId => text().nullable().references(
     PlanItems,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get conversationId => integer().nullable().references(
+  TextColumn get conversationId => text().nullable().references(
     Conversations,
     #id,
     onDelete: KeyAction.cascade,
@@ -414,6 +441,9 @@ class StudySessions extends Table {
   TextColumn get endedAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(
@@ -426,15 +456,15 @@ class StudySessions extends Table {
 class Attempts extends Table {
   @override
   String get tableName => 'attempt';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get conversationId =>
-      integer().references(Conversations, #id, onDelete: KeyAction.cascade)();
-  IntColumn get sessionId => integer().nullable().references(
+  TextColumn get id => text()();
+  TextColumn get conversationId =>
+      text().references(Conversations, #id, onDelete: KeyAction.cascade)();
+  TextColumn get sessionId => text().nullable().references(
     StudySessions,
     #id,
     onDelete: KeyAction.setNull,
   )();
-  IntColumn get redoOfAttemptId => integer().nullable().references(
+  TextColumn get redoOfAttemptId => text().nullable().references(
     Attempts,
     #id,
     onDelete: KeyAction.setNull,
@@ -449,6 +479,9 @@ class Attempts extends Table {
   TextColumn get submittedAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_assessment_attempt', columns: {#attemptId, #kind})
@@ -456,14 +489,17 @@ class Attempts extends Table {
 class Assessments extends Table {
   @override
   String get tableName => 'assessment';
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get attemptId =>
-      integer().references(Attempts, #id, onDelete: KeyAction.cascade)();
+  TextColumn get id => text()();
+  TextColumn get attemptId =>
+      text().references(Attempts, #id, onDelete: KeyAction.cascade)();
   TextColumn get kind => text().check(kind.isIn(assessmentKinds))();
   TextColumn get result => text()();
   TextColumn get basis => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(name: 'idx_memory_status', columns: {#status, #kind})
@@ -472,19 +508,22 @@ class Assessments extends Table {
 class Memories extends Table {
   @override
   String get tableName => 'memory';
-  IntColumn get id => integer().autoIncrement()();
+  TextColumn get id => text()();
   TextColumn get kind => text().check(kind.isIn(memoryKinds))();
   TextColumn get content => text()();
   TextColumn get scope => text().nullable()();
   TextColumn get sourceKind =>
       text().check(sourceKind.isIn(memorySourceKinds))();
-  IntColumn get sourceId => integer().nullable()();
+  TextColumn get sourceId => text().nullable()();
   TextColumn get validUntil => text().nullable()();
   TextColumn get status => text()
       .withDefault(const Constant('active'))
       .check(status.isIn(memoryStatuses))();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex.sql(

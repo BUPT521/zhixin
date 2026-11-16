@@ -116,7 +116,7 @@ class MemoryService {
   }
 
   /// 删除是软删除；撤销时按反向规则把状态改回 active。
-  Future<WriteResult> delete(int id) {
+  Future<WriteResult> delete(String id) {
     return transactions.run((txn) async {
       await repository.delete(id, transaction: txn);
       return txn.result();

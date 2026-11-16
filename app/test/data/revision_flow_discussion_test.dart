@@ -227,7 +227,9 @@ void main() {
     final hash = AssetStore.hashBytes(bytes);
     await expectLater(
       rig.db.transaction((txn) async {
-        final conversation = await insertRow(txn, 'conversation', {
+        const conversation = 'conv-1';
+        await insertRow(txn, 'conversation', {
+          'id': conversation,
           'title': '中断',
           'entry_kind': 'photo',
           'status': 'open',
@@ -236,6 +238,7 @@ void main() {
         });
         await rig.engine.assets.putBytes(txn, hash, bytes);
         await insertRow(txn, 'message', {
+          'id': 'msg-1',
           'conversation_id': conversation,
           'role': 'user',
           'content': '',

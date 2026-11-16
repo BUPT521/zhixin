@@ -29,25 +29,25 @@ func testCommit(id string, schema int) Commit {
 
 func TestServicePushIsLinearAndIdempotent(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 26)
+	svc := NewService(NewMemoryStore(), 27)
 
-	head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 26), testCommit("r2", 26)})
+	head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)})
 	if err != nil || head != 2 {
 		t.Fatalf("push: head %d, err %v", head, err)
 	}
 	// A retried batch after a lost response is ignored.
-	if head, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 26)}); err != nil || head != 2 {
+	if head, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}); err != nil || head != 2 {
 		t.Fatalf("replay: head %d, err %v", head, err)
 	}
 	// A new commit on a stale base must pull first.
-	if _, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 26)}); !errors.Is(err, ErrHeadMoved) {
+	if _, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); !errors.Is(err, ErrHeadMoved) {
 		t.Fatalf("stale push: want ErrHeadMoved, got %v", err)
 	}
 }
 
 func TestServiceValidatesBatchAndPage(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 26)
+	svc := NewService(NewMemoryStore(), 27)
 
 	if _, err := svc.Push(ctx, "u1", 0, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty batch: want ErrInvalid, got %v", err)
@@ -55,7 +55,7 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("old", 25)}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("old schema: want ErrInvalid, got %v", err)
 	}
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 26)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 

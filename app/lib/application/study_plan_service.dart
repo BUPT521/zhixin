@@ -42,10 +42,10 @@ class StudyPlanScreen {
   final StudyPlanView view;
 
   /// 每一步接下来的一次预约，没有预约的步骤不在表里。
-  final Map<int, ScheduleBlock> nextBlocks;
+  final Map<String, ScheduleBlock> nextBlocks;
 
   /// 每一步最近一次结束的场次，用来显示完成时间、结果与困难。
-  final Map<int, StudySession> sessions;
+  final Map<String, StudySession> sessions;
 }
 
 /// 一次学习步骤继续时打开的内容类型。
@@ -64,8 +64,8 @@ class StudyStepResume {
 
   final StudyStepResumeKind kind;
   final String title;
-  final int? conversationId;
-  final int? materialId;
+  final String? conversationId;
+  final String? materialId;
   final int? pageFrom;
   final int? pageTo;
 }
@@ -135,7 +135,7 @@ class StudyPlanService {
   Future<List<StudyPlan>> list({bool openOnly = false}) =>
       plans.list(openOnly: openOnly);
 
-  Future<StudyPlanView> view(int planId) async {
+  Future<StudyPlanView> view(String planId) async {
     final plan = await plans.byId(planId);
     if (plan == null) throw StateError('未找到这份学习计划');
     final steps = await plans.steps(planId);
@@ -152,14 +152,14 @@ class StudyPlanService {
   };
 
   /// 跟随写入更新的系统学习页一屏；页面订阅之后不再自己重读。
-  Stream<StudyPlanScreen> watchScreen(int planId) =>
+  Stream<StudyPlanScreen> watchScreen(String planId) =>
       runtime.watch(tables: _screenTables, read: () => loadScreen(planId));
 
   /// 读一屏：计划与步骤、每一步下一次预约与最近一次结束的场次同时发出。
   ///
   /// 三段读的是同一份步骤，同时发出之后页面等的是最慢的一段；预约按当前
   /// 时间口径判断“下一次”，截止小时变化之后重读会得到新的结果。
-  Future<StudyPlanScreen> loadScreen(int planId) async {
+  Future<StudyPlanScreen> loadScreen(String planId) async {
     final view = await this.view(planId);
     final stepIds = view.steps.map((step) => step.id);
     final (blocks, sessions) = await (
@@ -170,15 +170,15 @@ class StudyPlanService {
   }
 
   /// 每个步骤最近一次结束的场次，给步骤卡显示完成时间、结果与困难。
-  Future<Map<int, StudySession>> latestSessionsForSteps(
-    Iterable<int> stepIds,
+  Future<Map<String, StudySession>> latestSessionsForSteps(
+    Iterable<String> stepIds,
   ) => study.latestEndedByPlanItem(stepIds);
 
   /// 这一步上次停在哪里：有作答时回到原题，有讨论时回到讨论，否则打开材料。
   ///
   /// 计划页、预约与事项详情共用这一条判断，入口只负责打开对应内容，不再
   /// 各自决定是新建讨论还是直接进入材料。步骤绑定的讨论被删除时退回材料。
-  Future<StudyStepResume> resumePoint(int planId, int stepId) async {
+  Future<StudyStepResume> resumePoint(String planId, String stepId) async {
     final view = await this.view(planId);
     final step = view.steps.where((item) => item.id == stepId).firstOrNull;
     if (step == null) throw StateError('未找到这一步');
@@ -211,9 +211,9 @@ class StudyPlanService {
   ///
   /// 讨论与步骤绑定放在同一个事务里，之后从计划页或预约进入都会回到这条
   /// 讨论，而不是重新打开材料页。
-  Future<int> startDiscussionAtStep({
-    required int planId,
-    required int stepId,
+  Future<String> startDiscussionAtStep({
+    required String planId,
+    required String stepId,
     required int pageNo,
   }) async {
     final view = await this.view(planId);
@@ -246,10 +246,10 @@ class StudyPlanService {
   /// 前面已经通过核对的步骤，只给这一批按页补齐，并在 [StudyPlanProposal]
   /// 里标明整份结果的来源。
   Future<StudyPlanProposal> propose({
-    required int materialId,
+    required String materialId,
     required int pageFrom,
     required int pageTo,
-    int? goalId,
+    String? goalId,
     String? conversationFocus,
   }) async {
     final isDocx = (await materials.byId(materialId))?.isDocx ?? false;
@@ -338,8 +338,8 @@ class StudyPlanService {
   }
 
   Future<List<StudyStepDraft>> _proposeBatch({
-    required int materialId,
-    required int? goalId,
+    required String materialId,
+    required String? goalId,
     required String? conversationFocus,
     required LlmConfig config,
     required List<MaterialPage> batch,
@@ -389,12 +389,12 @@ class StudyPlanService {
 
   /// 保存用户确认的顺序；`conversationId` 用于从已有讨论开始系统学习。
   Future<StudyPlanView> createPlan({
-    required int materialId,
+    required String materialId,
     required int pageFrom,
     required int pageTo,
     required List<StudyStepDraft> steps,
-    int? goalId,
-    int? conversationId,
+    String? goalId,
+    String? conversationId,
     String? title,
   }) async {
     if (steps.isEmpty) throw ArgumentError('请先生成学习步骤');
@@ -440,8 +440,8 @@ class StudyPlanService {
   }
 
   Future<WriteResult> setStepStatus(
-    int planId,
-    int stepId,
+    String planId,
+    String stepId,
     PlanItemStatus status,
   ) => transactions.run((txn) async {
     await plans.setStepStatus(
@@ -453,19 +453,19 @@ class StudyPlanService {
     return txn.result();
   }, label: '更新学习步骤');
 
-  Future<WriteResult> pause(int planId) => transactions.run((txn) async {
+  Future<WriteResult> pause(String planId) => transactions.run((txn) async {
     await plans.setStatus(planId, StudyPlanStatus.paused, transaction: txn);
     return txn.result();
   }, label: '暂停学习计划');
 
-  Future<WriteResult> resume(int planId) => transactions.run((txn) async {
+  Future<WriteResult> resume(String planId) => transactions.run((txn) async {
     await plans.setStatus(planId, StudyPlanStatus.active, transaction: txn);
     return txn.result();
   }, label: '继续学习计划');
 
   /// 从当前步骤打开一次讨论；正式学习会把这一步标为进行中。
-  Future<int> startAtCurrent(
-    int planId, {
+  Future<String> startAtCurrent(
+    String planId, {
     bool temporary = false,
     bool newDiscussion = false,
   }) async {
@@ -524,7 +524,7 @@ class StudyPlanService {
     );
   }
 
-  Future<int> startTemporary(int planId) =>
+  Future<String> startTemporary(String planId) =>
       startAtCurrent(planId, temporary: true);
 
   List<StudyStepDraft> _localSteps(

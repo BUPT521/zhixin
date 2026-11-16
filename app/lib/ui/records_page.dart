@@ -67,11 +67,11 @@ class RecordsPage extends StatefulWidget {
   /// 从别的栏目跳到记录时带的意图：切到哪个页签，第几次请求。
   final ValueListenable<RecordsRequest> request;
   final VoidCallback? onStartQuestion;
-  final Future<void> Function(int questionId) onOpenLearning;
-  final Future<void> Function(int conversationId) onOpenDiscussion;
+  final Future<void> Function(String questionId) onOpenLearning;
+  final Future<void> Function(String conversationId) onOpenDiscussion;
 
   /// 从记录直接进入“先不看上次”的独立重做。
-  final Future<void> Function(int questionId)? onOpenLearningRedo;
+  final Future<void> Function(String questionId)? onOpenLearningRedo;
 
   @override
   State<RecordsPage> createState() => _RecordsPageState();
@@ -87,7 +87,7 @@ class _RecordsPageState extends State<RecordsPage> {
   static const _pageSize = 30;
 
   String? _answerFilter;
-  int? _goalFilter;
+  String? _goalFilter;
   bool _unassignedOnly = false;
   RecordsTab _tab = RecordsTab.learning;
 
@@ -104,8 +104,8 @@ class _RecordsPageState extends State<RecordsPage> {
   Stream<RecordsView>? _stream;
   RecordsView? _view;
   List<ConversationRecord> _older = const [];
-  Map<int, QuestionRow> _olderQuestions = const {};
-  Map<int, List<Assessment>> _olderAssessments = const {};
+  Map<String, QuestionRow> _olderQuestions = const {};
+  Map<String, List<Assessment>> _olderAssessments = const {};
   bool _hasMore = false;
   bool _loadingMore = false;
 
@@ -126,12 +126,12 @@ class _RecordsPageState extends State<RecordsPage> {
     ];
   }
 
-  Map<int, QuestionRow> get _questions => {
+  Map<String, QuestionRow> get _questions => {
     ...?_view?.questions,
     ..._olderQuestions,
   };
 
-  Map<int, List<Assessment>> get _assessments => {
+  Map<String, List<Assessment>> get _assessments => {
     ...?_view?.assessments,
     ..._olderAssessments,
   };
@@ -253,15 +253,15 @@ class _RecordsPageState extends State<RecordsPage> {
   }
 
   /// 打开学习页或讨论页；返回之后记录随订阅自动更新。
-  Future<void> _openLearning(int questionId) async {
+  Future<void> _openLearning(String questionId) async {
     await widget.onOpenLearning(questionId);
   }
 
-  Future<void> _openDiscussion(int conversationId) async {
+  Future<void> _openDiscussion(String conversationId) async {
     await widget.onOpenDiscussion(conversationId);
   }
 
-  Future<void> _openLearningRedo(int questionId) async {
+  Future<void> _openLearningRedo(String questionId) async {
     final open = widget.onOpenLearningRedo;
     if (open == null) {
       await _openLearning(questionId);
@@ -315,7 +315,7 @@ class _RecordsPageState extends State<RecordsPage> {
     }
   }
 
-  String _goalLabel(int? goalId) {
+  String _goalLabel(String? goalId) {
     if (goalId == null) return '无归属';
     return _goals.where((goal) => goal.id == goalId).firstOrNull?.title ??
         '目标已删除';
@@ -442,7 +442,7 @@ class _RecordsPageState extends State<RecordsPage> {
   bool get _filtered =>
       _goalFilter != null || _unassignedOnly || _answerFilter != null;
 
-  void _setGoalFilter({int? goalId, bool unassigned = false}) {
+  void _setGoalFilter({String? goalId, bool unassigned = false}) {
     setState(() {
       _goalFilter = unassigned ? null : goalId;
       _unassignedOnly = unassigned;

@@ -67,17 +67,17 @@ void main() {
     await repo.create(
       kind: MemoryKind.difficulty,
       content: '放缩方向不确定',
-      scope: memoryGoalScope(1),
+      scope: memoryGoalScope('goal-1'),
     );
     await repo.create(
       kind: MemoryKind.progress,
       content: '能独立做极限题',
-      scope: memoryGoalScope(2),
+      scope: memoryGoalScope('goal-2'),
     );
 
     final second = await repo.activeForContext(
       now: now,
-      scope: memoryGoalScope(2),
+      scope: memoryGoalScope('goal-2'),
     );
     expect(second.map((memory) => memory.content), contains('晚上学习'));
     expect(second.map((memory) => memory.content), contains('能独立做极限题'));
@@ -95,21 +95,21 @@ void main() {
     await repo.create(
       kind: MemoryKind.difficulty,
       content: '放缩方向不确定',
-      scope: memoryGoalScope(1),
+      scope: memoryGoalScope('goal-1'),
     );
     await repo.create(
       kind: MemoryKind.difficulty,
       content: '另一个目标的困难',
-      scope: memoryGoalScope(2),
+      scope: memoryGoalScope('goal-2'),
     );
     await repo.create(kind: MemoryKind.difficulty, content: '没有范围的困难');
     await repo.create(
       kind: MemoryKind.progress,
       content: '同一目标下的进展',
-      scope: memoryGoalScope(1),
+      scope: memoryGoalScope('goal-1'),
     );
 
-    final items = await repo.activeDifficulties(memoryGoalScope(1));
+    final items = await repo.activeDifficulties(memoryGoalScope('goal-1'));
 
     expect(items.map((item) => item.content), ['放缩方向不确定']);
   });

@@ -13,13 +13,13 @@ import 'package:zhixin/domain/models/score.dart';
 EvidenceHit _page(int pageNo, String content) {
   return EvidenceHit(
     kind: EvidenceKind.materialPage,
-    identity: 'material_page:1:$pageNo',
+    identity: 'material_page:mat-1:$pageNo',
     title: '《概率论讲义》第 $pageNo 页',
     snippet: content,
     matchedText: content,
     literal: false,
     score: Score.clamp(0.5),
-    location: EvidenceLocation(materialId: 1, pageNo: pageNo),
+    location: EvidenceLocation(materialId: 'mat-1', pageNo: pageNo),
     sourceVersion: 'v$pageNo',
     text: content,
   );
@@ -88,7 +88,7 @@ void main() {
     for (final item in first) {
       final excerpt = item['excerpt']! as String;
       expect(excerpt.runes.length, lessThanOrEqualTo(201));
-      expect(item['source'], startsWith('material_page:1:'));
+      expect(item['source'], startsWith('material_page:mat-1:'));
     }
 
     final reply = tools.finish('依据补搜到的条件概率定义回答。');
@@ -198,7 +198,7 @@ void main() {
           (q, l) async => [hit],
           materialHits: [
             const MaterialHit(
-              materialId: 1,
+              materialId: 'mat-1',
               materialTitle: '概率论讲义',
               pageNo: 1,
               content: '条件概率的定义。',

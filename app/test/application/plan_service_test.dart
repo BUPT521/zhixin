@@ -289,7 +289,7 @@ void main() {
     final service = _service(rig, policy: policy);
 
     final open = await tasks.createItem(title: '未完成的一项');
-    final done = <int>[];
+    final done = <String>[];
     for (var index = 0; index < 3; index++) {
       final id = await tasks.createItem(title: '已完成 $index');
       await studyPlans.setItemStatus(id, PlanItemStatus.done);
@@ -468,7 +468,7 @@ void main() {
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     final service = _service(rig, policy: policy);
 
-    Future<int> block(String title, int hour) async {
+    Future<String> block(String title, int hour) async {
       final item = await tasks.createItem(title: title);
       return schedule.addBlock(
         planItemId: item,

@@ -37,7 +37,7 @@ class LearningPage extends StatefulWidget {
     this.startRedo = false,
   });
 
-  final int questionId;
+  final String questionId;
 
   /// 从记录页的复查入口进入时直接进入独立重做，不再让用户先点一次。
   final bool startRedo;
@@ -68,7 +68,7 @@ class _LearningPageState extends State<LearningPage> {
   LlmCancelToken? _cancelToken;
 
   /// 已经展开全部帮助的尝试；默认只显示最近两条，更早的仍然可以查看。
-  final Set<int> _expandedHelps = <int>{};
+  final Set<String> _expandedHelps = <String>{};
 
   /// 是否已经配置模型，以及上一次求助的模式与来源；用来决定配置后能否重取。
   bool _configured = false;
@@ -84,16 +84,16 @@ class _LearningPageState extends State<LearningPage> {
   bool? _correct;
   bool? _independent;
   bool _delayed = false;
-  int? _draftAttemptId;
+  String? _draftAttemptId;
 
   /// 保存草稿与提交各保留一个请求编号：写入失败后用户再点一次时沿用同一个
   /// 编号，数据层按提交去重，不会重复写一条草稿或多提交一次作答。
   String? _draftRequestId;
-  int? _draftRequestAttemptId;
+  String? _draftRequestAttemptId;
   String? _submitRequestId;
-  int? _submitRequestAttemptId;
+  String? _submitRequestAttemptId;
   String? _assessRequestId;
-  int? _assessRequestAttemptId;
+  String? _assessRequestAttemptId;
 
   /// 用户选择先不看上次答案重做时，隐藏历次尝试，求助不带入旧讨论回答与困难。
   bool _independentRedo = false;
@@ -105,7 +105,8 @@ class _LearningPageState extends State<LearningPage> {
   late final BuddyTimelineAdapter _timelineAdapter = _LearningTimeline(this);
 
   /// 每次尝试的判断；订阅回填之前为空。
-  Map<int, List<Assessment>> get _assessments => _view?.assessments ?? const {};
+  Map<String, List<Assessment>> get _assessments =>
+      _view?.assessments ?? const {};
 
   /// 当前未提交尝试上的记忆建议：待确认的可以「记下」，已写入的可以撤销。
   List<MemoryItemView> get _memoryItems =>
@@ -202,7 +203,7 @@ class _LearningPageState extends State<LearningPage> {
   }
 
   /// 草稿里已经填过核对依据时带回来；之后的修改直接覆盖同一条判断。
-  String _checkableOf(int? attemptId) {
+  String _checkableOf(String? attemptId) {
     if (attemptId == null) return '';
     for (final assessment
         in (_assessments[attemptId] ?? const <Assessment>[]).reversed) {
@@ -247,7 +248,7 @@ class _LearningPageState extends State<LearningPage> {
 
   /// 保存整份草稿；检查、提交与离开学习页之前都先调用它。
   /// 同一份草稿或同一次提交的重试沿用同一个请求编号；换了一条尝试就换编号。
-  String _requestIdForDraft(int attemptId) {
+  String _requestIdForDraft(String attemptId) {
     if (_draftRequestAttemptId != attemptId) {
       _draftRequestAttemptId = attemptId;
       _draftRequestId =
@@ -256,7 +257,7 @@ class _LearningPageState extends State<LearningPage> {
     return _draftRequestId!;
   }
 
-  String _requestIdForSubmit(int attemptId) {
+  String _requestIdForSubmit(String attemptId) {
     if (_submitRequestAttemptId != attemptId) {
       _submitRequestAttemptId = attemptId;
       _submitRequestId =
@@ -265,7 +266,7 @@ class _LearningPageState extends State<LearningPage> {
     return _submitRequestId!;
   }
 
-  String _requestIdForAssess(int attemptId) {
+  String _requestIdForAssess(String attemptId) {
     if (_assessRequestAttemptId != attemptId) {
       _assessRequestAttemptId = attemptId;
       _assessRequestId =
@@ -415,12 +416,13 @@ class _LearningPageState extends State<LearningPage> {
   /// 帮助里的记忆建议要用户点“记下”才写入，与讨论的确认卡片一致。
   Future<void> _acceptMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
-    if (attempt == null) return;
+    final helpIndex = item.helpIndex;
+    if (attempt == null || helpIndex == null) return;
     await acceptMemoryCard(
       context: context,
       accept: () => AppScope.of(context).chat.learning.acceptMemory(
         attemptId: attempt.id,
-        helpIndex: item.ownerId,
+        helpIndex: helpIndex,
         itemId: item.itemId,
       ),
       scope: 'learning',
@@ -430,12 +432,13 @@ class _LearningPageState extends State<LearningPage> {
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final attempt = _view?.openAttempt;
-    if (attempt == null) return;
+    final helpIndex = item.helpIndex;
+    if (attempt == null || helpIndex == null) return;
     await dismissMemoryCard(
       context: context,
       dismiss: () => AppScope.of(context).chat.learning.dismissMemory(
         attemptId: attempt.id,
-        helpIndex: item.ownerId,
+        helpIndex: helpIndex,
         itemId: item.itemId,
       ),
       scope: 'learning',

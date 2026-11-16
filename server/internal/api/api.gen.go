@@ -283,7 +283,7 @@ type PushResult struct {
 
 // Ready defines model for Ready.
 type Ready struct {
-	// SchemaVersion Examples: 26
+	// SchemaVersion Examples: 27
 	SchemaVersion int         `json:"schema_version"`
 	Status        ReadyStatus `json:"status"`
 }

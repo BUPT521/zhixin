@@ -71,7 +71,7 @@ class EvidenceScope {
       broughtIdentities = const {};
 
   /// 用户主动查找时选定一个目标。
-  const EvidenceScope.userGoal(int id)
+  const EvidenceScope.userGoal(String id)
     : origin = EvidenceOrigin.user,
       kind = EvidenceScopeKind.goal,
       goalId = id,
@@ -81,7 +81,7 @@ class EvidenceScope {
       broughtIdentities = const {};
 
   /// 用户主动查找时选定一份材料。
-  const EvidenceScope.userMaterial(int id)
+  const EvidenceScope.userMaterial(String id)
     : origin = EvidenceOrigin.user,
       kind = EvidenceScopeKind.material,
       goalId = null,
@@ -106,14 +106,14 @@ class EvidenceScope {
 
   final EvidenceOrigin origin;
   final EvidenceScopeKind kind;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
 
   /// 当前材料页码；跨次综合沿“这份材料页”找作答时使用。
   final int? pageNo;
 
   /// 当前讨论；回答前检索用它排除本条记录本身的相关消息。
-  final int? conversationId;
+  final String? conversationId;
 
   /// 本轮由用户从查找结果带入的来源标识，例如 `attempt:12`；没有带入时为空。
   /// 它只对这一次回答有效，由调用方逐轮传入，不写进讨论或记录。
@@ -149,11 +149,11 @@ class EvidenceLocation {
     this.offset,
   });
 
-  final int? conversationId;
-  final int? messageId;
-  final int? materialId;
+  final String? conversationId;
+  final String? messageId;
+  final String? materialId;
   final int? pageNo;
-  final int? attemptId;
+  final String? attemptId;
 
   /// 字面命中的起始位置（从 1 开始），用于在原记录里标出这一处。
   final int? offset;
@@ -251,14 +251,14 @@ class CitationSource {
     this.isDocx = false,
   });
 
-  final int materialId;
+  final String materialId;
   final int pageNo;
   final String content;
   final String? materialTitle;
   final String? sourceVersion;
   final bool isDocx;
 
-  (int, int) get pageKey => (materialId, pageNo);
+  (String, int) get pageKey => (materialId, pageNo);
 }
 
 /// 一次检索的耗时：嵌入、查索引与完整检索分开记录，失败时也能看到停在哪一段。

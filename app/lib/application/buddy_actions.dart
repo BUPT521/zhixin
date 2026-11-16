@@ -42,7 +42,7 @@ Future<ApplyResult> applyMemoryDrafts({
   required MemoryRepository memories,
   required List<MemoryDraft> drafts,
   required MemorySourceKind sourceKind,
-  int? sourceId,
+  String? sourceId,
   String? scope,
   WriteTransaction? transaction,
   Clock clock = systemClock,
@@ -116,7 +116,7 @@ Future<AcceptedMemory> confirmMemoryDraft({
   required MemoryRepository memories,
   required MemoryDraft draft,
   required MemorySourceKind sourceKind,
-  required int sourceId,
+  required String sourceId,
   required String? scope,
   required Clock clock,
   required Future<void> Function(MemoryCardStatus status, int? commitId)

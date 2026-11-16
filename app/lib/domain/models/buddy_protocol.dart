@@ -117,7 +117,7 @@ class BuddyContext {
       identity.uniqueById(outlinePages, (page) => page.pageKey);
 
   Iterable<MaterialHit> get additionalMaterialHits sync* {
-    final included = <(int, int)>{
+    final included = <(String, int)>{
       if (material != null) ?materialPage?.pageKey,
       for (final page in outlinePages) page.pageKey,
     };
@@ -200,7 +200,7 @@ class CitationDraft {
     required this.quote,
   });
 
-  final int materialId;
+  final String materialId;
   final int pageNo;
   final String quote;
 

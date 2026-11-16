@@ -303,7 +303,7 @@ class RevisionUndoService {
     return rows.isEmpty ? null : typedRow(rows.first);
   }
 
-  Object _keyValue(String key) => int.tryParse(key) ?? key;
+  String _keyValue(String key) => key;
 
   Future<String?> _checkSchedule(
     RawExecutor txn,
@@ -320,7 +320,7 @@ class RevisionUndoService {
     final status = row['status']?.value as String? ?? 'planned';
     final start = row['start_at']?.value as String?;
     final end = row['end_at']?.value as String?;
-    final planItemId = row['plan_item_id']?.value as int?;
+    final planItemId = row['plan_item_id']?.value as String?;
     if (start == null || end == null || planItemId == null) {
       return '预约内容不完整，不能撤销';
     }
@@ -338,7 +338,7 @@ class RevisionUndoService {
         !_restoresStatus(commitChanges, 'plan_item', change.rowKey)) {
       return '预约对应的学习事项已经完成或暂缓，不再恢复这条预约';
     }
-    final goalId = item.first['goal_id'] as int?;
+    final goalId = item.first['goal_id'] as String?;
     if (goalId != null) {
       final goals = await selectRows(
         txn,
@@ -353,7 +353,7 @@ class RevisionUndoService {
           : goals.first['status'] as String?;
       if (goalStatus != null &&
           goalStatus != 'active' &&
-          !_restoresStatus(commitChanges, 'learning_goal', '$goalId')) {
+          !_restoresStatus(commitChanges, 'learning_goal', goalId)) {
         return '预约对应的学习目标已经暂停或结束，不再恢复这条预约';
       }
     }
@@ -370,12 +370,12 @@ class RevisionUndoService {
     if (startAt == null || endAt == null || !endAt.isAfter(startAt)) {
       return '预约时间不完整，不能撤销';
     }
-    final selfId = int.tryParse(change.rowKey);
+    final selfId = change.rowKey;
     final conflict = await findScheduleConflict(
       txn,
       start: startAt,
       end: endAt,
-      ignoredBlockIds: {?selfId},
+      ignoredBlockIds: {selfId},
     );
     if (conflict != null) {
       return '恢复后的时间与${conflict.description}冲突';
@@ -540,8 +540,8 @@ class RevisionUndoService {
     required int commitId,
     required List<RevisionChange> changes,
   }) async {
-    final titlesByMessage = <int, Set<String>>{};
-    final stepIdsByMessage = <int, Set<String>>{};
+    final titlesByMessage = <String, Set<String>>{};
+    final stepIdsByMessage = <String, Set<String>>{};
     for (final change in changes) {
       if (change.table != 'plan_item' || change.op != 'insert') continue;
       final row = change.after;
@@ -557,9 +557,9 @@ class RevisionUndoService {
         stepIdsByMessage.putIfAbsent(messageId, () => <String>{}).add(stepId);
       }
     }
-    final messageIds = <int>{
+    final messageIds = <String>{
       for (final change in changes)
-        if (change.table == 'message') ?int.tryParse(change.rowKey),
+        if (change.table == 'message') change.rowKey,
       ...titlesByMessage.keys,
     };
     for (final messageId in messageIds) {
@@ -605,13 +605,13 @@ class RevisionUndoService {
     }
   }
 
-  int? _originMessageId(Object? raw) {
+  String? _originMessageId(Object? raw) {
     if (raw is! String || raw.trim().isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
       final id = decoded['message_id'];
-      return id is int ? id : null;
+      return id is String ? id : null;
     } on FormatException {
       return null;
     }

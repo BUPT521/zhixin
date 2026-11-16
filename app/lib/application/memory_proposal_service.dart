@@ -36,7 +36,7 @@ class MemoryProposal {
   final String? scope;
 
   /// 来源作答的标识；写入记忆时记在 `source_kind = 'attempt'` 的 `source_id`。
-  final int sourceId;
+  final String sourceId;
   final String sourceLabel;
 
   /// 判断依据，例如帮助次数、独立性声明与作答时间。
@@ -44,7 +44,7 @@ class MemoryProposal {
 
   /// 提示下完成、独立完成或延迟后的独立完成。
   final String conditionLabel;
-  final int? conversationId;
+  final String? conversationId;
 }
 
 /// 一次提取的结果：待确认提案、已经处理过的来源与需要说明的情况。
@@ -108,7 +108,7 @@ class MemoryProposalService {
   Future<List<QuestionRow>> questions({int limit = 20}) =>
       conversations.questionRows(limit: limit);
 
-  Future<MemoryProposalOutcome> propose(int conversationId) async {
+  Future<MemoryProposalOutcome> propose(String conversationId) async {
     final conversation = await conversations.byId(conversationId);
     if (conversation == null) {
       return const MemoryProposalOutcome(notes: ['这条记录已经不存在']);
@@ -120,7 +120,7 @@ class MemoryProposalService {
       materialId: conversation.materialId,
     );
     final existing = await memories.list(includeInactive: true);
-    final processed = <int>{
+    final processed = <String>{
       for (final memory in existing)
         if (memory.sourceKind == MemorySourceKind.attempt &&
             memory.sourceId != null)
@@ -137,21 +137,27 @@ class MemoryProposalService {
       for (final memory in existing) _contentKey(memory.kind, memory.content),
     };
     final pending = <String, MemoryProposal>{};
+    // 界面上按“第几次作答”指称来源；作答编号已经是文本标识，这里按本次读取的
+    // 提交顺序给出一句可读的说明，内部仍以标识定位。
+    final labels = <String, String>{};
+    var submitted = 0;
     for (final attempt in records) {
       if (!attempt.submitted) continue;
-      final label = _conditionLabel(attempt);
+      submitted += 1;
+      final label = '第 $submitted 次作答';
+      labels[attempt.id] = label;
       final basis = _basis(attempt);
       final memoryKind = _kindFor(attempt);
       if (memoryKind == null) {
         if (attempt.isCorrect == true && attempt.independent == null) {
-          notes.add('$stem：第 ${attempt.id} 次作答没有说明是否独立，暂不生成独立完成的判断。');
+          notes.add('$stem：$label没有说明是否独立，暂不生成独立完成的判断。');
         } else if (attempt.isCorrect == true && !attempt.delayed) {
-          notes.add('$stem：第 ${attempt.id} 次作答在帮助下完成，不记为独立表现。');
+          notes.add('$stem：$label在帮助下完成，不记为独立表现。');
         }
         continue;
       }
       if (processed.contains(attempt.id)) {
-        skipped.add('$stem：第 ${attempt.id} 次作答已经处理过，不再重复生成。');
+        skipped.add('$stem：$label已经处理过，不再重复生成。');
         continue;
       }
       final content = _contentFor(stem, attempt, memoryKind);
@@ -163,7 +169,7 @@ class MemoryProposalService {
       final earlier = pending[key];
       if (earlier != null) {
         skipped.add(
-          '$stem：第 ${attempt.id} 次作答与第 ${earlier.sourceId} 次作答'
+          '$stem：$label与${labels[earlier.sourceId] ?? earlier.sourceLabel}'
           '指向同一判断，已合并为一条提案。',
         );
         continue;
@@ -174,9 +180,9 @@ class MemoryProposalService {
         content: content,
         scope: scope,
         sourceId: attempt.id,
-        sourceLabel: '第 ${attempt.id} 次作答（${question?.sourceRef ?? '本机记录'}）',
+        sourceLabel: '$label（${question?.sourceRef ?? '本机记录'}）',
         basis: basis,
-        conditionLabel: label,
+        conditionLabel: _conditionLabel(attempt),
         conversationId: conversationId,
       );
       pending[key] = proposal;

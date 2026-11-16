@@ -72,14 +72,14 @@ class ConversationRecord {
     this.hasDraft = false,
   });
 
-  final int id;
+  final String id;
   final String? title;
 
   /// 用户明确选择的目标；为空表示无归属。
-  final int? goalId;
+  final String? goalId;
 
   /// 这次讨论依据的材料与页码；为空表示没有带入材料。
-  final int? materialId;
+  final String? materialId;
   final int? pageNo;
   final String? materialTitle;
   final bool materialIsDocx;
@@ -153,7 +153,7 @@ class RelatedRecord {
     this.snippetText,
   });
 
-  final int conversationId;
+  final String conversationId;
   final String content;
   final String? title;
   final DateTime? createdAt;

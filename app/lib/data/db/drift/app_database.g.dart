@@ -11,16 +11,12 @@ class $TimetableEntriesTable extends TimetableEntries
   $TimetableEntriesTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _weekdayMeta = const VerificationMeta(
     'weekday',
@@ -123,6 +119,8 @@ class $TimetableEntriesTable extends TimetableEntries
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('weekday')) {
       context.handle(
@@ -188,7 +186,7 @@ class $TimetableEntriesTable extends TimetableEntries
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return TimetableEntryRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       weekday: attachedDatabase.typeMapping.read(
@@ -230,7 +228,7 @@ class $TimetableEntriesTable extends TimetableEntries
 
 class TimetableEntryRow extends DataClass
     implements Insertable<TimetableEntryRow> {
-  final int id;
+  final String id;
   final int weekday;
   final String startTime;
   final String endTime;
@@ -251,7 +249,7 @@ class TimetableEntryRow extends DataClass
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     map['weekday'] = Variable<int>(weekday);
     map['start_time'] = Variable<String>(startTime);
     map['end_time'] = Variable<String>(endTime);
@@ -285,7 +283,7 @@ class TimetableEntryRow extends DataClass
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return TimetableEntryRow(
-      id: serializer.fromJson<int>(json['id']),
+      id: serializer.fromJson<String>(json['id']),
       weekday: serializer.fromJson<int>(json['weekday']),
       startTime: serializer.fromJson<String>(json['startTime']),
       endTime: serializer.fromJson<String>(json['endTime']),
@@ -299,7 +297,7 @@ class TimetableEntryRow extends DataClass
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
+      'id': serializer.toJson<String>(id),
       'weekday': serializer.toJson<int>(weekday),
       'startTime': serializer.toJson<String>(startTime),
       'endTime': serializer.toJson<String>(endTime),
@@ -311,7 +309,7 @@ class TimetableEntryRow extends DataClass
   }
 
   TimetableEntryRow copyWith({
-    int? id,
+    String? id,
     int? weekday,
     String? startTime,
     String? endTime,
@@ -383,7 +381,7 @@ class TimetableEntryRow extends DataClass
 }
 
 class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
-  final Value<int> id;
+  final Value<String> id;
   final Value<int> weekday;
   final Value<String> startTime;
   final Value<String> endTime;
@@ -391,6 +389,7 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
   final Value<String?> location;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const TimetableEntriesCompanion({
     this.id = const Value.absent(),
     this.weekday = const Value.absent(),
@@ -400,9 +399,10 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
     this.location = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   TimetableEntriesCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     required int weekday,
     required String startTime,
     required String endTime,
@@ -410,14 +410,16 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
     this.location = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : weekday = Value(weekday),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       weekday = Value(weekday),
        startTime = Value(startTime),
        endTime = Value(endTime),
        title = Value(title),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<TimetableEntryRow> custom({
-    Expression<int>? id,
+    Expression<String>? id,
     Expression<int>? weekday,
     Expression<String>? startTime,
     Expression<String>? endTime,
@@ -425,6 +427,7 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
     Expression<String>? location,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -435,11 +438,12 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
       if (location != null) 'location': location,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   TimetableEntriesCompanion copyWith({
-    Value<int>? id,
+    Value<String>? id,
     Value<int>? weekday,
     Value<String>? startTime,
     Value<String>? endTime,
@@ -447,6 +451,7 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
     Value<String?>? location,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return TimetableEntriesCompanion(
       id: id ?? this.id,
@@ -457,6 +462,7 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
       location: location ?? this.location,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -464,7 +470,7 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (weekday.present) {
       map['weekday'] = Variable<int>(weekday.value);
@@ -487,6 +493,9 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -500,7 +509,8 @@ class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
           ..write('title: $title, ')
           ..write('location: $location, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -1081,16 +1091,12 @@ class $LearningGoalsTable extends LearningGoals
   $LearningGoalsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
@@ -1180,6 +1186,8 @@ class $LearningGoalsTable extends LearningGoals
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('title')) {
       context.handle(
@@ -1233,7 +1241,7 @@ class $LearningGoalsTable extends LearningGoals
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LearningGoalRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       title: attachedDatabase.typeMapping.read(
@@ -1270,7 +1278,7 @@ class $LearningGoalsTable extends LearningGoals
 }
 
 class LearningGoalRow extends DataClass implements Insertable<LearningGoalRow> {
-  final int id;
+  final String id;
   final String title;
   final String? scopeText;
   final String? dueDate;
@@ -1289,7 +1297,7 @@ class LearningGoalRow extends DataClass implements Insertable<LearningGoalRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     map['title'] = Variable<String>(title);
     if (!nullToAbsent || scopeText != null) {
       map['scope_text'] = Variable<String>(scopeText);
@@ -1325,7 +1333,7 @@ class LearningGoalRow extends DataClass implements Insertable<LearningGoalRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LearningGoalRow(
-      id: serializer.fromJson<int>(json['id']),
+      id: serializer.fromJson<String>(json['id']),
       title: serializer.fromJson<String>(json['title']),
       scopeText: serializer.fromJson<String?>(json['scopeText']),
       dueDate: serializer.fromJson<String?>(json['dueDate']),
@@ -1338,7 +1346,7 @@ class LearningGoalRow extends DataClass implements Insertable<LearningGoalRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
+      'id': serializer.toJson<String>(id),
       'title': serializer.toJson<String>(title),
       'scopeText': serializer.toJson<String?>(scopeText),
       'dueDate': serializer.toJson<String?>(dueDate),
@@ -1349,7 +1357,7 @@ class LearningGoalRow extends DataClass implements Insertable<LearningGoalRow> {
   }
 
   LearningGoalRow copyWith({
-    int? id,
+    String? id,
     String? title,
     Value<String?> scopeText = const Value.absent(),
     Value<String?> dueDate = const Value.absent(),
@@ -1408,13 +1416,14 @@ class LearningGoalRow extends DataClass implements Insertable<LearningGoalRow> {
 }
 
 class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
-  final Value<int> id;
+  final Value<String> id;
   final Value<String> title;
   final Value<String?> scopeText;
   final Value<String?> dueDate;
   final Value<String> status;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const LearningGoalsCompanion({
     this.id = const Value.absent(),
     this.title = const Value.absent(),
@@ -1423,26 +1432,30 @@ class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   LearningGoalsCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     required String title,
     this.scopeText = const Value.absent(),
     this.dueDate = const Value.absent(),
     this.status = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : title = Value(title),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       title = Value(title),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<LearningGoalRow> custom({
-    Expression<int>? id,
+    Expression<String>? id,
     Expression<String>? title,
     Expression<String>? scopeText,
     Expression<String>? dueDate,
     Expression<String>? status,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1452,17 +1465,19 @@ class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
       if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   LearningGoalsCompanion copyWith({
-    Value<int>? id,
+    Value<String>? id,
     Value<String>? title,
     Value<String?>? scopeText,
     Value<String?>? dueDate,
     Value<String>? status,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return LearningGoalsCompanion(
       id: id ?? this.id,
@@ -1472,6 +1487,7 @@ class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -1479,7 +1495,7 @@ class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (title.present) {
       map['title'] = Variable<String>(title.value);
@@ -1499,6 +1515,9 @@ class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -1511,7 +1530,8 @@ class LearningGoalsCompanion extends UpdateCompanion<LearningGoalRow> {
           ..write('dueDate: $dueDate, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -2056,16 +2076,12 @@ class $MaterialsTable extends Materials
   $MaterialsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
@@ -2125,11 +2141,11 @@ class $MaterialsTable extends Materials
   );
   static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
   @override
-  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> goalId = GeneratedColumn<String>(
     'goal_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES learning_goal (id) ON DELETE SET NULL',
@@ -2183,6 +2199,8 @@ class $MaterialsTable extends Materials
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('title')) {
       context.handle(
@@ -2254,7 +2272,7 @@ class $MaterialsTable extends Materials
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return MaterialRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       title: attachedDatabase.typeMapping.read(
@@ -2278,7 +2296,7 @@ class $MaterialsTable extends Materials
         data['${effectivePrefix}source_file_hash'],
       ),
       goalId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}goal_id'],
       ),
       createdAt: attachedDatabase.typeMapping.read(
@@ -2299,13 +2317,13 @@ class $MaterialsTable extends Materials
 }
 
 class MaterialRow extends DataClass implements Insertable<MaterialRow> {
-  final int id;
+  final String id;
   final String title;
   final String kind;
   final String? sourceRef;
   final String? sourceFileName;
   final String? sourceFileHash;
-  final int? goalId;
+  final String? goalId;
   final String createdAt;
   final String updatedAt;
   const MaterialRow({
@@ -2322,7 +2340,7 @@ class MaterialRow extends DataClass implements Insertable<MaterialRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     map['title'] = Variable<String>(title);
     map['kind'] = Variable<String>(kind);
     if (!nullToAbsent || sourceRef != null) {
@@ -2335,7 +2353,7 @@ class MaterialRow extends DataClass implements Insertable<MaterialRow> {
       map['source_file_hash'] = Variable<String>(sourceFileHash);
     }
     if (!nullToAbsent || goalId != null) {
-      map['goal_id'] = Variable<int>(goalId);
+      map['goal_id'] = Variable<String>(goalId);
     }
     map['created_at'] = Variable<String>(createdAt);
     map['updated_at'] = Variable<String>(updatedAt);
@@ -2370,13 +2388,13 @@ class MaterialRow extends DataClass implements Insertable<MaterialRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MaterialRow(
-      id: serializer.fromJson<int>(json['id']),
+      id: serializer.fromJson<String>(json['id']),
       title: serializer.fromJson<String>(json['title']),
       kind: serializer.fromJson<String>(json['kind']),
       sourceRef: serializer.fromJson<String?>(json['sourceRef']),
       sourceFileName: serializer.fromJson<String?>(json['sourceFileName']),
       sourceFileHash: serializer.fromJson<String?>(json['sourceFileHash']),
-      goalId: serializer.fromJson<int?>(json['goalId']),
+      goalId: serializer.fromJson<String?>(json['goalId']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
@@ -2385,26 +2403,26 @@ class MaterialRow extends DataClass implements Insertable<MaterialRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
+      'id': serializer.toJson<String>(id),
       'title': serializer.toJson<String>(title),
       'kind': serializer.toJson<String>(kind),
       'sourceRef': serializer.toJson<String?>(sourceRef),
       'sourceFileName': serializer.toJson<String?>(sourceFileName),
       'sourceFileHash': serializer.toJson<String?>(sourceFileHash),
-      'goalId': serializer.toJson<int?>(goalId),
+      'goalId': serializer.toJson<String?>(goalId),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
   }
 
   MaterialRow copyWith({
-    int? id,
+    String? id,
     String? title,
     String? kind,
     Value<String?> sourceRef = const Value.absent(),
     Value<String?> sourceFileName = const Value.absent(),
     Value<String?> sourceFileHash = const Value.absent(),
-    Value<int?> goalId = const Value.absent(),
+    Value<String?> goalId = const Value.absent(),
     String? createdAt,
     String? updatedAt,
   }) => MaterialRow(
@@ -2484,15 +2502,16 @@ class MaterialRow extends DataClass implements Insertable<MaterialRow> {
 }
 
 class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
-  final Value<int> id;
+  final Value<String> id;
   final Value<String> title;
   final Value<String> kind;
   final Value<String?> sourceRef;
   final Value<String?> sourceFileName;
   final Value<String?> sourceFileHash;
-  final Value<int?> goalId;
+  final Value<String?> goalId;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const MaterialsCompanion({
     this.id = const Value.absent(),
     this.title = const Value.absent(),
@@ -2503,9 +2522,10 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
     this.goalId = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   MaterialsCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     required String title,
     this.kind = const Value.absent(),
     this.sourceRef = const Value.absent(),
@@ -2514,19 +2534,22 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
     this.goalId = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : title = Value(title),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       title = Value(title),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<MaterialRow> custom({
-    Expression<int>? id,
+    Expression<String>? id,
     Expression<String>? title,
     Expression<String>? kind,
     Expression<String>? sourceRef,
     Expression<String>? sourceFileName,
     Expression<String>? sourceFileHash,
-    Expression<int>? goalId,
+    Expression<String>? goalId,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -2538,19 +2561,21 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
       if (goalId != null) 'goal_id': goalId,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   MaterialsCompanion copyWith({
-    Value<int>? id,
+    Value<String>? id,
     Value<String>? title,
     Value<String>? kind,
     Value<String?>? sourceRef,
     Value<String?>? sourceFileName,
     Value<String?>? sourceFileHash,
-    Value<int?>? goalId,
+    Value<String?>? goalId,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return MaterialsCompanion(
       id: id ?? this.id,
@@ -2562,6 +2587,7 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
       goalId: goalId ?? this.goalId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -2569,7 +2595,7 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (title.present) {
       map['title'] = Variable<String>(title.value);
@@ -2587,13 +2613,16 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
       map['source_file_hash'] = Variable<String>(sourceFileHash.value);
     }
     if (goalId.present) {
-      map['goal_id'] = Variable<int>(goalId.value);
+      map['goal_id'] = Variable<String>(goalId.value);
     }
     if (createdAt.present) {
       map['created_at'] = Variable<String>(createdAt.value);
     }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
     }
     return map;
   }
@@ -2609,7 +2638,8 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
           ..write('sourceFileHash: $sourceFileHash, ')
           ..write('goalId: $goalId, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -2623,26 +2653,22 @@ class $MaterialPagesTable extends MaterialPages
   $MaterialPagesTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _materialIdMeta = const VerificationMeta(
     'materialId',
   );
   @override
-  late final GeneratedColumn<int> materialId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> materialId = GeneratedColumn<String>(
     'material_id',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: true,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES material (id) ON DELETE CASCADE',
@@ -2724,6 +2750,8 @@ class $MaterialPagesTable extends MaterialPages
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('material_id')) {
       context.handle(
@@ -2785,11 +2813,11 @@ class $MaterialPagesTable extends MaterialPages
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return MaterialPageRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       materialId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}material_id'],
       )!,
       pageNo: attachedDatabase.typeMapping.read(
@@ -2822,8 +2850,8 @@ class $MaterialPagesTable extends MaterialPages
 }
 
 class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
-  final int id;
-  final int materialId;
+  final String id;
+  final String materialId;
   final int pageNo;
   final String? label;
   final String content;
@@ -2841,8 +2869,8 @@ class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['material_id'] = Variable<int>(materialId);
+    map['id'] = Variable<String>(id);
+    map['material_id'] = Variable<String>(materialId);
     map['page_no'] = Variable<int>(pageNo);
     if (!nullToAbsent || label != null) {
       map['label'] = Variable<String>(label);
@@ -2873,8 +2901,8 @@ class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MaterialPageRow(
-      id: serializer.fromJson<int>(json['id']),
-      materialId: serializer.fromJson<int>(json['materialId']),
+      id: serializer.fromJson<String>(json['id']),
+      materialId: serializer.fromJson<String>(json['materialId']),
       pageNo: serializer.fromJson<int>(json['pageNo']),
       label: serializer.fromJson<String?>(json['label']),
       content: serializer.fromJson<String>(json['content']),
@@ -2886,8 +2914,8 @@ class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'materialId': serializer.toJson<int>(materialId),
+      'id': serializer.toJson<String>(id),
+      'materialId': serializer.toJson<String>(materialId),
       'pageNo': serializer.toJson<int>(pageNo),
       'label': serializer.toJson<String?>(label),
       'content': serializer.toJson<String>(content),
@@ -2897,8 +2925,8 @@ class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
   }
 
   MaterialPageRow copyWith({
-    int? id,
-    int? materialId,
+    String? id,
+    String? materialId,
     int? pageNo,
     Value<String?> label = const Value.absent(),
     String? content,
@@ -2958,13 +2986,14 @@ class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
 }
 
 class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
-  final Value<int> id;
-  final Value<int> materialId;
+  final Value<String> id;
+  final Value<String> materialId;
   final Value<int> pageNo;
   final Value<String?> label;
   final Value<String> content;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const MaterialPagesCompanion({
     this.id = const Value.absent(),
     this.materialId = const Value.absent(),
@@ -2973,28 +3002,32 @@ class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
     this.content = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   MaterialPagesCompanion.insert({
-    this.id = const Value.absent(),
-    required int materialId,
+    required String id,
+    required String materialId,
     required int pageNo,
     this.label = const Value.absent(),
     required String content,
     required String createdAt,
     required String updatedAt,
-  }) : materialId = Value(materialId),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       materialId = Value(materialId),
        pageNo = Value(pageNo),
        content = Value(content),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<MaterialPageRow> custom({
-    Expression<int>? id,
-    Expression<int>? materialId,
+    Expression<String>? id,
+    Expression<String>? materialId,
     Expression<int>? pageNo,
     Expression<String>? label,
     Expression<String>? content,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -3004,17 +3037,19 @@ class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
       if (content != null) 'content': content,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   MaterialPagesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? materialId,
+    Value<String>? id,
+    Value<String>? materialId,
     Value<int>? pageNo,
     Value<String?>? label,
     Value<String>? content,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return MaterialPagesCompanion(
       id: id ?? this.id,
@@ -3024,6 +3059,7 @@ class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
       content: content ?? this.content,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -3031,10 +3067,10 @@ class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (materialId.present) {
-      map['material_id'] = Variable<int>(materialId.value);
+      map['material_id'] = Variable<String>(materialId.value);
     }
     if (pageNo.present) {
       map['page_no'] = Variable<int>(pageNo.value);
@@ -3051,6 +3087,9 @@ class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -3063,7 +3102,8 @@ class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
           ..write('label: $label, ')
           ..write('content: $content, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -3077,16 +3117,12 @@ class $ConversationsTable extends Conversations
   $ConversationsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
@@ -3099,11 +3135,11 @@ class $ConversationsTable extends Conversations
   );
   static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
   @override
-  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> goalId = GeneratedColumn<String>(
     'goal_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES learning_goal (id) ON DELETE SET NULL',
@@ -3113,11 +3149,11 @@ class $ConversationsTable extends Conversations
     'materialId',
   );
   @override
-  late final GeneratedColumn<int> materialId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> materialId = GeneratedColumn<String>(
     'material_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES material (id) ON DELETE SET NULL',
@@ -3158,13 +3194,14 @@ class $ConversationsTable extends Conversations
     'questionMessageId',
   );
   @override
-  late final GeneratedColumn<int> questionMessageId = GeneratedColumn<int>(
-    'question_message_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
+  late final GeneratedColumn<String> questionMessageId =
+      GeneratedColumn<String>(
+        'question_message_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _entryKindMeta = const VerificationMeta(
     'entryKind',
   );
@@ -3264,6 +3301,8 @@ class $ConversationsTable extends Conversations
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('title')) {
       context.handle(
@@ -3366,7 +3405,7 @@ class $ConversationsTable extends Conversations
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return ConversationRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       title: attachedDatabase.typeMapping.read(
@@ -3374,11 +3413,11 @@ class $ConversationsTable extends Conversations
         data['${effectivePrefix}title'],
       ),
       goalId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}goal_id'],
       ),
       materialId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}material_id'],
       ),
       pageNo: attachedDatabase.typeMapping.read(
@@ -3394,7 +3433,7 @@ class $ConversationsTable extends Conversations
         data['${effectivePrefix}context_text'],
       ),
       questionMessageId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}question_message_id'],
       ),
       entryKind: attachedDatabase.typeMapping.read(
@@ -3431,14 +3470,14 @@ class $ConversationsTable extends Conversations
 }
 
 class ConversationRow extends DataClass implements Insertable<ConversationRow> {
-  final int id;
+  final String id;
   final String? title;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
   final int? pageNo;
   final String? sourceRef;
   final String? contextText;
-  final int? questionMessageId;
+  final String? questionMessageId;
   final String entryKind;
   final String status;
   final String? endedAt;
@@ -3464,15 +3503,15 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     if (!nullToAbsent || title != null) {
       map['title'] = Variable<String>(title);
     }
     if (!nullToAbsent || goalId != null) {
-      map['goal_id'] = Variable<int>(goalId);
+      map['goal_id'] = Variable<String>(goalId);
     }
     if (!nullToAbsent || materialId != null) {
-      map['material_id'] = Variable<int>(materialId);
+      map['material_id'] = Variable<String>(materialId);
     }
     if (!nullToAbsent || pageNo != null) {
       map['page_no'] = Variable<int>(pageNo);
@@ -3484,7 +3523,7 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       map['context_text'] = Variable<String>(contextText);
     }
     if (!nullToAbsent || questionMessageId != null) {
-      map['question_message_id'] = Variable<int>(questionMessageId);
+      map['question_message_id'] = Variable<String>(questionMessageId);
     }
     map['entry_kind'] = Variable<String>(entryKind);
     map['status'] = Variable<String>(status);
@@ -3542,14 +3581,16 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return ConversationRow(
-      id: serializer.fromJson<int>(json['id']),
+      id: serializer.fromJson<String>(json['id']),
       title: serializer.fromJson<String?>(json['title']),
-      goalId: serializer.fromJson<int?>(json['goalId']),
-      materialId: serializer.fromJson<int?>(json['materialId']),
+      goalId: serializer.fromJson<String?>(json['goalId']),
+      materialId: serializer.fromJson<String?>(json['materialId']),
       pageNo: serializer.fromJson<int?>(json['pageNo']),
       sourceRef: serializer.fromJson<String?>(json['sourceRef']),
       contextText: serializer.fromJson<String?>(json['contextText']),
-      questionMessageId: serializer.fromJson<int?>(json['questionMessageId']),
+      questionMessageId: serializer.fromJson<String?>(
+        json['questionMessageId'],
+      ),
       entryKind: serializer.fromJson<String>(json['entryKind']),
       status: serializer.fromJson<String>(json['status']),
       endedAt: serializer.fromJson<String?>(json['endedAt']),
@@ -3562,14 +3603,14 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
+      'id': serializer.toJson<String>(id),
       'title': serializer.toJson<String?>(title),
-      'goalId': serializer.toJson<int?>(goalId),
-      'materialId': serializer.toJson<int?>(materialId),
+      'goalId': serializer.toJson<String?>(goalId),
+      'materialId': serializer.toJson<String?>(materialId),
       'pageNo': serializer.toJson<int?>(pageNo),
       'sourceRef': serializer.toJson<String?>(sourceRef),
       'contextText': serializer.toJson<String?>(contextText),
-      'questionMessageId': serializer.toJson<int?>(questionMessageId),
+      'questionMessageId': serializer.toJson<String?>(questionMessageId),
       'entryKind': serializer.toJson<String>(entryKind),
       'status': serializer.toJson<String>(status),
       'endedAt': serializer.toJson<String?>(endedAt),
@@ -3580,14 +3621,14 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
   }
 
   ConversationRow copyWith({
-    int? id,
+    String? id,
     Value<String?> title = const Value.absent(),
-    Value<int?> goalId = const Value.absent(),
-    Value<int?> materialId = const Value.absent(),
+    Value<String?> goalId = const Value.absent(),
+    Value<String?> materialId = const Value.absent(),
     Value<int?> pageNo = const Value.absent(),
     Value<String?> sourceRef = const Value.absent(),
     Value<String?> contextText = const Value.absent(),
-    Value<int?> questionMessageId = const Value.absent(),
+    Value<String?> questionMessageId = const Value.absent(),
     String? entryKind,
     String? status,
     Value<String?> endedAt = const Value.absent(),
@@ -3700,20 +3741,21 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
 }
 
 class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
-  final Value<int> id;
+  final Value<String> id;
   final Value<String?> title;
-  final Value<int?> goalId;
-  final Value<int?> materialId;
+  final Value<String?> goalId;
+  final Value<String?> materialId;
   final Value<int?> pageNo;
   final Value<String?> sourceRef;
   final Value<String?> contextText;
-  final Value<int?> questionMessageId;
+  final Value<String?> questionMessageId;
   final Value<String> entryKind;
   final Value<String> status;
   final Value<String?> endedAt;
   final Value<String?> lastMessageAt;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const ConversationsCompanion({
     this.id = const Value.absent(),
     this.title = const Value.absent(),
@@ -3729,9 +3771,10 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     this.lastMessageAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   ConversationsCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     this.title = const Value.absent(),
     this.goalId = const Value.absent(),
     this.materialId = const Value.absent(),
@@ -3745,23 +3788,26 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     this.lastMessageAt = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : createdAt = Value(createdAt),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<ConversationRow> custom({
-    Expression<int>? id,
+    Expression<String>? id,
     Expression<String>? title,
-    Expression<int>? goalId,
-    Expression<int>? materialId,
+    Expression<String>? goalId,
+    Expression<String>? materialId,
     Expression<int>? pageNo,
     Expression<String>? sourceRef,
     Expression<String>? contextText,
-    Expression<int>? questionMessageId,
+    Expression<String>? questionMessageId,
     Expression<String>? entryKind,
     Expression<String>? status,
     Expression<String>? endedAt,
     Expression<String>? lastMessageAt,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -3778,24 +3824,26 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       if (lastMessageAt != null) 'last_message_at': lastMessageAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   ConversationsCompanion copyWith({
-    Value<int>? id,
+    Value<String>? id,
     Value<String?>? title,
-    Value<int?>? goalId,
-    Value<int?>? materialId,
+    Value<String?>? goalId,
+    Value<String?>? materialId,
     Value<int?>? pageNo,
     Value<String?>? sourceRef,
     Value<String?>? contextText,
-    Value<int?>? questionMessageId,
+    Value<String?>? questionMessageId,
     Value<String>? entryKind,
     Value<String>? status,
     Value<String?>? endedAt,
     Value<String?>? lastMessageAt,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return ConversationsCompanion(
       id: id ?? this.id,
@@ -3812,6 +3860,7 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       lastMessageAt: lastMessageAt ?? this.lastMessageAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -3819,16 +3868,16 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (title.present) {
       map['title'] = Variable<String>(title.value);
     }
     if (goalId.present) {
-      map['goal_id'] = Variable<int>(goalId.value);
+      map['goal_id'] = Variable<String>(goalId.value);
     }
     if (materialId.present) {
-      map['material_id'] = Variable<int>(materialId.value);
+      map['material_id'] = Variable<String>(materialId.value);
     }
     if (pageNo.present) {
       map['page_no'] = Variable<int>(pageNo.value);
@@ -3840,7 +3889,7 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       map['context_text'] = Variable<String>(contextText.value);
     }
     if (questionMessageId.present) {
-      map['question_message_id'] = Variable<int>(questionMessageId.value);
+      map['question_message_id'] = Variable<String>(questionMessageId.value);
     }
     if (entryKind.present) {
       map['entry_kind'] = Variable<String>(entryKind.value);
@@ -3859,6 +3908,9 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
     }
     return map;
   }
@@ -3879,7 +3931,8 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
           ..write('endedAt: $endedAt, ')
           ..write('lastMessageAt: $lastMessageAt, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -3893,26 +3946,22 @@ class $MessagesTable extends Messages
   $MessagesTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _conversationIdMeta = const VerificationMeta(
     'conversationId',
   );
   @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
     'conversation_id',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: true,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES conversation (id) ON DELETE CASCADE',
@@ -3996,6 +4045,8 @@ class $MessagesTable extends Messages
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
@@ -4060,11 +4111,11 @@ class $MessagesTable extends Messages
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return MessageRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}conversation_id'],
       )!,
       role: attachedDatabase.typeMapping.read(
@@ -4097,8 +4148,8 @@ class $MessagesTable extends Messages
 }
 
 class MessageRow extends DataClass implements Insertable<MessageRow> {
-  final int id;
-  final int conversationId;
+  final String id;
+  final String conversationId;
   final String role;
   final String content;
   final String? imagePathsJson;
@@ -4116,8 +4167,8 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['conversation_id'] = Variable<int>(conversationId);
+    map['id'] = Variable<String>(id);
+    map['conversation_id'] = Variable<String>(conversationId);
     map['role'] = Variable<String>(role);
     map['content'] = Variable<String>(content);
     if (!nullToAbsent || imagePathsJson != null) {
@@ -4152,8 +4203,8 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MessageRow(
-      id: serializer.fromJson<int>(json['id']),
-      conversationId: serializer.fromJson<int>(json['conversationId']),
+      id: serializer.fromJson<String>(json['id']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
       role: serializer.fromJson<String>(json['role']),
       content: serializer.fromJson<String>(json['content']),
       imagePathsJson: serializer.fromJson<String?>(json['imagePathsJson']),
@@ -4165,8 +4216,8 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'conversationId': serializer.toJson<int>(conversationId),
+      'id': serializer.toJson<String>(id),
+      'conversationId': serializer.toJson<String>(conversationId),
       'role': serializer.toJson<String>(role),
       'content': serializer.toJson<String>(content),
       'imagePathsJson': serializer.toJson<String?>(imagePathsJson),
@@ -4176,8 +4227,8 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   }
 
   MessageRow copyWith({
-    int? id,
-    int? conversationId,
+    String? id,
+    String? conversationId,
     String? role,
     String? content,
     Value<String?> imagePathsJson = const Value.absent(),
@@ -4252,13 +4303,14 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
 }
 
 class MessagesCompanion extends UpdateCompanion<MessageRow> {
-  final Value<int> id;
-  final Value<int> conversationId;
+  final Value<String> id;
+  final Value<String> conversationId;
   final Value<String> role;
   final Value<String> content;
   final Value<String?> imagePathsJson;
   final Value<String?> structuredJson;
   final Value<String> createdAt;
+  final Value<int> rowid;
   const MessagesCompanion({
     this.id = const Value.absent(),
     this.conversationId = const Value.absent(),
@@ -4267,27 +4319,31 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     this.imagePathsJson = const Value.absent(),
     this.structuredJson = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   MessagesCompanion.insert({
-    this.id = const Value.absent(),
-    required int conversationId,
+    required String id,
+    required String conversationId,
     required String role,
     required String content,
     this.imagePathsJson = const Value.absent(),
     this.structuredJson = const Value.absent(),
     required String createdAt,
-  }) : conversationId = Value(conversationId),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       conversationId = Value(conversationId),
        role = Value(role),
        content = Value(content),
        createdAt = Value(createdAt);
   static Insertable<MessageRow> custom({
-    Expression<int>? id,
-    Expression<int>? conversationId,
+    Expression<String>? id,
+    Expression<String>? conversationId,
     Expression<String>? role,
     Expression<String>? content,
     Expression<String>? imagePathsJson,
     Expression<String>? structuredJson,
     Expression<String>? createdAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -4297,17 +4353,19 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
       if (imagePathsJson != null) 'image_paths_json': imagePathsJson,
       if (structuredJson != null) 'structured_json': structuredJson,
       if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   MessagesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? conversationId,
+    Value<String>? id,
+    Value<String>? conversationId,
     Value<String>? role,
     Value<String>? content,
     Value<String?>? imagePathsJson,
     Value<String?>? structuredJson,
     Value<String>? createdAt,
+    Value<int>? rowid,
   }) {
     return MessagesCompanion(
       id: id ?? this.id,
@@ -4317,6 +4375,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
       imagePathsJson: imagePathsJson ?? this.imagePathsJson,
       structuredJson: structuredJson ?? this.structuredJson,
       createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -4324,10 +4383,10 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
+      map['conversation_id'] = Variable<String>(conversationId.value);
     }
     if (role.present) {
       map['role'] = Variable<String>(role.value);
@@ -4344,6 +4403,9 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     if (createdAt.present) {
       map['created_at'] = Variable<String>(createdAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -4356,7 +4418,8 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
           ..write('content: $content, ')
           ..write('imagePathsJson: $imagePathsJson, ')
           ..write('structuredJson: $structuredJson, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -4370,26 +4433,22 @@ class $StudyPlansTable extends StudyPlans
   $StudyPlansTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _materialIdMeta = const VerificationMeta(
     'materialId',
   );
   @override
-  late final GeneratedColumn<int> materialId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> materialId = GeneratedColumn<String>(
     'material_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES material (id) ON DELETE SET NULL',
@@ -4397,11 +4456,11 @@ class $StudyPlansTable extends StudyPlans
   );
   static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
   @override
-  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> goalId = GeneratedColumn<String>(
     'goal_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES learning_goal (id) ON DELETE SET NULL',
@@ -4411,11 +4470,11 @@ class $StudyPlansTable extends StudyPlans
     'conversationId',
   );
   @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
     'conversation_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES conversation (id) ON DELETE SET NULL',
@@ -4522,6 +4581,8 @@ class $StudyPlansTable extends StudyPlans
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('material_id')) {
       context.handle(
@@ -4605,19 +4666,19 @@ class $StudyPlansTable extends StudyPlans
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return StudyPlanRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       materialId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}material_id'],
       ),
       goalId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}goal_id'],
       ),
       conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}conversation_id'],
       ),
       title: attachedDatabase.typeMapping.read(
@@ -4658,10 +4719,10 @@ class $StudyPlansTable extends StudyPlans
 }
 
 class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
-  final int id;
-  final int? materialId;
-  final int? goalId;
-  final int? conversationId;
+  final String id;
+  final String? materialId;
+  final String? goalId;
+  final String? conversationId;
   final String title;
   final int? pageFrom;
   final int? pageTo;
@@ -4685,15 +4746,15 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     if (!nullToAbsent || materialId != null) {
-      map['material_id'] = Variable<int>(materialId);
+      map['material_id'] = Variable<String>(materialId);
     }
     if (!nullToAbsent || goalId != null) {
-      map['goal_id'] = Variable<int>(goalId);
+      map['goal_id'] = Variable<String>(goalId);
     }
     if (!nullToAbsent || conversationId != null) {
-      map['conversation_id'] = Variable<int>(conversationId);
+      map['conversation_id'] = Variable<String>(conversationId);
     }
     map['title'] = Variable<String>(title);
     if (!nullToAbsent || pageFrom != null) {
@@ -4745,10 +4806,10 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return StudyPlanRow(
-      id: serializer.fromJson<int>(json['id']),
-      materialId: serializer.fromJson<int?>(json['materialId']),
-      goalId: serializer.fromJson<int?>(json['goalId']),
-      conversationId: serializer.fromJson<int?>(json['conversationId']),
+      id: serializer.fromJson<String>(json['id']),
+      materialId: serializer.fromJson<String?>(json['materialId']),
+      goalId: serializer.fromJson<String?>(json['goalId']),
+      conversationId: serializer.fromJson<String?>(json['conversationId']),
       title: serializer.fromJson<String>(json['title']),
       pageFrom: serializer.fromJson<int?>(json['pageFrom']),
       pageTo: serializer.fromJson<int?>(json['pageTo']),
@@ -4762,10 +4823,10 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'materialId': serializer.toJson<int?>(materialId),
-      'goalId': serializer.toJson<int?>(goalId),
-      'conversationId': serializer.toJson<int?>(conversationId),
+      'id': serializer.toJson<String>(id),
+      'materialId': serializer.toJson<String?>(materialId),
+      'goalId': serializer.toJson<String?>(goalId),
+      'conversationId': serializer.toJson<String?>(conversationId),
       'title': serializer.toJson<String>(title),
       'pageFrom': serializer.toJson<int?>(pageFrom),
       'pageTo': serializer.toJson<int?>(pageTo),
@@ -4777,10 +4838,10 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
   }
 
   StudyPlanRow copyWith({
-    int? id,
-    Value<int?> materialId = const Value.absent(),
-    Value<int?> goalId = const Value.absent(),
-    Value<int?> conversationId = const Value.absent(),
+    String? id,
+    Value<String?> materialId = const Value.absent(),
+    Value<String?> goalId = const Value.absent(),
+    Value<String?> conversationId = const Value.absent(),
     String? title,
     Value<int?> pageFrom = const Value.absent(),
     Value<int?> pageTo = const Value.absent(),
@@ -4875,10 +4936,10 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
 }
 
 class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
-  final Value<int> id;
-  final Value<int?> materialId;
-  final Value<int?> goalId;
-  final Value<int?> conversationId;
+  final Value<String> id;
+  final Value<String?> materialId;
+  final Value<String?> goalId;
+  final Value<String?> conversationId;
   final Value<String> title;
   final Value<int?> pageFrom;
   final Value<int?> pageTo;
@@ -4886,6 +4947,7 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
   final Value<String> status;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const StudyPlansCompanion({
     this.id = const Value.absent(),
     this.materialId = const Value.absent(),
@@ -4898,9 +4960,10 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   StudyPlansCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     this.materialId = const Value.absent(),
     this.goalId = const Value.absent(),
     this.conversationId = const Value.absent(),
@@ -4911,14 +4974,16 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     this.status = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : title = Value(title),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       title = Value(title),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<StudyPlanRow> custom({
-    Expression<int>? id,
-    Expression<int>? materialId,
-    Expression<int>? goalId,
-    Expression<int>? conversationId,
+    Expression<String>? id,
+    Expression<String>? materialId,
+    Expression<String>? goalId,
+    Expression<String>? conversationId,
     Expression<String>? title,
     Expression<int>? pageFrom,
     Expression<int>? pageTo,
@@ -4926,6 +4991,7 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     Expression<String>? status,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -4939,14 +5005,15 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
       if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   StudyPlansCompanion copyWith({
-    Value<int>? id,
-    Value<int?>? materialId,
-    Value<int?>? goalId,
-    Value<int?>? conversationId,
+    Value<String>? id,
+    Value<String?>? materialId,
+    Value<String?>? goalId,
+    Value<String?>? conversationId,
     Value<String>? title,
     Value<int?>? pageFrom,
     Value<int?>? pageTo,
@@ -4954,6 +5021,7 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     Value<String>? status,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return StudyPlansCompanion(
       id: id ?? this.id,
@@ -4967,6 +5035,7 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -4974,16 +5043,16 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (materialId.present) {
-      map['material_id'] = Variable<int>(materialId.value);
+      map['material_id'] = Variable<String>(materialId.value);
     }
     if (goalId.present) {
-      map['goal_id'] = Variable<int>(goalId.value);
+      map['goal_id'] = Variable<String>(goalId.value);
     }
     if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
+      map['conversation_id'] = Variable<String>(conversationId.value);
     }
     if (title.present) {
       map['title'] = Variable<String>(title.value);
@@ -5006,6 +5075,9 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -5022,7 +5094,8 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
           ..write('currentPage: $currentPage, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -5036,24 +5109,20 @@ class $PlanItemsTable extends PlanItems
   $PlanItemsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
   @override
-  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> goalId = GeneratedColumn<String>(
     'goal_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES learning_goal (id) ON DELETE SET NULL',
@@ -5063,11 +5132,11 @@ class $PlanItemsTable extends PlanItems
     'conversationId',
   );
   @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
     'conversation_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES conversation (id) ON DELETE SET NULL',
@@ -5077,11 +5146,11 @@ class $PlanItemsTable extends PlanItems
     'studyPlanId',
   );
   @override
-  late final GeneratedColumn<int> studyPlanId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> studyPlanId = GeneratedColumn<String>(
     'study_plan_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES study_plan (id) ON DELETE CASCADE',
@@ -5275,6 +5344,8 @@ class $PlanItemsTable extends PlanItems
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('goal_id')) {
       context.handle(
@@ -5403,19 +5474,19 @@ class $PlanItemsTable extends PlanItems
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return PlanItemRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       goalId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}goal_id'],
       ),
       conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}conversation_id'],
       ),
       studyPlanId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}study_plan_id'],
       ),
       seq: attachedDatabase.typeMapping.read(
@@ -5484,10 +5555,10 @@ class $PlanItemsTable extends PlanItems
 }
 
 class PlanItemRow extends DataClass implements Insertable<PlanItemRow> {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -5525,15 +5596,15 @@ class PlanItemRow extends DataClass implements Insertable<PlanItemRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     if (!nullToAbsent || goalId != null) {
-      map['goal_id'] = Variable<int>(goalId);
+      map['goal_id'] = Variable<String>(goalId);
     }
     if (!nullToAbsent || conversationId != null) {
-      map['conversation_id'] = Variable<int>(conversationId);
+      map['conversation_id'] = Variable<String>(conversationId);
     }
     if (!nullToAbsent || studyPlanId != null) {
-      map['study_plan_id'] = Variable<int>(studyPlanId);
+      map['study_plan_id'] = Variable<String>(studyPlanId);
     }
     if (!nullToAbsent || seq != null) {
       map['seq'] = Variable<int>(seq);
@@ -5615,10 +5686,10 @@ class PlanItemRow extends DataClass implements Insertable<PlanItemRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return PlanItemRow(
-      id: serializer.fromJson<int>(json['id']),
-      goalId: serializer.fromJson<int?>(json['goalId']),
-      conversationId: serializer.fromJson<int?>(json['conversationId']),
-      studyPlanId: serializer.fromJson<int?>(json['studyPlanId']),
+      id: serializer.fromJson<String>(json['id']),
+      goalId: serializer.fromJson<String?>(json['goalId']),
+      conversationId: serializer.fromJson<String?>(json['conversationId']),
+      studyPlanId: serializer.fromJson<String?>(json['studyPlanId']),
       seq: serializer.fromJson<int?>(json['seq']),
       title: serializer.fromJson<String>(json['title']),
       note: serializer.fromJson<String?>(json['note']),
@@ -5639,10 +5710,10 @@ class PlanItemRow extends DataClass implements Insertable<PlanItemRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'goalId': serializer.toJson<int?>(goalId),
-      'conversationId': serializer.toJson<int?>(conversationId),
-      'studyPlanId': serializer.toJson<int?>(studyPlanId),
+      'id': serializer.toJson<String>(id),
+      'goalId': serializer.toJson<String?>(goalId),
+      'conversationId': serializer.toJson<String?>(conversationId),
+      'studyPlanId': serializer.toJson<String?>(studyPlanId),
       'seq': serializer.toJson<int?>(seq),
       'title': serializer.toJson<String>(title),
       'note': serializer.toJson<String?>(note),
@@ -5661,10 +5732,10 @@ class PlanItemRow extends DataClass implements Insertable<PlanItemRow> {
   }
 
   PlanItemRow copyWith({
-    int? id,
-    Value<int?> goalId = const Value.absent(),
-    Value<int?> conversationId = const Value.absent(),
-    Value<int?> studyPlanId = const Value.absent(),
+    String? id,
+    Value<String?> goalId = const Value.absent(),
+    Value<String?> conversationId = const Value.absent(),
+    Value<String?> studyPlanId = const Value.absent(),
     Value<int?> seq = const Value.absent(),
     String? title,
     Value<String?> note = const Value.absent(),
@@ -5805,10 +5876,10 @@ class PlanItemRow extends DataClass implements Insertable<PlanItemRow> {
 }
 
 class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
-  final Value<int> id;
-  final Value<int?> goalId;
-  final Value<int?> conversationId;
-  final Value<int?> studyPlanId;
+  final Value<String> id;
+  final Value<String?> goalId;
+  final Value<String?> conversationId;
+  final Value<String?> studyPlanId;
   final Value<int?> seq;
   final Value<String> title;
   final Value<String?> note;
@@ -5823,6 +5894,7 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
   final Value<String?> completedAt;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const PlanItemsCompanion({
     this.id = const Value.absent(),
     this.goalId = const Value.absent(),
@@ -5842,9 +5914,10 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
     this.completedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   PlanItemsCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     this.goalId = const Value.absent(),
     this.conversationId = const Value.absent(),
     this.studyPlanId = const Value.absent(),
@@ -5862,14 +5935,16 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
     this.completedAt = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : title = Value(title),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       title = Value(title),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<PlanItemRow> custom({
-    Expression<int>? id,
-    Expression<int>? goalId,
-    Expression<int>? conversationId,
-    Expression<int>? studyPlanId,
+    Expression<String>? id,
+    Expression<String>? goalId,
+    Expression<String>? conversationId,
+    Expression<String>? studyPlanId,
     Expression<int>? seq,
     Expression<String>? title,
     Expression<String>? note,
@@ -5884,6 +5959,7 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
     Expression<String>? completedAt,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -5904,14 +5980,15 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
       if (completedAt != null) 'completed_at': completedAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   PlanItemsCompanion copyWith({
-    Value<int>? id,
-    Value<int?>? goalId,
-    Value<int?>? conversationId,
-    Value<int?>? studyPlanId,
+    Value<String>? id,
+    Value<String?>? goalId,
+    Value<String?>? conversationId,
+    Value<String?>? studyPlanId,
     Value<int?>? seq,
     Value<String>? title,
     Value<String?>? note,
@@ -5926,6 +6003,7 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
     Value<String?>? completedAt,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return PlanItemsCompanion(
       id: id ?? this.id,
@@ -5946,6 +6024,7 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
       completedAt: completedAt ?? this.completedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -5953,16 +6032,16 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (goalId.present) {
-      map['goal_id'] = Variable<int>(goalId.value);
+      map['goal_id'] = Variable<String>(goalId.value);
     }
     if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
+      map['conversation_id'] = Variable<String>(conversationId.value);
     }
     if (studyPlanId.present) {
-      map['study_plan_id'] = Variable<int>(studyPlanId.value);
+      map['study_plan_id'] = Variable<String>(studyPlanId.value);
     }
     if (seq.present) {
       map['seq'] = Variable<int>(seq.value);
@@ -6006,6 +6085,9 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -6029,7 +6111,8 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
           ..write('originJson: $originJson, ')
           ..write('completedAt: $completedAt, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -6043,26 +6126,22 @@ class $ScheduleBlocksTable extends ScheduleBlocks
   $ScheduleBlocksTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _planItemIdMeta = const VerificationMeta(
     'planItemId',
   );
   @override
-  late final GeneratedColumn<int> planItemId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> planItemId = GeneratedColumn<String>(
     'plan_item_id',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: true,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES plan_item (id) ON DELETE CASCADE',
@@ -6171,6 +6250,8 @@ class $ScheduleBlocksTable extends ScheduleBlocks
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('plan_item_id')) {
       context.handle(
@@ -6243,11 +6324,11 @@ class $ScheduleBlocksTable extends ScheduleBlocks
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return ScheduleBlockRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       planItemId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}plan_item_id'],
       )!,
       startAt: attachedDatabase.typeMapping.read(
@@ -6289,8 +6370,8 @@ class $ScheduleBlocksTable extends ScheduleBlocks
 
 class ScheduleBlockRow extends DataClass
     implements Insertable<ScheduleBlockRow> {
-  final int id;
-  final int planItemId;
+  final String id;
+  final String planItemId;
   final String startAt;
   final String endAt;
   final String source;
@@ -6312,8 +6393,8 @@ class ScheduleBlockRow extends DataClass
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['plan_item_id'] = Variable<int>(planItemId);
+    map['id'] = Variable<String>(id);
+    map['plan_item_id'] = Variable<String>(planItemId);
     map['start_at'] = Variable<String>(startAt);
     map['end_at'] = Variable<String>(endAt);
     map['source'] = Variable<String>(source);
@@ -6344,8 +6425,8 @@ class ScheduleBlockRow extends DataClass
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return ScheduleBlockRow(
-      id: serializer.fromJson<int>(json['id']),
-      planItemId: serializer.fromJson<int>(json['planItemId']),
+      id: serializer.fromJson<String>(json['id']),
+      planItemId: serializer.fromJson<String>(json['planItemId']),
       startAt: serializer.fromJson<String>(json['startAt']),
       endAt: serializer.fromJson<String>(json['endAt']),
       source: serializer.fromJson<String>(json['source']),
@@ -6359,8 +6440,8 @@ class ScheduleBlockRow extends DataClass
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'planItemId': serializer.toJson<int>(planItemId),
+      'id': serializer.toJson<String>(id),
+      'planItemId': serializer.toJson<String>(planItemId),
       'startAt': serializer.toJson<String>(startAt),
       'endAt': serializer.toJson<String>(endAt),
       'source': serializer.toJson<String>(source),
@@ -6372,8 +6453,8 @@ class ScheduleBlockRow extends DataClass
   }
 
   ScheduleBlockRow copyWith({
-    int? id,
-    int? planItemId,
+    String? id,
+    String? planItemId,
     String? startAt,
     String? endAt,
     String? source,
@@ -6452,8 +6533,8 @@ class ScheduleBlockRow extends DataClass
 }
 
 class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
-  final Value<int> id;
-  final Value<int> planItemId;
+  final Value<String> id;
+  final Value<String> planItemId;
   final Value<String> startAt;
   final Value<String> endAt;
   final Value<String> source;
@@ -6461,6 +6542,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
   final Value<bool> locked;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const ScheduleBlocksCompanion({
     this.id = const Value.absent(),
     this.planItemId = const Value.absent(),
@@ -6471,10 +6553,11 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     this.locked = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   ScheduleBlocksCompanion.insert({
-    this.id = const Value.absent(),
-    required int planItemId,
+    required String id,
+    required String planItemId,
     required String startAt,
     required String endAt,
     this.source = const Value.absent(),
@@ -6482,14 +6565,16 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     this.locked = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : planItemId = Value(planItemId),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       planItemId = Value(planItemId),
        startAt = Value(startAt),
        endAt = Value(endAt),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<ScheduleBlockRow> custom({
-    Expression<int>? id,
-    Expression<int>? planItemId,
+    Expression<String>? id,
+    Expression<String>? planItemId,
     Expression<String>? startAt,
     Expression<String>? endAt,
     Expression<String>? source,
@@ -6497,6 +6582,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     Expression<bool>? locked,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -6508,12 +6594,13 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
       if (locked != null) 'locked': locked,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   ScheduleBlocksCompanion copyWith({
-    Value<int>? id,
-    Value<int>? planItemId,
+    Value<String>? id,
+    Value<String>? planItemId,
     Value<String>? startAt,
     Value<String>? endAt,
     Value<String>? source,
@@ -6521,6 +6608,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     Value<bool>? locked,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return ScheduleBlocksCompanion(
       id: id ?? this.id,
@@ -6532,6 +6620,7 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
       locked: locked ?? this.locked,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -6539,10 +6628,10 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (planItemId.present) {
-      map['plan_item_id'] = Variable<int>(planItemId.value);
+      map['plan_item_id'] = Variable<String>(planItemId.value);
     }
     if (startAt.present) {
       map['start_at'] = Variable<String>(startAt.value);
@@ -6565,6 +6654,9 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -6579,7 +6671,8 @@ class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
           ..write('status: $status, ')
           ..write('locked: $locked, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -6593,24 +6686,20 @@ class $StudySessionsTable extends StudySessions
   $StudySessionsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _goalIdMeta = const VerificationMeta('goalId');
   @override
-  late final GeneratedColumn<int> goalId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> goalId = GeneratedColumn<String>(
     'goal_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES learning_goal (id) ON DELETE SET NULL',
@@ -6620,11 +6709,11 @@ class $StudySessionsTable extends StudySessions
     'planItemId',
   );
   @override
-  late final GeneratedColumn<int> planItemId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> planItemId = GeneratedColumn<String>(
     'plan_item_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES plan_item (id) ON DELETE SET NULL',
@@ -6634,11 +6723,11 @@ class $StudySessionsTable extends StudySessions
     'conversationId',
   );
   @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
     'conversation_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES conversation (id) ON DELETE CASCADE',
@@ -6738,6 +6827,8 @@ class $StudySessionsTable extends StudySessions
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('goal_id')) {
       context.handle(
@@ -6815,19 +6906,19 @@ class $StudySessionsTable extends StudySessions
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return StudySessionRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       goalId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}goal_id'],
       ),
       planItemId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}plan_item_id'],
       ),
       conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}conversation_id'],
       ),
       summary: attachedDatabase.typeMapping.read(
@@ -6864,10 +6955,10 @@ class $StudySessionsTable extends StudySessions
 }
 
 class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
-  final int id;
-  final int? goalId;
-  final int? planItemId;
-  final int? conversationId;
+  final String id;
+  final String? goalId;
+  final String? planItemId;
+  final String? conversationId;
   final String? summary;
   final String? outcome;
   final String startedAt;
@@ -6889,15 +6980,15 @@ class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     if (!nullToAbsent || goalId != null) {
-      map['goal_id'] = Variable<int>(goalId);
+      map['goal_id'] = Variable<String>(goalId);
     }
     if (!nullToAbsent || planItemId != null) {
-      map['plan_item_id'] = Variable<int>(planItemId);
+      map['plan_item_id'] = Variable<String>(planItemId);
     }
     if (!nullToAbsent || conversationId != null) {
-      map['conversation_id'] = Variable<int>(conversationId);
+      map['conversation_id'] = Variable<String>(conversationId);
     }
     if (!nullToAbsent || summary != null) {
       map['summary'] = Variable<String>(summary);
@@ -6947,10 +7038,10 @@ class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return StudySessionRow(
-      id: serializer.fromJson<int>(json['id']),
-      goalId: serializer.fromJson<int?>(json['goalId']),
-      planItemId: serializer.fromJson<int?>(json['planItemId']),
-      conversationId: serializer.fromJson<int?>(json['conversationId']),
+      id: serializer.fromJson<String>(json['id']),
+      goalId: serializer.fromJson<String?>(json['goalId']),
+      planItemId: serializer.fromJson<String?>(json['planItemId']),
+      conversationId: serializer.fromJson<String?>(json['conversationId']),
       summary: serializer.fromJson<String?>(json['summary']),
       outcome: serializer.fromJson<String?>(json['outcome']),
       startedAt: serializer.fromJson<String>(json['startedAt']),
@@ -6963,10 +7054,10 @@ class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'goalId': serializer.toJson<int?>(goalId),
-      'planItemId': serializer.toJson<int?>(planItemId),
-      'conversationId': serializer.toJson<int?>(conversationId),
+      'id': serializer.toJson<String>(id),
+      'goalId': serializer.toJson<String?>(goalId),
+      'planItemId': serializer.toJson<String?>(planItemId),
+      'conversationId': serializer.toJson<String?>(conversationId),
       'summary': serializer.toJson<String?>(summary),
       'outcome': serializer.toJson<String?>(outcome),
       'startedAt': serializer.toJson<String>(startedAt),
@@ -6977,10 +7068,10 @@ class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
   }
 
   StudySessionRow copyWith({
-    int? id,
-    Value<int?> goalId = const Value.absent(),
-    Value<int?> planItemId = const Value.absent(),
-    Value<int?> conversationId = const Value.absent(),
+    String? id,
+    Value<String?> goalId = const Value.absent(),
+    Value<String?> planItemId = const Value.absent(),
+    Value<String?> conversationId = const Value.absent(),
     Value<String?> summary = const Value.absent(),
     Value<String?> outcome = const Value.absent(),
     String? startedAt,
@@ -7067,16 +7158,17 @@ class StudySessionRow extends DataClass implements Insertable<StudySessionRow> {
 }
 
 class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
-  final Value<int> id;
-  final Value<int?> goalId;
-  final Value<int?> planItemId;
-  final Value<int?> conversationId;
+  final Value<String> id;
+  final Value<String?> goalId;
+  final Value<String?> planItemId;
+  final Value<String?> conversationId;
   final Value<String?> summary;
   final Value<String?> outcome;
   final Value<String> startedAt;
   final Value<String?> endedAt;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const StudySessionsCompanion({
     this.id = const Value.absent(),
     this.goalId = const Value.absent(),
@@ -7088,9 +7180,10 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
     this.endedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   StudySessionsCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     this.goalId = const Value.absent(),
     this.planItemId = const Value.absent(),
     this.conversationId = const Value.absent(),
@@ -7100,20 +7193,23 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
     this.endedAt = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : startedAt = Value(startedAt),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       startedAt = Value(startedAt),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<StudySessionRow> custom({
-    Expression<int>? id,
-    Expression<int>? goalId,
-    Expression<int>? planItemId,
-    Expression<int>? conversationId,
+    Expression<String>? id,
+    Expression<String>? goalId,
+    Expression<String>? planItemId,
+    Expression<String>? conversationId,
     Expression<String>? summary,
     Expression<String>? outcome,
     Expression<String>? startedAt,
     Expression<String>? endedAt,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -7126,20 +7222,22 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
       if (endedAt != null) 'ended_at': endedAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   StudySessionsCompanion copyWith({
-    Value<int>? id,
-    Value<int?>? goalId,
-    Value<int?>? planItemId,
-    Value<int?>? conversationId,
+    Value<String>? id,
+    Value<String?>? goalId,
+    Value<String?>? planItemId,
+    Value<String?>? conversationId,
     Value<String?>? summary,
     Value<String?>? outcome,
     Value<String>? startedAt,
     Value<String?>? endedAt,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return StudySessionsCompanion(
       id: id ?? this.id,
@@ -7152,6 +7250,7 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
       endedAt: endedAt ?? this.endedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -7159,16 +7258,16 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (goalId.present) {
-      map['goal_id'] = Variable<int>(goalId.value);
+      map['goal_id'] = Variable<String>(goalId.value);
     }
     if (planItemId.present) {
-      map['plan_item_id'] = Variable<int>(planItemId.value);
+      map['plan_item_id'] = Variable<String>(planItemId.value);
     }
     if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
+      map['conversation_id'] = Variable<String>(conversationId.value);
     }
     if (summary.present) {
       map['summary'] = Variable<String>(summary.value);
@@ -7188,6 +7287,9 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -7203,7 +7305,8 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
           ..write('startedAt: $startedAt, ')
           ..write('endedAt: $endedAt, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -7217,26 +7320,22 @@ class $AttemptsTable extends Attempts
   $AttemptsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _conversationIdMeta = const VerificationMeta(
     'conversationId',
   );
   @override
-  late final GeneratedColumn<int> conversationId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
     'conversation_id',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: true,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES conversation (id) ON DELETE CASCADE',
@@ -7246,11 +7345,11 @@ class $AttemptsTable extends Attempts
     'sessionId',
   );
   @override
-  late final GeneratedColumn<int> sessionId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> sessionId = GeneratedColumn<String>(
     'session_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES study_session (id) ON DELETE SET NULL',
@@ -7260,11 +7359,11 @@ class $AttemptsTable extends Attempts
     'redoOfAttemptId',
   );
   @override
-  late final GeneratedColumn<int> redoOfAttemptId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> redoOfAttemptId = GeneratedColumn<String>(
     'redo_of_attempt_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES attempt (id) ON DELETE SET NULL',
@@ -7421,6 +7520,8 @@ class $AttemptsTable extends Attempts
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
@@ -7528,19 +7629,19 @@ class $AttemptsTable extends Attempts
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return AttemptRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}conversation_id'],
       )!,
       sessionId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}session_id'],
       ),
       redoOfAttemptId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}redo_of_attempt_id'],
       ),
       userAnswer: attachedDatabase.typeMapping.read(
@@ -7593,10 +7694,10 @@ class $AttemptsTable extends Attempts
 }
 
 class AttemptRow extends DataClass implements Insertable<AttemptRow> {
-  final int id;
-  final int conversationId;
-  final int? sessionId;
-  final int? redoOfAttemptId;
+  final String id;
+  final String conversationId;
+  final String? sessionId;
+  final String? redoOfAttemptId;
   final String? userAnswer;
   final String? solution;
   final bool? isCorrect;
@@ -7626,13 +7727,13 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['conversation_id'] = Variable<int>(conversationId);
+    map['id'] = Variable<String>(id);
+    map['conversation_id'] = Variable<String>(conversationId);
     if (!nullToAbsent || sessionId != null) {
-      map['session_id'] = Variable<int>(sessionId);
+      map['session_id'] = Variable<String>(sessionId);
     }
     if (!nullToAbsent || redoOfAttemptId != null) {
-      map['redo_of_attempt_id'] = Variable<int>(redoOfAttemptId);
+      map['redo_of_attempt_id'] = Variable<String>(redoOfAttemptId);
     }
     if (!nullToAbsent || userAnswer != null) {
       map['user_answer'] = Variable<String>(userAnswer);
@@ -7704,10 +7805,10 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return AttemptRow(
-      id: serializer.fromJson<int>(json['id']),
-      conversationId: serializer.fromJson<int>(json['conversationId']),
-      sessionId: serializer.fromJson<int?>(json['sessionId']),
-      redoOfAttemptId: serializer.fromJson<int?>(json['redoOfAttemptId']),
+      id: serializer.fromJson<String>(json['id']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      sessionId: serializer.fromJson<String?>(json['sessionId']),
+      redoOfAttemptId: serializer.fromJson<String?>(json['redoOfAttemptId']),
       userAnswer: serializer.fromJson<String?>(json['userAnswer']),
       solution: serializer.fromJson<String?>(json['solution']),
       isCorrect: serializer.fromJson<bool?>(json['isCorrect']),
@@ -7724,10 +7825,10 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'conversationId': serializer.toJson<int>(conversationId),
-      'sessionId': serializer.toJson<int?>(sessionId),
-      'redoOfAttemptId': serializer.toJson<int?>(redoOfAttemptId),
+      'id': serializer.toJson<String>(id),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'sessionId': serializer.toJson<String?>(sessionId),
+      'redoOfAttemptId': serializer.toJson<String?>(redoOfAttemptId),
       'userAnswer': serializer.toJson<String?>(userAnswer),
       'solution': serializer.toJson<String?>(solution),
       'isCorrect': serializer.toJson<bool?>(isCorrect),
@@ -7742,10 +7843,10 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
   }
 
   AttemptRow copyWith({
-    int? id,
-    int? conversationId,
-    Value<int?> sessionId = const Value.absent(),
-    Value<int?> redoOfAttemptId = const Value.absent(),
+    String? id,
+    String? conversationId,
+    Value<String?> sessionId = const Value.absent(),
+    Value<String?> redoOfAttemptId = const Value.absent(),
     Value<String?> userAnswer = const Value.absent(),
     Value<String?> solution = const Value.absent(),
     Value<bool?> isCorrect = const Value.absent(),
@@ -7862,10 +7963,10 @@ class AttemptRow extends DataClass implements Insertable<AttemptRow> {
 }
 
 class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
-  final Value<int> id;
-  final Value<int> conversationId;
-  final Value<int?> sessionId;
-  final Value<int?> redoOfAttemptId;
+  final Value<String> id;
+  final Value<String> conversationId;
+  final Value<String?> sessionId;
+  final Value<String?> redoOfAttemptId;
   final Value<String?> userAnswer;
   final Value<String?> solution;
   final Value<bool?> isCorrect;
@@ -7876,6 +7977,7 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
   final Value<String?> submittedAt;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const AttemptsCompanion({
     this.id = const Value.absent(),
     this.conversationId = const Value.absent(),
@@ -7891,10 +7993,11 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     this.submittedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   AttemptsCompanion.insert({
-    this.id = const Value.absent(),
-    required int conversationId,
+    required String id,
+    required String conversationId,
     this.sessionId = const Value.absent(),
     this.redoOfAttemptId = const Value.absent(),
     this.userAnswer = const Value.absent(),
@@ -7907,14 +8010,16 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     this.submittedAt = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : conversationId = Value(conversationId),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       conversationId = Value(conversationId),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<AttemptRow> custom({
-    Expression<int>? id,
-    Expression<int>? conversationId,
-    Expression<int>? sessionId,
-    Expression<int>? redoOfAttemptId,
+    Expression<String>? id,
+    Expression<String>? conversationId,
+    Expression<String>? sessionId,
+    Expression<String>? redoOfAttemptId,
     Expression<String>? userAnswer,
     Expression<String>? solution,
     Expression<bool>? isCorrect,
@@ -7925,6 +8030,7 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     Expression<String>? submittedAt,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -7941,14 +8047,15 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
       if (submittedAt != null) 'submitted_at': submittedAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   AttemptsCompanion copyWith({
-    Value<int>? id,
-    Value<int>? conversationId,
-    Value<int?>? sessionId,
-    Value<int?>? redoOfAttemptId,
+    Value<String>? id,
+    Value<String>? conversationId,
+    Value<String?>? sessionId,
+    Value<String?>? redoOfAttemptId,
     Value<String?>? userAnswer,
     Value<String?>? solution,
     Value<bool?>? isCorrect,
@@ -7959,6 +8066,7 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     Value<String?>? submittedAt,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return AttemptsCompanion(
       id: id ?? this.id,
@@ -7975,6 +8083,7 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
       submittedAt: submittedAt ?? this.submittedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -7982,16 +8091,16 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (conversationId.present) {
-      map['conversation_id'] = Variable<int>(conversationId.value);
+      map['conversation_id'] = Variable<String>(conversationId.value);
     }
     if (sessionId.present) {
-      map['session_id'] = Variable<int>(sessionId.value);
+      map['session_id'] = Variable<String>(sessionId.value);
     }
     if (redoOfAttemptId.present) {
-      map['redo_of_attempt_id'] = Variable<int>(redoOfAttemptId.value);
+      map['redo_of_attempt_id'] = Variable<String>(redoOfAttemptId.value);
     }
     if (userAnswer.present) {
       map['user_answer'] = Variable<String>(userAnswer.value);
@@ -8023,6 +8132,9 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -8042,7 +8154,8 @@ class AttemptsCompanion extends UpdateCompanion<AttemptRow> {
           ..write('feedback: $feedback, ')
           ..write('submittedAt: $submittedAt, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -8056,26 +8169,22 @@ class $AssessmentsTable extends Assessments
   $AssessmentsTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _attemptIdMeta = const VerificationMeta(
     'attemptId',
   );
   @override
-  late final GeneratedColumn<int> attemptId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> attemptId = GeneratedColumn<String>(
     'attempt_id',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: true,
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES attempt (id) ON DELETE CASCADE',
@@ -8155,6 +8264,8 @@ class $AssessmentsTable extends Assessments
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('attempt_id')) {
       context.handle(
@@ -8212,11 +8323,11 @@ class $AssessmentsTable extends Assessments
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return AssessmentRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       attemptId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}attempt_id'],
       )!,
       kind: attachedDatabase.typeMapping.read(
@@ -8249,8 +8360,8 @@ class $AssessmentsTable extends Assessments
 }
 
 class AssessmentRow extends DataClass implements Insertable<AssessmentRow> {
-  final int id;
-  final int attemptId;
+  final String id;
+  final String attemptId;
   final String kind;
   final String result;
   final String? basis;
@@ -8268,8 +8379,8 @@ class AssessmentRow extends DataClass implements Insertable<AssessmentRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['attempt_id'] = Variable<int>(attemptId);
+    map['id'] = Variable<String>(id);
+    map['attempt_id'] = Variable<String>(attemptId);
     map['kind'] = Variable<String>(kind);
     map['result'] = Variable<String>(result);
     if (!nullToAbsent || basis != null) {
@@ -8300,8 +8411,8 @@ class AssessmentRow extends DataClass implements Insertable<AssessmentRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return AssessmentRow(
-      id: serializer.fromJson<int>(json['id']),
-      attemptId: serializer.fromJson<int>(json['attemptId']),
+      id: serializer.fromJson<String>(json['id']),
+      attemptId: serializer.fromJson<String>(json['attemptId']),
       kind: serializer.fromJson<String>(json['kind']),
       result: serializer.fromJson<String>(json['result']),
       basis: serializer.fromJson<String?>(json['basis']),
@@ -8313,8 +8424,8 @@ class AssessmentRow extends DataClass implements Insertable<AssessmentRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'attemptId': serializer.toJson<int>(attemptId),
+      'id': serializer.toJson<String>(id),
+      'attemptId': serializer.toJson<String>(attemptId),
       'kind': serializer.toJson<String>(kind),
       'result': serializer.toJson<String>(result),
       'basis': serializer.toJson<String?>(basis),
@@ -8324,8 +8435,8 @@ class AssessmentRow extends DataClass implements Insertable<AssessmentRow> {
   }
 
   AssessmentRow copyWith({
-    int? id,
-    int? attemptId,
+    String? id,
+    String? attemptId,
     String? kind,
     String? result,
     Value<String?> basis = const Value.absent(),
@@ -8383,13 +8494,14 @@ class AssessmentRow extends DataClass implements Insertable<AssessmentRow> {
 }
 
 class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
-  final Value<int> id;
-  final Value<int> attemptId;
+  final Value<String> id;
+  final Value<String> attemptId;
   final Value<String> kind;
   final Value<String> result;
   final Value<String?> basis;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const AssessmentsCompanion({
     this.id = const Value.absent(),
     this.attemptId = const Value.absent(),
@@ -8398,28 +8510,32 @@ class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
     this.basis = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   AssessmentsCompanion.insert({
-    this.id = const Value.absent(),
-    required int attemptId,
+    required String id,
+    required String attemptId,
     required String kind,
     required String result,
     this.basis = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : attemptId = Value(attemptId),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       attemptId = Value(attemptId),
        kind = Value(kind),
        result = Value(result),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<AssessmentRow> custom({
-    Expression<int>? id,
-    Expression<int>? attemptId,
+    Expression<String>? id,
+    Expression<String>? attemptId,
     Expression<String>? kind,
     Expression<String>? result,
     Expression<String>? basis,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -8429,17 +8545,19 @@ class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
       if (basis != null) 'basis': basis,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   AssessmentsCompanion copyWith({
-    Value<int>? id,
-    Value<int>? attemptId,
+    Value<String>? id,
+    Value<String>? attemptId,
     Value<String>? kind,
     Value<String>? result,
     Value<String?>? basis,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return AssessmentsCompanion(
       id: id ?? this.id,
@@ -8449,6 +8567,7 @@ class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
       basis: basis ?? this.basis,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -8456,10 +8575,10 @@ class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (attemptId.present) {
-      map['attempt_id'] = Variable<int>(attemptId.value);
+      map['attempt_id'] = Variable<String>(attemptId.value);
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
@@ -8476,6 +8595,9 @@ class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
     return map;
   }
 
@@ -8488,7 +8610,8 @@ class AssessmentsCompanion extends UpdateCompanion<AssessmentRow> {
           ..write('result: $result, ')
           ..write('basis: $basis, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -8502,16 +8625,12 @@ class $MemoriesTable extends Memories
   $MemoriesTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
@@ -8559,11 +8678,11 @@ class $MemoriesTable extends Memories
     'sourceId',
   );
   @override
-  late final GeneratedColumn<int> sourceId = GeneratedColumn<int>(
+  late final GeneratedColumn<String> sourceId = GeneratedColumn<String>(
     'source_id',
     aliasedName,
     true,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
   static const VerificationMeta _validUntilMeta = const VerificationMeta(
@@ -8637,6 +8756,8 @@ class $MemoriesTable extends Memories
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
@@ -8712,7 +8833,7 @@ class $MemoriesTable extends Memories
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return MemoryRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
       kind: attachedDatabase.typeMapping.read(
@@ -8732,7 +8853,7 @@ class $MemoriesTable extends Memories
         data['${effectivePrefix}source_kind'],
       )!,
       sourceId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.string,
         data['${effectivePrefix}source_id'],
       ),
       validUntil: attachedDatabase.typeMapping.read(
@@ -8761,12 +8882,12 @@ class $MemoriesTable extends Memories
 }
 
 class MemoryRow extends DataClass implements Insertable<MemoryRow> {
-  final int id;
+  final String id;
   final String kind;
   final String content;
   final String? scope;
   final String sourceKind;
-  final int? sourceId;
+  final String? sourceId;
   final String? validUntil;
   final String status;
   final String createdAt;
@@ -8786,7 +8907,7 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
+    map['id'] = Variable<String>(id);
     map['kind'] = Variable<String>(kind);
     map['content'] = Variable<String>(content);
     if (!nullToAbsent || scope != null) {
@@ -8794,7 +8915,7 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
     }
     map['source_kind'] = Variable<String>(sourceKind);
     if (!nullToAbsent || sourceId != null) {
-      map['source_id'] = Variable<int>(sourceId);
+      map['source_id'] = Variable<String>(sourceId);
     }
     if (!nullToAbsent || validUntil != null) {
       map['valid_until'] = Variable<String>(validUntil);
@@ -8832,12 +8953,12 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MemoryRow(
-      id: serializer.fromJson<int>(json['id']),
+      id: serializer.fromJson<String>(json['id']),
       kind: serializer.fromJson<String>(json['kind']),
       content: serializer.fromJson<String>(json['content']),
       scope: serializer.fromJson<String?>(json['scope']),
       sourceKind: serializer.fromJson<String>(json['sourceKind']),
-      sourceId: serializer.fromJson<int?>(json['sourceId']),
+      sourceId: serializer.fromJson<String?>(json['sourceId']),
       validUntil: serializer.fromJson<String?>(json['validUntil']),
       status: serializer.fromJson<String>(json['status']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
@@ -8848,12 +8969,12 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
+      'id': serializer.toJson<String>(id),
       'kind': serializer.toJson<String>(kind),
       'content': serializer.toJson<String>(content),
       'scope': serializer.toJson<String?>(scope),
       'sourceKind': serializer.toJson<String>(sourceKind),
-      'sourceId': serializer.toJson<int?>(sourceId),
+      'sourceId': serializer.toJson<String?>(sourceId),
       'validUntil': serializer.toJson<String?>(validUntil),
       'status': serializer.toJson<String>(status),
       'createdAt': serializer.toJson<String>(createdAt),
@@ -8862,12 +8983,12 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
   }
 
   MemoryRow copyWith({
-    int? id,
+    String? id,
     String? kind,
     String? content,
     Value<String?> scope = const Value.absent(),
     String? sourceKind,
-    Value<int?> sourceId = const Value.absent(),
+    Value<String?> sourceId = const Value.absent(),
     Value<String?> validUntil = const Value.absent(),
     String? status,
     String? createdAt,
@@ -8950,16 +9071,17 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
 }
 
 class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
-  final Value<int> id;
+  final Value<String> id;
   final Value<String> kind;
   final Value<String> content;
   final Value<String?> scope;
   final Value<String> sourceKind;
-  final Value<int?> sourceId;
+  final Value<String?> sourceId;
   final Value<String?> validUntil;
   final Value<String> status;
   final Value<String> createdAt;
   final Value<String> updatedAt;
+  final Value<int> rowid;
   const MemoriesCompanion({
     this.id = const Value.absent(),
     this.kind = const Value.absent(),
@@ -8971,9 +9093,10 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
   MemoriesCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     required String kind,
     required String content,
     this.scope = const Value.absent(),
@@ -8983,22 +9106,25 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     this.status = const Value.absent(),
     required String createdAt,
     required String updatedAt,
-  }) : kind = Value(kind),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       kind = Value(kind),
        content = Value(content),
        sourceKind = Value(sourceKind),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<MemoryRow> custom({
-    Expression<int>? id,
+    Expression<String>? id,
     Expression<String>? kind,
     Expression<String>? content,
     Expression<String>? scope,
     Expression<String>? sourceKind,
-    Expression<int>? sourceId,
+    Expression<String>? sourceId,
     Expression<String>? validUntil,
     Expression<String>? status,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -9011,20 +9137,22 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
       if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
   MemoriesCompanion copyWith({
-    Value<int>? id,
+    Value<String>? id,
     Value<String>? kind,
     Value<String>? content,
     Value<String?>? scope,
     Value<String>? sourceKind,
-    Value<int?>? sourceId,
+    Value<String?>? sourceId,
     Value<String?>? validUntil,
     Value<String>? status,
     Value<String>? createdAt,
     Value<String>? updatedAt,
+    Value<int>? rowid,
   }) {
     return MemoriesCompanion(
       id: id ?? this.id,
@@ -9037,6 +9165,7 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -9044,7 +9173,7 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<int>(id.value);
+      map['id'] = Variable<String>(id.value);
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
@@ -9059,7 +9188,7 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
       map['source_kind'] = Variable<String>(sourceKind.value);
     }
     if (sourceId.present) {
-      map['source_id'] = Variable<int>(sourceId.value);
+      map['source_id'] = Variable<String>(sourceId.value);
     }
     if (validUntil.present) {
       map['valid_until'] = Variable<String>(validUntil.value);
@@ -9072,6 +9201,9 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
     }
     return map;
   }
@@ -9088,7 +9220,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
           ..write('validUntil: $validUntil, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -11624,6 +11757,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'CREATE INDEX idx_revision_checkpoint_commit ON revision_checkpoint (commit_id, id)',
   );
   Future<int> insertTimetableEntry(
+    String id,
     int weekday,
     String startTime,
     String endTime,
@@ -11632,8 +11766,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
+      'INSERT INTO timetable_entry (id, weekday, start_time, end_time, title, location, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)',
       variables: [
+        Variable<String>(id),
         Variable<int>(weekday),
         Variable<String>(startTime),
         Variable<String>(endTime),
@@ -11645,10 +11780,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> deleteTimetableEntry(int entryId) {
+  Future<int> deleteTimetableEntry(String entryId) {
     return customUpdate(
       'DELETE FROM timetable_entry WHERE id = ?1',
-      variables: [Variable<int>(entryId)],
+      variables: [Variable<String>(entryId)],
       updates: {this.timetableEntries},
       updateKind: UpdateKind.delete,
     );
@@ -11680,25 +11815,25 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<StudySessionRow> openStudySession(
-    int conversationId,
-    int planItemId,
-    int? goalId,
+    String? conversationId,
+    String? planItemId,
+    String? goalId,
   ) {
     return customSelect(
-      'SELECT * FROM study_session WHERE ended_at IS NULL AND((?1 <> 0 AND conversation_id = ?1)OR(?1 = 0 AND conversation_id IS NULL AND((?2 <> 0 AND plan_item_id = ?2)OR(?2 = 0 AND plan_item_id IS NULL AND((?3 = 0 AND goal_id IS NULL)OR(?3 <> 0 AND goal_id = ?3))))))ORDER BY id DESC LIMIT 1',
+      'SELECT * FROM study_session WHERE ended_at IS NULL AND((?1 IS NOT NULL AND conversation_id = ?1)OR(?1 IS NULL AND conversation_id IS NULL AND((?2 IS NOT NULL AND plan_item_id = ?2)OR(?2 IS NULL AND plan_item_id IS NULL AND((?3 IS NULL AND goal_id IS NULL)OR(?3 IS NOT NULL AND goal_id = ?3))))))ORDER BY id DESC LIMIT 1',
       variables: [
-        Variable<int>(conversationId),
-        Variable<int>(planItemId),
-        Variable<int>(goalId),
+        Variable<String>(conversationId),
+        Variable<String>(planItemId),
+        Variable<String>(goalId),
       ],
       readsFrom: {this.studySessions},
     ).asyncMap(this.studySessions.mapFromRow);
   }
 
-  Selectable<StudySessionRow> studySessionById(int id) {
+  Selectable<StudySessionRow> studySessionById(String id) {
     return customSelect(
       'SELECT * FROM study_session WHERE id = ?1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.studySessions},
     ).asyncMap(this.studySessions.mapFromRow);
   }
@@ -11712,12 +11847,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<StudySessionRow> endedStudySessionsForGoal(
-    int? goalId,
+    String? goalId,
     int? rowLimit,
   ) {
     return customSelect(
       'SELECT * FROM study_session WHERE goal_id = ?1 AND ended_at IS NOT NULL ORDER BY ended_at DESC, id DESC LIMIT COALESCE(?2, -1)',
-      variables: [Variable<int>(goalId), Variable<int>(rowLimit)],
+      variables: [Variable<String>(goalId), Variable<int>(rowLimit)],
       readsFrom: {this.studySessions},
     ).asyncMap(this.studySessions.mapFromRow);
   }
@@ -11733,17 +11868,19 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> insertStudySession(
-    int? goalId,
-    int? itemId,
-    int? conversationId,
+    String id,
+    String? goalId,
+    String? itemId,
+    String? conversationId,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO study_session (goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)',
+      'INSERT INTO study_session (id, goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)',
       variables: [
-        Variable<int>(goalId),
-        Variable<int>(itemId),
-        Variable<int>(conversationId),
+        Variable<String>(id),
+        Variable<String>(goalId),
+        Variable<String>(itemId),
+        Variable<String>(conversationId),
         Variable<String>(stamp),
       ],
       updates: {this.studySessions},
@@ -11754,7 +11891,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String? outcome,
     String? summary,
     String? stamp,
-    int sessionId,
+    String sessionId,
   ) {
     return customUpdate(
       'UPDATE study_session SET outcome = ?1, summary = ?2, ended_at = ?3, updated_at = ?3 WHERE id = ?4',
@@ -11762,33 +11899,33 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(outcome),
         Variable<String>(summary),
         Variable<String>(stamp),
-        Variable<int>(sessionId),
+        Variable<String>(sessionId),
       ],
       updates: {this.studySessions},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> deleteStudySession(int sessionId) {
+  Future<int> deleteStudySession(String sessionId) {
     return customUpdate(
       'DELETE FROM study_session WHERE id = ?1',
-      variables: [Variable<int>(sessionId)],
+      variables: [Variable<String>(sessionId)],
       updates: {this.studySessions},
       updateKind: UpdateKind.delete,
     );
   }
 
-  Selectable<StudyPlanRow> studyPlanById(int id) {
+  Selectable<StudyPlanRow> studyPlanById(String id) {
     return customSelect(
       'SELECT * FROM study_plan WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.studyPlans},
     ).asyncMap(this.studyPlans.mapFromRow);
   }
 
   Selectable<PlanRowsResult> planRows(
     String doneStatus,
-    int? id,
+    String? id,
     int openOnly,
     String activeStatus,
     String pausedStatus,
@@ -11800,7 +11937,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title FROM study_plan AS sp WHERE(?2 IS NULL OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT COALESCE(?8, -1)',
       variables: [
         Variable<String>(doneStatus),
-        Variable<int>(id),
+        Variable<String>(id),
         Variable<int>(openOnly),
         Variable<String>(activeStatus),
         Variable<String>(pausedStatus),
@@ -11811,10 +11948,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => PlanRowsResult(
-        id: row.read<int>('id'),
-        materialId: row.readNullable<int>('material_id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
+        id: row.read<String>('id'),
+        materialId: row.readNullable<String>('material_id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
         title: row.read<String>('title'),
         pageFrom: row.readNullable<int>('page_from'),
         pageTo: row.readNullable<int>('page_to'),
@@ -11832,9 +11969,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> insertStudyPlan(
-    int? materialId,
-    int? goalId,
-    int? conversationId,
+    String id,
+    String? materialId,
+    String? goalId,
+    String? conversationId,
     String title,
     int? pageFrom,
     int? pageTo,
@@ -11843,11 +11981,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO study_plan (material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)',
+      'INSERT INTO study_plan (id, material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)',
       variables: [
-        Variable<int>(materialId),
-        Variable<int>(goalId),
-        Variable<int>(conversationId),
+        Variable<String>(id),
+        Variable<String>(materialId),
+        Variable<String>(goalId),
+        Variable<String>(conversationId),
         Variable<String>(title),
         Variable<int>(pageFrom),
         Variable<int>(pageTo),
@@ -11859,13 +11998,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> setStudyPlanStatus(String status, String stamp, int planId) {
+  Future<int> setStudyPlanStatus(String status, String stamp, String planId) {
     return customUpdate(
       'UPDATE study_plan SET status = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<String>(status),
         Variable<String>(stamp),
-        Variable<int>(planId),
+        Variable<String>(planId),
       ],
       updates: {this.studyPlans},
       updateKind: UpdateKind.update,
@@ -11876,7 +12015,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int? currentPage,
     String? status,
     String stamp,
-    int planId,
+    String planId,
   ) {
     return customUpdate(
       'UPDATE study_plan SET current_page = ?1, status = COALESCE(?2, status), updated_at = ?3 WHERE id = ?4',
@@ -11884,7 +12023,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<int>(currentPage),
         Variable<String>(status),
         Variable<String>(stamp),
-        Variable<int>(planId),
+        Variable<String>(planId),
       ],
       updates: {this.studyPlans},
       updateKind: UpdateKind.update,
@@ -11938,8 +12077,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.planItems, this.scheduleBlocks},
     ).map(
       (QueryRow row) => BlocksOverlappingResult(
-        id: row.read<int>('id'),
-        planItemId: row.read<int>('plan_item_id'),
+        id: row.read<String>('id'),
+        planItemId: row.read<String>('plan_item_id'),
         startAt: row.read<String>('start_at'),
         endAt: row.read<String>('end_at'),
         source: row.read<String>('source'),
@@ -11961,8 +12100,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.planItems, this.scheduleBlocks},
     ).map(
       (QueryRow row) => NextPlannedBlockResult(
-        id: row.read<int>('id'),
-        planItemId: row.read<int>('plan_item_id'),
+        id: row.read<String>('id'),
+        planItemId: row.read<String>('plan_item_id'),
         startAt: row.read<String>('start_at'),
         endAt: row.read<String>('end_at'),
         source: row.read<String>('source'),
@@ -11984,7 +12123,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.scheduleBlocks, this.planItems},
     ).map(
       (QueryRow row) => PlannedBlockSpansResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         startAt: row.read<String>('start_at'),
         endAt: row.read<String>('end_at'),
         title: row.read<String>('title'),
@@ -11993,12 +12132,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<ScheduleBlockRow> adjustableBlocksForGoal(
-    int? goalId,
+    String? goalId,
     String now,
   ) {
     return customSelect(
       'SELECT b.* FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE p.goal_id = ?1 AND b.status = \'planned\' AND b.locked = 0 AND b.start_at >= ?2 ORDER BY b.start_at',
-      variables: [Variable<int>(goalId), Variable<String>(now)],
+      variables: [Variable<String>(goalId), Variable<String>(now)],
       readsFrom: {this.scheduleBlocks, this.planItems},
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
@@ -12012,12 +12151,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<ScheduleBlockRow> upcomingBlocksForItem(
-    int planItemId,
+    String planItemId,
     String now,
   ) {
     return customSelect(
       'SELECT * FROM schedule_block WHERE plan_item_id = ?1 AND status = \'planned\' AND start_at >= ?2 ORDER BY start_at',
-      variables: [Variable<int>(planItemId), Variable<String>(now)],
+      variables: [Variable<String>(planItemId), Variable<String>(now)],
       readsFrom: {this.scheduleBlocks},
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
@@ -12044,33 +12183,34 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
 
-  Selectable<ScheduleBlockRow> scheduleBlockById(int id) {
+  Selectable<ScheduleBlockRow> scheduleBlockById(String id) {
     return customSelect(
       'SELECT * FROM schedule_block WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.scheduleBlocks},
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
 
-  Selectable<ScheduleBlockRow> blocksForItem(int planItemId) {
+  Selectable<ScheduleBlockRow> blocksForItem(String planItemId) {
     return customSelect(
       'SELECT * FROM schedule_block WHERE plan_item_id = ?1 ORDER BY start_at',
-      variables: [Variable<int>(planItemId)],
+      variables: [Variable<String>(planItemId)],
       readsFrom: {this.scheduleBlocks},
     ).asyncMap(this.scheduleBlocks.mapFromRow);
   }
 
-  Future<int> cancelPlannedBlocksForItem(String stamp, int itemId) {
+  Future<int> cancelPlannedBlocksForItem(String stamp, String itemId) {
     return customUpdate(
       'UPDATE schedule_block SET status = \'cancelled\', updated_at = ?1 WHERE plan_item_id = ?2 AND status = \'planned\'',
-      variables: [Variable<String>(stamp), Variable<int>(itemId)],
+      variables: [Variable<String>(stamp), Variable<String>(itemId)],
       updates: {this.scheduleBlocks},
       updateKind: UpdateKind.update,
     );
   }
 
   Future<int> insertScheduleBlock(
-    int itemId,
+    String id,
+    String itemId,
     String startAt,
     String endAt,
     String source,
@@ -12078,9 +12218,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO schedule_block (plan_item_id, start_at, end_at, source, status, locked, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, \'planned\', ?5, ?6, ?6)',
+      'INSERT INTO schedule_block (id, plan_item_id, start_at, end_at, source, status, locked, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, \'planned\', ?6, ?7, ?7)',
       variables: [
-        Variable<int>(itemId),
+        Variable<String>(id),
+        Variable<String>(itemId),
         Variable<String>(startAt),
         Variable<String>(endAt),
         Variable<String>(source),
@@ -12095,7 +12236,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String startAt,
     String endAt,
     String stamp,
-    int blockId,
+    String blockId,
   ) {
     return customUpdate(
       'UPDATE schedule_block SET start_at = ?1, end_at = ?2, status = \'planned\', updated_at = ?3 WHERE id = ?4',
@@ -12103,20 +12244,20 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(startAt),
         Variable<String>(endAt),
         Variable<String>(stamp),
-        Variable<int>(blockId),
+        Variable<String>(blockId),
       ],
       updates: {this.scheduleBlocks},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> setBlockLocked(bool locked, String stamp, int blockId) {
+  Future<int> setBlockLocked(bool locked, String stamp, String blockId) {
     return customUpdate(
       'UPDATE schedule_block SET locked = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<bool>(locked),
         Variable<String>(stamp),
-        Variable<int>(blockId),
+        Variable<String>(blockId),
       ],
       updates: {this.scheduleBlocks},
       updateKind: UpdateKind.update,
@@ -12132,23 +12273,27 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> setScheduleBlockStatus(String status, String stamp, int blockId) {
+  Future<int> setScheduleBlockStatus(
+    String status,
+    String stamp,
+    String blockId,
+  ) {
     return customUpdate(
       'UPDATE schedule_block SET status = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<String>(status),
         Variable<String>(stamp),
-        Variable<int>(blockId),
+        Variable<String>(blockId),
       ],
       updates: {this.scheduleBlocks},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> deleteScheduleBlock(int blockId) {
+  Future<int> deleteScheduleBlock(String blockId) {
     return customUpdate(
       'DELETE FROM schedule_block WHERE id = ?1',
-      variables: [Variable<int>(blockId)],
+      variables: [Variable<String>(blockId)],
       updates: {this.scheduleBlocks},
       updateKind: UpdateKind.delete,
     );
@@ -12190,28 +12335,28 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<int> itemHasScheduleOrSession(int? itemId) {
+  Selectable<int> itemHasScheduleOrSession(String? itemId) {
     return customSelect(
       'SELECT 1 AS _c0 FROM schedule_block WHERE plan_item_id = ?1 UNION ALL SELECT 1 FROM study_session WHERE plan_item_id = ?1 LIMIT 1',
-      variables: [Variable<int>(itemId)],
+      variables: [Variable<String>(itemId)],
       readsFrom: {this.scheduleBlocks, this.studySessions},
     ).map((QueryRow row) => row.read<int>('_c0'));
   }
 
   Selectable<ItemByConversationAndTitleResult> itemByConversationAndTitle(
-    int? conversationId,
+    String? conversationId,
     String title,
   ) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND p.title = ?2 ORDER BY p.id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId), Variable<String>(title)],
+      variables: [Variable<String>(conversationId), Variable<String>(title)],
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => ItemByConversationAndTitleResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12231,30 +12376,31 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<ItemPlanResult> itemPlan(int itemId) {
+  Selectable<ItemPlanResult> itemPlan(String itemId) {
     return customSelect(
       'SELECT id, study_plan_id FROM plan_item WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(itemId)],
+      variables: [Variable<String>(itemId)],
       readsFrom: {this.planItems},
     ).map(
       (QueryRow row) => ItemPlanResult(
-        id: row.read<int>('id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
       ),
     );
   }
 
-  Selectable<PlanItemRow> stepsOfPlan(int? planId) {
+  Selectable<PlanItemRow> stepsOfPlan(String? planId) {
     return customSelect(
       'SELECT * FROM plan_item WHERE study_plan_id = ?1 ORDER BY seq, id',
-      variables: [Variable<int>(planId)],
+      variables: [Variable<String>(planId)],
       readsFrom: {this.planItems},
     ).asyncMap(this.planItems.mapFromRow);
   }
 
   Future<int> insertStudyPlanStep(
-    int? goalId,
-    int? planId,
+    String id,
+    String? goalId,
+    String? planId,
     int? seq,
     String title,
     String? note,
@@ -12264,10 +12410,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO plan_item (goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, \'user\', ?9, ?9)',
+      'INSERT INTO plan_item (id, goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, \'user\', ?10, ?10)',
       variables: [
-        Variable<int>(goalId),
-        Variable<int>(planId),
+        Variable<String>(id),
+        Variable<String>(goalId),
+        Variable<String>(planId),
         Variable<int>(seq),
         Variable<String>(title),
         Variable<String>(note),
@@ -12281,16 +12428,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> setStudyStepConversation(
-    int? conversationId,
-    int stepId,
-    int? planId,
+    String? conversationId,
+    String stepId,
+    String? planId,
   ) {
     return customUpdate(
       'UPDATE plan_item SET conversation_id = ?1 WHERE id = ?2 AND study_plan_id = ?3',
       variables: [
-        Variable<int>(conversationId),
-        Variable<int>(stepId),
-        Variable<int>(planId),
+        Variable<String>(conversationId),
+        Variable<String>(stepId),
+        Variable<String>(planId),
       ],
       updates: {this.planItems},
       updateKind: UpdateKind.update,
@@ -12301,7 +12448,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String status,
     String? completedAt,
     String stamp,
-    int itemId,
+    String itemId,
   ) {
     return customUpdate(
       'UPDATE plan_item SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4',
@@ -12309,7 +12456,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(status),
         Variable<String>(completedAt),
         Variable<String>(stamp),
-        Variable<int>(itemId),
+        Variable<String>(itemId),
       ],
       updates: {this.planItems},
       updateKind: UpdateKind.update,
@@ -12319,8 +12466,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Future<int> resetOtherActiveStudySteps(
     String todoStatus,
     String stamp,
-    int? planId,
-    int itemId,
+    String? planId,
+    String itemId,
     String doingStatus,
   ) {
     return customUpdate(
@@ -12328,8 +12475,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [
         Variable<String>(todoStatus),
         Variable<String>(stamp),
-        Variable<int>(planId),
-        Variable<int>(itemId),
+        Variable<String>(planId),
+        Variable<String>(itemId),
         Variable<String>(doingStatus),
       ],
       updates: {this.planItems},
@@ -12337,17 +12484,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<PlanStepsResult> planSteps(int? planId) {
+  Selectable<PlanStepsResult> planSteps(String? planId) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.study_plan_id = ?1 ORDER BY p.seq, p.id',
-      variables: [Variable<int>(planId)],
+      variables: [Variable<String>(planId)],
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => PlanStepsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12374,10 +12521,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => PlanStepsForPlansResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12397,10 +12544,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<int> lastPlanStepSeq(int? planId) {
+  Selectable<int> lastPlanStepSeq(String? planId) {
     return customSelect(
       'SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item WHERE study_plan_id = ?1',
-      variables: [Variable<int>(planId)],
+      variables: [Variable<String>(planId)],
       readsFrom: {this.planItems},
     ).map((QueryRow row) => row.read<int>('last_seq'));
   }
@@ -12409,7 +12556,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String now,
     String doneStatus,
     String cancelledStatus,
-    int itemId,
+    String itemId,
     String plannedStatus,
   ) {
     return customUpdate(
@@ -12418,7 +12565,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(now),
         Variable<String>(doneStatus),
         Variable<String>(cancelledStatus),
-        Variable<int>(itemId),
+        Variable<String>(itemId),
         Variable<String>(plannedStatus),
       ],
       updates: {this.scheduleBlocks},
@@ -12456,10 +12603,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       },
     ).map(
       (QueryRow row) => ItemsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12479,17 +12626,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<ItemByIdResult> itemById(int id) {
+  Selectable<ItemByIdResult> itemById(String id) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.id = ?1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => ItemByIdResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12509,17 +12656,19 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<ItemByConversationResult> itemByConversation(int? conversationId) {
+  Selectable<ItemByConversationResult> itemByConversation(
+    String? conversationId,
+  ) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 ORDER BY p.id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => ItemByConversationResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12540,19 +12689,19 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<ItemByConversationAndStepResult> itemByConversationAndStep(
-    int? conversationId,
+    String? conversationId,
     String stepId,
   ) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE p.conversation_id = ?1 AND json_extract(p.origin_json, \'\$.step_id\') = ?2 ORDER BY p.id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId), Variable<String>(stepId)],
+      variables: [Variable<String>(conversationId), Variable<String>(stepId)],
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => ItemByConversationAndStepResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12587,10 +12736,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => DoneItemsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12625,10 +12774,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => ItemsByIdsResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12668,10 +12817,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       },
     ).map(
       (QueryRow row) => NextDueItemResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        conversationId: row.readNullable<int>('conversation_id'),
-        studyPlanId: row.readNullable<int>('study_plan_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
         seq: row.readNullable<int>('seq'),
         title: row.read<String>('title'),
         note: row.readNullable<String>('note'),
@@ -12692,16 +12841,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> bindTaskConversation(
-    int? conversationId,
+    String? conversationId,
     String stamp,
-    int itemId,
+    String itemId,
   ) {
     return customUpdate(
       'UPDATE plan_item SET conversation_id = ?1, updated_at = ?2 WHERE id = ?3 AND conversation_id IS NULL',
       variables: [
-        Variable<int>(conversationId),
+        Variable<String>(conversationId),
         Variable<String>(stamp),
-        Variable<int>(itemId),
+        Variable<String>(itemId),
       ],
       updates: {this.planItems},
       updateKind: UpdateKind.update,
@@ -12709,8 +12858,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> insertPlanItem(
-    int? goalId,
-    int? conversationId,
+    String id,
+    String? goalId,
+    String? conversationId,
     String title,
     String? note,
     String? dueAt,
@@ -12721,10 +12871,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO plan_item (goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)',
+      'INSERT INTO plan_item (id, goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)',
       variables: [
-        Variable<int>(goalId),
-        Variable<int>(conversationId),
+        Variable<String>(id),
+        Variable<String>(goalId),
+        Variable<String>(conversationId),
         Variable<String>(title),
         Variable<String>(note),
         Variable<String>(dueAt),
@@ -12738,86 +12889,90 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> setPlanItemPriority(int priority, String stamp, int itemId) {
+  Future<int> setPlanItemPriority(int priority, String stamp, String itemId) {
     return customUpdate(
       'UPDATE plan_item SET priority = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<int>(priority),
         Variable<String>(stamp),
-        Variable<int>(itemId),
+        Variable<String>(itemId),
       ],
       updates: {this.planItems},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> deletePlanItem(int itemId) {
+  Future<int> deletePlanItem(String itemId) {
     return customUpdate(
       'DELETE FROM plan_item WHERE id = ?1',
-      variables: [Variable<int>(itemId)],
+      variables: [Variable<String>(itemId)],
       updates: {this.planItems},
       updateKind: UpdateKind.delete,
     );
   }
 
-  Selectable<MessageRow> recentMessages(int conversationId, int? rowLimit) {
+  Selectable<MessageRow> recentMessages(String conversationId, int? rowLimit) {
     return customSelect(
       'SELECT * FROM message WHERE conversation_id = ?1 ORDER BY id DESC LIMIT COALESCE(?2, -1)',
-      variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
+      variables: [Variable<String>(conversationId), Variable<int>(rowLimit)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
   }
 
   Selectable<MessageRow> messagesPage(
-    int conversationId,
-    int? beforeId,
+    String conversationId,
+    String? beforeId,
     int rowLimit,
   ) {
     return customSelect(
       'SELECT * FROM message WHERE conversation_id = ?1 AND(?2 IS NULL OR id < ?2)ORDER BY id DESC LIMIT ?3',
       variables: [
-        Variable<int>(conversationId),
-        Variable<int>(beforeId),
+        Variable<String>(conversationId),
+        Variable<String>(beforeId),
         Variable<int>(rowLimit),
       ],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
   }
 
-  Selectable<MessageRow> firstUserMessage(int conversationId, int? beforeId) {
+  Selectable<MessageRow> firstUserMessage(
+    String conversationId,
+    String? beforeId,
+  ) {
     return customSelect(
       'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)AND(?2 IS NULL OR id < ?2)ORDER BY id LIMIT 1',
-      variables: [Variable<int>(conversationId), Variable<int>(beforeId)],
+      variables: [Variable<String>(conversationId), Variable<String>(beforeId)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
   }
 
-  Selectable<MessageRow> lastUserMessage(int conversationId) {
+  Selectable<MessageRow> lastUserMessage(String conversationId) {
     return customSelect(
       'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)ORDER BY id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
   }
 
-  Selectable<MessageRow> messageById(int id) {
+  Selectable<MessageRow> messageById(String id) {
     return customSelect(
       'SELECT * FROM message WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
   }
 
-  Selectable<String?> imagePathsOfConversation(int conversationId) {
+  Selectable<String?> imagePathsOfConversation(String conversationId) {
     return customSelect(
       'SELECT image_paths_json FROM message WHERE conversation_id = ?1 AND image_paths_json IS NOT NULL',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.messages},
     ).map((QueryRow row) => row.readNullable<String>('image_paths_json'));
   }
 
   Future<int> insertConversationMessage(
-    int conversationId,
+    String id,
+    String conversationId,
     String role,
     String content,
     String? imagePaths,
@@ -12825,9 +12980,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO message (conversation_id, role, content, image_paths_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+      'INSERT INTO message (id, conversation_id, role, content, image_paths_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
       variables: [
-        Variable<int>(conversationId),
+        Variable<String>(id),
+        Variable<String>(conversationId),
         Variable<String>(role),
         Variable<String>(content),
         Variable<String>(imagePaths),
@@ -12838,39 +12994,45 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> deleteConversationMessages(int conversationId) {
+  Future<int> deleteConversationMessages(String conversationId) {
     return customUpdate(
       'DELETE FROM message WHERE conversation_id = ?1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       updates: {this.messages},
       updateKind: UpdateKind.delete,
     );
   }
 
-  Future<int> setMessageStructuredState(String? structuredJson, int messageId) {
+  Future<int> setMessageStructuredState(
+    String? structuredJson,
+    String messageId,
+  ) {
     return customUpdate(
       'UPDATE message SET structured_json = ?1 WHERE id = ?2',
-      variables: [Variable<String>(structuredJson), Variable<int>(messageId)],
+      variables: [
+        Variable<String>(structuredJson),
+        Variable<String>(messageId),
+      ],
       updates: {this.messages},
       updateKind: UpdateKind.update,
     );
   }
 
   Selectable<EvidenceMessageCurrentResult> evidenceMessageCurrent(
-    int messageId,
+    String messageId,
   ) {
     return customSelect(
       'SELECT m.content, m.created_at, c.id AS conversation_id, c.title, c.goal_id, c.material_id FROM message AS m JOIN conversation AS c ON c.id = m.conversation_id WHERE m.id = ?1 LIMIT 1',
-      variables: [Variable<int>(messageId)],
+      variables: [Variable<String>(messageId)],
       readsFrom: {this.messages, this.conversations},
     ).map(
       (QueryRow row) => EvidenceMessageCurrentResult(
         content: row.read<String>('content'),
         createdAt: row.read<String>('created_at'),
-        conversationId: row.read<int>('conversation_id'),
+        conversationId: row.read<String>('conversation_id'),
         title: row.readNullable<String>('title'),
-        goalId: row.readNullable<int>('goal_id'),
-        materialId: row.readNullable<int>('material_id'),
+        goalId: row.readNullable<String>('goal_id'),
+        materialId: row.readNullable<String>('material_id'),
       ),
     );
   }
@@ -12882,19 +13044,21 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.messages, this.conversations},
     ).map(
       (QueryRow row) => EvidenceMessageSourcesResult(
-        id: row.read<int>('id'),
-        conversationId: row.read<int>('conversation_id'),
+        id: row.read<String>('id'),
+        conversationId: row.read<String>('conversation_id'),
         content: row.read<String>('content'),
         createdAt: row.read<String>('created_at'),
-        materialId: row.readNullable<int>('material_id'),
+        materialId: row.readNullable<String>('material_id'),
       ),
     );
   }
 
-  Selectable<EvidenceMessageSourceResult> evidenceMessageSource(int messageId) {
+  Selectable<EvidenceMessageSourceResult> evidenceMessageSource(
+    String messageId,
+  ) {
     return customSelect(
       'SELECT content, created_at FROM message WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(messageId)],
+      variables: [Variable<String>(messageId)],
       readsFrom: {this.messages},
     ).map(
       (QueryRow row) => EvidenceMessageSourceResult(
@@ -12922,16 +13086,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.memories},
     ).map(
       (QueryRow row) => ActiveDifficultiesResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         content: row.read<String>('content'),
       ),
     );
   }
 
-  Selectable<MemoryRow> memoryById(int id) {
+  Selectable<MemoryRow> memoryById(String id) {
     return customSelect(
       'SELECT * FROM memory WHERE id = ?1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.memories},
     ).asyncMap(this.memories.mapFromRow);
   }
@@ -12952,7 +13116,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<MemoryRow> memoriesForContext(
     String? now,
-    String scope,
+    String? scope,
     int? rowLimit,
   ) {
     return customSelect(
@@ -12966,31 +13130,33 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.memories.mapFromRow);
   }
 
-  Selectable<int> hasMemoryFromSource(String sourceKind, int? sourceId) {
+  Selectable<String> hasMemoryFromSource(String sourceKind, String? sourceId) {
     return customSelect(
       'SELECT id FROM memory WHERE source_kind = ?1 AND source_id = ?2 LIMIT 1',
-      variables: [Variable<String>(sourceKind), Variable<int>(sourceId)],
+      variables: [Variable<String>(sourceKind), Variable<String>(sourceId)],
       readsFrom: {this.memories},
-    ).map((QueryRow row) => row.read<int>('id'));
+    ).map((QueryRow row) => row.read<String>('id'));
   }
 
   Future<int> insertMemory(
+    String id,
     String kind,
     String content,
     String? scope,
     String sourceKind,
-    int? sourceId,
+    String? sourceId,
     String? validUntil,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO memory (kind, content, scope, source_kind, source_id, valid_until, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, \'active\', ?7, ?7)',
+      'INSERT INTO memory (id, kind, content, scope, source_kind, source_id, valid_until, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, \'active\', ?8, ?8)',
       variables: [
+        Variable<String>(id),
         Variable<String>(kind),
         Variable<String>(content),
         Variable<String>(scope),
         Variable<String>(sourceKind),
-        Variable<int>(sourceId),
+        Variable<String>(sourceId),
         Variable<String>(validUntil),
         Variable<String>(stamp),
       ],
@@ -13002,7 +13168,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String content,
     String? validUntil,
     String stamp,
-    int memoryId,
+    String memoryId,
   ) {
     return customUpdate(
       'UPDATE memory SET content = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4',
@@ -13010,61 +13176,61 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(content),
         Variable<String>(validUntil),
         Variable<String>(stamp),
-        Variable<int>(memoryId),
+        Variable<String>(memoryId),
       ],
       updates: {this.memories},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> setMemoryStatus(String status, String stamp, int memoryId) {
+  Future<int> setMemoryStatus(String status, String stamp, String memoryId) {
     return customUpdate(
       'UPDATE memory SET status = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<String>(status),
         Variable<String>(stamp),
-        Variable<int>(memoryId),
+        Variable<String>(memoryId),
       ],
       updates: {this.memories},
       updateKind: UpdateKind.update,
     );
   }
 
-  Selectable<MaterialScopeResult> materialScope(int id) {
+  Selectable<MaterialScopeResult> materialScope(String id) {
     return customSelect(
       'SELECT id, goal_id FROM material WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.materials},
     ).map(
       (QueryRow row) => MaterialScopeResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
       ),
     );
   }
 
-  Selectable<String?> materialFileHash(int materialId) {
+  Selectable<String?> materialFileHash(String materialId) {
     return customSelect(
       'SELECT source_file_hash FROM material WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(materialId)],
+      variables: [Variable<String>(materialId)],
       readsFrom: {this.materials},
     ).map((QueryRow row) => row.readNullable<String>('source_file_hash'));
   }
 
-  Selectable<MaterialByIdResult> materialById(int id) {
+  Selectable<MaterialByIdResult> materialById(String id) {
     return customSelect(
       'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE m.id = ?1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.materialPages, this.materials},
     ).map(
       (QueryRow row) => MaterialByIdResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         title: row.read<String>('title'),
         kind: row.read<String>('kind'),
         sourceRef: row.readNullable<String>('source_ref'),
         sourceFileName: row.readNullable<String>('source_file_name'),
         sourceFileHash: row.readNullable<String>('source_file_hash'),
-        goalId: row.readNullable<int>('goal_id'),
+        goalId: row.readNullable<String>('goal_id'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         pageCount: row.read<int>('page_count'),
@@ -13072,20 +13238,20 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<MaterialListResult> materialList(int? goalId) {
+  Selectable<MaterialListResult> materialList(String? goalId) {
     return customSelect(
       'SELECT m.*, (SELECT COUNT(*) FROM material_page AS p WHERE p.material_id = m.id) AS page_count FROM material AS m WHERE(?1 IS NULL OR m.goal_id = ?1 OR m.goal_id IS NULL)ORDER BY m.updated_at DESC, m.id DESC',
-      variables: [Variable<int>(goalId)],
+      variables: [Variable<String>(goalId)],
       readsFrom: {this.materialPages, this.materials},
     ).map(
       (QueryRow row) => MaterialListResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         title: row.read<String>('title'),
         kind: row.read<String>('kind'),
         sourceRef: row.readNullable<String>('source_ref'),
         sourceFileName: row.readNullable<String>('source_file_name'),
         sourceFileHash: row.readNullable<String>('source_file_hash'),
-        goalId: row.readNullable<int>('goal_id'),
+        goalId: row.readNullable<String>('goal_id'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         pageCount: row.read<int>('page_count'),
@@ -13094,68 +13260,70 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> insertMaterial(
+    String id,
     String title,
     String kind,
     String? sourceRef,
     String? fileName,
     String? fileHash,
-    int? goalId,
+    String? goalId,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO material (title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)',
+      'INSERT INTO material (id, title, kind, source_ref, source_file_name, source_file_hash, goal_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)',
       variables: [
+        Variable<String>(id),
         Variable<String>(title),
         Variable<String>(kind),
         Variable<String>(sourceRef),
         Variable<String>(fileName),
         Variable<String>(fileHash),
-        Variable<int>(goalId),
+        Variable<String>(goalId),
         Variable<String>(stamp),
       ],
       updates: {this.materials},
     );
   }
 
-  Future<int> setMaterialGoal(int? goalId, String stamp, int materialId) {
+  Future<int> setMaterialGoal(String? goalId, String stamp, String materialId) {
     return customUpdate(
       'UPDATE material SET goal_id = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
-        Variable<int>(goalId),
+        Variable<String>(goalId),
         Variable<String>(stamp),
-        Variable<int>(materialId),
+        Variable<String>(materialId),
       ],
       updates: {this.materials},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> touchMaterial(String stamp, int materialId) {
+  Future<int> touchMaterial(String stamp, String materialId) {
     return customUpdate(
       'UPDATE material SET updated_at = ?1 WHERE id = ?2',
-      variables: [Variable<String>(stamp), Variable<int>(materialId)],
+      variables: [Variable<String>(stamp), Variable<String>(materialId)],
       updates: {this.materials},
       updateKind: UpdateKind.update,
     );
   }
 
-  Selectable<MaterialPageRow> pagesOfMaterial(int materialId) {
+  Selectable<MaterialPageRow> pagesOfMaterial(String materialId) {
     return customSelect(
       'SELECT * FROM material_page WHERE material_id = ?1 ORDER BY page_no',
-      variables: [Variable<int>(materialId)],
+      variables: [Variable<String>(materialId)],
       readsFrom: {this.materialPages},
     ).asyncMap(this.materialPages.mapFromRow);
   }
 
   Selectable<MaterialPageRow> pagesInRange(
-    int materialId,
+    String materialId,
     int? pageFrom,
     int? pageTo,
   ) {
     return customSelect(
       'SELECT * FROM material_page WHERE material_id = ?1 AND(?2 IS NULL OR page_no >= ?2)AND(?3 IS NULL OR page_no <= ?3)ORDER BY page_no',
       variables: [
-        Variable<int>(materialId),
+        Variable<String>(materialId),
         Variable<int>(pageFrom),
         Variable<int>(pageTo),
       ],
@@ -13163,33 +13331,35 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.materialPages.mapFromRow);
   }
 
-  Selectable<MaterialPageRow> pageById(int pageId) {
+  Selectable<MaterialPageRow> pageById(String pageId) {
     return customSelect(
       'SELECT * FROM material_page WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(pageId)],
+      variables: [Variable<String>(pageId)],
       readsFrom: {this.materialPages},
     ).asyncMap(this.materialPages.mapFromRow);
   }
 
-  Selectable<int> pageMaterialId(int pageId) {
+  Selectable<String> pageMaterialId(String pageId) {
     return customSelect(
       'SELECT material_id FROM material_page WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(pageId)],
+      variables: [Variable<String>(pageId)],
       readsFrom: {this.materialPages},
-    ).map((QueryRow row) => row.read<int>('material_id'));
+    ).map((QueryRow row) => row.read<String>('material_id'));
   }
 
   Future<int> insertMaterialPage(
-    int materialId,
+    String id,
+    String materialId,
     int pageNo,
     String? label,
     String content,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO material_page (material_id, page_no, label, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      'INSERT INTO material_page (id, material_id, page_no, label, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
       variables: [
-        Variable<int>(materialId),
+        Variable<String>(id),
+        Variable<String>(materialId),
         Variable<int>(pageNo),
         Variable<String>(label),
         Variable<String>(content),
@@ -13203,7 +13373,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String content,
     String? label,
     String stamp,
-    int pageId,
+    String pageId,
   ) {
     return customUpdate(
       'UPDATE material_page SET content = ?1, label = ?2, updated_at = ?3 WHERE id = ?4',
@@ -13211,26 +13381,26 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(content),
         Variable<String>(label),
         Variable<String>(stamp),
-        Variable<int>(pageId),
+        Variable<String>(pageId),
       ],
       updates: {this.materialPages},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> deleteMaterialPage(int pageId) {
+  Future<int> deleteMaterialPage(String pageId) {
     return customUpdate(
       'DELETE FROM material_page WHERE id = ?1',
-      variables: [Variable<int>(pageId)],
+      variables: [Variable<String>(pageId)],
       updates: {this.materialPages},
       updateKind: UpdateKind.delete,
     );
   }
 
-  Selectable<MaterialPageBoundsResult> materialPageBounds(int materialId) {
+  Selectable<MaterialPageBoundsResult> materialPageBounds(String materialId) {
     return customSelect(
       'SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page FROM material_page WHERE material_id = ?1',
-      variables: [Variable<int>(materialId)],
+      variables: [Variable<String>(materialId)],
       readsFrom: {this.materialPages},
     ).map(
       (QueryRow row) => MaterialPageBoundsResult(
@@ -13240,21 +13410,24 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<MaterialPageRow> materialPageByNumber(int materialId, int pageNo) {
+  Selectable<MaterialPageRow> materialPageByNumber(
+    String materialId,
+    int pageNo,
+  ) {
     return customSelect(
       'SELECT * FROM material_page WHERE material_id = ?1 AND page_no = ?2 LIMIT 1',
-      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
+      variables: [Variable<String>(materialId), Variable<int>(pageNo)],
       readsFrom: {this.materialPages},
     ).asyncMap(this.materialPages.mapFromRow);
   }
 
   Selectable<EvidenceMaterialPageCurrentResult> evidenceMaterialPageCurrent(
-    int materialId,
+    String materialId,
     int pageNo,
   ) {
     return customSelect(
       'SELECT mp.content, mp.label, mp.updated_at, m.title, m.source_file_name FROM material_page AS mp JOIN material AS m ON m.id = mp.material_id WHERE mp.material_id = ?1 AND mp.page_no = ?2 LIMIT 1',
-      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
+      variables: [Variable<String>(materialId), Variable<int>(pageNo)],
       readsFrom: {this.materialPages, this.materials},
     ).map(
       (QueryRow row) => EvidenceMaterialPageCurrentResult(
@@ -13274,7 +13447,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materialPages},
     ).map(
       (QueryRow row) => EvidenceMaterialPageSourcesResult(
-        materialId: row.read<int>('material_id'),
+        materialId: row.read<String>('material_id'),
         pageNo: row.read<int>('page_no'),
         content: row.read<String>('content'),
         updatedAt: row.read<String>('updated_at'),
@@ -13283,12 +13456,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<EvidenceMaterialPageSourceResult> evidenceMaterialPageSource(
-    int materialId,
+    String materialId,
     int pageNo,
   ) {
     return customSelect(
       'SELECT content, updated_at FROM material_page WHERE material_id = ?1 AND page_no = ?2 LIMIT 1',
-      variables: [Variable<int>(materialId), Variable<int>(pageNo)],
+      variables: [Variable<String>(materialId), Variable<int>(pageNo)],
       readsFrom: {this.materialPages},
     ).map(
       (QueryRow row) => EvidenceMaterialPageSourceResult(
@@ -13306,15 +13479,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.learningGoals.mapFromRow);
   }
 
-  Selectable<LearningGoalRow> goalById(int id) {
+  Selectable<LearningGoalRow> goalById(String id) {
     return customSelect(
       'SELECT * FROM learning_goal WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.learningGoals},
     ).asyncMap(this.learningGoals.mapFromRow);
   }
 
   Future<int> insertLearningGoal(
+    String id,
     String title,
     String? scopeText,
     String? dueDate,
@@ -13322,8 +13496,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      'INSERT INTO learning_goal (id, title, scope_text, due_date, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
       variables: [
+        Variable<String>(id),
         Variable<String>(title),
         Variable<String>(scopeText),
         Variable<String>(dueDate),
@@ -13334,13 +13509,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> setLearningGoalStatus(String status, String stamp, int goalId) {
+  Future<int> setLearningGoalStatus(
+    String status,
+    String stamp,
+    String goalId,
+  ) {
     return customUpdate(
       'UPDATE learning_goal SET status = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<String>(status),
         Variable<String>(stamp),
-        Variable<int>(goalId),
+        Variable<String>(goalId),
       ],
       updates: {this.learningGoals},
       updateKind: UpdateKind.update,
@@ -13363,21 +13542,21 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.learningGoals.mapFromRow);
   }
 
-  Selectable<ConversationByIdResult> conversationById(int conversationId) {
+  Selectable<ConversationByIdResult> conversationById(String conversationId) {
     return customSelect(
       'SELECT c.*, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.materials, this.conversations, this.attempts},
     ).map(
       (QueryRow row) => ConversationByIdResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         title: row.readNullable<String>('title'),
-        goalId: row.readNullable<int>('goal_id'),
-        materialId: row.readNullable<int>('material_id'),
+        goalId: row.readNullable<String>('goal_id'),
+        materialId: row.readNullable<String>('material_id'),
         pageNo: row.readNullable<int>('page_no'),
         sourceRef: row.readNullable<String>('source_ref'),
         contextText: row.readNullable<String>('context_text'),
-        questionMessageId: row.readNullable<int>('question_message_id'),
+        questionMessageId: row.readNullable<String>('question_message_id'),
         entryKind: row.read<String>('entry_kind'),
         status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
@@ -13393,15 +13572,15 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<ConversationQuestionResult> conversationQuestion(
-    int conversationId,
+    String conversationId,
   ) {
     return customSelect(
       'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_paths_json FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.conversations, this.materials, this.messages},
     ).map(
       (QueryRow row) => ConversationQuestionResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         sourceRef: row.readNullable<String>('source_ref'),
         contextText: row.readNullable<String>('context_text'),
         pageNo: row.readNullable<int>('page_no'),
@@ -13430,7 +13609,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       },
     ).map(
       (QueryRow row) => QuestionRowsResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         sourceRef: row.readNullable<String>('source_ref'),
         contextText: row.readNullable<String>('context_text'),
         pageNo: row.readNullable<int>('page_no'),
@@ -13440,8 +13619,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         sourceFileName: row.readNullable<String>('source_file_name'),
         stem: row.readNullable<String>('stem'),
         imagePathsJson: row.readNullable<String>('image_paths_json'),
-        lastAttemptId: row.readNullable<int>('last_attempt_id'),
-        lastAttemptSessionId: row.readNullable<int>('last_attempt_session_id'),
+        lastAttemptId: row.readNullable<String>('last_attempt_id'),
+        lastAttemptSessionId: row.readNullable<String>(
+          'last_attempt_session_id',
+        ),
         lastAttemptUserAnswer: row.readNullable<String>(
           'last_attempt_user_answer',
         ),
@@ -13465,7 +13646,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<ConversationRecordsResult> conversationRecords(
-    int? goalId,
+    String? goalId,
     int unassignedOnly,
     String? answerStatus,
     int? rowLimit,
@@ -13474,7 +13655,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     return customSelect(
       'SELECT c.*, (SELECT COUNT(*) FROM message AS m WHERE m.conversation_id = c.id) AS message_count, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS preview, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id DESC LIMIT 1) AS last_user_message, (SELECT a.user_answer FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_answer, (SELECT a.updated_at FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL ORDER BY a.id DESC LIMIT 1) AS draft_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, EXISTS (SELECT 1 AS _c0 FROM attempt AS a WHERE a.conversation_id = c.id) AS has_attempts, EXISTS (SELECT 1 AS _c1 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NULL) AS has_draft FROM conversation AS c WHERE(?1 IS NULL OR c.goal_id = ?1)AND(?2 = 0 OR c.goal_id IS NULL)AND(?3 IS NULL OR(?3 = \'open\' AND EXISTS (SELECT 1 AS _c2 FROM attempt AS a WHERE a.conversation_id = c.id) AND NOT EXISTS (SELECT 1 AS _c3 FROM attempt AS a WHERE a.conversation_id = c.id AND a.submitted_at IS NOT NULL))OR(?3 = \'correct\' AND EXISTS (SELECT 1 AS _c4 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 1))OR(?3 = \'wrong\' AND EXISTS (SELECT 1 AS _c5 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct = 0))OR(?3 = \'unjudged\' AND EXISTS (SELECT 1 AS _c6 FROM attempt AS a WHERE a.conversation_id = c.id AND a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) AND a.is_correct IS NULL)))ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(?4, -1) OFFSET ?5',
       variables: [
-        Variable<int>(goalId),
+        Variable<String>(goalId),
         Variable<int>(unassignedOnly),
         Variable<String>(answerStatus),
         Variable<int>(rowLimit),
@@ -13488,14 +13669,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       },
     ).map(
       (QueryRow row) => ConversationRecordsResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         title: row.readNullable<String>('title'),
-        goalId: row.readNullable<int>('goal_id'),
-        materialId: row.readNullable<int>('material_id'),
+        goalId: row.readNullable<String>('goal_id'),
+        materialId: row.readNullable<String>('material_id'),
         pageNo: row.readNullable<int>('page_no'),
         sourceRef: row.readNullable<String>('source_ref'),
         contextText: row.readNullable<String>('context_text'),
-        questionMessageId: row.readNullable<int>('question_message_id'),
+        questionMessageId: row.readNullable<String>('question_message_id'),
         entryKind: row.read<String>('entry_kind'),
         status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
@@ -13527,14 +13708,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       },
     ).map(
       (QueryRow row) => RecentlyActiveRecordsResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         title: row.readNullable<String>('title'),
-        goalId: row.readNullable<int>('goal_id'),
-        materialId: row.readNullable<int>('material_id'),
+        goalId: row.readNullable<String>('goal_id'),
+        materialId: row.readNullable<String>('material_id'),
         pageNo: row.readNullable<int>('page_no'),
         sourceRef: row.readNullable<String>('source_ref'),
         contextText: row.readNullable<String>('context_text'),
-        questionMessageId: row.readNullable<int>('question_message_id'),
+        questionMessageId: row.readNullable<String>('question_message_id'),
         entryKind: row.read<String>('entry_kind'),
         status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
@@ -13555,9 +13736,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> insertConversationRecord(
+    String id,
     String? title,
-    int? goalId,
-    int? materialId,
+    String? goalId,
+    String? materialId,
     int? pageNo,
     String? sourceRef,
     String? contextText,
@@ -13565,11 +13747,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO conversation (title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, \'open\', ?8, ?8)',
+      'INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, \'open\', ?9, ?9)',
       variables: [
+        Variable<String>(id),
         Variable<String>(title),
-        Variable<int>(goalId),
-        Variable<int>(materialId),
+        Variable<String>(goalId),
+        Variable<String>(materialId),
         Variable<int>(pageNo),
         Variable<String>(sourceRef),
         Variable<String>(contextText),
@@ -13580,26 +13763,26 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> recordLastMessageTime(String stamp, int conversationId) {
+  Future<int> recordLastMessageTime(String stamp, String conversationId) {
     return customUpdate(
       'UPDATE conversation SET updated_at = ?1, last_message_at = ?1 WHERE id = ?2',
-      variables: [Variable<String>(stamp), Variable<int>(conversationId)],
+      variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
     );
   }
 
   Future<int> setConversationGoal(
-    int? goalId,
+    String? goalId,
     String stamp,
-    int conversationId,
+    String conversationId,
   ) {
     return customUpdate(
       'UPDATE conversation SET goal_id = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
-        Variable<int>(goalId),
+        Variable<String>(goalId),
         Variable<String>(stamp),
-        Variable<int>(conversationId),
+        Variable<String>(conversationId),
       ],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
@@ -13607,84 +13790,87 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> setConversationMaterial(
-    int? materialId,
+    String? materialId,
     int? pageNo,
     String stamp,
-    int conversationId,
+    String conversationId,
   ) {
     return customUpdate(
       'UPDATE conversation SET material_id = ?1, page_no = ?2, updated_at = ?3 WHERE id = ?4',
       variables: [
-        Variable<int>(materialId),
+        Variable<String>(materialId),
         Variable<int>(pageNo),
         Variable<String>(stamp),
-        Variable<int>(conversationId),
+        Variable<String>(conversationId),
       ],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> setQuestionMessage(int? messageId, int conversationId) {
+  Future<int> setQuestionMessage(String? messageId, String conversationId) {
     return customUpdate(
       'UPDATE conversation SET question_message_id = ?1 WHERE id = ?2',
-      variables: [Variable<int>(messageId), Variable<int>(conversationId)],
+      variables: [
+        Variable<String>(messageId),
+        Variable<String>(conversationId),
+      ],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> endConversation(String? stamp, int conversationId) {
+  Future<int> endConversation(String? stamp, String conversationId) {
     return customUpdate(
       'UPDATE conversation SET status = \'ended\', ended_at = ?1, updated_at = ?1 WHERE id = ?2',
-      variables: [Variable<String>(stamp), Variable<int>(conversationId)],
+      variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> deleteConversationRecord(int conversationId) {
+  Future<int> deleteConversationRecord(String conversationId) {
     return customUpdate(
       'DELETE FROM conversation WHERE id = ?1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.delete,
     );
   }
 
-  Future<int> reopenConversation(String stamp, int conversationId) {
+  Future<int> reopenConversation(String stamp, String conversationId) {
     return customUpdate(
       'UPDATE conversation SET status = \'open\', ended_at = NULL, updated_at = ?1 WHERE id = ?2',
-      variables: [Variable<String>(stamp), Variable<int>(conversationId)],
+      variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
     );
   }
 
-  Selectable<ConversationScopeResult> conversationScope(int id) {
+  Selectable<ConversationScopeResult> conversationScope(String id) {
     return customSelect(
       'SELECT id, goal_id, material_id FROM conversation WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.conversations},
     ).map(
       (QueryRow row) => ConversationScopeResult(
-        id: row.read<int>('id'),
-        goalId: row.readNullable<int>('goal_id'),
-        materialId: row.readNullable<int>('material_id'),
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        materialId: row.readNullable<String>('material_id'),
       ),
     );
   }
 
   Selectable<EvidenceQuestionCurrentResult> evidenceQuestionCurrent(
-    int conversationId,
+    String conversationId,
   ) {
     return customSelect(
       'SELECT COALESCE(c.question_message_id, (SELECT m.id FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' ORDER BY m.id LIMIT 1)) AS question_message_id, COALESCE(c.source_ref,(CASE WHEN (SELECT title FROM material WHERE id = c.material_id) IS NOT NULL AND c.page_no IS NOT NULL THEN \'《\' || (SELECT title FROM material WHERE id = c.material_id) || \'》第 \' || c.page_no || \' 页\' END)) AS source_ref, c.title, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id = COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)) LIMIT 1) AS stem FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.conversations, this.messages, this.materials},
     ).map(
       (QueryRow row) => EvidenceQuestionCurrentResult(
-        questionMessageId: row.readNullable<int>('question_message_id'),
+        questionMessageId: row.readNullable<String>('question_message_id'),
         sourceRef: row.readNullable<String>('source_ref'),
         title: row.readNullable<String>('title'),
         contextText: row.readNullable<String>('context_text'),
@@ -13696,81 +13882,83 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<AttemptSubmissionResult> attemptSubmission(int attemptId) {
+  Selectable<AttemptSubmissionResult> attemptSubmission(String attemptId) {
     return customSelect(
       'SELECT id, submitted_at FROM attempt WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(attemptId)],
+      variables: [Variable<String>(attemptId)],
       readsFrom: {this.attempts},
     ).map(
       (QueryRow row) => AttemptSubmissionResult(
-        id: row.read<int>('id'),
+        id: row.read<String>('id'),
         submittedAt: row.readNullable<String>('submitted_at'),
       ),
     );
   }
 
-  Selectable<AttemptRow> attemptsForConversation(int conversationId) {
+  Selectable<AttemptRow> attemptsForConversation(String conversationId) {
     return customSelect(
       'SELECT * FROM attempt WHERE conversation_id = ?1 ORDER BY id DESC',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.attempts},
     ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Selectable<AttemptRow> priorFeedback(int conversationId, int rowLimit) {
+  Selectable<AttemptRow> priorFeedback(String conversationId, int rowLimit) {
     return customSelect(
       'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL AND feedback IS NOT NULL AND TRIM(feedback) <> \'\' ORDER BY submitted_at DESC, id DESC LIMIT ?2',
-      variables: [Variable<int>(conversationId), Variable<int>(rowLimit)],
+      variables: [Variable<String>(conversationId), Variable<int>(rowLimit)],
       readsFrom: {this.attempts},
     ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Selectable<AttemptRow> latestSubmittedAttempt(int conversationId) {
+  Selectable<AttemptRow> latestSubmittedAttempt(String conversationId) {
     return customSelect(
       'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NOT NULL ORDER BY submitted_at DESC, id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.attempts},
     ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Selectable<AttemptRow> attemptById(int id) {
+  Selectable<AttemptRow> attemptById(String id) {
     return customSelect(
       'SELECT * FROM attempt WHERE id = ?1 LIMIT 1',
-      variables: [Variable<int>(id)],
+      variables: [Variable<String>(id)],
       readsFrom: {this.attempts},
     ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Selectable<AttemptRow> openAttempt(int conversationId) {
+  Selectable<AttemptRow> openAttempt(String conversationId) {
     return customSelect(
       'SELECT * FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NULL ORDER BY id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.attempts},
     ).asyncMap(this.attempts.mapFromRow);
   }
 
-  Selectable<int?> sessionGoalOfConversation(int conversationId) {
+  Selectable<String?> sessionGoalOfConversation(String conversationId) {
     return customSelect(
       'SELECT s.goal_id FROM attempt AS a JOIN study_session AS s ON s.id = a.session_id WHERE a.conversation_id = ?1 AND s.goal_id IS NOT NULL ORDER BY a.id DESC LIMIT 1',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.studySessions, this.attempts},
-    ).map((QueryRow row) => row.readNullable<int>('goal_id'));
+    ).map((QueryRow row) => row.readNullable<String>('goal_id'));
   }
 
   Future<int> insertOpenAttempt(
-    int conversationId,
-    int? sessionId,
-    int? redoOfAttemptId,
+    String id,
+    String conversationId,
+    String? sessionId,
+    String? redoOfAttemptId,
     bool delayed,
     String createdAt,
     String updatedAt,
   ) {
     return customInsert(
-      'INSERT INTO attempt (conversation_id, session_id, redo_of_attempt_id, delayed, created_at, updated_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE NOT EXISTS (SELECT 1 FROM attempt WHERE conversation_id = ?1 AND submitted_at IS NULL)',
+      'INSERT INTO attempt (id, conversation_id, session_id, redo_of_attempt_id, delayed, created_at, updated_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE NOT EXISTS (SELECT 1 FROM attempt WHERE conversation_id = ?2 AND submitted_at IS NULL)',
       variables: [
-        Variable<int>(conversationId),
-        Variable<int>(sessionId),
-        Variable<int>(redoOfAttemptId),
+        Variable<String>(id),
+        Variable<String>(conversationId),
+        Variable<String>(sessionId),
+        Variable<String>(redoOfAttemptId),
         Variable<bool>(delayed),
         Variable<String>(createdAt),
         Variable<String>(updatedAt),
@@ -13780,20 +13968,20 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Future<int> updateOpenAttemptContext(
-    int? sessionId,
-    int? redoOfAttemptId,
+    String? sessionId,
+    String? redoOfAttemptId,
     bool? delayed,
     String stamp,
-    int attemptId,
+    String attemptId,
   ) {
     return customUpdate(
       'UPDATE attempt SET session_id = COALESCE(?1, session_id), redo_of_attempt_id = COALESCE(?2, redo_of_attempt_id), delayed = COALESCE(?3, delayed), updated_at = ?4 WHERE id = ?5 AND submitted_at IS NULL',
       variables: [
-        Variable<int>(sessionId),
-        Variable<int>(redoOfAttemptId),
+        Variable<String>(sessionId),
+        Variable<String>(redoOfAttemptId),
         Variable<bool>(delayed),
         Variable<String>(stamp),
-        Variable<int>(attemptId),
+        Variable<String>(attemptId),
       ],
       updates: {this.attempts},
       updateKind: UpdateKind.update,
@@ -13808,7 +13996,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     bool delayed,
     String? feedback,
     String stamp,
-    int attemptId,
+    String attemptId,
   ) {
     return customUpdate(
       'UPDATE attempt SET user_answer = ?1, solution = ?2, is_correct = ?3, independent = ?4, delayed = ?5, feedback = ?6, updated_at = ?7 WHERE id = ?8 AND submitted_at IS NULL',
@@ -13820,20 +14008,20 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<bool>(delayed),
         Variable<String>(feedback),
         Variable<String>(stamp),
-        Variable<int>(attemptId),
+        Variable<String>(attemptId),
       ],
       updates: {this.attempts},
       updateKind: UpdateKind.update,
     );
   }
 
-  Future<int> setAttemptHelp(String? helpJson, String stamp, int attemptId) {
+  Future<int> setAttemptHelp(String? helpJson, String stamp, String attemptId) {
     return customUpdate(
       'UPDATE attempt SET help_json = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<String>(helpJson),
         Variable<String>(stamp),
-        Variable<int>(attemptId),
+        Variable<String>(attemptId),
       ],
       updates: {this.attempts},
       updateKind: UpdateKind.update,
@@ -13848,7 +14036,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     bool delayed,
     String? feedback,
     String? stamp,
-    int attemptId,
+    String attemptId,
   ) {
     return customUpdate(
       'UPDATE attempt SET user_answer = ?1, solution = ?2, is_correct = ?3, independent = ?4, delayed = ?5, feedback = ?6, submitted_at = ?7, updated_at = ?7 WHERE id = ?8 AND submitted_at IS NULL',
@@ -13860,42 +14048,42 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<bool>(delayed),
         Variable<String>(feedback),
         Variable<String>(stamp),
-        Variable<int>(attemptId),
+        Variable<String>(attemptId),
       ],
       updates: {this.attempts},
       updateKind: UpdateKind.update,
     );
   }
 
-  Selectable<int?> sessionIdsOfConversation(int conversationId) {
+  Selectable<String?> sessionIdsOfConversation(String conversationId) {
     return customSelect(
       'SELECT DISTINCT session_id FROM attempt WHERE conversation_id = ?1 AND session_id IS NOT NULL',
-      variables: [Variable<int>(conversationId)],
+      variables: [Variable<String>(conversationId)],
       readsFrom: {this.attempts},
-    ).map((QueryRow row) => row.readNullable<int>('session_id'));
+    ).map((QueryRow row) => row.readNullable<String>('session_id'));
   }
 
-  Selectable<int> attemptsInSession(int? sessionId) {
+  Selectable<String> attemptsInSession(String? sessionId) {
     return customSelect(
       'SELECT id FROM attempt WHERE session_id = ?1 LIMIT 1',
-      variables: [Variable<int>(sessionId)],
+      variables: [Variable<String>(sessionId)],
       readsFrom: {this.attempts},
-    ).map((QueryRow row) => row.read<int>('id'));
+    ).map((QueryRow row) => row.read<String>('id'));
   }
 
   Selectable<RecentSubmittedResult> recentSubmitted(
-    int? goalId,
-    int? materialId,
-    int? conversationId,
+    String? goalId,
+    String? materialId,
+    String? conversationId,
     String broughtIds,
     int? rowLimit,
   ) {
     return customSelect(
       'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 IS NOT NULL AND c.goal_id = ?1)OR(?2 IS NOT NULL AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 IS NOT NULL OR ?2 IS NOT NULL OR(?3 IS NOT NULL AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 IS NOT NULL OR ?2 IS NOT NULL)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT COALESCE(?5, -1)',
       variables: [
-        Variable<int>(goalId),
-        Variable<int>(materialId),
-        Variable<int>(conversationId),
+        Variable<String>(goalId),
+        Variable<String>(materialId),
+        Variable<String>(conversationId),
         Variable<String>(broughtIds),
         Variable<int>(rowLimit),
       ],
@@ -13907,9 +14095,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       },
     ).map(
       (QueryRow row) => RecentSubmittedResult(
-        attemptId: row.read<int>('attempt_id'),
-        attemptConversationId: row.read<int>('attempt_conversation_id'),
-        attemptSessionId: row.readNullable<int>('attempt_session_id'),
+        attemptId: row.read<String>('attempt_id'),
+        attemptConversationId: row.read<String>('attempt_conversation_id'),
+        attemptSessionId: row.readNullable<String>('attempt_session_id'),
         attemptUserAnswer: row.readNullable<String>('attempt_user_answer'),
         attemptSolution: row.readNullable<String>('attempt_solution'),
         attemptIsCorrect: row.readNullable<bool>('attempt_is_correct'),
@@ -13919,7 +14107,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         attemptDelayed: row.read<bool>('attempt_delayed'),
         attemptSubmittedAt: row.readNullable<String>('attempt_submitted_at'),
         attemptCreatedAt: row.read<String>('attempt_created_at'),
-        questionId: row.read<int>('question_id'),
+        questionId: row.read<String>('question_id'),
         questionSourceRef: row.readNullable<String>('question_source_ref'),
         questionContextText: row.readNullable<String>('question_context_text'),
         questionPageNo: row.readNullable<int>('question_page_no'),
@@ -13937,15 +14125,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<EvidenceAnswerCurrentResult> evidenceAnswerCurrent(int attemptId) {
+  Selectable<EvidenceAnswerCurrentResult> evidenceAnswerCurrent(
+    String attemptId,
+  ) {
     return customSelect(
       'SELECT a.id, a.conversation_id, a.user_answer, a.solution, a.feedback, a.submitted_at, c.title, c.source_ref FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.id = ?1 AND a.submitted_at IS NOT NULL LIMIT 1',
-      variables: [Variable<int>(attemptId)],
+      variables: [Variable<String>(attemptId)],
       readsFrom: {this.attempts, this.conversations},
     ).map(
       (QueryRow row) => EvidenceAnswerCurrentResult(
-        id: row.read<int>('id'),
-        conversationId: row.read<int>('conversation_id'),
+        id: row.read<String>('id'),
+        conversationId: row.read<String>('conversation_id'),
         userAnswer: row.readNullable<String>('user_answer'),
         solution: row.readNullable<String>('solution'),
         feedback: row.readNullable<String>('feedback'),
@@ -13963,21 +14153,23 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.attempts, this.conversations},
     ).map(
       (QueryRow row) => EvidenceAnswerSourcesResult(
-        id: row.read<int>('id'),
-        conversationId: row.read<int>('conversation_id'),
+        id: row.read<String>('id'),
+        conversationId: row.read<String>('conversation_id'),
         userAnswer: row.readNullable<String>('user_answer'),
         solution: row.readNullable<String>('solution'),
         feedback: row.readNullable<String>('feedback'),
         submittedAt: row.readNullable<String>('submitted_at'),
-        materialId: row.readNullable<int>('material_id'),
+        materialId: row.readNullable<String>('material_id'),
       ),
     );
   }
 
-  Selectable<EvidenceAnswerSourceResult> evidenceAnswerSource(int attemptId) {
+  Selectable<EvidenceAnswerSourceResult> evidenceAnswerSource(
+    String attemptId,
+  ) {
     return customSelect(
       'SELECT user_answer, solution, feedback, submitted_at FROM attempt WHERE id = ?1 AND submitted_at IS NOT NULL LIMIT 1',
-      variables: [Variable<int>(attemptId)],
+      variables: [Variable<String>(attemptId)],
       readsFrom: {this.attempts},
     ).map(
       (QueryRow row) => EvidenceAnswerSourceResult(
@@ -13990,11 +14182,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<EvidenceThreadAttemptsResult> evidenceThreadAttempts(
-    int? conversationId,
+    String? conversationId,
     String? stem,
-    int? materialId,
+    String? materialId,
     int? pageNo,
-    int? goalId,
+    String? goalId,
     int includeUnassigned,
     String? from,
     String? to,
@@ -14003,11 +14195,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     return customSelect(
       'SELECT a.*, c.source_ref AS thread_source_ref, c.material_id AS thread_material_id, c.page_no AS thread_page_no, c.goal_id AS thread_goal_id, COALESCE((SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id = COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)) LIMIT 1), \'\') AS thread_stem FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND(?1 IS NULL OR c.id = ?1)AND(?2 IS NULL OR (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id = COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)) LIMIT 1) = ?2)AND(?3 IS NULL OR(c.material_id = ?3 AND(?4 IS NULL OR c.page_no = ?4)))AND(?5 IS NULL OR c.goal_id = ?5 OR(?6 = 1 AND c.goal_id IS NULL))AND(?7 IS NULL OR a.submitted_at >= ?7)AND(?8 IS NULL OR a.submitted_at < ?8)ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?9',
       variables: [
-        Variable<int>(conversationId),
+        Variable<String>(conversationId),
         Variable<String>(stem),
-        Variable<int>(materialId),
+        Variable<String>(materialId),
         Variable<int>(pageNo),
-        Variable<int>(goalId),
+        Variable<String>(goalId),
         Variable<int>(includeUnassigned),
         Variable<String>(from),
         Variable<String>(to),
@@ -14016,10 +14208,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.conversations, this.messages, this.attempts},
     ).map(
       (QueryRow row) => EvidenceThreadAttemptsResult(
-        id: row.read<int>('id'),
-        conversationId: row.read<int>('conversation_id'),
-        sessionId: row.readNullable<int>('session_id'),
-        redoOfAttemptId: row.readNullable<int>('redo_of_attempt_id'),
+        id: row.read<String>('id'),
+        conversationId: row.read<String>('conversation_id'),
+        sessionId: row.readNullable<String>('session_id'),
+        redoOfAttemptId: row.readNullable<String>('redo_of_attempt_id'),
         userAnswer: row.readNullable<String>('user_answer'),
         solution: row.readNullable<String>('solution'),
         isCorrect: row.readNullable<bool>('is_correct'),
@@ -14031,18 +14223,18 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         threadSourceRef: row.readNullable<String>('thread_source_ref'),
-        threadMaterialId: row.readNullable<int>('thread_material_id'),
+        threadMaterialId: row.readNullable<String>('thread_material_id'),
         threadPageNo: row.readNullable<int>('thread_page_no'),
-        threadGoalId: row.readNullable<int>('thread_goal_id'),
+        threadGoalId: row.readNullable<String>('thread_goal_id'),
         threadStem: row.read<String>('thread_stem'),
       ),
     );
   }
 
-  Selectable<AssessmentRow> assessmentsForAttempt(int attemptId) {
+  Selectable<AssessmentRow> assessmentsForAttempt(String attemptId) {
     return customSelect(
       'SELECT * FROM assessment WHERE attempt_id = ?1 ORDER BY id',
-      variables: [Variable<int>(attemptId)],
+      variables: [Variable<String>(attemptId)],
       readsFrom: {this.assessments},
     ).asyncMap(this.assessments.mapFromRow);
   }
@@ -14055,42 +14247,47 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.assessments.mapFromRow);
   }
 
-  Selectable<AssessmentRow> latestAssessmentOfKind(int attemptId, String kind) {
+  Selectable<AssessmentRow> latestAssessmentOfKind(
+    String attemptId,
+    String kind,
+  ) {
     return customSelect(
       'SELECT * FROM assessment WHERE attempt_id = ?1 AND kind = ?2 ORDER BY id DESC LIMIT 1',
-      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      variables: [Variable<String>(attemptId), Variable<String>(kind)],
       readsFrom: {this.assessments},
     ).asyncMap(this.assessments.mapFromRow);
   }
 
-  Selectable<int> assessmentIdsOfKind(int attemptId, String kind) {
+  Selectable<String> assessmentIdsOfKind(String attemptId, String kind) {
     return customSelect(
       'SELECT id FROM assessment WHERE attempt_id = ?1 AND kind = ?2 ORDER BY id DESC',
-      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      variables: [Variable<String>(attemptId), Variable<String>(kind)],
       readsFrom: {this.assessments},
-    ).map((QueryRow row) => row.read<int>('id'));
+    ).map((QueryRow row) => row.read<String>('id'));
   }
 
-  Future<int> deleteAssessmentsOfKind(int attemptId, String kind) {
+  Future<int> deleteAssessmentsOfKind(String attemptId, String kind) {
     return customUpdate(
       'DELETE FROM assessment WHERE attempt_id = ?1 AND kind = ?2',
-      variables: [Variable<int>(attemptId), Variable<String>(kind)],
+      variables: [Variable<String>(attemptId), Variable<String>(kind)],
       updates: {this.assessments},
       updateKind: UpdateKind.delete,
     );
   }
 
   Future<int> insertAssessment(
-    int attemptId,
+    String id,
+    String attemptId,
     String kind,
     String result,
     String? basis,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO assessment (attempt_id, kind, result, basis, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)',
+      'INSERT INTO assessment (id, attempt_id, kind, result, basis, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)',
       variables: [
-        Variable<int>(attemptId),
+        Variable<String>(id),
+        Variable<String>(attemptId),
         Variable<String>(kind),
         Variable<String>(result),
         Variable<String>(basis),
@@ -14103,14 +14300,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Future<int> updateAssessmentResult(
     String result,
     String stamp,
-    int assessmentId,
+    String assessmentId,
   ) {
     return customUpdate(
       'UPDATE assessment SET result = ?1, updated_at = ?2 WHERE id = ?3',
       variables: [
         Variable<String>(result),
         Variable<String>(stamp),
-        Variable<int>(assessmentId),
+        Variable<String>(assessmentId),
       ],
       updates: {this.assessments},
       updateKind: UpdateKind.update,
@@ -14355,10 +14552,10 @@ class TimetableEntriesOnWeekdayResult {
 }
 
 class PlanRowsResult {
-  final int id;
-  final int? materialId;
-  final int? goalId;
-  final int? conversationId;
+  final String id;
+  final String? materialId;
+  final String? goalId;
+  final String? conversationId;
   final String title;
   final int? pageFrom;
   final int? pageTo;
@@ -14392,8 +14589,8 @@ class PlanRowsResult {
 }
 
 class BlocksOverlappingResult {
-  final int id;
-  final int planItemId;
+  final String id;
+  final String planItemId;
   final String startAt;
   final String endAt;
   final String source;
@@ -14421,8 +14618,8 @@ class BlocksOverlappingResult {
 }
 
 class NextPlannedBlockResult {
-  final int id;
-  final int planItemId;
+  final String id;
+  final String planItemId;
   final String startAt;
   final String endAt;
   final String source;
@@ -14450,7 +14647,7 @@ class NextPlannedBlockResult {
 }
 
 class PlannedBlockSpansResult {
-  final int id;
+  final String id;
   final String startAt;
   final String endAt;
   final String title;
@@ -14485,10 +14682,10 @@ class PlannedBlocksAfterResult {
 }
 
 class ItemByConversationAndTitleResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14528,16 +14725,16 @@ class ItemByConversationAndTitleResult {
 }
 
 class ItemPlanResult {
-  final int id;
-  final int? studyPlanId;
+  final String id;
+  final String? studyPlanId;
   ItemPlanResult({required this.id, this.studyPlanId});
 }
 
 class PlanStepsResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14577,10 +14774,10 @@ class PlanStepsResult {
 }
 
 class PlanStepsForPlansResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14620,10 +14817,10 @@ class PlanStepsForPlansResult {
 }
 
 class ItemsResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14663,10 +14860,10 @@ class ItemsResult {
 }
 
 class ItemByIdResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14706,10 +14903,10 @@ class ItemByIdResult {
 }
 
 class ItemByConversationResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14749,10 +14946,10 @@ class ItemByConversationResult {
 }
 
 class ItemByConversationAndStepResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14792,10 +14989,10 @@ class ItemByConversationAndStepResult {
 }
 
 class DoneItemsResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14835,10 +15032,10 @@ class DoneItemsResult {
 }
 
 class ItemsByIdsResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14878,10 +15075,10 @@ class ItemsByIdsResult {
 }
 
 class NextDueItemResult {
-  final int id;
-  final int? goalId;
-  final int? conversationId;
-  final int? studyPlanId;
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
   final int? seq;
   final String title;
   final String? note;
@@ -14923,10 +15120,10 @@ class NextDueItemResult {
 class EvidenceMessageCurrentResult {
   final String content;
   final String createdAt;
-  final int conversationId;
+  final String conversationId;
   final String? title;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
   EvidenceMessageCurrentResult({
     required this.content,
     required this.createdAt,
@@ -14938,11 +15135,11 @@ class EvidenceMessageCurrentResult {
 }
 
 class EvidenceMessageSourcesResult {
-  final int id;
-  final int conversationId;
+  final String id;
+  final String conversationId;
   final String content;
   final String createdAt;
-  final int? materialId;
+  final String? materialId;
   EvidenceMessageSourcesResult({
     required this.id,
     required this.conversationId,
@@ -14959,7 +15156,7 @@ class EvidenceMessageSourceResult {
 }
 
 class ActiveDifficultiesResult {
-  final int id;
+  final String id;
   final String content;
   ActiveDifficultiesResult({required this.id, required this.content});
 }
@@ -14976,19 +15173,19 @@ class ActiveMemoryIdentitiesResult {
 }
 
 class MaterialScopeResult {
-  final int id;
-  final int? goalId;
+  final String id;
+  final String? goalId;
   MaterialScopeResult({required this.id, this.goalId});
 }
 
 class MaterialByIdResult {
-  final int id;
+  final String id;
   final String title;
   final String kind;
   final String? sourceRef;
   final String? sourceFileName;
   final String? sourceFileHash;
-  final int? goalId;
+  final String? goalId;
   final String createdAt;
   final String updatedAt;
   final int pageCount;
@@ -15007,13 +15204,13 @@ class MaterialByIdResult {
 }
 
 class MaterialListResult {
-  final int id;
+  final String id;
   final String title;
   final String kind;
   final String? sourceRef;
   final String? sourceFileName;
   final String? sourceFileHash;
-  final int? goalId;
+  final String? goalId;
   final String createdAt;
   final String updatedAt;
   final int pageCount;
@@ -15053,7 +15250,7 @@ class EvidenceMaterialPageCurrentResult {
 }
 
 class EvidenceMaterialPageSourcesResult {
-  final int materialId;
+  final String materialId;
   final int pageNo;
   final String content;
   final String updatedAt;
@@ -15075,14 +15272,14 @@ class EvidenceMaterialPageSourceResult {
 }
 
 class ConversationByIdResult {
-  final int id;
+  final String id;
   final String? title;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
   final int? pageNo;
   final String? sourceRef;
   final String? contextText;
-  final int? questionMessageId;
+  final String? questionMessageId;
   final String entryKind;
   final String status;
   final String? endedAt;
@@ -15116,7 +15313,7 @@ class ConversationByIdResult {
 }
 
 class ConversationQuestionResult {
-  final int id;
+  final String id;
   final String? sourceRef;
   final String? contextText;
   final int? pageNo;
@@ -15141,7 +15338,7 @@ class ConversationQuestionResult {
 }
 
 class QuestionRowsResult {
-  final int id;
+  final String id;
   final String? sourceRef;
   final String? contextText;
   final int? pageNo;
@@ -15151,8 +15348,8 @@ class QuestionRowsResult {
   final String? sourceFileName;
   final String? stem;
   final String? imagePathsJson;
-  final int? lastAttemptId;
-  final int? lastAttemptSessionId;
+  final String? lastAttemptId;
+  final String? lastAttemptSessionId;
   final String? lastAttemptUserAnswer;
   final String? lastAttemptSolution;
   final bool? lastAttemptIsCorrect;
@@ -15190,14 +15387,14 @@ class QuestionRowsResult {
 }
 
 class ConversationRecordsResult {
-  final int id;
+  final String id;
   final String? title;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
   final int? pageNo;
   final String? sourceRef;
   final String? contextText;
-  final int? questionMessageId;
+  final String? questionMessageId;
   final String entryKind;
   final String status;
   final String? endedAt;
@@ -15241,14 +15438,14 @@ class ConversationRecordsResult {
 }
 
 class RecentlyActiveRecordsResult {
-  final int id;
+  final String id;
   final String? title;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
   final int? pageNo;
   final String? sourceRef;
   final String? contextText;
-  final int? questionMessageId;
+  final String? questionMessageId;
   final String entryKind;
   final String status;
   final String? endedAt;
@@ -15292,14 +15489,14 @@ class RecentlyActiveRecordsResult {
 }
 
 class ConversationScopeResult {
-  final int id;
-  final int? goalId;
-  final int? materialId;
+  final String id;
+  final String? goalId;
+  final String? materialId;
   ConversationScopeResult({required this.id, this.goalId, this.materialId});
 }
 
 class EvidenceQuestionCurrentResult {
-  final int? questionMessageId;
+  final String? questionMessageId;
   final String? sourceRef;
   final String? title;
   final String? contextText;
@@ -15320,15 +15517,15 @@ class EvidenceQuestionCurrentResult {
 }
 
 class AttemptSubmissionResult {
-  final int id;
+  final String id;
   final String? submittedAt;
   AttemptSubmissionResult({required this.id, this.submittedAt});
 }
 
 class RecentSubmittedResult {
-  final int attemptId;
-  final int attemptConversationId;
-  final int? attemptSessionId;
+  final String attemptId;
+  final String attemptConversationId;
+  final String? attemptSessionId;
   final String? attemptUserAnswer;
   final String? attemptSolution;
   final bool? attemptIsCorrect;
@@ -15338,7 +15535,7 @@ class RecentSubmittedResult {
   final bool attemptDelayed;
   final String? attemptSubmittedAt;
   final String attemptCreatedAt;
-  final int questionId;
+  final String questionId;
   final String? questionSourceRef;
   final String? questionContextText;
   final int? questionPageNo;
@@ -15375,8 +15572,8 @@ class RecentSubmittedResult {
 }
 
 class EvidenceAnswerCurrentResult {
-  final int id;
-  final int conversationId;
+  final String id;
+  final String conversationId;
   final String? userAnswer;
   final String? solution;
   final String? feedback;
@@ -15396,13 +15593,13 @@ class EvidenceAnswerCurrentResult {
 }
 
 class EvidenceAnswerSourcesResult {
-  final int id;
-  final int conversationId;
+  final String id;
+  final String conversationId;
   final String? userAnswer;
   final String? solution;
   final String? feedback;
   final String? submittedAt;
-  final int? materialId;
+  final String? materialId;
   EvidenceAnswerSourcesResult({
     required this.id,
     required this.conversationId,
@@ -15428,10 +15625,10 @@ class EvidenceAnswerSourceResult {
 }
 
 class EvidenceThreadAttemptsResult {
-  final int id;
-  final int conversationId;
-  final int? sessionId;
-  final int? redoOfAttemptId;
+  final String id;
+  final String conversationId;
+  final String? sessionId;
+  final String? redoOfAttemptId;
   final String? userAnswer;
   final String? solution;
   final bool? isCorrect;
@@ -15443,9 +15640,9 @@ class EvidenceThreadAttemptsResult {
   final String createdAt;
   final String updatedAt;
   final String? threadSourceRef;
-  final int? threadMaterialId;
+  final String? threadMaterialId;
   final int? threadPageNo;
-  final int? threadGoalId;
+  final String? threadGoalId;
   final String threadStem;
   EvidenceThreadAttemptsResult({
     required this.id,

@@ -107,7 +107,7 @@ void main() {
       toolName: proposeCitationsTool,
       arguments: {
         'citations': [
-          {'material_id': 1, 'page_no': 3, 'quote': '原文逐字摘录'},
+          {'material_id': 'mat-1', 'page_no': 3, 'quote': '原文逐字摘录'},
         ],
       },
       signature: (reply) => [

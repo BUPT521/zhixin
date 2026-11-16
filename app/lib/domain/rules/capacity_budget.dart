@@ -12,7 +12,7 @@ import '../models/time_values.dart';
 class CapacityDemand {
   const CapacityDemand({required this.id, required this.minutes, this.dueAt});
 
-  final int id;
+  final String id;
   final int minutes;
   final DateTime? dueAt;
 }
@@ -26,7 +26,7 @@ class CapacityFit {
     this.windows = const [],
   });
 
-  final int id;
+  final String id;
   final int minutes;
   final int allocated;
 
@@ -71,8 +71,8 @@ List<CapacityFit> fitByDeadline({
         return byDue != 0 ? byDue : a.index.compareTo(b.index);
       });
 
-  final allocatedById = <int, int>{};
-  final windowsById = <int, List<TimeRange>>{};
+  final allocatedById = <String, int>{};
+  final windowsById = <String, List<TimeRange>>{};
   for (final entry in ordered) {
     final demand = entry.demand;
     final due = demand.dueAt;

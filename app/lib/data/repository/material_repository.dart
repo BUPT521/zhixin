@@ -6,6 +6,7 @@ import '../db/fts.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
@@ -22,11 +23,11 @@ class MaterialRepository {
   final RawDatabase _db;
   final Clock _clock;
 
-  Future<int> create({
+  Future<String> create({
     required String title,
     MaterialKind kind = MaterialKind.text,
     String? sourceRef,
-    int? goalId,
+    String? goalId,
     WriteTransaction? transaction,
   }) {
     return _create(
@@ -38,11 +39,11 @@ class MaterialRepository {
     );
   }
 
-  Future<int> _create({
+  Future<String> _create({
     required String title,
     required MaterialKind kind,
     required String? sourceRef,
-    required int? goalId,
+    required String? goalId,
     required RawExecutor executor,
     String? sourceFileName,
     String? sourceFileHash,
@@ -50,8 +51,10 @@ class MaterialRepository {
     final text = title.trim();
     if (text.isEmpty) throw ArgumentError('材料标题不能为空');
     final now = formatDateTime(_clock());
-    return executor.writeGenerated(
+    final id = newUuidV7();
+    await executor.writeGenerated(
       (db) => db.insertMaterial(
+        id,
         text,
         kind.value,
         nullableText(sourceRef),
@@ -61,6 +64,7 @@ class MaterialRepository {
         now,
       ),
     );
+    return id;
   }
 
   /// 页码行的字段与领域模型同名，只补时间解析。
@@ -74,12 +78,12 @@ class MaterialRepository {
 
   /// 材料的两条查询挑的列相同，按同一组字段还原成领域模型。
   static Material _material(
-    int id,
+    String id,
     String title,
     String kind,
     String? sourceRef,
     String? sourceFileName,
-    int? goalId,
+    String? goalId,
     int pageCount,
     String createdAt,
     String updatedAt,
@@ -119,13 +123,13 @@ class MaterialRepository {
     r.updatedAt,
   );
 
-  Future<Material?> byId(int id) async {
+  Future<Material?> byId(String id) async {
     final rows = await _db.selectGenerated((db) => db.materialById(id).get());
     return rows.isEmpty ? null : _materialOf(rows.first);
   }
 
-  Future<List<Material>> list({int? goalId}) async {
-    // 传 0 表示不限目标：材料标识从 1 开始，0 不会命中任何一条。
+  Future<List<Material>> list({String? goalId}) async {
+    // 不传目标表示不限范围，查询按空参数关掉目标条件。
     final rows = await _db.selectGenerated(
       (db) => db.materialList(goalId).get(),
     );
@@ -133,8 +137,8 @@ class MaterialRepository {
   }
 
   Future<void> setGoal(
-    int id,
-    int? goalId, {
+    String id,
+    String? goalId, {
     WriteTransaction? transaction,
   }) async {
     final stamp = formatDateTime(_clock());
@@ -144,7 +148,7 @@ class MaterialRepository {
     ).writeGenerated((db) => db.setMaterialGoal(goalId, stamp, id));
   }
 
-  Future<List<MaterialPage>> pages(int materialId) async {
+  Future<List<MaterialPage>> pages(String materialId) async {
     final rows = await _db.selectGenerated(
       (db) => db.pagesOfMaterial(materialId).get(),
     );
@@ -155,7 +159,7 @@ class MaterialRepository {
   ///
   /// [pageFrom]、[pageTo] 为空表示这一端不设限，两端都为空时等同全部页面。
   Future<List<MaterialPage>> pagesBetween(
-    int materialId, {
+    String materialId, {
     int? pageFrom,
     int? pageTo,
   }) async {
@@ -165,7 +169,7 @@ class MaterialRepository {
     return rows.map(_pageOf).toList(growable: false);
   }
 
-  Future<({int? first, int? last})> pageBounds(int materialId) async {
+  Future<({int? first, int? last})> pageBounds(String materialId) async {
     final rows = await _db.selectGenerated(
       (db) => db.materialPageBounds(materialId).get(),
     );
@@ -173,7 +177,7 @@ class MaterialRepository {
     return (first: rows.single.firstPage, last: rows.single.lastPage);
   }
 
-  Future<MaterialPage?> page(int materialId, int pageNo) async {
+  Future<MaterialPage?> page(String materialId, int pageNo) async {
     final row = await _db.selectGenerated(
       (db) => db.materialPageByNumber(materialId, pageNo).getSingleOrNull(),
     );
@@ -182,7 +186,7 @@ class MaterialRepository {
 
   /// 按页编号取这一页；更正时在同一个事务里读修改前的整行。
   Future<MaterialPage?> pageById(
-    int pageId, {
+    String pageId, {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
@@ -193,8 +197,8 @@ class MaterialRepository {
   }
 
   /// 新增一页；同一材料同一页码已有原文时抛出 [PageNumberTaken]，不覆盖。
-  Future<int> addPage({
-    required int materialId,
+  Future<String> addPage({
+    required String materialId,
     required int pageNo,
     required String content,
     String? label,
@@ -209,8 +213,8 @@ class MaterialRepository {
     );
   }
 
-  Future<int> _addPage({
-    required int materialId,
+  Future<String> _addPage({
+    required String materialId,
     required int pageNo,
     required String content,
     required String? label,
@@ -224,8 +228,10 @@ class MaterialRepository {
     );
     if (existing != null) throw PageNumberTaken(pageNo);
     final now = formatDateTime(_clock());
-    final id = await executor.writeGenerated(
+    final id = newUuidV7();
+    await executor.writeGenerated(
       (db) => db.insertMaterialPage(
+        id,
         materialId,
         pageNo,
         nullableText(label),
@@ -239,7 +245,7 @@ class MaterialRepository {
 
   /// 更正已有的一页；这一页不存在时抛出 [StateError]。
   Future<void> correctPage({
-    required int pageId,
+    required String pageId,
     required String content,
     String? label,
     WriteTransaction? transaction,
@@ -253,7 +259,7 @@ class MaterialRepository {
   }
 
   Future<void> _correctPage({
-    required int pageId,
+    required String pageId,
     required String content,
     required String? label,
     required RawExecutor executor,
@@ -274,17 +280,17 @@ class MaterialRepository {
   /// 创建材料与导入的全部页码；传入 [transaction] 时整批落在同一个提交里。
   ///
   /// 导入前先检查页码：同一批出现重复页码时整批拒绝，不写入任何一页。
-  Future<int> createWithPages({
+  Future<String> createWithPages({
     required String title,
     required List<MaterialPageDraft> pages,
     MaterialKind kind = MaterialKind.text,
     String? sourceRef,
-    int? goalId,
+    String? goalId,
     ({String name, String hash, Uint8List bytes})? sourceFile,
     WriteTransaction? transaction,
   }) async {
     _checkImportedPages(pages);
-    Future<int> save(RawExecutor executor) async {
+    Future<String> save(RawExecutor executor) async {
       if (sourceFile != null) {
         await AssetStore().putBytes(
           executor,
@@ -316,7 +322,7 @@ class MaterialRepository {
     return save(writeExecutor(transaction, _db));
   }
 
-  Future<Uint8List?> sourceFileBytes(int materialId) async {
+  Future<Uint8List?> sourceFileBytes(String materialId) async {
     final hash = await _db.selectGenerated(
       (db) => db.materialFileHash(materialId).getSingleOrNull(),
     );
@@ -341,10 +347,10 @@ class MaterialRepository {
   /// 交给 FTS5 索引：候选由 `MATCH` 选出，先后按 `bm25()` 排。
   Future<List<MaterialHit>> search(
     String query, {
-    int? goalId,
+    String? goalId,
     bool restrictToGoal = true,
     int? limit = 4,
-    int? excludeMaterialId,
+    String? excludeMaterialId,
     int? excludePageNo,
   }) async {
     final terms = searchTerms(query);
@@ -373,7 +379,7 @@ class MaterialRepository {
         ..add(excludePageNo ?? -1);
     }
     where.add(
-      'mp.id IN (SELECT rowid FROM material_page_fts '
+      'mp.rowid IN (SELECT rowid FROM material_page_fts '
       'WHERE material_page_fts MATCH ?)',
     );
     args.add(ftsQuery(tokens));
@@ -384,7 +390,7 @@ class MaterialRepository {
       FROM material_page mp JOIN material m ON m.id = mp.material_id
       WHERE ${where.join(' AND ')}
       ORDER BY (SELECT bm25(material_page_fts) FROM material_page_fts
-        WHERE material_page_fts MATCH ? AND rowid = mp.id),
+        WHERE material_page_fts MATCH ? AND rowid = mp.rowid),
         mp.material_id DESC, mp.page_no
       ${limit == null ? '' : 'LIMIT ?'}
       ''',
@@ -393,7 +399,7 @@ class MaterialRepository {
     return rows
         .map(
           (row) => MaterialHit(
-            materialId: row['material_id']! as int,
+            materialId: row['material_id']! as String,
             materialTitle: row['material_title'] as String? ?? '材料',
             isDocx: isDocxFile(row['source_file_name'] as String?),
             pageNo: row['page_no']! as int,
@@ -406,7 +412,7 @@ class MaterialRepository {
   }
 
   Future<void> _touch(
-    int materialId,
+    String materialId,
     String stamp, {
     RawExecutor? executor,
   }) async {

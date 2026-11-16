@@ -19,7 +19,7 @@ import (
 
 const (
 	// testSchemaVersion 与服务端接受的客户端 schema 版本一致（server.ClientSchemaVersion）。
-	testSchemaVersion = 26
+	testSchemaVersion = 27
 	testMaxJSON       = 1 << 20
 )
 

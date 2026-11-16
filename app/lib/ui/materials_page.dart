@@ -34,7 +34,7 @@ class MaterialDetailPage extends StatefulWidget {
     this.planItemId,
   });
 
-  final int materialId;
+  final String materialId;
 
   /// 本次学习步骤覆盖的页码；为空时显示全部页面。
   final int? pageFrom;
@@ -42,8 +42,8 @@ class MaterialDetailPage extends StatefulWidget {
   final String? stepTitle;
 
   /// 从学习步骤打开时记下计划与步骤，从这里开始的讨论会绑回这一步。
-  final int? studyPlanId;
-  final int? planItemId;
+  final String? studyPlanId;
+  final String? planItemId;
 
   @override
   State<MaterialDetailPage> createState() => _MaterialDetailPageState();
@@ -224,7 +224,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     try {
       final history = await scope.data.revisions.rowHistory(
         table: 'material_page',
-        rowKey: '${page.id}',
+        rowKey: page.id,
       );
       final active = await scope.data.revisions.activeCommits(
         history.map((commit) => commit.id),

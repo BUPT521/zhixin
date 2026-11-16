@@ -3,21 +3,25 @@
 import '../tables.dart';
 
 -- 当前打开的场次：先按讨论找；没有讨论时按事项找；都没有时按目标找。
--- 编号传 0 表示这一层不适用，与原来的嵌套判断一致。
-openStudySession:
+-- 标识传空表示这一层不适用，与原来的嵌套判断一致。
+openStudySession(
+  REQUIRED :conversationId AS TEXT OR NULL,
+  REQUIRED :planItemId AS TEXT OR NULL,
+  REQUIRED :goalId AS TEXT OR NULL
+):
 SELECT * FROM study_session
 WHERE ended_at IS NULL
   AND (
-    (:conversationId <> 0 AND conversation_id = :conversationId)
+    (:conversationId IS NOT NULL AND conversation_id = :conversationId)
     OR (
-      :conversationId = 0 AND conversation_id IS NULL
+      :conversationId IS NULL AND conversation_id IS NULL
       AND (
-        (:planItemId <> 0 AND plan_item_id = :planItemId)
+        (:planItemId IS NOT NULL AND plan_item_id = :planItemId)
         OR (
-          :planItemId = 0 AND plan_item_id IS NULL
+          :planItemId IS NULL AND plan_item_id IS NULL
           AND (
-            (:goalId = 0 AND goal_id IS NULL)
-            OR (:goalId <> 0 AND goal_id = :goalId)
+            (:goalId IS NULL AND goal_id IS NULL)
+            OR (:goalId IS NOT NULL AND goal_id = :goalId)
           )
         )
       )
@@ -49,8 +53,8 @@ WHERE plan_item_id IN (SELECT value FROM json_each(:planItemIds))
 ORDER BY ended_at ASC, id ASC;
 
 insertStudySession:
-INSERT INTO study_session (goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at)
-VALUES (:goalId, :itemId, :conversationId, :stamp, :stamp, :stamp);
+INSERT INTO study_session (id, goal_id, plan_item_id, conversation_id, started_at, created_at, updated_at)
+VALUES (:id, :goalId, :itemId, :conversationId, :stamp, :stamp, :stamp);
 
 finishStudySession:
 UPDATE study_session SET outcome = :outcome,

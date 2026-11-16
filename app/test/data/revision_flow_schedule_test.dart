@@ -20,9 +20,11 @@ void main() {
   late TaskRepository tasks;
   late PlanService plan;
   late int dataChanges;
+  late int itemSeq;
 
   setUp(() async {
     dataChanges = 0;
+    itemSeq = 0;
     rig = await openTestRig(
       clock: () => DateTime(2026, 11, 10, 10),
       onDataChanged: () async {
@@ -47,8 +49,10 @@ void main() {
     await rig.close();
   });
 
-  Future<int> item(String title, {int? planId, int? seq}) async {
-    return insertRow(rig.db, 'plan_item', {
+  Future<String> item(String title, {String? planId, int? seq}) async {
+    final id = 'item-${++itemSeq}';
+    await insertRow(rig.db, 'plan_item', {
+      'id': id,
       'study_plan_id': planId,
       'seq': seq,
       'title': title,
@@ -58,9 +62,10 @@ void main() {
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
+    return id;
   }
 
-  Future<int> block(int planItemId, int hour) {
+  Future<String> block(String planItemId, int hour) {
     return schedule.addBlock(
       planItemId: planItemId,
       start: DateTime(2026, 11, 11, hour),
@@ -68,7 +73,7 @@ void main() {
     );
   }
 
-  Future<({int a, int b})> twoBlocks() async {
+  Future<({String a, String b})> twoBlocks() async {
     final first = await item('第一项');
     final second = await item('第二项');
     return (a: await block(first, 9), b: await block(second, 11));
@@ -175,7 +180,7 @@ void main() {
       title: '数据结构',
     );
     final timetableId =
-        (await selectRows(rig.raw, 'timetable_entry')).single['id']! as int;
+        (await selectRows(rig.raw, 'timetable_entry')).single['id']! as String;
     final commit = (await plan.deleteTimetable(timetableId)).commitId!;
     expect(await selectRows(rig.raw, 'timetable_entry'), isEmpty);
 
@@ -320,12 +325,14 @@ void main() {
   });
 
   test('整版恢复处理唯一键交换', () async {
-    final planId = await insertRow(rig.db, 'study_plan', {
+    await insertRow(rig.db, 'study_plan', {
+      'id': 'plan-1',
       'title': '交换顺序',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
+    const planId = 'plan-1';
     final first = await item('第一步', planId: planId, seq: 1);
     final second = await item('第二步', planId: planId, seq: 2);
     final before = await rig.engine.headId(rig.raw);

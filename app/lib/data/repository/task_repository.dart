@@ -8,6 +8,7 @@ import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 
 /// 目标与学习事项（01 `learning_goal` / `plan_item`）。
@@ -60,10 +61,10 @@ class TaskRepository {
 
   /// 六条查询挑的列相同，结果行按同一组字段还原成领域模型。
   static PlanItem _item(
-    int id,
-    int? goalId,
-    int? conversationId,
-    int? studyPlanId,
+    String id,
+    String? goalId,
+    String? conversationId,
+    String? studyPlanId,
     int? seq,
     String title,
     String? note,
@@ -267,7 +268,7 @@ class TaskRepository {
   );
 
   Future<LearningGoal?> goalById(
-    int id, {
+    String id, {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
@@ -278,7 +279,7 @@ class TaskRepository {
   }
 
   /// 新建目标；已有效的其他目标保持原状。
-  Future<int> createGoal({
+  Future<String> createGoal({
     required String title,
     String? scopeText,
     DateTime? dueDate,
@@ -286,8 +287,10 @@ class TaskRepository {
   }) async {
     final now = _clock();
     final stamp = formatDateTime(now);
-    return writeExecutor(transaction, _db).writeGenerated(
+    final id = newUuidV7();
+    await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertLearningGoal(
+        id,
         title.trim(),
         scopeText?.trim(),
         dueDate == null ? null : formatDate(dueDate),
@@ -295,20 +298,21 @@ class TaskRepository {
         stamp,
       ),
     );
+    return id;
   }
 
   /// 暂停目标只改状态；相关未来安排与已完成记录保持原样。
-  Future<void> pauseGoal(int id, {WriteTransaction? transaction}) =>
+  Future<void> pauseGoal(String id, {WriteTransaction? transaction}) =>
       _setGoalStatus(id, LearningGoalStatus.paused, transaction: transaction);
 
-  Future<void> resumeGoal(int id, {WriteTransaction? transaction}) =>
+  Future<void> resumeGoal(String id, {WriteTransaction? transaction}) =>
       _setGoalStatus(id, LearningGoalStatus.active, transaction: transaction);
 
-  Future<void> closeGoal(int id, {WriteTransaction? transaction}) =>
+  Future<void> closeGoal(String id, {WriteTransaction? transaction}) =>
       _setGoalStatus(id, LearningGoalStatus.done, transaction: transaction);
 
   Future<void> _setGoalStatus(
-    int id,
+    String id,
     LearningGoalStatus status, {
     WriteTransaction? transaction,
   }) async {
@@ -342,7 +346,7 @@ class TaskRepository {
     return rows.map(_itemOfItems).toList(growable: false);
   }
 
-  Future<PlanItem?> byId(int id, {WriteTransaction? transaction}) async {
+  Future<PlanItem?> byId(String id, {WriteTransaction? transaction}) async {
     final executor = writeExecutor(transaction, _db);
     final rows = await executor.selectGenerated((db) => db.itemById(id).get());
     return rows.isEmpty ? null : _itemOfById(rows.first);
@@ -350,8 +354,8 @@ class TaskRepository {
 
   /// 把从这一步带入的讨论记回事项；已有讨论时不覆盖，避免把继续位置改乱。
   Future<void> bindConversation(
-    int planItemId,
-    int conversationId, {
+    String planItemId,
+    String conversationId, {
     WriteTransaction? transaction,
   }) async {
     final stamp = formatDateTime(_clock());
@@ -361,7 +365,7 @@ class TaskRepository {
   }
 
   /// 这条讨论绑定的学习步骤；普通入口从讨论开始作答时用它补上场次的事项。
-  Future<PlanItem?> byConversation(int conversationId) async {
+  Future<PlanItem?> byConversation(String conversationId) async {
     final rows = await _db.selectGenerated(
       (db) => db.itemByConversation(conversationId).get(),
     );
@@ -370,7 +374,7 @@ class TaskRepository {
 
   /// 同一条讨论里同一个建议编号对应的事项；重复请求据此返回原结果。
   Future<PlanItem?> byConversationAndStep(
-    int conversationId,
+    String conversationId,
     String stepId,
   ) async {
     final rows = await _db.selectGenerated(
@@ -381,7 +385,7 @@ class TaskRepository {
 
   /// 从讨论里接受建议后按标题找回刚才建立的事项，供重复请求返回原结果。
   Future<PlanItem?> byConversationAndTitle(
-    int conversationId,
+    String conversationId,
     String title,
   ) async {
     final row = await _db.selectGenerated(
@@ -412,7 +416,7 @@ class TaskRepository {
   ///
   /// 首页活动卡要在“正在进行”与“接下来”两条预约里各取一项，原先为此逐条
   /// 查询；这里用一次 `IN` 查询取回，读取次数与预约条数无关。
-  Future<Map<int, PlanItem>> byIds(Iterable<int> ids) async {
+  Future<Map<String, PlanItem>> byIds(Iterable<String> ids) async {
     final keys = {...ids};
     if (keys.isEmpty) return const {};
     final rows = await _db.selectGenerated(
@@ -422,7 +426,7 @@ class TaskRepository {
   }
 
   Future<bool> hasScheduleOrSession(
-    int itemId, {
+    String itemId, {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
@@ -447,10 +451,10 @@ class TaskRepository {
   }
 
   /// 新建事项只保留一段说明。
-  Future<int> createItem({
+  Future<String> createItem({
     required String title,
-    int? goalId,
-    int? conversationId,
+    String? goalId,
+    String? conversationId,
     String? note,
     DateTime? dueAt,
     int? estMinutes,
@@ -459,8 +463,10 @@ class TaskRepository {
     WriteTransaction? transaction,
   }) async {
     final now = _clock();
-    return writeExecutor(transaction, _db).writeGenerated(
+    final id = newUuidV7();
+    await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertPlanItem(
+        id,
         goalId,
         conversationId,
         title.trim(),
@@ -473,11 +479,12 @@ class TaskRepository {
         formatDateTime(now),
       ),
     );
+    return id;
   }
 
   /// 0 普通、1 优先、2 最高；容量不足时按它排序。
   Future<void> setPriority(
-    int id,
+    String id,
     int priority, {
     WriteTransaction? transaction,
   }) async {
@@ -489,7 +496,7 @@ class TaskRepository {
     ).writeGenerated((db) => db.setPlanItemPriority(value, stamp, id));
   }
 
-  Future<void> deleteItem(int id) async {
+  Future<void> deleteItem(String id) async {
     await _db.writeGenerated((db) => db.deletePlanItem(id));
   }
 }

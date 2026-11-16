@@ -53,7 +53,7 @@ class QuestionView {
   final List<ChatMessage> recentMessages;
 
   /// 每次尝试的判断，按尝试编号分组；学习页在历次尝试里逐条显示。
-  final Map<int, List<Assessment>> assessments;
+  final Map<String, List<Assessment>> assessments;
 
   /// 当前未提交尝试上的记忆建议；已经写入的只保留仍可撤销的那几条。
   final List<MemoryItemView> memoryItems;
@@ -92,8 +92,8 @@ class RecordsView {
 
   final List<LearningGoal> goals;
   final List<ConversationRecord> records;
-  final Map<int, QuestionRow> questions;
-  final Map<int, List<Assessment>> assessments;
+  final Map<String, QuestionRow> questions;
+  final Map<String, List<Assessment>> assessments;
 }
 
 /// 按本次最新的有判断的已提交尝试推出场次结果；没有提交或都没判断时留空。
@@ -160,7 +160,7 @@ class LearningService {
   final ServiceRuntime runtime;
   final WriteTransactions transactions;
 
-  Future<QuestionView> view(int conversationId) async {
+  Future<QuestionView> view(String conversationId) async {
     final (question, recordAttempts, recent) = await (
       conversations.question(conversationId),
       attempts.attemptsFor(conversationId),
@@ -194,13 +194,13 @@ class LearningService {
   };
 
   /// 跟随写入更新的学习页一屏：原题、历次尝试、最近消息、判断与记忆建议。
-  Stream<QuestionView> watchQuestion(int conversationId) => runtime.watch(
+  Stream<QuestionView> watchQuestion(String conversationId) => runtime.watch(
     tables: _questionTables,
     read: () => loadQuestion(conversationId),
   );
 
   /// 读一次学习页一屏：题目、尝试与最近消息取 [view]，再补判断与记忆建议。
-  Future<QuestionView> loadQuestion(int conversationId) async {
+  Future<QuestionView> loadQuestion(String conversationId) async {
     final data = await view(conversationId);
     final open = data.openAttempt;
     final (assessments, memoryItems) = await (
@@ -222,7 +222,7 @@ class LearningService {
   /// 有作答的记录，附带每条最近一次作答；记录页与记忆建议页共用这一份读取。
   Future<List<QuestionRow>> questionRows({
     int? limit,
-    Iterable<int>? conversationIds,
+    Iterable<String>? conversationIds,
   }) => conversations.questionRows(
     limit: limit,
     conversationIds: conversationIds,
@@ -244,7 +244,7 @@ class LearningService {
 
   /// 跟随写入更新的记录一屏；筛选与分页条件都进读取闭包。
   Stream<RecordsView> watchRecords({
-    int? goalId,
+    String? goalId,
     bool unassignedOnly = false,
     String? answerStatus,
     int limit = 30,
@@ -260,7 +260,7 @@ class LearningService {
 
   /// 读一屏记录：目标列表与这一页记录同时发出，再补每题的判断。
   Future<RecordsView> recordsView({
-    int? goalId,
+    String? goalId,
     bool unassignedOnly = false,
     String? answerStatus,
     int limit = 30,
@@ -286,7 +286,7 @@ class LearningService {
         if (row.lastAttempt != null) row.lastAttempt!,
     ];
     final assessments = lastAttempts.isEmpty
-        ? const <int, List<Assessment>>{}
+        ? const <String, List<Assessment>>{}
         : await assessmentsFor(lastAttempts);
     return RecordsView(
       goals: goals,
@@ -296,12 +296,12 @@ class LearningService {
     );
   }
 
-  Future<int> capture({
+  Future<String> capture({
     required String stem,
     String? sourceRef,
     String? contextText,
     List<String> imagePaths = const [],
-    int? planItemId,
+    String? planItemId,
   }) async {
     final images = imagePaths
         .where((path) => path.trim().isNotEmpty)
@@ -356,7 +356,7 @@ class LearningService {
 
   /// 从一条已有讨论开始作答：题干与图片就是那时最后一条用户消息，
   /// 作答直接挂在这条记录上，不再复制题目或帮助。
-  Future<int> startAnswering({required int conversationId}) async {
+  Future<String> startAnswering({required String conversationId}) async {
     final requestEpoch = runtime.dataEpoch;
     final record = await conversations.byId(conversationId);
     if (record == null) throw StateError('未找到这条讨论');
@@ -390,7 +390,7 @@ class LearningService {
   }
 
   Future<HelpResult> help({
-    required int questionId,
+    required String questionId,
     required BuddyMode mode,
     Set<String> broughtIdentities = const {},
     void Function(String text)? onText,
@@ -600,13 +600,13 @@ class LearningService {
         if (entry.item.status != MemoryCardStatus.accepted ||
             (entry.item.commitId != null &&
                 active.contains(entry.item.commitId)))
-          MemoryItemView(ownerId: entry.helpIndex, draft: entry.item),
+          MemoryItemView.help(helpIndex: entry.helpIndex, draft: entry.item),
     ];
   }
 
   /// 用户点“记下”后才写入帮助里的记忆建议；重复或过长时不写，卡片随之收起。
   Future<AcceptedMemory> acceptMemory({
-    required int attemptId,
+    required String attemptId,
     required int helpIndex,
     required String itemId,
     String? requestId,
@@ -667,7 +667,7 @@ class LearningService {
 
   /// 用户点“不记”后收起建议；没有写入记忆，不需要撤销。
   Future<void> dismissMemory({
-    required int attemptId,
+    required String attemptId,
     required int helpIndex,
     required String itemId,
   }) async {
@@ -704,7 +704,7 @@ class LearningService {
   }
 
   Future<void> _setHelpMemoryStatus(
-    int attemptId,
+    String attemptId,
     int helpIndex,
     String itemId, {
     required MemoryCardStatus status,
@@ -734,7 +734,7 @@ class LearningService {
   /// 自评不再单独写一条判断，作答记录里的帮助次数、独立与延迟情况已经足够
   /// 推出结果；用户填写的核对依据单独保存，只表示用户提供了一个依据。
   Future<WriteResult> submit({
-    required int attemptId,
+    required String attemptId,
     required String answer,
     String? solution,
     required bool? isCorrect,
@@ -777,7 +777,7 @@ class LearningService {
     );
   }
 
-  Future<Map<int, List<Assessment>>> assessmentsFor(List<Attempt> attempts) {
+  Future<Map<String, List<Assessment>>> assessmentsFor(List<Attempt> attempts) {
     return assessments.forAttempts([
       for (final attempt in attempts) attempt.id,
     ]);
@@ -785,8 +785,8 @@ class LearningService {
 
   /// 让模型检查这次作答的依据；判断只保存来源、结论与依据，不标记是否核对。
   Future<Assessment> assessWithModel({
-    required int questionId,
-    required int attemptId,
+    required String questionId,
+    required String attemptId,
     Set<String> broughtIdentities = const {},
     String? requestId,
   }) async {
@@ -842,7 +842,7 @@ class LearningService {
     if (draft == null) {
       throw StateError('模型未提供可用判断');
     }
-    late final int id;
+    late final String id;
     try {
       id = await transactions.run(
         (txn) async {
@@ -886,7 +886,7 @@ class LearningService {
   /// [independentRedo] 为真时把新尝试关联到最近一次已提交作答，重做状态随
   /// 尝试保存，重新打开页面仍能回到“先不看上次”的模式。
   Future<Attempt> openAttempt(
-    int conversationId, {
+    String conversationId, {
     bool independentRedo = false,
   }) async {
     final requestEpoch = runtime.dataEpoch;
@@ -921,7 +921,7 @@ class LearningService {
   /// 未提交时点检查、保存草稿或离开学习页都走这里；核对依据写到判断表，
   /// 提交时沿用同一条，不再重复新增。
   Future<void> saveDraft({
-    required int attemptId,
+    required String attemptId,
     required String answer,
     String? solution,
     bool? isCorrect,
@@ -967,7 +967,7 @@ class LearningService {
   /// 场次只作为后台记录：最近一次答对记为完成，答错但本次有答对记为部分完成，
   /// 其余记为没做成；没有提交过时结果留空。困难留在这场学习与作答记录里，
   /// 不另写独立记忆，再次作答时只带入这道题以前留下的困难。
-  Future<void> closeForQuestion(int conversationId) async {
+  Future<void> closeForQuestion(String conversationId) async {
     final recordAttempts = await attempts.attemptsFor(conversationId);
     final sessionId = recordAttempts.firstOrNull?.sessionId;
     if (sessionId == null) return;
@@ -1047,9 +1047,9 @@ class LearningService {
       text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
   Future<StudySession> _ensureSession({
-    required int conversationId,
-    int? planItemId,
-    int? goalId,
+    required String conversationId,
+    String? planItemId,
+    String? goalId,
     WriteTransaction? transaction,
   }) async {
     final item = planItemId == null

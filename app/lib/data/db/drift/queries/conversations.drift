@@ -93,7 +93,7 @@ LIMIT COALESCE(:rowLimit, -1);
 -- 目标、只看无归属与作答状态三种筛选用可空参数关掉，传空表示不筛选；作答状态
 -- 的取值按最近一次已提交作答的判定过滤，口径与界面的作答状态一致。
 conversationRecords(
-  REQUIRED :goalId AS INT OR NULL,
+  REQUIRED :goalId AS TEXT OR NULL,
   REQUIRED :unassignedOnly AS INT,
   REQUIRED :answerStatus AS TEXT OR NULL,
   REQUIRED :rowLimit AS INT OR NULL,
@@ -194,8 +194,8 @@ ORDER BY max(c.updated_at,
 LIMIT COALESCE(:limit, -1);
 
 insertConversationRecord:
-INSERT INTO conversation (title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at)
-VALUES (:title, :goalId, :materialId, :pageNo, :sourceRef, :contextText, :entryKind, 'open', :stamp, :stamp);
+INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at)
+VALUES (:id, :title, :goalId, :materialId, :pageNo, :sourceRef, :contextText, :entryKind, 'open', :stamp, :stamp);
 
 recordLastMessageTime:
 UPDATE conversation SET updated_at = :stamp,

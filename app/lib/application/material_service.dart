@@ -25,7 +25,8 @@ class MaterialService {
   /// 当前数据代次：打开文件选择器之前取一次，导入时交给 [importDocx] 核对。
   int get dataEpoch => runtime.dataEpoch;
 
-  Future<List<Material>> list({int? goalId}) => materials.list(goalId: goalId);
+  Future<List<Material>> list({String? goalId}) =>
+      materials.list(goalId: goalId);
 
   /// 材料页读到的表：材料行、页码与所属目标。
   ///
@@ -38,44 +39,44 @@ class MaterialService {
   };
 
   /// 跟随写入更新的材料列表。
-  Stream<List<Material>> watchList({int? goalId}) => runtime.watch(
+  Stream<List<Material>> watchList({String? goalId}) => runtime.watch(
     tables: _listTables,
     read: () => list(goalId: goalId),
   );
 
   /// 跟随写入更新的单份材料：材料行与它的页码。
-  Stream<Material?> watchMaterial(int id) =>
+  Stream<Material?> watchMaterial(String id) =>
       runtime.watch(tables: _listTables, read: () => byId(id));
 
   /// 材料详情与单页原文读到的表：材料行的时间与页码计数随页码一起变化。
   static const Set<String> _pageTables = {'material', 'material_page'};
 
   /// 跟随写入更新的页码列表；材料详情逐页显示时整份重读。
-  Stream<List<MaterialPage>> watchPages(int materialId) =>
+  Stream<List<MaterialPage>> watchPages(String materialId) =>
       runtime.watch(tables: _pageTables, read: () => pages(materialId));
 
   /// 跟随写入更新的单页原文；只显示一页的地方换页时换一条新流。
-  Stream<MaterialPage?> watchPage(int materialId, int pageNo) =>
+  Stream<MaterialPage?> watchPage(String materialId, int pageNo) =>
       runtime.watch(tables: _pageTables, read: () => page(materialId, pageNo));
 
-  Future<Material?> byId(int id) => materials.byId(id);
+  Future<Material?> byId(String id) => materials.byId(id);
 
   /// 材料当前的最小与最大页码；做学习计划时据此决定可选范围。
-  Future<({int? first, int? last})> pageBounds(int materialId) =>
+  Future<({int? first, int? last})> pageBounds(String materialId) =>
       materials.pageBounds(materialId);
 
-  Future<List<MaterialPage>> pages(int materialId) =>
+  Future<List<MaterialPage>> pages(String materialId) =>
       materials.pages(materialId);
 
   /// 材料里某一页；查看来源原文与更正后的回显都只读这一页。
-  Future<MaterialPage?> page(int materialId, int pageNo) =>
+  Future<MaterialPage?> page(String materialId, int pageNo) =>
       materials.page(materialId, pageNo);
 
-  Future<int> create({
+  Future<String> create({
     required String title,
     MaterialKind kind = MaterialKind.text,
     String? sourceRef,
-    int? goalId,
+    String? goalId,
   }) {
     return transactions.run(
       (txn) => materials.create(
@@ -89,12 +90,12 @@ class MaterialService {
     );
   }
 
-  Future<int> importMaterial({
+  Future<String> importMaterial({
     required String title,
     required List<MaterialPageDraft> pages,
     MaterialKind kind = MaterialKind.text,
     String? sourceRef,
-    int? goalId,
+    String? goalId,
   }) {
     return transactions.run(
       (txn) => materials.createWithPages(
@@ -109,11 +110,11 @@ class MaterialService {
     );
   }
 
-  Future<int> importDocx({
+  Future<String> importDocx({
     required DocxImport document,
     required String title,
     required int expectedEpoch,
-    int? goalId,
+    String? goalId,
   }) {
     return transactions.run((txn) {
       if (runtime.dataEpoch != expectedEpoch) {
@@ -135,8 +136,8 @@ class MaterialService {
   }
 
   /// 添加一页；页码已存在时抛出 [PageNumberTaken]，不改动已有原文。
-  Future<int> addPage({
-    required int materialId,
+  Future<String> addPage({
+    required String materialId,
     required int pageNo,
     required String content,
     String? label,
@@ -153,7 +154,7 @@ class MaterialService {
     );
   }
 
-  Future<WriteResult> setGoal(int materialId, int? goalId) =>
+  Future<WriteResult> setGoal(String materialId, String? goalId) =>
       transactions.run((txn) async {
         await materials.setGoal(materialId, goalId, transaction: txn);
         return txn.result();

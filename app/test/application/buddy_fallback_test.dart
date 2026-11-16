@@ -19,7 +19,7 @@ BuddyContext _context({
 }) {
   return BuddyContext(
     now: DateTime(2026, 11, 10, 20),
-    question: question == null ? null : Question(id: 1, stem: question),
+    question: question == null ? null : Question(id: 'conv-1', stem: question),
     attempt: attempt,
     openItems: openItems,
     todayBlocks: todayBlocks,
@@ -34,7 +34,9 @@ BuddyContext _context({
 void main() {
   test('普通提问得到针对这句话的步骤，不推荐已有的学习事项', () {
     final reply = localBuddyReply(
-      _context(openItems: [const PlanItem(id: 1, title: '第三章作业')]),
+      _context(
+        openItems: [const PlanItem(id: 'item-1', title: '第三章作业')],
+      ),
       text: '为什么这里需要独立性？',
     );
 
@@ -98,10 +100,10 @@ void main() {
   test('带入材料页时按页码提示核对原文', () {
     final reply = localBuddyReply(
       _context(
-        material: const Material(id: 7, title: '概率论课件'),
+        material: const Material(id: 'mat-7', title: '概率论课件'),
         materialPage: const MaterialPage(
-          id: 1,
-          materialId: 7,
+          id: 'page-1',
+          materialId: 'mat-7',
           pageNo: 12,
           content: '条件概率的定义是 P(A|B)=P(AB)/P(B)。',
         ),
@@ -134,8 +136,8 @@ void main() {
 
   test('用过的帮助次数会写进本地提示', () {
     final attempt = Attempt(
-      id: 3,
-      conversationId: 1,
+      id: 'attempt-3',
+      conversationId: 'conv-1',
       helps: [
         HelpEntry(kind: 'hint', content: '先写条件', at: DateTime(2026, 11, 10)),
       ],
@@ -148,7 +150,9 @@ void main() {
 
   test('待办与最近没做对的题仍然给本地建议，标明来源', () {
     final item = localBuddyReply(
-      _context(openItems: [const PlanItem(id: 1, title: '第三章作业')]),
+      _context(
+        openItems: [const PlanItem(id: 'item-1', title: '第三章作业')],
+      ),
     );
     expect(item, contains('本地建议：开始学习事项「第三章作业」'));
 
@@ -157,12 +161,12 @@ void main() {
         recentAttempts: [
           AttemptWithQuestion(
             attempt: Attempt(
-              id: 2,
-              conversationId: 9,
+              id: 'attempt-2',
+              conversationId: 'conv-9',
               isCorrect: false,
               submittedAt: DateTime(2026, 11, 9),
             ),
-            question: const Question(id: 9, stem: '第 8 题求条件概率'),
+            question: const Question(id: 'conv-9', stem: '第 8 题求条件概率'),
           ),
         ],
       ),
@@ -177,8 +181,8 @@ void main() {
 
     final todayBlock = ScheduledItem(
       block: ScheduleBlock(
-        id: 1,
-        planItemId: 5,
+        id: 'block-1',
+        planItemId: 'item-5',
         startAt: DateTime(2026, 11, 10, 20),
         endAt: DateTime(2026, 11, 10, 20, 30),
       ),
@@ -186,7 +190,9 @@ void main() {
       itemNote: '做完第 3 节',
     );
     final plan = localNextStep(
-      _context(openItems: [const PlanItem(id: 5, title: '第三章作业')]),
+      _context(
+        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
+      ),
       text: '接下来做什么',
     );
     expect(plan.single.title, '第三章作业');
@@ -197,7 +203,7 @@ void main() {
     final withBlock = localNextStep(
       _context(
         todayBlocks: [todayBlock],
-        openItems: [const PlanItem(id: 5, title: '第三章作业')],
+        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
       ),
       text: '接下来做什么',
     );
@@ -208,12 +214,12 @@ void main() {
   test('用户问的是具体问题时，本地不另推已有的待办', () {
     final steps = localNextStep(
       _context(
-        openItems: [const PlanItem(id: 5, title: '第三章作业')],
+        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
         todayBlocks: [
           ScheduledItem(
             block: ScheduleBlock(
-              id: 2,
-              planItemId: 5,
+              id: 'block-2',
+              planItemId: 'item-5',
               startAt: DateTime(2026, 11, 10, 20),
               endAt: DateTime(2026, 11, 10, 20, 30),
             ),
@@ -228,7 +234,9 @@ void main() {
 
   test('没有当次文字问题时，仍按当天预约与待办给建议', () {
     final step = localNextStep(
-      _context(openItems: [const PlanItem(id: 5, title: '第三章作业')]),
+      _context(
+        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
+      ),
     );
     expect(step.single.title, '第三章作业');
   });

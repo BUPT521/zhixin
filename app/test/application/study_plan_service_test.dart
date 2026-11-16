@@ -125,7 +125,7 @@ class _Harness {
     );
   }
 
-  Future<int> materialWithPages(List<int> pageNos) async {
+  Future<String> materialWithPages(List<int> pageNos) async {
     final id = await materials.create(title: '概率论讲义', kind: MaterialKind.book);
     for (final pageNo in pageNos) {
       await materials.addPage(

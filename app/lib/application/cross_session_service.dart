@@ -64,11 +64,11 @@ class _ThreadTier {
   });
 
   final String label;
-  final int? conversationId;
+  final String? conversationId;
   final String? stem;
-  final int? materialId;
+  final String? materialId;
   final int? pageNo;
-  final int? goalId;
+  final String? goalId;
 
   /// 沿同一个目标找作答时，是否同时带上没有归属的记录。
   final bool includeUnassigned;
@@ -92,7 +92,7 @@ class CrossSessionService {
     required EvidenceScope scope,
     required DateTime now,
     String? stem,
-    int? excludeAttemptId,
+    String? excludeAttemptId,
     int limit = 5,
   }) async {
     if (!scope.isAnswerContext) return const CrossSessionSummary();
@@ -131,7 +131,7 @@ class CrossSessionService {
               _ThreadTier(label: '当前目标', goalId: scope.goalId),
           ];
 
-    final collected = <int, ThreadAttempt>{};
+    final collected = <String, ThreadAttempt>{};
     String? threadLabel;
     for (final tier in tiers) {
       final found = await repository.threadAttempts(
@@ -280,7 +280,7 @@ class CrossSessionService {
       if (answer.isNotEmpty) '答案：$shortAnswer',
       if (attempt.feedback != null) '当时卡在：${attempt.feedback}',
       if (attempt.helps.isNotEmpty) '应用内帮助 ${attempt.helps.length} 次',
-      if (attempt.redoOfAttemptId != null) '复查第 ${attempt.redoOfAttemptId} 次作答',
+      if (attempt.redoOfAttemptId != null) '复查之前的一次作答',
     ];
     return EvidenceHit(
       kind: EvidenceKind.answer,

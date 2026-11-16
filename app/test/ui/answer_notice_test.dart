@@ -132,8 +132,8 @@ void main() {
 
   test('重新打开讨论时按保存下来的值与失败类型写回同一条说明', () {
     final message = ChatMessage(
-      id: 1,
-      conversationId: 2,
+      id: 'msg-1',
+      conversationId: 'conv-1',
       role: MessageRole.assistant,
       content: '本地回答',
       payload: const ChatMessagePayload(
@@ -152,8 +152,8 @@ void main() {
 
   test('本地兜底中没有配置模型的消息需要配置入口', () {
     final message = ChatMessage(
-      id: 1,
-      conversationId: 2,
+      id: 'msg-1',
+      conversationId: 'conv-1',
       role: MessageRole.assistant,
       content: '本地回答',
       payload: const ChatMessagePayload(

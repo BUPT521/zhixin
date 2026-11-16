@@ -2,7 +2,9 @@
 ///
 /// 材料页、消息与作答各有一张外部内容表。FTS5 只能对普通列建索引，而二元组要
 /// 在写入时按 [bigramsExpression] 算出来，因此索引列 `idx` 不随业务行存放，而由
-/// 业务表上的触发器写入；`content=` 仍指向业务表，索引的行号用业务表主键。
+/// 业务表上的触发器写入；`content=` 仍指向业务表，索引的行号用业务表的隐式
+/// rowid。业务主键改成 UUIDv7 文本之后（ADR-0018），rowid 与主键不再是同一列，
+/// 查询与触发器统一按 `rowid` 关联。
 /// 查询用 [bigrams] 切出同一套词，交给 `MATCH`，排序用 FTS5 自带的 `bm25()`。
 ///
 /// 版本引擎清除随库保留的触发器后，再按本文件安装同步触发器。
@@ -71,7 +73,7 @@ Set<String> ftsTriggerNames() => {
 List<String> ftsStatements() => [
   for (final index in ftsIndexes) ...[
     'CREATE VIRTUAL TABLE IF NOT EXISTS "${index.table}" USING fts5('
-        'idx, content="${index.source}", content_rowid="id", '
+        'idx, content="${index.source}", content_rowid="rowid", '
         'tokenize="unicode61 tokenchars \'_\'")',
     ..._triggers(index),
   ],
@@ -80,7 +82,7 @@ List<String> ftsStatements() => [
 /// 安装同步触发器，索引定义变化或索引表缺失时从业务行重建。
 Future<void> installFtsSchema(RawDatabase db) async {
   const key = 'fts_index_version';
-  const version = '2';
+  const version = '3';
   await db.transaction((txn) async {
     final versions = await txn.rawQuery(
       'SELECT value FROM app_meta WHERE key = ?',
@@ -126,7 +128,7 @@ Future<void> rebuildFtsIndex(RawExecutor db, FtsIndex index) async {
   );
   await db.execute(
     'INSERT INTO "${index.table}"(rowid, idx) '
-    'SELECT s.id, $value FROM "${index.source}" AS s',
+    'SELECT s.rowid, $value FROM "${index.source}" AS s',
   );
 }
 
@@ -147,17 +149,17 @@ List<String> _triggers(FtsIndex index) {
   return [
     'CREATE TRIGGER IF NOT EXISTS "${index.insertTrigger}" '
         'AFTER INSERT ON "${index.source}" $enabled BEGIN '
-        'INSERT INTO "$table"(rowid, idx) VALUES (NEW.id, $value); END',
+        'INSERT INTO "$table"(rowid, idx) VALUES (NEW.rowid, $value); END',
     // 先按旧值删掉索引行，再按新值写入；外部内容表不认识普通的 DELETE，
     // 只能用 FTS5 的 delete 命令，否则会去业务表核对旧值。
     'CREATE TRIGGER IF NOT EXISTS "${index.updateTrigger}" '
         'AFTER UPDATE OF ${index.columns.join(', ')} ON "${index.source}" $enabled'
         'BEGIN INSERT INTO "$table"("$table", rowid, idx) '
-        "VALUES('delete', OLD.id, $old); "
-        'INSERT INTO "$table"(rowid, idx) VALUES (NEW.id, $value); END',
+        "VALUES('delete', OLD.rowid, $old); "
+        'INSERT INTO "$table"(rowid, idx) VALUES (NEW.rowid, $value); END',
     'CREATE TRIGGER IF NOT EXISTS "${index.deleteTrigger}" '
         'AFTER DELETE ON "${index.source}" $enabled BEGIN '
         'INSERT INTO "$table"("$table", rowid, idx) '
-        "VALUES('delete', OLD.id, $old); END",
+        "VALUES('delete', OLD.rowid, $old); END",
   ];
 }

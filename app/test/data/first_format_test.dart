@@ -21,6 +21,7 @@ void main() {
     final db = await openZhixinDatabase(path: path);
     addTearDown(db.close);
     await insertRow(db, 'material', {
+      'id': 'mat-1',
       'title': '当前材料',
       'kind': 'book',
       'created_at': '2026-11-06 09:00:00',
@@ -68,6 +69,7 @@ void main() {
 
     final before = await openZhixinDatabase(path: path);
     await insertRow(before, 'material', {
+      'id': 'mat-1',
       'title': '恢复前',
       'kind': 'book',
       'created_at': '2026-11-06 09:00:00',
@@ -84,6 +86,7 @@ void main() {
     await File(path).delete();
     final replaced = await openZhixinDatabase(path: path);
     await insertRow(replaced, 'material', {
+      'id': 'mat-1',
       'title': '恢复后',
       'kind': 'book',
       'created_at': '2026-11-06 10:00:00',
@@ -123,13 +126,16 @@ void main() {
     await File('${images.path}/m-1.jpg').writeAsBytes([9, 8, 7]);
 
     final first = await openZhixinDatabase(path: path);
-    final materialId = await insertRow(first, 'material', {
+    const materialId = 'mat-1';
+    await insertRow(first, 'material', {
+      'id': materialId,
       'title': '概率论讲义',
       'kind': 'book',
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:00:00',
     });
     await insertRow(first, 'material_page', {
+      'id': 'page-1',
       'material_id': materialId,
       'page_no': 3,
       'label': '条件概率',
@@ -137,7 +143,9 @@ void main() {
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:00:00',
     });
-    final conversationId = await insertRow(first, 'conversation', {
+    const conversationId = 'conv-1';
+    await insertRow(first, 'conversation', {
+      'id': conversationId,
       'title': '条件概率讨论',
       'material_id': materialId,
       'page_no': 3,
@@ -147,6 +155,7 @@ void main() {
       'updated_at': '2026-11-06 09:05:00',
     });
     await insertRow(first, 'message', {
+      'id': 'msg-1',
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',

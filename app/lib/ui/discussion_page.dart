@@ -16,7 +16,7 @@ class DiscussionPage extends StatelessWidget {
     this.onSubmitted,
   }) : assert(conversationId != null || startNew, '打开讨论要给出记录编号，或者明确说这是新讨论');
 
-  final int? conversationId;
+  final String? conversationId;
   final bool startNew;
 
   /// 首页带进来的文字与图片：进页面时先摆进输入区，由用户确认后发送。

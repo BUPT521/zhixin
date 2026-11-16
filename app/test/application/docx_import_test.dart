@@ -154,7 +154,7 @@ void main() {
       service.importDocx(
         document: document,
         title: '目标已删除',
-        goalId: -1,
+        goalId: 'goal-1',
         expectedEpoch: epoch,
       ),
       throwsA(isA<SqliteException>()),

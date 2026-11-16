@@ -79,7 +79,7 @@ class PendingSuggestion {
     required this.draft,
   });
 
-  final int messageId;
+  final String messageId;
 
   /// 建议在这条消息里的稳定编号；同名建议靠它分别接受或忽略。
   final String stepId;
@@ -170,7 +170,7 @@ class DiscussionService {
 
   /// 记录列表；[answerStatus] 按作答判定筛选，[limit] 与 [offset] 用于按页读取。
   Future<List<ConversationRecord>> records({
-    int? goalId,
+    String? goalId,
     bool unassignedOnly = false,
     String? answerStatus,
     int? limit = 200,
@@ -183,7 +183,7 @@ class DiscussionService {
     offset: offset,
   );
 
-  Future<ConversationRecord?> byId(int id) => conversations.byId(id);
+  Future<ConversationRecord?> byId(String id) => conversations.byId(id);
 
   /// 讨论页读到的表：任一表写入之后整屏重读一次（ADR-0014）。
   ///
@@ -202,7 +202,7 @@ class DiscussionService {
   /// [olderMessages] 是页面已经按“读取较早讨论”读出来的更早消息，读取时与最近
   /// 一页按编号去重合并，因此建议、记忆卡片与回执也覆盖已经翻到的部分。
   Stream<ConversationView> watchConversation(
-    int id, {
+    String id, {
     List<ChatMessage> olderMessages = const [],
   }) => runtime.watch(
     tables: _conversationTables,
@@ -212,7 +212,7 @@ class DiscussionService {
   /// 读一次讨论一屏：记录、目标与最近一页消息互不依赖，同时读取，再从合并后
   /// 的消息里读出下一步建议、记忆卡片与回执。
   Future<ConversationView> conversationView(
-    int id, {
+    String id, {
     List<ChatMessage> olderMessages = const [],
   }) async {
     final (record, goals, page) = await (
@@ -244,7 +244,7 @@ class DiscussionService {
     List<ChatMessage> older,
     List<ChatMessage> latest,
   ) {
-    final seen = <int>{};
+    final seen = <String>{};
     return [
       for (final message in older)
         if (seen.add(message.id)) message,
@@ -258,15 +258,15 @@ class DiscussionService {
   /// 讨论发送、重答与系统学习焦点都只要最近这一段；原先先把整条讨论读回、
   /// 再由提示词按 12000 字裁剪，讨论越长读取越大。第一条用户消息另行补在
   /// 最前，与提示词的选取规则一致。
-  Future<List<ChatMessage>> history(int id) => _promptHistory(id);
+  Future<List<ChatMessage>> history(String id) => _promptHistory(id);
 
   Future<List<ChatMessage>> _promptHistory(
-    int conversationId, {
-    int? beforeMessageId,
+    String conversationId, {
+    String? beforeMessageId,
   }) async {
     final recent = <ChatMessage>[];
     var used = 0;
-    int? before = beforeMessageId;
+    String? before = beforeMessageId;
     while (used < buddyHistoryCharBudget) {
       final page = await conversations.historyPage(
         conversationId,
@@ -292,8 +292,8 @@ class DiscussionService {
   }
 
   Future<({List<ChatMessage> messages, bool hasOlder})> historyPage(
-    int id, {
-    int? beforeMessageId,
+    String id, {
+    String? beforeMessageId,
     int limit = 50,
   }) => conversations.historyPage(
     id,
@@ -302,10 +302,10 @@ class DiscussionService {
   );
 
   /// 新建一条还没有消息的讨论，用于从材料页开始或从记录里手动开一条。
-  Future<int> createConversation({
+  Future<String> createConversation({
     String? title,
-    int? goalId,
-    int? materialId,
+    String? goalId,
+    String? materialId,
     int? pageNo,
   }) {
     return conversations.create(
@@ -329,13 +329,13 @@ class DiscussionService {
   /// [onUserMessage] 在用户消息写入之后立即回调，让界面先显示这条消息；
   /// [onPartial] 在模型边生成时回调正文，最终仍以返回的 [ChatResult] 为准。
   Future<ChatResult> reply({
-    int? conversationId,
+    String? conversationId,
     String text = '',
     List<String> imagePaths = const [],
     bool repeatLast = false,
-    int? materialId,
+    String? materialId,
     int? pageNo,
-    int? goalId,
+    String? goalId,
     Set<String> broughtIdentities = const {},
     void Function(ChatMessage message)? onUserMessage,
     void Function(String text)? onPartial,
@@ -377,9 +377,9 @@ class DiscussionService {
   Future<ChatResult> _openConversation({
     required String text,
     required List<String> imagePaths,
-    required int? materialId,
+    required String? materialId,
     required int? pageNo,
-    required int? goalId,
+    required String? goalId,
     required Set<String> broughtIdentities,
     required void Function(ChatMessage message)? onUserMessage,
     required void Function(String text)? onPartial,
@@ -413,7 +413,7 @@ class DiscussionService {
 
   /// 在同一条讨论里继续说；已经结束的讨论会重新打开。
   Future<ChatResult> _continueConversation({
-    required int conversationId,
+    required String conversationId,
     required String text,
     required List<String> imagePaths,
     required Set<String> broughtIdentities,
@@ -471,7 +471,7 @@ class DiscussionService {
   /// 不重复写用户消息，也不改写原来的回答，新回答追加在后面。问题、作答与
   /// 材料位置都保留，用户可以对照两条回答。
   Future<ChatResult> _repeatLast({
-    required int conversationId,
+    required String conversationId,
     required void Function(String text)? onPartial,
     required LlmCancelToken? cancelToken,
   }) async {
@@ -514,7 +514,7 @@ class DiscussionService {
   /// [record] 是调用方已经读到的记录，材料位置与记忆范围都从它取，不再按
   /// 编号读一次；[config] 同理，重答已经读过配置，传进来复用。
   Future<ChatResult> _answer({
-    required int conversationId,
+    required String conversationId,
     required ConversationRecord record,
     required String text,
     required List<String> imageRefs,
@@ -762,7 +762,7 @@ class DiscussionService {
   }
 
   /// 用户明确选择的归属；传空表示改回无归属。
-  Future<WriteResult> setGoal(int conversationId, int? goalId) async {
+  Future<WriteResult> setGoal(String conversationId, String? goalId) async {
     if (goalId != null) {
       final goal = await tasks.goalById(goalId);
       if (goal == null) throw ArgumentError('未找到这个目标');
@@ -775,8 +775,8 @@ class DiscussionService {
 
   /// 这次讨论依据的材料与页码；传空表示不再带入材料。
   Future<WriteResult> setMaterial(
-    int conversationId, {
-    required int? materialId,
+    String conversationId, {
+    required String? materialId,
     int? pageNo,
   }) async {
     if (materialId != null) {
@@ -796,13 +796,14 @@ class DiscussionService {
   }
 
   /// 结束这次求助；记录保留，之后可以从“记录”重新打开。
-  Future<WriteResult> end(int conversationId) => transactions.run((txn) async {
-    await conversations.end(conversationId);
-    return txn.result();
-  }, label: '结束求助');
+  Future<WriteResult> end(String conversationId) =>
+      transactions.run((txn) async {
+        await conversations.end(conversationId);
+        return txn.result();
+      }, label: '结束求助');
 
   /// 清空一条讨论：消息与讨论记录一起删掉，题目、尝试与记忆不受影响。
-  Future<WriteResult> clear(int conversationId) async {
+  Future<WriteResult> clear(String conversationId) async {
     final done = await transactions.run((txn) async {
       final paths = await conversations.clear(conversationId, transaction: txn);
       return (paths: paths, result: await txn.result());
@@ -817,11 +818,11 @@ class DiscussionService {
   /// 这里不写时间块，安排由用户在“安排”页自己排。编号按消息与建议生成，
   /// 同一条建议连点两次只形成一条提交。
   Future<AcceptedSuggestion> acceptNextStep({
-    required int conversationId,
-    required int messageId,
+    required String conversationId,
+    required String messageId,
     required NextStepDraft draft,
     String? stepId,
-    int? goalId,
+    String? goalId,
     String? requestId,
   }) {
     return _acceptNextStepOnce(
@@ -841,11 +842,11 @@ class DiscussionService {
   }
 
   Future<AcceptedSuggestion> _acceptNextStepOnce({
-    required int conversationId,
-    required int messageId,
+    required String conversationId,
+    required String messageId,
     required NextStepDraft draft,
     String? stepId,
-    int? goalId,
+    String? goalId,
     String? requestId,
   }) async {
     try {
@@ -953,8 +954,8 @@ class DiscussionService {
   }
 
   Future<void> dismissNextStep({
-    required int conversationId,
-    required int messageId,
+    required String conversationId,
+    required String messageId,
     required String title,
     String? stepId,
   }) async {
@@ -976,7 +977,7 @@ class DiscussionService {
   Future<List<MemoryItemView>> memoryItemsFromMessages(
     List<ChatMessage> messages,
   ) async {
-    final stored = <({int messageId, MemoryDraft draft})>[];
+    final stored = <({String messageId, MemoryDraft draft})>[];
     for (final message in messages) {
       if (message.role != MessageRole.assistant) continue;
       for (final item
@@ -1005,7 +1006,9 @@ class DiscussionService {
       } else if (item.status != MemoryCardStatus.pending) {
         continue;
       }
-      result.add(MemoryItemView(ownerId: entry.messageId, draft: item));
+      result.add(
+        MemoryItemView.message(messageId: entry.messageId, draft: item),
+      );
     }
     return result;
   }
@@ -1014,8 +1017,8 @@ class DiscussionService {
   ///
   /// 编号按消息与卡片编号生成，同一张卡连点两次只形成一条提交。
   Future<AcceptedMemory> acceptMemoryItem({
-    required int conversationId,
-    required int messageId,
+    required String conversationId,
+    required String messageId,
     required String itemId,
     String? requestId,
   }) async {
@@ -1083,8 +1086,8 @@ class DiscussionService {
 
   /// 用户点“不记”后收起卡片；记忆没有写入，不需要撤销。
   Future<void> dismissMemoryItem({
-    required int conversationId,
-    required int messageId,
+    required String conversationId,
+    required String messageId,
     required String itemId,
   }) async {
     final message = await conversations.messageById(messageId);
@@ -1128,13 +1131,13 @@ class DiscussionService {
   ///
   /// 引用核验只认这份来源表，模型自己写出的材料编号不会因为库里恰好有这一页
   /// 就被接受；同一页以第一次提供的原文为准。
-  static Map<(int, int), CitationSource> _citationSources(
+  static Map<(String, int), CitationSource> _citationSources(
     BuddyContext facts,
     List<CitationSource> provided,
   ) {
-    final sources = <(int, int), CitationSource>{};
+    final sources = <(String, int), CitationSource>{};
     void add(
-      int materialId,
+      String materialId,
       int pageNo,
       String content, {
       String? title,
@@ -1187,9 +1190,9 @@ class DiscussionService {
 
   Future<List<Citation>> _verifyCitations(
     List<CitationDraft> drafts, {
-    required Map<(int, int), CitationSource> sources,
+    required Map<(String, int), CitationSource> sources,
   }) async {
-    final pages = <(int, int), MaterialPage?>{};
+    final pages = <(String, int), MaterialPage?>{};
     final result = <Citation>[];
     for (final draft in uniqueById(drafts, (draft) => draft.contentId)) {
       final key = (draft.materialId, draft.pageNo);

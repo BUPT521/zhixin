@@ -10,7 +10,7 @@ void main() {
     addTearDown(db.close);
     var now = DateTime(2026, 11, 10, 9);
     final conversations = ConversationRepository(db, clock: () => now);
-    final ids = <int>[];
+    final ids = <String>[];
     for (var index = 0; index < 5; index++) {
       now = DateTime(2026, 11, 10, 9, index);
       final id = await conversations.create(title: '第 $index 条');
@@ -43,7 +43,7 @@ void main() {
     final conversations = ConversationRepository(db, clock: () => now);
     final attempts = AttemptRepository(db, clock: () => now);
 
-    Future<int> record(String title) async {
+    Future<String> record(String title) async {
       now = now.add(const Duration(minutes: 1));
       final id = await conversations.create(title: title);
       await conversations.append(id, role: MessageRole.user, content: title);
@@ -74,7 +74,7 @@ void main() {
 
     final discussion = await record('只有讨论');
 
-    Future<Set<int>> ids(String status) async => {
+    Future<Set<String>> ids(String status) async => {
       for (final record in await conversations.list(answerStatus: status))
         record.id,
     };
@@ -99,7 +99,7 @@ void main() {
     final conversations = ConversationRepository(db, clock: () => now);
     final attempts = AttemptRepository(db, clock: () => now);
 
-    final kept = <int>[];
+    final kept = <String>[];
     for (var index = 0; index < 3; index++) {
       now = DateTime(2026, 11, 10, 9, index);
       final id = await conversations.create(title: '第 $index 条');
@@ -130,7 +130,7 @@ void main() {
     final conversations = ConversationRepository(db, clock: () => now);
     final attempts = AttemptRepository(db, clock: () => now);
 
-    final ids = <int>[];
+    final ids = <String>[];
     for (var index = 0; index < 6; index++) {
       now = DateTime(2026, 11, 10, 9, index);
       final id = await conversations.create(title: '第 $index 条');

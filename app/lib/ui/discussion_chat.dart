@@ -52,7 +52,7 @@ class DiscussionChat extends StatefulWidget {
     this.emptyHint = '提出问题或添加题目图片即可开始；目标为可选项。',
   }) : assert(conversationId != null || startNew, '打开讨论要给出记录编号，或者明确说这是新讨论');
 
-  final int? conversationId;
+  final String? conversationId;
   final bool startNew;
 
   /// 首页已经取好的文字与图片：进页面时摆进输入区，等用户确认后再发送。
@@ -82,7 +82,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 本次发送的取消信号；生成中按停止时用它中止请求。
   LlmCancelToken? _cancelToken;
 
-  int? _conversationId;
+  String? _conversationId;
 
   /// 这条讨论的一屏订阅；记录、消息、归属、建议与记忆卡片都从它读
   /// （ADR-0014），写入之后由数据层重读，页面不再自己 `_load()`。
@@ -106,7 +106,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   String? _notice;
 
   /// 生成中的回答出现之后用于判断订阅是否已经读回这条回答。
-  int? _answeringAfterMessageId;
+  String? _answeringAfterMessageId;
 
   /// 用户消息已经落库、但这一轮没有保存回答；提示条据此给出重试入口。
   bool _retryableNotice = false;
@@ -182,7 +182,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 屏幕上正在显示的消息：更早的几页在前，订阅给出的最近一页在后，发送流程
   /// 已经拿到但订阅还没有回填的消息补在最后，三处按编号去重。
   List<ChatMessage> get _messages {
-    final seen = <int>{};
+    final seen = <String>{};
     return [
       for (final message in _olderMessages)
         if (seen.add(message.id)) message,
@@ -231,7 +231,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         answeringAfter != null &&
         view.messages.any(
           (message) =>
-              message.id > answeringAfter &&
+              message.id.compareTo(answeringAfter) > 0 &&
               message.role == MessageRole.assistant,
         )) {
       _streaming = false;
@@ -407,7 +407,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   LlmCancelToken _beginReply({required bool retrying}) {
     final cancel = LlmCancelToken();
     _cancelToken = cancel;
-    _answeringAfterMessageId = _messages.lastOrNull?.id ?? 0;
+    _answeringAfterMessageId = _messages.lastOrNull?.id ?? '';
     _streamingText.value = '';
     _pendingStreamText = null;
     setState(() {
@@ -429,7 +429,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 重试只补回答；[retryable] 为假时不显示重试入口，因为原问题也没有保存。
   void _failReply(
     String reason, {
-    int? fallbackConversationId,
+    String? fallbackConversationId,
     bool retryable = true,
   }) {
     if (!mounted) return;
@@ -450,7 +450,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   void _endReply(
     LlmCancelToken cancel, {
     required bool retrying,
-    int? activityId,
+    String? activityId,
   }) {
     if (activityId != null) DiscussionActivity.end(activityId);
     if (identical(_cancelToken, cancel)) _cancelToken = null;
@@ -470,7 +470,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final submittedDraft = _input.text;
     if (text.isEmpty && _picked.isEmpty) return;
     final cancel = _beginReply(retrying: false);
-    int? generatingId;
+    String? generatingId;
     void handleUserMessage(ChatMessage message) {
       generatingId = message.conversationId;
       DiscussionActivity.begin(generatingId!);
@@ -731,7 +731,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         timing = await showZhixinDialog<BlockDraft>(
           context: context,
           builder: (_) => BlockDialog(
-            items: [PlanItem(id: 0, title: suggestion.draft.title)],
+            items: [PlanItem(id: '', title: suggestion.draft.title)],
             initialMinutes: suggestion.draft.minutes,
           ),
         );
@@ -835,12 +835,13 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 记忆卡片与撤销之后由订阅更新页面，公共流程里的这次重读不再发起。
   Future<void> _acceptMemory(MemoryItemView item) async {
     final id = _conversationId;
-    if (id == null) return;
+    final messageId = item.messageId;
+    if (id == null || messageId == null) return;
     await acceptMemoryCard(
       context: context,
       accept: () => AppScope.of(context).chat.discussion.acceptMemoryItem(
         conversationId: id,
-        messageId: item.ownerId,
+        messageId: messageId,
         itemId: item.itemId,
       ),
       scope: 'discussion',
@@ -850,12 +851,13 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final id = _conversationId;
-    if (id == null) return;
+    final messageId = item.messageId;
+    if (id == null || messageId == null) return;
     await dismissMemoryCard(
       context: context,
       dismiss: () => AppScope.of(context).chat.discussion.dismissMemoryItem(
         conversationId: id,
-        messageId: item.ownerId,
+        messageId: messageId,
         itemId: item.itemId,
       ),
       scope: 'discussion',

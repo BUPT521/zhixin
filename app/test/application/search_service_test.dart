@@ -25,7 +25,7 @@ List<EvidenceHit> _hits(SearchResults results) => [
 EvidenceHit _singleHit(SearchResults results, EvidenceKind kind) =>
     _hits(results).singleWhere((hit) => hit.kind == kind);
 
-String _conversationKey(int id) => 'conversation:$id';
+String _conversationKey(String id) => 'conversation:$id';
 
 Iterable<int?> _materialPages(SearchResults results) =>
     _hits(results)
@@ -225,7 +225,7 @@ void main() {
       evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
     final base = DateTime(2026, 10, 1);
-    final ids = <int>[];
+    final ids = <String>[];
     for (var index = 0; index < 60; index++) {
       final conversation = await conversations.create(title: '矩阵讨论 $index');
       ids.add(conversation);
@@ -406,7 +406,7 @@ void main() {
         content: '矩阵的第 $index 个问题',
       );
     }
-    final ids = <int>[noisy];
+    final ids = <String>[noisy];
     for (var index = 0; index < 24; index++) {
       final conversation = await conversations.create(title: '其他矩阵 $index');
       ids.add(conversation);
@@ -484,7 +484,7 @@ void main() {
     final search = SearchService(
       evidence: EvidenceService(repository: EvidenceRepository(db)),
     );
-    final localIds = <int>[];
+    final localIds = <String>[];
     for (var index = 0; index < 25; index++) {
       final id = await conversations.create(title: '矩阵记录 $index');
       localIds.add(id);
@@ -494,7 +494,7 @@ void main() {
         content: '矩阵记录 $index',
       );
     }
-    final semanticIds = <int>[];
+    final semanticIds = <String>[];
     for (var index = 0; index < 3; index++) {
       final id = await conversations.create(title: '语义记录 $index');
       semanticIds.add(id);
@@ -508,7 +508,7 @@ void main() {
       for (var index = 0; index < semanticIds.length; index++)
         EvidenceHit(
           kind: EvidenceKind.message,
-          identity: 'message:${1000 + index}',
+          identity: 'message:msg-${1000 + index}',
           title: '语义记录 $index',
           snippet: '线性无关 $index',
           matchedText: '线性无关 $index',
@@ -517,7 +517,7 @@ void main() {
           score: Score.clamp(0.5),
           location: EvidenceLocation(
             conversationId: semanticIds[index],
-            messageId: 1000 + index,
+            messageId: 'msg-${1000 + index}',
           ),
         ),
     ];
@@ -558,7 +558,7 @@ void main() {
   });
 
   test('接上下一页时按来源标识去重，已经显示过的记录不再出现', () {
-    EvidenceHit hit(int id) => EvidenceHit(
+    EvidenceHit hit(String id) => EvidenceHit(
       kind: EvidenceKind.message,
       identity: 'message:$id',
       title: '矩阵讨论',
@@ -566,10 +566,13 @@ void main() {
       matchedText: '矩阵记录 $id',
       literal: false,
       score: Score.clamp(0.5),
-      location: EvidenceLocation(conversationId: id, messageId: id),
+      location: EvidenceLocation(conversationId: id, messageId: 'msg-$id'),
     );
-    SearchEntry entry(int id) =>
-        SearchEntry(key: _conversationKey(id), hits: [hit(id)], localRank: id);
+    SearchEntry entry(int id) => SearchEntry(
+      key: _conversationKey('conv-$id'),
+      hits: [hit('conv-$id')],
+      localRank: id,
+    );
     final first = SearchResults(
       query: '矩阵',
       entries: [entry(1), entry(2)],
@@ -585,9 +588,9 @@ void main() {
 
     final merged = first.append(next);
     expect(merged.entries.map((entry) => entry.key), [
-      'conversation:1',
-      'conversation:2',
-      'conversation:3',
+      'conversation:conv-1',
+      'conversation:conv-2',
+      'conversation:conv-3',
     ]);
     expect(merged.hasMore, isFalse);
     expect(merged.nextOffset, 3);

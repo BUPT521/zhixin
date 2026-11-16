@@ -33,7 +33,7 @@ ChatMessagePayload sample() => ChatMessagePayload(
   ],
   citations: const [
     Citation(
-      materialId: 1,
+      materialId: 'mat-1',
       pageNo: 7,
       quote: '条件概率是已知一个事件发生时，另一个事件发生的概率。',
       verified: true,

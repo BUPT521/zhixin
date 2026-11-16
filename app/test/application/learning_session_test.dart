@@ -4,39 +4,42 @@ import 'package:zhixin/domain/models/question.dart';
 import 'package:zhixin/domain/models/study.dart';
 
 Attempt _attempt(
-  int id, {
+  String id, {
   bool? correct,
   String? feedback,
   bool submitted = true,
 }) {
   return Attempt(
     id: id,
-    conversationId: 1,
+    conversationId: 'conv-1',
     isCorrect: correct,
     feedback: feedback,
-    submittedAt: submitted ? DateTime(2026, 11, 7, 20, id) : null,
+    submittedAt: submitted ? DateTime(2026, 11, 7, 20) : null,
   );
 }
 
 void main() {
   test('场次结果按最新的已提交尝试推出', () {
     expect(deriveSessionOutcome(const []), isNull);
-    expect(deriveSessionOutcome([_attempt(1, submitted: false)]), isNull);
     expect(
-      deriveSessionOutcome([_attempt(1, correct: true)]),
+      deriveSessionOutcome([_attempt('attempt-1', submitted: false)]),
+      isNull,
+    );
+    expect(
+      deriveSessionOutcome([_attempt('attempt-1', correct: true)]),
       SessionOutcome.done,
     );
     expect(
       deriveSessionOutcome([
-        _attempt(2, correct: false),
-        _attempt(1, correct: true),
+        _attempt('attempt-2', correct: false),
+        _attempt('attempt-1', correct: true),
       ]),
       SessionOutcome.partial,
     );
     expect(
       deriveSessionOutcome([
-        _attempt(2, correct: false),
-        _attempt(1, correct: false),
+        _attempt('attempt-2', correct: false),
+        _attempt('attempt-1', correct: false),
       ]),
       SessionOutcome.notDone,
     );
@@ -45,9 +48,9 @@ void main() {
   test('未提交的尝试不参与结果，最新的提交以编号为准', () {
     expect(
       deriveSessionOutcome([
-        _attempt(3, submitted: false),
-        _attempt(2, correct: true),
-        _attempt(1, correct: false),
+        _attempt('attempt-3', submitted: false),
+        _attempt('attempt-2', correct: true),
+        _attempt('attempt-1', correct: false),
       ]),
       SessionOutcome.done,
     );
@@ -55,12 +58,18 @@ void main() {
 
   test('暂不判断的作答不推出结果，也不当成答错', () {
     expect(
-      deriveSessionOutcome([_attempt(2), _attempt(1, correct: false)]),
+      deriveSessionOutcome([
+        _attempt('attempt-2'),
+        _attempt('attempt-1', correct: false),
+      ]),
       SessionOutcome.notDone,
     );
-    expect(deriveSessionOutcome([_attempt(1)]), isNull);
+    expect(deriveSessionOutcome([_attempt('attempt-1')]), isNull);
     expect(
-      deriveSessionOutcome([_attempt(2), _attempt(1, correct: true)]),
+      deriveSessionOutcome([
+        _attempt('attempt-2'),
+        _attempt('attempt-1', correct: true),
+      ]),
       SessionOutcome.done,
     );
   });
@@ -69,9 +78,9 @@ void main() {
     expect(deriveSessionSummary(const []), isNull);
     expect(
       deriveSessionSummary([
-        _attempt(3, correct: true),
-        _attempt(2, correct: false, feedback: '放缩方向还不确定'),
-        _attempt(1, correct: false, feedback: '更早的卡点'),
+        _attempt('attempt-3', correct: true),
+        _attempt('attempt-2', correct: false, feedback: '放缩方向还不确定'),
+        _attempt('attempt-1', correct: false, feedback: '更早的卡点'),
       ]),
       '放缩方向还不确定',
     );

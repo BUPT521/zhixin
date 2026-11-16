@@ -7,7 +7,7 @@ import 'package:zhixin/domain/models/question.dart';
 
 import '../support/test_db.dart';
 
-Future<int> _record(
+Future<String> _record(
   ConversationRepository conversations,
   AttemptRepository attempts, {
   String stem = '',
@@ -176,7 +176,7 @@ void main() {
     expect(photo.displayStem, '图片题目');
     expect(photo.imagePaths, ['m-1.jpg']);
 
-    expect(await conversations.question(textId + 999), isNull);
+    expect(await conversations.question('conv-missing'), isNull);
   });
 
   test('同时开始作答只留下一条未提交草稿', () async {

@@ -4,6 +4,7 @@ import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 
 import '../../domain/models/assessment.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/write_transactions.dart';
@@ -15,8 +16,8 @@ class AssessmentRepository {
   final RawDatabase _db;
   final Clock _clock;
 
-  Future<int> add({
-    required int attemptId,
+  Future<String> add({
+    required String attemptId,
     required AssessmentKind kind,
     required String result,
     String? basis,
@@ -25,10 +26,18 @@ class AssessmentRepository {
     final text = result.trim();
     if (text.isEmpty) throw ArgumentError('判断内容不能为空');
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).writeGenerated(
-      (db) =>
-          db.insertAssessment(attemptId, kind.value, text, basis?.trim(), now),
+    final id = newUuidV7();
+    await writeExecutor(transaction, _db).writeGenerated(
+      (db) => db.insertAssessment(
+        id,
+        attemptId,
+        kind.value,
+        text,
+        basis?.trim(),
+        now,
+      ),
     );
+    return id;
   }
 
   /// 草稿里的核对依据：有内容时写进这次尝试，清空时删掉，提交时沿用同一条。
@@ -44,7 +53,7 @@ class AssessmentRepository {
   );
 
   Future<void> saveUserBasisDraft(
-    int attemptId,
+    String attemptId,
     String? result, {
     WriteTransaction? transaction,
   }) async {
@@ -74,6 +83,7 @@ class AssessmentRepository {
     if (ids.isEmpty) {
       await writer.writeGenerated(
         (db) => db.insertAssessment(
+          newUuidV7(),
           attemptId,
           AssessmentKind.user.value,
           text,
@@ -95,7 +105,7 @@ class AssessmentRepository {
     }
   }
 
-  Future<List<Assessment>> forAttempt(int attemptId) async {
+  Future<List<Assessment>> forAttempt(String attemptId) async {
     final rows = await _db.selectGenerated(
       (db) => db.assessmentsForAttempt(attemptId).get(),
     );
@@ -103,12 +113,14 @@ class AssessmentRepository {
   }
 
   /// 一次学习里多次作答的判断，按尝试编号分组给界面用。
-  Future<Map<int, List<Assessment>>> forAttempts(List<int> attemptIds) async {
+  Future<Map<String, List<Assessment>>> forAttempts(
+    List<String> attemptIds,
+  ) async {
     if (attemptIds.isEmpty) return const {};
     final rows = await _db.selectGenerated(
       (db) => db.assessmentsForAttempts(jsonEncode(attemptIds)).get(),
     );
-    final result = <int, List<Assessment>>{};
+    final result = <String, List<Assessment>>{};
     for (final row in rows) {
       final assessment = _assessmentOf(row);
       result.putIfAbsent(assessment.attemptId, () => []).add(assessment);
@@ -116,7 +128,10 @@ class AssessmentRepository {
     return result;
   }
 
-  Future<Assessment?> latestOfKind(int attemptId, AssessmentKind kind) async {
+  Future<Assessment?> latestOfKind(
+    String attemptId,
+    AssessmentKind kind,
+  ) async {
     final row = await _db.selectGenerated(
       (db) =>
           db.latestAssessmentOfKind(attemptId, kind.value).getSingleOrNull(),

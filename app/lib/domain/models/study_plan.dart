@@ -73,13 +73,13 @@ class StudyPlan {
     this.updatedAt,
   });
 
-  final int id;
+  final String id;
   final String title;
-  final int? materialId;
-  final int? goalId;
+  final String? materialId;
+  final String? goalId;
 
   /// 从哪条讨论开始这份学习；为空表示直接从材料建立。
-  final int? conversationId;
+  final String? conversationId;
   final int? pageFrom;
   final int? pageTo;
 

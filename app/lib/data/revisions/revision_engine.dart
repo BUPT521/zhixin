@@ -1211,6 +1211,11 @@ class RevisionEngine {
       if (size > maxBytes) {
         // 删除后的页空间不会自动归还；预算判断前先回收一次。
         await db.execute('VACUUM');
+        // VACUUM 可能重排没有显式整数主键的表的隐式 rowid，关键词索引按 rowid
+        // 关联（ADR-0018），回收之后按当前数据重建一次。
+        for (final index in ftsIndexes) {
+          await rebuildFtsIndex(db, index);
+        }
         size = await databaseBytes(db);
       }
       if (size <= maxBytes || keep <= 1) {
