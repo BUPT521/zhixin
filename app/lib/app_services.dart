@@ -3,6 +3,7 @@ import 'application/capacity_service.dart';
 import 'application/continue_service.dart';
 import 'application/context_service.dart';
 import 'application/discussion_service.dart';
+import 'application/embedding_settings.dart';
 import 'application/learning_service.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
@@ -15,7 +16,6 @@ import 'application/study_plan_service.dart';
 import 'application/undo_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/revisions/revision_service.dart';
-import 'data/vector/embedding_config_store.dart';
 import 'plugins/persona/persona_catalog.dart';
 import 'plugins/runtime/plugin_runtime.dart';
 
@@ -105,7 +105,7 @@ class SettingsServices {
   });
 
   final SettingsService edit;
-  final EmbeddingConfigStore embedding;
+  final EmbeddingSettingsService embedding;
 
   final BuddyAi Function() aiFactory;
 

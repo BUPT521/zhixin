@@ -71,7 +71,7 @@ lib/
 
 ### 下一阶段的模块化建议
 
-建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供七组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及把 `plan_page.dart` 的页签继续拆开（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 的页面重读已经换成订阅）。
+建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供七组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口，语义索引配置经 `application/embedding_settings.dart` 保存与应用。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及把 `plan_page.dart` 的页签继续拆开（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 的页面重读已经换成订阅）。
 
 1. **第一批从安排开始，周视图与读取状态已经拆开。** `plan_page.dart` 原先同时控制周视图、预约与改期、事项列表和页面刷新；现在周视图移到 `plan_week_view.dart`，只接收当前周的数据与选周、点击回调，并自己创建、更新与释放日历的事件控制器，页面只保存当前目标周并订阅 `PlanService.watchWeek` 一条流，换周时换一条新流（原 `application/plan_week_reader.dart` 的请求编号与过期结果判断已随订阅下线）。预约冲突检查、整组顺延与撤销沿用现有事务入口，首批以周切换状态、固定安排冲突和一次操作对应一条可撤销提交验收。
 2. **随后收拢讨论与作答的回答入口。** `BuddyTimeline` 已经共用消息与回执展示，讨论和作答仍分别维护模型请求、失败兜底与写回流程，可以先共用回答请求的取消、失败分类和数据代次检查，同时让两个用例继续各自保存讨论消息、作答帮助与判断。`LlmClient` 的三种请求格式与流式解码适合按协议整理，`AgentLoop` 继续统一控制整轮预算、重试和工具调用顺序；这一批以无模型可用、停止生成、工具续接及恢复后拒绝旧回答为验收场景。

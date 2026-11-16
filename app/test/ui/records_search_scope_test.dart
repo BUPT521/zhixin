@@ -379,9 +379,8 @@ void main() {
     // 已经配置了嵌入来源，但向量索引根目录的位置被一个同名文件占住，索引打开
     // 时无法创建目录，读取索引状态因此失败。
     await tester.runAsync(() async {
-      scope!.applyEmbeddingConfig(
+      scope!.settings.embedding.apply(
         const EmbeddingConfig(enabled: true, provider: 'local', dim: 4),
-        refresh: false,
       );
       final path = scope!.paths.vectorIndexPath;
       final existing = Directory(path);

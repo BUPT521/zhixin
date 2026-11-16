@@ -172,8 +172,9 @@ class AppScopeState extends State<AppScope> {
     SecureSecretStore(),
   );
 
-  /// 当前嵌入配置；启动时读取，设置页保存之后由应用根重新应用。
-  EmbeddingConfig? embeddingConfig;
+  /// 语义索引配置的唯一入口：页面保存一次，应用根启动时恢复一次。
+  late final EmbeddingSettingsService _embeddingSettings =
+      EmbeddingSettingsService(store: _embeddingStore, semantic: _semantic);
 
   SemanticIndexService? __semantic;
 
@@ -217,7 +218,7 @@ class AppScopeState extends State<AppScope> {
     memory: MemoryServices(edit: _memoryEdit, proposals: _proposals),
     settings: SettingsServices(
       edit: _settingsEdit,
-      embedding: _embeddingStore,
+      embedding: _embeddingSettings,
       aiFactory: () => _ai,
     ),
     data: DataServices(
@@ -478,11 +479,12 @@ class AppScopeState extends State<AppScope> {
       clock: clock,
     );
     _restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
-    embeddingConfig = await _embeddingStore.read();
+    final embeddingConfig = await _embeddingSettings.read();
+    _embeddingSettings.apply(embeddingConfig);
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
     // 向量库的打开、初始化 zvec 引擎与建表都在后台 isolate 里进行，首帧只发起
     // 请求，不等待它完成。
-    applyEmbeddingConfig(embeddingConfig);
+    if (_embeddingSettings.configured) _refreshSemanticIndexNow();
     // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
     // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
     _scheduleAttachmentMaintenance();
@@ -516,18 +518,6 @@ class AppScopeState extends State<AppScope> {
     } catch (error, stack) {
       // 补建失败不打断使用：缺图的位置已经按“找不到图片”显示，下次再补。
       crashLog.record(error, stack, kind: 'rebuild_attachments');
-    }
-  }
-
-  /// 应用一套嵌入配置：换掉嵌入来源，清掉旧模型对应的索引，再在后台补建。
-  ///
-  /// 没有配置或关闭语义索引时不读向量库，回答前后的原文与关键词检索照常。
-  void applyEmbeddingConfig(EmbeddingConfig? config, {bool refresh = true}) {
-    embeddingConfig = config;
-    final embedding = embeddingRuntime(config);
-    _semantic.configure(client: embedding.client, canSend: embedding.canSend);
-    if (refresh && _semantic.configured) {
-      _refreshSemanticIndexNow();
     }
   }
 

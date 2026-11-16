@@ -163,7 +163,6 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     });
     try {
       await scope.settings.embedding.save(config);
-      scope.applyEmbeddingConfig(config, refresh: false);
       await _refresh(scope);
     } catch (error, stack) {
       if (!mounted) return;
