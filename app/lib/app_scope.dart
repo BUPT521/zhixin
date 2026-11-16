@@ -385,9 +385,6 @@ class AppScopeState extends State<AppScope> {
     markPendingWorkInvalidated: () => _operationEpoch++,
     notifyDataChanged: () {
       dataVersion.value++;
-      // 整库恢复、导入与清空换掉了数据：订阅中的页面按全部表重读一次
-      // （ADR-0014 第 3 条）。
-      _db.notifyAllTables();
       _refreshSemanticIndex();
     },
     recordFailure: (error, stack, {required kind}) =>
@@ -556,8 +553,6 @@ class AppScopeState extends State<AppScope> {
   Future<void> _invalidatePendingWork() async {
     _operationEpoch++;
     dataVersion.value++;
-    // 版本恢复与单项撤销换掉了当前数据，订阅中的页面按全部表重读一次。
-    _db.notifyAllTables();
     _refreshSemanticIndex();
   }
 
