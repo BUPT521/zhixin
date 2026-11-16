@@ -48,7 +48,7 @@ class PlanWeek {
   /// 全部目标，当前有效的排在前面；可以同时有多个。
   final List<LearningGoal> goals;
 
-  LearningGoal? goalById(int? id) {
+  LearningGoal? goalById(String? id) {
     if (id == null) return null;
     return goals.where((goal) => goal.id == id).firstOrNull;
   }
@@ -103,8 +103,8 @@ class PlanService {
   Future<List<LearningGoal>> activeGoals() => tasks.activeGoals();
 
   /// 每个未完成事项接下来的一次预约；系统学习页据此显示下次安排。
-  Future<Map<int, ScheduleBlock>> nextBlocksForItems(
-    Iterable<int> planItemIds,
+  Future<Map<String, ScheduleBlock>> nextBlocksForItems(
+    Iterable<String> planItemIds,
   ) => schedule.nextBlocksForItems(planItemIds, runtime.policy.now);
 
   /// 回执与撤销都读提交历史，不再维护单独的操作日志。
@@ -149,7 +149,7 @@ class PlanService {
     final steps = await studyPlans.stepsForPlans(
       plans.where((plan) => !plan.done).map((plan) => plan.id),
     );
-    final stepsByPlan = <int, List<PlanItem>>{};
+    final stepsByPlan = <String, List<PlanItem>>{};
     for (final step in steps) {
       final planId = step.studyPlanId;
       if (planId == null) continue;
@@ -199,7 +199,7 @@ class PlanService {
       tasks.doneItems(limit: limit, offset: offset);
 
   /// 按编号读一项事项；周视图点到的预约可能不在本页读回的事项里。
-  Future<PlanItem?> itemById(int id) => tasks.byId(id);
+  Future<PlanItem?> itemById(String id) => tasks.byId(id);
 
   /// 安排页只展示真正写入了记忆或学习事项的提交；只有卡片状态变化、没有
   /// 数据写入的提交不算改动。其他写入在数据版本页按完整历史查看。
@@ -215,7 +215,7 @@ class PlanService {
   /// 编号按草稿内容生成，同一份草稿连点两次只形成一条提交。
   Future<WriteResult> addItem({
     required String title,
-    int? goalId,
+    String? goalId,
     String? note,
     DateTime? dueAt,
     int? minutes,
@@ -271,7 +271,10 @@ class PlanService {
   /// 待取消的预约在事务内按目标重新读取，再用一条语句一起取消，最后才改目标
   /// 状态；中途失败时这次事务整体回滚，不会留下已经取消的预约与仍在进行中的
   /// 目标。
-  Future<WriteResult> pauseGoal(int id, {bool cancelFlexibleFuture = false}) {
+  Future<WriteResult> pauseGoal(
+    String id, {
+    bool cancelFlexibleFuture = false,
+  }) {
     final now = runtime.policy.now;
     return transactions.run((txn) async {
       if (cancelFlexibleFuture) {
@@ -290,14 +293,14 @@ class PlanService {
     }, label: '暂停目标');
   }
 
-  Future<WriteResult> resumeGoal(int id) {
+  Future<WriteResult> resumeGoal(String id) {
     return transactions.run((txn) async {
       await tasks.resumeGoal(id, transaction: txn);
       return txn.result();
     }, label: '恢复目标');
   }
 
-  Future<WriteResult> closeGoal(int id) {
+  Future<WriteResult> closeGoal(String id) {
     return transactions.run((txn) async {
       await tasks.closeGoal(id, transaction: txn);
       return txn.result();
@@ -305,7 +308,7 @@ class PlanService {
   }
 
   /// 目标下未开始的弹性安排数量，暂停前用于说明会取消什么。
-  Future<int> flexibleFutureCount(int goalId) async {
+  Future<int> flexibleFutureCount(String goalId) async {
     final blocks = await schedule.flexibleFutureBlocksForGoal(
       goalId,
       runtime.policy.now,
@@ -318,7 +321,7 @@ class PlanService {
   ///
   /// 状态迁移不用请求编号去重：同一个目标状态可能被多次进入（完成后改回、
   /// 再完成），按编号去重会把后续动作误判成重试。
-  Future<WriteResult> setStatus(int id, PlanItemStatus status) =>
+  Future<WriteResult> setStatus(String id, PlanItemStatus status) =>
       transactions.run((txn) async {
         final current = await tasks.byId(id, transaction: txn);
         if (current == null) return const WriteResult.skipped('这项事项已不存在');
@@ -329,7 +332,7 @@ class PlanService {
         return txn.result();
       }, label: '更新事项状态');
 
-  Future<WriteResult> setPriority(int id, int priority) =>
+  Future<WriteResult> setPriority(String id, int priority) =>
       transactions.run((txn) async {
         await tasks.setPriority(id, priority, transaction: txn);
         return txn.result();
@@ -340,7 +343,7 @@ class PlanService {
   /// 单条预约原先只写时间块，不回到提示条，也不出现在提交历史之外的入口；
   /// 现在与整组顺延一样在事务里写入并带回编号，撤销时按提交回放。
   Future<WriteResult> scheduleItem({
-    required int planItemId,
+    required String planItemId,
     required DateTime start,
     required DateTime end,
     PlanItemSource source = PlanItemSource.user,
@@ -364,7 +367,7 @@ class PlanService {
 
   /// 改一次预约的时间；与单条预约一样返回写结果。
   Future<WriteResult> moveBlock(
-    int id, {
+    String id, {
     required DateTime start,
     required DateTime end,
   }) {
@@ -390,21 +393,21 @@ class PlanService {
   }
 
   /// 取消、恢复、固定与删除预约各自形成一次可撤销的提交。
-  Future<WriteResult> setBlockStatus(int id, ScheduleBlockStatus status) {
+  Future<WriteResult> setBlockStatus(String id, ScheduleBlockStatus status) {
     return transactions.run((txn) async {
       await schedule.setBlockStatus(id, status, transaction: txn);
       return txn.result();
     }, label: '修改预约状态');
   }
 
-  Future<WriteResult> deleteBlock(int id) {
+  Future<WriteResult> deleteBlock(String id) {
     return transactions.run((txn) async {
       await schedule.deleteBlock(id, transaction: txn);
       return txn.result();
     }, label: '删除预约');
   }
 
-  Future<WriteResult> setBlockLocked(int id, bool locked) {
+  Future<WriteResult> setBlockLocked(String id, bool locked) {
     return transactions.run((txn) async {
       await schedule.setLocked(id, locked, transaction: txn);
       return txn.result();
@@ -443,7 +446,7 @@ class PlanService {
   }
 
   /// 删除一节课；返回写结果，提示条据此提供撤销。
-  Future<WriteResult> deleteTimetable(int id) {
+  Future<WriteResult> deleteTimetable(String id) {
     return transactions.run((txn) async {
       await schedule.deleteTimetable(id, transaction: txn);
       return txn.result();

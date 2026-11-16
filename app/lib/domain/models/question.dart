@@ -21,7 +21,7 @@ class Question {
   });
 
   /// 学习记录的标识。
-  final int id;
+  final String id;
   final String stem;
   final String? sourceRef;
   final String? contextText;
@@ -30,7 +30,7 @@ class Question {
   final DateTime? updatedAt;
 
   /// 讨论标识就是记录本身；保留这个读法，调用方不必区分两者。
-  int get conversationId => id;
+  String get conversationId => id;
 
   bool get hasImages => imagePaths.isNotEmpty;
 
@@ -83,14 +83,14 @@ class Attempt {
     this.createdAt,
   });
 
-  final int id;
+  final String id;
 
   /// 这次作答属于哪条学习记录。
-  final int conversationId;
-  final int? sessionId;
+  final String conversationId;
+  final String? sessionId;
 
   /// 独立重做时被复查的那次已提交作答；为空表示普通作答。
-  final int? redoOfAttemptId;
+  final String? redoOfAttemptId;
   final String? userAnswer;
 
   /// 单独保存的解法；不覆盖答案、帮助与困难。

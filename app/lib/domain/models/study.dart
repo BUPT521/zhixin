@@ -55,7 +55,7 @@ class LearningGoal {
     this.updatedAt,
   });
 
-  final int id;
+  final String id;
   final String title;
   final String? scopeText;
   final String? dueDate;
@@ -112,14 +112,14 @@ class PlanItem {
     this.updatedAt,
   });
 
-  final int id;
-  final int? goalId;
+  final String id;
+  final String? goalId;
 
   /// 由哪条讨论接受而来；为空表示不是从讨论里保存的。
-  final int? conversationId;
+  final String? conversationId;
 
   /// 所属系统学习计划；为空表示是独立的学习事项。
-  final int? studyPlanId;
+  final String? studyPlanId;
 
   /// 在系统学习计划中的顺序；独立事项为空。
   final int? seq;
@@ -165,12 +165,12 @@ class StudySession {
     this.endedAt,
   });
 
-  final int id;
-  final int? goalId;
-  final int? planItemId;
+  final String id;
+  final String? goalId;
+  final String? planItemId;
 
   /// 这次学习属于哪一条学习记录；链路入口不同也按记录区分场次。
-  final int? conversationId;
+  final String? conversationId;
   final String? summary;
 
   /// 场次结果；未结束时为空。
@@ -215,8 +215,8 @@ class ScheduleBlock {
     this.locked = false,
   });
 
-  final int id;
-  final int planItemId;
+  final String id;
+  final String planItemId;
   final DateTime startAt;
   final DateTime endAt;
 
@@ -260,7 +260,7 @@ class TimetableEntry {
     this.location,
   });
 
-  final int id;
+  final String id;
   final int weekday;
   final String startTime;
   final String endTime;

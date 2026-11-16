@@ -1,11 +1,12 @@
 /// 用户从查找结果带入本次回答的来源；只对下一次回答有效。
 ///
-/// 来源按业务标识记录，例如 `attempt:12`、`message:88`、
-/// `material_page:3:7`。讨论页发送时读取这份标识并随本轮请求交给检索，
-/// 回答结束后清空，因此带入不会写进讨论、记录或下一轮上下文。
+/// 来源按业务标识记录，形如 `attempt:<uuid>`、`message:<uuid>`、
+/// `material_page:<uuid>:7`（主键是 UUIDv7 文本，材料页另带整数页码，
+/// ADR-0018）。讨论页发送时读取这份标识并随本轮请求交给检索，回答结束后
+/// 清空，因此带入不会写进讨论、记录或下一轮上下文。
 class BroughtSources {
   static final _identity = RegExp(
-    r'^(material_page:\d+:\d+|message:\d+|question:\d+|attempt:\d+)$',
+    r'^(material_page:[0-9a-z-]+:\d+|message:[0-9a-z-]+|question:[0-9a-z-]+|attempt:[0-9a-z-]+)$',
   );
 
   final _identities = <String>{};

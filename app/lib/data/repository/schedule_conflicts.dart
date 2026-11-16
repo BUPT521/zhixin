@@ -27,7 +27,7 @@ Future<ScheduleConflict?> findScheduleConflict(
   RawExecutor executor, {
   required DateTime start,
   required DateTime end,
-  Set<int> ignoredBlockIds = const {},
+  Set<String> ignoredBlockIds = const {},
 }) async {
   _requireInterval(start, end);
   final block = await _findBlockConflict(
@@ -153,7 +153,7 @@ Future<ScheduleConflict?> _findBlockConflict(
   RawExecutor executor, {
   required DateTime start,
   required DateTime end,
-  required Set<int> ignoredBlockIds,
+  required Set<String> ignoredBlockIds,
 }) async {
   final rows = await executor.selectGenerated(
     (db) => db

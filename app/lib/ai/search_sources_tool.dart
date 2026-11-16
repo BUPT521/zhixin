@@ -20,7 +20,7 @@ AgentTool searchSourcesReader(
   SourceSearch search, {
   required AgentReadBudget budget,
   required List<CitationSource> providedSources,
-  required Map<(int, int), MaterialHit> pages,
+  required Map<(String, int), MaterialHit> pages,
 }) {
   final reader = _SourceReader(
     search: search,
@@ -70,7 +70,7 @@ class _SourceReader {
   final List<CitationSource> providedSources;
 
   /// 补搜到的材料页加进本轮可补读的页，模型可以继续用材料读取工具分段读原文。
-  final Map<(int, int), MaterialHit> pages;
+  final Map<(String, int), MaterialHit> pages;
   var _calls = 0;
 
   Future<AgentToolResult> read(String query) async {

@@ -120,11 +120,11 @@ class SemanticLocator {
 
   final String kind;
   final String sourceKey;
-  final int? conversationId;
-  final int? messageId;
-  final int? materialId;
+  final String? conversationId;
+  final String? messageId;
+  final String? materialId;
   final int? pageNo;
-  final int? attemptId;
+  final String? attemptId;
 
   Map<String, Object?> toJson() => {
     'kind': kind,
@@ -146,11 +146,11 @@ class SemanticLocator {
       return SemanticLocator(
         kind: kind,
         sourceKey: sourceKey,
-        conversationId: value['conversation_id'] as int?,
-        messageId: value['message_id'] as int?,
-        materialId: value['material_id'] as int?,
+        conversationId: value['conversation_id'] as String?,
+        messageId: value['message_id'] as String?,
+        materialId: value['material_id'] as String?,
         pageNo: value['page_no'] as int?,
-        attemptId: value['attempt_id'] as int?,
+        attemptId: value['attempt_id'] as String?,
       );
     } catch (_) {
       return null;

@@ -76,15 +76,15 @@ enum MemoryRecallPurpose {
 }
 
 /// 记忆适用范围：有归属时写 `goal:<id>`，只带入材料时写 `material:<id>`。
-String memoryGoalScope(int goalId) => 'goal:$goalId';
+String memoryGoalScope(String goalId) => 'goal:$goalId';
 
-String memoryMaterialScope(int materialId) => 'material:$materialId';
+String memoryMaterialScope(String materialId) => 'material:$materialId';
 
 /// 一次回答或一条记忆的适用范围：目标优先，其次材料，都没有时是全局。
 ///
 /// 讨论、作答、上下文组装与建议草案原先各写一遍同样的判定，放宽或收紧只在
 /// 这里改；全局范围用空值表示。
-String? memoryScopeFor({int? goalId, int? materialId}) {
+String? memoryScopeFor({String? goalId, String? materialId}) {
   if (goalId != null) return memoryGoalScope(goalId);
   if (materialId != null) return memoryMaterialScope(materialId);
   return null;
@@ -108,14 +108,14 @@ class Memory {
     this.updatedAt,
   });
 
-  final int id;
+  final String id;
   final MemoryKind kind;
   final String content;
   final String? scope;
 
   /// 这条记忆从哪来；界面按 [MemorySourceKind.label] 显示。
   final MemorySourceKind sourceKind;
-  final int? sourceId;
+  final String? sourceId;
   final DateTime? validUntil;
 
   /// 当前状态；[active] 只表示还在用，删掉的仍留在库里。

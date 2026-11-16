@@ -6,6 +6,7 @@ import '../db/raw_executor.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 
 /// 一次学习（01 `study_session`）：从搭子、题目或日程开始，多次尝试共用一个结果。
@@ -16,14 +17,16 @@ class StudyRepository {
   final Clock _clock;
 
   Future<StudySession> start({
-    int? goalId,
-    int? planItemId,
-    int? conversationId,
+    String? goalId,
+    String? planItemId,
+    String? conversationId,
     WriteTransaction? transaction,
   }) async {
     final now = _clock();
-    final id = await writeExecutor(transaction, _db).writeGenerated(
+    final id = newUuidV7();
+    await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertStudySession(
+        id,
         goalId,
         planItemId,
         conversationId,
@@ -52,20 +55,20 @@ class StudyRepository {
   );
 
   Future<StudySession?> openFor({
-    int? goalId,
-    int? planItemId,
-    int? conversationId,
+    String? goalId,
+    String? planItemId,
+    String? conversationId,
     WriteTransaction? transaction,
   }) async {
     final row = await writeExecutor(transaction, _db).selectGenerated(
       (db) => db
-          .openStudySession(conversationId ?? 0, planItemId ?? 0, goalId ?? 0)
+          .openStudySession(conversationId, planItemId, goalId)
           .getSingleOrNull(),
     );
     return row == null ? null : _sessionOf(row);
   }
 
-  Future<StudySession?> byId(int id, {WriteTransaction? transaction}) async {
+  Future<StudySession?> byId(String id, {WriteTransaction? transaction}) async {
     final row = await writeExecutor(
       transaction,
       _db,
@@ -74,7 +77,7 @@ class StudyRepository {
   }
 
   Future<void> end(
-    int id, {
+    String id, {
     SessionOutcome? outcome,
     String? summary,
     WriteTransaction? transaction,
@@ -97,7 +100,7 @@ class StudyRepository {
   /// [limit] 为空时返回这个目标的全部已结束场次，避免同一困难隔了很多次
   /// 学习再出现时被固定条数漏掉。
   Future<List<StudySession>> recentForGoal(
-    int goalId, {
+    String goalId, {
     int? limit = 20,
   }) async {
     final rows = await _db.selectGenerated(
@@ -110,15 +113,15 @@ class StudyRepository {
   ///
   /// 步骤卡用它显示完成时间、这次结果与困难摘要，不按步骤逐条查库；同一
   /// 步骤有多次学习时保留结束时间最晚的一条。
-  Future<Map<int, StudySession>> latestEndedByPlanItem(
-    Iterable<int> planItemIds,
+  Future<Map<String, StudySession>> latestEndedByPlanItem(
+    Iterable<String> planItemIds,
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
     if (ids.isEmpty) return const {};
     final rows = await _db.selectGenerated(
       (db) => db.endedStudySessionsForPlanItems(jsonEncode(ids)).get(),
     );
-    final result = <int, StudySession>{};
+    final result = <String, StudySession>{};
     for (final row in rows) {
       final session = _sessionOf(row);
       final planItemId = session.planItemId;

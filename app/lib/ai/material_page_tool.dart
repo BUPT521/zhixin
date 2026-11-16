@@ -18,7 +18,7 @@ bool canReadMaterial(BuddyContext context) =>
     (context.additionalMaterialHits.isNotEmpty || canSearchSources(context));
 
 AgentTool materialPageReader(
-  Map<(int, int), MaterialHit> pages, {
+  Map<(String, int), MaterialHit> pages, {
   AgentReadBudget? readBudget,
 }) {
   final reader = _MaterialReader(pages, readBudget ?? AgentReadBudget());
@@ -31,7 +31,7 @@ AgentTool materialPageReader(
       parameters: {
         'type': 'object',
         'properties': {
-          'material_id': {'type': 'integer'},
+          'material_id': {'type': 'string'},
           'page_no': {'type': 'integer'},
           'offset': {'type': 'integer', 'minimum': 0},
         },
@@ -40,7 +40,7 @@ AgentTool materialPageReader(
     ),
     execute: (args, resultTokens) {
       return reader.read(
-        args['material_id'] as int,
+        args['material_id'] as String,
         args['page_no'] as int,
         args['offset'] as int? ?? 0,
         resultTokens,
@@ -53,16 +53,16 @@ typedef _ReadRange = ({String id, int start, int end, bool hasMore});
 
 /// 只读本轮已经检索出的材料快照。后续读取不接触数据库或文件。
 class _MaterialReader {
-  _MaterialReader(Map<(int, int), MaterialHit> pages, this.budget)
+  _MaterialReader(Map<(String, int), MaterialHit> pages, this.budget)
     : _pages = pages;
 
   static const _chunkSize = 8000;
-  final Map<(int, int), MaterialHit> _pages;
+  final Map<(String, int), MaterialHit> _pages;
   final AgentReadBudget budget;
-  final _reads = <(int, int), List<_ReadRange>>{};
+  final _reads = <(String, int), List<_ReadRange>>{};
 
   AgentToolResult read(
-    int materialId,
+    String materialId,
     int pageNo,
     int offset,
     int resultTokens,

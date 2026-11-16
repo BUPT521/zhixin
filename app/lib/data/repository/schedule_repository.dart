@@ -6,6 +6,7 @@ import '../db/write_transactions.dart';
 import '../../domain/models/study.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/uuid_v7.dart';
 import 'schedule_conflicts.dart';
 
 class ScheduleConflictException implements Exception {
@@ -32,7 +33,7 @@ class ScheduleAdjustment {
     required this.end,
   });
 
-  final int id;
+  final String id;
   final DateTime start;
   final DateTime end;
 }
@@ -40,8 +41,8 @@ class ScheduleAdjustment {
 /// 课表与时间块（01 `timetable_entry` / `schedule_block`）。
 class ScheduleRepository {
   static ScheduleBlock _blockOf({
-    required int id,
-    required int planItemId,
+    required String id,
+    required String planItemId,
     required String startAt,
     required String endAt,
     required PlanItemSource source,
@@ -104,7 +105,7 @@ class ScheduleRepository {
   ///
   /// 新建、改期预约时查课表，新增课表时反过来查已经排好的预约，两个方向共用
   /// [findRecurringTimetableConflict] 的判断。
-  Future<int> addTimetable({
+  Future<String> addTimetable({
     required int weekday,
     required String startTime,
     required String endTime,
@@ -122,8 +123,10 @@ class ScheduleRepository {
       now: at,
     );
     if (conflict != null) throw _exceptionFor(conflict);
-    return txn.writeGenerated(
+    final id = newUuidV7();
+    await txn.writeGenerated(
       (db) => db.insertTimetableEntry(
+        id,
         weekday,
         startTime,
         endTime,
@@ -132,9 +135,13 @@ class ScheduleRepository {
         formatDateTime(at),
       ),
     );
+    return id;
   }
 
-  Future<void> deleteTimetable(int id, {WriteTransaction? transaction}) async {
+  Future<void> deleteTimetable(
+    String id, {
+    WriteTransaction? transaction,
+  }) async {
     await writeExecutor(
       transaction,
       _db,
@@ -162,8 +169,8 @@ class ScheduleRepository {
     return _scheduledOfNext(rows.first);
   }
 
-  Future<int> addBlock({
-    required int planItemId,
+  Future<String> addBlock({
+    required String planItemId,
     required DateTime start,
     required DateTime end,
     PlanItemSource source = PlanItemSource.user,
@@ -173,8 +180,10 @@ class ScheduleRepository {
     final executor = writeExecutor(transaction, _db);
     await _ensureNoConflict(executor, start: start, end: end);
     final now = formatDateTime(_clock());
-    return executor.writeGenerated(
+    final id = newUuidV7();
+    await executor.writeGenerated(
       (db) => db.insertScheduleBlock(
+        id,
         planItemId,
         formatDateTime(start),
         formatDateTime(end),
@@ -183,6 +192,7 @@ class ScheduleRepository {
         now,
       ),
     );
+    return id;
   }
 
   /// 一次业务操作调整多条预约：先按目标时间整体校验，全部通过才逐条写入。
@@ -195,7 +205,7 @@ class ScheduleRepository {
   }) async {
     if (adjustments.isEmpty) return;
     final executor = writeExecutor(transaction, _db);
-    final ids = <int>{};
+    final ids = <String>{};
     for (final adjustment in adjustments) {
       if (!ids.add(adjustment.id)) {
         throw ArgumentError('同一预约在一次操作里只能调整一次');
@@ -282,7 +292,7 @@ class ScheduleRepository {
   }
 
   Future<void> moveBlock(
-    int id, {
+    String id, {
     required DateTime start,
     required DateTime end,
     WriteTransaction? transaction,
@@ -314,7 +324,7 @@ class ScheduleRepository {
     RawExecutor executor, {
     required DateTime start,
     required DateTime end,
-    int? excludeBlockId,
+    String? excludeBlockId,
   }) async {
     final conflict = await findScheduleConflict(
       executor,
@@ -335,7 +345,7 @@ class ScheduleRepository {
 
   /// 用户把这次安排固定下来；固定的块不参加自动调整。
   Future<void> setLocked(
-    int id,
+    String id,
     bool locked, {
     WriteTransaction? transaction,
   }) async {
@@ -348,7 +358,7 @@ class ScheduleRepository {
 
   /// 最近仍有效的未来时间块，按开始时间排列。
   Future<List<ScheduleBlock>> futureBlocksForItem(
-    int planItemId,
+    String planItemId,
     DateTime now, {
     WriteTransaction? transaction,
   }) async {
@@ -362,8 +372,8 @@ class ScheduleRepository {
   ///
   /// 计划页与日程摘要用它在同一步骤上显示时间并改期，已经结束或取消的
   /// 时间块不再参与。
-  Future<Map<int, ScheduleBlock>> nextBlocksForItems(
-    Iterable<int> planItemIds,
+  Future<Map<String, ScheduleBlock>> nextBlocksForItems(
+    Iterable<String> planItemIds,
     DateTime now,
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
@@ -372,7 +382,7 @@ class ScheduleRepository {
       (db) =>
           db.firstLiveBlockPerItem(jsonEncode(ids), formatDateTime(now)).get(),
     );
-    final result = <int, ScheduleBlock>{};
+    final result = <String, ScheduleBlock>{};
     for (final row in rows) {
       final block = _blockOfRow(row);
       result.putIfAbsent(block.planItemId, () => block);
@@ -380,8 +390,8 @@ class ScheduleRepository {
     return result;
   }
 
-  Future<Map<int, List<ScheduleBlock>>> futureBlocksForItems(
-    Iterable<int> planItemIds,
+  Future<Map<String, List<ScheduleBlock>>> futureBlocksForItems(
+    Iterable<String> planItemIds,
     DateTime now,
   ) async {
     final ids = planItemIds.toSet().toList(growable: false);
@@ -390,7 +400,7 @@ class ScheduleRepository {
       (db) =>
           db.upcomingBlocksForItems(jsonEncode(ids), formatDateTime(now)).get(),
     );
-    final result = <int, List<ScheduleBlock>>{};
+    final result = <String, List<ScheduleBlock>>{};
     for (final row in rows) {
       final block = _blockOfRow(row);
       result.putIfAbsent(block.planItemId, () => []).add(block);
@@ -403,7 +413,7 @@ class ScheduleRepository {
   /// 暂停目标前用它确定取消范围，界面也用同一份查询说明会取消几条，固定的块
   /// 不参与；[transaction] 让这段读取与后面的取消落在同一个事务里。
   Future<List<ScheduleBlock>> flexibleFutureBlocksForGoal(
-    int goalId,
+    String goalId,
     DateTime now, {
     WriteTransaction? transaction,
   }) async {
@@ -429,7 +439,7 @@ class ScheduleRepository {
   /// 传入的预约里只要有一条已经取消或不再存在，就报错交给外层事务回滚，
   /// 不会只改掉其中一部分。
   Future<void> cancelBlocks(
-    Iterable<int> ids, {
+    Iterable<String> ids, {
     WriteTransaction? transaction,
   }) async {
     final list = ids.toSet().toList(growable: false);
@@ -446,7 +456,7 @@ class ScheduleRepository {
 
   /// 改预约状态；恢复为待开始时同样核对时间占用，避免绕开新建与改期的限制。
   Future<void> setBlockStatus(
-    int id,
+    String id,
     ScheduleBlockStatus status, {
     WriteTransaction? transaction,
   }) async {
@@ -469,21 +479,21 @@ class ScheduleRepository {
     );
   }
 
-  Future<void> deleteBlock(int id, {WriteTransaction? transaction}) async {
+  Future<void> deleteBlock(String id, {WriteTransaction? transaction}) async {
     await writeExecutor(
       transaction,
       _db,
     ).writeGenerated((db) => db.deleteScheduleBlock(id));
   }
 
-  Future<ScheduleBlock?> blockById(int id) async {
+  Future<ScheduleBlock?> blockById(String id) async {
     final row = await _db.selectGenerated(
       (db) => db.scheduleBlockById(id).getSingleOrNull(),
     );
     return row == null ? null : _blockOfRow(row);
   }
 
-  Future<List<ScheduleBlock>> blocksForItem(int planItemId) async {
+  Future<List<ScheduleBlock>> blocksForItem(String planItemId) async {
     final rows = await _db.selectGenerated(
       (db) => db.blocksForItem(planItemId).get(),
     );

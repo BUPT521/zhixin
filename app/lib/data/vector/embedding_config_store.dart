@@ -48,7 +48,7 @@ class EmbeddingConfig {
   final int dim;
   final String apiKey;
   final EmbeddingShareScope shareScope;
-  final List<int> materialIds;
+  final List<String> materialIds;
   final String textVersion;
 
   bool get usesRemote => provider == 'remote';
@@ -94,7 +94,7 @@ class EmbeddingConfig {
       materialIds: [
         if (value['material_ids'] is List)
           for (final id in value['material_ids'] as List)
-            if (id is int) id,
+            if (id is String && id.isNotEmpty) id,
       ],
       textVersion: (value['text_version'] as String?) ?? semanticTextVersion,
     );

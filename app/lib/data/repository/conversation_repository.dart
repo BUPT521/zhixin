@@ -13,6 +13,7 @@ import '../../domain/rules/attachments.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
+import '../../domain/rules/uuid_v7.dart';
 
 export '../../domain/models/chat_message.dart';
 export '../../domain/models/conversation.dart';
@@ -92,10 +93,10 @@ class ConversationRepository {
 
   /// 列表与“继续上次”挑的列相同，按同一组字段还原成领域模型。
   static ConversationRecord _record(
-    int id,
+    String id,
     String? title,
-    int? goalId,
-    int? materialId,
+    String? goalId,
+    String? materialId,
     int? pageNo,
     String? materialTitle,
     String? sourceFileName,
@@ -255,7 +256,7 @@ class ConversationRepository {
 
   /// 题目的出处缺省时按材料标题与页码补一条，口径与原实现相同。
   Question _question({
-    required int id,
+    required String id,
     required String stem,
     required String? sourceRef,
     required String? contextText,
@@ -284,19 +285,21 @@ class ConversationRepository {
   }
 
   /// 新建一条讨论；`entryKind` 记录这次求助来自文字、图片还是两者。
-  Future<int> create({
+  Future<String> create({
     String? title,
     EntryKind entryKind = EntryKind.text,
-    int? goalId,
-    int? materialId,
+    String? goalId,
+    String? materialId,
     int? pageNo,
     String? sourceRef,
     String? contextText,
     WriteTransaction? transaction,
   }) async {
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).writeGenerated(
+    final id = newUuidV7();
+    await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertConversationRecord(
+        id,
         nullableText(title),
         goalId,
         materialId,
@@ -307,10 +310,11 @@ class ConversationRepository {
         now,
       ),
     );
+    return id;
   }
 
   Future<ConversationRecord?> byId(
-    int conversationId, {
+    String conversationId, {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
@@ -330,7 +334,7 @@ class ConversationRepository {
   /// [limit] 与 [offset] 用于分页读取。排序键固定，翻页不会重复或漏行；读取量
   /// 只跟这一页的条数有关，不随库里的记录总数增长。
   Future<List<ConversationRecord>> list({
-    int? goalId,
+    String? goalId,
     bool unassignedOnly = false,
     String? answerStatus,
     int? limit = 200,
@@ -366,7 +370,7 @@ class ConversationRepository {
   }
 
   /// 一条学习记录对应的题目视图：题干与图片取开始作答时确定的用户消息。
-  Future<Question?> question(int conversationId) async {
+  Future<Question?> question(String conversationId) async {
     final rows = await _db.selectGenerated(
       (db) => db.conversationQuestion(conversationId).get(),
     );
@@ -379,7 +383,7 @@ class ConversationRepository {
   /// 当前这一页，不再为整库记录各读一次首条消息与最近一次作答。
   Future<List<QuestionRow>> questionRows({
     int? limit,
-    Iterable<int>? conversationIds,
+    Iterable<String>? conversationIds,
   }) async {
     final ids = conversationIds?.toSet().toList(growable: false);
     if (ids != null && ids.isEmpty) return const [];
@@ -398,10 +402,10 @@ class ConversationRepository {
   /// 讨论的作答不进入这次上下文。
   Future<List<AttemptWithQuestion>> recentSubmitted({
     int? limit = 20,
-    int? goalId,
-    int? materialId,
-    int? conversationId,
-    Set<int> broughtAttemptIds = const {},
+    String? goalId,
+    String? materialId,
+    String? conversationId,
+    Set<String> broughtAttemptIds = const {},
   }) async {
     final rows = await _db.selectGenerated(
       (db) => db
@@ -417,7 +421,7 @@ class ConversationRepository {
     return [for (final row in rows) _attemptWithQuestionOf(row)];
   }
 
-  Future<Attempt?> latestSubmitted(int conversationId) async {
+  Future<Attempt?> latestSubmitted(String conversationId) async {
     final row = await _db.selectGenerated(
       (db) => db.latestSubmittedAttempt(conversationId).getSingleOrNull(),
     );
@@ -429,7 +433,7 @@ class ConversationRepository {
   /// 讨论界面用 [historyPage] 分页，这里给需要完整历史的调用方（例如把
   /// 讨论里的回答导入作答帮助）使用。
   Future<List<ChatMessage>> recent(
-    int conversationId, {
+    String conversationId, {
     int? limit = 100,
     WriteTransaction? transaction,
   }) async {
@@ -445,8 +449,8 @@ class ConversationRepository {
   }
 
   Future<({List<ChatMessage> messages, bool hasOlder})> historyPage(
-    int conversationId, {
-    int? beforeMessageId,
+    String conversationId, {
+    String? beforeMessageId,
     int limit = 50,
   }) async {
     final rows = await _db.selectGenerated(
@@ -463,8 +467,8 @@ class ConversationRepository {
   /// 提示词的预算之外仍要保留这次讨论的原问题；重答时给出正在重答的
   /// [beforeMessageId] 之前的第一条，避免把这条问题又放进历史。
   Future<ChatMessage?> firstUserMessage(
-    int conversationId, {
-    int? beforeMessageId,
+    String conversationId, {
+    String? beforeMessageId,
   }) => _edgeUserMessage(
     conversationId,
     beforeMessageId: beforeMessageId,
@@ -472,13 +476,13 @@ class ConversationRepository {
   );
 
   /// 这条记录的最后一条用户消息；重答用它取问题，不读回整条讨论。
-  Future<ChatMessage?> lastUserMessage(int conversationId) =>
+  Future<ChatMessage?> lastUserMessage(String conversationId) =>
       _edgeUserMessage(conversationId, first: false);
 
   Future<ChatMessage?> _edgeUserMessage(
-    int conversationId, {
+    String conversationId, {
     required bool first,
-    int? beforeMessageId,
+    String? beforeMessageId,
   }) async {
     final row = await _db.selectGenerated(
       (db) => first
@@ -491,7 +495,7 @@ class ConversationRepository {
   }
 
   Future<ChatMessage?> messageById(
-    int messageId, {
+    String messageId, {
     WriteTransaction? transaction,
   }) async {
     final executor = writeExecutor(transaction, _db);
@@ -506,7 +510,7 @@ class ConversationRepository {
   /// 角色只有用户、搭子与系统三种真实取值，未知值不写库，避免把坏数据留给
   /// 后面的读取与提示词拼装。
   Future<ChatMessage> append(
-    int conversationId, {
+    String conversationId, {
     required MessageRole role,
     String content = '',
     List<String> imagePaths = const [],
@@ -527,8 +531,10 @@ class ConversationRepository {
     final stamp = formatDateTime(now);
     final structuredJson = payload?.encode();
     final writer = writeExecutor(transaction, _db);
-    final id = await writer.writeGenerated(
+    final id = newUuidV7();
+    await writer.writeGenerated(
       (db) => db.insertConversationMessage(
+        id,
         conversationId,
         role.value,
         text,
@@ -552,7 +558,7 @@ class ConversationRepository {
   }
 
   /// 记下用户明确选择的归属；传入空值表示改回无归属。
-  Future<void> setGoal(int conversationId, int? goalId) async {
+  Future<void> setGoal(String conversationId, String? goalId) async {
     final stamp = formatDateTime(_clock());
     await _db.writeGenerated(
       (db) => db.setConversationGoal(goalId, stamp, conversationId),
@@ -561,8 +567,8 @@ class ConversationRepository {
 
   /// 记下这次讨论依据的材料与页码；传空表示不再带入材料。
   Future<void> setMaterial(
-    int conversationId, {
-    required int? materialId,
+    String conversationId, {
+    required String? materialId,
     int? pageNo,
   }) async {
     final stamp = formatDateTime(_clock());
@@ -581,8 +587,8 @@ class ConversationRepository {
   /// 用户在讨论里先问方法、后来才补完整题目时，开始作答要以当时的那条消息
   /// 为原题，不能一直沿用它前面那条更早的求助；找到后不再随后的追问改动。
   Future<void> setQuestionMessage(
-    int conversationId,
-    int messageId, {
+    String conversationId,
+    String messageId, {
     WriteTransaction? transaction,
   }) async {
     await writeExecutor(
@@ -592,7 +598,7 @@ class ConversationRepository {
   }
 
   /// 结束一次求助；之后再发消息会重新打开同一条讨论。
-  Future<void> end(int conversationId) async {
+  Future<void> end(String conversationId) async {
     final now = formatDateTime(_clock());
     await _db.writeGenerated((db) => db.endConversation(now, conversationId));
   }
@@ -602,14 +608,14 @@ class ConversationRepository {
   /// 场次没有指向记录的列，只能从作答反查；这条记录清空后如果某个场次
   /// 已经没有其他作答，就一起删掉，避免留下永远不结束的后台场次。
   Future<List<String>> clear(
-    int conversationId, {
+    String conversationId, {
     WriteTransaction? transaction,
   }) async {
     final txn = writeExecutor(transaction, _db);
     final linkedSessionIds = await txn.selectGenerated(
       (db) => db.sessionIdsOfConversation(conversationId).get(),
     );
-    final sessionIds = <int>{for (final id in linkedSessionIds) ?id};
+    final sessionIds = <String>{for (final id in linkedSessionIds) ?id};
     final encodedPaths = await txn.selectGenerated(
       (db) => db.imagePathsOfConversation(conversationId).get(),
     );
@@ -641,7 +647,7 @@ class ConversationRepository {
   }
 
   Future<void> reopen(
-    int conversationId, {
+    String conversationId, {
     WriteTransaction? transaction,
   }) async {
     final stamp = formatDateTime(_clock());
@@ -654,7 +660,7 @@ class ConversationRepository {
   /// 接受一条下一步建议后，在原消息里记下标题与提交编号；重新打开不会重复
   /// 保存，回执可以按提交撤销。
   Future<void> markNextStepAccepted(
-    int messageId,
+    String messageId,
     String title, {
     String? stepId,
     required int commitId,
@@ -669,7 +675,7 @@ class ConversationRepository {
   }
 
   Future<void> markNextStepDismissed(
-    int messageId,
+    String messageId,
     String title, {
     String? stepId,
     WriteTransaction? transaction,
@@ -683,7 +689,7 @@ class ConversationRepository {
 
   /// 记下一条记忆卡片的处理结果：待确认、已写入或已忽略。
   Future<void> setMemoryItemStatus(
-    int messageId,
+    String messageId,
     String itemId, {
     required MemoryCardStatus status,
     int? commitId,
@@ -699,7 +705,7 @@ class ConversationRepository {
 
   /// 读出消息的结构化补充，改完写回；没有这条消息或没有改动时不写。
   Future<ChatMessagePayload?> _updatePayload(
-    int messageId, {
+    String messageId, {
     required WriteTransaction? transaction,
     required ChatMessagePayload? Function(ChatMessagePayload payload) update,
   }) async {

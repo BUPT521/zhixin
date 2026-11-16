@@ -83,7 +83,7 @@ class CapacityService {
 
   /// 按当前自然周计算：从今天到本周日，入口用“这周能做什么”时不再把
   /// 下周一以后的时间算进本周预算。
-  Future<CapacityPlan> computeThisWeek({int? goalId}) {
+  Future<CapacityPlan> computeThisWeek({String? goalId}) {
     final now = runtime.policy.now;
     final today = naturalDay(now);
     final week = runtime.policy.naturalWeekRange(now);
@@ -104,7 +104,7 @@ class CapacityService {
   };
 
   /// 跟随写入更新的本周容量预估；面板重新估算与失败重试换一条新流。
-  Stream<CapacityPlan> watchThisWeek({int? goalId}) => runtime.watch(
+  Stream<CapacityPlan> watchThisWeek({String? goalId}) => runtime.watch(
     tables: _weekTables,
     read: () => computeThisWeek(goalId: goalId),
   );
@@ -112,7 +112,7 @@ class CapacityService {
   /// 按常用时段估算可用时间，并给出事项的优先顺序与粗略预算。
   Future<CapacityPlan> compute({
     int days = 7,
-    int? goalId,
+    String? goalId,
     ClockTime? windowStart,
     ClockTime? windowEnd,
   }) async {
@@ -139,7 +139,7 @@ class CapacityService {
 
     final candidates = <CapacityCandidate>[];
     final skipped = <CapacitySkip>[];
-    final movableIds = <int>{};
+    final movableIds = <String>{};
     for (final item in ordered) {
       final future = futureByItem[item.id] ?? const <ScheduleBlock>[];
       if (future.any((block) => block.locked)) {
@@ -353,12 +353,12 @@ class CapacityService {
   /// [expectedBlockId] 是预览时看到的可调整预约，[expectedBlockStart] 与
   /// [expectedBlockEnd] 是它当时的时间；[expectedNone] 表示预览时这一项还没有
   /// 任何预约；三者用来辨认状态是否已经变化。
-  Future<({int blockId, int commitId})> book({
+  Future<({String blockId, int commitId})> book({
     required PlanItem item,
     required DateTime start,
     required DateTime end,
     bool append = false,
-    int? expectedBlockId,
+    String? expectedBlockId,
     DateTime? expectedBlockStart,
     DateTime? expectedBlockEnd,
     bool expectedNone = false,

@@ -37,7 +37,7 @@ class CapacityCandidate {
   final List<TimeRange> windows;
 
   /// 已经存在且可调整的弹性块；为空表示预约时新建。
-  final int? movableBlockId;
+  final String? movableBlockId;
 
   /// 可调整的弹性块原来的时间；点选空档前用它说明这次会从哪里改到哪里。
   final DateTime? movableStart;

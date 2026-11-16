@@ -28,12 +28,12 @@ class ContextRequest {
   final Attempt? attempt;
   final List<Assessment> assessmentRecords;
   final BuddyMode mode;
-  final int? goalId;
-  final int? materialId;
+  final String? goalId;
+  final String? materialId;
   final int? pageNo;
   final int? pageFrom;
   final int? pageTo;
-  final int? conversationId;
+  final String? conversationId;
   final String query;
   final Set<String> broughtIdentities;
   final String? conversationFocus;

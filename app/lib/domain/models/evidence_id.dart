@@ -1,24 +1,28 @@
 /// 证据来源标识的唯一写法：同一业务记录在任何检索路径上得到同一个字符串。
 ///
 /// 关键词、语义与跨次检索都按这个标识合并；散在各处的 `message:$id` 一类
-/// 拼接集中到这里，格式改动只需要改一处。
+/// 拼接集中到这里，格式改动只需要改一处。业务记录的标识是 UUIDv7 文本
+/// （ADR-0018），材料页仍带整数页码，因此标识形如 `attempt:<uuid>` 与
+/// `material_page:<uuid>:7`。
 class EvidenceId {
   const EvidenceId(this.value);
 
-  factory EvidenceId.materialPage(int materialId, int pageNo) =>
+  factory EvidenceId.materialPage(String materialId, int pageNo) =>
       EvidenceId('material_page:$materialId:$pageNo');
 
-  factory EvidenceId.message(int messageId) => EvidenceId('message:$messageId');
+  factory EvidenceId.message(String messageId) =>
+      EvidenceId('message:$messageId');
 
-  factory EvidenceId.attempt(int attemptId) => EvidenceId('attempt:$attemptId');
+  factory EvidenceId.attempt(String attemptId) =>
+      EvidenceId('attempt:$attemptId');
 
-  factory EvidenceId.question(int conversationId) =>
+  factory EvidenceId.question(String conversationId) =>
       EvidenceId('question:$conversationId');
 
-  factory EvidenceId.conversation(int conversationId) =>
+  factory EvidenceId.conversation(String conversationId) =>
       EvidenceId('conversation:$conversationId');
 
-  /// 解析标识；格式不对或编号不是整数时返回空。
+  /// 解析标识；格式不对或编号为空时返回空。
   static EvidenceId? tryParse(String value) {
     final text = value.trim();
     final parts = text.split(':');
@@ -26,11 +30,9 @@ class EvidenceId {
     final kind = parts.first;
     if (kind == 'material_page') {
       if (parts.length != 3) return null;
-      if (int.tryParse(parts[1]) == null || int.tryParse(parts[2]) == null) {
-        return null;
-      }
+      if (parts[1].isEmpty || int.tryParse(parts[2]) == null) return null;
     } else if (_singleIdKinds.contains(kind)) {
-      if (parts.length != 2 || int.tryParse(parts[1]) == null) return null;
+      if (parts.length != 2 || parts[1].isEmpty) return null;
     } else {
       return null;
     }
@@ -44,13 +46,13 @@ class EvidenceId {
     'conversation',
   };
 
-  /// 类型前缀：material_page、message、ttempt、question 或 conversation。
+  /// 类型前缀：material_page、message、attempt、question 或 conversation。
   String get kind => value.split(':').first;
 
   /// 第二段编号：材料页是材料编号，其余是记录编号。
-  int? get primaryId {
+  String? get primaryId {
     final parts = value.split(':');
-    return parts.length < 2 ? null : int.tryParse(parts[1]);
+    return parts.length < 2 || parts[1].isEmpty ? null : parts[1];
   }
 
   /// 材料页的页码；其他类型为空。

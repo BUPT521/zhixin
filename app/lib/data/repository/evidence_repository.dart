@@ -27,12 +27,12 @@ class ThreadAttempt {
   });
 
   final Attempt attempt;
-  final int conversationId;
+  final String conversationId;
   final String stem;
   final String? sourceRef;
-  final int? materialId;
+  final String? materialId;
   final int? pageNo;
-  final int? goalId;
+  final String? goalId;
 }
 
 /// 可进入语义索引的一条来源：定位、用于嵌入的正文与读取时的来源版本。
@@ -61,15 +61,15 @@ class SearchCursor {
   });
 
   /// 材料页按 `(material_id DESC, page_no ASC)` 读出，记住最后一次的位置。
-  final (int, int)? materialPage;
+  final (String, int)? materialPage;
 
   /// 消息与题目按主键倒序读出。
-  final int? messageId;
-  final int? questionId;
+  final String? messageId;
+  final String? questionId;
 
   /// 已提交作答按 `(submitted_at DESC, id DESC)` 读出。
   final String? answerSubmittedAt;
-  final int? answerId;
+  final String? answerId;
 }
 
 /// 一批用户查找候选；[cursor] 为空表示四类来源都已经读完。
@@ -104,8 +104,8 @@ class EvidenceRepository {
     String query, {
     required EvidenceScope scope,
     int limitPerKind = 20,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
   }) async {
     final text = query.trim();
     if (text.isEmpty) return const [];
@@ -125,8 +125,8 @@ class EvidenceRepository {
     String query, {
     required EvidenceScope scope,
     int limitPerKind = 20,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
   }) async {
     final shape = shapeQuery(query);
     if (shape.terms.isEmpty) return const [];
@@ -145,8 +145,8 @@ class EvidenceRepository {
     required EvidenceScope scope,
     required int limitPerKind,
     required bool literal,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
   }) async {
     final hits = <EvidenceHit>[
       ...await _pages(
@@ -196,8 +196,8 @@ class EvidenceRepository {
     required bool literal,
     int batchSize = 100,
     SearchCursor? after,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
   }) async {
     final text = query.trim();
     if (text.isEmpty) return const EvidenceSearchPage(hits: []);
@@ -261,22 +261,22 @@ class EvidenceRepository {
       hits: hits,
       cursor: SearchCursor(
         materialPage: pagedPages.isEmpty
-            ? const (0, 0)
+            ? const ('', 0)
             : (
                 pagedPages.last.location.materialId!,
                 pagedPages.last.location.pageNo!,
               ),
         messageId: pagedMessages.isEmpty
-            ? 0
+            ? ''
             : pagedMessages.last.location.messageId,
         questionId: pagedQuestions.isEmpty
-            ? 0
+            ? ''
             : pagedQuestions.last.location.conversationId,
         answerSubmittedAt: pagedAnswers.isEmpty
             ? '0000'
             : formatDateTime(pagedAnswers.last.createdAt!),
         answerId: pagedAnswers.isEmpty
-            ? 0
+            ? ''
             : pagedAnswers.last.location.attemptId,
       ),
     );
@@ -289,8 +289,8 @@ class EvidenceRepository {
   Future<List<EvidenceHit>> allLiteral(
     String query, {
     required EvidenceScope scope,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
     int batchSize = 200,
   }) {
     return _loadAll(
@@ -307,8 +307,8 @@ class EvidenceRepository {
   Future<List<EvidenceHit>> allKeyword(
     String query, {
     required EvidenceScope scope,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
     int batchSize = 200,
   }) {
     return _loadAll(
@@ -325,8 +325,8 @@ class EvidenceRepository {
     String query, {
     required EvidenceScope scope,
     required bool literal,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
     required int batchSize,
   }) async {
     final hits = <EvidenceHit>[];
@@ -483,11 +483,11 @@ class EvidenceRepository {
   /// 是否独立完成；同一道题超过 [limit] 次作答时，“上次”因此是本次之前最近
   /// 的一次，不会退回到最早几次。只读已提交的作答。
   Future<List<ThreadAttempt>> threadAttempts({
-    int? conversationId,
+    String? conversationId,
     String? stem,
-    int? goalId,
+    String? goalId,
     bool includeUnassigned = false,
-    int? materialId,
+    String? materialId,
     int? pageNo,
     DateTime? from,
     DateTime? to,
@@ -691,7 +691,7 @@ class EvidenceRepository {
     EvidenceScope scope, {
     required int limit,
     required bool literal,
-    (int, int)? excludePage,
+    (String, int)? excludePage,
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
@@ -710,7 +710,7 @@ class EvidenceRepository {
     }
     final fts = literal
         ? null
-        : _ftsSearch('material_page_fts', shape.terms, 'mp.id');
+        : _ftsSearch('material_page_fts', shape.terms, 'mp.rowid');
     final (match, matchArgs) = fts == null
         ? _literalMatch([
             'mp.content',
@@ -757,15 +757,13 @@ class EvidenceRepository {
           final content = data['content']! as String;
           final label = data['label'] as String?;
           final pageNo = data['page_no']! as int;
+          final materialId = data['material_id']! as String;
           final offset = literal
               ? _literalOffset(content, label, shape.text)
               : _termOffset(content, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.materialPage,
-            identity: EvidenceId.materialPage(
-              data['material_id']! as int,
-              pageNo,
-            ).value,
+            identity: EvidenceId.materialPage(materialId, pageNo).value,
             title:
                 '《${data['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(data['source_file_name'] as String?))}',
             snippet: searchSnippet(content, _termsFor(shape, literal)),
@@ -776,7 +774,7 @@ class EvidenceRepository {
                 ? literalMatchScore(offset: offset, textLength: content.length)
                 : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              materialId: data['material_id']! as int,
+              materialId: materialId,
               pageNo: pageNo,
               offset: offset,
             ),
@@ -792,7 +790,7 @@ class EvidenceRepository {
     EvidenceScope scope, {
     required int limit,
     required bool literal,
-    int? excludeConversationId,
+    String? excludeConversationId,
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
@@ -807,9 +805,11 @@ class EvidenceRepository {
     }
     if (after != null) {
       before.add('m.id < ?');
-      beforeArgs.add(after.messageId ?? 0);
+      beforeArgs.add(after.messageId ?? '');
     }
-    final fts = literal ? null : _ftsSearch('message_fts', shape.terms, 'm.id');
+    final fts = literal
+        ? null
+        : _ftsSearch('message_fts', shape.terms, 'm.rowid');
     final (match, matchArgs) = fts == null
         ? _literalMatch(['m.content'], shape.text)
         : (fts.match, [fts.query]);
@@ -849,12 +849,14 @@ class EvidenceRepository {
         .map((row) {
           final data = row.data;
           final content = data['content']! as String;
+          final messageId = data['id']! as String;
+          final conversationId = data['conversation_id']! as String;
           final offset = literal
               ? _literalOffset(content, null, shape.text)
               : _termOffset(content, shape.terms);
           return EvidenceHit(
             kind: EvidenceKind.message,
-            identity: EvidenceId.message(data['id']! as int).value,
+            identity: EvidenceId.message(messageId).value,
             title: (data['title'] as String?) ?? '一次讨论',
             snippet: searchSnippet(content, _termsFor(shape, literal)),
             text: content,
@@ -864,8 +866,8 @@ class EvidenceRepository {
                 ? literalMatchScore(offset: offset, textLength: content.length)
                 : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              conversationId: data['conversation_id']! as int,
-              messageId: data['id']! as int,
+              conversationId: conversationId,
+              messageId: messageId,
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(content, data['created_at']),
@@ -889,11 +891,11 @@ class EvidenceRepository {
     final beforeArgs = <Object>[];
     if (after != null) {
       before.add('c.id < ?');
-      beforeArgs.add(after.questionId ?? 0);
+      beforeArgs.add(after.questionId ?? '');
     }
     final fts = literal
         ? null
-        : _ftsSearch('message_fts', shape.terms, _questionMessageId);
+        : _ftsSearch('message_fts', shape.terms, _questionMessageRowId);
     final (match, matchArgs) = fts == null
         ? _literalMatch([
             "COALESCE($_firstUserContent, '')",
@@ -948,10 +950,10 @@ class EvidenceRepository {
                   shape.text,
                 )
               : _termOffset(text, shape.terms);
+          final conversationId = data['conversation_id']! as String;
           return EvidenceHit(
             kind: EvidenceKind.question,
-            identity: EvidenceId.question(data['conversation_id']! as int)
-                .value,
+            identity: EvidenceId.question(conversationId).value,
             title: _conversationTitle(sourceRef, data['title'] as String?),
             snippet: searchSnippet(text, _termsFor(shape, literal)),
             text: text,
@@ -965,8 +967,8 @@ class EvidenceRepository {
                   )
                 : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              conversationId: data['conversation_id']! as int,
-              messageId: data['question_message_id'] as int?,
+              conversationId: conversationId,
+              messageId: data['question_message_id'] as String?,
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(
@@ -985,7 +987,7 @@ class EvidenceRepository {
     EvidenceScope scope, {
     required int limit,
     required bool literal,
-    int? excludeConversationId,
+    String? excludeConversationId,
     SearchCursor? after,
     bool rankBeforeLimit = false,
   }) async {
@@ -997,11 +999,13 @@ class EvidenceRepository {
     }
     final submittedAfter = after?.answerSubmittedAt;
     if (submittedAfter != null) {
-      final answerId = after!.answerId ?? 0;
+      final answerId = after!.answerId ?? '';
       before.add('(a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))');
       beforeArgs.addAll([submittedAfter, submittedAfter, answerId]);
     }
-    final fts = literal ? null : _ftsSearch('attempt_fts', shape.terms, 'a.id');
+    final fts = literal
+        ? null
+        : _ftsSearch('attempt_fts', shape.terms, 'a.rowid');
     final (match, matchArgs) = fts == null
         ? _literalMatch([
             "COALESCE(a.user_answer, '')",
@@ -1052,10 +1056,11 @@ class EvidenceRepository {
           final offset = literal
               ? _literalOffset(text, null, shape.text)
               : _termOffset(text, shape.terms);
+          final attemptId = data['id']! as String;
           return EvidenceHit(
             kind: EvidenceKind.answer,
-            identity: EvidenceId.attempt(data['id']! as int).value,
-            title: _answerTitle(data['id']! as int),
+            identity: EvidenceId.attempt(attemptId).value,
+            title: _answerTitle(attemptId),
             snippet: searchSnippet(text, _termsFor(shape, literal)),
             text: text,
             matchedText: _matchedText(text, shape, literal, offset),
@@ -1068,8 +1073,8 @@ class EvidenceRepository {
                   )
                 : keywordMatchScore(data['keyword_rank'] as num?),
             location: EvidenceLocation(
-              conversationId: data['conversation_id']! as int,
-              attemptId: data['id']! as int,
+              conversationId: data['conversation_id']! as String,
+              attemptId: attemptId,
               offset: offset,
             ),
             sourceVersion: evidenceSourceVersion(text, data['submitted_at']),
@@ -1080,7 +1085,7 @@ class EvidenceRepository {
         .toList(growable: false);
   }
 
-  static String _answerTitle(int attemptId) => '一次已提交作答 · 第 $attemptId 条';
+  static String _answerTitle(String attemptId) => '一次已提交作答 · 第 $attemptId 条';
 
   static String _conversationTitle(String? sourceRef, String? title) {
     if (sourceRef != null && sourceRef.trim().isNotEmpty) return sourceRef;
@@ -1168,6 +1173,11 @@ class EvidenceRepository {
       'COALESCE(c.question_message_id, (SELECT m.id FROM message m '
       "WHERE m.conversation_id = c.id AND m.role = 'user' "
       'ORDER BY m.id LIMIT 1))';
+
+  /// 题目消息在 FTS 索引里的行号：索引按业务表的隐式 rowid 关联，而这里只有
+  /// 消息主键，先按主键查出那一行的 rowid 再跟索引比对。
+  static const String _questionMessageRowId =
+      '(SELECT mm.rowid FROM message mm WHERE mm.id = $_questionMessageId)';
 
   /// 题干：取题目消息的正文；没有题目消息时为空。
   static const String _firstUserContent =

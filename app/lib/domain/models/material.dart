@@ -51,14 +51,14 @@ class Material {
     this.updatedAt,
   });
 
-  final int id;
+  final String id;
   final String title;
 
   /// 材料种类；读库时认不出的值回落到 [MaterialKind.unknown]。
   final MaterialKind kind;
   final String? sourceRef;
   final String? sourceFileName;
-  final int? goalId;
+  final String? goalId;
   final int pageCount;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -93,13 +93,13 @@ class MaterialPage {
     this.label,
   });
 
-  final int id;
-  final int materialId;
+  final String id;
+  final String materialId;
   final int pageNo;
   final String? label;
   final String content;
 
-  (int, int) get pageKey => (materialId, pageNo);
+  (String, int) get pageKey => (materialId, pageNo);
 
   String get preview {
     final text = content.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -119,7 +119,7 @@ class MaterialHit {
     this.isDocx = false,
   });
 
-  final int materialId;
+  final String materialId;
   final String materialTitle;
   final int pageNo;
   final String? label;
@@ -129,7 +129,7 @@ class MaterialHit {
 
   String get position => materialPosition(pageNo, isDocx: isDocx);
 
-  (int, int) get pageKey => (materialId, pageNo);
+  (String, int) get pageKey => (materialId, pageNo);
 
   String get snippet =>
       snippetText ?? searchSnippet(content, const <String>[], limit: 80);
@@ -148,11 +148,11 @@ class Citation {
 
   factory Citation.fromJson(
     Object? value, {
-    Map<int, String> materialTitles = const {},
+    Map<String, String> materialTitles = const {},
   }) {
     if (value is! Map) {
       return const Citation(
-        materialId: 0,
+        materialId: '',
         pageNo: 0,
         quote: '',
         verified: false,
@@ -162,17 +162,18 @@ class Citation {
     final pageNo = value['page_no'];
     final quote = value['quote'];
     return Citation(
-      materialId: materialId is int ? materialId : 0,
+      materialId: materialId is String ? materialId : '',
       pageNo: pageNo is int ? pageNo : 0,
       quote: quote is String ? quote.trim() : '',
       verified: value['verified'] == true,
       isDocx: value['is_docx'] == true,
       materialTitle:
-          (value['material_title'] as String?) ?? materialTitles[materialId],
+          (value['material_title'] as String?) ??
+          (materialId is String ? materialTitles[materialId] : null),
     );
   }
 
-  final int materialId;
+  final String materialId;
   final int pageNo;
   final String quote;
   final bool verified;

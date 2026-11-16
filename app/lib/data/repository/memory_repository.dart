@@ -4,6 +4,7 @@ import '../db/raw_executor.dart';
 import '../../domain/models/memory.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 
 /// 记忆（01 `memory`）：带来源与有效期，可纠正、可删除。
@@ -37,7 +38,7 @@ class MemoryRepository {
   /// 同一范围里仍然有效的困难记忆；同一困难再次出现时只比较这些条目。
   ///
   /// 原先为此读回全部记忆再在 Dart 里按类型与范围筛选，记忆越多读得越多。
-  Future<List<({int id, String content})>> activeDifficulties(
+  Future<List<({String id, String content})>> activeDifficulties(
     String? scope,
   ) async {
     final rows = await _db.selectGenerated(
@@ -48,7 +49,7 @@ class MemoryRepository {
     return [for (final row in rows) (id: row.id, content: row.content)];
   }
 
-  Future<Memory?> byId(int id) async {
+  Future<Memory?> byId(String id) async {
     final row = await _db.selectGenerated(
       (db) => db.memoryById(id).getSingleOrNull(),
     );
@@ -87,20 +88,22 @@ class MemoryRepository {
     return rows.map(_memoryOf).toList(growable: false);
   }
 
-  Future<int> create({
+  Future<String> create({
     required MemoryKind kind,
     required String content,
     String? scope,
     MemorySourceKind sourceKind = MemorySourceKind.user,
-    int? sourceId,
+    String? sourceId,
     DateTime? validUntil,
     WriteTransaction? transaction,
   }) async {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
     final now = formatDateTime(_clock());
-    return writeExecutor(transaction, _db).writeGenerated(
+    final id = newUuidV7();
+    await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.insertMemory(
+        id,
         kind.value,
         text,
         scope?.trim(),
@@ -110,10 +113,11 @@ class MemoryRepository {
         now,
       ),
     );
+    return id;
   }
 
   Future<void> updateContent(
-    int id, {
+    String id, {
     required String content,
     DateTime? validUntil,
     WriteTransaction? transaction,
@@ -131,14 +135,14 @@ class MemoryRepository {
     );
   }
 
-  Future<void> supersede(int id) async {
+  Future<void> supersede(String id) async {
     final stamp = formatDateTime(_clock());
     await _db.writeGenerated(
       (db) => db.setMemoryStatus(MemoryStatus.superseded.value, stamp, id),
     );
   }
 
-  Future<void> delete(int id, {WriteTransaction? transaction}) async {
+  Future<void> delete(String id, {WriteTransaction? transaction}) async {
     final stamp = formatDateTime(_clock());
     await writeExecutor(transaction, _db).writeGenerated(
       (db) => db.setMemoryStatus(MemoryStatus.deleted.value, stamp, id),
@@ -149,7 +153,7 @@ class MemoryRepository {
   /// 重复生成记忆；可以在写入事务里核对，避免读到事务外的旧状态。
   Future<bool> hasSource(
     MemorySourceKind sourceKind,
-    int sourceId, {
+    String sourceId, {
     WriteTransaction? transaction,
   }) async {
     final row = await writeExecutor(transaction, _db).selectGenerated(
@@ -160,7 +164,7 @@ class MemoryRepository {
   }
 
   /// 撤销删除或纠正时恢复为 active。
-  Future<void> restore(int id) async {
+  Future<void> restore(String id) async {
     final stamp = formatDateTime(_clock());
     await _db.writeGenerated(
       (db) => db.setMemoryStatus(MemoryStatus.active.value, stamp, id),

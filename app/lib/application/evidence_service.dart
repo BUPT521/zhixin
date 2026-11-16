@@ -90,10 +90,10 @@ class EvidenceService {
     required EvidenceScope scope,
     int perKindLimit = 6,
     int? limit,
-    (int, int)? excludePage,
+    (String, int)? excludePage,
     required DateTime now,
     String? stem,
-    int? excludeAttemptId,
+    String? excludeAttemptId,
   }) {
     return _lookup(
       query,
@@ -115,11 +115,11 @@ class EvidenceService {
     required int? perKindLimit,
     required bool includeKeyword,
     int? limit,
-    int? excludeConversationId,
-    (int, int)? excludePage,
+    String? excludeConversationId,
+    (String, int)? excludePage,
     DateTime? now,
     String? stem,
-    int? excludeAttemptId,
+    String? excludeAttemptId,
   }) async {
     final shape = shapeQuery(query);
     if (shape.isEmpty) {

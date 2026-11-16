@@ -25,7 +25,7 @@ String buildBuddySystemPrompt(BuddyContext context) {
     (goal) => goal.id,
   ).where((goal) => goal.id != currentGoal?.id);
   final materialHits = context.additionalMaterialHits;
-  final attemptIds = <int>{};
+  final attemptIds = <String>{};
   final persona = context.persona;
 
   final rules = <String>[

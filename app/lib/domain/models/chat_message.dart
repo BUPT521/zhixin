@@ -38,8 +38,8 @@ class ChatMessage {
     this.payload,
   });
 
-  final int id;
-  final int conversationId;
+  final String id;
+  final String conversationId;
 
   String get identity => 'message:$conversationId:$id';
 

@@ -33,8 +33,8 @@ class Assessment {
     this.createdAt,
   });
 
-  final int id;
-  final int attemptId;
+  final String id;
+  final String attemptId;
   final AssessmentKind kind;
   final String result;
   final String? basis;
