@@ -8,21 +8,18 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/application/plan_service.dart';
-import 'package:zhixin/application/plan_week_reader.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/ui/plan_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
-/// 安排页的换周读取：两次读取反序完成时，标题、日历、预约与课表都留在新周，
-/// 旧结果、旧错误与旧分页结果不再写回。
+/// 安排页的换周订阅：换周只保留最新一条订阅，迟到的旧周数据不再写回；
+/// 写入之后的新数据由订阅带回，下拉刷新重新订阅当前目标周。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
   AppScopeState? scope;
-
-  setUpAll(() {});
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-plan-week-');
@@ -44,39 +41,28 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  /// 读取还没回来的请求；用例按自己的顺序把结果交回去。
-  final pending = <({DateTime weekStart, Completer<PlanWeek> completer})>[];
-  late PlanWeekReader reader;
+  /// 页面订阅过的周，按请求顺序；同一周重新订阅会再记一次。
+  late List<DateTime> requested;
+
+  /// 每个周一对应最近一次订阅的流；用例按自己的顺序把数据交回去。
+  late Map<DateTime, StreamController<PlanWeek>> streams;
 
   setUp(() {
-    pending.clear();
-    reader = PlanWeekReader(
-      read: (weekStart) {
-        final completer = Completer<PlanWeek>();
-        pending.add((weekStart: weekStart, completer: completer));
-        return completer.future;
-      },
-    );
+    requested = [];
+    streams = {};
   });
 
-  /// 交回某一次读取的结果；同一周可能有多次请求，先完成的先交回。
-  void complete(DateTime weekStart, PlanWeek week) {
-    final request = pending.firstWhere(
-      (entry) => entry.weekStart == weekStart && !entry.completer.isCompleted,
-      orElse: () => throw StateError('没有等待中的读取：$weekStart'),
-    );
-    request.completer.complete(week);
+  /// 安排页注入的读法：每个目标周给一条流，数据什么时候回来由用例决定。
+  Stream<PlanWeek> watchWeek(DateTime weekStart) {
+    requested.add(weekStart);
+    final controller = StreamController<PlanWeek>();
+    streams[weekStart] = controller;
+    return controller.stream;
   }
 
-  bool isWaiting(DateTime weekStart) => pending.any(
-    (entry) => entry.weekStart == weekStart && !entry.completer.isCompleted,
-  );
-
-  /// 最近一次发出、还没有交回结果的读取；都交回之后取最后一条。
-  DateTime? lastRequestedWeek() {
-    final waiting = pending.where((entry) => !entry.completer.isCompleted);
-    if (waiting.isNotEmpty) return waiting.last.weekStart;
-    return pending.isEmpty ? null : pending.last.weekStart;
+  /// 订阅带回一份数据，相当于一次读取完成，或一次写入之后的重读。
+  void emit(DateTime weekStart, PlanWeek week) {
+    streams[weekStart]!.add(week);
   }
 
   Future<void> settle(WidgetTester tester) async {
@@ -118,15 +104,15 @@ void main() {
               child: AppScope(themeMode: themeMode, child: child!),
             ),
           ),
-          home: PlanPage(reader: reader),
+          home: PlanPage(watchWeek: watchWeek),
         ),
       );
       scope = tester.state<AppScopeState>(find.byType(AppScope));
       await scope!.ready;
     });
-    // 应用根就绪之后页面才装配出来，首读在它挂上树的那一帧发出。
+    // 应用根就绪之后页面才装配出来，首读的订阅在它挂上树的那一帧建立。
     await tester.pump();
-    expect(pending, hasLength(1));
+    expect(requested, hasLength(1));
   }
 
   /// 一周的数据：周二一段预约与一节固定课表，标题用来辨认是哪一周。
@@ -172,7 +158,7 @@ void main() {
         '${lastDay.month}月${lastDay.day}日';
   }
 
-  testWidgets('两次换周反序完成时，标题、日历、预约与课表都属于新周', (tester) async {
+  testWidgets('换周只保留最新一条订阅，迟到的旧周数据不再写回', (tester) async {
     final policy = TimePolicy(clock: DateTime.now);
     final thisWeek = policy.naturalWeekStart(policy.now);
     final nextWeek = DateTime(thisWeek.year, thisWeek.month, thisWeek.day + 7);
@@ -183,46 +169,39 @@ void main() {
     );
 
     await openPlanPage(tester);
-    expect(pending.single.weekStart, thisWeek);
+    expect(requested, [thisWeek]);
 
-    await tester.runAsync(() async {
-      complete(
-        thisWeek,
-        weekData(thisWeek, blockTitle: '本周的预约', timetableTitle: '本周的课'),
-      );
-    });
+    emit(
+      thisWeek,
+      weekData(thisWeek, blockTitle: '本周的预约', timetableTitle: '本周的课'),
+    );
     await settle(tester);
     expect(find.text(weekTitle(thisWeek)), findsOneWidget);
     expect(find.text('本周的预约'), findsOneWidget);
 
-    // 连点两次下一周：两次读取都还没回来。
-    await tester.tap(find.bySemanticsLabel('下一周'));
+    // 连点两次下一周：两个新周各换一条订阅，最初那条已经退订。
     await tester.tap(find.bySemanticsLabel('下一周'));
     await settle(tester);
-    expect(isWaiting(nextWeek), isTrue);
-    expect(isWaiting(laterWeek), isTrue);
+    await tester.tap(find.bySemanticsLabel('下一周'));
+    await settle(tester);
+    expect(requested, [thisWeek, nextWeek, laterWeek]);
 
-    // 新周先回来，旧周后回来。
-    await tester.runAsync(() async {
-      complete(
-        laterWeek,
-        weekData(laterWeek, blockTitle: '新周的预约', timetableTitle: '新周的课'),
-      );
-    });
+    emit(
+      laterWeek,
+      weekData(laterWeek, blockTitle: '新周的预约', timetableTitle: '新周的课'),
+    );
     await settle(tester);
     expect(find.text(weekTitle(laterWeek)), findsOneWidget);
     expect(find.text('新周的预约'), findsOneWidget);
     expect(find.text('新周的课'), findsOneWidget);
 
-    await tester.runAsync(() async {
-      complete(
-        nextWeek,
-        weekData(nextWeek, blockTitle: '旧周的预约', timetableTitle: '旧周的课'),
-      );
-    });
+    // 旧周的读取在退订之后才回来，不再写回标题、预约与课表。
+    emit(
+      nextWeek,
+      weekData(nextWeek, blockTitle: '旧周的预约', timetableTitle: '旧周的课'),
+    );
     await settle(tester);
 
-    // 旧结果不再写回：标题、预约与课表都还是新周。
     expect(find.text(weekTitle(laterWeek)), findsOneWidget);
     expect(find.text(weekTitle(nextWeek)), findsNothing);
     expect(find.text('新周的预约'), findsOneWidget);
@@ -246,44 +225,76 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('刷新从当前目标周发起，结果与当前请求一致', (tester) async {
+  testWidgets('写入之后订阅带回的新数据直接显示，页面不重新订阅', (tester) async {
+    final policy = TimePolicy(clock: DateTime.now);
+    final thisWeek = policy.naturalWeekStart(policy.now);
+
+    await openPlanPage(tester);
+    emit(
+      thisWeek,
+      weekData(thisWeek, blockTitle: '写入前的预约', timetableTitle: '写入前的课'),
+    );
+    await settle(tester);
+    expect(find.text('写入前的预约'), findsOneWidget);
+    expect(find.text('写入前的课'), findsOneWidget);
+
+    // 写入提交之后，数据层在同一条订阅上再回填一次；页面不再自己重读。
+    emit(
+      thisWeek,
+      weekData(thisWeek, blockTitle: '写入后的预约', timetableTitle: '写入后的课'),
+    );
+    await settle(tester);
+
+    expect(requested, [thisWeek]);
+    expect(find.text(weekTitle(thisWeek)), findsOneWidget);
+    expect(find.text('写入后的预约'), findsOneWidget);
+    expect(find.text('写入后的课'), findsOneWidget);
+    expect(find.text('写入前的预约'), findsNothing);
+    expect(find.text('写入前的课'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('下拉刷新重新订阅当前目标周，不回到最初那一周', (tester) async {
     final policy = TimePolicy(clock: DateTime.now);
     final thisWeek = policy.naturalWeekStart(policy.now);
     final nextWeek = DateTime(thisWeek.year, thisWeek.month, thisWeek.day + 7);
 
     await openPlanPage(tester);
-    await tester.runAsync(() async {
-      complete(
-        thisWeek,
-        weekData(thisWeek, blockTitle: '本周的预约', timetableTitle: '本周的课'),
-      );
-    });
+    emit(
+      thisWeek,
+      weekData(thisWeek, blockTitle: '本周的预约', timetableTitle: '本周的课'),
+    );
     await settle(tester);
 
     await tester.tap(find.bySemanticsLabel('下一周'));
     await settle(tester);
-    await tester.runAsync(() async {
-      complete(
-        nextWeek,
-        weekData(nextWeek, blockTitle: '下一周的预约', timetableTitle: '下一周的课'),
-      );
-    });
+    emit(
+      nextWeek,
+      weekData(nextWeek, blockTitle: '下一周的预约', timetableTitle: '下一周的课'),
+    );
     await settle(tester);
     expect(find.text(weekTitle(nextWeek)), findsOneWidget);
 
-    // 数据版本变化触发刷新：重新读的是当前目标周，不是最初那一周。
-    scope!.dataVersion.value++;
-    await settle(tester);
-    expect(lastRequestedWeek(), nextWeek);
-    expect(isWaiting(nextWeek), isTrue);
-    expect(isWaiting(thisWeek), isFalse);
-
+    // 下拉刷新只重新订阅当前目标周，最初那一周不再重读。
+    final refresh = tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator).first)
+        .onRefresh;
+    late Future<void> pending;
     await tester.runAsync(() async {
-      complete(
-        nextWeek,
-        weekData(nextWeek, blockTitle: '刷新后的预约', timetableTitle: '刷新后的课'),
-      );
+      pending = refresh();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
+    await tester.pump();
+    expect(requested.last, nextWeek);
+    expect(requested.where((week) => week == thisWeek), hasLength(1));
+
+    emit(
+      nextWeek,
+      weekData(nextWeek, blockTitle: '刷新后的预约', timetableTitle: '刷新后的课'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.runAsync(() => pending);
     await settle(tester);
 
     expect(find.text(weekTitle(nextWeek)), findsOneWidget);

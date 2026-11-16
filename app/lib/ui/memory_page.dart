@@ -5,11 +5,13 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/memory_service.dart';
 import '../domain/models/memory.dart';
 import 'copy.dart';
 import 'date_time_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
@@ -28,53 +30,30 @@ class MemoryPage extends StatefulWidget {
 }
 
 class _MemoryPageState extends State<MemoryPage> {
-  List<Memory> _memories = const [];
-  Map<String, String> _scopeLabels = const {};
-  bool _loading = true;
-  bool _started = false;
+  /// 记忆页一屏的订阅：记忆条目与范围名字一起读回（ADR-0014）。
+  ///
+  /// 保存、删除与撤销之后的重新读取都由数据层完成，页面不再自己重读。
+  Stream<MemoryPageView>? _stream;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_started) return;
-    _started = true;
-    _load();
+    // 页面要读应用根上的仓库，等依赖就绪之后再订阅。
+    _stream ??= AppScope.of(context).memory.edit.watchMemories();
   }
 
-  Future<void> _load() async {
-    try {
-      final app = AppScope.of(context);
-      final memories = await app.memory.edit.list();
-      final goals = await app.study.plan.goals();
-      final materials = await app.library.material.list();
-      if (!mounted) return;
-      // 结果回来时若还在推入动画里，等动画结束再填。
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _memories = memories;
-        _scopeLabels = {
-          for (final goal in goals)
-            memoryGoalScope(goal.id): '目标：${goal.title}',
-          for (final material in materials)
-            memoryMaterialScope(material.id): '材料：${material.title}',
-        };
-        _loading = false;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      final message = describeFailure(
-        context,
-        error,
-        stack,
-        action: '读取记忆',
-        kind: 'memory_read',
-        kept: '本机记忆没有改动',
-        next: '可以返回再打开',
-      );
-      showToast(context, message);
-    }
+  void _onReadError(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取记忆',
+      kind: 'memory_read',
+      kept: '屏幕上已经显示的记忆保持不变',
+      next: '可以稍后再打开这一页',
+    );
+    showToast(context, message);
   }
 
   Future<void> _add() async {
@@ -89,7 +68,6 @@ class _MemoryPageState extends State<MemoryPage> {
         content: draft.content,
         validUntil: draft.validUntil,
       );
-      await _load();
       if (!mounted || !result.changed) return;
       _receipt('已记下这条记忆', result.commitId!);
     } catch (error, stack) {
@@ -116,7 +94,6 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       final result = await AppScope.of(context).memory.edit
           .save(memory, content: draft.content, validUntil: draft.validUntil);
-      await _load();
       if (!mounted) return;
       if (!result.changed) {
         showToast(context, result.skippedReason ?? '这条记忆没有变化。');
@@ -149,7 +126,6 @@ class _MemoryPageState extends State<MemoryPage> {
     if (!confirmed || !mounted) return;
     try {
       final result = await AppScope.of(context).memory.edit.delete(memory.id);
-      await _load();
       if (!mounted || !result.changed) return;
       _receipt('已删除这条记忆', result.commitId!);
     } catch (error, stack) {
@@ -177,18 +153,12 @@ class _MemoryPageState extends State<MemoryPage> {
     );
   }
 
-  Future<void> _undo(int commitId) =>
-      undoCommitWithFeedback(context, commitId, reload: _load);
+  /// 撤销写回之后的重读由订阅完成，这里不再手动刷新列表。
+  Future<void> _undo(int commitId) => undoCommitWithFeedback(context, commitId);
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final now = AppScope.of(context).timePolicy.now;
-    final active = _memories.where((memory) => memory.isValidAt(now)).toList();
-    final expired = _memories
-        .where((memory) => memory.active && !memory.isValidAt(now))
-        .toList();
-    final inactive = _memories.where((memory) => !memory.active).toList();
     return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('记忆'),
@@ -201,67 +171,80 @@ class _MemoryPageState extends State<MemoryPage> {
           ),
         ],
       ),
-      child: Stack(
-        children: [
-          _loading
-              ? const PageLoading()
-              : ListView(
-                  padding: theme.space.pageInsets(bottom: 96),
-                  children: [
-                    Text(
-                      '这些记忆用于关联学习背景；修改后使用新内容，删除后停止使用。',
-                      style: theme.text.bodySmall,
-                    ),
-                    SizedBox(height: context.zhixin.space.gap),
-                    if (_memories.isEmpty)
-                      const forui.FCard(
-                        child: EmptyState(
-                          icon: FLucideIcons.brain,
-                          title: emptyMemory,
-                          description: '可以添加一条学习偏好，例如“先给提示，再看完整解答”。',
-                        ),
-                      ),
-                    for (final memory in active) _tile(theme, memory),
-                    if (expired.isNotEmpty) ...[
-                      const SectionHeading(
-                        title: '已过期',
-                        subtitle: '有效期已结束，你仍可修改或删除。',
-                      ),
-                      for (final memory in expired) _tile(theme, memory),
-                    ],
-                    if (inactive.isNotEmpty) ...[
-                      const SectionHeading(title: '已停用'),
-                      for (final memory in inactive) _tile(theme, memory),
-                    ],
-                  ],
-                ),
-          Align(
-            alignment: Alignment.bottomRight,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: forui.FButton(
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _add,
-                  prefix: const Icon(FLucideIcons.plus),
-                  child: const Text('添加记忆'),
+      child: LiveView<MemoryPageView>(
+        stream: _stream,
+        onError: _onReadError,
+        builder: (context, view, loading) => Stack(
+          children: [
+            if (loading)
+              const PageLoading()
+            else
+              _memoryList(theme, view!, AppScope.of(context).timePolicy.now),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: forui.FButton(
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: _add,
+                    prefix: const Icon(FLucideIcons.plus),
+                    child: const Text('添加记忆'),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _tile(ZhixinTheme theme, Memory memory) {
+  Widget _memoryList(ZhixinTheme theme, MemoryPageView view, DateTime now) {
+    final memories = view.memories;
+    final active = memories.where((memory) => memory.isValidAt(now)).toList();
+    final expired = memories
+        .where((memory) => memory.active && !memory.isValidAt(now))
+        .toList();
+    final inactive = memories.where((memory) => !memory.active).toList();
+    return ListView(
+      padding: theme.space.pageInsets(bottom: 96),
+      children: [
+        Text('这些记忆用于关联学习背景；修改后使用新内容，删除后停止使用。', style: theme.text.bodySmall),
+        SizedBox(height: context.zhixin.space.gap),
+        if (memories.isEmpty)
+          const forui.FCard(
+            child: EmptyState(
+              icon: FLucideIcons.brain,
+              title: emptyMemory,
+              description: '可以添加一条学习偏好，例如“先给提示，再看完整解答”。',
+            ),
+          ),
+        for (final memory in active) _tile(theme, memory, view.scopeLabels),
+        if (expired.isNotEmpty) ...[
+          const SectionHeading(title: '已过期', subtitle: '有效期已结束，你仍可修改或删除。'),
+          for (final memory in expired) _tile(theme, memory, view.scopeLabels),
+        ],
+        if (inactive.isNotEmpty) ...[
+          const SectionHeading(title: '已停用'),
+          for (final memory in inactive) _tile(theme, memory, view.scopeLabels),
+        ],
+      ],
+    );
+  }
+
+  Widget _tile(
+    ZhixinTheme theme,
+    Memory memory,
+    Map<String, String> scopeLabels,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: forui.FTile(
         title: Text(memory.content),
         subtitle: Text(
           '${memory.kind.label} · ${memory.sourceLabel} · ${memory.validLabel}'
-          '${memory.scope == null ? '' : ' · ${_scopeLabels[memory.scope] ?? '范围已删除'}'}',
+          '${memory.scope == null ? '' : ' · ${scopeLabels[memory.scope] ?? '范围已删除'}'}',
         ),
         suffix: moreMenu(
           items: [

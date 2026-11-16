@@ -1,11 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/continue_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/models/study_plan.dart';
+import 'package:zhixin/domain/rules/time_policy.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 void main() {
@@ -17,7 +20,12 @@ void main() {
     final conversations = ConversationRepository(db, clock: clock);
     final attempts = AttemptRepository(db, clock: clock);
     final plans = StudyPlanRepository(db, clock: clock);
-    final service = ContinueService(conversations: conversations, plans: plans);
+    final service = ContinueService(
+      conversations: conversations,
+      plans: plans,
+      activity: _noActivity,
+      runtime: testRuntime(policy: () => TimePolicy(clock: clock)),
+    );
 
     final planId = await plans.createWithDrafts(
       title: '理解导数',
@@ -69,7 +77,12 @@ void main() {
     DateTime clock() => now;
     final conversations = ConversationRepository(db, clock: clock);
     final plans = StudyPlanRepository(db, clock: clock);
-    final service = ContinueService(conversations: conversations, plans: plans);
+    final service = ContinueService(
+      conversations: conversations,
+      plans: plans,
+      activity: _noActivity,
+      runtime: testRuntime(policy: () => TimePolicy(clock: clock)),
+    );
 
     await plans.createWithDrafts(
       title: '理解导数',
@@ -102,7 +115,12 @@ void main() {
     final conversations = ConversationRepository(db, clock: clock);
     final attempts = AttemptRepository(db, clock: clock);
     final plans = StudyPlanRepository(db, clock: clock);
-    final service = ContinueService(conversations: conversations, plans: plans);
+    final service = ContinueService(
+      conversations: conversations,
+      plans: plans,
+      activity: _noActivity,
+      runtime: testRuntime(policy: () => TimePolicy(clock: clock)),
+    );
 
     // 计划与讨论交替更新，另有较早的记录在最后写了草稿。
     for (var index = 0; index < 4; index++) {
@@ -134,7 +152,44 @@ void main() {
       all.take(3).map((entry) => entry.isPlan ? 'plan' : 'record').toList(),
     );
   });
+
+  test('订阅中的首页摘要在写入之后重读一次', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final now = DateTime(2026, 11, 10, 9);
+    final conversations = ConversationRepository(rig.db);
+    final plans = StudyPlanRepository(rig.db);
+    final service = ContinueService(
+      conversations: conversations,
+      plans: plans,
+      activity: _noActivity,
+      runtime: testRuntime(
+        policy: () => TimePolicy(clock: () => now),
+        live: rig.db.live,
+      ),
+    );
+    final homes = <NowHome>[];
+    final subscription = service.watchHome().listen(homes.add);
+    addTearDown(subscription.cancel);
+
+    await _settle();
+    expect(homes, hasLength(1), reason: '订阅之后先读一次');
+    expect(homes.single.continueEntries, isEmpty);
+    expect(homes.single.activity.isEmpty, isTrue);
+
+    await conversations.create(title: '一条讨论');
+    await _settle();
+    expect(homes, hasLength(2), reason: '讨论写入之后重读一次');
+    expect(homes.last.continueEntries.single.record!.title, '一条讨论');
+  });
 }
+
+/// 首页活动摘要：这组用例只看继续入口，活动一律为空。
+Future<NowActivity> _noActivity() async => const NowActivity();
+
+/// 让通知、读取与回填排到队尾：这几步都是微任务与定时器。
+Future<void> _settle() =>
+    Future<void>.delayed(const Duration(milliseconds: 20));
 
 String _label(ContinueEntry entry) {
   if (entry.isPlan) return 'plan';

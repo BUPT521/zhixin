@@ -202,7 +202,7 @@ Future<void> showModelSetupGuide(
 Future<void> acceptMemoryCard({
   required BuildContext context,
   required Future<AcceptedMemory> Function() accept,
-  required Future<void> Function() reload,
+  Future<void> Function()? reload,
   required String scope,
   required void Function(String notice) showNotice,
 }) async {
@@ -223,7 +223,7 @@ Future<void> acceptMemoryCard({
 Future<void> dismissMemoryCard({
   required BuildContext context,
   required Future<void> Function() dismiss,
-  required Future<void> Function() reload,
+  Future<void> Function()? reload,
   required String scope,
   required void Function(String notice) showNotice,
 }) async {
@@ -244,14 +244,14 @@ Future<void> dismissMemoryCard({
 Future<void> undoMemoryCard({
   required BuildContext context,
   required int commitId,
-  required Future<void> Function() reload,
+  Future<void> Function()? reload,
   required String scope,
   required void Function(String notice) showNotice,
 }) async {
   try {
     final result = await AppScope.of(context).data.undo.undoCommit(commitId);
     if (!context.mounted) return;
-    await reload();
+    if (reload != null) await reload();
     if (!context.mounted) return;
     showToast(context, result.message);
   } catch (error, stack) {
@@ -273,7 +273,7 @@ Future<void> undoMemoryCard({
 Future<void> _runMemoryAction<T>({
   required BuildContext context,
   required Future<T> Function() action,
-  required Future<void> Function() reload,
+  Future<void> Function()? reload,
   required String actionText,
   required String kind,
   required String kept,
@@ -284,7 +284,7 @@ Future<void> _runMemoryAction<T>({
   try {
     final result = await action();
     if (!context.mounted) return;
-    await reload();
+    if (reload != null) await reload();
     if (!context.mounted) return;
     toast?.call(result);
   } catch (error, stack) {

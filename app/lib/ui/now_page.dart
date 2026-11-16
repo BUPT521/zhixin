@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:forui/forui.dart' as forui;
@@ -9,7 +11,6 @@ import 'theme.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_scope.dart';
-import 'data_version_watcher.dart';
 import '../application/context_service.dart';
 import '../application/continue_service.dart';
 import '../domain/models/conversation.dart';
@@ -19,6 +20,7 @@ import 'capture_entry.dart';
 import 'discussion_activity.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
@@ -53,19 +55,17 @@ class NowPage extends StatefulWidget {
   State<NowPage> createState() => _NowPageState();
 }
 
-class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
+class _NowPageState extends State<NowPage> {
   final _input = TextEditingController();
-  NowActivity? _activity;
-  List<ContinueEntry> _continue = const [];
-  bool _loading = true;
-  bool _started = false;
   bool _opening = false;
 
-  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
+  /// 首页顶部摘要的订阅：当前活动与继续入口一次读回（ADR-0014）。
+  ///
+  /// 切到这一栏时才建立，之后常驻；跳去学习、讨论再回来不再手动重读。
+  Stream<NowHome>? _stream;
 
-  /// 两段各自读取、各自出错；一段失败不挡住另一段。
-  String? _activityError;
-  String? _continueError;
+  /// 下拉刷新之后等新结果回来再收起转圈；没有结果时按超时放行。
+  Completer<void>? _refreshWaiter;
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
@@ -80,11 +80,8 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
-    watchDataVersion(AppScope.of(context).dataVersion);
-    if (_started) return;
-    if (!_active) return;
-    _started = true;
-    _load();
+    // 未显示的页面不提前订阅，也不在后台读；切到首页时再开始。
+    if (_stream == null && _active) _stream = _createStream();
   }
 
   @override
@@ -96,95 +93,59 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
     }
   }
 
-  /// 切到这一栏时立刻发起读取；结果回来时若还在切栏动画里，等动画走完再填。
-  void _onActiveChanged() {
-    if (!mounted || !_active) return;
-    _started = true;
-    _load();
-  }
-
-  @override
-  bool get dataVersionActive => _active;
-
-  @override
-  void onDataVersionChanged() {
-    _load();
-  }
-
-  /// 生成开始或结束时重画卡片；消息数与摘要等下次进入页面时重新读取。
-  void _onGeneratingChanged() {
-    if (!mounted || !_active) return;
-    setState(() {});
-  }
-
   @override
   void dispose() {
     widget.activeTab.removeListener(_onActiveChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
     _input.dispose();
     super.dispose();
   }
 
-  /// 活动卡与“继续上次”互不依赖，分开读取；一段失败时只在这一段说明，
-  /// 另一段照常显示，刷新或页内重试都不会清掉已经读到的内容。
-  Future<void> _load() async {
-    await Future.wait([_loadActivity(), _loadContinue()]);
-    if (!mounted || !_loading) return;
-    setState(() => _loading = false);
+  Stream<NowHome> _createStream() =>
+      AppScope.of(context).study.continueLast.watchHome();
+
+  /// 换一条新流：下拉刷新走这里，写入之后的重读由数据层完成。
+  Future<void> _refresh() {
+    final waiter = Completer<void>();
+    _refreshWaiter = waiter;
+    setState(() => _stream = _createStream());
+    return waiter.future.timeout(const Duration(seconds: 3), onTimeout: () {});
   }
 
-  Future<void> _loadActivity() async {
-    final scope = AppScope.of(context);
-    try {
-      final activity = await scope.chat.context.loadActivity();
-      if (!mounted) return;
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _activity = activity;
-        _activityError = null;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _activityError = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取首页的学习安排',
-          kind: 'now_activity_read',
-          kept: '本机已经保存的安排没有改动',
-          next: '可以点「重试」再读一次',
-        );
-      });
-    }
+  /// 新结果回来了：放行等待中的刷新转圈。
+  void _onHome(NowHome _) {
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
   }
 
-  Future<void> _loadContinue() async {
-    final scope = AppScope.of(context);
-    try {
-      final entries = await scope.study.continueLast.load();
-      if (!mounted) return;
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _continue = entries;
-        _continueError = null;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _continueError = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取最近的学习记录',
-          kind: 'now_continue_read',
-          kept: '本机已经保存的记录没有改动',
-          next: '可以点「重试」再读一次',
-        );
-      });
-    }
+  void _onHomeError(Object error, StackTrace stack) {
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取首页的学习安排',
+      kind: 'now_read',
+      kept: '屏幕上已经显示的内容保持不变',
+      next: '可以下拉刷新再读一次',
+    );
+    showToast(context, message);
+  }
+
+  /// 切到这一栏时接着订阅；已经有的订阅常驻，切回来不重新读。
+  void _onActiveChanged() {
+    if (!mounted || !_active) return;
+    if (_stream == null) setState(() => _stream = _createStream());
+  }
+
+  /// 生成开始或结束时重画卡片；消息数与摘要随订阅更新。
+  void _onGeneratingChanged() {
+    if (!mounted || !_active) return;
+    setState(() {});
   }
 
   /// 首页取图：先把图片拍好或选好，再带着文字进入新讨论。
@@ -230,15 +191,52 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
         if (mounted) _input.clear();
       },
     );
-    if (mounted) await _load();
     if (mounted) setState(() => _opening = false);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final activity = _activity;
-    final showActivity = !_loading && activity != null && !activity.isEmpty;
+    return TabScaffold(
+      header: ZhixinHeader(
+        nested: false,
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [ZhixinMark(), SizedBox(width: 10), Text('知新')],
+        ),
+        actions: [
+          ZhixinHeaderAction(
+            icon: FLucideIcons.brain,
+            tooltip: '记忆',
+            onPressed: widget.onOpenMemory,
+          ),
+          ZhixinHeaderAction(
+            icon: FLucideIcons.settings,
+            tooltip: '设置',
+            onPressed: widget.onOpenSettings,
+          ),
+        ],
+      ),
+      child: PageWidth(
+        child: LiveView<NowHome>(
+          stream: _stream,
+          onData: _onHome,
+          onError: _onHomeError,
+          builder: (context, home, loading) =>
+              _homeBody(theme, home, loading: loading),
+        ),
+      ),
+    );
+  }
+
+  /// 一屏内容：当前活动在输入区之前，继续入口在最后。
+  ///
+  /// 首读用与卡片同高的骨架占位，读完原位替换；下拉刷新换一条新流，新结果
+  /// 回来时收起转圈（ADR-0014）。
+  Widget _homeBody(ZhixinTheme theme, NowHome? home, {required bool loading}) {
+    final activity = home?.activity;
+    final showActivity = !loading && activity != null && !activity.isEmpty;
+    final entries = home?.continueEntries ?? const <ContinueEntry>[];
     final sections = <WidgetBuilder>[
       // 当前活动置于输入区之前，让开始按钮留在首屏。
       (_) => ExpandReveal(
@@ -288,77 +286,41 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
         ),
       ),
     ];
-    return TabScaffold(
-      header: ZhixinHeader(
-        nested: false,
-        title: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [ZhixinMark(), SizedBox(width: 10), Text('知新')],
-        ),
-        actions: [
-          ZhixinHeaderAction(
-            icon: FLucideIcons.brain,
-            tooltip: '记忆',
-            onPressed: widget.onOpenMemory,
-          ),
-          ZhixinHeaderAction(
-            icon: FLucideIcons.settings,
-            tooltip: '设置',
-            onPressed: widget.onOpenSettings,
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: CustomScrollView(
+        key: const PageStorageKey('now-scroll'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverPadding(
+            padding: theme.space.pageInsets(),
+            sliver: SliverMainAxisGroup(
+              slivers: [
+                SliverList.builder(
+                  key: const ValueKey('now-actions'),
+                  itemCount: sections.length,
+                  itemBuilder: (context, index) => sections[index](context),
+                ),
+                FadeIn.sliver(
+                  key: const ValueKey('continue-content'),
+                  trigger: loading,
+                  playOnInit: false,
+                  child: _continueList(theme, entries, loading: loading),
+                ),
+              ],
+            ),
           ),
         ],
-      ),
-      child: PageWidth(
-        child: RefreshIndicator(
-          onRefresh: _load,
-          child: CustomScrollView(
-            key: const PageStorageKey('now-scroll'),
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverPadding(
-                padding: theme.space.pageInsets(),
-                sliver: SliverMainAxisGroup(
-                  slivers: [
-                    if (_activityError case final message?)
-                      SliverToBoxAdapter(
-                        key: const ValueKey('activity-error'),
-                        child: InlineNotice(
-                          message: message,
-                          onRetry: _loadActivity,
-                        ),
-                      ),
-                    SliverList.builder(
-                      key: const ValueKey('now-actions'),
-                      itemCount: sections.length,
-                      itemBuilder: (context, index) => sections[index](context),
-                    ),
-                    if (_continueError case final message?)
-                      SliverToBoxAdapter(
-                        key: const ValueKey('continue-error'),
-                        child: InlineNotice(
-                          message: message,
-                          onRetry: _loadContinue,
-                        ),
-                      ),
-                    FadeIn.sliver(
-                      key: const ValueKey('continue-content'),
-                      trigger: _loading,
-                      playOnInit: false,
-                      child: _continueList(theme),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
 
-  Widget _continueList(ZhixinTheme theme) {
-    final entries = _continue;
-    if (!_loading && _continueError == null && entries.isEmpty) {
+  Widget _continueList(
+    ZhixinTheme theme,
+    List<ContinueEntry> entries, {
+    required bool loading,
+  }) {
+    if (!loading && entries.isEmpty) {
       return const SliverToBoxAdapter(
         child: forui.FCard(
           child: EmptyState(
@@ -370,12 +332,12 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
       );
     }
     return SliverList.builder(
-      itemCount: entries.length + (_loading ? 1 : 0),
+      itemCount: entries.length + (loading ? 1 : 0),
       itemBuilder: (context, index) {
-        if (_loading && index == 0) {
+        if (loading && index == 0) {
           return const ListSkeleton(rows: 2, rowHeight: 76);
         }
-        return _continueCard(theme, entries[index - (_loading ? 1 : 0)]);
+        return _continueCard(theme, entries[index - (loading ? 1 : 0)]);
       },
     );
   }
@@ -481,7 +443,6 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
       clue: clue,
       onPress: () async {
         await openStudyPlan(context, plan.id);
-        if (mounted) await _load();
       },
     );
   }
@@ -536,10 +497,8 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
       onPress: () async {
         if (hasDraft) {
           await widget.onOpenLearning(record.id);
-          if (mounted) await _load();
         } else {
           await openDiscussion(context, record.id);
-          if (mounted) await _load();
         }
       },
     );
@@ -783,12 +742,10 @@ class _NowPageState extends State<NowPage> with DataVersionWatcher<NowPage> {
 
   Future<void> _openActivity(PlanItem item) async {
     await openPlanItem(context, item);
-    if (mounted) await _load();
   }
 
   Future<void> _openPlanItem(PlanItem item) async {
     await openPlanDetail(context, item.id);
-    if (mounted) await _load();
   }
 }
 

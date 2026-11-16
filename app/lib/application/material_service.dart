@@ -47,6 +47,17 @@ class MaterialService {
   Stream<Material?> watchMaterial(int id) =>
       runtime.watch(tables: _listTables, read: () => byId(id));
 
+  /// 材料详情与单页原文读到的表：材料行的时间与页码计数随页码一起变化。
+  static const Set<String> _pageTables = {'material', 'material_page'};
+
+  /// 跟随写入更新的页码列表；材料详情逐页显示时整份重读。
+  Stream<List<MaterialPage>> watchPages(int materialId) =>
+      runtime.watch(tables: _pageTables, read: () => pages(materialId));
+
+  /// 跟随写入更新的单页原文；只显示一页的地方换页时换一条新流。
+  Stream<MaterialPage?> watchPage(int materialId, int pageNo) =>
+      runtime.watch(tables: _pageTables, read: () => page(materialId, pageNo));
+
   Future<Material?> byId(int id) => materials.byId(id);
 
   /// 材料当前的最小与最大页码；做学习计划时据此决定可选范围。

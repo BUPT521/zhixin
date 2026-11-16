@@ -1,9 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/memory_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
+import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
+import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/memory.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 void main() {
@@ -13,7 +16,10 @@ void main() {
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
       transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
     );
 
     final id = await memories.create(
@@ -45,7 +51,10 @@ void main() {
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
       transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
     );
     final id = await memories.create(
       kind: MemoryKind.difficulty,
@@ -74,7 +83,10 @@ void main() {
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
       transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
     );
     final id = await memories.create(
       kind: MemoryKind.progress,
@@ -96,7 +108,10 @@ void main() {
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
       memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
       transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
     );
 
     final result = await service.add(
@@ -110,4 +125,38 @@ void main() {
     expect(undone.applied, isTrue, reason: undone.message);
     expect(await memories.list(includeInactive: true), isEmpty);
   });
+
+  test('订阅中的记忆页在保存与删除之后重读一次', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final memories = MemoryRepository(rig.db);
+    final service = MemoryService(
+      memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
+      transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(live: rig.db.live),
+    );
+    final views = <MemoryPageView>[];
+    final subscription = service.watchMemories().listen(views.add);
+    addTearDown(subscription.cancel);
+
+    await _settle();
+    expect(views, hasLength(1), reason: '订阅之后先读一次');
+    expect(views.single.memories, isEmpty);
+
+    await service.add(kind: MemoryKind.preference, content: '晚上学习');
+    await _settle();
+    expect(views, hasLength(2), reason: '写入之后重读一次');
+    expect(views.last.memories.single.content, '晚上学习');
+
+    await service.delete(views.last.memories.single.id);
+    await _settle();
+    expect(views, hasLength(3), reason: '删除之后重读一次');
+    expect(views.last.memories.single.active, isFalse);
+  });
 }
+
+/// 让通知、读取与回填排到队尾：这几步都是微任务与定时器。
+Future<void> _settle() =>
+    Future<void>.delayed(const Duration(milliseconds: 20));

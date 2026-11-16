@@ -1506,7 +1506,10 @@ void main() {
     addTearDown(h.db.close);
     final memoryService = MemoryService(
       h.memories,
+      tasks: h.tasks,
+      materials: h.materials,
       transactions: WriteTransactions(h.db),
+      runtime: testRuntime(),
     );
 
     final removed = await h.memories.create(

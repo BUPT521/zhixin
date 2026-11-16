@@ -282,6 +282,8 @@ class AppScopeState extends State<AppScope> {
   late final ContinueService _continueLast = ContinueService(
     conversations: _conversations,
     plans: _studyPlans,
+    activity: _context.loadActivity,
+    runtime: _runtime,
   );
 
   /// 讨论与作答共用：记录归属优先，没有时沿用最近一次学习的目标。
@@ -296,6 +298,7 @@ class AppScopeState extends State<AppScope> {
     ai: _ai,
     context: _context,
     conversations: _conversations,
+    schedule: _schedule,
     study: _studyRecords,
     transactions: _transactions,
     runtime: _runtime,
@@ -344,7 +347,10 @@ class AppScopeState extends State<AppScope> {
 
   late final MemoryService _memoryEdit = MemoryService(
     _memories,
+    tasks: _tasks,
+    materials: _materials,
     transactions: _transactions,
+    runtime: _runtime,
   );
 
   late final MemoryProposalService _proposals = MemoryProposalService(
@@ -352,6 +358,7 @@ class AppScopeState extends State<AppScope> {
     conversations: _conversations,
     memories: _memories,
     transactions: _transactions,
+    runtime: _runtime,
   );
 
   late final SettingsService _settingsEdit = SettingsService(

@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import '../raw_executor.dart';
 import 'app_database.dart';
@@ -8,9 +9,12 @@ import 'app_database.dart';
 /// SQL 仍是引擎自己拼的原生语句，这里只负责执行、绑定参数与事务边界；
 /// 执行器本身随恢复替换，仓库与页面持有的对象不变。
 class DriftRawDatabase implements RawDatabase {
-  DriftRawDatabase(this.database);
+  DriftRawDatabase(this.database, {this.connection});
 
   final AppDatabase database;
+
+  /// 打开库时持有的底层连接；由这里关闭，见 [close]。
+  final sqlite.Database? connection;
 
   @override
   DatabaseConnectionUser get driftConnection => database;
@@ -21,8 +25,21 @@ class DriftRawDatabase implements RawDatabase {
   Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action) =>
       database.transaction(() => action(DriftRawExecutor(database)));
 
+  /// 关库：先同步释放底层 SQLite 连接，再走 drift 的关闭流程。
+  ///
+  /// drift 的关闭要先关流查询、再关执行器，每一步都在微任务里接着走；页面
+  /// 退出与测试收尾时这些微任务可能不再推进，文件就会一直被占着。底层连接
+  /// 本身是同步关闭的，先关它，后面几步即使没走完也不会留下句柄。
   @override
-  Future<void> close() => database.close();
+  Future<void> close() async {
+    try {
+      final connection = this.connection;
+      if (connection != null) connection.close();
+    } catch (_) {
+      // 已经关过：交给下面的 drift 关闭流程处理。
+    }
+    await database.close();
+  }
 
   @override
   Future<int> execute(String sql, [List<Object?>? arguments]) =>

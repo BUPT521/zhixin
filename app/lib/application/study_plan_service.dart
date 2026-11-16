@@ -4,6 +4,7 @@ import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/material_repository.dart';
+import '../data/repository/schedule_repository.dart';
 import '../data/repository/study_plan_repository.dart';
 import '../data/repository/study_repository.dart';
 import '../domain/models/material.dart';
@@ -25,6 +26,26 @@ class StudyPlanView {
   final List<PlanItem> steps;
 
   PlanItem? get currentStep => currentStudyStep(steps);
+}
+
+/// 系统学习页的一屏：计划与步骤、每一步下一次预约、最近一次结束的场次。
+///
+/// 三段都按同一份步骤读回，订阅之后由数据层在相关表被写入时整份重读，页面
+/// 不再在推进步骤、预约与打开讨论之后自己重读（ADR-0014）。
+class StudyPlanScreen {
+  const StudyPlanScreen({
+    required this.view,
+    required this.nextBlocks,
+    required this.sessions,
+  });
+
+  final StudyPlanView view;
+
+  /// 每一步接下来的一次预约，没有预约的步骤不在表里。
+  final Map<int, ScheduleBlock> nextBlocks;
+
+  /// 每一步最近一次结束的场次，用来显示完成时间、结果与困难。
+  final Map<int, StudySession> sessions;
 }
 
 /// 一次学习步骤继续时打开的内容类型。
@@ -93,6 +114,7 @@ class StudyPlanService {
     required this.ai,
     required this.context,
     required this.conversations,
+    required this.schedule,
     required this.study,
     required this.transactions,
     required this.runtime,
@@ -103,6 +125,9 @@ class StudyPlanService {
   final BuddyAi ai;
   final ContextService context;
   final ConversationRepository conversations;
+
+  /// 每一步的下一次预约从日程仓库读，与计划、场次一起组成系统学习页的一屏。
+  final ScheduleRepository schedule;
   final StudyRepository study;
   final WriteTransactions transactions;
   final ServiceRuntime runtime;
@@ -115,6 +140,33 @@ class StudyPlanService {
     if (plan == null) throw StateError('未找到这份学习计划');
     final steps = await plans.steps(planId);
     return StudyPlanView(plan: plan, steps: steps);
+  }
+
+  /// 系统学习页一屏读到的表：任一表被写入之后整屏重读一次（ADR-0014）。
+  static const Set<String> _screenTables = {
+    'study_plan',
+    'plan_item',
+    'material',
+    'schedule_block',
+    'study_session',
+  };
+
+  /// 跟随写入更新的系统学习页一屏；页面订阅之后不再自己重读。
+  Stream<StudyPlanScreen> watchScreen(int planId) =>
+      runtime.watch(tables: _screenTables, read: () => loadScreen(planId));
+
+  /// 读一屏：计划与步骤、每一步下一次预约与最近一次结束的场次同时发出。
+  ///
+  /// 三段读的是同一份步骤，同时发出之后页面等的是最慢的一段；预约按当前
+  /// 时间口径判断“下一次”，截止小时变化之后重读会得到新的结果。
+  Future<StudyPlanScreen> loadScreen(int planId) async {
+    final view = await this.view(planId);
+    final stepIds = view.steps.map((step) => step.id);
+    final (blocks, sessions) = await (
+      schedule.nextBlocksForItems(stepIds, runtime.policy.now),
+      latestSessionsForSteps(stepIds),
+    ).wait;
+    return StudyPlanScreen(view: view, nextBlocks: blocks, sessions: sessions);
   }
 
   /// 每个步骤最近一次结束的场次，给步骤卡显示完成时间、结果与困难。

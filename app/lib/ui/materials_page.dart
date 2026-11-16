@@ -6,10 +6,10 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../domain/models/material.dart';
-import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'study_plan_setup.dart';
 import 'undo_feedback.dart';
@@ -49,21 +49,24 @@ class MaterialDetailPage extends StatefulWidget {
   State<MaterialDetailPage> createState() => _MaterialDetailPageState();
 }
 
-class _MaterialDetailPageState extends State<MaterialDetailPage>
-    with DataVersionWatcher<MaterialDetailPage> {
-  Material? _material;
-  List<MaterialPage> _pages = const [];
-  bool _loading = true;
+class _MaterialDetailPageState extends State<MaterialDetailPage> {
+  /// 材料行与页码各一条订阅：任一表被写入之后由数据层重读（ADR-0014）。
+  ///
+  /// 更正一页、补充一页、撤销与改归属之后不再由页面重读；从讨论返回时保持
+  /// 当前内容，不另起一次读取。
+  Stream<Material?>? _materialStream;
+  Stream<List<MaterialPage>>? _pagesStream;
   bool _started = false;
   bool _showAllPages = false;
 
   bool get _hasRange => widget.pageFrom != null || widget.pageTo != null;
 
-  List<MaterialPage> get _visiblePages {
-    if (!_hasRange || _showAllPages) return _pages;
+  /// 按本次学习步骤的页码范围筛出要显示的页；页面本身仍读这份材料的全部页。
+  List<MaterialPage> _visiblePages(List<MaterialPage> pages) {
+    if (!_hasRange || _showAllPages) return pages;
     final from = widget.pageFrom ?? 1;
     final to = widget.pageTo ?? 1 << 30;
-    return _pages
+    return pages
         .where((page) => page.pageNo >= from && page.pageNo <= to)
         .toList(growable: false);
   }
@@ -71,52 +74,44 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
-    _load();
+    final service = AppScope.of(context).library.material;
+    _materialStream = service.watchMaterial(widget.materialId);
+    _pagesStream = service.watchPages(widget.materialId);
   }
 
-  /// 从这里开始的讨论在返回后不再手动重读；数据版本推进时自己刷新。
-  @override
-  void onDataVersionChanged() {
-    _load();
+  void _reportMaterialFailure(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取这份材料',
+      kind: 'material_detail_read',
+      kept: '材料与页面没有改动',
+      next: '可以返回再打开',
+    );
+    showToast(context, message);
   }
 
-  Future<void> _load() async {
+  void _reportPagesFailure(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取这份材料的页码',
+      kind: 'material_pages_read',
+      kept: '材料没有改动',
+      next: '可以返回再打开',
+    );
+    showToast(context, message);
+  }
+
+  Future<void> _startDiscussion(MaterialPage page, Material material) async {
     final scope = AppScope.of(context);
     try {
-      final material = await scope.library.material.byId(widget.materialId);
-      final pages = await scope.library.material.pages(widget.materialId);
-      if (!mounted) return;
-      // 结果回来时若还在推入动画里，等动画结束再填，免得滑入途中整页重建。
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _material = material;
-        _pages = pages;
-        _loading = false;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      final message = describeFailure(
-        context,
-        error,
-        stack,
-        action: '读取这份材料',
-        kind: 'material_detail_read',
-        kept: '材料与页面没有改动',
-        next: '可以返回再打开',
-      );
-      showToast(context, message);
-    }
-  }
-
-  Future<void> _startDiscussion(MaterialPage page) async {
-    final scope = AppScope.of(context);
-    try {
-      final material = _material;
       final planId = widget.studyPlanId;
       final itemId = widget.planItemId;
       final id = planId != null && itemId != null
@@ -126,14 +121,13 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
               pageNo: page.pageNo,
             )
           : await scope.chat.discussion.createConversation(
-              title: '《${material?.title ?? '材料'}》第 ${page.pageNo} 页',
-              goalId: material?.goalId,
+              title: '《${material.title}》第 ${page.pageNo} 页',
+              goalId: material.goalId,
               materialId: widget.materialId,
               pageNo: page.pageNo,
             );
       if (!mounted) return;
       await openDiscussion(context, id);
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(
@@ -184,7 +178,6 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
         page: page,
         corrected: corrected.trim(),
       );
-      await _load();
       if (!mounted) return;
       if (!result.changed) {
         showToast(context, result.skippedReason ?? '这一页的内容没有变化。');
@@ -215,7 +208,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
     return undoCommitWithFeedback(
       context,
       commitId,
-      reload: _load,
+      // 撤销写入之后的重读由订阅完成（ADR-0014），这里不再另起一次读取。
+
       onUndone: () {
         if (closeSheet != null && closeSheet.mounted) {
           Navigator.of(closeSheet).pop();
@@ -295,9 +289,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
     }
   }
 
-  Future<void> _changeGoal() async {
-    final material = _material;
-    if (material == null) return;
+  Future<void> _changeGoal(Material material) async {
     final scope = AppScope.of(context);
     final goals = await scope.study.plan.goals();
     if (!mounted) return;
@@ -310,7 +302,6 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
     );
     if (choice == null || !mounted) return;
     await scope.library.material.setGoal(material.id, choice.goalId);
-    await _load();
   }
 
   String _rangeLabel() {
@@ -324,91 +315,118 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final material = _material;
-    if (_loading) {
-      return const DetailScaffold(child: PageLoading());
-    }
-    if (material == null) {
-      return DetailScaffold(
-        header: const ZhixinHeader(title: Text('材料'), showBack: true),
-        child: const Center(child: Text('未找到这份材料')),
-      );
-    }
-    return DetailScaffold(
-      header: ZhixinHeader(
-        title: Text(material.title),
-        showBack: true,
-        actions: [
-          ZhixinHeaderAction(
-            icon: FLucideIcons.route,
-            tooltip: '系统学习',
-            onPressed: () => showStudyPlanSetup(context, material: material),
+    return LiveView<Material?>(
+      stream: _materialStream,
+      onError: _reportMaterialFailure,
+      builder: (context, material, loading) {
+        if (loading) return const DetailScaffold(child: PageLoading());
+        if (material == null) {
+          return const DetailScaffold(
+            header: ZhixinHeader(title: Text('材料'), showBack: true),
+            child: Center(child: Text('未找到这份材料')),
+          );
+        }
+        return DetailScaffold(
+          header: ZhixinHeader(
+            title: Text(material.title),
+            showBack: true,
+            actions: [
+              ZhixinHeaderAction(
+                icon: FLucideIcons.route,
+                tooltip: '系统学习',
+                onPressed: () =>
+                    showStudyPlanSetup(context, material: material),
+              ),
+              ZhixinHeaderButton(
+                label: '归属',
+                onPressed: () => _changeGoal(material),
+              ),
+            ],
           ),
-          ZhixinHeaderButton(label: '归属', onPressed: _changeGoal),
-        ],
-      ),
-      child: ListView(
-        padding: theme.space.pageInsets(),
-        children: [
-          Text(
-            '${material.kindLabel}'
-            '${material.sourceRef == null ? '' : ' · ${material.sourceRef}'}',
-            style: theme.text.bodySmall,
+          child: LiveView<List<MaterialPage>>(
+            stream: _pagesStream,
+            onError: _reportPagesFailure,
+            builder: (context, pages, pagesLoading) =>
+                _body(theme, material, pages, pagesLoading),
           ),
-          if (_hasRange) ...[
-            SizedBox(height: context.zhixin.space.gap),
-            forui.FCard(
-              style: .delta(
-                decoration: .shapeDelta(color: theme.colors.secondaryContainer),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.stepTitle ?? '本次学习步骤',
-                      style: theme.text.titleSmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '本次范围：${_rangeLabel()}'
-                      '${_showAllPages ? ' · 正在查看全部页面' : ''}',
-                      style: theme.text.bodySmall,
-                    ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: () =>
-                          setState(() => _showAllPages = !_showAllPages),
-                      child: Text(_showAllPages ? '只看本次范围' : '查看全部页面'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          SizedBox(height: context.zhixin.space.gap),
-          if (_pages.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text('这份材料还没有页面。选择“添加一页”以补充原文。'),
-            )
-          else if (_visiblePages.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                '这一步的页码还没有保存原文。可以查看全部页面，或先补充这一页。',
-                style: theme.text.bodyMedium,
-              ),
-            ),
-          for (final page in _visiblePages) _pageCard(theme, page),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  Widget _pageCard(ZhixinTheme theme, MaterialPage page) {
+  /// 材料信息与逐页原文；首读页码时先放与页面卡片同高的骨架。
+  Widget _body(
+    ZhixinTheme theme,
+    Material material,
+    List<MaterialPage>? pages,
+    bool loading,
+  ) {
+    final all = pages ?? const <MaterialPage>[];
+    final visible = loading ? const <MaterialPage>[] : _visiblePages(all);
+    return ListView(
+      padding: theme.space.pageInsets(),
+      children: [
+        Text(
+          '${material.kindLabel}'
+          '${material.sourceRef == null ? '' : ' · ${material.sourceRef}'}',
+          style: theme.text.bodySmall,
+        ),
+        if (_hasRange) ...[
+          SizedBox(height: context.zhixin.space.gap),
+          forui.FCard(
+            style: .delta(
+              decoration: .shapeDelta(color: theme.colors.secondaryContainer),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.stepTitle ?? '本次学习步骤',
+                    style: theme.text.titleSmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '本次范围：${_rangeLabel()}'
+                    '${_showAllPages ? ' · 正在查看全部页面' : ''}',
+                    style: theme.text.bodySmall,
+                  ),
+                  forui.FButton(
+                    variant: forui.FButtonVariant.ghost,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: () =>
+                        setState(() => _showAllPages = !_showAllPages),
+                    child: Text(_showAllPages ? '只看本次范围' : '查看全部页面'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        SizedBox(height: context.zhixin.space.gap),
+        if (loading)
+          const ListSkeleton(rows: 3)
+        else if (all.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Text('这份材料还没有页面。选择“添加一页”以补充原文。'),
+          )
+        else if (visible.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              '这一步的页码还没有保存原文。可以查看全部页面，或先补充这一页。',
+              style: theme.text.bodyMedium,
+            ),
+          )
+        else
+          for (final page in visible) _pageCard(theme, page, material),
+      ],
+    );
+  }
+
+  Widget _pageCard(ZhixinTheme theme, MaterialPage page, Material material) {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: forui.FCard(
@@ -430,7 +448,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage>
                   forui.FButton(
                     variant: forui.FButtonVariant.ghost,
                     mainAxisSize: MainAxisSize.min,
-                    onPress: () => _startDiscussion(page),
+                    onPress: () => _startDiscussion(page, material),
                     child: const Text('从这里开始讨论'),
                   ),
                   forui.FButton(

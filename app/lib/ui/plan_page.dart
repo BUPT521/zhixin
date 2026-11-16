@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
@@ -6,10 +8,8 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
-import 'data_version_watcher.dart';
 import 'plan_dialogs.dart';
 import '../application/plan_service.dart';
-import '../application/plan_week_reader.dart';
 import '../data/repository/schedule_repository.dart';
 import '../data/revisions/revision_models.dart';
 import '../domain/models/study.dart';
@@ -19,6 +19,7 @@ import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_dialog.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'plan_week_view.dart';
 import 'workspace_widgets.dart';
@@ -30,6 +31,12 @@ import 'zhixin_menu.dart';
 import 'zhixin_segmented.dart';
 import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
+
+/// 一次周订阅带回的数据与对应的周一。
+///
+/// 周一是订阅时要求的周，跟着数据一起回来：换周过程中迟到的结果能认出自己在读
+/// 哪一周，页面据此丢掉不属于当前目标周的内容。
+typedef WeekSnapshot = ({DateTime weekStart, PlanWeek week});
 
 /// 安排：每周日程、系统学习、学习事项与 AI 改动的撤销。
 ///
@@ -43,11 +50,11 @@ class PlanPage extends StatefulWidget {
     this.tabIndex = 2,
     this.request,
     this.onOpenMaterials,
-    this.reader,
+    this.watchWeek,
   }) : initialItemId = null;
 
   /// 事项详情入口：推入一条事项并展开它的操作面板，不参与底栏切栏。
-  const PlanPage.detail({super.key, required int itemId, this.reader})
+  const PlanPage.detail({super.key, required int itemId, this.watchWeek})
     : initialItemId = itemId,
       activeTab = null,
       tabIndex = 2,
@@ -65,46 +72,73 @@ class PlanPage extends StatefulWidget {
   final ValueListenable<int>? request;
   final VoidCallback? onOpenMaterials;
 
-  /// 换周读取的入口；为空时读取应用根里的安排服务。
+  /// 一周数据的流式读法；为空时订阅应用根里的安排服务。
   ///
-  /// 测试传入可控的读取，用来让旧周的数据晚于新周返回。
-  final PlanWeekReader? reader;
+  /// 测试传入可控制的流，用来按周交回数据，并验证换周只保留最新一条订阅。
+  final Stream<PlanWeek> Function(DateTime weekStart)? watchWeek;
 
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
 
-class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
+class _PlanPageState extends State<PlanPage> {
+  /// 订阅带回的一周数据；换周与刷新都会换掉它。
   PlanWeek? _week;
-  bool _loading = true;
-  bool _started = false;
+
+  /// 目标周的周一；页面决定要读哪一周时改它。
+  DateTime? _weekAnchor;
+
+  /// 屏幕上这一份数据属于哪一周；数据到达之后才更新，列表据此淡入，
+  /// 同一周的刷新与从详情返回不闪。
+  DateTime? _shownAnchor;
+
+  /// 当前目标周的订阅；为空表示还没有切到过安排页。
+  ///
+  /// 换周与刷新都只换一条流，写入之后的重读、迟到结果的丢弃都由数据层与
+  /// [LiveView] 完成（ADR-0014）。
+  Stream<WeekSnapshot>? _weekStream;
+
+  /// 首读失败的说明；已经显示过内容时保留那一份，不换成错误页。
+  String? _error;
+
+  /// 下拉刷新之后等新的一份数据回来再收起转圈；没有结果时按超时放行。
+  Completer<void>? _refreshWaiter;
+
   bool _openedInitial = false;
   int _tab = 0;
   bool _showAllPlans = false;
 
   bool _showWeekGrid = false;
 
-  /// 选周、刷新与过期结果的判定都走它；页面只按最新一次请求回填。
-  PlanWeekReader? _reader;
-  String? _error;
-
   /// 进过的页签常驻：切回来不再重建，滚动位置一并保住。
   final Set<int> _visited = {0};
 
-  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
-
-  /// 当前显示的是哪一周；读完换周之后才更新，列表据此淡入，
-  /// 同一周的刷新与从详情返回不闪。
-  DateTime? _shownAnchor;
-
-  /// 已完成事项按页展开；默认不读，避免每次打开安排页都把历史读一遍。
-  List<PlanItem> _doneItems = const [];
-  bool _doneLoaded = false;
+  /// 已完成事项默认不读，避免每次打开安排页都把历史读一遍。
+  ///
+  /// 第一页跟着一条订阅，写入之后自动重读；继续读取的页按页追加，按编号去重
+  /// 合并，写法与记录页的 `_older` 一致。
+  StreamSubscription<List<PlanItem>>? _doneSubscription;
+  List<PlanItem> _doneFirst = const [];
+  List<PlanItem> _doneOlder = const [];
+  bool _doneExpanded = false;
   bool _loadingDone = false;
-  bool _hasMoreDone = false;
   bool _doneLoadFailed = false;
   bool _doneLoadScheduled = false;
   static const int _donePageSize = 30;
+
+  /// 屏幕上已经读到的已完成事项：第一页在前，继续读取的页去重之后接在后面。
+  List<PlanItem> get _doneItems {
+    if (_doneOlder.isEmpty) return _doneFirst;
+    final seen = {for (final item in _doneFirst) item.id};
+    return [
+      ..._doneFirst,
+      for (final item in _doneOlder)
+        if (seen.add(item.id)) item,
+    ];
+  }
+
+  /// 还没读到的已完成事项数量由整周数据的总数决定，写入之后跟着一起更新。
+  bool get _hasMoreDone => _doneItems.length < (_week?.doneItemCount ?? 0);
 
   bool get _active =>
       widget.activeTab == null || widget.activeTab!.value == widget.tabIndex;
@@ -130,6 +164,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     showToast(context, message);
   }
 
+  /// 撤销之后的重读由订阅完成，提交服务仍要求一个回调，这里不额外做什么。
   @override
   void initState() {
     super.initState();
@@ -140,16 +175,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final scope = AppScope.of(context);
-    watchDataVersion(scope.dataVersion);
-    if (_started) return;
-    _started = true;
-    final policy = scope.timePolicy;
-    _reader ??=
-        widget.reader ?? PlanWeekReader(read: scope.study.plan.loadWeek);
-    // 未显示的页面不提前读取，也不在后台保留转圈；先记下这一周，切到安排时再读。
-    final target = _reader!.select(policy.naturalWeekStart(policy.now));
-    if (target != null && _active) _load(target);
+    final policy = AppScope.of(context).timePolicy;
+    _weekAnchor ??= policy.naturalWeekStart(policy.now);
+    // 未显示的页面不提前订阅，也不在后台读；切到安排时再建立订阅。
+    if (_weekStream == null && _active) {
+      _weekStream = _createStream(_weekAnchor!);
+    }
   }
 
   @override
@@ -169,16 +200,90 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   void dispose() {
     widget.activeTab?.removeListener(_onActiveChanged);
     widget.request?.removeListener(_onRequestChanged);
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
+    _doneSubscription?.cancel();
+    _doneSubscription = null;
     super.dispose();
   }
 
-  /// 切到这一栏时立刻发起读取；结果回来时等切栏动画结束再填。
-  void _onActiveChanged() {
-    if (!mounted || !_active) return;
-    _load();
+  /// 一个目标周的订阅；页面只决定读哪一周，写入之后的重读由数据层负责。
+  Stream<WeekSnapshot> _createStream(DateTime weekStart) {
+    final read = widget.watchWeek ?? AppScope.of(context).study.plan.watchWeek;
+    return read(weekStart).map((week) => (weekStart: weekStart, week: week));
   }
 
-  /// 从别的栏目跳到安排：页签复位到日程，常驻页签不重读。
+  /// 重新订阅当前目标周：下拉刷新与手动刷新都只换一条新流。
+  Future<void> _reload() {
+    final weekStart = _weekAnchor;
+    if (weekStart == null) return Future<void>.value();
+    final waiter = Completer<void>();
+    _refreshWaiter = waiter;
+    setState(() {
+      _error = null;
+      _weekStream = _createStream(weekStart);
+      _resetDone();
+    });
+    return waiter.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+  }
+
+  /// 新的一份周数据：换周过程中迟到的旧结果直接丢掉，界面不会对着别的周显示。
+  void _onWeek(WeekSnapshot snapshot) {
+    if (!mounted || snapshot.weekStart != _weekAnchor) return;
+    setState(() {
+      _week = snapshot.week;
+      _shownAnchor = snapshot.weekStart;
+      _error = null;
+    });
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
+    unawaited(_openInitial(snapshot));
+  }
+
+  /// 读取失败：已经显示的一周保持不变，只提示一次；还没有内容时留下重试入口。
+  void _onWeekError(Object error, StackTrace stack) {
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取安排',
+      kind: 'plan_read',
+      kept: '已经保存的安排没有改动',
+      next: '可以点右上角刷新，或切换页面再回来',
+    );
+    setState(() => _error = message);
+    showToast(context, message);
+  }
+
+  /// 详情入口按编号展开一次事项；一周数据第一次到达之后才做。
+  Future<void> _openInitial(WeekSnapshot snapshot) async {
+    final itemId = widget.initialItemId;
+    if (_openedInitial || itemId == null) return;
+    final item =
+        snapshot.week.items.where((item) => item.id == itemId).firstOrNull ??
+        await _itemById(itemId);
+    if (!mounted || _openedInitial || snapshot.weekStart != _weekAnchor) return;
+    if (item == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _openedInitial) return;
+      _openedInitial = true;
+      _showItem(item);
+    });
+  }
+
+  /// 切到这一栏时建立订阅；已经建立的订阅保留，切回来看到的仍是最新数据。
+  void _onActiveChanged() {
+    if (!mounted || !_active) return;
+    if (_weekStream != null) return;
+    final weekStart = _weekAnchor;
+    if (weekStart == null) return;
+    setState(() => _weekStream = _createStream(weekStart));
+  }
+
+  /// 从别的栏目跳到安排：页签复位到日程，内容由订阅照常更新。
   void _onRequestChanged() {
     if (!mounted) return;
     setState(() {
@@ -187,96 +292,35 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     });
   }
 
-  @override
-  bool get dataVersionActive => _active;
-
-  @override
-  void onDataVersionChanged() {
-    _load();
-  }
-
-  /// 读取一个目标周；只有最新一次请求的结果会写回界面。
-  ///
-  /// 结果回来之后先等切栏、返回或推入动画结束，再确认这次请求仍然有效：
-  /// 期间又选了别的周、又刷新过或页面已经卸载，旧结果、旧错误与旧分页
-  /// 都不再写回，标题、日历、预约与课表始终对应同一个目标周。
-  Future<void> _load([PlanWeekTarget? target]) async {
-    final reader = _reader;
-    if (reader == null) return;
-    final request = target ?? reader.refresh();
-    if (request == null) return;
-    try {
-      final week = await reader.read(request.weekStart);
-      if (!mounted || !reader.isCurrent(request)) return;
-      // 结果回来时若还在切栏或返回动画里，等动画走完再填。
-      await context.afterTransition();
-      if (!mounted || !reader.isCurrent(request)) return;
-      setState(() {
-        _week = week;
-        _shownAnchor = request.weekStart;
-        _loading = false;
-        _error = null;
-        _resetDonePages();
-      });
-      if (!_openedInitial && widget.initialItemId != null) {
-        final item =
-            week.items
-                .where((item) => item.id == widget.initialItemId)
-                .firstOrNull ??
-            await _itemById(widget.initialItemId!);
-        if (mounted && reader.isCurrent(request) && item != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || !reader.isCurrent(request) || _openedInitial) {
-              return;
-            }
-            _openedInitial = true;
-            _showItem(item);
-          });
-        }
-      }
-    } catch (error, stack) {
-      if (!mounted || !reader.isCurrent(request)) return;
-      final message = describeFailure(
-        context,
-        error,
-        stack,
-        action: '读取安排',
-        kind: 'plan_read',
-        kept: '已经保存的安排没有改动',
-        next: '可以点右上角刷新，或切换页面再回来',
-      );
-      await context.afterTransition();
-      if (!mounted || !reader.isCurrent(request)) return;
-      setState(() {
-        _loading = false;
-        _error = message;
-      });
-      showToast(context, message);
-    }
-  }
-
   /// 所有选周入口都走这里：上一周、下一周、横滑与回到本周。
+  ///
+  /// 同一周不重复订阅；换周只换一条新的流，旧订阅由 [LiveView] 退订。
   void _selectWeek(DateTime date) {
-    final reader = _reader;
-    if (reader == null) return;
     final weekStart = AppScope.of(context).timePolicy.naturalWeekStart(date);
-    final target = reader.select(weekStart);
-    if (target == null) return;
-    _load(target);
+    if (weekStart == _weekAnchor) return;
+    setState(() {
+      _weekAnchor = weekStart;
+      _weekStream = _createStream(weekStart);
+      _error = null;
+      _resetDone();
+    });
   }
 
   /// 从当前目标周前后移动；连续点按时按目标周累加，不等上一次读回。
   void _stepWeek(int weeks) {
-    final from = _reader?.weekStart ?? _shownAnchor;
+    final from = _weekAnchor ?? _shownAnchor;
     if (from == null) return;
     _selectWeek(DateTime(from.year, from.month, from.day + 7 * weeks));
   }
 
-  void _resetDonePages() {
-    _doneItems = const [];
-    _doneLoaded = false;
+  /// 换周与刷新之后收起已完成：那一页按目标周与新的写入重新订阅。
+  void _resetDone() {
+    _doneSubscription?.cancel();
+    _doneSubscription = null;
+    _doneFirst = const [];
+    _doneOlder = const [];
+    _doneExpanded = false;
     _loadingDone = false;
-    _hasMoreDone = false;
     _doneLoadFailed = false;
   }
 
@@ -301,11 +345,64 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     }
   }
 
-  /// 展开或继续读取已完成事项；一次读一页，顺序按最近完成时间。
-  Future<void> _loadDone({bool reset = false}) async {
-    final week = _week;
-    if (week == null || _loadingDone || (!reset && !_hasMoreDone)) return;
-    final offset = reset ? 0 : _doneItems.length;
+  /// 展开或收起已完成事项；展开时订阅第一页，收起时退订。
+  void _toggleDone() {
+    if (_loadingDone) return;
+    if (_doneExpanded) {
+      // 已经读出的内容留到收起动画结束，下次展开再重新订阅第一页。
+      setState(() => _doneExpanded = false);
+      _doneSubscription?.cancel();
+      _doneSubscription = null;
+      return;
+    }
+    setState(() => _doneExpanded = true);
+    _subscribeDone();
+  }
+
+  /// 已完成事项第一页跟着一条订阅：写入之后自动重读，页面不再自己刷新。
+  void _subscribeDone() {
+    _doneSubscription?.cancel();
+    _doneSubscription = null;
+    final service = AppScope.of(context).study.plan;
+    setState(() {
+      _doneFirst = const [];
+      _doneOlder = const [];
+      _loadingDone = true;
+      _doneLoadFailed = false;
+    });
+    _doneSubscription = service
+        .watchDoneItems(limit: _donePageSize)
+        .listen(
+          (page) {
+            if (!mounted) return;
+            setState(() {
+              _doneFirst = page;
+              _loadingDone = false;
+              _doneLoadFailed = false;
+            });
+          },
+          onError: (Object error, StackTrace stack) {
+            if (!mounted) return;
+            setState(() {
+              _loadingDone = false;
+              _doneLoadFailed = true;
+            });
+            _reportFailure(
+              error,
+              stack,
+              action: '读取已完成事项',
+              kind: 'plan_done_read',
+              kept: '已经读出的内容保持不变',
+              next: '可以在列表底部重试',
+            );
+          },
+        );
+  }
+
+  /// 继续读取已完成的下一页；已经读到的内容保持不变，失败时留下重试入口。
+  Future<void> _loadMoreDone() async {
+    if (_loadingDone || !_hasMoreDone) return;
+    final offset = _doneItems.length;
     setState(() {
       _loadingDone = true;
       _doneLoadFailed = false;
@@ -313,31 +410,34 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     try {
       final page = await AppScope.of(context).study.plan
           .doneItems(limit: _donePageSize, offset: offset);
-      if (!mounted || !identical(_week, week)) return;
+      if (!mounted) return;
       setState(() {
-        _doneItems = reset ? page : [..._doneItems, ...page];
-        _doneLoaded = true;
-        _hasMoreDone =
-            page.length == _donePageSize &&
-            _doneItems.length < week.doneItemCount;
+        _doneOlder = [..._doneOlder, ...page];
         _loadingDone = false;
       });
     } catch (error, stack) {
-      if (!mounted || !identical(_week, week)) return;
-      final message = describeFailure(
-        context,
+      if (!mounted) return;
+      setState(() {
+        _loadingDone = false;
+        _doneLoadFailed = true;
+      });
+      _reportFailure(
         error,
         stack,
         action: '读取已完成事项',
         kind: 'plan_done_read',
         kept: '已经读出的内容保持不变',
-        next: reset ? '可以再次展开已完成事项' : '可以在列表底部重试',
+        next: '可以在列表底部重试',
       );
-      setState(() {
-        _loadingDone = false;
-        _doneLoadFailed = !reset;
-      });
-      showToast(context, message);
+    }
+  }
+
+  /// 读取失败之后重试：第一页还没读到时重新订阅，否则继续读下一页。
+  void _retryDone() {
+    if (_doneFirst.isEmpty) {
+      _subscribeDone();
+    } else {
+      _loadMoreDone();
     }
   }
 
@@ -352,12 +452,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         !_canLoadMoreDone) {
       return false;
     }
-    final items = _doneItems;
+    final loaded = _doneItems.length;
     _doneLoadScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _doneLoadScheduled = false;
-      if (mounted && _canLoadMoreDone && identical(items, _doneItems)) {
-        _loadDone();
+      if (mounted && _canLoadMoreDone && loaded == _doneItems.length) {
+        _loadMoreDone();
       }
     });
     WidgetsBinding.instance.ensureVisualUpdate();
@@ -367,7 +467,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   bool get _canLoadMoreDone =>
       _active &&
       _tab == 1 &&
-      _doneLoaded &&
+      _doneExpanded &&
       _hasMoreDone &&
       !_loadingDone &&
       !_doneLoadFailed;
@@ -381,7 +481,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         scopeText: draft.scope,
         dueDate: draft.dueDate,
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(
@@ -445,15 +544,13 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         goal.id,
         cancelFlexibleFuture: cancelFlexible,
       );
-      await _load();
       if (!mounted || !result.changed) return;
       showActionToast(
         context,
         '已暂停「${goal.title}」'
         '${cancelFlexible ? '，并取消 $flexible 项弹性安排' : ''}',
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -470,7 +567,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   Future<void> _resumeGoal(LearningGoal goal) async {
     try {
       await AppScope.of(context).study.plan.resumeGoal(goal.id);
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(
@@ -501,7 +597,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         dueAt: draft.dueAt,
         minutes: draft.minutes,
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(
@@ -535,7 +630,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         start: draft.start,
         end: draft.start.add(Duration(minutes: draft.minutes)),
       );
-      await _load();
       if (!mounted) return;
       final title = items
           .where((item) => item.id == draft.itemId)
@@ -545,8 +639,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         context,
         title == null ? '已预约学习时间' : '已预约「$title」',
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -638,14 +731,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     final scope = AppScope.of(context);
     try {
       final result = await scope.study.plan.rescheduleGroup(adjustments);
-      await _load();
       if (!mounted) return;
       showActionToast(
         context,
         '已整组顺延 $minutes 分钟，共 ${movable.length} 条预约',
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -682,7 +773,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         title: draft.title,
         location: draft.location,
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(
@@ -712,14 +802,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     try {
       final result = await AppScope.of(context).study.plan
           .deleteTimetable(entry.id);
-      await _load();
       if (!mounted || !result.changed) return;
       showActionToast(
         context,
         '已删除课表「${entry.title}」',
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -733,13 +821,13 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     }
   }
 
+  /// AI 改动的撤销：撤销之后的一周数据由订阅带回。
   Future<void> _undo(RevisionCommit commit) =>
-      undoCommitWithFeedback(context, commit.id, reload: _load);
+      undoCommitWithFeedback(context, commit.id);
 
   Future<void> _setStatus(PlanItem item, PlanItemStatus status) async {
     try {
       await AppScope.of(context).study.plan.setStatus(item.id, status);
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(
@@ -752,9 +840,9 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     }
   }
 
+  /// 这周能做什么：面板里的预约写入之后，一周数据由订阅重读。
   Future<void> _capacity() async {
     await showCapacitySheet(context);
-    if (mounted) await _load();
   }
 
   ScheduleBlock? _blockForItem(PlanItem item) {
@@ -907,12 +995,11 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
       },
     );
     if (!mounted || action == null) return;
+    // 从学习页或讨论页返回之后不再重读，订阅已经带回写入的结果。
     if (action == 'study') {
       await openPlanItem(context, item);
-      if (mounted) await _load();
     } else if (action == 'source') {
       await openDiscussion(context, item.conversationId!);
-      if (mounted) await _load();
     } else if (action == 'plan') {
       await _openStudyPlan(item.studyPlanId!);
     } else if (action == 'schedule') {
@@ -946,14 +1033,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
               end: end,
             )
           : await service.moveBlock(block.id, start: draft.start, end: end);
-      await _load();
       if (!mounted || !result.changed) return;
       showActionToast(
         context,
         block == null ? '已预约「${item.title}」' : '已改约「${item.title}」',
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -1006,7 +1091,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           ScheduleBlockStatus.done,
         );
       }
-      await _load();
       if (!mounted) return;
       if (result == null || !result.changed) {
         showToast(
@@ -1018,8 +1102,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           context,
           action == 'complete' ? '已$completeLabel' : '本次预约已结束',
           label: '撤销',
-          onPressed: () =>
-              undoCommitWithFeedback(context, result!.commitId!, reload: _load),
+          onPressed: () => undoCommitWithFeedback(context, result!.commitId!),
         );
       }
     } catch (error, stack) {
@@ -1034,9 +1117,9 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     }
   }
 
+  /// 打开系统学习计划；返回之后的一周数据由订阅带回。
   Future<void> _openStudyPlan(int id) async {
     await openStudyPlan(context, id);
-    if (mounted) await _load();
   }
 
   @override
@@ -1086,68 +1169,84 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
           ],
         ],
       ),
-      child: _week == null && !_active
+      child: _weekStream == null
           ? const SizedBox.shrink()
-          : _loading
-          // 首读也先摆出页签，读完只在下面换内容，页面不往下跳。
-          ? PageWidth(
-              child: Column(
-                children: [
-                  _tabBar(theme),
-                  Expanded(
-                    child: ListSkeleton(
-                      rows: 3,
-                      padding: EdgeInsets.fromLTRB(0, theme.space.sm, 0, 0),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          : week == null
-          // 读取失败沿用 InlineNotice 一条出口，说明与重试留在同一处。
-          ? Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: theme.space.page,
-                vertical: theme.space.xl,
-              ),
-              child: Center(
-                child: InlineNotice(
-                  message: _error ?? '安排读取失败，请刷新本机数据后重试。',
-                  onRetry: _load,
-                ),
-              ),
-            )
-          // 读完第一次之后整页淡入；之后换页签或换周只淡入列表。
-          : FadeIn(
-              child: PageWidth(
-                child: Column(
-                  children: [
-                    _tabBar(theme),
-                    Expanded(
-                      child: FadeIn(
-                        trigger: (_tab, _shownAnchor),
-                        playOnInit: false,
-                        // 四个页签常驻，切换只换显示：切回来不再重建，滚动
-                        // 位置与已读到的内容都留住；首次进入某个页签时才建。
-                        child: IndexedStack(
-                          sizing: StackFit.expand,
-                          index: _tab,
-                          children: [
-                            for (var tab = 0; tab < 4; tab++)
-                              if (_visited.contains(tab))
-                                _tabList(theme, week, tab)
-                              else
-                                const SizedBox.shrink(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          // 首读中的骨架、读取失败与已经读到的内容都交给一条订阅决定：
+          // 数据到达就重建，写入之后的重读由数据层与 [LiveView] 完成。
+          : LiveView<WeekSnapshot>(
+              stream: _weekStream,
+              onData: _onWeek,
+              onError: _onWeekError,
+              builder: (context, snapshot, loading) {
+                final week = _week;
+                if (week != null) return _loadedWeek(theme, week);
+                // 还没有内容：首读中先摆出页签与骨架，失败时留下说明与重试。
+                if (_error != null) return _errorNotice(theme);
+                if (loading) return _loadingWeek(theme);
+                return _errorNotice(theme);
+              },
             ),
     );
   }
+
+  /// 首读中的页面：页签先就位，读完只在下面换内容，页面不往下跳。
+  Widget _loadingWeek(ZhixinTheme theme) => PageWidth(
+    child: Column(
+      children: [
+        _tabBar(theme),
+        Expanded(
+          child: ListSkeleton(
+            rows: 3,
+            padding: EdgeInsets.fromLTRB(0, theme.space.sm, 0, 0),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// 首读失败时的一个出口：说明与重试留在同一处。
+  Widget _errorNotice(ZhixinTheme theme) => Padding(
+    padding: EdgeInsets.symmetric(
+      horizontal: theme.space.page,
+      vertical: theme.space.xl,
+    ),
+    child: Center(
+      child: InlineNotice(
+        message: _error ?? '安排读取失败，请刷新本机数据后重试。',
+        onRetry: _reload,
+      ),
+    ),
+  );
+
+  /// 读到内容之后整页淡入；之后换页签或换周只淡入列表。
+  Widget _loadedWeek(ZhixinTheme theme, PlanWeek week) => FadeIn(
+    child: PageWidth(
+      child: Column(
+        children: [
+          _tabBar(theme),
+          Expanded(
+            child: FadeIn(
+              trigger: (_tab, _shownAnchor),
+              playOnInit: false,
+              // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
+              // 已读到的内容都留住；首次进入某个页签时才建。
+              child: IndexedStack(
+                sizing: StackFit.expand,
+                index: _tab,
+                children: [
+                  for (var tab = 0; tab < 4; tab++)
+                    if (_visited.contains(tab))
+                      _tabList(theme, week, tab)
+                    else
+                      const SizedBox.shrink(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   /// 页签固定在列表上方：原来它随列表滚走，看到日程中段时想切到事项要先滚回顶部。
   Widget _tabBar(ZhixinTheme theme) => Padding(
@@ -1175,7 +1274,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   /// 每个页签保留自己的滚动位置，卡片进入视口缓存范围时才构建。
   Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
       RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: _reload,
         child: NotificationListener<ScrollNotification>(
           onNotification: tab == 1 ? _onItemsScroll : null,
           child: CustomScrollView(
@@ -1537,25 +1636,14 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
               variant: forui.FButtonVariant.ghost,
               size: forui.FButtonSizeVariant.sm,
               mainAxisSize: MainAxisSize.min,
-              onPress: _loadingDone
-                  ? null
-                  : () {
-                      if (!_doneLoaded) {
-                        _loadDone(reset: true);
-                        return;
-                      }
-                      // 保留本页用于收起动画，下次展开时重新读第一页。
-                      setState(() {
-                        _doneLoaded = false;
-                        _hasMoreDone = false;
-                        _doneLoadFailed = false;
-                      });
-                    },
+              onPress: _loadingDone ? null : _toggleDone,
               suffix: Icon(
-                _doneLoaded ? FLucideIcons.chevronUp : FLucideIcons.chevronDown,
+                _doneExpanded
+                    ? FLucideIcons.chevronUp
+                    : FLucideIcons.chevronDown,
               ),
               child: Text(
-                _doneLoaded ? '收起已完成' : '显示已完成（${week.doneItemCount}）',
+                _doneExpanded ? '收起已完成' : '显示已完成（${week.doneItemCount}）',
               ),
             ),
           ),
@@ -1563,7 +1651,7 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
       ),
       ExpandReveal.sliver(
         key: const ValueKey('done-items'),
-        visible: _doneLoaded,
+        visible: _doneExpanded,
         child: SliverList.builder(
           itemCount: 1 + items.length + (hasFooter ? 1 : 0),
           itemBuilder: (context, index) {
@@ -1580,9 +1668,9 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
               );
             }
             return LoadMoreFooter(
-              label: '重试读取更早的已完成事项',
+              label: _doneFirst.isEmpty ? '重试读取已完成事项' : '重试读取更早的已完成事项',
               loading: false,
-              onPressed: () => _loadDone(),
+              onPressed: _retryDone,
             );
           },
         ),
@@ -1666,7 +1754,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
     if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).study.plan.closeGoal(goal.id);
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(
@@ -2144,14 +2231,12 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
         ),
         _ => (null, ''),
       };
-      await _load();
       if (!mounted || result == null || !result.changed) return;
       showActionToast(
         context,
         message,
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -2168,7 +2253,6 @@ class _PlanPageState extends State<PlanPage> with DataVersionWatcher<PlanPage> {
   Future<void> _setPriority(PlanItem item, int priority) async {
     try {
       await AppScope.of(context).study.plan.setPriority(item.id, priority);
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _reportFailure(

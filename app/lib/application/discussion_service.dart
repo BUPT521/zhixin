@@ -94,6 +94,34 @@ class AcceptedSuggestion {
   final int commitId;
 }
 
+/// 讨论页的一屏：记录本身、目标列表、已经读到的消息，以及从这批消息读出的
+/// 下一步建议、记忆卡片与回答写下的改动。
+///
+/// 消息从旧到新排列；按“读取较早讨论”读出来的更早几页作为读取的输入交给
+/// 服务，由服务接在最近一页之前并按编号去重，页面只按顺序显示。
+class ConversationView {
+  const ConversationView({
+    required this.record,
+    required this.goals,
+    required this.messages,
+    required this.hasOlder,
+    this.pending = const [],
+    this.memoryItems = const [],
+    this.changes = const [],
+  });
+
+  final ConversationRecord? record;
+  final List<LearningGoal> goals;
+  final List<ChatMessage> messages;
+
+  /// 读到的这一页之前是否还有更早的消息。
+  final bool hasOlder;
+
+  final List<PendingSuggestion> pending;
+  final List<MemoryItemView> memoryItems;
+  final List<AppliedChange> changes;
+}
+
 /// 从文字或图片开始的一次讨论。
 ///
 /// 讨论不要求先有目标，普通求助只写消息与记忆：不写 `plan_item`，不改动既有
@@ -156,6 +184,74 @@ class DiscussionService {
   );
 
   Future<ConversationRecord?> byId(int id) => conversations.byId(id);
+
+  /// 讨论页读到的表：任一表写入之后整屏重读一次（ADR-0014）。
+  ///
+  /// 记录行自身还会补出材料标题、是否有作答与是否有草稿，因此 `attempt` 与
+  /// `material` 也在这里；目标选择读 `learning_goal`。
+  static const Set<String> _conversationTables = {
+    'conversation',
+    'message',
+    'attempt',
+    'material',
+    'learning_goal',
+  };
+
+  /// 跟随写入更新的讨论一屏。
+  ///
+  /// [olderMessages] 是页面已经按“读取较早讨论”读出来的更早消息，读取时与最近
+  /// 一页按编号去重合并，因此建议、记忆卡片与回执也覆盖已经翻到的部分。
+  Stream<ConversationView> watchConversation(
+    int id, {
+    List<ChatMessage> olderMessages = const [],
+  }) => runtime.watch(
+    tables: _conversationTables,
+    read: () => conversationView(id, olderMessages: olderMessages),
+  );
+
+  /// 读一次讨论一屏：记录、目标与最近一页消息互不依赖，同时读取，再从合并后
+  /// 的消息里读出下一步建议、记忆卡片与回执。
+  Future<ConversationView> conversationView(
+    int id, {
+    List<ChatMessage> olderMessages = const [],
+  }) async {
+    final (record, goals, page) = await (
+      conversations.byId(id),
+      tasks.activeGoals(),
+      conversations.historyPage(id),
+    ).wait;
+    final messages = mergeOlderMessages(olderMessages, page.messages);
+    final (memoryItems, changes) = await (
+      memoryItemsFromMessages(messages),
+      changesFromMessages(messages),
+    ).wait;
+    return ConversationView(
+      record: record,
+      goals: goals,
+      messages: messages,
+      hasOlder: page.hasOlder,
+      pending: pendingSuggestions(messages),
+      memoryItems: memoryItems,
+      changes: changes,
+    );
+  }
+
+  /// 把更早读到的消息接在最近一页之前，按编号去重。
+  ///
+  /// 同一条讨论里消息编号随写入递增，较早读出的几页都在最近一页之前；两页在
+  /// 记录变长时可能有重叠，去重保证同一条消息只显示一次。
+  static List<ChatMessage> mergeOlderMessages(
+    List<ChatMessage> older,
+    List<ChatMessage> latest,
+  ) {
+    final seen = <int>{};
+    return [
+      for (final message in older)
+        if (seen.add(message.id)) message,
+      for (final message in latest)
+        if (seen.add(message.id)) message,
+    ];
+  }
 
   /// 发给模型的近期讨论：从最新一条向前累计到字数预算为止。
   ///

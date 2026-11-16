@@ -8,11 +8,36 @@ import '../db/database_gate.dart';
 import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
 import '../revisions/revision_engine.dart';
+import '../revisions/revision_models.dart';
 import '../revisions/revision_package.dart';
 import '../revisions/revision_service.dart';
 import 'data_package_service.dart';
 import 'restore_inspection.dart';
 import 'restore_point_store.dart';
+
+/// 数据版本页一屏读到的内容：提交历史、撤销判断、存储占用与恢复点列表。
+class DataVersionOverview {
+  const DataVersionOverview({
+    required this.history,
+    required this.undoReasons,
+    required this.usage,
+    required this.restorePoints,
+    required this.restorePointKeep,
+  });
+
+  final RevisionHistory history;
+
+  /// 每条提交不能撤销的原因；可以撤销的提交不在表里，或对应 null。
+  final Map<int, String?> undoReasons;
+
+  /// 当前库的规模、附件大小、检查点与命名版本数量。
+  final RevisionStorageUsage usage;
+
+  /// 恢复点按保存时间倒序，最多保留 [restorePointKeep] 份。
+  final List<RestorePoint> restorePoints;
+
+  final int restorePointKeep;
+}
 
 /// 数据包与整库恢复：导出、备份、导入、恢复点与清空。
 ///
@@ -151,6 +176,42 @@ class DataVersionService {
     );
   }
 
+  /// 数据版本页一屏读到的表：三张版本元数据表与检查点。
+  ///
+  /// 提交收尾每次都会通知这三张版本表，版本恢复、撤销、导入与清空还会由应用根
+  /// 按全部表补发一次；页面因此不在这些操作之后自己重读（ADR-0014）。
+  static const Set<String> _overviewTables = {
+    'revision_commit',
+    'revision_change',
+    'revision_ref',
+    'revision_checkpoint',
+  };
+
+  /// 数据版本页的一屏读取：先读历史，再读撤销判断、存储占用与恢复点。
+  Future<DataVersionOverview> overview({int limit = 200}) async {
+    final history = await revisions.history(limit: limit);
+    final usage = await revisions.storageUsage();
+    final undoReasons = await revisions.undoBlockReasons(history.commits);
+    final restorePoints = await restorePointStore.list();
+    return DataVersionOverview(
+      history: history,
+      undoReasons: undoReasons,
+      usage: usage,
+      restorePoints: restorePoints,
+      restorePointKeep: restorePointKeep,
+    );
+  }
+
+  /// 跟随写入更新的整屏读取；页面订阅之后不再在恢复、撤销与清理之后自己重读。
+  ///
+  /// 读取走版本服务的库入口，与写路径共用同一个通知流；恢复点写在文件里，
+  /// 删除之后由 [deleteRestorePoint] 补发一次通知。
+  Stream<DataVersionOverview> watchOverview({int limit = 200}) =>
+      revisions.db.watch(
+        tables: _overviewTables,
+        read: () => overview(limit: limit),
+      );
+
   /// 恢复点按保存时间倒序；数据版本页用它列出恢复前自动保存的状态。
   Future<List<RestorePoint>> restorePoints() => restorePointStore.list();
 
@@ -162,8 +223,13 @@ class DataVersionService {
       restorePointStore.read(point);
 
   /// 删除一份恢复点；文件与同名说明一起删除。
-  Future<void> deleteRestorePoint(RestorePoint point) =>
-      restorePointStore.delete(point);
+  ///
+  /// 恢复点不在库里，删除不形成提交；这里按版本表补发一次通知，订阅中的列表
+  /// 因此跟着少一条。
+  Future<void> deleteRestorePoint(RestorePoint point) async {
+    await restorePointStore.delete(point);
+    revisions.db.notifyTables(_overviewTables);
+  }
 
   /// 清空本机学习数据，并按当前结构重开一个空库。
   Future<void> resetAllData() async {

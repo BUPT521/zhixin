@@ -7,9 +7,9 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/study_plan_service.dart';
 import '../domain/models/study.dart';
-import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'plan_dialogs.dart';
 import 'undo_feedback.dart';
@@ -28,80 +28,53 @@ class StudyPlanPage extends StatefulWidget {
   State<StudyPlanPage> createState() => _StudyPlanPageState();
 }
 
-class _StudyPlanPageState extends State<StudyPlanPage>
-    with DataVersionWatcher<StudyPlanPage> {
-  StudyPlanView? _view;
-  Map<int, ScheduleBlock> _nextBlocks = const {};
-  Map<int, StudySession> _sessions = const {};
-  bool _loading = true;
+class _StudyPlanPageState extends State<StudyPlanPage> {
+  /// 一屏订阅：计划、步骤、每一步的预约与场次随写入更新（ADR-0014）。
+  ///
+  /// 推进步骤、预约与打开讨论之后的重读都由数据层完成，页面不再自己重读。
+  Stream<StudyPlanScreen>? _stream;
+
+  /// 最近一次读回的一屏；动作处理从这里取当前计划与预约。
+  StudyPlanScreen? _screen;
   bool _busy = false;
-  bool _started = false;
   String? _notice;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    watchDataVersion(AppScope.of(context).dataVersion);
-    if (_started) return;
-    _started = true;
-    _load();
+    // 页面要读应用根上的仓库，等依赖就绪之后再订阅。
+    _stream ??= AppScope.of(context).study.systemPlan
+        .watchScreen(widget.planId);
   }
 
-  /// 推进步骤与打开讨论都在页面里发起，动作结束会自己重读；忙碌时不叠加。
-  @override
-  bool get dataVersionActive => !_busy;
-
-  @override
-  void onDataVersionChanged() {
-    _load();
+  /// 新的一屏回来了：动作处理改用它，界面由订阅重建。
+  void _onScreen(StudyPlanScreen screen) {
+    _screen = screen;
   }
 
-  Future<void> _load() async {
-    try {
-      final scope = AppScope.of(context);
-      final view = await scope.study.systemPlan.view(widget.planId);
-      final (blocks, sessions) = await (
-        scope.study.plan.nextBlocksForItems(view.steps.map((step) => step.id)),
-        scope.study.systemPlan.latestSessionsForSteps(
-          view.steps.map((step) => step.id),
-        ),
-      ).wait;
-      if (!mounted) return;
-      // 结果回来时若还在推入动画里，等动画结束再填。
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _view = view;
-        _nextBlocks = blocks;
-        _sessions = sessions;
-        _loading = false;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取学习计划',
-          kind: 'study_plan_read',
-          kept: '计划与步骤没有改动',
-          next: '可以返回再打开',
-        );
-      });
-    }
+  void _onReadError(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取学习计划',
+      kind: 'study_plan_read',
+      kept: '屏幕上已经显示的计划与步骤保持不变',
+      next: '可以返回再打开这一页',
+    );
+    showToast(context, message);
   }
 
+  /// 打开这一步的讨论；返回之后这一屏随订阅更新，不再手动重读。
   Future<void> _openDiscussion(int conversationId) async {
     await openDiscussion(context, conversationId);
-    await _load();
   }
 
   Future<void> _studyStep(PlanItem step) async {
     if (_busy) return;
     final scope = AppScope.of(context);
-    final sourceConversationId = _view?.plan.conversationId;
+    final sourceConversationId = _screen?.view.plan.conversationId;
     final stepConversationId = step.conversationId;
     final hasPreviousDiscussion =
         stepConversationId != null &&
@@ -147,7 +120,6 @@ class _StudyPlanPageState extends State<StudyPlanPage>
         await _openDiscussion(id);
       } else {
         await openPlanItem(context, step);
-        if (mounted) await _load();
       }
     } catch (error, stack) {
       if (!mounted) return;
@@ -168,7 +140,7 @@ class _StudyPlanPageState extends State<StudyPlanPage>
   }
 
   Future<void> _schedule(PlanItem step) async {
-    final block = _nextBlocks[step.id];
+    final block = _screen?.nextBlocks[step.id];
     final draft = await showZhixinDialog<BlockDraft>(
       context: context,
       builder: (_) => BlockDialog(
@@ -188,14 +160,13 @@ class _StudyPlanPageState extends State<StudyPlanPage>
               end: end,
             )
           : await service.moveBlock(block.id, start: draft.start, end: end);
-      await _load();
       if (!mounted || !result.changed) return;
       showActionToast(
         context,
         block == null ? '已为这一步预约时间' : '已改约这一步的时间',
         label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _load),
+        // 撤销写回之后的重读由订阅完成，这里不再手动刷新这一屏。
+        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -217,7 +188,6 @@ class _StudyPlanPageState extends State<StudyPlanPage>
     try {
       await AppScope.of(context).study.systemPlan
           .setStepStatus(widget.planId, step.id, status);
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -257,7 +227,7 @@ class _StudyPlanPageState extends State<StudyPlanPage>
   }
 
   Future<void> _togglePause() async {
-    final view = _view;
+    final view = _screen?.view;
     if (view == null) return;
     final service = AppScope.of(context).study.systemPlan;
     try {
@@ -266,7 +236,6 @@ class _StudyPlanPageState extends State<StudyPlanPage>
       } else {
         await service.resume(widget.planId);
       }
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -285,17 +254,26 @@ class _StudyPlanPageState extends State<StudyPlanPage>
 
   @override
   Widget build(BuildContext context) {
+    return LiveView<StudyPlanScreen>(
+      stream: _stream,
+      onData: _onScreen,
+      onError: _onReadError,
+      builder: (context, screen, loading) {
+        if (loading) return const DetailScaffold(child: PageLoading());
+        if (screen == null) {
+          return DetailScaffold(
+            header: const ZhixinHeader(title: Text('系统学习'), showBack: true),
+            child: Center(child: Text(_notice ?? '未找到这份学习计划')),
+          );
+        }
+        return _planBody(context, screen);
+      },
+    );
+  }
+
+  Widget _planBody(BuildContext context, StudyPlanScreen screen) {
     final theme = context.zhixin;
-    final view = _view;
-    if (_loading) {
-      return const DetailScaffold(child: PageLoading());
-    }
-    if (view == null) {
-      return DetailScaffold(
-        header: const ZhixinHeader(title: Text('系统学习'), showBack: true),
-        child: Center(child: Text(_notice ?? '未找到这份学习计划')),
-      );
-    }
+    final view = screen.view;
     final plan = view.plan;
     return DetailScaffold(
       header: ZhixinHeader(
@@ -340,7 +318,7 @@ class _StudyPlanPageState extends State<StudyPlanPage>
             ),
           ),
           SizedBox(height: context.zhixin.space.gap),
-          for (final step in view.steps) _stepCard(theme, step, view),
+          for (final step in view.steps) _stepCard(theme, screen, step),
           const SizedBox(height: 12),
           Wrap(
             children: [
@@ -359,9 +337,10 @@ class _StudyPlanPageState extends State<StudyPlanPage>
     );
   }
 
-  Widget _stepCard(ZhixinTheme theme, PlanItem step, StudyPlanView view) {
-    final isCurrent = view.currentStep?.id == step.id;
-    final block = _nextBlocks[step.id];
+  Widget _stepCard(ZhixinTheme theme, StudyPlanScreen screen, PlanItem step) {
+    final isCurrent = screen.view.currentStep?.id == step.id;
+    final block = screen.nextBlocks[step.id];
+    final session = screen.sessions[step.id];
     final label = step.status == PlanItemStatus.todo ? '待学' : step.status.label;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -407,21 +386,21 @@ class _StudyPlanPageState extends State<StudyPlanPage>
                     style: theme.text.bodySmall,
                   ),
                 ),
-              if (step.done && _sessions[step.id] != null) ...[
+              if (step.done && session != null) ...[
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    '这次学习：${shortTime(_sessions[step.id]!.startedAt)}–'
-                    '${shortTime(_sessions[step.id]!.endedAt ?? _sessions[step.id]!.startedAt)}'
-                    '${_sessions[step.id]!.outcomeLabel == null ? '' : ' · ${_sessions[step.id]!.outcomeLabel}'}',
+                    '这次学习：${shortTime(session.startedAt)}–'
+                    '${shortTime(session.endedAt ?? session.startedAt)}'
+                    '${session.outcomeLabel == null ? '' : ' · ${session.outcomeLabel}'}',
                     style: theme.text.bodySmall,
                   ),
                 ),
-                if (_sessions[step.id]!.summary?.trim().isNotEmpty ?? false)
+                if (session.summary?.trim().isNotEmpty ?? false)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
-                      '困难：${_sessions[step.id]!.summary!.trim()}',
+                      '困难：${session.summary!.trim()}',
                       style: theme.text.bodySmall,
                     ),
                   ),

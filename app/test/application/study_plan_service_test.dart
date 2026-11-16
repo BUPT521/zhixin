@@ -118,6 +118,7 @@ class _Harness {
         runtime: testRuntime(policy: () => policy),
       ),
       conversations: conversations,
+      schedule: schedule,
       study: study,
       transactions: WriteTransactions(db),
       runtime: testRuntime(policy: () => policy),
@@ -617,4 +618,71 @@ void main() {
     expect(view.steps.first.status, PlanItemStatus.done);
     expect(view.plan.currentPage, 2);
   });
+
+  test('订阅中的系统学习页一屏在推进步骤之后重读一次', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
+    final materials = MaterialRepository(rig.db);
+    final plans = StudyPlanRepository(rig.db);
+    final conversations = ConversationRepository(rig.db);
+    final schedule = ScheduleRepository(rig.db);
+    final service = StudyPlanService(
+      plans: plans,
+      materials: materials,
+      ai: _FakeAi(),
+      context: ContextService(
+        tasks: TaskRepository(rig.db),
+        attempts: AttemptRepository(rig.db),
+        schedule: schedule,
+        memories: MemoryRepository(rig.db),
+        conversations: conversations,
+        materials: materials,
+        runtime: testRuntime(policy: () => policy),
+      ),
+      conversations: conversations,
+      schedule: schedule,
+      study: StudyRepository(rig.db),
+      transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(policy: () => policy, live: rig.db.live),
+    );
+    final materialId = await materials.create(
+      title: '概率论讲义',
+      kind: MaterialKind.book,
+    );
+    await materials.addPage(
+      materialId: materialId,
+      pageNo: 1,
+      content: '第 1 页：条件概率与独立性。',
+    );
+    final created = await service.createPlan(
+      materialId: materialId,
+      pageFrom: 1,
+      pageTo: 1,
+      steps: const [StudyStepDraft(title: '阅读定义', pageFrom: 1, pageTo: 1)],
+    );
+    final screens = <StudyPlanScreen>[];
+    final subscription = service
+        .watchScreen(created.plan.id)
+        .listen(screens.add);
+    addTearDown(subscription.cancel);
+
+    await _settle();
+    expect(screens, hasLength(1), reason: '订阅之后先读一次');
+    expect(screens.single.view.steps.single.title, '阅读定义');
+    expect(screens.single.view.steps.single.done, isFalse);
+
+    await service.setStepStatus(
+      created.plan.id,
+      created.steps.single.id,
+      PlanItemStatus.done,
+    );
+    await _settle();
+    expect(screens, hasLength(2), reason: '步骤写入之后重读一次');
+    expect(screens.last.view.steps.single.done, isTrue);
+  });
 }
+
+/// 让通知、读取与回填排到队尾：这几步都是微任务与定时器。
+Future<void> _settle() =>
+    Future<void>.delayed(const Duration(milliseconds: 20));

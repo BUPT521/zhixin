@@ -685,7 +685,6 @@ class _RecordsPageState extends State<RecordsPage> {
     try {
       await AppScope.of(context).chat.discussion
           .setGoal(record.id, choice.goalId);
-      await _reload();
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(
@@ -721,7 +720,6 @@ class _RecordsPageState extends State<RecordsPage> {
     if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).chat.discussion.clear(record.id);
-      await _reload();
       if (!mounted) return;
       showToast(context, '已清空这条记录');
     } catch (error, stack) {

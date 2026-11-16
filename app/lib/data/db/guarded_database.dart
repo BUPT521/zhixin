@@ -45,11 +45,18 @@ class GuardedDatabase implements RawDatabase {
 
   late final LiveQueries _live = LiveQueries(
     changes: _changes.stream,
-    run: gate.shared,
+    run: _readAfterCommit,
   );
 
   /// 跟随写入更新的读取入口；应用服务经运行环境使用（ADR-0014）。
   LiveQueries get live => _live;
+
+  /// 提交之后的重读：登记成读者，后面排队的写入等它读完再开始。
+  ///
+  /// 读取本身在发出通知的执行区里执行，因此与写入共用同一个事件循环，
+  /// 不会出现“读取等 pump、写入等读取”的互等。
+  Future<T> _readAfterCommit<T>(Future<T> Function() read) =>
+      gate.shared(read, newReader: true);
 
   @override
   DatabaseConnectionUser? get driftConnection => _currentTxn?.driftConnection;
@@ -94,18 +101,22 @@ class GuardedDatabase implements RawDatabase {
   /// 通知流本身不随连接替换关闭，订阅中的页面继续收到重读。
   void connectionReplaced() {
     _closed = false;
+    _live.muted = false;
     _changes.connectionReplaced();
   }
 
   /// 关闭连接：等正在进行的读写结束；恢复流程里已经在独占区，直接执行。
   ///
   /// 页面退出与测试清理都会各关一次，第二次直接返回，不再重关连接；恢复与
-  /// 清空换库之后由 [connectionReplaced] 复位，新连接照常可以关。
+  /// 清空换库之后由 [connectionReplaced] 复位，新连接照常可以关。关之前先
+  /// 停掉订阅的重读：库关掉之后再有读取进来，drift 会把连接重新打开，
+  /// 测试收尾删临时目录时表现为文件被占用。
   @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    await gate.exclusive(() => _db.close());
+    _live.muted = true;
+    await gate.closeExclusive(() => _db.close());
   }
 
   bool _closed = false;

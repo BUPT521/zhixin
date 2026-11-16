@@ -19,8 +19,16 @@ class DatabaseGate {
   /// 当前调用是否已经在独占区内。
   bool get holdsExclusive => Zone.current[_exclusiveScope] == true;
 
-  Future<T> shared<T>(Future<T> Function() action) async {
-    if (holdsExclusive || Zone.current[_sharedScope] == true) {
+  /// 共享访问：同一调用链里已经持有共享或独占时直接执行，不重复排队。
+  ///
+  /// [newReader] 为真时即使已经处在独占区里也登记一个读者：提交收尾发出的
+  /// 重读就是这种情况，它要在独占区结束前就排上，让后面的写入等它读完，
+  /// 读到的也一定是这次提交之后的数据。
+  Future<T> shared<T>(
+    Future<T> Function() action, {
+    bool newReader = false,
+  }) async {
+    if (!newReader && (holdsExclusive || Zone.current[_sharedScope] == true)) {
       return action();
     }
     await _acquireRead();
@@ -60,7 +68,7 @@ class DatabaseGate {
   bool _canRead() => !_writerActive && !_writerWaiting;
 
   void _releaseRead() {
-    _readers--;
+    if (_readers > 0) _readers--;
     if (_readers > 0) return;
     _drainWaiters();
   }
@@ -74,6 +82,23 @@ class DatabaseGate {
     final waiter = Completer<void>();
     _writeWaiters.add(waiter);
     return waiter.future;
+  }
+
+  /// 关库专用的独占访问：不再等还在进行的读，直接把库关掉。
+  ///
+  /// 关库发生在页面退出与测试清理时，读者可能停在一个再也不会推进的执行区里，
+  /// 等下去就是永久等待；库关掉之后这些读取会拿到错误，而它们的结果已经没人
+  /// 接收。读者计数在这里清零，之后迟到的释放不会再把它减成负数。
+  Future<T> closeExclusive<T>(Future<T> Function() action) async {
+    _writerActive = true;
+    try {
+      return await action();
+    } finally {
+      _writerActive = false;
+      _writerWaiting = false;
+      _readers = 0;
+      _drainWaiters();
+    }
   }
 
   void _releaseWrite() {

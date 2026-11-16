@@ -5,13 +5,12 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 
 import '../app_scope.dart';
 import '../application/docx_import.dart';
-import '../application/request_gate.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/text.dart';
-import 'data_version_watcher.dart';
 import 'docx_review_dialog.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'theme.dart';
 import 'workspace_widgets.dart';
@@ -30,73 +29,80 @@ class MaterialList extends StatefulWidget {
   State<MaterialList> createState() => MaterialListState();
 }
 
-class MaterialListState extends State<MaterialList>
-    with DataVersionWatcher<MaterialList> {
-  List<Material> _materials = const [];
-  List<({int id, String title, bool active})> _goals = const [];
-  bool _loading = true;
+class MaterialListState extends State<MaterialList> {
+  /// 材料列表的订阅：材料、页码与目标任一被写入之后由数据层整份重读。
+  ///
+  /// 导入、加页、更正与从详情返回之后不再由页面重读，刷新按钮与切回材料页签
+  /// 只是换一条新流（ADR-0014）。
+  Stream<List<Material>>? _stream;
   bool _started = false;
   bool _importingWord = false;
-  final RequestGate _gate = RequestGate();
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    watchDataVersion(AppScope.of(context).dataVersion);
+    // 没显示的页签不提前读取；等这一栏第一次建出来再订阅。
     if (_started) return;
     _started = true;
-    reload();
+    _stream = _createStream();
   }
 
-  /// 导入、加页与从详情返回都不再手动重读；数据版本推进时自己刷新。
-  @override
-  void onDataVersionChanged() {
-    reload();
-  }
+  Stream<List<Material>> _createStream() =>
+      AppScope.of(context).library.material.watchList();
 
-  Future<void> reload() async {
+  /// 重新订阅材料列表；记录页的刷新按钮与切回材料页签都走这里。
+  ///
+  /// 方法名与原来一致，记录页仍按 `reload()` 调用，实现改成换一条新流。
+  void reload() {
     if (!mounted) return;
-    final scope = AppScope.of(context);
-    final request = _gate.start();
+    setState(() => _stream = _createStream());
+  }
+
+  void _reportReadFailure(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取材料列表',
+      kind: 'materials_read',
+      kept: '已有的材料没有改动',
+      next: '可以点刷新再试',
+    );
+    showToast(context, message);
+  }
+
+  /// 打开导入对话框之前读一次目标列表；归属选项只在打开对话框时用得到。
+  Future<List<({int id, String title, bool active})>?> _loadGoals() async {
     try {
-      final (materials, goals) = await (
-        scope.library.material.list(),
-        scope.study.plan.goals(),
-      ).wait;
-      if (!mounted || !_gate.isCurrent(request)) return;
-      await context.afterTransition(contentTransition: widget.tabTransition);
-      if (!mounted || !_gate.isCurrent(request)) return;
-      setState(() {
-        _materials = materials;
-        _goals = [
-          for (final goal in goals)
-            (id: goal.id, title: goal.title, active: goal.active),
-        ];
-        _loading = false;
-      });
+      final goals = await AppScope.of(context).study.plan.goals();
+      return [
+        for (final goal in goals)
+          (id: goal.id, title: goal.title, active: goal.active),
+      ];
     } catch (error, stack) {
-      if (!mounted || !_gate.isCurrent(request)) return;
-      await context.afterTransition(contentTransition: widget.tabTransition);
-      if (!mounted || !_gate.isCurrent(request)) return;
-      setState(() => _loading = false);
+      if (!mounted) return null;
       final message = describeFailure(
         context,
         error,
         stack,
-        action: '读取材料列表',
-        kind: 'materials_read',
-        kept: '已有的材料没有改动',
-        next: '可以点刷新再试',
+        action: '读取目标列表',
+        kind: 'materials_goals',
+        kept: '材料没有改动',
+        next: '可以再试一次',
       );
       showToast(context, message);
+      return null;
     }
   }
 
   Future<void> _import() async {
     final scope = AppScope.of(context);
+    final goals = await _loadGoals();
+    if (goals == null || !mounted) return;
     final drafts = await showZhixinDialog<List<_MaterialDraft>>(
       context: context,
-      builder: (_) => _ImportMaterialDialog(goals: _goals),
+      builder: (_) => _ImportMaterialDialog(goals: goals),
     );
     if (drafts == null || drafts.isEmpty || !mounted) return;
     try {
@@ -144,10 +150,12 @@ class MaterialListState extends State<MaterialList>
         file.readAsByteStream(),
       );
       if (!mounted) return;
+      final goals = await _loadGoals();
+      if (goals == null || !mounted) return;
       final selection = await showDocxReview(
         context,
         document: document,
-        goals: _goals,
+        goals: goals,
       );
       if (selection == null || !mounted) return;
       final id = await service.importDocx(
@@ -176,10 +184,10 @@ class MaterialListState extends State<MaterialList>
     }
   }
 
+  /// 打开刚导入的材料；列表由订阅刷新，返回之后不再重读。
   Future<void> _openImportedMaterial(int id) async {
     if (!mounted) return;
     await openMaterial(context, id);
-    if (mounted) await reload();
   }
 
   Future<void> _addPage(Material material) async {
@@ -217,7 +225,6 @@ class MaterialListState extends State<MaterialList>
         content: draft.content,
         label: draft.label,
       );
-      await reload();
     } on PageNumberTaken catch (error) {
       if (!mounted) return;
       final message = '$error。要改这一页，请打开材料详情点「更正这一页」。';
@@ -240,86 +247,91 @@ class MaterialListState extends State<MaterialList>
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final canImport = !_loading && !_importingWord;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 12, 4),
-          child: Row(
-            children: [
-              Text('材料', style: theme.text.titleSmall),
-              const Spacer(),
-              forui.FButton(
-                variant: forui.FButtonVariant.secondary,
-                mainAxisSize: MainAxisSize.min,
-                onPress: canImport ? _import : null,
-                child: const Text('导入材料'),
-              ),
-              const SizedBox(width: 4),
-              forui.FButton(
-                variant: forui.FButtonVariant.secondary,
-                mainAxisSize: MainAxisSize.min,
-                onPress: canImport ? _importWord : null,
-                child: const Text('导入 Word'),
-              ),
-            ],
-          ),
-        ),
-        if (_importingWord) const forui.FProgress(),
-        Expanded(
-          child: _loading
-              ? SingleChildScrollView(
-                  child: ListSkeleton(
-                    rowHeight: 73,
-                    padding: theme.space.pageInsets(),
+    return LiveView<List<Material>>(
+      stream: _stream,
+      contentTransition: widget.tabTransition,
+      onError: _reportReadFailure,
+      builder: (context, materials, loading) {
+        final list = materials ?? const <Material>[];
+        final canImport = !loading && !_importingWord;
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 12, 4),
+              child: Row(
+                children: [
+                  Text('材料', style: theme.text.titleSmall),
+                  const Spacer(),
+                  forui.FButton(
+                    variant: forui.FButtonVariant.secondary,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: canImport ? _import : null,
+                    child: const Text('导入材料'),
                   ),
-                )
-              : _materials.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(
-                      '选择 .docx 文件或粘贴原文，之后可搜索材料、引用原文或建立学习计划。',
-                      textAlign: TextAlign.center,
-                      style: theme.text.bodyMedium,
-                    ),
+                  const SizedBox(width: 4),
+                  forui.FButton(
+                    variant: forui.FButtonVariant.secondary,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: canImport ? _importWord : null,
+                    child: const Text('导入 Word'),
                   ),
-                )
-              : ListView.separated(
-                  padding: theme.space.pageInsets(),
-                  itemCount: _materials.length,
-                  separatorBuilder: (_, _) =>
-                      SizedBox(height: context.zhixin.space.gap),
-                  itemBuilder: (context, index) {
-                    final material = _materials[index];
-                    return forui.FTile(
-                      title: Text(material.title),
-                      subtitle: Text(
-                        '${material.kindLabel}'
-                        '${material.sourceRef == null ? '' : ' · ${material.sourceRef}'}'
-                        ' · ${material.pageCount} ${material.isDocx ? '个片段' : '页'}',
+                ],
+              ),
+            ),
+            if (_importingWord) const forui.FProgress(),
+            Expanded(
+              child: loading
+                  ? SingleChildScrollView(
+                      child: ListSkeleton(
+                        rowHeight: 73,
+                        padding: theme.space.pageInsets(),
                       ),
-                      suffix: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (!material.isDocx)
-                            ZhixinIconButton(
-                              tooltip: '添加一页',
-                              onPressed: () => _addPage(material),
-                              icon: FLucideIcons.filePlus,
-                            ),
-                          const Icon(FLucideIcons.chevronRight),
-                        ],
+                    )
+                  : list.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Text(
+                          '选择 .docx 文件或粘贴原文，之后可搜索材料、引用原文或建立学习计划。',
+                          textAlign: TextAlign.center,
+                          style: theme.text.bodyMedium,
+                        ),
                       ),
-                      onPress: () async {
-                        await openMaterial(context, material.id);
-                        await reload();
+                    )
+                  : ListView.separated(
+                      padding: theme.space.pageInsets(),
+                      itemCount: list.length,
+                      separatorBuilder: (_, _) =>
+                          SizedBox(height: context.zhixin.space.gap),
+                      itemBuilder: (context, index) {
+                        final material = list[index];
+                        return forui.FTile(
+                          title: Text(material.title),
+                          subtitle: Text(
+                            '${material.kindLabel}'
+                            '${material.sourceRef == null ? '' : ' · ${material.sourceRef}'}'
+                            ' · ${material.pageCount} ${material.isDocx ? '个片段' : '页'}',
+                          ),
+                          suffix: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!material.isDocx)
+                                ZhixinIconButton(
+                                  tooltip: '添加一页',
+                                  onPressed: () => _addPage(material),
+                                  icon: FLucideIcons.filePlus,
+                                ),
+                              const Icon(FLucideIcons.chevronRight),
+                            ],
+                          ),
+                          onPress: () => openMaterial(context, material.id),
+                        );
                       },
-                    );
-                  },
-                ),
-        ),
-      ],
+                    ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

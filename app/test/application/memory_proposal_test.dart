@@ -11,6 +11,7 @@ import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/memory.dart';
 
+import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
 import 'package:zhixin/data/db/sql.dart';
@@ -137,6 +138,7 @@ void main() {
       conversations: ConversationRepository(rig.db),
       memories: MemoryRepository(rig.db),
       transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
     );
 
     final outcome = await service.propose(seeded.$2);
@@ -258,6 +260,7 @@ void main() {
       conversations: conversations,
       memories: MemoryRepository(rig.db),
       transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
     );
     final outcome = await service.propose(conversation);
     expect(outcome.proposals, hasLength(1));
@@ -303,7 +306,39 @@ void main() {
       isFalse,
     );
   });
+
+  test('订阅中的记录列表在建议写入之后重读一次', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final seeded = await _seed(rig);
+    final service = MemoryProposalService(
+      attempts: AttemptRepository(rig.db),
+      conversations: ConversationRepository(rig.db),
+      memories: MemoryRepository(rig.db),
+      transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(live: rig.db.live),
+    );
+    final counts = <int>[];
+    final subscription = service.watchQuestions().listen(
+      (rows) => counts.add(rows.length),
+    );
+    addTearDown(subscription.cancel);
+
+    await _settle();
+    expect(counts, hasLength(1), reason: '订阅之后先读一次');
+    expect(counts.single, 1, reason: '种子数据只有一条有作答的记录');
+
+    final outcome = await service.propose(seeded.$2);
+    await service.accept(outcome.proposals.first);
+    await _settle();
+    expect(counts, hasLength(2), reason: '写入记忆之后重读一次');
+    expect(counts.last, 1);
+  });
 }
+
+/// 让通知、读取与回填排到队尾：这几步都是微任务与定时器。
+Future<void> _settle() =>
+    Future<void>.delayed(const Duration(milliseconds: 20));
 
 class RepositorySet {
   RepositorySet(this.rig);
@@ -315,10 +350,14 @@ class RepositorySet {
     conversations: ConversationRepository(rig.db),
     memories: MemoryRepository(rig.db),
     transactions: WriteTransactions(rig.db),
+    runtime: testRuntime(),
   );
 
   late final MemoryService memoryService = MemoryService(
     MemoryRepository(rig.db),
+    tasks: TaskRepository(rig.db),
+    materials: MaterialRepository(rig.db),
     transactions: WriteTransactions(rig.db),
+    runtime: testRuntime(),
   );
 }

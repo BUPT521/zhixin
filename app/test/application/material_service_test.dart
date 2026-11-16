@@ -10,11 +10,16 @@ import '../support/test_db.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
-MaterialService _service(TestRig rig, {Clock? clock}) => MaterialService(
-  materials: MaterialRepository(rig.db, clock: clock ?? systemClock),
-  transactions: WriteTransactions(rig.db),
-  runtime: testRuntime(),
-);
+MaterialService _service(TestRig rig, {Clock? clock, bool live = false}) =>
+    MaterialService(
+      materials: MaterialRepository(rig.db, clock: clock ?? systemClock),
+      transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(live: live ? rig.db.live : null),
+    );
+
+/// 让通知、读取与回填排到队尾：这几步都是微任务与定时器。
+Future<void> _settle() =>
+    Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
   test('材料和全部页码在同一事务内导入', () async {
@@ -269,5 +274,60 @@ void main() {
       throwsStateError,
     );
     expect(await selectRows(rig.db, 'material_page'), isEmpty);
+  });
+
+  test('材料列表、材料行与页码的订阅在写入之后重读', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final service = _service(rig, live: true);
+    final materialId = await service.importMaterial(
+      title: '概率论讲义',
+      pages: const [
+        (pageNo: 1, content: '第一页', label: null),
+        (pageNo: 2, content: '第二页', label: null),
+      ],
+    );
+
+    final lists = <List<Material>>[];
+    final rows = <Material?>[];
+    final pages = <List<MaterialPage>>[];
+    final singlePages = <MaterialPage?>[];
+    final subscriptions = [
+      service.watchList().listen(lists.add),
+      service.watchMaterial(materialId).listen(rows.add),
+      service.watchPages(materialId).listen(pages.add),
+      service.watchPage(materialId, 2).listen(singlePages.add),
+    ];
+    addTearDown(() async {
+      for (final subscription in subscriptions) {
+        await subscription.cancel();
+      }
+    });
+    await _settle();
+    expect(lists.single.single.pageCount, 2);
+    expect(rows.single?.title, '概率论讲义');
+    expect(pages.single.map((page) => page.pageNo), [1, 2]);
+    expect(singlePages.single?.content, '第二页');
+
+    // 补一页之后，整份页码与单页原文都跟着重读。
+    await service.addPage(materialId: materialId, pageNo: 3, content: '补充的第三页');
+    await _settle();
+    expect(pages.last.map((page) => page.pageNo), [1, 2, 3]);
+    expect(lists.last.single.pageCount, 3);
+    // 按表通知不区分行，补别的页也会让这一页重读一次，结果仍是第 2 页。
+    expect(singlePages, hasLength(2));
+    expect(singlePages.last?.content, '第二页');
+
+    // 改第 2 页之后，单页读法读到更正后的原文。
+    await service.correctPage(
+      page: pages.last.singleWhere((page) => page.pageNo == 2),
+      corrected: '更正后的第二页',
+    );
+    await _settle();
+    expect(singlePages.last?.content, '更正后的第二页');
+    expect(
+      pages.last.singleWhere((page) => page.pageNo == 2).content,
+      '更正后的第二页',
+    );
   });
 }

@@ -14,6 +14,17 @@ import '../domain/rules/time_policy.dart';
 import 'service_runtime.dart';
 import 'time_policy_controller.dart';
 
+/// 设置页从库里读到的设置项：每日截止小时与拍照方式。
+///
+/// 截止小时写在 profile 里，拍照方式写在 app_meta 里；恢复、导入与清空之后
+/// 由应用根按全部表补发一次，页面因此不在这些操作之后自己重读。
+class SettingsView {
+  const SettingsView({required this.cutoffHour, required this.useSystemCamera});
+
+  final int cutoffHour;
+  final bool useSystemCamera;
+}
+
 /// 设置页的读写：模型、导出恢复、清空与每日截止小时。
 class SettingsService {
   SettingsService({
@@ -73,6 +84,21 @@ class SettingsService {
   /// 拍照是否走系统相机；默认用应用内相机，快门之后直接进框选。
   Future<bool> useSystemCamera() async =>
       await settings.metadata(systemCameraKey) == '1';
+
+  /// 设置页读到的表：截止小时与拍照方式。
+  static const Set<String> _settingsTables = {'profile', 'app_meta'};
+
+  /// 跟随写入更新的设置项读取；页面订阅之后不再在保存之后自己重读。
+  ///
+  /// 截止小时保存成一条提交，提交收尾通知 profile，页面因此立刻用新值；
+  /// 拍照方式写在 app_meta 里，整库恢复与导入时随全部表一起补发（ADR-0014）。
+  Stream<SettingsView> watchSettings() => runtime.watch(
+    tables: _settingsTables,
+    read: () async => SettingsView(
+      cutoffHour: await cutoffHour(),
+      useSystemCamera: await useSystemCamera(),
+    ),
+  );
 
   Future<WriteResult> setUseSystemCamera(bool value) =>
       transactions.run((txn) async {

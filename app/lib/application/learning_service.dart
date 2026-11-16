@@ -33,13 +33,16 @@ import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'service_runtime.dart';
 
-/// 一道题的当前状态：原题、尝试与一条未提交尝试。
+/// 一道题的当前状态：原题、尝试、一条未提交尝试，以及学习页要显示的判断与
+/// 记忆建议。
 class QuestionView {
   const QuestionView({
     required this.question,
     required this.attempts,
     this.openAttempt,
     this.recentMessages = const [],
+    this.assessments = const {},
+    this.memoryItems = const [],
   });
 
   final Question question;
@@ -48,6 +51,12 @@ class QuestionView {
 
   /// 这道题最近几条讨论消息；学习页在题目下方显示刚才的对话。
   final List<ChatMessage> recentMessages;
+
+  /// 每次尝试的判断，按尝试编号分组；学习页在历次尝试里逐条显示。
+  final Map<int, List<Assessment>> assessments;
+
+  /// 当前未提交尝试上的记忆建议；已经写入的只保留仍可撤销的那几条。
+  final List<MemoryItemView> memoryItems;
 
   Attempt? get lastSubmitted => attempts
       .where((attempt) => attempt.submitted)
@@ -169,6 +178,46 @@ class LearningService {
 
   /// 学习页在题目下方显示的消息条数。
   static const int _recentMessageCount = 6;
+
+  /// 学习页读到的表：任一表写入之后整屏重读一次（ADR-0014）。
+  ///
+  /// 题目视图里的出处与材料标题来自 `material`，材料改名之后也要重读；判断与
+  /// 记忆建议分别来自 `assessment` 与 `attempt`，接受记忆卡片时写入的 `memory`
+  /// 一并列上，避免漏掉只写记忆的那一次提交。
+  static const Set<String> _questionTables = {
+    'conversation',
+    'message',
+    'attempt',
+    'assessment',
+    'material',
+    'memory',
+  };
+
+  /// 跟随写入更新的学习页一屏：原题、历次尝试、最近消息、判断与记忆建议。
+  Stream<QuestionView> watchQuestion(int conversationId) => runtime.watch(
+    tables: _questionTables,
+    read: () => loadQuestion(conversationId),
+  );
+
+  /// 读一次学习页一屏：题目、尝试与最近消息取 [view]，再补判断与记忆建议。
+  Future<QuestionView> loadQuestion(int conversationId) async {
+    final data = await view(conversationId);
+    final open = data.openAttempt;
+    final (assessments, memoryItems) = await (
+      assessmentsFor(data.attempts),
+      open == null
+          ? Future<List<MemoryItemView>>.value(const <MemoryItemView>[])
+          : memoryItemsFor(open),
+    ).wait;
+    return QuestionView(
+      question: data.question,
+      attempts: data.attempts,
+      openAttempt: open,
+      recentMessages: data.recentMessages,
+      assessments: assessments,
+      memoryItems: memoryItems,
+    );
+  }
 
   /// 有作答的记录，附带每条最近一次作答；记录页与记忆建议页共用这一份读取。
   Future<List<QuestionRow>> questionRows({

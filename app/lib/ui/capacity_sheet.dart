@@ -5,12 +5,12 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
-import '../application/capacity_service.dart';
 import '../domain/models/capacity.dart';
 import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'live_view.dart';
 import 'undo_feedback.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
@@ -36,69 +36,65 @@ class _CapacitySheet extends StatefulWidget {
 }
 
 class _CapacitySheetState extends State<_CapacitySheet> {
-  CapacityPlan? _plan;
-  bool _loading = true;
-  bool _started = false;
+  /// 这一屏的订阅；重新估算与失败重试换一条新流。
+  Stream<CapacityPlan>? _stream;
+
   String? _notice;
-  ClockTime _windowStart = CapacityService.defaultWindowStart;
-  ClockTime _windowEnd = CapacityService.defaultWindowEnd;
+  bool _refreshing = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_started) return;
-    _started = true;
-    _load();
+    _stream ??= _createStream();
   }
 
-  Future<void> _load() async {
-    final scope = AppScope.of(context);
-    try {
-      final plan = await scope.study.capacity.computeThisWeek();
-      if (!mounted) return;
-      // 结果回来时若还在展开动画里，等动画结束再填，免得滑入途中高度跳一次。
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _plan = plan;
-        _loading = false;
-        _notice = null;
-        _windowStart = plan.windowStart;
-        _windowEnd = plan.windowEnd;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _plan = null;
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '计算可用时间',
-          kind: 'capacity_compute',
-          kept: '已有预约与课表没有改动',
-          next: '可以合上再打开重试',
-        );
-      });
-    }
+  Stream<CapacityPlan> _createStream() =>
+      AppScope.of(context).study.capacity.watchThisWeek();
+
+  /// 重新估算与失败重试：换一条新流，新结果到达之后可以再点选空档。
+  void _reload() {
+    setState(() {
+      _notice = null;
+      _refreshing = true;
+      _stream = _createStream();
+    });
   }
 
-  Future<void> _editWindow() async {
-    final start = await _pickTime(_windowStart);
+  /// 新结果到达：上一次写入留下的失败说明不再适用。
+  void _onPlan(CapacityPlan plan) {
+    if (_notice == null && !_refreshing) return;
+    setState(() {
+      _notice = null;
+      _refreshing = false;
+    });
+  }
+
+  void _onPlanError(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '计算可用时间',
+      kind: 'capacity_compute',
+      kept: '已有预约与课表没有改动',
+      next: '可以点重试再算一次',
+    );
+    setState(() {
+      _notice = message;
+      _refreshing = false;
+    });
+    showToast(context, message);
+  }
+
+  Future<void> _editWindow(CapacityPlan plan) async {
+    final start = await _pickTime(plan.windowStart);
     if (start == null || !mounted) return;
-    final end = await _pickTime(_windowEnd);
+    final end = await _pickTime(plan.windowEnd);
     if (end == null || !mounted) return;
     final scope = AppScope.of(context);
     try {
       await scope.study.capacity.setWindow(start: start, end: end);
-      setState(() {
-        _windowStart = start;
-        _windowEnd = end;
-        _loading = true;
-        _plan = null;
-      });
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -112,7 +108,11 @@ class _CapacitySheetState extends State<_CapacitySheet> {
           next: '可以再选一次',
         ),
       );
+      return;
     }
+    if (!mounted) return;
+    // 常用时段写在 app_meta 里，不形成提交、没有表通知；保存之后换一条新流。
+    _reload();
   }
 
   Future<ClockTime?> _pickTime(ClockTime current) async {
@@ -223,146 +223,146 @@ class _CapacitySheetState extends State<_CapacitySheet> {
       context,
       append ? '已为「${item.title}」追加一段预约' : '已预约「${item.title}」',
       label: '撤销',
-      onPressed: () => undoCommitWithFeedback(context, commitId, reload: _load),
+      onPressed: () => undoCommitWithFeedback(
+        context,
+        commitId,
+
+        // 撤销会写预约与版本表，订阅据此重读，这里不再重复读取。
+      ),
     );
-    setState(() {
-      _loading = true;
-      _plan = null;
-    });
-    await _load();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    final plan = _plan;
+    return LiveView<CapacityPlan>(
+      stream: _stream,
+      onData: _onPlan,
+      onError: _onPlanError,
+      builder: (context, plan, loading) {
+        final theme = context.zhixin;
+        final body = plan == null
+            ? loading && _notice == null
+                  ? const SizedBox(height: 240, child: PageLoading())
+                  : _failureView(theme)
+            : _planView(theme, plan);
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+          ),
+          child: body,
+        );
+      },
+    );
+  }
+
+  Widget _planView(ZhixinTheme theme, CapacityPlan plan) {
     final movable = <CapacityCandidate>[
-      if (plan != null)
-        for (final candidate in plan.candidates)
-          if (candidate.movableStart != null && candidate.movableEnd != null)
-            candidate,
+      for (final candidate in plan.candidates)
+        if (candidate.movableStart != null && candidate.movableEnd != null)
+          candidate,
     ];
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
-      ),
-      child: _loading
-          ? const SizedBox(height: 240, child: PageLoading())
-          : plan == null
-          ? _failureView(theme)
-          : SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('这周还能做什么', style: theme.text.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            '本周剩余 ${plan.days} 天${plan.availableBudget}可用，'
+            '待排事项${plan.demandBudget}。',
+            style: theme.text.bodyMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '估时来自事项填写，未填写时按 20 分钟占位；'
+            '空档按截止时间算好后直接列出，点一段并确认新建或改约后，'
+            '才写入这个时间。',
+            style: theme.text.bodySmall,
+          ),
+          SizedBox(height: context.zhixin.space.gap),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '常用学习时段：${plan.windowStart.format()}–${plan.windowEnd.format()}',
+                  style: theme.text.bodyMedium,
+                ),
+              ),
+              forui.FButton(
+                variant: forui.FButtonVariant.ghost,
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('这周还能做什么', style: theme.text.titleLarge),
-                  const SizedBox(height: 4),
-                  Text(
-                    '本周剩余 ${plan.days} 天${plan.availableBudget}可用，'
-                    '待排事项${plan.demandBudget}。',
-                    style: theme.text.bodyMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '估时来自事项填写，未填写时按 20 分钟占位；'
-                    '空档按截止时间算好后直接列出，点一段并确认新建或改约后，'
-                    '才写入这个时间。',
-                    style: theme.text.bodySmall,
-                  ),
-                  SizedBox(height: context.zhixin.space.gap),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '常用学习时段：${plan.windowStart.format()}–${plan.windowEnd.format()}',
-                          style: theme.text.bodyMedium,
-                        ),
-                      ),
-                      forui.FButton(
-                        variant: forui.FButtonVariant.ghost,
-                        mainAxisSize: MainAxisSize.min,
-                        onPress: _editWindow,
-                        child: const Text('修改'),
-                      ),
-                    ],
-                  ),
-                  for (final note in plan.notes)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        note,
-                        style: theme.text.bodySmall.copyWith(
-                          color: theme.colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  SizedBox(height: context.zhixin.space.gap),
-                  if (movable.isNotEmpty) ...[
-                    Text('这次估算会把以下弹性预约算作可调整', style: theme.text.titleSmall),
-                    for (final candidate in movable)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '「${candidate.item.title}」'
-                          '${_rangeText(candidate.movableStart!, candidate.movableEnd!)}'
-                          '；点它的空档后才改期',
-                          style: theme.text.bodySmall,
-                        ),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text('没有点选的预约保持原时间。', style: theme.text.bodySmall),
-                    ),
-                  ],
-                  if (plan.candidates.isEmpty)
-                    Text('当前没有可预约的学习事项。', style: theme.text.bodyMedium)
-                  else
-                    Text('按优先级与截止排出的顺序', style: theme.text.titleSmall),
-                  for (var index = 0; index < plan.candidates.length; index++)
-                    _candidateTile(theme, plan.candidates[index], index),
-                  if (plan.skipped.isNotEmpty) ...[
-                    SizedBox(height: context.zhixin.space.gap),
-                    Text('本次不调整的安排', style: theme.text.titleSmall),
-                    for (final skip in plan.skipped)
-                      forui.FTile(
-                        prefix: const Icon(FLucideIcons.lock),
-                        title: Text(skip.item.title),
-                        subtitle: Text(skip.reason),
-                      ),
-                  ],
-                  if (_notice != null) InlineNotice(message: _notice!),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      forui.FButton(
-                        variant: forui.FButtonVariant.outline,
-                        mainAxisSize: MainAxisSize.min,
-                        onPress: _loading
-                            ? null
-                            : () {
-                                setState(() {
-                                  _loading = true;
-                                  _plan = null;
-                                });
-                                _load();
-                              },
-                        child: const Text('重新估算'),
-                      ),
-                      const SizedBox(width: 8),
-                      forui.FButton(
-                        mainAxisSize: MainAxisSize.min,
-                        onPress: _loading
-                            ? null
-                            : () => Navigator.of(context).pop(),
-                        child: const Text('完成'),
-                      ),
-                    ],
-                  ),
-                ],
+                onPress: () => _editWindow(plan),
+                child: const Text('修改'),
+              ),
+            ],
+          ),
+          for (final note in plan.notes)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                note,
+                style: theme.text.bodySmall.copyWith(
+                  color: theme.colors.onSurfaceVariant,
+                ),
               ),
             ),
+          SizedBox(height: context.zhixin.space.gap),
+          if (movable.isNotEmpty) ...[
+            Text('这次估算会把以下弹性预约算作可调整', style: theme.text.titleSmall),
+            for (final candidate in movable)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '「${candidate.item.title}」'
+                  '${_rangeText(candidate.movableStart!, candidate.movableEnd!)}'
+                  '；点它的空档后才改期',
+                  style: theme.text.bodySmall,
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('没有点选的预约保持原时间。', style: theme.text.bodySmall),
+            ),
+          ],
+          if (plan.candidates.isEmpty)
+            Text('当前没有可预约的学习事项。', style: theme.text.bodyMedium)
+          else
+            Text('按优先级与截止排出的顺序', style: theme.text.titleSmall),
+          for (var index = 0; index < plan.candidates.length; index++)
+            _candidateTile(theme, plan.candidates[index], index),
+          if (plan.skipped.isNotEmpty) ...[
+            SizedBox(height: context.zhixin.space.gap),
+            Text('本次不调整的安排', style: theme.text.titleSmall),
+            for (final skip in plan.skipped)
+              forui.FTile(
+                prefix: const Icon(FLucideIcons.lock),
+                title: Text(skip.item.title),
+                subtitle: Text(skip.reason),
+              ),
+          ],
+          if (_notice != null) InlineNotice(message: _notice!),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              forui.FButton(
+                variant: forui.FButtonVariant.outline,
+                mainAxisSize: MainAxisSize.min,
+                onPress: _refreshing ? null : _reload,
+                child: const Text('重新估算'),
+              ),
+              const SizedBox(width: 8),
+              forui.FButton(
+                mainAxisSize: MainAxisSize.min,
+                onPress: () => Navigator.of(context).pop(),
+                child: const Text('完成'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -379,13 +379,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
             forui.FButton(
               variant: forui.FButtonVariant.outline,
               mainAxisSize: MainAxisSize.min,
-              onPress: () {
-                setState(() {
-                  _loading = true;
-                  _notice = null;
-                });
-                _load();
-              },
+              onPress: _reload,
               child: const Text('重试'),
             ),
             forui.FButton(

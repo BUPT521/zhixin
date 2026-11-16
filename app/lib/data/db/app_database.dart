@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:drift/native.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
@@ -22,12 +21,19 @@ const List<String> zhixinDbSideFiles = ['-journal', '-wal', '-shm'];
 /// 表结构由 drift 的 [AppDatabase] 建立；版本与当前结构不一致时清空所有表
 /// 并按当前结构重建：开发期只有可丢弃的测试数据，旧库整体重建，不进入升级
 /// 路径（ADR-0002）。版本引擎初始化时安装版本采集和关键词索引的触发器。
+///
+/// 底层 `sqlite3` 连接由这里持有、交给 [DriftRawDatabase] 关闭：drift 的关闭
+/// 流程要经过几个微任务，页面退出与测试收尾时它们可能不再推进，而底层连接
+/// 是同步关闭的，关掉它文件句柄就立刻归还（ADR-0014 实施时发现）。
 Future<RawDatabase> openZhixinDatabase({
   required String path,
   Clock clock = systemClock,
 }) async {
-  final app = AppDatabase(NativeDatabase(File(path)));
-  final raw = DriftRawDatabase(app);
+  final file = sqlite.sqlite3.open(path);
+  final app = AppDatabase(
+    NativeDatabase.opened(file, closeUnderlyingOnClose: false),
+  );
+  final raw = DriftRawDatabase(app, connection: file);
   // 触发一次查询，让 drift 完成建表与迁移。
   await raw.rawQuery('PRAGMA user_version');
   await RevisionEngine(clock: clock)

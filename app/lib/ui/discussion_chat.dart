@@ -20,10 +20,10 @@ import 'answer_notice.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
 import 'capture_entry.dart';
-import 'data_version_watcher.dart';
 import 'discussion_activity.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
+import 'live_view.dart';
 import 'material_picker.dart';
 import 'navigation.dart';
 import 'plan_dialogs.dart';
@@ -68,8 +68,7 @@ class DiscussionChat extends StatefulWidget {
   State<DiscussionChat> createState() => DiscussionChatState();
 }
 
-class DiscussionChatState extends State<DiscussionChat>
-    with DataVersionWatcher<DiscussionChat> {
+class DiscussionChatState extends State<DiscussionChat> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
@@ -84,23 +83,37 @@ class DiscussionChatState extends State<DiscussionChat>
   LlmCancelToken? _cancelToken;
 
   int? _conversationId;
-  ConversationRecord? _record;
-  List<ChatMessage> _messages = const [];
-  List<PendingSuggestion> _pending = const [];
-  List<MemoryItemView> _memoryItems = const [];
-  List<LearningGoal> _goals = const [];
-  List<AppliedChange> _changes = const [];
+
+  /// 这条讨论的一屏订阅；记录、消息、归属、建议与记忆卡片都从它读
+  /// （ADR-0014），写入之后由数据层重读，页面不再自己 `_load()`。
+  Stream<ConversationView>? _stream;
+
+  ConversationView? _view;
+
+  /// 按“读取较早讨论”读出来的更早几页，从旧到新排列。
+  ///
+  /// 第一页由订阅给出，这几页由页面按需读取之后作为输入交给订阅，整屏读法
+  /// 把两者按编号去重合并；建议、记忆卡片与回执也随之覆盖已经翻到的部分。
+  List<ChatMessage> _olderMessages = const [];
+
+  /// 发送流程已经拿到、但订阅还没有回填的消息；按编号去重之后补在最后。
+  List<ChatMessage> _draftMessages = const [];
+
+  /// 首读失败时不再显示骨架屏，改为直接显示可输入的空页面并提示原因。
+  bool _readFailed = false;
+
   List<XFile> _picked = const [];
   String? _notice;
+
+  /// 生成中的回答出现之后用于判断订阅是否已经读回这条回答。
+  int? _answeringAfterMessageId;
 
   /// 用户消息已经落库、但这一轮没有保存回答；提示条据此给出重试入口。
   bool _retryableNotice = false;
   bool _streaming = false;
   bool _followScheduled = false;
-  bool _loading = true;
   bool _sending = false;
   bool _loadingOlder = false;
-  bool _hasOlderMessages = false;
   bool _answering = false;
   bool _started = false;
 
@@ -126,31 +139,20 @@ class DiscussionChatState extends State<DiscussionChat>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
     _conversationId = widget.conversationId;
-    _initialize();
-  }
-
-  /// 生成中不跟着写入重读：这一轮的消息与收尾由发送流程自己合并。
-  @override
-  bool get dataVersionActive => !_sending && !_retrying && !_streaming;
-
-  @override
-  void onDataVersionChanged() {
-    _load();
-  }
-
-  Future<void> _initialize() async {
     _input.text = widget.initialText;
-    await _load();
-    if (!mounted) return;
+    if (_conversationId != null) _stream = _createStream();
+    _readConfigured();
     if (widget.initialImages.isNotEmpty) {
       // 图片已经在首页取好并框过，这里只摆进输入区；文字与图片由用户确认后再发。
-      setState(() => _picked = [...widget.initialImages]);
+      _picked = [...widget.initialImages];
     } else if (widget.initialText.trim().isNotEmpty) {
-      await _send();
+      // 首条消息等页面挂上之后再发，输入区与骨架屏已经就位。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _send();
+      });
     }
   }
 
@@ -164,66 +166,99 @@ class DiscussionChatState extends State<DiscussionChat>
     super.dispose();
   }
 
-  /// 页面重新变为可见时刷新记录，保留还没有发送的文字。
-  Future<void> reload() => _load();
+  /// 当前记录；订阅回填之前为空，讨论栏与目标选择据此等待。
+  ConversationRecord? get _record => _view?.record;
 
-  Future<void> _load() async {
-    final scope = AppScope.of(context);
+  List<LearningGoal> get _goals => _view?.goals ?? const [];
+
+  List<PendingSuggestion> get _pending => _view?.pending ?? const [];
+
+  List<MemoryItemView> get _memoryItems => _view?.memoryItems ?? const [];
+
+  List<AppliedChange> get _changes => _view?.changes ?? const [];
+
+  bool get _hasOlderMessages => _view?.hasOlder ?? false;
+
+  /// 屏幕上正在显示的消息：更早的几页在前，订阅给出的最近一页在后，发送流程
+  /// 已经拿到但订阅还没有回填的消息补在最后，三处按编号去重。
+  List<ChatMessage> get _messages {
+    final seen = <int>{};
+    return [
+      for (final message in _olderMessages)
+        if (seen.add(message.id)) message,
+      for (final message in _view?.messages ?? const <ChatMessage>[])
+        if (seen.add(message.id)) message,
+      for (final message in _draftMessages)
+        if (seen.add(message.id)) message,
+    ];
+  }
+
+  /// 当前讨论的一屏订阅；阅读较早讨论之后带着新读到的几页重建，整屏读法把
+  /// 它们与最近一页按编号去重合并。
+  Stream<ConversationView> _createStream() {
+    final id = _conversationId;
+    if (id == null) throw StateError('还没有打开任何讨论');
+    return AppScope.of(context).chat.discussion
+        .watchConversation(id, olderMessages: _olderMessages);
+  }
+
+  /// 模型配置决定回答下方的恢复入口；它不随这些表写入变化，只读一次。
+  Future<void> _readConfigured() async {
     try {
-      final id = _conversationId;
-      // 目标、模型配置与记录互不依赖，同时读取。
-      final (goals, config, record) = await (
-        scope.study.plan.activeGoals(),
-        scope.settings.edit.config(),
-        id == null
-            ? Future<ConversationRecord?>.value()
-            : scope.chat.discussion.byId(id),
-      ).wait;
-      final page = record == null
-          ? (messages: const <ChatMessage>[], hasOlder: false)
-          : await scope.chat.discussion.historyPage(record.id);
-      final messages = page.messages;
+      final config = await AppScope.of(context).settings.edit.config();
       if (!mounted) return;
-      // 消息列表决定首屏，先把它交出去；改动建议与记忆卡片随后补上，不跟着
-      // 一起等待。结果回来时若还在推入动画里，等动画结束再填。
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _goals = goals;
-        _record = record;
-        _conversationId = record?.id;
-        _messages = messages;
-        _hasOlderMessages = page.hasOlder;
-        _pending = DiscussionService.pendingSuggestions(messages);
-        _configured = config?.isConfigured ?? false;
-        _loading = false;
-      });
-      _jumpToEnd();
-      // 回执与记忆卡片都从同一批消息里读，可以同时发出。
-      final (changes, memoryItems) = await (
-        scope.chat.discussion.changesFromMessages(messages),
-        scope.chat.discussion.memoryItemsFromMessages(messages),
-      ).wait;
-      if (!mounted) return;
-      setState(() {
-        _memoryItems = memoryItems;
-        _changes = changes;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取这条讨论',
-          kind: 'discussion_read',
-          kept: '已经保存的消息没有改动',
-          next: '可以返回记录页再打开',
-        );
-      });
+      setState(() => _configured = config?.isConfigured ?? false);
+    } catch (_) {
+      // 配置读不到时按未配置显示，不打断讨论本身的读取与输入。
     }
+  }
+
+  /// 订阅回填一屏结果：替换记录与消息，并决定是否贴底与收起生成气泡。
+  void _onConversation(ConversationView view) {
+    final previousLastId = _view?.messages.lastOrNull?.id;
+    final firstResult = _view == null;
+    _view = view;
+    _readFailed = false;
+    final ids = {for (final message in view.messages) message.id};
+    _draftMessages = [
+      for (final message in _draftMessages)
+        if (!ids.contains(message.id)) message,
+    ];
+    // 回答已经保存而发送流程还没有返回时，用保存的消息替换生成中的气泡，
+    // 避免同一段回答同时以两种形式出现。
+    final answeringAfter = _answeringAfterMessageId;
+    if (_streaming &&
+        answeringAfter != null &&
+        view.messages.any(
+          (message) =>
+              message.id > answeringAfter &&
+              message.role == MessageRole.assistant,
+        )) {
+      _streaming = false;
+      _streamingText.value = '';
+      _pendingStreamText = null;
+    }
+    final latestId = view.messages.lastOrNull?.id;
+    if (firstResult || (latestId != previousLastId && _isNearBottom)) {
+      _jumpToEnd();
+    }
+  }
+
+  /// 读取失败时保留已经显示的内容，只提示一次；首读失败不再停在骨架屏。
+  void _onConversationError(Object error, StackTrace stack) {
+    if (!mounted) return;
+    _readFailed = true;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取这条讨论',
+      kind: 'discussion_read',
+      kept: '已经保存的消息没有改动',
+      next: '可以返回记录页再打开',
+    );
+    setState(() => _notice = message);
+    showToast(context, message);
   }
 
   void _onScroll() {
@@ -238,34 +273,23 @@ class DiscussionChatState extends State<DiscussionChat>
 
   Future<void> _loadOlder() async {
     final id = _conversationId;
-    if (id == null ||
-        _loadingOlder ||
-        !_hasOlderMessages ||
-        _messages.isEmpty) {
+    final messages = _messages;
+    if (id == null || _loadingOlder || !_hasOlderMessages || messages.isEmpty) {
       return;
     }
-    final beforeId = _messages.first.id;
+    final beforeId = messages.first.id;
     final oldOffset = _scroll.hasClients ? _scroll.position.pixels : 0.0;
     setState(() => _loadingOlder = true);
     try {
-      final scope = AppScope.of(context);
-      final page = await scope.chat.discussion.historyPage(
-        id,
-        beforeMessageId: beforeId,
-      );
-      final merged = [...page.messages, ..._messages];
-      final (memoryItems, changes) = await (
-        scope.chat.discussion.memoryItemsFromMessages(merged),
-        scope.chat.discussion.changesFromMessages(merged),
-      ).wait;
+      final page = await AppScope.of(context).chat.discussion
+          .historyPage(id, beforeMessageId: beforeId);
       if (!mounted) return;
+      // 更早读到的几页作为整屏读法的输入交给订阅：消息接在最近一页之前，
+      // 建议、记忆卡片与回执也随之重算，不再由页面另读一遍。
       setState(() {
-        _messages = merged;
-        _hasOlderMessages = page.hasOlder;
-        _pending = DiscussionService.pendingSuggestions(merged);
-        _memoryItems = memoryItems;
-        _changes = changes;
+        _olderMessages = [...page.messages, ..._olderMessages];
         _loadingOlder = false;
+        _stream = _createStream();
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!_scroll.hasClients) return;
@@ -312,12 +336,13 @@ class DiscussionChatState extends State<DiscussionChat>
     });
   }
 
+  /// 用户消息已经落库：先放进页面，订阅回填之后按编号去重。
   void _showUserMessage(ChatMessage message) {
     if (!mounted || _messages.any((item) => item.id == message.id)) return;
     _streamingText.value = '';
     _pendingStreamText = null;
     setState(() {
-      _messages = [..._messages, message];
+      _draftMessages = [..._draftMessages, message];
       _streaming = true;
     });
     // 发送后直接贴到底部，第一段正文出现时不用等滚动动画。
@@ -352,22 +377,16 @@ class DiscussionChatState extends State<DiscussionChat>
     _streamingText.value = pending;
   }
 
-  /// 一次回答写回后的收尾：消息、建议、记忆卡片与提示一起更新。
+  /// 一次回答写回后的收尾：把这次的两条消息交给页面，并说明回答的状态。
   ///
-  /// 发送与重答原先各写一段相同的合并、贴底与状态复位，改动其中一处时另一处
-  /// 仍在旧写法上；现在两条路径只在取回答之前不同，写回之后走这里。
-  void _settleReply(
-    List<ChatMessage> merged,
-    List<MemoryItemView> memoryItems,
-    String? notice,
-  ) {
+  /// 记忆卡片、建议与回执不在收尾时另读一遍，订阅在写入之后会把这些一并
+  /// 重读并回填（ADR-0014）；这里只处理发送流程自己的按钮与提示。
+  void _settleReply(List<ChatMessage> messages, String? notice) {
     final followReply = _isNearBottom;
     _streamingText.value = '';
     _pendingStreamText = null;
     setState(() {
-      _messages = merged;
-      _pending = DiscussionService.pendingSuggestions(merged);
-      _memoryItems = memoryItems;
+      _draftMessages = messages;
       _notice = notice;
       _retryableNotice = false;
       _streaming = false;
@@ -388,6 +407,7 @@ class DiscussionChatState extends State<DiscussionChat>
   LlmCancelToken _beginReply({required bool retrying}) {
     final cancel = LlmCancelToken();
     _cancelToken = cancel;
+    _answeringAfterMessageId = _messages.lastOrNull?.id ?? 0;
     _streamingText.value = '';
     _pendingStreamText = null;
     setState(() {
@@ -395,7 +415,6 @@ class DiscussionChatState extends State<DiscussionChat>
         _retrying = true;
       } else {
         _sending = true;
-        _changes = const [];
       }
       _streaming = true;
       _notice = null;
@@ -415,8 +434,9 @@ class DiscussionChatState extends State<DiscussionChat>
   }) {
     if (!mounted) return;
     setState(() {
-      if (fallbackConversationId != null) {
-        _conversationId ??= fallbackConversationId;
+      if (fallbackConversationId != null && _conversationId == null) {
+        _conversationId = fallbackConversationId;
+        _stream = _createStream();
       }
       _notice = reason;
       _retryableNotice = retryable;
@@ -480,49 +500,18 @@ class DiscussionChatState extends State<DiscussionChat>
       sent = true;
       scope.broughtSources.clear();
       final id = result.userMessage.conversationId;
-      // 用户消息可能已经由回调先放进列表；按编号去重后再补上最终两条。
-      final merged = [
-        for (final message in _messages)
-          if (message.id != result.userMessage.id &&
-              message.id != result.assistantMessage.id)
-            message,
-        result.userMessage,
-        result.assistantMessage,
-      ];
-      // 记录与卡片只服务展示；读取失败不应把已经保存的回答当成发送失败，
-      // 更不能在此时清理已经被消息引用的图片。
-      ConversationRecord? record;
-      var memoryItems = const <MemoryItemView>[];
-      var notice = answerNoticeText(result.outcome);
-      try {
-        final (loadedRecord, items) = await (
-          scope.chat.discussion.byId(id),
-          scope.chat.discussion.memoryItemsFromMessages(merged),
-        ).wait;
-        record = loadedRecord;
-        memoryItems = items;
-      } catch (error, stack) {
-        final read = mounted
-            ? describeFailure(
-                context,
-                error,
-                stack,
-                action: '读取这条讨论的记录',
-                kind: 'discussion_read_after_send',
-                kept: '回答已经保存',
-                next: '可以返回记录页再打开',
-              )
-            : '读取记录没有完成，回答已经保存。';
-        notice = notice == null ? read : '$notice $read';
-      }
       if (!mounted) return;
       if (_input.text == submittedDraft) _input.clear();
       setState(() {
         _conversationId = id;
         _picked = const [];
-        _record = record ?? _record;
+        _stream ??= _createStream();
       });
-      _settleReply(merged, memoryItems, notice);
+      // 两条消息先交给页面即时显示；记录、建议与卡片由订阅回填。
+      _settleReply([
+        result.userMessage,
+        result.assistantMessage,
+      ], answerNoticeText(result.outcome));
       // 消息已经写进库，缓存里的取图副本可以删了；发送失败时保留，用户可以再发一次。
       await deleteTemporaryCaptures(picks);
       if (!result.fromModel &&
@@ -618,7 +607,6 @@ class DiscussionChatState extends State<DiscussionChat>
           .startAnswering(conversationId: id);
       if (!mounted) return;
       await openLearning(context, questionId);
-      if (mounted) await _load();
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -651,9 +639,6 @@ class DiscussionChatState extends State<DiscussionChat>
     final service = AppScope.of(context).chat.discussion;
     try {
       await service.setGoal(record.id, choice.goalId);
-      final updated = await service.byId(record.id);
-      if (!mounted) return;
-      setState(() => _record = updated);
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -686,9 +671,7 @@ class DiscussionChatState extends State<DiscussionChat>
         materialId: selection.materialId,
         pageNo: selection.pageNo,
       );
-      final updated = await service.byId(record.id);
       if (!mounted) return;
-      setState(() => _record = updated);
       showToast(context, '已使用材料：${selection.label}');
     } catch (error, stack) {
       if (!mounted) return;
@@ -791,8 +774,6 @@ class DiscussionChatState extends State<DiscussionChat>
         }
       }
       if (!mounted) return;
-      await _load();
-      if (!mounted) return;
       final message = scheduled
           ? '已保存并预约时间'
           : schedule
@@ -803,11 +784,7 @@ class DiscussionChatState extends State<DiscussionChat>
         message,
         label: scheduled ? '撤销预约' : '查看并安排',
         onPressed: scheduled
-            ? () => undoCommitWithFeedback(
-                context,
-                scheduledCommitId,
-                reload: _load,
-              )
+            ? () => undoCommitWithFeedback(context, scheduledCommitId)
             : () => openPlanDetail(context, result.item.id),
       );
     } catch (error, stack) {
@@ -836,7 +813,6 @@ class DiscussionChatState extends State<DiscussionChat>
         title: suggestion.draft.title,
         stepId: suggestion.stepId,
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -854,8 +830,9 @@ class DiscussionChatState extends State<DiscussionChat>
   }
 
   Future<void> _undoChange(AppliedChange change) =>
-      undoCommitWithFeedback(context, change.commitId, reload: _load);
+      undoCommitWithFeedback(context, change.commitId);
 
+  /// 记忆卡片与撤销之后由订阅更新页面，公共流程里的这次重读不再发起。
   Future<void> _acceptMemory(MemoryItemView item) async {
     final id = _conversationId;
     if (id == null) return;
@@ -866,7 +843,6 @@ class DiscussionChatState extends State<DiscussionChat>
         messageId: item.ownerId,
         itemId: item.itemId,
       ),
-      reload: _load,
       scope: 'discussion',
       showNotice: (notice) => setState(() => _notice = notice),
     );
@@ -882,7 +858,6 @@ class DiscussionChatState extends State<DiscussionChat>
         messageId: item.ownerId,
         itemId: item.itemId,
       ),
-      reload: _load,
       scope: 'discussion',
       showNotice: (notice) => setState(() => _notice = notice),
     );
@@ -894,7 +869,6 @@ class DiscussionChatState extends State<DiscussionChat>
     await undoMemoryCard(
       context: context,
       commitId: commitId,
-      reload: _load,
       scope: 'discussion',
       showNotice: (notice) => setState(() => _notice = notice),
     );
@@ -908,10 +882,6 @@ class DiscussionChatState extends State<DiscussionChat>
     final service = AppScope.of(context).chat.discussion;
     try {
       await service.end(id);
-      if (!mounted) return;
-      final updated = await service.byId(id);
-      if (!mounted) return;
-      setState(() => _record = updated);
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -974,20 +944,12 @@ class DiscussionChatState extends State<DiscussionChat>
         cancelToken: cancel,
       );
       if (!mounted) return;
-      final merged = [
-        for (final message in _messages)
+      // 新回答先按编号去重接在最后；订阅随后回填同一条消息时不会重复。
+      _settleReply([
+        for (final message in _draftMessages)
           if (message.id != result.assistantMessage.id) message,
         result.assistantMessage,
-      ];
-      var memoryItems = _memoryItems;
-      try {
-        memoryItems = await AppScope.of(context).chat.discussion
-            .memoryItemsFromMessages(merged);
-      } catch (_) {
-        // 卡片只是展示；读不出来不影响已经保存的回答。
-      }
-      if (!mounted) return;
-      _settleReply(merged, memoryItems, answerNoticeText(result.outcome));
+      ], answerNoticeText(result.outcome));
     } on LlmException catch (error) {
       final next = switch (error.failure) {
         LlmFailure.notConfigured => '先到设置里配置模型后再试',
@@ -1066,18 +1028,34 @@ class DiscussionChatState extends State<DiscussionChat>
     );
   }
 
+  /// 首读中：讨论已经打开，订阅还没有回填结果，页面也没有已经拿到的消息。
+  ///
+  /// 新讨论没有编号，读取不会发生，直接显示可输入的空页面；首读失败之后也
+  /// 不停在骨架屏上（ADR-0014 的读取方式与原来的加载态一致）。
+  bool get _firstLoad =>
+      _conversationId != null &&
+      _view == null &&
+      !_readFailed &&
+      _draftMessages.isEmpty;
+
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const PageLoading();
-    }
-    final theme = context.zhixin;
-    return Column(
-      children: [
-        if (_record != null) _recordBar(theme, _record!),
-        Expanded(child: BuddyTimeline(adapter: _timelineAdapter)),
-        _composer(),
-      ],
+    return LiveView<ConversationView>(
+      stream: _stream,
+      onData: _onConversation,
+      onError: _onConversationError,
+      builder: (context, data, loading) {
+        if (loading && _firstLoad) return const PageLoading();
+        final theme = context.zhixin;
+        final record = _record;
+        return Column(
+          children: [
+            if (record != null) _recordBar(theme, record),
+            Expanded(child: BuddyTimeline(adapter: _timelineAdapter)),
+            _composer(),
+          ],
+        );
+      },
     );
   }
 

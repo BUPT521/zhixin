@@ -92,6 +92,23 @@ class CapacityService {
     return compute(days: days, goalId: goalId);
   }
 
+  /// 容量面板这一屏读到的表：任一表被写入之后整屏重读一次（ADR-0014）。
+  static const Set<String> _weekTables = {
+    'plan_item',
+    'schedule_block',
+    'timetable_entry',
+    'study_session',
+    'learning_goal',
+    'profile',
+    'app_meta',
+  };
+
+  /// 跟随写入更新的本周容量预估；面板重新估算与失败重试换一条新流。
+  Stream<CapacityPlan> watchThisWeek({int? goalId}) => runtime.watch(
+    tables: _weekTables,
+    read: () => computeThisWeek(goalId: goalId),
+  );
+
   /// 按常用时段估算可用时间，并给出事项的优先顺序与粗略预算。
   Future<CapacityPlan> compute({
     int days = 7,

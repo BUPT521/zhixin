@@ -20,9 +20,9 @@ import '../domain/rules/text.dart';
 import 'answer_notice.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
-import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'live_view.dart';
 import 'navigation.dart';
 import 'zhixin_chip.dart';
 import 'workspace_widgets.dart';
@@ -46,17 +46,19 @@ class LearningPage extends StatefulWidget {
   State<LearningPage> createState() => _LearningPageState();
 }
 
-class _LearningPageState extends State<LearningPage>
-    with DataVersionWatcher<LearningPage> {
+class _LearningPageState extends State<LearningPage> {
+  /// 这道题的一屏订阅：原题、历次尝试、最近消息、判断与记忆建议都从它读
+  /// （ADR-0014），保存、求助、接受记忆与提交之后的重读由数据层完成。
+  Stream<QuestionView>? _stream;
+
   QuestionView? _view;
-  Map<int, List<Assessment>> _assessments = const {};
-  bool _loading = true;
+
+  /// 首读失败的原因；页面据此在骨架屏位置显示说明，不再一直转圈。
+  String? _readError;
+
   bool _busy = false;
   String? _help;
   String? _notice;
-
-  /// 当前未提交尝试上的记忆建议：待确认的可以「记下」，已写入的可以撤销。
-  List<MemoryItemView> _memoryItems = const [];
   bool _started = false;
   bool _leaving = false;
 
@@ -99,11 +101,19 @@ class _LearningPageState extends State<LearningPage>
   /// 从记录页复查入口进入时，第一次读取之后自动进入独立重做。
   bool _autoRedoStarted = false;
 
-  /// 同一条记录最近几条讨论消息；学习页把讨论与作答放在一起，完整讨论另开。
-  List<ChatMessage> _recentMessages = const [];
-
   /// 时间线只向页面取当前帮助、记忆与回执，排列与失败说明由共用组件负责。
   late final BuddyTimelineAdapter _timelineAdapter = _LearningTimeline(this);
+
+  /// 每次尝试的判断；订阅回填之前为空。
+  Map<int, List<Assessment>> get _assessments => _view?.assessments ?? const {};
+
+  /// 当前未提交尝试上的记忆建议：待确认的可以「记下」，已写入的可以撤销。
+  List<MemoryItemView> get _memoryItems =>
+      _view?.memoryItems ?? const <MemoryItemView>[];
+
+  /// 同一条记录最近几条讨论消息；学习页把讨论与作答放在一起，完整讨论另开。
+  List<ChatMessage> get _recentMessages =>
+      _view?.recentMessages ?? const <ChatMessage>[];
 
   @override
   void dispose() {
@@ -118,72 +128,60 @@ class _LearningPageState extends State<LearningPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    watchDataVersion(AppScope.of(context).dataVersion);
     if (_started) return;
     _started = true;
-    _load();
+    _stream = AppScope.of(context).chat.learning
+        .watchQuestion(widget.questionId);
+    _readConfigured();
   }
 
-  /// 保存、求助与提交都在页面里发起，动作结束会自己重读；生成中不额外重读。
-  @override
-  bool get dataVersionActive => !_busy && !_generating;
-
-  @override
-  void onDataVersionChanged() {
-    _load();
-  }
-
-  Future<void> _load({bool reapplyDraft = false}) async {
-    final scope = AppScope.of(context);
+  /// 模型配置决定帮助下方的恢复入口；它不随这些表写入变化，只读一次。
+  Future<void> _readConfigured() async {
     try {
-      final view = await scope.chat.learning.view(widget.questionId);
-      final open = view.openAttempt;
-      // 判断、记忆建议与模型配置互不依赖，同时读取。
-      final (assessments, memoryItems, config) = await (
-        scope.chat.learning.assessmentsFor(view.attempts),
-        open == null
-            ? Future<List<MemoryItemView>>.value(const [])
-            : scope.chat.learning.memoryItemsFor(open),
-        scope.settings.edit.config(),
-      ).wait;
+      final config = await AppScope.of(context).settings.edit.config();
       if (!mounted) return;
-      // 结果回来时若还在推入动画里，等动画结束再填，内容不会在滑动中途跳出来。
-      await context.afterTransition();
-      if (!mounted) return;
-      setState(() {
-        _view = view;
-        _assessments = assessments;
-        _memoryItems = memoryItems;
-        _configured = config?.isConfigured ?? false;
-        _recentMessages = view.recentMessages;
-        _independentRedo = open?.redoOfAttemptId != null;
-        _loading = false;
-        _applyDraft(view.openAttempt, force: reapplyDraft);
-      });
-      if (widget.startRedo &&
-          !_autoRedoStarted &&
-          view.openAttempt == null &&
-          view.attempts.any((attempt) => attempt.submitted)) {
-        _autoRedoStarted = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _startRedo();
-        });
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取这道题与作答记录',
-          kind: 'learning_read',
-          kept: '本机记录没有改动',
-          next: '可以返回记录页再打开',
-        );
+      setState(() => _configured = config?.isConfigured ?? false);
+    } catch (_) {
+      // 配置读不到时按未配置显示，不打断题目与作答本身的读取。
+    }
+  }
+
+  /// 订阅回填一屏结果：换掉题目与尝试，并把草稿、独立重做状态与自动进入
+  /// 复查这几件事一次处理完。
+  void _onQuestion(QuestionView view) {
+    _view = view;
+    _readError = null;
+    final open = view.openAttempt;
+    // 独立重做只在存在未提交尝试时由它决定；提交之后尝试结束，页面自己复位。
+    if (open != null) _independentRedo = open.redoOfAttemptId != null;
+    _applyDraft(open);
+    if (widget.startRedo &&
+        !_autoRedoStarted &&
+        open == null &&
+        view.attempts.any((attempt) => attempt.submitted)) {
+      _autoRedoStarted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startRedo();
       });
     }
+  }
+
+  /// 读取失败时保留已经显示的内容并提示一次；首读失败不再停在骨架屏。
+  void _onQuestionError(Object error, StackTrace stack) {
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取这道题与作答记录',
+      kind: 'learning_read',
+      kept: '本机记录没有改动',
+      next: '可以返回记录页再打开',
+    );
+    if (_view == null) {
+      setState(() => _readError = message);
+    }
+    showToast(context, message);
   }
 
   /// 把未提交的尝试读回草稿；同一条尝试上的修改不覆盖用户正在写的内容。
@@ -309,8 +307,6 @@ class _LearningPageState extends State<LearningPage>
       _draftRequestAttemptId = null;
       if (!mounted) return true;
       _draftAttemptId = attempt.id;
-      await _load();
-      if (!mounted) return true;
       if (notify) {
         showToast(context, '草稿已保存，可继续补充');
       }
@@ -385,7 +381,6 @@ class _LearningPageState extends State<LearningPage>
         _lastFromModel = result.fromModel;
         _lastInterrupted = result.interrupted;
       });
-      await _load();
       if (!mounted) return;
       if (!result.fromModel &&
           result.notices.contains(Notice.modelNotConfigured)) {
@@ -428,7 +423,6 @@ class _LearningPageState extends State<LearningPage>
         helpIndex: item.ownerId,
         itemId: item.itemId,
       ),
-      reload: _load,
       scope: 'learning',
       showNotice: (notice) => setState(() => _notice = notice),
     );
@@ -444,7 +438,6 @@ class _LearningPageState extends State<LearningPage>
         helpIndex: item.ownerId,
         itemId: item.itemId,
       ),
-      reload: _load,
       scope: 'learning',
       showNotice: (notice) => setState(() => _notice = notice),
     );
@@ -456,12 +449,12 @@ class _LearningPageState extends State<LearningPage>
     await undoMemoryCard(
       context: context,
       commitId: commitId,
-      reload: _load,
       scope: 'learning',
       showNotice: (notice) => setState(() => _notice = notice),
     );
   }
 
+  /// 记忆卡片与撤销之后由订阅更新页面，公共流程里的这次重读不再发起。
   /// 点开原题缩略图看大图；图片文件不在了就说明，不弹空白页。
   Future<void> _showImage(String path) async {
     final file = File(AppScope.of(context).paths.resolveImage(path));
@@ -571,7 +564,6 @@ class _LearningPageState extends State<LearningPage>
         _delayed = false;
         _draftAttemptId = null;
       });
-      await _load(reapplyDraft: true);
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -617,10 +609,12 @@ class _LearningPageState extends State<LearningPage>
       );
       _submitRequestId = null;
       _submitRequestAttemptId = null;
-      if (mounted) setState(() => _independentRedo = false);
-      await _load(reapplyDraft: true);
       if (!mounted) return;
-      setState(() => _help = null);
+      // 提交之后这条尝试不再可改：表单的复位由订阅回填新的一屏完成。
+      setState(() {
+        _independentRedo = false;
+        _help = null;
+      });
       showToast(context, '这次作答已经记下');
     } catch (error, stack) {
       // 提交失败时把草稿整份留下，返回记录后还能接着写。
@@ -651,7 +645,6 @@ class _LearningPageState extends State<LearningPage>
     if (mounted) setState(() => _busy = false);
     if (!saved || !mounted) return;
     await openDiscussion(context, conversationId);
-    if (mounted) await _load();
   }
 
   /// 返回时先落下草稿，落不下就留在页面；保存成功才结束场次并退出。
@@ -674,17 +667,28 @@ class _LearningPageState extends State<LearningPage>
 
   @override
   Widget build(BuildContext context) {
+    return LiveView<QuestionView>(
+      stream: _stream,
+      onData: _onQuestion,
+      onError: _onQuestionError,
+      builder: (context, data, loading) {
+        final view = data ?? _view;
+        if (view == null) {
+          // 首读失败时显示原因；没有失败还在等第一份结果时显示骨架屏。
+          return _readError == null
+              ? const DetailScaffold(child: PageLoading())
+              : DetailScaffold(
+                  header: const ZhixinHeader(title: Text('题目'), showBack: true),
+                  child: Center(child: Text(_readError!)),
+                );
+        }
+        return _questionPage(context, view);
+      },
+    );
+  }
+
+  Widget _questionPage(BuildContext context, QuestionView view) {
     final theme = context.zhixin;
-    if (_loading) {
-      return const DetailScaffold(child: PageLoading());
-    }
-    final view = _view;
-    if (view == null) {
-      return DetailScaffold(
-        header: const ZhixinHeader(title: Text('题目'), showBack: true),
-        child: Center(child: Text(_notice ?? '未找到这道题')),
-      );
-    }
     final attempts = view.attempts;
     return PopScope<void>(
       canPop: false,
@@ -1199,7 +1203,6 @@ class _LearningPageState extends State<LearningPage>
       app.broughtSources.clear();
       _assessRequestId = null;
       _assessRequestAttemptId = null;
-      await _load();
       if (!mounted) return;
       showToast(context, '模型判断已记录');
     } catch (error, stack) {
