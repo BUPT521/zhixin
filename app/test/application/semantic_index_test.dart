@@ -368,6 +368,33 @@ void main() {
     expect(cleared.builtAt, isNull);
   });
 
+  test('清空全部记录前释放索引句柄，之后按同一路径重新打开', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    await _seed(db);
+    var opens = 0;
+    var closes = 0;
+    final service = SemanticIndexService(
+      repository: EvidenceRepository(db),
+      initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+      indexPath: '',
+      vectorStoreOpener: () async {
+        opens++;
+        return _TrackedStore(MemoryVectorIndex(_spec), () async => closes++);
+      },
+    );
+    addTearDown(service.close);
+
+    expect((await service.refresh()).embedded, 7);
+    expect(opens, 1);
+    await service.release();
+    expect(closes, 1);
+    expect(service.lastRefresh, isNull);
+
+    expect((await service.refresh()).embedded, 7);
+    expect(opens, 2);
+  });
+
   test('限制更新来源数时保留批次以外已有的有效索引', () async {
     final rig = await _rig();
     addTearDown(rig.db.close);

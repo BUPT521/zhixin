@@ -606,6 +606,21 @@ class SemanticIndexService {
     return stats;
   }
 
+  /// 清空全部记录之前释放索引句柄：关闭 collection 但不关闭服务。
+  ///
+  /// 索引目录由删除本机数据的流程删除；嵌入来源保持配置，下一次刷新会在同一
+  /// 路径重新建立 collection。已经发出的索引请求按取消处理，不会写回旧句柄。
+  Future<void> release() async {
+    if (_closed) return;
+    _invalidateOperations();
+    final store = _store;
+    _store = null;
+    _lastRefresh = null;
+    await _queueStoreOperation(() async {
+      await store?.close();
+    });
+  }
+
   Future<void> clear() async {
     final spec = client?.spec;
     if (_closed || spec == null) return;

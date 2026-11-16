@@ -419,7 +419,14 @@ class AppScopeState extends State<AppScope> {
   Future<void> _resetStudyData() async {
     await _connection?.close();
     _connection = null;
-    await deleteLocalStudyData(filesDir: paths.filesDir, dbPath: paths.dbPath);
+    // 清空全部记录连语义索引一起删：先释放 collection 句柄，删除流程才能
+    // 删掉索引目录；嵌入来源保持配置，下一次刷新按空库重建索引。
+    await __semantic?.release();
+    await deleteLocalStudyData(
+      filesDir: paths.filesDir,
+      dbPath: paths.dbPath,
+      vectorIndexPath: paths.vectorIndexPath,
+    );
     await paths.ensureDirectories();
     await _open();
   }
