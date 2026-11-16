@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:forui/forui.dart' as forui;
@@ -7,8 +9,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
-import 'data_version_watcher.dart';
-import '../application/request_gate.dart';
+import '../application/learning_service.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/question.dart';
@@ -18,6 +19,7 @@ import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
+import 'live_view.dart';
 import 'materials_list.dart';
 import 'navigation.dart';
 import 'question_capture_button.dart';
@@ -75,8 +77,7 @@ class RecordsPage extends StatefulWidget {
   State<RecordsPage> createState() => _RecordsPageState();
 }
 
-class _RecordsPageState extends State<RecordsPage>
-    with DataVersionWatcher<RecordsPage> {
+class _RecordsPageState extends State<RecordsPage> {
   final GlobalKey<MaterialListState> _materialsKey =
       GlobalKey<MaterialListState>();
   final TextEditingController _searchHint = TextEditingController();
@@ -85,17 +86,9 @@ class _RecordsPageState extends State<RecordsPage>
   /// 一次读这么多条记录与对应的题目；再多由列表底部的入口继续读。
   static const _pageSize = 30;
 
-  Map<int, QuestionRow> _questions = const {};
-  Map<int, List<Assessment>> _assessments = const {};
   String? _answerFilter;
-  final RequestGate _gate = RequestGate();
-
-  List<ConversationRecord> _records = const [];
-  List<LearningGoal> _goals = const [];
   int? _goalFilter;
   bool _unassignedOnly = false;
-  bool _hasMore = false;
-  bool _loadingMore = false;
   RecordsTab _tab = RecordsTab.learning;
 
   /// 进过的页签常驻：切回来不再重建，也不重新读取，滚动位置一并保住。
@@ -104,15 +97,46 @@ class _RecordsPageState extends State<RecordsPage>
   /// 已经处理到第几次跳转请求；用来忽略重复通知。
   int _seenRequest = 0;
 
-  /// 数据版本在页面里监听：整库恢复之后自己重读，父级不再包一层。
+  /// 当前筛选的第一页订阅；筛选一变就换一条流，旧订阅随页面一起退订。
+  ///
+  /// 第一页由数据层在写入之后重读，页面不再在别处保存之后自己重读
+  /// （ADR-0014）；继续读取的页仍按屏幕上的入口逐页追加。
+  Stream<RecordsView>? _stream;
+  RecordsView? _view;
+  List<ConversationRecord> _older = const [];
+  Map<int, QuestionRow> _olderQuestions = const {};
+  Map<int, List<Assessment>> _olderAssessments = const {};
+  bool _hasMore = false;
+  bool _loadingMore = false;
 
-  /// 列表当前显示的是哪一组筛选的结果；读完新筛选之后才换，列表据此淡入，
-  /// 刷新或从详情返回时筛选没变，列表不闪。
-  Object? _shownFilter;
-  bool _loading = true;
-  bool _started = false;
+  /// 下拉刷新之后等第一页回来再收起转圈；没有结果时按超时放行。
+  Completer<void>? _refreshWaiter;
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
+
+  /// 屏幕上正在显示的记录：第一页在前，继续读取的页去重之后接在后面。
+  List<ConversationRecord> get _records {
+    final first = _view?.records ?? const <ConversationRecord>[];
+    if (_older.isEmpty) return first;
+    final seen = {for (final record in first) record.id};
+    return [
+      ...first,
+      for (final record in _older)
+        if (seen.add(record.id)) record,
+    ];
+  }
+
+  Map<int, QuestionRow> get _questions => {
+    ...?_view?.questions,
+    ..._olderQuestions,
+  };
+
+  Map<int, List<Assessment>> get _assessments => {
+    ...?_view?.assessments,
+    ..._olderAssessments,
+  };
+
+  List<LearningGoal> get _goals => _view?.goals ?? const <LearningGoal>[];
 
   @override
   void initState() {
@@ -127,10 +151,8 @@ class _RecordsPageState extends State<RecordsPage>
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
-    watchDataVersion(AppScope.of(context).dataVersion);
-    if (_started || !_active) return;
-    _started = true;
-    _load();
+    // 未显示的页面不提前订阅，也不在后台读；切到记录时再开始。
+    if (_stream == null && _active) _stream = _createStream();
   }
 
   @override
@@ -151,15 +173,65 @@ class _RecordsPageState extends State<RecordsPage>
     widget.activeTab.removeListener(_onActiveChanged);
     widget.request.removeListener(_onRequestChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
     _searchHint.dispose();
     super.dispose();
   }
 
-  /// 切到这一栏时立刻发起读取；已有内容先显示，读完静默替换。
+  /// 当前筛选与分页条件对应的第一页读法。
+  Stream<RecordsView> _createStream() {
+    return AppScope.of(context).chat.learning.watchRecords(
+      goalId: _goalFilter,
+      unassignedOnly: _unassignedOnly,
+      answerStatus: _answerFilter,
+      limit: _pageSize,
+    );
+  }
+
+  /// 重新订阅第一页：筛选变了、下拉刷新与手动刷新都走这里。
+  Future<void> _reload() {
+    final waiter = Completer<void>();
+    _refreshWaiter = waiter;
+    setState(() {
+      _older = const [];
+      _olderQuestions = const {};
+      _olderAssessments = const {};
+      _hasMore = false;
+      _loadingMore = false;
+      _stream = _createStream();
+    });
+    return waiter.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+  }
+
+  /// 第一页回来了：换掉屏幕上的一屏，并放行等待中的刷新。
+  void _onRecords(RecordsView view) {
+    _view = view;
+    if (_older.isEmpty) _hasMore = view.records.length == _pageSize;
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
+  }
+
+  void _onRecordsError(Object error, StackTrace stack) {
+    _refreshWaiter?.complete();
+    _refreshWaiter = null;
+    if (!mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取学习记录',
+      kind: 'records_read',
+      kept: '当前筛选和已经读出的内容保持不变',
+      next: '可以点右上角刷新再试',
+    );
+    showToast(context, message);
+  }
+
+  /// 切到这一栏时接着订阅；常驻页签的内容不重读。
   void _onActiveChanged() {
     if (!mounted || !_active) return;
-    _started = true;
-    _load();
+    if (_stream == null) setState(() => _stream = _createStream());
     if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
   }
 
@@ -174,29 +246,19 @@ class _RecordsPageState extends State<RecordsPage>
     });
   }
 
-  @override
-  bool get dataVersionActive => _active;
-
-  @override
-  void onDataVersionChanged() {
-    _load();
-  }
-
   /// 生成开始或结束时重画记录；消息数与摘要等下次读取列表时更新。
   void _onGeneratingChanged() {
     if (!mounted || !_active) return;
     setState(() {});
   }
 
-  /// 打开学习页或讨论页，返回后只重读列表；三栏不随这次浏览重建。
+  /// 打开学习页或讨论页；返回之后记录随订阅自动更新。
   Future<void> _openLearning(int questionId) async {
     await widget.onOpenLearning(questionId);
-    if (mounted) await _load();
   }
 
   Future<void> _openDiscussion(int conversationId) async {
     await widget.onOpenDiscussion(conversationId);
-    if (mounted) await _load();
   }
 
   Future<void> _openLearningRedo(int questionId) async {
@@ -206,7 +268,6 @@ class _RecordsPageState extends State<RecordsPage>
       return;
     }
     await open(questionId);
-    if (mounted) await _load();
   }
 
   Future<void> _openSearch() async {
@@ -215,90 +276,40 @@ class _RecordsPageState extends State<RecordsPage>
       onOpenLearning: _openLearning,
       onOpenDiscussion: _openDiscussion,
     );
-    if (mounted) await _load();
   }
-
-  Future<void> _load() => _read(append: false);
 
   /// 继续读下一页；筛选条件与排序键不变，不会重复或漏掉记录。
   Future<void> _loadMore() async {
-    if (_loadingMore || _loading || !_hasMore) return;
-    await _read(append: true);
-  }
-
-  /// 只读当前这一页的记录，题目视图也限制在这一页里。
-  ///
-  /// 筛选与分页都交给查询，界面不再先把整库记录读回来再逐条比较；[append]
-  /// 为真时接着上一页读，返回的记录追加在后面。
-  Future<void> _read({required bool append}) async {
-    if (!mounted) return;
-    _started = true;
-    final scope = AppScope.of(context);
-    final request = _gate.start();
-    final filter = (_goalFilter, _unassignedOnly, _answerFilter);
-    if (append) setState(() => _loadingMore = true);
+    if (_loadingMore || !_hasMore) return;
+    final offset = _records.length;
+    setState(() => _loadingMore = true);
     try {
-      // 目标列表与这一页记录互不依赖，同时发出，首屏少一次往返。
-      final (goals, records) = await (
-        append
-            ? Future<List<LearningGoal>>.value(_goals)
-            : scope.study.plan.goals(),
-        scope.chat.discussion.records(
-          goalId: _unassignedOnly ? null : _goalFilter,
-          unassignedOnly: _unassignedOnly,
-          answerStatus: _answerFilter,
-          limit: _pageSize,
-          offset: append ? _records.length : 0,
-        ),
-      ).wait;
-      final questions = records.isEmpty
-          ? const <QuestionRow>[]
-          : await scope.chat.learning.questionRows(
-              conversationIds: records.map((record) => record.id),
-            );
-      final lastAttempts = [
-        for (final row in questions)
-          if (row.lastAttempt != null) row.lastAttempt!,
-      ];
-      final assessments = lastAttempts.isEmpty
-          ? const <int, List<Assessment>>{}
-          : await scope.chat.learning.assessmentsFor(lastAttempts);
-      if (!mounted || !_gate.isCurrent(request)) return;
-      // 结果回来时若还在切栏或返回动画里，等动画走完再填，回填不打断动画。
-      await context.afterTransition();
-      if (!mounted || !_gate.isCurrent(request)) return;
-      final loaded = <int, QuestionRow>{if (append) ..._questions};
-      for (final row in questions) {
-        loaded[row.question.id] = row;
-      }
-      final loadedAssessments = <int, List<Assessment>>{
-        if (append) ..._assessments,
-        ...assessments,
-      };
+      final page = await AppScope.of(context).chat.learning.recordsView(
+        goalId: _goalFilter,
+        unassignedOnly: _unassignedOnly,
+        answerStatus: _answerFilter,
+        limit: _pageSize,
+        offset: offset,
+      );
+      if (!mounted) return;
       setState(() {
-        _goals = goals;
-        _records = append ? [..._records, ...records] : records;
-        _questions = loaded;
-        _assessments = loadedAssessments;
-        _hasMore = records.length == _pageSize;
+        _older = [..._older, ...page.records];
+        _olderQuestions = {..._olderQuestions, ...page.questions};
+        _olderAssessments = {..._olderAssessments, ...page.assessments};
+        _hasMore = page.records.length == _pageSize;
         _loadingMore = false;
-        _loading = false;
-        if (!append) _shownFilter = filter;
       });
     } catch (error, stack) {
-      if (!mounted || !_gate.isCurrent(request)) return;
-      setState(() {
-        _loading = false;
-        _loadingMore = false;
-      });
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
       final message = describeFailure(
         context,
         error,
         stack,
-        action: '读取学习记录',
-        kind: 'records_read',
-        kept: '当前筛选和已经读出的内容保持不变',
-        next: '可以点右上角刷新再试',
+        action: '读取更多记录',
+        kind: 'records_more',
+        kept: '已经读出的内容保持不变',
+        next: '可以再点一次继续读取',
       );
       showToast(context, message);
     }
@@ -331,7 +342,7 @@ class _RecordsPageState extends State<RecordsPage>
               if (_tab == RecordsTab.materials) {
                 _materialsKey.currentState?.reload();
               } else {
-                _load();
+                _reload();
               }
             },
           ),
@@ -404,7 +415,7 @@ class _RecordsPageState extends State<RecordsPage>
               // 数据都留住，切回来不再整棵重建、不再重读。首次进入某页签时
               // 才把它建出来。换页签与读完第一页时，新内容淡入一次。
               child: FadeIn.withTransition(
-                trigger: (_tab, learning && _loading),
+                trigger: _tab,
                 playOnInit: false,
                 builder: (transition) => IndexedStack(
                   sizing: StackFit.expand,
@@ -436,12 +447,12 @@ class _RecordsPageState extends State<RecordsPage>
       _goalFilter = unassigned ? null : goalId;
       _unassignedOnly = unassigned;
     });
-    _load();
+    _reload();
   }
 
   void _setAnswerFilter(String? status) {
     setState(() => _answerFilter = status);
-    _load();
+    _reload();
   }
 
   /// 筛选只占一行：作答状态的下拉放在最前，目标归属的选项跟在后面横向滚动。
@@ -532,65 +543,72 @@ class _RecordsPageState extends State<RecordsPage>
   }
 
   Widget _learningRecords(ZhixinTheme theme) {
-    final records = _records;
-    return Column(
-      children: [
+    return LiveView<RecordsView>(
+      stream: _stream,
+      onData: _onRecords,
+      onError: _onRecordsError,
+      builder: (context, view, loading) {
+        final records = _records;
         // 筛选条不依赖读取结果，首读时就位，读完只在下面换内容，页面不往下跳。
-        _filterBar(theme),
-        Expanded(
-          child: _loading
-              // 首读用与记录卡片同高的静态骨架，读完原位替换。
-              ? ListSkeleton(
-                  rows: 3,
-                  padding: EdgeInsets.fromLTRB(
-                    theme.space.page,
-                    theme.space.sm,
-                    theme.space.page,
-                    0,
-                  ),
-                )
-              : FadeIn(
-                  trigger: _shownFilter,
-                  playOnInit: false,
-                  child: records.isEmpty
-                      ? SingleChildScrollView(
-                          child: EmptyState(
-                            icon: _filtered
-                                ? FLucideIcons.filterX
-                                : FLucideIcons.messageCircle,
-                            title: _filtered ? '没有符合筛选的记录' : emptyRecords,
-                            description: _filtered
-                                ? '可以调整筛选条件，查看其他记录。'
-                                : '讨论和题目的作答都会保存在这里。',
-                            action: _filtered
-                                ? forui.FButton(
-                                    variant: forui.FButtonVariant.outline,
-                                    mainAxisSize: MainAxisSize.min,
-                                    onPress: () {
-                                      setState(() {
-                                        _goalFilter = null;
-                                        _unassignedOnly = false;
-                                        _answerFilter = null;
-                                      });
-                                      _load();
-                                    },
-                                    child: const Text('清除筛选'),
-                                  )
-                                : forui.FButton(
-                                    variant: forui.FButtonVariant.secondary,
-                                    mainAxisSize: MainAxisSize.min,
-                                    onPress: widget.onStartQuestion,
-                                    child: const Text('提出问题'),
-                                  ),
-                          ),
-                        )
-                      : RefreshIndicator(
-                          onRefresh: _load,
-                          child: _recordList(theme, records),
-                        ),
-                ),
-        ),
-      ],
+        return Column(
+          children: [
+            _filterBar(theme),
+            Expanded(
+              child: loading
+                  // 首读用与记录卡片同高的静态骨架，读完原位替换。
+                  ? ListSkeleton(
+                      rows: 3,
+                      padding: EdgeInsets.fromLTRB(
+                        theme.space.page,
+                        theme.space.sm,
+                        theme.space.page,
+                        0,
+                      ),
+                    )
+                  : FadeIn(
+                      trigger: (_goalFilter, _unassignedOnly, _answerFilter),
+                      playOnInit: false,
+                      child: records.isEmpty
+                          ? SingleChildScrollView(
+                              child: EmptyState(
+                                icon: _filtered
+                                    ? FLucideIcons.filterX
+                                    : FLucideIcons.messageCircle,
+                                title: _filtered ? '没有符合筛选的记录' : emptyRecords,
+                                description: _filtered
+                                    ? '可以调整筛选条件，查看其他记录。'
+                                    : '讨论和题目的作答都会保存在这里。',
+                                action: _filtered
+                                    ? forui.FButton(
+                                        variant: forui.FButtonVariant.outline,
+                                        mainAxisSize: MainAxisSize.min,
+                                        onPress: () {
+                                          setState(() {
+                                            _goalFilter = null;
+                                            _unassignedOnly = false;
+                                            _answerFilter = null;
+                                          });
+                                          _reload();
+                                        },
+                                        child: const Text('清除筛选'),
+                                      )
+                                    : forui.FButton(
+                                        variant: forui.FButtonVariant.secondary,
+                                        mainAxisSize: MainAxisSize.min,
+                                        onPress: widget.onStartQuestion,
+                                        child: const Text('提出问题'),
+                                      ),
+                              ),
+                            )
+                          : RefreshIndicator(
+                              onRefresh: _reload,
+                              child: _recordList(theme, records),
+                            ),
+                    ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -667,7 +685,7 @@ class _RecordsPageState extends State<RecordsPage>
     try {
       await AppScope.of(context).chat.discussion
           .setGoal(record.id, choice.goalId);
-      await _load();
+      await _reload();
     } catch (error, stack) {
       if (!mounted) return;
       final message = describeFailure(
@@ -703,7 +721,7 @@ class _RecordsPageState extends State<RecordsPage>
     if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).chat.discussion.clear(record.id);
-      await _load();
+      await _reload();
       if (!mounted) return;
       showToast(context, '已清空这条记录');
     } catch (error, stack) {

@@ -6,6 +6,7 @@ import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
 import 'database_gate.dart';
 import 'drift/app_database.dart';
+import 'live_queries.dart';
 import 'raw_executor.dart';
 
 /// 把整库访问收进 [DatabaseGate]：读共享，写、事务与关闭独占（01 第 7 章）。
@@ -39,6 +40,17 @@ class GuardedDatabase implements RawDatabase {
 
   RawDatabase get _db => resolve();
 
+  /// 表变更通知与跟随更新的读取；库连接换掉之后由应用根调用 [connectionReplaced]。
+  late final TableChanges _changes = TableChanges();
+
+  late final LiveQueries _live = LiveQueries(
+    changes: _changes.stream,
+    run: gate.shared,
+  );
+
+  /// 跟随写入更新的读取入口；应用服务经运行环境使用（ADR-0014）。
+  LiveQueries get live => _live;
+
   @override
   DatabaseConnectionUser? get driftConnection => _currentTxn?.driftConnection;
 
@@ -57,9 +69,46 @@ class GuardedDatabase implements RawDatabase {
   /// 版本引擎、备份与撤销使用的执行器就是本对象本身。
   RawExecutor get raw => this;
 
+  /// 跟随写入更新的读取；读取经共享访问执行，与恢复、清空的独占区互斥。
+  ///
+  /// 只有应用根的主连接提供这条路：仓库与页面拿的是本对象，只读副本与单条
+  /// 语句的执行器没有订阅者，不实现（ADR-0014）。
+  Stream<T> watch<T>({
+    required Set<String> tables,
+    required Future<T> Function() read,
+  }) => _live.watch(tables: tables, read: read);
+
+  /// 一批已经提交的表变更：提交成功之后、独占区释放之前发布。
+  ///
+  /// 整库恢复、导入与撤销这类不经过命令的表级改动由调用方在事务结束之后
+  /// 直接调用，[notifyAllTables] 是它们常用的形式（ADR-0014 第 3 条）。
+  void notifyTables(Iterable<String> tables) => _changes.publish(tables);
+
+  /// 全部业务表通知一次：整份换数据之后用。
+  void notifyAllTables() => _changes.connectionReplaced();
+
+  /// 库连接被换掉（整库恢复、清空之后重新打开）：按全部表补发一次，
+  /// 订阅中的页面因此在新库上重读。
+  ///
+  /// 恢复流程会先关掉当前连接再打开新库，[close] 的“已关闭”标记随之复位，
+  /// 通知流本身不随连接替换关闭，订阅中的页面继续收到重读。
+  void connectionReplaced() {
+    _closed = false;
+    _changes.connectionReplaced();
+  }
+
   /// 关闭连接：等正在进行的读写结束；恢复流程里已经在独占区，直接执行。
+  ///
+  /// 页面退出与测试清理都会各关一次，第二次直接返回，不再重关连接；恢复与
+  /// 清空换库之后由 [connectionReplaced] 复位，新连接照常可以关。
   @override
-  Future<void> close() => gate.exclusive(() => _db.close());
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await gate.exclusive(() => _db.close());
+  }
+
+  bool _closed = false;
 
   /// 事务一律按独占执行：事务里通常要写，读到的也必须是同一时刻的状态。
   @override
@@ -102,27 +151,39 @@ class GuardedDatabase implements RawDatabase {
           (txn) => runZoned(() => action(txn), zoneValues: {_txnScope: txn}),
         );
       }
-      return _db.transaction((txn) async {
-        if (requestId != null) {
-          final existing = await engine.commitByRequest(txn, requestId);
-          if (existing != null) {
-            if (onDuplicate != null) return onDuplicate(existing);
-            throw RevisionDuplicateRequest(existing);
-          }
-        }
-        final commitId = await engine.beginCommand(txn, requestId: requestId);
-        return runZoned(() async {
-          final result = await action(txn);
-          await engine.finishCommand(
-            txn,
-            commitId,
-            action: label ?? defaultAction,
-            actor: actor,
-            requestId: requestId,
-          );
-          return result;
-        }, zoneValues: {_txnScope: txn});
-      });
+      final changed = <String>{};
+      return _db
+          .transaction((txn) async {
+            if (requestId != null) {
+              final existing = await engine.commitByRequest(txn, requestId);
+              if (existing != null) {
+                if (onDuplicate != null) return onDuplicate(existing);
+                throw RevisionDuplicateRequest(existing);
+              }
+            }
+            final commitId = await engine.beginCommand(
+              txn,
+              requestId: requestId,
+            );
+            return runZoned(() async {
+              final result = await action(txn);
+              await engine.finishCommand(
+                txn,
+                commitId,
+                action: label ?? defaultAction,
+                actor: actor,
+                requestId: requestId,
+                changedTables: changed,
+              );
+              return result;
+            }, zoneValues: {_txnScope: txn});
+          })
+          .then((result) {
+            // 提交已经落库、独占区还没释放：这时发布表变更，订阅中的读取都排在
+            // 独占区之后，读到的就是这次提交之后的数据（ADR-0014 第 2 条）。
+            _changes.publish(changed);
+            return result;
+          });
     });
   }
 

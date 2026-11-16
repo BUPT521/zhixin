@@ -71,6 +71,12 @@ class RevisionService {
     clock: clock,
   );
 
+  /// 命名版本、裁剪与清理会改到的版本表；历史页订阅的就是这几张。
+  static const Set<String> _historyTables = {
+    ...revisionHistoryTables,
+    'revision_checkpoint',
+  };
+
   Future<RevisionHistory> history({int limit = 200}) async {
     final head = await engine.headId(db.raw);
     final commits = await engine.commits(db.raw, limit: limit);
@@ -168,13 +174,23 @@ class RevisionService {
     required String label,
     String? note,
   }) {
-    return db.gate.exclusive(
-      () => engine.nameCommit(raw(), commitId, name: label, note: note),
-    );
+    return db.gate.exclusive(() async {
+      final ref = await engine.nameCommit(
+        raw(),
+        commitId,
+        name: label,
+        note: note,
+      );
+      db.notifyTables(_historyTables);
+      return ref;
+    });
   }
 
   Future<void> deleteName(String label) {
-    return db.gate.exclusive(() => engine.deleteName(raw(), label));
+    return db.gate.exclusive(() async {
+      await engine.deleteName(raw(), label);
+      db.notifyTables(_historyTables);
+    });
   }
 
   Future<RevisionUndoResult> undoCommit(int commitId) {
@@ -204,6 +220,7 @@ class RevisionService {
         maxBytes: maxBytes,
       );
       await _stripDeadReceipts();
+      db.notifyTables(_historyTables);
       return result;
     });
   }
@@ -212,6 +229,7 @@ class RevisionService {
     return db.gate.exclusive(() async {
       await engine.clearHistory(raw());
       await _stripDeadReceipts();
+      db.notifyTables(_historyTables);
     });
   }
 

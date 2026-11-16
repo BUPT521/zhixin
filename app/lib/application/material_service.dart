@@ -27,6 +27,26 @@ class MaterialService {
 
   Future<List<Material>> list({int? goalId}) => materials.list(goalId: goalId);
 
+  /// 材料页读到的表：材料行、页码与所属目标。
+  ///
+  /// 任一表被写入之后整份重读一次，材料列表与材料详情因此跟随其它入口的
+  /// 导入、更正与归属调整（ADR-0014）。
+  static const Set<String> _listTables = {
+    'material',
+    'material_page',
+    'learning_goal',
+  };
+
+  /// 跟随写入更新的材料列表。
+  Stream<List<Material>> watchList({int? goalId}) => runtime.watch(
+    tables: _listTables,
+    read: () => list(goalId: goalId),
+  );
+
+  /// 跟随写入更新的单份材料：材料行与它的页码。
+  Stream<Material?> watchMaterial(int id) =>
+      runtime.watch(tables: _listTables, read: () => byId(id));
+
   Future<Material?> byId(int id) => materials.byId(id);
 
   /// 材料当前的最小与最大页码；做学习计划时据此决定可选范围。

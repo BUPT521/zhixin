@@ -72,6 +72,21 @@ class HelpResult {
   List<Notice> get notices => outcome.notices;
 }
 
+/// 记录页的一屏：目标、这一页记录与每题最近一次尝试的判断。
+class RecordsView {
+  const RecordsView({
+    required this.goals,
+    required this.records,
+    required this.questions,
+    required this.assessments,
+  });
+
+  final List<LearningGoal> goals;
+  final List<ConversationRecord> records;
+  final Map<int, QuestionRow> questions;
+  final Map<int, List<Assessment>> assessments;
+}
+
 /// 按本次最新的有判断的已提交尝试推出场次结果；没有提交或都没判断时留空。
 ///
 /// 最新的答对为完成；最新的答错但本次有答对为部分完成；都有判断且都没答对
@@ -163,6 +178,74 @@ class LearningService {
     limit: limit,
     conversationIds: conversationIds,
   );
+
+  /// 记录页读到的一屏：目标、这一页记录，以及每题最近一次尝试的判断。
+  ///
+  /// 一次读取取回整屏，订阅之后由数据层在这几张表被写入时整屏重读
+  /// （ADR-0014）；分页仍按屏幕上的“继续读取”逐页追加。
+  static const Set<String> _recordsTables = {
+    'conversation',
+    'message',
+    'attempt',
+    'assessment',
+    'learning_goal',
+    'material',
+    'study_session',
+  };
+
+  /// 跟随写入更新的记录一屏；筛选与分页条件都进读取闭包。
+  Stream<RecordsView> watchRecords({
+    int? goalId,
+    bool unassignedOnly = false,
+    String? answerStatus,
+    int limit = 30,
+  }) => runtime.watch(
+    tables: _recordsTables,
+    read: () => recordsView(
+      goalId: goalId,
+      unassignedOnly: unassignedOnly,
+      answerStatus: answerStatus,
+      limit: limit,
+    ),
+  );
+
+  /// 读一屏记录：目标列表与这一页记录同时发出，再补每题的判断。
+  Future<RecordsView> recordsView({
+    int? goalId,
+    bool unassignedOnly = false,
+    String? answerStatus,
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    final (goals, records) = await (
+      tasks.goals(),
+      conversations.list(
+        goalId: unassignedOnly ? null : goalId,
+        unassignedOnly: unassignedOnly,
+        answerStatus: answerStatus,
+        limit: limit,
+        offset: offset,
+      ),
+    ).wait;
+    final questions = records.isEmpty
+        ? const <QuestionRow>[]
+        : await questionRows(
+            conversationIds: records.map((record) => record.id),
+          );
+    final lastAttempts = [
+      for (final row in questions)
+        if (row.lastAttempt != null) row.lastAttempt!,
+    ];
+    final assessments = lastAttempts.isEmpty
+        ? const <int, List<Assessment>>{}
+        : await assessmentsFor(lastAttempts);
+    return RecordsView(
+      goals: goals,
+      records: records,
+      questions: {for (final row in questions) row.question.id: row},
+      assessments: assessments,
+    );
+  }
 
   Future<int> capture({
     required String stem,

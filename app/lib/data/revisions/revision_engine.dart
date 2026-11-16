@@ -28,6 +28,16 @@ final Set<String> revisionMetadataTables = {
 const Set<String> nonVersionedPersistentTables =
     nonVersionedPersistentTableNames;
 
+/// 记录提交历史的版本元数据表；每次提交都会写到，历史页因此也跟随更新。
+///
+/// 这三张表不参与采集，业务表的通知按提交里的净变化发，历史页读的是它们，
+/// 所以提交收尾一并带上（ADR-0014 第 2 条）。
+const Set<String> revisionHistoryTables = {
+  'revision_commit',
+  'revision_change',
+  'revision_ref',
+};
+
 /// 参与版本采集的业务表，顺序按外键依赖排列：先被引用的表在前。
 ///
 /// 由 drift 表类派生：元数据、附件对象与内部设置表以外的表都参与采集。新增
@@ -425,12 +435,17 @@ class RevisionEngine {
   }
 
   /// 结束一次命令：合并暂存变化，有净变化才追加提交并推进 `HEAD`。
+  ///
+  /// [changedTables] 是输出参数：形成提交时填入这次改到的表与版本元数据表，
+  /// 由调用方在事务提交之后发布给订阅中的页面（ADR-0014 第 2 条）；没有净
+  /// 变化时不填，回滚时调用方也不会发布。
   Future<RevisionCommit?> finishCommand(
     RawExecutor txn,
     int commitId, {
     required String action,
     String actor = 'user',
     String? requestId,
+    Set<String>? changedTables,
   }) async {
     final net = await _collect(txn, commitId);
     await _clearStage(txn, commitId);
@@ -474,6 +489,11 @@ class RevisionEngine {
       where: 'name = ?',
       whereArgs: [RevisionRef.headName],
     );
+    // 这次提交改到的表与版本元数据表；发布由调用方在提交之后做。
+    changedTables?.addAll({
+      for (final change in net) change.table,
+      ...revisionHistoryTables,
+    });
     await _clearContext(txn);
 
     if (checkpointEvery > 0 && commit.id % checkpointEvery == 0) {

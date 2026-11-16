@@ -71,6 +71,34 @@ class PlanService {
   /// 全部目标，当前有效的排在前面；不能靠 [loadWeek] 的页面从这里读。
   Future<List<LearningGoal>> goals() => tasks.goals();
 
+  /// 安排页一屏数据读到的表：其中任一表被写入之后整屏重读一次。
+  ///
+  /// 一次提交常同时改到事项、预约与提交历史，整屏读法只重跑一次，回填的
+  /// 也一定是同一时刻的数据（ADR-0014）。
+  static const Set<String> _weekTables = {
+    'plan_item',
+    'schedule_block',
+    'timetable_entry',
+    'learning_goal',
+    'study_plan',
+    'memory',
+  };
+
+  /// 跟随写入更新的 [loadWeek]；页面订阅之后不再在写入之后自己重读。
+  Stream<PlanWeek> watchWeek(DateTime anchor) =>
+      runtime.watch(tables: _weekTables, read: () => loadWeek(anchor));
+
+  /// 跟随写入更新的目标列表；归属选择与筛选条用它。
+  Stream<List<LearningGoal>> watchGoals() =>
+      runtime.watch(tables: const {'learning_goal'}, read: goals);
+
+  /// 跟随写入更新的已完成事项分页；展开列表之后每页都是一个订阅。
+  Stream<List<PlanItem>> watchDoneItems({int limit = 30, int offset = 0}) =>
+      runtime.watch(
+        tables: const {'plan_item'},
+        read: () => doneItems(limit: limit, offset: offset),
+      );
+
   /// 当前有效的目标；记录检索与记忆建议的归属选择从这里读。
   Future<List<LearningGoal>> activeGoals() => tasks.activeGoals();
 

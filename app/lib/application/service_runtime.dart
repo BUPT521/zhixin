@@ -1,3 +1,4 @@
+import '../data/db/live_queries.dart';
 import '../domain/rules/time_policy.dart';
 
 /// 模型调用失败时写进本机诊断记录；界面只拿归类后的说明。
@@ -18,6 +19,7 @@ class ServiceRuntime {
     required this.policySource,
     required this.filesDirSource,
     this.dataEpochSource = _zeroDataEpoch,
+    this.live,
     this.recordFailure,
   });
 
@@ -30,6 +32,9 @@ class ServiceRuntime {
   /// 数据代次的来源；恢复、清空与导入之后加一。
   final int Function() dataEpochSource;
 
+  /// 跟随写入更新的读取；单元测试没有接库时为空，读取只执行一次。
+  final LiveQueries? live;
+
   /// 当前的时间口径；截止小时改变后返回新值，服务不缓存旧口径。
   TimePolicy get policy => policySource();
 
@@ -38,6 +43,19 @@ class ServiceRuntime {
 
   /// 当前数据代次；异步回答据此判断恢复之后能否写回。
   int get dataEpoch => dataEpochSource();
+
+  /// 跟随写入更新的读取：[tables] 里任一表被写入后重新执行 [read]。
+  ///
+  /// 服务的流式读法都从这里出去（ADR-0014）：页面订阅之后不再在写入之后
+  /// 自己重读，恢复与清空换库时也由数据层补发一次。
+  Stream<T> watch<T>({
+    required Set<String> tables,
+    required Future<T> Function() read,
+  }) {
+    final queries = live;
+    if (queries == null) return Stream.fromFuture(read());
+    return queries.watch(tables: tables, read: read);
+  }
 
   /// 模型调用的类型、消息与调用栈只交给本机诊断记录，不进入界面说明。
   final ModelFailureRecorder? recordFailure;

@@ -162,6 +162,7 @@ class AppScopeState extends State<AppScope> {
     policySource: () => timePolicy,
     filesDirSource: () => paths.filesDir,
     dataEpochSource: () => _operationEpoch,
+    live: _db.live,
     recordFailure: crashLog.record,
   );
 
@@ -385,6 +386,9 @@ class AppScopeState extends State<AppScope> {
     markPendingWorkInvalidated: () => _operationEpoch++,
     notifyDataChanged: () {
       dataVersion.value++;
+      // 整库恢复、导入与清空换掉了数据：订阅中的页面按全部表重读一次
+      // （ADR-0014 第 3 条）。
+      _db.notifyAllTables();
       _refreshSemanticIndex();
     },
     recordFailure: (error, stack, {required kind}) =>
@@ -524,6 +528,9 @@ class AppScopeState extends State<AppScope> {
       clock: clock,
     );
     _connection = connection;
+    // 新连接接上表变更通知，并按全部表补发一次：恢复与清空换库之后，
+    // 订阅中的页面在新库上重读，不会停在旧连接的数据上（ADR-0014）。
+    _db.connectionReplaced();
     await _bind();
     return connection;
   }
@@ -553,6 +560,8 @@ class AppScopeState extends State<AppScope> {
   Future<void> _invalidatePendingWork() async {
     _operationEpoch++;
     dataVersion.value++;
+    // 版本恢复与单项撤销换掉了当前数据，订阅中的页面按全部表重读一次。
+    _db.notifyAllTables();
     _refreshSemanticIndex();
   }
 
