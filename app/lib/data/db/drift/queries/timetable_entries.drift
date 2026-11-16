@@ -3,8 +3,8 @@
 import '../tables.dart';
 
 insertTimetableEntry:
-INSERT INTO timetable_entry (weekday, start_time, end_time, title, location, created_at, updated_at)
-VALUES (:weekday, :startTime, :endTime, :title, :location, :stamp, :stamp);
+INSERT INTO timetable_entry (id, weekday, start_time, end_time, title, location, created_at, updated_at)
+VALUES (:id, :weekday, :startTime, :endTime, :title, :location, :stamp, :stamp);
 
 deleteTimetableEntry:
 DELETE FROM timetable_entry WHERE id = :entryId;

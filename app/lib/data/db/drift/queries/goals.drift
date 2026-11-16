@@ -13,8 +13,8 @@ goalById:
 SELECT * FROM learning_goal WHERE id = :id LIMIT 1;
 
 insertLearningGoal:
-INSERT INTO learning_goal (title, scope_text, due_date, status, created_at, updated_at)
-VALUES (:title, :scopeText, :dueDate, :status, :stamp, :stamp);
+INSERT INTO learning_goal (id, title, scope_text, due_date, status, created_at, updated_at)
+VALUES (:id, :title, :scopeText, :dueDate, :status, :stamp, :stamp);
 
 setLearningGoalStatus:
 UPDATE learning_goal SET status = :status,

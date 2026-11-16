@@ -38,7 +38,8 @@ Future<List<Map<String, Object?>>> selectRows(
   return executor.rawQuery(buffer.toString(), whereArgs);
 }
 
-/// 插入一行并返回新行编号；[replace] 覆盖同主键旧行，[ignore] 跳过冲突。
+/// 插入一行并返回执行结果；业务表主键由调用方在 [values] 里给出，不再取新行
+/// 编号（ADR-0018）。[replace] 覆盖同主键旧行，[ignore] 跳过冲突。
 Future<int> insertRow(
   RawExecutor executor,
   String table,

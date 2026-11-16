@@ -9,20 +9,20 @@ import (
 
 func TestServiceUploadValidatesSchemaAndSize(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 8, 2, 26)
+	svc := NewService(NewMemoryStore(), 8, 2, 27)
 
 	if _, err := svc.Upload(ctx, "u1", "sha", 25, "", 1, strings.NewReader("x")); !errors.Is(err, ErrSchemaVersion) {
 		t.Fatalf("other schema: want ErrSchemaVersion, got %v", err)
 	}
-	if _, err := svc.Upload(ctx, "u1", "sha", 26, "", 9, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
+	if _, err := svc.Upload(ctx, "u1", "sha", 27, "", 9, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("oversize: want ErrTooLarge, got %v", err)
 	}
 
-	meta, err := svc.Upload(ctx, "u1", "sha", 26, "  phone  ", 4, strings.NewReader("zip1"))
+	meta, err := svc.Upload(ctx, "u1", "sha", 27, "  phone  ", 4, strings.NewReader("zip1"))
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
-	if meta.DeviceName != "phone" || meta.Size != 4 || meta.SchemaVersion != 26 {
+	if meta.DeviceName != "phone" || meta.Size != 4 || meta.SchemaVersion != 27 {
 		t.Fatalf("meta = %+v", meta)
 	}
 	list, err := svc.List(ctx, "u1")
@@ -33,9 +33,9 @@ func TestServiceUploadValidatesSchemaAndSize(t *testing.T) {
 
 func TestServiceKeepsNewestSnapshots(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 8, 2, 26)
+	svc := NewService(NewMemoryStore(), 8, 2, 27)
 	for _, body := range []string{"a", "b", "c"} {
-		if _, err := svc.Upload(ctx, "u1", "sha-"+body, 26, "", 1, strings.NewReader(body)); err != nil {
+		if _, err := svc.Upload(ctx, "u1", "sha-"+body, 27, "", 1, strings.NewReader(body)); err != nil {
 			t.Fatalf("upload %s: %v", body, err)
 		}
 	}

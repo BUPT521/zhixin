@@ -11,7 +11,7 @@ import 'sql.dart';
 
 /// 库文件与 schema 版本。库文件放在应用私有目录，导出时整份复制。
 const String zhixinDbFileName = 'zhixin.db';
-const int zhixinSchemaVersion = 26;
+const int zhixinSchemaVersion = 27;
 
 /// 与库文件同名的附属文件：回滚日志、WAL 与共享内存。
 const List<String> zhixinDbSideFiles = ['-journal', '-wal', '-shm'];

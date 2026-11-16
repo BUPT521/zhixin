@@ -9,7 +9,7 @@ SELECT * FROM study_plan WHERE id = :id LIMIT 1;
 -- 计划列表；参数按调用点传，不生效的条件由空参数关掉。
 planRows(
   REQUIRED :doneStatus AS TEXT,
-  REQUIRED :id AS INT OR NULL,
+  REQUIRED :id AS TEXT OR NULL,
   REQUIRED :openOnly AS INT,
   REQUIRED :activeStatus AS TEXT,
   REQUIRED :pausedStatus AS TEXT,
@@ -42,8 +42,8 @@ ORDER BY
 LIMIT COALESCE(:rowLimit, -1);
 
 insertStudyPlan:
-INSERT INTO study_plan (material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at)
-VALUES (:materialId, :goalId, :conversationId, :title, :pageFrom, :pageTo, :currentPage, :status, :stamp, :stamp);
+INSERT INTO study_plan (id, material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at)
+VALUES (:id, :materialId, :goalId, :conversationId, :title, :pageFrom, :pageTo, :currentPage, :status, :stamp, :stamp);
 
 setStudyPlanStatus:
 UPDATE study_plan SET status = :status,

@@ -10,7 +10,7 @@ ORDER BY page_no;
 
 -- 材料里选中的一段页；起止传空表示这一端不限。
 pagesInRange(
-  REQUIRED :materialId AS INT,
+  REQUIRED :materialId AS TEXT,
   REQUIRED :pageFrom AS INT OR NULL,
   REQUIRED :pageTo AS INT OR NULL
 ):
@@ -29,8 +29,8 @@ pageMaterialId:
 SELECT material_id FROM material_page WHERE id = :pageId LIMIT 1;
 
 insertMaterialPage:
-INSERT INTO material_page (material_id, page_no, label, content, created_at, updated_at)
-VALUES (:materialId, :pageNo, :label, :content, :stamp, :stamp);
+INSERT INTO material_page (id, material_id, page_no, label, content, created_at, updated_at)
+VALUES (:id, :materialId, :pageNo, :label, :content, :stamp, :stamp);
 
 updateMaterialPage:
 UPDATE material_page SET content = :content,

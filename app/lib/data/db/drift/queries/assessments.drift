@@ -29,8 +29,8 @@ deleteAssessmentsOfKind:
 DELETE FROM assessment WHERE attempt_id = :attemptId AND kind = :kind;
 
 insertAssessment:
-INSERT INTO assessment (attempt_id, kind, result, basis, created_at, updated_at)
-VALUES (:attemptId, :kind, :result, :basis, :stamp, :stamp);
+INSERT INTO assessment (id, attempt_id, kind, result, basis, created_at, updated_at)
+VALUES (:id, :attemptId, :kind, :result, :basis, :stamp, :stamp);
 
 updateAssessmentResult:
 UPDATE assessment SET result = :result,

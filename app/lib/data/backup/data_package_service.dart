@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../db/app_database.dart';
+import '../db/fts.dart';
 import '../../domain/rules/attachments.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
@@ -172,6 +173,12 @@ class DataPackageService {
         manifest.schemaVersion,
       );
       reopened = await openDb();
+
+      // 版本库备份由 VACUUM INTO 生成，没有显式整数主键的业务表 rowid 可能被
+      // 重排；关键词索引按 rowid 关联（ADR-0018），换库之后按数据重建一次。
+      for (final index in ftsIndexes) {
+        await rebuildFtsIndex(reopened, index);
+      }
 
       // 重新打开后核对核心表行数：包里的库在替换或复制时被截断、或打开时
       // 落到新建的空库，这里会发现并退回恢复前的数据，而不是把空库当成功。

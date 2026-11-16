@@ -25,8 +25,8 @@ WHERE study_plan_id = :planId
 ORDER BY seq, id;
 
 insertStudyPlanStep:
-INSERT INTO plan_item (goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at)
-VALUES (:goalId, NULL, :planId, :seq, :title, :note, :pageFrom, :pageTo, 0, :status, 'user', :stamp, :stamp);
+INSERT INTO plan_item (id, goal_id, conversation_id, study_plan_id, seq, title, note, page_from, page_to, priority, status, source, created_at, updated_at)
+VALUES (:id, :goalId, NULL, :planId, :seq, :title, :note, :pageFrom, :pageTo, 0, :status, 'user', :stamp, :stamp);
 
 setStudyStepConversation:
 UPDATE plan_item SET conversation_id = :conversationId
@@ -176,8 +176,8 @@ UPDATE plan_item SET conversation_id = :conversationId,
 WHERE id = :itemId AND conversation_id IS NULL;
 
 insertPlanItem:
-INSERT INTO plan_item (goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at)
-VALUES (:goalId, :conversationId, :title, :note, :dueAt, :estMinutes, :status, :source, :origin, :stamp, :stamp);
+INSERT INTO plan_item (id, goal_id, conversation_id, title, note, due_at, est_minutes, status, source, origin_json, created_at, updated_at)
+VALUES (:id, :goalId, :conversationId, :title, :note, :dueAt, :estMinutes, :status, :source, :origin, :stamp, :stamp);
 
 setPlanItemPriority:
 UPDATE plan_item SET priority = :priority,
