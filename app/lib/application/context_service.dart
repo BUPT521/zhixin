@@ -42,6 +42,7 @@ class ContextService {
     required this.materials,
     required this.runtime,
     this.evidence,
+    this.personaSource,
   });
 
   final TaskRepository tasks;
@@ -54,6 +55,11 @@ class ContextService {
 
   /// 回答前的原文检索；为空时只使用关键词检索，行为与之前一致。
   final EvidenceService? evidence;
+
+  /// 当前启用的人格；由应用根从插件运行时取，为空表示这轮不带人格段落。
+  ///
+  /// 每次回答前重新读一次设置，恢复或清空之后人名与文本立即生效。
+  final Future<BuddyPersona?> Function()? personaSource;
 
   Future<BuddyContext> load(ContextRequest request) async {
     final question = request.question;
@@ -222,6 +228,7 @@ class ContextService {
 
     return BuddyContext(
       now: now,
+      persona: await personaSource?.call(),
       goal: goal,
       goals: goals,
       openItems: openItems,

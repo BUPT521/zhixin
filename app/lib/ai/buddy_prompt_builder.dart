@@ -26,6 +26,7 @@ String buildBuddySystemPrompt(BuddyContext context) {
   ).where((goal) => goal.id != currentGoal?.id);
   final materialHits = context.additionalMaterialHits;
   final attemptIds = <int>{};
+  final persona = context.persona;
 
   final rules = <String>[
     '依据本轮提供的记录、材料和工具返回的原文回答，不编造题目、时间、成绩、页码或用户没说过的事。',
@@ -64,6 +65,11 @@ String buildBuddySystemPrompt(BuddyContext context) {
     if (withAssessment)
       '学习判断是这次学习结果的依据；区分独立完成、辅助完成与待核实，'
           '写清依据，没有可靠依据时结果填「待核实」，不要补造。',
+    if (persona != null)
+      '人格只影响语气、称呼、讲解风格与篇幅倾向，不改变判分、引用、写入、工具使用与事实依据。'
+          '人格与记忆中的讲解偏好冲突时，按用户本轮的说明、当前启用的人格、记忆中的讲解偏好依次优先；'
+          '用户本轮说明优先于人格，人格优先于记忆里的讲解偏好，'
+          '记忆里的困难、进展与时间限制照常带入，不受人格影响。',
   ];
 
   final lines = <String>[
@@ -71,6 +77,11 @@ String buildBuddySystemPrompt(BuddyContext context) {
     '规则：',
     for (var index = 0; index < rules.length; index++)
       '${index + 1}. ${rules[index]}',
+    if (persona != null) ...[
+      '',
+      '当前启用的人格：${persona.name}',
+      truncateCodePoints(persona.text, personaTextLimit),
+    ],
     '',
     '当前时间：${formatDateTime(context.now)}',
     '本次讨论归属：${currentGoal?.title ?? '没有归属（正常回答）'}'

@@ -29,10 +29,22 @@ typedef SourceSearch = Future<List<EvidenceHit>> Function(
   int limit,
 );
 
+/// 当前启用的人格在提示词里的最小表示：显示名称与设定文本。
+///
+/// 人格只影响语气、称呼、讲解风格与篇幅倾向；顺序与边界写在提示词构建处，
+/// 这里只带上名称与文本，不携带权限或工具说明。
+class BuddyPersona {
+  const BuddyPersona({required this.name, required this.text});
+
+  final String name;
+  final String text;
+}
+
 /// 生成回答所需的上下文；只放当前用得到的内容，不发整库。
 class BuddyContext {
   const BuddyContext({
     required this.now,
+    this.persona,
     this.goal,
     this.goals = const [],
     this.openItems = const [],
@@ -56,6 +68,9 @@ class BuddyContext {
   });
 
   final DateTime now;
+
+  /// 当前启用的人格；没有启用或人格插件停用时不带这一段。
+  final BuddyPersona? persona;
 
   /// 当前讨论明确选择的目标；为空表示这次求助没有归属。
   final LearningGoal? goal;
