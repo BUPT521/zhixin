@@ -79,6 +79,46 @@ void main() {
     }
   });
 
+  test('插件目录不读数据层与界面，也不持有数据库连接', () {
+    final lib = Directory('lib').absolute;
+    final plugins = Directory(p.join(lib.path, 'plugins'));
+    expect(plugins.existsSync(), isTrue, reason: 'M1 应建立 lib/plugins 目录');
+    final sources = _dartFiles(plugins);
+    expect(sources, isNotEmpty);
+
+    for (final source in sources) {
+      for (final target in _reachableFiles(lib, source)) {
+        final path = p.normalize(target.absolute.path);
+        for (final forbidden in ['data', 'ui']) {
+          expect(
+            p.isWithin(p.join(lib.path, forbidden), path),
+            isFalse,
+            reason: '${source.path} 不能依赖 ${target.path}',
+          );
+        }
+        final directives = _directives(target);
+        expect(
+          directives.where(
+            (uri) =>
+                uri.startsWith('package:sqlite3') ||
+                uri.startsWith('package:drift'),
+          ),
+          isEmpty,
+          reason: '${target.path} 不能打开数据库或持有连接，写入只能由应用服务完成',
+        );
+        expect(
+          directives.where(
+            (uri) =>
+                uri.startsWith('package:flutter') ||
+                uri.startsWith('package:path_provider/'),
+          ),
+          isEmpty,
+          reason: '${target.path} 不依赖界面与平台插件，插件代码保持纯 Dart',
+        );
+      }
+    }
+  });
+
   test('应用根只公开服务与基础句柄，仓库、库连接与测试入口不对外', () {
     final lib = Directory('lib').absolute;
     final scopeLines = File(p.join(lib.path, 'app_scope.dart'))

@@ -113,7 +113,12 @@ void main() {
           .at(2),
       'sk-test',
     );
-    await tester.ensureVisible(find.text('保存'));
+    // 设置页变长之后，直接 ensureVisible 会把按钮顶到页面头部下面；
+    // 按居中位置滚动再点，避免点击落在头部区域。
+    await Scrollable.ensureVisible(
+      tester.element(find.text('保存')),
+      alignment: 0.5,
+    );
     await tester.pump();
     await tester.tap(find.text('保存'));
     await tester.pump();
