@@ -116,7 +116,8 @@ class SemanticIndexService {
   /// 是否允许把这条来源的原文发送给远程嵌入服务；本地来源不需要判断。
   bool Function(SemanticSource source)? get canSend => _canSend;
 
-  /// 当前数据代次（例如版本提交的 HEAD）；变化时索引按当前数据重建。
+  /// 当前数据代次：`HEAD` 所在提交的 `generation`，整版恢复、导入与清理历史
+  /// 时变化；变化时索引按当前数据重建，普通写入不会改变它。
   final Future<String> Function()? epoch;
   final Clock clock;
   final Duration queryTimeout;

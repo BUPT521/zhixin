@@ -155,6 +155,16 @@ class AppScopeState extends State<AppScope> {
   /// 写入触发的索引刷新静默期：连续提交时等最后一次写入之后只扫一次库。
   static const Duration _semanticQuietPeriod = Duration(seconds: 3);
 
+  /// 语义索引的来源表：这几张表有了提交才需要补建索引。
+  ///
+  /// 其余业务表（目标、设置、版本历史等）的提交不改变索引内容；讨论与材料的
+  /// 删除会经外键级联改到这里的表，仍然会触发。
+  static const Set<String> _semanticSourceTables = {
+    'material_page',
+    'message',
+    'attempt',
+  };
+
   TimePolicy get timePolicy => _timePolicy.policy;
 
   /// 服务共用的运行环境；时间口径随保存的设置换新，数据代次随恢复与清空推进。
@@ -183,7 +193,7 @@ class AppScopeState extends State<AppScope> {
     repository: _evidenceRepository,
     indexPath: paths.vectorIndexPath,
     indexLogPath: paths.vectorLogPath,
-    epoch: () async => '${await _engine.headId(_connection!)}',
+    epoch: () async => '${await _engine.currentGeneration(_connection!)}',
     clock: clock,
     recordFailure: crashLog.record,
   );
@@ -438,6 +448,7 @@ class AppScopeState extends State<AppScope> {
     crashLog = widget.crashLog ?? CrashLog(filesDir: paths.filesDir);
     crashLog.recordLaunch();
     _db = GuardedDatabase(gate: _gate, resolve: () => _connection!);
+    _db.onCommitted = _onCommitted;
     _llmStore = LlmConfigStore(SecureSecretStore());
     _configuredAi = AiChatService(store: _llmStore);
     _dataPackages = DataPackageService(
@@ -566,15 +577,23 @@ class AppScopeState extends State<AppScope> {
 
   /// 数据代次变化后按当前数据补建语义索引；没有配置或已关闭时不动向量库。
   ///
-  /// 写入触发的刷新等 [_semanticQuietPeriod] 再执行，期间再次写入只顺延，
-  /// 避免每次提交都全量扫库；立即需要索引的入口仍直接调用刷新。
+  /// 来源表有提交之后与数据代次变化之后都走这里，等 [_semanticQuietPeriod] 再
+  /// 执行，期间再次触发只顺延，避免连续提交时每次都全量扫库；立即需要索引的
+  /// 入口仍直接调用刷新。
   void _refreshSemanticIndex() {
-    if (!_semantic.configured) return;
+    final semantic = __semantic;
+    if (semantic == null || !semantic.configured) return;
     _semanticRefreshTimer?.cancel();
     _semanticRefreshTimer = Timer(_semanticQuietPeriod, () {
       _semanticRefreshTimer = null;
       _refreshSemanticIndexNow();
     });
+  }
+
+  /// 一次提交落库之后调用：来源表变了就排在安静期之后补建索引。
+  void _onCommitted(Set<String> tables) {
+    if (!tables.any(_semanticSourceTables.contains)) return;
+    _refreshSemanticIndex();
   }
 
   /// 后台补建索引；失败只写诊断记录，不打断界面，回答继续使用原文与关键词。

@@ -300,4 +300,72 @@ void main() {
     expect(tester.takeException(), isNull);
     await drain(tester);
   }, skip: _skipWithoutZvec != null);
+
+  testWidgets('普通写入之后下一次刷新只补新来源，不整份重建', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(() async {
+      final local = await scope!.testing.conversations.create(title: '矩阵讨论');
+      await scope!.testing.conversations.append(
+        local,
+        role: MessageRole.user,
+        content: '矩阵的秩怎么求',
+      );
+      scope!.library.semanticIndex.configure(
+        client: FixedEmbeddingClient(
+          spec: _spec,
+          vectors: {
+            '矩阵的秩怎么求': [0.2, 0.9, 0, 0],
+            '线性无关的行向量个数': [0.98, 0.1, 0, 0],
+          },
+        ),
+      );
+      expect((await scope!.library.semanticIndex.refresh()).embedded, 1);
+
+      await scope!.testing.conversations.append(
+        local,
+        role: MessageRole.user,
+        content: '线性无关的行向量个数',
+      );
+      final next = await scope!.library.semanticIndex.refresh();
+      expect(next.embedded, 1);
+      expect(next.skipped, 1);
+      // 等安静期的后台刷新跑完，收尾时没有仍在运行的索引操作。
+      await Future<void>.delayed(const Duration(seconds: 5));
+    });
+    await drain(tester);
+  }, skip: _skipWithoutZvec != null);
+
+  testWidgets('来源表写入之后按安静期补进索引', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(() async {
+      final local = await scope!.testing.conversations.create(title: '矩阵讨论');
+      await scope!.testing.conversations.append(
+        local,
+        role: MessageRole.user,
+        content: '矩阵的秩怎么求',
+      );
+      scope!.library.semanticIndex.configure(
+        client: FixedEmbeddingClient(
+          spec: _spec,
+          vectors: {
+            '矩阵的秩怎么求': [0.2, 0.9, 0, 0],
+            '线性无关的行向量个数': [0.98, 0.1, 0, 0],
+          },
+        ),
+      );
+      expect((await scope!.library.semanticIndex.refresh()).embedded, 1);
+
+      await scope!.testing.conversations.append(
+        local,
+        role: MessageRole.user,
+        content: '线性无关的行向量个数',
+      );
+      // 不手动刷新：等安静期之后的后台刷新把新来源写进索引。
+      await Future<void>.delayed(const Duration(seconds: 5));
+      final stats = await scope!.library.semanticIndex.stats();
+      expect(stats.entries, 2);
+      expect(stats.lastRefresh?.embedded, 1);
+    });
+    await drain(tester);
+  }, skip: _skipWithoutZvec != null);
 }

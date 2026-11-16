@@ -36,6 +36,12 @@ class GuardedDatabase implements RawDatabase {
   /// 没有显式业务动作时的提交说明。
   final String defaultAction;
 
+  /// 一次带净变化的提交落库之后回调改到的表，在独占区释放之前调用。
+  ///
+  /// 应用根用它把语义索引的补建排进安静期；回滚的写入与没有净变化的写入不
+  /// 调用，整库恢复与清空换库之后由调用方另行通知（ADR-0014 第 2、3 条）。
+  void Function(Set<String> tables)? onCommitted;
+
   static final Object _txnScope = Object();
 
   RawDatabase get _db => resolve();
@@ -193,6 +199,8 @@ class GuardedDatabase implements RawDatabase {
             // 提交已经落库、独占区还没释放：这时发布表变更，订阅中的读取都排在
             // 独占区之后，读到的就是这次提交之后的数据（ADR-0014 第 2 条）。
             _changes.publish(changed);
+            final committed = onCommitted;
+            if (committed != null && changed.isNotEmpty) committed(changed);
             return result;
           });
     });

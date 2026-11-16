@@ -249,6 +249,16 @@ class RevisionEngine {
     return rows.first['commit_id']! as int;
   }
 
+  /// 当前数据代次：`HEAD` 所在提交的 `generation`。
+  ///
+  /// 普通写入沿用父提交的代次，整版恢复、导入与清理历史各加一，因此它只在
+  /// 整份数据被替换时变化，并且随库保存、重启之后仍然一致。语义索引用它判断
+  /// 是否整份重建，不能用 `HEAD` 代替：`HEAD` 每次写入都会变。
+  Future<int> currentGeneration(RawExecutor executor) async {
+    final head = await commitById(executor, await headId(executor));
+    return head?.generation ?? 0;
+  }
+
   Future<RevisionCommit?> commitById(RawExecutor executor, int id) async {
     final rows = await selectRows(
       executor,

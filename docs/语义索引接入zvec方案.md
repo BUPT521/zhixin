@@ -148,9 +148,15 @@ zvec 的一次 `upsert` 只保证这一批文档本身，删除和写入之间�
 
 ### 4.7 后台线程与引擎参数
 
-zvec 的写入是单进程独占，知新本来就只有一个后台 isolate 持有索引，这一点不需要调整。`Zvec.initialize` 传入 `ConfigData`：查询与 `optimize` 各用 1 个线程，避免和界面线程争用小核；内存上限设 128 MB，引擎要求这个值大于 100 MB。日志写到缓存目录的文件里，级别为警告，原因见 ADR-0022 实施方案第 6 节。`Doc`、`VectorQuery` 持有原生内存，`ZvecVectorIndex` 内部用 `try/finally` 调用 `destroy`，不把它们传出 isolate；跨线程传递的仍是现在的 `Map` 与 `List`。
+zvec 的写入是单进程独占，知新本来就只有一个后台 isolate 持有索引，这一点不需要调整。`Zvec.initialize` 传入 `ConfigData`：查询与 `optimize` 各用 1 个线程，避免和界面线程争用小核；内存上限设 256 MB，约合六万条 1024 维 FP32 向量的本体，原先是 128 MB，两万条时留给索引结构、写入缓冲与查询的余量不足；它仍是上限，不是常驻占用。引擎要求这个值大于 100 MB。日志写到缓存目录的文件里，级别为警告，原因见 ADR-0022 实施方案第 6 节。`Doc`、`VectorQuery` 持有原生内存，`ZvecVectorIndex` 内部用 `try/finally` 调用 `destroy`，不把它们传出 isolate；跨线程传递的仍是现在的 `Map` 与 `List`。
 
 Flat 索引不需要 `optimize` 才能检索，但段数增加后检索会变慢。一次刷新写入超过 200 个文档时，在 `flush` 之后调用一次 `optimize` 合并段，两万条的耗时约 0.1 秒。
+
+### 4.8 刷新时机与数据代次
+
+刷新在四类事件之后执行：应用启动、来源表有净变化的提交之后等 3 秒、恢复或撤销或导入或清空之后、设置页手动更新。`GuardedDatabase` 在提交落库之后把改到的表交给应用根，应用根只对 `material_page`、`message`、`attempt` 三张表排刷新，连续提交共用一次扫描。
+
+数据代次取 `HEAD` 所在提交的 `generation`，整版恢复、导入与清理历史各推进一次，普通写入沿用父提交的代次。代次与索引状态文件里的不同时，刷新先清空再重建；相同时按来源版本增量更新，删除的来源由 `pruneSources` 清理。代次随库保存，重启之后仍然一致。早先取的是 `HEAD` 本身，任何写入都会推进它，于是有写入之后的下一次刷新会整份重建，增量路径用不上；改成 `generation` 之后，普通写入只补变化的来源。
 
 ## 5. 依赖、构建与测试
 
@@ -158,7 +164,7 @@ Flat 索引不需要 `optimize` 才能检索，但段数增加后检索会变慢
 
 zvec 的 Flutter 插件在 Gradle 的 `preBuild` 之前从 GitHub Releases 下载 C 库并校验 SHA-256，缓存目录由环境变量 `ZVEC_SDK_CACHE` 决定，默认是 `~/.cache/zvec-dart`（Windows 为 `%LOCALAPPDATA%\zvec-dart`）。`pubspec.yaml` 里的注释记录过 GitHub Releases 偶发 504，CI 的打包任务因此在 `actions/cache` 里加上这个目录，键取插件版本号。
 
-测试分四类：
+测试分五类：
 
 | 层 | 内容 | 运行条件 |
 |---|---|---|
@@ -166,6 +172,7 @@ zvec 的 Flutter 插件在 Gradle 的 `preBuild` 之前从 GitHub Releases 下�
 | 索引契约 | `vector_index_contract_test.dart`，同一组用例分别跑 `MemoryVectorIndex` 与 `ZvecVectorIndex`：写入、覆盖、缩短片段、清理、按键读取、过滤检索、中途退出后的版本判断、换模型重建 | `ZvecVectorIndex` 需要 `ZVEC_LIBRARY_PATH` 指向本机的 C 库，没有设置时跳过并打印原因 |
 | isolate | `vector_store_isolate_test.dart`，覆盖后台 isolate 的打开、写入、查询、统计与两个 isolate 先后打开、关闭之后引擎仍可再用 | 同上 |
 | 范围预过滤 | `vector_prefilter_test.dart`，`hitInScope` 判为在范围内的来源，预过滤必须放行 | 任何环境 |
+| 刷新与代次 | `records_search_semantic_test.dart`：普通写入之后只补新来源、来源表提交之后按安静期补进索引；`guarded_database_test.dart`：净变化提交回调改到的表、空提交不回调 | 前者需要 `ZVEC_LIBRARY_PATH` 与真实 zvec，后者任何环境 |
 
 CI 的 Linux 任务下载 `zvec-sdk-linux-amd64.tar.gz`（约 40 MB），按 `zvec_sdk.json` 里的 SHA-256 校验后放进缓存，再设置 `ZVEC_LIBRARY_PATH`。Windows 本机开发下载 `zvec-sdk-windows-amd64.zip` 后设置这个变量，步骤见 [app/README 的运行一节](../app/README.md#运行)。
 
