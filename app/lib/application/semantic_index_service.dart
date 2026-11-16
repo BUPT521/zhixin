@@ -56,6 +56,8 @@ class IndexRefreshResult {
   /// 等待嵌入期间来源被更正、删除或撤销，写回前放弃的条数。
   final int lateSkipped;
   final int failed;
+
+  /// 清理时删除的向量条数。
   final int removed;
   final int total;
   final SemanticFailure failure;
@@ -115,19 +117,32 @@ class SemanticIndexService {
     EmbeddingClient? client,
     bool Function(SemanticSource source)? canSend,
   }) {
+    if (_closed) {
+      client?.dispose();
+      return;
+    }
     final current = _client;
+    final previousModel = current?.spec.indexKey;
+    final nextModel = client?.spec.indexKey;
+    if (!identical(current, client) || !identical(_canSend, canSend)) {
+      _invalidateOperations();
+    }
     if (current != null && !identical(current, client)) current.dispose();
     _client = client;
     _canSend = canSend;
     final store = _store;
-    if (store != null && store.spec.indexKey != client?.spec.indexKey) {
+    if (store != null && store.spec.indexKey != nextModel) {
       _store = null;
-      unawaited(store.close());
+      unawaited(_queueStoreOperation(store.close));
     }
+    if (previousModel != nextModel) _lastRefresh = null;
   }
 
   VectorStore? _store;
   Future<VectorStore>? _opening;
+  Future<void> _storeOperations = Future<void>.value();
+  Future<void>? _closing;
+  int _generation = 0;
   bool _closed = false;
   IndexRefreshResult? _lastRefresh;
   Future<IndexRefreshResult>? _refreshing;
@@ -136,38 +151,67 @@ class SemanticIndexService {
 
   bool get configured => client != null;
 
-  /// 取当前索引句柄；第一次用时才打开，打开与建表都在后台 isolate 里完成。
-  Future<VectorStore> _requireStore() async {
+  void _invalidateOperations() {
+    _generation++;
+    _opening = null;
+    _refreshing = null;
+  }
+
+  void _requireCurrent(int generation) {
     if (_closed) throw const VectorStoreClosedException();
-    final existing = _store;
-    if (existing != null) return existing;
+    if (generation != _generation) {
+      throw const EmbeddingUnavailable('语义索引的配置或内容已经变更');
+    }
+  }
+
+  Future<T> _queueStoreOperation<T>(Future<T> Function() operation) {
+    final next = _storeOperations.then((_) => operation());
+    // 每个请求处理自己的失败，后续操作仍可关闭或重新打开索引。
+    _storeOperations = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
+  }
+
+  Future<T> _useCurrentStore<T>(int generation, Future<T> Function() use) =>
+      _queueStoreOperation(() {
+        _requireCurrent(generation);
+        return use();
+      });
+
+  /// 取当前索引句柄；第一次用时才打开，打开与建表都在后台 isolate 里完成。
+  Future<VectorStore> _requireStore(int generation) async {
+    _requireCurrent(generation);
     final clientSpec = client?.spec;
     if (clientSpec == null) {
       throw const EmbeddingUnavailable('没有配置嵌入来源');
     }
     final opening = _opening;
-    if (opening != null) return opening;
-    final future = _open(clientSpec);
+    if (opening != null) {
+      final store = await opening;
+      _requireCurrent(generation);
+      return store;
+    }
+    final future = _queueStoreOperation(() => _open(clientSpec, generation));
     _opening = future;
     try {
-      return await future;
+      final store = await future;
+      _requireCurrent(generation);
+      return store;
     } finally {
       if (identical(_opening, future)) _opening = null;
     }
   }
 
-  Future<VectorStore> _open(EmbeddingModelSpec spec) async {
+  Future<VectorStore> _open(EmbeddingModelSpec spec, int generation) async {
+    _requireCurrent(generation);
+    final existing = _store;
+    if (existing != null) return existing;
     final opener = _openStore;
     final store = opener != null
         ? await opener()
         : await IsolateVectorStore.open(path: indexPath, spec: spec);
-    if (_closed) {
+    if (generation != _generation) {
       await store.close();
-      throw const VectorStoreClosedException();
-    }
-    if (client?.spec.indexKey != spec.indexKey) {
-      await store.close();
-      throw const EmbeddingUnavailable('嵌入来源已经切换');
+      _requireCurrent(generation);
     }
     _store = store;
     return store;
@@ -181,23 +225,29 @@ class SemanticIndexService {
   Future<IndexRefreshResult> refresh({int? maxSources, bool force = false}) {
     final running = _refreshing;
     if (running != null) return running;
-    final future = _refresh(maxSources: maxSources, force: force);
+    final future = _refresh(_generation, maxSources: maxSources, force: force);
     _refreshing = future;
     return future;
   }
 
-  Future<IndexRefreshResult> _refresh({
+  Future<IndexRefreshResult> _refresh(
+    int generation, {
     int? maxSources,
     bool force = false,
   }) async {
     try {
-      return await _runRefresh(maxSources: maxSources, force: force);
+      return await _runRefresh(
+        generation,
+        maxSources: maxSources,
+        force: force,
+      );
     } finally {
-      _refreshing = null;
+      if (generation == _generation) _refreshing = null;
     }
   }
 
-  Future<IndexRefreshResult> _runRefresh({
+  Future<IndexRefreshResult> _runRefresh(
+    int generation, {
     int? maxSources,
     bool force = false,
   }) async {
@@ -210,33 +260,46 @@ class SemanticIndexService {
       // 先读数据代次再打开索引：打开、加载 sqlite-vec 与建表都由后台 isolate
       // 承接，界面线程在这里只等一个 Future，启动首帧不再执行这些同步调用。
       final currentEpoch = await epoch?.call() ?? '0';
-      final store = await _requireStore();
+      final store = await _requireStore(generation);
       if (await store.meta('epoch') != currentEpoch) {
-        await store.clear();
-        await store.setMeta('epoch', currentEpoch);
+        await _useCurrentStore(generation, () async {
+          await store.clear();
+          await store.setMeta('epoch', currentEpoch);
+        });
       }
-      final sources = await repository.semanticSources(limit: maxSources);
+      final sources = await repository.semanticSources();
+      _requireCurrent(generation);
 
-      final indexed = await store.indexedSources();
-      final keep = <String>{};
+      // 嵌入数量可以分批限制，清理与统计仍以全部允许进入索引的来源为准。
+      final sendAllowed = canSend;
+      final keep = {
+        for (final source in sources)
+          if (sendAllowed?.call(source) ?? true) source.locator.sourceKey,
+      };
+      final indexed = await store.indexedSources(keep.toList(growable: false));
+      final committed = indexed.keys.toSet();
+      final batch = maxSources == null
+          ? sources
+          : sources.take(maxSources).toList(growable: false);
       var embedded = 0;
+      var writtenEntries = 0;
       var skipped = 0;
       var lateSkipped = 0;
       var failed = 0;
       var embedMs = 0;
       var writeMs = 0;
 
-      for (final source in sources) {
-        final sendable = canSend?.call(source) ?? true;
-        if (!sendable) {
+      for (final source in batch) {
+        _requireCurrent(generation);
+        final sourceKey = source.locator.sourceKey;
+        if (!keep.contains(sourceKey)) {
           // 用户缩小了可发送范围：这条来源不再进入 keep，索引里的旧向量在最后
           // 统一删除，避免继续参与检索。
           skipped++;
           continue;
         }
-        keep.add(source.locator.sourceKey);
         final chunks = semanticChunks(source.content);
-        final existing = indexed[source.locator.sourceKey];
+        final existing = indexed[sourceKey];
         final unchanged =
             existing != null &&
             existing.sourceVersion == source.sourceVersion &&
@@ -248,6 +311,7 @@ class SemanticIndexService {
         final vectors = <List<double>>[];
         var sourceFailed = false;
         for (final chunk in chunks) {
+          _requireCurrent(generation);
           final started = DateTime.now();
           try {
             vectors.add(await embedding.embed(chunk.text));
@@ -267,6 +331,7 @@ class SemanticIndexService {
         }
         // 迟到结果写回之前重新检查来源：等待嵌入期间内容被更正、删除或撤销，
         // 就放弃这一条，等下一次更新再处理。
+        _requireCurrent(generation);
         final fresh = await repository.semanticSource(source.locator);
         if (fresh == null || fresh.sourceVersion != source.sourceVersion) {
           lateSkipped++;
@@ -274,14 +339,23 @@ class SemanticIndexService {
         }
         final writeStarted = DateTime.now();
         try {
-          await store.replaceSource(
-            locator: source.locator,
-            sourceVersion: source.sourceVersion,
-            chunks: [for (final chunk in chunks) chunk.text],
-            vectors: vectors,
-            createdAt: formatDateTime(now),
+          await _useCurrentStore(
+            generation,
+            () => store.replaceSource(
+              locator: source.locator,
+              sourceVersion: source.sourceVersion,
+              chunks: [for (final chunk in chunks) chunk.text],
+              vectors: vectors,
+              createdAt: formatDateTime(now),
+            ),
           );
           embedded++;
+          writtenEntries += chunks.length;
+          if (chunks.isEmpty) {
+            committed.remove(sourceKey);
+          } else {
+            committed.add(sourceKey);
+          }
         } catch (_) {
           failed++;
         } finally {
@@ -289,15 +363,23 @@ class SemanticIndexService {
         }
       }
 
-      final removed = await store.pruneSources(keep);
-      await store.setMeta('built_at', formatDateTime(now));
+      final removed = await _useCurrentStore(generation, () async {
+        final removed = await store.pruneSources(keep);
+        await store.finishRefresh(
+          builtAt: formatDateTime(now),
+          sourceCount: committed.length,
+          writtenEntries: writtenEntries,
+        );
+        return removed;
+      });
+      _requireCurrent(generation);
       final result = IndexRefreshResult(
         embedded: embedded,
         skipped: skipped,
         lateSkipped: lateSkipped,
         failed: failed,
         removed: removed,
-        total: sources.length,
+        total: batch.length,
         failure: failed == 0 ? SemanticFailure.none : SemanticFailure.error,
         embedMs: embedMs,
         writeMs: writeMs,
@@ -305,8 +387,8 @@ class SemanticIndexService {
       _lastRefresh = result;
       return result;
     } on Object {
-      // 应用退出时索引会被关闭，进行中的刷新随之结束，不必再当作失败上报。
-      if (_closed) {
+      // 退出、切换配置和清空都会让原来的刷新结束。
+      if (_closed || generation != _generation) {
         return const IndexRefreshResult(failure: SemanticFailure.cancelled);
       }
       rethrow;
@@ -325,6 +407,7 @@ class SemanticIndexService {
     if (embedding == null) {
       return const SemanticResult(failure: SemanticFailure.notConfigured);
     }
+    final generation = _generation;
     final effectiveTimeout = timeout ?? queryTimeout;
     final total = Stopwatch()..start();
     if (cancelToken?.cancelled == true) {
@@ -334,25 +417,15 @@ class SemanticIndexService {
     List<double> vector;
     try {
       vector = await embedding.embed(query).timeout(effectiveTimeout);
-    } on TimeoutException {
+    } catch (error) {
+      final failure = switch (error) {
+        _ when generation != _generation || cancelToken?.cancelled == true =>
+          SemanticFailure.cancelled,
+        TimeoutException() => SemanticFailure.timeout,
+        _ => SemanticFailure.error,
+      };
       return SemanticResult(
-        failure: SemanticFailure.timeout,
-        timings: EvidenceTimings(
-          embedMs: embedStarted.elapsedMilliseconds,
-          totalMs: total.elapsedMilliseconds,
-        ),
-      );
-    } on EmbeddingUnavailable {
-      return SemanticResult(
-        failure: SemanticFailure.error,
-        timings: EvidenceTimings(
-          embedMs: embedStarted.elapsedMilliseconds,
-          totalMs: total.elapsedMilliseconds,
-        ),
-      );
-    } catch (_) {
-      return SemanticResult(
-        failure: SemanticFailure.error,
+        failure: failure,
         timings: EvidenceTimings(
           embedMs: embedStarted.elapsedMilliseconds,
           totalMs: total.elapsedMilliseconds,
@@ -360,7 +433,7 @@ class SemanticIndexService {
       );
     }
     final embedMs = embedStarted.elapsedMilliseconds;
-    if (cancelToken?.cancelled == true) {
+    if (cancelToken?.cancelled == true || generation != _generation) {
       return SemanticResult(
         failure: SemanticFailure.cancelled,
         timings: EvidenceTimings(
@@ -371,8 +444,9 @@ class SemanticIndexService {
     }
     final indexStarted = Stopwatch()..start();
     try {
-      final store = await _requireStore();
+      final store = await _requireStore(generation);
       final entries = await store.entryCount();
+      _requireCurrent(generation);
       // 全部记录的范围里，四倍候选一般够用；限定目标或材料时，范围外的向量
       // 更容易占满候选，取二十倍并封顶 400，避免收窄范围后漏召回。
       final candidateLimit = scope.limitsToAll ? limit * 4 : limit * 20;
@@ -380,6 +454,7 @@ class SemanticIndexService {
         vector,
         k: math.min(400, math.max(limit, candidateLimit)),
       );
+      _requireCurrent(generation);
       final indexMs = indexStarted.elapsedMilliseconds;
       final hits = <EvidenceHit>[];
       var verifiedOut = 0;
@@ -400,6 +475,7 @@ class SemanticIndexService {
         hits.add(fresh.copyWith(literal: false, score: hit.score));
         if (hits.length >= limit) break;
       }
+      _requireCurrent(generation);
       return SemanticResult(
         hits: hits,
         entries: entries,
@@ -414,7 +490,9 @@ class SemanticIndexService {
     } catch (_) {
       // 索引打不开或读取失败时退回原文与关键词；调用方只看 usable。
       return SemanticResult(
-        failure: SemanticFailure.error,
+        failure: generation == _generation
+            ? SemanticFailure.error
+            : SemanticFailure.cancelled,
         timings: EvidenceTimings(
           embedMs: embedMs,
           totalMs: total.elapsedMilliseconds,
@@ -476,42 +554,49 @@ class SemanticIndexService {
         modelKey: '',
       );
     }
-    final store = await _requireStore();
-    final indexed = await store.indexedSources();
-    return SemanticIndexStats(
-      configured: true,
-      entries: await store.entryCount(),
-      sources: indexed.length,
-      modelKey: await store.meta('model_key') ?? '',
-      builtAt: await store.meta('built_at'),
-      lastRefresh: _lastRefresh,
+    final generation = _generation;
+    final store = await _requireStore(generation);
+    final stats = await _useCurrentStore(
+      generation,
+      () async => SemanticIndexStats(
+        configured: true,
+        entries: await store.entryCount(),
+        sources: await store.sourceCount(),
+        modelKey: store.spec.indexKey,
+        builtAt: await store.meta('built_at'),
+        lastRefresh: _lastRefresh,
+      ),
     );
+    _requireCurrent(generation);
+    return stats;
   }
 
   Future<void> clear() async {
-    final store = _store;
-    if (store != null) await store.clear();
+    final spec = client?.spec;
+    if (_closed || spec == null) return;
+    _invalidateOperations();
+    final generation = _generation;
+    await _queueStoreOperation(() async {
+      final store = await _open(spec, generation);
+      _requireCurrent(generation);
+      await store.clear();
+      if (generation == _generation) _lastRefresh = null;
+    });
   }
 
-  Future<void> close() async {
+  Future<void> close() {
+    final closing = _closing;
+    if (closing != null) return closing;
     _closed = true;
+    _invalidateOperations();
     final store = _store;
     _store = null;
-    final opening = _opening;
-    if (opening != null) {
-      try {
-        final opened = await opening;
-        if (!identical(opened, store)) await opened.close();
-      } catch (_) {
-        // 打开失败时的索引本来就没有建立，不必再关一次。
-      }
-    }
-    _store = null;
-    try {
+    final next = _closing = _queueStoreOperation(() async {
       await store?.close();
-    } finally {
-      client?.dispose();
-    }
+    });
+    _client?.dispose();
+    _client = null;
+    return next;
   }
 }
 
