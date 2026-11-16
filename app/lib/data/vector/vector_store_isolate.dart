@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 
 import '../../domain/rules/embedding.dart';
+import 'sqlite_vector_index.dart';
 import 'vector_index.dart';
 import 'vector_store.dart';
 
@@ -237,7 +238,7 @@ void _vectorStoreMain(_SpawnRequest request) {
   try {
     final spec = EmbeddingModelSpec.fromJson(request.spec);
     if (spec == null) throw const FormatException('嵌入模型信息不完整');
-    index = VectorIndex.open(
+    index = SqliteVectorIndex.open(
       path: request.path,
       spec: spec,
       inMemory: request.inMemory,

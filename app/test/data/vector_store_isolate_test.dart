@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/vector/sqlite_vector_index.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/data/vector/vector_store_isolate.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
@@ -54,6 +55,53 @@ void main() {
 
     await store.close();
     expect(File('${directory.path}/index.db').existsSync(), isTrue);
+  });
+
+  test('切换嵌入模型与维度时清空旧索引并重建结构', () {
+    final dir = Directory.systemTemp.createTempSync('zhixin_vec_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final path = '${dir.path}/index.db';
+
+    final first = SqliteVectorIndex.open(path: path, spec: _spec);
+    first.replaceSource(
+      locator: const SemanticLocator(
+        kind: 'message',
+        sourceKey: 'message:msg-1',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+      ),
+      sourceVersion: 'v1',
+      chunks: const ['熵增'],
+      vectors: const [
+        [1, 0, 0, 0],
+      ],
+      createdAt: '2026-11-12 10:00:00',
+    );
+    expect(first.entryCount, 1);
+    first.close();
+
+    final second = SqliteVectorIndex.open(
+      path: path,
+      spec: const EmbeddingModelSpec(id: 'another-embed', dim: 8),
+    );
+    addTearDown(second.close);
+    expect(second.entryCount, 0);
+    expect(second.meta('model_key'), contains('another-embed'));
+    second.replaceSource(
+      locator: const SemanticLocator(
+        kind: 'message',
+        sourceKey: 'message:msg-1',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+      ),
+      sourceVersion: 'v2',
+      chunks: const ['熵增'],
+      vectors: const [
+        [1, 0, 0, 0, 0, 0, 0, 0],
+      ],
+      createdAt: '2026-11-12 10:00:00',
+    );
+    expect(second.search([1, 0, 0, 0, 0, 0, 0, 0], k: 1), hasLength(1));
   });
 
   test('索引打不开时把异常交回调用方', () async {

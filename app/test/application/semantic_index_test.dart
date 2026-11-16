@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -15,7 +14,7 @@ import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
-import 'package:zhixin/data/vector/vector_index.dart';
+import 'package:zhixin/data/vector/memory_vector_index.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
@@ -153,7 +152,7 @@ Future<
   ({
     RawDatabase db,
     EvidenceRepository repository,
-    VectorIndex index,
+    MemoryVectorIndex index,
     SemanticIndexService service,
     _Corpus corpus,
   })
@@ -166,7 +165,7 @@ _rig({
   final db = await openTestDb();
   final corpus = await _seed(db);
   final repository = EvidenceRepository(db);
-  final index = VectorIndex.open(inMemory: true, spec: _spec);
+  final index = MemoryVectorIndex(_spec);
   final client =
       clientFor?.call(_spec) ??
       FixedEmbeddingClient(spec: _spec, vectors: _vectors());
@@ -226,9 +225,9 @@ class _MutatingClient implements EmbeddingClient {
 }
 
 void main() {
-  test('固定测试向量验证扩展注册、写入与查询', () {
+  test('固定测试向量验证内存索引写入与查询', () {
     final spec = _spec;
-    final index = VectorIndex.open(inMemory: true, spec: spec);
+    final index = MemoryVectorIndex(spec);
     addTearDown(index.close);
     final locator = const SemanticLocator(
       kind: 'material_page',
@@ -341,7 +340,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final index = VectorIndex.open(inMemory: true, spec: _spec);
+    final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
     final client = _MutatingClient(
       inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
@@ -483,53 +482,6 @@ void main() {
     expect(rig.index.meta('epoch'), '2');
   });
 
-  test('切换嵌入模型与维度时清空旧索引并重建结构', () {
-    final dir = Directory.systemTemp.createTempSync('zhixin_vec_');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final path = '${dir.path}/index.db';
-
-    final first = VectorIndex.open(path: path, spec: _spec);
-    first.replaceSource(
-      locator: const SemanticLocator(
-        kind: 'message',
-        sourceKey: 'message:msg-1',
-        conversationId: 'conv-1',
-        messageId: 'msg-1',
-      ),
-      sourceVersion: 'v1',
-      chunks: const ['熵增'],
-      vectors: const [
-        [1, 0, 0, 0],
-      ],
-      createdAt: '2026-11-12 10:00:00',
-    );
-    expect(first.entryCount, 1);
-    first.close();
-
-    final second = VectorIndex.open(
-      path: path,
-      spec: const EmbeddingModelSpec(id: 'another-embed', dim: 8),
-    );
-    addTearDown(second.close);
-    expect(second.entryCount, 0);
-    expect(second.meta('model_key'), contains('another-embed'));
-    second.replaceSource(
-      locator: const SemanticLocator(
-        kind: 'message',
-        sourceKey: 'message:msg-1',
-        conversationId: 'conv-1',
-        messageId: 'msg-1',
-      ),
-      sourceVersion: 'v2',
-      chunks: const ['熵增'],
-      vectors: const [
-        [1, 0, 0, 0, 0, 0, 0, 0],
-      ],
-      createdAt: '2026-11-12 10:00:00',
-    );
-    expect(second.search([1, 0, 0, 0, 0, 0, 0, 0], k: 1), hasLength(1));
-  });
-
   test('回答前检索把语义候选与原文命中按来源标识合并', () async {
     final rig = await _rig();
     addTearDown(rig.db.close);
@@ -564,7 +516,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
-    final index = VectorIndex.open(inMemory: true, spec: _spec);
+    final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
     final sent = <String>[];
     final config = EmbeddingConfig(
@@ -704,7 +656,7 @@ void main() {
         '噪声 $index': [1, 0.001 * (index + 1), 0, 0],
       '目标记录': [0.5, 0.5, 0, 0],
     };
-    final index = VectorIndex.open(inMemory: true, spec: _spec);
+    final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
     final service = SemanticIndexService(
       repository: EvidenceRepository(db),
@@ -744,7 +696,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     await _seed(db);
-    final index = VectorIndex.open(inMemory: true, spec: _spec);
+    final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
     final client = _CountingClient(
       FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
