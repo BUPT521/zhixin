@@ -16,8 +16,10 @@ import 'application/undo_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/vector/embedding_config_store.dart';
+import 'plugins/persona/persona_catalog.dart';
+import 'plugins/runtime/plugin_runtime.dart';
 
-/// 应用根持有的全部服务，按使用场景分成六组。
+/// 应用根持有的全部服务，按使用场景分成七组。
 ///
 /// 页面只从这里取服务，装配顺序仍留在 [AppScopeState]；分组只决定从哪里
 /// 找，不改变服务之间的依赖。
@@ -29,6 +31,7 @@ class AppServices {
     required this.memory,
     required this.settings,
     required this.data,
+    required this.plugins,
   });
 
   final ChatServices chat;
@@ -37,6 +40,7 @@ class AppServices {
   final MemoryServices memory;
   final SettingsServices settings;
   final DataServices data;
+  final PluginServices plugins;
 }
 
 /// 讨论与作答：两条回答路径共用同一份上下文、记忆范围与提交历史。
@@ -123,4 +127,15 @@ class DataServices {
 
   /// 撤销一条提交；撤销成功之后由应用层刷新截止小时。
   final UndoService undo;
+}
+
+/// 插件运行时与人格清单：启停、权限与当前人格都从这里取。
+class PluginServices {
+  const PluginServices({required this.runtime, required this.personas});
+
+  /// 注册第一方插件、读写启停状态、在调用点核对权限。
+  final PluginRuntime runtime;
+
+  /// 人格列表与当前启用项；提示词只读启用项，页面用它列预置与切换。
+  final PersonaCatalog personas;
 }

@@ -8,6 +8,7 @@ import 'theme.dart';
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../app_scope.dart';
+import 'copy.dart';
 import 'data_version_watcher.dart';
 import 'format.dart';
 import '../data/diagnostics/crash_log.dart';
@@ -567,6 +568,22 @@ class _SettingsPageState extends State<SettingsPage>
             },
           ),
           SizedBox(height: theme.space.sm),
+          const SectionHeading(title: '插件'),
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.package),
+            title: const Text(pluginsPageTitle),
+            subtitle: const Text(pluginsEntrySubtitle),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: () => openPlugins(context),
+          ),
+          SizedBox(height: theme.space.sm),
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.sparkles),
+            title: const Text(personaPageTitle),
+            subtitle: const Text(personaEntrySubtitle),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: () => openPersona(context),
+          ),
           const SectionHeading(title: '诊断'),
           forui.FSwitch(
             label: const Text('发送崩溃报告'),

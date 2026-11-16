@@ -24,7 +24,9 @@ import 'learning_page.dart';
 import 'materials_page.dart';
 import 'memory_page.dart';
 import 'memory_proposal_page.dart';
+import 'persona_page.dart';
 import 'plan_page.dart';
+import 'plugins_page.dart';
 import 'question_crop_page.dart';
 import 'records_search_page.dart';
 import 'settings_page.dart';
@@ -125,6 +127,18 @@ Future<void> openSettings(BuildContext context) {
 Future<void> openMemory(BuildContext context) {
   return Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const MemoryPage()));
+}
+
+/// 打开插件设置页：启停随应用编译的第一方插件。
+Future<void> openPlugins(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const PluginsPage()));
+}
+
+/// 打开人格页：切换当前启用的内置人格。
+Future<void> openPersona(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const PersonaPage()));
 }
 
 /// 打开“从作答整理记忆”页。

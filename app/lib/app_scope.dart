@@ -49,6 +49,7 @@ import 'data/vector/embedding_config_store.dart';
 import 'data/repository/evidence_repository.dart';
 import 'data/repository/material_repository.dart';
 import 'data/repository/memory_repository.dart';
+import 'data/repository/plugin_metadata_store.dart';
 import 'data/repository/schedule_repository.dart';
 import 'data/repository/settings_repository.dart';
 import 'data/repository/study_repository.dart';
@@ -59,6 +60,9 @@ import 'platform/app_paths.dart';
 import 'platform/app_info.dart';
 import 'platform/first_frame.dart';
 import 'platform/secure_secret_store.dart';
+import 'plugins/persona/persona_catalog.dart';
+import 'plugins/persona/persona_plugin.dart';
+import 'plugins/runtime/plugin_runtime.dart';
 import 'ui/theme_mode_controller.dart';
 
 /// 打开一次库，把仓库与服务挂在这里；页面不从各自开库。
@@ -115,6 +119,9 @@ class AppScopeState extends State<AppScope> {
 
   late LlmConfigStore _llmStore;
   AiChatService? _configuredAi;
+
+  /// 第一方插件运行时；启动时装载，整库恢复与清空之后重读 app_meta。
+  PluginRuntime? _pluginRuntime;
 
   /// 讨论、学习与系统学习共用的回答来源；设置页的连接测试仍用真实客户端。
   BuddyAi get _ai => widget.ai ?? _configuredAi!;
@@ -215,9 +222,13 @@ class AppScopeState extends State<AppScope> {
       versions: _dataVersions,
       undo: _undo,
     ),
+    plugins: PluginServices(
+      runtime: _pluginRuntime!,
+      personas: _pluginRuntime!.personas,
+    ),
   );
 
-  /// 讨论与作答、安排与学习、材料与检索、记忆、设置、数据版本六组服务。
+  /// 讨论与作答、安排与学习、材料与检索、记忆、设置、数据版本、插件七组服务。
   AppServices get services => _services;
 
   ChatServices get chat => _services.chat;
@@ -244,6 +255,11 @@ class AppScopeState extends State<AppScope> {
     materials: _materials,
     runtime: _runtime,
     evidence: _evidence,
+    personaSource: () async {
+      final runtime = _pluginRuntime;
+      if (runtime == null) return null;
+      return runtime.loadActivePersonaForPrompt();
+    },
   );
 
   late final MaterialService _material = MaterialService(
@@ -369,6 +385,9 @@ class AppScopeState extends State<AppScope> {
     markPendingWorkInvalidated: () => _operationEpoch++,
     notifyDataChanged: () {
       dataVersion.value++;
+      // 整库恢复、导入与清空换掉了数据：订阅中的页面按全部表重读一次
+      // （ADR-0014 第 3 条）。
+      _db.notifyAllTables();
       _refreshSemanticIndex();
     },
     recordFailure: (error, stack, {required kind}) =>
@@ -419,6 +438,15 @@ class AppScopeState extends State<AppScope> {
     );
     await _dataPackages.recoverInterruptedRestore();
     await _open();
+    // 插件运行时只读 app_meta：启停状态与人格配置随整库备份恢复，不形成提交。
+    final pluginStore = SettingsPluginMetadataStore(_settings, clock);
+    final personaCatalog = PersonaCatalog(store: pluginStore);
+    _pluginRuntime = PluginRuntime(
+      store: pluginStore,
+      personas: personaCatalog,
+      plugins: [PersonaPlugin(personaCatalog)],
+    );
+    await _pluginRuntime!.load();
     _engine = RevisionEngine(clock: clock);
     _db.revisions = _engine;
     _attachmentCache = AttachmentCache(filesDir: () => paths.filesDir);
@@ -528,6 +556,8 @@ class AppScopeState extends State<AppScope> {
   Future<void> _invalidatePendingWork() async {
     _operationEpoch++;
     dataVersion.value++;
+    // 版本恢复与单项撤销换掉了当前数据，订阅中的页面按全部表重读一次。
+    _db.notifyAllTables();
     _refreshSemanticIndex();
   }
 
