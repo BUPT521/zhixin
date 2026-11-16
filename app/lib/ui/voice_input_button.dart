@@ -10,6 +10,18 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_toast.dart';
 
+/// 语音识别失败时给用户看的说明。
+///
+/// 平台错误码来自 speech_to_text 的 Android 实现：设备没有选中的识别服务时报
+/// `error_client`，拒绝麦克风权限时报 `error_permission`。国产系统常常没有带识别
+/// 服务，这时权限已经允许也仍然失败，不能让用户一直去查权限。
+String voiceErrorText(String code) => switch (code) {
+  'error_permission' => '没有麦克风权限，可以在系统设置里允许知新录音，或者改用键盘输入。',
+  'error_client' => '这台设备没有可用的语音识别服务，可以改用键盘输入。',
+  'error_network' => '语音识别需要联网，网络不可用时可以改用键盘输入。',
+  _ => '语音识别没有完成，可以改用键盘输入。',
+};
+
 /// 语音输入（02 第 5 章）：只在每日记录与备注里出现，转成文字后仍可改。
 ///
 /// 设备没有识别服务、没有麦克风权限或识别失败时只提示一句，不阻塞键盘输入。
@@ -71,10 +83,10 @@ class _VoiceInputButtonState extends State<VoiceInputButton> {
 
     try {
       final available = await _speech.initialize(
-        onError: (_) {
+        onError: (error) {
           if (!mounted) return;
           setState(() => _listening = false);
-          _snack('语音识别没有完成，可以检查麦克风权限后再试。');
+          _snack(voiceErrorText(error.errorMsg));
         },
         onStatus: (status) {
           if (!mounted) return;
