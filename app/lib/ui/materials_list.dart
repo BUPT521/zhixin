@@ -73,7 +73,7 @@ class MaterialListState extends State<MaterialList> {
   }
 
   /// 打开导入对话框之前读一次目标列表；归属选项只在打开对话框时用得到。
-  Future<List<({int id, String title, bool active})>?> _loadGoals() async {
+  Future<List<({String id, String title, bool active})>?> _loadGoals() async {
     try {
       final goals = await AppScope.of(context).study.plan.goals();
       return [
@@ -185,7 +185,7 @@ class MaterialListState extends State<MaterialList> {
   }
 
   /// 打开刚导入的材料；列表由订阅刷新，返回之后不再重读。
-  Future<void> _openImportedMaterial(int id) async {
+  Future<void> _openImportedMaterial(String id) async {
     if (!mounted) return;
     await openMaterial(context, id);
   }
@@ -353,7 +353,7 @@ class _MaterialDraft {
   final String content;
   final String? sourceRef;
   final String? label;
-  final int? goalId;
+  final String? goalId;
 }
 
 class _PageDraft {
@@ -368,7 +368,7 @@ class _PageDraft {
 class _ImportMaterialDialog extends StatefulWidget {
   const _ImportMaterialDialog({required this.goals});
 
-  final List<({int id, String title, bool active})> goals;
+  final List<({String id, String title, bool active})> goals;
 
   @override
   State<_ImportMaterialDialog> createState() => _ImportMaterialDialogState();

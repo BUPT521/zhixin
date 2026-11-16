@@ -17,7 +17,7 @@ class MaterialSelection {
     required this.pageNo,
   });
 
-  final int materialId;
+  final String materialId;
   final String materialTitle;
   final int pageNo;
 
@@ -27,7 +27,7 @@ class MaterialSelection {
 /// 选择材料与页码；没有材料时提示先去记录里导入。
 Future<MaterialSelection?> showMaterialPicker(
   BuildContext context, {
-  int? initialMaterialId,
+  String? initialMaterialId,
   int? initialPageNo,
 }) async {
   final scope = AppScope.of(context);

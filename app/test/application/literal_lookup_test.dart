@@ -27,14 +27,14 @@ class _Corpus {
     required this.draftAnswer,
   });
 
-  final int goalProbability;
-  final int goalLinear;
-  final int materialProbability;
-  final int materialLinear;
-  final int discussion;
-  final int question;
-  final int noise;
-  final int draftAnswer;
+  final String goalProbability;
+  final String goalLinear;
+  final String materialProbability;
+  final String materialLinear;
+  final String discussion;
+  final String question;
+  final String noise;
+  final String draftAnswer;
 }
 
 Future<_Corpus> _seed(RawDatabase db) async {

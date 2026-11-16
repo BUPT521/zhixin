@@ -93,7 +93,7 @@ class DiscussionMessage extends StatelessWidget {
               citation: citation,
               onOpen:
                   onOpenCitation == null ||
-                      citation.materialId <= 0 ||
+                      citation.materialId.isEmpty ||
                       citation.pageNo <= 0
                   ? null
                   : () => onOpenCitation!(citation),

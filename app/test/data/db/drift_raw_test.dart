@@ -17,6 +17,7 @@ void main() {
     final commitId = await raw.transaction((txn) async {
       final id = await engine.beginCommand(txn);
       await insertRow(txn, 'learning_goal', {
+        'id': 'goal-1',
         'title': '测试目标',
         'created_at': '2026-11-14 10:00:00',
         'updated_at': '2026-11-14 10:00:00',

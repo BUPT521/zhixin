@@ -60,7 +60,9 @@ void main() {
     );
     addTearDown(rig.close);
 
-    final goal = await insertRow(rig.db, 'learning_goal', {
+    const goal = 'goal-1';
+    await insertRow(rig.db, 'learning_goal', {
+      'id': goal,
       'title': '恢复前',
       'status': 'active',
       'created_at': '2026-11-10 09:00:00',

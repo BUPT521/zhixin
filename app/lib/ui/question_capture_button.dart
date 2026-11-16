@@ -21,8 +21,8 @@ class QuestionCaptureButton extends StatelessWidget {
     required this.onOpenDiscussion,
   });
 
-  final Future<void> Function(int questionId) onOpenLearning;
-  final Future<void> Function(int conversationId) onOpenDiscussion;
+  final Future<void> Function(String questionId) onOpenLearning;
+  final Future<void> Function(String conversationId) onOpenDiscussion;
 
   @override
   Widget build(BuildContext context) => forui.FButton(

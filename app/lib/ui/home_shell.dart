@@ -93,17 +93,17 @@ class _HomeShellState extends State<HomeShell> {
     _open(2);
   }
 
-  Future<void> _openLearning(int questionId) async {
+  Future<void> _openLearning(String questionId) async {
     if (!mounted) return;
     await openLearning(context, questionId);
   }
 
-  Future<void> _openLearningRedo(int questionId) async {
+  Future<void> _openLearningRedo(String questionId) async {
     if (!mounted) return;
     await openLearningRedo(context, questionId);
   }
 
-  Future<void> _openDiscussion(int conversationId) async {
+  Future<void> _openDiscussion(String conversationId) async {
     if (!mounted) return;
     await openDiscussion(context, conversationId);
   }

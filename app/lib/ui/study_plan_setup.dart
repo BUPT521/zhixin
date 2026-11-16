@@ -23,7 +23,7 @@ import 'zhixin_toast.dart';
 Future<void> showStudyPlanSetup(
   BuildContext context, {
   required Material material,
-  int? conversationId,
+  String? conversationId,
   int? initialPage,
 }) async {
   final scope = AppScope.of(context);

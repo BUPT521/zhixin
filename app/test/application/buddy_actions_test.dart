@@ -26,7 +26,7 @@ void main() {
       memories: memories,
       drafts: const [draft],
       sourceKind: MemorySourceKind.message,
-      sourceId: 1,
+      sourceId: 'msg-1',
     );
     expect(result.changes, hasLength(1));
     expect(result.changes.single.draft, same(draft));
@@ -174,20 +174,20 @@ void main() {
         MemoryDraft(kind: MemoryKind.constraint, content: '晚上只有半小时'),
       ],
       sourceKind: MemorySourceKind.message,
-      scope: memoryGoalScope(3),
+      scope: memoryGoalScope('goal-3'),
     );
     final all = await memories.list();
     expect(all, hasLength(4));
     String? scopeOf(String content) =>
         all.firstWhere((memory) => memory.content == content).scope;
-    expect(scopeOf('放缩方向不确定'), memoryGoalScope(3));
-    expect(scopeOf('能独立列出条件'), memoryGoalScope(3));
+    expect(scopeOf('放缩方向不确定'), memoryGoalScope('goal-3'));
+    expect(scopeOf('能独立列出条件'), memoryGoalScope('goal-3'));
     expect(scopeOf('喜欢先看例子'), isNull);
     expect(scopeOf('晚上只有半小时'), isNull);
 
     final other = await memories.activeForContext(
       now: DateTime.now(),
-      scope: memoryGoalScope(4),
+      scope: memoryGoalScope('goal-4'),
     );
     expect(
       other.map((memory) => memory.content),

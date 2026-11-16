@@ -19,11 +19,12 @@ import 'package:zhixin/data/db/sql.dart';
 Future<
   (
     TestRig rig,
-    int conversationId,
-    int helpedId,
-    int wrongId,
-    int independentId,
-    int unstatedId,
+    String conversationId,
+    String helpedId,
+    String wrongId,
+    String independentId,
+    String unstatedId,
+    String goalId,
   )
 >
 _seed(TestRig rig) async {
@@ -125,7 +126,15 @@ _seed(TestRig rig) async {
     independent: null,
   );
 
-  return (rig, conversation, helped.id, wrong.id, independent.id, unstated.id);
+  return (
+    rig,
+    conversation,
+    helped.id,
+    wrong.id,
+    independent.id,
+    unstated.id,
+    goal,
+  );
 }
 
 void main() {
@@ -150,7 +159,7 @@ void main() {
       (proposal) => proposal.kind == MemoryKind.progress,
     );
     expect(difficulty.sourceId, seeded.$4);
-    expect(difficulty.scope, memoryGoalScope(1));
+    expect(difficulty.scope, memoryGoalScope(seeded.$7));
     expect(difficulty.content, contains('记反'));
     expect(difficulty.conditionLabel, contains('提示'));
     expect(difficulty.basis, contains('自评有误'));
@@ -191,7 +200,7 @@ void main() {
     );
     expect(memory.sourceKind, MemorySourceKind.attempt);
     expect(memory.kind, MemoryKind.progress);
-    expect(memory.scope, memoryGoalScope(1));
+    expect(memory.scope, memoryGoalScope(seeded.$7));
     expect(memory.status, MemoryStatus.active);
     expect(memory.content, contains('独立完成'));
 

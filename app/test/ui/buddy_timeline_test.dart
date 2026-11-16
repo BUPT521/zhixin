@@ -12,8 +12,8 @@ MemoryItemView memory({
   MemoryCardStatus status = MemoryCardStatus.pending,
   int? commitId,
 }) {
-  return MemoryItemView(
-    ownerId: 1,
+  return MemoryItemView.message(
+    messageId: 'msg-1',
     draft: MemoryDraft(
       id: 'memory-1',
       kind: MemoryKind.preference,
@@ -27,8 +27,8 @@ MemoryItemView memory({
 
 ChatMessage message({String content = '条件概率怎么算？'}) {
   return ChatMessage(
-    id: 1,
-    conversationId: 1,
+    id: 'msg-1',
+    conversationId: 'conv-1',
     role: MessageRole.user,
     content: content,
   );

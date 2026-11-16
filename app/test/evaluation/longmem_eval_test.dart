@@ -60,22 +60,22 @@ class CorpusIds {
     required this.attemptWrong,
   });
 
-  final int goalProbability;
-  final int goalLinear;
-  final int materialProbability;
-  final int materialLinear;
-  final int conversationQuestion;
-  final int conversationEntropy;
-  final int conversationLinear;
-  final int conversationUnassigned;
-  final int attemptHelped;
-  final int attemptIndependent;
-  final int attemptWrong;
+  final String goalProbability;
+  final String goalLinear;
+  final String materialProbability;
+  final String materialLinear;
+  final String conversationQuestion;
+  final String conversationEntropy;
+  final String conversationLinear;
+  final String conversationUnassigned;
+  final String attemptHelped;
+  final String attemptIndependent;
+  final String attemptWrong;
 
-  String page(int materialId, int pageNo) =>
+  String page(String materialId, int pageNo) =>
       'material_page:$materialId:$pageNo';
-  String question(int conversationId) => 'question:$conversationId';
-  String answer(int attemptId) => 'attempt:$attemptId';
+  String question(String conversationId) => 'question:$conversationId';
+  String answer(String attemptId) => 'attempt:$attemptId';
 }
 
 Future<CorpusIds> _seed(RawDatabase db) async {
@@ -327,7 +327,7 @@ final List<LongMemCase> _cases = [
     queryTime: _queryTime,
     scope: (ids) => EvidenceScope.answer(goalId: ids.goalProbability),
     requiredEvidence: (ids) => [
-      ids.page(1, 7),
+      ids.page(ids.materialProbability, 7),
       ids.question(ids.conversationQuestion),
     ],
     expectedHelp: '打开原题与例 3-2 的材料页',
@@ -503,7 +503,7 @@ class _Harness {
   ) {
     final budgeted = inContext.take(evalCase.budget).toList(growable: false);
     final question = Question(
-      id: 0,
+      id: 'conv-1',
       stem: evalCase.query,
       createdAt: evalCase.queryTime,
     );
@@ -514,7 +514,7 @@ class _Harness {
         evidence: budgeted,
       ),
     );
-    final present = RegExp(r'(material_page|message|question|attempt):[0-9:]+')
+    final present = RegExp(r'(material_page|message|question|attempt):[^）\s]+')
         .allMatches(prompt)
         .map((match) => match.group(0)!)
         .toSet();

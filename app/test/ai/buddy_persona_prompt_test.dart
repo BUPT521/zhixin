@@ -15,7 +15,7 @@ void main() {
         ),
         memories: const [
           Memory(
-            id: 1,
+            id: 'memory-1',
             kind: MemoryKind.preference,
             content: '讲解时先给一个例子',
             status: MemoryStatus.active,

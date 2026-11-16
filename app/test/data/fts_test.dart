@@ -48,7 +48,7 @@ void main() {
     addTearDown(db.close);
     const stamp = '2026-11-14 10:00:00';
     await insertRow(db, 'conversation', {
-      'id': 1,
+      'id': 'conv-1',
       'title': '讨论',
       'entry_kind': 'text',
       'status': 'open',
@@ -56,8 +56,8 @@ void main() {
       'updated_at': stamp,
     });
     await insertRow(db, 'message', {
-      'id': 1,
-      'conversation_id': 1,
+      'id': 'msg-1',
+      'conversation_id': 'conv-1',
       'role': 'user',
       'content': '矩阵的秩是线性无关行向量的最大个数',
       'created_at': stamp,
@@ -79,12 +79,12 @@ void main() {
       'message',
       {'content': '条件概率与独立性'},
       where: 'id = ?',
-      whereArgs: [1],
+      whereArgs: ['msg-1'],
     );
     expect(await hits('矩阵'), isEmpty, reason: '改过之后旧词不应再命中');
     expect(await hits('条件概率'), {1});
 
-    await deleteRows(db, 'message', where: 'id = ?', whereArgs: [1]);
+    await deleteRows(db, 'message', where: 'id = ?', whereArgs: ['msg-1']);
     expect(await hits('条件概率'), isEmpty, reason: '删除之后索引行也删掉');
   });
 
@@ -93,13 +93,14 @@ void main() {
     addTearDown(db.close);
     const stamp = '2026-11-14 10:00:00';
     await insertRow(db, 'material', {
-      'id': 1,
+      'id': 'mat-1',
       'title': '讲义',
       'created_at': stamp,
       'updated_at': stamp,
     });
     await insertRow(db, 'material_page', {
-      'material_id': 1,
+      'id': 'page-1',
+      'material_id': 'mat-1',
       'page_no': 1,
       'label': '傅里叶变换',
       'content': '基础内容',
@@ -107,7 +108,7 @@ void main() {
       'updated_at': stamp,
     });
     await insertRow(db, 'conversation', {
-      'id': 1,
+      'id': 'conv-1',
       'title': '讨论',
       'entry_kind': 'text',
       'status': 'open',
@@ -115,8 +116,8 @@ void main() {
       'updated_at': stamp,
     });
     await insertRow(db, 'attempt', {
-      'id': 1,
-      'conversation_id': 1,
+      'id': 'attempt-1',
+      'conversation_id': 'conv-1',
       'user_answer': '试答',
       'solution': '柯西不等式',
       'feedback': '齐次化步骤',
@@ -129,27 +130,27 @@ void main() {
     const scope = EvidenceScope.userAll();
     expect(
       (await evidence.keyword('傅里叶变换', scope: scope)).single.identity,
-      'material_page:1:1',
+      'material_page:mat-1:1',
     );
     expect(
       (await evidence.keyword('柯西不等式', scope: scope)).single.identity,
-      'attempt:1',
+      'attempt:attempt-1',
     );
     expect(
       (await evidence.keyword('齐次化步骤', scope: scope)).single.identity,
-      'attempt:1',
+      'attempt:attempt-1',
     );
     await updateRow(
       db,
       'attempt',
       {'feedback': '齐次化步骤已复核', 'solution': null},
       where: 'id = ?',
-      whereArgs: [1],
+      whereArgs: ['attempt-1'],
     );
     expect(await evidence.keyword('柯西不等式', scope: scope), isEmpty);
     expect(
       (await evidence.keyword('齐次化步骤', scope: scope)).single.identity,
-      'attempt:1',
+      'attempt:attempt-1',
     );
   });
 
@@ -158,17 +159,20 @@ void main() {
     addTearDown(db.close);
     const stamp = '2026-11-14 10:00:00';
     await insertRow(db, 'conversation', {
-      'id': 1,
+      'id': 'conv-1',
       'title': '讨论',
       'entry_kind': 'text',
       'status': 'open',
       'created_at': stamp,
       'updated_at': stamp,
     });
-    for (final (id, content) in [(1, '矩阵 独立性 矩阵 独立性'), (2, '这里只讨论矩阵')]) {
+    for (final (id, content) in [
+      ('msg-1', '矩阵 独立性 矩阵 独立性'),
+      ('msg-2', '这里只讨论矩阵'),
+    ]) {
       await insertRow(db, 'message', {
         'id': id,
-        'conversation_id': 1,
+        'conversation_id': 'conv-1',
         'role': 'user',
         'content': content,
         'created_at': stamp,
@@ -178,9 +182,9 @@ void main() {
     const scope = EvidenceScope.userAll();
     const query = '矩阵 独立性';
     final hits = await evidence.keyword(query, scope: scope, limitPerKind: 1);
-    expect(hits.single.location.messageId, 1);
+    expect(hits.single.location.messageId, 'msg-1');
     final paged = await evidence.allKeyword(query, scope: scope, batchSize: 1);
-    expect(paged.map((hit) => hit.location.messageId), [2, 1]);
+    expect(paged.map((hit) => hit.location.messageId), ['msg-2', 'msg-1']);
     expect(paged.last.score, hits.single.score);
     expect(paged.last.score.compareTo(paged.first.score), greaterThan(0));
   });
@@ -193,7 +197,7 @@ void main() {
     final transactions = WriteTransactions(rig.db);
     await transactions.run((txn) async {
       await insertRow(txn.executor, 'conversation', {
-        'id': 1,
+        'id': 'conv-1',
         'title': '讨论',
         'entry_kind': 'text',
         'status': 'open',
@@ -201,8 +205,8 @@ void main() {
         'updated_at': stamp,
       });
       await insertRow(txn.executor, 'message', {
-        'id': 1,
-        'conversation_id': 1,
+        'id': 'msg-1',
+        'conversation_id': 'conv-1',
         'role': 'user',
         'content': '矩阵的秩',
         'created_at': stamp,

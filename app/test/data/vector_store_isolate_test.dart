@@ -9,9 +9,9 @@ const _spec = EmbeddingModelSpec(id: 'isolate-embed', dim: 4, provider: 'test');
 
 const _locator = SemanticLocator(
   kind: 'message',
-  sourceKey: 'message:1',
-  conversationId: 1,
-  messageId: 1,
+  sourceKey: 'message:msg-1',
+  conversationId: 'conv-1',
+  messageId: 'msg-1',
 );
 
 /// 向量库整体在后台 isolate 里：界面侧只拿到句柄，打开、建表、写入与查询都
@@ -40,13 +40,16 @@ void main() {
     expect(await store.entryCount(), 1);
     expect(await store.meta('model_key'), contains('isolate-embed'));
     final sources = await store.indexedSources();
-    expect(sources['message:1']?.sourceVersion, 'v1');
-    expect(sources['message:1']?.chunks, 1);
+    expect(sources['message:msg-1']?.sourceVersion, 'v1');
+    expect(sources['message:msg-1']?.chunks, 1);
 
     final matches = await store.search([0.99, 0.05, 0, 0], k: 3);
     expect(matches, hasLength(1));
-    expect(matches.single.sourceKey, 'message:1');
-    expect(matches.single.locatorJson, contains('"source_key":"message:1"'));
+    expect(matches.single.sourceKey, 'message:msg-1');
+    expect(
+      matches.single.locatorJson,
+      contains('"source_key":"message:msg-1"'),
+    );
     expect(matches.single.distance, lessThan(0.1));
 
     await store.close();

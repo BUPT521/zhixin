@@ -32,8 +32,8 @@ class RecordsSearchPage extends StatefulWidget {
     required this.onOpenDiscussion,
   });
 
-  final Future<void> Function(int questionId) onOpenLearning;
-  final Future<void> Function(int conversationId) onOpenDiscussion;
+  final Future<void> Function(String questionId) onOpenLearning;
+  final Future<void> Function(String conversationId) onOpenDiscussion;
 
   @override
   State<RecordsSearchPage> createState() => _RecordsSearchPageState();
@@ -665,7 +665,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   Widget _recordTile(ZhixinTheme theme, SearchEntry entry) {
     final conversationId = entry.hits
         .map((hit) => hit.location.conversationId)
-        .whereType<int>()
+        .whereType<String>()
         .firstOrNull;
     final question = entry.hits
         .where((hit) => hit.kind == EvidenceKind.question)

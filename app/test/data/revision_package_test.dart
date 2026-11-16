@@ -38,7 +38,9 @@ void main() {
     );
     final bytes = Uint8List.fromList(List<int>.generate(500, (i) => i % 251));
     final hash = AssetStore.hashBytes(bytes);
-    final conversation = await insertRow(db, 'conversation', {
+    const conversation = 'conv-1';
+    await insertRow(db, 'conversation', {
+      'id': conversation,
       'title': '带图',
       'entry_kind': 'photo',
       'status': 'open',
@@ -48,6 +50,7 @@ void main() {
     await db.transaction((txn) async {
       await engine.assets.putBytes(txn, hash, bytes);
       await insertRow(txn, 'message', {
+        'id': 'msg-1',
         'conversation_id': conversation,
         'role': 'user',
         'content': '',
@@ -113,7 +116,9 @@ void main() {
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
     );
-    final conversation = await insertRow(db, 'conversation', {
+    const conversation = 'conv-1';
+    await insertRow(db, 'conversation', {
+      'id': conversation,
       'title': '缺图',
       'entry_kind': 'photo',
       'status': 'open',
@@ -122,6 +127,7 @@ void main() {
     });
     final missingHash = 'a' * 64;
     await insertRow(db, 'message', {
+      'id': 'msg-1',
       'conversation_id': conversation,
       'role': 'user',
       'content': '',
@@ -170,7 +176,9 @@ void main() {
       appVersion: 'test',
       clock: () => DateTime(2026, 11, 10, 10),
     );
-    final goal = await insertRow(db, 'learning_goal', {
+    const goal = 'goal-1';
+    await insertRow(db, 'learning_goal', {
+      'id': goal,
       'title': '备份目标',
       'status': 'active',
       'created_at': '2026-11-10T10:00:00',

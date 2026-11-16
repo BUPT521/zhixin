@@ -44,7 +44,7 @@ class NowPage extends StatefulWidget {
   /// 底栏当前栏的下标；页面自己监听，父级切栏时不再重建这一栏。
   final ValueListenable<int> activeTab;
   final int tabIndex;
-  final Future<void> Function(int questionId) onOpenLearning;
+  final Future<void> Function(String questionId) onOpenLearning;
   final VoidCallback onOpenPlan;
   final VoidCallback onOpenRecords;
   final VoidCallback onOpenMaterials;

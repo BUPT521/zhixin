@@ -15,7 +15,9 @@ void main() {
   tearDown(() => rig.close());
 
   test('普通写入形成一次带类型的净变化提交', () async {
-    final id = await insertRow(rig.db, 'learning_goal', {
+    const id = 'goal-1';
+    await insertRow(rig.db, 'learning_goal', {
+      'id': id,
       'title': '复习线代',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
@@ -30,7 +32,7 @@ void main() {
     expect(changes, hasLength(1));
     expect(changes.first.table, 'learning_goal');
     expect(changes.first.op, 'insert');
-    expect(changes.first.after!['id']!.type, 'integer');
+    expect(changes.first.after!['id']!.type, 'text');
     expect(changes.first.after!['title']!.value, '复习线代');
 
     await updateRow(
@@ -50,7 +52,9 @@ void main() {
   });
 
   test('同一字段改走又改回仍保留两次提交', () async {
-    final id = await insertRow(rig.db, 'learning_goal', {
+    const id = 'goal-1';
+    await insertRow(rig.db, 'learning_goal', {
+      'id': id,
       'title': 'A',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',
@@ -80,6 +84,7 @@ void main() {
     await expectLater(
       rig.db.transaction((txn) async {
         await insertRow(txn, 'learning_goal', {
+          'id': 'goal-1',
           'title': '不会保留',
           'status': 'active',
           'created_at': '2026-11-10T09:00:00',
@@ -105,7 +110,7 @@ void main() {
   test('版本化表拒绝 REPLACE，避免旧行绕过删除采集', () async {
     expect(
       () => insertRow(rig.db, 'learning_goal', {
-        'id': 1,
+        'id': 'goal-1',
         'title': '替换',
         'status': 'active',
         'created_at': '2026-11-10T09:00:00',
@@ -116,7 +121,9 @@ void main() {
     expect(
       () => rig.db.execute(
         'INSERT OR REPLACE INTO learning_goal '
-        '(id, title, status, created_at, updated_at) VALUES (1, ?, ?, ?, ?)',
+        '(id, title, status, created_at, updated_at) VALUES ('
+        'goal-1'
+        ', ?, ?, ?, ?)',
         ['替换', 'active', '2026-11-10T09:00:00', '2026-11-10T09:00:00'],
       ),
       throwsArgumentError,
@@ -130,6 +137,7 @@ void main() {
       (txn) async {
         calls++;
         await insertRow(txn, 'memory', {
+          'id': 'memory-1',
           'kind': 'preference',
           'content': '重试一次',
           'source_kind': 'user',
@@ -166,6 +174,7 @@ void main() {
     await transactions.run((txn) async {
       insideId = await txn.commitId();
       await insertRow(txn.executor, 'memory', {
+        'id': 'memory-1',
         'kind': 'preference',
         'content': '带回执',
         'source_kind': 'user',
@@ -188,7 +197,9 @@ void main() {
   });
 
   test('从检查点重建并与当前数据逐字段一致', () async {
-    final id = await insertRow(rig.db, 'learning_goal', {
+    const id = 'goal-1';
+    await insertRow(rig.db, 'learning_goal', {
+      'id': id,
       'title': '目标',
       'scope_text': '第一章',
       'status': 'active',
@@ -208,7 +219,9 @@ void main() {
   });
 
   test('整版恢复追加提交，预览后 HEAD 变化会拒绝', () async {
-    final id = await insertRow(rig.db, 'learning_goal', {
+    const id = 'goal-1';
+    await insertRow(rig.db, 'learning_goal', {
+      'id': id,
       'title': '恢复前',
       'status': 'active',
       'created_at': '2026-11-10T09:00:00',

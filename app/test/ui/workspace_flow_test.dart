@@ -278,7 +278,8 @@ void main() {
       final bytes = Uint8List.fromList([1, 2, 3]);
       final hash = AssetStore.hashBytes(bytes);
       final recordId = await state.testing.db.transaction((txn) async {
-        final id = await insertRow(txn, 'conversation', {
+        await insertRow(txn, 'conversation', {
+          'id': 'conv-1',
           'title': '带图的学习记录',
           'entry_kind': 'photo',
           'status': 'open',
@@ -287,13 +288,14 @@ void main() {
         });
         await AssetStore().putBytes(txn, hash, bytes);
         await insertRow(txn, 'message', {
-          'conversation_id': id,
+          'id': 'msg-1',
+          'conversation_id': 'conv-1',
           'role': 'user',
           'content': '',
           'image_paths_json': '["$hash"]',
           'created_at': '2026-11-10T10:00:00',
         });
-        return id;
+        return 'conv-1';
       });
       final exported = File('${directory.path}/current.zip');
       await state.data.versions.exportCurrentData(exported.path);
@@ -769,7 +771,7 @@ void main() {
           fromModel: true,
           citations: [
             Citation(
-              materialId: 1,
+              materialId: 'mat-1',
               materialTitle: '概率论讲义',
               pageNo: 7,
               quote: '条件概率是已知一个事件发生时，另一个事件发生的概率。',
@@ -1023,8 +1025,10 @@ void main() {
     await preview(tester, 'item-detail');
     await tester.tap(find.text('预约时间').last);
     await settle(tester);
-    final dropdown = tester.widget<forui.FSelect<int>>(_select<int>('学习事项'));
-    final selected = tester.widget<EditableText>(_selectField<int>('学习事项'));
+    final dropdown = tester.widget<forui.FSelect<String>>(
+      _select<String>('学习事项'),
+    );
+    final selected = tester.widget<EditableText>(_selectField<String>('学习事项'));
     expect(dropdown.format(data!.item), '练习导数定义');
     expect(selected.controller.text, '练习导数定义');
     await tester.tap(find.text('取消').last);
@@ -2445,6 +2449,7 @@ void main() {
     await openApp(tester);
     await tester.runAsync(
       () => insertRow(scope!.testing.db, 'conversation', {
+        'id': 'conv-1',
         'title': '不能撤销的讨论',
         'entry_kind': 'text',
         'status': 'open',

@@ -23,7 +23,7 @@ class ItemDraft {
   });
 
   final String title;
-  final int? goalId;
+  final String? goalId;
 
   /// 一句话说明这次做什么、做到什么程度算完成。
   final String? note;
@@ -148,7 +148,7 @@ class BlockDraft {
     required this.minutes,
   });
 
-  final int itemId;
+  final String itemId;
   final DateTime start;
   final int minutes;
 }
@@ -163,7 +163,7 @@ class BlockDialog extends StatefulWidget {
   });
 
   final List<PlanItem> items;
-  final int? initialItemId;
+  final String? initialItemId;
 
   /// 改期时带入当前时间与时长，预约新时间时为空。
   final DateTime? initialStart;
@@ -174,7 +174,7 @@ class BlockDialog extends StatefulWidget {
 }
 
 class _BlockDialogState extends State<BlockDialog> {
-  late int _itemId = _initialItem();
+  late String _itemId = _initialItem();
   late DateTime _start;
   late int _minutes = widget.initialMinutes ?? 20;
   bool _timeInitialized = false;
@@ -195,7 +195,7 @@ class _BlockDialogState extends State<BlockDialog> {
         : initial;
   }
 
-  int _initialItem() {
+  String _initialItem() {
     final id = widget.initialItemId;
     return id != null && widget.items.any((item) => item.id == id)
         ? id
@@ -216,7 +216,7 @@ class _BlockDialogState extends State<BlockDialog> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ZhixinSelect<int>(
+          ZhixinSelect<String>(
             value: _itemId,
             label: planItemName,
             options: {for (final item in widget.items) item.id: item.title},

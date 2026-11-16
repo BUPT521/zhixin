@@ -125,7 +125,7 @@ void main() {
     return PlanWeek(
       timetable: [
         TimetableEntry(
-          id: 1,
+          id: 'entry-1',
           weekday: day.weekday,
           startTime: '08:00',
           endTime: '09:00',
@@ -135,8 +135,8 @@ void main() {
       blocks: [
         ScheduledItem(
           block: ScheduleBlock(
-            id: 1,
-            planItemId: 1,
+            id: 'block-1',
+            planItemId: 'item-1',
             startAt: DateTime(day.year, day.month, day.day, 10),
             endAt: DateTime(day.year, day.month, day.day, 11),
           ),

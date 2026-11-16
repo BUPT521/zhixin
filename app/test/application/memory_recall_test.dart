@@ -105,13 +105,13 @@ void main() {
     await repo.create(
       kind: MemoryKind.difficulty,
       content: '另一个目标的卡点',
-      scope: memoryGoalScope(2),
+      scope: memoryGoalScope('goal-2'),
     );
 
     final results = await MemoryRecallService(repo).recall(
       now: now,
       purpose: MemoryRecallPurpose.chat,
-      scope: memoryGoalScope(1),
+      scope: memoryGoalScope('goal-1'),
     );
     expect(results.map((memory) => memory.content), ['晚上学习']);
   });
@@ -157,7 +157,7 @@ void main() {
       kind: MemoryKind.progress,
       content: '来自作答的进展：第 8 题独立完成',
       sourceKind: MemorySourceKind.attempt,
-      sourceId: 7,
+      sourceId: 'attempt-7',
     );
     await repo.create(kind: MemoryKind.progress, content: '手工写下的进展');
 

@@ -23,13 +23,16 @@ void main() {
   });
 
   test('启动清理仅删除数据库不再引用的图片', () async {
-    final conversationId = await insertRow(db, 'conversation', {
+    const conversationId = 'conv-1';
+    await insertRow(db, 'conversation', {
+      'id': conversationId,
       'entry_kind': 'photo',
       'status': 'open',
       'created_at': '2026-11-08 09:00:00',
       'updated_at': '2026-11-08 09:00:00',
     });
     await insertRow(db, 'message', {
+      'id': 'msg-1',
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',
@@ -50,13 +53,16 @@ void main() {
   });
 
   test('候选回收保留仍被引用的图片且不扫描其他文件', () async {
-    final conversationId = await insertRow(db, 'conversation', {
+    const conversationId = 'conv-1';
+    await insertRow(db, 'conversation', {
+      'id': conversationId,
       'entry_kind': 'photo',
       'status': 'open',
       'created_at': '2026-11-08 09:00:00',
       'updated_at': '2026-11-08 09:00:00',
     });
     await insertRow(db, 'message', {
+      'id': 'msg-1',
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',

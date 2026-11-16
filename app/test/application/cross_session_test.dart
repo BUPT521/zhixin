@@ -28,15 +28,15 @@ class _Corpus {
     required this.attemptOtherGoalConversation,
   });
 
-  final int goal;
-  final int material;
-  final int conversationA;
-  final int conversationB;
-  final int conversationC;
-  final int conversationSameQuestion;
-  final int attemptHelped;
-  final int attemptIndependent;
-  final int attemptOtherGoalConversation;
+  final String goal;
+  final String material;
+  final String conversationA;
+  final String conversationB;
+  final String conversationC;
+  final String conversationSameQuestion;
+  final String attemptHelped;
+  final String attemptIndependent;
+  final String attemptOtherGoalConversation;
 }
 
 Future<_Corpus> _seed(RawDatabase db) async {
@@ -49,7 +49,7 @@ Future<_Corpus> _seed(RawDatabase db) async {
   await materials.addPage(materialId: material, pageNo: 7, content: '例 3-2。');
   await materials.addPage(materialId: material, pageNo: 1, content: '条件概率。');
 
-  Future<int> conversation({required String stem, int pageNo = 7}) async {
+  Future<String> conversation({required String stem, int pageNo = 7}) async {
     final id = await conversations.create();
     await conversations.setGoal(id, goal);
     await conversations.setMaterial(id, materialId: material, pageNo: pageNo);
@@ -354,7 +354,7 @@ void main() {
       content: '例 3-2 求条件概率',
     );
 
-    Future<int> addAttempt({
+    Future<String> addAttempt({
       required String submittedAt,
       required String answer,
       required bool? isCorrect,
@@ -479,7 +479,7 @@ void main() {
     final conversations = ConversationRepository(db);
     final attempts = AttemptRepository(db);
 
-    Future<int> record() async {
+    Future<String> record() async {
       final id = await conversations.create(sourceRef: '例 3-2');
       await conversations.append(
         id,
@@ -489,7 +489,7 @@ void main() {
       return id;
     }
 
-    Future<void> submit(int conversationId, String at) async {
+    Future<void> submit(String conversationId, String at) async {
       final attempt = await attempts.ensureOpenAttempt(conversationId);
       await attempts.submit(
         attempt.id,
@@ -536,7 +536,7 @@ void main() {
     final goalA = await tasks.createGoal(title: '概率论期末');
     final goalB = await tasks.createGoal(title: '线性代数作业');
 
-    Future<int> record(int? goalId, String at) async {
+    Future<String> record(String? goalId, String at) async {
       final id = await conversations.create(sourceRef: '例 3-2');
       if (goalId != null) await conversations.setGoal(id, goalId);
       await conversations.append(

@@ -97,7 +97,7 @@ void main() {
       );
       return id;
     });
-    expect(conversationId, isPositive);
+    expect(conversationId, isNotEmpty);
     expect(find.text('条件概率'), findsOneWidget);
     expect(find.textContaining('上次问：为什么条件概率'), findsOneWidget);
     expect(find.text('随时回来继续学习'), findsNothing);

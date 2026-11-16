@@ -8,8 +8,11 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
+  var memorySeq = 0;
+
   Future<int> addMemory(TestRig rig, String content) async {
     await insertRow(rig.db, 'memory', {
+      'id': 'memory-${++memorySeq}',
       'kind': 'preference',
       'content': content,
       'source_kind': 'user',
@@ -20,26 +23,30 @@ void main() {
     return rig.engine.headId(rig.raw);
   }
 
-  Future<int> openConversation(TestRig rig) async {
-    final conversationId = await insertRow(rig.db, 'conversation', {
+  Future<String> openConversation(TestRig rig) async {
+    const conversationId = 'conv-1';
+    await insertRow(rig.db, 'conversation', {
+      'id': conversationId,
       'title': '回执',
       'entry_kind': 'text',
       'status': 'open',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
-    return insertRow(rig.db, 'message', {
+    await insertRow(rig.db, 'message', {
+      'id': 'msg-1',
       'conversation_id': conversationId,
       'role': 'assistant',
       'content': '回答',
       'structured_json': '{}',
       'created_at': '2026-11-10T09:00:00',
     });
+    return 'msg-1';
   }
 
   Future<Map<String, Object?>> readStructured(
     TestRig rig,
-    int messageId,
+    String messageId,
   ) async {
     final rows = await selectRows(
       rig.raw,
@@ -158,7 +165,7 @@ void main() {
     final headCommit = await rig.engine.commitById(rig.raw, head);
     expect(headCommit!.action, clearDeadReceiptsAction);
     final projection = await rig.engine.projectionAt(rig.raw, head);
-    final row = projection['message']![messageId.toString()]!;
+    final row = projection['message']![messageId]!;
     expect(
       row['structured_json']!.value,
       await _structuredText(rig, messageId),
@@ -183,7 +190,7 @@ void main() {
   });
 }
 
-Future<String> _structuredText(TestRig rig, int messageId) async {
+Future<String> _structuredText(TestRig rig, String messageId) async {
   final rows = await selectRows(
     rig.raw,
     'message',

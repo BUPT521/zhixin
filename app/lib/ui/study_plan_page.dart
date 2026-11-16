@@ -22,7 +22,7 @@ import 'zhixin_toast.dart';
 class StudyPlanPage extends StatefulWidget {
   const StudyPlanPage({super.key, required this.planId});
 
-  final int planId;
+  final String planId;
 
   @override
   State<StudyPlanPage> createState() => _StudyPlanPageState();
@@ -67,7 +67,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   }
 
   /// 打开这一步的讨论；返回之后这一屏随订阅更新，不再手动重读。
-  Future<void> _openDiscussion(int conversationId) async {
+  Future<void> _openDiscussion(String conversationId) async {
     await openDiscussion(context, conversationId);
   }
 

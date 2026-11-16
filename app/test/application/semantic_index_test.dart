@@ -54,13 +54,13 @@ class _Corpus {
     required this.entropyPage,
   });
 
-  final int goalProbability;
-  final int goalLinear;
-  final int materialProbability;
-  final int materialLinear;
+  final String goalProbability;
+  final String goalLinear;
+  final String materialProbability;
+  final String materialLinear;
 
   /// 熵那一页的行标识，用于直接改写内容模拟更正。
-  final int entropyPage;
+  final String entropyPage;
 }
 
 Future<_Corpus> _seed(RawDatabase db) async {
@@ -232,8 +232,8 @@ void main() {
     addTearDown(index.close);
     final locator = const SemanticLocator(
       kind: 'material_page',
-      sourceKey: 'material_page:1:1',
-      materialId: 1,
+      sourceKey: 'material_page:mat-1:1',
+      materialId: 'mat-1',
       pageNo: 1,
     );
     index.replaceSource(
@@ -247,7 +247,7 @@ void main() {
     );
     final matches = index.search([0.99, 0.05, 0, 0], k: 3);
     expect(matches, hasLength(1));
-    expect(matches.single.sourceKey, 'material_page:1:1');
+    expect(matches.single.sourceKey, 'material_page:mat-1:1');
     expect(matches.single.distance, lessThan(0.1));
     expect(index.entryCount, 1);
     expect(index.meta('model_key'), contains('test-embed'));
@@ -272,7 +272,10 @@ void main() {
     expect(result.timings.candidates, greaterThan(0));
     expect(result.entries, 7);
     expect(result.hits, isNotEmpty);
-    expect(result.hits.first.identity, 'material_page:1:1');
+    expect(
+      result.hits.first.identity,
+      'material_page:${rig.corpus.materialProbability}:1',
+    );
     expect(result.hits.first.snippet, contains('熵'));
 
     final scoped = await rig.service.search(
@@ -281,12 +284,17 @@ void main() {
       limit: 5,
     );
     expect(
-      scoped.hits.any((hit) => hit.identity == 'material_page:1:1'),
+      scoped.hits.any(
+        (hit) =>
+            hit.identity == 'material_page:${rig.corpus.materialProbability}:1',
+      ),
       isFalse,
       reason: '其他目标的材料页不进入本次回答范围',
     );
     expect(
-      scoped.hits.any((hit) => hit.identity == 'material_page:2:1'),
+      scoped.hits.any(
+        (hit) => hit.identity == 'material_page:${rig.corpus.materialLinear}:1',
+      ),
       isTrue,
     );
   });
@@ -380,7 +388,10 @@ void main() {
       limit: 5,
     );
     expect(
-      result.hits.any((hit) => hit.identity == 'material_page:1:1'),
+      result.hits.any(
+        (hit) =>
+            hit.identity == 'material_page:${rig.corpus.materialProbability}:1',
+      ),
       isFalse,
     );
     expect(result.timings.verifiedOut, greaterThanOrEqualTo(1));
@@ -481,9 +492,9 @@ void main() {
     first.replaceSource(
       locator: const SemanticLocator(
         kind: 'message',
-        sourceKey: 'message:1',
-        conversationId: 1,
-        messageId: 1,
+        sourceKey: 'message:msg-1',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
       ),
       sourceVersion: 'v1',
       chunks: const ['熵增'],
@@ -505,9 +516,9 @@ void main() {
     second.replaceSource(
       locator: const SemanticLocator(
         kind: 'message',
-        sourceKey: 'message:1',
-        conversationId: 1,
-        messageId: 1,
+        sourceKey: 'message:msg-1',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
       ),
       sourceVersion: 'v2',
       chunks: const ['熵增'],
@@ -539,7 +550,10 @@ void main() {
     expect(bundle.semanticFailed, isFalse);
     expect(bundle.timings, isNotNull);
     expect(
-      bundle.hits.any((hit) => hit.identity == 'material_page:1:1'),
+      bundle.hits.any(
+        (hit) =>
+            hit.identity == 'material_page:${rig.corpus.materialProbability}:1',
+      ),
       isTrue,
     );
     final identities = bundle.hits.map((hit) => hit.identity).toList();
@@ -649,12 +663,17 @@ void main() {
     );
     expect(result.usable, isTrue);
     expect(
-      result.hits.any((hit) => hit.identity == 'material_page:1:1'),
+      result.hits.any(
+        (hit) =>
+            hit.identity == 'material_page:${rig.corpus.materialProbability}:1',
+      ),
       isFalse,
       reason: '概率材料的页不属于线性材料范围',
     );
     expect(
-      result.hits.any((hit) => hit.identity == 'material_page:2:1'),
+      result.hits.any(
+        (hit) => hit.identity == 'material_page:${rig.corpus.materialLinear}:1',
+      ),
       isTrue,
     );
   });

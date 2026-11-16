@@ -22,7 +22,7 @@ class GoalChoice {
   /// 不归属任何目标。
   static const unassigned = GoalChoice(null);
 
-  final int? goalId;
+  final String? goalId;
 
   @override
   bool operator ==(Object other) =>
@@ -40,7 +40,7 @@ Map<GoalChoice, String> goalChoiceOptions(Iterable<LearningGoal> goals) => {
 
 /// 材料导入等处只缓存目标的编号、名称与是否有效，选项只列仍然有效的目标。
 Map<GoalChoice, String> goalChoiceOptionsFrom(
-  Iterable<({int id, String title, bool active})> goals,
+  Iterable<({String id, String title, bool active})> goals,
 ) => {
   GoalChoice.unassigned: goalUnassigned,
   for (final goal in goals)
@@ -53,7 +53,7 @@ Map<GoalChoice, String> goalChoiceOptionsFrom(
 Future<GoalChoice?> showGoalChoice(
   BuildContext context, {
   required List<LearningGoal> goals,
-  int? initialGoalId,
+  String? initialGoalId,
   String title = '选择目标',
   String note = '可选择一个目标，也可将内容单独保存在记录中。',
 }) {

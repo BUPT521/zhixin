@@ -12,7 +12,10 @@ EvidenceHit _hit(String identity, Score score, {bool literal = false}) {
     matchedText: '片段 $identity',
     literal: literal,
     score: score,
-    location: const EvidenceLocation(conversationId: 1, messageId: 1),
+    location: const EvidenceLocation(
+      conversationId: 'conv-1',
+      messageId: 'msg-1',
+    ),
   );
 }
 

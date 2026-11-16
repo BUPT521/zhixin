@@ -92,7 +92,7 @@ Map<String, Object?> _chatCall(String id, String name, Object arguments) => {
 };
 
 const _hit = MaterialHit(
-  materialId: 2,
+  materialId: 'mat-2',
   materialTitle: '概率论讲义',
   pageNo: 7,
   content: '这是正文里的条件概率公式。',
@@ -117,12 +117,12 @@ void main() {
         (
           id: 'call_page',
           name: readMaterialPageTool,
-          args: {'material_id': 2, 'page_no': 7},
+          args: {'material_id': 'mat-2', 'page_no': 7},
         ),
         (
           id: 'call_denied',
           name: readMaterialPageTool,
-          args: {'material_id': 2, 'page_no': 8},
+          args: {'material_id': 'mat-2', 'page_no': 8},
         ),
         (
           id: 'call_proposal',
@@ -350,12 +350,12 @@ void main() {
           calls: [
             if (requests == 1)
               _chatCall('call_reused', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 7,
                 'offset': 0,
               }),
             _chatCall('call_reused', readMaterialPageTool, {
-              'material_id': 2,
+              'material_id': 'mat-2',
               'page_no': 7,
               'offset': requests - 1,
             }),
@@ -381,7 +381,7 @@ void main() {
           return _chatReply(
             calls: [
               _chatCall('shared', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 7,
                 'offset': -1,
               }),
@@ -392,7 +392,7 @@ void main() {
               }),
               _chatCall('denied', proposeStudyStepsTool, {'steps': []}),
               _chatCall('', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 7,
               }),
             ],
@@ -459,20 +459,20 @@ void main() {
       }),
     );
     const first = ChatMessage(
-      id: 1,
-      conversationId: 2,
+      id: 'msg-1',
+      conversationId: 'conv-2',
       role: MessageRole.user,
       content: '同样的问题',
     );
     const second = ChatMessage(
-      id: 2,
-      conversationId: 2,
+      id: 'msg-2',
+      conversationId: 'conv-2',
       role: MessageRole.user,
       content: '同样的问题',
     );
     const current = ChatMessage(
-      id: 3,
-      conversationId: 2,
+      id: 'msg-3',
+      conversationId: 'conv-2',
       role: MessageRole.user,
       content: '历史里的当前问题',
     );
@@ -540,7 +540,7 @@ void main() {
                 ],
               }),
             _chatCall('read_$step', readMaterialPageTool, {
-              'material_id': 2,
+              'material_id': 'mat-2',
               'page_no': 7,
               'offset': offsets[step],
             }),
@@ -554,7 +554,7 @@ void main() {
         now: DateTime(2026, 11, 7),
         materialHits: [
           MaterialHit(
-            materialId: 2,
+            materialId: 'mat-2',
             materialTitle: '概率论讲义',
             pageNo: 7,
             content: '${'甲' * 7999}😀${'乙' * 48000}',
@@ -642,7 +642,12 @@ void main() {
         mode: BuddyMode.plan,
         outlinePages: [
           for (final page in [7, 8, 9])
-            MaterialPage(id: page, materialId: 2, pageNo: page, content: '讲义'),
+            MaterialPage(
+              id: 'page-$page',
+              materialId: 'mat-2',
+              pageNo: page,
+              content: '讲义',
+            ),
         ],
       ),
       history: const [],
@@ -664,11 +669,11 @@ void main() {
           return _chatReply(
             calls: [
               _chatCall('first', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 7,
               }),
               _chatCall('second', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 7,
                 'offset': 8000,
               }),
@@ -701,7 +706,7 @@ void main() {
         now: DateTime(2026, 11, 7),
         materialHits: [
           MaterialHit(
-            materialId: 2,
+            materialId: 'mat-2',
             materialTitle: '长讲义',
             pageNo: 7,
             content: '甲' * 18000,
@@ -758,7 +763,7 @@ void main() {
               }),
               for (var index = 0; index < 60; index++)
                 _chatCall('page_$index', readMaterialPageTool, {
-                  'material_id': 2,
+                  'material_id': 'mat-2',
                   'page_no': 7,
                 }),
             ],
@@ -801,7 +806,7 @@ void main() {
                     ],
                   }),
                   _chatCall('page', readMaterialPageTool, {
-                    'material_id': 2,
+                    'material_id': 'mat-2',
                     'page_no': 7,
                   }),
                 ],
@@ -849,11 +854,11 @@ void main() {
             text: '先读讲义。',
             calls: [
               _chatCall('', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 7,
               }),
               _chatCall('call_zhixin_1', readMaterialPageTool, {
-                'material_id': 2,
+                'material_id': 'mat-2',
                 'page_no': 8,
               }),
             ],
@@ -918,7 +923,7 @@ void main() {
                     ],
                   }),
                   _chatCall('page', readMaterialPageTool, {
-                    'material_id': 2,
+                    'material_id': 'mat-2',
                     'page_no': 7,
                   }),
                 ],
@@ -1258,8 +1263,8 @@ void main() {
     final history = [
       for (var index = 0; index < 30; index++)
         ChatMessage(
-          id: index + 1,
-          conversationId: 1,
+          id: 'msg-${index + 1}',
+          conversationId: 'conv-1',
           role: index.isEven ? MessageRole.user : MessageRole.assistant,
           content: '第 $index 条消息',
         ),
@@ -1299,8 +1304,8 @@ void main() {
     final history = [
       for (var index = 0; index < 30; index++)
         ChatMessage(
-          id: index + 1,
-          conversationId: 1,
+          id: 'msg-${index + 1}',
+          conversationId: 'conv-1',
           role: index.isEven ? MessageRole.user : MessageRole.assistant,
           content: '$index $long',
         ),
@@ -1423,14 +1428,14 @@ void main() {
 
   test('本地规则回答不进入模型历史，重答时只带用户说过的话', () {
     ChatMessage message(
-      int id,
+      String id,
       MessageRole role,
       String content, {
       bool? model,
     }) {
       return ChatMessage(
         id: id,
-        conversationId: 1,
+        conversationId: 'conv-1',
         role: role,
         content: content,
         payload: model == null ? null : ChatMessagePayload(fromModel: model),
@@ -1438,19 +1443,19 @@ void main() {
     }
 
     final history = selectBuddyHistory([
-      message(1, MessageRole.user, '第一问'),
-      message(2, MessageRole.assistant, '本地兜底的一段话', model: false),
-      message(3, MessageRole.user, '第二问'),
-      message(4, MessageRole.assistant, '模型回答', model: true),
+      message('msg-1', MessageRole.user, '第一问'),
+      message('msg-2', MessageRole.assistant, '本地兜底的一段话', model: false),
+      message('msg-3', MessageRole.user, '第二问'),
+      message('msg-4', MessageRole.assistant, '模型回答', model: true),
     ]);
 
-    expect(history.map((item) => item.id), [1, 3, 4]);
+    expect(history.map((item) => item.id), ['msg-1', 'msg-3', 'msg-4']);
     // 旧记录的助手消息没有来源标记，仍然作为历史保留。
     final legacy = selectBuddyHistory([
-      message(1, MessageRole.user, '第一问'),
-      message(2, MessageRole.assistant, '旧回答'),
+      message('msg-1', MessageRole.user, '第一问'),
+      message('msg-2', MessageRole.assistant, '旧回答'),
     ]);
-    expect(legacy.map((item) => item.id), [1, 2]);
+    expect(legacy.map((item) => item.id), ['msg-1', 'msg-2']);
   });
 
   test('模型拒绝工具声明时用首轮证据普通请求回答', () async {
@@ -1477,13 +1482,13 @@ void main() {
         evidence: [
           EvidenceHit(
             kind: EvidenceKind.materialPage,
-            identity: 'material_page:1:3',
+            identity: 'material_page:mat-1:3',
             title: '《概率论讲义》第 3 页',
             snippet: '条件概率 P(A|B)=P(AB)/P(B)。',
             matchedText: '条件概率',
             literal: false,
             score: Score.clamp(0.5),
-            location: const EvidenceLocation(materialId: 1, pageNo: 3),
+            location: const EvidenceLocation(materialId: 'mat-1', pageNo: 3),
             text: '条件概率 P(A|B)=P(AB)/P(B)。',
           ),
         ],

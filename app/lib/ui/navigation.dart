@@ -34,7 +34,7 @@ import 'study_plan_page.dart';
 import 'zhixin_toast.dart';
 
 /// 打开学习页：原题、历次尝试与这一次的提示。
-Future<void> openLearning(BuildContext context, int questionId) {
+Future<void> openLearning(BuildContext context, String questionId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => LearningPage(questionId: questionId),
@@ -43,7 +43,7 @@ Future<void> openLearning(BuildContext context, int questionId) {
 }
 
 /// 打开学习页并直接进入独立重做（先不看上次答案）。
-Future<void> openLearningRedo(BuildContext context, int questionId) {
+Future<void> openLearningRedo(BuildContext context, String questionId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => LearningPage(questionId: questionId, startRedo: true),
@@ -52,7 +52,7 @@ Future<void> openLearningRedo(BuildContext context, int questionId) {
 }
 
 /// 打开一条已有讨论。
-Future<void> openDiscussion(BuildContext context, int conversationId) {
+Future<void> openDiscussion(BuildContext context, String conversationId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => DiscussionPage(conversationId: conversationId),
@@ -82,12 +82,12 @@ Future<void> openNewDiscussion(
 /// 打开一份材料的详情；从学习步骤进入时可以只显示这一步的页码。
 Future<void> openMaterial(
   BuildContext context,
-  int materialId, {
+  String materialId, {
   int? pageFrom,
   int? pageTo,
   String? stepTitle,
-  int? studyPlanId,
-  int? planItemId,
+  String? studyPlanId,
+  String? planItemId,
 }) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -104,14 +104,14 @@ Future<void> openMaterial(
 }
 
 /// 打开一条学习事项的详情；安排页本身仍是底栏页，详情走这个入口。
-Future<void> openPlanDetail(BuildContext context, int itemId) {
+Future<void> openPlanDetail(BuildContext context, String itemId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(builder: (_) => PlanPage.detail(itemId: itemId)),
   );
 }
 
 /// 打开一份系统学习计划。
-Future<void> openStudyPlan(BuildContext context, int planId) {
+Future<void> openStudyPlan(BuildContext context, String planId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(builder: (_) => StudyPlanPage(planId: planId)),
   );
@@ -170,8 +170,8 @@ Future<void> openEmbeddingSettings(BuildContext context) {
 /// 打开记录搜索；结果里打开学习页或讨论仍交回记录页的入口。
 Future<void> openRecordsSearch(
   BuildContext context, {
-  required Future<void> Function(int questionId) onOpenLearning,
-  required Future<void> Function(int conversationId) onOpenDiscussion,
+  required Future<void> Function(String questionId) onOpenLearning,
+  required Future<void> Function(String conversationId) onOpenDiscussion,
 }) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(

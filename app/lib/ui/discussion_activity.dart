@@ -7,19 +7,18 @@ import 'package:material_ui/material_ui.dart';
 class DiscussionActivity {
   DiscussionActivity._();
 
-  static final ValueNotifier<Set<int>> generating = ValueNotifier<Set<int>>(
-    const <int>{},
-  );
+  static final ValueNotifier<Set<String>> generating =
+      ValueNotifier<Set<String>>(const <String>{});
 
-  static bool isGenerating(int conversationId) =>
+  static bool isGenerating(String conversationId) =>
       generating.value.contains(conversationId);
 
-  static void begin(int conversationId) {
+  static void begin(String conversationId) {
     if (generating.value.contains(conversationId)) return;
     generating.value = {...generating.value, conversationId};
   }
 
-  static void end(int conversationId) {
+  static void end(String conversationId) {
     if (!generating.value.contains(conversationId)) return;
     final next = {...generating.value}..remove(conversationId);
     generating.value = next;

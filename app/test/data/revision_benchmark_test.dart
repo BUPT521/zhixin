@@ -34,6 +34,7 @@ void main() {
     final watch = Stopwatch()..start();
     for (var index = 0; index < commits; index++) {
       await insertRow(db, 'memory', {
+        'id': 'memory-$index',
         'kind': 'preference',
         'content': '第 $index 条记忆',
         'source_kind': 'user',
@@ -50,7 +51,9 @@ void main() {
     );
     final hash = AssetStore.hashBytes(image);
     final imageWatch = Stopwatch()..start();
-    final conversation = await insertRow(db, 'conversation', {
+    const conversation = 'conv-1';
+    await insertRow(db, 'conversation', {
+      'id': conversation,
       'title': '基准图片',
       'entry_kind': 'photo',
       'status': 'open',
@@ -60,6 +63,7 @@ void main() {
     await db.transaction((txn) async {
       await engine.assets.putBytes(txn, hash, image);
       await insertRow(txn, 'message', {
+        'id': 'msg-1',
         'conversation_id': conversation,
         'role': 'user',
         'content': '',

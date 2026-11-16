@@ -3,12 +3,13 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/schema.dart'
     show requiredColumns, schemaIndexNames, schemaTableNames;
 
 void main() {
-  test('drift 建出的库覆盖 schema 26 的全部表与必需列', () async {
+  test('drift 建出的库覆盖 schema 27 的全部表与必需列', () async {
     final db = AppDatabase.memory();
     addTearDown(db.close);
 
@@ -74,7 +75,7 @@ void main() {
     addTearDown(db.close);
 
     final version = await db.customSelect('PRAGMA user_version').getSingle();
-    expect(version.read<int>('user_version'), 26);
+    expect(version.read<int>('user_version'), zhixinSchemaVersion);
 
     final foreignKeys = await db
         .customSelect('PRAGMA foreign_keys')

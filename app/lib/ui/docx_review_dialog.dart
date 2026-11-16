@@ -13,11 +13,11 @@ import 'zhixin_select.dart';
 ///
 /// 整框与 [ZhixinDialogLayout] 共用标题、正文与按钮排法，名称与归属用 Forui
 /// 控件，归属选择与材料、事项用的是同一个 [goalChoiceOptionsFrom]。
-Future<({String title, int? goalId})?> showDocxReview(
+Future<({String title, String? goalId})?> showDocxReview(
   BuildContext context, {
   required DocxImport document,
-  required List<({int id, String title, bool active})> goals,
-}) => showZhixinDialog<({String title, int? goalId})>(
+  required List<({String id, String title, bool active})> goals,
+}) => showZhixinDialog<({String title, String? goalId})>(
   context: context,
   builder: (context) => _DocxReviewDialog(document: document, goals: goals),
 );
@@ -26,7 +26,7 @@ class _DocxReviewDialog extends StatefulWidget {
   const _DocxReviewDialog({required this.document, required this.goals});
 
   final DocxImport document;
-  final List<({int id, String title, bool active})> goals;
+  final List<({String id, String title, bool active})> goals;
 
   @override
   State<_DocxReviewDialog> createState() => _DocxReviewDialogState();
