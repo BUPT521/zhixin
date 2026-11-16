@@ -1322,6 +1322,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.4"
+  zvec:
+    dependency: "direct main"
+    description:
+      name: zvec
+      sha256: "15b1c47ce736c2e069779eb91118f1b412311181dbf0fe3ef70cce5495699551"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.8.0"
 sdks:
   dart: ">=3.13.7 <4.0.0"
   flutter: ">=3.47.0"

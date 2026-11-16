@@ -25,6 +25,7 @@ dependencies:
   # 语义索引：独立的 sqlite3_vec 库，只用它保存可从业务库重建的向量。
   sqlite3: ^3.9.1
   sqlite3_vec: ^0.1.2
+  zvec: 0.8.0
 
   # 接模型：HTTP 直连，key 存 Android Keystore。
   http: ^1.6.0
