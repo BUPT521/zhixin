@@ -919,6 +919,29 @@ void main() {
     expect(DiscussionService.pendingSuggestions([restored!]), hasLength(2));
   });
 
+  test('界面传入的图片文件名按内容哈希入库，换机恢复后仍能显示原图', () async {
+    final h = _Harness();
+    await h.open();
+    addTearDown(h.db.close);
+    final bytes = [7, 8, 9];
+    final file = File('${h.rig.filesDir}/question_images/m-2.jpg');
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes);
+    final hash = AssetStore.hashBytes(bytes);
+
+    final result = await h.service.reply(
+      text: '这题怎么做',
+      imagePaths: ['m-2.jpg'],
+    );
+
+    expect(result.userMessage.imagePaths, [hash]);
+    expect(await h.rig.engine.assets.verify(h.rig.raw, hash), isTrue);
+    expect(
+      File('${h.rig.filesDir}/question_images/$hash').existsSync(),
+      isTrue,
+    );
+  });
+
   test('文字追问仍带上一条消息的原图，而不是只发占位符', () async {
     final h = _Harness(
       config: const LlmConfig(

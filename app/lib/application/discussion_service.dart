@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 import '../ai/ai_chat_service.dart';
 import '../ai/buddy_prompt.dart';
 import '../ai/llm_client.dart';
@@ -1257,9 +1259,12 @@ class DiscussionService {
     final pending = <String, Uint8List>{};
     for (final path in paths) {
       try {
-        final bytes = await File(
-          AssetStore.isHash(path) ? cache.pathFor(path) : path,
-        ).readAsBytes();
+        // 界面传进来的是图片目录里的文件名，按文件名在缓存目录里取；
+        // 哈希引用本来就在缓存目录，绝对路径按原路径读取。
+        final source = AssetStore.isHash(path) || !p.isAbsolute(path)
+            ? cache.pathFor(path)
+            : path;
+        final bytes = await File(source).readAsBytes();
         final hash = AssetStore.hashBytes(bytes);
         if (!pending.containsKey(hash)) {
           await cache.write(hash, bytes);

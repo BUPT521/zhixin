@@ -321,7 +321,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       title: '清空全部记录',
       content: const Text(
-        '将删除目标、题目、作答、日程、记忆、讨论记录和保存的版本，且无法撤销。'
+        '将删除目标、题目、作答、日程、记忆、讨论记录、图片和保存的版本，且无法撤销。'
         '模型配置会保留。确定清空？',
       ),
       confirmLabel: '清空',
