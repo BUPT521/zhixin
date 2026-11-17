@@ -2371,7 +2371,7 @@ void main() {
     await tester.tap(find.byIcon(FLucideIcons.settings));
     await settle(tester);
     await tester.scrollUntilVisible(
-      find.text('外观'),
+      _selectField<ThemeMode>('深浅色'),
       260,
       scrollable: _settingsScrollable(),
     );
@@ -2490,6 +2490,17 @@ void main() {
     await tester.tap(dataTile);
     await settle(tester);
 
+    await tester.scrollUntilVisible(
+      find.text('提交历史'),
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byType(DataVersionPage),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(FLucideIcons.ellipsis).first);
     await settle(tester);
     final items = tester.widgetList<forui.FTile>(
@@ -2515,6 +2526,8 @@ void main() {
     );
     expect(scope!.timePolicy.cutoffHour, 4);
 
+    await tester.ensureVisible(cutoffField);
+    await tester.pumpAndSettle();
     await tester.tap(cutoffField);
     await settle(tester);
     await tester.tap(find.text('0 点').last);

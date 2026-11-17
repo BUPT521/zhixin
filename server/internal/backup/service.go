@@ -84,6 +84,12 @@ func (s *Service) Delete(ctx context.Context, userID, id string) error {
 	return s.store.Delete(ctx, userID, id)
 }
 
+// DeleteAll 清空账号在云端的全部备份。保留账号只清云端数据是设置页的独立动作，
+// 规则留在这里而不是处理器里：账下没有备份时同样成功，存储失败原样上抛。
+func (s *Service) DeleteAll(ctx context.Context, userID string) error {
+	return s.store.DeleteAll(ctx, userID)
+}
+
 func cleanDevice(name string) string {
 	name = strings.TrimSpace(name)
 	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 64 {

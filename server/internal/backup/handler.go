@@ -150,3 +150,14 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// DeleteAll 清空当前账号的全部备份。空账号也回 204，客户端只按状态码判断，
+// 不需要先列表再决定调不调用。
+func (h *Handler) DeleteAll(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r.Context())
+	if err := h.svc.DeleteAll(r.Context(), p.UserID); err != nil {
+		httpx.WriteInternal(w, r, h.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

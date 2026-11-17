@@ -68,6 +68,18 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 	return items, nil
 }
 
+const deleteSyncCommits = `-- name: DeleteSyncCommits :exec
+DELETE FROM sync_commit
+WHERE user_id = $1
+`
+
+// 清空一个账号的提交序列；sync_head 由调用方在同一事务里 EnsureSyncHead、
+// LockSyncHead 之后用 SetSyncHead 重置为 0，与追加提交共用同一把锁。
+func (q *Queries) DeleteSyncCommits(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteSyncCommits, userID)
+	return err
+}
+
 const ensureSyncHead = `-- name: EnsureSyncHead :exec
 
 INSERT INTO sync_head (user_id, head)

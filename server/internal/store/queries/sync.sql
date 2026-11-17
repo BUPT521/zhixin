@@ -25,6 +25,12 @@ FROM sync_commit
 WHERE user_id = sqlc.arg(user_id)
   AND request_id = ANY(sqlc.arg(request_ids)::text[]);
 
+-- 清空一个账号的提交序列；sync_head 由调用方在同一事务里 EnsureSyncHead、
+-- LockSyncHead 之后用 SetSyncHead 重置为 0，与追加提交共用同一把锁。
+-- name: DeleteSyncCommits :exec
+DELETE FROM sync_commit
+WHERE user_id = sqlc.arg(user_id);
+
 -- name: InsertSyncCommit :exec
 INSERT INTO sync_commit (
   user_id, seq, request_id, device_id, schema_version,

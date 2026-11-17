@@ -151,6 +151,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SyncHead" }
   /v1/sync/commits:
+    delete:
+      tags: [sync]
+      summary: 清空该账号的提交序列，服务端 head 重置为 0
+      description: |
+        删除这个账号在服务端保存的全部提交，并把 head 重置为 0，账号与整库备份不受影响。
+        客户端在设置页“清除云端数据”时调用，与 `DELETE /v1/backups` 一起把云端恢复到空白状态。
+        操作不可撤销：清空后其他设备无法再拉取这些提交，未推送的本机改动不会再出现在云端，
+        因此调用前客户端应提示用户确认。成功返回 204，没有响应体。
+      responses:
+        "204": { description: 已清空 }
+        "401": { $ref: "#/components/responses/Problem" }
     get:
       tags: [sync]
       summary: 拉取 seq 大于 after 的提交
@@ -234,6 +245,17 @@ paths:
         "413": { $ref: "#/components/responses/Problem" }
 
   /v1/backups:
+    delete:
+      tags: [backup]
+      summary: 清空该账号的全部整库备份
+      description: |
+        删除这个账号在服务端保存的全部备份，元数据行与对象存储里的字节一并删除，账号与同步
+        提交序列不受影响。客户端在设置页“清除云端数据”时调用，与 `DELETE /v1/sync/commits`
+        一起把云端恢复到空白状态。操作不可撤销：云端副本删除之后无法再下载，只剩本机数据库
+        里的数据，因此调用前客户端应提示用户确认。成功返回 204，没有响应体。
+      responses:
+        "204": { description: 已清空 }
+        "401": { $ref: "#/components/responses/Problem" }
     get:
       tags: [backup]
       summary: 列出整库备份，新的在前

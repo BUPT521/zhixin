@@ -37,6 +37,8 @@ func (a testAPI) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params
 
 func (a testAPI) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) { a.h.Push(w, r) }
 
+func (a testAPI) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) { a.h.Reset(w, r) }
+
 // newTestServer 装配本包处理器与鉴权中间件，返回客户端与用于签发测试令牌的
 // 账号服务；限流由 server 包统一测。
 func newTestServer(t *testing.T) (*testutil.Client, *auth.Service) {
@@ -112,6 +114,55 @@ func TestHandlerSyncIsLinearAndIdempotent(t *testing.T) {
 	other := signIn(t, authSvc, "c@d.cn")
 	if code := c.JSON(http.MethodGet, "/v1/sync/commits", other, nil, &pull); code != http.StatusOK || len(pull.Commits) != 0 || pull.Head != 0 {
 		t.Fatalf("leaked across accounts: %d %+v", code, pull)
+	}
+}
+
+// TestHandlerResetClearsLogAndHead 守住“清除云端数据（保留账号）”：
+// 清空当前账号的提交序列并把 head 重置为 0，另一个账号与账号本身不受影响；
+// 重置之后从 0 重新推送可以正常分配序号；未带令牌返回 401。
+func TestHandlerResetClearsLogAndHead(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "a@b.cn")
+	other := signIn(t, authSvc, "c@d.cn")
+
+	var push api.PushResult
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{"base_seq": 0, "commits": []any{commitBody("r1"), commitBody("r2")}}, &push); code != http.StatusOK || push.Head != 2 {
+		t.Fatalf("push: %d %+v", code, push)
+	}
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", other, map[string]any{"base_seq": 0, "commits": []any{commitBody("other-1")}}, &push); code != http.StatusOK || push.Head != 1 {
+		t.Fatalf("other push: %d %+v", code, push)
+	}
+
+	if code := c.JSON(http.MethodDelete, "/v1/sync/commits", token, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("clear commits: %d", code)
+	}
+
+	var head api.SyncHead
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", token, nil, &head); code != http.StatusOK || head.Head != 0 {
+		t.Fatalf("head after clear: %d %+v", code, head)
+	}
+	var page api.CommitPage
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits", token, nil, &page); code != http.StatusOK || len(page.Commits) != 0 || page.Head != 0 {
+		t.Fatalf("page after clear: %d %+v", code, page)
+	}
+	// 序号从 0 重新开始，客户端按 base_seq=0 推送即可。
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{"base_seq": 0, "commits": []any{commitBody("r3")}}, &push); code != http.StatusOK || push.Head != 1 {
+		t.Fatalf("push after clear: %d %+v", code, push)
+	}
+	// 重复调用是幂等的。
+	if code := c.JSON(http.MethodDelete, "/v1/sync/commits", token, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("second clear: %d", code)
+	}
+
+	// 另一个账号的序列不受影响。
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", other, nil, &head); code != http.StatusOK || head.Head != 1 {
+		t.Fatalf("other head after clear: %d %+v", code, head)
+	}
+
+	// 鉴权由中间件负责：没有令牌时处理器根本不会被调用。
+	p := testutil.ReadProblem(t, c.Do(http.MethodDelete, "/v1/sync/commits", "", nil, nil))
+	if p.Status != http.StatusUnauthorized || p.Code != string(httpx.CodeUnauthorized) {
+		t.Fatalf("anonymous clear: %+v", p)
 	}
 }
 

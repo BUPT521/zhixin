@@ -80,11 +80,20 @@ List<ChatMessage> selectBuddyHistory(
 
 /// 为一轮回答装配配置、模型客户端、提示与本轮可用的学习工具。
 class AiChatService implements BuddyAi {
-  AiChatService({required this.store, http.Client? httpClient})
-    : _httpClient = httpClient,
-      _ownsHttpClient = httpClient == null;
+  AiChatService({
+    required this.store,
+    this.configSource,
+    http.Client? httpClient,
+  }) : _httpClient = httpClient,
+       _ownsHttpClient = httpClient == null;
 
   final LlmConfigStore store;
+
+  /// 当前的模型配置；为空时直接读 [store]。
+  ///
+  /// 应用根在装配时传入它，让“知新服务”每次请求都换成当前访问令牌：令牌会
+  /// 过期并轮换，不能随配置一起存进 Keystore。测试不传，仍读存储。
+  final Future<LlmConfig?> Function()? configSource;
 
   /// 建一次连接反复用，省去每次求助重新握手；测试可以换成 MockClient。
   http.Client? _httpClient;
@@ -99,6 +108,16 @@ class AiChatService implements BuddyAi {
 
   @override
   Future<LlmConfig?> config() async {
+    final source = configSource;
+    if (source != null) {
+      try {
+        final value = await source();
+        _lastConfig = value;
+        return value;
+      } on LlmConfigReadFailure {
+        return _lastConfig;
+      }
+    }
     try {
       final value = await store.read();
       _lastConfig = value;

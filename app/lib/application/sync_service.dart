@@ -1,0 +1,636 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
+
+import '../data/cloud/cloud_preferences_store.dart';
+import '../data/cloud/server_client.dart';
+import '../data/db/app_database.dart' show zhixinSchemaVersion;
+import '../data/db/guarded_database.dart';
+import '../data/db/write_transactions.dart';
+import '../data/revisions/asset_store.dart';
+import '../data/revisions/revision_engine.dart';
+import '../data/revisions/revision_models.dart';
+import '../data/revisions/revision_service.dart';
+import '../domain/rules/time_format.dart';
+import '../domain/rules/time_policy.dart';
+import 'account_service.dart';
+
+/// 服务端接受的客户端 schema 与本机不一致：两端要一起升级。
+class SyncSchemaMismatch implements Exception {
+  const SyncSchemaMismatch({required this.server, required this.client});
+
+  final int server;
+  final int client;
+
+  @override
+  String toString() => '服务端接受 schema $server，本机是 $client；升级应用或服务端后再同步';
+}
+
+/// 增量同步一屏读到的状态，设置页与账号页据此显示登录、待推送与上次同步。
+class SyncStatus {
+  const SyncStatus({
+    required this.signedIn,
+    required this.email,
+    required this.autoSync,
+    required this.syncing,
+    required this.pendingCommits,
+    required this.localHead,
+    required this.serverHead,
+    required this.needsBootstrap,
+    this.lastSyncedAt,
+    this.lastError,
+  });
+
+  final bool signedIn;
+  final String email;
+  final bool autoSync;
+  final bool syncing;
+  final int pendingCommits;
+  final int localHead;
+  final int? serverHead;
+  final bool needsBootstrap;
+  final DateTime? lastSyncedAt;
+  final String? lastError;
+}
+
+/// 一次同步的结果：拉取与推送的提交数、上传与下载的附件数。
+class SyncResult {
+  const SyncResult({
+    this.pulledCommits = 0,
+    this.pushedCommits = 0,
+    this.uploadedAssets = 0,
+    this.downloadedAssets = 0,
+  });
+
+  final int pulledCommits;
+  final int pushedCommits;
+  final int uploadedAssets;
+  final int downloadedAssets;
+
+  bool get changed =>
+      pulledCommits > 0 ||
+      pushedCommits > 0 ||
+      uploadedAssets > 0 ||
+      downloadedAssets > 0;
+}
+
+/// 按提交序列与服务端同步：首次上传当前数据为基线，之后拉取远端提交、在本机
+/// 应用为新的提交，再推送本机新提交，并把提交里引用的附件按哈希补齐。
+///
+/// 服务端只保存线性序列，不解析内容；冲突按“后到达的覆盖先到达的”处理，被覆盖
+/// 的值留在提交历史里（[server/README](../../../server/README.md) 的同步协议）。
+/// 同步只读写本机数据库与网络，不换库、不清空，界面通过数据层已有的表通知重读。
+class SyncService {
+  SyncService({
+    required this.account,
+    required this.preferences,
+    required this.revisions,
+    required this.engine,
+    required this.database,
+    required this.transactions,
+    required this.assets,
+    required this.cache,
+    required this.clock,
+    required this.recordFailure,
+  });
+
+  final AccountService account;
+  final CloudPreferencesStore preferences;
+  final RevisionService revisions;
+  final RevisionEngine engine;
+  final GuardedDatabase database;
+  final WriteTransactions transactions;
+  final AssetStore assets;
+  final AttachmentCache cache;
+  final Clock clock;
+  final void Function(Object error, StackTrace stack, {required String kind})
+  recordFailure;
+
+  /// 一批最多推送的提交数，与契约的 `maxItems: 200` 一致。
+  static const int _pushBatch = 200;
+
+  /// 首次基线一条提交最多带的变化数：控制单次请求体大小，避免超过服务端上限。
+  static const int _baselineChunk = 100;
+
+  Future<SyncResult>? _running;
+  Timer? _timer;
+  String? _lastError;
+  bool _disposed = false;
+
+  bool get syncing => _running != null;
+
+  Future<SyncStatus> status() async {
+    final snapshot = await account.snapshot();
+    final localHead = await engine.headId(database.raw);
+    final state = await preferences.syncState();
+    if (!snapshot.signedIn) {
+      return SyncStatus(
+        signedIn: false,
+        email: '',
+        autoSync: snapshot.autoSync,
+        syncing: syncing,
+        pendingCommits: 0,
+        localHead: localHead,
+        serverHead: null,
+        needsBootstrap: false,
+        lastError: _lastError,
+      );
+    }
+    final ownState = state?.userId == snapshot.session!.userId ? state : null;
+    final pending = ownState == null
+        ? localHead
+        : (await revisions.commitsAfter(ownState.pushedThrough))
+              .where((commit) => !ownState.remoteLocalIds.contains(commit.id))
+              .length;
+    return SyncStatus(
+      signedIn: true,
+      email: snapshot.email,
+      autoSync: snapshot.autoSync,
+      syncing: syncing,
+      pendingCommits: pending,
+      localHead: localHead,
+      serverHead: ownState?.serverHead,
+      needsBootstrap: ownState == null || ownState.pushedThrough > localHead,
+      lastSyncedAt: ownState?.syncedAt,
+      lastError: _lastError,
+    );
+  }
+
+  /// 立即同步；同时只跑一次，重复调用等同一个结果。
+  Future<SyncResult> syncNow() {
+    final running = _running;
+    if (running != null) return running;
+    final future = _sync();
+    _running = future.whenComplete(() => _running = null);
+    return _running!;
+  }
+
+  /// 写入、登录与应用启动之后延迟同步一次：连续写入只排一次，失败只留说明。
+  Future<void> schedule({Duration delay = const Duration(seconds: 5)}) async {
+    if (_disposed) return;
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn || !snapshot.autoSync) return;
+    _timer?.cancel();
+    _timer = Timer(delay, () {
+      _timer = null;
+      if (_disposed) return;
+      unawaited(
+        syncNow().catchError((Object error, StackTrace stack) {
+          _lastError = _describe(error);
+          return const SyncResult();
+        }),
+      );
+    });
+  }
+
+  /// 退出登录、删除账号或清除云端数据之后清掉本机游标。
+  Future<void> clearState() => preferences.clearSyncState();
+
+  void dispose() {
+    _disposed = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<SyncResult> _sync() async {
+    _lastError = null;
+    var pulled = 0;
+    var pushed = 0;
+    var uploaded = 0;
+    var downloaded = 0;
+    final deviceId = await account.deviceId();
+    try {
+      final snapshot = await account.snapshot();
+      if (!snapshot.signedIn) throw const AccountSignedOut();
+      final remoteHead = await account.call(
+        (client, token) => client.head(token),
+      );
+      if (remoteHead.schemaVersion != zhixinSchemaVersion) {
+        throw SyncSchemaMismatch(
+          server: remoteHead.schemaVersion,
+          client: zhixinSchemaVersion,
+        );
+      }
+      var state = await preferences.syncState();
+      final localHead = await engine.headId(database.raw);
+      if (state != null &&
+          (state.userId != snapshot.session!.userId ||
+              state.pushedThrough > localHead)) {
+        // 换了账号，或本机数据被清空、换库：游标不再对应本机提交编号。
+        await preferences.clearSyncState();
+        state = null;
+      }
+      if (state != null && remoteHead.head < state.serverHead) {
+        // 服务端序列被清空过，服务端位置回到 0，需要重新上传基线。
+        await preferences.clearSyncState();
+        state = null;
+      }
+
+      if (state == null) {
+        final boot = await _bootstrap(deviceId);
+        pulled += boot.pulled;
+        pushed += boot.pushed;
+        uploaded += boot.uploaded;
+        downloaded += boot.downloaded;
+        state = boot.state;
+      } else {
+        var current = await _pull(
+          state: state,
+          deviceId: deviceId,
+          downloaded: (count) => downloaded += count,
+        );
+        pulled += current.pulled;
+        state = current.state;
+        final push = await _push(
+          state: state,
+          deviceId: deviceId,
+          uploaded: (count) => uploaded += count,
+          onPulled: (result) {
+            pulled += result.pulled;
+            downloaded += result.downloaded;
+          },
+        );
+        pushed += push.pushed;
+        state = push.state;
+      }
+      final finalState = state.copyWith(syncedAt: clock());
+      await preferences.saveSyncState(finalState);
+      return SyncResult(
+        pulledCommits: pulled,
+        pushedCommits: pushed,
+        uploadedAssets: uploaded,
+        downloadedAssets: downloaded,
+      );
+    } catch (error, stack) {
+      _lastError = _describe(error);
+      recordFailure(error, stack, kind: 'cloud_sync');
+      rethrow;
+    }
+  }
+
+  /// 第一次同步：先把服务端已有的提交拉下来，再把本机当前数据作为一份基线
+  /// 上传，最后补齐附件。本机历史仍然完整，后续写入按提交增量推送。
+  Future<
+    ({SyncState state, int pulled, int pushed, int uploaded, int downloaded})
+  >
+  _bootstrap(String deviceId) async {
+    var pulled = 0;
+    var downloaded = 0;
+    final remoteHead = await account.call(
+      (client, token) => client.head(token),
+    );
+    final localHead = await engine.headId(database.raw);
+    var state = SyncState(
+      userId: (await account.snapshot()).session!.userId,
+      serverHead: 0,
+      pushedThrough: localHead,
+    );
+    if (remoteHead.head > 0) {
+      final result = await _pull(
+        state: state,
+        deviceId: deviceId,
+        persist: false,
+        downloaded: (count) => downloaded += count,
+      );
+      pulled = result.pulled;
+      state = result.state;
+    }
+    final headAfterPull = await engine.headId(database.raw);
+    final projection = await engine.readProjection(database.raw);
+    final changes = <RevisionChange>[];
+    var seq = 1;
+    for (final table in versionedTableNames) {
+      final rows = projection[table] ?? const <String, TypedRow>{};
+      for (final entry in rows.entries) {
+        changes.add(
+          RevisionChange(
+            commitId: 0,
+            seq: seq++,
+            table: table,
+            rowKey: entry.key,
+            op: 'insert',
+            after: entry.value,
+          ),
+        );
+      }
+    }
+    var pushed = 0;
+    var baseSeq = state.serverHead;
+    final userId = state.userId;
+    for (var index = 0; index < changes.length; index += _baselineChunk) {
+      final end = (index + _baselineChunk).clamp(0, changes.length);
+      final chunk = changes.sublist(index, end);
+      final commit = ServerCommit(
+        requestId: _baselineRequestId(deviceId, index, chunk),
+        deviceId: deviceId,
+        schemaVersion: zhixinSchemaVersion,
+        actor: 'system',
+        action: '首次同步基线',
+        createdAt: formatDateTime(clock()),
+        changes: [for (final change in chunk) _toServerChange(change)],
+      );
+      baseSeq = await account.call(
+        (client, token) =>
+            client.push(token, baseSeq: baseSeq, commits: [commit]),
+      );
+      pushed++;
+    }
+    final uploaded = await _uploadAssets(
+      AssetStore.hashesInProjection(projection),
+    );
+    state = SyncState(
+      userId: userId,
+      serverHead: baseSeq,
+      pushedThrough: headAfterPull,
+      syncedAt: clock(),
+    );
+    await preferences.saveSyncState(state);
+    return (
+      state: state,
+      pulled: pulled,
+      pushed: pushed,
+      uploaded: uploaded,
+      downloaded: downloaded,
+    );
+  }
+
+  /// 拉取 `state.serverHead` 之后的提交并应用到本机，返回推进后的游标。
+  Future<({SyncState state, int pulled, int downloaded})> _pull({
+    required SyncState state,
+    required String deviceId,
+    required void Function(int count) downloaded,
+    bool persist = true,
+  }) async {
+    var current = state;
+    var pulled = 0;
+    var downloadCount = 0;
+    while (true) {
+      final page = await account.call(
+        (client, token) => client.pull(token, after: current.serverHead),
+      );
+      if (page.commits.isEmpty) {
+        current = current.copyWith(serverHead: page.head);
+        if (persist) await preferences.saveSyncState(current);
+        break;
+      }
+      final hashes = <String>{};
+      for (final commit in page.commits) {
+        final applied = await _applyRemote(commit);
+        hashes.addAll(applied.assetHashes);
+        pulled++;
+        if (applied.commit != null) {
+          current = current.copyWith(
+            remoteLocalIds: {...current.remoteLocalIds, applied.commit!.id},
+          );
+        }
+      }
+      current = current.copyWith(
+        serverHead: page.commits.last.seq ?? page.head,
+        syncedAt: clock(),
+      );
+      if (persist) await preferences.saveSyncState(current);
+      final fetched = await _downloadAssets(hashes);
+      downloadCount += fetched;
+      downloaded(fetched);
+      if (!page.hasMore) break;
+    }
+    return (state: current, pulled: pulled, downloaded: downloadCount);
+  }
+
+  /// 推送本机游标之后的提交；服务端位置变化时先拉取再重试。
+  Future<({SyncState state, int pushed})> _push({
+    required SyncState state,
+    required String deviceId,
+    required void Function(int count) uploaded,
+    required void Function(({int pulled, int downloaded}) result) onPulled,
+  }) async {
+    var current = state;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final headNow = await account.call((client, token) => client.head(token));
+      if (headNow.head != current.serverHead) {
+        final pulled = await _pull(
+          state: current,
+          deviceId: deviceId,
+          downloaded: (count) {},
+        );
+        current = pulled.state;
+        onPulled((pulled: pulled.pulled, downloaded: pulled.downloaded));
+      }
+      final localHead = await engine.headId(database.raw);
+      final pending = [
+        for (final commit in await revisions.commitsAfter(
+          current.pushedThrough,
+        ))
+          if (!current.remoteLocalIds.contains(commit.id)) commit,
+      ];
+      if (pending.isEmpty) {
+        current = current.copyWith(pushedThrough: localHead);
+        await preferences.saveSyncState(current);
+        return (state: current, pushed: 0);
+      }
+      final assetHashes = <String>{};
+      var pushed = 0;
+      try {
+        var baseSeq = current.serverHead;
+        for (var index = 0; index < pending.length; index += _pushBatch) {
+          final end = (index + _pushBatch).clamp(0, pending.length);
+          final batch = pending.sublist(index, end);
+          final payload = <ServerCommit>[];
+          for (final commit in batch) {
+            final changes = await engine.changesFor(database.raw, commit.id);
+            assetHashes.addAll(AssetStore.hashesInChanges(changes));
+            payload.add(
+              ServerCommit(
+                requestId: _requestIdFor(commit, deviceId),
+                deviceId: deviceId,
+                schemaVersion: zhixinSchemaVersion,
+                actor: _actorOf(commit.actor),
+                action: commit.action,
+                createdAt: formatDateTime(commit.createdAt ?? clock()),
+                changes: [
+                  for (final change in changes) _toServerChange(change),
+                ],
+              ),
+            );
+          }
+          baseSeq = await account.call(
+            (client, token) =>
+                client.push(token, baseSeq: baseSeq, commits: payload),
+          );
+          pushed += payload.length;
+          current = current.copyWith(serverHead: baseSeq);
+          await preferences.saveSyncState(current);
+        }
+      } on ServerProblem catch (error) {
+        if (!error.isConflict) rethrow;
+        final head = error.extra['head'];
+        current = current.copyWith(
+          serverHead: head is num ? head.toInt() : current.serverHead,
+        );
+        await preferences.saveSyncState(current);
+        continue;
+      }
+      uploaded(await _uploadAssets(assetHashes));
+      current = current.copyWith(
+        pushedThrough: localHead,
+        remoteLocalIds: {
+          for (final id in current.remoteLocalIds)
+            if (id > localHead) id,
+        },
+        syncedAt: clock(),
+      );
+      await preferences.saveSyncState(current);
+      return (state: current, pushed: pushed);
+    }
+    throw const ServerProblem(
+      code: 'conflict',
+      status: 409,
+      detail: '服务端位置连续变化，这次同步没有完成',
+    );
+  }
+
+  Future<({RevisionCommit? commit, Set<String> assetHashes, int skipped})>
+  _applyRemote(ServerCommit commit) async {
+    final changes = <RevisionChange>[];
+    var seq = 1;
+    for (final change in commit.changes) {
+      final before = change.before == null
+          ? null
+          : decodeTypedRow(jsonEncode(change.before));
+      final after = change.after == null
+          ? null
+          : decodeTypedRow(jsonEncode(change.after));
+      changes.add(
+        RevisionChange(
+          commitId: 0,
+          seq: seq++,
+          table: change.table,
+          rowKey: change.rowKey,
+          op: change.op,
+          before: before,
+          after: after,
+        ),
+      );
+    }
+    final actor = const {'user', 'ai', 'system'}.contains(commit.actor)
+        ? commit.actor
+        : 'user';
+    final result = await revisions.applyRemoteCommit(
+      requestId: commit.requestId,
+      action: commit.action.isEmpty ? '从其他设备同步' : commit.action,
+      actor: actor,
+      changes: changes,
+    );
+    if (result.skipped > 0) {
+      recordFailure(
+        StateError('同步 ${commit.requestId} 时跳过 ${result.skipped} 条对不上的变化'),
+        StackTrace.current,
+        kind: 'cloud_sync_apply_skipped',
+      );
+    }
+    return (
+      commit: result.commit,
+      assetHashes: AssetStore.hashesInChanges(changes),
+      skipped: result.skipped,
+    );
+  }
+
+  Future<int> _uploadAssets(Set<String> hashes) async {
+    if (hashes.isEmpty) return 0;
+    final local = await assets.objectHashes(database.raw);
+    var uploaded = 0;
+    for (final hash in hashes) {
+      if (!local.contains(hash)) continue;
+      final exists = await account.call(
+        (client, token) => client.blobExists(token, hash),
+      );
+      if (exists != null) continue;
+      final bytes = await assets.readBytes(database.raw, hash);
+      if (bytes == null) continue;
+      await account.call(
+        (client, token) => client.blobUpload(token, hash, bytes),
+      );
+      uploaded++;
+    }
+    return uploaded;
+  }
+
+  Future<int> _downloadAssets(Set<String> hashes) async {
+    if (hashes.isEmpty) return 0;
+    final local = await assets.objectHashes(database.raw);
+    final fetched = <String, List<int>>{};
+    for (final hash in hashes) {
+      if (local.contains(hash)) continue;
+      final bytes = await account.call(
+        (client, token) => client.blobDownload(token, hash),
+      );
+      if (AssetStore.hashBytes(bytes) != hash) {
+        recordFailure(
+          StateError('服务端返回的附件 $hash 校验失败'),
+          StackTrace.current,
+          kind: 'cloud_sync_asset_hash',
+        );
+        continue;
+      }
+      fetched[hash] = bytes;
+    }
+    if (fetched.isEmpty) return 0;
+    await transactions.run((txn) async {
+      for (final entry in fetched.entries) {
+        await assets.putBytes(
+          txn.executor,
+          entry.key,
+          Uint8List.fromList(entry.value),
+        );
+      }
+    }, label: '同步附件');
+    for (final entry in fetched.entries) {
+      try {
+        await cache.write(entry.key, Uint8List.fromList(entry.value));
+      } catch (error, stack) {
+        recordFailure(error, stack, kind: 'cloud_sync_assetcache');
+      }
+    }
+    return fetched.length;
+  }
+
+  ServerChange _toServerChange(RevisionChange change) => ServerChange(
+    table: change.table,
+    rowKey: change.rowKey,
+    op: change.op,
+    before: change.before == null ? null : typedRowToJson(change.before!),
+    after: change.after == null ? null : typedRowToJson(change.after!),
+  );
+
+  String _requestIdFor(RevisionCommit commit, String deviceId) {
+    final existing = commit.requestId?.trim() ?? '';
+    if (existing.isNotEmpty) return existing;
+    return 'l-${deviceId.substring(0, 8)}-${commit.id}';
+  }
+
+  String _baselineRequestId(
+    String deviceId,
+    int index,
+    List<RevisionChange> chunk,
+  ) {
+    final digest = sha256
+        .convert(
+          utf8.encode(jsonEncode([for (final change in chunk) change.toRow()])),
+        )
+        .toString()
+        .substring(0, 12);
+    return 'b-${deviceId.substring(0, 8)}-$index-$digest';
+  }
+
+  String _actorOf(String actor) =>
+      const {'user', 'ai', 'system'}.contains(actor) ? actor : 'user';
+
+  String _describe(Object error) => switch (error) {
+    ServerProblem(:final userMessage) => userMessage,
+    AccountSignedOut(:final userMessage) => userMessage,
+    SyncSchemaMismatch() => error.toString(),
+    _ => '同步没有完成',
+  };
+}

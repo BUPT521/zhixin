@@ -15,7 +15,9 @@ import '../app_scope.dart';
 import '../application/study_plan_service.dart';
 import '../domain/models/study.dart';
 import 'about_page.dart';
+import 'account_page.dart';
 import 'camera_capture_page.dart';
+import 'cloud_backup_page.dart';
 import 'data_version_page.dart';
 import 'discussion_page.dart';
 import 'embedding_settings_page.dart';
@@ -158,6 +160,18 @@ Future<void> openDataVersion(BuildContext context) {
 Future<void> openAbout(BuildContext context) {
   return Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const AboutPage()));
+}
+
+/// 打开账号与云同步页：服务地址、登录注册、同步状态与云端数据操作。
+Future<void> openAccount(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const AccountPage()));
+}
+
+/// 打开云端备份页：上传、列出、下载恢复与删除服务端保存的整库备份。
+Future<void> openCloudBackup(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const CloudBackupPage()));
 }
 
 /// 打开语义索引设置页。

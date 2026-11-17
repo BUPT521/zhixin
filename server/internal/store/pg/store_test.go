@@ -119,6 +119,87 @@ func TestPostgresDeleteUserAndObjects(t *testing.T) {
 	}
 }
 
+// TestPostgresClearAccountData 覆盖“保留账号、清空云端数据”的两个存储方法：
+// 清空备份删掉元数据行与对象字节，清空序列把 head 归零；两者都只影响指定账号，
+// 清空之后可以继续上传与推送，空账号重复清空也成功。
+func TestPostgresClearAccountData(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"u1", "u2"} {
+		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+			t.Fatalf("user %s: %v", id, err)
+		}
+	}
+	put := func(userID, id, body string) {
+		t.Helper()
+		meta := backup.Meta{
+			ID: id, SHA256: "sha-" + id, Size: int64(len(body)), SchemaVersion: 27,
+			CreatedAt: time.Now().UTC(),
+		}
+		if err := st.Put(ctx, userID, meta, strings.NewReader(body), 5); err != nil {
+			t.Fatalf("put %s/%s: %v", userID, id, err)
+		}
+	}
+	put("u1", "b1", "zip-b1")
+	put("u1", "b2", "zip-b2")
+	put("u2", "b9", "zip-b9")
+
+	if err := st.DeleteAll(ctx, "u1"); err != nil {
+		t.Fatalf("delete all backups: %v", err)
+	}
+	if list, err := st.List(ctx, "u1"); err != nil || len(list) != 0 {
+		t.Fatalf("backups after clear = %+v, %v", list, err)
+	}
+	for _, id := range []string{"b1", "b2"} {
+		if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u1", id)); !errors.Is(err, objectstore.ErrNotFound) {
+			t.Fatalf("对象 %s 应随清空删除，得到 %v", id, err)
+		}
+	}
+	if list, err := st.List(ctx, "u2"); err != nil || len(list) != 1 || list[0].ID != "b9" {
+		t.Fatalf("另一个账号的备份应保留，得到 %+v, %v", list, err)
+	}
+
+	mk := func(id string) syncsvc.Commit {
+		after := json.RawMessage(`{}`)
+		return syncsvc.Commit{
+			RequestId: id, DeviceId: "d1", SchemaVersion: 27,
+			Actor: "user", Action: "write", CreatedAt: "2026-11-15 10:00:00",
+			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
+		}
+	}
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}); err != nil || head != 2 {
+		t.Fatalf("append u1: head %d, err %v", head, err)
+	}
+	if head, err := st.Append(ctx, "u2", 0, []syncsvc.Commit{mk("other")}); err != nil || head != 1 {
+		t.Fatalf("append u2: head %d, err %v", head, err)
+	}
+
+	if err := st.Reset(ctx, "u1"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if head, err := st.Head(ctx, "u1"); err != nil || head != 0 {
+		t.Fatalf("head after reset = %d, %v", head, err)
+	}
+	if commits, err := st.After(ctx, "u1", 0, 10); err != nil || len(commits) != 0 {
+		t.Fatalf("commits after reset = %+v, %v", commits, err)
+	}
+	// 重置之后从 0 重新推送，序号重新从 1 开始。
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r3")}); err != nil || head != 1 {
+		t.Fatalf("append after reset: head %d, err %v", head, err)
+	}
+	if head, err := st.Head(ctx, "u2"); err != nil || head != 1 {
+		t.Fatalf("另一个账号的 head 应保留，得到 %d, %v", head, err)
+	}
+
+	// 已经清空的账号重复清空也成功，失败重试不需要先判断有没有数据。
+	if err := st.DeleteAll(ctx, "u1"); err != nil {
+		t.Fatalf("second delete all: %v", err)
+	}
+	if err := st.Reset(ctx, "u1"); err != nil {
+		t.Fatalf("second reset: %v", err)
+	}
+}
+
 func TestPostgresSyncSequence(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

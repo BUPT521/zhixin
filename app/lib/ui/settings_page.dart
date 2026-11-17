@@ -8,6 +8,7 @@ import 'theme.dart';
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../app_scope.dart';
+import '../application/account_service.dart';
 import '../application/settings_service.dart';
 import '../domain/rules/time_policy.dart';
 import 'copy.dart';
@@ -23,7 +24,7 @@ import 'zhixin_header.dart';
 import 'zhixin_select.dart';
 
 /// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
-enum _Area { model, learning, appearance, diagnostics, danger }
+enum _Area { account, model, learning, appearance, diagnostics, danger }
 
 /// 一段操作的最近一次结果；失败用错误描边的就地说明，成功用一行小字。
 class _Result {
@@ -44,11 +45,13 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final _baseUrl = TextEditingController();
   LlmApi _api = LlmApi.chat;
+  LlmSource _source = LlmSource.custom;
   final _model = TextEditingController();
   final _contextWindow = TextEditingController();
   final _key = TextEditingController();
 
   LlmConfig? _config;
+  AccountSnapshot? _account;
   bool _allowImages = true;
   ThemeMode _themeMode = ThemeMode.system;
 
@@ -120,6 +123,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _loadLocal(AppScopeState scope) async {
     try {
       final config = await scope.settings.edit.config();
+      final account = await scope.accountServices.account.snapshot();
       final reportCrashes = await DiagnosticsStore(scope.paths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
@@ -130,6 +134,7 @@ class _SettingsPageState extends State<SettingsPage> {
       await context.afterTransition();
       if (!mounted) return;
       setState(() {
+        _account = account;
         _applyConfig(config);
         _reportCrashes = reportCrashes;
         _themeMode = themeMode;
@@ -208,6 +213,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void _applyConfig(LlmConfig? config) {
     _config = config;
     _allowImages = config?.allowImages ?? true;
+    _source = config?.source ?? LlmSource.custom;
     _api = config?.api ?? LlmApi.chat;
     _baseUrl.text = config?.baseUrl ?? LlmConfig.defaultBaseUrl;
     _model.text = config?.model ?? LlmConfig.defaultModel;
@@ -227,6 +233,19 @@ class _SettingsPageState extends State<SettingsPage> {
     if (window == null || window <= 0) {
       throw const FormatException('模型上下文上限须为正整数');
     }
+    if (_source == LlmSource.server) {
+      final base = _account?.serverBaseUrl ?? '';
+      return LlmConfig(
+        source: LlmSource.server,
+        api: LlmApi.chat,
+        baseUrl: base.isEmpty ? '' : '$base/v1/llm',
+        model: _model.text.trim().isEmpty
+            ? LlmConfig.defaultModel
+            : _model.text.trim(),
+        allowImages: _allowImages,
+        contextWindowTokens: window,
+      );
+    }
     return LlmConfig(
       api: _api,
       baseUrl: _baseUrl.text.trim(),
@@ -234,11 +253,13 @@ class _SettingsPageState extends State<SettingsPage> {
       apiKey: _key.text.trim(),
       allowImages: _allowImages,
       contextWindowTokens: window,
+      source: LlmSource.custom,
     );
   }
 
   /// 改了接口地址还沿用旧 Key 时先停下；旧 Key 只对原地址有效。
   void _rejectStaleKey() {
+    if (_source != LlmSource.custom) return;
     final config = _formConfig();
     if (config.reusesKeyFrom(_config)) {
       throw const LlmException(LlmFailure.auth, '接口地址已修改，请重新填写这个地址的 API Key');
@@ -378,6 +399,19 @@ class _SettingsPageState extends State<SettingsPage> {
     openDataVersion(context);
   }
 
+  /// 打开账号页；返回之后重新读登录状态，模型来源与云端入口跟着变。
+  Future<void> _openAccount() async {
+    final scope = AppScope.of(context);
+    await openAccount(context);
+    if (!mounted) return;
+    await _loadLocal(scope);
+  }
+
+  /// 打开云端备份页。
+  Future<void> _openCloudBackups() async {
+    await openCloudBackup(context);
+  }
+
   Future<void> _resetAll() async {
     final confirmed = await confirmZhixin(
       context: context,
@@ -440,7 +474,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
-    final configured = _config?.isConfigured ?? false;
+    final signedIn = _account?.signedIn ?? false;
+    final configured =
+        _config != null &&
+        (_config!.isConfigured || (_config!.isServer && signedIn));
     // 首读失败时按默认值显示，原因写在页面顶部的就地说明里。
     final cutoff = settings?.cutoffHour ?? defaultDayCutoffHour;
     final systemCamera = settings?.useSystemCamera ?? false;
@@ -450,8 +487,36 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_loadFailure != null)
           InlineNotice(message: _loadFailure!, onRetry: _retry),
         SectionHeading(
-          title: '模型',
+          title: '账号与云同步',
           first: true,
+          subtitle: '账号可选；登录之后可以使用云端备份、按提交的同步与知新服务的模型来源。',
+          action: StatusTag(
+            signedIn ? '已登录' : '未登录',
+            tone: signedIn ? TagTone.accent : TagTone.muted,
+          ),
+        ),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.userRound),
+          title: Text(signedIn ? _account!.email : '登录或注册'),
+          subtitle: Text(
+            signedIn
+                ? '服务地址：${_account!.serverLabel}'
+                : '填写服务地址后登录；不登录时应用完全在本机运行。',
+          ),
+          suffix: const Icon(FLucideIcons.chevronRight),
+          onPress: _busy ? null : _openAccount,
+        ),
+        if (signedIn)
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.cloud),
+            title: const Text('云端备份'),
+            subtitle: const Text('上传整库快照、列出与下载恢复；换手机时登录即可取回。'),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: _busy ? null : _openCloudBackups,
+          ),
+        ?_resultFor(_Area.account),
+        SectionHeading(
+          title: '模型',
           action: StatusTag(
             configured ? '已配置' : '未配置',
             tone: configured ? TagTone.accent : TagTone.muted,
@@ -474,32 +539,61 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
-                ZhixinSelect<LlmApi>(
-                  value: _api,
-                  label: '接口风格',
-                  description: '按服务商选择；DeepSeek 与多数兼容地址用 Chat Completions。',
-                  options: {for (final api in LlmApi.values) api: api.label},
+                ZhixinSelect<LlmSource>(
+                  value: _source,
+                  label: '模型来源',
+                  description: '自填 Key 直连提供方；知新服务用登录账号的访问令牌走服务端代理，不保存 key。',
+                  options: {
+                    for (final source in LlmSource.values) source: source.label,
+                  },
                   onChange: (value) =>
-                      setState(() => _api = value ?? LlmApi.chat),
+                      setState(() => _source = value ?? LlmSource.custom),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
-                forui.FTextField(
-                  control: .managed(controller: _baseUrl),
-                  label: const Text('接口地址'),
-                  hint: 'https://api.deepseek.com/v1',
-                ),
-                SizedBox(height: context.zhixin.space.gap),
+                if (_source == LlmSource.custom) ...[
+                  ZhixinSelect<LlmApi>(
+                    value: _api,
+                    label: '接口风格',
+                    description: '按服务商选择；DeepSeek 与多数兼容地址用 Chat Completions。',
+                    options: {for (final api in LlmApi.values) api: api.label},
+                    onChange: (value) =>
+                        setState(() => _api = value ?? LlmApi.chat),
+                  ),
+                  SizedBox(height: context.zhixin.space.gap),
+                  forui.FTextField(
+                    control: .managed(controller: _baseUrl),
+                    label: const Text('接口地址'),
+                    hint: 'https://api.deepseek.com/v1',
+                  ),
+                  SizedBox(height: context.zhixin.space.gap),
+                ] else ...[
+                  Text(
+                    signedIn
+                        ? '请求发到 ${_account!.serverBaseUrl}/v1/llm，'
+                              '密钥由服务端保管；每日额度用完后可以改用自己的 API Key。'
+                        : '还没有登录。登录之后才能使用知新服务；现在仍可以使用自填 Key。',
+                    style: theme.text.bodySmall.copyWith(
+                      color: signedIn
+                          ? theme.colors.onSurfaceVariant
+                          : theme.colors.error,
+                    ),
+                  ),
+                  SizedBox(height: context.zhixin.space.gap),
+                ],
                 forui.FTextField(
                   control: .managed(controller: _model),
                   label: const Text('模型名'),
                   description: const Text('需要模型支持工具调用（function calling）'),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
-                forui.FTextField(
-                  control: .managed(controller: _key),
-                  obscureText: true,
-                  label: const Text('API Key'),
-                ),
+                if (_source == LlmSource.custom) ...[
+                  forui.FTextField(
+                    control: .managed(controller: _key),
+                    obscureText: true,
+                    label: const Text('API Key'),
+                  ),
+                  SizedBox(height: context.zhixin.space.gap),
+                ],
                 SizedBox(height: context.zhixin.space.gap),
                 forui.FTextField(
                   control: .managed(controller: _contextWindow),
@@ -761,7 +855,8 @@ class _SettingsPageState extends State<SettingsPage> {
         ?_resultFor(_Area.danger),
         SizedBox(height: theme.space.md),
         Text(
-          '知新是开源学习搭子，学习数据保存在本机；模型调用使用你配置的 API Key，费用由模型服务商按用量结算。',
+          '知新是开源学习搭子，学习数据默认保存在本机；登录之后才会使用项目组自建服务端的'
+          '云端备份、增量同步与模型代理，模型调用也可以自填 API Key 直连提供方。',
           style: theme.text.bodySmall,
         ),
       ],

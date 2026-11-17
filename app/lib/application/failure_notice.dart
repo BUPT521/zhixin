@@ -1,9 +1,12 @@
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
+import '../data/cloud/server_client.dart';
 import '../data/repository/schedule_repository.dart';
 import '../data/revisions/revision_engine.dart';
 import '../domain/models/backup_error.dart';
 import '../domain/models/material.dart';
+import 'account_service.dart';
+import 'sync_service.dart';
 
 /// 本地读写失败时给界面看的一句说明。
 ///
@@ -38,5 +41,9 @@ String? _knownMessage(Object error) => switch (error) {
   RevisionStaleHead() => error.toString(),
   LlmException(:final shortText) => '模型调用失败（$shortText）',
   LlmConfigReadFailure() => '读取模型配置失败',
+  ServerProblem(:final userMessage) => userMessage,
+  AccountSignedOut(:final userMessage) => userMessage,
+  AccountConfigException(:final message) => message,
+  SyncSchemaMismatch() => error.toString(),
   _ => null,
 };

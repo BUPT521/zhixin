@@ -37,6 +37,9 @@ type Store interface {
 	List(ctx context.Context, userID string) ([]Meta, error)
 	Open(ctx context.Context, userID, id string) (Meta, io.ReadCloser, error)
 	Delete(ctx context.Context, userID, id string) error
+	// DeleteAll removes every snapshot of the account, metadata and bytes.
+	// An empty account is not an error; a failure anywhere is returned.
+	DeleteAll(ctx context.Context, userID string) error
 }
 
 func newID() string {
@@ -109,6 +112,15 @@ func (m *MemoryStore) Delete(_ context.Context, userID, id string) error {
 }
 
 func (m *MemoryStore) DeleteUser(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.items, userID)
+	return nil
+}
+
+// DeleteAll 清空一个账号的备份：元数据与字节在内存实现里是同一份数据，
+// 一次删掉即可，空账号不算错误。
+func (m *MemoryStore) DeleteAll(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, userID)

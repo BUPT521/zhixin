@@ -5,7 +5,10 @@ import 'package:material_ui/material_ui.dart';
 
 import 'ai/ai_chat_service.dart';
 import 'app_services.dart';
+import 'ai/llm_config.dart';
 import 'ai/llm_config_store.dart';
+import 'application/account_service.dart';
+import 'application/cloud_backup_service.dart';
 import 'application/context_service.dart';
 import 'application/brought_sources.dart';
 import 'application/capacity_service.dart';
@@ -25,12 +28,15 @@ import 'application/search_service.dart';
 import 'application/service_runtime.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
+import 'application/sync_service.dart';
 import 'application/time_policy_controller.dart';
 import 'application/undo_service.dart';
 import 'data/backup/data_package_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
 import 'data/attachment_store.dart';
+import 'data/cloud/account_store.dart';
+import 'data/cloud/cloud_preferences_store.dart';
 import 'data/db/app_database.dart';
 import 'data/db/database_gate.dart';
 import 'data/db/guarded_database.dart';
@@ -120,6 +126,16 @@ class AppScopeState extends State<AppScope> {
 
   late LlmConfigStore _llmStore;
   AiChatService? _configuredAi;
+
+  /// 账号与云同步：令牌在 Keystore，服务地址与同步游标在应用私有目录。
+  AccountService? _accountService;
+  late final CloudPreferencesStore _cloudPreferences;
+  CloudBackupService? _cloudBackups;
+  SyncService? _cloudSync;
+
+  AccountService get _account => _accountService!;
+  CloudBackupService get _backups => _cloudBackups!;
+  SyncService get _sync => _cloudSync!;
 
   /// 第一方插件运行时；启动时装载，整库恢复与清空之后重读 app_meta。
   PluginRuntime? _pluginRuntime;
@@ -241,9 +257,10 @@ class AppScopeState extends State<AppScope> {
       runtime: _pluginRuntime!,
       personas: _pluginRuntime!.personas,
     ),
+    account: AccountServices(account: _account, backups: _backups, sync: _sync),
   );
 
-  /// 讨论与作答、安排与学习、材料与检索、记忆、设置、数据版本、插件七组服务。
+  /// 讨论、作答、安排、材料、记忆、设置、数据版本、插件与账号九组服务。
   AppServices get services => _services;
 
   ChatServices get chat => _services.chat;
@@ -257,6 +274,8 @@ class AppScopeState extends State<AppScope> {
   SettingsServices get settings => _services.settings;
 
   DataServices get data => _services.data;
+
+  AccountServices get accountServices => _services.account;
 
   late final _transactions = WriteTransactions(_db);
   late final _settings = SettingsRepository(_db);
@@ -383,6 +402,7 @@ class AppScopeState extends State<AppScope> {
     runtime: _runtime,
     timePolicy: _timePolicy,
     dataVersions: _dataVersions,
+    authorizeConfig: (config) => _account.prepareModelConfig(config),
   );
 
   /// 撤销的应用层入口；撤销成功之后由它刷新截止小时，数据层不引 application。
@@ -458,7 +478,16 @@ class AppScopeState extends State<AppScope> {
     _db = GuardedDatabase(gate: _gate, resolve: () => _connection!);
     _db.onCommitted = _onCommitted;
     _llmStore = LlmConfigStore(SecureSecretStore());
-    _configuredAi = AiChatService(store: _llmStore);
+    _cloudPreferences = CloudPreferencesStore(filesDir: paths.filesDir);
+    _accountService = AccountService(
+      store: AccountStore(SecureSecretStore()),
+      preferences: _cloudPreferences,
+      deviceName: '知新 ${appVersion.split('+').first}',
+    );
+    _configuredAi = AiChatService(
+      store: _llmStore,
+      configSource: _configuredModelConfig,
+    );
     _dataPackages = DataPackageService(
       filesDir: paths.filesDir,
       dbPath: paths.dbPath,
@@ -498,6 +527,25 @@ class AppScopeState extends State<AppScope> {
       clock: clock,
     );
     _restorePoints = RestorePointStore(filesDir: paths.filesDir, clock: clock);
+    _cloudBackups = CloudBackupService(
+      account: _account,
+      versions: _dataVersions,
+      filesDir: paths.filesDir,
+      clock: clock,
+    );
+    _cloudSync = SyncService(
+      account: _account,
+      preferences: _cloudPreferences,
+      revisions: _revisions,
+      engine: _engine,
+      database: _db,
+      transactions: _transactions,
+      assets: _engine.assets,
+      cache: _attachmentCache,
+      clock: clock,
+      recordFailure: (error, stack, {required kind}) =>
+          crashLog.record(error, stack, kind: kind),
+    );
     final embeddingConfig = await _embeddingSettings.read();
     _embeddingSettings.apply(embeddingConfig);
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
@@ -507,6 +555,17 @@ class AppScopeState extends State<AppScope> {
     // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
     // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
     _scheduleAttachmentMaintenance();
+    // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。
+    unawaited(_sync.schedule());
+  }
+
+  /// 读取模型配置；选择知新服务时换成当前账号的访问令牌。
+  ///
+  /// 令牌不进 Keystore，每次回答前从这里取；没有登录时返回 null，回答按未
+  /// 配置退回本地兜底，设置页另有说明。
+  Future<LlmConfig?> _configuredModelConfig() async {
+    final stored = await _llmStore.read();
+    return _account.authorizeModelConfig(stored);
   }
 
   /// 首帧交出之后在后台整理附件：先删掉数据库不再引用的图片，必要时补建缓存。
@@ -600,6 +659,9 @@ class AppScopeState extends State<AppScope> {
 
   /// 一次提交落库之后调用：来源表变了就排在安静期之后补建索引。
   void _onCommitted(Set<String> tables) {
+    // 登录之后写入随自动同步推到服务端；同步本身应用的远端提交也会走到这里，
+    // 这时没有待推送的提交，下一次同步只做一次位置核对。
+    _cloudSync?.schedule();
     if (!tables.any(_semanticSourceTables.contains)) return;
     _refreshSemanticIndex();
   }
@@ -619,6 +681,8 @@ class AppScopeState extends State<AppScope> {
   @override
   void dispose() {
     _semanticRefreshTimer?.cancel();
+    _cloudSync?.dispose();
+    _accountService?.dispose();
     _configuredAi?.dispose();
     final semantic = __semantic;
     if (semantic != null) unawaited(semantic.close());

@@ -36,6 +36,20 @@ class RevisionHistory {
   }
 }
 
+/// 应用一条远端提交的结果：本机新生成的提交编号（没有净变化时为空）与因
+/// 本机状态对不上而跳过的条数；[duplicate] 表示这个请求编号已经应用过。
+class RemoteApplyResult {
+  const RemoteApplyResult({
+    required this.commit,
+    required this.skipped,
+    required this.duplicate,
+  });
+
+  final RevisionCommit? commit;
+  final int skipped;
+  final bool duplicate;
+}
+
 /// 页面与设置入口使用的一层：历史、比较、命名、撤销、整版恢复、留存与清理。
 ///
 /// 读写都经同一个 [GuardedDatabase]，恢复和清理走独占区；重建与比较在独占区
@@ -168,6 +182,40 @@ class RevisionService {
       return (commit: commit, cacheWarning: cacheWarning);
     });
   }
+
+  /// 应用一条远端提交：本机因此生成一条同样的净变化提交，撤销与数据版本页
+  /// 照常可用；请求编号沿用远端的，服务端重复下发时不会在本机叠加第二次。
+  Future<RemoteApplyResult> applyRemoteCommit({
+    required String requestId,
+    required String action,
+    required String actor,
+    required List<RevisionChange> changes,
+  }) async {
+    final existing = await engine.commitByRequest(db.raw, requestId);
+    if (existing != null) {
+      return RemoteApplyResult(commit: existing, skipped: 0, duplicate: true);
+    }
+    var skipped = 0;
+    await db.command<RevisionCommit?>(
+      (txn) async {
+        skipped = await engine.applyChanges(txn, changes);
+        return null;
+      },
+      label: action,
+      actor: actor,
+      requestId: requestId,
+      onDuplicate: (_) => null,
+    );
+    return RemoteApplyResult(
+      commit: await engine.commitByRequest(db.raw, requestId),
+      skipped: skipped,
+      duplicate: false,
+    );
+  }
+
+  /// 编号大于 [after] 的提交，推送前从这里取；编号已经由版本引擎分配。
+  Future<List<RevisionCommit>> commitsAfter(int after) =>
+      engine.commitsAfter(db.raw, after);
 
   Future<RevisionRef> name(
     int commitId, {

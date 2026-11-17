@@ -36,7 +36,7 @@ flutter analyze
 flutter test
 ```
 
-CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同一套表结构，不必起模拟器；备份与恢复预检的只读副本用 `package:sqlite3` 打开，和执行器是同一个实现。语义索引的契约测试与后台 isolate 用例在 `ZVEC_LIBRARY_PATH` 没有设置时跳过并打印原因，CI 的 Linux 任务会设置这个变量。
+CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同一套表结构，不必起模拟器；备份与恢复预检的只读副本用 `package:sqlite3` 打开，和执行器是同一个实现。语义索引的契约测试与后台 isolate 用例在 `ZVEC_LIBRARY_PATH` 没有设置时跳过并打印原因，CI 的 Linux 任务会设置这个变量。账号与云同步的用例用 `test/support/fake_server.dart` 的进程内假服务端走登录、刷新、备份、提交序列与附件的往返，不访问网络；服务端自己的行为由 `server/` 下的 Go 用例覆盖。
 
 ## 目录
 
@@ -44,14 +44,15 @@ CI 跑的就是这三条。测试用 drift 的内存库在 Dart VM 里执行同�
 assets/prompts/                              ← 系统提示、上下文说明、请求文本与工具说明，按段落读取
 lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
-├── app_services.dart                        ← 七组服务（讨论、安排、材料、记忆、设置、数据版本、插件）
+├── app_services.dart                        ← 八组服务（讨论、安排、材料、记忆、设置、数据版本、插件、账号）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
-├── application/                            ← 用例：对话、学习、计划、记忆、设置
+├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步
 ├── data/
 │   ├── db/                                 ← drift 表结构与索引（docs/01 的唯一结构来源）、开库、访问协调、关键词索引
 │   │   └── drift/queries/                  ← 一张表一个 .drift 文件，由 build_runner 生成类型化方法
 │   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
 │   ├── backup/                             ← zip 导出、旧数据版本、暂存校验与分阶段恢复
+│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址与同步游标
 │   ├── diagnostics/                        ← 本机崩溃记录与自建 Sentry 上报
 │   └── repository/                         ← 讨论、作答、目标、事项、日程、记忆与设置
 ├── domain/
@@ -60,7 +61,7 @@ lib/
 ├── plugins/
 │   ├── runtime/                            ← 清单、插件接口、四个权限门面、运行时与设置读写接口
 │   └── persona/                            ← 人格插件：对象与 800 字校验、内置人格、app_meta 存储
-└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、关于；页面导航在 navigation.dart，文案在 copy.dart
+└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、账号、云端备份、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
 `ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
@@ -73,7 +74,7 @@ lib/
 
 ### 下一阶段的模块化建议
 
-建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供七组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口，语义索引配置经 `application/embedding_settings.dart` 保存与应用。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及把 `plan_page.dart` 的页签继续拆开（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 的页面重读已经换成订阅）。
+建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供八组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口，语义索引配置经 `application/embedding_settings.dart` 保存与应用。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及把 `plan_page.dart` 的页签继续拆开（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 的页面重读已经换成订阅）。
 
 1. **第一批从安排开始，周视图与读取状态已经拆开。** `plan_page.dart` 原先同时控制周视图、预约与改期、事项列表和页面刷新；现在周视图移到 `plan_week_view.dart`，只接收当前周的数据与选周、点击回调，并自己创建、更新与释放日历的事件控制器，页面只保存当前目标周并订阅 `PlanService.watchWeek` 一条流，换周时换一条新流（原 `application/plan_week_reader.dart` 的请求编号与过期结果判断已随订阅下线）。预约冲突检查、整组顺延与撤销沿用现有事务入口，首批以周切换状态、固定安排冲突和一次操作对应一条可撤销提交验收。
 2. **随后收拢讨论与作答的回答入口。** `BuddyTimeline` 已经共用消息与回执展示，讨论和作答仍分别维护模型请求、失败兜底与写回流程，可以先共用回答请求的取消、失败分类和数据代次检查，同时让两个用例继续各自保存讨论消息、作答帮助与判断。`LlmClient` 的三种请求格式与流式解码适合按协议整理，`AgentLoop` 继续统一控制整轮预算、重试和工具调用顺序；这一批以无模型可用、停止生成、工具续接及恢复后拒绝旧回答为验收场景。
@@ -131,7 +132,7 @@ lib/
 
 ## 模型
 
-设置页填接口风格、接口地址、模型名与 API Key，默认 `Chat Completions`、`https://api.deepseek.com/v1` 与 `deepseek-flash`。key 存在 Android Keystore，不进仓库、不写日志；应用不内置密钥。登录用户可以选择“知新服务”作为模型来源，接口风格固定为 Chat Completions，地址为服务端的 `/v1/llm`，访问令牌代替 key，客户端入口尚未实现，见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)。接口风格由用户显式选择，不按域名猜：同一家服务商的不同地址可能只支持其中一种，猜错时只能看到 404 或 400。
+设置页填接口风格、接口地址、模型名与 API Key，默认 `Chat Completions`、`https://api.deepseek.com/v1` 与 `deepseek-flash`。key 存在 Android Keystore，不进仓库、不写日志；应用不内置密钥。登录用户可以在设置页把模型来源改为“知新服务”：接口风格固定为 Chat Completions，地址由服务地址拼出 `/v1/llm`，访问令牌代替 key，令牌过期时先刷新再用，额度用完时改用自己的 key；客户端入口在 `lib/application/account_service.dart` 与 `lib/ai/ai_chat_service.dart` 的配置来源里，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)。接口风格由用户显式选择，不按域名猜：同一家服务商的不同地址可能只支持其中一种，猜错时只能看到 404 或 400。
 
 三种风格共用一个传输层。地址只填域名时补 `/v1`，Anthropic 按 `base/v1/messages` 拼接（`https://api.deepseek.com/anthropic` 因此得到 `/anthropic/v1/messages`）。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限在 OpenAI 官方用 `max_completion_tokens`、其余实现用 `max_tokens`，指向 DeepSeek 时带 `{"thinking":{"type":"disabled"}}`；Responses 发顶层 `instructions`、`input`（`input_text`、`output_text`、`input_image` 的 data URL，工具用 `{type:function,name,parameters,strict:false}`）与 `max_output_tokens`，指向 DeepSeek 时带 `{"reasoning":{"effort":"none"}}`；Anthropic Messages 用 `x-api-key` 与 `anthropic-version: 2023-06-01` 鉴权，system 放顶层，工具用 `input_schema`，图片是 `{type:image,source:{type:base64,…}}` 块，指定工具时 `tool_choice` 取 `{"type":"tool","name":…}`。
 
@@ -146,6 +147,16 @@ lib/
 设置页可以填写模型的上下文上限，应用据此估算输入容量并预留输出空间。连接测试用一次最小工具请求检查模型或地址能否返回可解析的工具参数。
 
 没有配置、断网或调用失败时，讨论、题目、尝试、日程与记忆仍可查看与记录，下一步由本地规则给出，并标明来源。
+
+## 账号与云同步
+
+账号可选。`lib/data/cloud/server_client.dart` 是服务端的最小 HTTP 客户端，只拼路径、解 JSON 与把错误统一成 `ServerProblem`；账号会话、令牌刷新、退出登录、删除账号与“知新服务”配置在 `lib/application/account_service.dart`，令牌与设备标识只写 Android Keystore（`lib/data/cloud/account_store.dart`），服务地址、自动同步开关与同步游标写在应用私有目录的 `cloud.json`（`lib/data/cloud/cloud_preferences_store.dart`），不进入数据库、数据包与整库备份。
+
+云端备份在 `lib/application/cloud_backup_service.dart`：上传时用与“备份版本库”相同的 `VACUUM INTO` 快照生成 zip，计算 SHA-256 之后按契约上传，服务端按保留份数删除最旧的；列表、下载与删除都按账号隔离，下载后先核对响应头里的哈希，再交给本机已有的预检、确认与恢复点流程替换数据库。页面在 `lib/ui/account_page.dart` 与 `lib/ui/cloud_backup_page.dart`，从设置页和数据版本页进入。
+
+增量同步在 `lib/application/sync_service.dart`。第一次同步先拉取服务端已有的提交并在本机应用，再把当前业务投影作为基线上传，之后只推送新提交；拉取到的远端提交经 `RevisionService.applyRemoteCommit` 在本机生成一条同样净变化的提交，撤销与数据版本页照常可用，远端提交的请求编号沿用到本机，重复下发不会叠加。附件按内容哈希随提交上传与下载，拉取时核对哈希；服务端位置变化返回 409 时先拉取再重推，同一字段两台设备同时修改时后到达的覆盖先到达的，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md)。应用根在提交之后延迟几秒排一次同步，账号页可以手动立即同步；同步失败只记一条说明与本机诊断，本机读写不受影响。
+
+`lib/application/sync_service.dart` 只依赖 `GuardedDatabase`、版本服务与账号服务，不换库、不清空；远端提交的应用走 `GuardedDatabase.command`，因此与普通写入共用数据库独占区、表通知与版本通知。同步游标记服务端位置、对齐到的本机提交编号与拉取时生成的提交编号，恢复备份、清空记录或删除云端数据之后下一次同步按当前数据重新对齐。
 
 ## 插件
 

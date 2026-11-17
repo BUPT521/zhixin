@@ -113,6 +113,25 @@ func (s *Store) Delete(ctx context.Context, userID, id string) error {
 	return s.objects.Remove(ctx, objectstore.BackupKey(userID, id))
 }
 
+// DeleteAll 清空一个账号的全部备份：先按账号列出备份、逐个删除对象键，再删数据库行。
+//
+// 顺序按对象键规则照搬 Delete：键由 userID 与备份 id 拼出，不扫描前缀，免得把
+// 别的账号的对象一起删掉。任何一步失败都直接返回错误，不吞掉；对象删除失败时元
+// 数据还在，重试会从列表重新开始；元数据删除失败时对象已经不在了，再删一次不算
+// 错误（objectstore.Remove 的约定），所以整个操作可以重试。
+func (s *Store) DeleteAll(ctx context.Context, userID string) error {
+	rows, err := s.q.ListBackups(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := s.objects.Remove(ctx, objectstore.BackupKey(userID, row.ID)); err != nil {
+			return err
+		}
+	}
+	return s.q.DeleteBackups(ctx, userID)
+}
+
 // Used 返回当天已用的 token 数；没有记录时是 0。
 func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
 	date, err := pgDate(day)

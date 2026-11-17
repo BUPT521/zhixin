@@ -33,10 +33,31 @@ enum LlmApi {
   };
 }
 
+/// 模型来源：自填 Key 直连提供方，或登录之后使用服务端代理。
+///
+/// 选择“知新服务”时地址与接口风格由服务端决定，key 用账号的访问令牌临时替换，
+/// 不写入本机配置；令牌过期或退出登录时回答退回本地兜底（ADR-0008、ADR-0009）。
+enum LlmSource {
+  custom('custom', '自填 Key'),
+  server('server', '知新服务');
+
+  const LlmSource(this.value, this.label);
+
+  final String value;
+  final String label;
+
+  static LlmSource fromValue(String? value) {
+    for (final source in values) {
+      if (source.value == value) return source;
+    }
+    return LlmSource.custom;
+  }
+}
+
 /// 模型配置：key 存 Android Keystore，接口风格、地址、模型名都可改。
 ///
 /// 默认 DeepSeek V4.1 flash 的 Chat Completions；key 只存在设备上，不进仓库、
-/// 不写日志。
+/// 不写日志。选择知新服务时不保存访问令牌，运行时由账号服务填入。
 class LlmConfig {
   const LlmConfig({
     this.api = LlmApi.chat,
@@ -45,6 +66,7 @@ class LlmConfig {
     this.apiKey = '',
     this.allowImages = true,
     this.contextWindowTokens = defaultContextWindowTokens,
+    this.source = LlmSource.custom,
   });
 
   static const String defaultBaseUrl = 'https://api.deepseek.com/v1';
@@ -56,6 +78,9 @@ class LlmConfig {
   final String model;
   final String apiKey;
 
+  /// 回答走自填 Key 还是登录后的服务端代理。
+  final LlmSource source;
+
   /// 是否允许把原题图片发给模型；关闭后只能手填或纯文字讲题。
   final bool allowImages;
   final int contextWindowTokens;
@@ -63,10 +88,32 @@ class LlmConfig {
   int get outputTokenLimit =>
       math.min(buddyMaxOutputTokens, math.max(1, contextWindowTokens ~/ 4));
 
+  bool get isServer => source == LlmSource.server;
+
   bool get isConfigured =>
       baseUrl.trim().isNotEmpty &&
       model.trim().isNotEmpty &&
       apiKey.trim().isNotEmpty;
+
+  LlmConfig copyWith({
+    LlmApi? api,
+    String? baseUrl,
+    String? model,
+    String? apiKey,
+    bool? allowImages,
+    int? contextWindowTokens,
+    LlmSource? source,
+  }) {
+    return LlmConfig(
+      api: api ?? this.api,
+      baseUrl: baseUrl ?? this.baseUrl,
+      model: model ?? this.model,
+      apiKey: apiKey ?? this.apiKey,
+      allowImages: allowImages ?? this.allowImages,
+      contextWindowTokens: contextWindowTokens ?? this.contextWindowTokens,
+      source: source ?? this.source,
+    );
+  }
 
   /// 换了接口地址却还带着旧地址的 Key：测试或保存前要拦住，避免把凭据发到
   /// 新地址，也避免用户以为已经验证过新配置。
@@ -114,6 +161,7 @@ class LlmConfig {
     'api_key': apiKey,
     'allow_images': allowImages ? '1' : '0',
     'context_window_tokens': contextWindowTokens.toString(),
+    'source': source.value,
   };
 
   factory LlmConfig.fromJson(Map<String, Object?> json) {
@@ -129,6 +177,7 @@ class LlmConfig {
       contextWindowTokens: window != null && window > 0
           ? window
           : defaultContextWindowTokens,
+      source: LlmSource.fromValue(json['source'] as String?),
     );
   }
 }

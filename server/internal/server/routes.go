@@ -58,6 +58,7 @@ func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params
 func (rt routes) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 	rt.sync.Push(w, r)
 }
+func (rt routes) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) { rt.sync.Reset(w, r) }
 
 func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
 	rt.blobs.Get(w, r, sha256)
@@ -70,6 +71,9 @@ func (rt routes) PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256
 }
 
 func (rt routes) GetV1Backups(w http.ResponseWriter, r *http.Request) { rt.backups.List(w, r) }
+func (rt routes) DeleteV1Backups(w http.ResponseWriter, r *http.Request) {
+	rt.backups.DeleteAll(w, r)
+}
 func (rt routes) PostV1Backups(w http.ResponseWriter, r *http.Request, params api.PostV1BackupsParams) {
 	rt.backups.Upload(w, r, params)
 }

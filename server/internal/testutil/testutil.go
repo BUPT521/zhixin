@@ -126,6 +126,10 @@ func (Base) PostV1AuthRegister(w http.ResponseWriter, _ *http.Request) {
 }
 func (Base) GetV1Backups(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
 
+func (Base) DeleteV1Backups(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
 func (Base) PostV1Backups(w http.ResponseWriter, _ *http.Request, _ api.PostV1BackupsParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
@@ -159,6 +163,10 @@ func (Base) GetV1LlmModels(w http.ResponseWriter, _ *http.Request) {
 }
 func (Base) GetV1LlmQuota(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
 func (Base) GetV1SyncHead(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
+
+func (Base) DeleteV1SyncCommits(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
 
 func (Base) GetV1SyncCommits(w http.ResponseWriter, _ *http.Request, _ api.GetV1SyncCommitsParams) {
 	w.WriteHeader(http.StatusNotFound)

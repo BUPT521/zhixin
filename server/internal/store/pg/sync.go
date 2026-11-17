@@ -92,6 +92,34 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 	return newHead, nil
 }
 
+// Reset 在一个事务里清空账号的提交序列并把 head 重置为 0。
+//
+// 与 Append 走同一套顺序：先 EnsureSyncHead 保证 head 行存在，再 LockSyncHead 锁住
+// 它，删完提交后 SetSyncHead 写回 0。这样并发的推送要么在锁前完成、要么在重置之后
+// 从 0 重新开始，不会把旧序号接着用下去。
+func (s *Store) Reset(ctx context.Context, userID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	if err := q.EnsureSyncHead(ctx, userID); err != nil {
+		return err
+	}
+	if _, err := q.LockSyncHead(ctx, userID); err != nil {
+		return err
+	}
+	if err := q.DeleteSyncCommits(ctx, userID); err != nil {
+		return err
+	}
+	if err := q.SetSyncHead(ctx, db.SetSyncHeadParams{UserID: userID, Head: 0}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // After 返回 seq 大于 after 的提交，按顺序最多 limit 条。
 func (s *Store) After(ctx context.Context, userID string, after int64, limit int) ([]syncsvc.Commit, error) {
 	rows, err := s.q.CommitsAfter(ctx, db.CommitsAfterParams{

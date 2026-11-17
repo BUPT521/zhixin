@@ -72,3 +72,41 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 		t.Fatalf("pull = %+v, %v", page, err)
 	}
 }
+
+// TestServiceResetClearsLog 守住重置的范围：只清指定账号的序列并把 head 归零，
+// 另一个账号不受影响；重置之后从 0 重新推送可以正常分配序号，空序列再重置一次
+// 不算错误。
+func TestServiceResetClearsLog(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryStore(), 27)
+
+	if head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}); err != nil || head != 2 {
+		t.Fatalf("push u1: head %d, err %v", head, err)
+	}
+	if head, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("other", 27)}); err != nil || head != 1 {
+		t.Fatalf("push u2: head %d, err %v", head, err)
+	}
+
+	if err := svc.Reset(ctx, "u1"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if head, err := svc.Head(ctx, "u1"); err != nil || head != 0 {
+		t.Fatalf("head after reset = %d, %v", head, err)
+	}
+	page, err := svc.Pull(ctx, "u1", nil, nil)
+	if err != nil || len(page.Commits) != 0 || page.Head != 0 || page.HasMore {
+		t.Fatalf("pull after reset = %+v, %v", page, err)
+	}
+	// 重置之后序号从 1 重新开始。
+	if head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); err != nil || head != 1 {
+		t.Fatalf("push after reset: head %d, err %v", head, err)
+	}
+
+	if head, err := svc.Head(ctx, "u2"); err != nil || head != 1 {
+		t.Fatalf("other account head = %d, %v", head, err)
+	}
+
+	if err := svc.Reset(ctx, "u1"); err != nil {
+		t.Fatalf("second reset: %v", err)
+	}
+}

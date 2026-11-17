@@ -27,6 +27,12 @@ WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 DELETE FROM backup
 WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
+-- 清空一个账号的全部备份。字节由调用方先按 ListBackups 的结果逐个删除对象键，
+-- 再调用这一句删元数据行。
+-- name: DeleteBackups :exec
+DELETE FROM backup
+WHERE user_id = sqlc.arg(user_id);
+
 
 -- 只保留最新的若干份；返回被删掉的那些 id，调用方据此删除对象存储里的字节。
 -- name: TrimBackups :many

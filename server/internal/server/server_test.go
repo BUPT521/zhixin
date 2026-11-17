@@ -165,6 +165,112 @@ func blobSHA(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// commitRequest 造一条能通过契约校验的提交，用于端到端的推送与清空。
+func commitRequest(requestID string) map[string]any {
+	return map[string]any{
+		"request_id":     requestID,
+		"device_id":      "device-a",
+		"schema_version": ClientSchemaVersion,
+		"actor":          "user",
+		"action":         "create_plan_item",
+		"created_at":     "2026-11-14 09:00:00",
+		"changes": []map[string]any{{
+			"table": "plan_item", "row_key": "01JD", "op": "insert",
+			"after": map[string]any{"title": "复习第三章"},
+		}},
+	}
+}
+
+// TestClearCloudDataKeepsAccount 是设置页“清除云端数据（保留账号）”的端到端用例：
+// 上传备份并推送提交之后调用两个 DELETE，本账号的备份列表为空、head 为 0，
+// 账号仍然可用且序列从 0 重新开始，另一个账号的数据不受影响，未带令牌返回 401。
+func TestClearCloudDataKeepsAccount(t *testing.T) {
+	h := newHarness(t, nil)
+	owner := h.signUp("clear@b.cn")
+	other := h.signUp("keep@b.cn")
+
+	push := func(token, requestID string) {
+		t.Helper()
+		var result struct {
+			Head int64 `json:"head"`
+		}
+		if code := h.json("POST", "/v1/sync/commits", token, map[string]any{
+			"base_seq": 0,
+			"commits":  []any{commitRequest(requestID)},
+		}, &result); code != http.StatusOK || result.Head != 1 {
+			t.Fatalf("push %s: %d %+v", requestID, code, result)
+		}
+	}
+	if resp := upload(h, owner, []byte("zip-owner"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("owner upload: %d", resp.StatusCode)
+	}
+	if resp := upload(h, other, []byte("zip-other"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("other upload: %d", resp.StatusCode)
+	}
+	push(owner, "r-owner")
+	push(other, "r-other")
+
+	if code := h.json("DELETE", "/v1/backups", owner, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("clear backups: %d", code)
+	}
+	if code := h.json("DELETE", "/v1/sync/commits", owner, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("clear commits: %d", code)
+	}
+
+	var list struct {
+		Backups []struct {
+			ID string `json:"id"`
+		} `json:"backups"`
+	}
+	h.json("GET", "/v1/backups", owner, nil, &list)
+	if len(list.Backups) != 0 {
+		t.Fatalf("owner backups survived: %+v", list)
+	}
+	h.json("GET", "/v1/backups", other, nil, &list)
+	if len(list.Backups) != 1 {
+		t.Fatalf("other account backups changed: %+v", list)
+	}
+
+	var head struct {
+		Head int64 `json:"head"`
+	}
+	h.json("GET", "/v1/sync/head", owner, nil, &head)
+	if head.Head != 0 {
+		t.Fatalf("owner head after clear: %+v", head)
+	}
+	h.json("GET", "/v1/sync/head", other, nil, &head)
+	if head.Head != 1 {
+		t.Fatalf("other account head changed: %+v", head)
+	}
+
+	// 账号本身保留，清空之后可以继续使用：再次上传备份、从 0 重新推送。
+	if code := h.json("GET", "/v1/me", owner, nil, nil); code != http.StatusOK {
+		t.Fatalf("account disappeared: %d", code)
+	}
+	if resp := upload(h, owner, []byte("zip-again"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload after clear: %d", resp.StatusCode)
+	}
+	push(owner, "r-again")
+	if code := h.json("DELETE", "/v1/backups", owner, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("second clear backups: %d", code)
+	}
+	if code := h.json("DELETE", "/v1/sync/commits", owner, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("second clear commits: %d", code)
+	}
+
+	// 两个接口都要求鉴权，缺令牌时由中间件返回 401 problem。
+	for _, path := range []string{"/v1/backups", "/v1/sync/commits"} {
+		resp := h.do("DELETE", path, "", nil, nil)
+		var p problem
+		if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+			t.Fatalf("DELETE %s: decode: %v", path, err)
+		}
+		if resp.StatusCode != http.StatusUnauthorized || p.Code != "unauthorized" {
+			t.Fatalf("DELETE %s anonymous: %d %+v", path, resp.StatusCode, p)
+		}
+	}
+}
+
 func TestAuthRateLimitReturns429(t *testing.T) {
 	// 每秒 0.0001 个令牌、初始 1 个：第二次请求必定被拒。
 	h := newHarness(t, map[string]string{
@@ -341,6 +447,10 @@ func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit)
 
 func (failingSyncStore) After(context.Context, string, int64, int) ([]syncsvc.Commit, error) {
 	return nil, errors.New("database is down")
+}
+
+func (failingSyncStore) Reset(context.Context, string) error {
+	return errors.New("database is down")
 }
 
 func TestInternalErrorsAreProblems(t *testing.T) {

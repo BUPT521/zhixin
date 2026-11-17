@@ -378,6 +378,9 @@ type ServerInterface interface {
 	// PostV1AuthRegister 注册并登录当前设备（按来源地址限流，与登录共用一个令牌桶）
 	// (POST /v1/auth/register)
 	PostV1AuthRegister(w http.ResponseWriter, r *http.Request)
+	// DeleteV1Backups 清空该账号的全部整库备份
+	// (DELETE /v1/backups)
+	DeleteV1Backups(w http.ResponseWriter, r *http.Request)
 	// GetV1Backups 列出整库备份，新的在前
 	// (GET /v1/backups)
 	GetV1Backups(w http.ResponseWriter, r *http.Request)
@@ -414,6 +417,9 @@ type ServerInterface interface {
 	// GetV1Me 当前账号
 	// (GET /v1/me)
 	GetV1Me(w http.ResponseWriter, r *http.Request)
+	// DeleteV1SyncCommits 清空该账号的提交序列，服务端 head 重置为 0
+	// (DELETE /v1/sync/commits)
+	DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request)
 	// GetV1SyncCommits 拉取 seq 大于 after 的提交
 	// (GET /v1/sync/commits)
 	GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params GetV1SyncCommitsParams)
@@ -509,6 +515,20 @@ func (siw *ServerInterfaceWrapper) PostV1AuthRegister(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostV1AuthRegister(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteV1Backups operation middleware
+func (siw *ServerInterfaceWrapper) DeleteV1Backups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteV1Backups(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -819,6 +839,20 @@ func (siw *ServerInterfaceWrapper) GetV1Me(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteV1SyncCommits operation middleware
+func (siw *ServerInterfaceWrapper) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteV1SyncCommits(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetV1SyncCommits operation middleware
 func (siw *ServerInterfaceWrapper) GetV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 
@@ -1022,11 +1056,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me", wrapper.DeleteV1Me)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetV1Me)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/head", wrapper.GetV1SyncHead)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/sync/commits", wrapper.DeleteV1SyncCommits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/commits", wrapper.GetV1SyncCommits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/sync/commits", wrapper.PostV1SyncCommits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/blobs/{sha256}", wrapper.GetV1BlobsSha256)
 	m.HandleFunc(http.MethodHead+" "+options.BaseURL+"/v1/blobs/{sha256}", wrapper.HeadV1BlobsSha256)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/blobs/{sha256}", wrapper.PutV1BlobsSha256)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/backups", wrapper.DeleteV1Backups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/backups", wrapper.GetV1Backups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/backups", wrapper.PostV1Backups)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/backups/{id}", wrapper.DeleteV1BackupsId)

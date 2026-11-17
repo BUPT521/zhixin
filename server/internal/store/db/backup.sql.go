@@ -78,6 +78,18 @@ func (q *Queries) DeleteBackup(ctx context.Context, arg DeleteBackupParams) erro
 	return err
 }
 
+const deleteBackups = `-- name: DeleteBackups :exec
+DELETE FROM backup
+WHERE user_id = $1
+`
+
+// 清空一个账号的全部备份。字节由调用方先按 ListBackups 的结果逐个删除对象键，
+// 再调用这一句删元数据行。
+func (q *Queries) DeleteBackups(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteBackups, userID)
+	return err
+}
+
 const insertBackup = `-- name: InsertBackup :exec
 
 INSERT INTO backup (

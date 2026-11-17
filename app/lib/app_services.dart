@@ -1,5 +1,7 @@
 import 'ai/ai_chat_service.dart';
+import 'application/account_service.dart';
 import 'application/capacity_service.dart';
+import 'application/cloud_backup_service.dart';
 import 'application/continue_service.dart';
 import 'application/context_service.dart';
 import 'application/discussion_service.dart';
@@ -13,13 +15,14 @@ import 'application/search_service.dart';
 import 'application/semantic_index_service.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
+import 'application/sync_service.dart';
 import 'application/undo_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/revisions/revision_service.dart';
 import 'plugins/persona/persona_catalog.dart';
 import 'plugins/runtime/plugin_runtime.dart';
 
-/// 应用根持有的全部服务，按使用场景分成七组。
+/// 应用根持有的全部服务，按使用场景分成八组。
 ///
 /// 页面只从这里取服务，装配顺序仍留在 [AppScopeState]；分组只决定从哪里
 /// 找，不改变服务之间的依赖。
@@ -32,6 +35,7 @@ class AppServices {
     required this.settings,
     required this.data,
     required this.plugins,
+    required this.account,
   });
 
   final ChatServices chat;
@@ -41,6 +45,7 @@ class AppServices {
   final SettingsServices settings;
   final DataServices data;
   final PluginServices plugins;
+  final AccountServices account;
 }
 
 /// 讨论与作答：两条回答路径共用同一份上下文、记忆范围与提交历史。
@@ -138,4 +143,17 @@ class PluginServices {
 
   /// 人格列表与当前启用项；提示词只读启用项，页面用它列预置与切换。
   final PersonaCatalog personas;
+}
+
+/// 账号与云同步：登录状态、云端整库备份与按提交的增量同步。
+class AccountServices {
+  const AccountServices({
+    required this.account,
+    required this.backups,
+    required this.sync,
+  });
+
+  final AccountService account;
+  final CloudBackupService backups;
+  final SyncService sync;
 }

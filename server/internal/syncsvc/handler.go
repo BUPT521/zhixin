@@ -76,3 +76,14 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, api.PushResult{Head: head})
 }
+
+// Reset 清空当前账号的提交序列并把 head 重置为 0。空序列也回 204，客户端只按
+// 状态码判断，不需要先看 head 再决定调不调用。
+func (h *Handler) Reset(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r.Context())
+	if err := h.svc.Reset(r.Context(), p.UserID); err != nil {
+		httpx.WriteInternal(w, r, h.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

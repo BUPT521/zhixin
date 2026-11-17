@@ -21,6 +21,7 @@ import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'live_view.dart';
+import 'navigation.dart';
 import 'restore_flow.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
@@ -898,6 +899,12 @@ class _DataVersionPageState extends State<DataVersionPage> {
               title: const Text('备份版本库'),
               subtitle: const Text('整库快照，含历史与附件。'),
               onPress: _busy ? null : _backupRepository,
+            ),
+            forui.FTile(
+              prefix: const LeadingIcon(FLucideIcons.cloud),
+              title: const Text('云端备份'),
+              subtitle: const Text('登录后把版本库上传到服务端，换机时下载恢复。'),
+              onPress: _busy ? null : () => openCloudBackup(context),
             ),
             const SectionHeading(title: '导入与恢复'),
             forui.FTile(

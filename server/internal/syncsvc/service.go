@@ -95,3 +95,9 @@ func (s *Service) Push(
 	}
 	return s.store.Append(ctx, userID, base, commits)
 }
+
+// Reset 清空账号的提交序列并把 head 重置为 0。设置页“清除云端数据”用它把服务端
+// 恢复到空白状态；账号与整库备份不受影响，规则在这里而不是处理器里。
+func (s *Service) Reset(ctx context.Context, userID string) error {
+	return s.store.Reset(ctx, userID)
+}

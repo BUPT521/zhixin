@@ -42,6 +42,9 @@ type Store interface {
 	Append(ctx context.Context, userID string, base int64, commits []Commit) (int64, error)
 	// After returns up to limit commits with seq > after, in order.
 	After(ctx context.Context, userID string, after int64, limit int) ([]Commit, error)
+	// Reset deletes every commit of the account and sets the head back to 0.
+	// An empty log is not an error; a failure anywhere is returned.
+	Reset(ctx context.Context, userID string) error
 }
 
 // MemoryStore is a Store kept in process memory.
@@ -128,6 +131,15 @@ func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit
 }
 
 func (m *MemoryStore) DeleteUser(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.logs, userID)
+	return nil
+}
+
+// Reset 清空一个账号的提交序列。内存实现里 head 就是日志长度，删掉日志即回到 0，
+// 空账号不算错误。
+func (m *MemoryStore) Reset(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.logs, userID)
