@@ -11,6 +11,7 @@ class StoredVector {
     required this.sourceVersion,
     required this.locatorJson,
     required this.distance,
+    this.score = 0,
   });
 
   final String sourceKey;
@@ -19,6 +20,9 @@ class StoredVector {
   final String sourceVersion;
   final String locatorJson;
   final double distance;
+
+  /// 融合检索的得分，越大越相关；只有 [VectorIndex.searchHybrid] 会填。
+  final double score;
 }
 
 /// 索引条目的当前状态：用于判断来源是否需要重新嵌入。
@@ -98,6 +102,15 @@ abstract interface class VectorIndex {
 
   List<StoredVector> search(
     List<double> query, {
+    int k = 20,
+    VectorPrefilter? prefilter,
+  });
+
+  /// 一次查询同时取关键词与语义候选，按名次融合后返回；[vector] 为空时只做
+  /// 关键词一路。返回值按融合分从高到低，[StoredVector.score] 已填。
+  List<StoredVector> searchHybrid(
+    String text, {
+    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
   });

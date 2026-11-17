@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -30,6 +31,10 @@ class ZvecVectorIndex implements VectorIndex {
   );
 
   static const String _embeddingField = 'embedding';
+  static const String _contentField = 'content';
+
+  /// 融合检索的名次平滑常数，与应用层融合的取值一致。
+  static const int _rrfRankConstant = 60;
 
   /// 状态文件与 collection 目录共用的短哈希长度。
   static const int _hashLength = 16;
@@ -179,7 +184,8 @@ class ZvecVectorIndex implements VectorIndex {
         ..setIndexParams(InvertIndexParams()),
       FieldSchema(name: 'conversation_id', dataType: DataType.string)
         ..setIndexParams(InvertIndexParams()),
-      FieldSchema(name: 'content', dataType: DataType.string),
+      FieldSchema(name: 'content', dataType: DataType.string)
+        ..setIndexParams(FtsIndexParams(tokenizerName: 'jieba')),
       FieldSchema(name: 'source_version', dataType: DataType.string),
       FieldSchema(name: 'locator_json', dataType: DataType.string),
       FieldSchema(name: 'created_at', dataType: DataType.string),
@@ -623,6 +629,98 @@ class ZvecVectorIndex implements VectorIndex {
             sourceVersion: sourceVersion,
             locatorJson: locatorJson,
             distance: doc.score,
+          ),
+        );
+      }
+      return result;
+    } finally {
+      request.destroy();
+      for (final doc in docs) {
+        doc.destroy();
+      }
+    }
+  }
+
+  /// 关键词与语义两路候选在同一次查询里融合，融合方式为名次倒数相加。
+  ///
+  /// [vector] 为空时只做关键词一路；zvec 的 MultiQuery 至少要有两路子查询，
+  /// 这时把同一条关键词查询发两次，融合后的先后与单路的 BM25 顺序一致。
+  @override
+  List<StoredVector> searchHybrid(
+    String text, {
+    List<double>? vector,
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) {
+    _ensureOpen();
+    if (k <= 0) return const [];
+    final queryText = text.trim();
+    final hasVector = vector != null && vector.isNotEmpty;
+    if (queryText.isEmpty && !hasVector) return const [];
+    final candidates = math.min(400, math.max(k, k * 4));
+    final subQueries = <SubQuery>[
+      if (queryText.isNotEmpty)
+        SubQuery(
+          fieldName: _contentField,
+          fts: FtsQuery(matchString: queryText),
+          numCandidates: candidates,
+        ),
+      if (hasVector)
+        SubQuery(
+          fieldName: _embeddingField,
+          vector: Float32List.fromList(normalizeVector(vector)),
+          numCandidates: candidates,
+        ),
+    ];
+    if (subQueries.length == 1) {
+      subQueries.add(
+        SubQuery(
+          fieldName: _contentField,
+          fts: FtsQuery(matchString: queryText),
+          numCandidates: candidates,
+        ),
+      );
+    }
+    final request = MultiQuery(
+      subQueries: subQueries,
+      topk: k,
+      filter: _filterFor(prefilter),
+      includeVector: false,
+      outputFields: const [
+        'source_key',
+        'chunk',
+        'content',
+        'source_version',
+        'locator_json',
+      ],
+      rerank: const RrfRerank(rankConstant: _rrfRankConstant),
+    );
+    final docs = <Doc>[];
+    try {
+      docs.addAll(_collection.multiQuery(request));
+      final result = <StoredVector>[];
+      for (final doc in docs) {
+        final sourceKey = doc.getString('source_key');
+        final chunk = doc.getInt64('chunk');
+        final content = doc.getString('content');
+        final sourceVersion = doc.getString('source_version');
+        final locatorJson = doc.getString('locator_json');
+        if (sourceKey == null ||
+            chunk == null ||
+            content == null ||
+            sourceVersion == null ||
+            locatorJson == null) {
+          continue;
+        }
+        result.add(
+          StoredVector(
+            sourceKey: sourceKey,
+            chunk: chunk,
+            content: content,
+            sourceVersion: sourceVersion,
+            locatorJson: locatorJson,
+            distance: 0,
+            score: doc.score,
           ),
         );
       }

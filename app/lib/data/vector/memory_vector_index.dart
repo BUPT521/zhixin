@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../domain/rules/embedding.dart';
+import '../../domain/rules/search_terms.dart';
 import 'vector_index.dart';
 
 /// 纯 Dart 的语义索引，供服务层测试使用。
@@ -117,6 +118,90 @@ class MemoryVectorIndex implements VectorIndex {
     matches.sort((left, right) => left.distance.compareTo(right.distance));
     return matches.take(k).toList();
   }
+
+  @override
+  List<StoredVector> searchHybrid(
+    String text, {
+    List<double>? vector,
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) {
+    if (k <= 0) return const [];
+    const rankConstant = 60;
+    final terms = bigrams(text.trim()).toSet();
+    final byKey = <String, StoredVector>{};
+    final keywordRanks = <String, int>{};
+    if (terms.isNotEmpty) {
+      final matches = <StoredVector>[];
+      for (final source in _sources.values) {
+        if (prefilter != null && !prefilter.allows(source.locator)) continue;
+        final locatorJson = VectorIndex.jsonOf(source.locator);
+        for (var chunk = 0; chunk < source.chunks.length; chunk++) {
+          final content = source.chunks[chunk];
+          final overlap = bigrams(content).toSet().intersection(terms).length;
+          if (overlap == 0) continue;
+          final match = StoredVector(
+            sourceKey: source.locator.sourceKey,
+            chunk: chunk,
+            content: content,
+            sourceVersion: source.version,
+            locatorJson: locatorJson,
+            distance: 0,
+            score: overlap.toDouble(),
+          );
+          matches.add(match);
+          byKey['${match.sourceKey}#${match.chunk}'] = match;
+        }
+      }
+      matches.sort((left, right) {
+        final byScore = right.score.compareTo(left.score);
+        if (byScore != 0) return byScore;
+        return _entryKey(left).compareTo(_entryKey(right));
+      });
+      for (var index = 0; index < matches.length; index++) {
+        keywordRanks[_entryKey(matches[index])] = index + 1;
+      }
+    }
+    final semanticRanks = <String, int>{};
+    final query = vector;
+    if (query != null && query.isNotEmpty) {
+      final semantic = search(query, k: k * 4, prefilter: prefilter);
+      for (var index = 0; index < semantic.length; index++) {
+        final match = semantic[index];
+        semanticRanks[_entryKey(match)] = index + 1;
+        byKey.putIfAbsent(_entryKey(match), () => match);
+      }
+    }
+    final fused = <StoredVector>[];
+    for (final entry in byKey.entries) {
+      final keywordRank = keywordRanks[entry.key];
+      final semanticRank = semanticRanks[entry.key];
+      var score = 0.0;
+      if (keywordRank != null) score += 1 / (rankConstant + keywordRank);
+      if (semanticRank != null) score += 1 / (rankConstant + semanticRank);
+      final match = entry.value;
+      fused.add(
+        StoredVector(
+          sourceKey: match.sourceKey,
+          chunk: match.chunk,
+          content: match.content,
+          sourceVersion: match.sourceVersion,
+          locatorJson: match.locatorJson,
+          distance: 0,
+          score: score,
+        ),
+      );
+    }
+    fused.sort((left, right) {
+      final byScore = right.score.compareTo(left.score);
+      if (byScore != 0) return byScore;
+      return _entryKey(left).compareTo(_entryKey(right));
+    });
+    return fused.take(k).toList();
+  }
+
+  static String _entryKey(StoredVector match) =>
+      '${match.sourceKey}#${match.chunk}';
 
   Float32List _prepareVector(List<double> vector) {
     if (vector.length != spec.dim) {

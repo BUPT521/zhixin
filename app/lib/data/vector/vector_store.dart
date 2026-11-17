@@ -40,6 +40,14 @@ abstract interface class VectorStore {
     VectorPrefilter? prefilter,
   });
 
+  /// 一次取关键词与语义候选，按名次融合后返回。
+  Future<List<StoredVector>> searchHybrid(
+    String text, {
+    List<double>? vector,
+    int k = 20,
+    VectorPrefilter? prefilter,
+  });
+
   Future<void> clear();
 
   Future<void> close();
@@ -111,6 +119,15 @@ class DirectVectorStore implements VectorStore {
     int k = 20,
     VectorPrefilter? prefilter,
   }) async => index.search(query, k: k, prefilter: prefilter);
+
+  @override
+  Future<List<StoredVector>> searchHybrid(
+    String text, {
+    List<double>? vector,
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) async =>
+      index.searchHybrid(text, vector: vector, k: k, prefilter: prefilter);
 
   @override
   Future<void> clear() async => index.clear();

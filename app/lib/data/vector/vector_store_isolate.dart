@@ -189,6 +189,33 @@ class IsolateVectorStore implements VectorStore {
   }
 
   @override
+  Future<List<StoredVector>> searchHybrid(
+    String text, {
+    List<double>? vector,
+    int k = 20,
+    VectorPrefilter? prefilter,
+  }) async {
+    final value = await _send('searchHybrid', [
+      text,
+      vector,
+      k,
+      _encodePrefilter(prefilter),
+    ]) as List;
+    return [
+      for (final row in value.cast<Map>())
+        StoredVector(
+          sourceKey: row['sourceKey'] as String,
+          chunk: row['chunk'] as int,
+          content: row['content'] as String,
+          sourceVersion: row['sourceVersion'] as String,
+          locatorJson: row['locatorJson'] as String,
+          distance: 0,
+          score: (row['score'] as num).toDouble(),
+        ),
+    ];
+  }
+
+  @override
   Future<void> clear() async {
     await _send('clear');
   }
@@ -380,6 +407,24 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
             'sourceVersion': row.sourceVersion,
             'locatorJson': row.locatorJson,
             'distance': row.distance,
+          },
+      ];
+    case 'searchHybrid':
+      final vector = args[1] as List?;
+      return [
+        for (final row in index.searchHybrid(
+          args[0] as String,
+          vector: vector?.cast<double>(),
+          k: args[2] as int,
+          prefilter: _decodePrefilter(args[3] as Map?),
+        ))
+          {
+            'sourceKey': row.sourceKey,
+            'chunk': row.chunk,
+            'content': row.content,
+            'sourceVersion': row.sourceVersion,
+            'locatorJson': row.locatorJson,
+            'score': row.score,
           },
       ];
     case 'clear':

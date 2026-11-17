@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-/// 文本处理版本：切块方式或规范化方式改变时递增，旧索引据此失效。
-const String semanticTextVersion = 'zhixin-text-v1';
+/// 文本处理版本：切块方式、规范化方式或索引字段改变时递增，旧索引据此失效。
+const String semanticTextVersion = 'zhixin-text-v2';
 
 /// 一次嵌入使用的模型；模型标识、维度与文本处理版本共同决定索引是否可复用。
 class EmbeddingModelSpec {

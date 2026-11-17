@@ -404,6 +404,72 @@ void runVectorIndexContract(
       }
     }, skip: skip);
 
+    test('searchHybrid 的关键词一路与两路融合', () {
+      final index = openIndex();
+      _replace(
+        index,
+        _pageA,
+        version: 'v1',
+        chunks: const ['矩阵的秩'],
+        vectors: const [
+          [1, 0, 0, 0],
+        ],
+      );
+      _replace(
+        index,
+        _pageB,
+        version: 'v1',
+        chunks: const ['天气与出行'],
+        vectors: const [
+          [0.9, 0.1, 0, 0],
+        ],
+      );
+      _replace(
+        index,
+        _message,
+        version: 'v1',
+        chunks: const ['线性代数'],
+        vectors: const [
+          [0, 1, 0, 0],
+        ],
+      );
+
+      // 只有关键词一路时，命中按关键词相关性排在前面。
+      final keywordOnly = index.searchHybrid('矩阵', k: 10);
+      expect(keywordOnly, isNotEmpty);
+      expect(keywordOnly.first.sourceKey, _pageA.sourceKey);
+      expect(
+        keywordOnly.every((match) => match.content.contains('矩阵')),
+        isTrue,
+      );
+
+      // 两路融合：关键词命中与向量相近的来源都在结果里，分数降序。
+      final hybrid = index.searchHybrid(
+        '矩阵',
+        vector: const [0, 1, 0, 0],
+        k: 10,
+      );
+      final keys = {for (final match in hybrid) match.sourceKey};
+      expect(keys, containsAll({_pageA.sourceKey, _message.sourceKey}));
+      for (var index = 1; index < hybrid.length; index++) {
+        expect(
+          hybrid[index - 1].score,
+          greaterThanOrEqualTo(hybrid[index].score),
+        );
+      }
+
+      // 预过滤在融合的两路上都生效。
+      final filtered = index.searchHybrid(
+        '矩阵',
+        vector: const [0, 1, 0, 0],
+        k: 10,
+        prefilter: const MaterialVectorPrefilter('mat-b'),
+      );
+      final filteredKeys = {for (final match in filtered) match.sourceKey};
+      expect(filteredKeys, isNot(contains(_pageA.sourceKey)));
+      expect(filteredKeys, contains(_pageB.sourceKey));
+    }, skip: skip);
+
     test('统计在 finishRefresh 之后写入，clear 之后归零', () {
       final index = openIndex();
       expect(index.sourceCount, 0);
