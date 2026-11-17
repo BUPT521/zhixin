@@ -21,6 +21,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/store"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -40,6 +41,7 @@ var (
 	_ backup.Store         = (*Store)(nil)
 	_ llmproxy.Quota       = (*Store)(nil)
 	_ feedback.Store       = (*Store)(nil)
+	_ retention.Store      = (*Store)(nil)
 	_ interface{ Close() } = (*Store)(nil)
 )
 

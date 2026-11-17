@@ -70,11 +70,29 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
+	limit, err := p.dailyLimit(r.Context(), pr.UserID)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, api.LLMQuota{
 		Day:         openapi_types.Date{Time: p.dayTime()},
 		UsedTokens:  used,
-		DailyTokens: p.cfg.DailyTokens,
+		DailyTokens: limit,
 	})
+}
+
+// dailyLimit 返回账号当天可用的 token 上限：先看有没有按账号调整过的额度，
+// 没有时用配置的默认值。调整写 llm_quota 表，不重启服务，下一次请求生效。
+func (p *Proxy) dailyLimit(ctx context.Context, userID string) (int64, error) {
+	limit, ok, err := p.quota.DailyLimit(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return limit, nil
+	}
+	return p.cfg.DailyTokens, nil
 }
 
 func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
@@ -111,10 +129,15 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
-	if used >= p.cfg.DailyTokens {
+	limit, err := p.dailyLimit(r.Context(), pr.UserID)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
+	if used >= limit {
 		httpx.WriteProblemExtra(w, r, http.StatusTooManyRequests, httpx.CodeQuotaExceeded,
 			"daily budget used up; use your own key or try again tomorrow",
-			map[string]any{"day": day, "used_tokens": used, "daily_tokens": p.cfg.DailyTokens})
+			map[string]any{"day": day, "used_tokens": used, "daily_tokens": limit})
 		return
 	}
 

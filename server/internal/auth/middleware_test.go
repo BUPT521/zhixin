@@ -135,6 +135,50 @@ func TestMiddlewareRejectsInvalidToken(t *testing.T) {
 	}
 }
 
+// fakeActivity 记录中间件报告过的账号活跃；去重是记录器的职责，不在中间件里。
+type fakeActivity struct {
+	ids []string
+	err error
+}
+
+func (f *fakeActivity) RecordUserActive(_ context.Context, userID string) error {
+	f.ids = append(f.ids, userID)
+	return f.err
+}
+
+// TestMiddlewareRecordsActivityAfterAuth 核对登录用户的活跃只统计鉴权成功的请求：
+// 未带令牌的请求不记录，记录失败也不影响这次请求。
+func TestMiddlewareRecordsActivityAfterAuth(t *testing.T) {
+	h, svc := newAuthedHandler(t, NewMemoryStore())
+	activity := &fakeActivity{}
+	svc.SetActivityRecorder(activity)
+	tok, err := svc.Register(context.Background(), "a@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := serve(t, h, http.MethodGet, "/v1/me", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous request: %d", rec.Code)
+	}
+	if len(activity.ids) != 0 {
+		t.Fatalf("未鉴权的请求不应记录活跃：%v", activity.ids)
+	}
+
+	for i := 0; i < 2; i++ {
+		if rec := serve(t, h, http.MethodGet, "/v1/me", "Bearer "+tok.AccessToken); rec.Code != http.StatusOK {
+			t.Fatalf("valid request %d: %d", i+1, rec.Code)
+		}
+	}
+	if len(activity.ids) != 2 || activity.ids[0] != tok.UserID {
+		t.Fatalf("两个已鉴权请求都应记录活跃：%v", activity.ids)
+	}
+
+	activity.err = errors.New("stats store is down")
+	if rec := serve(t, h, http.MethodGet, "/v1/me", "Bearer "+tok.AccessToken); rec.Code != http.StatusOK {
+		t.Fatalf("活跃记录失败不应让请求失败：%d", rec.Code)
+	}
+}
+
 // TestMiddlewareReportsStoreFailureAs500 守住 401 与 500 的分界：令牌本身没问题，
 // 存储查不动时必须回 500，而不是让客户端以为登录过期、白白清掉本地令牌。
 func TestMiddlewareReportsStoreFailureAs500(t *testing.T) {

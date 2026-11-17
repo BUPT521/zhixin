@@ -32,18 +32,19 @@ func (a testAPI) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request
 	a.p.Chat(w, r)
 }
 
-// newTestServer 装配本包处理器与鉴权中间件，返回客户端与用于签发测试令牌的
-// 账号服务。
-func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.Service) {
+// newTestServer 装配本包处理器与鉴权中间件，返回客户端、账号服务与内存额度，
+// 便于用例调整个别账号的额度。
+func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.Service, *MemoryQuota) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	proxy := NewHandler(cfg, NewMemoryQuota(), time.UTC, log)
+	quota := NewMemoryQuota()
+	proxy := NewHandler(cfg, quota, time.UTC, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
 		httpx.RequestID,
 		auth.Middleware(authSvc, log),
-	)), authSvc
+	)), authSvc, quota
 }
 
 // signIn 注册一个测试账号并返回访问令牌。
@@ -70,7 +71,7 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	c, authSvc := newTestServer(t, config.LLMConfig{
+	c, authSvc, _ := newTestServer(t, config.LLMConfig{
 		BaseURL:         upstream.URL,
 		APIKey:          "sk-server",
 		Models:          []string{"deepseek-flash"},
@@ -108,8 +109,65 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}
 }
 
+func TestHandlerQuotaOverride(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"total_tokens\":120}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	c, authSvc, quota := newTestServer(t, config.LLMConfig{
+		BaseURL:         upstream.URL,
+		APIKey:          "sk-server",
+		Models:          []string{"deepseek-flash"},
+		DailyTokens:     100,
+		MaxRequestBytes: 1 << 20,
+	})
+	tokens, err := authSvc.Register(context.Background(), "override@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := tokens.AccessToken
+	chat := map[string]any{
+		"model": "deepseek-flash", "stream": true,
+		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
+	}
+
+	// 默认额度 100：第一次花掉 120，第二次按默认额度会被拒。
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+		t.Fatalf("第一次请求应通过，得到 %d", code)
+	}
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+		t.Fatalf("默认额度应用完：%d %+v", code, p)
+	}
+
+	// 调高这个账号之后，同样的用量不再被拒。
+	quota.SetDailyLimit(tokens.UserID, 5000)
+	var q struct {
+		Used        int64 `json:"used_tokens"`
+		DailyTokens int64 `json:"daily_tokens"`
+	}
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.DailyTokens != 5000 || q.Used != 120 {
+		t.Fatalf("额度接口应返回调整后的值：%d %+v", code, q)
+	}
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+		t.Fatalf("调整之后应通过，得到 %d", code)
+	}
+
+	// 调低之后立即生效，被拒时 extra 里带的是调整后的额度。
+	quota.SetDailyLimit(tokens.UserID, 100)
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests {
+		t.Fatalf("调低之后应被拒，得到 %d", code)
+	}
+	if got, _ := p.Extra["daily_tokens"].(float64); got != 100 {
+		t.Fatalf("被拒的额度应为调整后的 100，得到 %v", p.Extra)
+	}
+}
+
 func TestHandlerLLMProxyDisabledWithoutKey(t *testing.T) {
-	c, authSvc := newTestServer(t, config.LLMConfig{
+	c, authSvc, _ := newTestServer(t, config.LLMConfig{
 		BaseURL:         "http://127.0.0.1:1",
 		Models:          []string{"deepseek-flash"},
 		DailyTokens:     100,

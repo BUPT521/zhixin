@@ -57,6 +57,9 @@ class FakeServer {
   final List<Map<String, Object?>> releases = [];
   final List<Map<String, Object?>> feedbacks = [];
 
+  /// 收到的匿名活跃上报；同样是公开接口。
+  final List<Map<String, Object?>> actives = [];
+
   int headOf(String userId) => commits[userId]?.length ?? 0;
 
   String userIdOf(String email) => _userIds[email]!;
@@ -102,6 +105,12 @@ class FakeServer {
         'id': 'feedback-${feedbacks.length}',
         'created_at': '2026-11-18T10:00:00Z',
       });
+    }
+    if (method == 'POST' && path == '/v1/telemetry/active') {
+      final installId = (body['install_id'] as String? ?? '').trim();
+      if (installId.length < 16) return _problem(400, 'invalid_request');
+      actives.add(body);
+      return http.Response('', 204);
     }
 
     final token = _bearer(request);

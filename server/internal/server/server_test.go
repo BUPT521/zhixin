@@ -19,15 +19,17 @@ import (
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
 // 本文件只测装配与横切规则：契约路由是否都接上、中间件顺序、401/404/problem
 // 体、两类限流与账号删除的扇出。各模块的处理器用例在各自的包里。
 type harness struct {
-	t   *testing.T
-	srv *httptest.Server
-	cfg config.Config
+	t      *testing.T
+	srv    *httptest.Server
+	cfg    config.Config
+	stores Stores
 }
 
 func newHarness(t *testing.T, env map[string]string) *harness {
@@ -35,11 +37,12 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 	// 用例都从同一个来源地址发请求，默认关掉限流，免得相互干扰；
 	// 专门测限流的用例自己把这些变量打开。
 	merged := map[string]string{
-		"ZHIXIN_AUTH_RATE":     "0",
-		"ZHIXIN_REFRESH_RATE":  "0",
-		"ZHIXIN_UPLOAD_RATE":   "0",
-		"ZHIXIN_CODE_RATE":     "0",
-		"ZHIXIN_FEEDBACK_RATE": "0",
+		"ZHIXIN_AUTH_RATE":      "0",
+		"ZHIXIN_REFRESH_RATE":   "0",
+		"ZHIXIN_UPLOAD_RATE":    "0",
+		"ZHIXIN_CODE_RATE":      "0",
+		"ZHIXIN_FEEDBACK_RATE":  "0",
+		"ZHIXIN_TELEMETRY_RATE": "0",
 	}
 	for k, v := range env {
 		merged[k] = v
@@ -50,9 +53,10 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(New(cfg, MemoryStores(), log))
+	stores := MemoryStores()
+	srv := httptest.NewServer(New(cfg, stores, log))
 	t.Cleanup(srv.Close)
-	return &harness{t: t, srv: srv, cfg: cfg}
+	return &harness{t: t, srv: srv, cfg: cfg, stores: stores}
 }
 
 func (h *harness) do(method, path, token string, body io.Reader, hdr map[string]string) *http.Response {
@@ -678,6 +682,57 @@ func TestTrustedProxySplitsBucketsByForwardedFor(t *testing.T) {
 	}
 	if code := submit("198.51.100.1"); code != http.StatusTooManyRequests {
 		t.Fatalf("同一个来源的第二次提交应被限流，得到 %d", code)
+	}
+}
+
+// TestTelemetryIsPublicAndIdempotent 核对匿名活跃上报不需要登录、同一天重复上报
+// 不报错，字段不合法时按请求错误返回。
+func TestTelemetryIsPublicAndIdempotent(t *testing.T) {
+	h := newHarness(t, nil)
+	body := map[string]any{
+		"install_id":  "0f8fad5b-d9cb-469f-a165-70867728950e",
+		"app_version": "0.2.0-dev+3",
+		"platform":    "android",
+	}
+	for i := 0; i < 2; i++ {
+		if code := h.json("POST", "/v1/telemetry/active", "", body, nil); code != http.StatusNoContent {
+			t.Fatalf("第 %d 次匿名上报应返回 204，得到 %d", i+1, code)
+		}
+	}
+	if code := h.json("POST", "/v1/telemetry/active", "", map[string]any{"install_id": "short"}, nil); code != http.StatusBadRequest {
+		t.Fatalf("不合法安装标识应返回 400，得到 %d", code)
+	}
+}
+
+// TestQuotaOverrideIsPerAccount 核对按账号调整的额度只影响这个账号：接口返回
+// 调整后的数字，另一个账号仍用配置的默认值，删号时覆盖行一并清掉。
+func TestQuotaOverrideIsPerAccount(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_LLM_DAILY_TOKENS": "1000"})
+	quota := h.stores.Quota.(*llmproxy.MemoryQuota)
+
+	first := h.signUp("quota-a@b.cn")
+	var me struct {
+		UserID string `json:"user_id"`
+	}
+	h.json("GET", "/v1/me", first, nil, &me)
+	quota.SetDailyLimit(me.UserID, 5000)
+
+	var status struct {
+		DailyTokens int64 `json:"daily_tokens"`
+	}
+	if code := h.json("GET", "/v1/llm/quota", first, nil, &status); code != http.StatusOK || status.DailyTokens != 5000 {
+		t.Fatalf("调整后的额度没有生效：%d %+v", code, status)
+	}
+	second := h.signUp("quota-b@b.cn")
+	if code := h.json("GET", "/v1/llm/quota", second, nil, &status); code != http.StatusOK || status.DailyTokens != 1000 {
+		t.Fatalf("另一个账号应继续用默认额度：%d %+v", code, status)
+	}
+
+	if code := h.json("DELETE", "/v1/me", first, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("delete account: %d", code)
+	}
+	if limit, ok, err := quota.DailyLimit(context.Background(), me.UserID); err != nil || ok {
+		t.Fatalf("删号后覆盖行应被清掉：limit=%d ok=%v err=%v", limit, ok, err)
 	}
 }
 

@@ -97,6 +97,13 @@ func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler 
 			case err != nil:
 				httpx.WriteInternal(w, r, log, err)
 			default:
+				// 活跃统计是尽力而为：存储故障只记日志，不让这次请求失败。
+				if err := svc.RecordActivity(r.Context(), p.UserID); err != nil {
+					log.Warn("record user activity",
+						slog.String("request_id", httpx.RequestIDFrom(r.Context())),
+						slog.String("error", err.Error()),
+					)
+				}
 				next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 			}
 		})

@@ -274,6 +274,36 @@ void main() {
       ),
     );
   });
+
+  test('匿名活跃上报不需要登录', () async {
+    final server = FakeServer();
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+
+    await client.reportActive(
+      installId: '0f8fad5b-d9cb-469f-a165-70867728950e',
+      appVersion: '0.2.0-dev+3',
+    );
+    expect(
+      server.actives.single['install_id'],
+      '0f8fad5b-d9cb-469f-a165-70867728950e',
+    );
+    expect(server.actives.single['platform'], 'android');
+    expect(server.actives.single['app_version'], '0.2.0-dev+3');
+
+    await expectLater(
+      client.reportActive(installId: 'too-short'),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.code,
+          'code',
+          'invalid_request',
+        ),
+      ),
+    );
+  });
 }
 
 String _sha256Of(List<int> bytes) => sha256.convert(bytes).toString();

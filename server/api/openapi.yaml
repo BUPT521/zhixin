@@ -451,6 +451,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ReleaseList" }
 
+  /v1/telemetry/active:
+    post:
+      tags: [app]
+      security: []
+      summary: 匿名上报一次活跃
+      description: |
+        没有登录的设备每天最多上报一次，内容只有随机安装标识、应用版本与平台，
+        不含学习内容。服务端按收到的自然日保存一行，只存安装标识的
+        HMAC-SHA256，原始标识不落库；同一标识同一天重复上报是幂等的，客户端丢失
+        响应后原样重试安全。登录用户的活跃由服务端按请求日期统计，不需要调用这个
+        接口。数据按 180 天滚动删除。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TelemetryPing" }
+      responses:
+        "204": { description: 已记录，或今天已经记录过 }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /v1/feedback:
     post:
       tags: [app]
@@ -705,3 +727,15 @@ components:
       properties:
         head: { type: integer, format: int64 }
         schema_version: { type: integer }
+    TelemetryPing:
+      type: object
+      required: [install_id]
+      additionalProperties: false
+      properties:
+        install_id:
+          type: string
+          minLength: 16
+          maxLength: 128
+          description: 首次启动时随机生成并保存在应用私有目录，卸载或清空数据后重新生成
+        app_version: { type: string, maxLength: 64 }
+        platform: { type: string, maxLength: 32 }

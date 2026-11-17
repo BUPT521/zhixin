@@ -128,6 +128,20 @@ func (q *Queries) InsertBackup(ctx context.Context, arg InsertBackupParams) erro
 	return err
 }
 
+const lLMQuotaOverride = `-- name: LLMQuotaOverride :one
+SELECT daily_tokens
+FROM llm_quota
+WHERE user_id = $1
+`
+
+// 按账号调整的每日额度；没有行时用 ZHIXIN_LLM_DAILY_TOKENS。
+func (q *Queries) LLMQuotaOverride(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRow(ctx, lLMQuotaOverride, userID)
+	var daily_tokens int64
+	err := row.Scan(&daily_tokens)
+	return daily_tokens, err
+}
+
 const listBackups = `-- name: ListBackups :many
 SELECT id, sha256, size, schema_version, device_name, created_at
 FROM backup

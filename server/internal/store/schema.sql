@@ -93,3 +93,32 @@ CREATE TABLE feedback (
 );
 CREATE INDEX feedback_created ON feedback(created_at DESC);
 
+-- 登录账号的活跃：一行是一天，按服务端收到的请求日期记（ADR-0019）。
+CREATE TABLE user_active (
+  user_id  TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day      DATE NOT NULL,                      -- ZHIXIN_TIMEZONE 下的自然日
+  PRIMARY KEY (user_id, day)
+);
+CREATE INDEX user_active_day ON user_active(day);
+
+-- 未登录设备的匿名活跃：只保存安装标识的 HMAC-SHA256 与日期，原始标识不落库；
+-- 按 180 天滚动删除（ADR-0019）。
+CREATE TABLE install_active (
+  install_hash  TEXT NOT NULL,
+  day           DATE NOT NULL,
+  app_version   TEXT NOT NULL DEFAULT '',
+  platform      TEXT NOT NULL DEFAULT '',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (install_hash, day)
+);
+CREATE INDEX install_active_day ON install_active(day);
+
+-- 按账号调整每日模型额度：没有行时用 ZHIXIN_LLM_DAILY_TOKENS。管理员直接写
+-- 这张表调整个别账号，不重启服务，也不另开管理接口。
+CREATE TABLE llm_quota (
+  user_id       TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  daily_tokens  BIGINT NOT NULL CHECK (daily_tokens > 0),
+  note          TEXT NOT NULL DEFAULT '',
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
