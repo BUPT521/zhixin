@@ -104,7 +104,7 @@ server/
 
 ## 部署与凭据
 
-第一套实例跑在一台单机 Debian 13 上，不做容器化，原因与取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 第 7 条。`zhixin-api` 由 systemd 拉起，只监听回环地址，前面的 nginx 终止 TLS 并反向代理到它；数据库用发行版包安装的 PostgreSQL 17；备份与附件的字节放 S3 兼容的对象存储，第一套实例用阿里云 OSS，端点、地域、bucket 与密钥都写在服务器的环境变量里，不配置对象存储时回落到 `ZHIXIN_BLOB_DIR` 指向的本机目录，只用于本地开发。域名由管理员在 DNS 里指向这台机器，证书由 certbot 申请并自动续期。需要注入的环境变量就是上面配置表里的那些，仓库里不写地址、口令与 key。资源清单、谁能做什么、配置放在哪，见[运维手册](运维手册.md)。
+第一套实例跑在一台单机 Debian 13 上，不做容器化，原因与取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 第 7 条。`zhixin-api` 由 systemd 拉起，只监听回环地址，前面的 nginx 终止 TLS 并反向代理到它；数据库用发行版包安装的 PostgreSQL 17；备份与附件的字节放 S3 兼容的对象存储，第一套实例用阿里云 OSS，端点、地域、bucket 与密钥都写在服务器的环境变量里，不配置对象存储时回落到 `ZHIXIN_BLOB_DIR` 指向的本机目录，只用于本地开发。域名由管理员在 DNS 里指向这台机器，证书由 certbot 申请并自动续期。需要注入的环境变量就是上面配置表里的那些，仓库里不写口令与 key；资源清单、地址、接入方式与操作步骤见[运维手册](运维手册.md)。
 
 部署与升级只有三步：在开发机上交叉编译 `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhixin-api ./cmd/zhixin-api`，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`。回滚是把上一个可执行文件换回去重新启动。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
 
