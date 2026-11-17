@@ -6,7 +6,7 @@ import '../domain/rules/search_terms.dart';
 ///
 /// 先由仓库筛掉过期的、已删除的、已被替代的条目和其他范围的条目，再在这里
 /// 按用途与查询相关性取最多 40 条。约束先占预算，其余条目先看用途类别，再按
-/// 记忆正文的 BM25 相关性排序；更新时间只在相关性与类别都相同时比较。待确认
+/// 记忆正文命中的二元组数量排序；更新时间只在相关性与类别都相同时比较。待确认
 /// 的记忆提案不在 `memory` 表里，确认之前不会成为候选。
 class MemoryRecallService {
   MemoryRecallService(this.repository);
