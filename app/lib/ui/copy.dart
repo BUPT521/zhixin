@@ -17,10 +17,11 @@ const buddyName = '搭子';
 /// [buddyName] 分开保留；页签与板块标题共用这一份，不再一处写“AI 改动”。
 const aiChanges = 'AI 的改动';
 
-/// 底栏三个入口；页面标题引用同一组常量，不另写一份。
+/// 底栏四个入口；页面标题引用同一组常量，不另写一份。
 const tabNow = '现在';
 const tabRecords = '记录';
 const tabPlan = '安排';
+const tabMine = '我的';
 
 /// 记录页的两个页签。
 ///
@@ -49,10 +50,10 @@ const emptyMemory = '还没有学习记忆';
 const emptyChangesTitle = '还没有改动';
 const emptyChangesDescription = '$buddyName执行过的变更会出现在这里。';
 
-/// 设置页的插件与人格入口，以及两个设置页的标题。
+/// “我的”页的插件与人格入口，以及这两页的标题。
 const pluginsPageTitle = '插件';
 const personaPageTitle = '人格';
-const pluginsEntrySubtitle = '管理随应用编译的能力插件与人格插件的启停。';
+const pluginsEntrySubtitle = '启停随应用编译的能力与人格插件。';
 const personaEntrySubtitle = '选择搭子的语气、称呼与讲解风格。';
 
 /// 人格页的顺序与边界说明；设置页与人格页共用同一句。

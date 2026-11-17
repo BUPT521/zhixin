@@ -11,9 +11,7 @@ import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/settings_service.dart';
 import '../domain/rules/time_policy.dart';
-import 'copy.dart';
 import '../data/diagnostics/crash_log.dart';
-import '../platform/app_info.dart';
 import '../platform/diagnostics_store.dart';
 import 'failure_feedback.dart';
 import 'live_view.dart';
@@ -24,7 +22,7 @@ import 'zhixin_header.dart';
 import 'zhixin_select.dart';
 
 /// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
-enum _Area { account, model, learning, appearance, diagnostics, danger }
+enum _Area { model, learning, appearance, diagnostics, danger }
 
 /// 一段操作的最近一次结果；失败用错误描边的就地说明，成功用一行小字。
 class _Result {
@@ -34,7 +32,9 @@ class _Result {
   final bool failed;
 }
 
-/// 设置：模型、语义索引、学习、外观、插件与人格、数据、诊断与危险操作。
+/// 设置：模型、语义索引、学习、外观、诊断与危险操作。
+///
+/// 只放偏好配置；账号、记忆、人格、插件、数据版本与关于从底栏“我的”进入。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -410,21 +410,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  void _openVersions() {
-    openDataVersion(context);
-  }
-
-  /// 打开账号页；返回之后重新读登录状态，模型来源与云端入口跟着变。
+  /// 打开账号页；返回之后重新读登录状态，模型来源跟着变。
   Future<void> _openAccount() async {
     final scope = AppScope.of(context);
     await openAccount(context);
     if (!mounted) return;
     await _loadLocal(scope);
-  }
-
-  /// 打开云端备份页。
-  Future<void> _openCloudBackups() async {
-    await openCloudBackup(context);
   }
 
   Future<void> _resetAll() async {
@@ -502,36 +493,8 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_loadFailure != null)
           InlineNotice(message: _loadFailure!, onRetry: _retry),
         SectionHeading(
-          title: '账号与云同步',
-          first: true,
-          subtitle: '账号可选；登录之后可以使用云端备份、按提交的同步与知新服务的模型来源。',
-          action: StatusTag(
-            signedIn ? '已登录' : '未登录',
-            tone: signedIn ? TagTone.accent : TagTone.muted,
-          ),
-        ),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.userRound),
-          title: Text(signedIn ? _account!.email : '登录或注册'),
-          subtitle: Text(
-            signedIn
-                ? '服务地址：${_account!.serverLabel}'
-                : '填写服务地址后登录；不登录时应用完全在本机运行。',
-          ),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: _busy ? null : _openAccount,
-        ),
-        if (signedIn)
-          forui.FTile(
-            prefix: const LeadingIcon(FLucideIcons.cloud),
-            title: const Text('云端备份'),
-            subtitle: const Text('上传整库快照、列出与下载恢复；换手机时登录即可取回。'),
-            suffix: const Icon(FLucideIcons.chevronRight),
-            onPress: _busy ? null : _openCloudBackups,
-          ),
-        ?_resultFor(_Area.account),
-        SectionHeading(
           title: '模型',
+          first: _loadFailure == null,
           action: StatusTag(
             configured ? '已配置' : '未配置',
             tone: configured ? TagTone.accent : TagTone.muted,
@@ -593,6 +556,19 @@ class _SettingsPageState extends State<SettingsPage> {
                           : theme.colors.error,
                     ),
                   ),
+                  if (!signedIn) ...[
+                    SizedBox(height: context.zhixin.space.sm),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: forui.FButton(
+                        variant: forui.FButtonVariant.outline,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy ? null : _openAccount,
+                        prefix: const Icon(FLucideIcons.logIn),
+                        child: const Text('登录或注册'),
+                      ),
+                    ),
+                  ],
                   if (signedIn && _serverModels.isNotEmpty) ...[
                     SizedBox(height: context.zhixin.space.xs),
                     Text(
@@ -663,15 +639,7 @@ class _SettingsPageState extends State<SettingsPage> {
           suffix: const Icon(FLucideIcons.chevronRight),
           onPress: _busy ? null : _openEmbedding,
         ),
-        const SectionHeading(title: '学习', subtitle: '记忆、每天的截止时间与拍照方式影响回答和记录。'),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.brain),
-          title: const Text('学习记忆'),
-          subtitle: const Text('查看、修改和删除记忆'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: () => openMemory(context),
-        ),
-        SizedBox(height: theme.space.sm),
+        const SectionHeading(title: '学习', subtitle: '每天的截止时间与拍照方式影响记录与拍题。'),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
@@ -791,31 +759,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         ?_resultFor(_Area.appearance),
-        const SectionHeading(title: '插件与人格'),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.package),
-          title: const Text(pluginsPageTitle),
-          subtitle: const Text(pluginsEntrySubtitle),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: () => openPlugins(context),
-        ),
-        SizedBox(height: theme.space.sm),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.sparkles),
-          title: const Text(personaPageTitle),
-          subtitle: const Text(personaEntrySubtitle),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: () => openPersona(context),
-        ),
-        const SectionHeading(title: '数据'),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.history),
-          title: const Text('数据版本'),
-          subtitle: const Text('查看提交历史、命名版本与数据包，导出、备份与恢复都在这里。'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: _openVersions,
-        ),
-        const SectionHeading(title: '诊断与关于'),
+        const SectionHeading(title: '诊断'),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
@@ -844,14 +788,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         ?_resultFor(_Area.diagnostics),
-        SizedBox(height: theme.space.sm),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.info),
-          title: const Text('关于'),
-          subtitle: Text('版本 $appVersion · 开源许可'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: () => openAbout(context),
-        ),
         const SectionHeading(
           title: '危险操作',
           subtitle: '这两项都无法撤销；删除模型配置只影响本机保存的模型设置。',
