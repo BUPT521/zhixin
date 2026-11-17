@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import '../../domain/models/material.dart';
 import '../../domain/rules/search_terms.dart';
-import '../db/fts.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
@@ -343,8 +342,8 @@ class MaterialRepository {
   /// 按关键词找材料页。
   ///
   /// 回答上下文默认只取同一目标或未归属的材料；用户主动检索时把
-  /// `restrictToGoal` 设为 false，搜索结果覆盖全部材料。关键词命中与排序都
-  /// 交给 FTS5 索引：候选由 `MATCH` 选出，先后按 `bm25()` 排。
+  /// `restrictToGoal` 设为 false，搜索结果覆盖全部材料。关键词命中按二元组
+  /// 在正文与标签里做子串匹配；单个材料的页数有限，不再建索引。
   Future<List<MaterialHit>> search(
     String query, {
     String? goalId,
@@ -378,23 +377,27 @@ class MaterialRepository {
         ..add(excludeMaterialId)
         ..add(excludePageNo ?? -1);
     }
-    where.add(
-      'mp.rowid IN (SELECT rowid FROM material_page_fts '
-      'WHERE material_page_fts MATCH ?)',
-    );
-    args.add(ftsQuery(tokens));
+    final tokenClauses = <String>[];
+    for (final token in tokens) {
+      tokenClauses.add(
+        '(instr(lower(mp.content), lower(?)) > 0 '
+        'OR instr(lower(mp.label), lower(?)) > 0)',
+      );
+      args
+        ..add(token)
+        ..add(token);
+    }
+    where.add('(${tokenClauses.join(' OR ')})');
     final rows = await _db.rawQuery(
       '''
       SELECT mp.material_id, mp.page_no, mp.label, mp.content,
         m.title AS material_title, m.source_file_name
       FROM material_page mp JOIN material m ON m.id = mp.material_id
       WHERE ${where.join(' AND ')}
-      ORDER BY (SELECT bm25(material_page_fts) FROM material_page_fts
-        WHERE material_page_fts MATCH ? AND rowid = mp.rowid),
-        mp.material_id DESC, mp.page_no
+      ORDER BY mp.material_id DESC, mp.page_no
       ${limit == null ? '' : 'LIMIT ?'}
       ''',
-      [...args, ftsQuery(tokens), ?limit],
+      [...args, ?limit],
     );
     return rows
         .map(
