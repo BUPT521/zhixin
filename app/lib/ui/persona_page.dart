@@ -6,11 +6,12 @@ import '../plugins/persona/persona.dart';
 import 'copy.dart';
 import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
+import 'navigation.dart';
 import 'theme.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 
-/// 设置页的“人格”：列出内置人格与当前启用项，可以切换启用与停用。
+/// 设置页的“人格”：列出内置人格与当前启用项，单选，另加“不使用人格”。
 ///
 /// 同一时间只启用一个人格；切换写在 `app_meta`，不形成数据提交。导入、编辑与
 /// 分享本次不开放，页面写明而不放不会生效的按钮。
@@ -61,7 +62,7 @@ class _PersonaPageState extends State<PersonaPage>
         action: '读取人格设置',
         kind: 'persona_read',
         kept: '已经保存的人格与启用项没有改动',
-        next: '可以重新打开这一页',
+        next: '可以在页面顶部重试',
       );
     }
     setState(() {
@@ -70,7 +71,8 @@ class _PersonaPageState extends State<PersonaPage>
     });
   }
 
-  Future<void> _select(Persona persona, bool enabled) async {
+  /// 单选：传入人格启用它，传空表示不使用人格。
+  Future<void> _select(Persona? persona) async {
     if (_busy) return;
     setState(() {
       _busy = true;
@@ -78,7 +80,7 @@ class _PersonaPageState extends State<PersonaPage>
     });
     try {
       await AppScope.of(context).services.plugins.runtime
-          .setActivePersona(enabled ? persona.id : null);
+          .setActivePersona(persona?.id);
       if (!mounted) return;
       setState(() {});
     } catch (error, stack) {
@@ -99,52 +101,70 @@ class _PersonaPageState extends State<PersonaPage>
     }
   }
 
+  /// 人格插件停用之后，人格设定不会进入提示词；去插件页启用之后回来重读。
+  Future<void> _openPluginsPage() async {
+    await openPlugins(context);
+    if (!mounted) return;
+    await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const DetailScaffold(child: PageLoading());
-    }
     final theme = context.zhixin;
+    if (_loading) {
+      return DetailScaffold(
+        header: const ZhixinHeader(
+          title: Text(personaPageTitle),
+          showBack: true,
+        ),
+        child: ListView(
+          padding: theme.space.pageInsets(),
+          children: const [ListSkeleton(rows: 3, rowHeight: 96)],
+        ),
+      );
+    }
     final plugins = AppScope.of(context).services.plugins;
     final personas = plugins.personas.items;
     final active = plugins.personas.active;
+    final pluginEnabled = plugins.runtime.personaPluginEnabled;
+    final disabled = _busy || !pluginEnabled;
     return DetailScaffold(
       header: const ZhixinHeader(title: Text(personaPageTitle), showBack: true),
       child: ListView(
-        padding: theme.space.pageInsets(top: theme.space.xl),
+        padding: theme.space.pageInsets(),
         children: [
-          const SectionHeading(
-            title: personaPageTitle,
+          SectionHeading(
+            title: '内置人格',
             subtitle: personaBoundaryNotice,
             first: true,
-          ),
-          if (_notice != null) InlineNotice(message: _notice!),
-          if (!plugins.runtime.personaPluginEnabled)
-            Padding(
-              padding: EdgeInsets.only(bottom: theme.space.sm),
-              child: Text(
-                personaPluginDisabled,
-                style: theme.text.bodySmall.copyWith(
-                  color: theme.colors.onSurfaceVariant,
-                ),
-              ),
-            ),
-          Padding(
-            padding: EdgeInsets.only(bottom: theme.space.md),
-            child: Text(
-              active == null ? personaDefaultTone : '当前人格：${active.name}',
-              style: theme.text.bodyMedium,
+            action: StatusTag(
+              active == null ? '未启用' : '已启用',
+              tone: active == null ? TagTone.muted : TagTone.accent,
             ),
           ),
+          if (_notice != null) InlineNotice(message: _notice!, onRetry: _load),
+          if (!pluginEnabled)
+            InlineNotice(
+              message: personaPluginDisabled,
+              retryLabel: '去启用',
+              onRetry: _openPluginsPage,
+            ),
+          _NoPersonaCard(
+            active: active == null,
+            enabled: !disabled,
+            onSelected: () => _select(null),
+          ),
+          SizedBox(height: theme.space.sm),
           for (final persona in personas) ...[
             _PersonaCard(
               persona: persona,
               active: active?.id == persona.id,
-              busy: _busy,
-              onChanged: (value) => _select(persona, value),
+              enabled: !disabled,
+              onSelected: () => _select(persona),
             ),
-            SizedBox(height: theme.space.md),
+            SizedBox(height: theme.space.sm),
           ],
+          SizedBox(height: theme.space.md),
           Text(
             personaExtrasUnavailable,
             style: theme.text.bodySmall.copyWith(
@@ -157,19 +177,57 @@ class _PersonaPageState extends State<PersonaPage>
   }
 }
 
-/// 一个人格：名称、启用开关、作者、说明与完整设定文本。
+/// “不使用人格”：单选的一项，搭子按默认语气回答。
+class _NoPersonaCard extends StatelessWidget {
+  const _NoPersonaCard({
+    required this.active,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final bool active;
+  final bool enabled;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return forui.FCard(
+      child: Padding(
+        padding: EdgeInsets.all(theme.space.lg),
+        child: forui.FRadio(
+          value: active,
+          enabled: enabled,
+          semanticsLabel: '不使用人格',
+          label: Text('不使用人格', style: theme.text.titleMedium),
+          description: Text(
+            active ? personaDefaultTone : '停用当前人格之后，搭子使用默认语气。',
+            style: theme.text.bodySmall.copyWith(
+              color: theme.colors.onSurfaceVariant,
+            ),
+          ),
+          onChange: (value) {
+            if (value) onSelected();
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// 一个人格：名称、单选、作者、说明与完整设定文本。
 class _PersonaCard extends StatelessWidget {
   const _PersonaCard({
     required this.persona,
     required this.active,
-    required this.busy,
-    required this.onChanged,
+    required this.enabled,
+    required this.onSelected,
   });
 
   final Persona persona;
   final bool active;
-  final bool busy;
-  final ValueChanged<bool> onChanged;
+  final bool enabled;
+  final VoidCallback onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -185,12 +243,23 @@ class _PersonaCard extends StatelessWidget {
                 Expanded(
                   child: Text(persona.name, style: theme.text.titleMedium),
                 ),
-                forui.FSwitch(value: active, onChange: busy ? null : onChanged),
+                forui.FRadio(
+                  value: active,
+                  enabled: enabled,
+                  semanticsLabel: '启用${persona.name}人格',
+                  onChange: (value) {
+                    if (value) onSelected();
+                  },
+                ),
               ],
             ),
+            if (active) ...[
+              SizedBox(height: theme.space.xs),
+              const StatusTag('当前启用', tone: TagTone.accent),
+            ],
             SizedBox(height: theme.space.xs),
             Text(
-              '作者：${persona.author}${active ? ' · 当前启用' : ''}',
+              '作者：${persona.author}',
               style: theme.text.bodySmall.copyWith(
                 color: theme.colors.onSurfaceVariant,
               ),

@@ -142,7 +142,9 @@ void main() {
         independent: true,
       );
     });
-    await pumpUntil(tester, find.textContaining('独立完成 · 自评做对'));
+    await pumpUntil(tester, find.text('自评做对'));
+    // 自评与模型判断改成状态标签，独立性在标签里也标出来。
+    expect(find.text('独立完成'), findsWidgets);
     expect(find.textContaining('作答：外部写下的答案'), findsOneWidget);
     expect(find.text('未提交的草稿'), findsNothing);
     expect(tester.takeException(), isNull);

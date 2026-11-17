@@ -52,7 +52,10 @@ class _GoalDialogState extends State<_GoalDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           forui.FTextField(
-            control: .managed(controller: _title),
+            control: .managed(
+              controller: _title,
+              onChange: (_) => setState(() {}),
+            ),
             label: const Text('目标名称'),
             hint: '周五前完成极限章节作业',
           ),
@@ -94,25 +97,20 @@ class _GoalDialogState extends State<_GoalDialog> {
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
+        cancelZhixinButton(context),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
-          onPress: () {
-            final title = _title.text.trim();
-            if (title.isEmpty) return;
-            Navigator.of(context).pop(
-              GoalDraft(
-                title: title,
-                scope: nullableText(_scope.text),
-                dueDate: _due,
-              ),
-            );
-          },
+          onPress: _title.text.trim().isEmpty
+              ? null
+              : () {
+                  Navigator.of(context).pop(
+                    GoalDraft(
+                      title: _title.text.trim(),
+                      scope: nullableText(_scope.text),
+                      dueDate: _due,
+                    ),
+                  );
+                },
           child: const Text('保存'),
         ),
       ],

@@ -21,7 +21,7 @@ import 'zhixin_toast.dart';
 /// 系统图片选择器只提供预览，不能往里加框选；这一步放在取图之后、存图之前，
 /// 首页提问、讨论页与「贴一道题」共用同一个页面。框选交互使用
 /// `crop_your_image` 的 [Crop]，裁剪与编码在它自己的 compute 里完成；相机拍糊
-/// 时不必退出重来，页面右上角的重拍会回到相机换一张。
+/// 时不必退出重来，点底栏的重拍回到相机换一张。
 class QuestionCropPage extends StatefulWidget {
   const QuestionCropPage({
     super.key,
@@ -157,25 +157,21 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
             onPressed: _saving ? null : () => Navigator.of(context).pop(),
           ),
         ],
-        actions: [
-          if (widget.allowRetake)
-            ZhixinHeaderAction(
-              key: const ValueKey('question-crop-retake'),
-              tooltip: '重拍',
-              icon: FLucideIcons.camera,
-              onPressed: _saving || _bytes == null ? null : _retake,
-            ),
-        ],
       ),
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+            padding: EdgeInsets.fromLTRB(
+              theme.space.page,
+              theme.space.xs,
+              theme.space.page,
+              theme.space.sm,
+            ),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 widget.allowRetake
-                    ? '拖动四角框住一道题，框外的部分不会保存；拍糊了就点右上角重拍。'
+                    ? '拖动四角框住一道题，框外的部分不会保存；拍糊了点底栏的重拍。'
                     : '拖动四角框住一道题，框外的部分不会保存。',
                 style: theme.text.bodySmall.copyWith(
                   color: theme.colors.onSurfaceVariant,
@@ -185,7 +181,12 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                0,
+                theme.space.page,
+                theme.space.md,
+              ),
               child: Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
@@ -207,7 +208,7 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
     if (_error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          padding: EdgeInsets.symmetric(horizontal: theme.space.xl),
           child: InlineNotice(
             message: _error!,
             onRetry: () => Navigator.of(context).pop(),
@@ -231,34 +232,51 @@ class _QuestionCropPageState extends State<QuestionCropPage> {
     );
   }
 
+  /// 底栏：重拍与确认是这一页唯一的两个动作，放弃只留标题栏的 X。
+  ///
+  /// 底部包一层 [SafeArea]：手势条或 Home 条不能压住“使用这张图”。
   Widget _footer() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: forui.FButton(
-              variant: forui.FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _saving ? null : () => Navigator.of(context).pop(),
-              child: const Text('取消'),
+    final theme = context.zhixin;
+    return SafeArea(
+      key: const ValueKey('question-crop-footer'),
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          theme.space.page,
+          0,
+          theme.space.page,
+          theme.space.md,
+        ),
+        child: Row(
+          children: [
+            if (widget.allowRetake) ...[
+              Expanded(
+                child: forui.FButton(
+                  key: const ValueKey('question-crop-retake'),
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _saving || _bytes == null ? null : _retake,
+                  prefix: const Icon(FLucideIcons.camera),
+                  child: const Text('重拍'),
+                ),
+              ),
+              SizedBox(width: theme.space.md),
+            ],
+            Expanded(
+              child: forui.FButton(
+                key: const ValueKey('question-crop-confirm'),
+                mainAxisSize: MainAxisSize.min,
+                onPress: _saving || _bytes == null ? null : _confirm,
+                prefix: _saving
+                    ? const forui.FCircularProgress(
+                        size: forui.FCircularProgressSizeVariant.sm,
+                      )
+                    : const Icon(FLucideIcons.check),
+                child: const Text('使用这张图'),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: forui.FButton(
-              key: const ValueKey('question-crop-confirm'),
-              mainAxisSize: MainAxisSize.min,
-              onPress: _saving || _bytes == null ? null : _confirm,
-              prefix: _saving
-                  ? const forui.FCircularProgress(
-                      size: forui.FCircularProgressSizeVariant.sm,
-                    )
-                  : const Icon(FLucideIcons.check),
-              child: const Text('使用这张图'),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

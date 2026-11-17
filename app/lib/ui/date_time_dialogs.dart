@@ -26,14 +26,18 @@ Future<DateTime?> showZhixinDatePicker({
 }
 
 /// 选择时间；界面固定 24 小时制，与页面里的时刻写法一致。
+///
+/// 同一处连续选两次时间时用 [helpText] 说明这次选的是哪一个，例如容量面板的
+/// “开始时间”与“结束时间”；不传时仍是“选择时间”。
 Future<TimeOfDay?> showZhixinTimePicker({
   required BuildContext context,
   required TimeOfDay initialTime,
+  String helpText = '选择时间',
 }) {
   return showTimePicker(
     context: context,
     initialTime: initialTime,
-    helpText: '选择时间',
+    helpText: helpText,
     cancelText: '取消',
     confirmText: '确定',
     builder: (context, child) => MediaQuery(

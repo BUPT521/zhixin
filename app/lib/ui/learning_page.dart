@@ -20,13 +20,14 @@ import '../domain/rules/text.dart';
 import 'answer_notice.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
+import 'discussion_message.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'live_view.dart';
 import 'navigation.dart';
-import 'zhixin_chip.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
+import 'zhixin_segmented.dart';
 import 'zhixin_toast.dart';
 
 /// 学习中：原题、历次尝试、提示与讲解，以及这次的结果。
@@ -167,7 +168,10 @@ class _LearningPageState extends State<LearningPage> {
     }
   }
 
-  /// 读取失败时保留已经显示的内容并提示一次；首读失败不再停在骨架屏。
+  /// 读取失败时保留已经显示的内容并就地说明一次；首读失败不再停在骨架屏。
+  ///
+  /// 有就地说明时不再另外弹一条相同的 toast；重试入口只在首读失败时给出，
+  /// 重新订阅这道题之后再读到结果就收起。
   void _onQuestionError(Object error, StackTrace stack) {
     if (!mounted) return;
     final message = describeFailure(
@@ -177,12 +181,24 @@ class _LearningPageState extends State<LearningPage> {
       action: '读取这道题与作答记录',
       kind: 'learning_read',
       kept: '本机记录没有改动',
-      next: '可以返回记录页再打开',
+      next: '可以点下面「重试」再读一次',
     );
-    if (_view == null) {
-      setState(() => _readError = message);
-    }
-    showToast(context, message);
+    setState(() {
+      if (_view == null) {
+        _readError = message;
+      } else {
+        _notice = message;
+      }
+    });
+  }
+
+  /// 首读失败之后重新订阅这道题；已经显示的内容留到新结果到达。
+  void _retryRead() {
+    setState(() {
+      _readError = null;
+      _stream = AppScope.of(context).chat.learning
+          .watchQuestion(widget.questionId);
+    });
   }
 
   /// 把未提交的尝试读回草稿；同一条尝试上的修改不覆盖用户正在写的内容。
@@ -458,50 +474,6 @@ class _LearningPageState extends State<LearningPage> {
   }
 
   /// 记忆卡片与撤销之后由订阅更新页面，公共流程里的这次重读不再发起。
-  /// 点开原题缩略图看大图；图片文件不在了就说明，不弹空白页。
-  Future<void> _showImage(String path) async {
-    final file = File(AppScope.of(context).paths.resolveImage(path));
-    if (!await file.exists()) {
-      if (!mounted) return;
-      showToast(context, '这张原图在本机已经找不到');
-      return;
-    }
-    if (!mounted) return;
-    // 遮挡层、进出动画与圆角跟页面里的其他对话框一致；对话框默认限制宽度
-    // 280 到 560，看图时改成占满屏宽只留外边距，横屏与平板上不会被压窄。
-    final media = MediaQuery.of(context);
-    final size = media.size;
-    // 手机拍的原图直接解码要占几十 MB：按屏宽 × dpr × 2 设解码尺寸，与看图
-    // 的 4 倍放大配合已经够清晰。大图解码好之前先用同一张图的小尺寸垫底，
-    // 点开时不会先白屏，也不用等原图。
-    final decodeWidth = (size.width * media.devicePixelRatio * 2).round();
-    final thumbWidth = (size.width * media.devicePixelRatio).round();
-    await forui.showFDialog<void>(
-      context: context,
-      builder: (context, style, animation) => forui.FDialog(
-        animation: animation,
-        clipBehavior: Clip.antiAlias,
-        constraints: BoxConstraints(
-          minWidth: 0,
-          maxWidth: size.width - 24,
-          maxHeight: size.height - 24,
-        ),
-        builder: (context, style) => InteractiveViewer(
-          minScale: 1,
-          maxScale: 4,
-          child: Image.file(
-            file,
-            cacheWidth: decodeWidth,
-            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-              if (wasSynchronouslyLoaded || frame != null) return child;
-              return Image.file(file, cacheWidth: thumbWidth);
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _showModelGuide() async {
     await showModelSetupGuide(
       context,
@@ -677,13 +649,23 @@ class _LearningPageState extends State<LearningPage> {
       builder: (context, data, loading) {
         final view = data ?? _view;
         if (view == null) {
-          // 首读失败时显示原因；没有失败还在等第一份结果时显示骨架屏。
-          return _readError == null
-              ? const DetailScaffold(child: PageLoading())
-              : DetailScaffold(
-                  header: const ZhixinHeader(title: Text('题目'), showBack: true),
-                  child: Center(child: Text(_readError!)),
-                );
+          final theme = context.zhixin;
+          // 加载与首读失败都带同一条标题栏，读完标题不变，页面不跳。
+          return DetailScaffold(
+            header: const ZhixinHeader(title: Text('学习中'), showBack: true),
+            child: _readError == null
+                ? Padding(
+                    padding: theme.space.pageInsets(),
+                    child: const ListSkeleton(rows: 3),
+                  )
+                : Padding(
+                    padding: theme.space.pageInsets(),
+                    child: InlineNotice(
+                      message: _readError!,
+                      onRetry: _retryRead,
+                    ),
+                  ),
+          );
         }
         return _questionPage(context, view);
       },
@@ -703,203 +685,248 @@ class _LearningPageState extends State<LearningPage> {
           title: const Text('学习中'),
           showBack: true,
           actions: [
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _busy ? null : _openDiscussion,
-              child: const Text('讨论'),
+            ZhixinHeaderButton(
+              label: '讨论',
+              onPressed: _busy ? null : _openDiscussion,
             ),
           ],
         ),
         child: ListView(
           padding: theme.space.pageInsets(),
           children: [
-            forui.FCard(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      view.question.displayStem,
-                      style: theme.text.titleMedium,
-                    ),
-                    if (view.question.sourceRef != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        '出处：${view.question.sourceRef}',
-                        style: theme.text.bodySmall,
-                      ),
-                    ],
-                    if (view.question.contextText != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        '材料：${view.question.contextText}',
-                        style: theme.text.bodySmall,
-                      ),
-                    ],
-                    if (view.question.imagePaths.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final path in view.question.imagePaths)
-                            GestureDetector(
-                              onTap: () => _showImage(path),
-                              child: ClipRRect(
-                                borderRadius: theme.radius.tag,
-                                child: Image.file(
-                                  File(
-                                    AppScope.of(context).paths
-                                        .resolveImage(path),
-                                  ),
-                                  width: 150,
-                                  height: 120,
-                                  // 原题图片按显示宽度解码，不把 1600 像素的图整张放进内存。
-                                  cacheWidth:
-                                      (150 *
-                                              MediaQuery.devicePixelRatioOf(
-                                                context,
-                                              ))
-                                          .round(),
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) =>
-                                      const SizedBox.shrink(),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
+            _questionCard(context, view),
+            SizedBox(height: theme.space.md),
             _draftCard(theme),
-            SizedBox(height: theme.space.gap),
             if (AppScope.of(context).broughtSources.length > 0) ...[
-              Row(
-                children: [
-                  Icon(
-                    FLucideIcons.listChecks,
-                    size: 16,
-                    color: theme.colors.primary,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      '已加入 ${AppScope.of(context).broughtSources.length} 条来源，'
-                      '本次回答后清除。',
-                      style: theme.text.bodySmall,
-                    ),
-                  ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () => setState(
-                      () => AppScope.of(context).broughtSources.clear(),
-                    ),
-                    child: const Text('不带入'),
-                  ),
-                ],
-              ),
               SizedBox(height: theme.space.gap),
+              _broughtSourcesRow(theme),
             ],
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                forui.FButton(
-                  variant: forui.FButtonVariant.secondary,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : () => _ask(BuddyMode.hint),
-                  child: const Text('提示'),
-                ),
-                forui.FButton(
-                  variant: forui.FButtonVariant.secondary,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : () => _ask(BuddyMode.explain),
-                  child: const Text('讲解'),
-                ),
-                forui.FButton(
-                  variant: forui.FButtonVariant.secondary,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : () => _ask(BuddyMode.check),
-                  child: const Text('检查'),
-                ),
-                forui.FButton(
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : _submit,
-                  child: const Text('提交作答'),
-                ),
-                if (_generating)
-                  forui.FButton(
-                    variant: forui.FButtonVariant.outline,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: _stopHelp,
-                    prefix: const Icon(FLucideIcons.square),
-                    child: const Text('停止生成'),
-                  ),
-              ],
-            ),
+            SizedBox(height: theme.space.md),
+            // 三个求助入口排在草稿之后，结果落在下面，提交按钮再往下，
+            // 看完帮助不用往回滚就能提交。
+            _helpRow(theme),
             if (_busy)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: forui.FProgress(),
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: theme.space.md),
+                child: const forui.FProgress(),
               ),
             BuddyTimeline(adapter: _timelineAdapter),
+            _submitSection(theme),
             if (!_independentRedo) ...[
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(child: Text('历次尝试', style: theme.text.titleSmall)),
-                  if (attempts.isNotEmpty && _view?.openAttempt == null)
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _startRedo,
-                      prefix: const Icon(FLucideIcons.refreshCw),
-                      child: const Text('再答一次（先不看上次）'),
-                    ),
-                ],
+              SectionHeading(
+                title: '历次尝试',
+                action: attempts.isNotEmpty && _view?.openAttempt == null
+                    ? forui.FButton(
+                        variant: forui.FButtonVariant.ghost,
+                        size: forui.FButtonSizeVariant.sm,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy ? null : _startRedo,
+                        prefix: const Icon(FLucideIcons.refreshCw),
+                        child: const Text('复查（先不看上次）'),
+                      )
+                    : null,
               ),
               if (attempts.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text('提交答案后，这里会显示作答记录。'),
+                Padding(
+                  padding: EdgeInsets.only(bottom: theme.space.sm),
+                  child: Text('提交答案后，这里会显示作答记录。', style: theme.text.bodySmall),
                 ),
               for (final attempt in attempts) _attemptTile(theme, attempt),
             ] else
               Padding(
-                padding: const EdgeInsets.only(top: 16),
+                padding: EdgeInsets.only(top: theme.space.md),
                 child: Text(
                   '独立重做：这次不显示以前的答案与帮助，提交后恢复显示。',
                   style: theme.text.bodySmall,
                 ),
               ),
-            if (!_independentRedo && _recentMessages.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('同一条记录里的讨论', style: theme.text.titleSmall),
-                  ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: _busy ? null : _openDiscussion,
-                    child: const Text('打开完整讨论'),
-                  ),
-                ],
+            if (!_independentRedo && _recentMessages.isNotEmpty)
+              SectionHeading(
+                title: '同一条记录里的讨论',
+                action: forui.FButton(
+                  variant: forui.FButtonVariant.ghost,
+                  size: forui.FButtonSizeVariant.sm,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : _openDiscussion,
+                  child: const Text('打开完整讨论'),
+                ),
               ),
+            if (!_independentRedo && _recentMessages.isNotEmpty)
               for (final message in _timelineMessages)
                 ChatMessagePreview(message: message),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 原题卡：题干、出处、材料摘录与可点开的原图。
+  Widget _questionCard(BuildContext context, QuestionView view) {
+    final theme = context.zhixin;
+    final question = view.question;
+    return forui.FCard(
+      child: Padding(
+        padding: EdgeInsets.all(theme.space.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(question.displayStem, style: theme.text.titleMedium),
+            if (question.sourceRef != null) ...[
+              SizedBox(height: theme.space.tight),
+              Text('出处：${question.sourceRef}', style: theme.text.bodySmall),
+            ],
+            if (question.contextText != null) ...[
+              SizedBox(height: theme.space.tight),
+              Text('材料：${question.contextText}', style: theme.text.bodySmall),
+            ],
+            if (question.imagePaths.isNotEmpty) ...[
+              SizedBox(height: theme.space.sm),
+              Wrap(
+                spacing: theme.space.sm,
+                runSpacing: theme.space.sm,
+                children: [
+                  for (final path in question.imagePaths)
+                    GestureDetector(
+                      // 原图点开看大图，与讨论里的图片同一处实现。
+                      onTap: () => showImagePreview(
+                        context,
+                        AppScope.of(context).paths.resolveImage(path),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: theme.radius.tag,
+                        child: Image.file(
+                          File(AppScope.of(context).paths.resolveImage(path)),
+                          width: 150,
+                          height: 120,
+                          // 原题图片按显示宽度解码，不把 1600 像素的图整张放进内存。
+                          cacheWidth:
+                              (150 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => ColoredBox(
+                            color: theme.colors.surfaceContainerHigh,
+                            child: SizedBox(
+                              width: 150,
+                              height: 120,
+                              child: Center(
+                                child: Text(
+                                  '本机没有这张原图',
+                                  style: theme.text.bodySmall.copyWith(
+                                    color: theme.colors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  /// 从查找结果带入的来源只用于下一次回答，发送后清空。
+  Widget _broughtSourcesRow(ZhixinTheme theme) {
+    final count = AppScope.of(context).broughtSources.length;
+    return Row(
+      children: [
+        Icon(FLucideIcons.listChecks, size: 16, color: theme.colors.primary),
+        SizedBox(width: theme.space.xs),
+        Expanded(
+          child: Text('已加入 $count 条来源，本次回答后清除。', style: theme.text.bodySmall),
+        ),
+        forui.FButton(
+          variant: forui.FButtonVariant.ghost,
+          mainAxisSize: MainAxisSize.min,
+          onPress: () =>
+              setState(() => AppScope.of(context).broughtSources.clear()),
+          child: const Text('不带入'),
+        ),
+      ],
+    );
+  }
+
+  /// 提示、讲解与检查：三个小号描边按钮同排，生成中另给停止入口。
+  Widget _helpRow(ZhixinTheme theme) {
+    Widget button(String label, BuddyMode mode) => forui.FButton(
+      variant: forui.FButtonVariant.outline,
+      size: forui.FButtonSizeVariant.sm,
+      mainAxisSize: MainAxisSize.max,
+      onPress: _busy ? null : () => _ask(mode),
+      child: Text(label),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: button('提示', BuddyMode.hint)),
+            SizedBox(width: theme.space.sm),
+            Expanded(child: button('讲解', BuddyMode.explain)),
+            SizedBox(width: theme.space.sm),
+            Expanded(child: button('检查', BuddyMode.check)),
+          ],
+        ),
+        if (_generating)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Padding(
+              padding: EdgeInsets.only(top: theme.space.sm),
+              child: forui.FButton(
+                variant: forui.FButtonVariant.outline,
+                size: forui.FButtonSizeVariant.sm,
+                mainAxisSize: MainAxisSize.min,
+                onPress: _stopHelp,
+                prefix: const Icon(FLucideIcons.square),
+                child: const Text('停止生成'),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 自评与提交：看完帮助再判断这次做得怎样，提交按钮占满整行。
+  Widget _submitSection(ZhixinTheme theme) {
+    final helps = _view?.openAttempt?.helps.length ?? 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(height: theme.space.sectionTop),
+        Text('这次做对了吗', style: theme.text.bodyMedium),
+        SizedBox(height: theme.space.xs),
+        IgnorePointer(
+          ignoring: _busy,
+          child: ZhixinSegmented<bool?>(
+            segments: const [
+              ZhixinSegment(value: true, label: '做对了'),
+              ZhixinSegment(value: false, label: '做错了'),
+              ZhixinSegment(value: null, label: '暂不判断'),
+            ],
+            selected: _correct,
+            onChanged: (value) => setState(() => _correct = value),
+          ),
+        ),
+        if (helps > 0)
+          Padding(
+            padding: EdgeInsets.only(top: theme.space.sm),
+            child: Text(
+              '本次已使用应用内帮助 $helps 次，提交后按「辅助完成」记录。',
+              style: theme.text.bodySmall,
+            ),
+          ),
+        SizedBox(height: theme.space.md),
+        forui.FButton(
+          mainAxisSize: MainAxisSize.max,
+          onPress: _busy ? null : _submit,
+          child: const Text('提交作答'),
+        ),
+      ],
     );
   }
 
@@ -914,7 +941,12 @@ class _LearningPageState extends State<LearningPage> {
     final helps = _view?.openAttempt?.helps.length ?? 0;
     return forui.FCard(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+        padding: EdgeInsets.fromLTRB(
+          theme.space.lg,
+          theme.space.sm,
+          theme.space.lg,
+          theme.space.md,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -923,6 +955,7 @@ class _LearningPageState extends State<LearningPage> {
                 Expanded(child: Text('作答草稿', style: theme.text.titleSmall)),
                 forui.FButton(
                   variant: forui.FButtonVariant.ghost,
+                  size: forui.FButtonSizeVariant.sm,
                   mainAxisSize: MainAxisSize.min,
                   onPress: _busy ? null : _saveDraftFromButton,
                   child: const Text('保存草稿'),
@@ -946,47 +979,13 @@ class _LearningPageState extends State<LearningPage> {
               label: const Text('解法（可选）'),
               hint: '整理后单独保存，不覆盖答案、帮助与困难',
             ),
-            const SizedBox(height: 10),
-            Text('这次做对了吗', style: theme.text.bodyMedium),
-            const SizedBox(height: 2),
-            Wrap(
-              spacing: 8,
-              children: [
-                ZhixinChip(
-                  label: '做对了',
-                  selected: _correct == true,
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _correct = true),
-                ),
-                ZhixinChip(
-                  label: '做错了',
-                  selected: _correct == false,
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _correct = false),
-                ),
-                ZhixinChip(
-                  label: '暂不判断',
-                  selected: _correct == null,
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _correct = null),
-                ),
-              ],
-            ),
-            if (helps > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  '本次已使用应用内帮助 $helps 次，提交后按「辅助完成」记录。',
-                  style: theme.text.bodySmall,
-                ),
-              ),
+            SizedBox(height: theme.space.gap),
             forui.FAccordion(
-              style: const .delta(
-                titlePadding: .value(EdgeInsets.symmetric(vertical: 8)),
-                childPadding: .value(EdgeInsets.only(bottom: 4)),
+              style: .delta(
+                titlePadding: .value(
+                  EdgeInsets.symmetric(vertical: theme.space.sm),
+                ),
+                childPadding: .value(EdgeInsets.only(bottom: theme.space.xs)),
                 dividerStyle: .delta(color: Colors.transparent),
               ),
               children: [
@@ -995,7 +994,7 @@ class _LearningPageState extends State<LearningPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('补充依据（可选）', style: theme.text.titleSmall),
-                      const SizedBox(height: 2),
+                      SizedBox(height: theme.space.xs / 2),
                       Text('独立性、间隔、困难与核对依据', style: theme.text.bodySmall),
                     ],
                   ),
@@ -1007,35 +1006,34 @@ class _LearningPageState extends State<LearningPage> {
                           alignment: Alignment.centerLeft,
                           child: Text('这次是否独立完成', style: theme.text.bodyMedium),
                         ),
-                        const SizedBox(height: 2),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Wrap(
-                            spacing: 8,
-                            children: [
-                              ZhixinChip(
+                        SizedBox(height: theme.space.xs),
+                        // 三选一改成互斥的分段控件：点按区域更大，也能看出只能选一个。
+                        IgnorePointer(
+                          ignoring: _busy,
+                          child: ZhixinSegmented<String?>(
+                            segments: const [
+                              ZhixinSegment(
+                                value: 'independent',
                                 label: '独立完成',
-                                selected: _independent == true,
-                                onPressed: _busy
-                                    ? null
-                                    : () => setState(() => _independent = true),
                               ),
-                              ZhixinChip(
+                              ZhixinSegment(
+                                value: 'external',
                                 label: '用了应用外帮助',
-                                selected: _independent == false,
-                                onPressed: _busy
-                                    ? null
-                                    : () =>
-                                          setState(() => _independent = false),
                               ),
-                              ZhixinChip(
-                                label: '未说明',
-                                selected: _independent == null,
-                                onPressed: _busy
-                                    ? null
-                                    : () => setState(() => _independent = null),
-                              ),
+                              ZhixinSegment(value: null, label: '未说明'),
                             ],
+                            selected: switch (_independent) {
+                              true => 'independent',
+                              false => 'external',
+                              null => null,
+                            },
+                            onChanged: (value) => setState(
+                              () => _independent = switch (value) {
+                                'independent' => true,
+                                'external' => false,
+                                _ => null,
+                              },
+                            ),
                           ),
                         ),
                         SizedBox(height: theme.space.gap),
@@ -1070,20 +1068,36 @@ class _LearningPageState extends State<LearningPage> {
   }
 
   Widget _attemptTile(ZhixinTheme theme, Attempt attempt) {
-    final label = attempt.submitted
-        ? '${attempt.selfResult} · ${attempt.judgmentLabel}'
-        : '未提交的草稿';
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: EdgeInsets.only(top: theme.space.sm),
       child: forui.FCard(
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.all(theme.space.md),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Expanded(child: Text(label, style: theme.text.labelLarge)),
+                  Expanded(
+                    child: TagRow(
+                      children: [
+                        if (attempt.submitted) ...[
+                          StatusTag(attempt.selfResult),
+                          StatusTag(
+                            attempt.judgmentLabel,
+                            tone: switch (attempt.isCorrect) {
+                              true => TagTone.accent,
+                              false => TagTone.attention,
+                              null => TagTone.muted,
+                            },
+                          ),
+                        ] else
+                          // 未提交的草稿是这一页最需要留意的状态，用留意色标出。
+                          const StatusTag('未提交的草稿', tone: TagTone.attention),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: theme.space.sm),
                   Text(
                     attempt.submittedAt == null
                         ? ''
@@ -1093,25 +1107,25 @@ class _LearningPageState extends State<LearningPage> {
                 ],
               ),
               if (attempt.userAnswer != null) ...[
-                const SizedBox(height: 6),
+                SizedBox(height: theme.space.tight),
                 Text('作答：${attempt.userAnswer}', style: theme.text.bodyMedium),
               ],
               if (attempt.solution?.trim().isNotEmpty ?? false) ...[
-                const SizedBox(height: 6),
+                SizedBox(height: theme.space.tight),
                 Text(
                   '解法：${attempt.solution!.trim()}',
                   style: theme.text.bodyMedium,
                 ),
               ],
               if (attempt.feedback?.trim().isNotEmpty ?? false) ...[
-                const SizedBox(height: 6),
+                SizedBox(height: theme.space.tight),
                 Text(
                   '困难：${attempt.feedback!.trim()}',
                   style: theme.text.bodyMedium,
                 ),
               ],
               if (attempt.helps.isNotEmpty) ...[
-                const SizedBox(height: 6),
+                SizedBox(height: theme.space.tight),
                 Text(
                   '应用内帮助 ${attempt.helps.length} 次',
                   style: theme.text.bodySmall,
@@ -1120,7 +1134,7 @@ class _LearningPageState extends State<LearningPage> {
                     _expandedHelps.contains(attempt.id))
                   for (final help in attempt.helps)
                     Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                      padding: EdgeInsets.only(top: theme.space.xs / 2),
                       child: Text(
                         '· ${_helpLabel(help.kind)}：${help.content}',
                         style: theme.text.bodySmall,
@@ -1129,7 +1143,7 @@ class _LearningPageState extends State<LearningPage> {
                 else
                   for (final help in attempt.helps.reversed.take(2))
                     Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                      padding: EdgeInsets.only(top: theme.space.xs / 2),
                       child: Text(
                         '· ${_helpLabel(help.kind)}：${_shorten(help.content)}',
                         style: theme.text.bodySmall,
@@ -1158,7 +1172,7 @@ class _LearningPageState extends State<LearningPage> {
                 SizedBox(height: theme.space.gap),
                 Divider(height: 1, color: theme.colors.outlineVariant),
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
+                  padding: EdgeInsets.only(top: theme.space.xs),
                   child: Text(
                     '依据：${attempt.selfBasis}',
                     style: theme.text.bodySmall,
@@ -1167,7 +1181,7 @@ class _LearningPageState extends State<LearningPage> {
                 for (final assessment
                     in _assessments[attempt.id] ?? const <Assessment>[])
                   Padding(
-                    padding: const EdgeInsets.only(top: 4),
+                    padding: EdgeInsets.only(top: theme.space.xs),
                     child: Text(
                       '${assessment.kind.label}：${assessment.result}'
                       '${assessment.basis == null ? '' : '\n依据：${assessment.basis}'}',

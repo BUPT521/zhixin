@@ -5,8 +5,11 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'dart:async';
 
 import 'package:camera/camera.dart';
+import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import 'capture_entry.dart' show captureErrorText, pickCaptureImage;
 import 'theme.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_toast.dart';
@@ -53,6 +56,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _torch = false;
   String? _error;
 
+  /// 相册选择期间不算“回到前台”：用户可能正在相册里，回来时要带着选好的图
+  /// 离开这一页，不能顺手把相机再打开一次。
+  bool _pickingFromGallery = false;
+
   /// 点按对焦的方框位置，短暂显示之后清除。
   Offset? _focusAt;
 
@@ -72,16 +79,22 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // 权限被拒时控制器为空，用户多半是去系统设置放行再回来；控制器为空或
+      // 还挂着错误时都重新打开一次，能打开就把错误提示换回预览。
+      if (_pickingFromGallery) return;
+      if (_controller == null || _error != null) {
+        unawaited(_open());
+      }
+      return;
+    }
+    if (state != AppLifecycleState.inactive || _opening) return;
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
-    if (state == AppLifecycleState.inactive && !_opening) {
-      // 退到后台先放掉相机；回到前台重新打开，预览不会停在最后一帧。
-      _controller = null;
-      unawaited(controller.dispose());
-      if (mounted) setState(() {});
-    } else if (state == AppLifecycleState.resumed) {
-      unawaited(_open());
-    }
+    // 退到后台先放掉相机；回到前台重新打开，预览不会停在最后一帧。
+    _controller = null;
+    unawaited(controller.dispose());
+    if (mounted) setState(() {});
   }
 
   Future<void> _open() async {
@@ -200,6 +213,42 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
+  Future<void> _pickFromGallery() async {
+    if (_pickingFromGallery) return;
+    _pickingFromGallery = true;
+    try {
+      final picked = await pickCaptureImage(ImageSource.gallery);
+      if (!mounted) return;
+      if (picked != null) {
+        Navigator.of(context).pop(picked);
+      } else if (_error != null) {
+        // 取消相册选择时留在这一页，顺手再试一次相机：用户可能刚在系统设置里
+        // 放行了权限。
+        unawaited(_open());
+      }
+    } catch (error) {
+      if (!mounted) return;
+      showToast(context, captureErrorText(error));
+    } finally {
+      _pickingFromGallery = false;
+    }
+  }
+
+  /// 打开本应用在系统设置里的权限页。
+  ///
+  /// iOS 与 macOS 可以直接用 `app-settings:` 打开；Android 的应用详情页要原生
+  /// intent，当前没有接入，改为就地写清路径，用户在系统设置里放行后回到这一
+  /// 页会自动重新打开相机。
+  Future<void> _openSystemSettings() async {
+    try {
+      if (await launchUrl(Uri.parse('app-settings:'))) return;
+    } catch (_) {
+      // 没有处理这个 scheme 的平台走下面的说明。
+    }
+    if (!mounted) return;
+    showToast(context, '在系统设置 → 应用 → 知新 里允许相机使用，再回到这一页。');
+  }
+
   Future<void> _toggleTorch() async {
     final controller = _controller;
     if (controller == null) return;
@@ -210,7 +259,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } catch (_) {
       // 有些设备没有补光灯，或者相机正在切换，这一次点了不生效。
       if (!mounted) return;
-      showToast(context, '这台设备的闪光灯用不了');
+      showToast(context, '这台设备的补光灯用不了');
     }
   }
 
@@ -288,11 +337,42 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     if (error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: InlineNotice(
-            message: error,
-            onRetry: () => Navigator.of(context).pop(),
-            retryLabel: '返回',
+          padding: EdgeInsets.symmetric(horizontal: context.zhixin.space.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              InlineNotice(message: error),
+              SizedBox(height: context.zhixin.space.sm),
+              // 相机打不开时用户仍有两条路：换相册选一张，或去系统设置放行
+              // 权限后回来。回到这一页会自动重新打开相机。
+              Wrap(
+                spacing: context.zhixin.space.sm,
+                runSpacing: context.zhixin.space.sm,
+                alignment: WrapAlignment.center,
+                children: [
+                  forui.FButton(
+                    key: const ValueKey('camera-pick-gallery'),
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: _pickFromGallery,
+                    prefix: const Icon(FLucideIcons.images),
+                    child: const Text('从相册选择'),
+                  ),
+                  forui.FButton(
+                    key: const ValueKey('camera-open-settings'),
+                    variant: forui.FButtonVariant.outline,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: _openSystemSettings,
+                    child: const Text('打开系统设置'),
+                  ),
+                  forui.FButton(
+                    variant: forui.FButtonVariant.ghost,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: () => Navigator.of(context).pop(),
+                    child: const Text('返回'),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       );
@@ -335,7 +415,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             ),
           ZhixinIconButton(
             key: const ValueKey('camera-torch'),
-            tooltip: _torch ? '关闭闪光灯' : '打开闪光灯',
+            tooltip: _torch ? '关闭补光灯' : '打开补光灯',
             onPressed: _controller == null ? null : _toggleTorch,
             icon: _torch ? FLucideIcons.flashlight : FLucideIcons.flashlightOff,
             iconColor: _torch ? Colors.amber : Colors.white,

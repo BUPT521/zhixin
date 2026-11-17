@@ -112,6 +112,8 @@ void main() {
     navigator.push(MaterialPageRoute<void>(builder: (_) => const MemoryPage()));
     await settle(tester);
     expect(find.byType(MemoryPage), findsOneWidget);
+    expect(find.text('还没有学习记忆'), findsOneWidget);
+    expect(find.textContaining('搭子会在使用中逐步记住'), findsOneWidget);
 
     await seed(
       tester,
@@ -121,18 +123,30 @@ void main() {
       ),
     );
     expect(find.text('先给提示，再看完整解答'), findsOneWidget);
+    expect(find.text('偏好'), findsWidgets);
 
     final memories = (await tester.runAsync(() => scope!.memory.edit.list()))!;
+    // 编辑框里改过类型也要真正保存：内容不变、类型变了同样形成一次修改。
     await seed(
       tester,
-      () => scope!.memory.edit.save(memories.single, content: '先给一步提示，再给完整解答'),
+      () => scope!.memory.edit.save(
+        memories.single,
+        kind: MemoryKind.constraint,
+        content: '先给一步提示，再给完整解答',
+      ),
     );
     expect(find.text('先给提示，再看完整解答'), findsNothing);
     expect(find.text('先给一步提示，再给完整解答'), findsOneWidget);
+    expect(find.text('限制'), findsWidgets);
+    expect(find.text('偏好'), findsNothing);
 
     await seed(tester, () => scope!.memory.edit.delete(memories.single.id));
-    expect(find.text('先给一步提示，再给完整解答'), findsOneWidget);
-    expect(find.text('已停用'), findsOneWidget);
+    expect(
+      find.text('先给一步提示，再给完整解答'),
+      findsNothing,
+      reason: '已删除的条目不再列在记忆页，也不再提供修改与删除',
+    );
+    expect(find.text('已删除的记忆可在数据版本里查看。'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -145,12 +159,13 @@ void main() {
       MaterialPageRoute<void>(builder: (_) => const MemoryProposalPage()),
     );
     await settle(tester);
-    expect(find.text('最近有作答的记录'), findsOneWidget);
+    expect(find.text('还没有可以整理的作答'), findsOneWidget);
 
     final conversationId = await seed(
       tester,
       () => scope!.chat.learning.capture(stem: '写出条件概率公式'),
     );
+    expect(find.text('最近有作答的记录'), findsOneWidget);
     expect(find.text('写出条件概率公式'), findsOneWidget);
 
     // 提交一次作答：列表随作答与记忆相关的表重读，判断跟着更新。
@@ -165,6 +180,11 @@ void main() {
     });
     expect(find.text('写出条件概率公式'), findsOneWidget);
     expect(find.text('未判断'), findsNothing);
+
+    // 点一条记录，整理结果就在这条记录下方展开，不再追加到整页最下面。
+    await tester.tap(find.text('写出条件概率公式'));
+    await settle(tester);
+    expect(find.textContaining('不记为独立表现'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -199,8 +219,9 @@ void main() {
       ),
     );
     await settle(tester);
-    expect(find.text('阅读条件概率的定义'), findsOneWidget);
-    expect(find.text('完成这一步'), findsOneWidget);
+    // 步骤标题与状态在系统学习页重排过，这里只核对这一条步骤与它的状态标签。
+    expect(find.textContaining('阅读条件概率的定义'), findsWidgets);
+    expect(find.text('待学'), findsOneWidget);
 
     await seed(
       tester,
@@ -210,8 +231,8 @@ void main() {
         PlanItemStatus.done,
       ),
     );
-    expect(find.text('完成这一步'), findsNothing);
-    expect(find.text('恢复为待学习'), findsOneWidget);
+    expect(find.text('已完成'), findsWidgets);
+    expect(find.text('待学'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

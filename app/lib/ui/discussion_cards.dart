@@ -10,9 +10,15 @@ import '../application/memory_view.dart';
 import '../domain/models/buddy_protocol.dart';
 import '../domain/rules/time_format.dart';
 import 'discussion_message.dart';
+import 'workspace_widgets.dart';
 
-/// 讨论里三类卡片共用的外边距：与消息列同宽，左右各留 16。
-const discussionCardMargin = EdgeInsets.fromLTRB(16, 4, 16, 4);
+/// 讨论里三类卡片共用的外边距：与消息列同宽，左右对齐页面边距。
+EdgeInsets discussionCardMargin(ZhixinTheme theme) => EdgeInsets.fromLTRB(
+  theme.space.page,
+  theme.space.xs,
+  theme.space.page,
+  theme.space.xs,
+);
 
 /// 一条记忆：待确认时给出“记下”与“不记”，已经写入时给出“撤销”。
 ///
@@ -41,21 +47,22 @@ class MemoryCard extends StatelessWidget {
         ? '长期有效'
         : '有效至 ${formatDate(draft.validUntil!)}';
     return DiscussionCard(
-      margin: discussionCardMargin,
+      margin: discussionCardMargin(theme),
       icon: pending ? FLucideIcons.bookmarkPlus : FLucideIcons.bookmark,
       title: pending ? '记忆建议' : '已记下',
       status: pending ? '待确认' : null,
-      accent: pending ? theme.colors.secondary : null,
+      iconTone: pending ? TagTone.attention : TagTone.accent,
+      statusTone: pending ? TagTone.attention : TagTone.neutral,
       children: [
         Text(draft.content, style: theme.text.bodyMedium),
-        const SizedBox(height: 4),
+        SizedBox(height: theme.space.xs),
         Text(
           '${draft.kind.label} · $source · $valid',
           style: theme.text.bodySmall,
         ),
-        SizedBox(height: context.zhixin.space.gap),
+        SizedBox(height: theme.space.gap),
         Wrap(
-          spacing: 8,
+          spacing: theme.space.sm,
           children: [
             if (pending) ...[
               forui.FButton(
@@ -105,7 +112,7 @@ class SuggestionCard extends StatelessWidget {
     final draft = suggestion.draft;
     final minutes = draft.minutes;
     return DiscussionCard(
-      margin: discussionCardMargin,
+      margin: discussionCardMargin(theme),
       icon: FLucideIcons.calendarClock,
       title: '下一步建议',
       status: minutes != null && minutes > 0 ? '约 $minutes 分钟' : null,
@@ -115,10 +122,10 @@ class SuggestionCard extends StatelessWidget {
           Text('要做的事：${draft.action}', style: theme.text.bodySmall),
         if (draft.endCondition != null)
           Text('结束条件：${draft.endCondition}', style: theme.text.bodySmall),
-        SizedBox(height: context.zhixin.space.gap),
+        SizedBox(height: theme.space.gap),
         Wrap(
-          spacing: 8,
-          runSpacing: 4,
+          spacing: theme.space.sm,
+          runSpacing: theme.space.xs,
           children: [
             forui.FButton(
               variant: forui.FButtonVariant.secondary,
@@ -160,7 +167,7 @@ class ChangeReceiptCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     return DiscussionCard(
-      margin: discussionCardMargin,
+      margin: discussionCardMargin(theme),
       icon: FLucideIcons.circleCheck,
       title: '改动回执',
       children: [

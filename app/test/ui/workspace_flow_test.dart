@@ -41,6 +41,7 @@ import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
 import 'package:zhixin/ui/zhixin_chip.dart';
 import 'package:zhixin/ui/zhixin_header.dart';
+import 'package:zhixin/ui/zhixin_icon_button.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
 import 'package:zhixin/data/db/sql.dart';
@@ -57,6 +58,11 @@ Finder _select<T>(String label) => find.ancestor(
 
 Finder _selectField<T>(String label) =>
     find.descendant(of: _select<T>(label), matching: find.byType(EditableText));
+
+/// 讨论页顶行的“更多讨论操作”菜单触发器；菜单项要点开之后才在树里。
+Finder _discussionMoreMenu() => find.byWidgetPredicate(
+  (widget) => widget is ZhixinIconButton && widget.tooltip == '更多讨论操作',
+);
 
 /// 设置页自身的滚动区域。下拉框和输入框内部也有 Scrollable，
 /// 直接取 Scrollable 会拿到输入框里面那个横向的。
@@ -533,6 +539,8 @@ void main() {
     await tester.tap(find.text('待结束的讨论'));
     await settle(tester);
     expect(find.byType(DiscussionPage), findsOneWidget);
+    await tester.tap(_discussionMoreMenu());
+    await settle(tester);
     await tester.tap(find.text('结束讨论'));
     await settle(tester);
     expect(find.text('已结束'), findsOneWidget);
@@ -620,11 +628,11 @@ void main() {
     await settle(tester);
 
     await tester.scrollUntilVisible(
-      find.text('再答一次（先不看上次）'),
+      find.text('复查（先不看上次）'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('再答一次（先不看上次）'));
+    await tester.tap(find.text('复查（先不看上次）'));
     await settle(tester);
 
     await tester.scrollUntilVisible(
@@ -912,6 +920,8 @@ void main() {
     );
     await settle(tester);
 
+    await tester.tap(_discussionMoreMenu());
+    await settle(tester);
     await tester.tap(find.text('结束讨论'));
     await settle(tester);
     expect(find.byType(forui.FDialog), findsNothing);
@@ -936,6 +946,8 @@ void main() {
     );
     expect(reopened!.open, isTrue);
     expect(find.text('已结束'), findsNothing);
+    await tester.tap(_discussionMoreMenu());
+    await settle(tester);
     expect(find.text('结束讨论'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -1042,6 +1054,8 @@ void main() {
       tester.widget<DiscussionPage>(find.byType(DiscussionPage)).conversationId,
       data.conversation,
     );
+    await tester.tap(_discussionMoreMenu());
+    await settle(tester);
     await tester.tap(find.text('查看原文'));
     await settle(tester);
     expect(find.text('导数描述函数在一点附近的变化率。'), findsOneWidget);
@@ -1248,13 +1262,9 @@ void main() {
     await tester.enterText(fields.at(2), '卡在定义');
     await tester.ensureVisible(fields.at(3));
     await tester.enterText(fields.at(3), '与标准答案一致');
-    await tester.ensureVisible(find.widgetWithText(ZhixinChip, '用了应用外帮助'));
-    // 选项芯片把点击从标签中心转到芯片本体，命中结果里没有标签自己的 RenderBox；
-    // 点击仍然落在芯片的手势区，这里不按标签自身的命中结果报错。
-    await tester.tap(
-      find.widgetWithText(ZhixinChip, '用了应用外帮助'),
-      warnIfMissed: false,
-    );
+    await tester.ensureVisible(find.text('用了应用外帮助'));
+    // 三选一改成 ZhixinSegmented，点击落在分段的 GestureDetector 上。
+    await tester.tap(find.text('用了应用外帮助'));
     await tester.pump();
 
     // 点检查时先把整份草稿写进未提交尝试，回答再读这一份。
@@ -2360,7 +2370,14 @@ void main() {
     await openApp(tester);
     await tester.tap(find.byIcon(FLucideIcons.settings));
     await settle(tester);
-    expect(find.text('外观'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('外观'),
+      260,
+      scrollable: _settingsScrollable(),
+    );
+    await tester.ensureVisible(_selectField<ThemeMode>('深浅色'));
+    await tester.pumpAndSettle();
+    expect(_select<ThemeMode>('深浅色'), findsOneWidget);
 
     await tester.tap(_selectField<ThemeMode>('深浅色'));
     await settle(tester);
@@ -2371,6 +2388,8 @@ void main() {
       Brightness.dark,
     );
 
+    await tester.ensureVisible(_selectField<ThemeMode>('深浅色'));
+    await tester.pumpAndSettle();
     await tester.tap(_selectField<ThemeMode>('深浅色'));
     await settle(tester);
     await tester.tap(find.text('浅色').last);

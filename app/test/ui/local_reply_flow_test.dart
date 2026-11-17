@@ -101,7 +101,8 @@ void main() {
     // 从回答卡片直接进入设置页，配置页同时说明配置前后各能做什么。
     await tester.tap(find.widgetWithText(forui.FButton, '配置模型'));
     await waitFor(tester, find.text('设置'));
-    expect(find.textContaining('还没有配置模型'), findsOneWidget);
+    // 设置页首读先放骨架，等模型段读完再核对说明。
+    await waitFor(tester, find.textContaining('还没有配置模型'));
 
     await tester.enterText(
       find

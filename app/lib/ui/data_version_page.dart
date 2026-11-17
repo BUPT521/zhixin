@@ -14,6 +14,7 @@ import '../app_scope.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_models.dart';
+import '../data/revisions/revision_service.dart' show RevisionDetails;
 import '../domain/models/result.dart';
 import '../platform/data_package_export.dart';
 import 'copy.dart';
@@ -45,6 +46,13 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   bool _busy = false;
   int _keep = 100;
+
+  /// 提交历史先渲染的条数；点“读取更早的提交”再加一页。
+  static const int _historyPageSize = 30;
+  int _historyLimit = _historyPageSize;
+
+  /// 恢复过程（读包、校验、写入）的就地说明；只有最终结果才弹提示。
+  String? _restoreStatus;
 
   /// 第一次读取失败时的说明；重新订阅之后清除。
   String? _loadFailure;
@@ -141,10 +149,16 @@ class _DataVersionPageState extends State<DataVersionPage> {
         ],
       ),
       actions: [
-        forui.FButton(
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(true),
-          child: const Text('保存'),
+        // 名称为空时保存按钮不可点，用户不会以为点了没反应。
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: name,
+          builder: (context, value, _) => forui.FButton(
+            mainAxisSize: MainAxisSize.min,
+            onPress: value.text.trim().isEmpty
+                ? null
+                : () => Navigator.of(context).pop(true),
+            child: const Text('保存'),
+          ),
         ),
       ],
     );
@@ -177,13 +191,42 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   Future<void> _details(RevisionCommit commit) async {
     final scope = AppScope.of(context);
-    final details = await scope.data.revisions.details(commit.id);
-    if (!mounted || details == null) return;
+    try {
+      final details = await scope.data.revisions.details(commit.id);
+      if (!mounted) return;
+      if (details == null) {
+        _report('这条提交的明细已经不在本机，提交历史里仍然列着它。');
+        return;
+      }
+      await _showDetails(details);
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '查看提交明细',
+          kind: 'data_version_details',
+          kept: '提交历史没有改动',
+          next: '可以再试一次',
+        ),
+      );
+    }
+  }
+
+  Future<void> _showDetails(RevisionDetails details) {
+    final commit = details.commit;
     final theme = context.zhixin;
-    await showZhixinSheet<void>(
+    return showZhixinSheet<void>(
       context: context,
       builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        padding: EdgeInsets.fromLTRB(
+          theme.space.page,
+          0,
+          theme.space.page,
+          theme.space.page,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -194,7 +237,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
               '${commit.changeCount} 处变化',
               style: theme.text.bodySmall,
             ),
-            SizedBox(height: context.zhixin.space.gap),
+            SizedBox(height: theme.space.md),
             if (details.changes.isEmpty)
               const Text('这次提交没有明细。')
             else
@@ -215,14 +258,16 @@ class _DataVersionPageState extends State<DataVersionPage> {
     );
   }
 
+  /// 一条净变化：字段名换成中文，映射不到的内部字段不显示。
   Widget _changeTile(ZhixinTheme theme, RevisionChange change) {
-    final hidden = {'id', 'created_at', 'updated_at'};
+    final before = change.before;
+    final after = change.after;
     final keys = <String>{
-      ...?change.before?.keys,
-      ...?change.after?.keys,
-    }.where((key) => !hidden.contains(key)).toList()..sort();
+      ...?before?.keys,
+      ...?after?.keys,
+    }.where(_fieldLabels.containsKey).toList()..sort();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.only(bottom: theme.space.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -230,26 +275,53 @@ class _DataVersionPageState extends State<DataVersionPage> {
             '${_tableLabel(change.table)} · ${_opLabel(change.op)}',
             style: theme.text.labelLarge,
           ),
-          for (final key in keys)
-            Text(
-              '$key：${_valueText(change.before?[key])}'
-              '${change.op == 'update' ? ' → ${_valueText(change.after?[key])}' : ''}',
-              style: theme.text.bodySmall,
-            ),
+          for (final key in keys) _changeLine(theme, change, key),
         ],
       ),
     );
   }
 
+  /// 明细里的一行：更新写前后值，新增与删除只写一侧。
+  Widget _changeLine(ZhixinTheme theme, RevisionChange change, String key) {
+    final before = _fieldText(change.table, key, change.before?[key]);
+    final after = _fieldText(change.table, key, change.after?[key]);
+    final text = change.isUpdate
+        ? '${_fieldLabels[key]}：$before → $after'
+        : '${_fieldLabels[key]}：${change.isDelete ? before : after}';
+    return Text(text, style: theme.text.bodySmall);
+  }
+
   Future<void> _compare(int head, RevisionCommit commit) async {
     final scope = AppScope.of(context);
-    final diff = await scope.data.revisions.compare(commit.id, head);
+    final RevisionDiff diff;
+    try {
+      diff = await scope.data.revisions.compare(commit.id, head);
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '比较当前版本',
+          kind: 'data_version_compare',
+          kept: '当前数据没有改动',
+          next: '可以再试一次',
+        ),
+      );
+      return;
+    }
     if (!mounted) return;
     final theme = context.zhixin;
     await showZhixinSheet<void>(
       context: context,
       builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        padding: EdgeInsets.fromLTRB(
+          theme.space.page,
+          0,
+          theme.space.page,
+          theme.space.page,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -260,7 +332,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
               '删除 ${diff.deleteCount}',
               style: theme.text.bodySmall,
             ),
-            SizedBox(height: context.zhixin.space.gap),
+            SizedBox(height: theme.space.md),
             if (diff.isEmpty)
               const Text('两个版本的业务数据一致。')
             else
@@ -269,19 +341,29 @@ class _DataVersionPageState extends State<DataVersionPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      for (final entry in diff.entries)
-                        Text(
-                          '${_tableLabel(entry.table)} · '
-                          '${_opLabel(entry.op)} · ${entry.rowKey}'
-                          '${entry.columns.isEmpty ? '' : '（${entry.columns.join('、')}）'}',
-                          style: theme.text.bodySmall,
-                        ),
+                      for (final entry in diff.entries) _diffTile(theme, entry),
                     ],
                   ),
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 比较结果的一行：表与动作之外，只列映射得到中文名的字段。
+  Widget _diffTile(ZhixinTheme theme, RevisionDiffEntry entry) {
+    final columns = entry.columns
+        .map((column) => _fieldLabels[column])
+        .whereType<String>()
+        .toList(growable: false);
+    return Padding(
+      padding: EdgeInsets.only(bottom: theme.space.tight),
+      child: Text(
+        '${_tableLabel(entry.table)} · ${_opLabel(entry.op)} · ${entry.rowKey}'
+        '${columns.isEmpty ? '' : '（${columns.join('、')}）'}',
+        style: theme.text.bodySmall,
       ),
     );
   }
@@ -425,8 +507,26 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final path = picked?.path;
     if (path == null || !mounted) return;
     final scope = AppScope.of(context);
-    final expectedHead = await scope.data.versions.currentHead();
-    final bytes = await File(path).readAsBytes();
+    final int expectedHead;
+    final Uint8List bytes;
+    try {
+      expectedHead = await scope.data.versions.currentHead();
+      bytes = await File(path).readAsBytes();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '读取数据包',
+          kind: 'data_version_import_read',
+          kept: '当前数据没有改动',
+          next: '可以换一个数据包再试',
+        ),
+      );
+      return;
+    }
     if (!mounted) return;
     final confirmed = await confirmZhixin(
       context: context,
@@ -483,18 +583,40 @@ class _DataVersionPageState extends State<DataVersionPage> {
   }
 
   /// 数据包与恢复点走同一条恢复流程：预检、说明影响与回退，再整库替换。
+  ///
+  /// 读包、校验与写入的每一步只在这一页里就地说一句，只有最终结果提示一次。
   Future<void> _restorePackage({Uint8List? preset, String? origin}) async {
     if (_busy) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _restoreStatus = null;
+    });
     try {
       final message = await runPackageRestore(
         context,
         preset: preset,
         origin: origin,
-        onStatus: _report,
+        onStatus: (message) {
+          if (mounted) setState(() => _restoreStatus = message);
+        },
       );
-      if (!mounted || message == null) return;
-      _report(message);
+      if (!mounted) return;
+      setState(() => _restoreStatus = null);
+      if (message != null) _report(message);
+    } catch (error, stack) {
+      if (!mounted) return;
+      setState(() => _restoreStatus = null);
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '恢复数据包',
+          kind: 'restore_apply',
+          kept: '当前数据保留',
+          next: '可以检查数据包后重试',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -562,6 +684,28 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   Future<void> _prune() async {
     if (_busy) return;
+    final usage = _view?.usage;
+    final total = usage?.commitCount ?? 0;
+    final named = usage?.namedCount ?? 0;
+    final removing = total - _keep - named - 1;
+    final removable = removing < 0 ? 0 : removing;
+    final confirmed = await confirmZhixin(
+      context: context,
+      title: '按留存清理',
+      content: Text(
+        removable > 0
+            ? '会删除约 $removable 条较早的提交，只保留最近 $_keep 条，'
+                  '以及当前 HEAD 与命名版本指向的提交；这些提交对应的“撤销”不再有效，'
+                  '删除后无法恢复。当前数据与命名版本保留；'
+                  '出现失效回执时还会追加一条不可撤销的清理提交。确定清理？'
+            : '当前 $total 条提交没有超过 $_keep 条，这次不会删除提交；'
+                  '会清掉不再被引用的检查点与附件。出现失效回执时还会追加一条不可撤销的清理提交。'
+                  '确定继续？',
+      ),
+      confirmLabel: '清理',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
       final result = await AppScope.of(context).data.revisions
@@ -582,6 +726,43 @@ class _DataVersionPageState extends State<DataVersionPage> {
           kind: 'data_version_prune',
           kept: '当前数据与命名版本保留',
           next: '可以稍后再试',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 删除命名版本：只去掉名称，不删提交；撤销入口由提交本身判断，不受影响。
+  Future<void> _deleteName(RevisionRef ref) async {
+    if (_busy) return;
+    final confirmed = await confirmZhixin(
+      context: context,
+      title: '删除命名版本',
+      content: Text(
+        '删除命名版本“${ref.name}”之后，这个名称不再出现在命名版本里。'
+        '它不会删除任何提交，指向提交 #${ref.commitId} 的“撤销”仍然有效；'
+        '当前数据与提交历史保持原样，仍可以从提交历史恢复到这个版本。',
+      ),
+      confirmLabel: '删除',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await AppScope.of(context).data.revisions.deleteName(ref.name);
+      _report('已删除命名版本“${ref.name}”');
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '删除命名版本',
+          kind: 'data_version_name_delete',
+          kept: '命名版本还在',
+          next: '可以再试一次',
         ),
       );
     } finally {
@@ -634,10 +815,19 @@ class _DataVersionPageState extends State<DataVersionPage> {
         onError: _onViewError,
         builder: (context, view, loading) {
           if (view != null) return _content(context, view);
-          if (loading && _loadFailure == null) return const PageLoading();
+          if (loading && _loadFailure == null) return _loading(context);
           return _failure(context);
         },
       ),
+    );
+  }
+
+  /// 首读时标题栏已经就位，内容用与提交行同高的骨架占位。
+  Widget _loading(BuildContext context) {
+    final theme = context.zhixin;
+    return ListView(
+      padding: theme.space.pageInsets(bottom: 96),
+      children: const [ListSkeleton(rows: 4)],
     );
   }
 
@@ -651,7 +841,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             InlineNotice(message: _loadFailure ?? '暂时无法读取数据版本。'),
-            const SizedBox(height: 12),
+            SizedBox(height: theme.space.md),
             forui.FButton(
               variant: forui.FButtonVariant.outline,
               mainAxisSize: MainAxisSize.min,
@@ -668,178 +858,171 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final theme = context.zhixin;
     final history = view.history;
     final usage = view.usage;
+    final commits = history.commits;
+    final shown = commits.take(_historyLimit).toList(growable: false);
     return RefreshIndicator(
       onRefresh: _reload,
-      child: ListView(
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: theme.space.pageInsets(bottom: 96),
-        children: [
-          Text(
-            '每次写入形成一条提交，当前数据对应本机 HEAD。'
-            '任一保留版本都能从检查点重建；图片按内容哈希去重后保存在同一个库里。'
-            '清理或裁剪之后，消息里指向已删除提交的回执会去掉提交编号，不再提供撤销入口。',
-            style: theme.text.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              forui.FButton(
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : () => _name(),
-                prefix: const Icon(FLucideIcons.bookmarkPlus),
-                child: const Text('命名当前版本'),
-              ),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _exportCurrent,
-                prefix: const Icon(FLucideIcons.download),
-                child: const Text('导出当前数据'),
-              ),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _backupRepository,
-                prefix: const Icon(FLucideIcons.package),
-                child: const Text('备份版本库'),
-              ),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _importCurrent,
-                prefix: const Icon(FLucideIcons.upload),
-                child: const Text('导入当前数据'),
-              ),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _restoreRepository,
-                prefix: const Icon(FLucideIcons.rotateCcw),
-                child: const Text('从版本库恢复'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _section(theme, '留存'),
-          Text(
-            '共 ${history.commits.length} 条保留提交 · '
-            '${_sizeLabel(usage.databaseBytes)} · HEAD ${history.head}',
-            style: theme.text.bodySmall,
-          ),
-          Text(
-            '附件 ${_sizeLabel(usage.assetBytes)}（${usage.assetCount} 个） · '
-            '检查点 ${usage.checkpointCount} 个 · '
-            '命名 ${usage.namedCount} 个',
-            style: theme.text.bodySmall,
-          ),
-          SizedBox(height: context.zhixin.space.gap),
-          Row(
-            children: [
-              Expanded(
-                child: ZhixinSelect<int>(
-                  value: _keep,
-                  label: '保留最近提交数',
-                  options: {
-                    for (final count in {
-                      20,
-                      50,
-                      100,
-                      200,
-                      500,
-                      _keep,
-                    }.toList()..sort())
-                      count: '$count 条',
-                  },
-                  onChange: _busy
-                      ? null
-                      : (value) {
-                          if (value == null) return;
-                          setState(() => _keep = value);
-                        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Text(
+                    '这一页保存每次改动，可以回到之前的版本，也可以导出成文件保存。',
+                    style: theme.text.bodyMedium,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _prune,
-                child: const Text('按留存清理'),
-              ),
-            ],
-          ),
-          SizedBox(height: context.zhixin.space.gap),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _busy ? null : _clearHistory,
-              prefix: const Icon(FLucideIcons.eraser),
-              child: const Text('清理历史并保留当前数据'),
+                SizedBox(width: theme.space.sm),
+                forui.FButton(
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : () => _name(),
+                  prefix: const Icon(FLucideIcons.bookmarkPlus),
+                  child: const Text('命名当前版本'),
+                ),
+              ],
             ),
-          ),
-          if (history.refs.isNotEmpty) ...[
-            const Divider(height: 28),
-            _section(theme, '命名版本'),
-            for (final ref in history.refs)
-              forui.FTile(
-                prefix: const Icon(FLucideIcons.bookmark),
-                title: Text(ref.name),
-                subtitle: Text(
-                  '${ref.note?.trim().isNotEmpty == true ? '${ref.note} · ' : ''}'
-                  '提交 ${ref.commitId}',
+            const SectionHeading(title: '导出与备份'),
+            forui.FTile(
+              prefix: const LeadingIcon(FLucideIcons.download),
+              title: const Text('导出当前数据'),
+              subtitle: const Text('业务数据与仍在使用的图片。'),
+              onPress: _busy ? null : _exportCurrent,
+            ),
+            forui.FTile(
+              prefix: const LeadingIcon(FLucideIcons.package),
+              title: const Text('备份版本库'),
+              subtitle: const Text('整库快照，含历史与附件。'),
+              onPress: _busy ? null : _backupRepository,
+            ),
+            const SectionHeading(title: '导入与恢复'),
+            forui.FTile(
+              prefix: const LeadingIcon(FLucideIcons.upload),
+              title: const Text('导入当前数据'),
+              subtitle: const Text('业务数据追加成一条提交。'),
+              onPress: _busy ? null : _importCurrent,
+            ),
+            forui.FTile(
+              prefix: const LeadingIcon(FLucideIcons.rotateCcw),
+              title: const Text('从版本库恢复'),
+              subtitle: const Text('用版本库备份替换当前数据；恢复前自动保存恢复点。'),
+              onPress: _busy ? null : _restoreRepository,
+            ),
+            if (_restoreStatus case final status?)
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.sm),
+                child: Text(
+                  status,
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
                 ),
-                suffix: ZhixinIconButton(
-                  tooltip: '删除命名',
-                  onPressed: _busy
-                      ? null
-                      : () async {
-                          setState(() => _busy = true);
-                          try {
-                            await AppScope.of(context).data.revisions
-                                .deleteName(ref.name);
-                          } catch (error, stack) {
-                            if (!mounted || !context.mounted) return;
-                            _report(
-                              describeFailure(
-                                context,
-                                error,
-                                stack,
-                                action: '删除命名版本',
-                                kind: 'data_version_name_delete',
-                                kept: '命名版本还在',
-                                next: '可以再试一次',
-                              ),
-                            );
-                          } finally {
-                            if (mounted) setState(() => _busy = false);
-                          }
-                        },
-                  icon: FLucideIcons.x,
+              ),
+            SectionHeading(
+              title: '留存',
+              subtitle:
+                  '共 ${usage.commitCount} 条保留提交 · '
+                  '${_sizeLabel(usage.databaseBytes)} · HEAD ${history.head}',
+              action: forui.FButton(
+                variant: forui.FButtonVariant.ghost,
+                size: forui.FButtonSizeVariant.sm,
+                mainAxisSize: MainAxisSize.min,
+                onPress: _busy ? null : _clearHistory,
+                prefix: const Icon(FLucideIcons.eraser),
+                child: const Text('清理历史'),
+              ),
+            ),
+            Text(
+              '附件 ${_sizeLabel(usage.assetBytes)}（${usage.assetCount} 个） · '
+              '检查点 ${usage.checkpointCount} 个 · '
+              '命名 ${usage.namedCount} 个',
+              style: theme.text.bodySmall,
+            ),
+            SizedBox(height: theme.space.md),
+            Row(
+              children: [
+                Expanded(
+                  child: ZhixinSelect<int>(
+                    value: _keep,
+                    label: '保留最近提交数',
+                    options: {
+                      for (final count in {
+                        20,
+                        50,
+                        100,
+                        200,
+                        500,
+                        _keep,
+                      }.toList()..sort())
+                        count: '$count 条',
+                    },
+                    onChange: _busy
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() => _keep = value);
+                          },
+                  ),
                 ),
+                SizedBox(width: theme.space.sm),
+                forui.FButton(
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : _prune,
+                  child: const Text('按留存清理'),
+                ),
+              ],
+            ),
+            SizedBox(height: theme.space.sm),
+            if (history.refs.isNotEmpty) ...[
+              const SectionHeading(
+                title: '命名版本',
+                subtitle: '命名版本在清理时保留；删除名称不会删除提交，仍可从提交历史恢复到这个版本。',
+              ),
+              for (final ref in history.refs)
+                forui.FTile(
+                  prefix: const LeadingIcon(FLucideIcons.bookmark),
+                  title: Text(
+                    ref.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${ref.note?.trim().isNotEmpty == true ? '${ref.note} · ' : ''}'
+                    '提交 #${ref.commitId}',
+                  ),
+                  suffix: ZhixinIconButton(
+                    tooltip: '删除命名',
+                    onPressed: _busy ? null : () => _deleteName(ref),
+                    icon: FLucideIcons.x,
+                  ),
+                ),
+            ],
+            // 没有恢复点时这一节不占位置：它只在恢复过一次之后才有内容可看。
+            if (view.restorePoints.isNotEmpty) ...[
+              SectionHeading(
+                title: '恢复点',
+                subtitle:
+                    '恢复前自动保存一份，最多保留最近 ${view.restorePointKeep} 份；'
+                    '卸载应用或清空全部记录会一起删除。',
+              ),
+              for (final point in view.restorePoints) _pointTile(theme, point),
+            ],
+            const SectionHeading(title: '提交历史'),
+            for (final commit in shown) _commitTile(theme, view, commit),
+            if (commits.length > shown.length)
+              LoadMoreFooter(
+                label: '读取更早的提交',
+                loading: false,
+                onPressed: () =>
+                    setState(() => _historyLimit += _historyPageSize),
               ),
           ],
-          const Divider(height: 28),
-          _section(theme, '恢复点'),
-          Text(
-            '从数据包或恢复点恢复之前，会先把当前状态保存成一份恢复点，'
-            '最多保留最近 ${view.restorePointKeep} 份。恢复点写在应用私有目录，'
-            '卸载应用或清空全部记录会一起删除。',
-            style: theme.text.bodySmall,
-          ),
-          if (view.restorePoints.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text('还没有恢复点；恢复数据包时会自动保存。', style: theme.text.bodySmall),
-            )
-          else
-            for (final point in view.restorePoints) _pointTile(theme, point),
-          const Divider(height: 28),
-          _section(theme, '提交历史'),
-          for (final commit in history.commits)
-            _commitTile(theme, view, commit),
-        ],
+        ),
       ),
     );
   }
@@ -854,7 +1037,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     final current = commit.id == history.head;
     final undoReason = view.undoReasons[commit.id];
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         prefix: Icon(
           current ? FLucideIcons.circleDot : FLucideIcons.gitCommit,
@@ -927,14 +1110,6 @@ class _DataVersionPageState extends State<DataVersionPage> {
     );
   }
 
-  Widget _section(ZhixinTheme theme, String title) => Padding(
-    padding: const EdgeInsets.only(bottom: 4),
-    child: Text(
-      title,
-      style: theme.text.titleSmall.copyWith(color: theme.colors.primary),
-    ),
-  );
-
   String _timeText(DateTime? time) => time == null ? '时间未知' : shortTime(time);
 
   String _actorLabel(String actor) => switch (actor) {
@@ -944,7 +1119,11 @@ class _DataVersionPageState extends State<DataVersionPage> {
   };
 
   String _tableLabel(String table) => switch (table) {
+    'app_meta' => '设置',
+    'profile' => '档案',
     'learning_goal' => '目标',
+    'asset_object' => '附件对象',
+    'asset_chunk' => '附件内容',
     'material' => '材料',
     'material_page' => '材料页',
     'conversation' => '讨论',
@@ -957,7 +1136,6 @@ class _DataVersionPageState extends State<DataVersionPage> {
     'attempt' => '作答',
     'assessment' => '学习判断',
     'memory' => '记忆',
-    'profile' => '档案',
     _ => table,
   };
 
@@ -967,10 +1145,171 @@ class _DataVersionPageState extends State<DataVersionPage> {
     _ => '修改',
   };
 
-  String _valueText(RevisionValue? value) {
+  /// 明细里显示的字段名；不在这张表里的内部字段不显示。
+  static const Map<String, String> _fieldLabels = {
+    'parent_id': '上一提交',
+    'generation': '数据代次',
+    'actor': '执行者',
+    'action': '动作',
+    'restored_commit_id': '恢复来源提交',
+    'reverted_commit_id': '撤销的提交',
+    'change_count': '变化处数',
+    'name': '名称',
+    'note': '备注',
+    'key': '设置项',
+    'value': '值',
+    'day_cutoff_hour': '每日截止小时',
+    'title': '标题',
+    'scope_text': '范围说明',
+    'due_date': '截止日期',
+    'due_at': '截止时间',
+    'status': '状态',
+    'goal_id': '目标',
+    'material_id': '材料',
+    'conversation_id': '讨论',
+    'message_id': '消息',
+    'page_no': '页码',
+    'page_from': '起始页',
+    'page_to': '结束页',
+    'current_page': '当前页',
+    'content': '内容',
+    'source_ref': '出处',
+    'source_file_name': '来源文件',
+    'source_file_hash': '来源文件校验',
+    'kind': '类型',
+    'entry_kind': '记录类型',
+    'seq': '序号',
+    'role': '角色',
+    'weekday': '星期',
+    'start_time': '开始时间',
+    'end_time': '结束时间',
+    'location': '地点',
+    'start_at': '开始时间',
+    'end_at': '结束时间',
+    'ended_at': '结束时间',
+    'locked': '已固定',
+    'source': '来源',
+    'plan_item_id': '学习事项',
+    'study_plan_id': '学习计划',
+    'material_page_id': '材料页',
+    'session_id': '学习场次',
+    'redo_of_attempt_id': '复查自',
+    'user_answer': '作答',
+    'solution': '解法',
+    'is_correct': '是否正确',
+    'independent': '独立完成',
+    'delayed': '延后',
+    'feedback': '反馈',
+    'submitted_at': '提交时间',
+    'last_message_at': '最后一条消息时间',
+    'attempt_id': '作答',
+    'result': '结果',
+    'basis': '依据',
+    'source_kind': '来源',
+    'source_id': '来源编号',
+    'valid_until': '有效期',
+  };
+
+  static const Set<String> _booleanFields = {
+    'locked',
+    'independent',
+    'delayed',
+    'is_correct',
+    'suppress',
+  };
+
+  static const Set<String> _dateFields = {'due_date', 'valid_until'};
+
+  /// 明细值：状态、类型与来源换成中文，时间按界面习惯显示，其余原样。
+  String _fieldText(String table, String key, RevisionValue? value) {
     if (value == null || value.isNull) return '空';
-    if (value.type == 'blob') return '二进制 ${value.value}';
-    return '${value.value}';
+    if (value.type == 'blob') return '二进制内容';
+    final raw = '${value.value}';
+    if (key == 'op') return _opLabel(raw);
+    if (_booleanFields.contains(key)) {
+      return raw == '1'
+          ? '是'
+          : raw == '0'
+          ? '否'
+          : raw;
+    }
+    final enumText = _enumText(table, key, raw);
+    if (enumText != null) return enumText;
+    if (_dateFields.contains(key)) {
+      final time = DateTime.tryParse(raw);
+      if (time != null) return '${time.month}月${time.day}日';
+    }
+    if (key.endsWith('_at')) {
+      final time = DateTime.tryParse(raw);
+      if (time != null) return shortTime(time.toLocal());
+    }
+    return raw;
+  }
+
+  /// 状态、类型与来源这类取值只在表与列对得上时翻译，其余保留原值。
+  String? _enumText(String table, String key, String value) {
+    final labels = switch ('$table.$key') {
+      'learning_goal.status' || 'study_plan.status' => const {
+        'active': '进行中',
+        'paused': '已暂停',
+        'done': '已完成',
+      },
+      'conversation.status' => const {'open': '进行中', 'ended': '已结束'},
+      'conversation.entry_kind' => const {
+        'text': '文字',
+        'photo': '拍照',
+        'text_photo': '文字与照片',
+      },
+      'plan_item.status' => const {
+        'todo': '待开始',
+        'doing': '进行中',
+        'done': '已完成',
+        'deferred': '已暂缓',
+      },
+      'schedule_block.status' => const {
+        'planned': '已安排',
+        'done': '已完成',
+        'cancelled': '已取消',
+      },
+      'study_session.outcome' => const {
+        'done': '完成',
+        'partial': '部分完成',
+        'not_done': '没有完成',
+      },
+      'assessment.kind' => const {'model': '模型判断', 'user': '自评'},
+      'memory.kind' => const {
+        'preference': '偏好',
+        'constraint': '限制',
+        'difficulty': '困难',
+        'progress': '进展',
+      },
+      'memory.status' => const {
+        'active': '有效',
+        'superseded': '已替换',
+        'deleted': '已删除',
+      },
+      'memory.source_kind' => const {
+        'user': '你说的',
+        'message': '讨论里',
+        'attempt': '作答',
+        'session': '学习场次',
+      },
+      'material.kind' => const {
+        'text': '文字',
+        'slides': '课件',
+        'book': '书',
+        'other': '其他',
+      },
+      'message.role' => const {
+        'user': '你',
+        'assistant': buddyName,
+        'system': '系统',
+      },
+      'plan_item.source' ||
+      'schedule_block.source' => const {'user': '你', 'ai': buddyName},
+      _ => null,
+    };
+    return labels?[value];
   }
 
   String _sizeLabel(int bytes) {

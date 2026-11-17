@@ -343,6 +343,9 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     return null;
   }
 
+  /// 查找范围做成输入框下方的一枚可点标签，与“按意思找”同一行。
+  ///
+  /// 范围只影响查找，回答仍用当前讨论的范围；这句说明放进菜单，不再占一排。
   Widget _scopeMenu() {
     return forui.FPopoverMenu.tiles(
       control: forui.FPopoverControl.lifted(
@@ -353,15 +356,24 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
           setState(() => _scopeMenuOpen = open);
         },
       ),
-      menuAnchor: AlignmentDirectional.topEnd,
-      childAnchor: AlignmentDirectional.bottomEnd,
+      menuAnchor: AlignmentDirectional.topStart,
+      childAnchor: AlignmentDirectional.bottomStart,
       style: const .delta(maxWidth: 320),
       semanticsLabel: '查找范围',
       barrierSemanticsLabel: '关闭查找范围',
-      builder: (context, controller, _) => ZhixinIconButton(
-        tooltip: '查找范围',
-        onPressed: controller.toggle,
-        icon: FLucideIcons.slidersHorizontal,
+      builder: (context, controller, _) => forui.FButton(
+        variant: forui.FButtonVariant.outline,
+        size: forui.FButtonSizeVariant.sm,
+        mainAxisSize: MainAxisSize.min,
+        onPress: controller.toggle,
+        prefix: const Icon(FLucideIcons.slidersHorizontal),
+        child: Flexible(
+          child: Text(
+            '查找范围：$_scopeLabel',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ),
       menuBuilder: (context, controller, _) {
         forui.FTile option(String label, EvidenceScope scope) {
@@ -384,6 +396,15 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
         }
 
         return [
+          forui.FTileGroup(
+            children: [
+              forui.FTile(
+                title: const Text('查找范围'),
+                subtitle: const Text('只影响这一次查找；回答只使用本次讨论的范围。'),
+                enabled: false,
+              ),
+            ],
+          ),
           forui.FTileGroup(
             children: [option('本机全部记录', const EvidenceScope.userAll())],
           ),
@@ -409,140 +430,146 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     );
   }
 
+  /// 从“没有命中”的空态回到全部记录再查一次；查询与查看位置保留。
+  void _resetScope() {
+    setState(() => _scope = const EvidenceScope.userAll());
+    final query = _query.text.trim();
+    if (query.isNotEmpty) _search(query);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final results = _results;
-    return DetailScaffold(
-      header: ZhixinHeader(
-        title: const Text('搜索记录'),
-        showBack: true,
-        actions: [
-          PopScope<void>(
-            canPop: !_scopeMenuOpen,
-            onPopInvokedWithResult: (didPop, _) {
-              if (!didPop && _scopeMenuOpen) {
-                setState(() => _scopeMenuOpen = false);
-              }
-            },
-            child: _scopeMenu(),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: theme.space.pageInsets(
-              top: theme.space.sm,
-              bottom: theme.space.xs,
-            ),
-            child: forui.FTextField(
-              control: .managed(controller: _query),
-              focusNode: _searchFocus,
-              textInputAction: TextInputAction.search,
-              onSubmit: _search,
-              hint: '搜索讨论、题目、作答或材料原文',
-              suffixBuilder: (_, style, _) => ZhixinIconButton(
-                tooltip: '搜索',
-                onPressed: () => _search(_query.text),
-                icon: FLucideIcons.search,
-                style: style.clearButtonStyle,
+    return PopScope<void>(
+      canPop: !_scopeMenuOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _scopeMenuOpen) {
+          setState(() => _scopeMenuOpen = false);
+        }
+      },
+      child: DetailScaffold(
+        header: const ZhixinHeader(title: Text('搜索记录'), showBack: true),
+        child: Column(
+          children: [
+            Padding(
+              padding: theme.space.pageInsets(
+                top: theme.space.sm,
+                bottom: theme.space.xs,
+              ),
+              child: forui.FTextField(
+                control: .managed(controller: _query),
+                focusNode: _searchFocus,
+                textInputAction: TextInputAction.search,
+                onSubmit: _search,
+                hint: '搜索讨论、题目、作答或材料原文',
+                suffixBuilder: (_, style, _) => ZhixinIconButton(
+                  tooltip: '搜索',
+                  onPressed: () => _search(_query.text),
+                  icon: FLucideIcons.search,
+                  style: style.clearButtonStyle,
+                ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Icon(
-                  FLucideIcons.filter,
-                  size: 16,
-                  color: theme.colors.onSurfaceVariant,
+            _searchControls(theme),
+            if (_loading) const forui.FProgress(),
+            if (AppScope.of(context).broughtSources.length > 0)
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  theme.space.page,
+                  theme.space.xs,
+                  theme.space.page,
+                  0,
                 ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    '查找范围：$_scopeLabel；回答只使用本次讨论的范围',
-                    style: theme.text.bodySmall,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _semanticBar(theme),
-          if (_loading) const forui.FProgress(),
-          if (AppScope.of(context).broughtSources.length > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-              child: Row(
-                children: [
-                  Icon(
-                    FLucideIcons.listChecks,
-                    size: 16,
-                    color: theme.colors.primary,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      '已加入 ${AppScope.of(context).broughtSources.length} 条来源，'
-                      '只对下一次回答有效。',
-                      style: theme.text.bodySmall,
+                child: Row(
+                  children: [
+                    Icon(
+                      FLucideIcons.listChecks,
+                      size: 16,
+                      color: theme.colors.primary,
                     ),
-                  ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () {
-                      setState(
-                        () => AppScope.of(context).broughtSources.clear(),
-                      );
-                    },
-                    child: const Text('清除'),
-                  ),
-                ],
+                    SizedBox(width: theme.space.xs),
+                    Expanded(
+                      child: Text(
+                        '已加入 ${AppScope.of(context).broughtSources.length} 条来源，'
+                        '只对下一次回答有效。',
+                        style: theme.text.bodySmall,
+                      ),
+                    ),
+                    forui.FButton(
+                      variant: forui.FButtonVariant.ghost,
+                      size: forui.FButtonSizeVariant.sm,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: () {
+                        setState(
+                          () => AppScope.of(context).broughtSources.clear(),
+                        );
+                      },
+                      child: const Text('清除'),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          if (_notice != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: InlineNotice(message: _notice!),
-            ),
-          Expanded(child: _resultsArea(theme, results)),
-        ],
+            if (_notice != null)
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  theme.space.page,
+                  0,
+                  theme.space.page,
+                  0,
+                ),
+                child: InlineNotice(message: _notice!),
+              ),
+            Expanded(child: _resultsArea(theme, results)),
+          ],
+        ),
       ),
     );
   }
 
-  /// “按意思找”与它的一条状态说明；没有配置嵌入来源时按钮不可用。
-  Widget _semanticBar(ZhixinTheme theme) {
+  /// 范围标签、按意思找与语义状态；没有配置嵌入来源时按钮不可用。
+  Widget _searchControls(ZhixinTheme theme) {
     final configured = AppScope.of(context).library.semanticIndex.configured;
     final status = _semanticStatus;
     return Padding(
-      padding: theme.space.pageInsets(top: theme.space.xs, bottom: 0),
+      padding: EdgeInsets.fromLTRB(
+        theme.space.page,
+        theme.space.xs,
+        theme.space.page,
+        0,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              Expanded(
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: _scopeMenu(),
+                ),
+              ),
+              SizedBox(width: theme.space.sm),
               forui.FButton(
                 variant: forui.FButtonVariant.outline,
+                size: forui.FButtonSizeVariant.sm,
                 mainAxisSize: MainAxisSize.min,
                 onPress: configured && !_semanticLoading
                     ? _searchByMeaning
                     : null,
-                prefix: const Icon(FLucideIcons.brain, size: 18),
+                prefix: const Icon(FLucideIcons.brain),
                 child: const Text('按意思找'),
               ),
-              const SizedBox(width: 8),
-              if (!configured)
-                Expanded(
-                  child: Text('配置语义索引后可以按意思找', style: theme.text.bodySmall),
-                ),
             ],
           ),
+          if (!configured)
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.xs),
+              child: Text('配置语义索引后可以按意思找', style: theme.text.bodySmall),
+            ),
           if (status != null)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: EdgeInsets.only(top: theme.space.xs),
               // 请求失败才用 InlineNotice；“正在按意思找”与“索引为空”仍是状态行。
               child: _semanticFailed
                   ? InlineNotice(message: status, onRetry: _searchByMeaning)
@@ -555,61 +582,59 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   Widget _resultsArea(ZhixinTheme theme, SearchResults? results) {
     if (results == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            '输入要查找的文字，按原样查找题号、公式、原句和带下划线的名称，'
-            '普通问句会同时按关键词查找。\n查找范围：$_scopeLabel。',
-            textAlign: TextAlign.center,
-            style: theme.text.bodyMedium,
-          ),
+      return SingleChildScrollView(
+        child: EmptyState(
+          icon: FLucideIcons.search,
+          title: '输入要查找的文字',
+          description: '题号、公式、原句和带下划线的名称按原样查找，普通问句会同时按关键词查找。',
         ),
       );
     }
     if (results.isEmpty) {
       // “按意思找”还在进行时本地可能暂时为空，空态等这一步结束再判断。
       if (_semanticLoading) return const SizedBox.shrink();
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            '没有找到「${results.query}」。\n'
-            '可以换一段原句，或把查找范围改回本机全部记录。',
-            textAlign: TextAlign.center,
-            style: theme.text.bodyMedium,
-          ),
+      final scoped = _scope.kind != EvidenceScopeKind.all;
+      return SingleChildScrollView(
+        child: EmptyState(
+          icon: FLucideIcons.searchX,
+          title: '没有找到「${results.query}」',
+          description: scoped
+              ? '当前只在$_scopeLabel里查找；可以改回本机全部记录再试。'
+              : '可以换一段原句，或换几个关键词再试。',
+          action: scoped
+              ? forui.FButton(
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _resetScope,
+                  child: const Text('改回本机全部记录'),
+                )
+              : null,
         ),
       );
     }
+    // 结果不足一页时不写“已经到最后一条”，免得刚搜完就多一行无关的结束语。
+    final showEnd =
+        !results.hasMore &&
+        results.entries.length >= SearchService.defaultPageSize;
     return ListView(
       controller: _scroll,
       padding: theme.space.pageInsets(top: theme.space.xs),
       children: [
         for (final entry in results.entries) _entryTile(theme, entry),
         if (results.hasMore)
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: Center(
-              child: forui.FButton(
-                variant: forui.FButtonVariant.ghost,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _loadingMore ? null : _loadMore,
-                prefix: _loadingMore
-                    ? const forui.FCircularProgress(size: .xs)
-                    : const Icon(FLucideIcons.chevronDown),
-                child: Text(_loadingMore ? '正在读取…' : '加载更多结果'),
-              ),
-            ),
+          LoadMoreFooter(
+            label: '加载更多结果',
+            loading: _loadingMore,
+            onPressed: _loadMore,
           )
-        else
+        else if (showEnd)
           Padding(
-            padding: const EdgeInsets.only(top: 16),
+            padding: EdgeInsets.only(top: theme.space.md),
             child: Center(child: Text('已经到最后一条', style: theme.text.bodySmall)),
           ),
         if (_semanticHits.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 4),
+            padding: EdgeInsets.only(top: theme.space.xs),
             child: Center(
               child: Text(
                 '按意思查找最多读取前 ${SearchService.fusionWindow} 条本地候选。',
@@ -631,31 +656,29 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   }
 
   Widget _materialTile(ZhixinTheme theme, SearchEntry entry, EvidenceHit hit) {
+    final tags = <Widget>[
+      if (entry.semanticOnly) const StatusTag('按意思', tone: TagTone.accent),
+      if (hit.literal) const StatusTag('原样命中', icon: FLucideIcons.type),
+    ];
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
-        prefix: const Icon(FLucideIcons.bookOpen),
-        title: Text(hit.title),
-        subtitle: Text(
-          hit.snippet,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        suffix: Row(
-          mainAxisSize: MainAxisSize.min,
+        prefix: const LeadingIcon(FLucideIcons.bookOpen, tone: TagTone.muted),
+        title: Text(hit.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (entry.semanticOnly) _semanticTag(theme),
-            if (hit.literal)
-              forui.FTooltip(
-                tipBuilder: (_, _) => const Text('原样命中'),
-                child: const Icon(FLucideIcons.type),
-              ),
-            ZhixinIconButton(
-              tooltip: '加入本次回答',
-              icon: FLucideIcons.listPlus,
-              onPressed: () => _bring(hit),
-            ),
+            if (tags.isNotEmpty) ...[
+              TagRow(children: tags),
+              SizedBox(height: theme.space.xs),
+            ],
+            Text(hit.snippet, maxLines: 2, overflow: TextOverflow.ellipsis),
           ],
+        ),
+        suffix: ZhixinIconButton(
+          tooltip: '加入本次回答',
+          icon: FLucideIcons.listPlus,
+          onPressed: () => _bring(hit),
         ),
         onPress: () => _openMaterial(hit),
       ),
@@ -686,59 +709,44 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       for (final answer in answers) '作答：${answer.snippet}',
       if (question?.sourceRef != null) '出处：${question!.sourceRef}',
     ].join('\n');
+    final tags = <Widget>[
+      if (entry.semanticOnly) const StatusTag('按意思', tone: TagTone.accent),
+      if (entry.hasLiteral) const StatusTag('原样命中', icon: FLucideIcons.type),
+    ];
+    // 整行去向与记录页一致：有题目回学习页，只有讨论内容回讨论页。
+    void Function()? open;
+    if (conversationId != null) {
+      open = question != null
+          ? () => widget.onOpenLearning(conversationId)
+          : () => widget.onOpenDiscussion(conversationId);
+    }
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
-        prefix: Icon(
+        prefix: LeadingIcon(
           question == null
               ? FLucideIcons.messageCircle
               : FLucideIcons.notebookPen,
+          tone: TagTone.muted,
         ),
         title: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: details.isEmpty
-            ? null
-            : Text(details, maxLines: 3, overflow: TextOverflow.ellipsis),
-        suffix: Row(
-          mainAxisSize: MainAxisSize.min,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (entry.semanticOnly) _semanticTag(theme),
-            ZhixinIconButton(
-              tooltip: '加入本次回答',
-              icon: FLucideIcons.listPlus,
-              onPressed: entry.hits.isEmpty
-                  ? null
-                  : () => _bring(entry.hits.first),
-            ),
-            if (conversationId != null &&
-                (question != null || answers.isNotEmpty))
-              ZhixinIconButton(
-                tooltip: '继续作答',
-                onPressed: () => widget.onOpenLearning(conversationId),
-                icon: FLucideIcons.pencil,
-              ),
+            if (tags.isNotEmpty) ...[
+              TagRow(children: tags),
+              SizedBox(height: theme.space.xs),
+            ],
+            if (details.isNotEmpty)
+              Text(details, maxLines: 3, overflow: TextOverflow.ellipsis),
           ],
         ),
-        onPress: conversationId == null
-            ? null
-            : () => widget.onOpenDiscussion(conversationId),
-      ),
-    );
-  }
-
-  /// “按意思”小标签：只有语义一路找到的记录才显示。
-  Widget _semanticTag(ZhixinTheme theme) {
-    return Container(
-      margin: const EdgeInsets.only(right: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: theme.colors.secondaryContainer,
-        borderRadius: theme.radius.tag,
-      ),
-      child: Text(
-        '按意思',
-        style: theme.text.labelSmall.copyWith(
-          color: theme.colors.onSecondaryContainer,
+        suffix: ZhixinIconButton(
+          tooltip: '加入本次回答',
+          icon: FLucideIcons.listPlus,
+          onPressed: entry.hits.isEmpty ? null : () => _bring(entry.hits.first),
         ),
+        onPress: open,
       ),
     );
   }

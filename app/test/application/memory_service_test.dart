@@ -28,7 +28,7 @@ void main() {
       sourceKind: MemorySourceKind.user,
     );
     final memory = (await memories.byId(id))!;
-    await service.save(memory, content: '条件概率不等于独立性，需要单独判断');
+    await service.save(memory, kind: memory.kind, content: '条件概率不等于独立性，需要单独判断');
 
     final active = await memories.activeForContext(now: DateTime.now());
     expect(active.single.content, contains('不等于独立性'));
@@ -37,6 +37,7 @@ void main() {
     final head = await rig.engine.headId(rig.db.raw);
     final result = await service.save(
       (await memories.byId(id))!,
+      kind: memory.kind,
       content: '条件概率不等于独立性，需要单独判断',
     );
     expect(result.changed, isFalse);
@@ -64,6 +65,7 @@ void main() {
 
     final result = await service.save(
       (await memories.byId(id))!,
+      kind: MemoryKind.difficulty,
       content: '新内容',
       validUntil: DateTime(2026, 12, 10),
     );
@@ -75,6 +77,70 @@ void main() {
     final restored = (await memories.byId(id))!;
     expect(restored.content, '旧内容');
     expect(restored.validUntil, DateTime(2026, 12, 1));
+  });
+
+  test('修改记忆类型真正写入，撤销后回到原类型', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final memories = MemoryRepository(rig.db);
+    final service = MemoryService(
+      memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
+      transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
+    );
+    final id = await memories.create(
+      kind: MemoryKind.difficulty,
+      content: '卡在独立性与条件概率的区分',
+    );
+
+    // 只改类型、内容不变，也算一次修改并形成提交。
+    final result = await service.save(
+      (await memories.byId(id))!,
+      kind: MemoryKind.preference,
+      content: '卡在独立性与条件概率的区分',
+    );
+    expect(result.changed, isTrue);
+    expect(result.commitId, isNotNull);
+    expect((await memories.byId(id))!.kind, MemoryKind.preference);
+
+    final undone = await rig.revisions.undoCommit(result.commitId!);
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect((await memories.byId(id))!.kind, MemoryKind.difficulty);
+  });
+
+  test('类型改成偏好时不再保留目标范围，撤销后类型与范围一起恢复', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final memories = MemoryRepository(rig.db);
+    final service = MemoryService(
+      memories,
+      tasks: TaskRepository(rig.db),
+      materials: MaterialRepository(rig.db),
+      transactions: WriteTransactions(rig.db),
+      runtime: testRuntime(),
+    );
+    final id = await memories.create(
+      kind: MemoryKind.difficulty,
+      content: '条件和独立性经常混在一起',
+      scope: memoryGoalScope('goal-1'),
+    );
+
+    final result = await service.save(
+      (await memories.byId(id))!,
+      kind: MemoryKind.preference,
+      content: '条件和独立性经常混在一起',
+    );
+    final changed = (await memories.byId(id))!;
+    expect(changed.kind, MemoryKind.preference);
+    expect(changed.scope, isNull, reason: '偏好适用于全部学习，不写范围');
+
+    final undone = await rig.revisions.undoCommit(result.commitId!);
+    expect(undone.applied, isTrue, reason: undone.message);
+    final restored = (await memories.byId(id))!;
+    expect(restored.kind, MemoryKind.difficulty);
+    expect(restored.scope, memoryGoalScope('goal-1'));
   });
 
   test('删除记忆返回提交编号，撤销后状态改回 active', () async {

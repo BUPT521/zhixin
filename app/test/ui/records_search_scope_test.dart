@@ -292,7 +292,17 @@ void main() {
     await settle(tester);
 
     await tester.tap(find.text('加载更多结果'));
-    await pumpUntil(tester, find.text('已经到最后一条'));
+    await pumpUntilGone(tester, find.text('加载更多结果'));
+    // 新取回的一条记录把结束行推到视口下方，滚到底再判断。
+    for (
+      var round = 0;
+      round < 10 && find.text('已经到最后一条').evaluate().isEmpty;
+      round++
+    ) {
+      await tester.dragFrom(const Offset(195, 700), const Offset(0, -300));
+      await settle(tester);
+    }
+    expect(find.text('已经到最后一条'), findsOneWidget);
     expect(find.text('加载更多结果'), findsNothing);
     expect(tester.takeException(), isNull);
   });

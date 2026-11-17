@@ -11,22 +11,29 @@ import '../app_scope.dart';
 import '../application/settings_service.dart';
 import '../domain/rules/time_policy.dart';
 import 'copy.dart';
-import 'format.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
-import '../platform/data_package_export.dart';
 import '../platform/diagnostics_store.dart';
 import 'failure_feedback.dart';
 import 'live_view.dart';
 import 'navigation.dart';
-import 'restore_flow.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
-import 'zhixin_toast.dart';
 
-/// 设置：模型、数据与清空；记忆单独一页。
+/// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
+enum _Area { model, learning, appearance, diagnostics, danger }
+
+/// 一段操作的最近一次结果；失败用错误描边的就地说明，成功用一行小字。
+class _Result {
+  const _Result(this.message, {this.failed = false});
+
+  final String message;
+  final bool failed;
+}
+
+/// 设置：模型、语义索引、学习、外观、插件与人格、数据、诊断与危险操作。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -48,7 +55,12 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _reportCrashes = true;
   bool _loading = true;
   bool _busy = false;
-  String? _status;
+  final Map<_Area, _Result> _results = {};
+
+  /// 语义索引入口的副标题：没有可用来源时写“未启用”，否则写来源条数。
+  bool _embeddingUsable = false;
+  int? _embeddingSources;
+
   bool _started = false;
 
   /// 库里设置项的订阅：截止小时与拍照方式随写入更新（ADR-0014）。
@@ -99,13 +111,12 @@ class _SettingsPageState extends State<SettingsPage> {
       action: '读取设置',
       kind: 'settings_read',
       kept: '现有设置没有改动',
-      next: '可以重新打开设置页',
+      next: '可以在页面顶部重试',
     );
     setState(() => _loadFailure = message);
-    showToast(context, message);
   }
 
-  /// 读本机保存的模型配置与诊断设置；这两项不在库里，只在打开页面时读一次。
+  /// 读本机保存的模型配置与诊断设置，以及语义索引的规模。
   Future<void> _loadLocal(AppScopeState scope) async {
     try {
       final config = await scope.settings.edit.config();
@@ -113,6 +124,7 @@ class _SettingsPageState extends State<SettingsPage> {
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
       final themeMode = scope.themeMode.value;
+      final embedding = await _readEmbeddingSummary(scope);
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填。
       await context.afterTransition();
@@ -121,23 +133,75 @@ class _SettingsPageState extends State<SettingsPage> {
         _applyConfig(config);
         _reportCrashes = reportCrashes;
         _themeMode = themeMode;
+        _embeddingUsable = embedding.usable;
+        _embeddingSources = embedding.sources;
         _loading = false;
       });
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _status = describeFailure(
+        _loadFailure = describeFailure(
           context,
           error,
           stack,
           action: '读取设置',
           kind: 'settings_read',
           kept: '现有设置没有改动',
-          next: '可以重新打开设置页',
+          next: '可以在页面顶部重试',
         );
       });
     }
+  }
+
+  /// 顶部说明失败之后的重试：重新订阅库里设置项，并把本机配置再读一次。
+  Future<void> _retry() async {
+    setState(() {
+      _loading = true;
+      _loadFailure = null;
+      _stream = AppScope.of(context).settings.edit.watchSettings();
+    });
+    await _loadLocal(AppScope.of(context));
+  }
+
+  /// 语义索引是否可用与来源条数；读取失败时按没有索引状态处理，不影响整页。
+  Future<({bool usable, int? sources})> _readEmbeddingSummary(
+    AppScopeState scope,
+  ) async {
+    var usable = false;
+    try {
+      final config = await scope.settings.embedding.read();
+      usable = config?.usable ?? false;
+    } catch (_) {
+      // 配置读不出来时按未启用显示，入口照常可以打开。
+    }
+    int? sources;
+    if (usable) {
+      try {
+        sources = (await scope.library.semanticIndex.stats()).sources;
+      } catch (_) {
+        // 索引状态读不出来时副标题写说明，不停在“0 条来源”。
+      }
+    }
+    return (usable: usable, sources: sources);
+  }
+
+  String get _embeddingSubtitle {
+    if (!_embeddingUsable) return '未启用';
+    final sources = _embeddingSources;
+    return sources == null ? '索引状态暂时无法读取' : '$sources 条来源';
+  }
+
+  Future<void> _openEmbedding() async {
+    final scope = AppScope.of(context);
+    await openEmbeddingSettings(context);
+    if (!mounted) return;
+    final embedding = await _readEmbeddingSummary(scope);
+    if (!mounted) return;
+    setState(() {
+      _embeddingUsable = embedding.usable;
+      _embeddingSources = embedding.sources;
+    });
   }
 
   /// 把一份模型配置填回输入框；为空时回到默认值与空输入。
@@ -181,11 +245,21 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// 结果既留在页面底部，也用轻提示提示一次，避免点完按钮看不到。
-  void _report(String message) {
+  /// 结果留在触发操作的那一段卡片下方；失败另用错误描边的就地说明。
+  void _report(_Area area, String message, {bool failed = false}) {
     if (!mounted) return;
-    setState(() => _status = message);
-    showToast(context, message);
+    setState(() => _results[area] = _Result(message, failed: failed));
+  }
+
+  Widget? _resultFor(_Area area) {
+    final result = _results[area];
+    if (result == null) return null;
+    final theme = context.zhixin;
+    if (result.failed) return InlineNotice(message: result.message);
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.sm),
+      child: Text(result.message, style: theme.text.bodySmall),
+    );
   }
 
   Future<void> _saveConfig() async {
@@ -197,10 +271,11 @@ class _SettingsPageState extends State<SettingsPage> {
       await AppScope.of(context).settings.edit.saveConfig(config);
       if (!mounted) return;
       setState(() => _applyConfig(config));
-      _report('模型配置已保存到本机；回到原来的讨论或题目即可接着回答');
+      _report(_Area.model, '模型配置已保存到本机；回到原来的讨论或题目即可接着回答');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
+        _Area.model,
         describeFailure(
           context,
           error,
@@ -210,6 +285,7 @@ class _SettingsPageState extends State<SettingsPage> {
           kept: '原来的配置没有改动',
           next: '可以再试一次',
         ),
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -218,19 +294,18 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _testConfig() async {
     if (_busy) return;
-    setState(() {
-      _busy = true;
-      _status = '正在测试连接…';
-    });
+    setState(() => _busy = true);
+    _report(_Area.model, '正在测试连接…');
     try {
       _rejectStaleKey();
       final duration = await AppScope.of(context).settings.edit
           .testConfig(_formConfig());
       if (!mounted) return;
-      _report('连接成功，用时 ${duration.inSeconds} 秒');
+      _report(_Area.model, '连接成功，用时 ${duration.inSeconds} 秒');
     } on LlmException catch (error, stack) {
       if (!mounted) return;
       _report(
+        _Area.model,
         describeFailure(
           context,
           error,
@@ -240,10 +315,12 @@ class _SettingsPageState extends State<SettingsPage> {
           kept: '已保存的配置没有改动',
           next: '可以检查接口地址、模型名与 API Key 后重试',
         ),
+        failed: true,
       );
     } catch (error, stack) {
       if (!mounted) return;
       _report(
+        _Area.model,
         describeFailure(
           context,
           error,
@@ -253,62 +330,47 @@ class _SettingsPageState extends State<SettingsPage> {
           kept: '已保存的配置没有改动',
           next: '可以检查网络与接口地址后重试',
         ),
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
+  /// 删除整份模型配置：清掉接口地址、模型名与 API Key，先做危险确认。
   Future<void> _clearConfig() async {
-    await AppScope.of(context).settings.edit.clearConfig();
-    if (!mounted) return;
-    setState(() => _applyConfig(null));
-    _report('已删除本机保存的 API Key');
-  }
-
-  Future<void> _export() async {
-    if (_busy) return;
-    setState(() => _busy = true);
+    final confirmed = await confirmZhixin(
+      context: context,
+      title: '删除模型配置',
+      content: const Text(
+        '将删除本机保存的接口地址、模型名与 API Key，且无法撤销。'
+        '删除之后仍然可以直接提问、记录作答与安排时间，回答区给本地步骤；'
+        '之后重新填写即可恢复。',
+      ),
+      confirmLabel: '删除',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
     try {
-      final now = AppScope.of(context).timePolicy.now;
-      final uri = await saveDataPackage(
-        fileName: 'zhixin-repository-${compactDate(now)}.zip',
-        writePackage: AppScope.of(context).data.versions.backupRepository,
-      );
+      await AppScope.of(context).settings.edit.clearConfig();
       if (!mounted) return;
-      _report(uri == null ? '已取消导出' : '已导出：$uri');
+      setState(() => _applyConfig(null));
+      _report(_Area.danger, '已删除本机保存的模型配置');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
+        _Area.danger,
         describeFailure(
           context,
           error,
           stack,
-          action: '导出当前数据',
-          kind: 'settings_export',
-          kept: '本机数据没有改动',
-          next: '可以检查剩余存储空间后重试',
+          action: '删除模型配置',
+          kind: 'settings_model_clear',
+          kept: '原来的配置没有改动',
+          next: '可以再试一次',
         ),
+        failed: true,
       );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _restore() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      final message = await runPackageRestore(
-        context,
-        onStatus: (message) {
-          if (mounted) setState(() => _status = message);
-        },
-      );
-      if (!mounted || message == null) return;
-      _report(message);
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -321,8 +383,8 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       title: '清空全部记录',
       content: const Text(
-        '将删除目标、题目、作答、日程、记忆、讨论记录、图片和保存的版本，且无法撤销。'
-        '模型配置会保留。确定清空？',
+        '将删除目标、题目、作答、日程、记忆、讨论记录、图片和保存的版本，'
+        '以及本机语义索引，且无法撤销。模型配置、外观与人格设置会保留。确定清空？',
       ),
       confirmLabel: '清空',
       destructive: true,
@@ -331,10 +393,11 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await AppScope.of(context).settings.edit.resetAllData();
       if (!mounted) return;
-      _report('本机记录已清空');
+      _report(_Area.danger, '本机记录已清空');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
+        _Area.danger,
         describeFailure(
           context,
           error,
@@ -344,20 +407,28 @@ class _SettingsPageState extends State<SettingsPage> {
           kept: '本机数据没有改动',
           next: '可以再试一次',
         ),
+        failed: true,
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     return LiveView<SettingsView>(
       stream: _stream,
       onData: _onSettings,
       onError: _onSettingsError,
       builder: (context, settings, loading) {
-        // 首读期间整页只显示等待指示，不先摆出可滚动的表单。
+        // 首读期间保留标题栏，内容用与卡片同高的骨架占位。
         if (_loading || (loading && _loadFailure == null)) {
-          return const DetailScaffold(child: PageLoading());
+          return DetailScaffold(
+            header: const ZhixinHeader(title: Text('设置'), showBack: true),
+            child: ListView(
+              padding: theme.space.pageInsets(),
+              children: const [ListSkeleton(rows: 3, rowHeight: 96)],
+            ),
+          );
         }
         return DetailScaffold(
           header: const ZhixinHeader(title: Text('设置'), showBack: true),
@@ -370,56 +441,22 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
     final configured = _config?.isConfigured ?? false;
-    // 首读失败时按默认值显示，原因写在页面底部的状态行里。
+    // 首读失败时按默认值显示，原因写在页面顶部的就地说明里。
     final cutoff = settings?.cutoffHour ?? defaultDayCutoffHour;
     final systemCamera = settings?.useSystemCamera ?? false;
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
-        const SectionHeading(title: '外观', first: true),
-        forui.FCard(
-          child: Padding(
-            padding: EdgeInsets.all(theme.space.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                ZhixinSelect<ThemeMode>(
-                  value: _themeMode,
-                  label: '深浅色',
-                  description: '默认跟随系统，也可以固定为浅色或深色；选择立即生效。',
-                  options: const {
-                    ThemeMode.system: '跟随系统',
-                    ThemeMode.light: '浅色',
-                    ThemeMode.dark: '深色',
-                  },
-                  onChange: (value) async {
-                    if (value == null) return;
-                    try {
-                      await AppScope.of(context).themeMode.select(value);
-                    } catch (error, stack) {
-                      if (!mounted || !context.mounted) return;
-                      _report(
-                        describeFailure(
-                          context,
-                          error,
-                          stack,
-                          action: '保存外观',
-                          kind: 'settings_theme',
-                          kept: '当前外观没有改动',
-                          next: '可以再选一次',
-                        ),
-                      );
-                      return;
-                    }
-                    if (!mounted) return;
-                    setState(() => _themeMode = value);
-                  },
-                ),
-              ],
-            ),
+        if (_loadFailure != null)
+          InlineNotice(message: _loadFailure!, onRetry: _retry),
+        SectionHeading(
+          title: '模型',
+          first: true,
+          action: StatusTag(
+            configured ? '已配置' : '未配置',
+            tone: configured ? TagTone.accent : TagTone.muted,
           ),
         ),
-        const SectionHeading(title: '模型'),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
@@ -470,12 +507,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   label: const Text('模型上下文上限（token）'),
                   description: const Text('按服务商公布的上限填写，留空使用 65536。'),
                 ),
+                SizedBox(height: context.zhixin.space.gap),
                 forui.FSwitch(
                   label: const Text('允许上传题目图片'),
                   description: const Text('请求提示、讲解或读图时发送当前图片。'),
                   value: _allowImages,
                   onChange: (value) => setState(() => _allowImages = value),
                 ),
+                SizedBox(height: context.zhixin.space.md),
                 Wrap(
                   spacing: theme.space.sm,
                   runSpacing: theme.space.sm,
@@ -491,25 +530,69 @@ class _SettingsPageState extends State<SettingsPage> {
                       onPress: _busy ? null : _testConfig,
                       child: const Text('测试连接'),
                     ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy || !configured ? null : _clearConfig,
-                      child: const Text('删除 API Key'),
-                    ),
                   ],
                 ),
               ],
             ),
           ),
         ),
-        const SectionHeading(title: '拍照'),
+        ?_resultFor(_Area.model),
+        SizedBox(height: theme.space.md),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.network),
+          title: const Text('语义索引'),
+          subtitle: Text(_embeddingSubtitle),
+          suffix: const Icon(FLucideIcons.chevronRight),
+          onPress: _busy ? null : _openEmbedding,
+        ),
+        const SectionHeading(title: '学习', subtitle: '记忆、每天的截止时间与拍照方式影响回答和记录。'),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.brain),
+          title: const Text('学习记忆'),
+          subtitle: const Text('查看、修改和删除记忆'),
+          suffix: const Icon(FLucideIcons.chevronRight),
+          onPress: () => openMemory(context),
+        ),
+        SizedBox(height: theme.space.sm),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                ZhixinSelect<int>(
+                  value: cutoff,
+                  label: '每天的截止时间',
+                  description: '截止时刻前的凌晨记录计入前一天；保存后立即生效，可在数据版本页撤销。',
+                  options: {
+                    for (var hour = 0; hour <= 6; hour++) hour: '$hour 点',
+                  },
+                  onChange: (value) async {
+                    if (value == null) return;
+                    try {
+                      // 截止小时保存成一条提交，订阅随这次提交重读，界面不另外改值。
+                      await AppScope.of(context).settings.edit
+                          .saveCutoffHour(value);
+                      _report(_Area.learning, '每日截止时间已保存');
+                    } catch (error, stack) {
+                      if (!mounted || !context.mounted) return;
+                      _report(
+                        _Area.learning,
+                        describeFailure(
+                          context,
+                          error,
+                          stack,
+                          action: '保存每日截止时间',
+                          kind: 'settings_cutoff',
+                          kept: '截止时间保持原样',
+                          next: '可以再选一次',
+                        ),
+                        failed: true,
+                      );
+                    }
+                  },
+                ),
+                SizedBox(height: theme.space.gap),
                 forui.FSwitch(
                   label: const Text('拍照使用系统相机'),
                   description: const Text(
@@ -524,6 +607,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     } catch (error, stack) {
                       if (!mounted || !context.mounted) return;
                       _report(
+                        _Area.learning,
                         describeFailure(
                           context,
                           error,
@@ -533,6 +617,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           kept: '拍照方式保持原样',
                           next: '可以再选一次',
                         ),
+                        failed: true,
                       );
                       return;
                     }
@@ -546,74 +631,49 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        const SectionHeading(title: '数据'),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.history),
-          title: const Text('数据版本'),
-          subtitle: const Text('查看提交历史、命名版本、留存与两类数据包。'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: _busy ? null : _openVersions,
+        ?_resultFor(_Area.learning),
+        const SectionHeading(title: '外观'),
+        forui.FCard(
+          child: Padding(
+            padding: EdgeInsets.all(theme.space.lg),
+            child: ZhixinSelect<ThemeMode>(
+              value: _themeMode,
+              label: '深浅色',
+              description: '默认跟随系统，也可以固定为浅色或深色；选择立即生效。',
+              options: const {
+                ThemeMode.system: '跟随系统',
+                ThemeMode.light: '浅色',
+                ThemeMode.dark: '深色',
+              },
+              onChange: (value) async {
+                if (value == null) return;
+                try {
+                  await AppScope.of(context).themeMode.select(value);
+                } catch (error, stack) {
+                  if (!mounted || !context.mounted) return;
+                  _report(
+                    _Area.appearance,
+                    describeFailure(
+                      context,
+                      error,
+                      stack,
+                      action: '保存外观',
+                      kind: 'settings_theme',
+                      kept: '当前外观没有改动',
+                      next: '可以再选一次',
+                    ),
+                    failed: true,
+                  );
+                  return;
+                }
+                if (!mounted) return;
+                setState(() => _themeMode = value);
+              },
+            ),
+          ),
         ),
-        SizedBox(height: theme.space.sm),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.share),
-          title: const Text('备份版本库'),
-          subtitle: const Text('将当前数据、HEAD、历史、命名版本与附件导出为 ZIP 文件。'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: _busy ? null : _export,
-        ),
-        SizedBox(height: theme.space.sm),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.rotateCcw),
-          title: const Text('恢复版本库备份'),
-          subtitle: const Text('恢复前会先保存当前状态；版本不匹配时会显示原因。'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: _busy ? null : () => _restore(),
-        ),
-        SizedBox(height: theme.space.sm),
-        forui.FTile(
-          variant: forui.FItemVariant.destructive,
-          title: const Text('清空全部记录'),
-          suffix: const Icon(FLucideIcons.trash2),
-          onPress: _busy ? null : _resetAll,
-        ),
-        const SectionHeading(title: '其他'),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.brain),
-          title: const Text('学习记忆'),
-          subtitle: const Text('查看、修改和删除记忆'),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: () => openMemory(context),
-        ),
-        SizedBox(height: theme.space.md),
-        ZhixinSelect<int>(
-          value: cutoff,
-          label: '每天的截止时间',
-          description: '截止时刻前的凌晨记录计入前一天；保存后立即生效，可在数据版本页撤销。',
-          options: {for (var hour = 0; hour <= 6; hour++) hour: '$hour 点'},
-          onChange: (value) async {
-            if (value == null) return;
-            try {
-              // 截止小时保存成一条提交，订阅随这次提交重读，界面不另外改值。
-              await AppScope.of(context).settings.edit.saveCutoffHour(value);
-            } catch (error, stack) {
-              if (!mounted || !context.mounted) return;
-              _report(
-                describeFailure(
-                  context,
-                  error,
-                  stack,
-                  action: '保存每日截止时间',
-                  kind: 'settings_cutoff',
-                  kept: '截止时间保持原样',
-                  next: '可以再选一次',
-                ),
-              );
-            }
-          },
-        ),
-        SizedBox(height: theme.space.sm),
-        const SectionHeading(title: '插件'),
+        ?_resultFor(_Area.appearance),
+        const SectionHeading(title: '插件与人格'),
         forui.FTile(
           prefix: const LeadingIcon(FLucideIcons.package),
           title: const Text(pluginsPageTitle),
@@ -629,29 +689,44 @@ class _SettingsPageState extends State<SettingsPage> {
           suffix: const Icon(FLucideIcons.chevronRight),
           onPress: () => openPersona(context),
         ),
-        const SectionHeading(title: '诊断'),
-        forui.FSwitch(
-          label: const Text('发送崩溃报告'),
-          description: const Text(
-            '报告包含错误类型、错误分类与应用代码位置。启动时按此设置决定是否连接'
-            '诊断服务，本机诊断记录单独保存。',
-          ),
-          value: _reportCrashes,
-          onChange: (value) async {
-            final previous = _reportCrashes;
-            setState(() => _reportCrashes = value);
-            CrashLog.reportEnabled = value;
-            try {
-              await DiagnosticsStore(AppScope.of(context).paths.filesDir)
-                  .write(value);
-            } catch (_) {
-              if (!context.mounted) return;
-              setState(() => _reportCrashes = previous);
-              CrashLog.reportEnabled = previous;
-              showToast(context, '设置没有保存，可以再试一次');
-            }
-          },
+        const SectionHeading(title: '数据'),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.history),
+          title: const Text('数据版本'),
+          subtitle: const Text('查看提交历史、命名版本与数据包，导出、备份与恢复都在这里。'),
+          suffix: const Icon(FLucideIcons.chevronRight),
+          onPress: _openVersions,
         ),
+        const SectionHeading(title: '诊断与关于'),
+        forui.FCard(
+          child: Padding(
+            padding: EdgeInsets.all(theme.space.lg),
+            child: forui.FSwitch(
+              label: const Text('发送崩溃报告'),
+              description: const Text(
+                '报告包含错误类型、错误分类与应用代码位置。启动时按此设置决定是否连接'
+                '诊断服务，本机诊断记录单独保存。',
+              ),
+              value: _reportCrashes,
+              onChange: (value) async {
+                final previous = _reportCrashes;
+                setState(() => _reportCrashes = value);
+                CrashLog.reportEnabled = value;
+                try {
+                  await DiagnosticsStore(AppScope.of(context).paths.filesDir)
+                      .write(value);
+                } catch (_) {
+                  if (!context.mounted) return;
+                  setState(() => _reportCrashes = previous);
+                  CrashLog.reportEnabled = previous;
+                  _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
+                }
+              },
+            ),
+          ),
+        ),
+        ?_resultFor(_Area.diagnostics),
+        SizedBox(height: theme.space.sm),
         forui.FTile(
           prefix: const LeadingIcon(FLucideIcons.info),
           title: const Text('关于'),
@@ -659,16 +734,36 @@ class _SettingsPageState extends State<SettingsPage> {
           suffix: const Icon(FLucideIcons.chevronRight),
           onPress: () => openAbout(context),
         ),
-        const SizedBox(height: 12),
+        const SectionHeading(
+          title: '危险操作',
+          subtitle: '这两项都无法撤销；删除模型配置只影响本机保存的模型设置。',
+        ),
+        forui.FTile(
+          variant: forui.FItemVariant.destructive,
+          prefix: const LeadingIcon(FLucideIcons.keyRound, tone: TagTone.muted),
+          title: const Text('删除模型配置'),
+          subtitle: const Text('删除本机保存的接口地址、模型名与 API Key；之后的回答按本地步骤给出。'),
+          suffix: const Icon(FLucideIcons.trash2),
+          onPress: _busy || !configured ? null : _clearConfig,
+        ),
+        SizedBox(height: theme.space.sm),
+        forui.FTile(
+          variant: forui.FItemVariant.destructive,
+          prefix: const LeadingIcon(FLucideIcons.trash2, tone: TagTone.muted),
+          title: const Text('清空全部记录'),
+          subtitle: const Text(
+            '删除目标、题目、作答、日程、记忆、讨论记录、图片、保存的版本与语义索引；'
+            '模型配置、外观与人格设置保留。',
+          ),
+          suffix: const Icon(FLucideIcons.trash2),
+          onPress: _busy ? null : _resetAll,
+        ),
+        ?_resultFor(_Area.danger),
+        SizedBox(height: theme.space.md),
         Text(
           '知新是开源学习搭子，学习数据保存在本机；模型调用使用你配置的 API Key，费用由模型服务商按用量结算。',
           style: theme.text.bodySmall,
         ),
-        if (_status != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(_status!, style: theme.text.bodySmall),
-          ),
       ],
     );
   }

@@ -7,6 +7,7 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/study_plan_service.dart';
 import '../domain/models/study.dart';
+import '../domain/models/study_plan.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'live_view.dart';
@@ -16,9 +17,10 @@ import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
+import 'zhixin_menu.dart';
 import 'zhixin_toast.dart';
 
-/// 一份系统学习计划：继续位置、步骤与临时求助入口。
+/// 一份系统学习计划：概览、下一步、全部步骤与临时求助入口。
 class StudyPlanPage extends StatefulWidget {
   const StudyPlanPage({super.key, required this.planId});
 
@@ -39,6 +41,9 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   bool _busy = false;
   String? _notice;
 
+  /// 首读失败过：标题栏照常显示，内容区给说明与重试入口。
+  bool _readFailed = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -50,8 +55,10 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   /// 新的一屏回来了：动作处理改用它，界面由订阅重建。
   void _onScreen(StudyPlanScreen screen) {
     _screen = screen;
+    _readFailed = false;
   }
 
+  /// 读取失败时就地说明一次，不再另弹一条同样的 toast；重试入口随说明给出。
   void _onReadError(Object error, StackTrace stack) {
     if (!mounted) return;
     final message = describeFailure(
@@ -61,9 +68,22 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       action: '读取学习计划',
       kind: 'study_plan_read',
       kept: '屏幕上已经显示的计划与步骤保持不变',
-      next: '可以返回再打开这一页',
+      next: '可以点下面「重试」再读一次',
     );
-    showToast(context, message);
+    setState(() {
+      _readFailed = true;
+      _notice = message;
+    });
+  }
+
+  /// 重新订阅这份计划；已经显示的内容留到新结果到达。
+  void _retryRead() {
+    setState(() {
+      _readFailed = false;
+      _notice = null;
+      _stream = AppScope.of(context).study.systemPlan
+          .watchScreen(widget.planId);
+    });
   }
 
   /// 打开这一步的讨论；返回之后这一屏随订阅更新，不再手动重读。
@@ -226,16 +246,28 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     }
   }
 
+  /// 暂停或恢复计划：按钮写明实际动作，写入之后给一条可以撤销的回执。
   Future<void> _togglePause() async {
     final view = _screen?.view;
     if (view == null) return;
     final service = AppScope.of(context).study.systemPlan;
+    final wasOpen = view.plan.open;
     try {
-      if (view.plan.open) {
-        await service.pause(widget.planId);
-      } else {
-        await service.resume(widget.planId);
+      final result = wasOpen
+          ? await service.pause(widget.planId)
+          : await service.resume(widget.planId);
+      if (!mounted) return;
+      final commitId = result.commitId;
+      if (!result.changed || commitId == null) {
+        setState(() => _notice = '计划状态没有变化。');
+        return;
       }
+      showActionToast(
+        context,
+        wasOpen ? '已暂停这份计划，步骤与进度都保留。' : '已恢复这份计划。',
+        label: '撤销',
+        onPressed: () => undoCommitWithFeedback(context, commitId),
+      );
     } catch (error, stack) {
       if (!mounted) return;
       setState(
@@ -258,30 +290,64 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       stream: _stream,
       onData: _onScreen,
       onError: _onReadError,
-      builder: (context, screen, loading) {
-        if (loading) return const DetailScaffold(child: PageLoading());
-        if (screen == null) {
-          return DetailScaffold(
-            header: const ZhixinHeader(title: Text('系统学习'), showBack: true),
-            child: Center(child: Text(_notice ?? '未找到这份学习计划')),
-          );
-        }
-        return _planBody(context, screen);
+      builder: (context, data, loading) {
+        final screen = data ?? _screen;
+        if (screen != null) return _planBody(context, screen);
+        final theme = context.zhixin;
+        // 首读、找不到与读取失败都带同一条标题栏，读完标题不变，页面不跳。
+        return DetailScaffold(
+          header: const ZhixinHeader(title: Text('系统学习'), showBack: true),
+          child: _readFailed
+              ? Padding(
+                  padding: theme.space.pageInsets(),
+                  child: InlineNotice(
+                    message: _notice ?? '暂时无法读取这份学习计划。',
+                    onRetry: _retryRead,
+                  ),
+                )
+              : loading
+              ? Padding(
+                  padding: theme.space.pageInsets(),
+                  child: const ListSkeleton(rows: 3),
+                )
+              : _notFound(theme),
+        );
       },
     );
   }
+
+  Widget _notFound(ZhixinTheme theme) => Padding(
+    padding: theme.space.pageInsets(),
+    child: EmptyState(
+      icon: FLucideIcons.route,
+      title: '没有找到这份学习计划',
+      description: '计划可能已经删除；可以回到安排页再打开一份。',
+      action: forui.FButton(
+        variant: forui.FButtonVariant.outline,
+        mainAxisSize: MainAxisSize.min,
+        onPress: () => Navigator.maybePop(context),
+        child: const Text('返回安排'),
+      ),
+    ),
+  );
 
   Widget _planBody(BuildContext context, StudyPlanScreen screen) {
     final theme = context.zhixin;
     final view = screen.view;
     final plan = view.plan;
+    final current = view.currentStep;
     return DetailScaffold(
       header: ZhixinHeader(
         title: const Text('系统学习'),
         showBack: true,
         actions: [
+          ZhixinHeaderAction(
+            icon: FLucideIcons.messageCircle,
+            tooltip: '提出临时问题',
+            onPressed: _temporary,
+          ),
           ZhixinHeaderButton(
-            label: plan.open ? '暂停' : '继续',
+            label: plan.open ? '暂停计划' : '恢复计划',
             onPressed: _togglePause,
           ),
         ],
@@ -289,158 +355,219 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       child: ListView(
         padding: theme.space.pageInsets(),
         children: [
-          forui.FCard(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(plan.title, style: theme.text.titleMedium),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${plan.statusLabel} · ${plan.progressLabel}',
-                    style: theme.text.bodySmall,
-                  ),
-                  if (plan.materialTitle != null)
-                    Text(
-                      '材料：${plan.materialTitle}',
-                      style: theme.text.bodySmall,
-                    ),
-                  if (plan.conversationId != null)
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: () => _openDiscussion(plan.conversationId!),
-                      child: const Text('返回来源讨论'),
-                    ),
-                ],
+          _overviewCard(theme, plan),
+          // 失败说明紧跟概览卡：哪一步操作失败都在同一屏上方看得到，
+          // 不再落到整页最后一项。
+          if (_notice != null)
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.md),
+              child: InlineNotice(
+                message: _notice!,
+                onRetry: _readFailed ? _retryRead : null,
               ),
             ),
-          ),
-          SizedBox(height: context.zhixin.space.gap),
-          for (final step in view.steps) _stepCard(theme, screen, step),
-          const SizedBox(height: 12),
-          Wrap(
-            children: [
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _temporary,
-                prefix: const Icon(FLucideIcons.messageCircle),
-                child: const Text('提出临时问题'),
-              ),
-            ],
-          ),
-          if (_notice != null) InlineNotice(message: _notice!),
+          if (current != null) ...[
+            SizedBox(height: theme.space.md),
+            _nextStepCard(theme, screen, current),
+          ],
+          const SectionHeading(title: '全部步骤'),
+          if (view.steps.isEmpty)
+            Padding(
+              padding: EdgeInsets.only(bottom: theme.space.sm),
+              child: Text('这份计划还没有步骤。', style: theme.text.bodySmall),
+            ),
+          for (final step in view.steps) _stepRow(theme, screen, step),
         ],
       ),
     );
   }
 
-  Widget _stepCard(ZhixinTheme theme, StudyPlanScreen screen, PlanItem step) {
+  /// 概览卡：标题、状态与进度、材料与来源讨论。
+  Widget _overviewCard(ZhixinTheme theme, StudyPlan plan) {
+    return forui.FCard(
+      child: Padding(
+        padding: EdgeInsets.all(theme.space.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(plan.title, style: theme.text.titleMedium),
+            SizedBox(height: theme.space.sm),
+            TagRow(
+              children: [
+                StatusTag(
+                  plan.statusLabel,
+                  tone: plan.open ? TagTone.accent : TagTone.muted,
+                ),
+                StatusTag(plan.progressLabel),
+                if (plan.materialTitle != null)
+                  StatusTag(plan.materialTitle!, icon: FLucideIcons.bookOpen),
+              ],
+            ),
+            if (plan.conversationId != null) ...[
+              SizedBox(height: theme.space.sm),
+              forui.FButton(
+                variant: forui.FButtonVariant.ghost,
+                size: forui.FButtonSizeVariant.sm,
+                mainAxisSize: MainAxisSize.min,
+                onPress: () => _openDiscussion(plan.conversationId!),
+                prefix: const Icon(FLucideIcons.messageCircle),
+                child: const Text('返回来源讨论'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 下一步卡：这一份计划只有一个主按钮，别的步骤不再各排三个同级按钮。
+  Widget _nextStepCard(
+    ZhixinTheme theme,
+    StudyPlanScreen screen,
+    PlanItem step,
+  ) {
+    final block = screen.nextBlocks[step.id];
+    return forui.FCard(
+      child: Padding(
+        padding: EdgeInsets.all(theme.space.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TagRow(
+              children: [
+                const StatusTag('下一步', tone: TagTone.accent),
+                if (step.pageLabel.isNotEmpty)
+                  StatusTag(step.pageLabel, tone: TagTone.muted),
+              ],
+            ),
+            SizedBox(height: theme.space.tight),
+            Text(step.title, style: theme.text.titleMedium),
+            if (step.note != null) ...[
+              SizedBox(height: theme.space.xs),
+              Text(step.note!, style: theme.text.bodySmall),
+            ],
+            if (block != null) ...[
+              SizedBox(height: theme.space.xs),
+              Text(
+                '预约：${shortTime(block.startAt)}–${clockOf(block.endAt)}',
+                style: theme.text.bodySmall,
+              ),
+            ],
+            SizedBox(height: theme.space.md),
+            Row(
+              children: [
+                forui.FButton(
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : () => _studyStep(step),
+                  child: const Text('学这一步'),
+                ),
+                SizedBox(width: theme.space.sm),
+                forui.FButton(
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : () => _schedule(step),
+                  child: Text(block == null ? '预约时间' : '改期'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 全部步骤里的每一步：状态用标签，完成与改期收进行尾菜单。
+  Widget _stepRow(ZhixinTheme theme, StudyPlanScreen screen, PlanItem step) {
     final isCurrent = screen.view.currentStep?.id == step.id;
     final block = screen.nextBlocks[step.id];
     final session = screen.sessions[step.id];
     final label = step.status == PlanItemStatus.todo ? '待学' : step.status.label;
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: forui.FCard(
-        // 当前要学的那一步用浅色底，和已经完成的步骤分开。
-        style: isCurrent
-            ? .delta(
-                decoration: .shapeDelta(color: theme.colors.secondaryContainer),
-              )
-            : const .context(),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text('第 ${step.seq ?? 1} 步', style: theme.text.labelMedium),
-                  const SizedBox(width: 8),
-                  Text(label, style: theme.text.labelSmall),
-                  const Spacer(),
-                  if (step.pageLabel.isNotEmpty)
-                    Text(step.pageLabel, style: theme.text.bodySmall),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(step.title, style: theme.text.titleSmall),
-              if (step.note != null)
-                Text(step.note!, style: theme.text.bodySmall),
-              if (block != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '预约：${shortTime(block.startAt)}–${clockOf(block.endAt)}',
-                    style: theme.text.bodySmall,
-                  ),
-                ),
-              if (step.done && step.completedAt != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '完成于 ${shortTime(step.completedAt!)}',
-                    style: theme.text.bodySmall,
-                  ),
-                ),
-              if (step.done && session != null) ...[
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '这次学习：${shortTime(session.startedAt)}–'
-                    '${shortTime(session.endedAt ?? session.startedAt)}'
-                    '${session.outcomeLabel == null ? '' : ' · ${session.outcomeLabel}'}',
-                    style: theme.text.bodySmall,
-                  ),
-                ),
-                if (session.summary?.trim().isNotEmpty ?? false)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      '困难：${session.summary!.trim()}',
-                      style: theme.text.bodySmall,
-                    ),
-                  ),
-              ],
-              Wrap(
-                spacing: 4,
-                children: [
-                  if (!step.done)
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : () => _studyStep(step),
-                      child: const Text('学这一步'),
-                    ),
-                  if (!step.done)
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : () => _schedule(step),
-                      child: Text(block == null ? '预约时间' : '改期'),
-                    ),
-                  if (!step.done)
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: () => _mark(step, PlanItemStatus.done),
-                      child: const Text('完成这一步'),
-                    ),
-                  if (step.done)
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: () => _mark(step, PlanItemStatus.todo),
-                      child: const Text('恢复为待学习'),
-                    ),
-                ],
-              ),
-            ],
-          ),
+    final details = <String>[
+      if (block != null)
+        '预约：${shortTime(block.startAt)}–${clockOf(block.endAt)}',
+      if (step.done && step.completedAt != null)
+        '完成于 ${shortTime(step.completedAt!)}',
+      if (step.done && session != null)
+        '这次学习：${shortTime(session.startedAt)}–'
+            '${shortTime(session.endedAt ?? session.startedAt)}'
+            '${session.outcomeLabel == null ? '' : ' · ${session.outcomeLabel}'}',
+      if (step.done && (session?.summary?.trim().isNotEmpty ?? false))
+        '困难：${session!.summary!.trim()}',
+    ];
+    final menuItems = <ZhixinMenuItem>[
+      if (!step.done)
+        ZhixinMenuItem(
+          label: '学这一步',
+          enabled: !_busy,
+          onSelected: () => _studyStep(step),
         ),
+      if (!step.done)
+        ZhixinMenuItem(
+          label: block == null ? '预约时间' : '改期',
+          enabled: !_busy,
+          onSelected: () => _schedule(step),
+        ),
+      if (!step.done)
+        ZhixinMenuItem(
+          label: '完成这一步',
+          onSelected: () => _mark(step, PlanItemStatus.done),
+        ),
+      if (step.done)
+        ZhixinMenuItem(
+          label: '恢复为待学习',
+          onSelected: () => _mark(step, PlanItemStatus.todo),
+        ),
+    ];
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.sm),
+      child: forui.FTile(
+        prefix: LeadingIcon(
+          step.done
+              ? FLucideIcons.circleCheck
+              : isCurrent
+              ? FLucideIcons.play
+              : FLucideIcons.circle,
+          tone: step.done
+              ? TagTone.muted
+              : isCurrent
+              ? TagTone.accent
+              : TagTone.neutral,
+          size: 32,
+        ),
+        title: Text('第 ${step.seq ?? 1} 步 · ${step.title}'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(height: theme.space.xs),
+            TagRow(
+              children: [
+                StatusTag(
+                  label,
+                  tone: step.done
+                      ? TagTone.muted
+                      : isCurrent
+                      ? TagTone.accent
+                      : TagTone.neutral,
+                ),
+                if (step.pageLabel.isNotEmpty)
+                  StatusTag(step.pageLabel, tone: TagTone.muted),
+              ],
+            ),
+            if (step.note != null && step.note!.trim().isNotEmpty)
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.xs),
+                child: Text(step.note!, style: theme.text.bodySmall),
+              ),
+            for (final detail in details)
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.xs / 2),
+                child: Text(detail, style: theme.text.bodySmall),
+              ),
+          ],
+        ),
+        suffix: menuItems.isEmpty
+            ? null
+            : moreMenu(items: menuItems, label: '第 ${step.seq ?? 1} 步的更多操作'),
       ),
     );
   }

@@ -34,6 +34,7 @@ import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_icon_button.dart';
+import 'zhixin_menu.dart';
 import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
 
@@ -245,6 +246,9 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   /// 读取失败时保留已经显示的内容，只提示一次；首读失败不再停在骨架屏。
+  ///
+  /// 说明放在时间线里就地显示，不再另外弹一条同样的 toast；重试入口随说明
+  /// 一起给出，重新订阅之后读到结果就会收起。
   void _onConversationError(Object error, StackTrace stack) {
     if (!mounted) return;
     _readFailed = true;
@@ -255,10 +259,20 @@ class DiscussionChatState extends State<DiscussionChat> {
       action: '读取这条讨论',
       kind: 'discussion_read',
       kept: '已经保存的消息没有改动',
-      next: '可以返回记录页再打开',
+      next: '可以点下面「重试」再读一次',
     );
     setState(() => _notice = message);
-    showToast(context, message);
+  }
+
+  /// 读取失败之后重新订阅这条讨论；已经显示的消息留到新结果到达。
+  void _retryRead() {
+    final id = _conversationId;
+    if (id == null) return;
+    setState(() {
+      _readFailed = false;
+      _notice = null;
+      _stream = _createStream();
+    });
   }
 
   void _onScroll() {
@@ -1007,14 +1021,14 @@ class DiscussionChatState extends State<DiscussionChat> {
         };
     final theme = context.zhixin;
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
+      padding: EdgeInsets.only(top: theme.space.sm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 发送后提示条已经显示同一句时不再重复；重新打开讨论时只在这里显示。
           if (failureNotice != null && failureNotice != _notice)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+              padding: EdgeInsets.only(bottom: theme.space.tight),
               child: Text(failureNotice, style: theme.text.bodySmall),
             ),
           ModelRecoveryButtons(
@@ -1047,13 +1061,21 @@ class DiscussionChatState extends State<DiscussionChat> {
       onData: _onConversation,
       onError: _onConversationError,
       builder: (context, data, loading) {
-        if (loading && _firstLoad) return const PageLoading();
         final theme = context.zhixin;
         final record = _record;
+        // 首读时顶栏与输入区照常显示，只有消息区先放骨架，读完原位换成消息。
+        final firstLoad = loading && _firstLoad;
         return Column(
           children: [
             if (record != null) _recordBar(theme, record),
-            Expanded(child: BuddyTimeline(adapter: _timelineAdapter)),
+            Expanded(
+              child: firstLoad
+                  ? ListSkeleton(
+                      rows: 3,
+                      padding: EdgeInsets.all(theme.space.page),
+                    )
+                  : BuddyTimeline(adapter: _timelineAdapter),
+            ),
             _composer(),
           ],
         );
@@ -1065,6 +1087,20 @@ class DiscussionChatState extends State<DiscussionChat> {
     final goal = record.goalId == null
         ? null
         : _goals.where((item) => item.id == record.goalId).firstOrNull;
+    final material = record.hasMaterial;
+    // 低频操作收进行尾菜单，第一行只留目标、材料与唯一的主动作“开始作答”。
+    final menuItems = <ZhixinMenuItem>[
+      if (material)
+        ZhixinMenuItem(label: '查看原文', onSelected: () => _showSource(record)),
+      if (material)
+        ZhixinMenuItem(
+          label: '系统学习',
+          enabled: !_sending,
+          onSelected: _startStudyPlan,
+        ),
+      if (record.open)
+        ZhixinMenuItem(label: '结束讨论', enabled: !_sending, onSelected: _end),
+    ];
     return Container(
       width: double.infinity,
       padding: theme.space.pageInsets(
@@ -1074,68 +1110,48 @@ class DiscussionChatState extends State<DiscussionChat> {
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: theme.colors.outlineVariant)),
       ),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        crossAxisAlignment: WrapCrossAlignment.center,
+      child: Row(
         children: [
-          ZhixinChip(
-            icon: FLucideIcons.flag,
-            label: goal?.title ?? '选择目标',
-            onPressed: _sending ? null : _chooseGoal,
-          ),
-          ZhixinChip(
-            icon: FLucideIcons.bookOpen,
-            label: record.hasMaterial ? record.materialLabel : '选择材料',
-            onPressed: _sending ? null : _chooseMaterial,
-          ),
-          if (record.hasMaterial) ...[
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => _showSource(record),
-              prefix: const Icon(FLucideIcons.newspaper),
-              child: const Text('查看原文'),
+          Expanded(
+            child: Wrap(
+              spacing: theme.space.tight,
+              runSpacing: theme.space.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                ZhixinChip(
+                  icon: FLucideIcons.flag,
+                  label: goal?.title ?? '选择目标',
+                  onPressed: _sending ? null : _chooseGoal,
+                ),
+                ZhixinChip(
+                  icon: FLucideIcons.bookOpen,
+                  label: material ? record.materialLabel : '选择材料',
+                  onPressed: _sending ? null : _chooseMaterial,
+                ),
+                if (!record.open)
+                  const StatusTag(
+                    '已结束',
+                    tone: TagTone.muted,
+                    icon: FLucideIcons.circleCheck,
+                  ),
+              ],
             ),
+          ),
+          if (_messages.isNotEmpty) ...[
+            SizedBox(width: theme.space.sm),
             forui.FButton(
-              variant: forui.FButtonVariant.ghost,
+              variant: forui.FButtonVariant.secondary,
               mainAxisSize: MainAxisSize.min,
-              onPress: _sending ? null : _startStudyPlan,
-              prefix: const Icon(FLucideIcons.route),
-              child: const Text('系统学习'),
+              onPress: _sending || _answering ? null : _startAnswering,
+              prefix: _answering
+                  ? const forui.FCircularProgress(
+                      size: forui.FCircularProgressSizeVariant.sm,
+                    )
+                  : const Icon(FLucideIcons.notebookPen),
+              child: Text(record.hasAttempts ? '继续作答' : '开始作答'),
             ),
           ],
-          if (_messages.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: forui.FButton(
-                variant: forui.FButtonVariant.secondary,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _sending || _answering ? null : _startAnswering,
-                prefix: _answering
-                    ? const forui.FCircularProgress(
-                        size: forui.FCircularProgressSizeVariant.sm,
-                      )
-                    : const Icon(FLucideIcons.notebookPen),
-                child: Text(record.hasAttempts ? '继续作答' : '开始作答'),
-              ),
-            ),
-          if (record.open)
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _sending ? null : _end,
-              child: const Text('结束讨论'),
-            )
-          else
-            const Padding(
-              padding: EdgeInsets.only(left: 4),
-              child: StatusTag(
-                '已结束',
-                tone: TagTone.muted,
-                icon: FLucideIcons.circleCheck,
-              ),
-            ),
+          if (menuItems.isNotEmpty) moreMenu(items: menuItems, label: '更多讨论操作'),
         ],
       ),
     );
@@ -1151,30 +1167,55 @@ class DiscussionChatState extends State<DiscussionChat> {
       if (!mounted) return;
       await showZhixinSheet<void>(
         context: context,
-        builder: (sheetContext) => SizedBox(
-          height: MediaQuery.sizeOf(sheetContext).height * 0.7,
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              Text(
-                record.materialLabel,
-                style: context.zhixin.text.titleMedium,
+        title: record.materialLabel,
+        builder: (sheetContext) {
+          final theme = sheetContext.zhixin;
+          final content = page?.content ?? '';
+          void openFull() {
+            Navigator.of(sheetContext).pop();
+            openMaterial(context, record.materialId!);
+          }
+
+          return SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * 0.6,
+            child: SingleChildScrollView(
+              padding: EdgeInsets.only(
+                top: theme.space.sm,
+                bottom: theme.space.lg,
               ),
-              const SizedBox(height: 16),
-              SelectableText(page?.content ?? '当前页暂无原文。补充原文后，可在此查看。'),
-              const SizedBox(height: 16),
-              forui.FButton(
-                variant: forui.FButtonVariant.outline,
-                mainAxisSize: MainAxisSize.min,
-                onPress: () {
-                  Navigator.of(sheetContext).pop();
-                  openMaterial(context, record.materialId!);
-                },
-                child: const Text('打开完整材料'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (content.trim().isEmpty)
+                    EmptyState(
+                      icon: FLucideIcons.fileText,
+                      title: '当前页暂无原文',
+                      description: '补充原文后，可以在这里查看这一页。',
+                      action: forui.FButton(
+                        variant: forui.FButtonVariant.outline,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: openFull,
+                        child: const Text('打开完整材料'),
+                      ),
+                    )
+                  else ...[
+                    SelectableText(content, style: theme.text.bodyLarge),
+                    SizedBox(height: theme.space.lg),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: forui.FButton(
+                        variant: forui.FButtonVariant.outline,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: openFull,
+                        child: const Text('打开完整材料'),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -1210,7 +1251,7 @@ class DiscussionChatState extends State<DiscussionChat> {
           children: [
             if (AppScope.of(context).broughtSources.length > 0)
               Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+                padding: EdgeInsets.only(bottom: theme.space.tight),
                 child: Row(
                   children: [
                     Icon(
@@ -1218,7 +1259,7 @@ class DiscussionChatState extends State<DiscussionChat> {
                       size: 16,
                       color: context.zhixin.colors.primary,
                     ),
-                    const SizedBox(width: 4),
+                    SizedBox(width: theme.space.xs),
                     Expanded(
                       child: Text(
                         '已加入 '
@@ -1240,7 +1281,7 @@ class DiscussionChatState extends State<DiscussionChat> {
               ),
             if (_picked.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+                padding: EdgeInsets.only(bottom: theme.space.tight),
                 child: CapturePhotoStrip(
                   photos: _picked,
                   onRemove: (index) => setState(
@@ -1287,7 +1328,7 @@ class DiscussionChatState extends State<DiscussionChat> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: theme.space.sm),
                 ZhixinIconButton(
                   tooltip: _sending ? '停止生成' : '发送',
                   variant: forui.FButtonVariant.primary,
@@ -1328,6 +1369,16 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
         BuddyNoticeEntry(
           message: state._notice!,
           actions: [
+            // 读取失败时就地给重试入口，不再另弹一条同样的 toast。
+            if (state._readFailed && !state._streaming)
+              forui.FButton(
+                variant: forui.FButtonVariant.ghost,
+                size: forui.FButtonSizeVariant.sm,
+                mainAxisSize: MainAxisSize.min,
+                onPress: state._retryRead,
+                prefix: const Icon(FLucideIcons.refreshCw),
+                child: const Text('重试'),
+              ),
             if (state._retryableNotice && !state._streaming)
               forui.FButton(
                 variant: forui.FButtonVariant.ghost,
@@ -1345,7 +1396,8 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
   Widget? get emptyState => Center(
     child: EmptyState(
       icon: FLucideIcons.messageCircle,
-      title: '讨论内容',
+      // 空讨论的标题写成一个动作，读者进来就知道下一步做什么。
+      title: '从一个问题开始',
       description: _state.widget.emptyHint,
     ),
   );

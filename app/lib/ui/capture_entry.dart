@@ -12,7 +12,6 @@ import '../app_scope.dart';
 import 'navigation.dart';
 import 'question_crop_page.dart' show shrinkCaptureImage;
 import 'theme.dart';
-import 'zhixin_icon_button.dart';
 import 'zhixin_sheet.dart';
 
 /// 首页提问、讨论页与“贴一道题”共用的图片录入：取图、框选、存图与缩略图。
@@ -194,9 +193,11 @@ Future<void> deleteTemporaryCaptures(Iterable<XFile> photos) async {
 /// 让用户选择拍摄照片还是从相册取；取消时返回 null。
 ///
 /// 首页、讨论页与“贴一道题”共用同一份选择，三处的按钮文字与顺序不再各写一套。
+/// 面板标题与左右边距由 [showZhixinSheet] 统一给出。
 Future<ImageSource?> chooseCaptureSource(BuildContext context) {
   return showZhixinSheet<ImageSource>(
     context: context,
+    title: '添加图片',
     builder: (context) => Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -228,42 +229,87 @@ class CapturePhotoStrip extends StatelessWidget {
   final ValueChanged<int> onRemove;
   final double size;
 
+  /// 移除按钮超出缩略图外的那一截，给按钮留出放得下 44 点可点区域的外边距。
+  static const double _overhang = 12;
+
+  /// 图标按钮的最小可点区域；系统的人机界面规范取 44。
+  static const double _tapTarget = 44;
+
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     // 缩略图只有几十像素，按屏幕像素解码一张 1600 像素的图会白白占几 MB 内存。
     final cacheWidth = (size * MediaQuery.devicePixelRatioOf(context)).round();
     return Wrap(
-      spacing: 8,
-      runSpacing: 6,
+      spacing: theme.space.sm,
+      runSpacing: theme.space.sm,
       children: [
         for (var index = 0; index < photos.length; index++)
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: context.zhixin.radius.tag,
-                child: Image.file(
-                  File(photos[index].path),
-                  width: size,
-                  height: size,
-                  cacheWidth: cacheWidth,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      SizedBox(width: size, height: size),
+          SizedBox(
+            width: size + _overhang,
+            height: size + _overhang,
+            // 叉号一半压在缩略图外，这一层不裁剪，外面再留出 [_overhang] 的
+            // 空白；按钮自己有 44 的可点区域，整张缩略图只有 56 时也点得中。
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  left: 0,
+                  bottom: 0,
+                  child: ClipRRect(
+                    borderRadius: theme.radius.tag,
+                    child: Image.file(
+                      File(photos[index].path),
+                      width: size,
+                      height: size,
+                      cacheWidth: cacheWidth,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          SizedBox(width: size, height: size),
+                    ),
+                  ),
                 ),
-              ),
-              Positioned(
-                top: -6,
-                right: -6,
-                child: ZhixinIconButton(
-                  size: forui.FButtonSizeVariant.sm,
-                  tooltip: '移除图片',
-                  onPressed: () => onRemove(index),
-                  icon: FLucideIcons.circleX,
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: Semantics(
+                    button: true,
+                    label: '移除图片',
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => onRemove(index),
+                      child: const SizedBox(
+                        width: _tapTarget,
+                        height: _tapTarget,
+                        child: Center(child: _RemoveBadge()),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
       ],
+    );
+  }
+}
+
+/// 缩略图右上角的移除图标：实心圆底压在照片上，深色浅色照片都看得清。
+class _RemoveBadge extends StatelessWidget {
+  const _RemoveBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Container(
+      width: 26,
+      height: 26,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: theme.colors.card,
+        border: Border.all(color: theme.colors.outlineVariant),
+      ),
+      child: Icon(FLucideIcons.x, size: 16, color: theme.colors.onSurface),
     );
   }
 }

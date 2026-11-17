@@ -1,6 +1,8 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
+import 'theme.dart';
+
 /// 弹出一个 Forui 对话框。
 ///
 /// 原来的页面直接 showDialog + AlertDialog，标题、正文与操作按钮由 Material
@@ -110,8 +112,10 @@ class ZhixinDialogLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = context.theme.dialogStyle;
+    // 间距取 space 令牌，和各页面、各面板用同一套数字，不再各写 24、20、16。
+    final space = context.zhixin.space;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+      padding: EdgeInsets.fromLTRB(space.xl, space.page, space.xl, space.lg),
       child: SizedBox(
         width: double.maxFinite,
         child: Column(
@@ -119,18 +123,18 @@ class ZhixinDialogLayout extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             DefaultTextStyle(style: style.titleTextStyle, child: title),
-            const SizedBox(height: 12),
+            SizedBox(height: space.md),
             Flexible(
               child: DefaultTextStyle(
                 style: style.bodyTextStyle,
                 child: SingleChildScrollView(child: content),
               ),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: space.page),
             Wrap(
               alignment: WrapAlignment.end,
-              spacing: 8,
-              runSpacing: 8,
+              spacing: space.sm,
+              runSpacing: space.sm,
               children: actions,
             ),
           ],

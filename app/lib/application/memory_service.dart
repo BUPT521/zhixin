@@ -1,3 +1,4 @@
+import '../data/db/sql.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
@@ -73,18 +74,26 @@ class MemoryService {
 
   Future<List<Memory>> list() => repository.list(includeInactive: true);
 
-  /// 用户改记忆时直接更新内容；回答读的是更新后的记忆本身。
+  /// 用户改记忆时直接更新类型、内容与有效期；回答读的是更新后的记忆本身。
+  ///
+  /// 类型与内容在同一条提交里写入：仓库的 [MemoryRepository.updateContent] 只写
+  /// 内容与有效期，用户在编辑框里换过的类型在这里补一次，撤销仍按提交整组回放。
+  /// 不传 [kind] 时只改内容与有效期，类型保持原样。
   Future<WriteResult> save(
     Memory memory, {
+    MemoryKind? kind,
     required String content,
     DateTime? validUntil,
   }) {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
+    final nextKind = kind;
     return transactions.run((txn) async {
       final current = await repository.byId(memory.id);
       if (current == null) throw StateError('这条记忆已不存在');
-      if (current.content == text &&
+      final kindChanged = nextKind != null && current.kind != nextKind;
+      if (!kindChanged &&
+          current.content == text &&
           _sameValidUntil(current.validUntil, validUntil)) {
         return const WriteResult.skipped('这条记忆没有变化');
       }
@@ -94,6 +103,19 @@ class MemoryService {
         validUntil: validUntil,
         transaction: txn,
       );
+      if (nextKind != null && kindChanged) {
+        await updateRow(
+          txn.executor,
+          'memory',
+          {
+            'kind': nextKind.value,
+            // 偏好与限制适用于全部学习，换成这两类时不再保留原来的目标或材料范围。
+            if (!nextKind.followsContext) 'scope': null,
+          },
+          where: 'id = ?',
+          whereArgs: [current.id],
+        );
+      }
       return txn.result();
     }, label: editMemoryAction);
   }

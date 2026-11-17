@@ -3,11 +3,15 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart' as forui;
+import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
+
+import '../support/docx_fixture.dart';
 
 /// 材料列表与材料详情改成订阅之后，页面之外的写入由数据层重读（ADR-0014）。
 ///
@@ -109,6 +113,62 @@ void main() {
     await pumpUntil(tester, find.text('刚导入的讲义'));
     expect(find.text('待阅讲义'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('空材料详情给出添加一页入口，保存后就地显示这一页', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(
+      () => scope!.library.material.create(title: '还没有原文的材料'),
+    );
+    await openMaterialsTab(tester);
+    await pumpUntil(tester, find.text('还没有原文的材料'));
+    await tester.tap(find.text('还没有原文的材料'));
+    await pumpUntil(tester, find.text('这份材料还没有原文'));
+
+    // 空态自带「添加一页」，详情页不再让用户去找材料列表行尾的按钮。
+    await tester.tap(find.text('添加一页'));
+    await pumpUntil(tester, find.byType(forui.FDialog));
+    final fields = find.descendant(
+      of: find.byType(forui.FDialog),
+      matching: find.byType(EditableText),
+    );
+    expect(fields, findsNWidgets(3));
+    await tester.enterText(fields.at(2), '从详情空态补上的第一页。');
+    await tester.tap(find.text('保存'));
+    await pumpUntil(tester, find.text('从详情空态补上的第一页。'));
+    expect(find.text('这份材料还没有原文'), findsNothing);
+    expect(tester.takeException(), isNull);
+    // 让最后一次重读收尾，再关闭测试库。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 300)),
+    );
+  });
+
+  testWidgets('Word 材料按片段称呼，详情不给添加一页', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(() async {
+      final document = await DocxImport.read(
+        '概率讲义.docx',
+        Stream.value(docxFixture()),
+      );
+      await scope!.library.material.importDocx(
+        document: document,
+        title: '概率讲义',
+        expectedEpoch: scope!.library.material.dataEpoch,
+      );
+    });
+    await openMaterialsTab(tester);
+    await pumpUntil(tester, find.text('概率讲义'));
+    expect(find.textContaining('个片段'), findsOneWidget);
+
+    await tester.tap(find.text('概率讲义'));
+    // Word 材料的页在详情里也叫片段，与列表、引用一致。
+    await pumpUntil(tester, find.textContaining('第 1 个片段'));
+    expect(find.text('添加一页'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 300)),
+    );
   });
 
   testWidgets('材料详情在补充与更正之后自动重读', (tester) async {

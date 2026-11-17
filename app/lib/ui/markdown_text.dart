@@ -16,18 +16,27 @@ import 'zhixin_toast.dart';
 /// Markdown 图片也不自动加载，只显示文字提示，用户点击后才交给系统浏览器，
 /// 因为默认实现会立即请求图片地址，打开历史讨论时就可能访问模型服务之外的地址。
 class MarkdownText extends StatelessWidget {
-  const MarkdownText(this.text, {super.key, this.streaming = false});
+  const MarkdownText(
+    this.text, {
+    super.key,
+    this.streaming = false,
+    this.large = false,
+  });
 
   final String text;
   final bool streaming;
+
+  /// 完整回答用大一号的正文，长讲解在手机上不会太密；短摘要仍用正文尺寸。
+  final bool large;
 
   @override
   Widget build(BuildContext context) {
     // 保持同一个 GptMarkdown 在树中，让它复用已排版的段落并更新尾段。
     // 整份原文一次传入，跨行列表、围栏和全篇引用定义由同一个解析器处理。
+    final theme = context.zhixin;
     final markdown = GptMarkdown(
       text,
-      style: context.zhixin.text.bodyMedium,
+      style: large ? theme.text.bodyLarge : theme.text.bodyMedium,
       isStreaming: streaming,
       html: false,
       useDollarSignsForLatex: true,
@@ -40,7 +49,10 @@ class MarkdownText extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         markdown,
-        const Padding(padding: EdgeInsets.only(top: 8), child: StreamingHint()),
+        Padding(
+          padding: EdgeInsets.only(top: theme.space.sm),
+          child: const StreamingHint(),
+        ),
       ],
     );
   }

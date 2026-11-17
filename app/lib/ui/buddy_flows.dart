@@ -93,22 +93,28 @@ class FailureNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
+    // 与 InlineNotice 同一套外观：卡片底、错误色描边、circleAlert 图标，
+    // 两处失败说明在同一个应用里不再有两种长相；动作排在说明下方。
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: theme.colors.surfaceContainerHigh,
-        borderRadius: theme.radius.bubble,
+        color: theme.colors.card,
+        borderRadius: theme.radius.card,
+        border: Border.all(color: theme.colors.error.withValues(alpha: 0.4)),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(theme.space.md),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              FLucideIcons.info,
-              size: 16,
-              color: theme.colors.onSurfaceVariant,
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(
+                FLucideIcons.circleAlert,
+                size: 18,
+                color: theme.colors.error,
+              ),
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: theme.space.sm),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,8 +122,12 @@ class FailureNotice extends StatelessWidget {
                   Text(message, style: theme.text.bodySmall),
                   if (actions.isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Wrap(spacing: 8, runSpacing: 4, children: actions),
+                      padding: EdgeInsets.only(top: theme.space.xs),
+                      child: Wrap(
+                        spacing: theme.space.sm,
+                        runSpacing: theme.space.xs,
+                        children: actions,
+                      ),
                     ),
                 ],
               ),

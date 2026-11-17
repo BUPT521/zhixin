@@ -47,13 +47,13 @@ class QuestionCaptureButton extends StatelessWidget {
     );
     // 图片已经复制进应用目录，缓存里的那张不用再留。
     await deleteTemporaryCaptures(draft.photos);
-    if (draft.photos.isNotEmpty && paths.isEmpty) {
+    // 图片没存进去时，帖子本身仍可以只靠题目文字保存；回执要等文字写入
+    // 成功之后再给，不能先一步说已经保存。
+    final imagesFailed = draft.photos.isNotEmpty && paths.isEmpty;
+    if (imagesFailed && draft.stem.isEmpty) {
       if (!context.mounted) return;
-      if (draft.stem.isEmpty) {
-        showToast(context, '图片保存失败，请填写题目文字后再保存');
-        return;
-      }
-      showToast(context, '图片保存失败，题目文字已保存');
+      showToast(context, '图片没有存进去，先保存题目文字');
+      return;
     }
 
     try {
@@ -71,6 +71,7 @@ class QuestionCaptureButton extends StatelessWidget {
         imagePaths: paths,
       );
       if (!context.mounted) return;
+      if (imagesFailed) showToast(context, '图片没有存进去，题目文字已经保存');
       await onOpenLearning(id);
     } catch (error, stack) {
       try {
@@ -163,22 +164,45 @@ class _CaptureSheetState extends State<_CaptureSheet> {
     }
   }
 
-  Future<void> _choosePhoto() async {
-    final source = await chooseCaptureSource(context);
-    if (source == null || !mounted) return;
-    await _pick(source);
-  }
-
   bool get _hasText => _stem.text.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     final canSave = _hasText || _photos.isNotEmpty;
     return ZhixinDialogLayout(
       title: const Text('贴一道题'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // 拍照与相册放在最上面：录入题目默认先点选，不必先展开“添加图片”
+          // 再选来源，键盘输入排在后面。
+          Row(
+            children: [
+              Expanded(
+                child: forui.FButton(
+                  key: const ValueKey('capture-take-photo'),
+                  mainAxisSize: MainAxisSize.max,
+                  onPress: _picking ? null : () => _pick(ImageSource.camera),
+                  prefix: const Icon(FLucideIcons.camera),
+                  child: const Text('拍照'),
+                ),
+              ),
+              SizedBox(width: theme.space.sm),
+              Expanded(
+                child: forui.FButton(
+                  key: const ValueKey('capture-pick-gallery'),
+                  variant: forui.FButtonVariant.secondary,
+                  mainAxisSize: MainAxisSize.max,
+                  onPress: _picking ? null : () => _pick(ImageSource.gallery),
+                  prefix: const Icon(FLucideIcons.images),
+                  child: const Text('相册'),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: theme.space.gap),
           forui.FTextField(
             control: .managed(controller: _stem),
             minLines: 3,
@@ -190,77 +214,59 @@ class _CaptureSheetState extends State<_CaptureSheet> {
               style: style.clearButtonStyle,
             ),
           ),
-          if (_hasText) ...[
-            forui.FTextField(
-              control: .managed(controller: _source),
-              label: const Text('出处（可选）'),
-              hint: '教材第 82 页第 8 题',
-            ),
-            SizedBox(height: context.zhixin.space.gap),
-            forui.FTextField(
-              control: .managed(controller: _context),
-              label: const Text('材料摘录（可选）'),
-            ),
-          ] else if (_photos.isNotEmpty)
+          if (!_hasText && _photos.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '上传图片会先存成一条讨论，在讨论里可以直接开始作答；'
-                  '写下文字后还可以填写出处和材料摘录。',
-                  style: context.zhixin.text.bodySmall,
-                ),
+              padding: EdgeInsets.only(top: theme.space.sm),
+              child: Text(
+                '上传图片会先存成一条讨论，在讨论里可以直接开始作答；'
+                '写下文字后还可以填写出处和材料摘录。',
+                style: theme.text.bodySmall,
               ),
             ),
-          SizedBox(height: context.zhixin.space.gap),
-          if (_photos.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: CapturePhotoStrip(
-                photos: _photos,
-                onRemove: (index) => setState(() => _photos.removeAt(index)),
-              ),
-            ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              forui.FButton(
-                variant: forui.FButtonVariant.ghost,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _picking ? null : _choosePhoto,
-                prefix: const Icon(FLucideIcons.imagePlus),
-                child: const Text('添加图片'),
-              ),
-              if (_photos.isNotEmpty)
-                Text(
-                  '${_photos.length}/2',
-                  style: context.zhixin.text.bodySmall,
+          // 输入第一个字之后才出现的出处与摘录：补上间距，按高度展开，不再
+          // 让一块表单突然顶出来。
+          ExpandReveal(
+            visible: _hasText,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(height: theme.space.gap),
+                forui.FTextField(
+                  control: .managed(controller: _source),
+                  label: const Text('出处（可选）'),
+                  hint: '教材第 82 页第 8 题',
                 ),
-            ],
+                SizedBox(height: theme.space.gap),
+                forui.FTextField(
+                  control: .managed(controller: _context),
+                  label: const Text('材料摘录（可选）'),
+                ),
+              ],
+            ),
           ),
+          if (_photos.isNotEmpty) ...[
+            SizedBox(height: theme.space.gap),
+            CapturePhotoStrip(
+              photos: _photos,
+              onRemove: (index) => setState(() => _photos.removeAt(index)),
+            ),
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.xs),
+              child: Text(
+                '已添加 ${_photos.length}/2 张图片',
+                style: theme.text.bodySmall,
+              ),
+            ),
+          ],
           if (!canSave)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '填写题目文字或添加图片后保存。',
-                  style: context.zhixin.text.bodySmall,
-                ),
-              ),
+              padding: EdgeInsets.only(top: theme.space.xs),
+              child: Text('填写题目文字或添加图片后保存。', style: theme.text.bodySmall),
             ),
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
+        cancelZhixinButton(context),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
           onPress: canSave

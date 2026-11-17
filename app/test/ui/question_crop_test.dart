@@ -1,10 +1,14 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart' as forui;
 import 'package:image/image.dart' as img;
 import 'package:material_ui/material_ui.dart';
+import 'package:path/path.dart' as p;
 import 'package:zhixin/ui/question_crop_page.dart';
+import 'package:zhixin/ui/theme.dart';
 
 void main() {
   test('按归一化坐标裁出区域，长边超过上限时等比缩小', () {
@@ -62,4 +66,67 @@ void main() {
     expect(kept.width, 1200);
     expect(kept.height, 800);
   });
+
+  testWidgets('从相机进来时底栏给出重拍与使用这张图，放弃只留标题栏的 X', (tester) async {
+    await _pumpCrop(tester, allowRetake: true);
+
+    expect(find.byKey(const ValueKey('question-crop-footer')), findsOneWidget);
+    expect(find.widgetWithText(forui.FButton, '重拍'), findsOneWidget);
+    expect(find.widgetWithText(forui.FButton, '使用这张图'), findsOneWidget);
+    // 放弃只留在标题栏的 X 上，底栏不再有一个“取消”。
+    expect(find.widgetWithText(forui.FButton, '取消'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('从相册进来时没有重拍，底栏只确认这张图', (tester) async {
+    await _pumpCrop(tester, allowRetake: false);
+
+    expect(find.widgetWithText(forui.FButton, '重拍'), findsNothing);
+    expect(find.widgetWithText(forui.FButton, '使用这张图'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
+
+/// 起一个框选页：原图用临时目录里真实的小图，读完再断言，测试结束时文件已经
+/// 释放，删除临时目录不会因为读取还没结束而失败。
+Future<void> _pumpCrop(WidgetTester tester, {required bool allowRetake}) async {
+  final dir = Directory.systemTemp.createTempSync('crop-footer-test');
+  addTearDown(() async {
+    try {
+      if (dir.existsSync()) await dir.delete(recursive: true);
+    } on FileSystemException {
+      // Windows 上删不掉时把临时目录交给系统清理，不影响用例结果。
+    }
+  });
+  final file = File(p.join(dir.path, 'shot.jpg'))
+    ..writeAsBytesSync(
+      Uint8List.fromList(img.encodeJpg(img.Image(width: 8, height: 8))),
+    );
+  await tester.runAsync(() async {
+    await tester.pumpWidget(
+      _host(
+        QuestionCropPage(
+          sourcePath: file.path,
+          outputDir: dir.path,
+          allowRetake: allowRetake,
+        ),
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  });
+  await tester.pump();
+}
+
+Widget _host(Widget child) => forui.FTheme(
+  data: zhixinForuiTheme,
+  child: MaterialApp(
+    theme: zhixinTheme,
+    localizationsDelegates: const [
+      ...GlobalMaterialLocalizations.delegates,
+      forui.FLocalizations.delegate,
+    ],
+    locale: const Locale('zh', 'CN'),
+    supportedLocales: const [Locale('zh', 'CN')],
+    home: child,
+  ),
+);

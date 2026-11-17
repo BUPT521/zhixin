@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:forui/forui.dart' as forui;
+import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import '../application/buddy_actions.dart';
@@ -152,7 +153,7 @@ class BuddyTimeline extends StatelessWidget {
       controller: adapter.controller,
       // 倒序列表把最新一条放在偏移 0，打开长讨论时直接落在底部。
       reverse: true,
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: EdgeInsets.symmetric(vertical: context.zhixin.space.md),
       itemCount: entries.length + (adapter.hasOlder ? 1 : 0),
       itemBuilder: (context, index) {
         if (index == entries.length) return _olderFooter(context);
@@ -165,7 +166,7 @@ class BuddyTimeline extends StatelessWidget {
   Widget _olderFooter(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(context.zhixin.space.md),
         child: adapter.loadingOlder
             ? const forui.FCircularProgress(size: .sm)
             : forui.FButton(
@@ -179,9 +180,10 @@ class BuddyTimeline extends StatelessWidget {
   }
 
   Widget _entry(BuildContext context, BuddyTimelineEntry entry) {
+    final space = context.zhixin.space;
     return switch (entry) {
       BuddyMessageEntry(:final message, :final footer) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: EdgeInsets.symmetric(horizontal: space.page),
         child: DiscussionMessage(
           message: message,
           imagePath: adapter.imagePath,
@@ -190,7 +192,7 @@ class BuddyTimeline extends StatelessWidget {
         ),
       ),
       BuddyStreamingEntry(:final text) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: EdgeInsets.symmetric(horizontal: space.page),
         child: ValueListenableBuilder<String>(
           valueListenable: text,
           builder: (context, value, _) => StreamingMessage(text: value),
@@ -198,7 +200,7 @@ class BuddyTimeline extends StatelessWidget {
       ),
       BuddyHelpEntry() => _helpCard(context, entry),
       BuddyMemoryEntry(:final item) => Padding(
-        padding: EdgeInsets.only(top: adapter.scrollable ? 0 : 8),
+        padding: EdgeInsets.only(top: adapter.scrollable ? 0 : space.sm),
         child: MemoryCard(
           item: item,
           onAccept: () => adapter.acceptMemory(item),
@@ -218,43 +220,44 @@ class BuddyTimeline extends StatelessWidget {
       ),
       BuddyNoticeEntry(:final message, :final actions) => Padding(
         padding: adapter.scrollable
-            ? const EdgeInsets.fromLTRB(16, 6, 16, 2)
-            : const EdgeInsets.only(top: 8),
+            ? EdgeInsets.fromLTRB(space.page, space.tight, space.page, space.xs)
+            : EdgeInsets.only(top: space.sm),
         child: FailureNotice(message: message, actions: actions),
       ),
     };
   }
 
   /// 学习页的帮助卡：生成中显示流式正文，生成完显示这一次保存的正文。
+  ///
+  /// 与回答、记忆、建议共用 [DiscussionCard]，帮助不再单独用陶土色底——这个
+  /// 颜色只表示草稿与优先这类需要留意的状态。
   Widget _helpCard(BuildContext context, BuddyHelpEntry entry) {
     final theme = context.zhixin;
     if (!entry.generating && (entry.text?.trim().isEmpty ?? true)) {
       return const SizedBox.shrink();
     }
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: forui.FCard(
-        style: .delta(
-          decoration: .shapeDelta(color: theme.colors.secondaryContainer),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: entry.generating
-              ? ValueListenableBuilder<String>(
-                  valueListenable: entry.streaming,
-                  builder: (context, text, _) => text.trim().isEmpty
-                      ? Row(
-                          children: [
-                            const forui.FCircularProgress(size: .xs),
-                            const SizedBox(width: 8),
-                            Text('正在生成', style: theme.text.bodySmall),
-                          ],
-                        )
-                      : MarkdownText(text, streaming: true),
-                )
-              : MarkdownText(entry.text!),
-        ),
-      ),
+    return DiscussionCard(
+      margin: EdgeInsets.only(top: theme.space.md),
+      icon: FLucideIcons.lightbulb,
+      title: '搭子的帮助',
+      status: entry.generating ? '正在生成' : null,
+      children: [
+        if (entry.generating)
+          ValueListenableBuilder<String>(
+            valueListenable: entry.streaming,
+            builder: (context, text, _) => text.trim().isEmpty
+                ? Row(
+                    children: [
+                      const forui.FCircularProgress(size: .xs),
+                      SizedBox(width: theme.space.sm),
+                      Text('正在生成', style: theme.text.bodySmall),
+                    ],
+                  )
+                : MarkdownText(text, streaming: true, large: true),
+          )
+        else
+          MarkdownText(entry.text!, large: true),
+      ],
     );
   }
 }
@@ -272,7 +275,7 @@ class ChatMessagePreview extends StatelessWidget {
         ? (message.hasImages ? '[图片]' : '[空消息]')
         : truncateCodePoints(text, 80);
     return Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: EdgeInsets.only(top: context.zhixin.space.xs),
       child: Text(
         '${_roleLabel(message.role)}：$preview',
         maxLines: 2,

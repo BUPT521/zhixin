@@ -21,9 +21,12 @@ import 'zhixin_toast.dart';
 enum _BookingAction { replace, append }
 
 /// 打开时间预算与优先顺序；用户点选算好的空档后，只预约那一项。
+///
+/// 面板标题与左右边距由 [showZhixinSheet] 统一给出，与其它面板一致。
 Future<void> showCapacitySheet(BuildContext context) async {
   await showZhixinSheet<void>(
     context: context,
+    title: '这周还能做什么',
     builder: (_) => const _CapacitySheet(),
   );
 }
@@ -88,9 +91,9 @@ class _CapacitySheetState extends State<_CapacitySheet> {
   }
 
   Future<void> _editWindow(CapacityPlan plan) async {
-    final start = await _pickTime(plan.windowStart);
+    final start = await _pickTime(plan.windowStart, '开始时间');
     if (start == null || !mounted) return;
-    final end = await _pickTime(plan.windowEnd);
+    final end = await _pickTime(plan.windowEnd, '结束时间');
     if (end == null || !mounted) return;
     final scope = AppScope.of(context);
     try {
@@ -115,11 +118,12 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     _reload();
   }
 
-  Future<ClockTime?> _pickTime(ClockTime current) async {
+  Future<ClockTime?> _pickTime(ClockTime current, String helpText) async {
     final initial = TimeOfDay(hour: current.hour, minute: current.minute);
     final picked = await showZhixinTimePicker(
       context: context,
       initialTime: initial,
+      helpText: helpText,
     );
     if (picked == null) return null;
     return ClockTime(picked.hour, picked.minute);
@@ -246,10 +250,10 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                   : _failureView(theme)
             : _planView(theme, plan);
         return Padding(
+          // 面板的左右边距与标题已由 [ZhixinSheet] 统一给出，这里只让出键盘
+          // 的高度，免得“完成”按钮被键盘挡住。
           padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+            bottom: MediaQuery.viewInsetsOf(context).bottom,
           ),
           child: body,
         );
@@ -268,8 +272,6 @@ class _CapacitySheetState extends State<_CapacitySheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('这周还能做什么', style: theme.text.titleLarge),
-          const SizedBox(height: 4),
           Text(
             '本周剩余 ${plan.days} 天${plan.availableBudget}可用，'
             '待排事项${plan.demandBudget}。',

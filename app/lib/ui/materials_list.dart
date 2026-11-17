@@ -16,8 +16,67 @@ import 'theme.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_icon_button.dart';
+import 'zhixin_menu.dart';
 import 'zhixin_select.dart';
 import 'zhixin_toast.dart';
+
+/// 给一份材料补一页：先读已有页码，再打开加页对话框，保存之后由订阅重读。
+///
+/// 材料列表行尾的按钮与材料详情的空态都用这一个入口，两处不再各写一遍加页
+/// 流程；页码已存在时不覆盖，提示到详情用「更正这一页」。
+Future<void> addMaterialPage(BuildContext context, Material material) async {
+  final scope = AppScope.of(context);
+  final List<MaterialPage> pages;
+  try {
+    pages = await scope.library.material.pages(material.id);
+  } catch (error, stack) {
+    if (!context.mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '读取这份材料的页码',
+      kind: 'material_pages_read',
+      kept: '材料没有改动',
+      next: '可以再试一次',
+    );
+    showToast(context, message);
+    return;
+  }
+  if (!context.mounted) return;
+  final draft = await showZhixinDialog<_PageDraft>(
+    context: context,
+    builder: (_) => _PageDialog(
+      material: material,
+      pageNumbers: {for (final page in pages) page.pageNo},
+    ),
+  );
+  if (draft == null || !context.mounted) return;
+  try {
+    await scope.library.material.addPage(
+      materialId: material.id,
+      pageNo: draft.pageNo,
+      content: draft.content,
+      label: draft.label,
+    );
+  } on PageNumberTaken catch (error) {
+    if (!context.mounted) return;
+    final message = '$error。要改这一页，请打开材料详情点「更正这一页」。';
+    showToast(context, message);
+  } catch (error, stack) {
+    if (!context.mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '保存这一页',
+      kind: 'material_page_save',
+      kept: '已有页面没有改动',
+      next: '可以再试一次',
+    );
+    showToast(context, message);
+  }
+}
 
 /// 记录页的材料分组：按材料查看页码，导入新的一份或补充一页。
 class MaterialList extends StatefulWidget {
@@ -36,6 +95,9 @@ class MaterialListState extends State<MaterialList> {
   bool _started = false;
   bool _importingWord = false;
 
+  /// 读取失败时就地说明；有内容时仍显示上一次读到的列表。
+  String? _notice;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -53,7 +115,10 @@ class MaterialListState extends State<MaterialList> {
   /// 方法名与原来一致，记录页仍按 `reload()` 调用，实现改成换一条新流。
   void reload() {
     if (!mounted) return;
-    setState(() => _stream = _createStream());
+    setState(() {
+      _notice = null;
+      _stream = _createStream();
+    });
   }
 
   void _reportReadFailure(Object error, StackTrace stack) {
@@ -65,9 +130,14 @@ class MaterialListState extends State<MaterialList> {
       action: '读取材料列表',
       kind: 'materials_read',
       kept: '已有的材料没有改动',
-      next: '可以点刷新再试',
+      next: '可以点重试再读一次',
     );
-    showToast(context, message);
+    setState(() => _notice = message);
+  }
+
+  void _clearNotice() {
+    if (_notice == null) return;
+    setState(() => _notice = null);
   }
 
   /// 打开导入对话框之前读一次目标列表；归属选项只在打开对话框时用得到。
@@ -188,94 +258,45 @@ class MaterialListState extends State<MaterialList> {
     await openMaterial(context, id);
   }
 
-  Future<void> _addPage(Material material) async {
-    final scope = AppScope.of(context);
-    final List<MaterialPage> pages;
-    try {
-      pages = await scope.library.material.pages(material.id);
-    } catch (error, stack) {
-      if (!mounted) return;
-      final message = describeFailure(
-        context,
-        error,
-        stack,
-        action: '读取这份材料的页码',
-        kind: 'material_pages_read',
-        kept: '材料没有改动',
-        next: '可以再试一次',
-      );
-      showToast(context, message);
-      return;
-    }
-    if (!mounted) return;
-    final draft = await showZhixinDialog<_PageDraft>(
-      context: context,
-      builder: (_) => _PageDialog(
-        material: material,
-        pageNumbers: {for (final page in pages) page.pageNo},
-      ),
-    );
-    if (draft == null || !mounted) return;
-    try {
-      await scope.library.material.addPage(
-        materialId: material.id,
-        pageNo: draft.pageNo,
-        content: draft.content,
-        label: draft.label,
-      );
-    } on PageNumberTaken catch (error) {
-      if (!mounted) return;
-      final message = '$error。要改这一页，请打开材料详情点「更正这一页」。';
-      showToast(context, message);
-    } catch (error, stack) {
-      if (!mounted) return;
-      final message = describeFailure(
-        context,
-        error,
-        stack,
-        action: '保存这一页',
-        kind: 'material_page_save',
-        kept: '已有页面没有改动',
-        next: '可以再试一次',
-      );
-      showToast(context, message);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     return LiveView<List<Material>>(
       stream: _stream,
       onError: _reportReadFailure,
+      onData: (_) => _clearNotice(),
       builder: (context, materials, loading) {
         final list = materials ?? const <Material>[];
         final canImport = !loading && !_importingWord;
+        // 列表为空时导入入口由空态承担，顶栏不再重复一个同样的按钮。
+        final showTopBar = loading || list.isNotEmpty;
         return Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 12, 4),
-              child: Row(
-                children: [
-                  Text('材料', style: theme.text.titleSmall),
-                  const Spacer(),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.secondary,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: canImport ? _import : null,
-                    child: const Text('导入材料'),
-                  ),
-                  const SizedBox(width: 4),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.secondary,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: canImport ? _importWord : null,
-                    child: const Text('导入 Word'),
-                  ),
-                ],
+            if (showTopBar)
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  theme.space.page,
+                  theme.space.sm,
+                  theme.space.page,
+                  theme.space.xs,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    _ImportMaterialButton(
+                      enabled: canImport,
+                      onPaste: _import,
+                      onWord: _importWord,
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (_importingWord) const forui.FProgress(),
+            if (_notice != null)
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                child: InlineNotice(message: _notice!, onRetry: reload),
+              ),
             Expanded(
               child: loading
                   ? SingleChildScrollView(
@@ -285,13 +306,15 @@ class MaterialListState extends State<MaterialList> {
                       ),
                     )
                   : list.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Text(
-                          '选择 .docx 文件或粘贴原文，之后可搜索材料、引用原文或建立学习计划。',
-                          textAlign: TextAlign.center,
-                          style: theme.text.bodyMedium,
+                  ? SingleChildScrollView(
+                      child: EmptyState(
+                        icon: FLucideIcons.bookOpenText,
+                        title: '还没有材料',
+                        description: '粘贴原文或选择 .docx 文件，之后可以搜索材料、引用原文或建立学习计划。',
+                        action: _ImportMaterialButton(
+                          enabled: canImport,
+                          onPaste: _import,
+                          onWord: _importWord,
                         ),
                       ),
                     )
@@ -299,7 +322,7 @@ class MaterialListState extends State<MaterialList> {
                       padding: theme.space.pageInsets(),
                       itemCount: list.length,
                       separatorBuilder: (_, _) =>
-                          SizedBox(height: context.zhixin.space.gap),
+                          SizedBox(height: theme.space.gap),
                       itemBuilder: (context, index) {
                         final material = list[index];
                         return forui.FTile(
@@ -315,7 +338,8 @@ class MaterialListState extends State<MaterialList> {
                               if (!material.isDocx)
                                 ZhixinIconButton(
                                   tooltip: '添加一页',
-                                  onPressed: () => _addPage(material),
+                                  onPressed: () =>
+                                      addMaterialPage(context, material),
                                   icon: FLucideIcons.filePlus,
                                 ),
                               const Icon(FLucideIcons.chevronRight),
@@ -329,6 +353,37 @@ class MaterialListState extends State<MaterialList> {
           ],
         );
       },
+    );
+  }
+}
+
+/// 材料的导入入口：一个按钮，菜单里选粘贴原文还是导入 Word 文件。
+class _ImportMaterialButton extends StatelessWidget {
+  const _ImportMaterialButton({
+    required this.enabled,
+    required this.onPaste,
+    required this.onWord,
+  });
+
+  final bool enabled;
+  final VoidCallback onPaste;
+  final VoidCallback onWord;
+
+  @override
+  Widget build(BuildContext context) {
+    return ZhixinMenu(
+      semanticsLabel: '导入材料',
+      items: [
+        ZhixinMenuItem(label: '粘贴原文', onSelected: onPaste),
+        ZhixinMenuItem(label: '从 Word 导入', onSelected: onWord),
+      ],
+      triggerBuilder: (context, controller) => forui.FButton(
+        variant: forui.FButtonVariant.secondary,
+        mainAxisSize: MainAxisSize.min,
+        onPress: enabled ? controller.toggle : null,
+        prefix: const Icon(FLucideIcons.upload),
+        child: const Text('导入材料'),
+      ),
     );
   }
 }
@@ -361,6 +416,20 @@ class _PageDraft {
   final String? label;
 }
 
+/// 表单字段的错误就地写红字：错误属于这一项，移到别处用户看不出哪项没通过。
+Widget _fieldError(ZhixinTheme theme, String message) {
+  return Padding(
+    padding: EdgeInsets.only(top: theme.space.xs),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        message,
+        style: theme.text.bodySmall.copyWith(color: theme.colors.error),
+      ),
+    ),
+  );
+}
+
 /// 导入一份材料：标题、类型、出处与第一页；也可以先只建材料。
 class _ImportMaterialDialog extends StatefulWidget {
   const _ImportMaterialDialog({required this.goals});
@@ -379,6 +448,8 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
   final _content = TextEditingController();
   MaterialKind _kind = MaterialKind.slides;
   GoalChoice _goal = GoalChoice.unassigned;
+  String? _titleError;
+  String? _contentError;
 
   @override
   void dispose() {
@@ -390,19 +461,48 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
     super.dispose();
   }
 
+  void _save() {
+    final title = _title.text.trim();
+    final content = _content.text.trim();
+    setState(() {
+      _titleError = title.isEmpty ? '填一个材料名称再保存。' : null;
+      _contentError = content.isEmpty ? '粘贴至少一页原文后保存。' : null;
+    });
+    if (_titleError != null || _contentError != null) return;
+    final pageNo = int.tryParse(_pageNo.text.trim()) ?? 1;
+    Navigator.of(context).pop([
+      _MaterialDraft(
+        title: title,
+        kind: _kind,
+        pageNo: pageNo <= 0 ? 1 : pageNo,
+        content: content,
+        sourceRef: nullableText(_source.text),
+        label: nullableText(_label.text),
+        goalId: _goal.goalId,
+      ),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     return ZhixinDialogLayout(
       title: const Text('导入材料'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           forui.FTextField(
-            control: .managed(controller: _title),
+            control: .managed(
+              controller: _title,
+              onChange: (_) {
+                if (_titleError != null) setState(() => _titleError = null);
+              },
+            ),
             label: const Text('材料名称'),
             hint: '概率论第 12 讲课件',
           ),
-          SizedBox(height: context.zhixin.space.gap),
+          if (_titleError != null) _fieldError(theme, _titleError!),
+          SizedBox(height: theme.space.gap),
           ZhixinSelect<MaterialKind>(
             value: _kind,
             label: '类型',
@@ -413,13 +513,13 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
             onChange: (value) =>
                 setState(() => _kind = value ?? MaterialKind.slides),
           ),
-          SizedBox(height: context.zhixin.space.gap),
+          SizedBox(height: theme.space.gap),
           forui.FTextField(
             control: .managed(controller: _source),
             label: const Text('出处（可选）'),
             hint: '教材第 8 章，或文件与页码说明',
           ),
-          SizedBox(height: context.zhixin.space.gap),
+          SizedBox(height: theme.space.gap),
           ZhixinSelect<GoalChoice>(
             value: _goal,
             label: goalSelectLabel,
@@ -427,6 +527,7 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
             onChange: (value) =>
                 setState(() => _goal = value ?? GoalChoice.unassigned),
           ),
+          SizedBox(height: theme.space.gap),
           Row(
             children: [
               SizedBox(
@@ -437,7 +538,7 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
                   label: const Text('页码'),
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: theme.space.sm),
               Expanded(
                 child: forui.FTextField(
                   control: .managed(controller: _label),
@@ -446,45 +547,29 @@ class _ImportMaterialDialogState extends State<_ImportMaterialDialog> {
               ),
             ],
           ),
+          SizedBox(height: theme.space.gap),
           forui.FTextField(
-            control: .managed(controller: _content),
+            control: .managed(
+              controller: _content,
+              onChange: (_) {
+                if (_contentError != null) {
+                  setState(() => _contentError = null);
+                }
+              },
+            ),
             minLines: 4,
             maxLines: 10,
             label: const Text('页面原文'),
-            hint: '先添加当前问题涉及的页面，再逐步补充其他内容。',
+            hint: '先粘贴当前问题涉及的那一页，其他内容再逐步补充。',
           ),
+          if (_contentError != null) _fieldError(theme, _contentError!),
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
+        cancelZhixinButton(context),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
-          onPress: () {
-            final title = _title.text.trim();
-            if (title.isEmpty) return;
-            final pageNo = int.tryParse(_pageNo.text.trim()) ?? 1;
-            final content = _content.text.trim();
-            if (content.isEmpty) {
-              showToast(context, '粘贴本页原文，或保存材料后在详情页添加。');
-              return;
-            }
-            Navigator.of(context).pop([
-              _MaterialDraft(
-                title: title,
-                kind: _kind,
-                pageNo: pageNo <= 0 ? 1 : pageNo,
-                content: content,
-                sourceRef: nullableText(_source.text),
-                label: nullableText(_label.text),
-                goalId: _goal.goalId,
-              ),
-            ]);
-          },
+          onPress: _save,
           child: const Text('保存'),
         ),
       ],
@@ -509,6 +594,7 @@ class _PageDialogState extends State<_PageDialog> {
   final _label = TextEditingController();
   final _content = TextEditingController();
   String? _pageNoError;
+  String? _contentError;
 
   @override
   void initState() {
@@ -526,15 +612,18 @@ class _PageDialogState extends State<_PageDialog> {
 
   void _save() {
     final content = _content.text.trim();
-    if (content.isEmpty) return;
     final pageNo = int.tryParse(_pageNo.text.trim()) ?? 0;
-    if (pageNo <= 0) return;
-    if (widget.pageNumbers.contains(pageNo)) {
-      setState(() {
+    setState(() {
+      _contentError = content.isEmpty ? '粘贴这一页的原文再保存。' : null;
+      if (pageNo <= 0) {
+        _pageNoError = '页码从 1 开始。';
+      } else if (widget.pageNumbers.contains(pageNo)) {
         _pageNoError = '第 $pageNo 页已有原文。要改这一页，请取消后到材料详情点「更正这一页」。';
-      });
-      return;
-    }
+      } else {
+        _pageNoError = null;
+      }
+    });
+    if (_pageNoError != null || _contentError != null) return;
     Navigator.of(context).pop(
       _PageDraft(
         pageNo: pageNo,
@@ -569,7 +658,7 @@ class _PageDialogState extends State<_PageDialog> {
                   label: const Text('页码'),
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: theme.space.sm),
               Expanded(
                 child: forui.FTextField(
                   control: .managed(controller: _label),
@@ -578,36 +667,27 @@ class _PageDialogState extends State<_PageDialog> {
               ),
             ],
           ),
-          // 表单字段的校验就地写红字：错误属于这一页的页码，移到 InlineNotice
-          // 会离开字段所在的位置，用户看不出是哪一项没通过。
-          if (_pageNoError != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  _pageNoError!,
-                  style: theme.text.bodySmall.copyWith(
-                    color: theme.colors.error,
-                  ),
-                ),
-              ),
-            ),
+          // 页码错误属于这一项，就写在字段下方，不挪到 InlineNotice。
+          if (_pageNoError != null) _fieldError(theme, _pageNoError!),
+          SizedBox(height: theme.space.gap),
           forui.FTextField(
-            control: .managed(controller: _content),
+            control: .managed(
+              controller: _content,
+              onChange: (_) {
+                if (_contentError != null) {
+                  setState(() => _contentError = null);
+                }
+              },
+            ),
             minLines: 4,
             maxLines: 10,
             label: const Text('页面原文'),
           ),
+          if (_contentError != null) _fieldError(theme, _contentError!),
         ],
       ),
       actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
+        cancelZhixinButton(context),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
           onPress: _save,

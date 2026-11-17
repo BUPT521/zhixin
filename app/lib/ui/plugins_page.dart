@@ -61,7 +61,7 @@ class _PluginsPageState extends State<PluginsPage>
           action: '读取插件设置',
           kind: 'plugins_read',
           kept: '已经保存的启停状态没有改动',
-          next: '可以重新打开这一页',
+          next: '可以在页面顶部重试',
         );
       });
     }
@@ -98,23 +98,32 @@ class _PluginsPageState extends State<PluginsPage>
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const DetailScaffold(child: PageLoading());
-    }
     final theme = context.zhixin;
+    if (_loading) {
+      return DetailScaffold(
+        header: const ZhixinHeader(
+          title: Text(pluginsPageTitle),
+          showBack: true,
+        ),
+        child: ListView(
+          padding: theme.space.pageInsets(),
+          children: const [ListSkeleton(rows: 2, rowHeight: 120)],
+        ),
+      );
+    }
     final runtime = AppScope.of(context).services.plugins.runtime;
     final plugins = runtime.plugins;
     return DetailScaffold(
       header: const ZhixinHeader(title: Text(pluginsPageTitle), showBack: true),
       child: ListView(
-        padding: theme.space.pageInsets(top: theme.space.xl),
+        padding: theme.space.pageInsets(),
         children: [
           const SectionHeading(
-            title: pluginsPageTitle,
+            title: '第一方插件',
             subtitle: '随应用编译的第一方插件在这里启用或停用；停用之后，这个插件提供的入口、工具与导入来源不再出现。',
             first: true,
           ),
-          if (_notice != null) InlineNotice(message: _notice!),
+          if (_notice != null) InlineNotice(message: _notice!, onRetry: _load),
           for (final plugin in plugins) ...[
             _PluginCard(
               plugin: plugin,
@@ -136,7 +145,7 @@ class _PluginsPageState extends State<PluginsPage>
   }
 }
 
-/// 一个插件的说明与开关：名称、类型、版本、说明与权限，右侧是启停。
+/// 一个插件的说明与开关：名称、状态、类型、版本、说明与权限，右侧是启停。
 class _PluginCard extends StatelessWidget {
   const _PluginCard({
     required this.plugin,
@@ -168,16 +177,23 @@ class _PluginCard extends StatelessWidget {
                 forui.FSwitch(
                   value: enabled,
                   onChange: busy ? null : onChanged,
+                  semanticsLabel: enabled
+                      ? '停用${manifest.name}插件'
+                      : '启用${manifest.name}插件',
                 ),
               ],
             ),
             SizedBox(height: theme.space.xs),
-            Text(
-              '${pluginKindLabel(manifest.kind)} · 版本 ${manifest.version}'
-              ' · ${enabled ? '已启用' : '已停用'}',
-              style: theme.text.bodySmall.copyWith(
-                color: theme.colors.onSurfaceVariant,
-              ),
+            TagRow(
+              children: [
+                StatusTag(
+                  enabled ? '已启用' : '已停用',
+                  tone: enabled ? TagTone.accent : TagTone.muted,
+                ),
+                StatusTag(
+                  '${pluginKindLabel(manifest.kind)} · 版本 ${manifest.version}',
+                ),
+              ],
             ),
             SizedBox(height: theme.space.sm),
             Text(manifest.description, style: theme.text.bodyMedium),

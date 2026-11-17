@@ -12,6 +12,7 @@ import '../domain/models/material.dart' show Citation;
 import 'copy.dart';
 import 'markdown_text.dart';
 import 'workspace_widgets.dart';
+import 'zhixin_toast.dart';
 
 class DiscussionMessage extends StatelessWidget {
   const DiscussionMessage({
@@ -39,30 +40,43 @@ class DiscussionMessage extends StatelessWidget {
       children: [
         if (message.hasImages)
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: theme.space.sm,
+            runSpacing: theme.space.sm,
             children: [
               for (final path in message.imagePaths)
-                ClipRRect(
-                  borderRadius: theme.radius.tag,
-                  child: Image.file(
-                    File(imagePath(path)),
-                    width: 160,
-                    height: 120,
-                    cacheWidth: cacheWidth,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const SizedBox(
+                GestureDetector(
+                  onTap: () => showImagePreview(context, imagePath(path)),
+                  child: ClipRRect(
+                    borderRadius: theme.radius.tag,
+                    child: Image.file(
+                      File(imagePath(path)),
                       width: 160,
                       height: 120,
-                      child: Center(child: Text('本机没有这张原图')),
+                      cacheWidth: cacheWidth,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => ColoredBox(
+                        color: theme.colors.surfaceContainerHigh,
+                        child: SizedBox(
+                          width: 160,
+                          height: 120,
+                          child: Center(
+                            child: Text(
+                              '本机没有这张原图',
+                              style: theme.text.bodySmall.copyWith(
+                                color: theme.colors.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
             ],
           ),
         if (message.content.trim().isNotEmpty) ...[
-          if (message.hasImages) SizedBox(height: context.zhixin.space.gap),
-          MarkdownText(message.content),
+          if (message.hasImages) SizedBox(height: theme.space.gap),
+          MarkdownText(message.content, large: true),
         ],
       ],
     );
@@ -73,6 +87,7 @@ class DiscussionMessage extends StatelessWidget {
     final citations = DiscussionService.citationsOf(message)
         .where((citation) => citation.quote.isNotEmpty);
     return _replyCard(
+      context,
       status: message.stopped
           ? '已停止生成'
           : message.interrupted
@@ -80,12 +95,17 @@ class DiscussionMessage extends StatelessWidget {
           : message.payload?.fromModel == false
           ? '本地规则'
           : null,
+      statusTone: message.stopped
+          ? TagTone.muted
+          : message.interrupted
+          ? TagTone.attention
+          : TagTone.neutral,
       children: [
         content,
         if (citations.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          SizedBox(height: theme.space.md),
           const Divider(height: 16),
-          const SizedBox(height: 10),
+          SizedBox(height: theme.space.sm),
           Text('参考依据', style: theme.text.labelLarge),
           for (final (index, citation) in citations.indexed)
             _CitationTile(
@@ -116,17 +136,27 @@ class _CitationTile extends StatelessWidget {
     final theme = context.zhixin;
     final colors = theme.colors;
     return Container(
-      margin: const EdgeInsets.only(top: 8),
+      margin: EdgeInsets.only(top: theme.space.sm),
       decoration: BoxDecoration(
         color: colors.surface,
         borderRadius: theme.radius.bubble,
       ),
       child: forui.FAccordion(
-        style: const .delta(
+        style: .delta(
           titlePadding: .value(
-            EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            EdgeInsets.symmetric(
+              horizontal: theme.space.md,
+              vertical: theme.space.sm,
+            ),
           ),
-          childPadding: .value(EdgeInsets.fromLTRB(10, 0, 10, 12)),
+          childPadding: .value(
+            EdgeInsets.fromLTRB(
+              theme.space.md,
+              0,
+              theme.space.md,
+              theme.space.md,
+            ),
+          ),
           dividerStyle: .delta(color: Colors.transparent),
         ),
         children: [
@@ -141,13 +171,13 @@ class _CitationTile extends StatelessWidget {
                   size: 18,
                   color: citation.verified ? colors.primary : colors.error,
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: theme.space.sm),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(citation.place, style: theme.text.titleSmall),
-                      const SizedBox(height: 2),
+                      SizedBox(height: theme.space.xs / 2),
                       Text(
                         citation.verified ? '已核对' : '未能核对',
                         style: theme.text.bodySmall.copyWith(
@@ -173,7 +203,13 @@ class _CitationTile extends StatelessWidget {
             ),
           ),
           if (onOpen != null)
-            TextButton(onPressed: onOpen, child: const Text('打开材料原文')),
+            forui.FButton(
+              variant: forui.FButtonVariant.ghost,
+              size: forui.FButtonSizeVariant.sm,
+              mainAxisSize: MainAxisSize.min,
+              onPress: onOpen,
+              child: const Text('打开材料原文'),
+            ),
         ],
       ),
     );
@@ -189,39 +225,50 @@ class StreamingMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _replyCard(
+      context,
       children: [
         if (text.trim().isEmpty)
           Row(
             children: [
               const forui.FCircularProgress(size: .xs),
-              const SizedBox(width: 8),
+              SizedBox(width: context.zhixin.space.sm),
               Expanded(
                 child: Text('正在回答', style: context.zhixin.text.bodySmall),
               ),
             ],
           )
         else
-          MarkdownText(text, streaming: true),
+          MarkdownText(text, streaming: true, large: true),
       ],
     );
   }
 }
 
-Widget _replyCard({String? status, required List<Widget> children}) {
+Widget _replyCard(
+  BuildContext context, {
+  String? status,
+  TagTone statusTone = TagTone.neutral,
+  required List<Widget> children,
+}) {
+  final theme = context.zhixin;
   return DiscussionCard(
-    margin: const EdgeInsets.only(bottom: 12),
+    margin: EdgeInsets.only(bottom: theme.space.md),
     icon: FLucideIcons.bookOpenText,
     title: '知新$buddyName',
     status: status,
+    statusTone: statusTone,
     children: [
       const Divider(height: 16),
-      const SizedBox(height: 10),
+      SizedBox(height: theme.space.sm),
       ...children,
     ],
   );
 }
 
 /// 回答、记忆、建议与回执共用卡片的标题、状态和边距。
+///
+/// 标题区的图标底与状态标签原先在这里手画，底色与字号和别处的
+/// [LeadingIcon]、[StatusTag] 对不上；现在两处都改用共用组件。
 class DiscussionCard extends StatelessWidget {
   const DiscussionCard({
     super.key,
@@ -230,7 +277,8 @@ class DiscussionCard extends StatelessWidget {
     required this.title,
     required this.children,
     this.status,
-    this.accent,
+    this.iconTone = TagTone.accent,
+    this.statusTone = TagTone.neutral,
   });
 
   final EdgeInsetsGeometry margin;
@@ -238,67 +286,40 @@ class DiscussionCard extends StatelessWidget {
   final String title;
   final List<Widget> children;
   final String? status;
-  final Color? accent;
+  final TagTone iconTone;
+  final TagTone statusTone;
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final colors = theme.colors;
-    final tone = accent ?? colors.primary;
     return Padding(
       padding: margin,
       child: forui.FCard(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          padding: EdgeInsets.all(theme.space.md),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: tone.withValues(alpha: 0.10),
-                      borderRadius: theme.radius.tag,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(7),
-                      child: Icon(icon, size: 18, color: tone),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+                  LeadingIcon(icon, tone: iconTone, size: 32),
+                  SizedBox(width: theme.space.sm),
                   Expanded(
                     child: Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
+                      spacing: theme.space.sm,
+                      runSpacing: theme.space.xs,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(title, style: theme.text.titleSmall),
                         if (status != null)
-                          DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: tone.withValues(alpha: 0.10),
-                              borderRadius: theme.radius.tag,
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              child: Text(
-                                status!,
-                                style: theme.text.labelSmall.copyWith(
-                                  color: colors.onSurface,
-                                ),
-                              ),
-                            ),
-                          ),
+                          StatusTag(status!, tone: statusTone),
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: theme.space.sm),
               ...children,
             ],
           ),
@@ -318,8 +339,11 @@ Widget _bubble(
   return Align(
     alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
     child: Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      margin: EdgeInsets.only(bottom: theme.space.sm),
+      padding: EdgeInsets.symmetric(
+        horizontal: theme.space.md,
+        vertical: theme.space.md,
+      ),
       constraints: BoxConstraints(
         maxWidth:
             MediaQuery.sizeOf(context).width.clamp(0.0, theme.space.maxWidth) *
@@ -338,6 +362,50 @@ Widget _bubble(
         border: isUser ? null : Border.fromBorderSide(side),
       ),
       child: child,
+    ),
+  );
+}
+
+/// 点开一张本机原图看大图；消息里的图片与学习页的原题共用这一处。
+///
+/// [filePath] 是已经解析好的本机文件路径（应用私有目录里的绝对路径）。对话框
+/// 默认限制宽度 280 到 560，看图时改成占满屏宽只留外边距，横屏与平板上不会被
+/// 压窄；手机拍的原图直接解码要占几十 MB，按屏宽 × dpr × 2 设解码尺寸，与看图
+/// 的 4 倍放大配合已经够清晰，大图解码之前先用同一张图的小尺寸垫底。
+Future<void> showImagePreview(BuildContext context, String filePath) async {
+  final file = File(filePath);
+  if (!await file.exists()) {
+    if (!context.mounted) return;
+    showToast(context, '这张原图在本机已经找不到');
+    return;
+  }
+  if (!context.mounted) return;
+  final media = MediaQuery.of(context);
+  final size = media.size;
+  final decodeWidth = (size.width * media.devicePixelRatio * 2).round();
+  final thumbWidth = (size.width * media.devicePixelRatio).round();
+  await forui.showFDialog<void>(
+    context: context,
+    builder: (context, style, animation) => forui.FDialog(
+      animation: animation,
+      clipBehavior: Clip.antiAlias,
+      constraints: BoxConstraints(
+        minWidth: 0,
+        maxWidth: size.width - 24,
+        maxHeight: size.height - 24,
+      ),
+      builder: (context, style) => InteractiveViewer(
+        minScale: 1,
+        maxScale: 4,
+        child: Image.file(
+          file,
+          cacheWidth: decodeWidth,
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (wasSynchronouslyLoaded || frame != null) return child;
+            return Image.file(file, cacheWidth: thumbWidth);
+          },
+        ),
+      ),
     ),
   );
 }

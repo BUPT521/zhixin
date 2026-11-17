@@ -8,6 +8,7 @@ import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/plugins/persona/persona_catalog.dart';
 import 'package:zhixin/plugins/runtime/plugin_runtime.dart';
 import 'package:zhixin/ui/copy.dart';
+import 'package:zhixin/ui/embedding_settings_page.dart';
 import 'package:zhixin/ui/persona_page.dart';
 import 'package:zhixin/ui/plugins_page.dart';
 import 'package:zhixin/ui/settings_page.dart';
@@ -113,10 +114,15 @@ void main() {
     });
   }
 
-  testWidgets('设置页显示插件与人格两个入口', (tester) async {
+  testWidgets('设置页显示语义索引、插件与人格三个入口', (tester) async {
     await pumpPage(tester, const SettingsPage());
-    await waitFor(tester, find.text('设置'));
+    // 先等首读骨架换成内容，再核对入口；只看标题栏会在骨架阶段就返回。
+    await waitFor(tester, find.text('语义索引'));
     expect(find.byType(SettingsPage), findsOneWidget);
+
+    // 搜索页提示“可以在设置里更新”，入口就在模型段之后；没有配置时写“未启用”。
+    expect(find.widgetWithText(forui.FTile, '语义索引'), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
 
     // 设置页比手机屏长，入口在下方；滚到可见再核对。
     final scrollable = find
@@ -133,9 +139,57 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
     }
     expect(find.widgetWithText(forui.FTile, '插件'), findsOneWidget);
-    expect(find.widgetWithText(forui.FTile, '人格'), findsOneWidget);
     expect(find.text(pluginsEntrySubtitle), findsOneWidget);
+
+    for (var step = 0; step < 10; step++) {
+      if (find.widgetWithText(forui.FTile, '人格').evaluate().isNotEmpty) {
+        break;
+      }
+      await tester.drag(scrollable, const Offset(0, -200));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.widgetWithText(forui.FTile, '人格'), findsOneWidget);
     expect(find.text(personaEntrySubtitle), findsOneWidget);
+
+    // 危险的模型配置删除与清空单独成段，在页底。
+    for (var step = 0; step < 10; step++) {
+      if (find.widgetWithText(forui.FTile, '删除模型配置').evaluate().isNotEmpty) {
+        break;
+      }
+      await tester.drag(scrollable, const Offset(0, -400));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.widgetWithText(forui.FTile, '删除模型配置'), findsOneWidget);
+    expect(find.text('危险操作'), findsOneWidget);
+
+    for (var step = 0; step < 10; step++) {
+      if (find.widgetWithText(forui.FTile, '清空全部记录').evaluate().isNotEmpty) {
+        break;
+      }
+      await tester.drag(scrollable, const Offset(0, -200));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.widgetWithText(forui.FTile, '清空全部记录'), findsOneWidget);
+  });
+
+  testWidgets('设置页的语义索引入口打开语义索引页', (tester) async {
+    await pumpPage(tester, const SettingsPage());
+    await waitFor(tester, find.widgetWithText(forui.FTile, '语义索引'));
+
+    await tester.tap(find.widgetWithText(forui.FTile, '语义索引'));
+    await waitFor(tester, find.text('索引状态'));
+
+    // 三段分开排：索引状态、嵌入来源、可发送范围。
+    expect(find.text('索引状态'), findsOneWidget);
+    expect(find.text('嵌入来源'), findsWidgets);
+    expect(find.text('可发送范围'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(EmbeddingSettingsPage),
+        matching: find.byType(forui.FSwitch),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('插件页列出人格插件并可以停用', (tester) async {
@@ -172,37 +226,45 @@ void main() {
     );
   });
 
-  testWidgets('人格页切换启用与停用，写进 app_meta 并更新状态行', (tester) async {
+  testWidgets('人格页单选启用与停用，写进 app_meta 并更新状态标签', (tester) async {
     await pumpPage(tester, const PersonaPage());
     await waitFor(tester, find.text('温和讲题'));
 
     expect(find.byType(PersonaPage), findsOneWidget);
     expect(find.text('简短直接'), findsOneWidget);
     expect(find.textContaining('人格只影响语气、称呼、讲解风格与篇幅倾向'), findsOneWidget);
+    expect(find.text('不使用人格'), findsOneWidget);
     expect(find.text(personaDefaultTone), findsOneWidget);
     expect(find.text(personaExtrasUnavailable), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
+    expect(find.text('已启用'), findsNothing);
 
-    await tester.tap(
-      find
-          .descendant(
-            of: find.byType(PersonaPage),
-            matching: find.byType(forui.FSwitch),
-          )
-          .first,
+    // 三枚单选：不使用人格、温和讲题、简短直接。
+    final radios = find.descendant(
+      of: find.byType(PersonaPage),
+      matching: find.byType(forui.FRadio),
     );
+    expect(radios, findsNWidgets(3));
+
+    await tester.tap(radios.at(1));
     await waitForMeta(tester, personaActiveKey, 'calm-teacher');
-    expect(find.textContaining('当前人格：温和讲题'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('当前启用'), findsOneWidget);
+    expect(find.text('已启用'), findsOneWidget);
     expect(find.text(personaDefaultTone), findsNothing);
 
-    await tester.tap(
-      find
-          .descendant(
-            of: find.byType(PersonaPage),
-            matching: find.byType(forui.FSwitch),
-          )
-          .first,
-    );
+    // 打开第二个人格会替换当前项，同一时间只留一个启用。
+    await tester.tap(radios.at(2));
+    await waitForMeta(tester, personaActiveKey, 'brief-coach');
+    await tester.pump();
+    expect(find.text('当前启用'), findsOneWidget);
+
+    // 点“不使用人格”停用；状态标签回到未启用。
+    await tester.tap(radios.first);
     await waitForMeta(tester, personaActiveKey, '');
+    await tester.pump();
+    expect(find.text('当前启用'), findsNothing);
+    expect(find.text('未启用'), findsOneWidget);
     expect(find.text(personaDefaultTone), findsOneWidget);
   });
 }

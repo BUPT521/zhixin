@@ -64,6 +64,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(result, isNull);
   });
+
+  testWidgets('连续选两次时间时标题说明这次选的是开始还是结束', (tester) async {
+    await tester.pumpWidget(
+      _host((context) async {
+        await showZhixinTimePicker(
+          context: context,
+          initialTime: const TimeOfDay(hour: 19, minute: 0),
+          helpText: '开始时间',
+        );
+      }),
+    );
+
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    expect(find.text('开始时间'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    // 不传 helpText 时保持原来的“选择时间”。
+    await tester.pumpWidget(
+      _host((context) async {
+        await showZhixinTimePicker(
+          context: context,
+          initialTime: const TimeOfDay(hour: 19, minute: 0),
+        );
+      }),
+    );
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择时间'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+  });
 }
 
 Widget _host(ValueChanged<BuildContext> open) => MaterialApp(

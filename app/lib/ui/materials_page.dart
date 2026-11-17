@@ -6,23 +6,27 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../domain/models/material.dart';
+import '../domain/models/study.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
 import 'live_view.dart';
+import 'materials_list.dart';
 import 'navigation.dart';
 import 'study_plan_setup.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
+import 'zhixin_menu.dart';
 import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
 
 /// 一份材料的详情：逐页查看、补充、纠正，并从某一页开始讨论。
 ///
 /// 从学习步骤打开时可以只显示这一步的页码，学生先看到本次范围，再决定是否
-/// 展开全部材料。
+/// 展开全部材料。Word 材料的片段与普通材料的页码统一由 [Material.position]
+/// 给出，详情与引用不再一处叫“片段”、另一处叫“第几页”。
 class MaterialDetailPage extends StatefulWidget {
   const MaterialDetailPage({
     super.key,
@@ -59,6 +63,9 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   bool _started = false;
   bool _showAllPages = false;
 
+  /// 读取失败时就地说明；已经显示的材料与页面保持上一份。
+  String? _notice;
+
   bool get _hasRange => widget.pageFrom != null || widget.pageTo != null;
 
   /// 按本次学习步骤的页码范围筛出要显示的页；页面本身仍读这份材料的全部页。
@@ -76,9 +83,26 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
+    _subscribe();
+  }
+
+  void _subscribe() {
     final service = AppScope.of(context).library.material;
     _materialStream = service.watchMaterial(widget.materialId);
     _pagesStream = service.watchPages(widget.materialId);
+  }
+
+  /// 读取失败后的重试：换两条新流，读到结果之前保留已经显示的内容。
+  void _reload() {
+    setState(() {
+      _notice = null;
+      _subscribe();
+    });
+  }
+
+  void _clearNotice() {
+    if (_notice == null) return;
+    setState(() => _notice = null);
   }
 
   void _reportMaterialFailure(Object error, StackTrace stack) {
@@ -90,9 +114,9 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       action: '读取这份材料',
       kind: 'material_detail_read',
       kept: '材料与页面没有改动',
-      next: '可以返回再打开',
+      next: '可以点重试再读一次',
     );
-    showToast(context, message);
+    setState(() => _notice = message);
   }
 
   void _reportPagesFailure(Object error, StackTrace stack) {
@@ -104,9 +128,9 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       action: '读取这份材料的页码',
       kind: 'material_pages_read',
       kept: '材料没有改动',
-      next: '可以返回再打开',
+      next: '可以点重试再读一次',
     );
-    showToast(context, message);
+    setState(() => _notice = message);
   }
 
   Future<void> _startDiscussion(MaterialPage page, Material material) async {
@@ -121,7 +145,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
               pageNo: page.pageNo,
             )
           : await scope.chat.discussion.createConversation(
-              title: '《${material.title}》第 ${page.pageNo} 页',
+              title: '《${material.title}》${material.position(page.pageNo)}',
               goalId: material.goalId,
               materialId: widget.materialId,
               pageNo: page.pageNo,
@@ -143,12 +167,12 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     }
   }
 
-  Future<void> _correct(MaterialPage page) async {
+  Future<void> _correct(Material material, MaterialPage page) async {
     final scope = AppScope.of(context);
     final controller = TextEditingController(text: page.content);
     final corrected = await showZhixinAlert<String>(
       context: context,
-      title: '更正第 ${page.pageNo} 页',
+      title: '更正${material.position(page.pageNo)}',
       cancelLabel: '取消',
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -172,7 +196,6 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       ],
     );
     if (corrected == null || corrected.trim().isEmpty || !mounted) return;
-    final pageNo = page.pageNo;
     try {
       final result = await scope.library.material.correctPage(
         page: page,
@@ -185,7 +208,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       }
       showActionToast(
         context,
-        '已更正第 $pageNo 页',
+        '已更正${material.position(page.pageNo)}',
         label: '撤销',
         onPressed: () => _undoCorrection(result.commitId!),
       );
@@ -218,7 +241,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     );
   }
 
-  Future<void> _showCorrections(MaterialPage page) async {
+  Future<void> _showCorrections(Material material, MaterialPage page) async {
     final scope = AppScope.of(context);
     final theme = context.zhixin;
     try {
@@ -232,18 +255,17 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       if (!mounted) return;
       await showZhixinSheet<void>(
         context: context,
+        title: '${material.position(page.pageNo)}的更正记录',
         builder: (sheetContext) => ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
           ),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            padding: EdgeInsets.only(bottom: theme.space.xs),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('第 ${page.pageNo} 页的更正记录', style: theme.text.titleMedium),
-                SizedBox(height: context.zhixin.space.gap),
                 if (history.isEmpty)
                   Text('这一页还没有更正记录。', style: theme.text.bodyMedium)
                 else
@@ -291,7 +313,23 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
 
   Future<void> _changeGoal(Material material) async {
     final scope = AppScope.of(context);
-    final goals = await scope.study.plan.goals();
+    final List<LearningGoal> goals;
+    try {
+      goals = await scope.study.plan.goals();
+    } catch (error, stack) {
+      if (!mounted) return;
+      final message = describeFailure(
+        context,
+        error,
+        stack,
+        action: '读取目标列表',
+        kind: 'material_goals_read',
+        kept: '材料的归属没有改动',
+        next: '可以再试一次',
+      );
+      showToast(context, message);
+      return;
+    }
     if (!mounted) return;
     final choice = await showGoalChoice(
       context,
@@ -301,16 +339,43 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       note: '可选择目标，也可将材料用于独立讨论。',
     );
     if (choice == null || !mounted) return;
-    await scope.library.material.setGoal(material.id, choice.goalId);
+    try {
+      final result = await scope.library.material.setGoal(
+        material.id,
+        choice.goalId,
+      );
+      if (!mounted) return;
+      if (!result.changed) {
+        showToast(context, result.skippedReason ?? '归属没有变化。');
+        return;
+      }
+      showToast(context, '已改为「${_goalLabel(goals, choice.goalId)}」');
+    } catch (error, stack) {
+      if (!mounted) return;
+      final message = describeFailure(
+        context,
+        error,
+        stack,
+        action: '调整这份材料的归属',
+        kind: 'material_set_goal',
+        kept: '材料的归属仍是修改前的目标',
+        next: '可以再试一次',
+      );
+      showToast(context, message);
+    }
   }
 
-  String _rangeLabel() {
-    final from = widget.pageFrom;
-    final to = widget.pageTo;
-    if (from == null) return '第 $to 页';
-    if (to == null || to == from) return '第 $from 页';
-    return '第 $from–$to 页';
+  String _goalLabel(List<LearningGoal> goals, String? goalId) {
+    if (goalId == null) return goalUnassigned;
+    for (final goal in goals) {
+      if (goal.id == goalId) return goal.title;
+    }
+    return goalUnassigned;
   }
+
+  /// 本次范围的页码；Word 材料按片段说。
+  String _rangeLabel(Material material) =>
+      material.position(widget.pageFrom, to: widget.pageTo);
 
   @override
   Widget build(BuildContext context) {
@@ -318,19 +383,13 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     return LiveView<Material?>(
       stream: _materialStream,
       onError: _reportMaterialFailure,
-      builder: (context, material, loading) {
-        if (loading) return const DetailScaffold(child: PageLoading());
-        if (material == null) {
-          return const DetailScaffold(
-            header: ZhixinHeader(title: Text('材料'), showBack: true),
-            child: Center(child: Text('未找到这份材料')),
-          );
-        }
-        return DetailScaffold(
-          header: ZhixinHeader(
-            title: Text(material.title),
-            showBack: true,
-            actions: [
+      onData: (_) => _clearNotice(),
+      builder: (context, material, loading) => DetailScaffold(
+        header: ZhixinHeader(
+          title: Text(material?.title ?? '材料'),
+          showBack: true,
+          actions: [
+            if (material != null) ...[
               ZhixinHeaderAction(
                 icon: FLucideIcons.route,
                 tooltip: '系统学习',
@@ -342,15 +401,44 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
                 onPressed: () => _changeGoal(material),
               ),
             ],
-          ),
-          child: LiveView<List<MaterialPage>>(
-            stream: _pagesStream,
-            onError: _reportPagesFailure,
-            builder: (context, pages, pagesLoading) =>
-                _body(theme, material, pages, pagesLoading),
-          ),
-        );
-      },
+          ],
+        ),
+        child: loading
+            ? ListView(
+                padding: theme.space.pageInsets(),
+                children: [
+                  if (_notice != null)
+                    InlineNotice(message: _notice!, onRetry: _reload),
+                  const ListSkeleton(rows: 3),
+                ],
+              )
+            : material == null
+            ? ListView(
+                padding: theme.space.pageInsets(),
+                children: [
+                  if (_notice != null)
+                    InlineNotice(message: _notice!, onRetry: _reload),
+                  EmptyState(
+                    icon: FLucideIcons.fileText,
+                    title: '未找到这份材料',
+                    description: '它可能已经被删除，可以返回材料列表重新选择。',
+                    action: forui.FButton(
+                      variant: forui.FButtonVariant.outline,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: () => Navigator.maybePop(context),
+                      child: const Text('返回'),
+                    ),
+                  ),
+                ],
+              )
+            : LiveView<List<MaterialPage>>(
+                stream: _pagesStream,
+                onError: _reportPagesFailure,
+                onData: (_) => _clearNotice(),
+                builder: (context, pages, pagesLoading) =>
+                    _body(theme, material, pages, pagesLoading),
+              ),
+      ),
     );
   }
 
@@ -366,19 +454,20 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
-        Text(
-          '${material.kindLabel}'
-          '${material.sourceRef == null ? '' : ' · ${material.sourceRef}'}',
-          style: theme.text.bodySmall,
+        if (_notice != null) InlineNotice(message: _notice!, onRetry: _reload),
+        TagRow(
+          children: [
+            StatusTag(material.kindLabel),
+            _GoalTag(material: material),
+            if (material.sourceRef != null)
+              StatusTag(material.sourceRef!, tone: TagTone.muted),
+          ],
         ),
         if (_hasRange) ...[
-          SizedBox(height: context.zhixin.space.gap),
+          SizedBox(height: theme.space.gap),
           forui.FCard(
-            style: .delta(
-              decoration: .shapeDelta(color: theme.colors.secondaryContainer),
-            ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+              padding: EdgeInsets.all(theme.space.md),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -386,14 +475,16 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
                     widget.stepTitle ?? '本次学习步骤',
                     style: theme.text.titleSmall,
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: theme.space.xs),
                   Text(
-                    '本次范围：${_rangeLabel()}'
-                    '${_showAllPages ? ' · 正在查看全部页面' : ''}',
-                    style: theme.text.bodySmall,
+                    '本次范围：${_rangeLabel(material)}',
+                    style: theme.text.bodySmall.copyWith(
+                      color: theme.colors.onSurfaceVariant,
+                    ),
                   ),
                   forui.FButton(
                     variant: forui.FButtonVariant.ghost,
+                    size: forui.FButtonSizeVariant.sm,
                     mainAxisSize: MainAxisSize.min,
                     onPress: () =>
                         setState(() => _showAllPages = !_showAllPages),
@@ -404,64 +495,84 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
             ),
           ),
         ],
-        SizedBox(height: context.zhixin.space.gap),
+        SizedBox(height: theme.space.gap),
         if (loading)
           const ListSkeleton(rows: 3)
         else if (all.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Text('这份材料还没有页面。选择“添加一页”以补充原文。'),
+          EmptyState(
+            icon: FLucideIcons.fileText,
+            title: '这份材料还没有原文',
+            description: material.isDocx
+                ? 'Word 材料的片段随导入写入，这里不逐段添加；可以重新导入一份。'
+                : '补充这一页的原文之后，可以引用原文或从这一页开始讨论。',
+            action: material.isDocx
+                ? null
+                : forui.FButton(
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: () => addMaterialPage(context, material),
+                    prefix: const Icon(FLucideIcons.filePlus),
+                    child: const Text('添加一页'),
+                  ),
           )
         else if (visible.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Text(
-              '这一步的页码还没有保存原文。可以查看全部页面，或先补充这一页。',
-              style: theme.text.bodyMedium,
-            ),
+          EmptyState(
+            icon: FLucideIcons.fileText,
+            title: '这一步的页码还没有原文',
+            description: '可以查看全部页面，或先补充这一页。',
+            action: material.isDocx
+                ? null
+                : forui.FButton(
+                    variant: forui.FButtonVariant.outline,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: () => addMaterialPage(context, material),
+                    child: const Text('添加一页'),
+                  ),
           )
         else
-          for (final page in visible) _pageCard(theme, page, material),
+          for (final page in visible) _pageCard(theme, material, page),
       ],
     );
   }
 
-  Widget _pageCard(ZhixinTheme theme, MaterialPage page, Material material) {
+  Widget _pageCard(ZhixinTheme theme, Material material, MaterialPage page) {
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: EdgeInsets.only(top: theme.space.sm),
       child: forui.FCard(
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.all(theme.space.md),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '第 ${page.pageNo} 页${page.label == null ? '' : ' · ${page.label}'}',
+                '${material.position(page.pageNo)}'
+                '${page.label == null ? '' : ' · ${page.label}'}',
                 style: theme.text.labelLarge,
               ),
-              const SizedBox(height: 6),
+              SizedBox(height: theme.space.tight),
               SelectableText(page.content, style: theme.text.bodyMedium),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 4,
+              SizedBox(height: theme.space.sm),
+              // 每页只有一个主操作；更正与记录收进菜单，卡片底部不再并排三个按钮。
+              Row(
                 children: [
                   forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
+                    variant: forui.FButtonVariant.outline,
+                    size: forui.FButtonSizeVariant.sm,
                     mainAxisSize: MainAxisSize.min,
                     onPress: () => _startDiscussion(page, material),
-                    child: const Text('从这里开始讨论'),
+                    child: const Text('讨论这一页'),
                   ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () => _correct(page),
-                    child: const Text('更正这一页'),
-                  ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () => _showCorrections(page),
-                    child: const Text('更正记录'),
+                  const Spacer(),
+                  moreMenu(
+                    items: [
+                      ZhixinMenuItem(
+                        label: '更正这一页',
+                        onSelected: () => _correct(material, page),
+                      ),
+                      ZhixinMenuItem(
+                        label: '更正记录',
+                        onSelected: () => _showCorrections(material, page),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -469,6 +580,49 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 材料当前归属的目标名：归属只存标识，目标改名之后这里跟着订阅重读。
+class _GoalTag extends StatefulWidget {
+  const _GoalTag({required this.material});
+
+  final Material material;
+
+  @override
+  State<_GoalTag> createState() => _GoalTagState();
+}
+
+class _GoalTagState extends State<_GoalTag> {
+  Stream<List<LearningGoal>>? _stream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _stream ??= AppScope.of(context).study.plan.watchGoals();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LiveView<List<LearningGoal>>(
+      stream: _stream,
+      builder: (context, goals, loading) {
+        final goalId = widget.material.goalId;
+        if (goalId == null) {
+          return const StatusTag('无归属', tone: TagTone.muted);
+        }
+        String? title;
+        for (final goal in goals ?? const <LearningGoal>[]) {
+          if (goal.id == goalId) {
+            title = goal.title;
+            break;
+          }
+        }
+        return StatusTag(
+          title == null ? (loading ? '目标' : '目标：已删除') : '目标：$title',
+        );
+      },
     );
   }
 }
