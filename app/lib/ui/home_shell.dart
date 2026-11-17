@@ -1,13 +1,17 @@
+import 'dart:async';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
+import '../app_scope.dart';
 import 'copy.dart';
 import 'mine_page.dart';
 import 'navigation.dart';
 import 'now_page.dart';
 import 'plan_page.dart';
 import 'records_page.dart';
+import 'telemetry_notice.dart';
 import 'theme.dart';
 
 /// 底部四栏（02 第 2.1 节）：现在 / 记录 / 安排 / 我的；账号、设置与其余次级
@@ -35,9 +39,20 @@ class _HomeShellState extends State<HomeShell> {
   /// 各栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
   List<Widget>? _pages;
 
+  /// 首次说明只安排一次，didChangeDependencies 会因主题、语言等变化被多次调用。
+  bool _noticeScheduled = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!_noticeScheduled) {
+      _noticeScheduled = true;
+      final report = AppScope.of(context).accountServices.activeReport;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(showTelemetryNoticeIfNeeded(context, report));
+      });
+    }
     _pages ??= [
       NowPage(
         key: const ValueKey('now'),

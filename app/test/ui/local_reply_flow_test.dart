@@ -10,6 +10,8 @@ import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ui/discussion_chat.dart';
 import 'package:zhixin/ui/settings_page.dart';
 
+import '../support/telemetry.dart';
+
 /// 没有模型时的提问、配置与重答入口走同一条界面流程。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +24,7 @@ void main() {
   setUp(() async {
     storedSecret = null;
     directory = await Directory.systemTemp.createTemp('zhixin-local-reply-');
+    await disableTelemetryForTests(directory.path);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(

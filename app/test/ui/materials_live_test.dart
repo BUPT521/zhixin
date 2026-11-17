@@ -11,6 +11,8 @@ import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
+import '../support/telemetry.dart';
+
 import '../support/docx_fixture.dart';
 
 /// 材料列表与材料详情改成订阅之后，页面之外的写入由数据层重读（ADR-0014）。
@@ -23,6 +25,7 @@ void main() {
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-materials-live-');
+    await disableTelemetryForTests(directory.path);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(

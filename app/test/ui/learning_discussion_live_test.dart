@@ -9,6 +9,8 @@ import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/learning_page.dart';
 
+import '../support/telemetry.dart';
+
 /// 讨论页与学习页改成订阅之后，页面之外的写入由数据层重读（ADR-0014）。
 ///
 /// 这里不返回记录页重进，也不点任何刷新入口：写入发生在页面之外，界面只靠
@@ -20,6 +22,7 @@ void main() {
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-learning-live-');
+    await disableTelemetryForTests(directory.path);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(

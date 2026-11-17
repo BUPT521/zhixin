@@ -8,6 +8,7 @@ import 'app_services.dart';
 import 'ai/llm_config.dart';
 import 'ai/llm_config_store.dart';
 import 'application/account_service.dart';
+import 'application/active_report_service.dart';
 import 'application/cloud_backup_service.dart';
 import 'application/context_service.dart';
 import 'application/brought_sources.dart';
@@ -37,6 +38,7 @@ import 'data/backup/restore_point_store.dart';
 import 'data/attachment_store.dart';
 import 'data/cloud/account_store.dart';
 import 'data/cloud/cloud_preferences_store.dart';
+import 'data/cloud/telemetry_store.dart';
 import 'data/db/app_database.dart';
 import 'data/db/database_gate.dart';
 import 'data/db/guarded_database.dart';
@@ -129,6 +131,7 @@ class AppScopeState extends State<AppScope> {
 
   /// 账号与云同步：令牌在 Keystore，服务地址与同步游标在应用私有目录。
   AccountService? _accountService;
+  ActiveReportService? _activeReportService;
   late final CloudPreferencesStore _cloudPreferences;
   CloudBackupService? _cloudBackups;
   SyncService? _cloudSync;
@@ -258,7 +261,12 @@ class AppScopeState extends State<AppScope> {
       runtime: _pluginRuntime!,
       personas: _pluginRuntime!.personas,
     ),
-    account: AccountServices(account: _account, backups: _backups, sync: _sync),
+    account: AccountServices(
+      account: _account,
+      backups: _backups,
+      sync: _sync,
+      activeReport: _activeReportService!,
+    ),
   );
 
   /// 讨论、作答、安排、材料、记忆、设置、数据版本、插件与账号九组服务。
@@ -485,6 +493,13 @@ class AppScopeState extends State<AppScope> {
       preferences: _cloudPreferences,
       deviceName: '知新 ${appVersion.split('+').first}',
     );
+    _activeReportService = ActiveReportService(
+      store: TelemetryStore(filesDir: paths.filesDir),
+      signedIn: () async => (await _account.snapshot()).session != null,
+      serverBaseUrl: _account.serverBaseUrl,
+      crashLog: crashLog,
+      appVersion: appVersion,
+    );
     _configuredAi = AiChatService(
       store: _llmStore,
       configSource: _configuredModelConfig,
@@ -558,6 +573,16 @@ class AppScopeState extends State<AppScope> {
     _scheduleAttachmentMaintenance();
     // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。
     unawaited(_sync.schedule());
+    _scheduleActiveReport();
+  }
+
+  /// 首帧之后在空闲里尝试一次匿名活跃上报（ADR-0019）：不等待、不阻塞启动，
+  /// 失败只写诊断记录；登录用户由服务端按请求日期统计，这一步会直接跳过。
+  void _scheduleActiveReport() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_activeReportService?.reportIfDue() ?? Future<void>.value());
+    });
   }
 
   /// 读取模型配置；选择知新服务时换成当前账号的访问令牌。

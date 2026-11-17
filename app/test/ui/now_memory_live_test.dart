@@ -14,6 +14,8 @@ import 'package:zhixin/ui/memory_page.dart';
 import 'package:zhixin/ui/memory_proposal_page.dart';
 import 'package:zhixin/ui/study_plan_page.dart';
 
+import '../support/telemetry.dart';
+
 /// 订阅跟随写入更新（ADR-0014）：首页摘要、记忆、记忆建议与系统学习四页。
 ///
 /// 写入走 [seed]：真异步区里写库，随后 pump 到回填结束。重读在发出通知的
@@ -25,6 +27,7 @@ void main() {
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-live-');
+    await disableTelemetryForTests(directory.path);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),

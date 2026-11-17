@@ -1,5 +1,6 @@
 import 'ai/ai_chat_service.dart';
 import 'application/account_service.dart';
+import 'application/active_report_service.dart';
 import 'application/capacity_service.dart';
 import 'application/cloud_backup_service.dart';
 import 'application/continue_service.dart';
@@ -151,9 +152,13 @@ class AccountServices {
     required this.account,
     required this.backups,
     required this.sync,
+    required this.activeReport,
   });
 
   final AccountService account;
   final CloudBackupService backups;
   final SyncService sync;
+
+  /// 不登录时的匿名活跃上报，见 ADR-0019。
+  final ActiveReportService activeReport;
 }

@@ -59,6 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
   ThemeMode _themeMode = ThemeMode.system;
 
   bool _reportCrashes = true;
+  bool _reportUsage = true;
   bool _loading = true;
   bool _busy = false;
   final Map<_Area, _Result> _results = {};
@@ -141,6 +142,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final reportCrashes = await DiagnosticsStore(scope.paths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
+      final reportUsage = await scope.accountServices.activeReport.enabled();
       final themeMode = scope.themeMode.value;
       final embedding = await _readEmbeddingSummary(scope);
       if (!mounted) return;
@@ -152,6 +154,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _serverModels = serverModels;
         _applyConfig(config);
         _reportCrashes = reportCrashes;
+        _reportUsage = reportUsage;
         _themeMode = themeMode;
         _embeddingUsable = embedding.usable;
         _embeddingSources = embedding.sources;
@@ -781,6 +784,33 @@ class _SettingsPageState extends State<SettingsPage> {
                   if (!context.mounted) return;
                   setState(() => _reportCrashes = previous);
                   CrashLog.reportEnabled = previous;
+                  _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
+                }
+              },
+            ),
+          ),
+        ),
+        const SectionHeading(title: '使用统计'),
+        forui.FCard(
+          child: Padding(
+            padding: EdgeInsets.all(theme.space.lg),
+            child: forui.FSwitch(
+              label: const Text('匿名使用统计'),
+              description: const Text(
+                '不登录时每天最多上报一次随机安装标识、应用版本与平台，不含学习内容，'
+                '也不与账号关联；登录之后由服务端按请求日期统计。关闭之后不再上报，'
+                '已经上报的记录保留。',
+              ),
+              value: _reportUsage,
+              onChange: (value) async {
+                final previous = _reportUsage;
+                setState(() => _reportUsage = value);
+                try {
+                  await AppScope.of(context).accountServices.activeReport
+                      .setEnabled(value);
+                } catch (_) {
+                  if (!context.mounted) return;
+                  setState(() => _reportUsage = previous);
                   _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
                 }
               },
