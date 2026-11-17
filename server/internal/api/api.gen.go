@@ -222,6 +222,30 @@ type Credentials struct {
 	Password   string              `json:"password"`
 }
 
+// Feedback defines model for Feedback.
+type Feedback struct {
+	// AppVersion 客户端版本名，例如 0.2.0-dev+3
+	AppVersion *string `json:"app_version,omitempty"`
+
+	// Contact 可选的联系邮箱，用于回复这条反馈
+	Contact *openapi_types.Email `json:"contact,omitempty"`
+
+	// Content 用户填写的反馈正文
+	Content string `json:"content"`
+
+	// Diagnostics 可选的诊断摘要，客户端先说明附带哪些内容
+	Diagnostics *string `json:"diagnostics,omitempty"`
+
+	// Platform 平台，例如 android
+	Platform *string `json:"platform,omitempty"`
+}
+
+// FeedbackReceipt defines model for FeedbackReceipt.
+type FeedbackReceipt struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Status HealthStatus `json:"status"`
@@ -296,6 +320,39 @@ type Ready struct {
 
 // ReadyStatus defines model for Ready.Status.
 type ReadyStatus string
+
+// Release defines model for Release.
+type Release struct {
+	// Build Android 的 versionCode
+	Build int64 `json:"build"`
+
+	// MinVersion 低于它的客户端应提示必须更新
+	MinVersion *string `json:"min_version,omitempty"`
+
+	// Notes 这一版的更新说明
+	Notes *string `json:"notes,omitempty"`
+
+	// Platform Examples: android
+	Platform string `json:"platform"`
+
+	// PublishedAt Examples: 2026-12-21
+	PublishedAt *string `json:"published_at,omitempty"`
+
+	// Sha256 安装包的 SHA-256，可选
+	Sha256 *string `json:"sha256,omitempty"`
+	Size   *int64  `json:"size,omitempty"`
+
+	// Url 安装包地址，服务端只校验是 http 或 https
+	Url string `json:"url"`
+
+	// Version Examples: 0.2.0
+	Version string `json:"version"`
+}
+
+// ReleaseList defines model for ReleaseList.
+type ReleaseList struct {
+	Releases []Release `json:"releases"`
+}
 
 // SyncHead defines model for SyncHead.
 type SyncHead struct {
@@ -384,6 +441,9 @@ type PostV1AuthRefreshJSONRequestBody PostV1AuthRefreshJSONBody
 // PostV1AuthRegisterJSONRequestBody defines body for PostV1AuthRegister for application/json ContentType.
 type PostV1AuthRegisterJSONRequestBody = Credentials
 
+// PostV1FeedbackJSONRequestBody defines body for PostV1Feedback for application/json ContentType.
+type PostV1FeedbackJSONRequestBody = Feedback
+
 // PostV1LlmChatCompletionsJSONRequestBody defines body for PostV1LlmChatCompletions for application/json ContentType.
 type PostV1LlmChatCompletionsJSONRequestBody PostV1LlmChatCompletionsJSONBody
 
@@ -398,6 +458,9 @@ type ServerInterface interface {
 	// GetReadyz 依赖可用，并返回服务端接受的客户端 schema 版本
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// GetV1AppReleases 应用安装包的发布清单
+	// (GET /v1/app/releases)
+	GetV1AppReleases(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthEmailVerifyConfirm 用验证码确认当前账号的邮箱
 	// (POST /v1/auth/email/verify/confirm)
 	PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request)
@@ -446,6 +509,9 @@ type ServerInterface interface {
 	// PutV1BlobsSha256 上传附件，服务端核对哈希
 	// (PUT /v1/blobs/{sha256})
 	PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string)
+	// PostV1Feedback 提交一条应用内反馈
+	// (POST /v1/feedback)
+	PostV1Feedback(w http.ResponseWriter, r *http.Request)
 	// PostV1LlmChatCompletions OpenAI Chat Completions 代理
 	// (POST /v1/llm/chat/completions)
 	PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request)
@@ -503,6 +569,20 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetV1AppReleases operation middleware
+func (siw *ServerInterfaceWrapper) GetV1AppReleases(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1AppReleases(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -869,6 +949,20 @@ func (siw *ServerInterfaceWrapper) PutV1BlobsSha256(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// PostV1Feedback operation middleware
+func (siw *ServerInterfaceWrapper) PostV1Feedback(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1Feedback(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostV1LlmChatCompletions operation middleware
 func (siw *ServerInterfaceWrapper) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
 
@@ -1174,6 +1268,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/models", wrapper.GetV1LlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/chat/completions", wrapper.PostV1LlmChatCompletions)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/app/releases", wrapper.GetV1AppReleases)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback", wrapper.PostV1Feedback)
 
 	return m
 }

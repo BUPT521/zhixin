@@ -53,7 +53,7 @@ func newTestServerWithMail(t *testing.T) (*testutil.Client, *fakeMailer) {
 	svc.ConfigureCodes(mail, []byte("test-secret"), 10*time.Minute, time.Minute)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return testutil.NewClient(t, testutil.NewServer(
-		testAPI{h: NewHandler(svc, log, testMaxJSON, nil, nil, nil)},
+		testAPI{h: NewHandler(svc, log, testMaxJSON, nil, nil, nil, httpx.RemoteHost)},
 		httpx.RequestID,
 		Middleware(svc, log),
 	)), mail

@@ -1,7 +1,9 @@
 // Package config reads the server configuration from environment variables.
 //
 // Every secret (database password, upstream model key) arrives through the
-// environment; nothing is read from files in the repository. See ADR-0009.
+// environment; nothing is read from files in the repository. The one exception
+// is the release manifest: its path comes from ZHIXIN_RELEASE_FILE and the file
+// itself lives outside the repository. See ADR-0009 and ADR-0025.
 package config
 
 import (
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/release"
 )
 
 // Config is the complete runtime configuration of zhixin-api.
@@ -76,6 +79,20 @@ type Config struct {
 	// 或来源地址计；设 0 关闭。
 	CodeRatePerSecond float64
 	CodeBurst         int
+
+	// FeedbackRatePerSecond 与 FeedbackBurst 限制应用内反馈的提交，按来源地址
+	// 计；设 0 关闭。
+	FeedbackRatePerSecond float64
+	FeedbackBurst         int
+	// TrustedProxy 为真时按 X-Forwarded-For 的最后一项取来源地址，用于直接
+	// 对端是项目组反向代理的部署；对外直接暴露时必须保持关闭。
+	TrustedProxy bool
+
+	// ReleaseFile 是发布清单文件；为空表示还没有对外发布过安装包，更新检查
+	// 返回空数组。
+	ReleaseFile string
+	// Releases 是启动时从 ReleaseFile 读入并校验过的清单，见 release.Load。
+	Releases []release.Entry
 
 	LLM LLMConfig
 }
@@ -180,6 +197,13 @@ func Load(getenv func(string) string) (Config, error) {
 		CodeRatePerSecond: fnum("ZHIXIN_CODE_RATE", "0.02"),
 		CodeBurst:         int(num("ZHIXIN_CODE_BURST", "1")),
 
+		FeedbackRatePerSecond: fnum("ZHIXIN_FEEDBACK_RATE", "0.02"),
+		FeedbackBurst:         int(num("ZHIXIN_FEEDBACK_BURST", "3")),
+
+		TrustedProxy: get("ZHIXIN_TRUSTED_PROXY", "0") == "1",
+
+		ReleaseFile: get("ZHIXIN_RELEASE_FILE", ""),
+
 		LLM: LLMConfig{
 			BaseURL:         strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:          get("ZHIXIN_LLM_API_KEY", ""),
@@ -214,5 +238,12 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.AccessTTL >= cfg.RefreshTTL && len(errs) == 0 {
 		errs = append(errs, errors.New("ZHIXIN_ACCESS_TTL must be shorter than ZHIXIN_REFRESH_TTL"))
 	}
+	// 发布清单不合法时启动直接失败：更新检查是公测前必须可用的功能，清单写错
+	// 却照常启动，客户端只会一直拿到空清单。
+	releases, err := release.Load(cfg.ReleaseFile)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.Releases = releases
 	return cfg, errors.Join(errs...)
 }

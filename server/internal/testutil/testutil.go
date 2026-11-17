@@ -187,3 +187,11 @@ func (Base) GetV1SyncCommits(w http.ResponseWriter, _ *http.Request, _ api.GetV1
 func (Base) PostV1SyncCommits(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
+
+func (Base) GetV1AppReleases(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (Base) PostV1Feedback(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}

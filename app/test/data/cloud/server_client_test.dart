@@ -222,6 +222,58 @@ void main() {
       ),
     );
   });
+
+  test('读发布清单不需要登录', () async {
+    final server = FakeServer()
+      ..releases.add({
+        'platform': 'android',
+        'version': '0.2.0',
+        'build': 2,
+        'url': 'https://example.test/zhixin-0.2.0.apk',
+        'min_version': '0.1.0',
+        'notes': '登录与云端备份',
+      });
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+
+    final list = await client.releases();
+    expect(list, hasLength(1));
+    expect(list.single.version, '0.2.0');
+    expect(list.single.build, 2);
+    expect(list.single.minVersion, '0.1.0');
+    expect(list.single.notes, '登录与云端备份');
+  });
+
+  test('提交反馈不需要登录，空正文与服务端拒绝一致', () async {
+    final server = FakeServer();
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+
+    final receipt = await client.sendFeedback(
+      content: '记录页按“下一步”没有反应',
+      appVersion: '0.2.0-dev+3',
+      diagnostics: '2026-11-18 10:00 记录页',
+    );
+    expect(receipt.id, isNotEmpty);
+    expect(server.feedbacks.single['content'], '记录页按“下一步”没有反应');
+    expect(server.feedbacks.single['platform'], 'android');
+    expect(server.feedbacks.single['app_version'], '0.2.0-dev+3');
+
+    await expectLater(
+      client.sendFeedback(content: '   '),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.code,
+          'code',
+          'invalid_request',
+        ),
+      ),
+    );
+  });
 }
 
 String _sha256Of(List<int> bytes) => sha256.convert(bytes).toString();

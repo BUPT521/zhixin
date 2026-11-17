@@ -53,6 +53,10 @@ class FakeServer {
   final Map<String, List<FakeBackup>> backups = {};
   final Map<String, Map<String, Uint8List>> blobs = {};
 
+  /// 发布清单与收到的反馈；两者都是公开接口，不需要登录。
+  final List<Map<String, Object?>> releases = [];
+  final List<Map<String, Object?>> feedbacks = [];
+
   int headOf(String userId) => commits[userId]?.length ?? 0;
 
   String userIdOf(String email) => _userIds[email]!;
@@ -86,6 +90,18 @@ class FakeServer {
     }
     if (method == 'POST' && path == '/v1/auth/password/reset') {
       return _resetPassword(body);
+    }
+    if (method == 'GET' && path == '/v1/app/releases') {
+      return _json(200, {'releases': releases});
+    }
+    if (method == 'POST' && path == '/v1/feedback') {
+      final content = (body['content'] as String? ?? '').trim();
+      if (content.isEmpty) return _problem(400, 'invalid_request');
+      feedbacks.add(body);
+      return _json(201, {
+        'id': 'feedback-${feedbacks.length}',
+        'created_at': '2026-11-18T10:00:00Z',
+      });
     }
 
     final token = _bearer(request);

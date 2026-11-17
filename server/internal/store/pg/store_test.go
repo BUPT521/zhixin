@@ -13,6 +13,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -34,7 +35,7 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS feedback, llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -331,6 +332,41 @@ func TestPostgresBackupsAndQuota(t *testing.T) {
 	}
 	if used, err := st.Used(ctx, "u1", "2026-11-15"); err != nil || used != 150 {
 		t.Fatalf("用量应累加到 150，得到 %d %v", used, err)
+	}
+}
+
+// TestPostgresFeedback 核对反馈落库的字段：正文、联系邮箱、版本、平台与诊断
+// 摘要原样保存，时间不是零值。反馈不关联账号，因此删号用例不涉及这张表。
+func TestPostgresFeedback(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	created := time.Now().UTC().Truncate(time.Microsecond)
+	item := feedback.Item{
+		ID: "f1", Content: "记录页没有反应", Contact: "a@b.cn",
+		AppVersion: "0.2.0-dev+3", Platform: "android",
+		Diagnostics: "2026-11-18 10:00 记录页", CreatedAt: created,
+	}
+	if err := st.CreateFeedback(ctx, item); err != nil {
+		t.Fatalf("create feedback: %v", err)
+	}
+
+	var got feedback.Item
+	err := st.pool.QueryRow(ctx, `SELECT id, content, contact, app_version, platform, diagnostics, created_at FROM feedback WHERE id = $1`, item.ID).
+		Scan(&got.ID, &got.Content, &got.Contact, &got.AppVersion, &got.Platform, &got.Diagnostics, &got.CreatedAt)
+	if err != nil {
+		t.Fatalf("read feedback: %v", err)
+	}
+	if got.Content != item.Content || got.Contact != item.Contact ||
+		got.AppVersion != item.AppVersion || got.Platform != item.Platform ||
+		got.Diagnostics != item.Diagnostics {
+		t.Fatalf("字段没有原样保存：%+v", got)
+	}
+	if !got.CreatedAt.Equal(created) {
+		t.Fatalf("保存时间不对：%v vs %v", got.CreatedAt, created)
+	}
+
+	if err := st.CreateFeedback(ctx, feedback.Item{ID: "f2", Content: "x"}); err == nil {
+		t.Fatal("零值时间应当报错，不能静默写成 0001-01-01")
 	}
 }
 

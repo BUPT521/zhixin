@@ -18,6 +18,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/store"
@@ -38,6 +39,7 @@ var (
 	_ syncsvc.Store        = (*Store)(nil)
 	_ backup.Store         = (*Store)(nil)
 	_ llmproxy.Quota       = (*Store)(nil)
+	_ feedback.Store       = (*Store)(nil)
 	_ interface{ Close() } = (*Store)(nil)
 )
 
@@ -281,6 +283,24 @@ func (s *Store) IncrementCodeAttempts(ctx context.Context, userID, purpose strin
 
 func (s *Store) DeleteCode(ctx context.Context, userID, purpose string) error {
 	return s.q.DeleteAuthCode(ctx, db.DeleteAuthCodeParams{UserID: userID, Purpose: purpose})
+}
+
+// CreateFeedback 保存一条应用内反馈。反馈不关联账号，删号时也没有需要级联的
+// 行；管理员按 created_at 直接查表，见 server/README。
+func (s *Store) CreateFeedback(ctx context.Context, item feedback.Item) error {
+	created, err := pgTime(item.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return s.q.InsertFeedback(ctx, db.InsertFeedbackParams{
+		ID:          item.ID,
+		Content:     item.Content,
+		Contact:     item.Contact,
+		AppVersion:  item.AppVersion,
+		Platform:    item.Platform,
+		Diagnostics: item.Diagnostics,
+		CreatedAt:   created,
+	})
 }
 
 // pgTime 把时间转成 PostgreSQL 的 timestamptz。零值说明调用方漏了赋值，直接

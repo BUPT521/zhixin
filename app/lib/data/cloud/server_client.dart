@@ -300,6 +300,58 @@ class ServerModel {
   final String id;
 }
 
+/// 发布清单里的一项；是否需要更新由界面比较 [version] 与 [build] 决定，
+/// 服务端只给数据（ADR-0025）。
+class ServerRelease {
+  const ServerRelease({
+    required this.platform,
+    required this.version,
+    required this.build,
+    required this.url,
+    this.publishedAt = '',
+    this.sha256 = '',
+    this.size = 0,
+    this.minVersion = '',
+    this.notes = '',
+  });
+
+  factory ServerRelease.fromJson(Map<String, Object?> json) => ServerRelease(
+    platform: json['platform'] as String? ?? '',
+    version: json['version'] as String? ?? '',
+    build: (json['build'] as num?)?.toInt() ?? 0,
+    url: json['url'] as String? ?? '',
+    publishedAt: json['published_at'] as String? ?? '',
+    sha256: json['sha256'] as String? ?? '',
+    size: (json['size'] as num?)?.toInt() ?? 0,
+    minVersion: json['min_version'] as String? ?? '',
+    notes: json['notes'] as String? ?? '',
+  );
+
+  final String platform;
+  final String version;
+  final int build;
+  final String url;
+  final String publishedAt;
+  final String sha256;
+  final int size;
+  final String minVersion;
+  final String notes;
+}
+
+/// 提交反馈之后的回执。
+class ServerFeedbackReceipt {
+  const ServerFeedbackReceipt({required this.id, this.createdAt});
+
+  factory ServerFeedbackReceipt.fromJson(Map<String, Object?> json) =>
+      ServerFeedbackReceipt(
+        id: json['id'] as String? ?? '',
+        createdAt: _parseTime(json['created_at']),
+      );
+
+  final String id;
+  final DateTime? createdAt;
+}
+
 /// 自建 API 服务的最小客户端：只拼 HTTP、解 JSON 与把错误统一成
 /// [ServerProblem]，令牌的保存、刷新与重试由账号服务负责。
 ///
@@ -564,6 +616,39 @@ class ServerClient {
         if (item is Map && item['id'] is String)
           ServerModel(item['id']! as String),
     ];
+  }
+
+  /// 读发布清单；不需要登录，没有配置清单时返回空列表。界面按平台取一项，
+  /// 再比较 [ServerRelease.version] 与 [ServerRelease.build] 决定是否提示更新。
+  Future<List<ServerRelease>> releases() async {
+    final json = await _json('GET', '/v1/app/releases');
+    return [
+      for (final item in (json['releases'] as List? ?? const []))
+        if (item is Map) ServerRelease.fromJson(item.cast<String, Object?>()),
+    ];
+  }
+
+  /// 提交一条应用内反馈；不需要登录，也不会带上访问令牌。联系邮箱、版本、
+  /// 平台与诊断摘要都可以留空，服务端只在非空时保存。
+  Future<ServerFeedbackReceipt> sendFeedback({
+    required String content,
+    String contact = '',
+    String appVersion = '',
+    String platform = 'android',
+    String diagnostics = '',
+  }) async {
+    final json = await _json(
+      'POST',
+      '/v1/feedback',
+      body: {
+        'content': content,
+        if (contact.trim().isNotEmpty) 'contact': contact.trim(),
+        if (appVersion.isNotEmpty) 'app_version': appVersion,
+        if (platform.isNotEmpty) 'platform': platform,
+        if (diagnostics.trim().isNotEmpty) 'diagnostics': diagnostics,
+      },
+    );
+    return ServerFeedbackReceipt.fromJson(json);
   }
 
   void dispose() {

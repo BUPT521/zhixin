@@ -56,11 +56,12 @@ func run(log *slog.Logger) error {
 		log.Info("using PostgreSQL stores")
 		blobStore := blobs.NewStore(objects)
 		stores = server.Stores{
-			Auth:    pgStore,
-			Sync:    pgStore,
-			Backups: pgStore,
-			Blobs:   blobStore,
-			Quota:   pgStore,
+			Auth:     pgStore,
+			Sync:     pgStore,
+			Backups:  pgStore,
+			Blobs:    blobStore,
+			Quota:    pgStore,
+			Feedback: pgStore,
 			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
 			// 由这里按前缀清理。
 			DeleteAccount: server.DeleteAccountData(
@@ -77,6 +78,11 @@ func run(log *slog.Logger) error {
 	}
 	if cfg.LLM.APIKey == "" {
 		log.Warn("ZHIXIN_LLM_API_KEY is empty: the model proxy answers 503")
+	}
+	if len(cfg.Releases) == 0 {
+		log.Warn("ZHIXIN_RELEASE_FILE is empty or lists no release: the update check returns an empty list")
+	} else {
+		log.Info("loaded the release manifest", slog.Int("releases", len(cfg.Releases)))
 	}
 
 	srv := &http.Server{
