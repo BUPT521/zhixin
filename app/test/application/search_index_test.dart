@@ -13,11 +13,13 @@ import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
+import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/data/vector/memory_vector_index.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/domain/models/evidence.dart';
+import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 
 import '../support/test_db.dart';
@@ -932,6 +934,111 @@ void main() {
     final results = await Future.wait([first, second]);
     expect(identical(results.first, results.last), isTrue);
     expect(client.calls, 7);
+  });
+
+  test('记忆索引按关键词相关性排序，改、删随之同步，不调用嵌入来源', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final memories = MemoryRepository(db);
+    final memoryIndex = MemoryVectorIndex(textOnlyModelSpec);
+    addTearDown(memoryIndex.close);
+    final service = SearchIndexService(
+      repository: EvidenceRepository(db),
+      indexPath: '',
+      clock: () => DateTime(2026, 11, 12, 10),
+      memoryStoreOpener: () async => DirectVectorStore(memoryIndex),
+    );
+    addTearDown(service.close);
+
+    final root = await memories.create(
+      kind: MemoryKind.difficulty,
+      content: '解分式方程时忘记检验增根',
+    );
+    final example = await memories.create(
+      kind: MemoryKind.preference,
+      content: '讲解时先给一个例子',
+    );
+    final timeLimit = await memories.create(
+      kind: MemoryKind.constraint,
+      content: '这周晚上只有半小时',
+    );
+    final candidates = [root, example, timeLimit];
+
+    final ordered = await service.rankMemories(
+      query: '增根 检验',
+      memories: await memories.list(),
+      candidateIds: candidates,
+    );
+    expect(ordered, isNotNull);
+    expect(ordered!.first, root);
+    expect(memoryIndex.entryCount, 3);
+
+    // 改写之后旧正文不再命中，新正文进索引。
+    await memories.updateContent(
+      root,
+      content: '分式方程解完要把根代回原方程',
+      kind: MemoryKind.difficulty,
+    );
+    final rewritten = await memories.list();
+    expect(
+      await service.rankMemories(
+        query: '增根 检验',
+        memories: rewritten,
+        candidateIds: candidates,
+      ),
+      isNot(contains(root)),
+    );
+    expect(
+      (await service.rankMemories(
+        query: '代回原方程',
+        memories: rewritten,
+        candidateIds: candidates,
+      ))!.first,
+      root,
+    );
+
+    // 删除的记忆不再留在索引里。
+    await memories.delete(example);
+    await service.rankMemories(
+      query: '例子',
+      memories: await memories.list(),
+      candidateIds: [root, timeLimit],
+    );
+    expect(memoryIndex.entryCount, 2);
+
+    // 索引只排候选：候选之外的相关记忆不参与本次排序。
+    expect(
+      await service.rankMemories(
+        query: '增根',
+        memories: await memories.list(),
+        candidateIds: [timeLimit],
+      ),
+      isEmpty,
+    );
+  });
+
+  test('记忆索引打不开时返回空值，由调用方退回本机排序', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final service = SearchIndexService(
+      repository: EvidenceRepository(db),
+      indexPath: '',
+      memoryStoreOpener: () async => throw const VectorStoreFailure('没有本机向量库'),
+    );
+    addTearDown(service.close);
+    final memory = (
+      id: 'memory-1',
+      content: '解分式方程时忘记检验增根',
+      kind: MemoryKind.difficulty,
+    );
+    final ordered = await service.rankMemories(
+      query: '增根',
+      memories: [
+        Memory(id: memory.id, kind: memory.kind, content: memory.content),
+      ],
+      candidateIds: [memory.id],
+    );
+    expect(ordered, isNull);
   });
 }
 

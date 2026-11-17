@@ -8,6 +8,37 @@ import '../support/test_db.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
+/// 排序替身：按给定顺序返回候选，并记下调用参数。
+class _FakeRanker implements MemoryRelevanceRanker {
+  _FakeRanker(this.order, {this.available = true});
+
+  /// 期望排在前面的记忆编号。
+  final List<String> order;
+
+  /// 为假时模拟索引打不开，调用方应当退回二元组排序。
+  final bool available;
+
+  String? query;
+  List<String> candidates = const [];
+  List<Memory> memories = const [];
+
+  @override
+  Future<List<String>?> rankMemories({
+    required String query,
+    required List<Memory> memories,
+    required List<String> candidateIds,
+  }) async {
+    this.query = query;
+    this.memories = memories;
+    candidates = candidateIds;
+    if (!available) return null;
+    return [
+      for (final id in order)
+        if (candidateIds.contains(id)) id,
+    ];
+  }
+}
+
 void main() {
   test('规划、讲解与检查按用途取不同类别的记忆，约束始终先占预算', () async {
     final db = await openTestDb();
@@ -166,5 +197,89 @@ void main() {
     expect(results, hasLength(2));
     expect(results.first.content, contains('第 8 题独立完成'));
     expect(results.last.sourceKind, MemorySourceKind.user);
+  });
+
+  test('索引给出的相关性先于更新时间，范围之外的记忆也进索引', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    var minute = 0;
+    final repo = MemoryRepository(
+      db,
+      clock: () => DateTime(2026, 11, 12, 9, minute++),
+    );
+    final now = DateTime(2026, 11, 12, 10);
+    final older = await repo.create(
+      kind: MemoryKind.preference,
+      content: '讲解时先给一个例子',
+    );
+    await updateRow(
+      db,
+      'memory',
+      {'updated_at': '2026-10-01 09:00:00'},
+      where: 'id = ?',
+      whereArgs: [older],
+    );
+    final newer = await repo.create(
+      kind: MemoryKind.preference,
+      content: '晚上先做简单题',
+    );
+    final otherGoal = await repo.create(
+      kind: MemoryKind.difficulty,
+      content: '放缩方向不确定',
+      scope: memoryGoalScope('goal-2'),
+    );
+    final expired = await repo.create(
+      kind: MemoryKind.preference,
+      content: '这周先只看第一章',
+      validUntil: now.subtract(const Duration(days: 1)),
+    );
+
+    final ranker = _FakeRanker([older]);
+    final results = await MemoryRecallService(repo, ranker: ranker).recall(
+      now: now,
+      purpose: MemoryRecallPurpose.plan,
+      scope: memoryGoalScope('goal-1'),
+      query: '先给一个例子',
+    );
+    expect(results.first.id, older, reason: '索引认为它最相关，即使更新时间更早');
+    expect(ranker.query, '先给一个例子');
+    expect(ranker.candidates, unorderedEquals([older, newer]));
+    expect(
+      ranker.memories.map((memory) => memory.id),
+      unorderedEquals([older, newer, otherGoal]),
+      reason: '范围之外的记忆留在索引里，换目标时不必重写',
+    );
+    expect(
+      ranker.memories.map((memory) => memory.id),
+      isNot(contains(expired)),
+      reason: '过期的条目不再同步进索引',
+    );
+  });
+
+  test('索引不可用时退回二元组排序', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final repo = MemoryRepository(db, clock: () => DateTime(2026, 11, 12, 9));
+    await repo.create(
+      kind: MemoryKind.progress,
+      content: '条件概率与独立性可以一起判断：P(AB)=P(A)P(B)。',
+    );
+    await updateRow(
+      db,
+      'memory',
+      {'updated_at': '2026-10-01 09:00:00'},
+      where: 'kind = ?',
+      whereArgs: [MemoryKind.progress.value],
+    );
+    await repo.create(kind: MemoryKind.progress, content: '今天状态一般，先做简单题。');
+
+    final ranker = _FakeRanker(const [], available: false);
+    final results = await MemoryRecallService(repo, ranker: ranker).recall(
+      now: DateTime(2026, 11, 12, 10),
+      purpose: MemoryRecallPurpose.check,
+      query: '条件概率 独立性',
+    );
+    expect(ranker.query, '条件概率 独立性');
+    expect(results.first.content, contains('条件概率与独立性'));
   });
 }

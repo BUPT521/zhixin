@@ -1,17 +1,23 @@
 import '../data/repository/memory_repository.dart';
 import '../domain/models/memory.dart';
+import '../domain/rules/content_identity.dart';
+import '../domain/rules/embedding.dart';
 import '../domain/rules/search_terms.dart';
 
 /// 按本次用途挑选记忆，给回答提示词使用。
 ///
 /// 先由仓库筛掉过期的、已删除的、已被替代的条目和其他范围的条目，再在这里
 /// 按用途与查询相关性取最多 40 条。约束先占预算，其余条目先看用途类别，再按
-/// 记忆正文命中的二元组数量排序；更新时间只在相关性与类别都相同时比较。待确认
-/// 的记忆提案不在 `memory` 表里，确认之前不会成为候选。
+/// 记忆正文与本次问题的相关性排序；相关性由检索索引给出，索引不可用时退回
+/// 本机的二元组切分。更新时间只在相关性与类别都相同时比较。待确认的记忆提案
+/// 不在 `memory` 表里，确认之前不会成为候选。
 class MemoryRecallService {
-  MemoryRecallService(this.repository);
+  MemoryRecallService(this.repository, {this.ranker});
 
   final MemoryRepository repository;
+
+  /// 相关性排序用的索引；为空时只用本机的二元组切分。
+  final MemoryRelevanceRanker? ranker;
 
   static const int defaultLimit = 40;
 
@@ -37,7 +43,7 @@ class MemoryRecallService {
       for (final memory in candidates)
         if (memory.kind != MemoryKind.constraint) memory,
     ];
-    final ranks = _relevanceRanks(rest, query);
+    final ranks = await _relevanceRanks(rest, query, now);
     final preferred = _preferredKinds(purpose);
     final positions = {
       for (var index = 0; index < rest.length; index++) rest[index].id: index,
@@ -88,13 +94,67 @@ class MemoryRecallService {
     };
   }
 
-  /// 按记忆正文的相关性给候选排名次；没有查询或只有一个候选时保持原顺序。
+  /// 候选记忆的名次：先问索引，索引不可用时按二元组切分。
   ///
-  /// 记忆条数远小于材料页与消息，因此不进入 zvec 索引（ADR-0024 的代价与
-  /// 边界一节保留了这条独立性）：用同一套二元组切分，按命中的词数打分，
-  /// 命中的词越多名次越前。
-  static Map<int, int> _relevanceRanks(List<Memory> memories, String query) {
+  /// 没有查询或只有一个候选时保持原顺序。
+  Future<Map<int, int>> _relevanceRanks(
+    List<Memory> memories,
+    String query,
+    DateTime now,
+  ) async {
     if (memories.length < 2 || query.trim().isEmpty) return const {};
+    final indexed = await _indexedRanks(memories, query, now);
+    if (indexed != null) return indexed;
+    return _bigramRanks(memories, query);
+  }
+
+  /// 用检索索引给候选排序；索引不可用或同步失败时返回空值。
+  ///
+  /// 交给索引的是当前有效且未过期的全部记忆：范围之外的条目留在索引里，换
+  /// 目标或材料时不必重新写入；本次范围只决定哪些条目参与排序。
+  Future<Map<int, int>?> _indexedRanks(
+    List<Memory> memories,
+    String query,
+    DateTime now,
+  ) async {
+    final sorter = ranker;
+    if (sorter == null) return null;
+    try {
+      final active = await repository.list();
+      final valid = [
+        for (final memory in active)
+          if (memory.isValidAt(now)) memory,
+      ];
+      final order = await sorter.rankMemories(
+        query: query,
+        memories: valid,
+        candidateIds: [for (final memory in memories) memory.id],
+      );
+      return order == null ? null : _ranksFromOrder(memories, order);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 命中条目的名次照索引给的先后，未命中的排在它们后面并保持原有顺序。
+  static Map<int, int> _ranksFromOrder(
+    List<Memory> memories,
+    List<String> order,
+  ) {
+    final hits = <String, int>{};
+    for (var rank = 0; rank < order.length; rank++) {
+      hits.putIfAbsent(order[rank], () => rank);
+    }
+    final ranks = <int, int>{};
+    var next = order.length;
+    for (var index = 0; index < memories.length; index++) {
+      ranks[index] = hits[memories[index].id] ?? next++;
+    }
+    return ranks;
+  }
+
+  /// 索引不可用时的本机排序：按命中的二元组数量打分，命中的词越多越前。
+  static Map<int, int> _bigramRanks(List<Memory> memories, String query) {
     final wanted = bigrams(query).toSet();
     if (wanted.isEmpty) return const {};
     final scores = <int, int>{
@@ -118,4 +178,36 @@ class MemoryRecallService {
     final rightTime = right.updatedAt?.millisecondsSinceEpoch ?? 0;
     return leftTime.compareTo(rightTime);
   }
+}
+
+/// 记忆排序用的索引能力；运行时由 `SearchIndexService` 实现。
+///
+/// 索引只接收调用方读到的记忆条目与本次候选，不读业务库：有效性、范围与
+/// 版本仍由仓库层判断。
+abstract interface class MemoryRelevanceRanker {
+  /// 同步索引之后按 [query] 给出 [candidateIds] 的先后，最相关的在前；
+  /// 索引不可用时返回空值，调用方退回本机的二元组排序。
+  Future<List<String>?> rankMemories({
+    required String query,
+    required List<Memory> memories,
+    required List<String> candidateIds,
+  });
+}
+
+/// 记忆在索引里的来源键；与证据来源分开，清理与预过滤都按这个前缀。
+String memorySourceKey(String id) => 'memory:$id';
+
+/// 记忆在索引里的定位信息；记忆不属于任何材料或讨论。
+SemanticLocator memoryLocator(String id) =>
+    SemanticLocator(kind: 'memory', sourceKey: memorySourceKey(id));
+
+/// 记忆的来源版本：正文与更新时间一起参与，编辑、纠正或恢复之后重新写入。
+String memorySourceVersion(Memory memory) =>
+    contentHash('${memory.content}\n${memory.updatedAt ?? ''}'.codeUnits);
+
+/// 从来源键还原记忆编号；不是记忆来源时返回空。
+String? memoryIdOf(String sourceKey) {
+  const prefix = 'memory:';
+  if (!sourceKey.startsWith(prefix)) return null;
+  return sourceKey.substring(prefix.length);
 }

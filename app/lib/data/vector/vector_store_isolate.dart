@@ -449,6 +449,10 @@ Map<String, Object?>? _encodePrefilter(VectorPrefilter? prefilter) =>
         'conversationId': conversationId,
         'sourceKeys': sourceKeys.toList(growable: false),
       },
+      SourceKeysVectorPrefilter(:final sourceKeys) => {
+        'kind': 'sourceKeys',
+        'sourceKeys': sourceKeys.toList(growable: false),
+      },
     };
 
 VectorPrefilter? _decodePrefilter(Map? value) {
@@ -458,6 +462,9 @@ VectorPrefilter? _decodePrefilter(Map? value) {
     'conversation' => ConversationVectorPrefilter(
       conversationId: value['conversationId'] as String?,
       sourceKeys: (value['sourceKeys'] as List).cast<String>().toSet(),
+    ),
+    'sourceKeys' => SourceKeysVectorPrefilter(
+      (value['sourceKeys'] as List).cast<String>(),
     ),
     _ => throw ArgumentError('未知的向量索引预过滤类型'),
   };

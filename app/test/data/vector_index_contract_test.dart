@@ -322,7 +322,7 @@ void runVectorIndexContract(
       expect(indexed[_pageB.sourceKey]!.chunks, 3);
     }, skip: skip);
 
-    test('search 的无过滤与两种预过滤', () {
+    test('search 的无过滤与三种预过滤', () {
       final index = openIndex();
       _replace(
         index,
@@ -403,6 +403,34 @@ void runVectorIndexContract(
         expect(conversation, allowedByConversation);
       } else {
         expect(conversation.containsAll(allowedByConversation), isTrue);
+      }
+
+      // 记忆召回：只放行给定的来源键，空集合一条也不放行。
+      final bySourceKeys = _identities(
+        index.search(
+          _unitVector,
+          k: 10,
+          prefilter: SourceKeysVectorPrefilter([
+            _attempt.sourceKey,
+            _pageA.sourceKey,
+          ]),
+        ),
+      );
+      if (supportsFilter) {
+        expect(bySourceKeys, {
+          '${_attempt.sourceKey}#0',
+          '${_pageA.sourceKey}#0',
+        });
+        expect(
+          index.search(
+            _unitVector,
+            k: 10,
+            prefilter: SourceKeysVectorPrefilter(const []),
+          ),
+          isEmpty,
+        );
+      } else {
+        expect(bySourceKeys.containsAll({'${_attempt.sourceKey}#0'}), isTrue);
       }
     }, skip: skip);
 
@@ -498,6 +526,22 @@ void runVectorIndexContract(
         // 没有向量字段时向量检索没有结果，正文里没有查询词时也不命中。
         expect(textIndex.search(_unitVector, k: 10), isEmpty);
         expect(textIndex.searchHybrid('拓扑', k: 10), isEmpty);
+
+        // 记忆召回按来源键把排序限制在本次候选里，空候选一条也不返回。
+        final scoped = textIndex.searchHybrid(
+          '矩阵',
+          k: 10,
+          prefilter: SourceKeysVectorPrefilter([_pageA.sourceKey]),
+        );
+        expect(scoped.map((match) => match.sourceKey), [_pageA.sourceKey]);
+        expect(
+          textIndex.searchHybrid(
+            '矩阵',
+            k: 10,
+            prefilter: SourceKeysVectorPrefilter(const []),
+          ),
+          isEmpty,
+        );
       }, skip: skip);
     }
 
@@ -796,6 +840,10 @@ void _runZvecOnlyTests(String? skip) {
           conversationId: 'conv-1',
           sourceKeys: {_pageB.sourceKey},
         ),
+        '记忆候选': SourceKeysVectorPrefilter([
+          _pageA.sourceKey,
+          _attempt.sourceKey,
+        ]),
       };
       for (final entry in prefilters.entries) {
         final expected = _identities(

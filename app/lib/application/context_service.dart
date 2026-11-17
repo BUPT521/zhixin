@@ -100,15 +100,18 @@ class ContextService {
           )
         : const <AttemptWithQuestion>[];
     final scope = memoryScopeFor(goalId: goalId, materialId: materialId);
-    // 记忆先按有效性与范围筛选，再按这次请求的用途与问题相关性取用。
+    // 记忆先按有效性与范围筛选，再按这次请求的用途与问题相关性取用；相关性
+    // 由检索索引给出，索引不可用时按本机的二元组切分。
     final purpose = switch (mode) {
       BuddyMode.plan => MemoryRecallPurpose.plan,
       BuddyMode.check => MemoryRecallPurpose.check,
       BuddyMode.explain || BuddyMode.hint => MemoryRecallPurpose.explain,
       BuddyMode.chat => MemoryRecallPurpose.chat,
     };
-    final remembered = await MemoryRecallService(memories)
-        .recall(now: now, scope: scope, purpose: purpose, query: query);
+    final remembered = await MemoryRecallService(
+      memories,
+      ranker: evidence?.index,
+    ).recall(now: now, scope: scope, purpose: purpose, query: query);
     // 同一道题以前的困难只从这道题的作答记录里取；不经过长期记忆，
     // 其他课程的卡点因此不会进入本次上下文。
     final earlier = question == null || !includeEarlier

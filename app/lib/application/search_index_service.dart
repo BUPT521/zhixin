@@ -1,18 +1,22 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:path/path.dart' as p;
+
 import '../data/db/drift/queries/evidence_scope.dart';
 import '../data/repository/evidence_repository.dart';
 import '../data/vector/vector_index.dart';
 import '../data/vector/vector_store.dart';
 import '../data/vector/vector_store_isolate.dart';
 import '../domain/models/evidence.dart';
+import '../domain/models/memory.dart';
 import '../domain/models/score.dart';
 import '../domain/rules/embedding.dart';
 import '../domain/rules/search_terms.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
 import 'embedding_client.dart';
+import 'memory_recall.dart';
 import 'service_runtime.dart';
 
 /// 索引检索不可用的原因；失败时调用方继续使用字面命中。
@@ -83,21 +87,28 @@ class IndexCancelToken {
 /// 处理版本区分；数据代次变化（恢复、导入、清空）时整份索引重建。写入前重新
 /// 读取来源版本，等待嵌入期间被更正或删除的内容不会进入索引。查询有独立的
 /// 超时与取消，失败时返回空结果，调用方继续使用字面命中。
-class SearchIndexService {
+///
+/// 同一个后台 isolate 里还有一套记忆索引（[rankMemories]）：材料页、消息与作答
+/// 的 collection 要按证据记录逐条核对范围与版本，记忆按记忆表的有效性判断，
+/// 两者核对规则不同，所以分成两个 collection，记忆的候选不会占掉记录的候选位。
+class SearchIndexService implements MemoryRelevanceRanker {
   SearchIndexService({
     required this.repository,
     EmbeddingClient? initialClient,
     required this.indexPath,
     this.indexLogPath,
+    this.memoryIndexPath,
     this.epoch,
     this.clock = systemClock,
     bool Function(SemanticSource source)? initialShareFilter,
     this.queryTimeout = const Duration(seconds: 4),
     Future<VectorStore> Function()? vectorStoreOpener,
+    Future<VectorStore> Function()? memoryStoreOpener,
     this.recordFailure,
   }) : _client = initialClient,
        _canSend = initialShareFilter,
-       _openStore = vectorStoreOpener;
+       _openStore = vectorStoreOpener,
+       _openMemoryStore = memoryStoreOpener;
 
   final EvidenceRepository repository;
 
@@ -123,6 +134,10 @@ class SearchIndexService {
   final Clock clock;
   final Duration queryTimeout;
   final Future<VectorStore> Function()? _openStore;
+
+  /// 记忆索引目录；为空时放在语义索引目录的同级，随本机数据一起删除。
+  final String? memoryIndexPath;
+  final Future<VectorStore> Function()? _openMemoryStore;
 
   /// 换一套嵌入来源；模型或维度改变时旧索引关闭，下一次更新按新模型重建。
   void configure({
@@ -239,6 +254,165 @@ class SearchIndexService {
     final record = recordFailure;
     if (record == null) return;
     record(_IndexRebuilt(reason), null, kind: 'semantic_index');
+  }
+
+  VectorStore? _memoryStore;
+  Future<VectorStore>? _memoryOpening;
+
+  /// 记忆索引目录：与语义索引同级，清空本机数据时一起删除。
+  String get memoryIndexDirectory =>
+      memoryIndexPath ?? p.join(p.dirname(indexPath), memoryIndexDirectoryName);
+
+  /// 取记忆索引句柄；第一次排序时才在后台 isolate 里打开并建表。
+  Future<VectorStore> _requireMemoryStore(int generation) async {
+    _requireCurrent(generation);
+    final opening = _memoryOpening;
+    if (opening != null) {
+      final store = await opening;
+      _requireCurrent(generation);
+      return store;
+    }
+    final future = _queueStoreOperation(() => _openMemory(generation));
+    _memoryOpening = future;
+    try {
+      final store = await future;
+      _requireCurrent(generation);
+      return store;
+    } finally {
+      if (identical(_memoryOpening, future)) _memoryOpening = null;
+    }
+  }
+
+  Future<VectorStore> _openMemory(int generation) async {
+    _requireCurrent(generation);
+    final existing = _memoryStore;
+    if (existing != null) return existing;
+    final opener = _openMemoryStore;
+    final store = opener != null
+        ? await opener()
+        : await IsolateVectorStore.open(
+            path: memoryIndexDirectory,
+            // 记忆只做全文索引：正文多是个人说明，共享范围按材料定义，没有覆盖
+            // 记忆；而且一次回答最多带入四十条，正文本来就会整段进提示词。
+            spec: textOnlyModelSpec,
+            logDirectory: indexLogPath,
+            onRebuild: _recordRebuild,
+          );
+    if (generation != _generation) {
+      await store.close();
+      _requireCurrent(generation);
+    }
+    _memoryStore = store;
+    return store;
+  }
+
+  /// 记忆召回的排序：先按当前记忆表同步索引，再在候选里按查询相关度给出先后。
+  ///
+  /// 只维护记忆正文的全文索引，不调用嵌入来源：记忆正文是个人说明，嵌入来源
+  /// 的共享范围按材料定义，没有覆盖记忆，联网发送需要单独的决定；而且一次回答
+  /// 最多带入四十条记忆，正文本来就会整段进提示词，向量排序的收益有限。索引
+  /// 不可用或同步失败时返回空值，调用方退回本机的二元组排序。
+  ///
+  /// [memories] 是当前有效且未过期的全部记忆，[candidateIds] 是本次范围内由
+  /// 仓库筛出的候选；同步以 [memories] 为准，删除不在其中的来源。
+  @override
+  Future<List<String>?> rankMemories({
+    required String query,
+    required List<Memory> memories,
+    required List<String> candidateIds,
+  }) async {
+    final text = query.trim();
+    if (_closed || text.isEmpty || candidateIds.isEmpty) return null;
+    final generation = _generation;
+    final now = clock();
+    try {
+      final store = await _requireMemoryStore(generation);
+      final currentEpoch = await epoch?.call() ?? '0';
+      final storedEpoch = await _useCurrentStore(
+        generation,
+        () => store.meta('epoch'),
+      );
+      if (storedEpoch != currentEpoch) {
+        await _useCurrentStore(generation, () async {
+          await store.clear();
+          await store.setMeta('epoch', currentEpoch);
+        });
+      }
+      final keys = <String>[];
+      final byId = <String, Memory>{};
+      for (final memory in memories) {
+        keys.add(memorySourceKey(memory.id));
+        byId[memory.id] = memory;
+      }
+      final indexed = keys.isEmpty
+          ? const <String, IndexedSource>{}
+          : await _useCurrentStore(
+              generation,
+              () => store.indexedSources(keys),
+            );
+      var written = 0;
+      for (final memory in memories) {
+        _requireCurrent(generation);
+        final chunks = semanticChunks(memory.content);
+        if (chunks.isEmpty) continue;
+        final key = memorySourceKey(memory.id);
+        final version = memorySourceVersion(memory);
+        final existing = indexed[key];
+        if (existing != null &&
+            existing.sourceVersion == version &&
+            existing.chunks == chunks.length) {
+          continue;
+        }
+        final texts = [for (final chunk in chunks) chunk.text];
+        await _useCurrentStore(
+          generation,
+          () => store.replaceSource(
+            locator: memoryLocator(memory.id),
+            sourceVersion: version,
+            chunks: texts,
+            vectors: const [],
+            createdAt: formatDateTime(now),
+          ),
+        );
+        written += texts.length;
+      }
+      await _useCurrentStore(generation, () async {
+        final removed = await store.pruneSources(keys.toSet());
+        if (written > 0 || removed > 0) {
+          await store.finishRefresh(
+            builtAt: formatDateTime(now),
+            sourceCount: keys.length,
+            writtenEntries: written,
+          );
+        }
+      });
+      final candidates = {for (final id in candidateIds) memorySourceKey(id)};
+      final hits = await _useCurrentStore(
+        generation,
+        () => store.searchHybrid(
+          text,
+          k: candidateIds.length,
+          prefilter: SourceKeysVectorPrefilter(candidates),
+        ),
+      );
+      _requireCurrent(generation);
+      final order = <String>[];
+      final seen = <String>{};
+      for (final hit in hits) {
+        final id = memoryIdOf(hit.sourceKey);
+        if (id == null || !seen.add(id)) continue;
+        final memory = byId[id];
+        // 只认可与当前正文一致的结果：同步期间被编辑或删除的条目不参与排序。
+        if (memory == null ||
+            memorySourceVersion(memory) != hit.sourceVersion) {
+          continue;
+        }
+        order.add(id);
+      }
+      return order;
+    } on Object {
+      return null;
+    }
   }
 
   /// 按当前数据补建索引；可以重复执行，已经是最新版本的来源会跳过。
@@ -639,19 +813,27 @@ class SearchIndexService {
     if (_closed) return;
     _invalidateOperations();
     final store = _store;
+    final memory = _memoryStore;
     _store = null;
+    _memoryStore = null;
     _lastRefresh = null;
     await _queueStoreOperation(() async {
       await store?.close();
+      await memory?.close();
     });
   }
 
+  /// 清空两份索引的条目；记忆索引与嵌入配置无关，已经在用时一并清空。
   Future<void> clear() async {
-    final spec = client?.spec;
-    if (_closed || spec == null) return;
+    if (_closed) return;
     _invalidateOperations();
     final generation = _generation;
+    final spec = client?.spec;
     await _queueStoreOperation(() async {
+      // 没有打开过的记忆索引不在这里新建：它只保存记忆正文，下一次召回会按
+      // 记忆表重新同步。
+      await _memoryStore?.clear();
+      if (spec == null) return;
       final store = await _open(spec, generation);
       _requireCurrent(generation);
       await store.clear();
@@ -665,9 +847,12 @@ class SearchIndexService {
     _closed = true;
     _invalidateOperations();
     final store = _store;
+    final memory = _memoryStore;
     _store = null;
+    _memoryStore = null;
     final next = _closing = _queueStoreOperation(() async {
       await store?.close();
+      await memory?.close();
     });
     _client?.dispose();
     _client = null;

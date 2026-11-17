@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../backup/restore_journal.dart';
+import '../vector/vector_index.dart';
 import 'app_database.dart';
 import '../../domain/rules/attachments.dart';
 
@@ -11,8 +12,8 @@ import '../../domain/rules/attachments.dart';
 /// 调用前先关闭数据库与向量库句柄：`vectorIndexPath` 下的 collection 带着打开
 /// 的句柄时删不掉，所以清空的调用方要先释放语义索引的句柄。模型配置存在
 /// Keystore 里，会保留，库内的截止小时与自动保存设置随库删除后恢复默认。
-/// 删除范围是库文件及其 WAL/SHM、题目图片、语义索引目录、旧的数据版本目录、
-/// 恢复点、未完成的恢复记录与回滚目录。
+/// 删除范围是库文件及其 WAL/SHM、题目图片、语义索引目录与同级的记忆索引目录、
+/// 旧的数据版本目录、恢复点、未完成的恢复记录与回滚目录。
 Future<void> deleteLocalStudyData({
   required String filesDir,
   required String dbPath,
@@ -47,6 +48,19 @@ Future<void> deleteLocalStudyData({
       await vectorIndex.delete(recursive: true);
     } on FileSystemException {
       // 文件被系统占用时下次打开会重建或由刷新清空。
+    }
+  }
+
+  // 记忆索引与语义索引同级，存的是记忆正文；同样按派生物删除，下一次召回
+  // 会按记忆表重新建立。
+  final memoryIndex = Directory(
+    p.join(p.dirname(vectorIndex.path), memoryIndexDirectoryName),
+  );
+  if (await memoryIndex.exists()) {
+    try {
+      await memoryIndex.delete(recursive: true);
+    } on FileSystemException {
+      // 句柄还在时留到下一次排序重写，记忆正文仍按记忆表同步。
     }
   }
 

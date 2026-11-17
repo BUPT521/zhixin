@@ -752,7 +752,17 @@ class ZvecVectorIndex implements VectorIndex {
             " or kind != 'material_page'",
       ConversationVectorPrefilter(:final conversationId, :final sourceKeys) =>
         _conversationFilter(conversationId, sourceKeys),
+      SourceKeysVectorPrefilter(:final sourceKeys) => _sourceKeysFilter(
+        sourceKeys,
+      ),
     };
+  }
+
+  /// 只按来源键放行；空的键集合用不可能命中的等值表达式表示。
+  String _sourceKeysFilter(Set<String> sourceKeys) {
+    if (sourceKeys.isEmpty) return "source_key = ''";
+    final values = [for (final key in sourceKeys) "'${_escape(key)}'"];
+    return 'source_key in (${values.join(', ')})';
   }
 
   String _conversationFilter(String? conversationId, Set<String> sourceKeys) {

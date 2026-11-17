@@ -2,6 +2,11 @@ import 'dart:convert';
 
 import '../../domain/rules/embedding.dart';
 
+/// 记忆索引目录名；与语义索引目录同级，清空本机数据时一起删除。
+///
+/// 记忆按记忆表的有效性核对，与证据来源的核对规则不同，因此单独一个 collection。
+const String memoryIndexDirectoryName = 'memory_index';
+
 /// 索引里的一条命中：来源、片段正文与写入时的版本。
 class StoredVector {
   const StoredVector({
@@ -64,6 +69,18 @@ final class ConversationVectorPrefilter extends VectorPrefilter {
   @override
   bool allows(SemanticLocator locator) =>
       (conversationId != null && locator.conversationId == conversationId) ||
+      sourceKeys.contains(locator.sourceKey);
+}
+
+/// 只保留给定的来源键；记忆召回用它把排序限制在本次候选之内。
+final class SourceKeysVectorPrefilter extends VectorPrefilter {
+  SourceKeysVectorPrefilter(Iterable<String> sourceKeys)
+    : sourceKeys = Set.unmodifiable(sourceKeys);
+
+  final Set<String> sourceKeys;
+
+  @override
+  bool allows(SemanticLocator locator) =>
       sourceKeys.contains(locator.sourceKey);
 }
 
