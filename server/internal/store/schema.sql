@@ -4,10 +4,24 @@
 -- 服务端不解析学习内容：同步变更与备份按客户端提交原样保存。
 
 CREATE TABLE app_user (
-  id             TEXT PRIMARY KEY,
-  email          TEXT NOT NULL UNIQUE,          -- 已转小写
-  password_hash  TEXT NOT NULL,                 -- argon2id，PHC 格式
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                 TEXT PRIMARY KEY,
+  email              TEXT NOT NULL UNIQUE,      -- 已转小写
+  password_hash      TEXT NOT NULL,             -- argon2id，PHC 格式
+  email_verified_at  TIMESTAMPTZ,               -- 空表示还没有确认邮箱
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 邮箱验证与找回密码共用的验证码：每个账号每种用途只保留最新一枚，
+-- 只存 HMAC-SHA256（验证码只有六位，直接存哈希可以被穷举）。过期或输错次数
+-- 达到上限时删除，重新发送时覆盖。
+CREATE TABLE auth_code (
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  purpose     TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
+  code_hash   TEXT NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, purpose)
 );
 
 -- 一台登录的设备一行；只存令牌的 SHA-256。

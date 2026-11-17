@@ -48,8 +48,20 @@ func (rt routes) PostV1AuthRegister(w http.ResponseWriter, r *http.Request) { rt
 func (rt routes) PostV1AuthLogin(w http.ResponseWriter, r *http.Request)    { rt.auth.Login(w, r) }
 func (rt routes) PostV1AuthRefresh(w http.ResponseWriter, r *http.Request)  { rt.auth.Refresh(w, r) }
 func (rt routes) PostV1AuthLogout(w http.ResponseWriter, r *http.Request)   { rt.auth.Logout(w, r) }
-func (rt routes) GetV1Me(w http.ResponseWriter, r *http.Request)            { rt.auth.Me(w, r) }
-func (rt routes) DeleteV1Me(w http.ResponseWriter, r *http.Request)         { rt.auth.DeleteMe(w, r) }
+func (rt routes) PostV1AuthEmailVerifyRequest(w http.ResponseWriter, r *http.Request) {
+	rt.auth.RequestEmailVerification(w, r)
+}
+func (rt routes) PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request) {
+	rt.auth.ConfirmEmailVerification(w, r)
+}
+func (rt routes) PostV1AuthPasswordForgot(w http.ResponseWriter, r *http.Request) {
+	rt.auth.ForgotPassword(w, r)
+}
+func (rt routes) PostV1AuthPasswordReset(w http.ResponseWriter, r *http.Request) {
+	rt.auth.ResetPassword(w, r)
+}
+func (rt routes) GetV1Me(w http.ResponseWriter, r *http.Request)    { rt.auth.Me(w, r) }
+func (rt routes) DeleteV1Me(w http.ResponseWriter, r *http.Request) { rt.auth.DeleteMe(w, r) }
 
 func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { rt.sync.Head(w, r) }
 func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {

@@ -115,6 +115,88 @@ paths:
               schema: { $ref: "#/components/schemas/Tokens" }
         "401": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/email/verify/request:
+    post:
+      tags: [auth]
+      summary: 给当前账号的邮箱发一封验证码邮件
+      description: |
+        已确认的邮箱直接返回 204，不重复发信；刚发过的账号返回 429，`Retry-After`
+        给出建议等待的秒数。服务端没有配置 SMTP 时返回 503，客户端提示稍后再试。
+        验证码为六位数字，默认十分钟有效，只存 HMAC-SHA256。
+      responses:
+        "204": { description: 已发送，或邮箱已经确认 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/auth/email/verify/confirm:
+    post:
+      tags: [auth]
+      summary: 用验证码确认当前账号的邮箱
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              additionalProperties: false
+              properties:
+                code: { type: string, minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }
+      responses:
+        "204": { description: 已确认 }
+        "400":
+          description: "`invalid_code`：不存在、已过期、已被换掉或输错次数过多"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/password/forgot:
+    post:
+      tags: [auth]
+      summary: 向已验证的邮箱发一封重设密码验证码
+      description: |
+        邮箱不存在或还没有验证时同样返回 204，不区分两种情况，避免用这个接口
+        探测哪些邮箱注册过。发信失败返回 503，客户端提示稍后再试。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        "204": { description: 已发送；邮箱不存在或未验证时不发信 }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/auth/password/reset:
+    post:
+      tags: [auth]
+      summary: 用验证码重设密码，并作废该账号的全部会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, new_password]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                code: { type: string, minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }
+                new_password: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        "204": { description: 已重设，其他设备需要重新登录 }
+        "400":
+          description: "`invalid_code` 或 `invalid_request`"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/logout:
     post:
       tags: [auth]
@@ -387,6 +469,7 @@ components:
             - invalid_request
             - unauthorized
             - invalid_credentials
+            - invalid_code
             - email_taken
             - not_found
             - conflict
@@ -489,10 +572,11 @@ components:
         daily_tokens: { type: integer, format: int64 }
     Me:
       type: object
-      required: [user_id, email, created_at]
+      required: [user_id, email, email_verified, created_at]
       properties:
         user_id: { type: string }
         email: { type: string }
+        email_verified: { type: boolean, description: 邮箱是否已经用验证码确认 }
         created_at: { type: string, format: date-time }
     Model:
       type: object

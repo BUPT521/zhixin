@@ -34,7 +34,7 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS llm_usage, backup, sync_commit, sync_head, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -76,12 +76,56 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	if err != nil || byAccess.ID != "s1" {
 		t.Fatalf("by access: %v %+v", err, byAccess)
 	}
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	code := auth.Code{
+		UserID: u.ID, Purpose: auth.PurposeVerifyEmail, CodeHash: "hash-1",
+		ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
+	}
+	if err := st.PutCode(ctx, code); err != nil {
+		t.Fatalf("put code: %v", err)
+	}
+	gotCode, err := st.Code(ctx, u.ID, auth.PurposeVerifyEmail)
+	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.Attempts != 0 {
+		t.Fatalf("get code: %v %+v", err, gotCode)
+	}
+	if n, err := st.IncrementCodeAttempts(ctx, u.ID, auth.PurposeVerifyEmail); err != nil || n != 1 {
+		t.Fatalf("increment attempts: %v %d", err, n)
+	}
+	if err := st.SetEmailVerified(ctx, u.ID, now); err != nil {
+		t.Fatalf("set verified: %v", err)
+	}
+	verified, err := st.UserByID(ctx, u.ID)
+	if err != nil || verified.EmailVerifiedAt.IsZero() {
+		t.Fatalf("verified user: %v %+v", err, verified)
+	}
+	if err := st.UpdatePassword(ctx, u.ID, "hash-2"); err != nil {
+		t.Fatalf("update password: %v", err)
+	}
+	if err := st.DeleteCode(ctx, u.ID, auth.PurposeVerifyEmail); err != nil {
+		t.Fatalf("delete code: %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeVerifyEmail); err != auth.ErrNotFound {
+		t.Fatalf("code survived delete: %v", err)
+	}
+	if err := st.DeleteUserSessions(ctx, u.ID); err != nil {
+		t.Fatalf("delete sessions: %v", err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah"); err != auth.ErrNotFound {
+		t.Fatalf("session survived: %v", err)
+	}
+	// 删会话之后再建一条，供下面核对账号级联删除。
+	sess2 := sess
+	sess2.ID, sess2.AccessHash, sess2.RefreshHash = "s2", "ah2", "rh2"
+	if err := st.CreateSession(ctx, sess2); err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
 	// 会话随账号行级联删除（schema.sql 的 ON DELETE CASCADE），服务层不再单独
 	// 调一次删会话。
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		t.Fatalf("delete user: %v", err)
 	}
-	if _, err := st.SessionByRefreshHash(ctx, "rh"); err != auth.ErrNotFound {
+	if _, err := st.SessionByRefreshHash(ctx, "rh2"); err != auth.ErrNotFound {
 		t.Fatalf("清掉账号之后应找不到会话，得到 %v", err)
 	}
 }

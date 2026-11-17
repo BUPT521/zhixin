@@ -107,10 +107,11 @@ func (s *Store) UserByEmail(ctx context.Context, email string) (auth.User, error
 		return auth.User{}, err
 	}
 	return auth.User{
-		ID:           row.ID,
-		Email:        row.Email,
-		PasswordHash: row.PasswordHash,
-		CreatedAt:    row.CreatedAt.Time,
+		ID:              row.ID,
+		Email:           row.Email,
+		PasswordHash:    row.PasswordHash,
+		EmailVerifiedAt: row.EmailVerifiedAt.Time,
+		CreatedAt:       row.CreatedAt.Time,
 	}, nil
 }
 
@@ -123,10 +124,11 @@ func (s *Store) UserByID(ctx context.Context, id string) (auth.User, error) {
 		return auth.User{}, err
 	}
 	return auth.User{
-		ID:           row.ID,
-		Email:        row.Email,
-		PasswordHash: row.PasswordHash,
-		CreatedAt:    row.CreatedAt.Time,
+		ID:              row.ID,
+		Email:           row.Email,
+		PasswordHash:    row.PasswordHash,
+		EmailVerifiedAt: row.EmailVerifiedAt.Time,
+		CreatedAt:       row.CreatedAt.Time,
 	}, nil
 }
 
@@ -209,6 +211,76 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 		return auth.ErrNotFound
 	}
 	return err
+}
+
+func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
+	return s.q.DeleteUserSessions(ctx, userID)
+}
+
+func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Time) error {
+	verified, err := pgTime(at)
+	if err != nil {
+		return err
+	}
+	return s.q.SetEmailVerified(ctx, db.SetEmailVerifiedParams{ID: userID, VerifiedAt: verified})
+}
+
+func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	return s.q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: passwordHash})
+}
+
+func (s *Store) PutCode(ctx context.Context, c auth.Code) error {
+	expires, err := pgTime(c.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	created, err := pgTime(c.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return s.q.PutAuthCode(ctx, db.PutAuthCodeParams{
+		UserID:    c.UserID,
+		Purpose:   c.Purpose,
+		CodeHash:  c.CodeHash,
+		ExpiresAt: expires,
+		CreatedAt: created,
+	})
+}
+
+func (s *Store) Code(ctx context.Context, userID, purpose string) (auth.Code, error) {
+	row, err := s.q.AuthCode(ctx, db.AuthCodeParams{UserID: userID, Purpose: purpose})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.Code{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.Code{}, err
+	}
+	return auth.Code{
+		UserID:    row.UserID,
+		Purpose:   row.Purpose,
+		CodeHash:  row.CodeHash,
+		ExpiresAt: row.ExpiresAt.Time,
+		Attempts:  int(row.Attempts),
+		CreatedAt: row.CreatedAt.Time,
+	}, nil
+}
+
+func (s *Store) IncrementCodeAttempts(ctx context.Context, userID, purpose string) (int, error) {
+	attempts, err := s.q.IncrementAuthCodeAttempts(ctx, db.IncrementAuthCodeAttemptsParams{
+		UserID:  userID,
+		Purpose: purpose,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, auth.ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return int(attempts), nil
+}
+
+func (s *Store) DeleteCode(ctx context.Context, userID, purpose string) error {
+	return s.q.DeleteAuthCode(ctx, db.DeleteAuthCodeParams{UserID: userID, Purpose: purpose})
 }
 
 // pgTime 把时间转成 PostgreSQL 的 timestamptz。零值说明调用方漏了赋值，直接

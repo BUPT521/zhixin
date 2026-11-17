@@ -8,13 +8,23 @@ INSERT INTO app_user (id, email, password_hash)
 VALUES (sqlc.arg(id), sqlc.arg(email), sqlc.arg(password_hash));
 
 -- name: UserByEmail :one
-SELECT id, email, password_hash, created_at
+SELECT id, email, password_hash, email_verified_at, created_at
 FROM app_user
 WHERE email = sqlc.arg(email);
 
 -- name: UserByID :one
-SELECT id, email, password_hash, created_at
+SELECT id, email, password_hash, email_verified_at, created_at
 FROM app_user
+WHERE id = sqlc.arg(id);
+
+-- name: SetEmailVerified :exec
+UPDATE app_user
+SET email_verified_at = sqlc.arg(verified_at)
+WHERE id = sqlc.arg(id);
+
+-- name: UpdatePassword :exec
+UPDATE app_user
+SET password_hash = sqlc.arg(password_hash)
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteUser :execrows
@@ -48,5 +58,37 @@ WHERE refresh_hash = sqlc.arg(refresh_hash);
 DELETE FROM session
 WHERE id = sqlc.arg(id);
 
+-- 重设密码之后作废这个账号的全部会话：其他设备必须重新登录。
+-- name: DeleteUserSessions :exec
+DELETE FROM session
+WHERE user_id = sqlc.arg(user_id);
+
 -- 删账号不单独删会话：schema.sql 的 session.user_id 上是 ON DELETE CASCADE，
--- 删掉 app_user 那一行时一起消失，所以这里没有 DeleteUserSessions。
+-- 删掉 app_user 那一行时一起消失。
+
+-- name: PutAuthCode :exec
+INSERT INTO auth_code (user_id, purpose, code_hash, expires_at, attempts, created_at)
+VALUES (
+  sqlc.arg(user_id), sqlc.arg(purpose), sqlc.arg(code_hash),
+  sqlc.arg(expires_at), 0, sqlc.arg(created_at)
+)
+ON CONFLICT (user_id, purpose) DO UPDATE SET
+  code_hash = excluded.code_hash,
+  expires_at = excluded.expires_at,
+  attempts = 0,
+  created_at = excluded.created_at;
+
+-- name: AuthCode :one
+SELECT user_id, purpose, code_hash, expires_at, attempts, created_at
+FROM auth_code
+WHERE user_id = sqlc.arg(user_id) AND purpose = sqlc.arg(purpose);
+
+-- name: IncrementAuthCodeAttempts :one
+UPDATE auth_code
+SET attempts = attempts + 1
+WHERE user_id = sqlc.arg(user_id) AND purpose = sqlc.arg(purpose)
+RETURNING attempts;
+
+-- name: DeleteAuthCode :exec
+DELETE FROM auth_code
+WHERE user_id = sqlc.arg(user_id) AND purpose = sqlc.arg(purpose);

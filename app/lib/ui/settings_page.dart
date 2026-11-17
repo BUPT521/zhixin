@@ -52,6 +52,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   LlmConfig? _config;
   AccountSnapshot? _account;
+
+  /// 服务端代理允许的模型；登录且读得到时显示，作为模型名的参照。
+  List<String> _serverModels = const [];
   bool _allowImages = true;
   ThemeMode _themeMode = ThemeMode.system;
 
@@ -124,6 +127,17 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final config = await scope.settings.edit.config();
       final account = await scope.accountServices.account.snapshot();
+      var serverModels = const <String>[];
+      if (account.signedIn) {
+        try {
+          serverModels = [
+            for (final model in await scope.accountServices.account.models())
+              model.id,
+          ];
+        } catch (_) {
+          // 模型列表只用于提示；读不到时保持空，不打断设置页。
+        }
+      }
       final reportCrashes = await DiagnosticsStore(scope.paths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
@@ -135,6 +149,7 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         _account = account;
+        _serverModels = serverModels;
         _applyConfig(config);
         _reportCrashes = reportCrashes;
         _themeMode = themeMode;
@@ -578,6 +593,15 @@ class _SettingsPageState extends State<SettingsPage> {
                           : theme.colors.error,
                     ),
                   ),
+                  if (signedIn && _serverModels.isNotEmpty) ...[
+                    SizedBox(height: context.zhixin.space.xs),
+                    Text(
+                      '服务端允许的模型：${_serverModels.join('、')}',
+                      style: theme.text.bodySmall.copyWith(
+                        color: theme.colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                   SizedBox(height: context.zhixin.space.gap),
                 ],
                 forui.FTextField(

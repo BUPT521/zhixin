@@ -12,11 +12,13 @@ class AccountSession {
     required this.refreshToken,
     required this.accessExpiresAt,
     required this.refreshExpiresAt,
+    this.emailVerified = false,
   });
 
   factory AccountSession.fromJson(Map<String, Object?> json) => AccountSession(
     userId: json['user_id'] as String? ?? '',
     email: json['email'] as String? ?? '',
+    emailVerified: json['email_verified'] == true,
     accessToken: json['access_token'] as String? ?? '',
     refreshToken: json['refresh_token'] as String? ?? '',
     accessExpiresAt:
@@ -32,6 +34,9 @@ class AccountSession {
   final String accessToken;
   final String refreshToken;
 
+  /// 邮箱是否已经确认；账号页据此提示验证，找回密码依赖它。
+  final bool emailVerified;
+
   /// 服务端返回的时间已经换成本机时区。
   final DateTime accessExpiresAt;
   final DateTime refreshExpiresAt;
@@ -43,10 +48,12 @@ class AccountSession {
     String? refreshToken,
     DateTime? accessExpiresAt,
     DateTime? refreshExpiresAt,
+    bool? emailVerified,
   }) {
     return AccountSession(
       userId: userId,
       email: email,
+      emailVerified: emailVerified ?? this.emailVerified,
       accessToken: accessToken ?? this.accessToken,
       refreshToken: refreshToken ?? this.refreshToken,
       accessExpiresAt: accessExpiresAt ?? this.accessExpiresAt,
@@ -57,6 +64,7 @@ class AccountSession {
   Map<String, Object?> toJson() => {
     'user_id': userId,
     'email': email,
+    'email_verified': emailVerified,
     'access_token': accessToken,
     'refresh_token': refreshToken,
     'access_expires_at': accessExpiresAt.toUtc().toIso8601String(),

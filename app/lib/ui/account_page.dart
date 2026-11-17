@@ -7,6 +7,8 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/sync_service.dart';
+import '../data/cloud/server_client.dart' show ServerQuota;
+import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -29,11 +31,19 @@ class _AccountPageState extends State<AccountPage> {
   final _server = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _verifyCode = TextEditingController();
+  final _resetCode = TextEditingController();
+  final _newPassword = TextEditingController();
 
   AccountSnapshot? _snapshot;
   SyncStatus? _sync;
+  ServerQuota? _quota;
   bool _loading = true;
   bool _busy = false;
+
+  /// 登录卡与找回密码卡之间的切换；验证码发出之后在同一个位置继续输入。
+  bool _showReset = false;
+  bool _codeSent = false;
 
   /// 页面顶部的一次性说明：失败用就地说明，成功用一行小字。
   String? _notice;
@@ -50,18 +60,31 @@ class _AccountPageState extends State<AccountPage> {
     _server.dispose();
     _email.dispose();
     _password.dispose();
+    _verifyCode.dispose();
+    _resetCode.dispose();
+    _newPassword.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     final scope = AppScope.of(context);
     try {
-      final snapshot = await scope.accountServices.account.snapshot();
+      // 顺带核对一次邮箱验证状态；没有登录或服务端不可达时沿用本机记录。
+      final snapshot = await scope.accountServices.account.refreshAccount();
       final sync = await scope.accountServices.sync.status();
+      ServerQuota? quota;
+      if (snapshot.signedIn) {
+        try {
+          quota = await scope.accountServices.account.quota();
+        } catch (_) {
+          // 额度只用于显示；读不到时这一块给一句说明，不影响同步与备份。
+        }
+      }
       if (!mounted) return;
       setState(() {
         _snapshot = snapshot;
         _sync = sync;
+        _quota = quota;
         _server.text = snapshot.serverBaseUrl;
         _loading = false;
       });
@@ -100,7 +123,15 @@ class _AccountPageState extends State<AccountPage> {
         return;
       }
       await scope.accountServices.account.setServerBaseUrl(value);
-      _report('服务地址已保存');
+      final ready = await scope.accountServices.account.checkServer();
+      final matches = ready.schemaVersion == zhixinSchemaVersion;
+      _report(
+        matches
+            ? '服务地址已保存：服务端就绪，接受 schema ${ready.schemaVersion}'
+            : '服务地址已保存，但服务端接受 schema ${ready.schemaVersion}，'
+                  '本机是 $zhixinSchemaVersion；两端要一起升级才能同步',
+        failed: !matches,
+      );
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -161,6 +192,145 @@ class _AccountPageState extends State<AccountPage> {
           kind: 'account_login',
           kept: '本机记录没有改动',
           next: '可以检查邮箱、密码与服务地址后重试',
+        ),
+        failed: true,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sendVerification() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await AppScope.of(context).accountServices.account
+          .requestEmailVerification();
+      _codeSent = true;
+      _report('验证码已经发到这个邮箱，十分钟内有效');
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '发送验证码',
+          kind: 'account_email_code',
+          kept: '登录状态没有改动',
+          next: '可以检查邮箱与服务地址后重试',
+        ),
+        failed: true,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _confirmVerification() async {
+    if (_busy) return;
+    final code = _verifyCode.text.trim();
+    if (code.length != 6) {
+      _report('填写邮件里的六位验证码', failed: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await AppScope.of(context).accountServices.account
+          .confirmEmailVerification(code);
+      _verifyCode.clear();
+      _codeSent = false;
+      _report('邮箱已经确认；忘记密码时可以收到重设验证码');
+      await _load();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '确认邮箱',
+          kind: 'account_email_confirm',
+          kept: '登录状态没有改动',
+          next: '可以重新获取验证码再试',
+        ),
+        failed: true,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sendResetCode() async {
+    if (_busy) return;
+    final email = _email.text.trim();
+    if (email.isEmpty) {
+      _report('先填写注册用的邮箱', failed: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await AppScope.of(context).accountServices.account
+          .requestPasswordReset(email);
+      _report('如果这个邮箱注册并验证过，验证码已经发出；十分钟内有效');
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '发送重设验证码',
+          kind: 'account_reset_code',
+          kept: '登录状态与密码没有改动',
+          next: '可以检查邮箱与服务地址后重试',
+        ),
+        failed: true,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    if (_busy) return;
+    final email = _email.text.trim();
+    final code = _resetCode.text.trim();
+    final password = _newPassword.text;
+    if (email.isEmpty) {
+      _report('先填写注册用的邮箱', failed: true);
+      return;
+    }
+    if (code.length != 6) {
+      _report('填写邮件里的六位验证码', failed: true);
+      return;
+    }
+    if (password.length < 8) {
+      _report('新密码至少 8 位', failed: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await AppScope.of(context).accountServices.account
+          .resetPassword(email: email, code: code, newPassword: password);
+      _password.clear();
+      _newPassword.clear();
+      _resetCode.clear();
+      _codeSent = false;
+      _showReset = false;
+      _report('密码已经重设，请用新密码登录；其他设备需要重新登录');
+      await _load();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '重设密码',
+          kind: 'account_reset',
+          kept: '密码没有改动',
+          next: '可以重新获取验证码再试',
         ),
         failed: true,
       );
@@ -313,6 +483,7 @@ class _AccountPageState extends State<AccountPage> {
           serverBaseUrl: _snapshot?.serverBaseUrl ?? '',
           session: _snapshot?.session,
           autoSync: value,
+          usesDefaultServer: _snapshot?.usesDefaultServer ?? false,
         ),
       );
       if (value) {
@@ -376,12 +547,10 @@ class _AccountPageState extends State<AccountPage> {
       SectionHeading(
         title: '服务地址',
         first: true,
-        subtitle: '由项目组提供；地址、账号与密码只用于这台设备登录，不写进仓库。',
+        subtitle: '默认使用项目组提供的实例，也可以改成自己的服务地址；账号与密码只用于这台设备登录。',
         action: StatusTag(
-          _snapshot?.serverBaseUrl.isNotEmpty == true ? '已填写' : '未填写',
-          tone: _snapshot?.serverBaseUrl.isNotEmpty == true
-              ? TagTone.accent
-              : TagTone.muted,
+          _snapshot?.usesDefaultServer == true ? '默认地址' : '已修改',
+          tone: TagTone.accent,
         ),
       ),
       forui.FCard(
@@ -413,8 +582,10 @@ class _AccountPageState extends State<AccountPage> {
         ),
       ),
       SectionHeading(
-        title: '登录或注册',
-        subtitle: '登录之后可以上传整库备份、在多台设备之间同步，并使用知新服务的模型额度。',
+        title: _showReset ? '找回密码' : '登录或注册',
+        subtitle: _showReset
+            ? '向已经验证的邮箱发一封六位验证码，验证之后设置新密码；其他设备会退出登录。'
+            : '登录之后可以上传整库备份、在多台设备之间同步，并使用知新服务的模型额度。',
       ),
       forui.FCard(
         child: Padding(
@@ -428,29 +599,91 @@ class _AccountPageState extends State<AccountPage> {
                 label: const Text('邮箱'),
               ),
               SizedBox(height: theme.space.gap),
-              forui.FTextField(
-                control: .managed(controller: _password),
-                obscureText: true,
-                label: const Text('密码（至少 8 位）'),
-              ),
-              SizedBox(height: theme.space.md),
-              Wrap(
-                spacing: theme.space.sm,
-                runSpacing: theme.space.sm,
-                children: [
-                  forui.FButton(
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: _busy ? null : () => _submit(register: false),
-                    child: const Text('登录'),
+              if (!_showReset) ...[
+                forui.FTextField(
+                  control: .managed(controller: _password),
+                  obscureText: true,
+                  label: const Text('密码（至少 8 位）'),
+                ),
+                SizedBox(height: theme.space.md),
+                Wrap(
+                  spacing: theme.space.sm,
+                  runSpacing: theme.space.sm,
+                  children: [
+                    forui.FButton(
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy ? null : () => _submit(register: false),
+                      child: const Text('登录'),
+                    ),
+                    forui.FButton(
+                      variant: forui.FButtonVariant.outline,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy ? null : () => _submit(register: true),
+                      child: const Text('注册'),
+                    ),
+                    forui.FButton(
+                      variant: forui.FButtonVariant.ghost,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy
+                          ? null
+                          : () {
+                              setState(() {
+                                _showReset = true;
+                                _codeSent = false;
+                              });
+                              _report('先点“发送验证码”，再填写邮件里的六位数字');
+                            },
+                      child: const Text('忘记密码'),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                if (_codeSent) ...[
+                  forui.FTextField(
+                    control: .managed(controller: _resetCode),
+                    keyboardType: TextInputType.number,
+                    label: const Text('邮件里的六位验证码'),
                   ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.outline,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: _busy ? null : () => _submit(register: true),
-                    child: const Text('注册'),
+                  SizedBox(height: theme.space.gap),
+                  forui.FTextField(
+                    control: .managed(controller: _newPassword),
+                    obscureText: true,
+                    label: const Text('新密码（至少 8 位）'),
                   ),
+                  SizedBox(height: theme.space.md),
                 ],
-              ),
+                Wrap(
+                  spacing: theme.space.sm,
+                  runSpacing: theme.space.sm,
+                  children: [
+                    forui.FButton(
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy ? null : _sendResetCode,
+                      child: Text(_codeSent ? '重新发送' : '发送验证码'),
+                    ),
+                    if (_codeSent)
+                      forui.FButton(
+                        variant: forui.FButtonVariant.outline,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy ? null : _resetPassword,
+                        child: const Text('重设密码'),
+                      ),
+                    forui.FButton(
+                      variant: forui.FButtonVariant.ghost,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy
+                          ? null
+                          : () => setState(() {
+                              _showReset = false;
+                              _codeSent = false;
+                              _resetCode.clear();
+                              _newPassword.clear();
+                            }),
+                      child: const Text('返回登录'),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -482,6 +715,17 @@ class _AccountPageState extends State<AccountPage> {
                   color: theme.colors.onSurfaceVariant,
                 ),
               ),
+              SizedBox(height: theme.space.xs),
+              Text(
+                snapshot.emailVerified
+                    ? '邮箱已确认，忘记密码时可以收到验证码。'
+                    : '邮箱还没有确认；先确认一次，忘记密码时才能收到重设验证码。',
+                style: theme.text.bodySmall.copyWith(
+                  color: snapshot.emailVerified
+                      ? theme.colors.onSurfaceVariant
+                      : theme.colors.error,
+                ),
+              ),
               SizedBox(height: theme.space.sm),
               forui.FSwitch(
                 label: const Text('自动同步'),
@@ -493,6 +737,47 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ),
       ),
+      if (!snapshot.emailVerified) ...[
+        SectionHeading(
+          title: '验证邮箱',
+          subtitle: '验证码发到这个邮箱，十分钟内有效；确认之后找回密码才能用。',
+        ),
+        forui.FCard(
+          child: Padding(
+            padding: EdgeInsets.all(theme.space.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_codeSent)
+                  forui.FTextField(
+                    control: .managed(controller: _verifyCode),
+                    keyboardType: TextInputType.number,
+                    label: const Text('邮件里的六位验证码'),
+                  ),
+                if (_codeSent) SizedBox(height: theme.space.md),
+                Wrap(
+                  spacing: theme.space.sm,
+                  runSpacing: theme.space.sm,
+                  children: [
+                    forui.FButton(
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy ? null : _sendVerification,
+                      child: Text(_codeSent ? '重新发送' : '发送验证码'),
+                    ),
+                    if (_codeSent)
+                      forui.FButton(
+                        variant: forui.FButtonVariant.outline,
+                        mainAxisSize: MainAxisSize.min,
+                        onPress: _busy ? null : _confirmVerification,
+                        child: const Text('确认邮箱'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
       SectionHeading(
         title: '同步',
         subtitle: '服务端保存同一条提交序列的另一份；两台设备同时修改同一字段时后到达的覆盖先到达的。',
@@ -535,6 +820,35 @@ class _AccountPageState extends State<AccountPage> {
                     child: const Text('云端备份'),
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      SectionHeading(
+        title: '模型额度',
+        subtitle: '知新服务按账号计每天可用的 token；额度用完时可以改用自己的 API Key，或等次日重置。',
+      ),
+      forui.FCard(
+        child: Padding(
+          padding: EdgeInsets.all(theme.space.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                _quota == null
+                    ? '额度暂时无法读取'
+                    : '今日已用 ${_quota!.usedTokens} / ${_quota!.dailyTokens} token',
+                style: theme.text.bodyMedium,
+              ),
+              SizedBox(height: theme.space.xs),
+              Text(
+                _quota == null
+                    ? '可以稍后重新进入这一页；备份与同步不受影响。'
+                    : '按 ${_quota!.day} 统计，重置时间以服务端时区为准。',
+                style: theme.text.bodySmall.copyWith(
+                  color: theme.colors.onSurfaceVariant,
+                ),
               ),
             ],
           ),

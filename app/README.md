@@ -150,7 +150,9 @@ lib/
 
 ## 账号与云同步
 
-账号可选。`lib/data/cloud/server_client.dart` 是服务端的最小 HTTP 客户端，只拼路径、解 JSON 与把错误统一成 `ServerProblem`；账号会话、令牌刷新、退出登录、删除账号与“知新服务”配置在 `lib/application/account_service.dart`，令牌与设备标识只写 Android Keystore（`lib/data/cloud/account_store.dart`），服务地址、自动同步开关与同步游标写在应用私有目录的 `cloud.json`（`lib/data/cloud/cloud_preferences_store.dart`），不进入数据库、数据包与整库备份。
+账号可选。`lib/data/cloud/server_client.dart` 是服务端的最小 HTTP 客户端，只拼路径、解 JSON 与把错误统一成 `ServerProblem`；账号会话、令牌刷新、邮箱验证、找回密码、退出登录、删除账号与“知新服务”配置在 `lib/application/account_service.dart`，令牌与设备标识只写 Android Keystore（`lib/data/cloud/account_store.dart`），服务地址、自动同步开关与同步游标写在应用私有目录的 `cloud.json`（`lib/data/cloud/cloud_preferences_store.dart`），不进入数据库、数据包与整库备份。没有保存地址时使用 `cloud_preferences_store.dart` 里的编译时默认值，正式包指向项目组的第一套实例，本地联调用 `--dart-define=ZHIXIN_SERVER_URL=...` 覆盖；保存地址后调用 `/readyz` 核对服务端就绪与 schema 版本，账号页把这个地址标为默认或已修改。
+
+注册之后的邮箱默认未确认，账号页提供发送与确认验证码的入口，验证码只以六位数字邮件送达，服务端存 HMAC；未确认时找回密码收不到重设验证码。登录卡的“忘记密码”切到邮箱、验证码与新密码三段表单，重设成功之后服务端作废该账号的全部会话，本机清掉登录状态并回到登录表单。账号页同时读 `/v1/llm/quota` 显示今日已用与每日额度，设置页在“知新服务”来源下列出 `/v1/llm/models` 返回的允许模型；这两处读取失败只给一行说明，不影响本机功能、备份与同步。
 
 云端备份在 `lib/application/cloud_backup_service.dart`：上传时用与“备份版本库”相同的 `VACUUM INTO` 快照生成 zip，计算 SHA-256 之后按契约上传，服务端按保留份数删除最旧的；列表、下载与删除都按账号隔离，下载后先核对响应头里的哈希，再交给本机已有的预检、确认与恢复点流程替换数据库。页面在 `lib/ui/account_page.dart` 与 `lib/ui/cloud_backup_page.dart`，从设置页和数据版本页进入。
 

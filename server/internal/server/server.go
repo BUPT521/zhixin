@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -88,7 +89,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
-	var byAddr, refreshLimits, uploadLimits *ratelimit.Limiter
+	var byAddr, refreshLimits, uploadLimits, codeLimits *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
 	}
@@ -98,8 +99,32 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	if cfg.UploadRatePerSecond > 0 {
 		uploadLimits = ratelimit.New(rate.Limit(cfg.UploadRatePerSecond), cfg.UploadBurst, 15*time.Minute)
 	}
+	if cfg.CodeRatePerSecond > 0 {
+		codeLimits = ratelimit.New(rate.Limit(cfg.CodeRatePerSecond), cfg.CodeBurst, 15*time.Minute)
+	}
+	mailer, err := auth.NewMailer(auth.MailerConfig{
+		Addr:     cfg.SMTPAddr,
+		From:     cfg.SMTPFrom,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		TLS:      cfg.SMTPTLS,
+		LogOnly:  cfg.MailLog,
+	}, log)
+	if err != nil {
+		log.Error("mail is disabled because its configuration is invalid", slog.String("error", err.Error()))
+		mailer = nil
+	}
+	codeSecret := []byte(cfg.CodeSecret)
+	if len(codeSecret) == 0 {
+		codeSecret = make([]byte, 32)
+		if _, err := rand.Read(codeSecret); err != nil {
+			log.Error("cannot generate a code secret", slog.String("error", err.Error()))
+		}
+		log.Warn("ZHIXIN_CODE_SECRET is empty: verification codes stop working after a restart")
+	}
+	authSvc.ConfigureCodes(mailer, codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
 	handlers := routes{
-		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits),
+		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits),
 		sync:          syncsvc.NewHandler(syncsvc.NewService(st.Sync, ClientSchemaVersion), log, 16*cfg.MaxJSONBytes),
 		backups:       backup.NewHandler(backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log),
 		blobs:         blobs.NewHandler(blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes), log),

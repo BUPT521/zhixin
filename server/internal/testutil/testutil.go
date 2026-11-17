@@ -124,6 +124,18 @@ func (Base) PostV1AuthRefresh(w http.ResponseWriter, _ *http.Request) {
 func (Base) PostV1AuthRegister(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) PostV1AuthEmailVerifyRequest(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1AuthPasswordForgot(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1AuthPasswordReset(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) GetV1Backups(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
 
 func (Base) DeleteV1Backups(w http.ResponseWriter, _ *http.Request) {

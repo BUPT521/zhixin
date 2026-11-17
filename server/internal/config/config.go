@@ -57,6 +57,25 @@ type Config struct {
 	UploadRatePerSecond float64
 	UploadBurst         int
 
+	// 邮箱验证与找回密码的发信。SMTPAddr 为空时这些接口返回 503；MailLog
+	// 只在本机联调时把邮件写进日志，生产不能打开。
+	SMTPAddr     string
+	SMTPFrom     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPTLS      string
+	MailLog      bool
+	// CodeSecret 是验证码 HMAC 的密钥；为空时每次启动随机生成，旧验证码随
+	// 重启失效。生产应固定一个随机值，才不会因为重启让用户重发。
+	CodeSecret string
+	CodeTTL    time.Duration
+	// CodeCooldown 是同一账号两次发送验证码的最小间隔。
+	CodeCooldown time.Duration
+	// CodeRatePerSecond 与 CodeBurst 限制发送验证码与重设密码的尝试，按账号
+	// 或来源地址计；设 0 关闭。
+	CodeRatePerSecond float64
+	CodeBurst         int
+
 	LLM LLMConfig
 }
 
@@ -147,6 +166,19 @@ func Load(getenv func(string) string) (Config, error) {
 		RefreshBurst:         int(num("ZHIXIN_REFRESH_BURST", "30")),
 		UploadRatePerSecond:  fnum("ZHIXIN_UPLOAD_RATE", "0.5"),
 		UploadBurst:          int(num("ZHIXIN_UPLOAD_BURST", "5")),
+
+		SMTPAddr:          get("ZHIXIN_SMTP_ADDR", ""),
+		SMTPFrom:          get("ZHIXIN_SMTP_FROM", ""),
+		SMTPUsername:      get("ZHIXIN_SMTP_USERNAME", ""),
+		SMTPPassword:      get("ZHIXIN_SMTP_PASSWORD", ""),
+		SMTPTLS:           get("ZHIXIN_SMTP_TLS", "starttls"),
+		MailLog:           get("ZHIXIN_MAIL_LOG", "0") == "1",
+		CodeSecret:        get("ZHIXIN_CODE_SECRET", ""),
+		CodeTTL:           dur("ZHIXIN_CODE_TTL", "10m"),
+		CodeCooldown:      dur("ZHIXIN_CODE_COOLDOWN", "60s"),
+		CodeRatePerSecond: fnum("ZHIXIN_CODE_RATE", "0.02"),
+		CodeBurst:         int(num("ZHIXIN_CODE_BURST", "1")),
+
 		LLM: LLMConfig{
 			BaseURL:         strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:          get("ZHIXIN_LLM_API_KEY", ""),
@@ -161,6 +193,19 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		if strings.Contains(cfg.S3.Endpoint, "://") {
 			errs = append(errs, errors.New("ZHIXIN_S3_ENDPOINT: give host and port only; use ZHIXIN_S3_USE_SSL to pick https"))
+		}
+	}
+	if cfg.SMTPAddr != "" {
+		if cfg.SMTPFrom == "" {
+			errs = append(errs, errors.New("ZHIXIN_SMTP_FROM is required when ZHIXIN_SMTP_ADDR is set"))
+		}
+		switch cfg.SMTPTLS {
+		case "starttls", "implicit", "none":
+		default:
+			errs = append(errs, fmt.Errorf("ZHIXIN_SMTP_TLS: want starttls, implicit or none, got %q", cfg.SMTPTLS))
+		}
+		if cfg.SMTPUsername != "" && cfg.SMTPPassword == "" {
+			errs = append(errs, errors.New("ZHIXIN_SMTP_PASSWORD is required when ZHIXIN_SMTP_USERNAME is set"))
 		}
 	}
 	if cfg.AccessTTL >= cfg.RefreshTTL && len(errs) == 0 {

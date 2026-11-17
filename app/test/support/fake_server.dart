@@ -33,7 +33,14 @@ class FakeServer {
 
   final Map<String, String> _passwords = {};
   final Map<String, String> _userIds = {};
+  final Set<String> _verified = {};
+  final Map<String, _FakeCode> _codes = {};
   int _nextUser = 1;
+  int _nextCode = 100000;
+
+  /// 测试取出最近一次发出的验证码；客户端拿不到邮件正文。
+  String? codeFor(String email, String purpose) =>
+      _codes['$email|$purpose']?.code;
 
   final Map<String, _Session> _access = {};
   final Map<String, _Session> _refresh = {};
@@ -62,6 +69,9 @@ class FakeServer {
         ? (jsonDecode(request.body) as Map).cast<String, Object?>()
         : const <String, Object?>{};
 
+    if (method == 'GET' && path == '/readyz') {
+      return _json(200, {'status': 'ready', 'schema_version': schemaVersion});
+    }
     if (method == 'POST' && path == '/v1/auth/register') {
       return _register(body);
     }
@@ -70,6 +80,12 @@ class FakeServer {
     }
     if (method == 'POST' && path == '/v1/auth/refresh') {
       return _refreshToken(body);
+    }
+    if (method == 'POST' && path == '/v1/auth/password/forgot') {
+      return _forgotPassword(body);
+    }
+    if (method == 'POST' && path == '/v1/auth/password/reset') {
+      return _resetPassword(body);
     }
 
     final token = _bearer(request);
@@ -88,14 +104,40 @@ class FakeServer {
       return http.Response('', 204);
     }
     if (method == 'GET' && path == '/v1/me') {
+      final email = _userIds.entries.firstWhere((e) => e.value == userId).key;
       return _json(200, {
         'user_id': userId,
-        'email': _userIds.entries.firstWhere((e) => e.value == userId).key,
+        'email': email,
+        'email_verified': _verified.contains(email),
         'created_at': '2026-11-17T10:00:00Z',
       });
     }
+    if (method == 'POST' && path == '/v1/auth/email/verify/request') {
+      final email = _userIds.entries.firstWhere((e) => e.value == userId).key;
+      if (!_verified.contains(email)) {
+        _codes['$email|verify_email'] = _newCode();
+      }
+      return http.Response('', 204);
+    }
+    if (method == 'POST' && path == '/v1/auth/email/verify/confirm') {
+      final email = _userIds.entries.firstWhere((e) => e.value == userId).key;
+      if (!_takeCode(email, 'verify_email', body['code'] as String? ?? '')) {
+        return _problem(400, 'invalid_code');
+      }
+      _verified.add(email);
+      return http.Response('', 204);
+    }
     if (method == 'DELETE' && path == '/v1/me') {
+      final matches = _userIds.entries
+          .where((entry) => entry.value == userId)
+          .map((entry) => entry.key);
+      final email = matches.isEmpty ? null : matches.first;
       _userIds.removeWhere((_, id) => id == userId);
+      if (email != null) {
+        _passwords.remove(email);
+        _verified.remove(email);
+        _codes.removeWhere((key, _) => key.startsWith('$email|'));
+      }
       commits.remove(userId);
       backups.remove(userId);
       blobs.remove(userId);
@@ -274,6 +316,44 @@ class FakeServer {
     return _tokens(session.userId, '', refresh: false);
   }
 
+  _FakeCode _newCode() {
+    final code = '${_nextCode++}';
+    return _FakeCode(
+      code: code,
+      expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+    );
+  }
+
+  bool _takeCode(String email, String purpose, String given) {
+    final entry = _codes.remove('$email|$purpose');
+    if (entry == null || entry.code != given.trim()) return false;
+    return DateTime.now().isBefore(entry.expiresAt);
+  }
+
+  http.Response _forgotPassword(Map<String, Object?> body) {
+    final email = (body['email'] as String? ?? '').trim().toLowerCase();
+    if (_passwords.containsKey(email) && _verified.contains(email)) {
+      _codes['$email|reset_password'] = _newCode();
+    }
+    return http.Response('', 204);
+  }
+
+  http.Response _resetPassword(Map<String, Object?> body) {
+    final email = (body['email'] as String? ?? '').trim().toLowerCase();
+    final password = body['new_password'] as String? ?? '';
+    if (!_passwords.containsKey(email) ||
+        !_verified.contains(email) ||
+        password.length < 8 ||
+        !_takeCode(email, 'reset_password', body['code'] as String? ?? '')) {
+      return _problem(400, 'invalid_code');
+    }
+    _passwords[email] = password;
+    final userId = _userIds[email]!;
+    _access.removeWhere((_, session) => session.userId == userId);
+    _refresh.removeWhere((_, session) => session.userId == userId);
+    return http.Response('', 204);
+  }
+
   http.Response _tokens(
     String userId,
     String deviceName, {
@@ -332,6 +412,13 @@ class FakeServer {
     status,
     headers: {'content-type': 'application/problem+json'},
   );
+}
+
+class _FakeCode {
+  const _FakeCode({required this.code, required this.expiresAt});
+
+  final String code;
+  final DateTime expiresAt;
 }
 
 class _Session {

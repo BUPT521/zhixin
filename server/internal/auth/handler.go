@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
@@ -50,16 +52,25 @@ type Handler struct {
 	// 一律放行。
 	byAddr        *ratelimit.Limiter
 	refreshLimits *ratelimit.Limiter
+	// codeLimits 限制发送验证码与重设密码的尝试：按账号、来源地址与邮箱各记
+	// 一个桶，防止同一账号被反复发信，也防止换账号刷同一个邮箱。
+	codeLimits *ratelimit.Limiter
 }
 
-func NewHandler(svc *Service, log *slog.Logger, maxBytes int64, byAddr, refreshLimits *ratelimit.Limiter) *Handler {
+func NewHandler(svc *Service, log *slog.Logger, maxBytes int64, byAddr, refreshLimits, codeLimits *ratelimit.Limiter) *Handler {
 	if byAddr == nil {
 		byAddr = ratelimit.Disabled()
 	}
 	if refreshLimits == nil {
 		refreshLimits = ratelimit.Disabled()
 	}
-	return &Handler{svc: svc, log: log, maxBytes: maxBytes, byAddr: byAddr, refreshLimits: refreshLimits}
+	if codeLimits == nil {
+		codeLimits = ratelimit.Disabled()
+	}
+	return &Handler{
+		svc: svc, log: log, maxBytes: maxBytes,
+		byAddr: byAddr, refreshLimits: refreshLimits, codeLimits: codeLimits,
+	}
 }
 
 // remoteKey 取来源地址；取不到时归到同一个键，宁可影响本机也不放行。
@@ -73,8 +84,20 @@ func remoteKey(r *http.Request) string {
 
 // tooMany 写 429 并带上 Retry-After；客户端据此退避，不解析 detail。
 func tooMany(w http.ResponseWriter, r *http.Request, retryAfter int64) {
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
 	w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
 	httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts, retry later")
+}
+
+// cooldownSeconds 把发送验证码的冷却写成 Retry-After 的整秒数。
+func (h *Handler) cooldownSeconds() int64 {
+	seconds := int64(h.svc.codeCooldown / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 // tokensJSON 把服务层的令牌结果转成契约类型，响应字段只在这里出现一次。
@@ -175,6 +198,101 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RequestEmailVerification 给当前账号的邮箱发验证码。已经确认过的账号直接
+// 返回 204，不重复发信；刚发过的返回 429 并给出建议等待秒数。
+func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r.Context())
+	if delay := h.codeLimits.Take("account:" + p.UserID); delay > 0 {
+		tooMany(w, r, delay)
+		return
+	}
+	err := h.svc.RequestEmailVerification(r.Context(), p)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrCodeTooSoon):
+		tooMany(w, r, h.cooldownSeconds())
+	case errors.Is(err, ErrMailUnavailable):
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
+	default:
+		httpx.WriteInternal(w, r, h.log, err)
+	}
+}
+
+// ConfirmEmailVerification 校验验证码并把邮箱标为已确认。
+func (h *Handler) ConfirmEmailVerification(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r.Context())
+	if delay := h.codeLimits.Take("confirm:" + p.UserID); delay > 0 {
+		tooMany(w, r, delay)
+		return
+	}
+	var in api.PostV1AuthEmailVerifyConfirmJSONRequestBody
+	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	err := h.svc.ConfirmEmailVerification(r.Context(), p, in.Code)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrInvalidInput):
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidCode, "")
+	default:
+		httpx.WriteInternal(w, r, h.log, err)
+	}
+}
+
+// ForgotPassword 向已验证的邮箱发重设验证码。邮箱不存在或未验证时也返回 204，
+// 这个接口因此不能被用来判断哪些邮箱注册过。
+func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	if delay := h.codeLimits.Take("forgot-address:" + remoteKey(r)); delay > 0 {
+		tooMany(w, r, delay)
+		return
+	}
+	var in api.PostV1AuthPasswordForgotJSONRequestBody
+	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(string(in.Email)))
+	if delay := h.codeLimits.Take("forgot-email:" + email); delay > 0 {
+		tooMany(w, r, delay)
+		return
+	}
+	err := h.svc.RequestPasswordReset(r.Context(), email)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidInput):
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address")
+	case errors.Is(err, ErrCodeTooSoon):
+		tooMany(w, r, h.cooldownSeconds())
+	case errors.Is(err, ErrMailUnavailable):
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
+	default:
+		httpx.WriteInternal(w, r, h.log, err)
+	}
+}
+
+// ResetPassword 用验证码重设密码，并作废这个账号的全部会话。
+func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	if delay := h.codeLimits.Take("reset-address:" + remoteKey(r)); delay > 0 {
+		tooMany(w, r, delay)
+		return
+	}
+	var in api.PostV1AuthPasswordResetJSONRequestBody
+	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	err := h.svc.ResetPassword(r.Context(), string(in.Email), in.Code, in.NewPassword)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrInvalidInput):
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidCode, "")
+	default:
+		httpx.WriteInternal(w, r, h.log, err)
+	}
+}
+
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p := MustPrincipal(r.Context())
 	u, err := h.svc.User(r.Context(), p)
@@ -182,7 +300,12 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, api.Me{UserId: u.ID, Email: u.Email, CreatedAt: u.CreatedAt})
+	httpx.WriteJSON(w, http.StatusOK, api.Me{
+		UserId:        u.ID,
+		Email:         u.Email,
+		EmailVerified: !u.EmailVerifiedAt.IsZero(),
+		CreatedAt:     u.CreatedAt,
+	})
 }
 
 func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {

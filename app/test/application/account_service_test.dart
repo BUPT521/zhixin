@@ -33,6 +33,36 @@ void main() {
     if (await dir.exists()) await dir.delete(recursive: true);
   });
 
+  test('没有填写地址时使用默认服务地址，并能检查就绪状态', () async {
+    final defaultDir = Directory('${dir.path}/default');
+    final defaultAccount = AccountService(
+      store: AccountStore(MemorySecretStore()),
+      preferences: CloudPreferencesStore(filesDir: defaultDir.path),
+      clientFactory: (baseUrl) =>
+          ServerClient(baseUrl: baseUrl, httpClient: server.client),
+    );
+    addTearDown(defaultAccount.dispose);
+
+    final snapshot = await defaultAccount.snapshot();
+    expect(snapshot.serverBaseUrl, defaultServerBaseUrl);
+    expect(snapshot.usesDefaultServer, isTrue);
+    expect(snapshot.serverLabel, startsWith('默认地址：'));
+
+    final ready = await defaultAccount.checkServer();
+    expect(ready.ready, isTrue);
+    expect(ready.schemaVersion, 27);
+
+    await defaultAccount.register(
+      email: 'default@example.com',
+      password: 'password123',
+    );
+    expect((await defaultAccount.quota()).dailyTokens, 200000);
+    expect(
+      (await defaultAccount.models()).map((model) => model.id),
+      contains('deepseek-flash'),
+    );
+  });
+
   test('注册后保存会话，知新服务配置换成访问令牌', () async {
     final snapshot = await account.register(
       email: 'A@Example.com',
@@ -109,6 +139,66 @@ void main() {
     expect(server.commits[userId], isEmpty);
     expect((await account.snapshot()).signedIn, isTrue);
     expect(server.userIdOf('e@example.com'), userId);
+  });
+
+  test('注册后邮箱未验证，确认验证码之后状态更新', () async {
+    final snapshot = await account.register(
+      email: 'g@example.com',
+      password: 'password123',
+    );
+    expect(snapshot.emailVerified, isFalse);
+
+    await account.requestEmailVerification();
+    final code = server.codeFor('g@example.com', 'verify_email');
+    expect(code, isNotNull);
+    await account.confirmEmailVerification(code!);
+
+    final refreshed = await account.refreshAccount();
+    expect(refreshed.emailVerified, isTrue);
+  });
+
+  test('验证码错误时服务端返回 invalid_code', () async {
+    await account.register(email: 'h@example.com', password: 'password123');
+    await account.requestEmailVerification();
+    await expectLater(
+      account.confirmEmailVerification('000000'),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.code,
+          'code',
+          'invalid_code',
+        ),
+      ),
+    );
+  });
+
+  test('忘记密码重设之后清掉本机会话，旧密码与旧令牌失效', () async {
+    await account.register(email: 'i@example.com', password: 'password123');
+    await account.requestEmailVerification();
+    final verifyCode = server.codeFor('i@example.com', 'verify_email')!;
+    await account.confirmEmailVerification(verifyCode);
+
+    final oldSession = await account.snapshot();
+    await account.logout();
+    await account.requestPasswordReset('i@example.com');
+    final resetCode = server.codeFor('i@example.com', 'reset_password')!;
+    await account.resetPassword(
+      email: 'i@example.com',
+      code: resetCode,
+      newPassword: 'newpassword123',
+    );
+    expect((await account.snapshot()).signedIn, isFalse);
+    expect(oldSession.session, isNotNull);
+
+    await expectLater(
+      account.login(email: 'i@example.com', password: 'password123'),
+      throwsA(isA<ServerProblem>()),
+    );
+    final again = await account.login(
+      email: 'i@example.com',
+      password: 'newpassword123',
+    );
+    expect(again.signedIn, isTrue);
   });
 
   test('删除账号清掉服务端数据与本机会话', () async {

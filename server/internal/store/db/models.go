@@ -9,10 +9,20 @@ import (
 )
 
 type AppUser struct {
-	ID           string
-	Email        string
-	PasswordHash string
-	CreatedAt    pgtype.Timestamptz
+	ID              string
+	Email           string
+	PasswordHash    string
+	EmailVerifiedAt pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
+type AuthCode struct {
+	UserID    string
+	Purpose   string
+	CodeHash  string
+	ExpiresAt pgtype.Timestamptz
+	Attempts  int32
+	CreatedAt pgtype.Timestamptz
 }
 
 type Backup struct {

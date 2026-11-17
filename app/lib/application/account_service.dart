@@ -31,16 +31,25 @@ class AccountSnapshot {
     required this.serverBaseUrl,
     required this.session,
     required this.autoSync,
+    this.usesDefaultServer = false,
   });
 
   final String serverBaseUrl;
   final AccountSession? session;
   final bool autoSync;
 
+  /// 地址还没有被改过，用的是编译时的默认值。
+  final bool usesDefaultServer;
+
   bool get signedIn => session != null;
   String get email => session?.email ?? '';
 
-  String get serverLabel => serverBaseUrl.isEmpty ? '还没有填写服务地址' : serverBaseUrl;
+  /// 邮箱还没有验证时，找回密码收不到验证码；账号页据此提示。
+  bool get emailVerified => session?.emailVerified ?? false;
+
+  String get serverLabel => serverBaseUrl.isEmpty
+      ? '还没有填写服务地址'
+      : (usesDefaultServer ? '默认地址：$serverBaseUrl' : serverBaseUrl);
 }
 
 /// 账号与登录：注册、登录、刷新令牌、退出、删除账号与清除云端数据。
@@ -77,18 +86,21 @@ class AccountService {
     final session = await store.read();
     final baseUrl = await preferences.serverBaseUrl();
     final autoSync = await preferences.autoSync();
+    final usesDefault = await preferences.usesDefaultServerBaseUrl();
     if (session != null && session.isExpired) {
       await store.clear();
       return AccountSnapshot(
         serverBaseUrl: baseUrl,
         session: null,
         autoSync: autoSync,
+        usesDefaultServer: usesDefault,
       );
     }
     return AccountSnapshot(
       serverBaseUrl: baseUrl,
       session: session,
       autoSync: autoSync,
+      usesDefaultServer: usesDefault,
     );
   }
 
@@ -167,6 +179,73 @@ class AccountService {
     await preferences.clearSyncState();
   }
 
+  /// 读服务端的就绪状态与它接受的客户端 schema；保存地址之后核对一次。
+  Future<ServerReady> checkServer() async {
+    final client = await _requireClient();
+    return client.ready();
+  }
+
+  /// 重新读一次服务端的账号信息，更新邮箱验证状态；网络失败时沿用本机记录。
+  Future<AccountSnapshot> refreshAccount() async {
+    final session = await store.read();
+    if (session == null) return snapshot();
+    try {
+      final remote = await call<ServerAccount>(
+        (client, token) => client.me(token),
+      );
+      final updated = session.copyWith(emailVerified: remote.emailVerified);
+      if (updated.emailVerified != session.emailVerified) {
+        await store.save(updated);
+      }
+      return AccountSnapshot(
+        serverBaseUrl: await serverBaseUrl(),
+        session: updated,
+        autoSync: await autoSync(),
+        usesDefaultServer: await preferences.usesDefaultServerBaseUrl(),
+      );
+    } catch (_) {
+      // 验证状态是一次额外的核对，失败不影响本机已登录状态。
+      return snapshot();
+    }
+  }
+
+  /// 给当前账号的邮箱发验证码；已经验证过时服务端不重复发信。
+  Future<void> requestEmailVerification() =>
+      call<void>((client, token) => client.requestEmailVerification(token));
+
+  /// 用六位验证码确认邮箱。
+  Future<void> confirmEmailVerification(String code) async {
+    await call<void>(
+      (client, token) => client.confirmEmailVerification(token, code),
+    );
+    final session = await store.read();
+    if (session != null) {
+      await store.save(session.copyWith(emailVerified: true));
+    }
+  }
+
+  /// 向已验证的邮箱发重设验证码；邮箱没有注册或没有验证时服务端也返回成功。
+  Future<void> requestPasswordReset(String email) async {
+    final client = await _requireClient();
+    await client.requestPasswordReset(email);
+  }
+
+  /// 用验证码重设密码；成功后服务端作废全部会话，这里清掉本机登录状态。
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final client = await _requireClient();
+    await client.resetPassword(
+      email: email,
+      code: code,
+      newPassword: newPassword,
+    );
+    await store.clear();
+    await preferences.clearSyncState();
+  }
+
   /// 当前账号的访问令牌；过期时先刷新，登录失效时清掉会话并抛出
   /// [AccountSignedOut]。没有登录时返回 null，供模型来源判断是否可用。
   Future<String?> accessTokenOrNull() async {
@@ -239,9 +318,19 @@ class AccountService {
     ServerTokens tokens, {
     required String email,
   }) async {
+    // 登录响应不带邮箱验证状态，多读一次 /v1/me；读不到不影响这次登录，
+    // 账号页下一次打开会再核对。
+    var emailVerified = false;
+    try {
+      final client = await _requireClient();
+      emailVerified = (await client.me(tokens.accessToken)).emailVerified;
+    } catch (_) {
+      // 忽略：首屏仍可进入，验证状态稍后重试。
+    }
     final session = AccountSession(
       userId: tokens.userId,
       email: email,
+      emailVerified: emailVerified,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       accessExpiresAt: tokens.accessExpiresAt,
@@ -256,6 +345,7 @@ class AccountService {
       serverBaseUrl: await serverBaseUrl(),
       session: session,
       autoSync: await autoSync(),
+      usesDefaultServer: await preferences.usesDefaultServerBaseUrl(),
     );
   }
 

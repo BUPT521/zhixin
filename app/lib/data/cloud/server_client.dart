@@ -40,6 +40,7 @@ class ServerProblem implements Exception {
     'offline' => '无法连接服务端，请检查网络与服务地址',
     'unauthorized' => '登录状态已失效，请重新登录',
     'invalid_credentials' => '邮箱或密码不正确',
+    'invalid_code' => '验证码不正确或已经过期，可以重新获取',
     'email_taken' => '这个邮箱已经注册过，可以直接登录',
     'rate_limited' =>
       retryAfterSeconds == null
@@ -65,17 +66,22 @@ class ServerAccount {
   const ServerAccount({
     required this.userId,
     required this.email,
+    this.emailVerified = false,
     this.createdAt,
   });
 
   factory ServerAccount.fromJson(Map<String, Object?> json) => ServerAccount(
     userId: json['user_id'] as String? ?? '',
     email: json['email'] as String? ?? '',
+    emailVerified: json['email_verified'] == true,
     createdAt: _parseTime(json['created_at']),
   );
 
   final String userId;
   final String email;
+
+  /// 邮箱是否已经用验证码确认；未确认时找回密码收不到重设验证码。
+  final bool emailVerified;
   final DateTime? createdAt;
 }
 
@@ -215,6 +221,19 @@ class ServerCommitPage {
   final bool hasMore;
 }
 
+/// 服务端的就绪状态与它接受的客户端 schema 版本。
+class ServerReady {
+  const ServerReady({required this.ready, required this.schemaVersion});
+
+  factory ServerReady.fromJson(Map<String, Object?> json) => ServerReady(
+    ready: json['status'] == 'ready',
+    schemaVersion: (json['schema_version'] as num?)?.toInt() ?? 0,
+  );
+
+  final bool ready;
+  final int schemaVersion;
+}
+
 /// 服务端序列的最新位置与它接受的客户端 schema 版本。
 class ServerHead {
   const ServerHead({required this.head, required this.schemaVersion});
@@ -317,6 +336,12 @@ class ServerClient {
     return normalized;
   }
 
+  /// 读一次就绪检查；依赖不可用时服务端返回 503，客户端按 [ServerProblem] 抛出。
+  Future<ServerReady> ready() async {
+    final json = await _json('GET', '/readyz');
+    return ServerReady.fromJson(json);
+  }
+
   /// 注册并登录当前设备；邮箱已被占用时抛出 `email_taken`。
   Future<ServerTokens> register({
     required String email,
@@ -373,6 +398,41 @@ class ServerClient {
   /// 删除账号，连同同步序列、附件、备份与用量。
   Future<void> deleteMe(String accessToken) =>
       _send('DELETE', '/v1/me', accessToken: accessToken);
+
+  /// 给当前账号的邮箱发验证码；已经确认时服务端返回 204，不重复发信。
+  Future<void> requestEmailVerification(String accessToken) =>
+      _send('POST', '/v1/auth/email/verify/request', accessToken: accessToken);
+
+  /// 用六位验证码确认当前账号的邮箱。
+  Future<void> confirmEmailVerification(String accessToken, String code) =>
+      _send(
+        'POST',
+        '/v1/auth/email/verify/confirm',
+        accessToken: accessToken,
+        body: {'code': code},
+      );
+
+  /// 向已验证的邮箱发重设验证码；邮箱不存在或未验证时服务端同样返回 204。
+  Future<void> requestPasswordReset(String email) => _send(
+    'POST',
+    '/v1/auth/password/forgot',
+    body: {'email': email.trim().toLowerCase()},
+  );
+
+  /// 用验证码重设密码；成功后这个账号的全部会话都被作废。
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) => _send(
+    'POST',
+    '/v1/auth/password/reset',
+    body: {
+      'email': email.trim().toLowerCase(),
+      'code': code,
+      'new_password': newPassword,
+    },
+  );
 
   /// 删除该账号的全部云端备份，账号保留。
   Future<void> deleteAllBackups(String accessToken) =>

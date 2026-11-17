@@ -20,6 +20,8 @@ var securedRoutes = []struct {
 	pattern string
 }{
 	{"POST", "/v1/auth/logout"},
+	{"POST", "/v1/auth/email/verify/request"},
+	{"POST", "/v1/auth/email/verify/confirm"},
 	{"GET", "/v1/me"},
 	{"DELETE", "/v1/me"},
 	{"GET", "/v1/sync/head"},

@@ -35,6 +35,7 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 		"ZHIXIN_AUTH_RATE":    "0",
 		"ZHIXIN_REFRESH_RATE": "0",
 		"ZHIXIN_UPLOAD_RATE":  "0",
+		"ZHIXIN_CODE_RATE":    "0",
 	}
 	for k, v := range env {
 		merged[k] = v
@@ -123,6 +124,27 @@ func TestHealthAndUnknownRoute(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
 		t.Fatalf("content type %q", ct)
+	}
+}
+
+// TestEmailVerificationWithoutMailer 守住没配发信时的行为：登录与备份照常，
+// 验证码接口回 503，找回密码对未验证的邮箱仍然回 204（不暴露邮箱是否存在）。
+func TestEmailVerificationWithoutMailer(t *testing.T) {
+	h := newHarness(t, nil)
+	token := h.signUp("mail@example.com")
+
+	var me struct {
+		EmailVerified bool `json:"email_verified"`
+	}
+	if code := h.json("GET", "/v1/me", token, nil, &me); code != http.StatusOK || me.EmailVerified {
+		t.Fatalf("me: %d %+v", code, me)
+	}
+	var p problem
+	if code := h.json("POST", "/v1/auth/email/verify/request", token, nil, &p); code != http.StatusServiceUnavailable || p.Code != "unavailable" {
+		t.Fatalf("request code without mail: %d %+v", code, p)
+	}
+	if code := h.json("POST", "/v1/auth/password/forgot", "", map[string]string{"email": "mail@example.com"}, nil); code != http.StatusNoContent {
+		t.Fatalf("forgot for unverified email: %d", code)
 	}
 }
 

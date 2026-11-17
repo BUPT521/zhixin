@@ -19,6 +19,7 @@ const (
 	CodeInvalidRequest     = api.ProblemCodeInvalidRequest
 	CodeUnauthorized       = api.ProblemCodeUnauthorized
 	CodeInvalidCredentials = api.ProblemCodeInvalidCredentials
+	CodeInvalidCode        = api.ProblemCodeInvalidCode
 	CodeEmailTaken         = api.ProblemCodeEmailTaken
 	CodeNotFound           = api.ProblemCodeNotFound
 	CodeConflict           = api.ProblemCodeConflict

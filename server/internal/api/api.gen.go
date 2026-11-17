@@ -78,6 +78,7 @@ const (
 	ProblemCodeConflict           ProblemCode = "conflict"
 	ProblemCodeEmailTaken         ProblemCode = "email_taken"
 	ProblemCodeInternal           ProblemCode = "internal"
+	ProblemCodeInvalidCode        ProblemCode = "invalid_code"
 	ProblemCodeInvalidCredentials ProblemCode = "invalid_credentials"
 	ProblemCodeInvalidRequest     ProblemCode = "invalid_request"
 	ProblemCodeModelNotAllowed    ProblemCode = "model_not_allowed"
@@ -99,6 +100,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeEmailTaken:
 		return true
 	case ProblemCodeInternal:
+		return true
+	case ProblemCodeInvalidCode:
 		return true
 	case ProblemCodeInvalidCredentials:
 		return true
@@ -238,7 +241,10 @@ type LLMQuota struct {
 type Me struct {
 	CreatedAt time.Time `json:"created_at"`
 	Email     string    `json:"email"`
-	UserId    string    `json:"user_id"`
+
+	// EmailVerified 邮箱是否已经用验证码确认
+	EmailVerified bool   `json:"email_verified"`
+	UserId        string `json:"user_id"`
 }
 
 // Model defines model for Model.
@@ -313,6 +319,23 @@ type TokensTokenType string
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
 
+// PostV1AuthEmailVerifyConfirmJSONBody defines parameters for PostV1AuthEmailVerifyConfirm.
+type PostV1AuthEmailVerifyConfirmJSONBody struct {
+	Code string `json:"code"`
+}
+
+// PostV1AuthPasswordForgotJSONBody defines parameters for PostV1AuthPasswordForgot.
+type PostV1AuthPasswordForgotJSONBody struct {
+	Email openapi_types.Email `json:"email"`
+}
+
+// PostV1AuthPasswordResetJSONBody defines parameters for PostV1AuthPasswordReset.
+type PostV1AuthPasswordResetJSONBody struct {
+	Code        string              `json:"code"`
+	Email       openapi_types.Email `json:"email"`
+	NewPassword string              `json:"new_password"`
+}
+
 // PostV1AuthRefreshJSONBody defines parameters for PostV1AuthRefresh.
 type PostV1AuthRefreshJSONBody struct {
 	RefreshToken string `json:"refresh_token"`
@@ -343,8 +366,17 @@ type PostV1SyncCommitsJSONBody struct {
 	Commits []Commit `json:"commits"`
 }
 
+// PostV1AuthEmailVerifyConfirmJSONRequestBody defines body for PostV1AuthEmailVerifyConfirm for application/json ContentType.
+type PostV1AuthEmailVerifyConfirmJSONRequestBody PostV1AuthEmailVerifyConfirmJSONBody
+
 // PostV1AuthLoginJSONRequestBody defines body for PostV1AuthLogin for application/json ContentType.
 type PostV1AuthLoginJSONRequestBody = Credentials
+
+// PostV1AuthPasswordForgotJSONRequestBody defines body for PostV1AuthPasswordForgot for application/json ContentType.
+type PostV1AuthPasswordForgotJSONRequestBody PostV1AuthPasswordForgotJSONBody
+
+// PostV1AuthPasswordResetJSONRequestBody defines body for PostV1AuthPasswordReset for application/json ContentType.
+type PostV1AuthPasswordResetJSONRequestBody PostV1AuthPasswordResetJSONBody
 
 // PostV1AuthRefreshJSONRequestBody defines body for PostV1AuthRefresh for application/json ContentType.
 type PostV1AuthRefreshJSONRequestBody PostV1AuthRefreshJSONBody
@@ -366,12 +398,24 @@ type ServerInterface interface {
 	// GetReadyz 依赖可用，并返回服务端接受的客户端 schema 版本
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// PostV1AuthEmailVerifyConfirm 用验证码确认当前账号的邮箱
+	// (POST /v1/auth/email/verify/confirm)
+	PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request)
+	// PostV1AuthEmailVerifyRequest 给当前账号的邮箱发一封验证码邮件
+	// (POST /v1/auth/email/verify/request)
+	PostV1AuthEmailVerifyRequest(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthLogin 登录，每台设备一个会话（按来源地址限流，与注册共用一个令牌桶）
 	// (POST /v1/auth/login)
 	PostV1AuthLogin(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthLogout 退出当前设备
 	// (POST /v1/auth/logout)
 	PostV1AuthLogout(w http.ResponseWriter, r *http.Request)
+	// PostV1AuthPasswordForgot 向已验证的邮箱发一封重设密码验证码
+	// (POST /v1/auth/password/forgot)
+	PostV1AuthPasswordForgot(w http.ResponseWriter, r *http.Request)
+	// PostV1AuthPasswordReset 用验证码重设密码，并作废该账号的全部会话
+	// (POST /v1/auth/password/reset)
+	PostV1AuthPasswordReset(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthRefresh 用刷新令牌换一组新令牌，旧的两枚立即失效（按账号与来源地址限流）
 	// (POST /v1/auth/refresh)
 	PostV1AuthRefresh(w http.ResponseWriter, r *http.Request)
@@ -468,6 +512,34 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// PostV1AuthEmailVerifyConfirm operation middleware
+func (siw *ServerInterfaceWrapper) PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1AuthEmailVerifyConfirm(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1AuthEmailVerifyRequest operation middleware
+func (siw *ServerInterfaceWrapper) PostV1AuthEmailVerifyRequest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1AuthEmailVerifyRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostV1AuthLogin operation middleware
 func (siw *ServerInterfaceWrapper) PostV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -487,6 +559,34 @@ func (siw *ServerInterfaceWrapper) PostV1AuthLogout(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostV1AuthLogout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1AuthPasswordForgot operation middleware
+func (siw *ServerInterfaceWrapper) PostV1AuthPasswordForgot(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1AuthPasswordForgot(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1AuthPasswordReset operation middleware
+func (siw *ServerInterfaceWrapper) PostV1AuthPasswordReset(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1AuthPasswordReset(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1052,6 +1152,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/register", wrapper.PostV1AuthRegister)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.PostV1AuthLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.PostV1AuthRefresh)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/email/verify/request", wrapper.PostV1AuthEmailVerifyRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/email/verify/confirm", wrapper.PostV1AuthEmailVerifyConfirm)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/password/forgot", wrapper.PostV1AuthPasswordForgot)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/password/reset", wrapper.PostV1AuthPasswordReset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.PostV1AuthLogout)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me", wrapper.DeleteV1Me)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetV1Me)

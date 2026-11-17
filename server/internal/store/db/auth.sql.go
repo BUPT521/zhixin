@@ -11,6 +11,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const authCode = `-- name: AuthCode :one
+SELECT user_id, purpose, code_hash, expires_at, attempts, created_at
+FROM auth_code
+WHERE user_id = $1 AND purpose = $2
+`
+
+type AuthCodeParams struct {
+	UserID  string
+	Purpose string
+}
+
+func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, error) {
+	row := q.db.QueryRow(ctx, authCode, arg.UserID, arg.Purpose)
+	var i AuthCode
+	err := row.Scan(
+		&i.UserID,
+		&i.Purpose,
+		&i.CodeHash,
+		&i.ExpiresAt,
+		&i.Attempts,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO session (
   id, user_id, device_name, access_hash, refresh_hash,
@@ -67,6 +92,21 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	return err
 }
 
+const deleteAuthCode = `-- name: DeleteAuthCode :exec
+DELETE FROM auth_code
+WHERE user_id = $1 AND purpose = $2
+`
+
+type DeleteAuthCodeParams struct {
+	UserID  string
+	Purpose string
+}
+
+func (q *Queries) DeleteAuthCode(ctx context.Context, arg DeleteAuthCodeParams) error {
+	_, err := q.db.Exec(ctx, deleteAuthCode, arg.UserID, arg.Purpose)
+	return err
+}
+
 const deleteSession = `-- name: DeleteSession :execrows
 DELETE FROM session
 WHERE id = $1
@@ -91,6 +131,71 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteUserSessions = `-- name: DeleteUserSessions :exec
+DELETE FROM session
+WHERE user_id = $1
+`
+
+// 重设密码之后作废这个账号的全部会话：其他设备必须重新登录。
+func (q *Queries) DeleteUserSessions(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteUserSessions, userID)
+	return err
+}
+
+const incrementAuthCodeAttempts = `-- name: IncrementAuthCodeAttempts :one
+UPDATE auth_code
+SET attempts = attempts + 1
+WHERE user_id = $1 AND purpose = $2
+RETURNING attempts
+`
+
+type IncrementAuthCodeAttemptsParams struct {
+	UserID  string
+	Purpose string
+}
+
+func (q *Queries) IncrementAuthCodeAttempts(ctx context.Context, arg IncrementAuthCodeAttemptsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, incrementAuthCodeAttempts, arg.UserID, arg.Purpose)
+	var attempts int32
+	err := row.Scan(&attempts)
+	return attempts, err
+}
+
+const putAuthCode = `-- name: PutAuthCode :exec
+
+INSERT INTO auth_code (user_id, purpose, code_hash, expires_at, attempts, created_at)
+VALUES (
+  $1, $2, $3,
+  $4, 0, $5
+)
+ON CONFLICT (user_id, purpose) DO UPDATE SET
+  code_hash = excluded.code_hash,
+  expires_at = excluded.expires_at,
+  attempts = 0,
+  created_at = excluded.created_at
+`
+
+type PutAuthCodeParams struct {
+	UserID    string
+	Purpose   string
+	CodeHash  string
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+// 删账号不单独删会话：schema.sql 的 session.user_id 上是 ON DELETE CASCADE，
+// 删掉 app_user 那一行时一起消失。
+func (q *Queries) PutAuthCode(ctx context.Context, arg PutAuthCodeParams) error {
+	_, err := q.db.Exec(ctx, putAuthCode,
+		arg.UserID,
+		arg.Purpose,
+		arg.CodeHash,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const sessionByAccessHash = `-- name: SessionByAccessHash :one
@@ -139,8 +244,40 @@ func (q *Queries) SessionByRefreshHash(ctx context.Context, refreshHash string) 
 	return i, err
 }
 
+const setEmailVerified = `-- name: SetEmailVerified :exec
+UPDATE app_user
+SET email_verified_at = $1
+WHERE id = $2
+`
+
+type SetEmailVerifiedParams struct {
+	VerifiedAt pgtype.Timestamptz
+	ID         string
+}
+
+func (q *Queries) SetEmailVerified(ctx context.Context, arg SetEmailVerifiedParams) error {
+	_, err := q.db.Exec(ctx, setEmailVerified, arg.VerifiedAt, arg.ID)
+	return err
+}
+
+const updatePassword = `-- name: UpdatePassword :exec
+UPDATE app_user
+SET password_hash = $1
+WHERE id = $2
+`
+
+type UpdatePasswordParams struct {
+	PasswordHash string
+	ID           string
+}
+
+func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
+	_, err := q.db.Exec(ctx, updatePassword, arg.PasswordHash, arg.ID)
+	return err
+}
+
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, password_hash, created_at
+SELECT id, email, password_hash, email_verified_at, created_at
 FROM app_user
 WHERE email = $1
 `
@@ -152,13 +289,14 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (AppUser, error
 		&i.ID,
 		&i.Email,
 		&i.PasswordHash,
+		&i.EmailVerifiedAt,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, password_hash, created_at
+SELECT id, email, password_hash, email_verified_at, created_at
 FROM app_user
 WHERE id = $1
 `
@@ -170,6 +308,7 @@ func (q *Queries) UserByID(ctx context.Context, id string) (AppUser, error) {
 		&i.ID,
 		&i.Email,
 		&i.PasswordHash,
+		&i.EmailVerifiedAt,
 		&i.CreatedAt,
 	)
 	return i, err
