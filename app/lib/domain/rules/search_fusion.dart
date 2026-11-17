@@ -16,8 +16,10 @@ String searchEntryKey(EvidenceHit hit) {
 /// 把本地记录顺序与语义命中合成为一份排序后的记录列表。
 ///
 /// 本地条目保留原有先后并记下名次；语义命中按返回顺序记名次，同一个键只出现
-/// 一次。排序规则写在 [compareSearchEntries] 里：含原样命中的记录始终在前，
-/// 其余按两路名次的倒数之和从高到低，分数相同按本地名次、再按记录标识。
+/// 一次。语义命中按片段返回，同一来源的多个片段命中时保留名次最高的一次，
+/// 后来的片段不覆盖已有名次。排序规则写在 [compareSearchEntries] 里：含原样
+/// 命中的记录始终在前，其余按两路名次的倒数之和从高到低，分数相同按本地名次、
+/// 再按记录标识。
 List<SearchEntry> fuseSearch(
   List<SearchEntry> local,
   List<EvidenceHit> semantic,
@@ -35,9 +37,14 @@ List<SearchEntry> fuseSearch(
     rank++;
     final key = searchEntryKey(hit);
     final existing = byKey[key];
-    byKey[key] = existing == null
-        ? SearchEntry(key: key, hits: [hit], semanticRank: rank)
-        : existing.withSemanticRank(rank);
+    if (existing == null) {
+      byKey[key] = SearchEntry(key: key, hits: [hit], semanticRank: rank);
+      continue;
+    }
+    // 同一来源的多个片段命中时只记最好的一次；后面的片段不覆盖已记名次。
+    if (existing.semanticRank == null || rank < existing.semanticRank!) {
+      byKey[key] = existing.withSemanticRank(rank);
+    }
   }
   return byKey.values.toList()..sort(compareSearchEntries);
 }

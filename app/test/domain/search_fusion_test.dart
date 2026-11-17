@@ -78,6 +78,22 @@ void main() {
     expect(entry.semanticOnly, isFalse);
   });
 
+  test('同一来源的多个片段只取最高名次，后来的片段不把它压低', () {
+    final fused = fuseSearch(const [], [
+      _hit(identity: 'message:1', conversationId: 'conv-a', semantic: true),
+      _hit(identity: 'message:2', conversationId: 'conv-b', semantic: true),
+      _hit(identity: 'message:3', conversationId: 'conv-a', semantic: true),
+    ]);
+
+    expect(fused.map((entry) => entry.key), [
+      'conversation:conv-a',
+      'conversation:conv-b',
+    ]);
+    expect(fused.first.semanticRank, 1);
+    expect(fused.first.hits, hasLength(1));
+    expect(fused.first.hits.single.identity, 'message:1');
+  });
+
   test('只由语义找到的记录带语义标签，材料页按页单独成条', () {
     final fused = fuseSearch(const [], [
       _hit(identity: 'message:8', conversationId: 'conv-8', semantic: true),
