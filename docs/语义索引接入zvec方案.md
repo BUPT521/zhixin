@@ -148,7 +148,7 @@ zvec 的一次 `upsert` 只保证这一批文档本身，删除和写入之间�
 
 ### 4.7 后台线程与引擎参数
 
-zvec 的写入是单进程独占，知新本来就只有一个后台 isolate 持有索引，这一点不需要调整。`Zvec.initialize` 传入 `ConfigData`：查询与 `optimize` 各用 1 个线程，避免和界面线程争用小核；内存上限设 256 MB，约合六万条 1024 维 FP32 向量的本体，原先是 128 MB，两万条时留给索引结构、写入缓冲与查询的余量不足；它仍是上限，不是常驻占用。引擎要求这个值大于 100 MB。日志写到缓存目录的文件里，级别为警告，原因见 ADR-0022 实施方案第 6 节。`Doc`、`VectorQuery` 持有原生内存，`ZvecVectorIndex` 内部用 `try/finally` 调用 `destroy`，不把它们传出 isolate；跨线程传递的仍是现在的 `Map` 与 `List`。
+zvec 的写入是单进程独占，知新本来就只有一个后台 isolate 持有索引，这一点不需要调整。`Zvec.initialize` 传入 `ConfigData`：查询与 `optimize` 各用 1 个线程，避免和界面线程争用小核；内存上限设 2 GB，约合五十万条 1024 维 FP32 向量的本体，原先是 256 MB，20 万条时连本体都不够；它仍是上限，不是常驻占用。引擎要求这个值大于 100 MB。日志写到缓存目录的文件里，级别为警告，原因见 ADR-0022 实施方案第 6 节。`Doc`、`VectorQuery` 持有原生内存，`ZvecVectorIndex` 内部用 `try/finally` 调用 `destroy`，不把它们传出 isolate；跨线程传递的仍是现在的 `Map` 与 `List`。
 
 Flat 索引不需要 `optimize` 才能检索，但段数增加后检索会变慢。一次刷新写入超过 200 个文档时，在 `flush` 之后调用一次 `optimize` 合并段，两万条的耗时约 0.1 秒。
 

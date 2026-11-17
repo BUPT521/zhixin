@@ -135,11 +135,12 @@ class ZvecVectorIndex implements VectorIndex {
     } on Object catch (error) {
       throw VectorStoreFailure('向量引擎加载失败：$error');
     }
-    // 两万条 1024 维向量的本体约 78 MiB，128 MB 留给索引结构、写入缓冲与查询
-    // 的余量不足；调到 256 MB，约合六万条向量的本体。引擎文档要求上限大于
-    // 100 MB，这是上限而不是常驻占用；片段数超过十万时按 ADR-0022 再评估。
+    // 两万条 1024 维向量的本体约 78 MiB，256 MB 只合六万条；20 万条光本体
+    // 就要 781 MiB，加上索引结构、写入缓冲与查询的余量会超。调到 2 GB，约合
+    // 五十万条向量的本体。引擎文档要求上限大于 100 MB，这是上限而不是常驻
+    // 占用，索引类型与上限的结论见 ADR-0022 决定第 3 条。
     final config = ConfigData()
-      ..setMemoryLimit(256 * 1024 * 1024)
+      ..setMemoryLimit(2 * 1024 * 1024 * 1024)
       ..setQueryThreadCount(1)
       ..setOptimizeThreadCount(1);
     if (logDirectory != null && logDirectory.isNotEmpty) {
