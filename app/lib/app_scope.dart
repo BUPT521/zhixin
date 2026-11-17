@@ -666,7 +666,7 @@ class AppScopeState extends State<AppScope> {
     _refreshSemanticIndex();
   }
 
-  /// 后台补建索引；失败只写诊断记录，不打断界面，回答继续使用原文与关键词。
+  /// 后台补建索引；失败只写诊断记录，不打断界面，回答继续使用字面命中。
   ///
   /// 设置页的手动“更新索引”直接调用服务并捕获异常，看到的是就地说明。
   void _refreshSemanticIndexNow() {

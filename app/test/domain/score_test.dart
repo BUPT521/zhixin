@@ -56,7 +56,6 @@ void main() {
   group('权重表', () {
     test('权重等于各来源旧量纲上界除以 112', () {
       expect(ScoreSource.literal.weight, 1);
-      expect(ScoreSource.keyword.weight, closeTo(15 / 112, 1e-12));
       expect(ScoreSource.semantic.weight, closeTo(13 / 112, 1e-12));
       expect(ScoreSource.crossSession.weight, closeTo(60 / 112, 1e-12));
     });
@@ -65,8 +64,6 @@ void main() {
       expect(ScoreSource.literal.normalize(100), Score.zero);
       expect(ScoreSource.literal.normalize(112).value, closeTo(1, 1e-12));
       expect(ScoreSource.literal.normalize(106).value, closeTo(0.5, 1e-12));
-      expect(ScoreSource.keyword.normalize(14), Score.zero);
-      expect(ScoreSource.keyword.normalize(15).value, closeTo(15 / 112, 1e-12));
       expect(ScoreSource.semantic.normalize(10), Score.zero);
       expect(
         ScoreSource.semantic.normalize(13).value,
@@ -81,10 +78,13 @@ void main() {
 
     test('同一原始分在同一来源下映射稳定，越界由 clamp 夹住', () {
       expect(
-        ScoreSource.keyword.normalize(14.4),
-        ScoreSource.keyword.normalize(14.4),
+        ScoreSource.semantic.normalize(10.4),
+        ScoreSource.semantic.normalize(10.4),
       );
-      expect(ScoreSource.keyword.normalize(20).value, closeTo(15 / 112, 1e-12));
+      expect(
+        ScoreSource.semantic.normalize(20).value,
+        closeTo(13 / 112, 1e-12),
+      );
       expect(ScoreSource.semantic.normalize(9).value, 0);
       expect(ScoreSource.literal.normalize(50), Score.zero);
     });
@@ -105,11 +105,6 @@ void main() {
         lessThan(0),
       );
       expect(
-        keywordMatchScore(-2).compareTo(keywordMatchScore(-0.2)),
-        greaterThan(0),
-      );
-      expect(keywordMatchScore(null), ScoreSource.keyword.normalize(14));
-      expect(
         semanticMatchScore(0.1).compareTo(semanticMatchScore(0.9)),
         greaterThan(0),
       );
@@ -119,24 +114,22 @@ void main() {
       );
     });
 
-    test('四类来源的分数都落在 0–1，旧量纲的先后关系保持不变', () {
+    test('三类来源的分数都落在 0–1，旧量纲的先后关系保持不变', () {
       final literal = literalMatchScore(offset: 5, textLength: 1000);
       final cross = crossSessionScore(0);
-      final keyword = keywordMatchScore(-1);
       final semantic = semanticMatchScore(0.5);
-      for (final score in [literal, cross, keyword, semantic]) {
+      for (final score in [literal, cross, semantic]) {
         expect(score.value, inInclusiveRange(0, 1));
       }
       expect(literal.compareTo(cross), greaterThan(0));
-      expect(cross.compareTo(keyword), greaterThan(0));
-      expect(keyword.compareTo(semantic), greaterThan(0));
+      expect(cross.compareTo(semantic), greaterThan(0));
     });
   });
 
   group('跨来源合并', () {
     test('原样命中在前，其余按统一分数从高到低', () {
       final bundle = EvidenceBundle.merge('矩阵', const EvidenceScope.userAll(), [
-        _hit('message:1', keywordMatchScore(-1)),
+        _hit('message:1', semanticMatchScore(0.2)),
         _hit('message:2', crossSessionScore(0)),
         _hit(
           'message:3',

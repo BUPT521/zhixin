@@ -47,9 +47,10 @@ class SearchResults {
 /// 记录页的本地检索：不联网也能完成，覆盖讨论消息、题目、已提交作答与材料页。
 ///
 /// 用户查找先读全部命中再排序与去重，不按来源类别预先截断；[searchPage] 在
-/// 按学习记录去重之后分页，翻页时再向后读取候选，较早的命中也能取到。带语义
-/// 命中时本地候选固定读 [fusionWindow] 条，融合后从同一份结果里切片，翻页
-/// 不会重复或漏项。
+/// 按学习记录去重之后分页，翻页时再向后读取候选，较早的命中也能取到。带索引
+/// 命中时本地候选只取字面命中，索引给出的关键词与语义候选由调用方传入，同一
+/// 批命中只参与一次融合；本地窗口固定读 [fusionWindow] 条，融合后从同一份
+/// 结果里切片，翻页不会重复或漏项。
 class SearchService {
   SearchService({required this.evidence});
 
@@ -57,14 +58,15 @@ class SearchService {
 
   static const int defaultPageSize = 20;
 
-  /// 带语义命中时本地候选的固定窗口；超过这个条数的更早记录不进入本次融合。
+  /// 带索引命中时字面候选的固定窗口；超过这个条数的更早记录不进入本次融合。
   static const int fusionWindow = 2000;
 
   /// 取去重后的第 [offset] 条学习记录起的一页；[hasMore] 表示后面还有命中。
   ///
-  /// [semanticHits] 为空时按原来的窗口与放大逻辑读取，行为与没有语义检索时
-  /// 一致。传入语义命中时本地候选固定读 [fusionWindow] 条，与语义命中按名次
-  /// 融合后再切片；`nextOffset` 数的是融合后的记录数。
+  /// [semanticHits] 为空时先读本地窗口再按需扩大，与只有字面检索时一致，索引
+  /// 候选由 [EvidenceService.userSearchWindow] 一并取回。传入索引命中时本地
+  /// 窗口只取字面，关键词与语义候选不再重复读取，融合之后再切片；`nextOffset`
+  /// 数的是融合后的记录数。
   Future<SearchResults> searchPage(
     String query, {
     EvidenceScope scope = const EvidenceScope.userAll(),
@@ -81,6 +83,7 @@ class SearchService {
         trimmed,
         scope: scope,
         maxHits: fusionWindow,
+        includeIndex: false,
       );
       final fused = fuseSearch(_entries(window.hits), semanticHits);
       final page = fused.skip(offset).take(pageSize).toList(growable: false);

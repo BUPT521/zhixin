@@ -4,7 +4,7 @@ import '../../domain/rules/embedding.dart';
 import '../../domain/rules/search_terms.dart';
 import 'vector_index.dart';
 
-/// 纯 Dart 的语义索引，供服务层测试使用。
+/// 纯 Dart 的索引实现，供服务层测试使用；关键词匹配口径与 zvec 的实现一致。
 class MemoryVectorIndex implements VectorIndex {
   MemoryVectorIndex(this.spec);
 
@@ -139,8 +139,12 @@ class MemoryVectorIndex implements VectorIndex {
         final locatorJson = VectorIndex.jsonOf(source.locator);
         for (var chunk = 0; chunk < source.chunks.length; chunk++) {
           final content = source.chunks[chunk];
-          // 测试替身按子串包含判断关键词命中，与引擎的分词口径不必逐字一致。
-          final overlap = terms.where(content.contains).length;
+          // 测试替身按子串出现次数判断关键词相关度，与引擎按词频排序的口径
+          // 接近；分词细节不必逐字一致。
+          final overlap = terms.fold(
+            0,
+            (count, term) => count + _occurrences(content, term),
+          );
           if (overlap == 0) continue;
           final match = StoredVector(
             sourceKey: source.locator.sourceKey,
@@ -204,6 +208,18 @@ class MemoryVectorIndex implements VectorIndex {
 
   static String _entryKey(StoredVector match) =>
       '${match.sourceKey}#${match.chunk}';
+
+  /// 子串 [term] 在 [content] 里出现的次数，用来近似引擎的词频。
+  static int _occurrences(String content, String term) {
+    var count = 0;
+    var from = 0;
+    while (true) {
+      final at = content.indexOf(term, from);
+      if (at < 0) return count;
+      count++;
+      from = at + 1;
+    }
+  }
 
   Float32List _prepareVector(List<double> vector) {
     if (vector.length != spec.dim) {

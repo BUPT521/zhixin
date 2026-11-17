@@ -177,6 +177,20 @@ _rig() async {
   );
 }
 
+/// 用户查找的候选窗口，用例只需要合并后的命中。
+Future<EvidenceBundle> _search(
+  EvidenceService evidence,
+  String query, {
+  EvidenceScope scope = const EvidenceScope.userAll(),
+}) async {
+  final window = await evidence.userSearchWindow(query, scope: scope);
+  return EvidenceBundle(
+    query: window.query,
+    scope: window.scope,
+    hits: window.hits,
+  );
+}
+
 void main() {
   test('查询形态：题号、公式与带下划线的名称按原样查找', () {
     expect(shapeQuery('例 3-2').literal, isTrue);
@@ -194,7 +208,7 @@ void main() {
     final rig = await _rig();
     addTearDown(rig.db.close);
 
-    final entropy = await rig.evidence.userSearch('熵');
+    final entropy = await _search(rig.evidence, '熵');
     expect(entropy.hits, isNotEmpty);
     final page = entropy.hits.firstWhere(
       (hit) => hit.kind == EvidenceKind.materialPage,
@@ -212,7 +226,7 @@ void main() {
     expect(message.location.messageId, isNotNull);
     expect(message.opensDiscussion, isTrue);
 
-    final reference = await rig.evidence.userSearch('例 3-2');
+    final reference = await _search(rig.evidence, '例 3-2');
     final labels = reference.hits.map((hit) => hit.identity).toList();
     // 命中第 2 页与题目本身，但不命中「例 3-20」。
     expect(reference.hits.any((hit) => hit.location.pageNo == 2), isTrue);
@@ -227,7 +241,7 @@ void main() {
     );
     expect(labels, isNotEmpty);
 
-    final formula = await rig.evidence.userSearch('f(x)');
+    final formula = await _search(rig.evidence, 'f(x)');
     expect(formula.hits.any((hit) => hit.location.pageNo == 3), isTrue);
     expect(
       formula.hits.any(
@@ -238,7 +252,7 @@ void main() {
       isFalse,
     );
 
-    final underscore = await rig.evidence.userSearch('a_b');
+    final underscore = await _search(rig.evidence, 'a_b');
     expect(
       underscore.hits.any(
         (hit) => hit.location.materialId == rig.corpus.materialLinear,
@@ -262,7 +276,7 @@ void main() {
     expect(answer.opensLearning, isTrue);
     expect(answer.snippet, contains('P(A|B)'));
 
-    final drafts = await rig.evidence.userSearch('还没写完');
+    final drafts = await _search(rig.evidence, '还没写完');
     expect(
       drafts.hits.any((hit) => hit.kind == EvidenceKind.answer),
       isFalse,
@@ -274,21 +288,23 @@ void main() {
     final rig = await _rig();
     addTearDown(rig.db.close);
 
-    final empty = await rig.evidence.userSearch('   ');
+    final empty = await _search(rig.evidence, '   ');
     expect(empty.isEmpty, isTrue);
     expect(empty.hits, isEmpty);
 
-    final nothing = await rig.evidence.userSearch('量子纠缠');
+    final nothing = await _search(rig.evidence, '量子纠缠');
     expect(nothing.isEmpty, isTrue);
 
     // 用户选定一个目标，结果不包含其他目标与未归属记录。
-    final goalScoped = await rig.evidence.userSearch(
+    final goalScoped = await _search(
+      rig.evidence,
       'a_b',
       scope: EvidenceScope.userGoal(rig.corpus.goalProbability),
     );
     expect(goalScoped.isEmpty, isTrue);
 
-    final materialScoped = await rig.evidence.userSearch(
+    final materialScoped = await _search(
+      rig.evidence,
       'a_b',
       scope: EvidenceScope.userMaterial(rig.corpus.materialLinear),
     );
@@ -300,7 +316,7 @@ void main() {
       isTrue,
     );
 
-    final all = await rig.evidence.userSearch('a_b');
+    final all = await _search(rig.evidence, 'a_b');
     expect(
       all.hits.any(
         (hit) => hit.location.materialId == rig.corpus.materialLinear,
@@ -410,8 +426,10 @@ void main() {
     final rig = await _rig();
     addTearDown(rig.db.close);
 
-    final hit = (await rig.evidence.userSearch('熵')).hits
-        .firstWhere((hit) => hit.kind == EvidenceKind.materialPage);
+    final hit = (await _search(
+      rig.evidence,
+      '熵',
+    )).hits.firstWhere((hit) => hit.kind == EvidenceKind.materialPage);
     final current = await rig.repository.current(hit);
     expect(current, isNotNull);
     expect(current!.sourceVersion, hit.sourceVersion);
@@ -431,8 +449,10 @@ void main() {
       isTrue,
     );
 
-    final conversationHit = (await rig.evidence.userSearch('熵增')).hits
-        .firstWhere((hit) => hit.kind == EvidenceKind.message);
+    final conversationHit = (await _search(
+      rig.evidence,
+      '熵增',
+    )).hits.firstWhere((hit) => hit.kind == EvidenceKind.message);
     expect(
       await rig.repository.inScope(
         conversationHit,
@@ -447,17 +467,18 @@ void main() {
       where: 'material_id = ? AND page_no = ?',
       whereArgs: [rig.corpus.materialProbability, 3],
     );
-    final removed = (await rig.evidence.userSearch('f(x)')).hits
-        .where((hit) => hit.kind == EvidenceKind.materialPage)
-        .toList();
+    final removed = (await _search(
+      rig.evidence,
+      'f(x)',
+    )).hits.where((hit) => hit.kind == EvidenceKind.materialPage).toList();
     expect(removed.any((hit) => hit.location.pageNo == 3), isFalse);
   });
 
-  test('同一来源重复命中只保留一条，字面命中排在关键词命中之前', () async {
+  test('同一来源重复命中只保留一条，字面命中排在前面', () async {
     final rig = await _rig();
     addTearDown(rig.db.close);
 
-    final bundle = await rig.evidence.userSearch('熵');
+    final bundle = await _search(rig.evidence, '熵');
     final identities = bundle.hits.map((hit) => hit.identity).toList();
     expect(identities.toSet().length, identities.length);
 

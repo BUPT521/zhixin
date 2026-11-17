@@ -19,52 +19,35 @@ class SearchWindow {
   final bool more;
 }
 
-/// 检索入口：字面命中、关键词命中与语义候选在这里合并，交给上层按来源标识去重。
+/// 检索入口：字面命中、关键词与语义候选在这里合并，交给上层按来源标识去重。
 ///
 /// 两条路径的服务范围不同。用户查找默认覆盖本机全部记录，也可以只在选定的
 /// 目标或材料里找；回答前检索由调用方传入当前目标、材料与讨论，不会读到范围
-/// 之外的记录。字面与关键词命中来自当前业务库，SQL 已按范围过滤；语义候选由
-/// 索引提供，读取时另行核对版本与范围。关键词候选交给 BM25 排序，字面命中
-/// 固定在前面，题号、页码与原句不会因为排序被挤掉。
+/// 之外的记录。字面命中来自当前业务库，SQL 已按范围过滤；关键词与语义候选
+/// 都由索引一次给出，读取时另行核对版本与范围。字面命中固定在前面，题号、
+/// 页码与原句不会因为排序被挤掉。
 class EvidenceService {
   EvidenceService({required this.repository, this.semantic, this.crossSession});
 
   final EvidenceRepository repository;
 
-  /// 语义检索；没有配置或暂不可用时只使用原文与关键词。
+  /// 检索索引；索引不可用时只使用字面命中。
   final SemanticIndexService? semantic;
 
   /// 跨次综合；查询带有显式时间或回看意图时补齐同题的各次作答。
   final CrossSessionService? crossSession;
 
-  /// 用户主动查找：普通问句同时走关键词，题号、公式与原句只按原样匹配。
-  ///
-  /// [perKindLimit] 为空时读出全部命中再排序，查找结果不再按类别预先截断；
-  /// 调用方需要分批读取时用 [userSearchWindow]。
-  Future<EvidenceBundle> userSearch(
-    String query, {
-    EvidenceScope scope = const EvidenceScope.userAll(),
-    int? perKindLimit,
-    int? limit,
-  }) {
-    return _lookup(
-      query,
-      scope: scope,
-      perKindLimit: perKindLimit,
-      limit: limit,
-      includeKeyword: true,
-    );
-  }
-
   /// 分批读取的候选窗口：最多读到 [maxHits] 条，超出时 [SearchWindow.more]
   /// 为真，调用方据此扩大窗口或停止翻页。
   ///
-  /// 关键词得分来自 FTS5，同一命中的得分与读取窗口的大小无关。
+  /// [includeIndex] 为假时只取字面命中，供调用方已经在同一批索引结果上融合时
+  /// 使用，避免同一批候选被计入两次。
   Future<SearchWindow> userSearchWindow(
     String query, {
     EvidenceScope scope = const EvidenceScope.userAll(),
     int maxHits = 800,
     int batchSize = 100,
+    bool includeIndex = true,
   }) async {
     final shape = shapeQuery(query);
     if (shape.isEmpty) {
@@ -75,6 +58,7 @@ class EvidenceService {
       scope: scope,
       maxHits: maxHits,
       batchSize: batchSize,
+      includeIndex: includeIndex,
     );
     return SearchWindow(
       query: shape.text,
@@ -100,7 +84,6 @@ class EvidenceService {
       scope: scope,
       perKindLimit: perKindLimit,
       limit: limit,
-      includeKeyword: true,
       excludeConversationId: scope.conversationId,
       excludePage: excludePage,
       now: now,
@@ -113,7 +96,6 @@ class EvidenceService {
     String query, {
     required EvidenceScope scope,
     required int? perKindLimit,
-    required bool includeKeyword,
     int? limit,
     String? excludeConversationId,
     (String, int)? excludePage,
@@ -193,13 +175,15 @@ class EvidenceService {
     );
   }
 
-  /// 按批读取字面与关键词候选；每条路径最多读 [maxHits] 条，任一路径还有
-  /// 更早的命中时记为 [SearchWindow.more]。
+  /// 按批读取候选：字面命中每批最多读 [maxHits] 条，[includeIndex] 为真时
+  /// 再从索引一次取回关键词与语义候选。任一路径还有更早的命中时记为
+  /// [SearchWindow.more]。
   Future<({List<EvidenceHit> hits, bool more})> _loadWindow(
     QueryShape shape, {
     required EvidenceScope scope,
     required int maxHits,
     required int batchSize,
+    required bool includeIndex,
   }) async {
     final hits = <EvidenceHit>[];
     var more = false;
@@ -210,7 +194,6 @@ class EvidenceService {
         final page = await repository.searchBatch(
           shape.text,
           scope: scope,
-          literal: true,
           batchSize: batchSize,
           after: cursor,
         );
@@ -227,7 +210,7 @@ class EvidenceService {
     await loadLiteral();
     // 关键词与语义候选由索引一次给出，条数受 maxHits 限制，不再分批翻页。
     final service = semantic;
-    if (!shape.literal && service != null) {
+    if (includeIndex && !shape.literal && service != null) {
       final result = await service.search(
         shape.text,
         scope: scope,

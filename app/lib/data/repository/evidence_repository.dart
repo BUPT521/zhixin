@@ -1,17 +1,15 @@
 import 'package:drift/drift.dart' show Variable;
 
-import '../db/fts.dart';
 import '../db/raw_executor.dart';
 import '../db/drift/queries/evidence_scope.dart';
-import '../../domain/rules/search_terms.dart';
 
 import '../../domain/models/evidence.dart';
 import '../../domain/models/evidence_id.dart';
 import '../../domain/models/material.dart';
 import '../../domain/models/question.dart';
 import '../../domain/rules/embedding.dart';
+import '../../domain/rules/search_terms.dart';
 import '../../domain/rules/time_format.dart';
-import '../../domain/rules/query_shape.dart';
 import '../../domain/rules/score_weights.dart';
 
 /// 一条跨次作答：作答本身、所属记录与题目出处。
@@ -82,16 +80,17 @@ class EvidenceSearchPage {
   bool get hasMore => cursor != null;
 }
 
-/// 字面查找用带绑定参数的 `instr`，关键词检索用 FTS5，范围条件在 SQL 中执行。
+/// 字面查找用带绑定参数的 `instr`，范围条件在 SQL 中执行。
 ///
 /// 字面查找覆盖材料页、讨论消息、题目与已提交作答；`instr` 不对通配符做特殊
-/// 处理，因此 `a_b`、`f(x)` 只会命中同样的字符序列。读取命中之后还可以按记录
-/// 标识重新读一次当前记录，核对范围、版本与删除状态，供语义索引的迟到结果
-/// 使用。
+/// 处理，因此 `a_b`、`f(x)` 只会命中同样的字符序列。按词切分的查找不在这里：
+/// 关键词与语义候选由索引一次给出，见 `SemanticIndexService`。读取命中之后还
+/// 可以按记录标识重新读一次当前记录，核对范围、版本与删除状态，供语义索引的
+/// 迟到结果使用。
 ///
 /// 按记录编号读回的查询与语义索引的候选读取走 `queries/` 下的生成查询；四类
-/// 命中查询还要写 FTS5 的 `MATCH`、`bm25()` 与关键字排名，生成查询表达不了，
-/// 保留手写 SQL，但范围条件由 [EvidenceScopeRule] 这一份规则渲染进来。
+/// 字面命中查询带上下标判断，生成查询表达不了，保留手写 SQL，但范围条件由
+/// [EvidenceScopeRule] 这一份规则渲染进来。
 class EvidenceRepository {
   EvidenceRepository(this._db);
 
@@ -109,79 +108,27 @@ class EvidenceRepository {
   }) async {
     final text = query.trim();
     if (text.isEmpty) return const [];
-    final shape = QueryShape(text: text, literal: true);
-    return _search(
-      shape,
-      scope: scope,
-      limitPerKind: limitPerKind,
-      excludeConversationId: excludeConversationId,
-      excludePage: excludePage,
-      literal: true,
-    );
-  }
-
-  /// 按关键词查找，各类候选由 FTS5 按相关性选出。
-  Future<List<EvidenceHit>> keyword(
-    String query, {
-    required EvidenceScope scope,
-    int limitPerKind = 20,
-    String? excludeConversationId,
-    (String, int)? excludePage,
-  }) async {
-    final shape = shapeQuery(query);
-    if (shape.terms.isEmpty) return const [];
-    return _search(
-      QueryShape(text: shape.text, literal: false),
-      scope: scope,
-      limitPerKind: limitPerKind,
-      excludeConversationId: excludeConversationId,
-      excludePage: excludePage,
-      literal: false,
-    );
-  }
-
-  Future<List<EvidenceHit>> _search(
-    QueryShape shape, {
-    required EvidenceScope scope,
-    required int limitPerKind,
-    required bool literal,
-    String? excludeConversationId,
-    (String, int)? excludePage,
-  }) async {
-    final hits = <EvidenceHit>[
+    return [
       ...await _pages(
-        shape,
+        text,
         scope,
         limit: limitPerKind,
-        literal: literal,
-        rankBeforeLimit: !literal,
         excludePage: excludePage,
       ),
       ...await _messages(
-        shape,
+        text,
         scope,
         limit: limitPerKind,
-        literal: literal,
-        rankBeforeLimit: !literal,
         excludeConversationId: excludeConversationId,
       ),
-      ...await _questions(
-        shape,
-        scope,
-        limit: limitPerKind,
-        literal: literal,
-        rankBeforeLimit: !literal,
-      ),
+      ...await _questions(text, scope, limit: limitPerKind),
       ...await _answers(
-        shape,
+        text,
         scope,
         limit: limitPerKind,
-        literal: literal,
-        rankBeforeLimit: !literal,
         excludeConversationId: excludeConversationId,
       ),
     ];
-    return hits;
   }
 
   /// 分批读取用户查找的候选：每类来源最多读 [batchSize] 条，从 [after] 之后
@@ -193,7 +140,6 @@ class EvidenceRepository {
   Future<EvidenceSearchPage> searchBatch(
     String query, {
     required EvidenceScope scope,
-    required bool literal,
     int batchSize = 100,
     SearchCursor? after,
     String? excludeConversationId,
@@ -201,40 +147,30 @@ class EvidenceRepository {
   }) async {
     final text = query.trim();
     if (text.isEmpty) return const EvidenceSearchPage(hits: []);
-    final shape = literal
-        ? QueryShape(text: text, literal: true)
-        : shapeQuery(text);
-    if (!literal && shape.terms.isEmpty) {
-      return const EvidenceSearchPage(hits: []);
-    }
     final pages = await _pages(
-      shape,
+      text,
       scope,
       limit: batchSize + 1,
-      literal: literal,
       excludePage: excludePage,
       after: after,
     );
     final messages = await _messages(
-      shape,
+      text,
       scope,
       limit: batchSize + 1,
-      literal: literal,
       excludeConversationId: excludeConversationId,
       after: after,
     );
     final questions = await _questions(
-      shape,
+      text,
       scope,
       limit: batchSize + 1,
-      literal: literal,
       after: after,
     );
     final answers = await _answers(
-      shape,
+      text,
       scope,
       limit: batchSize + 1,
-      literal: literal,
       excludeConversationId: excludeConversationId,
       after: after,
     );
@@ -296,25 +232,6 @@ class EvidenceRepository {
     return _loadAll(
       query,
       scope: scope,
-      literal: true,
-      excludeConversationId: excludeConversationId,
-      excludePage: excludePage,
-      batchSize: batchSize,
-    );
-  }
-
-  /// 按关键词读出全部命中，分批方式与 [allLiteral] 相同。
-  Future<List<EvidenceHit>> allKeyword(
-    String query, {
-    required EvidenceScope scope,
-    String? excludeConversationId,
-    (String, int)? excludePage,
-    int batchSize = 200,
-  }) {
-    return _loadAll(
-      query,
-      scope: scope,
-      literal: false,
       excludeConversationId: excludeConversationId,
       excludePage: excludePage,
       batchSize: batchSize,
@@ -324,7 +241,6 @@ class EvidenceRepository {
   Future<List<EvidenceHit>> _loadAll(
     String query, {
     required EvidenceScope scope,
-    required bool literal,
     String? excludeConversationId,
     (String, int)? excludePage,
     required int batchSize,
@@ -336,7 +252,6 @@ class EvidenceRepository {
       final page = await searchBatch(
         query,
         scope: scope,
-        literal: literal,
         batchSize: batchSize,
         after: cursor,
         excludeConversationId: excludeConversationId,
@@ -687,13 +602,11 @@ class EvidenceRepository {
       _db.selectGenerated((db) => hitInScope(db, hit, scope));
 
   Future<List<EvidenceHit>> _pages(
-    QueryShape shape,
+    String text,
     EvidenceScope scope, {
     required int limit,
-    required bool literal,
     (String, int)? excludePage,
     SearchCursor? after,
-    bool rankBeforeLimit = false,
   }) async {
     final before = <String>[];
     final beforeArgs = <Object>[];
@@ -708,16 +621,11 @@ class EvidenceRepository {
       );
       beforeArgs.addAll([pageAfter.$1, pageAfter.$1, pageAfter.$2]);
     }
-    final fts = literal
-        ? null
-        : _ftsSearch('material_page_fts', shape.terms, 'mp.rowid');
-    final (match, matchArgs) = fts == null
-        ? _literalMatch([
-            'mp.content',
-            "COALESCE(mp.label, '')",
-            'm.title',
-          ], shape.text)
-        : (fts.match, [fts.query]);
+    final (match, matchArgs) = _literalMatch([
+      'mp.content',
+      "COALESCE(mp.label, '')",
+      'm.title',
+    ], text);
     final rows = await _db.selectGenerated((db) async {
       final materials = db.alias(db.materials, 'm');
       final pages = db.alias(db.materialPages, 'mp');
@@ -737,14 +645,13 @@ class EvidenceRepository {
       ];
       return db
           .customSelect(
-            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, mp.material_id, mp.page_no, mp.label, mp.content, '
+            'SELECT mp.material_id, mp.page_no, mp.label, mp.content, '
             'mp.updated_at, m.title AS material_title, m.source_file_name '
             'FROM material_page mp JOIN material m ON m.id = mp.material_id '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}mp.material_id DESC, mp.page_no '
+            'ORDER BY mp.material_id DESC, mp.page_no '
             'LIMIT ?',
             variables: [
-              if (fts != null) Variable<String>(fts.query),
               for (final value in args) Variable(value),
               Variable<int>(limit),
             ],
@@ -758,21 +665,20 @@ class EvidenceRepository {
           final label = data['label'] as String?;
           final pageNo = data['page_no']! as int;
           final materialId = data['material_id']! as String;
-          final offset = literal
-              ? _literalOffset(content, label, shape.text)
-              : _termOffset(content, shape.terms);
+          final offset = _literalOffset(content, label, text);
           return EvidenceHit(
             kind: EvidenceKind.materialPage,
             identity: EvidenceId.materialPage(materialId, pageNo).value,
             title:
                 '《${data['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(data['source_file_name'] as String?))}',
-            snippet: searchSnippet(content, _termsFor(shape, literal)),
+            snippet: searchSnippet(content, [text]),
             text: content,
-            matchedText: _matchedText(content, shape, literal, offset),
-            literal: literal,
-            score: fts == null
-                ? literalMatchScore(offset: offset, textLength: content.length)
-                : keywordMatchScore(data['keyword_rank'] as num?),
+            matchedText: _matchedText(content, text, offset),
+            literal: true,
+            score: literalMatchScore(
+              offset: offset,
+              textLength: content.length,
+            ),
             location: EvidenceLocation(
               materialId: materialId,
               pageNo: pageNo,
@@ -786,13 +692,11 @@ class EvidenceRepository {
   }
 
   Future<List<EvidenceHit>> _messages(
-    QueryShape shape,
+    String text,
     EvidenceScope scope, {
     required int limit,
-    required bool literal,
     String? excludeConversationId,
     SearchCursor? after,
-    bool rankBeforeLimit = false,
   }) async {
     final before = <String>[
       "m.role IN ('user', 'assistant')",
@@ -807,12 +711,7 @@ class EvidenceRepository {
       before.add('m.id < ?');
       beforeArgs.add(after.messageId ?? '');
     }
-    final fts = literal
-        ? null
-        : _ftsSearch('message_fts', shape.terms, 'm.rowid');
-    final (match, matchArgs) = fts == null
-        ? _literalMatch(['m.content'], shape.text)
-        : (fts.match, [fts.query]);
+    final (match, matchArgs) = _literalMatch(['m.content'], text);
     final rows = await _db.selectGenerated((db) async {
       final conversations = db.alias(db.conversations, 'c');
       final messages = db.alias(db.messages, 'm');
@@ -833,12 +732,11 @@ class EvidenceRepository {
       ];
       return db
           .customSelect(
-            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, m.id, m.conversation_id, m.content, m.created_at, c.title '
+            'SELECT m.id, m.conversation_id, m.content, m.created_at, c.title '
             'FROM message m JOIN conversation c ON c.id = m.conversation_id '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}m.id DESC LIMIT ?',
+            'ORDER BY m.id DESC LIMIT ?',
             variables: [
-              if (fts != null) Variable<String>(fts.query),
               for (final value in args) Variable(value),
               Variable<int>(limit),
             ],
@@ -851,20 +749,19 @@ class EvidenceRepository {
           final content = data['content']! as String;
           final messageId = data['id']! as String;
           final conversationId = data['conversation_id']! as String;
-          final offset = literal
-              ? _literalOffset(content, null, shape.text)
-              : _termOffset(content, shape.terms);
+          final offset = _literalOffset(content, null, text);
           return EvidenceHit(
             kind: EvidenceKind.message,
             identity: EvidenceId.message(messageId).value,
             title: (data['title'] as String?) ?? '一次讨论',
-            snippet: searchSnippet(content, _termsFor(shape, literal)),
+            snippet: searchSnippet(content, [text]),
             text: content,
-            matchedText: _matchedText(content, shape, literal, offset),
-            literal: literal,
-            score: fts == null
-                ? literalMatchScore(offset: offset, textLength: content.length)
-                : keywordMatchScore(data['keyword_rank'] as num?),
+            matchedText: _matchedText(content, text, offset),
+            literal: true,
+            score: literalMatchScore(
+              offset: offset,
+              textLength: content.length,
+            ),
             location: EvidenceLocation(
               conversationId: conversationId,
               messageId: messageId,
@@ -878,12 +775,10 @@ class EvidenceRepository {
   }
 
   Future<List<EvidenceHit>> _questions(
-    QueryShape shape,
+    String text,
     EvidenceScope scope, {
     required int limit,
-    required bool literal,
     SearchCursor? after,
-    bool rankBeforeLimit = false,
   }) async {
     final before = <String>[
       'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)',
@@ -893,16 +788,11 @@ class EvidenceRepository {
       before.add('c.id < ?');
       beforeArgs.add(after.questionId ?? '');
     }
-    final fts = literal
-        ? null
-        : _ftsSearch('message_fts', shape.terms, _questionMessageRowId);
-    final (match, matchArgs) = fts == null
-        ? _literalMatch([
-            "COALESCE($_firstUserContent, '')",
-            "COALESCE(c.source_ref, '')",
-            "COALESCE(c.context_text, '')",
-          ], shape.text)
-        : (fts.match, [fts.query]);
+    final (match, matchArgs) = _literalMatch([
+      "COALESCE($_firstUserContent, '')",
+      "COALESCE(c.source_ref, '')",
+      "COALESCE(c.context_text, '')",
+    ], text);
     final rows = await _db.selectGenerated((db) async {
       final conversations = db.alias(db.conversations, 'c');
       final scopeSql = renderInSql(
@@ -921,15 +811,14 @@ class EvidenceRepository {
       ];
       return db
           .customSelect(
-            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, c.id AS conversation_id, '
+            'SELECT c.id AS conversation_id, '
             '$_questionMessageId AS question_message_id, '
             '$_firstUserContent AS stem, c.source_ref, c.context_text, c.title, '
             'c.page_no, c.created_at, c.updated_at '
             'FROM conversation c '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}c.id DESC LIMIT ?',
+            'ORDER BY c.id DESC LIMIT ?',
             variables: [
-              if (fts != null) Variable<String>(fts.query),
               for (final value in args) Variable(value),
               Variable<int>(limit),
             ],
@@ -942,30 +831,26 @@ class EvidenceRepository {
           final sourceRef = data['source_ref'] as String?;
           final context = (data['context_text'] as String?) ?? '';
           final stem = (data['stem'] as String?) ?? '';
-          final text = '$stem\n${sourceRef ?? ''}';
-          final offset = literal
-              ? _literalOffset(
-                  '$stem\n${sourceRef ?? ''}\n$context',
-                  null,
-                  shape.text,
-                )
-              : _termOffset(text, shape.terms);
+          final content = '$stem\n${sourceRef ?? ''}';
+          final offset = _literalOffset(
+            '$stem\n${sourceRef ?? ''}\n$context',
+            null,
+            text,
+          );
           final conversationId = data['conversation_id']! as String;
           return EvidenceHit(
             kind: EvidenceKind.question,
             identity: EvidenceId.question(conversationId).value,
             title: _conversationTitle(sourceRef, data['title'] as String?),
-            snippet: searchSnippet(text, _termsFor(shape, literal)),
-            text: text,
-            matchedText: _matchedText(text, shape, literal, offset),
-            literal: literal,
-            score: fts == null
-                ? literalMatchScore(
-                    offset: offset,
-                    textLength: text.length,
-                    kindPriority: 2,
-                  )
-                : keywordMatchScore(data['keyword_rank'] as num?),
+            snippet: searchSnippet(content, [text]),
+            text: content,
+            matchedText: _matchedText(content, text, offset),
+            literal: true,
+            score: literalMatchScore(
+              offset: offset,
+              textLength: content.length,
+              kindPriority: 2,
+            ),
             location: EvidenceLocation(
               conversationId: conversationId,
               messageId: data['question_message_id'] as String?,
@@ -983,13 +868,11 @@ class EvidenceRepository {
   }
 
   Future<List<EvidenceHit>> _answers(
-    QueryShape shape,
+    String text,
     EvidenceScope scope, {
     required int limit,
-    required bool literal,
     String? excludeConversationId,
     SearchCursor? after,
-    bool rankBeforeLimit = false,
   }) async {
     final before = <String>['a.submitted_at IS NOT NULL'];
     final beforeArgs = <Object>[];
@@ -1003,16 +886,11 @@ class EvidenceRepository {
       before.add('(a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))');
       beforeArgs.addAll([submittedAfter, submittedAfter, answerId]);
     }
-    final fts = literal
-        ? null
-        : _ftsSearch('attempt_fts', shape.terms, 'a.rowid');
-    final (match, matchArgs) = fts == null
-        ? _literalMatch([
-            "COALESCE(a.user_answer, '')",
-            "COALESCE(a.solution, '')",
-            "COALESCE(a.feedback, '')",
-          ], shape.text)
-        : (fts.match, [fts.query]);
+    final (match, matchArgs) = _literalMatch([
+      "COALESCE(a.user_answer, '')",
+      "COALESCE(a.solution, '')",
+      "COALESCE(a.feedback, '')",
+    ], text);
     final rows = await _db.selectGenerated((db) async {
       final conversations = db.alias(db.conversations, 'c');
       final attempts = db.alias(db.attempts, 'a');
@@ -1033,13 +911,12 @@ class EvidenceRepository {
       ];
       return db
           .customSelect(
-            'SELECT ${fts?.rank ?? 'NULL'} AS keyword_rank, a.id, a.conversation_id, a.user_answer, a.solution, '
+            'SELECT a.id, a.conversation_id, a.user_answer, a.solution, '
             'a.feedback, a.submitted_at, c.title, c.source_ref '
             'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY ${rankBeforeLimit ? 'keyword_rank, ' : ''}a.submitted_at DESC, a.id DESC LIMIT ?',
+            'ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?',
             variables: [
-              if (fts != null) Variable<String>(fts.query),
               for (final value in args) Variable(value),
               Variable<int>(limit),
             ],
@@ -1050,34 +927,30 @@ class EvidenceRepository {
         .map((row) {
           final data = row.data;
           final answer = (data['user_answer'] as String?) ?? '';
-          final text =
+          final content =
               '$answer\n${data['solution'] ?? ''}\n'
               '${data['feedback'] ?? ''}';
-          final offset = literal
-              ? _literalOffset(text, null, shape.text)
-              : _termOffset(text, shape.terms);
+          final offset = _literalOffset(content, null, text);
           final attemptId = data['id']! as String;
           return EvidenceHit(
             kind: EvidenceKind.answer,
             identity: EvidenceId.attempt(attemptId).value,
             title: _answerTitle(attemptId),
-            snippet: searchSnippet(text, _termsFor(shape, literal)),
-            text: text,
-            matchedText: _matchedText(text, shape, literal, offset),
-            literal: literal,
-            score: fts == null
-                ? literalMatchScore(
-                    offset: offset,
-                    textLength: text.length,
-                    kindPriority: 1,
-                  )
-                : keywordMatchScore(data['keyword_rank'] as num?),
+            snippet: searchSnippet(content, [text]),
+            text: content,
+            matchedText: _matchedText(content, text, offset),
+            literal: true,
+            score: literalMatchScore(
+              offset: offset,
+              textLength: content.length,
+              kindPriority: 1,
+            ),
             location: EvidenceLocation(
               conversationId: data['conversation_id']! as String,
               attemptId: attemptId,
               offset: offset,
             ),
-            sourceVersion: evidenceSourceVersion(text, data['submitted_at']),
+            sourceVersion: evidenceSourceVersion(content, data['submitted_at']),
             createdAt: optionalDateTime('${data['submitted_at'] ?? ''}'),
             sourceRef: data['source_ref'] as String?,
           );
@@ -1092,26 +965,12 @@ class EvidenceRepository {
     return title ?? '一次讨论';
   }
 
-  static String _matchedText(
-    String content,
-    QueryShape shape,
-    bool literal,
-    int offset,
-  ) {
-    if (literal) {
-      if (offset <= 0) return shape.text;
-      final start = (offset - 1).clamp(0, content.length);
-      final end = (start + 40).clamp(0, content.length);
-      return content.substring(start, end);
-    }
-    for (final term in shape.terms) {
-      if (content.toLowerCase().contains(term.toLowerCase())) return term;
-    }
-    return shape.text;
+  static String _matchedText(String content, String text, int offset) {
+    if (offset <= 0) return text;
+    final start = (offset - 1).clamp(0, content.length);
+    final end = (start + 40).clamp(0, content.length);
+    return content.substring(start, end);
   }
-
-  static List<String> _termsFor(QueryShape shape, bool literal) =>
-      literal ? [shape.text] : shape.terms;
 
   static int _literalOffset(String content, String? label, String text) {
     final lower = content.toLowerCase();
@@ -1120,15 +979,6 @@ class EvidenceRepository {
     final labelText = (label ?? '').toLowerCase();
     final labelFound = labelText.indexOf(text.toLowerCase());
     return labelFound >= 0 ? labelFound + 1 : 0;
-  }
-
-  static int _termOffset(String content, List<String> terms) {
-    final lower = content.toLowerCase();
-    for (final term in terms) {
-      final found = lower.indexOf(term.toLowerCase());
-      if (found >= 0) return found + 1;
-    }
-    return 0;
   }
 
   /// 字面匹配：命中之后不能紧接数字、字母或下划线，避免 `例 3-2` 命中
@@ -1152,32 +1002,11 @@ class EvidenceRepository {
     return ('(${parts.join(' OR ')})', args);
   }
 
-  static ({String match, String rank, String query}) _ftsSearch(
-    String table,
-    List<String> terms,
-    String keyColumn,
-  ) {
-    final query = ftsQuery({for (final term in terms) ...bigrams(term)});
-    return (
-      match:
-          '$keyColumn IN (SELECT rowid FROM "$table" WHERE "$table" MATCH ?)',
-      rank:
-          '(SELECT bm25("$table") FROM "$table" '
-          'WHERE "$table" MATCH ? AND rowid = $keyColumn)',
-      query: query.isEmpty ? '""' : query,
-    );
-  }
-
   /// 题目视图的题目消息：优先取记录上记下的编号，没有时取第一条用户消息。
   static const String _questionMessageId =
       'COALESCE(c.question_message_id, (SELECT m.id FROM message m '
       "WHERE m.conversation_id = c.id AND m.role = 'user' "
       'ORDER BY m.id LIMIT 1))';
-
-  /// 题目消息在 FTS 索引里的行号：索引按业务表的隐式 rowid 关联，而这里只有
-  /// 消息主键，先按主键查出那一行的 rowid 再跟索引比对。
-  static const String _questionMessageRowId =
-      '(SELECT mm.rowid FROM message mm WHERE mm.id = $_questionMessageId)';
 
   /// 题干：取题目消息的正文；没有题目消息时为空。
   static const String _firstUserContent =

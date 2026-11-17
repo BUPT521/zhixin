@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:zhixin/data/db/app_database.dart';
-import 'package:zhixin/data/db/fts.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/schema.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
@@ -25,13 +24,14 @@ void main() {
     );
     final names = {for (final row in tables) row['name']! as String};
     expect(names, containsAll(schemaTableNames()));
-    // 关键词索引表与影子表不进业务表计数，也不参与版本采集。
-    final businessNames = names.where(
-      (name) =>
-          !name.startsWith('rev_stage_') && !ftsTableNames().contains(name),
-    );
+    // 暂存表不进业务表计数，也不参与版本采集；旧版关键词索引表已删除。
+    final businessNames = names.where((name) => !name.startsWith('rev_stage_'));
     expect(businessNames.length, schemaTableNames().length);
-    expect(names, containsAll(ftsTableNames()));
+    expect(
+      names.where((name) => name.endsWith('_fts')),
+      isEmpty,
+      reason: '关键词检索并入索引之后业务库不再有 FTS5 表（ADR-0024）',
+    );
     final classified = {
       ...versionedTableNames,
       ...revisionMetadataTables,
@@ -39,13 +39,6 @@ void main() {
     };
     for (final table in businessNames) {
       expect(classified, contains(table), reason: '表 $table 没有登记版本分类');
-    }
-    for (final table in versionedTableNames) {
-      expect(
-        ftsTableNames(),
-        isNot(contains(table)),
-        reason: '关键词索引表 $table 不能登记为业务表',
-      );
     }
     final triggers = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'trigger'",
@@ -415,5 +408,25 @@ void main() {
     expect(attemptColumns, contains('conversation_id'));
     expect(attemptColumns, isNot(contains('question_id')));
     expect(await rebuilt.rawQuery('PRAGMA foreign_key_check'), isEmpty);
+  });
+
+  test('打开旧库时删除关键词索引留下的派生表与触发器', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    // 关键词检索并入索引之前的派生对象；新库不再创建，打开时清理。
+    await db.execute('CREATE TABLE material_page_fts (idx TEXT)');
+    await db.execute(
+      'CREATE TRIGGER fts_message_fts_ai AFTER INSERT ON message '
+      'BEGIN SELECT 1; END',
+    );
+
+    await RevisionEngine().initialize(db);
+
+    final rows = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE name = 'material_page_fts' "
+      "OR name = 'fts_message_fts_ai'",
+    );
+    expect(rows, isEmpty);
+    expect(await db.rawQuery('PRAGMA integrity_check'), isNotEmpty);
   });
 }

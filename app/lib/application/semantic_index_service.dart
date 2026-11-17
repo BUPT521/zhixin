@@ -15,10 +15,10 @@ import '../domain/rules/time_policy.dart';
 import 'embedding_client.dart';
 import 'service_runtime.dart';
 
-/// 语义检索不可用的原因；失败时调用方继续使用原文与关键词。
+/// 语义检索不可用的原因；失败时调用方继续使用字面命中。
 enum SemanticFailure { none, notConfigured, timeout, cancelled, error }
 
-/// 一次语义检索的结果；[hits] 已经按业务记录核对过版本与范围。
+/// 一次索引检索的结果；[hits] 已经按业务记录核对过版本与范围。
 class SemanticResult {
   const SemanticResult({
     this.hits = const [],
@@ -76,12 +76,13 @@ class SemanticCancelToken {
   void cancel() => _cancelled = true;
 }
 
-/// 语义索引服务：后台按来源版本补建索引，查询时先取候选再核对业务记录。
+/// 检索索引服务：后台按来源版本补建索引，查询时先取候选再核对业务记录。
 ///
-/// 索引按模型、维度与文本处理版本区分；数据代次变化（恢复、导入、清空）时
-/// 整份索引重建。写入前重新读取来源版本，等待嵌入期间被更正或删除的内容不会
-/// 进入索引。查询有独立的超时与取消，失败时返回空结果，调用方继续使用原文
-/// 与关键词。
+/// 索引同时服务关键词与语义：没有配置嵌入模型时只建全文索引，关键词检索照常
+/// 可用；配置之后加上向量字段，两路在引擎内一次融合。索引按模型、维度与文本
+/// 处理版本区分；数据代次变化（恢复、导入、清空）时整份索引重建。写入前重新
+/// 读取来源版本，等待嵌入期间被更正或删除的内容不会进入索引。查询有独立的
+/// 超时与取消，失败时返回空结果，调用方继续使用字面命中。
 class SemanticIndexService {
   SemanticIndexService({
     required this.repository,

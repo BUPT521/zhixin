@@ -90,8 +90,9 @@ class MemoryRecallService {
 
   /// 按记忆正文的相关性给候选排名次；没有查询或只有一个候选时保持原顺序。
   ///
-  /// 记忆条数远小于材料页与消息，因此不另建索引表（ADR-0013 第 7 条）：用
-  /// 与关键词索引同一套二元组切分，按命中的词数打分，命中的词越多名次越前。
+  /// 记忆条数远小于材料页与消息，因此不进入 zvec 索引（ADR-0024 的代价与
+  /// 边界一节保留了这条独立性）：用同一套二元组切分，按命中的词数打分，
+  /// 命中的词越多名次越前。
   static Map<int, int> _relevanceRanks(List<Memory> memories, String query) {
     if (memories.length < 2 || query.trim().isEmpty) return const {};
     final wanted = bigrams(query).toSet();

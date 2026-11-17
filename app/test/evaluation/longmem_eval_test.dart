@@ -6,14 +6,18 @@ import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/cross_session_service.dart';
+import 'package:zhixin/application/semantic_index_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
+import 'package:zhixin/data/vector/memory_vector_index.dart';
+import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/question.dart';
+import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/domain/rules/time_format.dart';
 
 import '../support/test_db.dart';
@@ -430,15 +434,18 @@ class CaseOutcome {
   final bool promptOk;
   final String? failureStage;
 
-  /// 检索这一段花的时间，含关键词排序；对照等待时间用。
+  /// 检索这一段花的时间，含索引查询；对照等待时间用。
   int elapsedMs = 0;
 }
 
 class _Harness {
-  _Harness({required this.repository, required this.ids});
+  _Harness({required this.repository, required this.ids, required this.index});
 
   final EvidenceRepository repository;
   final CorpusIds ids;
+
+  /// 纯文本索引：没有配置嵌入模型，只按关键词检索。
+  final SemanticIndexService index;
 
   Future<List<EvidenceHit>> retrieve(
     String strategy,
@@ -447,28 +454,19 @@ class _Harness {
   ) async {
     final normalized = evalCase.query.trim();
     switch (strategy) {
-      case 'keyword':
-        return EvidenceBundle.merge(
-          normalized,
-          scope,
-          await repository.keyword(normalized, scope: scope, limitPerKind: 40),
-        ).hits;
       case 'literal':
         return EvidenceBundle.merge(
           normalized,
           scope,
           await repository.literal(normalized, scope: scope, limitPerKind: 40),
         ).hits;
-      case 'bm25':
-        // 关键词候选已经由 FTS5 索引按 bm25() 排好，这里只折成分数。
-        final keywordHits = await repository.keyword(
-          normalized,
-          scope: scope,
-          limitPerKind: 40,
-        );
-        return keywordHits;
+      case 'index':
+        return (await index.search(normalized, scope: scope, limit: 40)).hits;
       case 'hybrid':
-        final service = EvidenceService(repository: repository);
+        final service = EvidenceService(
+          repository: repository,
+          semantic: index,
+        );
         return (await service.forAnswer(
           query: normalized,
           scope: scope,
@@ -479,6 +477,7 @@ class _Harness {
       case 'cross':
         final service = EvidenceService(
           repository: repository,
+          semantic: index,
           crossSession: CrossSessionService(repository: repository),
         );
         return (await service.forAnswer(
@@ -620,21 +619,24 @@ String _report(
 }
 
 void main() {
-  test('LongMemEval 式固定用例：关键词、原文与混合检索的对照', () async {
+  test('LongMemEval 式固定用例：字面、索引、混合与跨次检索的对照', () async {
     final db = await openTestDb();
     addTearDown(db.close);
     final ids = await _seed(db);
-    final harness = _Harness(repository: EvidenceRepository(db), ids: ids);
+    final repository = EvidenceRepository(db);
+    final index = SemanticIndexService(
+      repository: repository,
+      indexPath: '',
+      vectorStoreOpener: () async =>
+          DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
+    );
+    addTearDown(index.close);
+    await index.refresh();
+    final harness = _Harness(repository: repository, ids: ids, index: index);
 
     final outcomes = <CaseOutcome>[];
     final report = StringBuffer();
-    for (final strategy in const [
-      'keyword',
-      'literal',
-      'bm25',
-      'hybrid',
-      'cross',
-    ]) {
+    for (final strategy in const ['literal', 'index', 'hybrid', 'cross']) {
       final result = await _run(strategy, harness, _cases);
       outcomes.addAll(result);
       report.write(_report(strategy, _cases, result));
@@ -648,31 +650,30 @@ void main() {
             .fold(0, (sum, outcome) => sum + pick(outcome));
 
     final hybridRetrieved = total('hybrid', (outcome) => outcome.retrieved);
-    final keywordRetrieved = total('keyword', (outcome) => outcome.retrieved);
+    final literalRetrieved = total('literal', (outcome) => outcome.retrieved);
+    final indexRetrieved = total('index', (outcome) => outcome.retrieved);
     final hybridInContext = total('hybrid', (outcome) => outcome.inContext);
-    final keywordInContext = total('keyword', (outcome) => outcome.inContext);
+    final literalInContext = total('literal', (outcome) => outcome.inContext);
+    final indexInContext = total('index', (outcome) => outcome.inContext);
     expect(
       hybridRetrieved,
-      greaterThanOrEqualTo(keywordRetrieved),
-      reason: '混合检索找回的证据不应少于纯关键词',
+      greaterThanOrEqualTo(literalRetrieved),
+      reason: '混合检索找回的证据不应少于只读字面',
     );
     expect(
       hybridInContext,
-      greaterThanOrEqualTo(keywordInContext),
-      reason: '混合检索进入上下文的必要证据不应少于纯关键词',
-    );
-
-    final bm25Retrieved = total('bm25', (outcome) => outcome.retrieved);
-    final bm25InContext = total('bm25', (outcome) => outcome.inContext);
-    expect(
-      bm25InContext,
-      greaterThanOrEqualTo(keywordInContext),
-      reason: 'BM25 排序后进入上下文的必要证据不应少于原有排序',
+      greaterThanOrEqualTo(literalInContext),
+      reason: '混合检索进入上下文的必要证据不应少于只读字面',
     );
     expect(
-      bm25Retrieved,
-      greaterThanOrEqualTo(keywordRetrieved),
-      reason: 'BM25 排序不丢候选',
+      hybridRetrieved,
+      greaterThanOrEqualTo(indexRetrieved),
+      reason: '字面命中并入之后，找回的证据不应少于只读索引',
+    );
+    expect(
+      hybridInContext,
+      greaterThanOrEqualTo(indexInContext),
+      reason: '字面命中并入之后，进入上下文的必要证据不应少于只读索引',
     );
 
     final crossInContext = total('cross', (outcome) => outcome.inContext);
@@ -694,28 +695,24 @@ void main() {
     );
 
     final rankCase = outcomes.firstWhere(
-      (outcome) => outcome.strategy == 'bm25' && outcome.caseId == 'rank-1',
+      (outcome) => outcome.strategy == 'index' && outcome.caseId == 'rank-1',
+    );
+    final literalRankCase = outcomes.firstWhere(
+      (outcome) => outcome.strategy == 'literal' && outcome.caseId == 'rank-1',
     );
     // ignore: avoid_print
     print(
-      'BM25 对比：进入上下文 keyword $keywordInContext → bm25 $bm25InContext，'
-      '检索等待 keyword ${total('keyword', (outcome) => outcome.elapsedMs)} ms → '
-      'bm25 ${total('bm25', (outcome) => outcome.elapsedMs)} ms；'
-      '排序用例 ${rankCase.failureStage ?? '通过'}',
+      '排序用例对比：进入上下文 literal $literalInContext → index $indexInContext；'
+      '检索等待 literal ${total('literal', (outcome) => outcome.elapsedMs)} ms → '
+      'index ${total('index', (outcome) => outcome.elapsedMs)} ms；'
+      '索引结果 ${rankCase.failureStage ?? '通过'}',
     );
     expect(
-      ['context', 'retrieval', null],
-      contains(
-        outcomes
-            .firstWhere(
-              (outcome) =>
-                  outcome.strategy == 'keyword' && outcome.caseId == 'rank-1',
-            )
-            .failureStage,
-      ),
-      reason: '原始排序在排序用例上应当先丢掉必要证据',
+      literalRankCase.failureStage,
+      'retrieval',
+      reason: '整句按原样匹配时，排序用例的必要证据不会被找到',
     );
-    expect(rankCase.failureStage, isNull, reason: 'BM25 排序应把必要证据带进上下文');
+    expect(rankCase.failureStage, isNull, reason: '索引检索应把必要证据带进上下文');
     expect(rankCase.elapsedMs, greaterThanOrEqualTo(0));
 
     for (final outcome in outcomes) {

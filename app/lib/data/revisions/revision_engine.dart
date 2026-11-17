@@ -8,7 +8,6 @@ import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/drift/tables.dart'
     show nonVersionedPersistentTableNames, revisionMetadataTablePrefixes;
-import '../db/fts.dart';
 import '../db/schema.dart' show schemaTableNames, schemaTables;
 import '../db/sql.dart';
 import '../db/raw_executor.dart';
@@ -150,9 +149,31 @@ class RevisionEngine {
     Future<void> Function()? seed,
   }) async {
     await installRevisionSchema(db);
+    await _dropLegacySearchIndexes(db);
     await seed?.call();
-    await installFtsSchema(db);
     await _ensureMetadata(db);
+  }
+
+  /// 旧版关键词索引的派生表与触发器已无人读取，打开库时删除。
+  ///
+  /// 三张 FTS5 表与同步触发器是在关键词检索并入 zvec 之前建立的（ADR-0024），
+  /// 新库不再创建；已有的开发库在第一次打开时清理，避免整库备份的对象白名单
+  /// 把它们当成当前程序不认识的对象。删除的是派生数据，业务行不动。
+  Future<void> _dropLegacySearchIndexes(RawDatabase db) async {
+    final triggers = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+      "AND name GLOB 'fts_*_fts_*'",
+    );
+    for (final row in triggers) {
+      await db.execute('DROP TRIGGER IF EXISTS "${row['name']}"');
+    }
+    for (final table in const [
+      'material_page_fts',
+      'message_fts',
+      'attempt_fts',
+    ]) {
+      await db.execute('DROP TABLE IF EXISTS "$table"');
+    }
   }
 
   Future<void> _ensureMetadata(RawDatabase db) async {
@@ -1015,9 +1036,6 @@ class RevisionEngine {
       final current = await readProjection(txn);
       await _replaceProjection(txn, targetProjection);
       await _verifyProjection(txn, targetProjection);
-      // 整版恢复期间采集触发器处于暂停状态，关键词索引的同步触发器同样不会
-      // 生效，因此在这里按业务行整份重建三张索引（ADR-0013 第 6 条）。
-      await _rebuildSearchIndexes(txn);
       final changes = _changesFromDiff(current, targetProjection, commitId);
       final parent = await commitById(txn, head);
       final now = formatDateTime(clock());
@@ -1072,13 +1090,6 @@ class RevisionEngine {
     final violations = await txn.rawQuery('PRAGMA foreign_key_check');
     if (violations.isNotEmpty) {
       throw RevisionCorruption('恢复后的数据存在外键错误');
-    }
-  }
-
-  /// 整版恢复或导入时暂停索引触发器，待业务数据写入后重算二元组。
-  Future<void> _rebuildSearchIndexes(RawExecutor txn) async {
-    for (final index in ftsIndexes) {
-      await rebuildFtsIndex(txn, index);
     }
   }
 
@@ -1361,11 +1372,6 @@ class RevisionEngine {
       if (size > maxBytes) {
         // 删除后的页空间不会自动归还；预算判断前先回收一次。
         await db.execute('VACUUM');
-        // VACUUM 可能重排没有显式整数主键的表的隐式 rowid，关键词索引按 rowid
-        // 关联（ADR-0018），回收之后按当前数据重建一次。
-        for (final index in ftsIndexes) {
-          await rebuildFtsIndex(db, index);
-        }
         size = await databaseBytes(db);
       }
       if (size <= maxBytes || keep <= 1) {

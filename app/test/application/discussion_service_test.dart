@@ -1461,8 +1461,6 @@ void main() {
     );
 
     // 检索通过本地查询完成，不依赖模型。
-    final hits = await h.materials.search('独立性', goalId: goalA);
-    expect(hits.single.materialTitle, '概率论讲义');
     expect(result.userMessage.conversationId, isNotNull);
   });
 

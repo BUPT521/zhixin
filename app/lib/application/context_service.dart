@@ -53,7 +53,7 @@ class ContextService {
   final MaterialRepository materials;
   final ServiceRuntime runtime;
 
-  /// 回答前的原文检索；为空时只使用关键词检索，行为与之前一致。
+  /// 回答前的原文与记录检索；为空时不取检索结果，只用当前材料与记忆。
   final EvidenceService? evidence;
 
   /// 当前启用的人格；由应用根从插件运行时取，为空表示这轮不带人格段落。

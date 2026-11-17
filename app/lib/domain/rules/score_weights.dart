@@ -6,25 +6,18 @@ const double _legacyScale = 112;
 
 /// 检索打分的显式权重表：每类来源先把原始分归一化到 0–1，再乘该来源的权重。
 ///
-/// 旧代码里同一相关度有七套量纲，跨来源比较实际在比不同的尺子。权重表把
-/// 每类来源的旧量纲上界除以 [_legacyScale] 作为权重，于是统一后的分数范围
-/// 仍是 0–1，跨来源的先后也与旧代码一致：字面命中（1.0）在前，跨次作答
-/// （60/112 ≈ 0.54）居中，关键词命中（15/112）与语义命中（13/112）在后。
+/// 旧代码里同一相关度有多套量纲，跨来源比较实际在比不同的尺子。权重表把每类
+/// 来源的旧量纲上界除以 [_legacyScale] 作为权重，于是统一后的分数范围仍是
+/// 0–1，跨来源的先后也与旧代码一致：字面命中（1.0）在前，跨次作答
+/// （60/112 ≈ 0.54）居中，语义命中（13/112）在后。关键词与语义命中现在由索引
+/// 一次给出，分数是引擎的融合分；界面上的“按意思”标签按命中来源判断，不看
+/// 分数大小。
 ///
 /// 字面命中在合并时另有“原样命中优先”的规则，不靠数值大小排在最前；权重
 /// 只负责同一来源内部保持原有顺序、不同来源之间可以比较大小。
 enum ScoreSource {
   /// 字面命中：旧量纲 100–112，用户输入的整句出现在原文里，取满权重。
   literal(label: '字面命中', rawLower: 100, rawUpper: 112, weight: 1),
-
-  /// 关键词命中：FTS5 的 bm25 相关度换成 14 + relevance/(1 + relevance)，
-  /// 旧量纲 14–15。
-  keyword(
-    label: '关键词命中',
-    rawLower: 14,
-    rawUpper: 15,
-    weight: 15 / _legacyScale,
-  ),
 
   /// 语义命中：余弦距离换成 10 + (1 - 距离) * 3，旧量纲 10–13。
   semantic(
@@ -35,7 +28,7 @@ enum ScoreSource {
   ),
 
   /// 跨次作答：同一线程里旧量纲从 60 起、每往后一条减 0.1。它是用户回看
-  /// “上次、后来”时补齐的作答，排在关键词与语义命中之前。
+  /// “上次、后来”时补齐的作答，排在语义命中之前。
   crossSession(
     label: '跨次作答',
     rawLower: 0,
@@ -88,14 +81,6 @@ Score literalMatchScore({
   final length = textLength <= 0 ? 1 : textLength;
   final position = (1 - (offset - 1) / length) * 10;
   return ScoreSource.literal.normalize(100 + position + kindPriority);
-}
-
-/// 关键词命中的分数：FTS5 给更相关的结果更小的 bm25 值，取反后按
-/// relevance/(1 + relevance) 映射回旧量纲 14–15。
-Score keywordMatchScore(num? bm25Rank) {
-  final relevance = -(bm25Rank ?? 0);
-  if (relevance <= 0) return ScoreSource.keyword.normalize(14);
-  return ScoreSource.keyword.normalize(14 + relevance / (1 + relevance));
 }
 
 /// 语义命中的分数：余弦距离 0–1，越接近 1 越相关，对应旧量纲 10–13。

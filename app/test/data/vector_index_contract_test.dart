@@ -111,11 +111,13 @@ String _statePath(Directory root, EmbeddingModelSpec spec) =>
 /// 通用契约：内存实现与 zvec 实现都要满足。
 ///
 /// [open] 收到一个已经存在的空目录，返回打开后的索引；实现可以忽略这个目录。
+/// [openTextOnly] 按纯文本索引打开同一个目录，给出时补一条只走关键词的用例。
 /// [supportsFilter] 为假时，预过滤用例只要求结果集合包含范围允许的来源
 /// （预过滤可以更宽），为真时要求两者相等。
 void runVectorIndexContract(
   String label,
   VectorIndex Function(Directory dir) open, {
+  VectorIndex Function(Directory dir)? openTextOnly,
   bool supportsFilter = true,
   String? skip,
 }) {
@@ -470,6 +472,35 @@ void runVectorIndexContract(
       expect(filteredKeys, contains(_pageB.sourceKey));
     }, skip: skip);
 
+    if (openTextOnly != null) {
+      test('没有嵌入模型时只按关键词检索', () {
+        final textIndex = openTextOnly(root);
+        addTearDown(textIndex.close);
+        _replace(
+          textIndex,
+          _pageA,
+          version: 'v1',
+          chunks: const ['矩阵的秩'],
+          vectors: const [],
+        );
+        _replace(
+          textIndex,
+          _pageB,
+          version: 'v1',
+          chunks: const ['天气与出行'],
+          vectors: const [],
+        );
+
+        // 关键词检索走索引的全文子查询，不需要向量。
+        final hits = textIndex.searchHybrid('矩阵', k: 10);
+        expect(hits.map((match) => match.sourceKey), [_pageA.sourceKey]);
+        expect(hits.single.score, greaterThan(0));
+        // 没有向量字段时向量检索没有结果，正文里没有查询词时也不命中。
+        expect(textIndex.search(_unitVector, k: 10), isEmpty);
+        expect(textIndex.searchHybrid('拓扑', k: 10), isEmpty);
+      }, skip: skip);
+    }
+
     test('统计在 finishRefresh 之后写入，clear 之后归零', () {
       final index = openIndex();
       expect(index.sourceCount, 0);
@@ -786,11 +817,17 @@ void main() {
     stdout.writeln(reason);
   }
 
-  runVectorIndexContract('内存索引', (dir) => MemoryVectorIndex(_spec));
+  runVectorIndexContract(
+    '内存索引',
+    (dir) => MemoryVectorIndex(_spec),
+    openTextOnly: (dir) => MemoryVectorIndex(textOnlyModelSpec),
+  );
 
   runVectorIndexContract(
     'zvec 索引',
     (dir) => ZvecVectorIndex.open(rootPath: dir.path, spec: _spec),
+    openTextOnly: (dir) =>
+        ZvecVectorIndex.open(rootPath: dir.path, spec: textOnlyModelSpec),
     skip: reason,
   );
 

@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import '../../domain/rules/embedding.dart';
 
-/// 语义索引里的一条向量。
+/// 索引里的一条命中：来源、片段正文与写入时的版本。
 class StoredVector {
   const StoredVector({
     required this.sourceKey,

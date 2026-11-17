@@ -170,13 +170,18 @@ class ZvecVectorIndex implements VectorIndex {
     }
   }
 
+  /// 纯文本索引：没有配置嵌入模型时只建全文与标量字段。
+  static bool _isTextOnly(EmbeddingModelSpec spec) =>
+      spec.id == textOnlyModelSpec.id;
+
   static Collection _createCollection(String path, EmbeddingModelSpec spec) {
     final fields = <FieldSchema>[
-      VectorSchema(
-        _embeddingField,
-        spec.dim,
-        indexParams: FlatIndexParams(metricType: MetricType.cosine),
-      ),
+      if (!_isTextOnly(spec))
+        VectorSchema(
+          _embeddingField,
+          spec.dim,
+          indexParams: FlatIndexParams(metricType: MetricType.cosine),
+        ),
       FieldSchema(name: 'source_key', dataType: DataType.string)
         ..setIndexParams(InvertIndexParams()),
       FieldSchema(name: 'kind', dataType: DataType.string)
@@ -460,7 +465,8 @@ class ZvecVectorIndex implements VectorIndex {
     required String createdAt,
   }) {
     _ensureOpen();
-    if (chunks.length != vectors.length) {
+    final textOnly = _isTextOnly(spec);
+    if (chunks.length != vectors.length && !(textOnly && vectors.isEmpty)) {
       throw ArgumentError('片段数与向量数不一致');
     }
     final sourceKey = locator.sourceKey;
@@ -482,7 +488,7 @@ class ZvecVectorIndex implements VectorIndex {
             chunkCount: count,
             content: chunks[index],
             createdAt: createdAt,
-            vector: vectors[index],
+            vector: vectors.isEmpty ? null : vectors[index],
           ),
         );
       }
@@ -498,7 +504,7 @@ class ZvecVectorIndex implements VectorIndex {
         chunkCount: count,
         content: chunks[0],
         createdAt: createdAt,
-        vector: vectors[0],
+        vector: vectors.isEmpty ? null : vectors[0],
       );
       _writeBatch([head]);
     } finally {
@@ -516,14 +522,16 @@ class ZvecVectorIndex implements VectorIndex {
     required int chunkCount,
     required String content,
     required String createdAt,
-    required List<double> vector,
+    required List<double>? vector,
   }) {
     final doc = Doc(id: '${locator.sourceKey}#$chunk');
     try {
-      doc.setVector(
-        _embeddingField,
-        Float32List.fromList(normalizeVector(vector)),
-      );
+      if (vector != null) {
+        doc.setVector(
+          _embeddingField,
+          Float32List.fromList(normalizeVector(vector)),
+        );
+      }
       doc.setField('source_key', locator.sourceKey);
       doc.setField('kind', locator.kind);
       final materialId = locator.materialId;
@@ -590,6 +598,7 @@ class ZvecVectorIndex implements VectorIndex {
     VectorPrefilter? prefilter,
   }) {
     _ensureOpen();
+    if (_isTextOnly(spec)) return const [];
     if (k <= 0 || query.isEmpty) return const [];
     final request = VectorQuery(
       fieldName: _embeddingField,

@@ -137,24 +137,6 @@ void main() {
     expect(naturalMaterial.location.materialId, material);
     expect(naturalMaterial.location.pageNo, 3);
 
-    // 目标内的检索不带出别的目标的材料页。
-    final probabilityMaterial = await materials.create(
-      title: '概率论讲义',
-      kind: MaterialKind.text,
-      goalId: goalA,
-    );
-    await materials.addPage(
-      materialId: probabilityMaterial,
-      pageNo: 1,
-      content: '条件概率 P(A|B)=P(AB)/P(B)。',
-    );
-    final linearOnly = await materials.search('矩阵', goalId: goalA);
-    expect(linearOnly, isEmpty);
-    final probabilityInA = await materials.search('条件概率', goalId: goalA);
-    expect(probabilityInA.single.materialId, probabilityMaterial);
-    final probabilityInB = await materials.search('条件概率', goalId: goalB);
-    expect(probabilityInB, isEmpty);
-
     // 单字术语也要能检索；结果仍由记录条数决定，不再被长度门槛挡掉。
     final single = await _searchAll(search, '秩');
     expect(
@@ -206,32 +188,6 @@ void main() {
       _hits(results).where((hit) => hit.kind == EvidenceKind.materialPage),
       hasLength(8),
     );
-  });
-
-  test('材料先按全部候选相关性排序，摘要围绕命中内容生成', () async {
-    final db = await openTestDb();
-    addTearDown(db.close);
-    final materials = MaterialRepository(db);
-    final oldMaterial = await materials.create(title: '较早的矩阵材料');
-    final matchingText = '${List.filled(24, '背景内容。').join()}矩阵与独立性需要同时核对。';
-    await materials.addPage(
-      materialId: oldMaterial,
-      pageNo: 12,
-      content: matchingText,
-    );
-    final recentMaterial = await materials.create(title: '近期材料');
-    for (var page = 1; page <= 20; page++) {
-      await materials.addPage(
-        materialId: recentMaterial,
-        pageNo: page,
-        content: '矩阵这一项命中，但没有提到另一个关键词。',
-      );
-    }
-
-    final hits = await materials.search('矩阵 独立性', limit: 4);
-    expect(hits.first.materialId, oldMaterial);
-    expect(hits.first.pageNo, 12);
-    expect(hits.first.snippet, contains('独立性'));
   });
 
   test('同类命中超过四十条时分页在去重之后进行，最早一条可达', () async {

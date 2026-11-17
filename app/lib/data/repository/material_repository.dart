@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import '../../domain/models/material.dart';
-import '../../domain/rules/search_terms.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/text.dart';
@@ -337,92 +336,6 @@ class MaterialRepository {
         throw ArgumentError('第 ${page.pageNo} 页还没有内容');
       }
     }
-  }
-
-  /// 按关键词找材料页。
-  ///
-  /// 回答上下文默认只取同一目标或未归属的材料；用户主动检索时把
-  /// `restrictToGoal` 设为 false，搜索结果覆盖全部材料。关键词命中按二元组
-  /// 在正文与标签里做子串匹配；单个材料的页数有限，不再建索引。
-  Future<List<MaterialHit>> search(
-    String query, {
-    String? goalId,
-    bool restrictToGoal = true,
-    int? limit = 4,
-    String? excludeMaterialId,
-    int? excludePageNo,
-  }) async {
-    final terms = searchTerms(query);
-    if (terms.isEmpty) return const [];
-    final tokens = <String>[];
-    for (final term in terms) {
-      for (final token in bigrams(term)) {
-        if (!tokens.contains(token)) tokens.add(token);
-      }
-    }
-    if (tokens.isEmpty) return const [];
-    final where = <String>[];
-    final args = <Object?>[];
-    if (restrictToGoal) {
-      if (goalId == null) {
-        where.add('m.goal_id IS NULL');
-      } else {
-        where.add('(m.goal_id = ? OR m.goal_id IS NULL)');
-        args.add(goalId);
-      }
-    }
-    if (excludeMaterialId != null) {
-      where.add('NOT (mp.material_id = ? AND mp.page_no = ?)');
-      args
-        ..add(excludeMaterialId)
-        ..add(excludePageNo ?? -1);
-    }
-    final tokenClauses = <String>[];
-    final scoreParts = <String>[];
-    for (final token in tokens) {
-      tokenClauses.add(
-        '(instr(lower(mp.content), lower(?)) > 0 '
-        'OR instr(lower(mp.label), lower(?)) > 0)',
-      );
-      scoreParts.add(
-        '(instr(lower(mp.content), lower(?)) > 0 '
-        'OR instr(lower(mp.label), lower(?)) > 0)',
-      );
-      args
-        ..add(token)
-        ..add(token);
-    }
-    where.add('(${tokenClauses.join(' OR ')})');
-    // 命中词数多的页排前面；同分时新的材料与靠前的页优先。只取前几条时，
-    // 这一条决定较早但更相关的页不会因为材料标识小而排到窗口之外。
-    final scoreArgs = <Object?>[
-      for (final token in tokens) ...[token, token],
-    ];
-    final rows = await _db.rawQuery(
-      '''
-      SELECT mp.material_id, mp.page_no, mp.label, mp.content,
-        m.title AS material_title, m.source_file_name,
-        (${scoreParts.join(' + ')}) AS score
-      FROM material_page mp JOIN material m ON m.id = mp.material_id
-      WHERE ${where.join(' AND ')}
-      ORDER BY score DESC, mp.material_id DESC, mp.page_no
-      ${limit == null ? '' : 'LIMIT ?'}
-      ''',
-      [...scoreArgs, ...args, ?limit],
-    );
-    return rows
-        .map(
-          (row) => MaterialHit(
-            materialId: row['material_id']! as String,
-            materialTitle: row['material_title'] as String? ?? '材料',
-            isDocx: isDocxFile(row['source_file_name'] as String?),
-            pageNo: row['page_no']! as int,
-            label: row['label'] as String?,
-            content: row['content']! as String,
-            snippetText: searchSnippet(row['content']! as String, terms),
-          ),
-        )
-        .toList(growable: false);
   }
 
   Future<void> _touch(

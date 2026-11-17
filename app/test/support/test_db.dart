@@ -14,7 +14,8 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 
 /// 在 Dart VM 上开一份 drift 内存库；每个用例各自一份，互不影响。
 ///
-/// 与生产打开流程一致，由版本引擎安装采集和关键词索引的触发器。
+/// 与生产打开流程一致，由版本引擎安装版本采集触发器，并清理旧库的关键词
+/// 索引派生对象。
 Future<RawDatabase> openTestDb() async {
   final app = AppDatabase.memory();
   final raw = DriftRawDatabase(app);
