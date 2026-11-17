@@ -286,7 +286,9 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrInvalidInput):
+	case errors.Is(err, ErrInvalidInput):
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address and password 8 to 128 characters")
+	case errors.Is(err, ErrInvalidCode):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidCode, "")
 	default:
 		httpx.WriteInternal(w, r, h.log, err)
