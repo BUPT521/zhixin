@@ -54,6 +54,8 @@ VALUES (:id, :kind, :content, :scope, :sourceKind, :sourceId, :validUntil, 'acti
 updateMemoryContent:
 UPDATE memory SET content = :content,
   valid_until = :validUntil,
+  kind = :kind,
+  scope = :scope,
   updated_at = :stamp
 WHERE id = :memoryId;
 

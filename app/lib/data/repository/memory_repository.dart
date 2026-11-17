@@ -119,6 +119,8 @@ class MemoryRepository {
   Future<void> updateContent(
     String id, {
     required String content,
+    required MemoryKind kind,
+    String? scope,
     DateTime? validUntil,
     WriteTransaction? transaction,
   }) async {
@@ -129,6 +131,8 @@ class MemoryRepository {
       (db) => db.updateMemoryContent(
         text,
         validUntil == null ? null : formatDateTime(validUntil),
+        kind.value,
+        scope?.trim(),
         stamp,
         id,
       ),

@@ -1,4 +1,3 @@
-import '../data/db/sql.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
@@ -74,11 +73,11 @@ class MemoryService {
 
   Future<List<Memory>> list() => repository.list(includeInactive: true);
 
-  /// 用户改记忆时直接更新类型、内容与有效期；回答读的是更新后的记忆本身。
+  /// 用户改记忆时直接更新类型、内容、范围与有效期；回答读的是更新后的记忆本身。
   ///
-  /// 类型与内容在同一条提交里写入：仓库的 [MemoryRepository.updateContent] 只写
-  /// 内容与有效期，用户在编辑框里换过的类型在这里补一次，撤销仍按提交整组回放。
-  /// 不传 [kind] 时只改内容与有效期，类型保持原样。
+  /// 类型与内容在同一条提交里写入，撤销仍按提交整组回放。不传 [kind] 时只改
+  /// 内容与有效期，类型与范围保持原样；换成偏好或限制时不再保留原来的目标或
+  /// 材料范围，因为这两类适用于全部学习。
   Future<WriteResult> save(
     Memory memory, {
     MemoryKind? kind,
@@ -97,25 +96,15 @@ class MemoryService {
           _sameValidUntil(current.validUntil, validUntil)) {
         return const WriteResult.skipped('这条记忆没有变化');
       }
+      final savedKind = nextKind ?? current.kind;
       await repository.updateContent(
         memory.id,
         content: text,
+        kind: savedKind,
+        scope: savedKind.followsContext ? current.scope : null,
         validUntil: validUntil,
         transaction: txn,
       );
-      if (nextKind != null && kindChanged) {
-        await updateRow(
-          txn.executor,
-          'memory',
-          {
-            'kind': nextKind.value,
-            // 偏好与限制适用于全部学习，换成这两类时不再保留原来的目标或材料范围。
-            if (!nextKind.followsContext) 'scope': null,
-          },
-          where: 'id = ?',
-          whereArgs: [current.id],
-        );
-      }
       return txn.result();
     }, label: editMemoryAction);
   }

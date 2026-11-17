@@ -13167,14 +13167,18 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Future<int> updateMemoryContent(
     String content,
     String? validUntil,
+    String kind,
+    String? scope,
     String stamp,
     String memoryId,
   ) {
     return customUpdate(
-      'UPDATE memory SET content = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4',
+      'UPDATE memory SET content = ?1, valid_until = ?2, kind = ?3, scope = ?4, updated_at = ?5 WHERE id = ?6',
       variables: [
         Variable<String>(content),
         Variable<String>(validUntil),
+        Variable<String>(kind),
+        Variable<String>(scope),
         Variable<String>(stamp),
         Variable<String>(memoryId),
       ],

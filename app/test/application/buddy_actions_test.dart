@@ -50,7 +50,11 @@ void main() {
       sourceKind: MemorySourceKind.message,
     );
     final created = (await rig.engine.undoableCommits(rig.db.raw)).last;
-    await memories.updateContent(id, content: '用户修改后的困难');
+    await memories.updateContent(
+      id,
+      content: '用户修改后的困难',
+      kind: MemoryKind.difficulty,
+    );
 
     final undone = await rig.revisions.undoCommit(created.id);
     expect(undone.applied, isFalse);
