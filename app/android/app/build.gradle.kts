@@ -16,6 +16,7 @@ val keystoreProperties =
         }
     }
 val hasReleaseSigning = keystorePropertiesFile.exists()
+val adr0022Probe = providers.gradleProperty("target").orNull?.endsWith("adr_0022_probe.dart") == true
 
 android {
     namespace = "com.zhixin.app"
@@ -30,6 +31,9 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.zhixin.app"
+        if (adr0022Probe) {
+            applicationIdSuffix = ".adr0022probe"
+        }
         // ADR-0003：最低 Android 11（API 30）。只出 arm64 包，不为 32 位和老机器降配。
         minSdk = 30
         targetSdk = flutter.targetSdkVersion
@@ -64,6 +68,10 @@ android {
             versionNameSuffix = "-dev"
         }
         release {
+            if (adr0022Probe) {
+                isMinifyEnabled = false
+                isShrinkResources = false
+            }
             // 有 key.properties 就正式签名；没有则用 debug 签名，`flutter run --release` 仍可用。
             signingConfig =
                 if (hasReleaseSigning) {

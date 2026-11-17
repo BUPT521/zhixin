@@ -22,6 +22,8 @@ pwsh tool/dev.ps1           # 没有设备时先启动第一台 AVD，再执行 
 
 模拟器上的相机是虚拟场景，语音识别走系统服务，数据库、Keystore 与界面行为与手机一致。要验证更接近真实使用的效果，用 USB 连接手机并打开 USB 调试，Android 11 以上也可以用无线调试配对，`adb devices` 能列出之后直接执行 `flutter run`。
 
+语义索引的真机复测用 `pwsh tool/run_adr_0022_probe.ps1 -Apk <探针包>`，探针包由 `flutter build apk -t tool/adr_0022_probe.dart` 构建：`-t` 指定的入口以 `adr_0022_probe.dart` 结尾时，构建脚本给应用 ID 加 `.adr0022probe` 后缀并关闭压缩混淆，探针包因此与正式包并存。脚本在 PLK110 上依次生成 2000 与 20000 条 1024 维向量，记录冷打开、写入、查询、常驻内存与磁盘占用。这一项只做人工复测，不在 CI 与验收流程里执行。
+
 Windows 本机跑 `flutter test` 时，zvec 的实现需要一个本机的 C 库：从 zvec 的 GitHub Releases 下载 0.8.0 版本的 `zvec-sdk-windows-amd64.zip`，核对 SHA-256 为 `7fc16b1bf575d3300f4ae4728f09a6a096b67025d508c350c16302c665ccbbe8`，解压后把 `ZVEC_LIBRARY_PATH` 指向 `<解压目录>\lib\zvec_c_api.dll`，再把同一个 `lib` 目录加进 `PATH`，因为 `zvec.dll`、`zvec_core.dll` 与 `zvec_ailego.dll` 都在这个目录里。没有设置这个变量时，索引契约测试与后台 isolate 的用例会跳过并打印原因；CI 的 Linux 任务会下载并设置好，不受影响。
 
 最低 Android 11（API 30），只出 arm64。构建需要 JDK 21 与 Android SDK 36；CI 的版本固定在 [ci.yml](../.github/workflows/ci.yml)。
