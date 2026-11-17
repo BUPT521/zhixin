@@ -26,7 +26,9 @@ WHERE status = 'active'
   AND (valid_until IS NULL OR valid_until >= :now);
 
 -- 生成回答时取用的记忆：本次范围的排在前面，再按类型与更新时间。
-memoriesForContext(REQUIRED :rowLimit AS INT OR NULL):
+-- :scope 显式声明为必填文本：它同时与 '' 和可空的 scope 列比较，靠推断会在
+-- 可空与非空之间摇摆，生成文件因此每次重建都可能不同。
+memoriesForContext(REQUIRED :scope AS TEXT, REQUIRED :rowLimit AS INT OR NULL):
 SELECT * FROM memory
 WHERE status = 'active'
   AND (valid_until IS NULL OR valid_until >= :now)
