@@ -25,7 +25,7 @@
 | 最低系统 | Android 11（API 30）；只出 arm64 包，不兼容 32 位设备 |
 | 本地数据 | SQLite 单文件（drift，连接使用随包的 sqlite3），业务表、提交历史与附件同库，表结构与当前版本见 [01](docs/01-ER数据模型.md) |
 | 模型 | 用户自填 key，默认 `deepseek-flash`，接口地址与模型名可配置；登录后可改用服务端代理 |
-| 服务端 | Go 1.27 单个可执行文件 `zhixin-api`，标准库 `net/http`；账号、提交序列、整库备份、附件与模型代理按契约实现，元数据使用 PostgreSQL，备份和附件字节使用 S3 兼容存储，本地联调也可用内存或目录实现，限制见 [server/README](server/README.md)，取舍见 [ADR-0009](docs/adr/0009-API后端采用Go与分层框架.md) 与 [ADR-0015](docs/adr/0015-服务端引入代码生成与限流依赖.md) |
+| 服务端 | Go 1.27 单个可执行文件 `zhixin-api`，标准库 `net/http`；账号、提交序列、整库备份、附件与模型代理按契约实现，元数据使用 PostgreSQL，备份和附件字节可用 S3 兼容存储，单机上暂时写本机目录，本地联调也可用内存实现，限制见 [server/README](server/README.md)，取舍见 [ADR-0009](docs/adr/0009-API后端采用Go与分层框架.md) 与 [ADR-0015](docs/adr/0015-服务端引入代码生成与限流依赖.md) |
 | 构建 | JDK 21 + Android SDK 36，命令 `flutter build apk --debug`（内测包用 `--release`），见 [app/README](app/README.md) |
 
 应用代码在 `app/` 目录，先 `cd app`，再执行 `flutter pub get` 和 `flutter run` 就能装到真机上。CI 配置见 [ci.yml](.github/workflows/ci.yml)：代码推送和 PR 都会跑生成代码核对、格式检查、`flutter analyze` 与 `flutter test`，纯文档的提交跳过这几项；`main` 的 push 和每个 PR 都会构建 debug APK。正式包在 Actions 里手动运行“CI 与发版”生成。
