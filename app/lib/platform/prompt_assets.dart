@@ -9,11 +9,12 @@ import '../ai/prompt_text.dart';
 class PromptAssets {
   static const String systemAsset = 'assets/prompts/buddy_system.md';
   static const String requestAsset = 'assets/prompts/buddy_prompts.md';
+  static const String toolsAsset = 'assets/prompts/buddy_tools.md';
 
   static Future<void> load({AssetBundle? bundle}) async {
     final source = bundle ?? rootBundle;
     final sections = <String, String>{};
-    for (final path in const [systemAsset, requestAsset]) {
+    for (final path in const [systemAsset, requestAsset, toolsAsset]) {
       final raw = await source.loadString(path);
       for (final entry in PromptText.parse(raw, source: path).entries) {
         if (sections.containsKey(entry.key)) {

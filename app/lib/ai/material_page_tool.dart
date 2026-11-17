@@ -7,6 +7,7 @@ import 'agent_read_budget.dart';
 import 'agent_tools.dart';
 import 'llm_client.dart';
 import 'llm_context_budget.dart';
+import 'prompt_text.dart';
 import 'search_sources_tool.dart';
 
 const readMaterialPageTool = 'read_material_page';
@@ -23,11 +24,9 @@ AgentTool materialPageReader(
 }) {
   final reader = _MaterialReader(pages, readBudget ?? AgentReadBudget());
   return AgentTool(
-    schema: const LlmTool(
+    schema: LlmTool(
       name: readMaterialPageTool,
-      description:
-          '当材料检索摘录不足以回答时，读取本轮检索命中的指定材料页原文。'
-          'offset 按 Unicode 字符计数，从页首读取时省略，需要后续原文时用 next_offset。',
+      description: PromptText.instance['tool.read_material_page'],
       parameters: {
         'type': 'object',
         'properties': {

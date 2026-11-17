@@ -202,14 +202,17 @@ class AiChatService implements BuddyAi {
   Future<Duration> test(LlmConfig config) async {
     final client = _client(config, budget: LlmRequestBudget.probe());
     final started = DateTime.now();
+    final text = PromptText.instance;
     try {
       final reply = await client.complete(
-        system: '你是连接测试助手。只调用 submit_probe 工具，不要写正文。',
-        messages: const [LlmMessage(role: 'user', content: '连接测试')],
-        tools: const [
+        system: text['tool.submit_probe.system'],
+        messages: [
+          LlmMessage(role: 'user', content: text['tool.submit_probe.user']),
+        ],
+        tools: [
           LlmTool(
             name: 'submit_probe',
-            description: '连接测试：确认这个模型或地址可以返回工具调用。',
+            description: text['tool.submit_probe'],
             parameters: {
               'type': 'object',
               'properties': {

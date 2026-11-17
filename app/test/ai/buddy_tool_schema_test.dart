@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/buddy_tools.dart';
 import 'package:zhixin/ai/llm_client.dart';
+import 'package:zhixin/ai/material_page_tool.dart';
+import 'package:zhixin/ai/prompt_text.dart';
+import 'package:zhixin/ai/search_sources_tool.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 
 /// 一个工具的契约样例：一份合法规格，以及从解析结果里取出可比较的签名。
@@ -153,6 +156,29 @@ void main() {
         for (final tool in _tools(mode).registry.schemas) tool.name,
     };
     expect(contracts.map((contract) => contract.toolName).toSet(), exposed);
+  });
+
+  test('工具说明来自提示词资源', () {
+    const promptKeys = {
+      proposeMemoriesTool: 'tool.propose_memories',
+      proposeNextStepsTool: 'tool.propose_next_steps',
+      proposeCitationsTool: 'tool.propose_citations',
+      proposeAssessmentTool: 'tool.propose_assessment',
+      proposeStudyStepsTool: 'tool.propose_study_steps',
+      readMaterialPageTool: 'tool.read_material_page',
+      searchSourcesTool: 'tool.search_sources',
+    };
+    for (final mode in BuddyMode.values) {
+      for (final tool in _tools(mode).registry.schemas) {
+        final key = promptKeys[tool.name];
+        expect(key, isNotNull, reason: '${tool.name} 没有登记提示词段落');
+        expect(
+          tool.description,
+          PromptText.instance[key!],
+          reason: '${tool.name} 的说明应当来自 app/assets/prompts/',
+        );
+      }
+    }
   });
 
   test('工具执行前校验 schema 的必填字段', () async {

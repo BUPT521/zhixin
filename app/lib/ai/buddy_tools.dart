@@ -7,6 +7,7 @@ import '../domain/rules/study_plan_steps.dart';
 import 'agent_read_budget.dart';
 import 'agent_tools.dart';
 import 'llm_client.dart';
+import 'prompt_text.dart';
 import 'material_page_tool.dart';
 import 'search_sources_tool.dart';
 
@@ -217,178 +218,185 @@ AgentTool _proposeCitations(_Proposals<CitationDraft> proposals) => AgentTool(
 String? _optionalText(ToolArguments args, String field) =>
     nullableText(args[field] as String?);
 
-const LlmTool _memoriesSchema = LlmTool(
-  name: proposeMemoriesTool,
-  description:
-      '提交这次回答里值得记住的事实。只提交，不直接写数据库；用户明确说出的记忆由程序先记下并可撤销，'
-      '你推断的记忆由用户点“记下”后才保存。'
-      '只记长期有用或本次有效的事实，寒暄、一次性情绪和单次卡点不要提交。'
-      '用户明确说出的内容 source 用 user；你根据记录推断的用 inferred，用户没有说过的不要编造。',
-  parameters: {
-    'type': 'object',
-    'properties': {
-      'memories': {
-        'type': 'array',
-        'minItems': 1,
-        'maxItems': 5,
-        'items': {
-          'type': 'object',
-          'properties': {
-            'kind': {
-              'type': 'string',
-              'enum': ['preference', 'constraint', 'difficulty', 'progress'],
+LlmTool get _memoriesSchema {
+  final text = PromptText.instance;
+  return LlmTool(
+    name: proposeMemoriesTool,
+    description: text['tool.propose_memories'],
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'memories': {
+          'type': 'array',
+          'minItems': 1,
+          'maxItems': 5,
+          'items': {
+            'type': 'object',
+            'properties': {
+              'kind': {
+                'type': 'string',
+                'enum': ['preference', 'constraint', 'difficulty', 'progress'],
+              },
+              'content': {
+                'type': 'string',
+                'minLength': 1,
+                'maxLength': memoryContentLimit,
+                'description': text.format('tool.propose_memories.content', {
+                  'limit': '$memoryContentLimit',
+                }),
+              },
+              'valid_until': {
+                'type': ['string', 'null'],
+                'description': text['tool.propose_memories.valid_until'],
+              },
+              'source': {
+                'type': 'string',
+                'enum': ['user', 'inferred'],
+                'description': text['tool.propose_memories.source'],
+              },
             },
-            'content': {
-              'type': 'string',
-              'minLength': 1,
-              'maxLength': memoryContentLimit,
-              'description': '一句话，不超过 $memoryContentLimit 字',
-            },
-            'valid_until': {
-              'type': ['string', 'null'],
-              'description': 'YYYY-MM-DD HH:MM:SS；长期有效填 null',
-            },
-            'source': {
-              'type': 'string',
-              'enum': ['user', 'inferred'],
-              'description': '用户明确说出的用 user，你推断的用 inferred',
-            },
+            'required': ['kind', 'content', 'source'],
           },
-          'required': ['kind', 'content', 'source'],
         },
       },
+      'required': ['memories'],
     },
-    'required': ['memories'],
-  },
-);
+  );
+}
 
-const LlmTool _nextStepsSchema = LlmTool(
-  name: proposeNextStepsTool,
-  description:
-      '提交 1–3 条下一步建议。只是建议，不创建待办、不改动日程；用户点“加入安排”后才由程序保存。'
-      '每条写清做什么与做到什么算结束，材料出处或题号写进标题或动作里。'
-      '用户没有问下一步时不要提交。',
-  parameters: {
-    'type': 'object',
-    'properties': {
-      'steps': {
-        'type': 'array',
-        'minItems': 1,
-        'maxItems': 3,
-        'items': {
-          'type': 'object',
-          'properties': {
-            'title': {'type': 'string', 'minLength': 1, 'description': '动作标题'},
-            'action': {
-              'type': ['string', 'null'],
-              'description': '具体动作',
+LlmTool get _nextStepsSchema {
+  final text = PromptText.instance;
+  return LlmTool(
+    name: proposeNextStepsTool,
+    description: text['tool.propose_next_steps'],
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'steps': {
+          'type': 'array',
+          'minItems': 1,
+          'maxItems': 3,
+          'items': {
+            'type': 'object',
+            'properties': {
+              'title': {
+                'type': 'string',
+                'minLength': 1,
+                'description': text['tool.propose_next_steps.title'],
+              },
+              'action': {
+                'type': ['string', 'null'],
+                'description': text['tool.propose_next_steps.action'],
+              },
+              'end_condition': {
+                'type': ['string', 'null'],
+                'description': text['tool.propose_next_steps.end_condition'],
+              },
+              'minutes': {
+                'type': ['integer', 'null'],
+                'description': text['tool.propose_next_steps.minutes'],
+              },
             },
-            'end_condition': {
-              'type': ['string', 'null'],
-              'description': '什么时候算结束',
-            },
-            'minutes': {
-              'type': ['integer', 'null'],
-              'description': '预计分钟数，可省略',
-            },
+            'required': ['title'],
           },
-          'required': ['title'],
         },
       },
+      'required': ['steps'],
     },
-    'required': ['steps'],
-  },
-);
+  );
+}
 
-const LlmTool _citationsSchema = LlmTool(
-  name: proposeCitationsTool,
-  description:
-      '提交这次回答依据的材料页。quote 必须逐字摘录该页原文，material_id 用材料页前面标的编号；'
-      '不要改写、拼接或编造页码。没有依据就不要调用。',
-  parameters: {
-    'type': 'object',
-    'properties': {
-      'citations': {
-        'type': 'array',
-        'minItems': 1,
-        'maxItems': 5,
-        'items': {
-          'type': 'object',
-          'properties': {
-            'material_id': {'type': 'string'},
-            'page_no': {'type': 'integer'},
-            'quote': {
-              'type': 'string',
-              'minLength': 1,
-              'description': '原文逐字摘录',
+LlmTool get _citationsSchema {
+  final text = PromptText.instance;
+  return LlmTool(
+    name: proposeCitationsTool,
+    description: text['tool.propose_citations'],
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'citations': {
+          'type': 'array',
+          'minItems': 1,
+          'maxItems': 5,
+          'items': {
+            'type': 'object',
+            'properties': {
+              'material_id': {'type': 'string'},
+              'page_no': {'type': 'integer'},
+              'quote': {
+                'type': 'string',
+                'minLength': 1,
+                'description': text['tool.propose_citations.quote'],
+              },
             },
+            'required': ['material_id', 'page_no', 'quote'],
           },
-          'required': ['material_id', 'page_no', 'quote'],
         },
       },
+      'required': ['citations'],
     },
-    'required': ['citations'],
-  },
-);
+  );
+}
 
-const LlmTool _assessmentSchema = LlmTool(
-  name: proposeAssessmentTool,
-  description:
-      '提交这次学习结果的判断。只提交依据，不替用户判分；'
-      '结果区分独立完成、辅助完成与待核实。',
-  parameters: {
-    'type': 'object',
-    'properties': {
-      'result': {
-        'type': 'string',
-        'enum': ['独立完成', '辅助完成', '待核实'],
-      },
-      'basis': {
-        'type': ['string', 'null'],
-        'description': '依据哪段原文或哪次提示',
-      },
-    },
-    'required': ['result'],
-  },
-);
-
-const LlmTool _studyStepsSchema = LlmTool(
-  name: proposeStudyStepsTool,
-  description:
-      '按本次给出的材料页提出学习步骤，覆盖本次范围。每步写清页码范围与补充说明；'
-      '完成目标必需、但材料里没有展开的内容标 is_prerequisite=true 并写进 note。'
-      '不要替用户安排时间。',
-  parameters: {
-    'type': 'object',
-    'properties': {
-      'steps': {
-        'type': 'array',
-        'minItems': 1,
-        'maxItems': 12,
-        'items': {
-          'type': 'object',
-          'properties': {
-            'title': {
-              'type': 'string',
-              'minLength': 1,
-              'description': '这一步做什么',
-            },
-            'page_from': {
-              'type': ['integer', 'null'],
-            },
-            'page_to': {
-              'type': ['integer', 'null'],
-            },
-            'note': {
-              'type': ['string', 'null'],
-              'description': '补充说明',
-            },
-            'is_prerequisite': {'type': 'boolean'},
-          },
-          'required': ['title'],
+LlmTool get _assessmentSchema {
+  final text = PromptText.instance;
+  return LlmTool(
+    name: proposeAssessmentTool,
+    description: text['tool.propose_assessment'],
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'result': {
+          'type': 'string',
+          'enum': ['独立完成', '辅助完成', '待核实'],
+        },
+        'basis': {
+          'type': ['string', 'null'],
+          'description': text['tool.propose_assessment.basis'],
         },
       },
+      'required': ['result'],
     },
-    'required': ['steps'],
-  },
-);
+  );
+}
+
+LlmTool get _studyStepsSchema {
+  final text = PromptText.instance;
+  return LlmTool(
+    name: proposeStudyStepsTool,
+    description: text['tool.propose_study_steps'],
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'steps': {
+          'type': 'array',
+          'minItems': 1,
+          'maxItems': 12,
+          'items': {
+            'type': 'object',
+            'properties': {
+              'title': {
+                'type': 'string',
+                'minLength': 1,
+                'description': text['tool.propose_study_steps.title'],
+              },
+              'page_from': {
+                'type': ['integer', 'null'],
+              },
+              'page_to': {
+                'type': ['integer', 'null'],
+              },
+              'note': {
+                'type': ['string', 'null'],
+                'description': text['tool.propose_study_steps.note'],
+              },
+              'is_prerequisite': {'type': 'boolean'},
+            },
+            'required': ['title'],
+          },
+        },
+      },
+      'required': ['steps'],
+    },
+  );
+}

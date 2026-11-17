@@ -14,6 +14,9 @@ void main() {
       'request.hint',
       'request.study_steps',
       'request.previous_line',
+      'tool.propose_memories',
+      'tool.read_material_page',
+      'tool.submit_probe',
     ]) {
       expect(text[key], isNotEmpty, reason: '缺少段落：$key');
     }

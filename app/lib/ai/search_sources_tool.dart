@@ -4,6 +4,7 @@ import '../domain/models/material.dart';
 import 'agent_read_budget.dart';
 import 'agent_tools.dart';
 import 'llm_client.dart';
+import 'prompt_text.dart';
 
 import '../domain/rules/text.dart';
 
@@ -29,12 +30,9 @@ AgentTool searchSourcesReader(
     pages: pages,
   );
   return AgentTool(
-    schema: const LlmTool(
+    schema: LlmTool(
       name: searchSourcesTool,
-      description:
-          '首轮摘录不足时，在本轮范围与用户带入的来源内改写查询补搜。'
-          '每轮最多调用两次，每次最多五条候选，摘录约两百字；'
-          '不能扩大到当前目标、材料与这条讨论之外。',
+      description: PromptText.instance['tool.search_sources'],
       parameters: {
         'type': 'object',
         'properties': {
@@ -42,7 +40,7 @@ AgentTool searchSourcesReader(
             'type': 'string',
             'minLength': 1,
             'maxLength': 200,
-            'description': '改写后的查询，保留题号、公式或原句',
+            'description': PromptText.instance['tool.search_sources.query'],
           },
         },
         'required': ['query'],
