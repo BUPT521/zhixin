@@ -6,8 +6,9 @@ import 'package:material_ui/material_ui.dart';
 /// 动效的几档时长与曲线；页面与公共组件只从这里取，不再各写一套数字。
 ///
 /// 动效只用来说明“内容换了”“这一块展开了”“选中项移到了这里”，不做装饰：
-/// 位移不超过 8 像素，不缩放、不弹跳、不循环。系统打开“减少动态效果”时，
-/// [ZhixinMotionContext.motionOf] 把时长归零，界面直接到终态。
+/// 除底栏换栏按整幅栏宽滑入滑出之外，其余位移不超过 8 像素，不缩放、不弹跳、
+/// 不循环。系统打开“减少动态效果”时，[ZhixinMotionContext.motionOf] 把时长
+/// 归零，界面直接到终态。
 class ZhixinMotion {
   const ZhixinMotion();
 
@@ -384,83 +385,105 @@ class _ExpandRevealState extends State<ExpandReveal>
   }
 }
 
-/// 底部三栏用的常驻页面栈：切换时新栏淡入并上移几个像素，
+/// 底部三栏用的常驻页面栈：换栏时新栏从切换方向滑入，旧栏向相反方向滑出，
 /// 其余栏目保持原状态（输入、筛选与滚动位置都不丢）。
 ///
-/// 每栏都包同一层结构，结构不随切换变化，否则切栏时其余栏目的状态会被重建。
-/// 透明度用 [FadeTransition]、位移只动包在重绘边界外的一层，动画期间不重画
-/// 整栏内容；非当前栏关掉 [TickerMode]，隐藏的转圈与生成中提示暂停而不是销毁。
-class FadeIndexedStack extends StatefulWidget {
-  const FadeIndexedStack({
-    super.key,
-    required this.index,
-    required this.children,
-  });
+/// 每一栏都按同一层结构包起来，结构不随切换变化，否则切栏时其余栏目的状态
+/// 会被重建。位移只移动包在重绘边界外的一层，动画期间不重画整栏内容；非当前
+/// 栏关掉 [TickerMode]，隐藏的转圈与生成中提示暂停而不是销毁；没有参与本次
+/// 切换的栏目连语义一起隐藏，点击与读屏不会落到看不见的页面上。
+///
+/// 位移取整幅栏宽：切到更靠右的一栏时新栏从右侧进来、旧栏向左出去，切回左边
+/// 时方向相反；两栏在切换途中首尾相接，同一时刻只有一半屏幕在换内容。
+class TabSlideStack extends StatefulWidget {
+  const TabSlideStack({super.key, required this.index, required this.children});
 
   final int index;
   final List<Widget> children;
 
   @override
-  State<FadeIndexedStack> createState() => _FadeIndexedStackState();
+  State<TabSlideStack> createState() => _TabSlideStackState();
 }
 
-class _FadeIndexedStackState extends State<FadeIndexedStack>
+class _TabSlideStackState extends State<TabSlideStack>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
     value: 1,
   );
 
-  /// 透明度在前七成时间里走完，之后离屏层撤掉，剩下的时间只做位移收尾。
-  late final CurvedAnimation _opacity = CurvedAnimation(
-    parent: _controller,
-    curve: const Interval(0, 0.7, curve: Curves.easeOut),
-  );
-  late final CurvedAnimation _move = CurvedAnimation(
-    parent: _controller,
-    curve: const ZhixinMotion().move,
-  );
+  /// 正在滑出的那一栏；不在切换途中时为空。
+  int? _leaving;
+
+  /// 新栏进入的方向：正数从右侧进入（切到更靠右的一栏），负数从左侧进入。
+  double _direction = 1;
 
   @override
-  void didUpdateWidget(covariant FadeIndexedStack oldWidget) {
+  void initState() {
+    super.initState();
+    _controller.addStatusListener(_settle);
+  }
+
+  /// 播完把滑出去的旧栏撤下：它已经移到屏外，语义不该再留在树上。
+  void _settle(AnimationStatus status) {
+    if (status != AnimationStatus.completed || _leaving == null) return;
+    setState(() => _leaving = null);
+  }
+
+  @override
+  void didUpdateWidget(covariant TabSlideStack oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.index == widget.index) return;
-    const motion = ZhixinMotion();
-    final duration = context.motionOf(motion.emphasized);
+    _direction = widget.index > oldWidget.index ? 1 : -1;
+    final duration = context.motionOf(const ZhixinMotion().emphasized);
     if (duration == Duration.zero) {
+      _leaving = null;
       _controller.value = 1;
       return;
     }
+    _leaving = oldWidget.index;
     _controller.duration = duration;
     _controller.forward(from: 0);
   }
 
   @override
   void dispose() {
-    _move.dispose();
-    _opacity.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final rise = const ZhixinMotion().rise * 1.5;
-    return IndexedStack(
-      index: widget.index,
-      children: [
-        for (var i = 0; i < widget.children.length; i++)
-          TabTransition(
-            animation: _controller,
-            child: _TabLayer(
-              active: i == widget.index,
-              opacity: i == widget.index ? _opacity : kAlwaysCompleteAnimation,
-              move: i == widget.index ? _move : kAlwaysCompleteAnimation,
-              rise: rise,
-              child: widget.children[i],
-            ),
-          ),
-      ],
+    final curve = const ZhixinMotion().move;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            final moving = _controller.value < 1;
+            final t = curve.transform(_controller.value);
+            final leaving = moving ? _leaving : null;
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                for (var i = 0; i < widget.children.length; i++)
+                  _TabLayer(
+                    active: i == widget.index,
+                    visible: i == widget.index || i == leaving,
+                    dx: i == widget.index
+                        ? (1 - t) * width * _direction
+                        : i == leaving
+                        ? -t * width * _direction
+                        : 0,
+                    animation: _controller,
+                    child: widget.children[i],
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -468,32 +491,67 @@ class _FadeIndexedStackState extends State<FadeIndexedStack>
 class _TabLayer extends StatelessWidget {
   const _TabLayer({
     required this.active,
-    required this.opacity,
-    required this.move,
-    required this.rise,
+    required this.visible,
+    required this.dx,
+    required this.animation,
     required this.child,
   });
 
   final bool active;
-  final Animation<double> opacity;
-  final Animation<double> move;
-  final double rise;
+
+  /// 是否参与本次切换；不参与时保留状态，但不布局、不绘制，也不占语义。
+  final bool visible;
+
+  /// 本栏相对原位的水平位移，正数向右。
+  final double dx;
+
+  final Animation<double> animation;
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => TickerMode(
-    enabled: active,
-    child: FadeTransition(
-      opacity: opacity,
-      child: AnimatedBuilder(
-        animation: move,
+  Widget build(BuildContext context) => _TabStage(
+    visible: visible,
+    // 滑出的那一栏还在画面上，但它已经不是当前页：控件查找、读屏与测试按
+    // 原来的口径只看得到当前栏。
+    onstage: active,
+    child: ExcludeFocus(
+      excluding: !active,
+      child: TickerMode(
+        enabled: active,
         // 子树放进重绘边界：动画期间每帧只移动这一层，不重画页面内容。
-        child: RepaintBoundary(child: child),
-        builder: (context, child) => Transform.translate(
-          offset: Offset(0, (1 - move.value) * rise),
-          child: child,
+        child: Transform.translate(
+          offset: Offset(dx, 0),
+          child: RepaintBoundary(
+            child: TabTransition(animation: animation, child: child),
+          ),
         ),
       ),
     ),
   );
+}
+
+/// 一栏在页面栈里的显隐：控制是否布局、绘制，以及控件查找能否看到它。
+///
+/// 与 [Offstage] 的区别是多了 [onstage]：滑出的那一栏仍然布局与绘制，但已经
+/// 不是当前页，控件查找、读屏与测试和 [IndexedStack] 一样只看得到当前栏。
+class _TabStage extends Offstage {
+  const _TabStage({
+    required this.onstage,
+    required bool visible,
+    required super.child,
+  }) : super(offstage: !visible);
+
+  final bool onstage;
+
+  @override
+  _TabStageElement createElement() => _TabStageElement(this);
+}
+
+class _TabStageElement extends SingleChildRenderObjectElement {
+  _TabStageElement(_TabStage super.widget);
+
+  @override
+  void debugVisitOnstageChildren(ElementVisitor visitor) {
+    if ((widget as _TabStage).onstage) super.debugVisitOnstageChildren(visitor);
+  }
 }

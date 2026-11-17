@@ -41,6 +41,14 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  /// 换到记录栏并等滑入结束。切栏是整幅滑入，动画在换栏之后的下一帧才开始，
+  /// 先起一帧再把时间推过时长，记录栏才回到原位置、可以点它的入口。
+  Future<void> openRecords(WidgetTester tester) async {
+    await tester.tap(find.text('记录').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
   /// 轮询到目标控件出现；查找与列表读取都在后台完成，不能依赖
   /// pumpAndSettle 收尾。
   Future<void> pumpUntil(
@@ -149,8 +157,7 @@ void main() {
       );
     });
 
-    await tester.tap(find.text('记录').last);
-    await tester.pump(const Duration(milliseconds: 300));
+    await openRecords(tester);
     await tester.tap(find.byKey(const ValueKey('records-search-entry')));
     await pumpUntil(tester, find.text('搜索记录'));
 
@@ -261,8 +268,7 @@ void main() {
       }
     });
 
-    await tester.tap(find.text('记录').last);
-    await tester.pump(const Duration(milliseconds: 300));
+    await openRecords(tester);
     await tester.tap(find.byKey(const ValueKey('records-search-entry')));
     await pumpUntil(tester, find.text('搜索记录'));
 
@@ -305,8 +311,7 @@ void main() {
     });
     await settle(tester);
 
-    await tester.tap(find.text('记录').last);
-    await tester.pump(const Duration(milliseconds: 300));
+    await openRecords(tester);
     await tester.tap(find.byKey(const ValueKey('records-search-entry')));
 
     // 推入动画中途：输入框已经建出来，但还没有要焦点。
@@ -342,8 +347,7 @@ void main() {
     });
     await settle(tester);
 
-    await tester.tap(find.text('记录').last);
-    await tester.pump(const Duration(milliseconds: 300));
+    await openRecords(tester);
     await tester.tap(find.byKey(const ValueKey('records-search-entry')));
     // 路由推入共 260 毫秒；在过渡结束前打开范围菜单，焦点不应再被请求。
     await tester.pump();
@@ -388,8 +392,7 @@ void main() {
       File(path).createSync(recursive: true);
     });
 
-    await tester.tap(find.text('记录').last);
-    await tester.pump(const Duration(milliseconds: 300));
+    await openRecords(tester);
     await tester.tap(find.byIcon(FLucideIcons.network));
     await pumpUntil(tester, find.text('索引状态'));
     await pumpUntil(tester, find.textContaining('索引状态暂时无法读取'));

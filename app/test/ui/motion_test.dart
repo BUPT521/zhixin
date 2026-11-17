@@ -28,6 +28,25 @@ bool _tickerEnabled(WidgetTester tester, String text) => tester
     )
     .enabled;
 
+/// 一栏相对原位的水平位移；切栏途中用它判断滑入方向。
+double _dxOf(WidgetTester tester, String text) => tester
+    .widget<Transform>(
+      find
+          .ancestor(
+            of: find.text(text, skipOffstage: false),
+            matching: find.byType(Transform, skipOffstage: false),
+          )
+          .first,
+    )
+    .transform
+    .getTranslation()
+    .x;
+
+/// 一栏是否参与当前显示；没参与切换的栏目仍在树上，只是不布局、不绘制，
+/// 控件查找也看不到它。
+bool _shown(WidgetTester tester, String text) =>
+    find.text(text).evaluate().isNotEmpty;
+
 void main() {
   testWidgets('内容换掉时淡入，播完停在完全不透明', (tester) async {
     await tester.pumpWidget(
@@ -172,9 +191,50 @@ void main() {
     expect(tester.widget<SliverFadeTransition>(fade).opacity.value, 1);
   });
 
-  testWidgets('切栏淡入不重建其他栏目的状态', (tester) async {
+  testWidgets('切栏从切换方向滑入，旧栏反向滑出，播完回到原位', (tester) async {
     Widget stack(int index) => _host(
-      FadeIndexedStack(
+      TabSlideStack(
+        index: index,
+        children: const [Text('第一栏'), Text('第二栏'), Text('第三栏')],
+      ),
+    );
+
+    await tester.pumpWidget(stack(0));
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '第一栏'), 0);
+    expect(_shown(tester, '第一栏'), isTrue);
+    expect(_shown(tester, '第二栏'), isFalse);
+
+    // 切到更靠右的一栏：新栏从右侧进来，旧栏向左出去，两幅栏首尾相接。
+    await tester.pumpWidget(stack(1));
+    await tester.pump(const Duration(milliseconds: 80));
+    final entering = _dxOf(tester, '第二栏');
+    final leaving = _dxOf(tester, '第一栏');
+    expect(entering, greaterThan(0));
+    expect(leaving, lessThan(0));
+    expect(entering - leaving, closeTo(800, 0.5));
+    // 滑出的那一栏还画在屏上，但已经不是当前页：控件查找只看得到新栏。
+    expect(_shown(tester, '第二栏'), isTrue);
+    expect(_shown(tester, '第一栏'), isFalse);
+
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '第二栏'), 0);
+    expect(_shown(tester, '第二栏'), isTrue);
+    expect(_shown(tester, '第一栏'), isFalse);
+
+    // 切回左边：方向反过来。
+    await tester.pumpWidget(stack(0));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(_dxOf(tester, '第一栏'), lessThan(0));
+    expect(_dxOf(tester, '第二栏'), greaterThan(0));
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '第一栏'), 0);
+    expect(_shown(tester, '第二栏'), isFalse);
+  });
+
+  testWidgets('切栏滑入不重建其他栏目的状态', (tester) async {
+    Widget stack(int index) => _host(
+      TabSlideStack(
         index: index,
         children: const [
           _Counter(key: ValueKey('a')),
@@ -197,10 +257,7 @@ void main() {
 
   testWidgets('切栏时非当前栏停掉动画，当前栏照常推进', (tester) async {
     Widget stack(int index) => _host(
-      FadeIndexedStack(
-        index: index,
-        children: const [Text('第一栏'), Text('第二栏')],
-      ),
+      TabSlideStack(index: index, children: const [Text('第一栏'), Text('第二栏')]),
     );
 
     await tester.pumpWidget(stack(0));
@@ -213,19 +270,18 @@ void main() {
     expect(_tickerEnabled(tester, '第二栏'), isTrue);
   });
 
-  testWidgets('切栏播完停在完全不透明，减少动态效果时直接到终态', (tester) async {
+  testWidgets('切栏播完回到原位，减少动态效果时直接到终态', (tester) async {
     Widget stack(int index, {bool reduce = false}) => _host(
-      FadeIndexedStack(
-        index: index,
-        children: const [Text('第一栏'), Text('第二栏')],
-      ),
+      TabSlideStack(index: index, children: const [Text('第一栏'), Text('第二栏')]),
       reduce: reduce,
     );
 
     await tester.pumpWidget(stack(0, reduce: true));
     await tester.pumpWidget(stack(1, reduce: true));
     await tester.pump();
-    expect(_opacityOf(tester, find.text('第二栏')), 1);
+    expect(_dxOf(tester, '第二栏'), 0);
+    expect(_shown(tester, '第二栏'), isTrue);
+    expect(_shown(tester, '第一栏'), isFalse);
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
@@ -257,7 +313,7 @@ void main() {
   testWidgets('切栏动画结束之后才回填内容', (tester) async {
     final settledAt = <AnimationStatus?>[];
     Widget stack(int index) => _host(
-      FadeIndexedStack(
+      TabSlideStack(
         index: index,
         children: [
           const SizedBox.shrink(),

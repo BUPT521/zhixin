@@ -118,8 +118,9 @@ class _HomeShellState extends State<HomeShell> {
       valueListenable: _index,
       builder: (context, index, _) => forui.FScaffold(
         footer: _BottomBar(index: index, onChange: _open),
-        // 切栏时新栏淡入并上移几个像素；三栏仍然常驻，状态不随切换重建。
-        child: FadeIndexedStack(index: index, children: _pages ?? const []),
+        // 换栏时新栏从切换方向滑入、旧栏向相反方向滑出；三栏仍然常驻，
+        // 状态不随切换重建。
+        child: TabSlideStack(index: index, children: _pages ?? const []),
       ),
     );
   }

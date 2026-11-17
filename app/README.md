@@ -115,10 +115,10 @@ lib/
 
 动效与加载按 [动画流畅性优化方案](../docs/动画流畅性优化方案.md) 第 5 节执行，新增页面照下面五条写，不再另立一套：
 
-1. 逐帧变化的透明度只用 `FadeTransition`，不用 `Opacity` 组件；逐帧位移的子树先包 `RepaintBoundary`，让动画只动合成层。`FadeIn`、`ExpandReveal` 与 `FadeIndexedStack` 已经把这三件事做在组件里，页面直接用。
+1. 逐帧变化的透明度只用 `FadeTransition`，不用 `Opacity` 组件；逐帧位移的子树先包 `RepaintBoundary`，让动画只动合成层。`FadeIn`、`ExpandReveal` 与 `TabSlideStack` 已经把这三件事做在组件里，页面直接用。
 2. 动画期间不改布局：输入框聚焦、分段选中这类状态变化只插值颜色，边框宽度与字重固定，不让整块重新布局。
 3. 切栏、切页签与推入页面时读取立刻发起，回填前调用 `context.afterTransition()`，结果等过渡结束再交给界面；已有数据时返回不重播淡入，也不显示转圈。
-4. 常驻但不可见的内容一律包 `TickerMode(enabled: false)`；底栏与页签用 `IndexedStack` 常驻，切换只换显示，输入、筛选、滚动位置与 `MaterialList` 的状态因此不丢。
+4. 常驻但不可见的内容一律包 `TickerMode(enabled: false)`；底栏用 `TabSlideStack` 常驻三栏，记录与安排的页签用 `IndexedStack` 常驻，切换只换显示，输入、筛选、滚动位置与 `MaterialList` 的状态因此不丢。底栏换栏按整幅栏宽滑入滑出，其余位移仍不超过 8 像素。
 5. 页面路由的过渡在 `ThemeData.pageTransitionsTheme` 里配一次（安卓与桌面淡入加右推 24 像素，iOS 与 macOS 保留系统滑回手势），各页不再各写一套；减少动态效果时直接给终态。`MaterialPageRoute` 照常写，过渡由主题统一决定。
 
 首读占位用 `ListSkeleton`（与卡片同高的静态块），不要用居中转圈：转圈只占一行，内容读完之后下方整体下移，页面跟着跳动。
