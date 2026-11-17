@@ -64,6 +64,7 @@ import 'plugins/persona/persona_catalog.dart';
 import 'plugins/persona/persona_plugin.dart';
 import 'plugins/runtime/plugin_runtime.dart';
 import 'ui/theme_mode_controller.dart';
+import 'ui/workspace_widgets.dart';
 
 /// 打开一次库，把仓库与服务挂在这里；页面不从各自开库。
 class AppScope extends StatefulWidget {
@@ -657,9 +658,8 @@ class AppScopeState extends State<AppScope> {
           );
         }
         if (snapshot.connectionState != ConnectionState.done) {
-          return const forui.FScaffold(
-            child: Center(child: forui.FCircularProgress()),
-          );
+          // 启动时的等待与各页首读共用一个圈，尺寸只在这里定一次。
+          return const forui.FScaffold(child: PageLoading());
         }
         return _AppScopeData(state: this, child: widget.child);
       },

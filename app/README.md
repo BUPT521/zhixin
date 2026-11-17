@@ -121,7 +121,7 @@ lib/
 4. 常驻但不可见的内容一律包 `TickerMode(enabled: false)`；底栏与页内页签用 `TabSlideStack` 常驻，换周这类同一块位置换内容用 `SlideSwap`，切换只换显示，输入、筛选、滚动位置与 `MaterialList` 的状态因此不丢。底栏、页签与换周按整幅页宽滑入滑出，其余位移不超过 24 像素。
 5. 页面路由的过渡在 `ThemeData.pageTransitionsTheme` 里配一次（安卓与桌面淡入加右推 24 像素，iOS 与 macOS 保留系统滑回手势），各页不再各写一套；减少动态效果时直接给终态。`MaterialPageRoute` 照常写，过渡由主题统一决定。
 
-首读占位用 `ListSkeleton`（与卡片同高的静态块），不要用居中转圈：转圈只占一行，内容读完之后下方整体下移，页面跟着跳动。
+首读占位用 `ListSkeleton`（与卡片同高的静态块），不要用居中转圈：转圈只占一行，内容读完之后下方整体下移，页面跟着跳动。没有固定骨架的页面与启动等待用 `PageLoading`：Forui 的圆形指示默认取正文字号，手机上只有 18，看上去只是一个图标，所以这里定成 36 的直径并取主色；按钮、列表行与照片上的指示仍用 `sm`、`xs`，大小跟着所在控件走。这类差异在 Forui 的样式里改，界面里的 Material 只保留底部面板、日期时间选择与下拉刷新三处，同一种“正在读取”因此只有一套组件。
 
 页面之间的跳转统一经 [ui/navigation.dart](lib/ui/navigation.dart) 的一页一个函数打开，页面不互相 import，路由也只在这个文件里构造；`PlanPage` 的底栏入口与 `PlanPage.detail` 详情入口分开，详情不参与切栏。忙碌指示用 `FProgress` 与按钮内 `FCircularProgress`，错误与失败说明统一用 `InlineNotice`（可带重试），表单字段的就地校验文字保留在字段旁。确认框统一经 `confirmZhixin` 与 `showZhixinAlert` 打开，按钮形状与取消文案不再由调用方各写一份。文案集中在 [ui/copy.dart](lib/ui/copy.dart)（角色名、页签名与空态句式），时钟与日期格式集中在 [ui/format.dart](lib/ui/format.dart)，间距与圆角从 `ZhixinSpace`、`ZhixinRadius` 取，动效时长与曲线只从 [ui/motion.dart](lib/ui/motion.dart) 取。页面数据统一用 [ui/live_view.dart](lib/ui/live_view.dart) 的 `LiveView` 订阅应用服务给出的流：写入、撤销、导入与换库之后的重读由数据层推送，页面不再在保存或跳转返回后自己重读（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md)）。插件页与人格页读的是不形成提交的 `app_meta`，仍用 [ui/data_version_watcher.dart](lib/ui/data_version_watcher.dart) 在整库恢复与清空之后重读。
 

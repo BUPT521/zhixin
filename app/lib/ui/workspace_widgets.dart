@@ -430,12 +430,25 @@ class LoadMoreFooter extends StatelessWidget {
 }
 
 /// 整页首读时的等待指示；列表页用 [ListSkeleton]，其余页面用这一个。
+///
+/// 圈定在 [diameter]：Forui 的 `FCircularProgress` 默认取正文字号，手机上只有
+/// 18，看上去只是一个图标，读不出“正在读取”。按钮、列表行与照片上的指示仍用
+/// `sm`、`xs`，大小跟着所在控件走，只有整页等待这一处放大并取主色。
 class PageLoading extends StatelessWidget {
   const PageLoading({super.key});
 
+  /// 圆的直径，与 Material 圆形进度条的默认直径一致，两种组件互换时页面
+  /// 的分量相当。
+  static const double diameter = 36;
+
   @override
-  Widget build(BuildContext context) =>
-      const Center(child: forui.FCircularProgress());
+  Widget build(BuildContext context) => Center(
+    child: forui.FCircularProgress(
+      style: .delta(
+        iconStyle: .delta(size: diameter, color: context.zhixin.colors.primary),
+      ),
+    ),
+  );
 }
 
 /// 首读时的占位骨架：几条与真实卡片同高的静态块，读完原位换成内容。
