@@ -33,7 +33,6 @@ class ServerProblem implements Exception {
 
   bool get isUnauthorized => status == 401;
   bool get isConflict => status == 409;
-  bool get isOffline => code == 'offline';
 
   /// 给界面看的一句说明；未知错误保持笼统，不把 `detail` 带进界面。
   String get userMessage => switch (code) {

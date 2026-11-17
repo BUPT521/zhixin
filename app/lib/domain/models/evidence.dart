@@ -211,7 +211,6 @@ class EvidenceHit {
       location.conversationId != null &&
       (kind == EvidenceKind.message || kind == EvidenceKind.question);
   bool get opensLearning => kind == EvidenceKind.answer;
-  bool get opensMaterial => kind == EvidenceKind.materialPage;
 
   EvidenceHit copyWith({
     bool? literal,

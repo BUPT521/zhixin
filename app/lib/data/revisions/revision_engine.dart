@@ -1700,10 +1700,3 @@ Projection decodeProjection(String raw) {
   }
   return projection;
 }
-
-/// 读取 `Uint8List` 的辅助，供恢复与导出使用。
-Uint8List asBytes(Object? value) {
-  if (value is Uint8List) return value;
-  if (value is List<int>) return Uint8List.fromList(value);
-  throw StateError('期望 BLOB，实际为 ${value.runtimeType}');
-}

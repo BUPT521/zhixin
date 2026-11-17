@@ -57,11 +57,6 @@ class QuestionView {
 
   /// 当前未提交尝试上的记忆建议；已经写入的只保留仍可撤销的那几条。
   final List<MemoryItemView> memoryItems;
-
-  Attempt? get lastSubmitted => attempts
-      .where((attempt) => attempt.submitted)
-      .cast<Attempt?>()
-      .firstWhere((attempt) => true, orElse: () => null);
 }
 
 class HelpResult {

@@ -425,17 +425,6 @@ class TaskRepository {
     return {for (final row in rows) row.id: _itemOfByIds(row)};
   }
 
-  Future<bool> hasScheduleOrSession(
-    String itemId, {
-    WriteTransaction? transaction,
-  }) async {
-    final executor = writeExecutor(transaction, _db);
-    final rows = await executor.selectGenerated(
-      (db) => db.itemHasScheduleOrSession(itemId).get(),
-    );
-    return rows.isNotEmpty;
-  }
-
   /// 待办里截止最近的一条；所属目标已暂停的事项不参与“现在”页推荐。
   Future<PlanItem?> nextDue() async {
     final rows = await _db.selectGenerated(
@@ -494,9 +483,5 @@ class TaskRepository {
       transaction,
       _db,
     ).writeGenerated((db) => db.setPlanItemPriority(value, stamp, id));
-  }
-
-  Future<void> deleteItem(String id) async {
-    await _db.writeGenerated((db) => db.deletePlanItem(id));
   }
 }

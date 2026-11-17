@@ -124,9 +124,3 @@ JOIN plan_item p ON p.id = b.plan_item_id
 WHERE b.status = 'planned' AND b.end_at > :after
 ORDER BY b.start_at;
 
--- 这条事项是否已经排过时间或学过。
-itemHasScheduleOrSession:
-SELECT 1 FROM schedule_block WHERE plan_item_id = :itemId
-UNION ALL
-SELECT 1 FROM study_session WHERE plan_item_id = :itemId
-LIMIT 1;

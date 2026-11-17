@@ -97,7 +97,6 @@ class CapacityPlan {
   final ClockTime windowEnd;
 
   bool get overCapacity => demandMinutes > availableMinutes;
-  bool get hasCandidates => candidates.isNotEmpty;
 
   String get availableBudget => roughMinutes(availableMinutes);
   String get demandBudget => roughMinutes(demandMinutes);

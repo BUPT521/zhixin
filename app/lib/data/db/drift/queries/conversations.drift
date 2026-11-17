@@ -232,9 +232,6 @@ UPDATE conversation SET status = 'open',
   updated_at = :stamp
 WHERE id = :conversationId;
 
-conversationScope:
-SELECT id, goal_id, material_id FROM conversation WHERE id = :id LIMIT 1;
-
 -- 检索核对：一条题目命中的题干与出处。
 --
 -- 题干取开始作答时确定的用户消息；出处缺省时按材料标题与页码补一条，与题目的

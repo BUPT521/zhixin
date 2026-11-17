@@ -53,8 +53,6 @@ class ChatMessage {
   final ChatMessagePayload? payload;
 
   bool get isUser => role == MessageRole.user;
-  bool get isSystem => role == MessageRole.system;
-  bool get isAssistant => role == MessageRole.assistant;
   bool get hasImages => imagePaths.isNotEmpty;
 
   /// 这条回答是否在生成中被停止；历史记录里仍要标出来。

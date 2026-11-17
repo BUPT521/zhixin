@@ -321,10 +321,4 @@ class RevisionService {
   Future<List<String>> verifyAssets() => engine.verifyAssets(db.raw);
 
   Future<int> databaseBytes() => engine.databaseBytes(db.raw);
-
-  /// 当前数据里引用到的附件哈希，导出与回收都用这一份。
-  Future<Set<String>> currentAssetHashes() async {
-    final projection = await engine.readProjection(db.raw);
-    return AssetStore.hashesInProjection(projection);
-  }
 }

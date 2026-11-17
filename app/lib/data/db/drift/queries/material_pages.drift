@@ -38,9 +38,6 @@ UPDATE material_page SET content = :content,
   updated_at = :stamp
 WHERE id = :pageId;
 
-deleteMaterialPage:
-DELETE FROM material_page WHERE id = :pageId;
-
 -- 一份材料的页码范围；没有页时两列都是空。
 materialPageBounds:
 SELECT MIN(page_no) AS first_page, MAX(page_no) AS last_page

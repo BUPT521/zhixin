@@ -66,10 +66,4 @@ class TimeRange {
   int get minutes => end.difference(start).inMinutes;
 
   bool get isEmpty => !end.isAfter(start);
-
-  bool overlaps(TimeRange other) =>
-      start.isBefore(other.end) && end.isAfter(other.start);
-
-  TimeRange shift(Duration duration) =>
-      TimeRange(start: start.add(duration), end: end.add(duration));
 }

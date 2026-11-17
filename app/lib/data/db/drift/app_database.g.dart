@@ -12335,14 +12335,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<int> itemHasScheduleOrSession(String? itemId) {
-    return customSelect(
-      'SELECT 1 AS _c0 FROM schedule_block WHERE plan_item_id = ?1 UNION ALL SELECT 1 FROM study_session WHERE plan_item_id = ?1 LIMIT 1',
-      variables: [Variable<String>(itemId)],
-      readsFrom: {this.scheduleBlocks, this.studySessions},
-    ).map((QueryRow row) => row.read<int>('_c0'));
-  }
-
   Selectable<ItemByConversationAndTitleResult> itemByConversationAndTitle(
     String? conversationId,
     String title,
@@ -12542,14 +12534,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         sourceFileName: row.readNullable<String>('source_file_name'),
       ),
     );
-  }
-
-  Selectable<int> lastPlanStepSeq(String? planId) {
-    return customSelect(
-      'SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item WHERE study_plan_id = ?1',
-      variables: [Variable<String>(planId)],
-      readsFrom: {this.planItems},
-    ).map((QueryRow row) => row.read<int>('last_seq'));
   }
 
   Future<int> settleBlocksOnStepDone(
@@ -12902,15 +12886,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> deletePlanItem(String itemId) {
-    return customUpdate(
-      'DELETE FROM plan_item WHERE id = ?1',
-      variables: [Variable<String>(itemId)],
-      updates: {this.planItems},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
   Selectable<MessageRow> recentMessages(String conversationId, int? rowLimit) {
     return customSelect(
       'SELECT * FROM message WHERE conversation_id = ?1 ORDER BY id DESC LIMIT COALESCE(?2, -1)',
@@ -13200,19 +13175,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<MaterialScopeResult> materialScope(String id) {
-    return customSelect(
-      'SELECT id, goal_id FROM material WHERE id = ?1 LIMIT 1',
-      variables: [Variable<String>(id)],
-      readsFrom: {this.materials},
-    ).map(
-      (QueryRow row) => MaterialScopeResult(
-        id: row.read<String>('id'),
-        goalId: row.readNullable<String>('goal_id'),
-      ),
-    );
-  }
-
   Selectable<String?> materialFileHash(String materialId) {
     return customSelect(
       'SELECT source_file_hash FROM material WHERE id = ?1 LIMIT 1',
@@ -13389,15 +13351,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       ],
       updates: {this.materialPages},
       updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> deleteMaterialPage(String pageId) {
-    return customUpdate(
-      'DELETE FROM material_page WHERE id = ?1',
-      variables: [Variable<String>(pageId)],
-      updates: {this.materialPages},
-      updateKind: UpdateKind.delete,
     );
   }
 
@@ -13848,20 +13801,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
-    );
-  }
-
-  Selectable<ConversationScopeResult> conversationScope(String id) {
-    return customSelect(
-      'SELECT id, goal_id, material_id FROM conversation WHERE id = ?1 LIMIT 1',
-      variables: [Variable<String>(id)],
-      readsFrom: {this.conversations},
-    ).map(
-      (QueryRow row) => ConversationScopeResult(
-        id: row.read<String>('id'),
-        goalId: row.readNullable<String>('goal_id'),
-        materialId: row.readNullable<String>('material_id'),
-      ),
     );
   }
 
@@ -15176,12 +15115,6 @@ class ActiveMemoryIdentitiesResult {
   });
 }
 
-class MaterialScopeResult {
-  final String id;
-  final String? goalId;
-  MaterialScopeResult({required this.id, this.goalId});
-}
-
 class MaterialByIdResult {
   final String id;
   final String title;
@@ -15490,13 +15423,6 @@ class RecentlyActiveRecordsResult {
     required this.hasAttempts,
     required this.hasDraft,
   });
-}
-
-class ConversationScopeResult {
-  final String id;
-  final String? goalId;
-  final String? materialId;
-  ConversationScopeResult({required this.id, this.goalId, this.materialId});
 }
 
 class EvidenceQuestionCurrentResult {

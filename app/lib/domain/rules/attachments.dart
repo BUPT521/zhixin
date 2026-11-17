@@ -28,6 +28,3 @@ String resolveAttachment(String filesDir, String stored) {
   if (value.isEmpty) return value;
   return p.join(filesDir, questionImagesDirName, value);
 }
-
-/// 保存图片后写入数据库的名字；只保留文件名，不带目录。
-String storedAttachmentName(String path) => p.basename(path);

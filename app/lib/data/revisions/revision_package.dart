@@ -224,17 +224,6 @@ class RevisionPackageService {
     }
   }
 
-  /// 备份文件里声明的 `HEAD`；用于恢复前的提示与校验。
-  Future<int?> repositoryHead(Uint8List bytes) async {
-    final archive = ZipDecoder().decodeBytes(bytes);
-    final file = archive.findFile(_manifestEntry);
-    if (file == null) return null;
-    final decoded = jsonDecode(utf8.decode(file.content as List<int>));
-    if (decoded is! Map) return null;
-    final head = decoded['head'];
-    return head is int ? head : null;
-  }
-
   /// 恢复版本库之前先在暂存处核对：完整性、schema、`HEAD`、可重建性与附件。
   ///
   /// 返回 false 表示这不是版本库备份（仍可交给旧的当前数据包恢复流程）；
@@ -313,8 +302,6 @@ class RevisionPackageService {
       if (await dir.exists()) await dir.delete(recursive: true);
     }
   }
-
-  String assetPath(String hash) => p.join(_assetPrefix, hash);
 
   /// 暂存库的只读校验：版本、对象白名单、物理完整性与外键。
   ///

@@ -167,23 +167,6 @@ class AssetStore {
     }
     return result;
   }
-
-  /// 检查点里的业务投影引用的附件哈希。
-  static Set<String> hashesInProjectionJson(String json) {
-    final decoded = jsonDecode(json);
-    if (decoded is! Map) return const {};
-    final projection = <String, Map<String, TypedRow>>{};
-    for (final table in decoded.entries) {
-      final rows = table.value;
-      if (rows is! Map) continue;
-      final tableRows = <String, TypedRow>{};
-      for (final row in rows.entries) {
-        tableRows[row.key as String] = decodeTypedRow(jsonEncode(row.value));
-      }
-      projection[table.key as String] = tableRows;
-    }
-    return hashesInProjection(projection);
-  }
 }
 
 /// 界面读取图片用的临时文件缓存；内容始终可以从数据库重建。
@@ -275,18 +258,5 @@ class AttachmentCache {
       }
       await write(hash, bytes);
     }
-  }
-
-  /// 已缓存且被当前数据引用的图片文件；清理时只删没有引用的缓存。
-  Future<Set<String>> cachedHashes() async {
-    final directory = Directory(this.directory());
-    if (!await directory.exists()) return const {};
-    final result = <String>{};
-    await for (final entity in directory.list(followLinks: false)) {
-      if (entity is! File) continue;
-      final name = p.basename(entity.path);
-      if (AssetStore.isHash(name)) result.add(name);
-    }
-    return result;
   }
 }

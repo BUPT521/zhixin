@@ -63,10 +63,6 @@ FROM plan_item p
 WHERE p.study_plan_id IN (SELECT value FROM json_each(:planIds))
 ORDER BY p.study_plan_id, p.seq, p.id;
 
--- 计划下方的步骤里最大的顺序号；没有步骤时返回 0。
-lastPlanStepSeq:
-SELECT COALESCE(MAX(seq), 0) AS last_seq FROM plan_item
-WHERE study_plan_id = :planId;
 -- 完成一步时按是否真的学过回写预约状态：与场次有重叠的记为完成，
 -- 到过开始时间却没有场次的按取消处理。
 settleBlocksOnStepDone:
@@ -183,6 +179,3 @@ setPlanItemPriority:
 UPDATE plan_item SET priority = :priority,
   updated_at = :stamp
 WHERE id = :itemId;
-
-deletePlanItem:
-DELETE FROM plan_item WHERE id = :itemId;

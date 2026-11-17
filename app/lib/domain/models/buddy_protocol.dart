@@ -126,7 +126,6 @@ class BuddyContext {
     }
   }
 
-  bool get hasQuestion => question != null;
   bool get hasMaterial => materialPage != null;
 }
 

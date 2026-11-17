@@ -124,42 +124,6 @@ class StudyPlanRepository {
     return planId;
   }
 
-  /// 按顺序把草案写成学习事项；计划的材料、目标与来源讨论一并带上。
-  Future<void> addDrafts(
-    String planId,
-    List<StudyStepDraft> drafts, {
-    WriteTransaction? transaction,
-  }) async {
-    final plan = await byId(planId);
-    if (plan == null) throw StateError('未找到这份学习计划');
-    final now = formatDateTime(_clock());
-    final txn = writeExecutor(transaction, _db);
-    final lastSeq = await txn.selectGenerated(
-      (db) => db.lastPlanStepSeq(planId).getSingleOrNull(),
-    );
-    var seq = (lastSeq ?? 0) + 1;
-    for (final draft in drafts) {
-      final title = draft.title.trim();
-      if (title.isEmpty) continue;
-      await txn.writeGenerated(
-        (db) => db.insertStudyPlanStep(
-          newUuidV7(),
-          plan.goalId,
-          planId,
-          seq++,
-          title,
-          draft.isPrerequisite
-              ? '此前未接触的必要内容${draft.note == null ? '' : '：${draft.note}'}'
-              : draft.note,
-          draft.pageFrom,
-          draft.pageTo,
-          PlanItemStatus.todo.value,
-          now,
-        ),
-      );
-    }
-  }
-
   static StudyPlan _planOf(PlanRowsResult row) => StudyPlan(
     id: row.id,
     title: row.title,

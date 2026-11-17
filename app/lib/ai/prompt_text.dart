@@ -16,8 +16,6 @@ class PromptText {
     return value;
   }
 
-  static bool get isLoaded => _instance != null;
-
   /// 装入已经解析好的段落；重复调用会用新内容替换。
   static void install(Map<String, String> sections) {
     _instance = PromptText._(Map.unmodifiable(sections));

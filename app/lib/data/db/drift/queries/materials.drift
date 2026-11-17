@@ -2,9 +2,6 @@
 
 import '../tables.dart';
 
-materialScope:
-SELECT id, goal_id FROM material WHERE id = :id LIMIT 1;
-
 -- 材料原文件的哈希，用于取回附件字节。
 materialFileHash:
 SELECT source_file_hash FROM material WHERE id = :materialId LIMIT 1;

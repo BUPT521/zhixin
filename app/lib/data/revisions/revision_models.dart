@@ -44,7 +44,6 @@ class RevisionCommit {
 
   bool get isBaseline => id == 0;
   bool get isUndo => revertedCommitId != null;
-  bool get isRestore => restoredCommitId != null;
 
   Map<String, Object?> toRow() => {
     'id': id,
@@ -94,7 +93,6 @@ class RevisionChange {
   final TypedRow? before;
   final TypedRow? after;
 
-  bool get isInsert => op == 'insert';
   bool get isUpdate => op == 'update';
   bool get isDelete => op == 'delete';
 
@@ -134,8 +132,6 @@ class RevisionRef {
   final String? note;
   final DateTime? createdAt;
   final DateTime? updatedAt;
-
-  bool get isHead => name == headName;
 }
 
 /// 检查点：从某一提交重建所需的业务投影与附件清单。
@@ -170,8 +166,6 @@ class RevisionCheckpoint {
   final List<String> assetHashes;
   final String checksum;
   final DateTime? createdAt;
-
-  bool get isNamed => kind == 'named';
 }
 
 List<String> decodeStringList(String raw) {
