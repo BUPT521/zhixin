@@ -187,7 +187,6 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     if (query.isEmpty || _semanticLoading) return;
     final scope = AppScope.of(context);
     final index = scope.library.semanticIndex;
-    if (!index.configured) return;
     _semanticToken?.cancel();
     final token = SemanticCancelToken();
     _semanticToken = token;
@@ -336,10 +335,10 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   /// 一条状态行，说明语义这一步正在做什么、为什么没有补充结果。
   String? get _semanticStatus {
-    if (_semanticLoading) return '正在按意思找…';
-    if (_semanticFailed) return '按意思的部分没有完成，下面是原文与关键词结果';
-    if (_semanticEmptyIndex) return '语义索引还没有内容，可以在设置里更新';
-    if (_semanticAttempted && _semanticHits.isEmpty) return '没有找到意思相近的记录';
+    if (_semanticLoading) return '正在检索…';
+    if (_semanticFailed) return '检索索引没有完成，下面是原文与关键词结果';
+    if (_semanticEmptyIndex) return '检索索引还没有内容，可以在设置里更新';
+    if (_semanticAttempted && _semanticHits.isEmpty) return '索引里没有其他相关的记录';
     return null;
   }
 

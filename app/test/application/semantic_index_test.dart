@@ -641,18 +641,27 @@ void main() {
     expect(evidence, isNotEmpty);
   });
 
-  test('没有配置嵌入来源时按不可用处理', () async {
+  test('没有配置嵌入来源时只建全文索引，关键词仍然可用', () async {
     final db = await openTestDb();
     addTearDown(db.close);
+    await _seed(db);
     final repository = EvidenceRepository(db);
-    final service = SemanticIndexService(repository: repository, indexPath: '');
+    final service = SemanticIndexService(
+      repository: repository,
+      indexPath: '',
+      vectorStoreOpener: () async =>
+          DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
+    );
     final refresh = await service.refresh();
-    expect(refresh.failure, SemanticFailure.notConfigured);
+    expect(refresh.failure, SemanticFailure.none);
+    expect(refresh.embedded, greaterThan(0));
     final result = await service.search(
       '熵',
       scope: const EvidenceScope.userAll(),
     );
-    expect(result.failure, SemanticFailure.notConfigured);
+    expect(result.usable, isTrue);
+    expect(result.hits, isNotEmpty);
+    expect(result.hits.every((hit) => !hit.semantic), isTrue);
     expect((await service.stats()).configured, isFalse);
   });
 

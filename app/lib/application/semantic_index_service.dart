@@ -7,8 +7,8 @@ import '../data/vector/vector_index.dart';
 import '../data/vector/vector_store.dart';
 import '../data/vector/vector_store_isolate.dart';
 import '../domain/models/evidence.dart';
+import '../domain/models/score.dart';
 import '../domain/rules/embedding.dart';
-import '../domain/rules/score_weights.dart';
 import '../domain/rules/search_terms.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
@@ -188,20 +188,20 @@ class SemanticIndexService {
         return use();
       });
 
+  /// 配了嵌入模型时用它的 spec，没配时用纯文本索引的 spec。
+  EmbeddingModelSpec get _indexSpec => client?.spec ?? textOnlyModelSpec;
+
   /// 取当前索引句柄；第一次用时才打开，打开与建表都在后台 isolate 里完成。
   Future<VectorStore> _requireStore(int generation) async {
     _requireCurrent(generation);
-    final clientSpec = client?.spec;
-    if (clientSpec == null) {
-      throw const EmbeddingUnavailable('没有配置嵌入来源');
-    }
+    final spec = _indexSpec;
     final opening = _opening;
     if (opening != null) {
       final store = await opening;
       _requireCurrent(generation);
       return store;
     }
-    final future = _queueStoreOperation(() => _open(clientSpec, generation));
+    final future = _queueStoreOperation(() => _open(spec, generation));
     _opening = future;
     try {
       final store = await future;
@@ -275,9 +275,6 @@ class SemanticIndexService {
     bool force = false,
   }) async {
     final embedding = client;
-    if (embedding == null) {
-      return const IndexRefreshResult(failure: SemanticFailure.notConfigured);
-    }
     final now = clock();
     try {
       // 先读数据代次再打开索引：打开、初始化 zvec 引擎与建表都由后台 isolate
@@ -294,7 +291,8 @@ class SemanticIndexService {
       _requireCurrent(generation);
 
       // 嵌入数量可以分批限制，清理与统计仍以全部允许进入索引的来源为准。
-      final sendAllowed = canSend;
+      // 没有配置嵌入来源时只建全文索引，正文不出本机，分享范围不参与筛选。
+      final sendAllowed = embedding == null ? null : canSend;
       final keep = {
         for (final source in sources)
           if (sendAllowed?.call(source) ?? true) source.locator.sourceKey,
@@ -333,22 +331,25 @@ class SemanticIndexService {
         }
         final vectors = <List<double>>[];
         var sourceFailed = false;
-        for (final chunk in chunks) {
-          _requireCurrent(generation);
-          final started = DateTime.now();
-          try {
-            vectors.add(await embedding.embed(chunk.text));
-          } on EmbeddingUnavailable {
-            sourceFailed = true;
-            break;
-          } catch (_) {
-            sourceFailed = true;
-            break;
-          } finally {
-            embedMs += DateTime.now().difference(started).inMilliseconds;
+        if (embedding != null) {
+          for (final chunk in chunks) {
+            _requireCurrent(generation);
+            final started = DateTime.now();
+            try {
+              vectors.add(await embedding.embed(chunk.text));
+            } on EmbeddingUnavailable {
+              sourceFailed = true;
+              break;
+            } catch (_) {
+              sourceFailed = true;
+              break;
+            } finally {
+              embedMs += DateTime.now().difference(started).inMilliseconds;
+            }
           }
         }
-        if (sourceFailed || vectors.length != chunks.length) {
+        if (sourceFailed ||
+            (embedding != null && vectors.length != chunks.length)) {
           failed++;
           continue;
         }
@@ -427,9 +428,6 @@ class SemanticIndexService {
     SemanticCancelToken? cancelToken,
   }) async {
     final embedding = client;
-    if (embedding == null) {
-      return const SemanticResult(failure: SemanticFailure.notConfigured);
-    }
     final generation = _generation;
     final effectiveTimeout = timeout ?? queryTimeout;
     final total = Stopwatch()..start();
@@ -445,51 +443,68 @@ class SemanticIndexService {
       return const SemanticResult();
     }
     final embedStarted = Stopwatch()..start();
-    List<double> vector;
-    try {
-      vector = await embedding.embed(query).timeout(effectiveTimeout);
-    } catch (error) {
-      final failure = switch (error) {
-        _ when generation != _generation || cancelToken?.cancelled == true =>
-          SemanticFailure.cancelled,
-        TimeoutException() => SemanticFailure.timeout,
-        _ => SemanticFailure.error,
-      };
-      return SemanticResult(
-        failure: failure,
-        timings: EvidenceTimings(
-          embedMs: embedStarted.elapsedMilliseconds,
-          totalMs: total.elapsedMilliseconds,
-        ),
-      );
+    List<double>? vector;
+    if (embedding != null) {
+      try {
+        vector = await embedding.embed(query).timeout(effectiveTimeout);
+      } catch (error) {
+        final failure = switch (error) {
+          _ when generation != _generation || cancelToken?.cancelled == true =>
+            SemanticFailure.cancelled,
+          TimeoutException() => SemanticFailure.timeout,
+          _ => SemanticFailure.error,
+        };
+        return SemanticResult(
+          failure: failure,
+          timings: EvidenceTimings(
+            embedMs: embedStarted.elapsedMilliseconds,
+            totalMs: total.elapsedMilliseconds,
+          ),
+        );
+      }
+      if (cancelToken?.cancelled == true || generation != _generation) {
+        return SemanticResult(
+          failure: SemanticFailure.cancelled,
+          timings: EvidenceTimings(
+            embedMs: embedStarted.elapsedMilliseconds,
+            totalMs: total.elapsedMilliseconds,
+          ),
+        );
+      }
     }
     final embedMs = embedStarted.elapsedMilliseconds;
-    if (cancelToken?.cancelled == true || generation != _generation) {
-      return SemanticResult(
-        failure: SemanticFailure.cancelled,
-        timings: EvidenceTimings(
-          embedMs: embedMs,
-          totalMs: total.elapsedMilliseconds,
-        ),
-      );
-    }
     final indexStarted = Stopwatch()..start();
     try {
       final store = await _requireStore(generation);
       final entries = await store.entryCount();
       _requireCurrent(generation);
-      // 范围能下推时引擎在索引内部先过滤，候选不再被范围外的向量占满，
-      // 保留四倍；不能下推的目标范围仍取二十倍并封顶 400，避免漏召回。
+      // 范围能下推时引擎在索引内部先过滤，候选保留四倍；不能下推的目标范围
+      // 仍取二十倍并封顶 400，避免收窄范围后漏召回。
       final prefilter = vectorPrefilterFor(scope);
       final candidateLimit = prefilter == null
           ? (scope.limitsToAll ? limit * 4 : limit * 20)
           : limit * 4;
-      final candidates = await store.search(
-        vector,
-        k: math.min(400, math.max(limit, candidateLimit)),
+      final k = math.min(400, math.max(limit, candidateLimit));
+      final candidates = await store.searchHybrid(
+        query,
+        vector: vector,
+        k: k,
         prefilter: prefilter,
       );
       _requireCurrent(generation);
+      // 只由语义命中的来源：与关键词一路的来源键比较，用来决定“按意思”标签。
+      final keywordKeys = <String>{};
+      if (vector != null) {
+        final keywordOnly = await store.searchHybrid(
+          query,
+          k: k,
+          prefilter: prefilter,
+        );
+        for (final match in keywordOnly) {
+          keywordKeys.add(match.sourceKey);
+        }
+        _requireCurrent(generation);
+      }
       final indexMs = indexStarted.elapsedMilliseconds;
       final hits = <EvidenceHit>[];
       var verifiedOut = 0;
@@ -499,7 +514,9 @@ class SemanticIndexService {
           verifiedOut++;
           continue;
         }
-        final hit = _hitFor(locator, candidate, query);
+        final semanticOnly =
+            vector != null && !keywordKeys.contains(candidate.sourceKey);
+        final hit = _hitFor(locator, candidate, query, semantic: semanticOnly);
         final fresh = await repository.current(hit);
         if (fresh == null ||
             fresh.sourceVersion != candidate.sourceVersion ||
@@ -507,7 +524,13 @@ class SemanticIndexService {
           verifiedOut++;
           continue;
         }
-        hits.add(fresh.copyWith(literal: false, score: hit.score));
+        hits.add(
+          fresh.copyWith(
+            literal: false,
+            semantic: semanticOnly,
+            score: hit.score,
+          ),
+        );
         if (hits.length >= limit) break;
       }
       _requireCurrent(generation);
@@ -539,8 +562,9 @@ class SemanticIndexService {
   EvidenceHit _hitFor(
     SemanticLocator locator,
     StoredVector candidate,
-    String query,
-  ) {
+    String query, {
+    required bool semantic,
+  }) {
     final kind = switch (locator.kind) {
       'material_page' => EvidenceKind.materialPage,
       'answer' => EvidenceKind.answer,
@@ -563,8 +587,8 @@ class SemanticIndexService {
       text: candidate.content,
       matchedText: candidate.content,
       literal: false,
-      semantic: true,
-      score: semanticMatchScore(candidate.distance),
+      semantic: semantic,
+      score: Score.clamp(candidate.score),
       location: EvidenceLocation(
         conversationId: locator.conversationId,
         messageId: locator.messageId,

@@ -64,7 +64,7 @@ class MemoryVectorIndex implements VectorIndex {
     required List<List<double>> vectors,
     required String createdAt,
   }) {
-    if (chunks.length != vectors.length) {
+    if (chunks.length != vectors.length && vectors.isNotEmpty) {
       throw ArgumentError('片段数与向量数不一致');
     }
     final sourceKey = locator.sourceKey;
@@ -97,6 +97,7 @@ class MemoryVectorIndex implements VectorIndex {
     int k = 20,
     VectorPrefilter? prefilter,
   }) {
+    if (spec.id == textOnlyModelSpec.id) return const [];
     final vector = _prepareVector(query);
     final matches = <StoredVector>[];
     for (final source in _sources.values) {
@@ -138,7 +139,8 @@ class MemoryVectorIndex implements VectorIndex {
         final locatorJson = VectorIndex.jsonOf(source.locator);
         for (var chunk = 0; chunk < source.chunks.length; chunk++) {
           final content = source.chunks[chunk];
-          final overlap = bigrams(content).toSet().intersection(terms).length;
+          // 测试替身按子串包含判断关键词命中，与引擎的分词口径不必逐字一致。
+          final overlap = terms.where(content.contains).length;
           if (overlap == 0) continue;
           final match = StoredVector(
             sourceKey: source.locator.sourceKey,

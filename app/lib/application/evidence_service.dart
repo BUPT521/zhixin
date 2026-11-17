@@ -139,44 +139,27 @@ class EvidenceService {
             excludeConversationId: excludeConversationId,
             excludePage: excludePage,
           );
-    var keywordHits = includeKeyword && !shape.literal
-        ? perKindLimit == null
-              ? await repository.allKeyword(
-                  shape.text,
-                  scope: scope,
-                  excludeConversationId: excludeConversationId,
-                  excludePage: excludePage,
-                )
-              : await repository.keyword(
-                  shape.text,
-                  scope: scope,
-                  limitPerKind: perKindLimit,
-                  excludeConversationId: excludeConversationId,
-                  excludePage: excludePage,
-                )
-        : <EvidenceHit>[];
-    // 语义候选只在回答前检索时加入；失败或超时只记为不可用，不阻断本次回答。
+    // 关键词与语义候选都由索引一次给出；索引不可用时只保留字面命中。
+    var indexHits = const <EvidenceHit>[];
     var semanticFailed = false;
     EvidenceTimings? timings;
     final semanticService = semantic;
-    if (semanticService != null &&
-        scope.isAnswerContext &&
-        semanticService.configured) {
+    if (semanticService != null) {
       final result = await semanticService.search(
         shape.text,
         scope: scope,
         limit: limit ?? perKindLimit ?? 40,
       );
-      final semanticTimings = result.timings;
+      final indexTimings = result.timings;
       timings = EvidenceTimings(
-        embedMs: semanticTimings.embedMs,
-        indexMs: semanticTimings.indexMs,
-        totalMs: semanticTimings.totalMs,
-        verifiedOut: semanticTimings.verifiedOut,
-        candidates: semanticTimings.candidates,
+        embedMs: indexTimings.embedMs,
+        indexMs: indexTimings.indexMs,
+        totalMs: indexTimings.totalMs,
+        verifiedOut: indexTimings.verifiedOut,
+        candidates: indexTimings.candidates,
       );
       if (result.usable) {
-        keywordHits = [...keywordHits, ...result.hits];
+        indexHits = result.hits;
       } else {
         semanticFailed = true;
       }
@@ -202,7 +185,7 @@ class EvidenceService {
     return EvidenceBundle.merge(
       shape.text,
       scope,
-      [...literalHits, ...keywordHits, ...crossHits],
+      [...literalHits, ...indexHits, ...crossHits],
       limit: limit,
       semanticFailed: semanticFailed,
       timings: timings,
@@ -220,14 +203,14 @@ class EvidenceService {
   }) async {
     final hits = <EvidenceHit>[];
     var more = false;
-    Future<void> load(bool literal) async {
+    Future<void> loadLiteral() async {
       SearchCursor? cursor;
       var loaded = 0;
       do {
         final page = await repository.searchBatch(
           shape.text,
           scope: scope,
-          literal: literal,
+          literal: true,
           batchSize: batchSize,
           after: cursor,
         );
@@ -241,8 +224,17 @@ class EvidenceService {
       } while (cursor != null);
     }
 
-    await load(true);
-    if (!shape.literal) await load(false);
+    await loadLiteral();
+    // 关键词与语义候选由索引一次给出，条数受 maxHits 限制，不再分批翻页。
+    final service = semantic;
+    if (!shape.literal && service != null) {
+      final result = await service.search(
+        shape.text,
+        scope: scope,
+        limit: maxHits,
+      );
+      if (result.usable) hits.addAll(result.hits);
+    }
     return (hits: hits, more: more);
   }
 }

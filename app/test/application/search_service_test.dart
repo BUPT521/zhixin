@@ -2,11 +2,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/request_gate.dart';
 import 'package:zhixin/application/search_service.dart';
+import 'package:zhixin/application/semantic_index_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
+import 'package:zhixin/data/vector/memory_vector_index.dart';
+import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/domain/models/material.dart';
+import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/search_terms.dart';
 import 'package:zhixin/domain/rules/time_format.dart';
@@ -32,6 +36,15 @@ Iterable<int?> _materialPages(SearchResults results) =>
         .where((hit) => hit.kind == EvidenceKind.materialPage)
         .map((hit) => hit.location.pageNo);
 
+/// 关键词与语义候选都从索引取；测试用纯文本索引，种子数据写入后刷新一次。
+SemanticIndexService _textIndex(EvidenceRepository repository) =>
+    SemanticIndexService(
+      repository: repository,
+      indexPath: '',
+      vectorStoreOpener: () async =>
+          DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
+    );
+
 void main() {
   test('记录检索覆盖全部目标的讨论、题目与材料', () async {
     final db = await openTestDb();
@@ -39,9 +52,11 @@ void main() {
     final conversations = ConversationRepository(db);
     final attempts = AttemptRepository(db);
     final materials = MaterialRepository(db);
+    final repository = EvidenceRepository(db);
+    final semantic = _textIndex(repository);
     final tasks = TaskRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db)),
+      evidence: EvidenceService(repository: repository, semantic: semantic),
     );
 
     final goalA = await tasks.createGoal(title: '概率论期末');
@@ -80,6 +95,8 @@ void main() {
       pageNo: 3,
       content: '矩阵的秩是线性无关行向量的最大个数。',
     );
+
+    await semantic.refresh();
 
     // 用户主动检索不按目标过滤，两个目标的记录都能找到。
     final probabilityResults = await _searchAll(search, '条件概率');
@@ -289,8 +306,10 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     final conversations = ConversationRepository(db);
+    final repository = EvidenceRepository(db);
+    final semantic = _textIndex(repository);
     final search = SearchService(
-      evidence: EvidenceService(repository: EvidenceRepository(db)),
+      evidence: EvidenceService(repository: repository, semantic: semantic),
     );
     final old = await conversations.create(title: '较早的矩阵讨论');
     await conversations.append(
@@ -341,6 +360,7 @@ void main() {
       );
     }
 
+    await semantic.refresh();
     final results = await search.searchPage('矩阵 独立性', pageSize: 20);
     expect(results.entries.first.hits.first.location.conversationId, old);
   });

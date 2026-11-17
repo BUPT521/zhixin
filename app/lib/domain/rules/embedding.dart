@@ -41,6 +41,16 @@ class EmbeddingModelSpec {
   }
 }
 
+/// 没有配置嵌入模型时使用的索引标识：只建全文索引，不写向量。
+///
+/// 维度固定为 1 只为了让索引目录、状态文件与配置了模型的索引共用同一套打开
+/// 流程；这个 spec 从不参与嵌入调用。
+const EmbeddingModelSpec textOnlyModelSpec = EmbeddingModelSpec(
+  id: 'text-only',
+  dim: 1,
+  provider: 'local',
+);
+
 /// 把一段原文切成带重叠的块；短文本只有一块。
 ///
 /// 跨块重叠避免一句话正好落在边界时两边都取不到；块序号与原文一起构成向量
