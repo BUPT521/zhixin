@@ -79,3 +79,17 @@ CREATE TABLE llm_usage (
   PRIMARY KEY (user_id, day)
 );
 
+-- 应用内反馈：登录与否都可以提交，不关联账号，删号也不影响已经提交的反馈。
+-- 正文与诊断摘要是用户主动写的，服务端不解析；读取由管理员直接查这张表，
+-- 不另开列表接口（ADR-0025）。
+CREATE TABLE feedback (
+  id           TEXT PRIMARY KEY,
+  content      TEXT NOT NULL,
+  contact      TEXT NOT NULL DEFAULT '',
+  app_version  TEXT NOT NULL DEFAULT '',
+  platform     TEXT NOT NULL DEFAULT '',
+  diagnostics  TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX feedback_created ON feedback(created_at DESC);
+

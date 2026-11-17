@@ -12,8 +12,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -32,10 +35,11 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 	// 用例都从同一个来源地址发请求，默认关掉限流，免得相互干扰；
 	// 专门测限流的用例自己把这些变量打开。
 	merged := map[string]string{
-		"ZHIXIN_AUTH_RATE":    "0",
-		"ZHIXIN_REFRESH_RATE": "0",
-		"ZHIXIN_UPLOAD_RATE":  "0",
-		"ZHIXIN_CODE_RATE":    "0",
+		"ZHIXIN_AUTH_RATE":     "0",
+		"ZHIXIN_REFRESH_RATE":  "0",
+		"ZHIXIN_UPLOAD_RATE":   "0",
+		"ZHIXIN_CODE_RATE":     "0",
+		"ZHIXIN_FEEDBACK_RATE": "0",
 	}
 	for k, v := range env {
 		merged[k] = v
@@ -579,6 +583,101 @@ func TestUploadRateLimitReturns429(t *testing.T) {
 	}
 	if got := resp.Header.Get("Retry-After"); got == "" {
 		t.Fatal("429 must carry Retry-After")
+	}
+}
+
+// TestReleaseManifestIsPublic 核对更新检查在登录之前就能读：清单从
+// ZHIXIN_RELEASE_FILE 读入，接口不带令牌也返回同一个版本。
+func TestReleaseManifestIsPublic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "releases.json")
+	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","notes":"内测"}]}`
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	h := newHarness(t, map[string]string{"ZHIXIN_RELEASE_FILE": path})
+
+	var out struct {
+		Releases []struct {
+			Platform string `json:"platform"`
+			Version  string `json:"version"`
+			Build    int64  `json:"build"`
+			Url      string `json:"url"`
+			Notes    string `json:"notes"`
+		} `json:"releases"`
+	}
+	if code := h.json("GET", "/v1/app/releases", "", nil, &out); code != http.StatusOK {
+		t.Fatalf("未登录也应能读发布清单，得到 %d", code)
+	}
+	if len(out.Releases) != 1 {
+		t.Fatalf("应返回 1 条，得到 %+v", out.Releases)
+	}
+	got := out.Releases[0]
+	if got.Platform != "android" || got.Version != "0.2.0" || got.Build != 2 || got.Url != "https://example.test/a.apk" || got.Notes != "内测" {
+		t.Fatalf("清单内容不对：%+v", got)
+	}
+}
+
+// TestFeedbackIsPublicAndRateLimited 核对反馈不需要登录、保存后给回执，并且
+// 同一来源地址的连续提交会被限流。
+func TestFeedbackIsPublicAndRateLimited(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"ZHIXIN_FEEDBACK_RATE":  "0.0001",
+		"ZHIXIN_FEEDBACK_BURST": "1",
+	})
+	body := map[string]string{
+		"content":     "记录页按“下一步”没有反应",
+		"app_version": "0.2.0-dev+3",
+		"platform":    "android",
+	}
+	var receipt struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	if code := h.json("POST", "/v1/feedback", "", body, &receipt); code != http.StatusCreated {
+		t.Fatalf("未登录也应能提交反馈，得到 %d", code)
+	}
+	if receipt.ID == "" || receipt.CreatedAt.IsZero() {
+		t.Fatalf("回执缺字段：%+v", receipt)
+	}
+
+	resp := h.do("POST", "/v1/feedback", "", bytes.NewReader(mustJSON(t, body)), map[string]string{"Content-Type": "application/json"})
+	var p problem
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StatusCode != http.StatusTooManyRequests || p.Code != "rate_limited" {
+		t.Fatalf("紧接的一条应被限流，得到 %d %q", resp.StatusCode, p.Code)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Fatal("429 应带 Retry-After")
+	}
+}
+
+// TestTrustedProxySplitsBucketsByForwardedFor 核对打开信任反代之后，来源地址
+// 按 X-Forwarded-For 的最后一项区分：两个真实来源各有一条反馈的额度，同一个
+// 来源第三次提交才会被限流。
+func TestTrustedProxySplitsBucketsByForwardedFor(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"ZHIXIN_FEEDBACK_RATE":  "0.0001",
+		"ZHIXIN_FEEDBACK_BURST": "1",
+		"ZHIXIN_TRUSTED_PROXY":  "1",
+	})
+	submit := func(forwardedFor string) int {
+		t.Helper()
+		resp := h.do("POST", "/v1/feedback", "", bytes.NewReader(mustJSON(t, map[string]string{"content": "有问题"})), map[string]string{
+			"Content-Type":    "application/json",
+			"X-Forwarded-For": forwardedFor,
+		})
+		return resp.StatusCode
+	}
+	if code := submit("198.51.100.1"); code != http.StatusCreated {
+		t.Fatalf("第一个来源应被接受，得到 %d", code)
+	}
+	if code := submit("203.0.113.9"); code != http.StatusCreated {
+		t.Fatalf("第二个来源应被接受，得到 %d", code)
+	}
+	if code := submit("198.51.100.1"); code != http.StatusTooManyRequests {
+		t.Fatalf("同一个来源的第二次提交应被限流，得到 %d", code)
 	}
 }
 

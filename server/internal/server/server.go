@@ -16,10 +16,12 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
+	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -31,11 +33,12 @@ const ClientSchemaVersion = 27
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth    auth.Store
-	Sync    syncsvc.Store
-	Backups backup.Store
-	Blobs   blobs.Store
-	Quota   llmproxy.Quota
+	Auth     auth.Store
+	Sync     syncsvc.Store
+	Backups  backup.Store
+	Blobs    blobs.Store
+	Quota    llmproxy.Quota
+	Feedback feedback.Store
 	// DeleteAccount removes per-account data owned outside the auth store.
 	// It runs once before the account row disappears.
 	DeleteAccount auth.AccountDeleter
@@ -51,11 +54,12 @@ func MemoryStores() Stores {
 	blobStore := blobs.NewStore(objectstore.NewMemory())
 	quotaStore := llmproxy.NewMemoryQuota()
 	return Stores{
-		Auth:    authStore,
-		Sync:    syncStore,
-		Backups: backupStore,
-		Blobs:   blobStore,
-		Quota:   quotaStore,
+		Auth:     authStore,
+		Sync:     syncStore,
+		Backups:  backupStore,
+		Blobs:    blobStore,
+		Quota:    quotaStore,
+		Feedback: feedback.NewMemoryStore(),
 		DeleteAccount: DeleteAccountData(
 			syncStore.DeleteUser,
 			backupStore.DeleteUser,
@@ -89,7 +93,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
-	var byAddr, refreshLimits, uploadLimits, codeLimits *ratelimit.Limiter
+	var byAddr, refreshLimits, uploadLimits, codeLimits, feedbackLimits *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
 	}
@@ -101,6 +105,9 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	}
 	if cfg.CodeRatePerSecond > 0 {
 		codeLimits = ratelimit.New(rate.Limit(cfg.CodeRatePerSecond), cfg.CodeBurst, 15*time.Minute)
+	}
+	if cfg.FeedbackRatePerSecond > 0 {
+		feedbackLimits = ratelimit.New(rate.Limit(cfg.FeedbackRatePerSecond), cfg.FeedbackBurst, 15*time.Minute)
 	}
 	mailer, err := auth.NewMailer(auth.MailerConfig{
 		Addr:     cfg.SMTPAddr,
@@ -123,12 +130,15 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		log.Warn("ZHIXIN_CODE_SECRET is empty: verification codes stop working after a restart")
 	}
 	authSvc.ConfigureCodes(mailer, codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
+	clientHost := httpx.NewClientHost(cfg.TrustedProxy)
 	handlers := routes{
-		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits),
+		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost),
 		sync:          syncsvc.NewHandler(syncsvc.NewService(st.Sync, ClientSchemaVersion), log, 16*cfg.MaxJSONBytes),
 		backups:       backup.NewHandler(backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log),
 		blobs:         blobs.NewHandler(blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes), log),
 		llm:           llmproxy.NewHandler(cfg.LLM, st.Quota, cfg.Location, log),
+		feedback:      feedback.NewHandler(feedback.NewService(st.Feedback), log, cfg.MaxJSONBytes, feedbackLimits, clientHost),
+		release:       release.NewHandler(cfg.Releases),
 		schemaVersion: ClientSchemaVersion,
 		ready:         st.Ready,
 	}

@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -55,9 +53,18 @@ type Handler struct {
 	// codeLimits 限制发送验证码与重设密码的尝试：按账号、来源地址与邮箱各记
 	// 一个桶，防止同一账号被反复发信，也防止换账号刷同一个邮箱。
 	codeLimits *ratelimit.Limiter
+	// clientHost 取来源地址；直接对端是反向代理时由装配处换成读
+	// X-Forwarded-For 的实现，见 httpx.NewClientHost。
+	clientHost func(*http.Request) string
 }
 
-func NewHandler(svc *Service, log *slog.Logger, maxBytes int64, byAddr, refreshLimits, codeLimits *ratelimit.Limiter) *Handler {
+func NewHandler(
+	svc *Service,
+	log *slog.Logger,
+	maxBytes int64,
+	byAddr, refreshLimits, codeLimits *ratelimit.Limiter,
+	clientHost func(*http.Request) string,
+) *Handler {
 	if byAddr == nil {
 		byAddr = ratelimit.Disabled()
 	}
@@ -67,28 +74,14 @@ func NewHandler(svc *Service, log *slog.Logger, maxBytes int64, byAddr, refreshL
 	if codeLimits == nil {
 		codeLimits = ratelimit.Disabled()
 	}
+	if clientHost == nil {
+		clientHost = httpx.RemoteHost
+	}
 	return &Handler{
 		svc: svc, log: log, maxBytes: maxBytes,
 		byAddr: byAddr, refreshLimits: refreshLimits, codeLimits: codeLimits,
+		clientHost: clientHost,
 	}
-}
-
-// remoteKey 取来源地址；取不到时归到同一个键，宁可影响本机也不放行。
-func remoteKey(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil || host == "" {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-// tooMany 写 429 并带上 Retry-After；客户端据此退避，不解析 detail。
-func tooMany(w http.ResponseWriter, r *http.Request, retryAfter int64) {
-	if retryAfter < 1 {
-		retryAfter = 1
-	}
-	w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-	httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts, retry later")
 }
 
 // cooldownSeconds 把发送验证码的冷却写成 Retry-After 的整秒数。
@@ -122,8 +115,8 @@ func optional(value *string) string {
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	if delay := h.byAddr.Take(remoteKey(r)); delay > 0 {
-		tooMany(w, r, delay)
+	if delay := h.byAddr.Take(h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	var in api.Credentials
@@ -144,8 +137,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
-	if delay := h.byAddr.Take(remoteKey(r)); delay > 0 {
-		tooMany(w, r, delay)
+	if delay := h.byAddr.Take(h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	var in api.Credentials
@@ -164,8 +157,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
-	if delay := h.refreshLimits.Take("address:" + remoteKey(r)); delay > 0 {
-		tooMany(w, r, delay)
+	if delay := h.refreshLimits.Take("address:" + h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	var in api.PostV1AuthRefreshJSONRequestBody
@@ -179,7 +172,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, errRefreshLimited):
-		tooMany(w, r, accountDelay)
+		httpx.TooMany(w, r, accountDelay)
 	case errors.Is(err, ErrInvalidToken):
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "refresh token is invalid, expired or already used")
 	case err != nil:
@@ -203,7 +196,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Request) {
 	p := MustPrincipal(r.Context())
 	if delay := h.codeLimits.Take("account:" + p.UserID); delay > 0 {
-		tooMany(w, r, delay)
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	err := h.svc.RequestEmailVerification(r.Context(), p)
@@ -211,7 +204,7 @@ func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Reques
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, ErrCodeTooSoon):
-		tooMany(w, r, h.cooldownSeconds())
+		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.Is(err, ErrMailUnavailable):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
 	default:
@@ -223,7 +216,7 @@ func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Reques
 func (h *Handler) ConfirmEmailVerification(w http.ResponseWriter, r *http.Request) {
 	p := MustPrincipal(r.Context())
 	if delay := h.codeLimits.Take("confirm:" + p.UserID); delay > 0 {
-		tooMany(w, r, delay)
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	var in api.PostV1AuthEmailVerifyConfirmJSONRequestBody
@@ -244,8 +237,8 @@ func (h *Handler) ConfirmEmailVerification(w http.ResponseWriter, r *http.Reques
 // ForgotPassword 向已验证的邮箱发重设验证码。邮箱不存在或未验证时也返回 204，
 // 这个接口因此不能被用来判断哪些邮箱注册过。
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
-	if delay := h.codeLimits.Take("forgot-address:" + remoteKey(r)); delay > 0 {
-		tooMany(w, r, delay)
+	if delay := h.codeLimits.Take("forgot-address:" + h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	var in api.PostV1AuthPasswordForgotJSONRequestBody
@@ -254,7 +247,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(string(in.Email)))
 	if delay := h.codeLimits.Take("forgot-email:" + email); delay > 0 {
-		tooMany(w, r, delay)
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	err := h.svc.RequestPasswordReset(r.Context(), email)
@@ -264,7 +257,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address")
 	case errors.Is(err, ErrCodeTooSoon):
-		tooMany(w, r, h.cooldownSeconds())
+		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.Is(err, ErrMailUnavailable):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
 	default:
@@ -274,8 +267,8 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 // ResetPassword 用验证码重设密码，并作废这个账号的全部会话。
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
-	if delay := h.codeLimits.Take("reset-address:" + remoteKey(r)); delay > 0 {
-		tooMany(w, r, delay)
+	if delay := h.codeLimits.Take("reset-address:" + h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
 		return
 	}
 	var in api.PostV1AuthPasswordResetJSONRequestBody

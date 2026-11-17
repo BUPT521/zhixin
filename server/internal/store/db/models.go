@@ -35,6 +35,16 @@ type Backup struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type Feedback struct {
+	ID          string
+	Content     string
+	Contact     string
+	AppVersion  string
+	Platform    string
+	Diagnostics string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type LlmUsage struct {
 	UserID string
 	Day    pgtype.Date

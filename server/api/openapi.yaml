@@ -21,6 +21,7 @@ tags:
   - name: sync
   - name: backup
   - name: llm
+  - name: app
 
 paths:
   /healthz:
@@ -433,6 +434,47 @@ paths:
         "502": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
 
+  /v1/app/releases:
+    get:
+      tags: [app]
+      security: []
+      summary: 应用安装包的发布清单
+      description: |
+        不需要登录：更新提示在登录之前也可能出现。清单来自服务端本地的发布文件
+        （`ZHIXIN_RELEASE_FILE`），服务端只原样给出每个平台的版本、构建号、地址与
+        说明，不比较客户端版本，也不决定是否必须更新；客户端按平台取一项，自己比较
+        `version` 与 `build`。没有配置发布文件时返回空数组，客户端据此不提示更新。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReleaseList" }
+
+  /v1/feedback:
+    post:
+      tags: [app]
+      security: []
+      summary: 提交一条应用内反馈
+      description: |
+        登录与否都可以提交，服务端不把反馈绑定到账号。`content` 是用户填写的正文，
+        `diagnostics` 是可选的诊断摘要，两者都原样保存，服务端不解析内容；客户端在
+        附带诊断摘要之前应在本地说明会提交哪些内容。按来源地址限流。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Feedback" }
+      responses:
+        "201":
+          description: 已保存
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedbackReceipt" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
 components:
   securitySchemes:
     bearer:
@@ -558,6 +600,39 @@ components:
           items: { $ref: "#/components/schemas/Commit" }
         head: { type: integer, format: int64 }
         has_more: { type: boolean }
+    Feedback:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: 用户填写的反馈正文
+        contact:
+          type: string
+          format: email
+          maxLength: 254
+          description: 可选的联系邮箱，用于回复这条反馈
+        app_version:
+          type: string
+          maxLength: 64
+          description: 客户端版本名，例如 0.2.0-dev+3
+        platform:
+          type: string
+          maxLength: 32
+          description: 平台，例如 android
+        diagnostics:
+          type: string
+          maxLength: 65536
+          description: 可选的诊断摘要，客户端先说明附带哪些内容
+    FeedbackReceipt:
+      type: object
+      required: [id, created_at]
+      properties:
+        id: { type: string }
+        created_at: { type: string, format: date-time }
     Health:
       type: object
       required: [status]
@@ -604,6 +679,26 @@ components:
       properties:
         status: { type: string, const: ready }
         schema_version: { type: integer, examples: [27] }
+    Release:
+      type: object
+      required: [platform, version, build, url]
+      properties:
+        platform: { type: string, examples: [android] }
+        version: { type: string, examples: ["0.2.0"] }
+        build: { type: integer, format: int64, description: Android 的 versionCode }
+        published_at: { type: string, examples: ["2026-12-21"] }
+        url: { type: string, description: 安装包地址，服务端只校验是 http 或 https }
+        sha256: { type: string, description: 安装包的 SHA-256，可选 }
+        size: { type: integer, format: int64 }
+        min_version: { type: string, description: 低于它的客户端应提示必须更新 }
+        notes: { type: string, description: 这一版的更新说明 }
+    ReleaseList:
+      type: object
+      required: [releases]
+      properties:
+        releases:
+          type: array
+          items: { $ref: "#/components/schemas/Release" }
     SyncHead:
       type: object
       required: [head, schema_version]

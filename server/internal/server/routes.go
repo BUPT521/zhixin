@@ -8,8 +8,10 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/blobs"
+	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
+	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -18,11 +20,13 @@ import (
 // 这里只做转发，不看请求内容、不写响应：解码、校验、problem+json 与状态码仍在
 // 各处理器里，鉴权在 auth.Middleware。契约改了而这里没跟上时编译失败。
 type routes struct {
-	auth    *auth.Handler
-	sync    *syncsvc.Handler
-	backups *backup.Handler
-	blobs   *blobs.Handler
-	llm     *llmproxy.Proxy
+	auth     *auth.Handler
+	sync     *syncsvc.Handler
+	backups  *backup.Handler
+	blobs    *blobs.Handler
+	llm      *llmproxy.Proxy
+	feedback *feedback.Handler
+	release  *release.Handler
 
 	schemaVersion int
 	ready         func(ctx context.Context) error
@@ -101,3 +105,6 @@ func (rt routes) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { rt.llm
 func (rt routes) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
 	rt.llm.Chat(w, r)
 }
+
+func (rt routes) GetV1AppReleases(w http.ResponseWriter, r *http.Request) { rt.release.Releases(w, r) }
+func (rt routes) PostV1Feedback(w http.ResponseWriter, r *http.Request)   { rt.feedback.Submit(w, r) }
