@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/request_gate.dart';
 import 'package:zhixin/application/search_service.dart';
-import 'package:zhixin/application/semantic_index_service.dart';
+import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
@@ -37,8 +37,8 @@ Iterable<int?> _materialPages(SearchResults results) =>
         .map((hit) => hit.location.pageNo);
 
 /// 关键词与语义候选都从索引取；测试用纯文本索引，种子数据写入后刷新一次。
-SemanticIndexService _textIndex(EvidenceRepository repository) =>
-    SemanticIndexService(
+SearchIndexService _textIndex(EvidenceRepository repository) =>
+    SearchIndexService(
       repository: repository,
       indexPath: '',
       vectorStoreOpener: () async =>
@@ -56,7 +56,7 @@ void main() {
     final semantic = _textIndex(repository);
     final tasks = TaskRepository(db);
     final search = SearchService(
-      evidence: EvidenceService(repository: repository, semantic: semantic),
+      evidence: EvidenceService(repository: repository, index: semantic),
     );
 
     final goalA = await tasks.createGoal(title: '概率论期末');
@@ -265,7 +265,7 @@ void main() {
     final repository = EvidenceRepository(db);
     final semantic = _textIndex(repository);
     final search = SearchService(
-      evidence: EvidenceService(repository: repository, semantic: semantic),
+      evidence: EvidenceService(repository: repository, index: semantic),
     );
     final old = await conversations.create(title: '较早的矩阵讨论');
     await conversations.append(

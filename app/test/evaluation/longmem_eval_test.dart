@@ -6,7 +6,7 @@ import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/cross_session_service.dart';
-import 'package:zhixin/application/semantic_index_service.dart';
+import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
@@ -445,7 +445,7 @@ class _Harness {
   final CorpusIds ids;
 
   /// 纯文本索引：没有配置嵌入模型，只按关键词检索。
-  final SemanticIndexService index;
+  final SearchIndexService index;
 
   Future<List<EvidenceHit>> retrieve(
     String strategy,
@@ -463,10 +463,7 @@ class _Harness {
       case 'index':
         return (await index.search(normalized, scope: scope, limit: 40)).hits;
       case 'hybrid':
-        final service = EvidenceService(
-          repository: repository,
-          semantic: index,
-        );
+        final service = EvidenceService(repository: repository, index: index);
         return (await service.forAnswer(
           query: normalized,
           scope: scope,
@@ -477,7 +474,7 @@ class _Harness {
       case 'cross':
         final service = EvidenceService(
           repository: repository,
-          semantic: index,
+          index: index,
           crossSession: CrossSessionService(repository: repository),
         );
         return (await service.forAnswer(
@@ -624,7 +621,7 @@ void main() {
     addTearDown(db.close);
     final ids = await _seed(db);
     final repository = EvidenceRepository(db);
-    final index = SemanticIndexService(
+    final index = SearchIndexService(
       repository: repository,
       indexPath: '',
       vectorStoreOpener: () async =>

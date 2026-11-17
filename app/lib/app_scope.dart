@@ -21,7 +21,7 @@ import 'application/learning_service.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
-import 'application/semantic_index_service.dart';
+import 'application/search_index_service.dart';
 import 'application/memory_scope_service.dart';
 import 'application/plan_service.dart';
 import 'application/search_service.dart';
@@ -167,16 +167,16 @@ class AppScopeState extends State<AppScope> {
 
   final DatabaseGate _gate = DatabaseGate();
   int _operationEpoch = 0;
-  Timer? _semanticRefreshTimer;
+  Timer? _searchIndexRefreshTimer;
 
   /// 写入触发的索引刷新静默期：连续提交时等最后一次写入之后只扫一次库。
-  static const Duration _semanticQuietPeriod = Duration(seconds: 3);
+  static const Duration _searchIndexQuietPeriod = Duration(seconds: 3);
 
   /// 语义索引的来源表：这几张表有了提交才需要补建索引。
   ///
   /// 其余业务表（目标、设置、版本历史等）的提交不改变索引内容；讨论与材料的
   /// 删除会经外键级联改到这里的表，仍然会触发。
-  static const Set<String> _semanticSourceTables = {
+  static const Set<String> _searchIndexSourceTables = {
     'material_page',
     'message',
     'attempt',
@@ -199,21 +199,22 @@ class AppScopeState extends State<AppScope> {
     SecureSecretStore(),
   );
 
-  /// 语义索引配置的唯一入口：页面保存一次，应用根启动时恢复一次。
+  /// 检索索引配置的唯一入口：页面保存一次，应用根启动时恢复一次。
   late final EmbeddingSettingsService _embeddingSettings =
-      EmbeddingSettingsService(store: _embeddingStore, semantic: _semantic);
+      EmbeddingSettingsService(store: _embeddingStore, index: _searchIndex);
 
-  SemanticIndexService? __semantic;
+  SearchIndexService? _searchIndexService;
 
-  /// 语义索引按需创建；没有配置时不打开向量库。
-  SemanticIndexService get _semantic => __semantic ??= SemanticIndexService(
-    repository: _evidenceRepository,
-    indexPath: paths.vectorIndexPath,
-    indexLogPath: paths.vectorLogPath,
-    epoch: () async => '${await _engine.currentGeneration(_connection!)}',
-    clock: clock,
-    recordFailure: crashLog.record,
-  );
+  /// 检索索引按需创建；没有配置嵌入来源时只建全文索引。
+  SearchIndexService get _searchIndex =>
+      _searchIndexService ??= SearchIndexService(
+        repository: _evidenceRepository,
+        indexPath: paths.vectorIndexPath,
+        indexLogPath: paths.vectorLogPath,
+        epoch: () async => '${await _engine.currentGeneration(_connection!)}',
+        clock: clock,
+        recordFailure: crashLog.record,
+      );
 
   late final CrossSessionService _crossSession = CrossSessionService(
     repository: _evidenceRepository,
@@ -221,7 +222,7 @@ class AppScopeState extends State<AppScope> {
 
   late final EvidenceService _evidence = EvidenceService(
     repository: _evidenceRepository,
-    semantic: _semantic,
+    index: _searchIndex,
     crossSession: _crossSession,
   );
 
@@ -240,7 +241,7 @@ class AppScopeState extends State<AppScope> {
     library: LibraryServices(
       material: _material,
       search: _search,
-      semanticIndexFactory: () => _semantic,
+      searchIndexFactory: () => _searchIndex,
     ),
     memory: MemoryServices(edit: _memoryEdit, proposals: _proposals),
     settings: SettingsServices(
@@ -430,7 +431,7 @@ class AppScopeState extends State<AppScope> {
       // 整库恢复、导入与清空换掉了数据：订阅中的页面按全部表重读一次
       // （ADR-0014 第 3 条）。
       _db.notifyAllTables();
-      _refreshSemanticIndex();
+      _refreshSearchIndex();
     },
     recordFailure: (error, stack, {required kind}) =>
         crashLog.record(error, stack, kind: kind),
@@ -442,7 +443,7 @@ class AppScopeState extends State<AppScope> {
     _connection = null;
     // 清空全部记录连语义索引一起删：先释放 collection 句柄，删除流程才能
     // 删掉索引目录；嵌入来源保持配置，下一次刷新按空库重建索引。
-    await __semantic?.release();
+    await _searchIndexService?.release();
     await deleteLocalStudyData(
       filesDir: paths.filesDir,
       dbPath: paths.dbPath,
@@ -551,7 +552,7 @@ class AppScopeState extends State<AppScope> {
     // 重启之后按当前数据补建索引：数据代次与索引里的不一致时整份重建。
     // 向量库的打开、初始化 zvec 引擎与建表都在后台 isolate 里进行，首帧只发起
     // 请求，不等待它完成。
-    if (_embeddingSettings.configured) _refreshSemanticIndexNow();
+    if (_embeddingSettings.configured) _refreshSearchIndexNow();
     // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
     // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
     _scheduleAttachmentMaintenance();
@@ -639,21 +640,21 @@ class AppScopeState extends State<AppScope> {
     dataVersion.value++;
     // 版本恢复与单项撤销换掉了当前数据，订阅中的页面按全部表重读一次。
     _db.notifyAllTables();
-    _refreshSemanticIndex();
+    _refreshSearchIndex();
   }
 
-  /// 数据代次变化后按当前数据补建语义索引；没有配置或已关闭时不动向量库。
+  /// 数据代次变化后按当前数据补建检索索引；没有配置时只建全文索引。
   ///
-  /// 来源表有提交之后与数据代次变化之后都走这里，等 [_semanticQuietPeriod] 再
+  /// 来源表有提交之后与数据代次变化之后都走这里，等 [_searchIndexQuietPeriod] 再
   /// 执行，期间再次触发只顺延，避免连续提交时每次都全量扫库；立即需要索引的
   /// 入口仍直接调用刷新。
-  void _refreshSemanticIndex() {
-    final semantic = __semantic;
-    if (semantic == null || !semantic.configured) return;
-    _semanticRefreshTimer?.cancel();
-    _semanticRefreshTimer = Timer(_semanticQuietPeriod, () {
-      _semanticRefreshTimer = null;
-      _refreshSemanticIndexNow();
+  void _refreshSearchIndex() {
+    final index = _searchIndexService;
+    if (index == null || !index.configured) return;
+    _searchIndexRefreshTimer?.cancel();
+    _searchIndexRefreshTimer = Timer(_searchIndexQuietPeriod, () {
+      _searchIndexRefreshTimer = null;
+      _refreshSearchIndexNow();
     });
   }
 
@@ -662,31 +663,31 @@ class AppScopeState extends State<AppScope> {
     // 登录之后写入随自动同步推到服务端；同步本身应用的远端提交也会走到这里，
     // 这时没有待推送的提交，下一次同步只做一次位置核对。
     _cloudSync?.schedule();
-    if (!tables.any(_semanticSourceTables.contains)) return;
-    _refreshSemanticIndex();
+    if (!tables.any(_searchIndexSourceTables.contains)) return;
+    _refreshSearchIndex();
   }
 
   /// 后台补建索引；失败只写诊断记录，不打断界面，回答继续使用字面命中。
   ///
   /// 设置页的手动“更新索引”直接调用服务并捕获异常，看到的是就地说明。
-  void _refreshSemanticIndexNow() {
+  void _refreshSearchIndexNow() {
     unawaited(
-      _semantic.refresh().catchError((Object error, StackTrace stack) {
+      _searchIndex.refresh().catchError((Object error, StackTrace stack) {
         crashLog.record(error, stack, kind: 'semantic_index');
-        return const IndexRefreshResult(failure: SemanticFailure.error);
+        return const IndexRefreshResult(failure: IndexFailure.error);
       }),
     );
   }
 
   @override
   void dispose() {
-    _semanticRefreshTimer?.cancel();
+    _searchIndexRefreshTimer?.cancel();
     _cloudSync?.dispose();
     _accountService?.dispose();
     _configuredAi?.dispose();
-    final semantic = __semantic;
-    if (semantic != null) unawaited(semantic.close());
-    __semantic = null;
+    final index = _searchIndexService;
+    if (index != null) unawaited(index.close());
+    _searchIndexService = null;
     if (_connection != null) _db.close();
     dataVersion.dispose();
     super.dispose();

@@ -15,27 +15,27 @@ import '../domain/rules/time_policy.dart';
 import 'embedding_client.dart';
 import 'service_runtime.dart';
 
-/// 语义检索不可用的原因；失败时调用方继续使用字面命中。
-enum SemanticFailure { none, notConfigured, timeout, cancelled, error }
+/// 索引检索不可用的原因；失败时调用方继续使用字面命中。
+enum IndexFailure { none, notConfigured, timeout, cancelled, error }
 
 /// 一次索引检索的结果；[hits] 已经按业务记录核对过版本与范围。
-class SemanticResult {
-  const SemanticResult({
+class IndexResult {
+  const IndexResult({
     this.hits = const [],
-    this.failure = SemanticFailure.none,
+    this.failure = IndexFailure.none,
     this.timings = const EvidenceTimings(),
     this.entries = 0,
   });
 
   final List<EvidenceHit> hits;
-  final SemanticFailure failure;
+  final IndexFailure failure;
   final EvidenceTimings timings;
 
   /// 索引里现有的向量条数；界面据此区分“没有找到”和“索引还没有内容”。
   /// 没有配置、超时或取消时不知道索引规模，保持为零。
   final int entries;
 
-  bool get usable => failure == SemanticFailure.none;
+  bool get usable => failure == IndexFailure.none;
 }
 
 /// 索引更新一次的结果，后台更新与界面提示共用。
@@ -47,7 +47,7 @@ class IndexRefreshResult {
     this.failed = 0,
     this.removed = 0,
     this.total = 0,
-    this.failure = SemanticFailure.none,
+    this.failure = IndexFailure.none,
     this.embedMs = 0,
     this.writeMs = 0,
   });
@@ -62,13 +62,13 @@ class IndexRefreshResult {
   /// 清理时删除的向量条数。
   final int removed;
   final int total;
-  final SemanticFailure failure;
+  final IndexFailure failure;
   final int embedMs;
   final int writeMs;
 }
 
 /// 取消标记：查询开始后界面关闭或用户离开，不再等待嵌入结果。
-class SemanticCancelToken {
+class IndexCancelToken {
   bool _cancelled = false;
 
   bool get cancelled => _cancelled;
@@ -83,8 +83,8 @@ class SemanticCancelToken {
 /// 处理版本区分；数据代次变化（恢复、导入、清空）时整份索引重建。写入前重新
 /// 读取来源版本，等待嵌入期间被更正或删除的内容不会进入索引。查询有独立的
 /// 超时与取消，失败时返回空结果，调用方继续使用字面命中。
-class SemanticIndexService {
-  SemanticIndexService({
+class SearchIndexService {
+  SearchIndexService({
     required this.repository,
     EmbeddingClient? initialClient,
     required this.indexPath,
@@ -111,7 +111,7 @@ class SemanticIndexService {
   /// 索引结构损坏被重建时写本机诊断记录；界面不弹窗。
   final ModelFailureRecorder? recordFailure;
 
-  /// 当前嵌入来源；为空表示没有配置，语义检索与索引都不可用。
+  /// 当前嵌入来源；为空表示没有配置，关键词仍按全文索引检索。
   EmbeddingClient? get client => _client;
 
   /// 是否允许把这条来源的原文发送给远程嵌入服务；本地来源不需要判断。
@@ -172,7 +172,7 @@ class SemanticIndexService {
   void _requireCurrent(int generation) {
     if (_closed) throw const VectorStoreClosedException();
     if (generation != _generation) {
-      throw const EmbeddingUnavailable('语义索引的配置或内容已经变更');
+      throw const EmbeddingUnavailable('检索索引的配置或内容已经变更');
     }
   }
 
@@ -238,7 +238,7 @@ class SemanticIndexService {
   void _recordRebuild(String reason) {
     final record = recordFailure;
     if (record == null) return;
-    record(_SemanticIndexRebuilt(reason), null, kind: 'semantic_index');
+    record(_IndexRebuilt(reason), null, kind: 'semantic_index');
   }
 
   /// 按当前数据补建索引；可以重复执行，已经是最新版本的来源会跳过。
@@ -405,7 +405,7 @@ class SemanticIndexService {
         failed: failed,
         removed: removed,
         total: batch.length,
-        failure: failed == 0 ? SemanticFailure.none : SemanticFailure.error,
+        failure: failed == 0 ? IndexFailure.none : IndexFailure.error,
         embedMs: embedMs,
         writeMs: writeMs,
       );
@@ -414,26 +414,26 @@ class SemanticIndexService {
     } on Object {
       // 退出、切换配置和清空都会让原来的刷新结束。
       if (_closed || generation != _generation) {
-        return const IndexRefreshResult(failure: SemanticFailure.cancelled);
+        return const IndexRefreshResult(failure: IndexFailure.cancelled);
       }
       rethrow;
     }
   }
 
   /// 按查询向量取候选，并逐条读取当前记录核对范围与版本。
-  Future<SemanticResult> search(
+  Future<IndexResult> search(
     String query, {
     required EvidenceScope scope,
     int limit = 6,
     Duration? timeout,
-    SemanticCancelToken? cancelToken,
+    IndexCancelToken? cancelToken,
   }) async {
     final embedding = client;
     final generation = _generation;
     final effectiveTimeout = timeout ?? queryTimeout;
     final total = Stopwatch()..start();
     if (cancelToken?.cancelled == true) {
-      return const SemanticResult(failure: SemanticFailure.cancelled);
+      return const IndexResult(failure: IndexFailure.cancelled);
     }
     // 回答前检索没有目标归属、也没有当前讨论与带入来源时，业务规则一条也
     // 不放行，这里直接返回空结果，不再嵌入与检索。
@@ -441,7 +441,7 @@ class SemanticIndexService {
         scope.goalId == null &&
         scope.conversationId == null &&
         scope.broughtIdentities.isEmpty) {
-      return const SemanticResult();
+      return const IndexResult();
     }
     final embedStarted = Stopwatch()..start();
     List<double>? vector;
@@ -451,11 +451,11 @@ class SemanticIndexService {
       } catch (error) {
         final failure = switch (error) {
           _ when generation != _generation || cancelToken?.cancelled == true =>
-            SemanticFailure.cancelled,
-          TimeoutException() => SemanticFailure.timeout,
-          _ => SemanticFailure.error,
+            IndexFailure.cancelled,
+          TimeoutException() => IndexFailure.timeout,
+          _ => IndexFailure.error,
         };
-        return SemanticResult(
+        return IndexResult(
           failure: failure,
           timings: EvidenceTimings(
             embedMs: embedStarted.elapsedMilliseconds,
@@ -464,8 +464,8 @@ class SemanticIndexService {
         );
       }
       if (cancelToken?.cancelled == true || generation != _generation) {
-        return SemanticResult(
-          failure: SemanticFailure.cancelled,
+        return IndexResult(
+          failure: IndexFailure.cancelled,
           timings: EvidenceTimings(
             embedMs: embedStarted.elapsedMilliseconds,
             totalMs: total.elapsedMilliseconds,
@@ -535,7 +535,7 @@ class SemanticIndexService {
         if (hits.length >= limit) break;
       }
       _requireCurrent(generation);
-      return SemanticResult(
+      return IndexResult(
         hits: hits,
         entries: entries,
         timings: EvidenceTimings(
@@ -548,10 +548,10 @@ class SemanticIndexService {
       );
     } catch (_) {
       // 索引打不开或读取失败时退回原文与关键词；调用方只看 usable。
-      return SemanticResult(
+      return IndexResult(
         failure: generation == _generation
-            ? SemanticFailure.error
-            : SemanticFailure.cancelled,
+            ? IndexFailure.error
+            : IndexFailure.cancelled,
         timings: EvidenceTimings(
           embedMs: embedMs,
           totalMs: total.elapsedMilliseconds,
@@ -605,9 +605,9 @@ class SemanticIndexService {
   ///
   /// 读取状态会打开索引库；打不开时异常交给调用方，设置页据此显示失败说明，
   /// 不停在“还没有读取索引状态”。
-  Future<SemanticIndexStats> stats() async {
+  Future<IndexStats> stats() async {
     if (client == null) {
-      return const SemanticIndexStats(
+      return const IndexStats(
         configured: false,
         entries: 0,
         sources: 0,
@@ -618,7 +618,7 @@ class SemanticIndexService {
     final store = await _requireStore(generation);
     final stats = await _useCurrentStore(
       generation,
-      () async => SemanticIndexStats(
+      () async => IndexStats(
         configured: true,
         entries: await store.entryCount(),
         sources: await store.sourceCount(),
@@ -676,8 +676,8 @@ class SemanticIndexService {
 }
 
 /// 索引规模与状态；界面只显示这些信息，不读取向量内容。
-class SemanticIndexStats {
-  const SemanticIndexStats({
+class IndexStats {
+  const IndexStats({
     required this.configured,
     required this.entries,
     required this.sources,
@@ -695,11 +695,11 @@ class SemanticIndexStats {
 }
 
 /// 索引结构损坏被重建时交给本机诊断记录的说明；原文与调用栈不进入界面。
-class _SemanticIndexRebuilt implements Exception {
-  const _SemanticIndexRebuilt(this.reason);
+class _IndexRebuilt implements Exception {
+  const _IndexRebuilt(this.reason);
 
   final String reason;
 
   @override
-  String toString() => '语义索引结构损坏，已重建空索引：$reason';
+  String toString() => '检索索引结构损坏，已重建空索引：$reason';
 }

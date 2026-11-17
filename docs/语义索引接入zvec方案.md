@@ -1,10 +1,10 @@
 # 知新 · 语义索引接入 zvec 的方案
 
-> 本文记录把语义索引的存储引擎从替换前的 SQLite 向量表换成 [zvec](https://github.com/alibaba/zvec) 的做法：改哪一层、数据怎样落盘、每个操作怎样对应、构建与测试怎样调整，以及按什么顺序实施。范围是 2026-11-16 `main` 上的 `app/lib/data/vector/` 与 `semantic_index_service.dart`；关键词检索、业务库与服务端不在范围内。决定本身记在 [ADR-0022](adr/0022-语义索引改用zvec.md)（已采纳，第 1 至 6 步已完成），本文是它的实施说明，两处不一致时以 ADR 为准。
+> 本文记录把语义索引的存储引擎从替换前的 SQLite 向量表换成 [zvec](https://github.com/alibaba/zvec) 的做法：改哪一层、数据怎样落盘、每个操作怎样对应、构建与测试怎样调整，以及按什么顺序实施。范围是 2026-11-16 `main` 上的 `app/lib/data/vector/` 与 `search_index_service.dart`；关键词检索、业务库与服务端不在范围内。决定本身记在 [ADR-0022](adr/0022-语义索引改用zvec.md)（已采纳，第 1 至 6 步已完成），本文是它的实施说明，两处不一致时以 ADR 为准。
 
 ## 1. 结论
 
-替换只发生在 `VectorStore` 接口以下。`SemanticIndexService`、证据检索与界面继续通过 `VectorStore` 读写，后台 isolate 的消息协议保留，换掉的是 isolate 里实际持有数据的那一层：替换前是一个 SQLite 文件同时存放元数据表 `vector_entry` 和 `vec0` 虚拟表，现在是一个 zvec collection 加一个状态文件。接口的调整集中在几处：`indexedSources` 改为按调用方给出的来源键读取，新增 `sourceCount`，`search` 增加一个范围预过滤参数，`pruneSources` 改为返回删除的向量条数，完整清单见 [ADR-0022 实施方案第 1 节](adr/0022-语义索引改用zvec.md#1-接口改动)。打开与关闭的顺序、损坏后的处理、发布与回退也记在 ADR-0022 的实施方案里，本文不重复。
+替换只发生在 `VectorStore` 接口以下。`SearchIndexService`、证据检索与界面继续通过 `VectorStore` 读写，后台 isolate 的消息协议保留，换掉的是 isolate 里实际持有数据的那一层：替换前是一个 SQLite 文件同时存放元数据表 `vector_entry` 和 `vec0` 虚拟表，现在是一个 zvec collection 加一个状态文件。接口的调整集中在几处：`indexedSources` 改为按调用方给出的来源键读取，新增 `sourceCount`，`search` 增加一个范围预过滤参数，`pruneSources` 改为返回删除的向量条数，完整清单见 [ADR-0022 实施方案第 1 节](adr/0022-语义索引改用zvec.md#1-接口改动)。打开与关闭的顺序、损坏后的处理、发布与回退也记在 ADR-0022 的实施方案里，本文不重复。
 
 索引类型用 Flat（精确检索，FP32）与余弦距离，不量化，也不用 HNSW 与 IVF；所有规模都用这一种，决定与 20 万条的复测见 [ADR-0022 决定第 3 条](adr/0022-语义索引改用zvec.md#决定)与[二十万条向量的向量检索基准](向量检索基准.md)。每个嵌入模型一个 collection 目录，模型、维度或文本处理版本改变时换目录、删旧目录。zvec 没有跨文档事务，`replaceSource` 先写其余片段、最后写 0 号片段，0 号片段承担提交记录的作用，中途退出时下一次刷新会把这个来源判为“需要重建”。关键词检索继续使用 [ADR-0013](adr/0013-关键词检索改用FTS5.md) 的 FTS5。
 
@@ -21,7 +21,7 @@
 | [vector_index.dart](../app/lib/data/vector/vector_index.dart) | `VectorIndex` 同步接口，以及 `StoredVector`、`IndexedSource` 与 `VectorPrefilter` 值类型 |
 | [zvec_vector_index.dart](../app/lib/data/vector/zvec_vector_index.dart) | `ZvecVectorIndex`：一个模型键一个 collection 目录，状态写在同名的 JSON 文件里 |
 | [memory_vector_index.dart](../app/lib/data/vector/memory_vector_index.dart) | `MemoryVectorIndex`：纯 Dart 的余弦距离排序，服务层测试与契约测试用 |
-| [semantic_index_service.dart](../app/lib/application/semantic_index_service.dart) | 刷新（比对来源版本、嵌入、写入、清理）与检索（取候选、逐条核对业务记录与范围） |
+| [search_index_service.dart](../app/lib/application/search_index_service.dart) | 刷新（比对来源版本、嵌入、写入、清理）与检索（取候选、逐条核对业务记录与范围） |
 | [app_paths.dart](../app/lib/platform/app_paths.dart) | `vectorIndexPath` 指向 `filesDir/vector_index/`，`vectorLogPath` 指向缓存目录下的 `zvec_logs/` |
 
 检索由一次 `query` 带回 `source_key`、`chunk`、`content`、`source_version` 与 `locator_json`，不再逐条回表；服务层随后对每个候选调用 `repository.current` 与 `repository.inScope` 核对。替换前的 `vec0` 表只建了向量列，检索时不知道范围，限定到某个目标或材料时范围外的向量会挤占候选，服务层把候选数放大到 `limit × 20` 并封顶 400，范围很窄时仍可能漏召回；现在材料范围与回答前无目标范围可以下推，候选回到 `limit × 4`，目标范围仍按 20 倍处理。
@@ -62,7 +62,7 @@ sqlite-vec 0.1.6 起，`vec0` 可以声明元数据列（参与 KNN 内部过滤
 ### 4.1 分层
 
 ```
-SemanticIndexService ──► VectorStore（接口，界面线程）
+SearchIndexService ──► VectorStore（接口，界面线程）
                               │
               ┌───────────────┴───────────────┐
       IsolateVectorStore                DirectVectorStore（测试）
@@ -168,7 +168,7 @@ zvec 的 Flutter 插件在 Gradle 的 `preBuild` 之前从 GitHub Releases 下�
 
 | 层 | 内容 | 运行条件 |
 |---|---|---|
-| 服务层 | `semantic_index_test.dart` 使用 `MemoryVectorIndex` | 任何环境 |
+| 服务层 | `search_index_test.dart` 使用 `MemoryVectorIndex` | 任何环境 |
 | 索引契约 | `vector_index_contract_test.dart`，同一组用例分别跑 `MemoryVectorIndex` 与 `ZvecVectorIndex`：写入、覆盖、缩短片段、清理、按键读取、过滤检索、中途退出后的版本判断、换模型重建 | `ZvecVectorIndex` 需要 `ZVEC_LIBRARY_PATH` 指向本机的 C 库，没有设置时跳过并打印原因 |
 | isolate | `vector_store_isolate_test.dart`，覆盖后台 isolate 的打开、写入、查询、统计与两个 isolate 先后打开、关闭之后引擎仍可再用 | 同上 |
 | 范围预过滤 | `vector_prefilter_test.dart`，`hitInScope` 判为在范围内的来源，预过滤必须放行 | 任何环境 |

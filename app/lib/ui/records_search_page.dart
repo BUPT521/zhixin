@@ -7,7 +7,7 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/request_gate.dart';
 import '../application/search_service.dart';
-import '../application/semantic_index_service.dart';
+import '../application/search_index_service.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/search.dart';
 import '../domain/models/study.dart';
@@ -59,7 +59,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   /// 本次融合使用的语义命中；查询或范围变化时清空，需要重新按。
   List<EvidenceHit> _semanticHits = const [];
-  SemanticCancelToken? _semanticToken;
+  IndexCancelToken? _semanticToken;
   bool _semanticLoading = false;
   bool _semanticFailed = false;
   bool _semanticEmptyIndex = false;
@@ -186,9 +186,9 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     final query = _query.text.trim();
     if (query.isEmpty || _semanticLoading) return;
     final scope = AppScope.of(context);
-    final index = scope.library.semanticIndex;
+    final index = scope.library.searchIndex;
     _semanticToken?.cancel();
-    final token = SemanticCancelToken();
+    final token = IndexCancelToken();
     _semanticToken = token;
     setState(() {
       _semanticLoading = true;
@@ -197,7 +197,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       _semanticAttempted = false;
       _notice = null;
     });
-    SemanticResult result;
+    IndexResult result;
     try {
       result = await index.search(
         query,
@@ -206,11 +206,11 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
         cancelToken: token,
       );
     } catch (_) {
-      result = const SemanticResult(failure: SemanticFailure.error);
+      result = const IndexResult(failure: IndexFailure.error);
     }
     if (!mounted || !identical(_semanticToken, token)) return;
     _semanticToken = null;
-    if (result.failure == SemanticFailure.cancelled) {
+    if (result.failure == IndexFailure.cancelled) {
       setState(() => _semanticLoading = false);
       return;
     }
@@ -528,7 +528,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   /// 范围标签、按意思找与语义状态；没有配置嵌入来源时按钮不可用。
   Widget _searchControls(ZhixinTheme theme) {
-    final configured = AppScope.of(context).library.semanticIndex.configured;
+    final configured = AppScope.of(context).library.searchIndex.configured;
     final status = _semanticStatus;
     return Padding(
       padding: EdgeInsets.fromLTRB(

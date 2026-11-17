@@ -12,7 +12,7 @@ import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
 import 'application/plan_service.dart';
 import 'application/search_service.dart';
-import 'application/semantic_index_service.dart';
+import 'application/search_index_service.dart';
 import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'application/sync_service.dart';
@@ -81,16 +81,16 @@ class LibraryServices {
   const LibraryServices({
     required this.material,
     required this.search,
-    required this.semanticIndexFactory,
+    required this.searchIndexFactory,
   });
 
   final MaterialService material;
   final SearchService search;
 
-  /// 语义索引按需创建；没有配置时不打开向量库。
-  final SemanticIndexService Function() semanticIndexFactory;
+  /// 检索索引按需创建；索引同时服务关键词与语义，没有配置时只建全文索引。
+  final SearchIndexService Function() searchIndexFactory;
 
-  SemanticIndexService get semanticIndex => semanticIndexFactory();
+  SearchIndexService get searchIndex => searchIndexFactory();
 }
 
 /// 记忆页与记忆建议。

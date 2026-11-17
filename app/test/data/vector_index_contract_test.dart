@@ -77,7 +77,7 @@ String? _zvecSkipReason() {
   return null;
 }
 
-/// 写入一个来源的片段；与 `SemanticIndexService` 的调用方式一致。
+/// 写入一个来源的片段；与 `SearchIndexService` 的调用方式一致。
 void _replace(
   VectorIndex index,
   SemanticLocator locator, {

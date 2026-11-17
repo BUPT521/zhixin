@@ -198,7 +198,7 @@ class _SettingsPageState extends State<SettingsPage> {
     int? sources;
     if (usable) {
       try {
-        sources = (await scope.library.semanticIndex.stats()).sources;
+        sources = (await scope.library.searchIndex.stats()).sources;
       } catch (_) {
         // 索引状态读不出来时副标题写说明，不停在“0 条来源”。
       }

@@ -1,7 +1,7 @@
 import '../data/repository/evidence_repository.dart';
 import '../data/vector/embedding_config_store.dart';
 import 'embedding_client.dart';
-import 'semantic_index_service.dart';
+import 'search_index_service.dart';
 
 /// 按配置构造嵌入来源与发送范围。
 ///
@@ -37,17 +37,17 @@ embeddingRuntime(EmbeddingConfig? config) {
   return (client: client, canSend: canSend);
 }
 
-/// 语义索引配置的服务入口：读写嵌入配置，并把配置应用到索引服务。
+/// 索引的嵌入配置入口：读写嵌入配置，并把配置应用到索引服务。
 ///
 /// 设置页只调用 [save] 一次，写入安全存储与换掉嵌入来源在同一次调用里完成；
-/// 模型或维度改变时，[SemanticIndexService.configure] 把旧索引的关闭排进操作
+/// 模型或维度改变时，[SearchIndexService.configure] 把旧索引的关闭排进操作
 /// 队列，下一次打开等这次关闭完成。应用根启动时用 [read] 与 [apply] 恢复上次
 /// 保存的配置。
 class EmbeddingSettingsService {
-  EmbeddingSettingsService({required this.store, required this.semantic});
+  EmbeddingSettingsService({required this.store, required this.index});
 
   final EmbeddingConfigStore store;
-  final SemanticIndexService semantic;
+  final SearchIndexService index;
 
   EmbeddingConfig? _current;
 
@@ -55,7 +55,7 @@ class EmbeddingSettingsService {
   EmbeddingConfig? get current => _current;
 
   /// 是否配置了可用的嵌入来源。
-  bool get configured => semantic.configured;
+  bool get configured => index.configured;
 
   /// 读取保存的配置；读坏了按没有配置处理。
   Future<EmbeddingConfig?> read() => store.read();
@@ -72,6 +72,6 @@ class EmbeddingSettingsService {
   void apply(EmbeddingConfig? config) {
     _current = config;
     final runtime = embeddingRuntime(config);
-    semantic.configure(client: runtime.client, canSend: runtime.canSend);
+    index.configure(client: runtime.client, canSend: runtime.canSend);
   }
 }

@@ -5,7 +5,7 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
-import '../application/semantic_index_service.dart';
+import '../application/search_index_service.dart';
 import '../data/vector/embedding_config_store.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/material.dart';
@@ -37,7 +37,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   EmbeddingShareScope _shareScope = EmbeddingShareScope.off;
   final Set<String> _selectedMaterials = {};
   List<Material> _materials = const [];
-  SemanticIndexStats? _stats;
+  IndexStats? _stats;
   bool _statsFailed = false;
   bool _busy = false;
   String? _status;
@@ -87,11 +87,11 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       loadFailure = error;
       loadStack = stack;
     }
-    SemanticIndexStats? stats;
+    IndexStats? stats;
     Object? statsFailure;
     StackTrace? statsStack;
     try {
-      stats = await scope.library.semanticIndex.stats();
+      stats = await scope.library.searchIndex.stats();
     } catch (error, stack) {
       statsFailure = error;
       statsStack = stack;
@@ -154,12 +154,12 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     await _load();
   }
 
-  static String _failureLabel(SemanticFailure failure) => switch (failure) {
-    SemanticFailure.none => '正常',
-    SemanticFailure.notConfigured => '没有启用语义索引',
-    SemanticFailure.timeout => '请求超时',
-    SemanticFailure.cancelled => '已经取消',
-    SemanticFailure.error => '请求失败',
+  static String _failureLabel(IndexFailure failure) => switch (failure) {
+    IndexFailure.none => '正常',
+    IndexFailure.notConfigured => '没有启用语义索引',
+    IndexFailure.timeout => '请求超时',
+    IndexFailure.cancelled => '已经取消',
+    IndexFailure.error => '请求失败',
   };
 
   Future<void> _save() async {
@@ -229,8 +229,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final app = scope ?? AppScope.of(context);
     if (!keepBusy) setState(() => _busy = true);
     try {
-      final result = await app.library.semanticIndex.refresh();
-      final stats = await app.library.semanticIndex.stats();
+      final result = await app.library.searchIndex.refresh();
+      final stats = await app.library.searchIndex.stats();
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -259,10 +259,10 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
 
   /// 一次更新的摘要：只说处理了多少来源、写入了多少条，规则写清楚。
   String _describeRefresh(IndexRefreshResult result) {
-    if (result.failure == SemanticFailure.notConfigured) {
+    if (result.failure == IndexFailure.notConfigured) {
       return '没有启用语义索引，本次没有读写向量库。';
     }
-    if (result.failure == SemanticFailure.cancelled) {
+    if (result.failure == IndexFailure.cancelled) {
       return '本次索引更新已经取消。';
     }
     final failed = result.failed > 0 ? '，失败 ${result.failed} 条' : '';
@@ -282,7 +282,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final app = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final result = await app.library.semanticIndex.search(
+      final result = await app.library.searchIndex.search(
         '熵与能量有什么关系',
         scope: const EvidenceScope.userAll(),
         limit: 3,
@@ -292,7 +292,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       setState(() {
         _busy = false;
         _notice = null;
-        if (result.failure == SemanticFailure.none) {
+        if (result.failure == IndexFailure.none) {
           _status =
               '测试查询成功，找到 ${result.hits.length} 条相关记录；'
               '索引里现在有 ${result.entries} 条向量。';
@@ -338,8 +338,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final scope = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      await scope.library.semanticIndex.clear();
-      final stats = await scope.library.semanticIndex.stats();
+      await scope.library.searchIndex.clear();
+      final stats = await scope.library.searchIndex.stats();
       if (!mounted) return;
       setState(() {
         _busy = false;

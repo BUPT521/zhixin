@@ -2,7 +2,7 @@ import '../data/repository/evidence_repository.dart';
 import '../domain/models/evidence.dart';
 import '../domain/rules/query_shape.dart';
 import 'cross_session_service.dart';
-import 'semantic_index_service.dart';
+import 'search_index_service.dart';
 
 /// 用户查找读到的一段候选；[more] 为真表示还有更早的命中没有读进来。
 class SearchWindow {
@@ -27,12 +27,12 @@ class SearchWindow {
 /// 都由索引一次给出，读取时另行核对版本与范围。字面命中固定在前面，题号、
 /// 页码与原句不会因为排序被挤掉。
 class EvidenceService {
-  EvidenceService({required this.repository, this.semantic, this.crossSession});
+  EvidenceService({required this.repository, this.index, this.crossSession});
 
   final EvidenceRepository repository;
 
   /// 检索索引；索引不可用时只使用字面命中。
-  final SemanticIndexService? semantic;
+  final SearchIndexService? index;
 
   /// 跨次综合；查询带有显式时间或回看意图时补齐同题的各次作答。
   final CrossSessionService? crossSession;
@@ -123,11 +123,11 @@ class EvidenceService {
           );
     // 关键词与语义候选都由索引一次给出；索引不可用时只保留字面命中。
     var indexHits = const <EvidenceHit>[];
-    var semanticFailed = false;
+    var indexFailed = false;
     EvidenceTimings? timings;
-    final semanticService = semantic;
-    if (semanticService != null) {
-      final result = await semanticService.search(
+    final indexService = index;
+    if (indexService != null) {
+      final result = await indexService.search(
         shape.text,
         scope: scope,
         limit: limit ?? perKindLimit ?? 40,
@@ -143,7 +143,7 @@ class EvidenceService {
       if (result.usable) {
         indexHits = result.hits;
       } else {
-        semanticFailed = true;
+        indexFailed = true;
       }
     }
 
@@ -169,7 +169,7 @@ class EvidenceService {
       scope,
       [...literalHits, ...indexHits, ...crossHits],
       limit: limit,
-      semanticFailed: semanticFailed,
+      indexFailed: indexFailed,
       timings: timings,
       crossSessionNotes: crossNotes,
     );
@@ -209,7 +209,7 @@ class EvidenceService {
 
     await loadLiteral();
     // 关键词与语义候选由索引一次给出，条数受 maxHits 限制，不再分批翻页。
-    final service = semantic;
+    final service = index;
     if (includeIndex && !shape.literal && service != null) {
       final result = await service.search(
         shape.text,

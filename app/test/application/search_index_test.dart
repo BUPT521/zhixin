@@ -8,7 +8,7 @@ import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/embedding_settings.dart';
-import 'package:zhixin/application/semantic_index_service.dart';
+import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
@@ -154,7 +154,7 @@ Future<
     RawDatabase db,
     EvidenceRepository repository,
     MemoryVectorIndex index,
-    SemanticIndexService service,
+    SearchIndexService service,
     _Corpus corpus,
   })
 >
@@ -170,7 +170,7 @@ _rig({
   final client =
       clientFor?.call(_spec) ??
       FixedEmbeddingClient(spec: _spec, vectors: _vectors());
-  final service = SemanticIndexService(
+  final service = SearchIndexService(
     repository: repository,
     initialClient: client,
     indexPath: '',
@@ -259,7 +259,7 @@ void main() {
     addTearDown(rig.index.close);
 
     final refresh = await rig.service.refresh();
-    expect(refresh.failure, SemanticFailure.none);
+    expect(refresh.failure, IndexFailure.none);
     expect(refresh.embedded, 7);
 
     final result = await rig.service.search(
@@ -374,7 +374,7 @@ void main() {
     await _seed(db);
     var opens = 0;
     var closes = 0;
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       indexPath: '',
@@ -432,7 +432,7 @@ void main() {
     final clearing = rig.service.clear();
     release.complete();
     await clearing;
-    expect((await pending).failure, SemanticFailure.cancelled);
+    expect((await pending).failure, IndexFailure.cancelled);
     expect((await rig.service.stats()).entries, 0);
     expect((await rig.service.refresh()).embedded, 7);
     expect((await rig.service.stats()).sources, 7);
@@ -448,7 +448,7 @@ void main() {
     final releaseB = Completer<void>();
     final transitions = <String>[];
     var requestedSpec = _spec;
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: {}),
       indexPath: '',
@@ -515,7 +515,7 @@ void main() {
     final release = Completer<void>();
     const specB = EmbeddingModelSpec(id: 'another-embed', dim: 8);
     var opened = 0;
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: _MutatingClient(
         inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
@@ -541,7 +541,7 @@ void main() {
       client: FixedEmbeddingClient(spec: specB, vectors: {}),
     );
     release.complete();
-    expect((await search).failure, SemanticFailure.cancelled);
+    expect((await search).failure, IndexFailure.cancelled);
     expect(opened, 0);
     expect((await service.stats()).modelKey, specB.indexKey);
   });
@@ -565,7 +565,7 @@ void main() {
         );
       },
     );
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: client,
       indexPath: '',
@@ -621,17 +621,17 @@ void main() {
       timeout: const Duration(milliseconds: 30),
     );
     expect(timedOut.usable, isFalse);
-    expect(timedOut.failure, SemanticFailure.timeout);
+    expect(timedOut.failure, IndexFailure.timeout);
     expect(timedOut.hits, isEmpty);
     expect(timedOut.entries, 0);
 
-    final token = SemanticCancelToken()..cancel();
+    final token = IndexCancelToken()..cancel();
     final cancelled = await rig.service.search(
       '系统混乱程度怎么衡量',
       scope: EvidenceScope.answer(goalId: rig.corpus.goalProbability),
       cancelToken: token,
     );
-    expect(cancelled.failure, SemanticFailure.cancelled);
+    expect(cancelled.failure, IndexFailure.cancelled);
 
     // 原文与关键词检索不经过嵌入，仍然可用。
     final evidence = await rig.repository.literal(
@@ -646,14 +646,14 @@ void main() {
     addTearDown(db.close);
     await _seed(db);
     final repository = EvidenceRepository(db);
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: repository,
       indexPath: '',
       vectorStoreOpener: () async =>
           DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
     );
     final refresh = await service.refresh();
-    expect(refresh.failure, SemanticFailure.none);
+    expect(refresh.failure, IndexFailure.none);
     expect(refresh.embedded, greaterThan(0));
     final result = await service.search(
       '熵',
@@ -669,7 +669,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     await _seed(db);
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       indexPath: '',
@@ -682,7 +682,7 @@ void main() {
       scope: const EvidenceScope.userAll(),
     );
     expect(result.usable, isFalse);
-    expect(result.failure, SemanticFailure.error);
+    expect(result.failure, IndexFailure.error);
     expect(result.hits, isEmpty);
     await expectLater(service.refresh(), throwsA(isA<VectorStoreFailure>()));
   });
@@ -708,7 +708,7 @@ void main() {
     await rig.service.refresh();
     final evidence = EvidenceService(
       repository: rig.repository,
-      semantic: rig.service,
+      index: rig.service,
     );
 
     final bundle = await evidence.forAnswer(
@@ -718,7 +718,7 @@ void main() {
       now: DateTime(2026, 11, 8),
     );
     expect(bundle.hits, isNotEmpty);
-    expect(bundle.semanticFailed, isFalse);
+    expect(bundle.indexFailed, isFalse);
     expect(bundle.timings, isNotNull);
     expect(
       bundle.hits.any(
@@ -749,7 +749,7 @@ void main() {
     );
     final runtime = embeddingRuntime(config);
     expect(runtime.client, isNotNull);
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: _RecordingClient(
         inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
@@ -877,7 +877,7 @@ void main() {
     };
     final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: vectors),
       indexPath: '',
@@ -920,7 +920,7 @@ void main() {
     final client = _CountingClient(
       FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
     );
-    final service = SemanticIndexService(
+    final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: client,
       indexPath: '',

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/embedding_settings.dart';
-import 'package:zhixin/application/semantic_index_service.dart';
+import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/data/vector/memory_vector_index.dart';
@@ -20,14 +20,14 @@ void main() {
       dim: 4,
       provider: 'local',
     );
-    final semantic = SemanticIndexService(
+    final index = SearchIndexService(
       repository: EvidenceRepository(db),
       indexPath: '',
       vectorStoreOpener: () async => DirectVectorStore(MemoryVectorIndex(spec)),
     );
     final service = EmbeddingSettingsService(
       store: EmbeddingConfigStore(_MemorySecrets()),
-      semantic: semantic,
+      index: index,
     );
 
     await service.save(
@@ -43,7 +43,7 @@ void main() {
     expect(service.configured, isFalse);
     expect((await service.read())?.enabled, isFalse);
 
-    await semantic.close();
+    await index.close();
     await db.close();
   });
 }

@@ -57,7 +57,7 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.library.semanticIndex.close();
+    await scope?.library.searchIndex.close();
     await scope?.testing.db.close();
     scope = null;
     try {
@@ -170,7 +170,7 @@ void main() {
         role: MessageRole.user,
         content: '线性无关的行向量个数',
       );
-      scope!.library.semanticIndex.configure(
+      scope!.library.searchIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -180,7 +180,7 @@ void main() {
           },
         ),
       );
-      final refresh = await scope!.library.semanticIndex.refresh();
+      final refresh = await scope!.library.searchIndex.refresh();
       expect(refresh.failed, 0);
     });
 
@@ -205,7 +205,7 @@ void main() {
         role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
-      scope!.library.semanticIndex.configure(
+      scope!.library.searchIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -214,8 +214,8 @@ void main() {
           },
         ),
       );
-      expect((await scope!.library.semanticIndex.refresh()).failed, 0);
-      scope!.library.semanticIndex.configure(client: _FailingClient());
+      expect((await scope!.library.searchIndex.refresh()).failed, 0);
+      scope!.library.searchIndex.configure(client: _FailingClient());
     });
 
     await openSearch(tester);
@@ -239,7 +239,7 @@ void main() {
         role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
-      scope!.library.semanticIndex.configure(
+      scope!.library.searchIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -276,7 +276,7 @@ void main() {
         role: MessageRole.user,
         content: 'det(A) 的几何意义是面积缩放',
       );
-      scope!.library.semanticIndex.configure(
+      scope!.library.searchIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -286,7 +286,7 @@ void main() {
           },
         ),
       );
-      expect((await scope!.library.semanticIndex.refresh()).failed, 0);
+      expect((await scope!.library.searchIndex.refresh()).failed, 0);
     });
 
     await openSearch(tester);
@@ -310,7 +310,7 @@ void main() {
         role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
-      scope!.library.semanticIndex.configure(
+      scope!.library.searchIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -319,14 +319,14 @@ void main() {
           },
         ),
       );
-      expect((await scope!.library.semanticIndex.refresh()).embedded, 1);
+      expect((await scope!.library.searchIndex.refresh()).embedded, 1);
 
       await scope!.testing.conversations.append(
         local,
         role: MessageRole.user,
         content: '线性无关的行向量个数',
       );
-      final next = await scope!.library.semanticIndex.refresh();
+      final next = await scope!.library.searchIndex.refresh();
       expect(next.embedded, 1);
       expect(next.skipped, 1);
       // 等安静期的后台刷新跑完，收尾时没有仍在运行的索引操作。
@@ -344,7 +344,7 @@ void main() {
         role: MessageRole.user,
         content: '矩阵的秩怎么求',
       );
-      scope!.library.semanticIndex.configure(
+      scope!.library.searchIndex.configure(
         client: FixedEmbeddingClient(
           spec: _spec,
           vectors: {
@@ -353,7 +353,7 @@ void main() {
           },
         ),
       );
-      expect((await scope!.library.semanticIndex.refresh()).embedded, 1);
+      expect((await scope!.library.searchIndex.refresh()).embedded, 1);
 
       await scope!.testing.conversations.append(
         local,
@@ -362,7 +362,7 @@ void main() {
       );
       // 不手动刷新：等安静期之后的后台刷新把新来源写进索引。
       await Future<void>.delayed(const Duration(seconds: 5));
-      final stats = await scope!.library.semanticIndex.stats();
+      final stats = await scope!.library.searchIndex.stats();
       expect(stats.entries, 2);
       expect(stats.lastRefresh?.embedded, 1);
     });

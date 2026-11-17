@@ -286,7 +286,7 @@ class EvidenceBundle {
     required this.scope,
     this.hits = const [],
     this.dropped = 0,
-    this.semanticFailed = false,
+    this.indexFailed = false,
     this.timings,
     this.crossSessionNotes = const [],
   });
@@ -297,7 +297,7 @@ class EvidenceBundle {
   final int dropped;
 
   /// 语义检索不可用或超时；调用方继续使用字面与关键词结果。
-  final bool semanticFailed;
+  final bool indexFailed;
 
   /// 语义检索的耗时；没有调用语义检索时为空。
   final EvidenceTimings? timings;
@@ -314,7 +314,7 @@ class EvidenceBundle {
     Iterable<EvidenceHit> candidates, {
     int? limit,
     int dropped = 0,
-    bool semanticFailed = false,
+    bool indexFailed = false,
     EvidenceTimings? timings,
     List<String> crossSessionNotes = const [],
   }) {
@@ -332,7 +332,7 @@ class EvidenceBundle {
       scope: scope,
       hits: chosen,
       dropped: dropped + (sorted.length - chosen.length),
-      semanticFailed: semanticFailed,
+      indexFailed: indexFailed,
       timings: timings,
       crossSessionNotes: crossSessionNotes,
     );
