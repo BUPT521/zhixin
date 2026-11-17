@@ -1218,21 +1218,21 @@ class _PlanPageState extends State<PlanPage> {
     ),
   );
 
-  /// 读到内容之后整页淡入；之后换页签或换周只淡入列表。
+  /// 读到内容之后整页淡入；之后换周按前后次序左右滑过去，换页签同样滑列表。
   Widget _loadedWeek(ZhixinTheme theme, PlanWeek week) => FadeIn(
     child: PageWidth(
       child: Column(
         children: [
           _tabBar(theme),
           Expanded(
-            child: FadeIn(
-              trigger: (_tab, _shownAnchor),
-              playOnInit: false,
-              // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
-              // 已读到的内容都留住；首次进入某个页签时才建。
-              child: IndexedStack(
-                sizing: StackFit.expand,
+            // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
+            child: SlideSwap(
+              identity: _shownAnchor!,
+              order: _weekOrder(_shownAnchor!),
+              child: TabSlideStack(
                 index: _tab,
+                // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
+                // 已读到的内容都留住；首次进入某个页签时才建。
                 children: [
                   for (var tab = 0; tab < 4; tab++)
                     if (_visited.contains(tab))
@@ -1247,6 +1247,10 @@ class _PlanPageState extends State<PlanPage> {
       ),
     ),
   );
+
+  /// 周在时间上的序号，只用来判断换周的方向：往后一周变大。
+  static int _weekOrder(DateTime weekStart) =>
+      weekStart.millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
 
   /// 页签固定在列表上方：原来它随列表滚走，看到日程中段时想切到事项要先滚回顶部。
   Widget _tabBar(ZhixinTheme theme) => Padding(

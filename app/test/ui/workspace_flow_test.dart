@@ -413,9 +413,9 @@ void main() {
       expect(find.byType(forui.FCircularProgress), findsNothing);
       expect(tester.widget<forui.FButton>(importButton).onPress, isNull);
       final headingPosition = tester.getTopLeft(importButton);
-      final state = tester.state<MaterialListState>(materials);
+      final transition = TabTransition.maybeOf(tester.element(materials))!;
       expect(
-        state.widget.tabTransition.status,
+        transition.status,
         reduceMotion ? AnimationStatus.completed : AnimationStatus.forward,
       );
 
@@ -430,18 +430,19 @@ void main() {
       }
       await tester.pump();
       expect(skeleton, findsNothing);
-      expect(state.widget.tabTransition.status, AnimationStatus.completed);
+      expect(transition.status, AnimationStatus.completed);
       expect(find.text(title), findsOneWidget);
       expect(tester.widget<forui.FButton>(importButton).onPress, isNotNull);
       if (reduceMotion) {
         expect(tester.getTopLeft(importButton), headingPosition);
       }
 
+      final materialsState = tester.state<MaterialListState>(materials);
       await tester.tap(find.text('学习记录'));
       await tester.pumpAndSettle();
       await tester.tap(tab.hitTestable());
       await tester.pumpAndSettle();
-      expect(tester.state<MaterialListState>(materials), same(state));
+      expect(tester.state<MaterialListState>(materials), same(materialsState));
       expect(skeleton, findsNothing);
       expect(find.text(title), findsOneWidget);
     });

@@ -6,9 +6,9 @@ import 'package:material_ui/material_ui.dart';
 /// 动效的几档时长与曲线；页面与公共组件只从这里取，不再各写一套数字。
 ///
 /// 动效只用来说明“内容换了”“这一块展开了”“选中项移到了这里”，不做装饰：
-/// 除底栏换栏按整幅栏宽滑入滑出之外，其余位移不超过 8 像素，不缩放、不弹跳、
-/// 不循环。系统打开“减少动态效果”时，[ZhixinMotionContext.motionOf] 把时长
-/// 归零，界面直接到终态。
+/// 除底栏、页签与换周按整幅页宽滑入滑出之外，其余位移不超过 24 像素，不缩放、
+/// 不弹跳、不循环。系统打开“减少动态效果”时，[ZhixinMotionContext.motionOf]
+/// 把时长归零，界面直接到终态。
 class ZhixinMotion {
   const ZhixinMotion();
 
@@ -47,13 +47,14 @@ extension ZhixinMotionContext on BuildContext {
   ///
   /// 先等过当前这一帧再判断：切栏动画在状态变化之后的下一帧才开始，直接读
   /// 状态会读到“已经结束”，回填于是又落进动画里。读不到过渡时不多等。
+  /// 祖先要在这一帧之内取好：等完这一帧，这块内容可能已经卸载。
   Future<void> afterTransition({Animation<double>? contentTransition}) async {
     final route = ModalRoute.of(this)?.animation;
-    final tab = TabTransition.maybeOf(this);
+    final tabs = TabTransition.allOf(this);
     await SchedulerBinding.instance.endOfFrame;
     final pending = <Animation<double>>[
       ?_running(route),
-      ?_running(tab),
+      for (final tab in tabs) ?_running(tab),
       ?_running(contentTransition),
     ];
     if (pending.isEmpty) return;
@@ -109,6 +110,20 @@ class TabTransition extends InheritedWidget {
   static Animation<double>? maybeOf(BuildContext context) =>
       context.getInheritedWidgetOfExactType<TabTransition>()?.animation;
 
+  /// 当前内容外面套着的全部切换动画。
+  ///
+  /// 底栏、页签与换周各有一层，内层不是唯一的等待对象：换栏时页签那一层停着，
+  /// 但它上面的底栏正在滑，数据回填要等最外层走完。
+  static List<Animation<double>> allOf(BuildContext context) {
+    final found = <Animation<double>>[];
+    context.visitAncestorElements((element) {
+      final widget = element.widget;
+      if (widget is TabTransition) found.add(widget.animation);
+      return true;
+    });
+    return found;
+  }
+
   @override
   bool updateShouldNotify(TabTransition oldWidget) =>
       oldWidget.animation != animation;
@@ -159,34 +174,21 @@ class ZhixinPageTransitionsBuilder extends PageTransitionsBuilder {
 class FadeIn extends StatefulWidget {
   const FadeIn({
     super.key,
-    required Widget this.child,
+    required this.child,
     this.trigger,
     this.playOnInit = true,
     this.rise = true,
-  }) : _sliver = false,
-       builder = null;
+  }) : _sliver = false;
 
   const FadeIn.sliver({
     super.key,
-    required Widget this.child,
+    required this.child,
     this.trigger,
     this.playOnInit = true,
   }) : rise = false,
-       _sliver = true,
-       builder = null;
+       _sliver = true;
 
-  /// 子组件需要等本次淡入结束后回填时，可通过 [builder] 取得动画。
-  const FadeIn.withTransition({
-    super.key,
-    required Widget Function(Animation<double>) this.builder,
-    this.trigger,
-    this.playOnInit = true,
-    this.rise = true,
-  }) : child = null,
-       _sliver = false;
-
-  final Widget? child;
-  final Widget Function(Animation<double>)? builder;
+  final Widget child;
   final Object? trigger;
   final bool playOnInit;
 
@@ -246,12 +248,10 @@ class _FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
     const motion = ZhixinMotion();
     final curved = _curved;
     if (widget._sliver) {
-      return SliverFadeTransition(opacity: curved, sliver: widget.child!);
+      return SliverFadeTransition(opacity: curved, sliver: widget.child);
     }
     // 位移只移动这一层；内容放在重绘边界里，动画期间不重画文字与卡片。
-    final content = RepaintBoundary(
-      child: widget.builder?.call(_controller) ?? widget.child!,
-    );
+    final content = RepaintBoundary(child: widget.child);
     final fade = FadeTransition(opacity: curved, child: content);
     if (!widget.rise) return fade;
     return AnimatedBuilder(
@@ -385,16 +385,16 @@ class _ExpandRevealState extends State<ExpandReveal>
   }
 }
 
-/// 底部三栏用的常驻页面栈：换栏时新栏从切换方向滑入，旧栏向相反方向滑出，
-/// 其余栏目保持原状态（输入、筛选与滚动位置都不丢）。
+/// 底栏与页面内页签用的常驻页面栈：换页时新页从切换方向滑入，
+/// 旧页向相反方向滑出，其余页面保持原状态（输入、筛选与滚动位置都不丢）。
 ///
-/// 每一栏都按同一层结构包起来，结构不随切换变化，否则切栏时其余栏目的状态
-/// 会被重建。位移只移动包在重绘边界外的一层，动画期间不重画整栏内容；非当前
-/// 栏关掉 [TickerMode]，隐藏的转圈与生成中提示暂停而不是销毁；没有参与本次
-/// 切换的栏目连语义一起隐藏，点击与读屏不会落到看不见的页面上。
+/// 每一页都按同一层结构包起来，结构不随切换变化，否则切页时其余页面的状态
+/// 会被重建。位移只移动包在重绘边界外的一层，动画期间不重画整页内容；非当前
+/// 页关掉 [TickerMode]，隐藏的转圈与生成中提示暂停而不是销毁；没有参与本次
+/// 切换的页面连语义一起隐藏，点击与读屏不会落到看不见的页面上。
 ///
-/// 位移取整幅栏宽：切到更靠右的一栏时新栏从右侧进来、旧栏向左出去，切回左边
-/// 时方向相反；两栏在切换途中首尾相接，同一时刻只有一半屏幕在换内容。
+/// 位移取整幅页宽：切到更靠右的一页时新页从右侧进来、旧页向左出去，切回左边
+/// 时方向相反；两页在切换途中首尾相接，同一时刻只有一半屏幕在换内容。
 class TabSlideStack extends StatefulWidget {
   const TabSlideStack({super.key, required this.index, required this.children});
 
@@ -554,4 +554,139 @@ class _TabStageElement extends SingleChildRenderObjectElement {
   void debugVisitOnstageChildren(ElementVisitor visitor) {
     if ((widget as _TabStage).onstage) super.debugVisitOnstageChildren(visitor);
   }
+}
+
+/// 同一块位置换了内容时按先后次序左右滑动：新的从对应一侧进来，旧的出去。
+///
+/// 换周这类内容由数据决定、不是常驻页面的切换用它：[identity] 变了才播，
+/// [order] 变大表示新的在右边。旧内容在新内容播完之前留在树上继续绘制，播完
+/// 再回收；期间它不参与控件查找、读屏与焦点，控件查找只看得到新内容。
+///
+/// 新旧两块同时在树上，内容里如果有共享的 [GlobalKey] 会在这一段时间里冲突，
+/// 这类内容不要用它；每份内容各建各的 key 的，不受影响。
+class SlideSwap extends StatefulWidget {
+  const SlideSwap({
+    super.key,
+    required this.identity,
+    required this.order,
+    required this.child,
+  });
+
+  /// 内容的身份；同一个身份重建不播放。
+  final Object identity;
+
+  /// 新旧内容的次序，只用来判断方向。
+  final num order;
+
+  final Widget child;
+
+  @override
+  State<SlideSwap> createState() => _SlideSwapState();
+}
+
+class _SlideSwapState extends State<SlideSwap>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    value: 1,
+  )..addStatusListener(_settle);
+
+  /// 正在滑出的旧内容；不在切换途中时为空。
+  Widget? _previous;
+  Object? _previousIdentity;
+
+  /// 新内容进入的方向：正数从右侧进入（次序变大），负数从左侧进入。
+  double _direction = 1;
+
+  void _settle(AnimationStatus status) {
+    if (status != AnimationStatus.completed || _previous == null) return;
+    setState(() {
+      _previous = null;
+      _previousIdentity = null;
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant SlideSwap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.identity == widget.identity) return;
+    _direction = widget.order >= oldWidget.order ? 1 : -1;
+    final duration = context.motionOf(const ZhixinMotion().emphasized);
+    if (duration == Duration.zero) {
+      _previous = null;
+      _previousIdentity = null;
+      _controller.value = 1;
+      return;
+    }
+    _previous = oldWidget.child;
+    _previousIdentity = oldWidget.identity;
+    _controller.duration = duration;
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final curve = const ZhixinMotion().move;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            final leaving = _previous;
+            final moving = leaving != null && _controller.value < 1;
+            final t = curve.transform(_controller.value);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                // 两块走同一层结构，只差身份与位移：换内容时旧的那块按 key
+                // 原样留在树上继续画，不重新挂载，订阅与滚动位置都不重来。
+                if (moving)
+                  _layer(
+                    identity: _previousIdentity!,
+                    onstage: false,
+                    dx: -t * width * _direction,
+                    child: leaving,
+                  ),
+                _layer(
+                  identity: widget.identity,
+                  onstage: true,
+                  dx: (moving ? 1 - t : 0) * width * _direction,
+                  child: widget.child,
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _layer({
+    required Object identity,
+    required bool onstage,
+    required double dx,
+    required Widget child,
+  }) => KeyedSubtree(
+    key: ValueKey(identity),
+    child: _TabStage(
+      visible: true,
+      onstage: onstage,
+      child: ExcludeFocus(
+        excluding: !onstage,
+        child: Transform.translate(
+          offset: Offset(dx, 0),
+          child: RepaintBoundary(
+            child: TabTransition(animation: _controller, child: child),
+          ),
+        ),
+      ),
+    ),
+  );
 }

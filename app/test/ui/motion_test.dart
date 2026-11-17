@@ -285,6 +285,51 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
+  testWidgets('换周这类换内容按次序左右滑动，旧内容播完撤下', (tester) async {
+    Widget swap(int order, String text) =>
+        _host(SlideSwap(identity: text, order: order, child: Text(text)));
+
+    await tester.pumpWidget(swap(0, '上一周'));
+    expect(find.text('上一周'), findsOneWidget);
+
+    // 往后换：新内容从右侧进来，旧内容同时向左出去，两块都在树上。
+    await tester.pumpWidget(swap(1, '这一周'));
+    await tester.pump(const Duration(milliseconds: 80));
+    final entering = _dxOf(tester, '这一周');
+    final leaving = _dxOf(tester, '上一周');
+    expect(entering, greaterThan(0));
+    expect(leaving, lessThan(0));
+    expect(entering - leaving, closeTo(800, 0.5));
+    // 旧内容还画着，但已经不是当前页：控件查找只看得到新内容。
+    expect(_shown(tester, '上一周'), isFalse);
+
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '这一周'), 0);
+    expect(find.text('上一周', skipOffstage: false), findsNothing);
+
+    // 往前换：方向反过来。
+    await tester.pumpWidget(swap(0, '再上一周'));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(_dxOf(tester, '再上一周'), lessThan(0));
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '再上一周'), 0);
+  });
+
+  testWidgets('换内容减少动态效果时直接到终态', (tester) async {
+    Widget swap(String text) => _host(
+      SlideSwap(identity: text, order: text.length, child: Text(text)),
+      reduce: true,
+    );
+
+    await tester.pumpWidget(swap('旧的'));
+    await tester.pumpWidget(swap('新的'));
+    await tester.pump();
+    expect(_dxOf(tester, '新的'), 0);
+    expect(_shown(tester, '新的'), isTrue);
+    expect(find.text('旧的', skipOffstage: false), findsNothing);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
   testWidgets('路由过渡推进时淡入右推，播完停在终态，减少动态效果时直接到终态', (tester) async {
     await tester.pumpWidget(_host(const _TransitionHarness()));
     await tester.pump(const Duration(milliseconds: 100));

@@ -21,9 +21,7 @@ import 'zhixin_toast.dart';
 
 /// 记录页的材料分组：按材料查看页码，导入新的一份或补充一页。
 class MaterialList extends StatefulWidget {
-  const MaterialList({super.key, required this.tabTransition});
-
-  final Animation<double> tabTransition;
+  const MaterialList({super.key});
 
   @override
   State<MaterialList> createState() => MaterialListState();
@@ -249,7 +247,6 @@ class MaterialListState extends State<MaterialList> {
     final theme = context.zhixin;
     return LiveView<List<Material>>(
       stream: _stream,
-      contentTransition: widget.tabTransition,
       onError: _reportReadFailure,
       builder: (context, materials, loading) {
         final list = materials ?? const <Material>[];
