@@ -9,7 +9,6 @@ import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
-import 'package:zhixin/ui/motion.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
 /// 记录页的查找范围选择器：切换全部、目标与材料之后，结果随范围收窄并在
@@ -327,8 +326,8 @@ void main() {
       isFalse,
     );
 
-    // 动画走完之后才要焦点，软键盘这时才弹出。
-    await tester.pump(const ZhixinMotion().emphasized);
+    // 动画走完之后才要焦点，软键盘这时才弹出；等过渡与收尾读取都落定。
+    await settle(tester);
     await tester.pump();
     expect(tester.widget<EditableText>(searchField).focusNode.hasFocus, isTrue);
     expect(tester.takeException(), isNull);

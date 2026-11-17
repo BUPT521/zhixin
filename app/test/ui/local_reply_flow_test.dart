@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/ui/discussion_chat.dart';
 import 'package:zhixin/ui/settings_page.dart';
 
 /// 没有模型时的提问、配置与重答入口走同一条界面流程。
@@ -175,6 +176,13 @@ void main() {
       if (find.text('本地规则').evaluate().length >= 2) break;
     }
     expect(find.text('本地规则'), findsNWidgets(2));
-    expect(find.text('解方程 3x+2=8，求 x'), findsOneWidget);
+    // 首页的记录卡也会显示这个问题；这里只看讨论页里的用户消息只有一条。
+    expect(
+      find.descendant(
+        of: find.byType(DiscussionChat),
+        matching: find.text('解方程 3x+2=8，求 x'),
+      ),
+      findsOneWidget,
+    );
   });
 }

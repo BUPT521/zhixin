@@ -165,6 +165,38 @@ class ZhixinPageTransitionsBuilder extends PageTransitionsBuilder {
   }
 }
 
+/// 安卓二级页面的路由过渡：交给系统的预测性返回。
+///
+/// 手势进行中由 [PredictiveBackPageTransitionsBuilder] 跟着手指展示返回预览，
+/// 普通推入用它自己的回退过渡，时长与曲线由框架决定。系统要求减少动态效果时
+/// 直接显示终态，也不注册手势监听，返回手势仍然可以退出页面。
+class ZhixinAndroidPageTransitionsBuilder extends PageTransitionsBuilder {
+  const ZhixinAndroidPageTransitionsBuilder();
+
+  static const _predictive = PredictiveBackPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => _predictive.transitionDuration;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (context.reduceMotion) return child;
+    return _predictive.buildTransitions(
+      route,
+      context,
+      animation,
+      secondaryAnimation,
+      child,
+    );
+  }
+}
+
 /// 子组件首次出现、或 [trigger] 变化时淡入，并自下而上移动几个像素。
 ///
 /// 只播放新内容的进入，不保留旧内容做淡出：旧内容里可能带着 GlobalKey

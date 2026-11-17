@@ -1,6 +1,7 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:zhixin/ui/motion.dart';
+import 'package:zhixin/ui/theme.dart';
 
 Widget _host(Widget child, {bool reduce = false}) => MaterialApp(
   home: MediaQuery(
@@ -8,6 +9,49 @@ Widget _host(Widget child, {bool reduce = false}) => MaterialApp(
     child: Scaffold(body: child),
   ),
 );
+
+/// 安卓下推入二级页面的最小应用；[reduce] 为真时模拟系统打开的减少动态效果。
+Widget _routeApp({bool reduce = false}) => MaterialApp(
+  theme: zhixinTheme.copyWith(platform: TargetPlatform.android),
+  builder: (context, child) => MediaQuery(
+    data: MediaQuery.of(context).copyWith(disableAnimations: reduce),
+    child: child!,
+  ),
+  home: Scaffold(
+    body: Builder(
+      builder: (context) => Center(
+        child: TextButton(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const Scaffold(body: Text('第二页')),
+            ),
+          ),
+          child: const Text('打开'),
+        ),
+      ),
+    ),
+  ),
+);
+
+Future<void> _openSecondPage(WidgetTester tester) async {
+  await tester.tap(find.text('打开'));
+  await tester.pumpAndSettle();
+  expect(find.text('第二页'), findsOneWidget);
+}
+
+/// 走系统返回手势的通道，把原生侧发出的手势进度交给框架。
+Future<void> _sendBackGesture(
+  WidgetTester tester,
+  String method, [
+  Map<String, Object?>? arguments,
+]) async {
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    SystemChannels.backGesture.name,
+    const StandardMethodCodec().encodeMethodCall(MethodCall(method, arguments)),
+    (_) {},
+  );
+  await tester.pump();
+}
 
 double _opacityOf(WidgetTester tester, Finder finder) => tester
     .widget<FadeTransition>(
@@ -353,6 +397,79 @@ void main() {
       findsNothing,
     );
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('安卓的预测性返回跟着手指预览，取消后回到原页', (tester) async {
+    await tester.pumpWidget(_routeApp());
+    await _openSecondPage(tester);
+    final resting = tester.getTopLeft(find.text('第二页'));
+    expect(_opacityOf(tester, find.text('第二页')), 1);
+
+    await _sendBackGesture(tester, 'startBackGesture', {
+      'touchOffset': <double>[5, 300],
+      'progress': 0.0,
+      'swipeEdge': 0,
+    });
+    await _sendBackGesture(tester, 'updateBackGestureProgress', {
+      'x': 100.0,
+      'y': 300.0,
+      'progress': 0.8,
+      'swipeEdge': 0,
+    });
+    await tester.pump();
+    expect(tester.getTopLeft(find.text('第二页')).dx, greaterThan(resting.dx));
+
+    await _sendBackGesture(tester, 'cancelBackGesture');
+    await tester.pumpAndSettle();
+    expect(find.text('第二页'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('第二页')), resting);
+    expect(_opacityOf(tester, find.text('第二页')), 1);
+  });
+
+  testWidgets('安卓的预测性返回提交后回到上一页', (tester) async {
+    await tester.pumpWidget(_routeApp());
+    await _openSecondPage(tester);
+
+    await _sendBackGesture(tester, 'startBackGesture', {
+      'touchOffset': <double>[5, 300],
+      'progress': 0.0,
+      'swipeEdge': 0,
+    });
+    await _sendBackGesture(tester, 'updateBackGestureProgress', {
+      'x': 100.0,
+      'y': 300.0,
+      'progress': 0.9,
+      'swipeEdge': 0,
+    });
+    await _sendBackGesture(tester, 'commitBackGesture');
+    await tester.pumpAndSettle();
+
+    expect(find.text('第二页'), findsNothing);
+    expect(find.text('打开'), findsOneWidget);
+  });
+
+  testWidgets('减少动态效果时安卓的返回手势不播放预览', (tester) async {
+    await tester.pumpWidget(_routeApp(reduce: true));
+    await _openSecondPage(tester);
+    final resting = tester.getTopLeft(find.text('第二页'));
+
+    await _sendBackGesture(tester, 'startBackGesture', {
+      'touchOffset': <double>[5, 300],
+      'progress': 0.0,
+      'swipeEdge': 0,
+    });
+    await _sendBackGesture(tester, 'updateBackGestureProgress', {
+      'x': 100.0,
+      'y': 300.0,
+      'progress': 0.9,
+      'swipeEdge': 0,
+    });
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('第二页')), resting);
+
+    await _sendBackGesture(tester, 'commitBackGesture');
+    await tester.pumpAndSettle();
+    expect(find.text('第二页'), findsNothing);
   });
 
   testWidgets('切栏动画结束之后才回填内容', (tester) async {

@@ -453,11 +453,12 @@ ThemeData _buildMaterial(_Palette palette) {
   );
   final text = _textStyles(palette);
   return base.copyWith(
-    // 页面路由的过渡在这里配一次，各页不再各写一套：安卓与桌面用淡入加
-    // 右推，iOS 保留系统的滑回手势。减少动态效果时由 builder 直接给终态。
+    // 页面路由的过渡在这里配一次，各页不再各写一套：安卓交给系统的预测性
+    // 返回，手势中显示返回预览；iOS 与 macOS 保留 Cupertino 的滑回手势；
+    // 桌面没有返回手势，用淡入加右推。减少动态效果时由 builder 直接给终态。
     pageTransitionsTheme: const PageTransitionsTheme(
       builders: {
-        TargetPlatform.android: ZhixinPageTransitionsBuilder(),
+        TargetPlatform.android: ZhixinAndroidPageTransitionsBuilder(),
         TargetPlatform.fuchsia: ZhixinPageTransitionsBuilder(),
         TargetPlatform.linux: ZhixinPageTransitionsBuilder(),
         TargetPlatform.windows: ZhixinPageTransitionsBuilder(),

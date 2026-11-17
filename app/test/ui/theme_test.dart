@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -5,6 +6,25 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/ui/theme.dart';
 
 void main() {
+  test('路由过渡按平台分工，安卓交给预测性返回', () {
+    final builders = zhixinTheme.pageTransitionsTheme.builders;
+    expect(
+      builders[TargetPlatform.android],
+      isA<ZhixinAndroidPageTransitionsBuilder>(),
+    );
+    expect(
+      builders[TargetPlatform.iOS],
+      isA<CupertinoPageTransitionsBuilder>(),
+    );
+    expect(
+      builders[TargetPlatform.macOS],
+      isA<CupertinoPageTransitionsBuilder>(),
+    );
+    expect(
+      builders[TargetPlatform.windows],
+      isA<ZhixinPageTransitionsBuilder>(),
+    );
+  });
   testWidgets('回答正文的 Markdown 沿用应用配色与字号', (tester) async {
     late GptMarkdownThemeData markdown;
     await tester.pumpWidget(
