@@ -35,7 +35,7 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS feedback, llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -367,6 +367,94 @@ func TestPostgresFeedback(t *testing.T) {
 
 	if err := st.CreateFeedback(ctx, feedback.Item{ID: "f2", Content: "x"}); err == nil {
 		t.Fatal("零值时间应当报错，不能静默写成 0001-01-01")
+	}
+}
+
+// TestPostgresRetention 核对活跃数据按天幂等、保留期之外的行会被清理，以及
+// 登录账号的活跃随删号级联删除。
+func TestPostgresRetention(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "active@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := st.MarkUserActive(ctx, "u1", "2026-11-18"); err != nil {
+			t.Fatalf("mark user active %d: %v", i+1, err)
+		}
+		if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-18", "0.2.0", "android"); err != nil {
+			t.Fatalf("mark install active %d: %v", i+1, err)
+		}
+	}
+	if err := st.MarkInstallActive(ctx, "hash-old", "2026-01-01", "", ""); err != nil {
+		t.Fatalf("seed old install: %v", err)
+	}
+
+	var users, installs int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM user_active WHERE user_id = 'u1'`).Scan(&users); err != nil {
+		t.Fatalf("count user_active: %v", err)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM install_active`).Scan(&installs); err != nil {
+		t.Fatalf("count install_active: %v", err)
+	}
+	if users != 1 {
+		t.Fatalf("同一账号同一天应只有一行，得到 %d", users)
+	}
+	if installs != 2 {
+		t.Fatalf("两个不同安装标识应各留一行，重复上报不新增，得到 %d", installs)
+	}
+
+	if err := st.PruneInstallsBefore(ctx, "2026-05-22"); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM install_active`).Scan(&installs); err != nil {
+		t.Fatalf("count after prune: %v", err)
+	}
+	if installs != 1 {
+		t.Fatalf("保留期外的一行应被删除，留下 1 行，得到 %d", installs)
+	}
+
+	if err := st.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM user_active`).Scan(&users); err != nil {
+		t.Fatalf("count after delete: %v", err)
+	}
+	if users != 0 {
+		t.Fatalf("删号之后活跃行应级联删除，剩下 %d", users)
+	}
+}
+
+// TestPostgresQuotaOverride 核对按账号调整的额度读得到、没有行时用默认值，
+// 删号时覆盖行随外键级联删除。
+func TestPostgresQuotaOverride(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "quota@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	if _, ok, err := st.DailyLimit(ctx, "u1"); err != nil || ok {
+		t.Fatalf("没有覆盖行时应回落到默认值：ok=%v err=%v", ok, err)
+	}
+
+	if _, err := st.pool.Exec(ctx, `INSERT INTO llm_quota (user_id, daily_tokens, note) VALUES ('u1', 5000, '内测')`); err != nil {
+		t.Fatalf("insert override: %v", err)
+	}
+	limit, ok, err := st.DailyLimit(ctx, "u1")
+	if err != nil || !ok || limit != 5000 {
+		t.Fatalf("覆盖额度没有读到：limit=%d ok=%v err=%v", limit, ok, err)
+	}
+
+	if err := st.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM llm_quota`).Scan(&rows); err != nil {
+		t.Fatalf("count llm_quota: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("删号之后覆盖行应级联删除，剩下 %d", rows)
 	}
 }
 

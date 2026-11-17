@@ -56,3 +56,9 @@ INSERT INTO llm_usage (user_id, day, tokens)
 VALUES (sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(tokens))
 ON CONFLICT (user_id, day)
 DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens;
+
+-- 按账号调整的每日额度；没有行时用 ZHIXIN_LLM_DAILY_TOKENS。
+-- name: LLMQuotaOverride :one
+SELECT daily_tokens
+FROM llm_quota
+WHERE user_id = sqlc.arg(user_id);

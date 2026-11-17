@@ -84,6 +84,13 @@ type Config struct {
 	// 计；设 0 关闭。
 	FeedbackRatePerSecond float64
 	FeedbackBurst         int
+	// TelemetrySecret 是匿名安装标识的 HMAC 密钥（ADR-0019）；为空时每次启动
+	// 随机生成，重启后同一个安装会被当成新的，留存数字偏高。
+	TelemetrySecret string
+	// TelemetryRatePerSecond 与 TelemetryBurst 限制匿名活跃上报，按来源地址计；
+	// 设 0 关闭。
+	TelemetryRatePerSecond float64
+	TelemetryBurst         int
 	// TrustedProxy 为真时按 X-Forwarded-For 的最后一项取来源地址，用于直接
 	// 对端是项目组反向代理的部署；对外直接暴露时必须保持关闭。
 	TrustedProxy bool
@@ -199,6 +206,10 @@ func Load(getenv func(string) string) (Config, error) {
 
 		FeedbackRatePerSecond: fnum("ZHIXIN_FEEDBACK_RATE", "0.02"),
 		FeedbackBurst:         int(num("ZHIXIN_FEEDBACK_BURST", "3")),
+
+		TelemetrySecret:        get("ZHIXIN_TELEMETRY_SECRET", ""),
+		TelemetryRatePerSecond: fnum("ZHIXIN_TELEMETRY_RATE", "0.2"),
+		TelemetryBurst:         int(num("ZHIXIN_TELEMETRY_BURST", "20")),
 
 		TrustedProxy: get("ZHIXIN_TRUSTED_PROXY", "0") == "1",
 

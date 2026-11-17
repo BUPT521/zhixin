@@ -45,6 +45,21 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type InstallActive struct {
+	InstallHash string
+	Day         pgtype.Date
+	AppVersion  string
+	Platform    string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type LlmQuotum struct {
+	UserID      string
+	DailyTokens int64
+	Note        string
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type LlmUsage struct {
 	UserID string
 	Day    pgtype.Date
@@ -78,4 +93,9 @@ type SyncCommit struct {
 type SyncHead struct {
 	UserID string
 	Head   int64
+}
+
+type UserActive struct {
+	UserID string
+	Day    pgtype.Date
 }

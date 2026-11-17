@@ -16,6 +16,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/server"
 	"github.com/BUPT521/zhixin/server/internal/store/pg"
 )
@@ -56,12 +57,13 @@ func run(log *slog.Logger) error {
 		log.Info("using PostgreSQL stores")
 		blobStore := blobs.NewStore(objects)
 		stores = server.Stores{
-			Auth:     pgStore,
-			Sync:     pgStore,
-			Backups:  pgStore,
-			Blobs:    blobStore,
-			Quota:    pgStore,
-			Feedback: pgStore,
+			Auth:      pgStore,
+			Sync:      pgStore,
+			Backups:   pgStore,
+			Blobs:     blobStore,
+			Quota:     pgStore,
+			Feedback:  pgStore,
+			Retention: pgStore,
 			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
 			// 由这里按前缀清理。
 			DeleteAccount: server.DeleteAccountData(
@@ -96,6 +98,9 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// 匿名活跃按保留期滚动删除：启动时清一次，之后每天一次，与进程重启无关。
+	go retention.PruneLoop(ctx, stores.Retention, cfg.Location, log)
 
 	errc := make(chan error, 1)
 	go func() {

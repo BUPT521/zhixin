@@ -360,6 +360,15 @@ type SyncHead struct {
 	SchemaVersion int   `json:"schema_version"`
 }
 
+// TelemetryPing defines model for TelemetryPing.
+type TelemetryPing struct {
+	AppVersion *string `json:"app_version,omitempty"`
+
+	// InstallId 首次启动时随机生成并保存在应用私有目录，卸载或清空数据后重新生成
+	InstallId string  `json:"install_id"`
+	Platform  *string `json:"platform,omitempty"`
+}
+
 // Tokens defines model for Tokens.
 type Tokens struct {
 	AccessExpiresAt  *time.Time       `json:"access_expires_at,omitempty"`
@@ -450,6 +459,9 @@ type PostV1LlmChatCompletionsJSONRequestBody PostV1LlmChatCompletionsJSONBody
 // PostV1SyncCommitsJSONRequestBody defines body for PostV1SyncCommits for application/json ContentType.
 type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
 
+// PostV1TelemetryActiveJSONRequestBody defines body for PostV1TelemetryActive for application/json ContentType.
+type PostV1TelemetryActiveJSONRequestBody = TelemetryPing
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz 进程存活
@@ -539,6 +551,9 @@ type ServerInterface interface {
 	// GetV1SyncHead 服务端序列的最新位置
 	// (GET /v1/sync/head)
 	GetV1SyncHead(w http.ResponseWriter, r *http.Request)
+	// PostV1TelemetryActive 匿名上报一次活跃
+	// (POST /v1/telemetry/active)
+	PostV1TelemetryActive(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -1121,6 +1136,20 @@ func (siw *ServerInterfaceWrapper) GetV1SyncHead(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// PostV1TelemetryActive operation middleware
+func (siw *ServerInterfaceWrapper) PostV1TelemetryActive(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1TelemetryActive(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -1269,6 +1298,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/chat/completions", wrapper.PostV1LlmChatCompletions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/app/releases", wrapper.GetV1AppReleases)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/telemetry/active", wrapper.PostV1TelemetryActive)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback", wrapper.PostV1Feedback)
 
 	return m

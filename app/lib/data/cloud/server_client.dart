@@ -651,6 +651,23 @@ class ServerClient {
     return ServerFeedbackReceipt.fromJson(json);
   }
 
+  /// 匿名上报一次活跃，配合 ADR-0019 的留存统计；不需要登录，服务端按收到的
+  /// 自然日去重，同一天重复调用不会多记。安装标识由调用方生成并保存在应用私有
+  /// 目录，属于统计分析，不进入学习记录与备份。
+  Future<void> reportActive({
+    required String installId,
+    String appVersion = '',
+    String platform = 'android',
+  }) => _send(
+    'POST',
+    '/v1/telemetry/active',
+    body: {
+      'install_id': installId,
+      if (appVersion.isNotEmpty) 'app_version': appVersion,
+      if (platform.isNotEmpty) 'platform': platform,
+    },
+  );
+
   void dispose() {
     if (_ownsHttpClient) _http.close();
   }

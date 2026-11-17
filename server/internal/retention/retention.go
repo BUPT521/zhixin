@@ -1,0 +1,107 @@
+// Package retention 记录留存统计所需的活跃数据：登录账号按服务端收到的请求日期
+// 记一行，未登录的设备匿名上报安装标识，服务端只保存它的 HMAC-SHA256 与日期。
+//
+// 采集口径见 ADR-0019：不含学习内容，不保存原始安装标识、IP 与设备编号；匿名
+// 数据按 180 天滚动删除。怎么查询活跃与留存写在 server/README 的留存统计一节。
+package retention
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+const (
+	// ActiveKeepDays 是匿名活跃数据的保留天数，见 ADR-0019 第 4 条。
+	ActiveKeepDays = 180
+	// minInstallRunes 与 maxInstallRunes 限定安装标识的长度，避免客户端把整段
+	// 文本或空串当成标识发上来。
+	minInstallRunes = 16
+	maxInstallRunes = 128
+	// maxVersionRunes 与 maxPlatformRunes 是附带字段的上限，与反馈接口一致。
+	maxVersionRunes  = 64
+	maxPlatformRunes = 32
+)
+
+// ErrInvalid 表示上报的安装标识或附带字段不合法。
+var ErrInvalid = errors.New("retention: invalid ping")
+
+// Store 保存活跃数据。生产实现写 PostgreSQL；内存实现用于本地开发与测试。
+type Store interface {
+	// MarkInstallActive 保存一次匿名活跃。同一个安装标识在同一天重复上报只留
+	// 一行，交给存储的幂等写入处理。
+	MarkInstallActive(ctx context.Context, hash, day, appVersion, platform string) error
+	// MarkUserActive 保存一次登录账号的活跃，同样按天幂等。
+	MarkUserActive(ctx context.Context, userID, day string) error
+	// PruneInstallsBefore 删除日期早于 before 的匿名活跃行，before 为 YYYY-MM-DD。
+	PruneInstallsBefore(ctx context.Context, before string) error
+}
+
+type memoryInstall struct {
+	appVersion string
+	platform   string
+}
+
+// MemoryStore 把活跃数据留在进程内存里，用于本地开发与测试。
+type MemoryStore struct {
+	mu       sync.Mutex
+	installs map[[2]string]memoryInstall // [哈希, 日期]
+	users    map[[2]string]struct{}      // [账号, 日期]
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		installs: map[[2]string]memoryInstall{},
+		users:    map[[2]string]struct{}{},
+	}
+}
+
+func (m *MemoryStore) MarkInstallActive(_ context.Context, hash, day, appVersion, platform string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := [2]string{hash, day}
+	if _, ok := m.installs[key]; ok {
+		return nil
+	}
+	m.installs[key] = memoryInstall{appVersion: appVersion, platform: platform}
+	return nil
+}
+
+func (m *MemoryStore) MarkUserActive(_ context.Context, userID, day string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.users[[2]string{userID, day}] = struct{}{}
+	return nil
+}
+
+// PruneInstallsBefore 按字符串比较日期，YYYY-MM-DD 的字典序与时间顺序一致。
+func (m *MemoryStore) PruneInstallsBefore(_ context.Context, before string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.installs {
+		if key[1] < before {
+			delete(m.installs, key)
+		}
+	}
+	return nil
+}
+
+// installCount 与 userDayCount 供本包测试核对保存与清理的结果；读取入口不对外，
+// 管理员按 server/README 的语句直接查库。
+func (m *MemoryStore) installCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.installs)
+}
+
+func (m *MemoryStore) userDayCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.users)
+}
+
+// dayOf 返回 loc 时区下某天对应的 YYYY-MM-DD，服务端自然日只从这一处取。
+func dayOf(t time.Time, loc *time.Location) string {
+	return t.In(loc).Format("2006-01-02")
+}

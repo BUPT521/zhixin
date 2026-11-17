@@ -4,8 +4,9 @@
 // otherwise it is rejected with 409 and the client pulls, applies the remote
 // commits locally as new local commits (so undo keeps working), and pushes
 // again. Each commit carries the client's request_id so a retried push is a
-// no-op. Field-level conflict handling stays on the client and is still to be
-// decided after a two-device walkthrough.
+// no-op. Field-level conflict handling stays on the client: the two-device
+// protocol walkthrough of 2026-11-18 kept "last write wins, overwritten values
+// stay in the history" (server/internal/server/sync_walkthrough_test.go).
 package syncsvc
 
 import (

@@ -195,3 +195,7 @@ func (Base) GetV1AppReleases(w http.ResponseWriter, _ *http.Request) {
 func (Base) PostV1Feedback(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
+
+func (Base) PostV1TelemetryActive(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}

@@ -55,12 +55,20 @@ type Principal struct {
 // single idempotent operation rather than one registration per package.
 type AccountDeleter func(ctx context.Context, userID string) error
 
+// ActivityRecorder 记录账号在某一天活跃过；实现自己按天去重，见
+// retention.Service。登录用户的留存按服务端收到的请求日期统计（ADR-0019），
+// 所以每次鉴权成功都要经过它。
+type ActivityRecorder interface {
+	RecordUserActive(ctx context.Context, userID string) error
+}
+
 type Service struct {
 	store             Store
 	now               func() time.Time
 	accessTTL         time.Duration
 	refreshTTL        time.Duration
 	deleteAccountData AccountDeleter
+	activity          ActivityRecorder
 
 	// 邮箱验证与找回密码。mailer 为 nil 时请求返回 ErrMailUnavailable；
 	// codeSecret 用来给六位验证码做 HMAC，避免库里的哈希被穷举。
@@ -89,6 +97,19 @@ func (s *Service) ConfigureCodes(mailer Mailer, secret []byte, ttl, cooldown tim
 // SetAccountDataDeleter registers the one cleanup that runs before the account
 // row is removed.
 func (s *Service) SetAccountDataDeleter(d AccountDeleter) { s.deleteAccountData = d }
+
+// SetActivityRecorder registers the daily active-day recorder. 不设置时登录用户
+// 的活跃不统计，其他功能不受影响。
+func (s *Service) SetActivityRecorder(r ActivityRecorder) { s.activity = r }
+
+// RecordActivity 在鉴权成功之后记一次账号活跃。错误由调用方记日志，不影响
+// 本次请求：统计失败不该让用户的操作失败。
+func (s *Service) RecordActivity(ctx context.Context, userID string) error {
+	if s.activity == nil {
+		return nil
+	}
+	return s.activity.RecordUserActive(ctx, userID)
+}
 
 func newID() string {
 	var b [16]byte

@@ -22,6 +22,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
+	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -33,12 +34,13 @@ const ClientSchemaVersion = 27
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth     auth.Store
-	Sync     syncsvc.Store
-	Backups  backup.Store
-	Blobs    blobs.Store
-	Quota    llmproxy.Quota
-	Feedback feedback.Store
+	Auth      auth.Store
+	Sync      syncsvc.Store
+	Backups   backup.Store
+	Blobs     blobs.Store
+	Quota     llmproxy.Quota
+	Feedback  feedback.Store
+	Retention retention.Store
 	// DeleteAccount removes per-account data owned outside the auth store.
 	// It runs once before the account row disappears.
 	DeleteAccount auth.AccountDeleter
@@ -54,12 +56,13 @@ func MemoryStores() Stores {
 	blobStore := blobs.NewStore(objectstore.NewMemory())
 	quotaStore := llmproxy.NewMemoryQuota()
 	return Stores{
-		Auth:     authStore,
-		Sync:     syncStore,
-		Backups:  backupStore,
-		Blobs:    blobStore,
-		Quota:    quotaStore,
-		Feedback: feedback.NewMemoryStore(),
+		Auth:      authStore,
+		Sync:      syncStore,
+		Backups:   backupStore,
+		Blobs:     blobStore,
+		Quota:     quotaStore,
+		Feedback:  feedback.NewMemoryStore(),
+		Retention: retention.NewMemoryStore(),
 		DeleteAccount: DeleteAccountData(
 			syncStore.DeleteUser,
 			backupStore.DeleteUser,
@@ -93,7 +96,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
-	var byAddr, refreshLimits, uploadLimits, codeLimits, feedbackLimits *ratelimit.Limiter
+	var byAddr, refreshLimits, uploadLimits, codeLimits, feedbackLimits, telemetryLimits *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
 	}
@@ -108,6 +111,9 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	}
 	if cfg.FeedbackRatePerSecond > 0 {
 		feedbackLimits = ratelimit.New(rate.Limit(cfg.FeedbackRatePerSecond), cfg.FeedbackBurst, 15*time.Minute)
+	}
+	if cfg.TelemetryRatePerSecond > 0 {
+		telemetryLimits = ratelimit.New(rate.Limit(cfg.TelemetryRatePerSecond), cfg.TelemetryBurst, 15*time.Minute)
 	}
 	mailer, err := auth.NewMailer(auth.MailerConfig{
 		Addr:     cfg.SMTPAddr,
@@ -130,6 +136,20 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		log.Warn("ZHIXIN_CODE_SECRET is empty: verification codes stop working after a restart")
 	}
 	authSvc.ConfigureCodes(mailer, codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
+
+	// 匿名活跃的安装标识用 HMAC 保存；密钥为空时每次启动随机生成，重启后同一个
+	// 安装会被当成新的，留存数字偏高，因此生产必须固定。
+	telemetrySecret := []byte(cfg.TelemetrySecret)
+	if len(telemetrySecret) == 0 {
+		telemetrySecret = make([]byte, 32)
+		if _, err := rand.Read(telemetrySecret); err != nil {
+			log.Error("cannot generate a telemetry secret", slog.String("error", err.Error()))
+		}
+		log.Warn("ZHIXIN_TELEMETRY_SECRET is empty: install hashes change on restart and active counts inflate")
+	}
+	retentionSvc := retention.NewService(st.Retention, telemetrySecret, cfg.Location)
+	authSvc.SetActivityRecorder(retentionSvc)
+
 	clientHost := httpx.NewClientHost(cfg.TrustedProxy)
 	handlers := routes{
 		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost),
@@ -139,6 +159,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		llm:           llmproxy.NewHandler(cfg.LLM, st.Quota, cfg.Location, log),
 		feedback:      feedback.NewHandler(feedback.NewService(st.Feedback), log, cfg.MaxJSONBytes, feedbackLimits, clientHost),
 		release:       release.NewHandler(cfg.Releases),
+		retention:     retention.NewHandler(retentionSvc, log, cfg.MaxJSONBytes, telemetryLimits, clientHost),
 		schemaVersion: ClientSchemaVersion,
 		ready:         st.Ready,
 	}

@@ -161,6 +161,19 @@ func (s *Store) Add(ctx context.Context, userID, day string, tokens int64) error
 	})
 }
 
+// DailyLimit 返回这个账号单独调整过的每日额度；没有覆盖行时 ok 为 false，
+// 由调用方用配置的默认值。
+func (s *Store) DailyLimit(ctx context.Context, userID string) (int64, bool, error) {
+	limit, err := s.q.LLMQuotaOverride(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return limit, true, nil
+}
+
 // pgDate 把 YYYY-MM-DD 转成 PostgreSQL 的 date。格式不对时返回错误并由调用方
 // 上抛：以前给零值会让用量悄悄记到“没有这一天”上，查出来的数看着像 0。
 func pgDate(day string) (pgtype.Date, error) {
