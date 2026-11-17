@@ -378,8 +378,13 @@ class MaterialRepository {
         ..add(excludePageNo ?? -1);
     }
     final tokenClauses = <String>[];
+    final scoreParts = <String>[];
     for (final token in tokens) {
       tokenClauses.add(
+        '(instr(lower(mp.content), lower(?)) > 0 '
+        'OR instr(lower(mp.label), lower(?)) > 0)',
+      );
+      scoreParts.add(
         '(instr(lower(mp.content), lower(?)) > 0 '
         'OR instr(lower(mp.label), lower(?)) > 0)',
       );
@@ -388,16 +393,22 @@ class MaterialRepository {
         ..add(token);
     }
     where.add('(${tokenClauses.join(' OR ')})');
+    // 命中词数多的页排前面；同分时新的材料与靠前的页优先。只取前几条时，
+    // 这一条决定较早但更相关的页不会因为材料标识小而排到窗口之外。
+    final scoreArgs = <Object?>[
+      for (final token in tokens) ...[token, token],
+    ];
     final rows = await _db.rawQuery(
       '''
       SELECT mp.material_id, mp.page_no, mp.label, mp.content,
-        m.title AS material_title, m.source_file_name
+        m.title AS material_title, m.source_file_name,
+        (${scoreParts.join(' + ')}) AS score
       FROM material_page mp JOIN material m ON m.id = mp.material_id
       WHERE ${where.join(' AND ')}
-      ORDER BY mp.material_id DESC, mp.page_no
+      ORDER BY score DESC, mp.material_id DESC, mp.page_no
       ${limit == null ? '' : 'LIMIT ?'}
       ''',
-      [...args, ?limit],
+      [...scoreArgs, ...args, ?limit],
     );
     return rows
         .map(
