@@ -27,11 +27,13 @@ import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/platform/data_package_export.dart';
 import 'package:zhixin/ui/data_version_page.dart';
+import 'package:zhixin/ui/copy.dart';
 import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/format.dart';
 import 'package:zhixin/ui/learning_page.dart';
 import 'package:zhixin/ui/materials_list.dart';
 import 'package:zhixin/ui/materials_page.dart';
+import 'package:zhixin/ui/mine_page.dart';
 import 'package:zhixin/ui/now_page.dart';
 import 'package:zhixin/ui/plan_page.dart';
 import 'package:zhixin/ui/records_page.dart';
@@ -196,6 +198,34 @@ void main() {
       scope = tester.state<AppScopeState>(find.byType(AppScope));
       await scope!.ready;
     });
+    await settle(tester);
+  }
+
+  /// 从底栏“我的”打开一个次级入口：先切栏，再滚到这一行点开。
+  Future<void> openMineEntry(WidgetTester tester, String title) async {
+    await tester.tap(
+      find.descendant(
+        of: find.byType(forui.FBottomNavigationBar),
+        matching: find.text(tabMine),
+      ),
+    );
+    await settle(tester);
+    final entry = find.descendant(
+      of: find.byType(MinePage),
+      matching: find.widgetWithText(forui.FTile, title),
+    );
+    await tester.scrollUntilVisible(
+      entry,
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byType(MinePage),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(entry);
     await settle(tester);
   }
 
@@ -2368,8 +2398,7 @@ void main() {
 
   testWidgets('设置页可以把外观固定为深色或浅色', (tester) async {
     await openApp(tester);
-    await tester.tap(find.byIcon(FLucideIcons.settings));
-    await settle(tester);
+    await openMineEntry(tester, '设置');
     await tester.scrollUntilVisible(
       _selectField<ThemeMode>('深浅色'),
       260,
@@ -2406,18 +2435,7 @@ void main() {
     await tester.runAsync(
       () => scope!.testing.tasks.createGoal(title: '版本页目标'),
     );
-    await tester.tap(find.byIcon(FLucideIcons.settings));
-    await settle(tester);
-    final dataTile = find.text('数据版本');
-    await tester.scrollUntilVisible(
-      dataTile,
-      260,
-      scrollable: _settingsScrollable(),
-    );
-    await tester.ensureVisible(dataTile);
-    await tester.pumpAndSettle();
-    await tester.tap(dataTile);
-    await settle(tester);
+    await openMineEntry(tester, '数据版本');
     expect(find.byType(DataVersionPage), findsOneWidget);
     expect(find.text('命名当前版本'), findsOneWidget);
     expect(find.text('导出当前数据'), findsOneWidget);
@@ -2435,18 +2453,7 @@ void main() {
       await scope!.data.versions.backupRepository(backup.path);
       await scope!.data.versions.restore(await backup.readAsBytes());
     });
-    await tester.tap(find.byIcon(FLucideIcons.settings));
-    await settle(tester);
-    final dataTile = find.text('数据版本');
-    await tester.scrollUntilVisible(
-      dataTile,
-      260,
-      scrollable: _settingsScrollable(),
-    );
-    await tester.ensureVisible(dataTile);
-    await tester.pumpAndSettle();
-    await tester.tap(dataTile);
-    await settle(tester);
+    await openMineEntry(tester, '数据版本');
 
     final section = find.text('恢复点');
     await tester.scrollUntilVisible(
@@ -2477,18 +2484,7 @@ void main() {
         'updated_at': '2026-11-10 09:00:00',
       }),
     );
-    await tester.tap(find.byIcon(FLucideIcons.settings));
-    await settle(tester);
-    final dataTile = find.text('数据版本');
-    await tester.scrollUntilVisible(
-      dataTile,
-      260,
-      scrollable: _settingsScrollable(),
-    );
-    await tester.ensureVisible(dataTile);
-    await tester.pumpAndSettle();
-    await tester.tap(dataTile);
-    await settle(tester);
+    await openMineEntry(tester, '数据版本');
 
     await tester.scrollUntilVisible(
       find.text('提交历史'),
@@ -2516,8 +2512,7 @@ void main() {
 
   testWidgets('截止时间保存后立即生效，撤销后设置与时间口径一起刷新', (tester) async {
     await openApp(tester);
-    await tester.tap(find.byIcon(FLucideIcons.settings));
-    await settle(tester);
+    await openMineEntry(tester, '设置');
     final cutoffField = _selectField<int>('每天的截止时间');
     await tester.scrollUntilVisible(
       cutoffField,

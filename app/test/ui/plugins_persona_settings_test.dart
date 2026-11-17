@@ -9,13 +9,14 @@ import 'package:zhixin/plugins/persona/persona_catalog.dart';
 import 'package:zhixin/plugins/runtime/plugin_runtime.dart';
 import 'package:zhixin/ui/copy.dart';
 import 'package:zhixin/ui/embedding_settings_page.dart';
+import 'package:zhixin/ui/mine_page.dart';
 import 'package:zhixin/ui/persona_page.dart';
 import 'package:zhixin/ui/plugins_page.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
-/// 设置页的插件与人格入口：列表、启停与切换写进 app_meta。
+/// 设置页、“我的”页的入口，以及插件与人格的列表、启停与切换写进 app_meta。
 ///
 /// 直接装配页面与 [AppScope]，不从首页推进导航：这两页的验收点是列表、文案与
 /// 启停结果，导航动画与首页加载另有用例覆盖。
@@ -114,7 +115,7 @@ void main() {
     });
   }
 
-  testWidgets('设置页显示语义索引、插件与人格三个入口', (tester) async {
+  testWidgets('设置页显示语义索引入口，危险操作在页底', (tester) async {
     await pumpPage(tester, const SettingsPage());
     // 先等首读骨架换成内容，再核对入口；只看标题栏会在骨架阶段就返回。
     await waitFor(tester, find.text('语义索引'));
@@ -124,34 +125,18 @@ void main() {
     expect(find.widgetWithText(forui.FTile, '语义索引'), findsOneWidget);
     expect(find.text('未启用'), findsOneWidget);
 
-    // 设置页比手机屏长，入口在下方；滚到可见再核对。
+    // 账号、插件与人格都移到了“我的”，设置页只留偏好配置。
+    expect(find.text('账号与云同步'), findsNothing);
+    expect(find.widgetWithText(forui.FTile, pluginsPageTitle), findsNothing);
+    expect(find.widgetWithText(forui.FTile, personaPageTitle), findsNothing);
+
+    // 设置页比手机屏长，危险的模型配置删除与清空单独成段，在页底。
     final scrollable = find
         .descendant(
           of: find.byType(SettingsPage),
           matching: find.byType(Scrollable),
         )
         .first;
-    for (var step = 0; step < 10; step++) {
-      if (find.widgetWithText(forui.FTile, '插件').evaluate().isNotEmpty) {
-        break;
-      }
-      await tester.drag(scrollable, const Offset(0, -400));
-      await tester.pump(const Duration(milliseconds: 200));
-    }
-    expect(find.widgetWithText(forui.FTile, '插件'), findsOneWidget);
-    expect(find.text(pluginsEntrySubtitle), findsOneWidget);
-
-    for (var step = 0; step < 10; step++) {
-      if (find.widgetWithText(forui.FTile, '人格').evaluate().isNotEmpty) {
-        break;
-      }
-      await tester.drag(scrollable, const Offset(0, -200));
-      await tester.pump(const Duration(milliseconds: 200));
-    }
-    expect(find.widgetWithText(forui.FTile, '人格'), findsOneWidget);
-    expect(find.text(personaEntrySubtitle), findsOneWidget);
-
-    // 危险的模型配置删除与清空单独成段，在页底。
     for (var step = 0; step < 10; step++) {
       if (find.widgetWithText(forui.FTile, '删除模型配置').evaluate().isNotEmpty) {
         break;
@@ -170,6 +155,53 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
     }
     expect(find.widgetWithText(forui.FTile, '清空全部记录'), findsOneWidget);
+  });
+
+  testWidgets('我的页未登录时给登录入口，并列出数据、学习与通用入口', (tester) async {
+    final active = ValueNotifier<int>(3);
+    addTearDown(active.dispose);
+    await pumpPage(tester, MinePage(activeTab: active));
+    await waitFor(tester, find.text('登录或注册'));
+
+    expect(find.text('未登录'), findsOneWidget);
+    expect(find.text('学习记录只保存在这台设备'), findsOneWidget);
+    // 未登录时不显示云端备份；同步按钮只在登录之后出现。
+    expect(find.widgetWithText(forui.FTile, '云端备份'), findsNothing);
+    expect(find.text('立即同步'), findsNothing);
+
+    for (final title in [
+      '数据版本',
+      '学习记忆',
+      personaPageTitle,
+      pluginsPageTitle,
+      '设置',
+      '关于',
+    ]) {
+      expect(
+        find.widgetWithText(forui.FTile, title),
+        findsOneWidget,
+        reason: '我的页缺少入口：$title',
+      );
+    }
+    expect(find.text(pluginsEntrySubtitle), findsOneWidget);
+    expect(find.text(personaEntrySubtitle), findsOneWidget);
+
+    await tester.tap(find.text('登录或注册'));
+    // 账号页先放转圈，读完登录状态才排出服务地址与登录卡。
+    await waitFor(tester, find.text('忘记密码'));
+    expect(find.text('账号与云同步'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('我的页的设置入口打开设置页', (tester) async {
+    final active = ValueNotifier<int>(3);
+    addTearDown(active.dispose);
+    await pumpPage(tester, MinePage(activeTab: active));
+    await waitFor(tester, find.widgetWithText(forui.FTile, '设置'));
+
+    await tester.tap(find.widgetWithText(forui.FTile, '设置'));
+    await waitFor(tester, find.widgetWithText(forui.FTile, '语义索引'));
+    expect(find.byType(SettingsPage), findsOneWidget);
   });
 
   testWidgets('设置页的语义索引入口打开语义索引页', (tester) async {

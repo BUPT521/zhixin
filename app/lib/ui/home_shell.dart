@@ -3,15 +3,17 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import 'copy.dart';
+import 'mine_page.dart';
 import 'navigation.dart';
 import 'now_page.dart';
 import 'plan_page.dart';
 import 'records_page.dart';
 import 'theme.dart';
 
-/// 底部三栏（02 第 10.1 节）：现在 / 记录 / 安排，设置留在次级入口。
+/// 底部四栏（02 第 2.1 节）：现在 / 记录 / 安排 / 我的；账号、设置与其余次级
+/// 入口都收在“我的”里。
 ///
-/// 三栏常驻，不按数据版本换 key：返回详情之后由打开它的栏目自己重读数据，
+/// 四栏常驻，不按数据版本换 key：返回详情之后由打开它的栏目自己重读数据，
 /// 其他栏目的筛选、输入与滚动位置不跟着重建。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -21,8 +23,8 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  /// 当前栏与跳转请求都走 notifier：切栏只换常驻栈的下标，三栏的构造参数
-  /// 不变，切栏那一帧因此不必把三栏一起重建。
+  /// 当前栏与跳转请求都走 notifier：切栏只换常驻栈的下标，各栏的构造参数
+  /// 不变，切栏那一帧因此不必把各栏一起重建。
   final ValueNotifier<int> _index = ValueNotifier<int>(0);
   final ValueNotifier<RecordsRequest> _recordsRequest =
       ValueNotifier<RecordsRequest>(
@@ -30,7 +32,7 @@ class _HomeShellState extends State<HomeShell> {
       );
   final ValueNotifier<int> _scheduleRequest = ValueNotifier<int>(0);
 
-  /// 三栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
+  /// 各栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
   List<Widget>? _pages;
 
   @override
@@ -46,7 +48,6 @@ class _HomeShellState extends State<HomeShell> {
         onOpenRecords: () => _openRecords(RecordsTab.learning),
         onOpenMaterials: () => _openRecords(RecordsTab.materials),
         onOpenMemory: _openMemory,
-        onOpenSettings: _openSettings,
       ),
       RecordsPage(
         key: const ValueKey('records'),
@@ -65,12 +66,13 @@ class _HomeShellState extends State<HomeShell> {
         request: _scheduleRequest,
         onOpenMaterials: () => _openRecords(RecordsTab.materials),
       ),
+      MinePage(key: const ValueKey('mine'), activeTab: _index, tabIndex: 3),
     ];
   }
 
   @override
   void dispose() {
-    // 这些 notifier 由三栏共享，页面卸载时还会移除自己的监听，所以不在这里
+    // 这些 notifier 由各栏共享，页面卸载时还会移除自己的监听，所以不在这里
     // 销毁：跟着 HomeShell 一起被回收即可。
     super.dispose();
   }
@@ -110,15 +112,13 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _openMemory() => openMemory(context);
 
-  Future<void> _openSettings() => openSettings(context);
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
       valueListenable: _index,
       builder: (context, index, _) => forui.FScaffold(
         footer: _BottomBar(index: index, onChange: _open),
-        // 换栏时新栏从切换方向滑入、旧栏向相反方向滑出；三栏仍然常驻，
+        // 换栏时新栏从切换方向滑入、旧栏向相反方向滑出；各栏仍然常驻，
         // 状态不随切换重建。
         child: TabSlideStack(index: index, children: _pages ?? const []),
       ),
@@ -133,6 +133,7 @@ class _BottomBar extends StatelessWidget {
     (FLucideIcons.house, tabNow),
     (FLucideIcons.history, tabRecords),
     (FLucideIcons.calendarClock, tabPlan),
+    (FLucideIcons.circleUserRound, tabMine),
   ];
   static const _itemPadding = 5.0;
   static const _iconHeight = 30.0;

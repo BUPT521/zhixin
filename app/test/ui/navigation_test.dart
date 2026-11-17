@@ -66,7 +66,7 @@ void main() {
   });
 }
 
-/// 页面文件：文件名以 `_page.dart` 结尾，加上拼装三栏的 `home_shell.dart`。
+/// 页面文件：文件名以 `_page.dart` 结尾，加上拼装底栏的 `home_shell.dart`。
 List<File> _pageFiles(Directory ui) => ui
     .listSync()
     .whereType<File>()
@@ -77,11 +77,12 @@ List<File> _pageFiles(Directory ui) => ui
     )
     .toList(growable: false);
 
-/// 底栏三栏的页面：由 [HomeShell] 常驻拼装，不走推入入口。
+/// 底栏四栏的页面：由 [HomeShell] 常驻拼装，不走推入入口。
 List<String> _tabPages(Directory ui) => [
   p.join(ui.path, 'now_page.dart'),
   p.join(ui.path, 'records_page.dart'),
   p.join(ui.path, 'plan_page.dart'),
+  p.join(ui.path, 'mine_page.dart'),
 ];
 
 /// 文件里 import 到的同目录 dart 文件。

@@ -61,7 +61,7 @@ lib/
 ├── plugins/
 │   ├── runtime/                            ← 清单、插件接口、四个权限门面、运行时与设置读写接口
 │   └── persona/                            ← 人格插件：对象与 800 字校验、内置人格、app_meta 存储
-└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、设置、记忆、账号、云端备份、关于；页面导航在 navigation.dart，文案在 copy.dart
+└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、我的、设置、记忆、账号、云端备份、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
 `ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
@@ -108,7 +108,7 @@ lib/
 
 ## 界面
 
-界面组件与主题由 Forui 0.27.7 提供，三栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。三栏页面（现在、记录、安排）使用 `TabScaffold`：三栏外面已经有一层带底栏的 `FScaffold`（见 `home_shell.dart`），键盘弹出时由它让出一次键盘高度，页面自己的骨架不再按键盘缩放，否则内容会被扣掉两个键盘高度，输入区与发送按钮被裁掉，键盘上方只剩一条空白。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
+界面组件与主题由 Forui 0.27.7 提供，底栏四栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。底栏页面（现在、记录、安排、我的）使用 `TabScaffold`：它们外面已经有一层带底栏的 `FScaffold`（见 `home_shell.dart`），键盘弹出时由它让出一次键盘高度，页面自己的骨架不再按键盘缩放，否则内容会被扣掉两个键盘高度，输入区与发送按钮被裁掉，键盘上方只剩一条空白。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
 
 按钮、输入框、列表、卡片与表单优先使用 Forui，对话框和短提示分别通过 `showZhixinDialog` 和 `showToast` 打开。底部面板、日期时间选择器和下拉刷新使用 Material，其中底部面板和日期时间选择分别通过 `showZhixinSheet`、`showZhixinDatePicker` 与 `showZhixinTimePicker` 打开，样式由同一主题提供。筛选使用 `ZhixinChip`，互斥的视图切换使用 `ZhixinSegmented`，业务图标统一从 [Lucide 图标库](https://lucide.dev/icons/) 选取，通过 `FLucideIcons` 引用。
 
@@ -154,7 +154,7 @@ lib/
 
 注册之后的邮箱默认未确认，账号页提供发送与确认验证码的入口，验证码只以六位数字邮件送达，服务端存 HMAC；未确认时找回密码收不到重设验证码。登录卡的“忘记密码”切到邮箱、验证码与新密码三段表单，重设成功之后服务端作废该账号的全部会话，本机清掉登录状态并回到登录表单。账号页同时读 `/v1/llm/quota` 显示今日已用与每日额度，设置页在“知新服务”来源下列出 `/v1/llm/models` 返回的允许模型；这两处读取失败只给一行说明，不影响本机功能、备份与同步。
 
-云端备份在 `lib/application/cloud_backup_service.dart`：上传时用与“备份版本库”相同的 `VACUUM INTO` 快照生成 zip，计算 SHA-256 之后按契约上传，服务端按保留份数删除最旧的；列表、下载与删除都按账号隔离，下载后先核对响应头里的哈希，再交给本机已有的预检、确认与恢复点流程替换数据库。页面在 `lib/ui/account_page.dart` 与 `lib/ui/cloud_backup_page.dart`，从设置页和数据版本页进入。
+云端备份在 `lib/application/cloud_backup_service.dart`：上传时用与“备份版本库”相同的 `VACUUM INTO` 快照生成 zip，计算 SHA-256 之后按契约上传，服务端按保留份数删除最旧的；列表、下载与删除都按账号隔离，下载后先核对响应头里的哈希，再交给本机已有的预检、确认与恢复点流程替换数据库。页面在 `lib/ui/account_page.dart` 与 `lib/ui/cloud_backup_page.dart`，从“我的”页的账号卡、设置页模型段与数据版本页进入。
 
 增量同步在 `lib/application/sync_service.dart`。第一次同步先拉取服务端已有的提交并在本机应用，再把当前业务投影作为基线上传，之后只推送新提交；拉取到的远端提交经 `RevisionService.applyRemoteCommit` 在本机生成一条同样净变化的提交，撤销与数据版本页照常可用，远端提交的请求编号沿用到本机，重复下发不会叠加。附件按内容哈希随提交上传与下载，拉取时核对哈希；服务端位置变化返回 409 时先拉取再重推，同一字段两台设备同时修改时后到达的覆盖先到达的，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md)。应用根在提交之后延迟几秒排一次同步，账号页可以手动立即同步；同步失败只记一条说明与本机诊断，本机读写不受影响。
 
@@ -168,7 +168,7 @@ lib/
 - 目录规则：运行时基础设施放 `lib/plugins/runtime/`，单个插件放 `lib/plugins/<插件标识>/`。插件目录不 import `data/` 与 `ui/`，不持有数据库连接，也不依赖 Flutter；`test/architecture_test.dart` 对这三个边界逐条检查。
 - 人格插件在 `lib/plugins/persona/`。`persona.dart` 定义 `Persona` 与按码位计数的 800 字校验，超过时由 `validatePersonaText` 说明超出的字数，不静默截断；`builtin_personas.dart` 是两个内置人格；`persona_catalog.dart` 读写 `app_meta` 并切换当前启用项；`persona_plugin.dart` 是人格插件的清单与本体，清单不声明权限。人格段落由 `ai/buddy_prompt_builder.dart` 拼在核心规则之后、当前时间与记忆之前，启用人格时另有一条规则说明用户本轮说明、人格与记忆讲解偏好的顺序与边界；停用后下一次请求不再带人格段落，读取到超长文本时用 `truncateCodePoints` 兜底。
 - 设置键写在 `app_meta`：`persona.items` 保存人格 JSON 列表，`persona.active` 保存当前启用人格（空串表示未启用），`plugin.enabled.<插件标识>` 保存启停状态（`1` 或 `0`，没有写过时默认启用）。写入经 `SettingsRepository.setMetadata`，不形成提交，也不进数据版本页；整库备份包含 `app_meta`，恢复或清空之后下一轮回答与重新打开的页面都读恢复后的状态，当前数据包不包含这些设置。
-- 本期做运行时骨架、人格插件、设置页的“插件”与“人格”两个入口以及四条调用点检查；能力插件、课表导入、B 站与 ICS 读取、第三方插件、沙箱与服务端分享码留到 M3。插件不保存第三方账号的密码、Cookie 或令牌，也不把学习内容发给第三方工具服务。
+- 本期做运行时骨架、人格插件、“我的”页的“插件”与“人格”两个入口以及四条调用点检查；能力插件、课表导入、B 站与 ICS 读取、第三方插件、沙箱与服务端分享码留到 M3。插件不保存第三方账号的密码、Cookie 或令牌，也不把学习内容发给第三方工具服务。
 
 ## 发布
 
@@ -190,5 +190,5 @@ keystore 与口令由发版人保管，仓库与本机工程目录都不放：CI
 不是 debug 证书，并对包体记录版本、提交与 SHA-256。
 
 
-正式包在 Actions 里手动运行“CI 与发版”，用仓库 Secrets 里的签名配置生成；本机不出正式包。版本号按 [03 第 3 节](../docs/03-团队分工与协作.md#3-交付节奏)递增，取值以本目录 `pubspec.yaml` 的 `version` 一行为准，只由发版人（见 [03 第 2 节](../docs/03-团队分工与协作.md#2-角色)）在发包前修改；开发包的版本名带 `-dev` 且按 `com.zhixin.app.dev` 另装一个应用，设置页的“关于”显示构建时写入的构建名与构建号，不另存版本常量；许可页同时列出知新自身的 MIT 许可与第三方组件许可，知新自身的许可从 `platform/app_license.dart` 读取，测试会核对它与仓库根目录的 `LICENSE` 同文。
+正式包在 Actions 里手动运行“CI 与发版”，用仓库 Secrets 里的签名配置生成；本机不出正式包。版本号按 [03 第 3 节](../docs/03-团队分工与协作.md#3-交付节奏)递增，取值以本目录 `pubspec.yaml` 的 `version` 一行为准，只由发版人（见 [03 第 2 节](../docs/03-团队分工与协作.md#2-角色)）在发包前修改；开发包的版本名带 `-dev` 且按 `com.zhixin.app.dev` 另装一个应用，“我的”页的“关于”显示构建时写入的构建名与构建号，不另存版本常量；许可页同时列出知新自身的 MIT 许可与第三方组件许可，知新自身的许可从 `platform/app_license.dart` 读取，测试会核对它与仓库根目录的 `LICENSE` 同文。
 

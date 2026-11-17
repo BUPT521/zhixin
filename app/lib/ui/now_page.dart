@@ -38,7 +38,6 @@ class NowPage extends StatefulWidget {
     required this.onOpenRecords,
     required this.onOpenMaterials,
     required this.onOpenMemory,
-    required this.onOpenSettings,
   });
 
   /// 底栏当前栏的下标；页面自己监听，父级切栏时不再重建这一栏。
@@ -49,7 +48,6 @@ class NowPage extends StatefulWidget {
   final VoidCallback onOpenRecords;
   final VoidCallback onOpenMaterials;
   final VoidCallback onOpenMemory;
-  final VoidCallback onOpenSettings;
 
   @override
   State<NowPage> createState() => _NowPageState();
@@ -209,11 +207,6 @@ class _NowPageState extends State<NowPage> {
             icon: FLucideIcons.brain,
             tooltip: '记忆',
             onPressed: widget.onOpenMemory,
-          ),
-          ZhixinHeaderAction(
-            icon: FLucideIcons.settings,
-            tooltip: '设置',
-            onPressed: widget.onOpenSettings,
           ),
         ],
       ),
