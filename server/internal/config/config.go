@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -198,6 +199,8 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.SMTPAddr != "" {
 		if cfg.SMTPFrom == "" {
 			errs = append(errs, errors.New("ZHIXIN_SMTP_FROM is required when ZHIXIN_SMTP_ADDR is set"))
+		} else if _, err := mail.ParseAddress(cfg.SMTPFrom); err != nil {
+			errs = append(errs, fmt.Errorf("ZHIXIN_SMTP_FROM: %w", err))
 		}
 		switch cfg.SMTPTLS {
 		case "starttls", "implicit", "none":
