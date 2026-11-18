@@ -8,6 +8,8 @@ package release
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,8 +33,12 @@ type Entry struct {
 	PublishedAt string `json:"published_at"`
 	// URL 是安装包地址，正式实例应写 https。
 	URL string `json:"url"`
-	// SHA256 是安装包的哈希，可选；写了就校验格式。
+	// SHA256 是安装包的哈希，必填；发布清单与安装包对不上时客户端无法发现
+	// 被替换的包，因此不再允许省略。
 	SHA256 string `json:"sha256"`
+	// Signature 是安装包 SHA-256 的 Ed25519 签名（base64），可选；应用用内置
+	// 公钥核对，签名对不上时不提示更新。
+	Signature string `json:"signature"`
 	// Size 是安装包的字节数，可选。
 	Size int64 `json:"size"`
 	// MinVersion 是仍然可以使用的版本下限；低于它的客户端应提示必须更新。
@@ -77,6 +83,7 @@ func Load(path string) ([]Entry, error) {
 		e.PublishedAt = strings.TrimSpace(e.PublishedAt)
 		e.URL = strings.TrimSpace(e.URL)
 		e.SHA256 = strings.TrimSpace(e.SHA256)
+		e.Signature = strings.TrimSpace(e.Signature)
 		e.MinVersion = strings.TrimSpace(e.MinVersion)
 		e.Notes = strings.TrimSpace(e.Notes)
 		switch {
@@ -96,15 +103,21 @@ func Load(path string) ([]Entry, error) {
 		if err := checkURL(e.URL); err != nil {
 			return nil, fmt.Errorf("release: %s 的 url %w", e.Platform, err)
 		}
-		if e.SHA256 != "" && !httpx.ValidSHA256(e.SHA256) {
-			return nil, fmt.Errorf("release: %s 的 sha256 必须是 64 位小写十六进制", e.Platform)
+		if !httpx.ValidSHA256(e.SHA256) {
+			return nil, fmt.Errorf("release: %s 的 sha256 必填，且必须是 64 位小写十六进制", e.Platform)
+		}
+		if e.Signature != "" {
+			sig, err := base64.StdEncoding.DecodeString(e.Signature)
+			if err != nil || len(sig) != ed25519.SignatureSize {
+				return nil, fmt.Errorf("release: %s 的 signature 必须是 %d 字节 Ed25519 签名的 base64", e.Platform, ed25519.SignatureSize)
+			}
 		}
 	}
 	return m.Releases, nil
 }
 
-// checkURL 只接受绝对地址，协议限 http 与 https。正式实例应写 https，本地
-// 联调允许 http；这里不替部署环境做这个选择。
+// checkURL 只接受 https 绝对地址：正式更新包必须走加密连接，否则清单与安装包
+// 都可能在中途被替换。本机联调也走 https 或直接改清单测试，不为 http 开口子。
 func checkURL(raw string) error {
 	if raw == "" {
 		return errors.New("不能为空")
@@ -113,8 +126,8 @@ func checkURL(raw string) error {
 	if err != nil {
 		return errors.New("不是合法的地址")
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return errors.New("只能用 http 或 https")
+	if u.Scheme != "https" {
+		return errors.New("必须使用 https")
 	}
 	if u.Host == "" {
 		return errors.New("缺少主机名")

@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/mail"
 	"strings"
@@ -70,6 +71,18 @@ type Service struct {
 	deleteAccountData AccountDeleter
 	activity          ActivityRecorder
 
+	// passwords 限制同时进行的 argon2 计算数；为 nil 时不限制，只有装配处
+	// 按内存预算设置之后才生效。
+	passwords *PasswordBudget
+
+	// maxSessions 是每个账号保留的会话数上限，新登录超过时删最旧的。默认值
+	// 与配置 ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致，装配处可以覆盖。
+	maxSessions int
+
+	// securityLog 记录刷新令牌重放这类安全事件；为 nil 时不记，事件内容只有
+	// 账号、会话与请求标识，不含令牌。
+	securityLog *slog.Logger
+
 	// 邮箱验证与找回密码。mailer 为 nil 时请求返回 ErrMailUnavailable；
 	// codeSecret 用来给六位验证码做 HMAC，避免库里的哈希被穷举。
 	mailer       Mailer
@@ -80,8 +93,15 @@ type Service struct {
 
 const maxCodeAttempts = 5
 
+// defaultMaxSessions 是每个账号保留的会话数上限的默认值，与配置
+// ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致。
+const defaultMaxSessions = 20
+
 func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
-	return &Service{store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL}
+	return &Service{
+		store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL,
+		maxSessions: defaultMaxSessions,
+	}
 }
 
 // ConfigureCodes 装上发信与验证码参数；不调用时邮箱验证与找回密码一律返回
@@ -101,6 +121,68 @@ func (s *Service) SetAccountDataDeleter(d AccountDeleter) { s.deleteAccountData 
 // SetActivityRecorder registers the daily active-day recorder. 不设置时登录用户
 // 的活跃不统计，其他功能不受影响。
 func (s *Service) SetActivityRecorder(r ActivityRecorder) { s.activity = r }
+
+// SetPasswordBudget 按内存预算（MiB）限制同时进行的 argon2 计算数，注册、登录、
+// 重设密码与删号共用这一个上限。不调用时不限制。
+func (s *Service) SetPasswordBudget(mib int) {
+	if mib <= 0 {
+		s.passwords = nil
+		return
+	}
+	s.passwords = NewPasswordBudget(mib)
+}
+
+// SetSecurityLog 装上安全事件的日志出口。刷新令牌被重放时写 "refresh token
+// reuse"，字段只有 user_id、session_id 与 request_id。
+func (s *Service) SetSecurityLog(log *slog.Logger) { s.securityLog = log }
+
+// SetMaxSessions 设定每个账号保留的会话数上限；小于等于零的值忽略，避免把
+// 账号锁在“一登录就踢掉自己”的状态里。
+func (s *Service) SetMaxSessions(n int) {
+	if n > 0 {
+		s.maxSessions = n
+	}
+}
+
+// PruneLoop 启动时清理一次过期会话与验证码，之后每天清理一次，直到 ctx 结束。
+// 节奏与 retention.PruneLoop 一致：过期行不影响正确性，清理只控制表的大小。
+func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) {
+	prune := func() {
+		if err := store.PruneExpired(ctx, s.now()); err != nil {
+			log.Error("prune expired auth rows", slog.String("error", err.Error()))
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
+// hashPassword 在预算内生成哈希。等待名额期间 ctx 结束时直接返回错误，不再
+// 开启一次已经没人等的计算。
+func (s *Service) hashPassword(ctx context.Context, password string) (string, error) {
+	if err := s.passwords.Acquire(ctx); err != nil {
+		return "", err
+	}
+	defer s.passwords.Release()
+	return HashPassword(password)
+}
+
+// verifyPassword 在预算内核对密码。
+func (s *Service) verifyPassword(ctx context.Context, encoded, password string) (bool, error) {
+	if err := s.passwords.Acquire(ctx); err != nil {
+		return false, err
+	}
+	defer s.passwords.Release()
+	return VerifyPassword(encoded, password)
+}
 
 // RecordActivity 在鉴权成功之后记一次账号活跃。错误由调用方记日志，不影响
 // 本次请求：统计失败不该让用户的操作失败。
@@ -150,7 +232,7 @@ func (s *Service) Register(ctx context.Context, email, password, device string) 
 	if err := checkPassword(password); err != nil {
 		return Tokens{}, err
 	}
-	hash, err := HashPassword(password)
+	hash, err := s.hashPassword(ctx, password)
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -171,15 +253,17 @@ func (s *Service) Login(ctx context.Context, email, password, device string) (To
 	if errors.Is(err, ErrNotFound) {
 		// Spend the same work as a real check so timing does not reveal
 		// which emails are registered.
-		_, _ = VerifyPassword(dummyHash, password)
+		_, _ = s.verifyPassword(ctx, dummyHash, password)
 		return Tokens{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return Tokens{}, err
 	}
-	ok, err := VerifyPassword(u.PasswordHash, password)
+	ok, err := s.verifyPassword(ctx, u.PasswordHash, password)
 	if err != nil {
-		return Tokens{}, err
+		// 库里的哈希格式或参数不合法时按凭据错误处理：这是库里那一行的问题，
+		// 不能因此让这个账号每次登录都回 500，也不能借状态码区分账号是否存在。
+		return Tokens{}, ErrInvalidCredentials
 	}
 	if !ok {
 		return Tokens{}, ErrInvalidCredentials
@@ -191,32 +275,132 @@ var dummyHash, _ = HashPassword("zhixin-dummy-password")
 
 var errRefreshLimited = errors.New("refresh rate limited")
 
+// refreshGrace 是旧刷新令牌按“同一客户端重试”处理的宽限期。固定 60 秒，重试
+// 不延长：宽限期若按每次重试重新计算，复制了令牌的一方可以每隔 59 秒重放一次
+// 而永远不被发现。
+const refreshGrace = 60 * time.Second
+
 // Refresh rotates the session: the old refresh token stops working at once.
-func (s *Service) Refresh(ctx context.Context, refreshToken string) (Tokens, error) {
-	return s.refresh(ctx, refreshToken, nil)
+//
+// requestID 是客户端为这次刷新生成的标识，重试时原样带上；服务端据此判断旧
+// 令牌是同一客户端的重试还是被复制之后的重放。
+func (s *Service) Refresh(ctx context.Context, refreshToken, requestID string) (Tokens, error) {
+	return s.refresh(ctx, refreshToken, requestID, nil)
 }
 
-func (s *Service) refresh(ctx context.Context, refreshToken string, allowed func(string) bool) (Tokens, error) {
-	old, err := s.store.SessionByRefreshHash(ctx, hashToken(refreshToken))
+func (s *Service) refresh(ctx context.Context, refreshToken, requestID string, allowed func(string) bool) (Tokens, error) {
+	now := s.now()
+	oldHash := hashToken(refreshToken)
+	sess, err := s.store.SessionByRefreshHash(ctx, oldHash)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		// 旧令牌已经不在会话表里：可能是已经轮换掉的令牌又出现，交给重放检测。
+		return s.handleRefreshReuse(ctx, oldHash, requestID, now)
+	case err != nil:
+		return Tokens{}, err
+	}
+	if !now.Before(sess.RefreshExpires) {
+		return Tokens{}, ErrInvalidToken
+	}
+	if allowed != nil && !allowed(sess.UserID) {
+		return Tokens{}, errRefreshLimited
+	}
+	tokens, err := s.rotateSession(ctx, sess.ID, oldHash, sess.UserID, now)
+	if err != nil {
+		return Tokens{}, err
+	}
+	// 记下刚用掉的旧令牌摘要：它再出现时，只有宽限期内、request_id 相同的请求
+	// 按重试处理，其余按盗用撤销会话。写入失败时整次刷新失败，客户端会重新登录，
+	// 不会出现“令牌换了但重放检测缺失”的状态。
+	if err := s.store.RecordRefreshUsed(ctx, RefreshUsed{
+		TokenHash:           oldHash,
+		SessionID:           sess.ID,
+		UserID:              sess.UserID,
+		RequestID:           requestID,
+		RotatedAt:           now,
+		GraceUntil:          now.Add(refreshGrace),
+		ReplacedAccessHash:  hashToken(tokens.AccessToken),
+		ReplacedRefreshHash: hashToken(tokens.RefreshToken),
+	}); err != nil {
+		return Tokens{}, err
+	}
+	return tokens, nil
+}
+
+// handleRefreshReuse 处理一个已经轮换掉的刷新令牌再次出现。
+//
+// 宽限期内、request_id 与原记录一致时按同一客户端的重试处理：用同一份记录再
+// 轮换一次，宽限截止时间保持不变。其余情况（宽限期已过、request_id 缺失或不同）
+// 视为令牌被复制，撤销该账号的全部会话并记一条安全事件。完全没有记录时连账号
+// 都无法定位，只回 401。
+func (s *Service) handleRefreshReuse(ctx context.Context, oldHash, requestID string, now time.Time) (Tokens, error) {
+	used, err := s.store.UsedRefresh(ctx, oldHash)
 	if errors.Is(err, ErrNotFound) {
 		return Tokens{}, ErrInvalidToken
 	}
 	if err != nil {
 		return Tokens{}, err
 	}
-	if !s.now().Before(old.RefreshExpires) {
+	if requestID == "" || requestID != used.RequestID || !now.Before(used.GraceUntil) {
+		if s.securityLog != nil {
+			// 只记账号、会话与请求标识，不记令牌本身。
+			s.securityLog.Warn("refresh token reuse",
+				slog.String("user_id", used.UserID),
+				slog.String("session_id", used.SessionID),
+				slog.String("request_id", requestID),
+			)
+		}
+		if err := s.store.DeleteUserSessions(ctx, used.UserID); err != nil {
+			return Tokens{}, err
+		}
 		return Tokens{}, ErrInvalidToken
 	}
-	if allowed != nil && !allowed(old.UserID) {
-		return Tokens{}, errRefreshLimited
-	}
-	if err := s.store.DeleteSession(ctx, old.ID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Tokens{}, ErrInvalidToken
-		}
+	tokens, err := s.rotateSession(ctx, used.SessionID, used.ReplacedRefreshHash, used.UserID, now)
+	if err != nil {
 		return Tokens{}, err
 	}
-	return s.issue(ctx, old.UserID, old.DeviceName)
+	// 重试换掉了上一对令牌：原旧令牌与刚用掉的令牌都指向新的一对，宽限截止
+	// 时间沿用原记录。同一客户端在宽限期内连续重试因此都能拿到新令牌，而宽限期
+	// 不会因为重试变长。
+	for _, hash := range []string{oldHash, used.ReplacedRefreshHash} {
+		if err := s.store.RecordRefreshUsed(ctx, RefreshUsed{
+			TokenHash:           hash,
+			SessionID:           used.SessionID,
+			UserID:              used.UserID,
+			RequestID:           used.RequestID,
+			RotatedAt:           now,
+			GraceUntil:          used.GraceUntil,
+			ReplacedAccessHash:  hashToken(tokens.AccessToken),
+			ReplacedRefreshHash: hashToken(tokens.RefreshToken),
+		}); err != nil {
+			return Tokens{}, err
+		}
+	}
+	return tokens, nil
+}
+
+// rotateSession 生成一对新令牌并用 CAS 写回会话。CAS 失败说明这次刷新已经输给
+// 并发的另一个请求，按无效令牌处理，不撤销会话。
+func (s *Service) rotateSession(ctx context.Context, sessionID, oldRefreshHash, userID string, now time.Time) (Tokens, error) {
+	access, refresh := newToken(), newToken()
+	accessExpires := now.Add(s.accessTTL)
+	refreshExpires := now.Add(s.refreshTTL)
+	err := s.store.RotateSession(ctx, sessionID, oldRefreshHash,
+		hashToken(access), hashToken(refresh), accessExpires, refreshExpires)
+	if errors.Is(err, ErrInvalidToken) {
+		return Tokens{}, ErrInvalidToken
+	}
+	if err != nil {
+		return Tokens{}, err
+	}
+	return Tokens{
+		AccessToken:      access,
+		RefreshToken:     refresh,
+		TokenType:        "Bearer",
+		AccessExpiresAt:  accessExpires,
+		RefreshExpiresAt: refreshExpires,
+		UserID:           userID,
+	}, nil
 }
 
 // Authenticate resolves an access token.
@@ -316,17 +500,19 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 	if err := s.checkCode(ctx, u.ID, PurposeResetPassword, code); err != nil {
 		return err
 	}
-	hash, err := HashPassword(newPassword)
+	hash, err := s.hashPassword(ctx, newPassword)
 	if err != nil {
 		return err
 	}
-	if err := s.store.UpdatePassword(ctx, u.ID, hash); err != nil {
-		return err
+	// 校验过再交给存储在事务里重新比对一次摘要：验证码用掉、密码换掉、会话
+	// 清掉三件事一起提交，两个重试请求不会都成功，也不会出现“密码换了但旧
+	// 会话还在”的中间状态。
+	err = s.store.ResetPassword(ctx, u.ID, PurposeResetPassword,
+		s.hashCode(u.ID, PurposeResetPassword, strings.TrimSpace(code)), hash, s.now())
+	if errors.Is(err, ErrInvalidCode) {
+		return ErrInvalidCode
 	}
-	if err := s.store.DeleteUserSessions(ctx, u.ID); err != nil {
-		return err
-	}
-	return s.store.DeleteCode(ctx, u.ID, PurposeResetPassword)
+	return err
 }
 
 // issueCode 生成一枚六位验证码并交给发信。发信失败时删除刚写入的记录，
@@ -444,7 +630,21 @@ func codeBody(purpose, code string, ttl time.Duration) string {
 // caller-supplied data first, then the user row. Sessions, sync log, backups and
 // usage go with it through the schema's ON DELETE CASCADE. Any cleanup failure
 // stops before the user row is removed, so the request can be retried.
-func (s *Service) DeleteAccount(ctx context.Context, p Principal) error {
+//
+// 删号不可撤销，所以先核对一次密码：拿着别人设备上的访问令牌不能直接把账号
+// 删掉。密码校验与登录共用同一个内存预算与哈希校验规则。
+func (s *Service) DeleteAccount(ctx context.Context, p Principal, password string) error {
+	u, err := s.store.UserByID(ctx, p.UserID)
+	if errors.Is(err, ErrNotFound) {
+		return ErrInvalidCredentials
+	}
+	if err != nil {
+		return err
+	}
+	ok, err := s.verifyPassword(ctx, u.PasswordHash, password)
+	if err != nil || !ok {
+		return ErrInvalidCredentials
+	}
 	if s.deleteAccountData != nil {
 		if err := s.deleteAccountData(ctx, p.UserID); err != nil {
 			return err
@@ -466,7 +666,7 @@ func (s *Service) issue(ctx context.Context, userID, device string) (Tokens, err
 		RefreshExpires: now.Add(s.refreshTTL),
 		CreatedAt:      now,
 	}
-	if err := s.store.CreateSession(ctx, sess); err != nil {
+	if err := s.store.CreateSession(ctx, sess, s.maxSessions); err != nil {
 		return Tokens{}, err
 	}
 	return Tokens{

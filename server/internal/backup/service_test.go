@@ -48,6 +48,63 @@ func TestServiceKeepsNewestSnapshots(t *testing.T) {
 	}
 }
 
+// TestServiceDeleteScopesToAccountAndRejectsBadIDs 守住删除的归属与 id 形状：
+// 别的账号的 id 删不掉，形状不合法的 id 一律按“没有这份备份”处理，自己的备份
+// 正常删除，重复删除停在 ErrNotFound。
+func TestServiceDeleteScopesToAccountAndRejectsBadIDs(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryStore(), 64, 2, 27)
+
+	mine, err := svc.Upload(ctx, "u1", "sha-1", 27, "", 1, strings.NewReader("a"))
+	if err != nil {
+		t.Fatalf("upload u1: %v", err)
+	}
+	other, err := svc.Upload(ctx, "u2", "sha-2", 27, "", 1, strings.NewReader("b"))
+	if err != nil {
+		t.Fatalf("upload u2: %v", err)
+	}
+
+	// 拿另一个账号的 id 删：数据库层按 (user_id, id) 查不到行，两边都还在。
+	if err := svc.Delete(ctx, "u1", other.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting another account's backup: want ErrNotFound, got %v", err)
+	}
+	if list, err := svc.List(ctx, "u2"); err != nil || len(list) != 1 {
+		t.Fatalf("other account backup disappeared: %+v, %v", list, err)
+	}
+	if _, rc, err := svc.Open(ctx, "u2", other.ID); err != nil {
+		t.Fatalf("other account backup unreadable: %v", err)
+	} else {
+		_ = rc.Close()
+	}
+
+	// 非法 id 不产生删除，也不返回 500：契约里这个路径只有 404。
+	for _, id := range []string{
+		"", "abc", strings.Repeat("A", 32), strings.Repeat("g", 32),
+		mine.ID + "0", "../u2/" + other.ID,
+	} {
+		if err := svc.Delete(ctx, "u1", id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Delete(%q): want ErrNotFound, got %v", id, err)
+		}
+		if _, rc, err := svc.Open(ctx, "u1", id); !errors.Is(err, ErrNotFound) {
+			if rc != nil {
+				_ = rc.Close()
+			}
+			t.Errorf("Open(%q): want ErrNotFound, got %v", id, err)
+		}
+	}
+	if list, err := svc.List(ctx, "u1"); err != nil || len(list) != 1 || list[0].ID != mine.ID {
+		t.Fatalf("invalid ids changed the account's backups: %+v, %v", list, err)
+	}
+
+	// 自己的 id 正常删除；删过之后再删一次按不存在处理。
+	if err := svc.Delete(ctx, "u1", mine.ID); err != nil {
+		t.Fatalf("delete own backup: %v", err)
+	}
+	if err := svc.Delete(ctx, "u1", mine.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: want ErrNotFound, got %v", err)
+	}
+}
+
 // TestServiceDeleteAllClearsOnlyThatAccount 守住清空的范围：只删指定账号的备份，
 // 元数据与字节一起消失；另一个账号的备份仍可列出与打开；空账号再清一次不算错误。
 func TestServiceDeleteAllClearsOnlyThatAccount(t *testing.T) {

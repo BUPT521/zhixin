@@ -266,6 +266,13 @@ class _MinePageState extends State<MinePage> {
             ),
             const SectionHeading(title: '通用'),
             _Entry(
+              icon: FLucideIcons.messageCircle,
+              title: '反馈',
+              subtitle: '提交问题与建议，不需要登录',
+              onPress: () => _push(openFeedback),
+            ),
+            SizedBox(height: theme.space.sm),
+            _Entry(
               icon: FLucideIcons.settings,
               title: '设置',
               subtitle: '模型、语义索引、截止时间与外观',

@@ -2,6 +2,7 @@ package feedback
 
 import (
 	"context"
+	"log/slog"
 	"net/mail"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ const (
 	MaxAppVersionRunes  = 64
 	MaxPlatformRunes    = 32
 	MaxContactBytes     = 254
+	// DefaultKeepDays 是反馈的默认保留天数，与配置项 ZHIXIN_FEEDBACK_KEEP_DAYS
+	// 的默认值一致；更早的行由每日清理删除。
+	DefaultKeepDays = 365
 )
 
 // Submission 是处理器从请求里取出、还没校验的一条反馈。
@@ -36,12 +40,54 @@ type Receipt struct {
 
 // Service 负责字段校验与编号；处理器只管 HTTP，存储只管保存。
 type Service struct {
-	store Store
-	now   func() time.Time
+	store    Store
+	now      func() time.Time
+	keepDays int
 }
 
 func NewService(store Store) *Service {
-	return &Service{store: store, now: time.Now}
+	return &Service{store: store, now: time.Now, keepDays: DefaultKeepDays}
+}
+
+// SetKeepDays 设置反馈的保留天数，与 ZHIXIN_FEEDBACK_KEEP_DAYS 对应；设成 0 或
+// 负数表示不清理。装配处读完配置调用一次即可。
+func (s *Service) SetKeepDays(days int) { s.keepDays = days }
+
+// Prune 删除保留期之外的反馈，返回删除的行数。保留期按保留天数从当天倒推，
+// 边界当天保留。keepDays 为 0 或负数时不清理。
+func (s *Service) Prune(ctx context.Context) (int64, error) {
+	if s.keepDays <= 0 {
+		return 0, nil
+	}
+	before := s.now().UTC().AddDate(0, 0, -s.keepDays)
+	return s.store.DeleteBefore(ctx, before)
+}
+
+// PruneLoop 在启动时清理一次，之后每天清理一次，直到 ctx 结束。模式与
+// retention.PruneLoop 相同：进程重启不会让反馈超过保留期，每天一次对这张表
+// 足够。清理失败只记日志，等下一次再试。
+func (s *Service) PruneLoop(ctx context.Context, log *slog.Logger) {
+	prune := func() {
+		deleted, err := s.Prune(ctx)
+		if err != nil {
+			log.Error("prune feedback", slog.String("error", err.Error()))
+			return
+		}
+		if deleted > 0 {
+			log.Info("pruned feedback", slog.Int64("rows", deleted))
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }
 
 // Submit 校验并保存一条反馈。任何字段不合格都返回 ErrInvalidInput，客户端

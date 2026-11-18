@@ -46,22 +46,23 @@ lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
 ├── app_services.dart                        ← 八组服务（讨论、安排、材料、记忆、设置、数据版本、插件、账号）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
-├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步
+├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步、更新检查与反馈
 ├── data/
 │   ├── db/                                 ← drift 表结构与索引（docs/01 的唯一结构来源）、开库、访问协调
 │   │   └── drift/queries/                  ← 一张表一个 .drift 文件，由 build_runner 生成类型化方法
 │   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
 │   ├── backup/                             ← zip 导出、旧数据版本、暂存校验与分阶段恢复
-│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址、同步游标与匿名上报状态
+│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址、同步游标、发布清单验签与匿名上报状态
 │   ├── diagnostics/                        ← 本机崩溃记录与自建 Sentry 上报
 │   └── repository/                         ← 讨论、作答、目标、事项、日程、记忆与设置
 ├── domain/
 │   ├── models/                             ← 数据对象、值对象（ClockTime、TimeRange、Score、EvidenceId）与序列化
-│   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底与下一步
+│   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底、版本比较与下一步
+├── platform/                               ← 应用信息、提示词资源、发布清单签名公钥与许可
 ├── plugins/
 │   ├── runtime/                            ← 清单、插件接口、四个权限门面、运行时与设置读写接口
 │   └── persona/                            ← 人格插件：对象与 800 字校验、内置人格、app_meta 存储
-└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、我的、设置、记忆、账号、云端备份、关于；页面导航在 navigation.dart，文案在 copy.dart
+└── ui/                                     ← 现在、记录、记录检索、讨论与讨论内查找、材料与材料查找、系统学习、学习中、安排与安排查找、我的、设置、记忆与记忆查找、账号、云端备份、反馈、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
 `ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
@@ -191,8 +192,33 @@ lib/
 | `RELEASE_KEY_PASSWORD` | 密钥口令 |
 
 keystore 与口令由发版人保管，仓库与本机工程目录都不放：CI 把还原出来的 keystore 写到 runner 的临时目录，
-`key.properties` 里用绝对路径引用它，发版结束随 runner 一起销毁。发版任务的最后一步用 `apksigner` 核对证书
-不是 debug 证书，并对包体记录版本、提交与 SHA-256。
+`key.properties` 里用绝对路径引用它，发版结束随 runner 一起销毁。发版任务在构建之后用 `apksigner` 核对证书
+不是 debug 证书，并对包体记录版本、提交与 SHA-256，随后用 Ed25519 私钥产出发布清单的哈希与签名材料。
+
+### 发布清单签名
+
+发布清单里的每一版安装包另有一把 Ed25519 签名密钥，用来让应用确认清单与安装包没有被替换。私钥的 PKCS8
+编码以 base64 放在仓库 Secret `RELEASE_SIGNING_KEY_BASE64` 里，CI 在发版任务的“签名与清单”一步用它签名；
+这一项与 keystore 的四项一样，缺失时发版任务直接失败，不会产出一份没有签名的清单片段。密钥的生成与保管
+由发版人完成，命令如下：
+
+```bash
+openssl genpkey -algorithm Ed25519 -out release-signing.pem
+openssl pkey -in release-signing.pem -pubout -out release-signing.pub.pem
+base64 -w0 release-signing.pem   # 结果填入仓库 Secret RELEASE_SIGNING_KEY_BASE64
+```
+
+签名对象是安装包 SHA-256 的小写十六进制字符串本身，共 64 个 ASCII 字节，不加换行，也不签文件内容；
+CI 用 `openssl pkeyutl -sign -rawin` 对这段字符串生成 64 字节签名，再转成 base64 写进 `app-release.apk.sig`，
+同时产出 `app-release.apk.sha256`，两个文件与安装包一起上传为构件，并在 step summary 里给出可以直接填进
+发布清单的 JSON 片段。公钥以常量形式内置在应用里：把 `release-signing.pub.pem` 的内容原样填进
+`lib/platform/release_signing_key.dart` 的常量，或者构建时用
+`--dart-define=RELEASE_PUBLIC_KEY_PEM="-----BEGIN PUBLIC KEY-----…"` 传入，两种方式取其一。更新检查先
+核对清单地址是 https、下载后的 SHA-256 与清单的 `sha256` 一致，再用内置公钥对清单 `sha256` 字段的
+64 字节十六进制字符串验签，三项都通过才提示更新，任何一项不通过都不提示；公钥留空时清单带签名按
+验签失败处理，应用不提示更新。启动后的自动检查与设置页的“检查更新”走同一套流程，本次启动只自动
+检查一次。私钥与 keystore 一样只由发版人保管，不进仓库与本机工程目录；换密钥意味着旧版本应用无法验证
+新清单，发版说明要写明这一点，并在应用内置公钥的下一次发版里同步更新。
 
 
 正式包在 Actions 里手动运行“CI 与发版”，用仓库 Secrets 里的签名配置生成；本机不出正式包。版本号按 [03 第 3 节](../docs/03-团队分工与协作.md#3-交付节奏)递增，取值以本目录 `pubspec.yaml` 的 `version` 一行为准，只由发版人（见 [03 第 2 节](../docs/03-团队分工与协作.md#2-角色)）在发包前修改；开发包的版本名带 `-dev` 且按 `com.zhixin.app.dev` 另装一个应用，“我的”页的“关于”显示构建时写入的构建名与构建号，不另存版本常量；许可页同时列出知新自身的 MIT 许可与第三方组件许可，知新自身的许可从 `platform/app_license.dart` 读取，测试会核对它与仓库根目录的 `LICENSE` 同文。

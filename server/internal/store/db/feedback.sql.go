@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteFeedbackBefore = `-- name: DeleteFeedbackBefore :execrows
+DELETE FROM feedback WHERE created_at < $1
+`
+
+// 保留期清理：删除创建时间早于 before 的反馈，返回删除的行数（internal/feedback
+// 的 PruneLoop 每天调用一次，见 server/README 的应用内反馈）。
+func (q *Queries) DeleteFeedbackBefore(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFeedbackBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertFeedback = `-- name: InsertFeedback :exec
 
 INSERT INTO feedback (

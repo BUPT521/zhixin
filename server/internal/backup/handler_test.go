@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
@@ -123,6 +125,93 @@ func TestHandlerBackupRoundTripAndRetention(t *testing.T) {
 	got := testutil.ReadBody(t, c.Do(http.MethodGet, "/v1/backups/"+*newest.Id, token, nil, nil))
 	if string(got) != "zip-2" {
 		t.Fatalf("newest backup = %q", got)
+	}
+}
+
+// TestHandlerDeleteScopesToAccountAndRejectsBadIDs 守住备份删除的归属校验：
+// 拿别的账号的备份 id 调 DELETE 返回 404，对方元数据与字节都还在；形状不合法
+// 的 id 同样返回 404，且不会删掉自己的备份。
+func TestHandlerDeleteScopesToAccountAndRejectsBadIDs(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	mine := signIn(t, authSvc, "a@b.cn")
+	other := signIn(t, authSvc, "c@d.cn")
+
+	for i, token := range []string{mine, other} {
+		resp := upload(t, c, token, []byte(fmt.Sprintf("zip-%d", i)), testSchemaVersion)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload: %d", resp.StatusCode)
+		}
+	}
+	otherItems := listBackups(t, c, other)
+	if len(otherItems) != 1 || otherItems[0].Id == nil {
+		t.Fatalf("other account list: %+v", otherItems)
+	}
+	otherID := *otherItems[0].Id
+
+	// 别人的 id 按不存在处理，不能因为“格式合法”就删。
+	resp := c.Do(http.MethodDelete, "/v1/backups/"+otherID, mine, nil, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleting another account's backup: %d", resp.StatusCode)
+	}
+	// 形状不对的 id 也停在 404（契约里这个路径没有 400）。
+	for _, id := range []string{"not-a-backup-id", "0123456789ABCDEF0123456789ABCDEF"} {
+		resp = c.Do(http.MethodDelete, "/v1/backups/"+id, mine, nil, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("bad id %q: %d", id, resp.StatusCode)
+		}
+	}
+	// 另一个账号的备份仍然可以列出与下载。
+	if items := listBackups(t, c, other); len(items) != 1 {
+		t.Fatalf("other account backups changed: %+v", items)
+	}
+	if got := testutil.ReadBody(t, c.Do(http.MethodGet, "/v1/backups/"+otherID, other, nil, nil)); len(got) == 0 {
+		t.Fatal("other account backup is no longer readable")
+	}
+	// 自己的备份也还在：非法删除没有误伤。
+	if items := listBackups(t, c, mine); len(items) != 1 {
+		t.Fatalf("own backup changed by invalid delete: %+v", items)
+	}
+}
+
+// TestHandlerWriteBlockedDuringPurge 守住清除期间的写拦截：gate 返回
+// cloudpurge.ErrPurging 时上传与两个删除入口回 409 conflict，列表仍然可读，
+// 且确实没有写入；gate 自身出错时按 500 处理，不把故障当成清除中。
+func TestHandlerWriteBlockedDuringPurge(t *testing.T) {
+	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewHandler(NewService(NewMemoryStore(), testMaxBytes, testKept, testSchemaVersion), log)
+	handler.SetPurgeGate(func(context.Context, string) error { return cloudpurge.ErrPurging })
+	c := testutil.NewClient(t, testutil.NewServer(
+		testAPI{h: handler},
+		httpx.RequestID,
+		auth.Middleware(authSvc, log),
+	))
+	token := signIn(t, authSvc, "a@b.cn")
+
+	p := testutil.ReadProblem(t, upload(t, c, token, []byte("zip"), testSchemaVersion))
+	if p.Status != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
+		t.Fatalf("upload during purge: %+v", p)
+	}
+	p = testutil.ReadProblem(t, c.Do(http.MethodDelete, "/v1/backups", token, nil, nil))
+	if p.Status != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
+		t.Fatalf("clear during purge: %+v", p)
+	}
+	// 读取不受影响，而且被拦下的上传没有写进去。
+	if code := c.JSON(http.MethodGet, "/v1/backups", token, nil, nil); code != http.StatusOK {
+		t.Fatalf("list during purge: %d", code)
+	}
+	if items := listBackups(t, c, token); len(items) != 0 {
+		t.Fatalf("blocked upload was stored: %+v", items)
+	}
+
+	// gate 自身失败是 500，不是“清除中”的 409。
+	handler.SetPurgeGate(func(context.Context, string) error { return errors.New("标记存储不可用") })
+	p = testutil.ReadProblem(t, upload(t, c, token, []byte("zip"), testSchemaVersion))
+	if p.Status != http.StatusInternalServerError || p.Code != string(httpx.CodeInternal) {
+		t.Fatalf("gate failure: %+v", p)
 	}
 }
 

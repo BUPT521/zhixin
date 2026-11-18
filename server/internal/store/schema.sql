@@ -23,6 +23,8 @@ CREATE TABLE auth_code (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, purpose)
 );
+-- 每日清理过期验证码按 expires_at 扫。
+CREATE INDEX auth_code_by_expires ON auth_code(expires_at);
 
 -- 一台登录的设备一行；只存令牌的 SHA-256。
 CREATE TABLE session (
@@ -35,7 +37,26 @@ CREATE TABLE session (
   refresh_expires  TIMESTAMPTZ NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX session_by_user ON session(user_id);
+-- 登录时锁住账号行、按创建时间倒序只保留最新的若干条，会话上限因此不受并发
+-- 影响；user_id 上的这条复合索引同时承担按账号查会话的查询。
+CREATE INDEX session_by_user ON session(user_id, created_at DESC);
+-- 每日清理过期会话按 refresh_expires 扫。
+CREATE INDEX session_by_refresh_expires ON session(refresh_expires);
+
+-- 已经轮换掉的刷新令牌摘要。旧令牌再次出现时，服务层用它区分“同一客户端的
+-- 重试”与“令牌被复制”：宽限期固定 60 秒，重试不延长。只存摘要，不存令牌本身；
+-- 会话删掉时这些记录跟着删（ON DELETE CASCADE）。
+CREATE TABLE session_refresh_used (
+  token_hash            TEXT PRIMARY KEY,
+  session_id            TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  user_id               TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  request_id            TEXT NOT NULL DEFAULT '',
+  rotated_at            TIMESTAMPTZ NOT NULL,
+  grace_until           TIMESTAMPTZ NOT NULL,
+  replaced_access_hash  TEXT NOT NULL,          -- 本次轮换发出的访问令牌摘要
+  replaced_refresh_hash TEXT NOT NULL           -- 本次轮换发出的刷新令牌摘要
+);
+CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);
 
 -- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
 -- 锁住 sync_head，核对 base_seq = head 之后再追加。
@@ -120,5 +141,26 @@ CREATE TABLE llm_quota (
   daily_tokens  BIGINT NOT NULL CHECK (daily_tokens > 0),
   note          TEXT NOT NULL DEFAULT '',
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 附件索引：字节在对象存储的 attachments/<user_id>/<sha256>，这张表只记“这个
+-- 账号有这份内容、占多少字节”。账号总量配额按它求和；同一账号相同内容只有一行，
+-- 重复上传因此不重复计入。主键的前缀 (user_id) 已能支持按账号求和，另按
+-- created_at 建索引供回填与排查时按时间列出。
+CREATE TABLE attachment (
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  sha256      TEXT NOT NULL,
+  size        BIGINT NOT NULL CHECK (size >= 0),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, sha256)
+);
+CREATE INDEX attachment_user_created ON attachment(user_id, created_at DESC);
+
+-- 清除云端数据的进行中标记：一行表示这个账号正在清除（或上次清除中途失败）。
+-- 清除开始写入 started_at，结束时删除行；超过 10 分钟的标记视为上次中断，新的
+-- 请求接管并从头重做各步。清除期间写请求据此返回 409。账号删除时级联删除。
+CREATE TABLE user_purge (
+  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  started_at  TIMESTAMPTZ NOT NULL
 );
 

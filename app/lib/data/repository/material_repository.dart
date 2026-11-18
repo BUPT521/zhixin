@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:drift/drift.dart' show Variable;
+
 import '../../domain/models/material.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
@@ -9,6 +11,17 @@ import '../db/write_transactions.dart';
 import '../db/drift/app_database.dart';
 import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
+
+/// 材料查找的一行：材料本身与命中的一页。
+///
+/// 标题或来源命中的材料不带命中页，两项为空；页标签或正文命中的材料带回
+/// 页码最小的一页，正文片段由调用方按查询截取。
+typedef MaterialSearchRow = ({
+  Material material,
+  int? pageNo,
+  String? pageLabel,
+  String? pageContent,
+});
 
 /// 材料与页码（01 `material` / `material_page`）。
 ///
@@ -132,6 +145,100 @@ class MaterialRepository {
       (db) => db.materialList(goalId).get(),
     );
     return rows.map(_materialOfList).toList(growable: false);
+  }
+
+  /// 材料查找的一页：标题、来源、页标签或页内正文任一命中，符合查询的材料各
+  /// 占一行，按最近修改倒序排列，顺序与 [list] 一致。
+  ///
+  /// 一份材料最多一行，页内命中取页码最小的一页；翻页按这一份顺序执行，较早
+  /// 的命中也能翻到。边界规则与记录检索的字面命中相同，见
+  /// `domain/rules/search_terms.dart` 的 `literalMatchIndex`，“例 3-2”不会
+  /// 命中“例 3-20”。
+  Future<List<MaterialSearchRow>> search(
+    String query, {
+    required int limit,
+    int offset = 0,
+  }) async {
+    final text = query.trim();
+    if (text.isEmpty || limit <= 0) return const [];
+    final (titleMatch, titleArgs) = _literalMatch('m.title', text);
+    final (sourceMatch, sourceArgs) = _literalMatch(
+      "COALESCE(m.source_ref, '')",
+      text,
+    );
+    final (labelMatch, labelArgs) = _literalMatch(
+      "COALESCE(p.label, '')",
+      text,
+    );
+    final (contentMatch, contentArgs) = _literalMatch('p.content', text);
+    // 绑定参数的顺序按 SQL 里占位符出现的先后：页内条件在 JOIN 里，标题与
+    // 来源条件在 WHERE 里。
+    final args = <Object>[
+      ...labelArgs,
+      ...contentArgs,
+      ...titleArgs,
+      ...sourceArgs,
+    ];
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .customSelect(
+            '''
+SELECT m.id, m.title, m.kind, m.source_ref, m.source_file_name, m.goal_id,
+  m.created_at, m.updated_at,
+  (SELECT COUNT(*) FROM material_page c WHERE c.material_id = m.id)
+    AS page_count,
+  hp.page_no AS hit_page_no, hp.label AS hit_label,
+  hp.content AS hit_content
+FROM material m
+LEFT JOIN material_page hp
+  ON hp.material_id = m.id
+  AND hp.page_no = (
+    SELECT MIN(p.page_no) FROM material_page p
+    WHERE p.material_id = m.id AND ($labelMatch OR $contentMatch)
+  )
+WHERE ($titleMatch OR $sourceMatch OR hp.material_id IS NOT NULL)
+ORDER BY m.updated_at DESC, m.id DESC
+LIMIT ? OFFSET ?
+''',
+            variables: [
+              for (final value in args) Variable(value),
+              Variable<int>(limit),
+              Variable<int>(offset),
+            ],
+          )
+          .get(),
+    );
+    return [
+      for (final row in rows)
+        (
+          material: _material(
+            row.data['id']! as String,
+            row.data['title']! as String,
+            row.data['kind']! as String,
+            row.data['source_ref'] as String?,
+            row.data['source_file_name'] as String?,
+            row.data['goal_id'] as String?,
+            row.data['page_count']! as int,
+            row.data['created_at']! as String,
+            row.data['updated_at']! as String,
+          ),
+          pageNo: row.data['hit_page_no'] as int?,
+          pageLabel: row.data['hit_label'] as String?,
+          pageContent: row.data['hit_content'] as String?,
+        ),
+    ];
+  }
+
+  /// 字面命中的 SQL 条件：命中之后不紧接数字、ASCII 字母或下划线。
+  ///
+  /// 与 `literalMatchIndex` 是同一条规则的两种写法，改一处要同时改另一处；
+  /// 每个条件带三个绑定参数：查询原文两次与它的长度。
+  static (String, List<Object>) _literalMatch(String column, String text) {
+    final match =
+        'instr(lower($column), lower(?)) > 0 AND '
+        "COALESCE(substr($column, instr(lower($column), lower(?)) "
+        "+ length(?), 1), '') NOT GLOB '[0-9A-Za-z_]'";
+    return (match, [text, text, text]);
   }
 
   Future<void> setGoal(

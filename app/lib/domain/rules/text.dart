@@ -14,6 +14,18 @@ String? nullableText(String? value) {
   return text == null || text.isEmpty ? null : text;
 }
 
+/// 联系邮箱的轻量格式核对：排除没有 `@`、含空白或域名没有点的输入。
+///
+/// 最终以服务端的校验为准（server/README.md 的“应用内反馈”）；这里只拦下明显
+/// 写错的地址，不重复实现完整的邮箱语法。
+bool looksLikeEmailAddress(String value) {
+  final text = value.trim();
+  if (text.isEmpty || text.length > 254 || text.contains(RegExp(r'\s'))) {
+    return false;
+  }
+  return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
+}
+
 /// 按 Unicode 码位截断；超出时补 [ellipsis]。
 ///
 /// 字符串下标按 UTF-16 码元计数，直接 `substring` 会把表情或代理对切成两半；

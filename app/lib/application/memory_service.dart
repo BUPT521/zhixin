@@ -21,6 +21,114 @@ class MemoryPageView {
   final Map<String, String> scopeLabels;
 }
 
+/// 记忆查找的适用范围条件：全部、只查不限定范围的条目，或某个目标/材料。
+///
+/// 记忆的 `scope` 用空值表示适用于全部学习，因此“全部范围”与“只查不限定
+/// 范围的条目”要分开表示；具体范围沿用记忆里 `goal:<id>` 与 `material:<id>`
+/// 的写法。
+class MemoryScopeFilter {
+  const MemoryScopeFilter.all() : scope = null, onlyUnscoped = false;
+
+  const MemoryScopeFilter.unscoped() : scope = null, onlyUnscoped = true;
+
+  const MemoryScopeFilter.scoped(String this.scope) : onlyUnscoped = false;
+
+  /// 目标或材料标识；为空时看 [onlyUnscoped]。
+  final String? scope;
+
+  /// 只查没有写范围的条目。
+  final bool onlyUnscoped;
+
+  /// 不按范围筛选。
+  bool get isAll => scope == null && !onlyUnscoped;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryScopeFilter &&
+      other.scope == scope &&
+      other.onlyUnscoped == onlyUnscoped;
+
+  @override
+  int get hashCode => Object.hash(scope, onlyUnscoped);
+}
+
+/// 记忆查找的条件：正文关键词、类别、适用范围与状态。
+///
+/// 默认与记忆页当前列出的范围一致：有效与已过期都属于 `active` 状态，过期
+/// 只由有效期判断，因此这里不把“过期”单列成状态；已删除的条目只提示追溯
+/// 入口，不在记忆页重新列出。
+class MemorySearchQuery {
+  const MemorySearchQuery({
+    this.text = '',
+    this.kind,
+    this.scope = const MemoryScopeFilter.all(),
+    this.status = MemoryStatus.active,
+  });
+
+  final String text;
+
+  /// 为空时不限类别。
+  final MemoryKind? kind;
+  final MemoryScopeFilter scope;
+  final MemoryStatus status;
+
+  /// 没有关键词、也没有改过任何筛选。
+  bool get isDefault =>
+      text.trim().isEmpty &&
+      kind == null &&
+      scope.isAll &&
+      status == MemoryStatus.active;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemorySearchQuery &&
+      other.text == text &&
+      other.kind == kind &&
+      other.scope == scope &&
+      other.status == status;
+
+  @override
+  int get hashCode => Object.hash(text, kind, scope, status);
+}
+
+/// 记忆查找的一页结果：命中的条目、范围名字与继续翻页的位置。
+class MemorySearchResults {
+  const MemorySearchResults({
+    required this.query,
+    required this.memories,
+    required this.scopeLabels,
+    required this.matched,
+    required this.hasMore,
+    required this.nextOffset,
+  });
+
+  final MemorySearchQuery query;
+  final List<Memory> memories;
+
+  /// 范围标识到显示名的对应，与记忆页共用同一份读法。
+  final Map<String, String> scopeLabels;
+
+  /// 本次条件命中的总条数，用于在页脚说明还剩多少没有显示。
+  final int matched;
+  final bool hasMore;
+  final int nextOffset;
+
+  bool get isEmpty => memories.isEmpty;
+
+  /// 追加一页；只有同一组条件才能合并，页面换了筛选就重新取第一页。
+  MemorySearchResults append(MemorySearchResults next) {
+    assert(next.query == query);
+    return MemorySearchResults(
+      query: query,
+      memories: [...memories, ...next.memories],
+      scopeLabels: next.scopeLabels,
+      matched: next.matched,
+      hasMore: next.hasMore,
+      nextOffset: next.nextOffset,
+    );
+  }
+}
+
 /// 记忆页：列出、修改、删除；修改后只碰记忆表，回答读的是新内容。
 ///
 /// 每次保存与删除都在一条提交里完成，并返回提交编号供提示条撤销；内容没有
@@ -72,6 +180,46 @@ class MemoryService {
   }
 
   Future<List<Memory>> list() => repository.list(includeInactive: true);
+
+  /// 记忆查找一页的条数；与记录页查找一致，翻页只取用户真正看得到的一页。
+  static const int searchPageSize = 20;
+
+  /// 按正文、类别、适用范围与状态查找，全部在本机完成。
+  ///
+  /// 读取沿用记忆页的整屏读法，范围名字随结果一起返回；调用方换了查询或筛选
+  /// 之后用新的 [MemorySearchQuery] 重取第一页，并用 `RequestGate` 丢弃晚到
+  /// 的旧结果。分页在过滤之后执行，因此命中超过一页时也能翻到最早一条。
+  Future<MemorySearchResults> search(
+    MemorySearchQuery query, {
+    int offset = 0,
+    int pageSize = searchPageSize,
+  }) async {
+    final view = await loadPage();
+    final now = runtime.policy.now;
+    final matched = view.memories
+        .where((memory) => _matches(memory, query, now))
+        .toList(growable: false);
+    final page = matched.skip(offset).take(pageSize).toList(growable: false);
+    return MemorySearchResults(
+      query: query,
+      memories: page,
+      scopeLabels: view.scopeLabels,
+      matched: matched.length,
+      hasMore: offset + page.length < matched.length,
+      nextOffset: offset + page.length,
+    );
+  }
+
+  bool _matches(Memory memory, MemorySearchQuery query, DateTime now) {
+    if (memory.status != query.status) return false;
+    if (query.kind != null && memory.kind != query.kind) return false;
+    if (query.scope.onlyUnscoped && memory.scope != null) return false;
+    final scope = query.scope.scope;
+    if (scope != null && memory.scope != scope) return false;
+    final text = query.text.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return memory.content.toLowerCase().contains(text);
+  }
 
   /// 用户改记忆时直接更新类型、内容、范围与有效期；回答读的是更新后的记忆本身。
   ///

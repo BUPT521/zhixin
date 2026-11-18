@@ -135,6 +135,28 @@ class Memory {
 
   String get sourceLabel => sourceKind.label;
 
+  /// 来源对象的指称：讨论消息、作答记录或学习场次的编号。
+  ///
+  /// 用户自述没有来源对象；旧数据缺少编号时也只写来源类型。
+  String get sourceObjectLabel {
+    final id = sourceId;
+    if (id == null || id.isEmpty) return '';
+    final object = switch (sourceKind) {
+      MemorySourceKind.message => '讨论消息',
+      MemorySourceKind.attempt => '作答记录',
+      MemorySourceKind.session => '学习场次',
+      MemorySourceKind.user => '你的说明',
+      MemorySourceKind.unknown => '本机记录',
+    };
+    return '$object $id';
+  }
+
+  /// 来源一栏的完整说明：来源类型与来源对象。
+  String get sourceDetail {
+    final object = sourceObjectLabel;
+    return object.isEmpty ? sourceLabel : '$sourceLabel · $object';
+  }
+
   String get validLabel {
     final until = validUntil;
     if (until == null) return '长期有效';

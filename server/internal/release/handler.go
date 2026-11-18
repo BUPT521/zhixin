@@ -34,14 +34,15 @@ func entryJSON(e Entry) api.Release {
 		Version:  e.Version,
 		Build:    e.Build,
 		Url:      e.URL,
+		Sha256:   e.SHA256,
 	}
 	if e.PublishedAt != "" {
 		v := e.PublishedAt
 		out.PublishedAt = &v
 	}
-	if e.SHA256 != "" {
-		v := e.SHA256
-		out.Sha256 = &v
+	if e.Signature != "" {
+		v := e.Signature
+		out.Signature = &v
 	}
 	if e.Size > 0 {
 		v := e.Size

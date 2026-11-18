@@ -1136,6 +1136,13 @@ class _PlanPageState extends State<PlanPage> {
         nested: false,
         title: const Text(tabPlan),
         actions: [
+          // 查找入口常驻标题栏：周数据还没读完时也能进入；查找页自己读数据，
+          // 不参与这一页的周订阅与页签结构。
+          ZhixinHeaderAction(
+            icon: FLucideIcons.search,
+            tooltip: '查找安排',
+            onPressed: () => openPlanSearch(context),
+          ),
           if (week != null) ...[
             Padding(
               padding: const EdgeInsets.only(right: 4),
@@ -1148,15 +1155,18 @@ class _PlanPageState extends State<PlanPage> {
                 child: const Text('这周能做什么'),
               ),
             ),
-            ZhixinHeaderAction(
-              icon: FLucideIcons.plus,
-              tooltip: '新建事项',
-              onPressed: _addItem,
-            ),
             moreMenu(
               label: '更多安排操作',
               icon: FLucideIcons.ellipsisVertical,
               items: [
+                // 新建事项与查找图标同占标题栏右侧的宽度：窄屏放大文字时
+                // 两者并排会溢出，新建入口因此收进更多菜单，事项页签里另有
+                // 一个“新建”按钮。
+                ZhixinMenuItem(
+                  label: '新建事项',
+                  subtitle: '名称、说明与可选截止日期',
+                  onSelected: _addItem,
+                ),
                 ZhixinMenuItem(
                   label: '预约时间',
                   subtitle: '为一项未完成的事项选一段时间',

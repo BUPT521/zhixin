@@ -18,7 +18,9 @@ import 'application/cross_session_service.dart';
 import 'application/embedding_settings.dart';
 import 'application/discussion_service.dart';
 import 'application/evidence_service.dart';
+import 'application/feedback_service.dart';
 import 'application/learning_service.dart';
+import 'application/material_search.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
@@ -32,6 +34,7 @@ import 'application/study_plan_service.dart';
 import 'application/sync_service.dart';
 import 'application/time_policy_controller.dart';
 import 'application/undo_service.dart';
+import 'application/update_check_service.dart';
 import 'data/backup/data_package_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
@@ -67,6 +70,7 @@ import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
 import 'platform/app_info.dart';
 import 'platform/first_frame.dart';
+import 'platform/release_signing_key.dart';
 import 'platform/secure_secret_store.dart';
 import 'plugins/persona/persona_catalog.dart';
 import 'plugins/persona/persona_plugin.dart';
@@ -132,6 +136,8 @@ class AppScopeState extends State<AppScope> {
   /// 账号与云同步：令牌在 Keystore，服务地址与同步游标在应用私有目录。
   AccountService? _accountService;
   ActiveReportService? _activeReportService;
+  FeedbackService? _feedbackService;
+  UpdateCheckService? _updateCheckService;
   late final CloudPreferencesStore _cloudPreferences;
   CloudBackupService? _cloudBackups;
   SyncService? _cloudSync;
@@ -243,6 +249,7 @@ class AppScopeState extends State<AppScope> {
     ),
     library: LibraryServices(
       material: _material,
+      materialSearch: _materialSearch,
       search: _search,
       searchIndexFactory: () => _searchIndex,
     ),
@@ -266,6 +273,8 @@ class AppScopeState extends State<AppScope> {
       backups: _backups,
       sync: _sync,
       activeReport: _activeReportService!,
+      updates: _updateCheckService!,
+      feedback: _feedbackService!,
     ),
   );
 
@@ -309,6 +318,11 @@ class AppScopeState extends State<AppScope> {
     materials: _materials,
     transactions: _transactions,
     runtime: _runtime,
+  );
+
+  /// 材料查找：列表、详情与选择器共用，全部在本机完成。
+  late final MaterialSearchService _materialSearch = MaterialSearchService(
+    materials: _materials,
   );
 
   late final SearchService _search = SearchService(evidence: _evidence);
@@ -499,6 +513,16 @@ class AppScopeState extends State<AppScope> {
       serverBaseUrl: _account.serverBaseUrl,
       crashLog: crashLog,
       appVersion: appVersion,
+    );
+    _feedbackService = FeedbackService(serverBaseUrl: _account.serverBaseUrl);
+    _updateCheckService = UpdateCheckService(
+      serverBaseUrl: _account.serverBaseUrl,
+      appVersion: appVersion,
+      publicKeyPem: releasePublicKeyPem,
+      // 检查失败的常见原因是清单与安装包还没对齐，不是崩溃；只留本机诊断，
+      // 不交给 Sentry，也不打扰用户。
+      recordFailure: (error, stack, {required kind}) =>
+          crashLog.record(error, stack, kind: kind, report: false),
     );
     _configuredAi = AiChatService(
       store: _llmStore,

@@ -54,7 +54,7 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stores := MemoryStores()
-	srv := httptest.NewServer(New(cfg, stores, log))
+	srv := httptest.NewServer(New(context.Background(), cfg, stores, log))
 	t.Cleanup(srv.Close)
 	return &harness{t: t, srv: srv, cfg: cfg, stores: stores}
 }
@@ -175,7 +175,7 @@ func TestDeleteAccountClearsBackupBytes(t *testing.T) {
 		t.Fatalf("upload: %d", resp.StatusCode)
 	}
 
-	if code := h.json("DELETE", "/v1/me", token, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/me", token, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("delete account %d", code)
 	}
 	again := h.signUp("a@b.cn")
@@ -373,7 +373,7 @@ func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(cfg, MemoryStores(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := New(context.Background(), cfg, MemoryStores(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	post := func(path, address string, body any) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(mustJSON(t, body)))
@@ -415,7 +415,7 @@ func TestAccessLogRecordsRouteAndRequestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	handler := New(cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
+	handler := New(context.Background(), cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -440,7 +440,7 @@ func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	handler := New(cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
+	handler := New(context.Background(), cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -493,7 +493,7 @@ func TestInternalErrorsAreProblems(t *testing.T) {
 	stores := MemoryStores()
 	stores.Sync = failingSyncStore{}
 	var logs bytes.Buffer
-	handler := New(cfg, stores, slog.New(slog.NewTextHandler(&logs, nil)))
+	handler := New(context.Background(), cfg, stores, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	register := httptest.NewRequest(http.MethodPost, "/v1/auth/register",
 		bytes.NewReader(mustJSON(t, map[string]string{"email": "fail@b.cn", "password": "password1"})))
@@ -594,7 +594,7 @@ func TestUploadRateLimitReturns429(t *testing.T) {
 // ZHIXIN_RELEASE_FILE 读入，接口不带令牌也返回同一个版本。
 func TestReleaseManifestIsPublic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
-	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","notes":"内测"}]}`
+	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"` + strings.Repeat("0", 64) + `","notes":"内测"}]}`
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -662,9 +662,9 @@ func TestFeedbackIsPublicAndRateLimited(t *testing.T) {
 // 来源第三次提交才会被限流。
 func TestTrustedProxySplitsBucketsByForwardedFor(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		"ZHIXIN_FEEDBACK_RATE":  "0.0001",
-		"ZHIXIN_FEEDBACK_BURST": "1",
-		"ZHIXIN_TRUSTED_PROXY":  "1",
+		"ZHIXIN_FEEDBACK_RATE":   "0.0001",
+		"ZHIXIN_FEEDBACK_BURST":  "1",
+		"ZHIXIN_TRUSTED_PROXIES": "127.0.0.1/32",
 	})
 	submit := func(forwardedFor string) int {
 		t.Helper()
@@ -728,7 +728,7 @@ func TestQuotaOverrideIsPerAccount(t *testing.T) {
 		t.Fatalf("另一个账号应继续用默认额度：%d %+v", code, status)
 	}
 
-	if code := h.json("DELETE", "/v1/me", first, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/me", first, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("delete account: %d", code)
 	}
 	if limit, ok, err := quota.DailyLimit(context.Background(), me.UserID); err != nil || ok {

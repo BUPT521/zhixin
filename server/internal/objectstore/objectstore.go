@@ -18,6 +18,13 @@ type Info struct {
 	ContentType string
 }
 
+// Object 是前缀下列出的一个对象：键与字节数。列目录只服务于回填附件索引与
+// 排查遗留对象，不返回内容类型这类只有写入方关心的字段。
+type Object struct {
+	Key  string
+	Size int64
+}
+
 // ErrNotFound 表示键下没有对象。
 var ErrNotFound = errors.New("objectstore: 对象不存在")
 
@@ -51,6 +58,9 @@ type Store interface {
 	Remove(ctx context.Context, key string) error
 	// RemovePrefix 删除以 prefix 开头的全部对象，删除账号时用。
 	RemovePrefix(ctx context.Context, prefix string) error
+	// List 返回以 prefix 开头的全部对象；没有对象时返回空切片而不是错误。
+	// 回填附件索引需要从存储里读出键与字节数，所以三种实现都要能列目录。
+	List(ctx context.Context, prefix string) ([]Object, error)
 	// Ping 报告存储是否可用，供 /readyz 使用。
 	Ping(ctx context.Context) error
 }

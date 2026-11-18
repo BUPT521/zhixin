@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -75,6 +76,23 @@ func (m *Memory) RemovePrefix(_ context.Context, prefix string) error {
 		}
 	}
 	return nil
+}
+
+// List 按前缀列出对象，按键排序，测试与回填的统计因此稳定。
+func (m *Memory) List(_ context.Context, prefix string) ([]Object, error) {
+	if prefix == "" {
+		return nil, errors.New("objectstore: 拒绝列出空前缀")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Object, 0, len(m.items))
+	for key, b := range m.items {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, Object{Key: key, Size: int64(len(b))})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
 }
 
 func (m *Memory) Ping(context.Context) error { return nil }

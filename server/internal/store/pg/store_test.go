@@ -5,14 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/blobs"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -24,12 +28,19 @@ import (
 // 连接串必须指向专用测试库，因为用例会删除其中的业务表。
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
+	return newTestStoreWith(t, objectstore.NewMemory())
+}
+
+// newTestStoreWith 与 newTestStore 相同，只是允许用例换一种对象存储实现：
+// 核对目录存储的键边界时要看到真实的路径归一化。
+func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
+	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("ZHIXIN_TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("未设置 ZHIXIN_TEST_DATABASE_URL，跳过 PostgreSQL 用例")
 	}
 	ctx := context.Background()
-	st, err := Open(ctx, dsn, Options{Objects: objectstore.NewMemory()})
+	st, err := Open(ctx, dsn, Options{Objects: objects})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -70,7 +81,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 		AccessExpires:  time.Now().Add(time.Hour).UTC(),
 		RefreshExpires: time.Now().Add(24 * time.Hour).UTC(),
 	}
-	if err := st.CreateSession(ctx, sess); err != nil {
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	byAccess, err := st.SessionByAccessHash(ctx, "ah")
@@ -118,7 +129,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	// 删会话之后再建一条，供下面核对账号级联删除。
 	sess2 := sess
 	sess2.ID, sess2.AccessHash, sess2.RefreshHash = "s2", "ah2", "rh2"
-	if err := st.CreateSession(ctx, sess2); err != nil {
+	if err := st.CreateSession(ctx, sess2, 20); err != nil {
 		t.Fatalf("create second session: %v", err)
 	}
 	// 会话随账号行级联删除（schema.sql 的 ON DELETE CASCADE），服务层不再单独
@@ -131,6 +142,237 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	}
 }
 
+// TestPostgresSessionLimit 核对会话上限在事务里生效：超过上限时删最旧的一条，
+// 记录条数与“删掉的是最早那条”都对得上。
+func TestPostgresSessionLimit(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u := auth.User{ID: "u1", Email: "sessions@b.cn", PasswordHash: "h"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		sess := auth.Session{
+			ID:             fmt.Sprintf("s%d", i),
+			UserID:         u.ID,
+			AccessHash:     fmt.Sprintf("ah%d", i),
+			RefreshHash:    fmt.Sprintf("rh%d", i),
+			AccessExpires:  now.Add(time.Hour),
+			RefreshExpires: now.Add(24 * time.Hour),
+		}
+		if err := st.CreateSession(ctx, sess, 2); err != nil {
+			t.Fatalf("第 %d 条会话: %v", i+1, err)
+		}
+	}
+	var count int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM session WHERE user_id = 'u1'`).Scan(&count); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("上限 2 时应保留 2 条会话，得到 %d", count)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah0"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("最早的一条应被删掉，得到 %v", err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah2"); err != nil {
+		t.Fatalf("最新的会话应保留，得到 %v", err)
+	}
+}
+
+// TestPostgresResetPassword 核对重设密码在一个事务里提交：摘要对不上时验证码
+// 不被用掉、密码与会话都不动；成功之后验证码消失、密码换掉、会话清空，再用
+// 同一个验证码返回 ErrInvalidCode。
+func TestPostgresResetPassword(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	u := auth.User{ID: "u1", Email: "reset@b.cn", PasswordHash: "old-hash"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	sess := auth.Session{
+		ID: "s1", UserID: u.ID,
+		AccessHash: "ah1", RefreshHash: "rh1",
+		AccessExpires:  now.Add(time.Hour),
+		RefreshExpires: now.Add(24 * time.Hour),
+	}
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if err := st.PutCode(ctx, auth.Code{
+		UserID: u.ID, Purpose: auth.PurposeResetPassword, CodeHash: "good",
+		ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("code: %v", err)
+	}
+
+	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "wrong", "new-hash", now); !errors.Is(err, auth.ErrInvalidCode) {
+		t.Fatalf("摘要对不上时应返回 ErrInvalidCode，得到 %v", err)
+	}
+	if got, err := st.UserByID(ctx, u.ID); err != nil || got.PasswordHash != "old-hash" {
+		t.Fatalf("失败的原子操作不应改密码：%+v %v", got, err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah1"); err != nil {
+		t.Fatalf("失败的原子操作不应删会话: %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); err != nil {
+		t.Fatalf("失败的原子操作不应吃掉验证码: %v", err)
+	}
+
+	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "good", "new-hash", now); err != nil {
+		t.Fatalf("正确的摘要应当成功: %v", err)
+	}
+	if got, err := st.UserByID(ctx, u.ID); err != nil || got.PasswordHash != "new-hash" {
+		t.Fatalf("密码应换成新哈希：%+v %v", got, err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("会话应被清空，得到 %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("验证码应被用掉，得到 %v", err)
+	}
+	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "good", "another-hash", now); !errors.Is(err, auth.ErrInvalidCode) {
+		t.Fatalf("验证码重复使用应返回 ErrInvalidCode，得到 %v", err)
+	}
+}
+
+// TestPostgresRefreshRotation 核对 CAS 轮换只有一个成功、旧令牌摘要能读回，
+// 并且记录随会话删除级联消失。
+func TestPostgresRefreshRotation(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u := auth.User{ID: "u1", Email: "rotate@b.cn", PasswordHash: "h"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	sess := auth.Session{
+		ID: "s1", UserID: u.ID,
+		AccessHash: "ah1", RefreshHash: "rh1",
+		AccessExpires:  now.Add(time.Hour),
+		RefreshExpires: now.Add(24 * time.Hour),
+	}
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
+	if err := st.RotateSession(ctx, "s1", "rh1", "ah2", "rh2", now.Add(2*time.Hour), now.Add(48*time.Hour)); err != nil {
+		t.Fatalf("第一次轮换: %v", err)
+	}
+	// 用同一个旧摘要再轮换（并发输家）应当返回 ErrInvalidToken。
+	if err := st.RotateSession(ctx, "s1", "rh1", "ah3", "rh3", now.Add(3*time.Hour), now.Add(72*time.Hour)); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("旧摘要再轮换应返回 ErrInvalidToken，得到 %v", err)
+	}
+	if _, err := st.SessionByRefreshHash(ctx, "rh2"); err != nil {
+		t.Fatalf("轮换后的刷新摘要应能查到: %v", err)
+	}
+
+	used := auth.RefreshUsed{
+		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
+		RotatedAt: now, GraceUntil: now.Add(time.Minute),
+		ReplacedAccessHash: "ah2", ReplacedRefreshHash: "rh2",
+	}
+	// 同一个摘要重复写入是并发重试的常态，应当忽略而不是报主键冲突。
+	for i := 0; i < 2; i++ {
+		if err := st.RecordRefreshUsed(ctx, used); err != nil {
+			t.Fatalf("第 %d 次记录旧令牌: %v", i+1, err)
+		}
+	}
+	got, err := st.UsedRefresh(ctx, "rh1")
+	if err != nil {
+		t.Fatalf("读取旧令牌记录: %v", err)
+	}
+	if got.RequestID != "req-1" || got.SessionID != "s1" || got.ReplacedRefreshHash != "rh2" {
+		t.Fatalf("旧令牌记录不符合预期: %+v", got)
+	}
+	if !got.GraceUntil.Equal(used.GraceUntil) {
+		t.Fatalf("宽限截止时间应原样保存：%v vs %v", got.GraceUntil, used.GraceUntil)
+	}
+
+	// 重试路径会更新记录里“本次发出的令牌”，宽限截止时间与 request_id 保持
+	// 第一次的值。
+	updated := used
+	updated.RotatedAt = now.Add(5 * time.Second)
+	updated.ReplacedAccessHash, updated.ReplacedRefreshHash = "ah4", "rh4"
+	updated.GraceUntil = now.Add(30 * time.Second) // 不应被写入
+	if err := st.RecordRefreshUsed(ctx, updated); err != nil {
+		t.Fatalf("更新旧令牌记录: %v", err)
+	}
+	afterUpdate, err := st.UsedRefresh(ctx, "rh1")
+	if err != nil {
+		t.Fatalf("更新后读取旧令牌记录: %v", err)
+	}
+	if afterUpdate.ReplacedRefreshHash != "rh4" || afterUpdate.ReplacedAccessHash != "ah4" {
+		t.Fatalf("本次发出的令牌应更新，得到 %+v", afterUpdate)
+	}
+	if !afterUpdate.GraceUntil.Equal(used.GraceUntil) || afterUpdate.RequestID != "req-1" {
+		t.Fatalf("宽限截止时间与 request_id 不应被重试改写，得到 %+v", afterUpdate)
+	}
+
+	if err := st.DeleteSession(ctx, "s1"); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+	if _, err := st.UsedRefresh(ctx, "rh1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("会话删除之后旧令牌记录应级联消失，得到 %v", err)
+	}
+}
+
+// TestPostgresPruneExpired 核对过期会话与过期验证码会被清理，未过期的不动。
+func TestPostgresPruneExpired(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u := auth.User{ID: "u1", Email: "prune@b.cn", PasswordHash: "h"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now().UTC()
+	sess := auth.Session{
+		ID: "s1", UserID: u.ID,
+		AccessHash: "ah1", RefreshHash: "rh1",
+		AccessExpires:  now.Add(time.Hour),
+		RefreshExpires: now.Add(24 * time.Hour),
+	}
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	// 把这条会话与两枚验证码分别改成过期与未过期，清理之后只留下未过期的。
+	if _, err := st.pool.Exec(ctx, `UPDATE session SET refresh_expires = $1 WHERE id = 's1'`, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("expire session: %v", err)
+	}
+	for _, userID := range []string{u.ID, "u2"} {
+		if userID == "u2" {
+			if err := st.CreateUser(ctx, auth.User{ID: "u2", Email: "keep@b.cn", PasswordHash: "h"}); err != nil {
+				t.Fatalf("second user: %v", err)
+			}
+		}
+		expires := now.Add(-time.Minute)
+		if userID == "u2" {
+			expires = now.Add(10 * time.Minute)
+		}
+		if err := st.PutCode(ctx, auth.Code{
+			UserID: userID, Purpose: auth.PurposeResetPassword, CodeHash: "hash-" + userID,
+			ExpiresAt: expires, CreatedAt: now.Add(-time.Hour),
+		}); err != nil {
+			t.Fatalf("code %s: %v", userID, err)
+		}
+	}
+
+	if err := st.PruneExpired(ctx, now); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("过期会话应被清理，得到 %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("过期验证码应被清理，得到 %v", err)
+	}
+	if _, err := st.Code(ctx, "u2", auth.PurposeResetPassword); err != nil {
+		t.Fatalf("未过期验证码应保留，得到 %v", err)
+	}
+}
+
+// TestPostgresDeleteUserAndObjects 检查删号之后对象字节由独立步骤清理。
 func TestPostgresDeleteUserAndObjects(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -242,6 +484,309 @@ func TestPostgresClearAccountData(t *testing.T) {
 	}
 	if err := st.Reset(ctx, "u1"); err != nil {
 		t.Fatalf("second reset: %v", err)
+	}
+}
+
+// seedBackup 建一个账号并写一份备份；用例只关心归属与对象键。
+func seedBackup(t *testing.T, st *Store, userID, email, id string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: userID, Email: email, PasswordHash: "h"}); err != nil {
+		t.Fatalf("user %s: %v", userID, err)
+	}
+	body := []byte("zip-" + id)
+	meta := backup.Meta{
+		ID: id, SHA256: "sha-" + id, Size: int64(len(body)), SchemaVersion: 27,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := st.Put(ctx, userID, meta, bytes.NewReader(body), 5); err != nil {
+		t.Fatalf("put %s/%s: %v", userID, id, err)
+	}
+}
+
+// TestPostgresBackupDeleteScopesToAccount 守住删除的归属：拿另一个账号的 id 删除
+// 停在 ErrNotFound，元数据与对象都不动；0 行时不会按 id 拼出的键去删对象。
+func TestPostgresBackupDeleteScopesToAccount(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedBackup(t, st, "u1", "a@b.cn", "mine")
+	seedBackup(t, st, "u2", "c@d.cn", "other")
+
+	if err := st.Delete(ctx, "u1", "other"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("cross-account delete: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "other")); err != nil {
+		t.Fatalf("another account's object must stay: %v", err)
+	}
+	if list, err := st.List(ctx, "u2"); err != nil || len(list) != 1 {
+		t.Fatalf("another account's metadata must stay: %+v, %v", list, err)
+	}
+
+	// 形状像 ../u2/other 的 id：删不到行，也就不会去碰 u2 的对象。
+	if err := st.Delete(ctx, "u1", "../u2/other"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("path-shaped id: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "other")); err != nil {
+		t.Fatalf("path-shaped id touched another account: %v", err)
+	}
+
+	// 自己的能删一次，第二次停在 ErrNotFound。
+	if err := st.Delete(ctx, "u1", "mine"); err != nil {
+		t.Fatalf("delete own backup: %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u1", "mine")); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("own object should be deleted, got %v", err)
+	}
+	if err := st.Delete(ctx, "u1", "mine"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("second delete: want ErrNotFound, got %v", err)
+	}
+}
+
+// TestPostgresBackupDeleteDoesNotEscapeDirStore 用目录存储核对 ../ 形状的 id：
+// 目录实现会把 backups/u1/../u2/target.zip 归一成另一个账号的路径；服务层的
+// id 校验之外，存储层“0 行不动对象”是第二道保险。
+func TestPostgresBackupDeleteDoesNotEscapeDirStore(t *testing.T) {
+	dir, err := objectstore.NewDir(t.TempDir())
+	if err != nil {
+		t.Fatalf("dir: %v", err)
+	}
+	st := newTestStoreWith(t, dir)
+	ctx := context.Background()
+	seedBackup(t, st, "u1", "a@b.cn", "mine")
+	seedBackup(t, st, "u2", "c@d.cn", "target")
+
+	if err := st.Delete(ctx, "u1", "../u2/target"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if _, err := dir.Stat(ctx, objectstore.BackupKey("u2", "target")); err != nil {
+		t.Fatalf("another account's object was deleted through a path-shaped id: %v", err)
+	}
+}
+
+// TestPostgresDeleteAllClearsLeftoverObjects 守住清空备份的最后一步：元数据已经
+// 不在、对象还留着的孤儿会被账号前缀清理删掉，另一个账号不受影响。
+func TestPostgresDeleteAllClearsLeftoverObjects(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedBackup(t, st, "u1", "a@b.cn", "b1")
+	seedBackup(t, st, "u2", "c@d.cn", "b2")
+
+	orphan := objectstore.BackupKey("u1", "orphan")
+	body := []byte("left-behind")
+	if err := st.objects.Put(ctx, orphan, bytes.NewReader(body), objectstore.Info{Size: int64(len(body))}); err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+
+	if err := st.DeleteAll(ctx, "u1"); err != nil {
+		t.Fatalf("delete all: %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, orphan); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("leftover object should be removed, got %v", err)
+	}
+	if list, err := st.List(ctx, "u1"); err != nil || len(list) != 0 {
+		t.Fatalf("metadata after clear = %+v, %v", list, err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "b2")); err != nil {
+		t.Fatalf("another account's object must stay: %v", err)
+	}
+}
+
+// TestPostgresBlobQuota 覆盖附件索引的配额语义：重复内容不重复计数、超限带
+// 已用量与上限、保存失败回滚但字节已存在时保留索引、账号间互不影响、回填幂等、
+// 清账号与删账号都清掉索引与字节。
+func TestPostgresBlobQuota(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	bs := NewBlobStore(st)
+	for _, id := range []string{"u1", "u2"} {
+		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+			t.Fatalf("user %s: %v", id, err)
+		}
+	}
+	shaA := strings.Repeat("a", 64)
+	shaB := strings.Repeat("b", 64)
+	shaC := strings.Repeat("c", 64)
+
+	if used, err := bs.Reserve(ctx, "u1", shaA, 4, 10); err != nil || used != 4 {
+		t.Fatalf("first reserve: used %d, err %v", used, err)
+	}
+	if used, err := bs.Reserve(ctx, "u1", shaA, 4, 10); err != nil || used != 4 {
+		t.Fatalf("duplicate reserve: used %d, err %v", used, err)
+	}
+	used, err := bs.Reserve(ctx, "u1", shaB, 7, 10)
+	var full *blobs.StorageFullError
+	if !errors.Is(err, blobs.ErrStorageFull) || !errors.As(err, &full) || used != 4 || full.Used != 4 || full.Limit != 10 {
+		t.Fatalf("over limit: used %d, err %v", used, err)
+	}
+
+	// 保存之后字节可读；模拟一次失败重传触发 Release，字节还在时索引不动。
+	body := []byte("four")
+	if err := bs.Save(ctx, "u1", shaA, int64(len(body)), bytes.NewReader(body)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if size, err := bs.Stat(ctx, "u1", shaA); err != nil || size != int64(len(body)) {
+		t.Fatalf("stat = %d, %v", size, err)
+	}
+	rc, _, err := bs.Open(ctx, "u1", shaA)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	got, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if !bytes.Equal(got, body) {
+		t.Fatalf("open content = %q", got)
+	}
+	if err := bs.Release(ctx, "u1", shaA, int64(len(body))); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 4 {
+		t.Fatalf("release removed the index while bytes exist: used %d, %v", used, err)
+	}
+
+	// 另一个账号的总量单独计算。
+	if used, err := bs.Reserve(ctx, "u2", shaA, 4, 10); err != nil || used != 4 {
+		t.Fatalf("other account reserve: used %d, err %v", used, err)
+	}
+
+	// 回填：对象已经在存储里、索引没有时补一行，幂等。
+	orphan := []byte("five!")
+	if err := st.objects.Put(ctx, objectstore.AttachmentKey("u1", shaC), bytes.NewReader(orphan),
+		objectstore.Info{Size: int64(len(orphan))}); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	if added, err := bs.BackfillAttachment(ctx, "u1", shaC, int64(len(orphan))); err != nil || !added {
+		t.Fatalf("backfill: added %v, err %v", added, err)
+	}
+	if added, err := bs.BackfillAttachment(ctx, "u1", shaC, int64(len(orphan))); err != nil || added {
+		t.Fatalf("second backfill must be a no-op: added %v, err %v", added, err)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 4+int64(len(orphan)) {
+		t.Fatalf("used after backfill = %d, %v", used, err)
+	}
+
+	// 清账号（保留账号行）删索引与字节。
+	if err := bs.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("delete attachments: %v", err)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 0 {
+		t.Fatalf("used after clear = %d, %v", used, err)
+	}
+	if _, err := bs.Stat(ctx, "u1", shaA); !errors.Is(err, blobs.ErrNotFound) {
+		t.Fatalf("bytes after clear: %v", err)
+	}
+
+	// 删账号时 attachment 行按外键级联删除。
+	if err := st.DeleteUser(ctx, "u2"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM attachment`).Scan(&rows); err != nil {
+		t.Fatalf("count attachment: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("attachment rows should cascade with the account, got %d", rows)
+	}
+}
+
+// TestPostgresBlobReserveIsSerialized 核对同一账号的并发预留：两个各 6 字节的
+// 预留同时进入事务，账号行锁让它们排队，只有一个通过上限 10 的检查。
+func TestPostgresBlobReserveIsSerialized(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	bs := NewBlobStore(st)
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	shas := []string{strings.Repeat("a", 64), strings.Repeat("b", 64)}
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = bs.Reserve(ctx, "u1", shas[i], 6, 10)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	okCount := 0
+	for _, err := range errs {
+		var full *blobs.StorageFullError
+		switch {
+		case err == nil:
+			okCount++
+		case errors.As(err, &full):
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if okCount != 1 {
+		t.Fatalf("exactly one reservation must succeed, got %d (%v)", okCount, errs)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 6 {
+		t.Fatalf("used = %d, %v", used, err)
+	}
+}
+
+// TestPostgresPurgeMarker 核对清除标记的存储语义：没有标记、取得后拒绝新请求
+// 覆盖、超过有效期可接管、结束时删除；删账号时标记按外键级联删除。
+func TestPostgresPurgeMarker(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+
+	if _, ok, err := st.PurgeStartedAt(ctx, "u1"); err != nil || ok {
+		t.Fatalf("marker before purge: ok=%v err=%v", ok, err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	claimed, err := st.ClaimPurge(ctx, "u1", now, now.Add(-cloudpurge.StaleAfter))
+	if err != nil || !claimed {
+		t.Fatalf("claim: claimed %v, err %v", claimed, err)
+	}
+	started, ok, err := st.PurgeStartedAt(ctx, "u1")
+	if err != nil || !ok || !started.Equal(now) {
+		t.Fatalf("marker = %v, ok %v, err %v", started, ok, err)
+	}
+	// 标记还新：第二次取得被拒绝。
+	if claimed, err := st.ClaimPurge(ctx, "u1", now.Add(time.Minute), now.Add(time.Minute-cloudpurge.StaleAfter)); err != nil || claimed {
+		t.Fatalf("fresh marker must reject a second claim: claimed %v, err %v", claimed, err)
+	}
+	// 超过有效期：接管并刷新时间。
+	later := now.Add(cloudpurge.StaleAfter + time.Minute)
+	if claimed, err := st.ClaimPurge(ctx, "u1", later, later.Add(-cloudpurge.StaleAfter)); err != nil || !claimed {
+		t.Fatalf("stale marker takeover: claimed %v, err %v", claimed, err)
+	}
+	if started, _, _ := st.PurgeStartedAt(ctx, "u1"); !started.Equal(later) {
+		t.Fatalf("marker after takeover = %v, want %v", started, later)
+	}
+
+	// 结束时删除标记。
+	if err := st.EndPurge(ctx, "u1"); err != nil {
+		t.Fatalf("end purge: %v", err)
+	}
+	if _, ok, err := st.PurgeStartedAt(ctx, "u1"); err != nil || ok {
+		t.Fatalf("marker after end: ok=%v err=%v", ok, err)
+	}
+
+	// 删账号时标记级联删除，不会留下指向不存在账号的行。
+	if _, err := st.ClaimPurge(ctx, "u1", later, later.Add(-cloudpurge.StaleAfter)); err != nil {
+		t.Fatalf("claim before account deletion: %v", err)
+	}
+	if err := st.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM user_purge`).Scan(&rows); err != nil {
+		t.Fatalf("count user_purge: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("user_purge rows should cascade with the account, got %d", rows)
 	}
 }
 

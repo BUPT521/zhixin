@@ -105,20 +105,31 @@ func (s *Store) Open(ctx context.Context, userID, id string) (backup.Meta, io.Re
 	}, rc, nil
 }
 
-// Delete 删掉一条备份的元数据与字节。
+// Delete 删掉当前账号的一份备份：先按 (user_id, id) 删元数据，删到一行才删除
+// 对象键。
+//
+// 顺序有意与 Put 相反：先确认这行属于该账号，再去碰对象存储。0 行直接返回
+// ErrNotFound，不按 id 拼键删字节——客户端猜出来的 id（哪怕形状像
+// ../u2/<id>）也就没有机会删到别的账号。删元数据成功而删字节失败时，这次的
+// 调用返回错误，遗留的对象由 DeleteAll 的前缀清理兜住。
 func (s *Store) Delete(ctx context.Context, userID, id string) error {
-	if err := s.q.DeleteBackup(ctx, db.DeleteBackupParams{UserID: userID, ID: id}); err != nil {
+	deleted, err := s.q.DeleteBackup(ctx, db.DeleteBackupParams{UserID: userID, ID: id})
+	if err != nil {
 		return err
+	}
+	if deleted == 0 {
+		return backup.ErrNotFound
 	}
 	return s.objects.Remove(ctx, objectstore.BackupKey(userID, id))
 }
 
-// DeleteAll 清空一个账号的全部备份：先按账号列出备份、逐个删除对象键，再删数据库行。
+// DeleteAll 清空一个账号的全部备份：先按账号列出备份、逐个删除对象键，再删
+// 数据库行，最后按 backups/<账号>/ 前缀再清一次遗留对象。
 //
-// 顺序按对象键规则照搬 Delete：键由 userID 与备份 id 拼出，不扫描前缀，免得把
-// 别的账号的对象一起删掉。任何一步失败都直接返回错误，不吞掉；对象删除失败时元
-// 数据还在，重试会从列表重新开始；元数据删除失败时对象已经不在了，再删一次不算
-// 错误（objectstore.Remove 的约定），所以整个操作可以重试。
+// 前两步沿用 Delete 的键规则（键由 userID 与备份 id 拼出），第三步的前缀同样
+// 带上账号，所以只清这个账号的目录，别的账号不受影响。最后一步兜住“元数据已
+// 删、字节还在”的孤儿对象：Delete 删完元数据之后删字节失败、或 Put 写完字节
+// 还没写元数据就退出，重试 DeleteAll 时会在这里收敛。
 func (s *Store) DeleteAll(ctx context.Context, userID string) error {
 	rows, err := s.q.ListBackups(ctx, userID)
 	if err != nil {
@@ -129,7 +140,10 @@ func (s *Store) DeleteAll(ctx context.Context, userID string) error {
 			return err
 		}
 	}
-	return s.q.DeleteBackups(ctx, userID)
+	if err := s.q.DeleteBackups(ctx, userID); err != nil {
+		return err
+	}
+	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
 // Used 返回当天已用的 token 数；没有记录时是 0。

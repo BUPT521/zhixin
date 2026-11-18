@@ -237,5 +237,11 @@ class GuardedDatabase implements RawDatabase {
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
     List<Object?>? arguments,
-  ]) => gate.shared(() => _db.rawQuery(sql, arguments));
+  ]) {
+    // 事务里读的必须是本次事务写下的数据：外层连接在这个回调里可能正被事务
+    // 占用，也可能读到提交之前的旧状态，所以与 execute 一样优先取当前执行器。
+    final active = _currentTxn;
+    if (active != null) return active.rawQuery(sql, arguments);
+    return gate.shared(() => _db.rawQuery(sql, arguments));
+  }
 }

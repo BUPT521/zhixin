@@ -11,16 +11,19 @@ import '../application/answer_outcome.dart';
 import '../application/buddy_actions.dart';
 import '../application/discussion_service.dart';
 import '../application/memory_view.dart';
+import '../application/request_gate.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/material.dart' show Citation;
 import '../domain/models/study.dart';
+import '../domain/rules/discussion_search.dart';
 import '../domain/rules/notices.dart';
 import 'answer_notice.dart';
 import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
+import 'discussion_search.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
 import 'live_view.dart';
@@ -72,6 +75,32 @@ class DiscussionChat extends StatefulWidget {
 class DiscussionChatState extends State<DiscussionChat> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
+
+  /// 讨论内查找：输入与匹配在页面里完成，读取消息只走本机库。
+  final TextEditingController _searchInput = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
+  /// 每次查询换一个编号，晚到的旧结果直接丢弃。
+  final RequestGate _searchRequests = RequestGate();
+
+  /// 当前命中那一处消息的定位键；跳转靠它滚动到屏幕外的那一条。
+  final Map<String, GlobalKey> _messageKeys = {};
+
+  bool _searchOpen = false;
+  bool _searchLoading = false;
+  bool _searchReady = false;
+  String? _searchFailure;
+
+  /// 整条讨论的消息快照；查找覆盖已经翻到与没有翻到的全部消息。
+  List<ChatMessage> _searchAllMessages = const [];
+  List<ChatMessage> _searchHits = const [];
+
+  /// 当前是第几处，从 0 起；没有命中时为 -1。
+  int _searchIndex = -1;
+
+  /// 打开查找之前已经读到的更早几页与滚动位置，关闭时原位恢复。
+  List<ChatMessage> _searchSavedOlder = const [];
+  double _searchSavedOffset = 0;
 
   /// 只让正在生成的气泡跟着正文重建，不带着整页消息一起重建。
   final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
@@ -135,6 +164,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     super.initState();
     _streamingText.addListener(_onStreamingTextChanged);
     _scroll.addListener(_onScroll);
+    _searchInput.addListener(_onSearchTextChanged);
   }
 
   @override
@@ -161,9 +191,12 @@ class DiscussionChatState extends State<DiscussionChat> {
   void dispose() {
     _streamingText.removeListener(_onStreamingTextChanged);
     _scroll.removeListener(_onScroll);
+    _searchInput.removeListener(_onSearchTextChanged);
     _streamingText.dispose();
     _input.dispose();
     _scroll.dispose();
+    _searchInput.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -178,7 +211,9 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   List<AppliedChange> get _changes => _view?.changes ?? const [];
 
-  bool get _hasOlderMessages => _view?.hasOlder ?? false;
+  /// 查找读到整条讨论之后不再提示“读取较早讨论”，关闭查找时恢复原状态。
+  bool get _hasOlderMessages =>
+      _searchOpen && _searchReady ? false : (_view?.hasOlder ?? false);
 
   /// 屏幕上正在显示的消息：更早的几页在前，订阅给出的最近一页在后，发送流程
   /// 已经拿到但订阅还没有回填的消息补在最后，三处按编号去重。
@@ -201,6 +236,177 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (id == null) throw StateError('还没有打开任何讨论');
     return AppScope.of(context).chat.discussion
         .watchConversation(id, olderMessages: _olderMessages);
+  }
+
+  /// 查找命中的当前一条；查找关闭或没有命中时为空。
+  String? get _highlightedMessageId {
+    if (!_searchOpen ||
+        _searchIndex < 0 ||
+        _searchIndex >= _searchHits.length) {
+      return null;
+    }
+    return _searchHits[_searchIndex].id;
+  }
+
+  GlobalKey _messageKey(String messageId) =>
+      _messageKeys.putIfAbsent(messageId, GlobalKey.new);
+
+  /// 打开查找条：记下当前列表与滚动位置，关闭时原样恢复。
+  void _openSearch() {
+    if (_searchOpen) return;
+    setState(() {
+      _searchOpen = true;
+      _searchSavedOlder = _olderMessages;
+      _searchSavedOffset = _scroll.hasClients ? _scroll.position.pixels : 0;
+      _searchLoading = false;
+      _searchReady = false;
+      _searchFailure = null;
+      _searchAllMessages = const [];
+      _searchHits = const [];
+      _searchIndex = -1;
+    });
+    _searchInput.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchOpen) _searchFocus.requestFocus();
+    });
+  }
+
+  /// 关闭查找：恢复打开之前的列表与滚动位置，当前高亮一并消失。
+  void _closeSearch() {
+    if (!_searchOpen) return;
+    final restore = _searchSavedOffset;
+    // 还在读取的那次结果不再回填到已经关闭的查找条上。
+    _searchRequests.start();
+    _searchFocus.unfocus();
+    setState(() {
+      _searchOpen = false;
+      _searchLoading = false;
+      _searchReady = false;
+      _searchFailure = null;
+      _searchAllMessages = const [];
+      _searchHits = const [];
+      _searchIndex = -1;
+      _olderMessages = _searchSavedOlder;
+      _searchSavedOlder = const [];
+    });
+    _searchInput.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final position = _scroll.position;
+      _scroll.jumpTo(
+        restore
+            .clamp(position.minScrollExtent, position.maxScrollExtent)
+            .toDouble(),
+      );
+    });
+  }
+
+  void _onSearchTextChanged() {
+    if (!_searchOpen) return;
+    _runSearch(_searchInput.text);
+  }
+
+  void _retrySearch() {
+    if (!mounted) return;
+    setState(() {
+      _searchFailure = null;
+      _searchReady = false;
+    });
+    _runSearch(_searchInput.text);
+  }
+
+  /// 查询变化只保留最后一次结果；第一次查询先读整条讨论的消息。
+  Future<void> _runSearch(String text) async {
+    final query = text.trim();
+    final request = _searchRequests.start();
+    if (query.isEmpty) {
+      setState(() {
+        _searchLoading = false;
+        _searchFailure = null;
+        _searchHits = const [];
+        _searchIndex = -1;
+      });
+      return;
+    }
+    if (_searchReady) {
+      _applySearch(query);
+      return;
+    }
+    final id = _conversationId;
+    if (id == null) {
+      _applySearch(query);
+      return;
+    }
+    setState(() {
+      _searchLoading = true;
+      _searchFailure = null;
+    });
+    try {
+      final messages = await AppScope.of(context).chat.discussion
+          .messagesForSearch(id);
+      if (!mounted || !_searchRequests.isCurrent(request)) return;
+      setState(() {
+        _searchReady = true;
+        _searchAllMessages = messages;
+        _searchLoading = false;
+        // 查找覆盖整条讨论：时间线先接上全部消息，跳到较早的命中才有那一条。
+        _olderMessages = messages;
+      });
+      _applySearch(_searchInput.text.trim());
+    } catch (error, stack) {
+      if (!mounted || !_searchRequests.isCurrent(request)) return;
+      setState(() {
+        _searchLoading = false;
+        _searchFailure = describeFailure(
+          context,
+          error,
+          stack,
+          action: '在讨论里查找',
+          kind: 'discussion_search',
+          kept: '讨论与已经显示的消息没有改动',
+          next: '可以再试一次，也可以继续聊天',
+        );
+      });
+    }
+  }
+
+  void _applySearch(String query) {
+    final hits = searchDiscussionMessages(_searchAllMessages, query);
+    if (!mounted) return;
+    setState(() {
+      _searchHits = hits;
+      _searchIndex = hits.isEmpty ? -1 : 0;
+      _searchLoading = false;
+      _searchFailure = null;
+    });
+    if (hits.isNotEmpty) _revealSearchHit();
+  }
+
+  /// 上一处与下一处循环跳转；每次只让当前这一条带高亮。
+  void _stepSearch(int delta) {
+    if (_searchHits.isEmpty) return;
+    setState(() {
+      _searchIndex = (_searchIndex + delta) % _searchHits.length;
+    });
+    _revealSearchHit();
+  }
+
+  /// 把当前命中滚到屏幕中间：列表先按整列建出，屏幕外那一条的上下文才可用。
+  void _revealSearchHit() {
+    final id = _highlightedMessageId;
+    if (id == null) return;
+    final motion = context.zhixin.motion;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_searchOpen || _highlightedMessageId != id) return;
+      final target = _messageKeys[id]?.currentContext;
+      if (target == null) return;
+      Scrollable.ensureVisible(
+        target,
+        alignment: 0.5,
+        duration: motion.standard,
+        curve: motion.move,
+      );
+    });
   }
 
   /// 模型配置决定回答下方的恢复入口；它不随这些表写入变化，只读一次。
@@ -276,7 +482,8 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   void _onScroll() {
-    if (!_scroll.hasClients ||
+    if (_searchOpen ||
+        !_scroll.hasClients ||
         _loadingOlder ||
         !_hasOlderMessages ||
         _scroll.position.pixels < _scroll.position.maxScrollExtent - 48) {
@@ -288,7 +495,11 @@ class DiscussionChatState extends State<DiscussionChat> {
   Future<void> _loadOlder() async {
     final id = _conversationId;
     final messages = _messages;
-    if (id == null || _loadingOlder || !_hasOlderMessages || messages.isEmpty) {
+    if (id == null ||
+        _searchOpen ||
+        _loadingOlder ||
+        !_hasOlderMessages ||
+        messages.isEmpty) {
       return;
     }
     final beforeId = messages.first.id;
@@ -1068,6 +1279,21 @@ class DiscussionChatState extends State<DiscussionChat> {
         return Column(
           children: [
             if (record != null) _recordBar(theme, record),
+            if (_searchOpen)
+              DiscussionSearchBar(
+                controller: _searchInput,
+                focusNode: _searchFocus,
+                query: _searchInput.text,
+                matchCount: _searchHits.length,
+                matchIndex: _searchIndex,
+                loading: _searchLoading,
+                failure: _searchFailure,
+                onSubmitted: _runSearch,
+                onPrevious: () => _stepSearch(-1),
+                onNext: () => _stepSearch(1),
+                onRetry: _retrySearch,
+                onClose: _closeSearch,
+              ),
             Expanded(
               child: firstLoad
                   ? ListSkeleton(
@@ -1128,6 +1354,14 @@ class DiscussionChatState extends State<DiscussionChat> {
                   label: material ? record.materialLabel : '选择材料',
                   onPressed: _sending ? null : _chooseMaterial,
                 ),
+                if (_messages.isNotEmpty)
+                  // 查找与目标、材料同在一行，窄屏时随其他标签一起换行。
+                  ZhixinChip(
+                    key: const ValueKey('discussion-search-open'),
+                    icon: FLucideIcons.search,
+                    label: '查找',
+                    onPressed: _searchOpen ? null : _openSearch,
+                  ),
                 if (!record.open)
                   const StatusTag(
                     '已结束',
@@ -1419,6 +1653,18 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
 
   @override
   String imagePath(String stored) => _state._imagePath(stored);
+
+  @override
+  bool isHighlighted(String messageId) =>
+      _state._highlightedMessageId == messageId;
+
+  @override
+  Key? messageKey(String messageId) => _state._highlightedMessageId == messageId
+      ? _state._messageKey(messageId)
+      : null;
+
+  @override
+  bool get revealAll => _state._searchOpen;
 
   @override
   void openCitation(Citation citation) {
