@@ -119,7 +119,7 @@ server/
 
 每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号当日额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算是一个进程内的总账，防止单个实例的提供方账单失控。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
-每日额度默认取 `ZHIXIN_LLM_DAILY_TOKENS`，需要单独调整某个账号时在 `llm_quota` 表里写一行，下一次请求就按新数字判定，不用重启服务；删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 与聊天接口的 429 里返回的都是这个账号的生效额度。调整是运营动作，不另开管理接口，下面的语句写在[运维手册](运维手册.md#4-常用操作)里：
+每日额度默认取 `ZHIXIN_LLM_DAILY_TOKENS`，需要单独调整某个账号时在 `llm_quota` 表里写一行，下一次请求就按新数字判定，不用重启服务；删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 与聊天接口的 429 里返回的都是这个账号的生效额度。调整是运营动作，不另开管理接口，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
 
 ```sql
 -- 调高或新建一个账号的额度
