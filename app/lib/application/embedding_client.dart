@@ -20,13 +20,22 @@ abstract class EmbeddingClient {
 
   Future<List<double>> embed(String text);
 
+  /// 一次生成多段文本的向量；默认逐条调用 [embed]，远程来源覆盖为一次请求。
+  Future<List<List<double>>> embedBatch(List<String> texts) async {
+    final vectors = <List<double>>[];
+    for (final text in texts) {
+      vectors.add(await embed(text));
+    }
+    return vectors;
+  }
+
   void dispose() {}
 }
 
 /// 测试与验收用：按文本查表返回预先准备好的向量，没准备就报不可用。
 ///
 /// 固定向量只验证扩展注册、写入、查询与索引管理，不能说明真实语义效果。
-class FixedEmbeddingClient implements EmbeddingClient {
+class FixedEmbeddingClient extends EmbeddingClient {
   FixedEmbeddingClient({
     required this.spec,
     required Map<String, List<double>> vectors,
@@ -56,7 +65,7 @@ class FixedEmbeddingClient implements EmbeddingClient {
 ///
 /// 它只能把用词接近的文本放到一起，不能替代中文嵌入模型；没有配置远程嵌入
 /// 时用它保持索引可用，界面与文档都按这个限制说明效果。
-class HashingEmbeddingClient implements EmbeddingClient {
+class HashingEmbeddingClient extends EmbeddingClient {
   HashingEmbeddingClient({this.dim = 256, String id = 'local-hash-v1'})
     : spec = EmbeddingModelSpec(id: id, dim: dim, provider: 'local');
 
@@ -101,13 +110,14 @@ class HashingEmbeddingClient implements EmbeddingClient {
 
 /// 远程嵌入：OpenAI 兼容的 `/embeddings` 接口，只有在用户明确配置并选定了
 /// 可发送范围时才会被调用。
-class RemoteEmbeddingClient implements EmbeddingClient {
+class RemoteEmbeddingClient extends EmbeddingClient {
   RemoteEmbeddingClient({
     required this.spec,
     required this.endpoint,
     required this.apiKey,
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 8),
+    this.batchTimeout = const Duration(seconds: 30),
   }) : _http = httpClient ?? http.Client();
 
   @override
@@ -115,10 +125,24 @@ class RemoteEmbeddingClient implements EmbeddingClient {
   final String endpoint;
   final String apiKey;
   final Duration timeout;
+
+  /// 一次多段请求的等待上限；批量请求的计算时间比单条长。
+  final Duration batchTimeout;
   final http.Client _http;
 
   @override
   Future<List<double>> embed(String text) async {
+    final vectors = await _embed([text], timeout);
+    return vectors.first;
+  }
+
+  @override
+  Future<List<List<double>>> embedBatch(List<String> texts) async {
+    if (texts.isEmpty) return const [];
+    return _embed(texts, batchTimeout);
+  }
+
+  Future<List<List<double>>> _embed(List<String> texts, Duration wait) async {
     final uri = Uri.parse('$endpoint/embeddings');
     final response = await _http
         .post(
@@ -127,12 +151,9 @@ class RemoteEmbeddingClient implements EmbeddingClient {
             'Content-Type': 'application/json',
             if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
           },
-          body: jsonEncode({
-            'model': spec.id,
-            'input': [text],
-          }),
+          body: jsonEncode({'model': spec.id, 'input': texts}),
         )
-        .timeout(timeout);
+        .timeout(wait);
     if (response.statusCode != 200) {
       throw EmbeddingUnavailable('嵌入服务返回 ${response.statusCode}');
     }
@@ -142,19 +163,40 @@ class RemoteEmbeddingClient implements EmbeddingClient {
     if (data is! List || data.isEmpty) {
       throw const EmbeddingUnavailable('嵌入服务没有返回向量');
     }
-    final first = data.first;
-    final raw = first is Map ? first['embedding'] : null;
-    if (raw is! List) throw const EmbeddingUnavailable('嵌入服务没有返回向量');
-    final vector = <double>[];
-    for (final value in raw) {
-      final number = value is num ? value.toDouble() : null;
-      if (number == null) throw const EmbeddingUnavailable('向量里有非数字');
-      vector.add(number);
+    if (data.length != texts.length) {
+      throw const EmbeddingUnavailable('嵌入服务返回的向量条数不对');
     }
-    if (vector.length != spec.dim) {
-      throw EmbeddingUnavailable('向量维度为 ${vector.length}，配置的是 ${spec.dim}');
+    final vectors = List<List<double>?>.filled(texts.length, null);
+    var next = 0;
+    for (final item in data) {
+      if (item is! Map) {
+        throw const EmbeddingUnavailable('嵌入服务返回的格式不对');
+      }
+      final raw = item['embedding'];
+      if (raw is! List) throw const EmbeddingUnavailable('嵌入服务没有返回向量');
+      final vector = <double>[];
+      for (final value in raw) {
+        final number = value is num ? value.toDouble() : null;
+        if (number == null) throw const EmbeddingUnavailable('向量里有非数字');
+        vector.add(number);
+      }
+      if (vector.length != spec.dim) {
+        throw EmbeddingUnavailable('向量维度为 ${vector.length}，配置的是 ${spec.dim}');
+      }
+      final index = item['index'];
+      final slot = index is num && index >= 0 && index < texts.length
+          ? index.toInt()
+          : next;
+      next = slot + 1;
+      if (vectors[slot] != null) {
+        throw const EmbeddingUnavailable('嵌入服务返回了重复的序号');
+      }
+      vectors[slot] = normalizeVector(vector);
     }
-    return normalizeVector(vector);
+    if (vectors.any((vector) => vector == null)) {
+      throw const EmbeddingUnavailable('嵌入服务没有返回全部向量');
+    }
+    return [for (final vector in vectors) vector!];
   }
 
   @override

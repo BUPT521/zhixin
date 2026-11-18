@@ -110,6 +110,21 @@ class SearchIndexService implements MemoryRelevanceRanker {
        _openStore = vectorStoreOpener,
        _openMemoryStore = memoryStoreOpener;
 
+  /// 一次刷新在内存里保留的片段上限；一个窗口写完再取下一批，内存不随来源
+  /// 总数增长。
+  static const int _refreshWindowChunks = 96;
+
+  /// 一次嵌入请求的条数与字符上限；向量维度不变，批次按正文长度切分。
+  /// 条数按常见 OpenAI 兼容接口的下限取 10，整批被拒时还有逐条重发兜底。
+  static const int _embedBatchMaxItems = 10;
+  static const int _embedBatchMaxChars = 4000;
+
+  /// 同时在途的嵌入请求数；手机网络下再高容易触发服务商限流。
+  static const int _embedConcurrency = 4;
+
+  /// 整批失败后的重试次数，仍失败时逐条重发以定位坏文本。
+  static const int _embedBatchAttempts = 2;
+
   final EvidenceRepository repository;
 
   EmbeddingClient? _client;
@@ -474,7 +489,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
       };
       final indexed = await store.indexedSources(keep.toList(growable: false));
       final committed = indexed.keys.toSet();
-      final batch = maxSources == null
+      final targets = maxSources == null
           ? sources
           : sources.take(maxSources).toList(growable: false);
       var embedded = 0;
@@ -485,7 +500,10 @@ class SearchIndexService implements MemoryRelevanceRanker {
       var embedMs = 0;
       var writeMs = 0;
 
-      for (final source in batch) {
+      // 先把本次要重写的来源挑出来；等待嵌入期间来源被更正、删除或撤销时，
+      // 写回之前还会再核对一次版本。
+      final pending = <_PendingSource>[];
+      for (final source in targets) {
         _requireCurrent(generation);
         final sourceKey = source.locator.sourceKey;
         if (!keep.contains(sourceKey)) {
@@ -504,61 +522,152 @@ class SearchIndexService implements MemoryRelevanceRanker {
           skipped++;
           continue;
         }
-        final vectors = <List<double>>[];
-        var sourceFailed = false;
-        if (embedding != null) {
-          for (final chunk in chunks) {
-            _requireCurrent(generation);
-            final started = DateTime.now();
-            try {
-              vectors.add(await embedding.embed(chunk.text));
-            } on EmbeddingUnavailable {
-              sourceFailed = true;
-              break;
-            } catch (_) {
-              sourceFailed = true;
-              break;
-            } finally {
-              embedMs += DateTime.now().difference(started).inMilliseconds;
-            }
-          }
-        }
-        if (sourceFailed ||
-            (embedding != null && vectors.length != chunks.length)) {
-          failed++;
-          continue;
-        }
-        // 迟到结果写回之前重新检查来源：等待嵌入期间内容被更正、删除或撤销，
-        // 就放弃这一条，等下一次更新再处理。
+        pending.add(_PendingSource(source, chunks));
+      }
+
+      Future<void> writeSource(
+        _PendingSource item,
+        List<List<double>> vectors,
+      ) async {
         _requireCurrent(generation);
-        final fresh = await repository.semanticSource(source.locator);
-        if (fresh == null || fresh.sourceVersion != source.sourceVersion) {
-          lateSkipped++;
-          continue;
-        }
+        final sourceKey = item.source.locator.sourceKey;
         final writeStarted = DateTime.now();
         try {
           await _useCurrentStore(
             generation,
             () => store.replaceSource(
-              locator: source.locator,
-              sourceVersion: source.sourceVersion,
-              chunks: [for (final chunk in chunks) chunk.text],
+              locator: item.source.locator,
+              sourceVersion: item.source.sourceVersion,
+              chunks: [for (final chunk in item.chunks) chunk.text],
               vectors: vectors,
               createdAt: formatDateTime(now),
             ),
           );
           embedded++;
-          writtenEntries += chunks.length;
-          if (chunks.isEmpty) {
+          writtenEntries += item.chunks.length;
+          if (item.chunks.isEmpty) {
             committed.remove(sourceKey);
           } else {
             committed.add(sourceKey);
           }
         } catch (_) {
+          if (_closed || generation != _generation) rethrow;
           failed++;
         } finally {
           writeMs += DateTime.now().difference(writeStarted).inMilliseconds;
+        }
+      }
+
+      Future<bool> sourceCurrent(_PendingSource item) async {
+        final fresh = await repository.semanticSource(item.source.locator);
+        return fresh != null &&
+            fresh.sourceVersion == item.source.sourceVersion;
+      }
+
+      if (embedding == null) {
+        // 纯文本索引不调用嵌入来源，直接写正文。
+        for (final item in pending) {
+          _requireCurrent(generation);
+          if (!await sourceCurrent(item)) {
+            lateSkipped++;
+            continue;
+          }
+          await writeSource(item, const <List<double>>[]);
+        }
+      } else {
+        final embedder = embedding;
+        // 按块数与字符数切批，跨来源合并请求；一个窗口内的来源全部写完再进入
+        // 下一个窗口，向量只在窗口内保留，内存不随来源总数增长。
+        var start = 0;
+        while (start < pending.length) {
+          _requireCurrent(generation);
+          var end = start;
+          var windowChunks = 0;
+          while (end < pending.length) {
+            final size = pending[end].chunks.length;
+            if (end > start && windowChunks + size > _refreshWindowChunks) {
+              break;
+            }
+            windowChunks += size;
+            end++;
+          }
+          final window = pending.sublist(start, end);
+          final jobs = <_ChunkJob>[
+            for (var index = 0; index < window.length; index++)
+              for (var chunk = 0; chunk < window[index].chunks.length; chunk++)
+                _ChunkJob(index, chunk, window[index].chunks[chunk].text),
+          ];
+          final batches = _embedBatches(jobs);
+          final embedStarted = Stopwatch()..start();
+          var nextBatch = 0;
+          Future<void> worker() async {
+            while (true) {
+              final index = nextBatch++;
+              if (index >= batches.length) return;
+              _requireCurrent(generation);
+              final batch = batches[index];
+              final texts = [for (final job in batch) job.text];
+              var vectors = const <List<double>>[];
+              var ok = false;
+              for (var attempt = 0; attempt < _embedBatchAttempts; attempt++) {
+                try {
+                  vectors = await embedder.embedBatch(texts);
+                  ok = vectors.length == texts.length;
+                } catch (_) {
+                  if (_closed || generation != _generation) rethrow;
+                  ok = false;
+                }
+                if (ok) break;
+              }
+              if (ok) {
+                for (var index = 0; index < batch.length; index++) {
+                  window[batch[index].source].vectors[batch[index].chunk] =
+                      vectors[index];
+                }
+                continue;
+              }
+              // 整批失败时逐条重发，定位真正失败的那一条，避免一条坏文本
+              // 让同批的其他来源一起记为失败。
+              for (final job in batch) {
+                _requireCurrent(generation);
+                try {
+                  final vector = await embedder.embed(job.text);
+                  window[job.source].vectors[job.chunk] = vector;
+                } catch (_) {
+                  if (_closed || generation != _generation) rethrow;
+                  window[job.source].failed = true;
+                }
+              }
+            }
+          }
+
+          await Future.wait([
+            for (
+              var index = 0;
+              index < math.min(_embedConcurrency, batches.length);
+              index++
+            )
+              worker(),
+          ]);
+          embedMs += embedStarted.elapsedMilliseconds;
+
+          for (final item in window) {
+            if (item.failed || !item.complete) {
+              failed++;
+              continue;
+            }
+            _requireCurrent(generation);
+            // 迟到结果写回之前重新检查来源：等待嵌入期间内容被更正、删除或撤销，
+            // 就放弃这一条，等下一次更新再处理。
+            if (!await sourceCurrent(item)) {
+              lateSkipped++;
+              continue;
+            }
+            await writeSource(item, [
+              for (final vector in item.vectors) vector!,
+            ]);
+          }
+          start = end;
         }
       }
 
@@ -578,7 +687,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         lateSkipped: lateSkipped,
         failed: failed,
         removed: removed,
-        total: batch.length,
+        total: targets.length,
         failure: failed == 0 ? IndexFailure.none : IndexFailure.error,
         embedMs: embedMs,
         writeMs: writeMs,
@@ -592,6 +701,26 @@ class SearchIndexService implements MemoryRelevanceRanker {
       }
       rethrow;
     }
+  }
+
+  /// 把一段窗口里的文本按条数与字符数切成若干批，供一次请求发送。
+  List<List<_ChunkJob>> _embedBatches(List<_ChunkJob> jobs) {
+    final batches = <List<_ChunkJob>>[];
+    var current = <_ChunkJob>[];
+    var chars = 0;
+    for (final job in jobs) {
+      if (current.isNotEmpty &&
+          (current.length >= _embedBatchMaxItems ||
+              chars + job.text.length > _embedBatchMaxChars)) {
+        batches.add(current);
+        current = <_ChunkJob>[];
+        chars = 0;
+      }
+      current.add(job);
+      chars += job.text.length;
+    }
+    if (current.isNotEmpty) batches.add(current);
+    return batches;
   }
 
   /// 按查询向量取候选，并逐条读取当前记录核对范围与版本。
@@ -877,6 +1006,28 @@ class IndexStats {
   final String modelKey;
   final String? builtAt;
   final IndexRefreshResult? lastRefresh;
+}
+
+/// 一次刷新里等待嵌入的一条来源；向量按片段序号回填。
+class _PendingSource {
+  _PendingSource(this.source, this.chunks)
+    : vectors = List<List<double>?>.filled(chunks.length, null);
+
+  final SemanticSource source;
+  final List<({int index, String text})> chunks;
+  final List<List<double>?> vectors;
+  bool failed = false;
+
+  bool get complete => vectors.every((vector) => vector != null);
+}
+
+/// 一条待嵌入的片段；[source] 与 [chunk] 都是窗口内的下标。
+class _ChunkJob {
+  const _ChunkJob(this.source, this.chunk, this.text);
+
+  final int source;
+  final int chunk;
+  final String text;
 }
 
 /// 索引结构损坏被重建时交给本机诊断记录的说明；原文与调用栈不进入界面。

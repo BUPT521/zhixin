@@ -190,7 +190,7 @@ _rig({
   );
 }
 
-class _SlowClient implements EmbeddingClient {
+class _SlowClient extends EmbeddingClient {
   _SlowClient(this.inner);
 
   final EmbeddingClient inner;
@@ -208,7 +208,7 @@ class _SlowClient implements EmbeddingClient {
   void dispose() {}
 }
 
-class _MutatingClient implements EmbeddingClient {
+class _MutatingClient extends EmbeddingClient {
   _MutatingClient({required this.inner, required this.onEmbed});
 
   final EmbeddingClient inner;
@@ -823,6 +823,65 @@ void main() {
     );
   });
 
+  test('远程批量嵌入按返回序号还原顺序，输入保持原顺序', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        jsonEncode({
+          'data': [
+            {
+              'index': 1,
+              'embedding': [0, 1, 0, 0],
+            },
+            {
+              'index': 0,
+              'embedding': [1, 0, 0, 0],
+            },
+          ],
+        }),
+        200,
+      );
+    });
+    final embedding = RemoteEmbeddingClient(
+      spec: _spec,
+      endpoint: 'https://embed.example.com/v1',
+      apiKey: '',
+      httpClient: client,
+    );
+
+    final vectors = await embedding.embedBatch(['甲', '乙']);
+    expect(vectors[0], orderedEquals([1, 0, 0, 0]));
+    expect(vectors[1], orderedEquals([0, 1, 0, 0]));
+    final body = jsonDecode(captured.body) as Map<String, Object?>;
+    expect(body['input'], orderedEquals(['甲', '乙']));
+  });
+
+  test('远程批量嵌入返回的条数不足时报不可用', () async {
+    final embedding = RemoteEmbeddingClient(
+      spec: _spec,
+      endpoint: 'https://embed.example.com/v1',
+      apiKey: '',
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'embedding': [1, 0, 0, 0],
+              },
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
+
+    await expectLater(
+      embedding.embedBatch(['甲', '乙']),
+      throwsA(isA<EmbeddingUnavailable>()),
+    );
+  });
+
   test('材料范围只保留这份材料的页，不带出其他材料', () async {
     final rig = await _rig();
     addTearDown(rig.db.close);
@@ -934,6 +993,22 @@ void main() {
     final results = await Future.wait([first, second]);
     expect(identical(results.first, results.last), isTrue);
     expect(client.calls, 7);
+  });
+
+  test('一次刷新把多段正文合并成批量嵌入请求', () async {
+    final rig = await _rig(
+      clientFor: (spec) => _BatchCountingClient(
+        FixedEmbeddingClient(spec: spec, vectors: _vectors()),
+      ),
+    );
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+
+    final refresh = await rig.service.refresh();
+    expect(refresh.embedded, 7);
+    final client = rig.service.client! as _BatchCountingClient;
+    expect(client.batchCalls, 1);
+    expect(client.chunkCalls, 7);
   });
 
   test('记忆索引按关键词相关性排序，改、删随之同步，不调用嵌入来源', () async {
@@ -1054,7 +1129,7 @@ class _TrackedStore extends DirectVectorStore {
   }
 }
 
-class _CountingClient implements EmbeddingClient {
+class _CountingClient extends EmbeddingClient {
   _CountingClient(this.inner);
 
   final EmbeddingClient inner;
@@ -1073,7 +1148,34 @@ class _CountingClient implements EmbeddingClient {
   void dispose() {}
 }
 
-class _RecordingClient implements EmbeddingClient {
+class _BatchCountingClient extends EmbeddingClient {
+  _BatchCountingClient(this.inner);
+
+  final EmbeddingClient inner;
+  int batchCalls = 0;
+  int chunkCalls = 0;
+
+  @override
+  EmbeddingModelSpec get spec => inner.spec;
+
+  @override
+  Future<List<double>> embed(String text) {
+    chunkCalls++;
+    return inner.embed(text);
+  }
+
+  @override
+  Future<List<List<double>>> embedBatch(List<String> texts) async {
+    batchCalls++;
+    chunkCalls += texts.length;
+    return [for (final text in texts) await inner.embed(text)];
+  }
+
+  @override
+  void dispose() {}
+}
+
+class _RecordingClient extends EmbeddingClient {
   _RecordingClient({required this.inner, required this.sent});
 
   final EmbeddingClient inner;

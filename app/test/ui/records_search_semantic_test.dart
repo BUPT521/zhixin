@@ -23,7 +23,7 @@ final _skipWithoutZvec =
     ? null
     : '未设置 ZVEC_LIBRARY_PATH，跳过真实 zvec 的界面用例';
 
-class _FailingClient implements EmbeddingClient {
+class _FailingClient extends EmbeddingClient {
   @override
   EmbeddingModelSpec get spec => _spec;
 
