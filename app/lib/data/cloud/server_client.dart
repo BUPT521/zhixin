@@ -351,6 +351,7 @@ class ServerRelease {
     required this.url,
     this.publishedAt = '',
     this.sha256 = '',
+    this.signature = '',
     this.size = 0,
     this.minVersion = '',
     this.notes = '',
@@ -363,6 +364,7 @@ class ServerRelease {
     url: json['url'] as String? ?? '',
     publishedAt: json['published_at'] as String? ?? '',
     sha256: json['sha256'] as String? ?? '',
+    signature: json['signature'] as String? ?? '',
     size: (json['size'] as num?)?.toInt() ?? 0,
     minVersion: json['min_version'] as String? ?? '',
     notes: json['notes'] as String? ?? '',
@@ -373,7 +375,12 @@ class ServerRelease {
   final int build;
   final String url;
   final String publishedAt;
+
+  /// 安装包的 SHA-256，契约要求 64 位小写十六进制。
   final String sha256;
+
+  /// 对 [sha256] 十六进制字符串的 Ed25519 签名（base64），可选。
+  final String signature;
   final int size;
   final String minVersion;
   final String notes;
