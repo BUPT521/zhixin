@@ -70,6 +70,10 @@ type Service struct {
 	deleteAccountData AccountDeleter
 	activity          ActivityRecorder
 
+	// passwords 限制同时进行的 argon2 计算数；为 nil 时不限制，只有装配处
+	// 按内存预算设置之后才生效。
+	passwords *PasswordBudget
+
 	// 邮箱验证与找回密码。mailer 为 nil 时请求返回 ErrMailUnavailable；
 	// codeSecret 用来给六位验证码做 HMAC，避免库里的哈希被穷举。
 	mailer       Mailer
@@ -101,6 +105,35 @@ func (s *Service) SetAccountDataDeleter(d AccountDeleter) { s.deleteAccountData 
 // SetActivityRecorder registers the daily active-day recorder. 不设置时登录用户
 // 的活跃不统计，其他功能不受影响。
 func (s *Service) SetActivityRecorder(r ActivityRecorder) { s.activity = r }
+
+// SetPasswordBudget 按内存预算（MiB）限制同时进行的 argon2 计算数，注册、登录、
+// 重设密码与删号共用这一个上限。不调用时不限制。
+func (s *Service) SetPasswordBudget(mib int) {
+	if mib <= 0 {
+		s.passwords = nil
+		return
+	}
+	s.passwords = NewPasswordBudget(mib)
+}
+
+// hashPassword 在预算内生成哈希。等待名额期间 ctx 结束时直接返回错误，不再
+// 开启一次已经没人等的计算。
+func (s *Service) hashPassword(ctx context.Context, password string) (string, error) {
+	if err := s.passwords.Acquire(ctx); err != nil {
+		return "", err
+	}
+	defer s.passwords.Release()
+	return HashPassword(password)
+}
+
+// verifyPassword 在预算内核对密码。
+func (s *Service) verifyPassword(ctx context.Context, encoded, password string) (bool, error) {
+	if err := s.passwords.Acquire(ctx); err != nil {
+		return false, err
+	}
+	defer s.passwords.Release()
+	return VerifyPassword(encoded, password)
+}
 
 // RecordActivity 在鉴权成功之后记一次账号活跃。错误由调用方记日志，不影响
 // 本次请求：统计失败不该让用户的操作失败。
@@ -150,7 +183,7 @@ func (s *Service) Register(ctx context.Context, email, password, device string) 
 	if err := checkPassword(password); err != nil {
 		return Tokens{}, err
 	}
-	hash, err := HashPassword(password)
+	hash, err := s.hashPassword(ctx, password)
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -171,15 +204,17 @@ func (s *Service) Login(ctx context.Context, email, password, device string) (To
 	if errors.Is(err, ErrNotFound) {
 		// Spend the same work as a real check so timing does not reveal
 		// which emails are registered.
-		_, _ = VerifyPassword(dummyHash, password)
+		_, _ = s.verifyPassword(ctx, dummyHash, password)
 		return Tokens{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return Tokens{}, err
 	}
-	ok, err := VerifyPassword(u.PasswordHash, password)
+	ok, err := s.verifyPassword(ctx, u.PasswordHash, password)
 	if err != nil {
-		return Tokens{}, err
+		// 库里的哈希格式或参数不合法时按凭据错误处理：这是库里那一行的问题，
+		// 不能因此让这个账号每次登录都回 500，也不能借状态码区分账号是否存在。
+		return Tokens{}, ErrInvalidCredentials
 	}
 	if !ok {
 		return Tokens{}, ErrInvalidCredentials
@@ -316,7 +351,7 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 	if err := s.checkCode(ctx, u.ID, PurposeResetPassword, code); err != nil {
 		return err
 	}
-	hash, err := HashPassword(newPassword)
+	hash, err := s.hashPassword(ctx, newPassword)
 	if err != nil {
 		return err
 	}
