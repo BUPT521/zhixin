@@ -26,6 +26,7 @@ import 'learning_page.dart';
 import 'materials_page.dart';
 import 'memory_page.dart';
 import 'memory_proposal_page.dart';
+import 'memory_search_page.dart';
 import 'persona_page.dart';
 import 'plan_page.dart';
 import 'plugins_page.dart';
@@ -129,6 +130,12 @@ Future<void> openSettings(BuildContext context) {
 Future<void> openMemory(BuildContext context) {
   return Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const MemoryPage()));
+}
+
+/// 打开记忆查找页：按正文、类别、适用范围与状态查找。
+Future<void> openMemorySearch(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const MemorySearchPage()));
 }
 
 /// 打开插件设置页：启停随应用编译的第一方插件。
