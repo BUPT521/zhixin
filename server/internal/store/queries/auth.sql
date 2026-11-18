@@ -90,7 +90,8 @@ SET access_hash = sqlc.arg(new_access_hash),
 WHERE id = sqlc.arg(id) AND refresh_hash = sqlc.arg(old_refresh_hash);
 
 -- 轮换成功时记下旧令牌摘要，供旧令牌再次出现时判断是重试还是盗用。同一个
--- 摘要重复写入（并发重试）忽略即可。
+-- 摘要重复写入（并发或连续重试）时只更新“本次发出的令牌”，宽限截止时间与
+-- request_id 保持第一次的值：重试因此不延长宽限期。
 -- name: InsertRefreshUsed :exec
 INSERT INTO session_refresh_used (
   token_hash, session_id, user_id, request_id, rotated_at, grace_until,
@@ -101,7 +102,10 @@ VALUES (
   sqlc.arg(request_id), sqlc.arg(rotated_at), sqlc.arg(grace_until),
   sqlc.arg(replaced_access_hash), sqlc.arg(replaced_refresh_hash)
 )
-ON CONFLICT (token_hash) DO NOTHING;
+ON CONFLICT (token_hash) DO UPDATE SET
+  rotated_at = excluded.rotated_at,
+  replaced_access_hash = excluded.replaced_access_hash,
+  replaced_refresh_hash = excluded.replaced_refresh_hash;
 
 -- name: RefreshUsed :one
 SELECT token_hash, session_id, user_id, request_id, rotated_at, grace_until,

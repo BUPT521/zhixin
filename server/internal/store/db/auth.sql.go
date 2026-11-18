@@ -226,7 +226,10 @@ VALUES (
   $4, $5, $6,
   $7, $8
 )
-ON CONFLICT (token_hash) DO NOTHING
+ON CONFLICT (token_hash) DO UPDATE SET
+  rotated_at = excluded.rotated_at,
+  replaced_access_hash = excluded.replaced_access_hash,
+  replaced_refresh_hash = excluded.replaced_refresh_hash
 `
 
 type InsertRefreshUsedParams struct {
@@ -241,7 +244,8 @@ type InsertRefreshUsedParams struct {
 }
 
 // 轮换成功时记下旧令牌摘要，供旧令牌再次出现时判断是重试还是盗用。同一个
-// 摘要重复写入（并发重试）忽略即可。
+// 摘要重复写入（并发或连续重试）时只更新“本次发出的令牌”，宽限截止时间与
+// request_id 保持第一次的值：重试因此不延长宽限期。
 func (q *Queries) InsertRefreshUsed(ctx context.Context, arg InsertRefreshUsedParams) error {
 	_, err := q.db.Exec(ctx, insertRefreshUsed,
 		arg.TokenHash,

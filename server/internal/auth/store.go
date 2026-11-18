@@ -88,7 +88,8 @@ type Store interface {
 	RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error
 	// UsedRefresh 返回已经轮换掉的刷新令牌摘要；没有记录时返回 ErrNotFound。
 	UsedRefresh(ctx context.Context, tokenHash string) (RefreshUsed, error)
-	// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要；同一个摘要重复写入忽略。
+	// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要；同一个摘要重复写入时
+	// 更新“本次发出的令牌”，宽限截止时间与 request_id 保留第一次的值。
 	RecordRefreshUsed(ctx context.Context, u RefreshUsed) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
@@ -396,10 +397,17 @@ func (m *MemoryStore) UsedRefresh(_ context.Context, tokenHash string) (RefreshU
 	return u, nil
 }
 
+// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要。同一个摘要重复写入时只更新
+// “本次发出的令牌”，宽限截止时间与 request_id 保留第一次的值，重试因此不会
+// 延长宽限期，连续重试也仍然能按记录里的最新摘要再轮换。
 func (m *MemoryStore) RecordRefreshUsed(_ context.Context, u RefreshUsed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.refreshUsed[u.TokenHash]; ok {
+	if old, ok := m.refreshUsed[u.TokenHash]; ok {
+		old.RotatedAt = u.RotatedAt
+		old.ReplacedAccessHash = u.ReplacedAccessHash
+		old.ReplacedRefreshHash = u.ReplacedRefreshHash
+		m.refreshUsed[u.TokenHash] = old
 		return nil
 	}
 	m.refreshUsed[u.TokenHash] = u

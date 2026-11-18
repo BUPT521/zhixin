@@ -359,19 +359,22 @@ func (s *Service) handleRefreshReuse(ctx context.Context, oldHash, requestID str
 	if err != nil {
 		return Tokens{}, err
 	}
-	// 重试换掉了上一对令牌，旧令牌摘要继续保留同一宽限截止时间，下一对成为新的
-	// 可重试对象。
-	if err := s.store.RecordRefreshUsed(ctx, RefreshUsed{
-		TokenHash:           used.ReplacedRefreshHash,
-		SessionID:           used.SessionID,
-		UserID:              used.UserID,
-		RequestID:           used.RequestID,
-		RotatedAt:           now,
-		GraceUntil:          used.GraceUntil,
-		ReplacedAccessHash:  hashToken(tokens.AccessToken),
-		ReplacedRefreshHash: hashToken(tokens.RefreshToken),
-	}); err != nil {
-		return Tokens{}, err
+	// 重试换掉了上一对令牌：原旧令牌与刚用掉的令牌都指向新的一对，宽限截止
+	// 时间沿用原记录。同一客户端在宽限期内连续重试因此都能拿到新令牌，而宽限期
+	// 不会因为重试变长。
+	for _, hash := range []string{oldHash, used.ReplacedRefreshHash} {
+		if err := s.store.RecordRefreshUsed(ctx, RefreshUsed{
+			TokenHash:           hash,
+			SessionID:           used.SessionID,
+			UserID:              used.UserID,
+			RequestID:           used.RequestID,
+			RotatedAt:           now,
+			GraceUntil:          used.GraceUntil,
+			ReplacedAccessHash:  hashToken(tokens.AccessToken),
+			ReplacedRefreshHash: hashToken(tokens.RefreshToken),
+		}); err != nil {
+			return Tokens{}, err
+		}
 	}
 	return tokens, nil
 }

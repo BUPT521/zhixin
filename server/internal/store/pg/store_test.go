@@ -280,6 +280,26 @@ func TestPostgresRefreshRotation(t *testing.T) {
 		t.Fatalf("宽限截止时间应原样保存：%v vs %v", got.GraceUntil, used.GraceUntil)
 	}
 
+	// 重试路径会更新记录里“本次发出的令牌”，宽限截止时间与 request_id 保持
+	// 第一次的值。
+	updated := used
+	updated.RotatedAt = now.Add(5 * time.Second)
+	updated.ReplacedAccessHash, updated.ReplacedRefreshHash = "ah4", "rh4"
+	updated.GraceUntil = now.Add(30 * time.Second) // 不应被写入
+	if err := st.RecordRefreshUsed(ctx, updated); err != nil {
+		t.Fatalf("更新旧令牌记录: %v", err)
+	}
+	afterUpdate, err := st.UsedRefresh(ctx, "rh1")
+	if err != nil {
+		t.Fatalf("更新后读取旧令牌记录: %v", err)
+	}
+	if afterUpdate.ReplacedRefreshHash != "rh4" || afterUpdate.ReplacedAccessHash != "ah4" {
+		t.Fatalf("本次发出的令牌应更新，得到 %+v", afterUpdate)
+	}
+	if !afterUpdate.GraceUntil.Equal(used.GraceUntil) || afterUpdate.RequestID != "req-1" {
+		t.Fatalf("宽限截止时间与 request_id 不应被重试改写，得到 %+v", afterUpdate)
+	}
+
 	if err := st.DeleteSession(ctx, "s1"); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}

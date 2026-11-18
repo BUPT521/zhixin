@@ -75,8 +75,8 @@ func TestRefreshKeepsSessionAndRotates(t *testing.T) {
 	}
 }
 
-// TestRefreshRetryWithinGrace 核对宽限期内带同一 request_id 的重试成功，且重试
-// 返回的令牌可用、不记安全事件。
+// TestRefreshRetryWithinGrace 核对宽限期内带同一 request_id 的重试成功，连续
+// 重试也能拿到可用令牌，且不记安全事件。
 func TestRefreshRetryWithinGrace(t *testing.T) {
 	ctx := context.Background()
 	s, c, buf := newRefreshService(t)
@@ -86,16 +86,20 @@ func TestRefreshRetryWithinGrace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.t = c.t.Add(30 * time.Second)
-	retry, err := s.Refresh(ctx, first.RefreshToken, "req-1")
-	if err != nil {
-		t.Fatalf("宽限期内的同 request_id 重试应当成功: %v", err)
-	}
-	if _, err := s.Authenticate(ctx, retry.AccessToken); err != nil {
-		t.Fatalf("重试返回的访问令牌应可用: %v", err)
-	}
-	if _, err := s.Refresh(ctx, retry.RefreshToken, "req-1"); err != nil {
-		t.Fatalf("重试返回的刷新令牌应可用: %v", err)
+	for i := 0; i < 3; i++ {
+		c.t = c.t.Add(5 * time.Second)
+		retry, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+		if err != nil {
+			t.Fatalf("第 %d 次重试应当成功: %v", i+1, err)
+		}
+		if _, err := s.Authenticate(ctx, retry.AccessToken); err != nil {
+			t.Fatalf("第 %d 次重试返回的访问令牌应可用: %v", i+1, err)
+		}
+		if i == 2 {
+			if _, err := s.Refresh(ctx, retry.RefreshToken, "req-1"); err != nil {
+				t.Fatalf("重试返回的刷新令牌应可用: %v", err)
+			}
+		}
 	}
 	if strings.Contains(buf.String(), "refresh token reuse") {
 		t.Fatalf("重试不应记安全事件: %s", buf.String())
@@ -183,6 +187,44 @@ func TestRefreshRetryDoesNotExtendGrace(t *testing.T) {
 	c.t = c.t.Add(refreshGrace - 29*time.Second)
 	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("重试不应延长宽限期，得到 %v", err)
+	}
+}
+
+// TestConcurrentRefreshOneWins 核对并发刷新同一个令牌只有一个成功：CAS 的输家
+// 返回 ErrInvalidToken；如果输家的 request_id 不同，还会按重放撤销会话，所以只
+// 断言一成一败，不断言会话仍然存在。
+func TestConcurrentRefreshOneWins(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestService()
+	reg, err := s.Register(ctx, "a@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := s.Refresh(ctx, reg.RefreshToken, fmt.Sprintf("req-%d", i))
+			results <- err
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	success, rejected := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			success++
+		case errors.Is(err, ErrInvalidToken):
+			rejected++
+		default:
+			t.Fatalf("并发刷新返回了意外的错误: %v", err)
+		}
+	}
+	if success != 1 || rejected != 1 {
+		t.Fatalf("并发刷新应只有一个成功，得到成功 %d 个、拒绝 %d 个", success, rejected)
 	}
 }
 
