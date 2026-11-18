@@ -44,14 +44,53 @@ class FakeServer {
 
   final Map<String, _Session> _access = {};
   final Map<String, _Session> _refresh = {};
+
+  /// 已经轮换、仍在宽限期内的刷新令牌：记下原请求标识与当时的响应，用来模拟
+  /// 服务端把“同一标识的重试”和“旧刷新令牌被盗用”区分开。
+  final Map<String, _RefreshReplay> _refreshReplays = {};
+
+  /// 每次刷新请求的刷新令牌与 request_id，用例据此核对重试是否同号。
+  final List<({String refreshToken, String requestId})> refreshRequests = [];
+
+  /// 打开之后下一次刷新在服务端完成轮换、但响应在返回客户端之前断开。
+  bool dropNextRefreshResponse = false;
+
+  /// 刷新请求先等这个信号再处理；用例用它把刷新卡在途中，模拟切换身份。
+  Future<void>? delayRefresh;
+
+  /// 附件上传先等这个信号再处理，用来模拟上传途中切换实例或账号。
+  Future<void>? delayBlobUpload;
+
+  /// 登录请求先等这个信号再处理，用来模拟登录途中切换实例。
+  Future<void>? delayLogin;
+
+  /// 收到的登录请求次数，配合 [delayLogin] 判断请求已经发出。
+  int loginRequests = 0;
+
   int _nextToken = 1;
 
   /// 打开之后下一次带令牌的请求返回 401，客户端应当先刷新再重试。
   bool expireAccess = false;
 
+  /// 删除账号时密码错误的次数；用例据此确认密码错误没有触发令牌刷新重试。
+  int deleteAttempts = 0;
+
   final Map<String, List<Map<String, Object?>>> commits = {};
   final Map<String, List<FakeBackup>> backups = {};
   final Map<String, Map<String, Uint8List>> blobs = {};
+
+  /// 单个附件的上限与单账号附件总量上限；为空时不限制，与契约里的两个环境
+  /// 变量对应。超限时分别返回 `payload_too_large` 与 `storage_full`。
+  int? maxAttachmentBytes;
+  int? storageLimitBytes;
+
+  /// 收到的附件 PUT 次数，用例据此确认超限之后没有再上传后面的附件。
+  int blobUploadAttempts = 0;
+
+  /// `DELETE /v1/cloud` 的请求次数；[cloudClearConflicts] 控制接下来几次返回
+  /// 409，模拟上一次清除还没结束。
+  int cloudClearRequests = 0;
+  int cloudClearConflicts = 0;
 
   /// 发布清单与收到的反馈；两者都是公开接口，不需要登录。
   final List<Map<String, Object?>> releases = [];
@@ -157,12 +196,16 @@ class FakeServer {
           .where((entry) => entry.value == userId)
           .map((entry) => entry.key);
       final email = matches.isEmpty ? null : matches.first;
-      _userIds.removeWhere((_, id) => id == userId);
-      if (email != null) {
-        _passwords.remove(email);
-        _verified.remove(email);
-        _codes.removeWhere((key, _) => key.startsWith('$email|'));
+      final password = body['password'] as String? ?? '';
+      if (password.isEmpty) return _problem(400, 'invalid_request');
+      if (email == null || _passwords[email] != password) {
+        deleteAttempts++;
+        return _problem(401, 'invalid_credentials');
       }
+      _userIds.removeWhere((_, id) => id == userId);
+      _passwords.remove(email);
+      _verified.remove(email);
+      _codes.removeWhere((key, _) => key.startsWith('$email|'));
       commits.remove(userId);
       backups.remove(userId);
       blobs.remove(userId);
@@ -170,6 +213,18 @@ class FakeServer {
     }
     if (method == 'DELETE' && path == '/v1/backups') {
       backups.remove(userId);
+      return http.Response('', 204);
+    }
+    if (method == 'DELETE' && path == '/v1/cloud') {
+      cloudClearRequests++;
+      if (cloudClearConflicts > 0) {
+        cloudClearConflicts--;
+        return _problem(409, 'conflict');
+      }
+      // 一次清空备份、提交序列、附件与遗留对象，可重复调用；账号保留。
+      backups.remove(userId);
+      commits[userId] = [];
+      blobs.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/sync/commits') {
@@ -220,8 +275,29 @@ class FakeServer {
       final hash = path.substring('/v1/blobs/'.length);
       final userBlobs = blobs.putIfAbsent(userId, () => {});
       if (method == 'PUT') {
+        blobUploadAttempts++;
+        final gate = delayBlobUpload;
+        if (gate != null) await gate;
         final bytes = Uint8List.fromList(request.bodyBytes);
         if (_sha256Hex(bytes) != hash) return _problem(400, 'invalid_request');
+        final singleLimit = maxAttachmentBytes;
+        if (singleLimit != null && bytes.length > singleLimit) {
+          return _problem(413, 'payload_too_large');
+        }
+        final totalLimit = storageLimitBytes;
+        final used = userBlobs.values.fold<int>(
+          0,
+          (sum, current) => sum + current.length,
+        );
+        if (totalLimit != null &&
+            !userBlobs.containsKey(hash) &&
+            used + bytes.length > totalLimit) {
+          return _problem(
+            413,
+            'storage_full',
+            extra: {'used_bytes': used, 'limit_bytes': totalLimit},
+          );
+        }
         userBlobs[hash] = bytes;
         return http.Response('', 201);
       }
@@ -324,7 +400,10 @@ class FakeServer {
     return _tokens(userId, body['device_name'] as String? ?? '');
   }
 
-  http.Response _login(Map<String, Object?> body) {
+  Future<http.Response> _login(Map<String, Object?> body) async {
+    loginRequests++;
+    final gate = delayLogin;
+    if (gate != null) await gate;
     final email = (body['email'] as String? ?? '').trim().toLowerCase();
     if (_passwords[email] == null ||
         _passwords[email] != (body['password'] as String? ?? '')) {
@@ -333,12 +412,48 @@ class FakeServer {
     return _tokens(_userIds[email]!, body['device_name'] as String? ?? '');
   }
 
-  http.Response _refreshToken(Map<String, Object?> body) {
+  Future<http.Response> _refreshToken(Map<String, Object?> body) async {
     final refresh = body['refresh_token'] as String? ?? '';
+    final requestId = (body['request_id'] as String? ?? '').trim();
+    refreshRequests.add((refreshToken: refresh, requestId: requestId));
+    final gate = delayRefresh;
+    if (gate != null) await gate;
+    return _refreshTokenResponse(refresh, requestId);
+  }
+
+  http.Response _refreshTokenResponse(String refresh, String requestId) {
+    final replay = _refreshReplays[refresh];
+    if (replay != null) {
+      if (requestId.isEmpty ||
+          requestId != replay.requestId ||
+          DateTime.now().isAfter(replay.expiresAt)) {
+        // 换了标识、没带标识或超过宽限期：按旧刷新令牌被盗用处理，撤销会话。
+        _revoke(replay.userId);
+        _refreshReplays.remove(refresh);
+        return _problem(401, 'unauthorized');
+      }
+      return replay.response;
+    }
     final session = _refresh.remove(refresh);
     if (session == null) return _problem(401, 'unauthorized');
     _access.remove(session.accessToken);
-    return _tokens(session.userId, '', refresh: false);
+    final response = _tokens(session.userId, '', refresh: false);
+    _refreshReplays[refresh] = _RefreshReplay(
+      userId: session.userId,
+      requestId: requestId,
+      expiresAt: DateTime.now().add(const Duration(seconds: 60)),
+      response: response,
+    );
+    if (dropNextRefreshResponse) {
+      dropNextRefreshResponse = false;
+      throw http.ClientException('连接在刷新响应返回之前断开');
+    }
+    return response;
+  }
+
+  void _revoke(String userId) {
+    _access.removeWhere((_, session) => session.userId == userId);
+    _refresh.removeWhere((_, session) => session.userId == userId);
   }
 
   _FakeCode _newCode() {
@@ -456,6 +571,21 @@ class _Session {
   final String userId;
   final String accessToken;
   final String refreshToken;
+}
+
+/// 一次已经完成的刷新：原刷新令牌、请求标识、当时的响应与重试宽限期。
+class _RefreshReplay {
+  const _RefreshReplay({
+    required this.userId,
+    required this.requestId,
+    required this.expiresAt,
+    required this.response,
+  });
+
+  final String userId;
+  final String requestId;
+  final DateTime expiresAt;
+  final http.Response response;
 }
 
 class FakeBackup {

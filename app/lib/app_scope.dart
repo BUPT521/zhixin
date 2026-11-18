@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' as foundation;
+import 'package:flutter/services.dart' show appBuildName, appBuildNumber;
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
@@ -32,6 +34,7 @@ import 'application/study_plan_service.dart';
 import 'application/sync_service.dart';
 import 'application/time_policy_controller.dart';
 import 'application/undo_service.dart';
+import 'application/update_service.dart';
 import 'data/backup/data_package_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
@@ -132,6 +135,9 @@ class AppScopeState extends State<AppScope> {
   /// 账号与云同步：令牌在 Keystore，服务地址与同步游标在应用私有目录。
   AccountService? _accountService;
   ActiveReportService? _activeReportService;
+
+  /// 更新检查：启动后空闲时读一次发布清单，结果交给设置页显示。
+  UpdateService? _updateService;
   late final CloudPreferencesStore _cloudPreferences;
   CloudBackupService? _cloudBackups;
   SyncService? _cloudSync;
@@ -250,6 +256,7 @@ class AppScopeState extends State<AppScope> {
     settings: SettingsServices(
       edit: _settingsEdit,
       embedding: _embeddingSettings,
+      updates: _updateService!,
       aiFactory: () => _ai,
     ),
     data: DataServices(
@@ -500,6 +507,17 @@ class AppScopeState extends State<AppScope> {
       crashLog: crashLog,
       appVersion: appVersion,
     );
+    _updateService = UpdateService(
+      serverBaseUrl: _account.serverBaseUrl,
+      currentVersion: appBuildName ?? '0',
+      currentBuild: int.tryParse(appBuildNumber ?? '') ?? 0,
+      platform:
+          foundation.defaultTargetPlatform == foundation.TargetPlatform.android
+          ? 'android'
+          : 'other',
+      recordFailure: (error, stack, {required kind}) =>
+          crashLog.record(error, stack, kind: kind),
+    );
     _configuredAi = AiChatService(
       store: _llmStore,
       configSource: _configuredModelConfig,
@@ -574,6 +592,18 @@ class AppScopeState extends State<AppScope> {
     // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。
     unawaited(_sync.schedule());
     _scheduleActiveReport();
+    _scheduleUpdateCheck();
+  }
+
+  /// 首帧之后在空闲里检查一次发布清单；更新提示放在设置页，不打断学习。
+  ///
+  /// 检查本身不登录也能做，失败只写本机诊断；debug 构建默认不检查，见
+  /// [UpdateService.enabled]。
+  void _scheduleUpdateCheck() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_updateService?.ensureChecked() ?? Future<void>.value());
+    });
   }
 
   /// 首帧之后在空闲里尝试一次匿名活跃上报（ADR-0019）：不等待、不阻塞启动，
@@ -707,6 +737,7 @@ class AppScopeState extends State<AppScope> {
   @override
   void dispose() {
     _searchIndexRefreshTimer?.cancel();
+    _updateService?.dispose();
     _cloudSync?.dispose();
     _accountService?.dispose();
     _configuredAi?.dispose();

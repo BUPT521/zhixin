@@ -18,6 +18,7 @@ import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'application/sync_service.dart';
 import 'application/undo_service.dart';
+import 'application/update_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/revisions/revision_service.dart';
 import 'plugins/persona/persona_catalog.dart';
@@ -107,11 +108,15 @@ class SettingsServices {
   const SettingsServices({
     required this.edit,
     required this.embedding,
+    required this.updates,
     required this.aiFactory,
   });
 
   final SettingsService edit;
   final EmbeddingSettingsService embedding;
+
+  /// 启动后空闲时检查一次发布清单，设置页把结果展示为可关闭的提示。
+  final UpdateService updates;
 
   final BuddyAi Function() aiFactory;
 

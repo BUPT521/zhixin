@@ -6,11 +6,14 @@ import 'package:path/path.dart' as p;
 /// 增量同步的本机游标：服务端已经对齐到 [serverHead]，本机编号不超过
 /// [pushedThrough] 的提交都已经在服务端序列里。
 ///
+/// [serverOrigin] 与 [userId] 一起标识游标所属的服务实例与账号：切换实例或
+/// 账号之后旧游标不能再用，否则会把一个实例的位置带到另一个实例上。
 /// [remoteLocalIds] 是拉取远端提交之后在本机新生成的提交编号：它们对应服务端
 /// 已有的提交，推送时要跳过，成功推送之后随 [pushedThrough] 一起清空。
 class SyncState {
   const SyncState({
     required this.userId,
+    required this.serverOrigin,
     required this.serverHead,
     required this.pushedThrough,
     this.remoteLocalIds = const {},
@@ -19,6 +22,7 @@ class SyncState {
 
   factory SyncState.fromJson(Map<String, Object?> json) => SyncState(
     userId: json['user_id'] as String? ?? '',
+    serverOrigin: json['server_origin'] as String? ?? '',
     serverHead: (json['server_head'] as num?)?.toInt() ?? 0,
     pushedThrough: (json['pushed_through'] as num?)?.toInt() ?? 0,
     remoteLocalIds: {
@@ -29,6 +33,9 @@ class SyncState {
   );
 
   final String userId;
+
+  /// 游标所属服务实例的来源（协议、主机与端口）。
+  final String serverOrigin;
   final int serverHead;
   final int pushedThrough;
   final Set<int> remoteLocalIds;
@@ -42,6 +49,7 @@ class SyncState {
   }) {
     return SyncState(
       userId: userId,
+      serverOrigin: serverOrigin,
       serverHead: serverHead ?? this.serverHead,
       pushedThrough: pushedThrough ?? this.pushedThrough,
       remoteLocalIds: remoteLocalIds ?? this.remoteLocalIds,
@@ -51,6 +59,7 @@ class SyncState {
 
   Map<String, Object?> toJson() => {
     'user_id': userId,
+    'server_origin': serverOrigin,
     'server_head': serverHead,
     'pushed_through': pushedThrough,
     'remote_local_ids': remoteLocalIds.toList()..sort(),
@@ -132,12 +141,27 @@ class CloudPreferencesStore {
     await _write({...raw, 'auto_sync': value});
   }
 
+  /// 上一次登录的身份（实例来源与账号）；用它判断这次登录是不是换了账号，
+  /// 换了账号就把自动同步先停下来，等用户确认之后再恢复。
+  Future<String> lastIdentity() async {
+    final raw = await _read();
+    final value = raw['last_identity'];
+    return value is String ? value.trim() : '';
+  }
+
+  Future<void> setLastIdentity(String value) async {
+    final raw = await _read();
+    await _write({...raw, 'last_identity': value.trim()});
+  }
+
   Future<SyncState?> syncState() async {
     final raw = await _read();
     final state = raw['sync_state'];
     if (state is! Map) return null;
     final decoded = SyncState.fromJson(state.cast<String, Object?>());
-    return decoded.userId.isEmpty ? null : decoded;
+    return decoded.userId.isEmpty || decoded.serverOrigin.isEmpty
+        ? null
+        : decoded;
   }
 
   Future<void> saveSyncState(SyncState state) async {

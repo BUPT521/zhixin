@@ -9,6 +9,7 @@ import '../application/sync_service.dart';
 import '../data/cloud/server_client.dart' show ServerQuota;
 import '../platform/app_info.dart';
 import 'copy.dart';
+import 'cloud_sync_prompts.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -164,12 +165,53 @@ class _MinePageState extends State<MinePage> {
 
   Future<void> _syncNow() async {
     if (_syncing) return;
+    final services = AppScope.of(context).accountServices;
+    var confirmBaseline = false;
+    try {
+      final status = await services.sync.status();
+      if (status.baselineNeedsConfirmation) {
+        if (!mounted) return;
+        final confirmed = await confirmBaselineUpload(
+          context,
+          localCommits: status.localHead,
+        );
+        if (!confirmed) {
+          await services.account.setAutoSync(false);
+          if (!mounted) return;
+          setState(() {
+            _failed = false;
+            _notice = '已取消首次同步，没有上传本机记录；自动同步已暂停';
+          });
+          await _load();
+          return;
+        }
+        confirmBaseline = true;
+      }
+    } catch (error, stack) {
+      if (!mounted) return;
+      setState(() {
+        _failed = true;
+        _notice = describeFailure(
+          context,
+          error,
+          stack,
+          action: '读取同步状态',
+          kind: 'mine_sync_status',
+          kept: '本机记录没有改动',
+          next: '可以稍后再试',
+        );
+      });
+      return;
+    }
+    if (!mounted) return;
     setState(() {
       _syncing = true;
       _notice = null;
     });
     try {
-      final result = await AppScope.of(context).accountServices.sync.syncNow();
+      final result = await services.sync.syncNow(
+        confirmBaseline: confirmBaseline,
+      );
       if (!mounted) return;
       setState(() {
         _failed = false;

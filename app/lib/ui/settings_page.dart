@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'theme.dart';
 
@@ -10,16 +13,19 @@ import '../ai/llm_config.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/settings_service.dart';
+import '../application/update_service.dart';
 import '../domain/rules/time_policy.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/diagnostics_store.dart';
 import 'failure_feedback.dart';
 import 'live_view.dart';
 import 'navigation.dart';
+import 'update_notice.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
+import 'zhixin_toast.dart';
 
 /// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
 enum _Area { model, learning, appearance, diagnostics, danger }
@@ -76,6 +82,9 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 第一次读取设置项失败时的说明；重新订阅之后清除。
   String? _loadFailure;
 
+  /// 更新检查的结果由应用根在启动后写入，设置页只显示与关闭。
+  UpdateService? _updates;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -83,16 +92,37 @@ class _SettingsPageState extends State<SettingsPage> {
     _started = true;
     final scope = AppScope.of(context);
     _stream = scope.settings.edit.watchSettings();
+    _updates = scope.settings.updates..notice.addListener(_onUpdateNotice);
+    unawaited(_updates!.ensureChecked());
     _loadLocal(scope);
   }
 
   @override
   void dispose() {
+    _updates?.notice.removeListener(_onUpdateNotice);
     _baseUrl.dispose();
     _model.dispose();
     _contextWindow.dispose();
     _key.dispose();
     super.dispose();
+  }
+
+  void _onUpdateNotice() {
+    if (mounted) setState(() {});
+  }
+
+  /// 去下载交给系统浏览器；应用内不下载也不安装安装包。
+  Future<void> _openDownload(AppUpdate update) async {
+    final uri = Uri.tryParse(update.release.url.trim());
+    var opened = false;
+    if (uri != null) {
+      try {
+        opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        opened = false;
+      }
+    }
+    if (!opened && mounted) showToast(context, '没有可以打开下载地址的浏览器');
   }
 
   /// 重新订阅设置项：拍照方式写在 app_meta 里，保存不形成提交、没有表通知，
@@ -484,6 +514,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
     final signedIn = _account?.signedIn ?? false;
+    final update = _updates?.current;
     final configured =
         _config != null &&
         (_config!.isConfigured || (_config!.isServer && signedIn));
@@ -493,6 +524,14 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
+        if (update != null) ...[
+          UpdateNoticeCard(
+            update: update,
+            onDownload: () => _openDownload(update),
+            onDismiss: () => _updates!.dismiss(),
+          ),
+          SizedBox(height: theme.space.md),
+        ],
         if (_loadFailure != null)
           InlineNotice(message: _loadFailure!, onRetry: _retry),
         SectionHeading(

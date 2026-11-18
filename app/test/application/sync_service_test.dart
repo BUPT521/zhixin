@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -124,7 +125,7 @@ void main() {
   test('首次同步上传当前数据为基线，另一台设备拉取后得到同一条记录', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
 
     final userId = (await a.account.snapshot()).session!.userId;
     expect(server.headOf(userId), 1);
@@ -147,7 +148,7 @@ void main() {
   test('之后的本机写入按提交推送，另一台设备拉取后看到新记录与附件', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
 
     final b = await device('a@example.com');
     await b.sync.syncNow();
@@ -175,16 +176,124 @@ void main() {
   test('服务端序列被清空之后重新上传基线', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
     final userId = (await a.account.snapshot()).session!.userId;
     expect(server.headOf(userId), 1);
 
     await a.account.clearCloudData();
     await a.sync.clearState();
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
     // 清除云端数据之后服务端位置回到 0，同步重新上传了一份基线。
     expect(server.headOf(userId), 1);
     final last = server.commits[userId]!.last;
     expect(last['action'], '首次同步基线');
+  });
+
+  test('换实例重新登录后不复用旧同步游标，自动同步先暂停', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    expect((await a.sync.status()).serverHead, isNotNull);
+
+    await a.account.setServerBaseUrl('http://other.test');
+    final snapshot = await a.account.login(
+      email: 'a@example.com',
+      password: 'password123',
+    );
+    expect(snapshot.signedIn, isTrue);
+    expect(snapshot.autoSync, isFalse);
+    expect(await a.account.preferences.syncState(), isNull);
+    final status = await a.sync.status();
+    expect(status.serverHead, isNull);
+    expect(status.needsBootstrap, isTrue);
+  });
+
+  test('首次基线上传前必须确认，未确认时不向服务端写任何记录', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    await expectLater(
+      a.sync.syncNow(),
+      throwsA(
+        isA<BaselineConfirmationRequired>().having(
+          (error) => error.localCommits,
+          'localCommits',
+          1,
+        ),
+      ),
+    );
+    expect(server.headOf(userId), 0);
+    final status = await a.sync.status();
+    expect(status.baselineNeedsConfirmation, isTrue);
+    expect(status.needsBootstrap, isTrue);
+
+    await a.sync.syncNow(confirmBaseline: true);
+    expect(server.headOf(userId), 1);
+    final after = await a.sync.status();
+    expect(after.baselineNeedsConfirmation, isFalse);
+    expect(after.serverHead, 1);
+  });
+
+  test('账号附件总量超限时停止上传，游标不写回', () async {
+    server.storageLimitBytes = 2;
+    final a = await device('a@example.com', register: true);
+    final first = [1, 2, 3];
+    final second = [4, 5, 6];
+    final firstHash = AssetStore.hashBytes(first);
+    final secondHash = AssetStore.hashBytes(second);
+    await a.rig.db.command((txn) async {
+      await a.rig.engine.assets.putBytes(
+        txn,
+        firstHash,
+        Uint8List.fromList(first),
+      );
+      await a.rig.engine.assets.putBytes(
+        txn,
+        secondHash,
+        Uint8List.fromList(second),
+      );
+    }, label: '保存附件');
+    await _insertMemory(a.rig, 'm1', firstHash);
+    await _insertMemory(a.rig, 'm2', secondHash);
+
+    await expectLater(
+      a.sync.syncNow(confirmBaseline: true),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'storage_full')
+            .having(
+              (error) => error.userMessage,
+              'message',
+              contains('云端附件空间已满'),
+            ),
+      ),
+    );
+    // 第一个附件超限之后不再尝试后面的附件，也没有写回同步游标。
+    expect(server.blobUploadAttempts, 1);
+    expect(await a.account.preferences.syncState(), isNull);
+  });
+
+  test('上传途中切换实例，进行中的同步结果被丢弃', () async {
+    final a = await device('a@example.com', register: true);
+    final bytes = [1, 2, 3];
+    final hash = AssetStore.hashBytes(bytes);
+    await a.rig.db.command((txn) async {
+      await a.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
+    }, label: '保存附件');
+    await _insertMemory(a.rig, 'm1', hash);
+
+    final gate = Completer<void>();
+    server.delayBlobUpload = gate.future;
+    final pending = a.sync.syncNow(confirmBaseline: true);
+    while (server.blobUploadAttempts == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    // 附件已经发到旧实例，但同步还没收尾；这时切走，旧结果不能写回。
+    await a.account.setServerBaseUrl('http://other.test');
+    gate.complete();
+
+    await expectLater(pending, throwsA(isA<SyncIdentityChanged>()));
+    expect(await a.account.preferences.syncState(), isNull);
   });
 }

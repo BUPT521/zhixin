@@ -7,8 +7,10 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/sync_service.dart';
-import '../data/cloud/server_client.dart' show ServerQuota;
+import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
+import 'account_dialogs.dart';
+import 'cloud_sync_prompts.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -48,6 +50,9 @@ class _AccountPageState extends State<AccountPage> {
   /// 页面顶部的一次性说明：失败用就地说明，成功用一行小字。
   String? _notice;
   bool _failed = false;
+
+  /// 失败说明旁边可用的重试动作；成功说明与不需要重试的说明为空。
+  VoidCallback? _noticeRetry;
 
   @override
   void didChangeDependencies() {
@@ -106,11 +111,12 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  void _report(String message, {bool failed = false}) {
+  void _report(String message, {bool failed = false, VoidCallback? retry}) {
     if (!mounted) return;
     setState(() {
       _notice = message;
       _failed = failed;
+      _noticeRetry = retry;
     });
   }
 
@@ -133,6 +139,9 @@ class _AccountPageState extends State<AccountPage> {
         failed: !matches,
       );
       await _load();
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _report(error.message, failed: true);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -178,9 +187,12 @@ class _AccountPageState extends State<AccountPage> {
       );
       _report(
         '${register ? '注册并登录' : '登录'}成功：${result.email}；'
-        '云端备份与知新服务已经可用，同步会在后台开始',
+        '云端备份与知新服务已经可用，首次同步会先确认是否把本机记录上传到这个账号',
       );
       await _load();
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _report(error.message, failed: true);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -341,9 +353,48 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _syncNow() async {
     if (_busy) return;
+    final scope = AppScope.of(context);
+    var confirmBaseline = false;
+    try {
+      final status = await scope.accountServices.sync.status();
+      if (status.baselineNeedsConfirmation) {
+        if (!mounted) return;
+        final confirmed = await confirmBaselineUpload(
+          context,
+          localCommits: status.localHead,
+        );
+        if (!confirmed) {
+          // 取消就不上传，并把自动同步停下来；恢复要在开关上再确认一次。
+          await scope.accountServices.account.setAutoSync(false);
+          if (!mounted) return;
+          _report('已取消首次同步，没有上传本机记录；自动同步已暂停');
+          await _load();
+          return;
+        }
+        confirmBaseline = true;
+      }
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '读取同步状态',
+          kind: 'account_sync_status',
+          kept: '本机记录没有改动',
+          next: '可以稍后再试',
+        ),
+        failed: true,
+      );
+      return;
+    }
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).accountServices.sync.syncNow();
+      final result = await scope.accountServices.sync.syncNow(
+        confirmBaseline: confirmBaseline,
+      );
       _report(
         result.changed
             ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
@@ -398,25 +449,61 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _clearCloudData() async {
+    if (_busy) return;
     final confirmed = await confirmZhixin(
       context: context,
       title: '清除云端数据',
       content: const Text(
-        '会删除这个账号在服务端保存的全部整库备份与同步提交序列，'
-        '本机学习记录和账号保留。之后的下一次同步会把当前本机数据重新上传为基线；'
-        '其他设备需要重新同步，删除后无法恢复。',
+        '会一次删除这个账号在服务端保存的全部整库备份、同步提交序列、附件与遗留对象，'
+        '本机学习记录和账号保留。清除期间其他设备写入会被拒绝，完成后需要重新同步；'
+        '删除后无法恢复，可以重复执行。',
       ),
       confirmLabel: '清除',
       destructive: true,
     );
     if (!confirmed || !mounted || _busy) return;
     setState(() => _busy = true);
+    final scope = AppScope.of(context);
     try {
-      final scope = AppScope.of(context);
       await scope.accountServices.account.clearCloudData();
       await scope.accountServices.sync.clearState();
-      _report('云端备份与同步序列已清除；下一次同步会从本机重新开始');
+      // 清除之后先停掉自动同步，再问用户要不要恢复；首次同步仍会先确认。
+      await scope.accountServices.account.setAutoSync(false);
+      if (!mounted) return;
+      final resume = await confirmEnableAutoSync(
+        context,
+        accountLabel: _snapshot?.email ?? '',
+      );
+      if (resume) {
+        await scope.accountServices.account.setAutoSync(true);
+        await scope.accountServices.sync.schedule(
+          delay: const Duration(seconds: 1),
+        );
+        _report('云端数据已清除；自动同步已恢复，首次同步会先确认是否上传本机记录');
+      } else {
+        _report('云端数据已清除；自动同步保持暂停，需要时在“自动同步”开关里重新开启');
+      }
       await _load();
+    } on ServerProblem catch (error, stack) {
+      if (!mounted) return;
+      if (error.isConflict) {
+        // 上一次清除还没结束：不是失败，稍后再点一次即可。
+        _report('云端数据还在清理中，请稍后重试');
+      } else {
+        _report(
+          describeFailure(
+            context,
+            error,
+            stack,
+            action: '清除云端数据',
+            kind: 'account_clear_cloud',
+            kept: '云端数据与本机记录没有改动',
+            next: '可以检查网络后重试',
+          ),
+          failed: true,
+          retry: _clearCloudData,
+        );
+      }
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -430,6 +517,7 @@ class _AccountPageState extends State<AccountPage> {
           next: '可以检查网络后重试',
         ),
         failed: true,
+        retry: _clearCloudData,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -437,24 +525,34 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirmed = await confirmZhixin(
-      context: context,
-      title: '删除账号',
-      content: const Text(
-        '会删除这个账号在服务端保存的备份、同步序列、附件与登录会话，且无法恢复；'
-        '本机学习记录不受影响。删除之后可以用同一个邮箱重新注册。',
-      ),
-      confirmLabel: '删除账号',
-      destructive: true,
-    );
-    if (!confirmed || !mounted || _busy) return;
+    final password = await askDeleteAccountPassword(context);
+    if (password == null || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
       final scope = AppScope.of(context);
-      await scope.accountServices.account.deleteAccount();
+      await scope.accountServices.account.deleteAccount(password: password);
       await scope.accountServices.sync.clearState();
       _report('账号与云端数据已删除；本机记录仍在');
       await _load();
+    } on ServerProblem catch (error, stack) {
+      if (!mounted) return;
+      if (error.code == 'invalid_credentials') {
+        // 只是重新认证失败：会话与页面保持原样，可以再输入一次密码。
+        _report('密码不正确；账号与云端数据没有改动，登录状态保留', failed: true);
+      } else {
+        _report(
+          describeFailure(
+            context,
+            error,
+            stack,
+            action: '删除账号',
+            kind: 'account_delete',
+            kept: '账号与云端数据没有改动',
+            next: '可以检查网络后重试',
+          ),
+          failed: true,
+        );
+      }
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -475,6 +573,13 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _setAutoSync(bool value) async {
+    if (value) {
+      final confirmed = await confirmEnableAutoSync(
+        context,
+        accountLabel: _snapshot?.email ?? '',
+      );
+      if (!confirmed || !mounted) return;
+    }
     try {
       await AppScope.of(context).accountServices.account.setAutoSync(value);
       if (!mounted) return;
@@ -524,7 +629,7 @@ class _AccountPageState extends State<AccountPage> {
       children: [
         if (_notice != null)
           _failed
-              ? InlineNotice(message: _notice!)
+              ? InlineNotice(message: _notice!, onRetry: _noticeRetry)
               : Padding(
                   padding: EdgeInsets.only(bottom: theme.space.md),
                   child: Text(_notice!, style: theme.text.bodySmall),
@@ -564,7 +669,8 @@ class _AccountPageState extends State<AccountPage> {
                 label: const Text('服务地址'),
                 hint: 'https://zhixin.example.com',
                 description: const Text(
-                  '只填域名时按 https 处理；本地联调可以填 http://127.0.0.1:8080。',
+                  '只填域名时按 https 处理；正式版只接受 https 地址，'
+                  '本地联调要用 http 时需要在构建时显式打开明文开关。',
                 ),
               ),
               SizedBox(height: theme.space.sm),
@@ -795,6 +901,16 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_syncSummary(sync), style: theme.text.bodyMedium),
+              if (sync?.baselineNeedsConfirmation == true) ...[
+                SizedBox(height: theme.space.xs),
+                Text(
+                  '首次同步需要确认：会把本机现有的 ${sync!.localHead} 条提交上传到'
+                  '这个账号；点“立即同步”之后确认。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (sync?.lastError != null) ...[
                 SizedBox(height: theme.space.sm),
                 InlineNotice(

@@ -4,6 +4,7 @@ import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
+import '../domain/rules/uuid_v7.dart';
 
 /// 还没有登录，或登录已经失效；需要用户重新登录之后才能继续。
 class AccountSignedOut implements Exception {
@@ -82,8 +83,31 @@ class AccountService {
   Future<AccountSession>? _refreshing;
   ServerClient? _client;
 
+  /// 身份代次：切换服务实例、登录、退出、删除账号与重设密码时加一。
+  ///
+  /// 刷新与同步在开始时记下代次，完成时发现代次变了就丢弃这次结果，避免把
+  /// 旧账号的令牌或位置写到新身份上。
+  int _epoch = 0;
+
+  int get identityEpoch => _epoch;
+
+  void _advanceEpoch() => _epoch++;
+
+  /// 网络往返期间身份代次变了：这次结果属于旧实例或旧账号，直接丢弃。
+  void _ensureIdentityUnchanged(int epoch) {
+    if (epoch != _epoch) throw const AccountSignedOut();
+  }
+
+  /// 当前实例的来源；会话与同步游标都按它与账号一起区分。
+  Future<String> serverOrigin() async =>
+      ServerClient.originOf(await serverBaseUrl());
+
+  /// 只读当前实例的会话：换了实例之后旧会话读不出来，按未登录处理。
+  Future<AccountSession?> _readSession() async =>
+      store.read(origin: await serverOrigin());
+
   Future<AccountSnapshot> snapshot() async {
-    final session = await store.read();
+    final session = await _readSession();
     final baseUrl = await preferences.serverBaseUrl();
     final autoSync = await preferences.autoSync();
     final usesDefault = await preferences.usesDefaultServerBaseUrl();
@@ -107,11 +131,23 @@ class AccountService {
   Future<String> serverBaseUrl() => preferences.serverBaseUrl();
 
   /// 保存服务地址；格式不合法时抛出 [FormatException]。
+  ///
+  /// 换到另一个实例时旧会话与同步游标都不再适用，直接清掉并暂停自动同步：
+  /// 恢复自动同步之前要用户确认，避免把数据传到还没确认过的实例上。
   Future<void> setServerBaseUrl(String value) async {
     final normalized = ServerClient.normalizeBaseUrl(value);
+    final previousOrigin = ServerClient.originOf(
+      await preferences.serverBaseUrl(),
+    );
+    final nextOrigin = ServerClient.originOf(normalized);
     await preferences.setServerBaseUrl(normalized);
     _client?.dispose();
     _client = null;
+    if (previousOrigin == nextOrigin) return;
+    _advanceEpoch();
+    await store.clear();
+    await preferences.clearSyncState();
+    await preferences.setAutoSync(false);
   }
 
   Future<bool> autoSync() => preferences.autoSync();
@@ -123,12 +159,14 @@ class AccountService {
     required String email,
     required String password,
   }) async {
+    final epoch = _epoch;
     final client = await _requireClient();
     final tokens = await client.register(
       email: email.trim().toLowerCase(),
       password: password,
       deviceName: _deviceName,
     );
+    _ensureIdentityUnchanged(epoch);
     return _adopt(tokens, email: email.trim().toLowerCase());
   }
 
@@ -136,18 +174,21 @@ class AccountService {
     required String email,
     required String password,
   }) async {
+    final epoch = _epoch;
     final client = await _requireClient();
     final tokens = await client.login(
       email: email.trim().toLowerCase(),
       password: password,
       deviceName: _deviceName,
     );
+    _ensureIdentityUnchanged(epoch);
     return _adopt(tokens, email: email.trim().toLowerCase());
   }
 
   /// 退出当前设备；服务端不可达时也要清掉本机会话。
   Future<void> logout() async {
-    final session = await store.read();
+    final epoch = _epoch;
+    final session = await _readSession();
     if (session != null) {
       try {
         final client = await _requireClient();
@@ -156,26 +197,43 @@ class AccountService {
         // 退出登录以本机为准：网络失败时服务端会话到期后自然失效。
       }
     }
+    // 退出途中换了账号或实例：不能清掉新的登录状态。
+    if (epoch != _epoch) return;
+    _advanceEpoch();
     await store.clear();
   }
 
   /// 删除账号，连同云端同步序列、附件与备份；本机学习记录保留。
-  Future<void> deleteAccount() async {
-    final session = await store.read();
-    if (session == null) throw const AccountSignedOut();
-    await call<void>((client, token) => client.deleteMe(token));
+  ///
+  /// 服务端要求重新提交当前密码：密码错误时抛出 `invalid_credentials`，本机
+  /// 会话与页面状态都不改动，也不刷新令牌重试，避免多消耗一次失败预算。
+  Future<void> deleteAccount({required String password}) async {
+    final epoch = _epoch;
+    final session = await _requireSession();
+    final client = await _requireClient();
+    final token = (await _fresh(session)).accessToken;
+    try {
+      await client.deleteMe(token, password: password);
+    } on ServerProblem catch (error) {
+      if (!error.isUnauthorized || error.code == 'invalid_credentials') rethrow;
+      final retry = await _refreshStale(token);
+      await client.deleteMe(retry.accessToken, password: password);
+    }
+    // 删除请求途中切了账号：不能清掉新会话，也不能当作旧账号已经删除。
+    _ensureIdentityUnchanged(epoch);
+    _advanceEpoch();
     await store.clear();
     await preferences.clearSyncState();
   }
 
-  /// 清除云端备份与同步序列，保留账号与本机记录。
+  /// 一次清空云端备份、提交序列、附件与遗留对象，保留账号与本机记录。
   ///
-  /// 清空之后服务端位置回到 0，下一次同步会按当前本机数据重新上传一份基线。
+  /// 清空之后服务端位置回到 0，下一次同步需要重新确认后再上传基线。上一次
+  /// 清除还没结束时服务端返回 409 `conflict`，调用方按“稍后重试”处理。
   Future<void> clearCloudData() async {
-    await call<void>((client, token) async {
-      await client.deleteAllBackups(token);
-      await client.deleteSyncLog(token);
-    });
+    final epoch = _epoch;
+    await call<void>((client, token) => client.deleteCloud(token));
+    _ensureIdentityUnchanged(epoch);
     await preferences.clearSyncState();
   }
 
@@ -187,12 +245,15 @@ class AccountService {
 
   /// 重新读一次服务端的账号信息，更新邮箱验证状态；网络失败时沿用本机记录。
   Future<AccountSnapshot> refreshAccount() async {
-    final session = await store.read();
+    final epoch = _epoch;
+    final session = await _readSession();
     if (session == null) return snapshot();
     try {
       final remote = await call<ServerAccount>(
         (client, token) => client.me(token),
       );
+      // 核对途中换了账号或实例：旧账号的验证状态不能写到新会话上。
+      if (epoch != _epoch) return await snapshot();
       final updated = session.copyWith(emailVerified: remote.emailVerified);
       if (updated.emailVerified != session.emailVerified) {
         await store.save(updated);
@@ -215,10 +276,12 @@ class AccountService {
 
   /// 用六位验证码确认邮箱。
   Future<void> confirmEmailVerification(String code) async {
+    final epoch = _epoch;
     await call<void>(
       (client, token) => client.confirmEmailVerification(token, code),
     );
-    final session = await store.read();
+    _ensureIdentityUnchanged(epoch);
+    final session = await _readSession();
     if (session != null) {
       await store.save(session.copyWith(emailVerified: true));
     }
@@ -236,12 +299,15 @@ class AccountService {
     required String code,
     required String newPassword,
   }) async {
+    final epoch = _epoch;
     final client = await _requireClient();
     await client.resetPassword(
       email: email,
       code: code,
       newPassword: newPassword,
     );
+    _ensureIdentityUnchanged(epoch);
+    _advanceEpoch();
     await store.clear();
     await preferences.clearSyncState();
   }
@@ -249,7 +315,7 @@ class AccountService {
   /// 当前账号的访问令牌；过期时先刷新，登录失效时清掉会话并抛出
   /// [AccountSignedOut]。没有登录时返回 null，供模型来源判断是否可用。
   Future<String?> accessTokenOrNull() async {
-    final session = await store.read();
+    final session = await _readSession();
     if (session == null || session.isExpired) return null;
     try {
       return (await _fresh(session)).accessToken;
@@ -318,6 +384,10 @@ class AccountService {
     ServerTokens tokens, {
     required String email,
   }) async {
+    final epoch = _epoch;
+    // 会话绑定到签发它的实例：来源在请求之前读好，网络往返期间切换实例时
+    // 下面的代次检查会丢弃这次登录结果。
+    final origin = await serverOrigin();
     // 登录响应不带邮箱验证状态，多读一次 /v1/me；读不到不影响这次登录，
     // 账号页下一次打开会再核对。
     var emailVerified = false;
@@ -327,9 +397,11 @@ class AccountService {
     } catch (_) {
       // 忽略：首屏仍可进入，验证状态稍后重试。
     }
+    _ensureIdentityUnchanged(epoch);
     final session = AccountSession(
       userId: tokens.userId,
       email: email,
+      serverOrigin: origin,
       emailVerified: emailVerified,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -337,8 +409,20 @@ class AccountService {
       refreshExpiresAt: tokens.refreshExpiresAt,
     );
     await store.save(session);
+    _advanceEpoch();
     final state = await preferences.syncState();
-    if (state != null && state.userId != session.userId) {
+    final identity = '${session.serverOrigin}|${session.userId}';
+    final lastIdentity = await preferences.lastIdentity();
+    await preferences.setLastIdentity(identity);
+    final switched = lastIdentity.isNotEmpty && lastIdentity != identity;
+    if (switched) {
+      // 换了一个账号（或实例）：旧账号的同步位置不能用，自动同步先暂停，
+      // 等用户在账号页确认之后再恢复。
+      await preferences.clearSyncState();
+      await preferences.setAutoSync(false);
+    } else if (state != null &&
+        (state.userId != session.userId ||
+            state.serverOrigin != session.serverOrigin)) {
       await preferences.clearSyncState();
     }
     return AccountSnapshot(
@@ -350,7 +434,7 @@ class AccountService {
   }
 
   Future<AccountSession> _requireSession() async {
-    final session = await store.read();
+    final session = await _readSession();
     if (session == null) throw const AccountSignedOut();
     if (session.isExpired) {
       await store.clear();
@@ -367,7 +451,7 @@ class AccountService {
   }
 
   Future<AccountSession> _refreshStale(String usedToken) async {
-    final current = await store.read();
+    final current = await _readSession();
     if (current == null) throw const AccountSignedOut();
     // 别的请求已经换过令牌时直接用它，不再拿旧刷新令牌去换。
     if (current.accessToken != usedToken &&
@@ -383,9 +467,25 @@ class AccountService {
   }
 
   Future<AccountSession> _refresh(AccountSession current) async {
+    final epoch = _epoch;
     try {
       final client = await _requireClient();
-      final tokens = await client.refresh(current.refreshToken);
+      // 一次逻辑刷新只生成一个标识；两次请求都带上它，服务端才把第二次当作
+      // 同一次刷新的重试，而不是拿旧刷新令牌盗用。
+      final requestId = newUuidV7();
+      Future<ServerTokens> attempt() =>
+          client.refresh(current.refreshToken, requestId: requestId);
+      ServerTokens tokens;
+      try {
+        tokens = await attempt();
+      } on ServerProblem catch (error) {
+        if (error.code != 'offline') rethrow;
+        // 轮换可能已经在服务端完成、只是响应没有回来；宽限期内换一组新令牌
+        // 会被服务端当成盗用并撤销会话，所以只按同一标识重试一次。
+        tokens = await attempt();
+      }
+      // 刷新期间换了账号或实例：这次结果属于旧身份，不写回。
+      if (epoch != _epoch) throw const AccountSignedOut();
       final next = current.copyWith(
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -395,7 +495,7 @@ class AccountService {
       await store.save(next);
       return next;
     } on ServerProblem catch (error) {
-      if (error.isUnauthorized) {
+      if (error.isUnauthorized && epoch == _epoch) {
         await store.clear();
         throw const AccountSignedOut();
       }
