@@ -46,22 +46,23 @@ lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
 ├── app_services.dart                        ← 八组服务（讨论、安排、材料、记忆、设置、数据版本、插件、账号）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
-├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步
+├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步、更新检查与反馈
 ├── data/
 │   ├── db/                                 ← drift 表结构与索引（docs/01 的唯一结构来源）、开库、访问协调
 │   │   └── drift/queries/                  ← 一张表一个 .drift 文件，由 build_runner 生成类型化方法
 │   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
 │   ├── backup/                             ← zip 导出、旧数据版本、暂存校验与分阶段恢复
-│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址、同步游标与匿名上报状态
+│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址、同步游标、发布清单验签与匿名上报状态
 │   ├── diagnostics/                        ← 本机崩溃记录与自建 Sentry 上报
 │   └── repository/                         ← 讨论、作答、目标、事项、日程、记忆与设置
 ├── domain/
 │   ├── models/                             ← 数据对象、值对象（ClockTime、TimeRange、Score、EvidenceId）与序列化
-│   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底与下一步
+│   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底、版本比较与下一步
+├── platform/                               ← 应用信息、提示词资源、发布清单签名公钥与许可
 ├── plugins/
 │   ├── runtime/                            ← 清单、插件接口、四个权限门面、运行时与设置读写接口
 │   └── persona/                            ← 人格插件：对象与 800 字校验、内置人格、app_meta 存储
-└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、我的、设置、记忆、账号、云端备份、关于；页面导航在 navigation.dart，文案在 copy.dart
+└── ui/                                     ← 现在、记录、记录检索、讨论与讨论内查找、材料与材料查找、系统学习、学习中、安排与安排查找、我的、设置、记忆与记忆查找、账号、云端备份、反馈、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
 `ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
