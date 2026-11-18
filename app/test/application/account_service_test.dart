@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_config.dart';
@@ -94,6 +96,24 @@ void main() {
     expect(snapshot.signedIn, isTrue);
   });
 
+  test('刷新响应丢失时用同一个 request_id 重试旧刷新令牌', () async {
+    await account.register(email: 'l@example.com', password: 'password123');
+    // 下一次带令牌的请求被判过期，客户端先刷新；刷新在服务端已经轮换成功，
+    // 但响应在返回之前断开，客户端应当用同一个标识与旧刷新令牌再试一次。
+    server.expireAccess = true;
+    server.dropNextRefreshResponse = true;
+
+    final quota = await account.quota();
+    expect(quota.dailyTokens, 200000);
+    expect(server.refreshRequests, hasLength(2));
+    final first = server.refreshRequests[0];
+    final retry = server.refreshRequests[1];
+    expect(first.refreshToken, retry.refreshToken);
+    expect(first.requestId, isNotEmpty);
+    expect(retry.requestId, first.requestId);
+    expect((await account.snapshot()).signedIn, isTrue);
+  });
+
   test('登录时密码错误返回 invalid_credentials', () async {
     await account.register(email: 'c@example.com', password: 'password123');
     await account.logout();
@@ -126,7 +146,7 @@ void main() {
     expect(server.userIdOf('d@example.com'), userId);
   });
 
-  test('清除云端数据删除备份与提交序列，账号还在', () async {
+  test('清除云端数据一次清空备份、提交序列与附件，账号还在', () async {
     final snapshot = await account.register(
       email: 'e@example.com',
       password: 'password123',
@@ -135,10 +155,55 @@ void main() {
     server.commits[userId] = [
       {'request_id': 'r1', 'seq': 1},
     ];
+    server.backups[userId] = [
+      FakeBackup(
+        meta: {'id': 'backup-1', 'sha256': '', 'size': 0},
+        bytes: Uint8List.fromList([1, 2, 3]),
+      ),
+    ];
+    server.blobs[userId] = {
+      'a' * 64: Uint8List.fromList([4, 5, 6]),
+    };
     await account.clearCloudData();
+    expect(server.cloudClearRequests, 1);
     expect(server.commits[userId], isEmpty);
+    expect(server.backups[userId], isNull);
+    expect(server.blobs[userId], isNull);
     expect((await account.snapshot()).signedIn, isTrue);
     expect(server.userIdOf('e@example.com'), userId);
+  });
+
+  test('清除期间服务端返回 409 时不算失败，游标保留并可重试', () async {
+    final snapshot = await account.register(
+      email: 'e2@example.com',
+      password: 'password123',
+    );
+    final userId = snapshot.session!.userId;
+    await preferences.saveSyncState(
+      SyncState(
+        userId: userId,
+        serverOrigin: 'http://server.test',
+        serverHead: 2,
+        pushedThrough: 1,
+      ),
+    );
+    server.cloudClearConflicts = 1;
+
+    await expectLater(
+      account.clearCloudData(),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.isConflict, 'conflict', true)
+            .having((error) => error.status, 'status', 409),
+      ),
+    );
+    // 上一次清除还没结束时不清游标，用户稍后重试即可。
+    expect(await preferences.syncState(), isNotNull);
+    expect(server.cloudClearRequests, 1);
+
+    await account.clearCloudData();
+    expect(server.cloudClearRequests, 2);
+    expect(await preferences.syncState(), isNull);
   });
 
   test('注册后邮箱未验证，确认验证码之后状态更新', () async {
@@ -210,8 +275,143 @@ void main() {
     server.commits[userId] = [
       {'request_id': 'r1', 'seq': 1},
     ];
-    await account.deleteAccount();
+    await account.deleteAccount(password: 'password123');
     expect((await account.snapshot()).signedIn, isFalse);
     expect(server.commits.containsKey(userId), isFalse);
+  });
+
+  test('删除账号时密码错误只提示密码错误，登录状态与账号保留', () async {
+    final snapshot = await account.register(
+      email: 'j@example.com',
+      password: 'password123',
+    );
+    final userId = snapshot.session!.userId;
+
+    await expectLater(
+      account.deleteAccount(password: 'wrong-password'),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'invalid_credentials')
+            .having((error) => error.userMessage, 'message', '邮箱或密码不正确'),
+      ),
+    );
+    // 密码错误不刷新令牌再试，避免叠一次失败预算。
+    expect(server.deleteAttempts, 1);
+    expect((await account.snapshot()).signedIn, isTrue);
+    expect((await account.snapshot()).session!.userId, userId);
+    expect(server.userIdOf('j@example.com'), userId);
+
+    await account.deleteAccount(password: 'password123');
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('会话按实例来源保存，别的实例读不到旧令牌', () async {
+    final secrets = MemorySecretStore();
+    final store = AccountStore(secrets);
+    final now = DateTime.now();
+    await store.save(
+      AccountSession(
+        userId: 'user-1',
+        email: 'bound@example.com',
+        serverOrigin: 'https://a.test',
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        accessExpiresAt: now.add(const Duration(hours: 1)),
+        refreshExpiresAt: now.add(const Duration(days: 30)),
+      ),
+    );
+    expect(await store.read(origin: 'https://a.test'), isNotNull);
+    expect(await store.read(origin: 'https://b.test'), isNull);
+    expect((await store.read())!.serverOrigin, 'https://a.test');
+  });
+
+  test('切换服务实例后不复用旧会话，同步游标清掉并暂停自动同步', () async {
+    final snapshot = await account.register(
+      email: 'm@example.com',
+      password: 'password123',
+    );
+    final userId = snapshot.session!.userId;
+    await preferences.setAutoSync(true);
+    await preferences.saveSyncState(
+      SyncState(
+        userId: userId,
+        serverOrigin: 'http://server.test',
+        serverHead: 3,
+        pushedThrough: 1,
+      ),
+    );
+
+    await account.setServerBaseUrl('http://other.test');
+    final after = await account.snapshot();
+    expect(after.signedIn, isFalse);
+    expect(after.autoSync, isFalse);
+    expect(await preferences.syncState(), isNull);
+
+    // 切回旧实例也不会把旧会话还回来，需要重新登录。
+    await account.setServerBaseUrl('http://server.test');
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('切换实例时进行中的刷新结果被丢弃', () async {
+    await account.register(email: 'n@example.com', password: 'password123');
+    server.expireAccess = true;
+    final gate = Completer<void>();
+    server.delayRefresh = gate.future;
+
+    final pending = account.quota();
+    while (server.refreshRequests.isEmpty) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    // 刷新还卡在途中时换到另一个实例：这次刷新属于旧实例，结果不能写回。
+    await account.setServerBaseUrl('http://other.test');
+    gate.complete();
+
+    await expectLater(pending, throwsA(isA<AccountSignedOut>()));
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('登录途中切换实例时丢弃这次登录结果', () async {
+    await account.register(email: 'q@example.com', password: 'password123');
+    await account.logout();
+    final gate = Completer<void>();
+    server.delayLogin = gate.future;
+
+    final pending = account.login(
+      email: 'q@example.com',
+      password: 'password123',
+    );
+    while (server.loginRequests == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await account.setServerBaseUrl('http://other.test');
+    gate.complete();
+
+    await expectLater(pending, throwsA(isA<AccountSignedOut>()));
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('登录另一个账号时暂停自动同步并清掉旧游标', () async {
+    final first = await account.register(
+      email: 'o@example.com',
+      password: 'password123',
+    );
+    await preferences.setAutoSync(true);
+    await preferences.saveSyncState(
+      SyncState(
+        userId: first.session!.userId,
+        serverOrigin: 'http://server.test',
+        serverHead: 2,
+        pushedThrough: 1,
+      ),
+    );
+
+    await account.logout();
+    final second = await account.register(
+      email: 'p@example.com',
+      password: 'password123',
+    );
+    expect(second.session!.userId, isNot(first.session!.userId));
+    expect(second.autoSync, isFalse);
+    expect(await preferences.syncState(), isNull);
   });
 }

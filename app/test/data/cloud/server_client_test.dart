@@ -32,6 +32,178 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     });
+
+    test('地址里带用户名或密码时拒绝，避免凭据外泄', () {
+      expect(
+        () => ServerClient.normalizeBaseUrl(
+          'https://user:pass@zhixin.example.com',
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('用户名或密码'),
+          ),
+        ),
+      );
+      expect(
+        ServerClient.normalizeBaseUrl('https://zhixin.example.com'),
+        'https://zhixin.example.com',
+      );
+    });
+
+    test('正式构建只接受 https，显式打开联调开关时才允许 http', () {
+      expect(
+        ServerClient.normalizeBaseUrl(
+          'https://zhixin.example.com/',
+          requireHttps: true,
+        ),
+        'https://zhixin.example.com',
+      );
+      expect(
+        () => ServerClient.normalizeBaseUrl(
+          'http://127.0.0.1:8080',
+          requireHttps: true,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('https'),
+          ),
+        ),
+      );
+      expect(
+        ServerClient.normalizeBaseUrl(
+          'http://127.0.0.1:8080',
+          requireHttps: false,
+        ),
+        'http://127.0.0.1:8080',
+      );
+    });
+  });
+
+  group('重定向', () {
+    test('同源 30x 跟随，并保留访问令牌', () async {
+      final seen = <String>[];
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient((request) async {
+          seen.add(request.url.toString());
+          if (request.url.path == '/v1/sync/head') {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': '/v1/sync/head2'},
+            );
+          }
+          expect(
+            request.headers['authorization'] ??
+                request.headers['Authorization'],
+            'Bearer token',
+          );
+          return http.Response(
+            jsonEncode({'head': 3, 'schema_version': 27}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final head = await client.head('token');
+      expect(head.head, 3);
+      expect(seen, [
+        'http://server.test/v1/sync/head',
+        'http://server.test/v1/sync/head2',
+      ]);
+    });
+
+    test('跨域 30x 直接按失败处理，不把带令牌的请求带到别的域', () async {
+      var requests = 0;
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient((request) async {
+          requests++;
+          return http.Response(
+            '',
+            302,
+            headers: {'location': 'https://evil.test/v1/sync/head'},
+          );
+        }),
+      );
+
+      await expectLater(
+        client.head('token'),
+        throwsA(
+          isA<ServerProblem>()
+              .having((error) => error.code, 'code', 'redirect_blocked')
+              .having((error) => error.userMessage, 'message', contains('跨域')),
+        ),
+      );
+      expect(requests, 1);
+    });
+  });
+
+  group('刷新令牌', () {
+    test('同一 request_id 重试旧刷新令牌按重试处理', () async {
+      final server = FakeServer();
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: server.client,
+      );
+      final tokens = await client.register(
+        email: 'refresh-a@example.com',
+        password: 'password123',
+      );
+
+      final refreshed = await client.refresh(
+        tokens.refreshToken,
+        requestId: 'request-1',
+      );
+      expect(refreshed.accessToken, isNot(tokens.accessToken));
+      final replay = await client.refresh(
+        tokens.refreshToken,
+        requestId: 'request-1',
+      );
+      expect(replay.accessToken, refreshed.accessToken);
+      expect(server.refreshRequests.map((entry) => entry.requestId), [
+        'request-1',
+        'request-1',
+      ]);
+    });
+
+    test('换一个 request_id 使用旧刷新令牌会撤销会话', () async {
+      final server = FakeServer();
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: server.client,
+      );
+      final tokens = await client.register(
+        email: 'refresh-b@example.com',
+        password: 'password123',
+      );
+      final refreshed = await client.refresh(
+        tokens.refreshToken,
+        requestId: 'request-1',
+      );
+
+      await expectLater(
+        client.refresh(tokens.refreshToken, requestId: 'request-2'),
+        throwsA(
+          isA<ServerProblem>().having(
+            (error) => error.code,
+            'code',
+            'unauthorized',
+          ),
+        ),
+      );
+      await expectLater(
+        client.head(refreshed.accessToken),
+        throwsA(
+          isA<ServerProblem>().having((error) => error.status, 'status', 401),
+        ),
+      );
+    });
   });
 
   test('注册与登录返回令牌，重复注册说明邮箱已占用', () async {
@@ -76,6 +248,34 @@ void main() {
         isA<ServerProblem>()
             .having((error) => error.isUnauthorized, 'unauthorized', true)
             .having((error) => error.userMessage, 'message', contains('重新登录')),
+      ),
+    );
+  });
+
+  test('限流按 Retry-After 给出等待秒数', () async {
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'type': 'urn:zhixin:problem:rate_limited',
+            'title': 'rate_limited',
+            'status': 429,
+            'code': 'rate_limited',
+          }),
+          429,
+          headers: {'retry-after': '30'},
+        ),
+      ),
+    );
+    await expectLater(
+      client.deleteMe('token', password: 'wrong-password'),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.userMessage,
+          'message',
+          '尝试过于频繁，请 30 秒后再试',
+        ),
       ),
     );
   });
@@ -193,6 +393,46 @@ void main() {
     expect(await client.blobDownload(tokens.accessToken, sha), bytes);
   });
 
+  test('单个附件超限与账号总量超限分别给出说明', () async {
+    final server = FakeServer()
+      ..maxAttachmentBytes = 3
+      ..storageLimitBytes = 5;
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+    final tokens = await client.register(
+      email: 'blob-limit@example.com',
+      password: 'password123',
+    );
+
+    final tooLarge = Uint8List.fromList([1, 2, 3, 4]);
+    await expectLater(
+      client.blobUpload(tokens.accessToken, _sha256Of(tooLarge), tooLarge),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'payload_too_large')
+            .having((error) => error.userMessage, 'message', '文件超过服务端允许的大小'),
+      ),
+    );
+
+    final first = Uint8List.fromList([1, 2, 3]);
+    await client.blobUpload(tokens.accessToken, _sha256Of(first), first);
+    final second = Uint8List.fromList([4, 5, 6]);
+    await expectLater(
+      client.blobUpload(tokens.accessToken, _sha256Of(second), second),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'storage_full')
+            .having(
+              (error) => error.userMessage,
+              'message',
+              '云端附件空间已满：已用 3 B，上限 5 B',
+            ),
+      ),
+    );
+  });
+
   test('plumbing: DELETE 全量备份与同步序列返回 204', () async {
     final server = FakeServer();
     final client = ServerClient(
@@ -206,6 +446,47 @@ void main() {
     await client.deleteAllBackups(tokens.accessToken);
     await client.deleteSyncLog(tokens.accessToken);
     expect(await client.head(tokens.accessToken).then((h) => h.head), 0);
+  });
+
+  test('一次清空云端数据走 DELETE /v1/cloud，清除未结束时返回 conflict', () async {
+    final server = FakeServer();
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+    final tokens = await client.register(
+      email: 'cloud@example.com',
+      password: 'password123',
+    );
+    final userId = tokens.userId;
+    server.commits[userId] = [
+      {'request_id': 'r1', 'seq': 1},
+    ];
+    server.backups[userId] = [
+      FakeBackup(
+        meta: {'id': 'backup-1', 'sha256': '', 'size': 0},
+        bytes: Uint8List.fromList([1, 2, 3]),
+      ),
+    ];
+    server.blobs[userId] = {
+      'a' * 64: Uint8List.fromList([4, 5, 6]),
+    };
+
+    await client.deleteCloud(tokens.accessToken);
+    expect(server.cloudClearRequests, 1);
+    expect(server.commits[userId], isEmpty);
+    expect(server.backups[userId], isNull);
+    expect(server.blobs[userId], isNull);
+
+    server.cloudClearConflicts = 1;
+    await expectLater(
+      client.deleteCloud(tokens.accessToken),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.isConflict, 'conflict', true)
+            .having((error) => error.status, 'status', 409),
+      ),
+    );
   });
 
   test('非 problem 响应也按状态码归类', () async {
