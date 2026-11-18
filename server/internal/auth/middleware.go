@@ -11,7 +11,8 @@ import (
 
 // securedRoutes 是契约里要求 Bearer 的路径，写法与 openapi.yaml 的分段一致：
 // `{name}` 匹配任意一段。只列需要鉴权的；公开路径与契约之外的路径都直接放行，
-// 后者仍由 mux 的兜底处理器返回 404。
+// 后者仍由 mux 的兜底处理器返回 404。管理接口 /admin/v1/ 不用账号令牌，由
+// internal/admin 的中间件按管理令牌校验，也不列在这里。
 //
 // 这张表放在代码里而不是从生成结果读取，是因为 oapi-codegen 的中间件拿不到当前
 // 操作的 security 声明；契约增删接口时要同时改这里。
@@ -39,6 +40,7 @@ var securedRoutes = []struct {
 	{"GET", "/v1/llm/models"},
 	{"GET", "/v1/llm/quota"},
 	{"POST", "/v1/llm/chat/completions"},
+	{"POST", "/v1/llm/embeddings"},
 }
 
 // matchPath 比较契约写法与实际路径：{name} 匹配一段非空路径。
@@ -62,10 +64,12 @@ func matchPath(pattern, path string) bool {
 	return true
 }
 
-// needsAuth 报告这条请求是否落在需要 Bearer 的路由上。
+// needsAuth 报告这条请求是否落在需要 Bearer 的路由上。标准库路由的 GET 模式
+// 也接 HEAD，所以 HEAD 按 GET 判断，否则 HEAD 请求会绕过鉴权落进处理器。
 func needsAuth(method, path string) bool {
 	for _, rt := range securedRoutes {
-		if rt.method == method && matchPath(rt.pattern, path) {
+		sameMethod := rt.method == method || (method == "HEAD" && rt.method == "GET")
+		if sameMethod && matchPath(rt.pattern, path) {
 			return true
 		}
 	}

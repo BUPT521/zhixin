@@ -199,3 +199,16 @@ func TestMiddlewareReportsStoreFailureAs500(t *testing.T) {
 		t.Fatalf("content type %q", got)
 	}
 }
+
+// TestNeedsAuthTreatsHeadAsGet 守住 HEAD 不绕过鉴权：标准库的 GET 路由也接
+// HEAD，以前 HEAD /v1/llm/quota 会跳过令牌校验，落进处理器后 panic 成 500。
+func TestNeedsAuthTreatsHeadAsGet(t *testing.T) {
+	for _, path := range []string{"/v1/llm/quota", "/v1/me", "/v1/backups", "/v1/blobs/abc"} {
+		if !needsAuth("HEAD", path) {
+			t.Fatalf("HEAD %s 应当要求令牌", path)
+		}
+	}
+	if needsAuth("HEAD", "/v1/app/releases") || needsAuth("HEAD", "/healthz") {
+		t.Fatal("公开路由的 HEAD 不需要令牌")
+	}
+}
