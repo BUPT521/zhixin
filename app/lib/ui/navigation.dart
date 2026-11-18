@@ -30,6 +30,7 @@ import 'memory_proposal_page.dart';
 import 'memory_search_page.dart';
 import 'persona_page.dart';
 import 'plan_page.dart';
+import 'plan_search_page.dart';
 import 'plugins_page.dart';
 import 'question_crop_page.dart';
 import 'records_search_page.dart';
@@ -119,6 +120,15 @@ Future<void> openStudyPlan(BuildContext context, String planId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(builder: (_) => StudyPlanPage(planId: planId)),
   );
+}
+
+/// 打开安排查找：按标题、目标、状态与日期查事项、计划步骤与预约。
+///
+/// 页面里的结果点开仍走本文件的 [openPlanDetail] 与 [openPlanItem]，查找入口
+/// 不另造导航逻辑。
+Future<void> openPlanSearch(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const PlanSearchPage()));
 }
 
 /// 打开设置页。

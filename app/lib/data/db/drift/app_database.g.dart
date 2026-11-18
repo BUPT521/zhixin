@@ -12093,6 +12093,39 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<SearchPlanBlocksResult> searchPlanBlocks(
+    String? goalId,
+    String status,
+    String dayStart,
+    String dayEnd,
+  ) {
+    return customSelect(
+      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE(?1 = \'\' OR p.goal_id = ?1)AND(?2 = \'\' OR p.status = ?2)AND(?3 = \'\' OR(b.start_at >= ?3 AND b.start_at < ?4))ORDER BY b.start_at DESC, b.id DESC',
+      variables: [
+        Variable<String>(goalId),
+        Variable<String>(status),
+        Variable<String>(dayStart),
+        Variable<String>(dayEnd),
+      ],
+      readsFrom: {this.planItems, this.scheduleBlocks},
+    ).map(
+      (QueryRow row) => SearchPlanBlocksResult(
+        id: row.read<String>('id'),
+        planItemId: row.read<String>('plan_item_id'),
+        startAt: row.read<String>('start_at'),
+        endAt: row.read<String>('end_at'),
+        source: row.read<String>('source'),
+        status: row.read<String>('status'),
+        locked: row.read<bool>('locked'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        pTitle: row.read<String>('p_title'),
+        pNote: row.readNullable<String>('p_note'),
+        pStatus: row.read<String>('p_status'),
+      ),
+    );
+  }
+
   Selectable<NextPlannedBlockResult> nextPlannedBlock(String now) {
     return customSelect(
       'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at >= ?1 ORDER BY b.start_at LIMIT 1',
@@ -12758,6 +12791,46 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materials, this.studyPlans, this.planItems},
     ).map(
       (QueryRow row) => ItemsByIdsResult(
+        id: row.read<String>('id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        studyPlanId: row.readNullable<String>('study_plan_id'),
+        seq: row.readNullable<int>('seq'),
+        title: row.read<String>('title'),
+        note: row.readNullable<String>('note'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        dueAt: row.readNullable<String>('due_at'),
+        estMinutes: row.readNullable<int>('est_minutes'),
+        priority: row.read<int>('priority'),
+        status: row.read<String>('status'),
+        source: row.read<String>('source'),
+        originJson: row.readNullable<String>('origin_json'),
+        completedAt: row.readNullable<String>('completed_at'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+      ),
+    );
+  }
+
+  Selectable<SearchPlanItemsResult> searchPlanItems(
+    String? goalId,
+    String status,
+    String dayStart,
+    String? dayEnd,
+  ) {
+    return customSelect(
+      'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE(?1 = \'\' OR p.goal_id = ?1)AND(?2 = \'\' OR p.status = ?2)AND(?3 = \'\' OR(p.due_at IS NOT NULL AND p.due_at >= ?3 AND p.due_at < ?4))ORDER BY p.due_at IS NULL, p.due_at DESC, p.id DESC',
+      variables: [
+        Variable<String>(goalId),
+        Variable<String>(status),
+        Variable<String>(dayStart),
+        Variable<String>(dayEnd),
+      ],
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => SearchPlanItemsResult(
         id: row.read<String>('id'),
         goalId: row.readNullable<String>('goal_id'),
         conversationId: row.readNullable<String>('conversation_id'),
@@ -14560,6 +14633,35 @@ class BlocksOverlappingResult {
   });
 }
 
+class SearchPlanBlocksResult {
+  final String id;
+  final String planItemId;
+  final String startAt;
+  final String endAt;
+  final String source;
+  final String status;
+  final bool locked;
+  final String createdAt;
+  final String updatedAt;
+  final String pTitle;
+  final String? pNote;
+  final String pStatus;
+  SearchPlanBlocksResult({
+    required this.id,
+    required this.planItemId,
+    required this.startAt,
+    required this.endAt,
+    required this.source,
+    required this.status,
+    required this.locked,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.pTitle,
+    this.pNote,
+    required this.pStatus,
+  });
+}
+
 class NextPlannedBlockResult {
   final String id;
   final String planItemId;
@@ -14995,6 +15097,49 @@ class ItemsByIdsResult {
   final String updatedAt;
   final String? sourceFileName;
   ItemsByIdsResult({
+    required this.id,
+    this.goalId,
+    this.conversationId,
+    this.studyPlanId,
+    this.seq,
+    required this.title,
+    this.note,
+    this.pageFrom,
+    this.pageTo,
+    this.dueAt,
+    this.estMinutes,
+    required this.priority,
+    required this.status,
+    required this.source,
+    this.originJson,
+    this.completedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sourceFileName,
+  });
+}
+
+class SearchPlanItemsResult {
+  final String id;
+  final String? goalId;
+  final String? conversationId;
+  final String? studyPlanId;
+  final int? seq;
+  final String title;
+  final String? note;
+  final int? pageFrom;
+  final int? pageTo;
+  final String? dueAt;
+  final int? estMinutes;
+  final int priority;
+  final String status;
+  final String source;
+  final String? originJson;
+  final String? completedAt;
+  final String createdAt;
+  final String updatedAt;
+  final String? sourceFileName;
+  SearchPlanItemsResult({
     required this.id,
     this.goalId,
     this.conversationId,
