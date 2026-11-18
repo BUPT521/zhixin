@@ -152,11 +152,11 @@ lib/
 
 ## 账号与云同步
 
-账号可选。`lib/data/cloud/server_client.dart` 是服务端的最小 HTTP 客户端，只拼路径、解 JSON 与把错误统一成 `ServerProblem`；账号会话、令牌刷新、邮箱验证、找回密码、退出登录、删除账号与“知新服务”配置在 `lib/application/account_service.dart`，令牌与设备标识只写 Android Keystore（`lib/data/cloud/account_store.dart`），服务地址、自动同步开关与同步游标写在应用私有目录的 `cloud.json`（`lib/data/cloud/cloud_preferences_store.dart`），不进入数据库、数据包与整库备份。没有保存地址时使用 `cloud_preferences_store.dart` 里的编译时默认值，正式包指向项目组的第一套实例，本地联调用 `--dart-define=ZHIXIN_SERVER_URL=...` 覆盖；保存地址后调用 `/readyz` 核对服务端就绪与 schema 版本，账号页把这个地址标为默认或已修改。
+账号可选。`lib/data/cloud/server_client.dart` 是服务端的最小 HTTP 客户端，只拼路径、解 JSON 与把错误统一成 `ServerProblem`；账号会话、令牌刷新、邮箱验证、找回密码、退出登录、删除账号与“知新服务”配置在 `lib/application/account_service.dart`，令牌与设备标识只写 Android Keystore（`lib/data/cloud/account_store.dart`），服务地址、自动同步开关与同步游标写在应用私有目录的 `cloud.json`（`lib/data/cloud/cloud_preferences_store.dart`），不进入数据库、数据包与整库备份。没有保存地址时使用 `cloud_preferences_store.dart` 里的编译时默认值，正式包指向项目组的第一套实例，本地联调用 `--dart-define=ZHIXIN_SERVER_URL=...` 覆盖；保存地址后调用 `/readyz` 核对服务端就绪与 schema 版本，账号页把这个地址标为默认或已修改。正式包只接受 https 地址，明文 http 只在显式开启 `ZHIXIN_ALLOW_INSECURE_SERVER` 的联调构建里可用；带令牌的服务端请求不跟随跨域重定向，同源重定向才继续。会话、进行中的刷新与同步游标都绑定到服务实例来源与账号，换实例或换账号时旧响应按身份代次丢弃并暂停自动同步，首次把本机记录上传到某个账号前要确认。
 
-注册之后的邮箱默认未确认，账号页提供发送与确认验证码的入口，验证码只以六位数字邮件送达，服务端存 HMAC；未确认时找回密码收不到重设验证码。登录卡的“忘记密码”切到邮箱、验证码与新密码三段表单，重设成功之后服务端作废该账号的全部会话，本机清掉登录状态并回到登录表单。账号页同时读 `/v1/llm/quota` 显示今日已用与每日额度，设置页在“知新服务”来源下列出 `/v1/llm/models` 返回的允许模型；这两处读取失败只给一行说明，不影响本机功能、备份与同步。
+注册之后的邮箱默认未确认，账号页提供发送与确认验证码的入口，验证码只以六位数字邮件送达，服务端存 HMAC；未确认时找回密码收不到重设验证码。登录卡的“忘记密码”切到邮箱、验证码与新密码三段表单，重设成功之后服务端作废该账号的全部会话，本机清掉登录状态并回到登录表单。删除账号要先在确认框里重新输入当前密码，服务端回 401 `invalid_credentials` 时只提示密码错误并保留当前登录；“清除云端数据”调用 `DELETE /v1/cloud`，服务端回 409 时提示稍后重试，成功后页面显示完成状态并询问是否恢复自动同步。账号页同时读 `/v1/llm/quota` 显示今日已用与每日额度，设置页在“知新服务”来源下列出 `/v1/llm/models` 返回的允许模型；这两处读取失败只给一行说明，不影响本机功能、备份与同步。
 
-云端备份在 `lib/application/cloud_backup_service.dart`：上传时用与“备份版本库”相同的 `VACUUM INTO` 快照生成 zip，计算 SHA-256 之后按契约上传，服务端按保留份数删除最旧的；列表、下载与删除都按账号隔离，下载后先核对响应头里的哈希，再交给本机已有的预检、确认与恢复点流程替换数据库。页面在 `lib/ui/account_page.dart` 与 `lib/ui/cloud_backup_page.dart`，从“我的”页的账号卡、设置页模型段与数据版本页进入。
+云端备份在 `lib/application/cloud_backup_service.dart`：上传时用与“备份版本库”相同的 `VACUUM INTO` 快照生成 zip，计算 SHA-256 之后按契约上传，服务端按保留份数删除最旧的；列表、下载与删除都按账号隔离，下载后先核对响应头里的哈希，再交给本机已有的预检、确认与恢复点流程替换数据库。附件随同步上传，服务端按账号累计字节，超过账号总量配额时返回 413 `storage_full`，页面显示已用量与上限并停止本轮上传，不逐个重试。页面在 `lib/ui/account_page.dart` 与 `lib/ui/cloud_backup_page.dart`，从“我的”页的账号卡、设置页模型段与数据版本页进入。
 
 增量同步在 `lib/application/sync_service.dart`。第一次同步先拉取服务端已有的提交并在本机应用，再把当前业务投影作为基线上传，之后只推送新提交；拉取到的远端提交经 `RevisionService.applyRemoteCommit` 在本机生成一条同样净变化的提交，撤销与数据版本页照常可用，远端提交的请求编号沿用到本机，重复下发不会叠加。附件按内容哈希随提交上传与下载，拉取时核对哈希；服务端位置变化返回 409 时先拉取再重推，同一字段两台设备同时修改时后到达的覆盖先到达的，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md)。应用根在提交之后延迟几秒排一次同步，账号页可以手动立即同步；同步失败只记一条说明与本机诊断，本机读写不受影响。
 

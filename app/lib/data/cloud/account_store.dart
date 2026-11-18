@@ -4,10 +4,14 @@ import '../../ai/llm_config.dart' show SecretStore;
 import '../../domain/rules/uuid_v7.dart';
 
 /// 登录之后的会话：两枚令牌只存在 Android Keystore，不进数据库、数据包与日志。
+///
+/// 会话按服务实例的来源与账号一起保存（[serverOrigin]、[userId]）：换了服务
+/// 实例之后同一个账号的令牌也不能拿到新实例上使用。
 class AccountSession {
   const AccountSession({
     required this.userId,
     required this.email,
+    required this.serverOrigin,
     required this.accessToken,
     required this.refreshToken,
     required this.accessExpiresAt,
@@ -18,6 +22,7 @@ class AccountSession {
   factory AccountSession.fromJson(Map<String, Object?> json) => AccountSession(
     userId: json['user_id'] as String? ?? '',
     email: json['email'] as String? ?? '',
+    serverOrigin: json['server_origin'] as String? ?? '',
     emailVerified: json['email_verified'] == true,
     accessToken: json['access_token'] as String? ?? '',
     refreshToken: json['refresh_token'] as String? ?? '',
@@ -31,6 +36,9 @@ class AccountSession {
 
   final String userId;
   final String email;
+
+  /// 会话所属服务实例的来源（协议、主机与端口），切换实例之后不再复用。
+  final String serverOrigin;
   final String accessToken;
   final String refreshToken;
 
@@ -53,6 +61,7 @@ class AccountSession {
     return AccountSession(
       userId: userId,
       email: email,
+      serverOrigin: serverOrigin,
       emailVerified: emailVerified ?? this.emailVerified,
       accessToken: accessToken ?? this.accessToken,
       refreshToken: refreshToken ?? this.refreshToken,
@@ -64,6 +73,7 @@ class AccountSession {
   Map<String, Object?> toJson() => {
     'user_id': userId,
     'email': email,
+    'server_origin': serverOrigin,
     'email_verified': emailVerified,
     'access_token': accessToken,
     'refresh_token': refreshToken,
@@ -84,7 +94,9 @@ class AccountStore {
 
   final SecretStore _secrets;
 
-  Future<AccountSession?> read() async {
+  /// 读当前会话；传入 [origin] 时只返回属于这个服务实例的会话，换了实例就按
+  /// 未登录处理，不会把旧实例的令牌发到新地址上。
+  Future<AccountSession?> read({String? origin}) async {
     final String? raw;
     try {
       raw = await _secrets.read(sessionKey);
@@ -97,7 +109,12 @@ class AccountStore {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
       final session = AccountSession.fromJson(decoded.cast<String, Object?>());
-      if (session.userId.isEmpty || session.refreshToken.isEmpty) return null;
+      if (session.userId.isEmpty ||
+          session.refreshToken.isEmpty ||
+          session.serverOrigin.isEmpty) {
+        return null;
+      }
+      if (origin != null && session.serverOrigin != origin) return null;
       return session;
     } catch (_) {
       return null;

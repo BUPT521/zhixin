@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;

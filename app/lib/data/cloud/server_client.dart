@@ -46,15 +46,43 @@ class ServerProblem implements Exception {
           ? '尝试过于频繁，请稍后再试'
           : '尝试过于频繁，请 $retryAfterSeconds 秒后再试',
     'payload_too_large' => '文件超过服务端允许的大小',
+    'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
     'quota_exceeded' => '今日模型额度已经用完，可以改用自己的 API Key',
     'not_found' => '云端没有这条记录',
     'invalid_request' => '服务端没有接受这次请求',
+    'redirect_blocked' => '服务地址发生了跨域跳转，已停止这次请求',
     'unavailable' || 'upstream_failed' => '服务端暂时不可用，请稍后再试',
     'not_implemented' => '服务端还没有实现这个操作',
     _ => '服务端没有完成这次请求',
   };
+
+  /// 附件总量超限时把服务端给出的已用与上限写成一句说明；数字缺失时只说明
+  /// 空间已满，不编造额度。
+  String get _storageFullMessage {
+    final used = _byteCount(extra['used_bytes']);
+    final limit = _byteCount(extra['limit_bytes']);
+    if (used == null || limit == null) {
+      return '云端附件空间已满，请先清理云端数据或删掉不再需要的附件';
+    }
+    return '云端附件空间已满：已用 ${_formatBytes(used)}，上限 ${_formatBytes(limit)}';
+  }
+
+  static int? _byteCount(Object? value) => switch (value) {
+    num number => number.toInt(),
+    String text => int.tryParse(text.trim()),
+    _ => null,
+  };
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(1)} GB';
+  }
 
   @override
   String toString() => 'ServerProblem($status $code): $detail';
@@ -110,6 +138,19 @@ class ServerTokens {
   final DateTime accessExpiresAt;
   final DateTime refreshExpiresAt;
 }
+
+/// 构建时是否允许 http 服务地址：正式包默认关闭，只在本机联调时用
+/// `--dart-define=ZHIXIN_ALLOW_INSECURE_SERVER=true` 显式打开。
+const bool allowInsecureServer = bool.fromEnvironment(
+  'ZHIXIN_ALLOW_INSECURE_SERVER',
+  defaultValue: false,
+);
+
+/// AOT 正式构建的标记；debug 构建与 `flutter test` 都不是正式包。
+const bool _isReleaseBuild = bool.fromEnvironment('dart.vm.product');
+
+/// 正式构建强制 https；debug 构建与显式打开的联调开关允许 http。
+bool get serverRequiresHttps => _isReleaseBuild && !allowInsecureServer;
 
 /// 提交序列里的一条行级变化；`before`/`after` 是客户端版本值的原始 JSON。
 class ServerChange {
@@ -334,9 +375,11 @@ class ServerRelease {
   final int build;
   final String url;
   final String publishedAt;
+
+  /// 安装包的 SHA-256，契约要求 64 位小写十六进制。
   final String sha256;
 
-  /// 安装包 SHA-256 的 Ed25519 签名（base64）；清单没有签名时为空。
+  /// 对 [sha256] 十六进制字符串的 Ed25519 签名（base64），可选；清单没有签名时为空。
   final String signature;
   final int size;
   final String minVersion;
@@ -377,7 +420,10 @@ class ServerClient {
   final bool _ownsHttpClient;
 
   /// 规范化服务地址：去掉末尾斜杠，只接受 http 与 https。
-  static String normalizeBaseUrl(String raw) {
+  ///
+  /// 正式构建默认只接受 https；http 需要构建时显式打开联调开关。
+  /// [requireHttps] 只给测试核对正式包的判定，生产调用不传。
+  static String normalizeBaseUrl(String raw, {bool? requireHttps}) {
     var value = raw.trim();
     if (value.isEmpty) throw const FormatException('服务地址不能为空');
     if (!value.contains('://')) value = 'https://$value';
@@ -385,11 +431,28 @@ class ServerClient {
     if (uri == null || uri.host.isEmpty) {
       throw const FormatException('服务地址格式不正确');
     }
+    if (uri.userInfo.isNotEmpty) {
+      // 地址里带用户名或密码会随请求与日志外泄，服务地址只接受不含凭据的地址。
+      throw const FormatException('服务地址不能包含用户名或密码');
+    }
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw const FormatException('服务地址只支持 http 与 https');
     }
+    if ((requireHttps ?? serverRequiresHttps) && uri.scheme != 'https') {
+      throw const FormatException(
+        '正式版只接受 https 服务地址；本地联调需要使用 http 时，'
+        '在构建时显式打开不安全地址开关',
+      );
+    }
     final normalized = uri.toString().replaceAll(RegExp(r'/+$'), '');
     return normalized;
+  }
+
+  /// 服务地址的来源（协议、主机与端口）；账号会话与同步游标按它区分实例。
+  static String originOf(String baseUrl) {
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri == null || uri.host.isEmpty) return baseUrl.trim();
+    return uri.origin;
   }
 
   /// 读一次就绪检查；依赖不可用时服务端返回 503，客户端按 [ServerProblem] 抛出。
@@ -434,11 +497,18 @@ class ServerClient {
   }
 
   /// 用刷新令牌换一组新令牌；旧的两枚立即失效。
-  Future<ServerTokens> refresh(String refreshToken) async {
+  ///
+  /// [requestId] 是这次逻辑刷新的标识，网络在响应回来之前断开时用同一个标识与
+  /// 旧刷新令牌重试，服务端才按重试处理；换一个标识重试会被当成盗用并撤销会话。
+  Future<ServerTokens> refresh(String refreshToken, {String? requestId}) async {
     final json = await _json(
       'POST',
       '/v1/auth/refresh',
-      body: {'refresh_token': refreshToken},
+      body: {
+        'refresh_token': refreshToken,
+        if (requestId != null && requestId.trim().isNotEmpty)
+          'request_id': requestId.trim(),
+      },
     );
     return ServerTokens.fromJson(json);
   }
@@ -451,9 +521,16 @@ class ServerClient {
     return ServerAccount.fromJson(json);
   }
 
-  /// 删除账号，连同同步序列、附件、备份与用量。
-  Future<void> deleteMe(String accessToken) =>
-      _send('DELETE', '/v1/me', accessToken: accessToken);
+  /// 删除账号，连同同步序列、附件、备份与用量；删除前必须重新提交当前密码。
+  ///
+  /// 密码错误返回 401 `invalid_credentials`，与其他失败共用账号的失败预算。
+  Future<void> deleteMe(String accessToken, {required String password}) =>
+      _send(
+        'DELETE',
+        '/v1/me',
+        accessToken: accessToken,
+        body: {'password': password},
+      );
 
   /// 给当前账号的邮箱发验证码；已经确认时服务端返回 204，不重复发信。
   Future<void> requestEmailVerification(String accessToken) =>
@@ -493,6 +570,12 @@ class ServerClient {
   /// 删除该账号的全部云端备份，账号保留。
   Future<void> deleteAllBackups(String accessToken) =>
       _send('DELETE', '/v1/backups', accessToken: accessToken);
+
+  /// 一次清空该账号的全部云端数据：备份、提交序列、附件与对象存储里遗留的字节。
+  ///
+  /// 可重复调用；上一次清除还没结束时服务端返回 409 `conflict`，稍后重试即可。
+  Future<void> deleteCloud(String accessToken) =>
+      _send('DELETE', '/v1/cloud', accessToken: accessToken);
 
   /// 清空该账号的同步序列，服务端位置回到 0；账号与备份保留。
   Future<void> deleteSyncLog(String accessToken) =>
@@ -732,6 +815,9 @@ class ServerClient {
     }
   }
 
+  /// 一次跳转的上限，与 package:http 的默认值一致。
+  static const int _maxRedirects = 5;
+
   Future<http.Response> _raw(
     String method,
     String path, {
@@ -741,17 +827,63 @@ class ServerClient {
     Map<String, String> headers = const {},
     Map<String, String>? query,
   }) async {
-    final request = http.Request(method, _uri(path, query));
-    if (accessToken != null && accessToken.trim().isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer ${accessToken.trim()}';
+    final serverOrigin = Uri.parse(baseUrl).origin;
+    var currentMethod = method;
+    var currentUri = _uri(path, query);
+    var currentBody = body;
+    var currentBytes = bodyBytes;
+    for (var redirects = 0; ; redirects++) {
+      final request = http.Request(currentMethod, currentUri);
+      if (accessToken != null && accessToken.trim().isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer ${accessToken.trim()}';
+      }
+      request.headers.addAll(headers);
+      if (currentBody != null) {
+        request.headers['Content-Type'] = 'application/json';
+        request.bodyBytes = utf8.encode(jsonEncode(currentBody));
+      } else if (currentBytes != null) {
+        request.bodyBytes = currentBytes;
+      }
+      // 不交给 http 自动跟随：带令牌的请求只在同源跳转上继续，跨域一律当作失败。
+      request.followRedirects = false;
+      final response = await _sendRequest(request);
+      final location = response.headers['location'];
+      final isRedirect = const {
+        301,
+        302,
+        303,
+        307,
+        308,
+      }.contains(response.statusCode);
+      if (!isRedirect || location == null || location.trim().isEmpty) {
+        return response;
+      }
+      if (redirects >= _maxRedirects) {
+        throw ServerProblem(
+          code: 'redirect_blocked',
+          status: response.statusCode,
+          detail: '重定向次数超过上限',
+        );
+      }
+      final target = currentUri.resolve(location.trim());
+      if (target.origin != serverOrigin) {
+        throw ServerProblem(
+          code: 'redirect_blocked',
+          status: response.statusCode,
+          detail: '拒绝跟随跨域重定向',
+        );
+      }
+      // 301、302、303 按浏览器惯例改成 GET；307、308 保留方法与请求体。
+      if (response.statusCode != 307 && response.statusCode != 308) {
+        currentMethod = currentMethod == 'HEAD' ? 'HEAD' : 'GET';
+        currentBody = null;
+        currentBytes = null;
+      }
+      currentUri = target;
     }
-    request.headers.addAll(headers);
-    if (body != null) {
-      request.headers['Content-Type'] = 'application/json';
-      request.bodyBytes = utf8.encode(jsonEncode(body));
-    } else if (bodyBytes != null) {
-      request.bodyBytes = bodyBytes;
-    }
+  }
+
+  Future<http.Response> _sendRequest(http.Request request) async {
     try {
       final streamed = await _http.send(request).timeout(timeout);
       return await http.Response.fromStream(streamed).timeout(timeout);

@@ -28,6 +28,29 @@ class SyncSchemaMismatch implements Exception {
   String toString() => '服务端接受 schema $server，本机是 $client；升级应用或服务端后再同步';
 }
 
+/// 同步途中切换了服务实例或账号：这次同步的结果属于旧身份，直接丢弃。
+class SyncIdentityChanged implements Exception {
+  const SyncIdentityChanged();
+
+  @override
+  String toString() => '账号或服务实例已经变化，这次同步没有完成';
+}
+
+/// 这个账号第一次同步：需要先把本机现有记录作为基线上传，必须由用户确认。
+class BaselineConfirmationRequired implements Exception {
+  const BaselineConfirmationRequired(this.localCommits);
+
+  /// 本机当前 HEAD 对应的提交数，用来告诉用户会上传多少。
+  final int localCommits;
+
+  String get message =>
+      '这个账号还没有同步过。首次同步会把本机现有的 $localCommits 条提交作为基线'
+      '完整上传到这个账号的云端，其他登录这个账号的设备也会看到这些记录。';
+
+  @override
+  String toString() => message;
+}
+
 /// 增量同步一屏读到的状态，设置页与账号页据此显示登录、待推送与上次同步。
 class SyncStatus {
   const SyncStatus({
@@ -39,6 +62,7 @@ class SyncStatus {
     required this.localHead,
     required this.serverHead,
     required this.needsBootstrap,
+    this.baselineNeedsConfirmation = false,
     this.lastSyncedAt,
     this.lastError,
   });
@@ -51,6 +75,9 @@ class SyncStatus {
   final int localHead;
   final int? serverHead;
   final bool needsBootstrap;
+
+  /// 首次基线上传还没得到用户确认；界面据此在同步前询问一次。
+  final bool baselineNeedsConfirmation;
   final DateTime? lastSyncedAt;
   final String? lastError;
 }
@@ -119,7 +146,18 @@ class SyncService {
   String? _lastError;
   bool _disposed = false;
 
+  /// 这次同步开始时的身份代次；切换账号或实例之后进行中的同步据此丢弃结果。
+  int? _runEpoch;
+
   bool get syncing => _running != null;
+
+  /// 身份在同步途中变化时抛出 [SyncIdentityChanged]，不再写回旧账号的游标。
+  void _ensureIdentity() {
+    final expected = _runEpoch;
+    if (expected != null && account.identityEpoch != expected) {
+      throw const SyncIdentityChanged();
+    }
+  }
 
   Future<SyncStatus> status() async {
     final snapshot = await account.snapshot();
@@ -138,7 +176,13 @@ class SyncService {
         lastError: _lastError,
       );
     }
-    final ownState = state?.userId == snapshot.session!.userId ? state : null;
+    final origin = await account.serverOrigin();
+    final ownState =
+        state != null &&
+            state.userId == snapshot.session!.userId &&
+            state.serverOrigin == origin
+        ? state
+        : null;
     final pending = ownState == null
         ? localHead
         : (await revisions.commitsAfter(ownState.pushedThrough))
@@ -153,25 +197,42 @@ class SyncService {
       localHead: localHead,
       serverHead: ownState?.serverHead,
       needsBootstrap: ownState == null || ownState.pushedThrough > localHead,
+      baselineNeedsConfirmation: ownState == null && localHead > 0,
       lastSyncedAt: ownState?.syncedAt,
       lastError: _lastError,
     );
   }
 
   /// 立即同步；同时只跑一次，重复调用等同一个结果。
-  Future<SyncResult> syncNow() {
+  ///
+  /// [confirmBaseline] 表示用户已经在界面上确认过首次基线上传；没有确认时
+  /// 遇到需要上传本机记录的情况会抛出 [BaselineConfirmationRequired]。
+  Future<SyncResult> syncNow({bool confirmBaseline = false}) {
     final running = _running;
     if (running != null) return running;
-    final future = _sync();
+    final future = _sync(confirmBaseline: confirmBaseline);
     _running = future.whenComplete(() => _running = null);
     return _running!;
   }
 
   /// 写入、登录与应用启动之后延迟同步一次：连续写入只排一次，失败只留说明。
+  ///
+  /// 首次基线上传需要用户确认，没有确认之前不自动上传，也不反复重试；账号页
+  /// 的“立即同步”会先问一次。
   Future<void> schedule({Duration delay = const Duration(seconds: 5)}) async {
     if (_disposed) return;
     final snapshot = await account.snapshot();
     if (!snapshot.signedIn || !snapshot.autoSync) return;
+    final state = await preferences.syncState();
+    final origin = await account.serverOrigin();
+    final localHead = await engine.headId(database.raw);
+    final ownState =
+        state != null &&
+            state.userId == snapshot.session!.userId &&
+            state.serverOrigin == origin
+        ? state
+        : null;
+    if (ownState == null && localHead > 0) return;
     _timer?.cancel();
     _timer = Timer(delay, () {
       _timer = null;
@@ -194,13 +255,16 @@ class SyncService {
     _timer = null;
   }
 
-  Future<SyncResult> _sync() async {
+  Future<SyncResult> _sync({bool confirmBaseline = false}) async {
     _lastError = null;
     var pulled = 0;
     var pushed = 0;
     var uploaded = 0;
     var downloaded = 0;
     final deviceId = await account.deviceId();
+    final epoch = account.identityEpoch;
+    final origin = await account.serverOrigin();
+    _runEpoch = epoch;
     try {
       final snapshot = await account.snapshot();
       if (!snapshot.signedIn) throw const AccountSignedOut();
@@ -217,8 +281,9 @@ class SyncService {
       final localHead = await engine.headId(database.raw);
       if (state != null &&
           (state.userId != snapshot.session!.userId ||
+              state.serverOrigin != origin ||
               state.pushedThrough > localHead)) {
-        // 换了账号，或本机数据被清空、换库：游标不再对应本机提交编号。
+        // 换了账号或实例，或本机数据被清空、换库：游标不再对应本机提交编号。
         await preferences.clearSyncState();
         state = null;
       }
@@ -229,7 +294,12 @@ class SyncService {
       }
 
       if (state == null) {
-        final boot = await _bootstrap(deviceId);
+        // 首次同步（或服务端被清空后重建）会把本机记录整份上传，必须先确认；
+        // 本机没有记录时不需要确认。
+        if (localHead > 0 && !confirmBaseline) {
+          throw BaselineConfirmationRequired(localHead);
+        }
+        final boot = await _bootstrap(deviceId, origin);
         pulled += boot.pulled;
         pushed += boot.pushed;
         uploaded += boot.uploaded;
@@ -255,6 +325,7 @@ class SyncService {
         pushed += push.pushed;
         state = push.state;
       }
+      _ensureIdentity();
       final finalState = state.copyWith(syncedAt: clock());
       await preferences.saveSyncState(finalState);
       return SyncResult(
@@ -265,8 +336,13 @@ class SyncService {
       );
     } catch (error, stack) {
       _lastError = _describe(error);
-      recordFailure(error, stack, kind: 'cloud_sync');
+      if (error is! SyncIdentityChanged &&
+          error is! BaselineConfirmationRequired) {
+        recordFailure(error, stack, kind: 'cloud_sync');
+      }
       rethrow;
+    } finally {
+      _runEpoch = null;
     }
   }
 
@@ -275,7 +351,7 @@ class SyncService {
   Future<
     ({SyncState state, int pulled, int pushed, int uploaded, int downloaded})
   >
-  _bootstrap(String deviceId) async {
+  _bootstrap(String deviceId, String origin) async {
     var pulled = 0;
     var downloaded = 0;
     final remoteHead = await account.call(
@@ -284,6 +360,7 @@ class SyncService {
     final localHead = await engine.headId(database.raw);
     var state = SyncState(
       userId: (await account.snapshot()).session!.userId,
+      serverOrigin: origin,
       serverHead: 0,
       pushedThrough: localHead,
     );
@@ -320,6 +397,7 @@ class SyncService {
     var baseSeq = state.serverHead;
     final userId = state.userId;
     for (var index = 0; index < changes.length; index += _baselineChunk) {
+      _ensureIdentity();
       final end = (index + _baselineChunk).clamp(0, changes.length);
       final chunk = changes.sublist(index, end);
       final commit = ServerCommit(
@@ -340,8 +418,10 @@ class SyncService {
     final uploaded = await _uploadAssets(
       AssetStore.hashesInProjection(projection),
     );
+    _ensureIdentity();
     state = SyncState(
       userId: userId,
+      serverOrigin: origin,
       serverHead: baseSeq,
       pushedThrough: headAfterPull,
       syncedAt: clock(),
@@ -367,6 +447,7 @@ class SyncService {
     var pulled = 0;
     var downloadCount = 0;
     while (true) {
+      _ensureIdentity();
       final page = await account.call(
         (client, token) => client.pull(token, after: current.serverHead),
       );
@@ -377,6 +458,7 @@ class SyncService {
       }
       final hashes = <String>{};
       for (final commit in page.commits) {
+        _ensureIdentity();
         final applied = await _applyRemote(commit);
         hashes.addAll(applied.assetHashes);
         pulled++;
@@ -390,6 +472,7 @@ class SyncService {
         serverHead: page.commits.last.seq ?? page.head,
         syncedAt: clock(),
       );
+      _ensureIdentity();
       if (persist) await preferences.saveSyncState(current);
       final fetched = await _downloadAssets(hashes);
       downloadCount += fetched;
@@ -408,6 +491,7 @@ class SyncService {
   }) async {
     var current = state;
     for (var attempt = 0; attempt < 3; attempt++) {
+      _ensureIdentity();
       final headNow = await account.call((client, token) => client.head(token));
       if (headNow.head != current.serverHead) {
         final pulled = await _pull(
@@ -427,6 +511,7 @@ class SyncService {
       ];
       if (pending.isEmpty) {
         current = current.copyWith(pushedThrough: localHead);
+        _ensureIdentity();
         await preferences.saveSyncState(current);
         return (state: current, pushed: 0);
       }
@@ -461,6 +546,7 @@ class SyncService {
           );
           pushed += payload.length;
           current = current.copyWith(serverHead: baseSeq);
+          _ensureIdentity();
           await preferences.saveSyncState(current);
         }
       } on ServerProblem catch (error) {
@@ -469,6 +555,7 @@ class SyncService {
         current = current.copyWith(
           serverHead: head is num ? head.toInt() : current.serverHead,
         );
+        _ensureIdentity();
         await preferences.saveSyncState(current);
         continue;
       }
@@ -481,6 +568,7 @@ class SyncService {
         },
         syncedAt: clock(),
       );
+      _ensureIdentity();
       await preferences.saveSyncState(current);
       return (state: current, pushed: pushed);
     }
@@ -542,6 +630,7 @@ class SyncService {
     final local = await assets.objectHashes(database.raw);
     var uploaded = 0;
     for (final hash in hashes) {
+      _ensureIdentity();
       if (!local.contains(hash)) continue;
       final exists = await account.call(
         (client, token) => client.blobExists(token, hash),
@@ -549,6 +638,8 @@ class SyncService {
       if (exists != null) continue;
       final bytes = await assets.readBytes(database.raw, hash);
       if (bytes == null) continue;
+      // 账号附件总量已满时服务端返回 storage_full；异常向上抛出，这一轮上传
+      // 到此停止，界面按已用与上限说明，不静默跳过也不反复重试。
       await account.call(
         (client, token) => client.blobUpload(token, hash, bytes),
       );
@@ -562,6 +653,7 @@ class SyncService {
     final local = await assets.objectHashes(database.raw);
     final fetched = <String, List<int>>{};
     for (final hash in hashes) {
+      _ensureIdentity();
       if (local.contains(hash)) continue;
       final bytes = await account.call(
         (client, token) => client.blobDownload(token, hash),
@@ -631,6 +723,8 @@ class SyncService {
     ServerProblem(:final userMessage) => userMessage,
     AccountSignedOut(:final userMessage) => userMessage,
     SyncSchemaMismatch() => error.toString(),
+    SyncIdentityChanged() => error.toString(),
+    BaselineConfirmationRequired(:final message) => message,
     _ => '同步没有完成',
   };
 }

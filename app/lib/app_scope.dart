@@ -507,6 +507,9 @@ class AppScopeState extends State<AppScope> {
       preferences: _cloudPreferences,
       deviceName: '知新 ${appVersion.split('+').first}',
     );
+    // 先把服务实例来源读进内存：页面构建与预读会在假异步区里取会话，那里等不到
+    // 文件 I/O，来源缓存让这些读取不再落盘。
+    await _accountService!.serverOrigin();
     _activeReportService = ActiveReportService(
       store: TelemetryStore(filesDir: paths.filesDir),
       signedIn: () async => (await _account.snapshot()).session != null,
