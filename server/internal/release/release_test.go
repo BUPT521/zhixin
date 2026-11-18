@@ -58,7 +58,7 @@ func TestLoadReadsManifest(t *testing.T) {
 }
 
 func TestLoadTrimsAndAllowsEmptyList(t *testing.T) {
-	path := writeManifest(t, `{"releases":[{"platform":" android ","version":" 0.2.0 ","build":1,"url":"https://example.test/a.apk"}]}`)
+	path := writeManifest(t, `{"releases":[{"platform":" android ","version":" 0.2.0 ","build":1,"url":"https://example.test/a.apk","sha256":"`+zeroSHA+`"}]}`)
 	entries, err := Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -97,17 +97,20 @@ func TestLoadRejectsBadManifest(t *testing.T) {
 		{"不是 JSON", "releases: android"},
 		{"顶层多一段内容", `{"releases":[]} {}`},
 		{"未知字段", `{"releases":[],"channel":"beta"}`},
-		{"缺 platform", `{"releases":[{"version":"0.2.0","build":1,"url":"https://example.test/a.apk"}]}`},
-		{"缺 version", `{"releases":[{"platform":"android","build":1,"url":"https://example.test/a.apk"}]}`},
-		{"负数 build", `{"releases":[{"platform":"android","version":"0.2.0","build":-1,"url":"https://example.test/a.apk"}]}`},
-		{"负数 size", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk","size":-1}]}`},
-		{"地址为空", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":""}]}`},
-		{"地址没有主机", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https:///a.apk"}]}`},
-		{"地址协议不对", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"ftp://example.test/a.apk"}]}`},
+		{"缺 platform", `{"releases":[{"version":"0.2.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `"}]}`},
+		{"缺 version", `{"releases":[{"platform":"android","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `"}]}`},
+		{"缺 sha256", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk"}]}`},
+		{"负数 build", `{"releases":[{"platform":"android","version":"0.2.0","build":-1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `"}]}`},
+		{"负数 size", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `","size":-1}]}`},
+		{"地址为空", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"","sha256":"` + zeroSHA + `"}]}`},
+		{"地址没有主机", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https:///a.apk","sha256":"` + zeroSHA + `"}]}`},
+		{"地址协议不对", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"ftp://example.test/a.apk","sha256":"` + zeroSHA + `"}]}`},
+		{"地址不是 https", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"http://example.test/a.apk","sha256":"` + zeroSHA + `"}]}`},
 		{"哈希格式不对", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk","sha256":"abc"}]}`},
+		{"签名格式不对", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `","signature":"not-base64"}]}`},
 		{"平台重复", `{"releases":[
-			{"platform":"android","version":"0.1.0","build":1,"url":"https://example.test/a.apk"},
-			{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/b.apk"}
+			{"platform":"android","version":"0.1.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `"},
+			{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/b.apk","sha256":"` + zeroSHA + `"}
 		]}`},
 	}
 	for _, tc := range cases {

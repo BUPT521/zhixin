@@ -30,6 +30,9 @@ type routes struct {
 	release   *release.Handler
 	retention *retention.Handler
 
+	// cloud 清空账号的云端数据；由 server.New 注入，见 DeleteV1Cloud。
+	cloud func(w http.ResponseWriter, r *http.Request)
+
 	schemaVersion int
 	ready         func(ctx context.Context) error
 }
@@ -68,6 +71,16 @@ func (rt routes) PostV1AuthPasswordReset(w http.ResponseWriter, r *http.Request)
 }
 func (rt routes) GetV1Me(w http.ResponseWriter, r *http.Request)    { rt.auth.Me(w, r) }
 func (rt routes) DeleteV1Me(w http.ResponseWriter, r *http.Request) { rt.auth.DeleteMe(w, r) }
+
+// DeleteV1Cloud 清空账号的备份、提交序列、附件与遗留对象；装配由 server.New
+// 注入，未装配时返回 501 而不是悄悄回 204。
+func (rt routes) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) {
+	if rt.cloud == nil {
+		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "cloud purge is not wired")
+		return
+	}
+	rt.cloud(w, r)
+}
 
 func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { rt.sync.Head(w, r) }
 func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {

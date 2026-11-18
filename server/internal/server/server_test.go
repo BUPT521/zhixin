@@ -594,7 +594,7 @@ func TestUploadRateLimitReturns429(t *testing.T) {
 // ZHIXIN_RELEASE_FILE 读入，接口不带令牌也返回同一个版本。
 func TestReleaseManifestIsPublic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
-	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","notes":"内测"}]}`
+	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"` + strings.Repeat("0", 64) + `","notes":"内测"}]}`
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -662,9 +662,9 @@ func TestFeedbackIsPublicAndRateLimited(t *testing.T) {
 // 来源第三次提交才会被限流。
 func TestTrustedProxySplitsBucketsByForwardedFor(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		"ZHIXIN_FEEDBACK_RATE":  "0.0001",
-		"ZHIXIN_FEEDBACK_BURST": "1",
-		"ZHIXIN_TRUSTED_PROXY":  "1",
+		"ZHIXIN_FEEDBACK_RATE":   "0.0001",
+		"ZHIXIN_FEEDBACK_BURST":  "1",
+		"ZHIXIN_TRUSTED_PROXIES": "127.0.0.1/32",
 	})
 	submit := func(forwardedFor string) int {
 		t.Helper()

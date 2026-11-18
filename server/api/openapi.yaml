@@ -22,6 +22,7 @@ tags:
   - name: backup
   - name: llm
   - name: app
+  - name: cloud
 
 paths:
   /healthz:
@@ -108,6 +109,13 @@ paths:
               additionalProperties: false
               properties:
                 refresh_token: { type: string }
+                request_id:
+                  type: string
+                  maxLength: 64
+                  description: |
+                    这次刷新逻辑请求的标识，重试时原样带上。服务端据此判断旧刷新
+                    令牌是原请求的重试还是被盗用：只有标识一致、且在轮换后的固定
+                    宽限期内才按重试处理，否则撤销会话并记录安全事件。
       responses:
         "200":
           description: 已轮换
@@ -155,6 +163,7 @@ paths:
   /v1/auth/password/forgot:
     post:
       tags: [auth]
+      security: []
       summary: 向已验证的邮箱发一封重设密码验证码
       description: |
         邮箱不存在或还没有验证时同样返回 204，不区分两种情况，避免用这个接口
@@ -177,6 +186,7 @@ paths:
   /v1/auth/password/reset:
     post:
       tags: [auth]
+      security: []
       summary: 用验证码重设密码，并作废该账号的全部会话
       requestBody:
         required: true
@@ -219,9 +229,46 @@ paths:
     delete:
       tags: [auth]
       summary: 删除账号，连同同步序列、附件、备份与用量一并删除
+      description: |
+        删除前必须重新提交当前密码，确认是账号本人在操作。密码错误返回 401
+        `invalid_credentials`，与登录失败共用按账号的失败预算，超过时短暂返回
+        429；应用收到该错误只提示密码错误，保留当前登录。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              additionalProperties: false
+              properties:
+                password: { type: string, minLength: 1, maxLength: 128 }
       responses:
         "204": { description: 已删除 }
+        "401":
+          description: "`invalid_credentials`：密码不正确"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/cloud:
+    delete:
+      tags: [cloud]
+      summary: 清除该账号的全部云端数据
+      description: |
+        依次清理整库备份、提交序列、附件以及对象存储里遗留的字节，可重复调用：
+        中途失败时重试会从剩下的部分继续。清除期间这个账号的写入请求返回 409
+        `conflict`，客户端退避之后重试；账号、会话与本机数据不受影响。应用在设置
+        页显示完成状态，再询问是否恢复自动同步。
+      responses:
+        "204": { description: 已清空；本来就是空的也返回 204 }
         "401": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: "`conflict`：上一次清除还没结束，稍后重试"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /v1/sync/head:
     get:
@@ -316,8 +363,11 @@ paths:
       summary: 上传附件，服务端核对哈希
       description: |
         请求体是原始字节，单个附件的上限由 ZHIXIN_MAX_ATTACHMENT_BYTES 决定。
-        内容与路径里的 sha256 不一致时返回 400，超过上限返回 413。同一账号
-        重复上传相同内容写到同一个键，结果不变。
+        内容与路径里的 sha256 不一致时返回 400，超过单个上限返回 413
+        `payload_too_large`。一个账号的全部附件总量上限由
+        ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES 决定，超限返回 413 `storage_full`，
+        `extra` 里带 `used_bytes` 与 `limit_bytes`。同一账号重复上传相同内容写到
+        同一个键，结果不变，也不重复计入总量。
       requestBody:
         required: true
         content:
@@ -325,7 +375,11 @@ paths:
       responses:
         "201": { description: 已保存 }
         "400": { $ref: "#/components/responses/Problem" }
-        "413": { $ref: "#/components/responses/Problem" }
+        "413":
+          description: "`payload_too_large` 或 `storage_full`"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /v1/backups:
     delete:
@@ -414,8 +468,11 @@ paths:
         请求体按 Chat Completions 原样转发，服务端只读取 `model` 与 `stream`。
         流式请求应带 `stream_options.include_usage`，服务端据此记录用量。
         提供方的状态码与响应体原样返回；代理自身的拒绝用 problem+json：
-        `model_not_allowed`（400）、`quota_exceeded`（429）、`unavailable`（503，未配置提供方 key）、
-        `upstream_failed`（502）。
+        `model_not_allowed`（400）、`email_unverified`（403，账号还没确认邮箱，
+        托管额度未开放）、`quota_exceeded`（429，账号当日额度或实例总预算用完）、
+        `unavailable`（503，未配置提供方 key）、`upstream_failed`（502）。
+        非流式响应超过服务端的大小上限时按 `upstream_failed` 结束；流式响应有
+        空闲与总时限，超时会中断上游请求。
       requestBody:
         required: true
         content:
@@ -430,6 +487,11 @@ paths:
         "200":
           description: 提供方的响应，流式时为 text/event-stream
         "400": { $ref: "#/components/responses/Problem" }
+        "403":
+          description: "`email_unverified`：账号还没确认邮箱，托管额度未开放"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
@@ -535,9 +597,11 @@ components:
             - invalid_credentials
             - invalid_code
             - email_taken
+            - email_unverified
             - not_found
             - conflict
             - payload_too_large
+            - storage_full
             - model_not_allowed
             - rate_limited
             - quota_exceeded
@@ -703,14 +767,19 @@ components:
         schema_version: { type: integer, examples: [27] }
     Release:
       type: object
-      required: [platform, version, build, url]
+      required: [platform, version, build, url, sha256]
       properties:
         platform: { type: string, examples: [android] }
         version: { type: string, examples: ["0.2.0"] }
         build: { type: integer, format: int64, description: Android 的 versionCode }
         published_at: { type: string, examples: ["2026-12-21"] }
-        url: { type: string, description: 安装包地址，服务端只校验是 http 或 https }
-        sha256: { type: string, description: 安装包的 SHA-256，可选 }
+        url: { type: string, description: 安装包地址，必须是 https }
+        sha256: { type: string, description: 安装包的 SHA-256，64 位小写十六进制 }
+        signature:
+          type: string
+          description: |
+            安装包 SHA-256 的 Ed25519 签名（base64），可选。应用用内置公钥核对，
+            签名对不上时不提示更新；服务端只校验格式。
         size: { type: integer, format: int64 }
         min_version: { type: string, description: 低于它的客户端应提示必须更新 }
         notes: { type: string, description: 这一版的更新说明 }

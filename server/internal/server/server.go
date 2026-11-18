@@ -150,7 +150,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	retentionSvc := retention.NewService(st.Retention, telemetrySecret, cfg.Location)
 	authSvc.SetActivityRecorder(retentionSvc)
 
-	clientHost := httpx.NewClientHost(cfg.TrustedProxy)
+	clientHost := httpx.NewClientHost(cfg.TrustedProxies)
 	handlers := routes{
 		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost),
 		sync:          syncsvc.NewHandler(syncsvc.NewService(st.Sync, ClientSchemaVersion), log, 16*cfg.MaxJSONBytes),

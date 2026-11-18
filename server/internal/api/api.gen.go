@@ -77,6 +77,7 @@ func (e HealthStatus) Valid() bool {
 const (
 	ProblemCodeConflict           ProblemCode = "conflict"
 	ProblemCodeEmailTaken         ProblemCode = "email_taken"
+	ProblemCodeEmailUnverified    ProblemCode = "email_unverified"
 	ProblemCodeInternal           ProblemCode = "internal"
 	ProblemCodeInvalidCode        ProblemCode = "invalid_code"
 	ProblemCodeInvalidCredentials ProblemCode = "invalid_credentials"
@@ -87,6 +88,7 @@ const (
 	ProblemCodePayloadTooLarge    ProblemCode = "payload_too_large"
 	ProblemCodeQuotaExceeded      ProblemCode = "quota_exceeded"
 	ProblemCodeRateLimited        ProblemCode = "rate_limited"
+	ProblemCodeStorageFull        ProblemCode = "storage_full"
 	ProblemCodeUnauthorized       ProblemCode = "unauthorized"
 	ProblemCodeUnavailable        ProblemCode = "unavailable"
 	ProblemCodeUpstreamFailed     ProblemCode = "upstream_failed"
@@ -98,6 +100,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeConflict:
 		return true
 	case ProblemCodeEmailTaken:
+		return true
+	case ProblemCodeEmailUnverified:
 		return true
 	case ProblemCodeInternal:
 		return true
@@ -118,6 +122,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeQuotaExceeded:
 		return true
 	case ProblemCodeRateLimited:
+		return true
+	case ProblemCodeStorageFull:
 		return true
 	case ProblemCodeUnauthorized:
 		return true
@@ -338,11 +344,15 @@ type Release struct {
 	// PublishedAt Examples: 2026-12-21
 	PublishedAt *string `json:"published_at,omitempty"`
 
-	// Sha256 安装包的 SHA-256，可选
-	Sha256 *string `json:"sha256,omitempty"`
-	Size   *int64  `json:"size,omitempty"`
+	// Sha256 安装包的 SHA-256，64 位小写十六进制
+	Sha256 string `json:"sha256"`
 
-	// Url 安装包地址，服务端只校验是 http 或 https
+	// Signature 安装包 SHA-256 的 Ed25519 签名（base64），可选。应用用内置公钥核对，
+	// 签名对不上时不提示更新；服务端只校验格式。
+	Signature *string `json:"signature,omitempty"`
+	Size      *int64  `json:"size,omitempty"`
+
+	// Url 安装包地址，必须是 https
 	Url string `json:"url"`
 
 	// Version Examples: 0.2.0
@@ -405,6 +415,11 @@ type PostV1AuthPasswordResetJSONBody struct {
 // PostV1AuthRefreshJSONBody defines parameters for PostV1AuthRefresh.
 type PostV1AuthRefreshJSONBody struct {
 	RefreshToken string `json:"refresh_token"`
+
+	// RequestId 这次刷新逻辑请求的标识，重试时原样带上。服务端据此判断旧刷新
+	// 令牌是原请求的重试还是被盗用：只有标识一致、且在轮换后的固定
+	// 宽限期内才按重试处理，否则撤销会话并记录安全事件。
+	RequestId *string `json:"request_id,omitempty"`
 }
 
 // PostV1BackupsParams defines parameters for PostV1Backups.
@@ -418,6 +433,11 @@ type PostV1BackupsParams struct {
 type PostV1LlmChatCompletionsJSONBody struct {
 	Model  string `json:"model"`
 	Stream *bool  `json:"stream,omitempty"`
+}
+
+// DeleteV1MeJSONBody defines parameters for DeleteV1Me.
+type DeleteV1MeJSONBody struct {
+	Password string `json:"password"`
 }
 
 // GetV1SyncCommitsParams defines parameters for GetV1SyncCommits.
@@ -455,6 +475,9 @@ type PostV1FeedbackJSONRequestBody = Feedback
 
 // PostV1LlmChatCompletionsJSONRequestBody defines body for PostV1LlmChatCompletions for application/json ContentType.
 type PostV1LlmChatCompletionsJSONRequestBody PostV1LlmChatCompletionsJSONBody
+
+// DeleteV1MeJSONRequestBody defines body for DeleteV1Me for application/json ContentType.
+type DeleteV1MeJSONRequestBody DeleteV1MeJSONBody
 
 // PostV1SyncCommitsJSONRequestBody defines body for PostV1SyncCommits for application/json ContentType.
 type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
@@ -521,6 +544,9 @@ type ServerInterface interface {
 	// PutV1BlobsSha256 上传附件，服务端核对哈希
 	// (PUT /v1/blobs/{sha256})
 	PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string)
+	// DeleteV1Cloud 清除该账号的全部云端数据
+	// (DELETE /v1/cloud)
+	DeleteV1Cloud(w http.ResponseWriter, r *http.Request)
 	// PostV1Feedback 提交一条应用内反馈
 	// (POST /v1/feedback)
 	PostV1Feedback(w http.ResponseWriter, r *http.Request)
@@ -964,6 +990,20 @@ func (siw *ServerInterfaceWrapper) PutV1BlobsSha256(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteV1Cloud operation middleware
+func (siw *ServerInterfaceWrapper) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteV1Cloud(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostV1Feedback operation middleware
 func (siw *ServerInterfaceWrapper) PostV1Feedback(w http.ResponseWriter, r *http.Request) {
 
@@ -1282,6 +1322,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.PostV1AuthLogout)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me", wrapper.DeleteV1Me)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetV1Me)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/cloud", wrapper.DeleteV1Cloud)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/head", wrapper.GetV1SyncHead)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/sync/commits", wrapper.DeleteV1SyncCommits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/commits", wrapper.GetV1SyncCommits)

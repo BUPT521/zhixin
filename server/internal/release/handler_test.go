@@ -34,15 +34,16 @@ func TestReleasesWithoutManifest(t *testing.T) {
 	}
 }
 
-func TestReleasesReturnsOptionalFieldsOnlyWhenPresent(t *testing.T) {
+func TestReleasesReturnsRequiredFieldsAndOptionalOnesOnlyWhenPresent(t *testing.T) {
 	c := newClient(t, []Entry{
 		{
 			Platform: "android", Version: "0.2.0", Build: 2,
-			URL: "https://example.test/a.apk", Notes: "说明",
+			URL: "https://example.test/a.apk", SHA256: zeroSHA, Notes: "说明",
 		},
 		{
 			Platform: "android-tablet", Version: "0.1.0", Build: 1,
 			URL: "https://example.test/b.apk", SHA256: zeroSHA, Size: 10,
+			Signature: "c2lnbmF0dXJl",
 		},
 	})
 	resp := c.Do(http.MethodGet, "/v1/app/releases", "", nil, nil)
@@ -59,16 +60,19 @@ func TestReleasesReturnsOptionalFieldsOnlyWhenPresent(t *testing.T) {
 		t.Fatalf("应有 2 条，得到 %d", len(out.Releases))
 	}
 	first, second := out.Releases[0], out.Releases[1]
-	if _, ok := first["sha256"]; ok {
-		t.Fatalf("没写哈希时不应出现 sha256：%v", first)
+	if first["sha256"] != zeroSHA {
+		t.Fatalf("sha256 是必填字段，第一条应是零哈希：%v", first)
 	}
 	if _, ok := first["size"]; ok {
 		t.Fatalf("没写大小时不应出现 size：%v", first)
 	}
+	if _, ok := first["signature"]; ok {
+		t.Fatalf("没写签名时不应出现 signature：%v", first)
+	}
 	if first["notes"] != "说明" || first["version"] != "0.2.0" || first["build"] != float64(2) {
 		t.Fatalf("第一条内容不对：%v", first)
 	}
-	if second["sha256"] != zeroSHA || second["size"] != float64(10) {
+	if second["sha256"] != zeroSHA || second["size"] != float64(10) || second["signature"] != "c2lnbmF0dXJl" {
 		t.Fatalf("第二条的可选字段不对：%v", second)
 	}
 }

@@ -21,14 +21,17 @@ const (
 	CodeInvalidCredentials = api.ProblemCodeInvalidCredentials
 	CodeInvalidCode        = api.ProblemCodeInvalidCode
 	CodeEmailTaken         = api.ProblemCodeEmailTaken
+	CodeEmailUnverified    = api.ProblemCodeEmailUnverified
 	CodeNotFound           = api.ProblemCodeNotFound
 	CodeConflict           = api.ProblemCodeConflict
 	CodePayloadTooLarge    = api.ProblemCodePayloadTooLarge
+	CodeStorageFull        = api.ProblemCodeStorageFull
 	CodeModelNotAllowed    = api.ProblemCodeModelNotAllowed
 	CodeQuotaExceeded      = api.ProblemCodeQuotaExceeded
 	CodeRateLimited        = api.ProblemCodeRateLimited
 	CodeUpstreamFailed     = api.ProblemCodeUpstreamFailed
 	CodeUnavailable        = api.ProblemCodeUnavailable
+	CodeNotImplemented     = api.ProblemCodeNotImplemented
 	CodeInternal           = api.ProblemCodeInternal
 )
 

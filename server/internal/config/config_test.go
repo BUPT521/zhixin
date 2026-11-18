@@ -109,14 +109,166 @@ func TestLoadWithoutReleaseFile(t *testing.T) {
 	if cfg.FeedbackRatePerSecond <= 0 || cfg.FeedbackBurst < 1 {
 		t.Fatalf("反馈默认应开启限流：%+v", cfg)
 	}
-	if cfg.TrustedProxy {
+	if len(cfg.TrustedProxies) != 0 {
 		t.Fatal("没有配置反代时不应相信 X-Forwarded-For")
+	}
+}
+
+// TestLoadDefaultsForHardening 守住本轮新增配置的默认值：改动默认值等于改动
+// 线上行为，需要同时改 README 与 ADR-0028。
+func TestLoadDefaultsForHardening(t *testing.T) {
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BodyIdleTimeout != 60*time.Second {
+		t.Fatalf("body idle timeout = %v", cfg.BodyIdleTimeout)
+	}
+	if cfg.MaxSessionsPerUser != 20 {
+		t.Fatalf("max sessions = %d", cfg.MaxSessionsPerUser)
+	}
+	if cfg.Argon2MemoryBudgetMiB != 256 {
+		t.Fatalf("argon2 budget = %d", cfg.Argon2MemoryBudgetMiB)
+	}
+	if cfg.LoginFailRatePerSecond <= 0 || cfg.LoginFailBurst != 10 {
+		t.Fatalf("login fail budget = %v/%d", cfg.LoginFailRatePerSecond, cfg.LoginFailBurst)
+	}
+	if cfg.RateLimitKeys != 100000 {
+		t.Fatalf("rate limit keys = %d", cfg.RateLimitKeys)
+	}
+	if cfg.MaxAccountAttachmentBytes != 2<<30 {
+		t.Fatalf("account attachment bytes = %d", cfg.MaxAccountAttachmentBytes)
+	}
+	if cfg.SyncPullMaxBytes != 4<<20 {
+		t.Fatalf("sync pull bytes = %d", cfg.SyncPullMaxBytes)
+	}
+	if !cfg.LLM.RequireVerifiedEmail || cfg.LLM.ConcurrentPerUser != 4 {
+		t.Fatalf("llm gates = %+v", cfg.LLM)
+	}
+	if cfg.LLM.InstanceDailyTokens <= cfg.LLM.DailyTokens {
+		t.Fatalf("实例总预算应大于单账号预算：%+v", cfg.LLM)
+	}
+	if cfg.LLM.MaxResponseBytes != 32<<20 {
+		t.Fatalf("llm response bytes = %d", cfg.LLM.MaxResponseBytes)
+	}
+	if cfg.LLM.StreamIdleTimeout <= 0 || cfg.LLM.StreamTotalTimeout <= cfg.LLM.StreamIdleTimeout {
+		t.Fatalf("llm stream timeouts = %+v", cfg.LLM)
+	}
+	if cfg.FeedbackKeepDays != 365 {
+		t.Fatalf("feedback keep days = %d", cfg.FeedbackKeepDays)
+	}
+	if cfg.FeedbackGlobalRatePerSecond <= 0 || cfg.TelemetryGlobalRatePerSecond <= 0 {
+		t.Fatal("反馈与匿名上报的全局写入上限默认应开启")
+	}
+}
+
+func TestLoadTrustedProxies(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"ZHIXIN_TRUSTED_PROXIES": "203.0.113.10, 10.0.0.0/8, 2001:db8::1/64",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.TrustedProxies) != 3 {
+		t.Fatalf("proxies = %+v", cfg.TrustedProxies)
+	}
+	if got := cfg.TrustedProxies[0].String(); got != "203.0.113.10/32" {
+		t.Fatalf("first = %q", got)
+	}
+	if got := cfg.TrustedProxies[2].String(); got != "2001:db8::/64" {
+		t.Fatalf("third = %q", got)
+	}
+
+	for _, raw := range []string{"nope", "0.0.0.0/0", "::/0"} {
+		if _, err := Load(env(map[string]string{"ZHIXIN_TRUSTED_PROXIES": raw})); err == nil {
+			t.Fatalf("%q 应当被拒绝", raw)
+		}
+	}
+}
+
+// TestLoadProductionSelfCheck 守住生产配置自检：配置了数据库之后，验证码不能
+// 写日志、两个密钥必须固定。
+func TestLoadProductionSelfCheck(t *testing.T) {
+	base := map[string]string{
+		"ZHIXIN_DATABASE_URL":     "postgres://example/zhixin",
+		"ZHIXIN_CODE_SECRET":      "code-secret",
+		"ZHIXIN_TELEMETRY_SECRET": "telemetry-secret",
+		"ZHIXIN_SMTP_ADDR":        "smtp.example.test:587",
+		"ZHIXIN_SMTP_FROM":        "noreply@example.test",
+		"ZHIXIN_SMTP_USERNAME":    "noreply",
+		"ZHIXIN_SMTP_PASSWORD":    "pw",
+		"ZHIXIN_SMTP_TLS":         "starttls",
+	}
+	if _, err := Load(env(base)); err != nil {
+		t.Fatalf("合法生产配置不应报错：%v", err)
+	}
+
+	cases := []struct {
+		name string
+		key  string
+		val  string
+		want string
+	}{
+		{"验证码写日志", "ZHIXIN_MAIL_LOG", "1", "ZHIXIN_MAIL_LOG"},
+		{"缺验证码密钥", "ZHIXIN_CODE_SECRET", "", "ZHIXIN_CODE_SECRET"},
+		{"缺匿名统计密钥", "ZHIXIN_TELEMETRY_SECRET", "", "ZHIXIN_TELEMETRY_SECRET"},
+		{"非回环 SMTP 不加密", "ZHIXIN_SMTP_TLS", "none", "ZHIXIN_SMTP_TLS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := map[string]string{}
+			for k, v := range base {
+				m[k] = v
+			}
+			if tc.val == "" {
+				delete(m, tc.key)
+			} else {
+				m[tc.key] = tc.val
+			}
+			_, err := Load(env(m))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %s error, got %v", tc.want, err)
+			}
+		})
+	}
+
+	// 回环地址的 SMTP 在 none 模式下允许，供本机联调。
+	loopback := map[string]string{
+		"ZHIXIN_SMTP_ADDR":     "127.0.0.1:2525",
+		"ZHIXIN_SMTP_FROM":     "noreply@example.test",
+		"ZHIXIN_SMTP_USERNAME": "noreply",
+		"ZHIXIN_SMTP_PASSWORD": "pw",
+		"ZHIXIN_SMTP_TLS":      "none",
+	}
+	if _, err := Load(env(loopback)); err != nil {
+		t.Fatalf("回环 SMTP 的明文联调应允许：%v", err)
+	}
+}
+
+func TestLoadLLMUpstreamRequiresHTTPS(t *testing.T) {
+	if _, err := Load(env(map[string]string{
+		"ZHIXIN_LLM_API_KEY":  "key",
+		"ZHIXIN_LLM_BASE_URL": "http://api.example.test/v1",
+	})); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("带 key 的公网 http 地址应拒绝，得到 %v", err)
+	}
+	if _, err := Load(env(map[string]string{
+		"ZHIXIN_LLM_API_KEY":  "key",
+		"ZHIXIN_LLM_BASE_URL": "http://127.0.0.1:11434/v1",
+	})); err != nil {
+		t.Fatalf("本机联调允许 http：%v", err)
+	}
+	if _, err := Load(env(map[string]string{
+		"ZHIXIN_LLM_API_KEY":  "key",
+		"ZHIXIN_LLM_BASE_URL": "https://user:pw@api.example.test/v1",
+	})); err == nil {
+		t.Fatal("地址里带凭据应拒绝")
 	}
 }
 
 func TestLoadReadsReleaseManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
-	body := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk"}]}`
+	body := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
