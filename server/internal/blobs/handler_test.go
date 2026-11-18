@@ -37,12 +37,12 @@ func (a testAPI) PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha st
 }
 
 // newTestServer 装配本包处理器与鉴权中间件，返回客户端与用于签发测试令牌的
-// 账号服务。
-func newTestServer(t *testing.T, maxBytes int64) (*testutil.Client, *auth.Service) {
+// 账号服务。maxBytes 是单个附件上限，accountBytes 是账号总量上限。
+func newTestServer(t *testing.T, maxBytes, accountBytes int64) (*testutil.Client, *auth.Service) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(NewService(NewStore(objectstore.NewMemory()), maxBytes), log)
+	handler := NewHandler(NewService(NewStore(objectstore.NewMemory()), maxBytes).SetAccountBytes(accountBytes), log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
 		httpx.RequestID,
@@ -66,7 +66,7 @@ func blobSHA(data []byte) string {
 }
 
 func TestHandlerBlobRoundTrip(t *testing.T) {
-	c, authSvc := newTestServer(t, 1<<20)
+	c, authSvc := newTestServer(t, 1<<20, 1<<30)
 	token := signIn(t, authSvc, "a@b.cn")
 	data := []byte("attachment-bytes")
 	sha := blobSHA(data)
@@ -109,7 +109,7 @@ func TestHandlerBlobRoundTrip(t *testing.T) {
 }
 
 func TestHandlerBlobRejectsHashMismatch(t *testing.T) {
-	c, authSvc := newTestServer(t, 1<<20)
+	c, authSvc := newTestServer(t, 1<<20, 1<<30)
 	token := signIn(t, authSvc, "a@b.cn")
 	data := []byte("real-bytes")
 	claimed := blobSHA([]byte("other-bytes"))
@@ -128,8 +128,42 @@ func TestHandlerBlobRejectsHashMismatch(t *testing.T) {
 	}
 }
 
+// TestHandlerBlobAccountQuota 守住账号总量：同一份内容重复上传不重复计费，
+// 超限时返回 413 storage_full 并在 extra 里给出 used_bytes 与 limit_bytes，
+// 另一个账号不受影响。
+func TestHandlerBlobAccountQuota(t *testing.T) {
+	c, authSvc := newTestServer(t, 1<<20, 10)
+	token := signIn(t, authSvc, "a@b.cn")
+	other := signIn(t, authSvc, "c@d.cn")
+
+	body := []byte("123456") // 6 字节
+	for range 2 {
+		if resp := c.Do(http.MethodPut, "/v1/blobs/"+blobSHA(body), token, bytes.NewReader(body), nil); resp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload of the same content: %d", resp.StatusCode)
+		}
+	}
+
+	second := []byte("abcdef") // 另 6 字节，6+6 超过上限 10
+	p := testutil.ReadProblem(t, c.Do(http.MethodPut, "/v1/blobs/"+blobSHA(second), token, bytes.NewReader(second), nil))
+	if p.Status != http.StatusRequestEntityTooLarge || p.Code != string(httpx.CodeStorageFull) {
+		t.Fatalf("over quota: %+v", p)
+	}
+	if p.Extra["used_bytes"] != float64(6) || p.Extra["limit_bytes"] != float64(10) {
+		t.Fatalf("quota numbers: %+v", p.Extra)
+	}
+	// 被拒绝的内容没有落盘。
+	if resp := c.Do(http.MethodHead, "/v1/blobs/"+blobSHA(second), token, nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("rejected upload was stored: %d", resp.StatusCode)
+	}
+
+	// 另一个账号的总量单独计算。
+	if resp := c.Do(http.MethodPut, "/v1/blobs/"+blobSHA(second), other, bytes.NewReader(second), nil); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("another account was limited: %d", resp.StatusCode)
+	}
+}
+
 func TestHandlerBlobRejectsOversize(t *testing.T) {
-	c, authSvc := newTestServer(t, 4)
+	c, authSvc := newTestServer(t, 4, 1<<30)
 	token := signIn(t, authSvc, "a@b.cn")
 	data := []byte("too many bytes")
 	p := testutil.ReadProblem(t, c.Do(http.MethodPut, "/v1/blobs/"+blobSHA(data), token, bytes.NewReader(data), nil))

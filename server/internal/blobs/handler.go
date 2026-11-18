@@ -95,6 +95,15 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
 			return
 		}
+		// 账号总量超限时给出已用量与上限：客户端据此提示用户先删附件，而不是
+		// 反复重试同一个请求（契约的 extra 字段）。
+		var full *StorageFullError
+		if errors.As(err, &full) {
+			httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodeStorageFull,
+				"account attachment storage is full",
+				map[string]any{"used_bytes": full.Used, "limit_bytes": full.Limit})
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
