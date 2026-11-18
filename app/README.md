@@ -210,10 +210,13 @@ base64 -w0 release-signing.pem   # 结果填入仓库 Secret RELEASE_SIGNING_KEY
 签名对象是安装包 SHA-256 的小写十六进制字符串本身，共 64 个 ASCII 字节，不加换行，也不签文件内容；
 CI 用 `openssl pkeyutl -sign -rawin` 对这段字符串生成 64 字节签名，再转成 base64 写进 `app-release.apk.sig`，
 同时产出 `app-release.apk.sha256`，两个文件与安装包一起上传为构件，并在 step summary 里给出可以直接填进
-发布清单的 JSON 片段。公钥以常量形式内置在应用里，做法是把 `release-signing.pub.pem` 的内容原样放进应用
-代码的常量并随包编译（应用侧校验由吴闻杰接入）：更新检查先核对清单地址是 https、下载后的 SHA-256 与清单的
-`sha256` 一致，再用内置公钥对清单 `sha256` 字段的 64 字节十六进制字符串验签，三项都通过才提示更新，任何一项
-不通过都不提示。私钥与 keystore 一样只由发版人保管，不进仓库与本机工程目录；换密钥意味着旧版本应用无法验证
+发布清单的 JSON 片段。公钥以常量形式内置在应用里：把 `release-signing.pub.pem` 的内容原样填进
+`lib/platform/release_signing_key.dart` 的常量，或者构建时用
+`--dart-define=RELEASE_PUBLIC_KEY_PEM="-----BEGIN PUBLIC KEY-----…"` 传入，两种方式取其一。更新检查先
+核对清单地址是 https、下载后的 SHA-256 与清单的 `sha256` 一致，再用内置公钥对清单 `sha256` 字段的
+64 字节十六进制字符串验签，三项都通过才提示更新，任何一项不通过都不提示；公钥留空时清单带签名按
+验签失败处理，应用不提示更新。启动后的自动检查与设置页的“检查更新”走同一套流程，本次启动只自动
+检查一次。私钥与 keystore 一样只由发版人保管，不进仓库与本机工程目录；换密钥意味着旧版本应用无法验证
 新清单，发版说明要写明这一点，并在应用内置公钥的下一次发版里同步更新。
 
 

@@ -310,6 +310,7 @@ class ServerRelease {
     required this.url,
     this.publishedAt = '',
     this.sha256 = '',
+    this.signature = '',
     this.size = 0,
     this.minVersion = '',
     this.notes = '',
@@ -322,6 +323,7 @@ class ServerRelease {
     url: json['url'] as String? ?? '',
     publishedAt: json['published_at'] as String? ?? '',
     sha256: json['sha256'] as String? ?? '',
+    signature: json['signature'] as String? ?? '',
     size: (json['size'] as num?)?.toInt() ?? 0,
     minVersion: json['min_version'] as String? ?? '',
     notes: json['notes'] as String? ?? '',
@@ -333,6 +335,9 @@ class ServerRelease {
   final String url;
   final String publishedAt;
   final String sha256;
+
+  /// 安装包 SHA-256 的 Ed25519 签名（base64）；清单没有签名时为空。
+  final String signature;
   final int size;
   final String minVersion;
   final String notes;

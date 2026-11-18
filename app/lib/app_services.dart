@@ -7,6 +7,7 @@ import 'application/continue_service.dart';
 import 'application/context_service.dart';
 import 'application/discussion_service.dart';
 import 'application/embedding_settings.dart';
+import 'application/feedback_service.dart';
 import 'application/learning_service.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
@@ -18,6 +19,7 @@ import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'application/sync_service.dart';
 import 'application/undo_service.dart';
+import 'application/update_check_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/revisions/revision_service.dart';
 import 'plugins/persona/persona_catalog.dart';
@@ -153,6 +155,8 @@ class AccountServices {
     required this.backups,
     required this.sync,
     required this.activeReport,
+    required this.updates,
+    required this.feedback,
   });
 
   final AccountService account;
@@ -161,4 +165,10 @@ class AccountServices {
 
   /// 不登录时的匿名活跃上报，见 ADR-0019。
   final ActiveReportService activeReport;
+
+  /// 应用内更新检查：读公开清单，核对 https、哈希与签名，见 ADR-0025。
+  final UpdateCheckService updates;
+
+  /// 应用内反馈：不要求登录，提交到当前服务地址。
+  final FeedbackService feedback;
 }

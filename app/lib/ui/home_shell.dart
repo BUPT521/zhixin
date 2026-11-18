@@ -5,6 +5,8 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
+import '../application/active_report_service.dart';
+import '../application/update_check_service.dart';
 import 'copy.dart';
 import 'mine_page.dart';
 import 'navigation.dart';
@@ -13,6 +15,7 @@ import 'plan_page.dart';
 import 'records_page.dart';
 import 'telemetry_notice.dart';
 import 'theme.dart';
+import 'update_notice.dart';
 
 /// 底部四栏（02 第 2.1 节）：现在 / 记录 / 安排 / 我的；账号、设置与其余次级
 /// 入口都收在“我的”里。
@@ -50,18 +53,20 @@ class _HomeShellState extends State<HomeShell> {
   /// 各栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
   List<Widget>? _pages;
 
-  /// 首次说明只安排一次，didChangeDependencies 会因主题、语言等变化被多次调用。
-  bool _noticeScheduled = false;
+  /// 首次说明与更新检查只安排一次，didChangeDependencies 会因主题、语言等变化被多次调用。
+  bool _startupChecksScheduled = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_noticeScheduled) {
-      _noticeScheduled = true;
-      final report = AppScope.of(context).accountServices.activeReport;
+    if (!_startupChecksScheduled) {
+      _startupChecksScheduled = true;
+      final services = AppScope.of(context).accountServices;
+      final report = services.activeReport;
+      final updates = services.updates;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        unawaited(showTelemetryNoticeIfNeeded(context, report));
+        unawaited(_runStartupChecks(report, updates));
         _preloadTimer = Timer(preloadDelay, () {
           if (mounted) _preload.value = true;
         });
@@ -112,6 +117,19 @@ class _HomeShellState extends State<HomeShell> {
     // 这些 notifier 由各栏共享，页面卸载时还会移除自己的监听，所以不在这里
     // 销毁：跟着 HomeShell 一起被回收即可。
     super.dispose();
+  }
+
+  /// 首次说明与更新检查都放在启动后的空闲时机。
+  ///
+  /// 先等首次说明关掉再检查更新，两个弹窗不会叠在一起。本次启动只检查一次；
+  /// 网络与校验失败静默，原因由服务写进本机诊断。
+  Future<void> _runStartupChecks(
+    ActiveReportService report,
+    UpdateCheckService updates,
+  ) async {
+    await showTelemetryNoticeIfNeeded(context, report);
+    if (!mounted) return;
+    await showStartupUpdateCheck(context, updates);
   }
 
   void _open(int index) {

@@ -22,6 +22,7 @@ import 'data_version_page.dart';
 import 'discussion_page.dart';
 import 'embedding_settings_page.dart';
 import 'failure_feedback.dart';
+import 'feedback_page.dart';
 import 'learning_page.dart';
 import 'materials_page.dart';
 import 'memory_page.dart';
@@ -179,6 +180,12 @@ Future<void> openEmbeddingSettings(BuildContext context) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(builder: (_) => const EmbeddingSettingsPage()),
   );
+}
+
+/// 打开反馈页：正文必填，可附联系邮箱与本机诊断摘要，不要求登录。
+Future<void> openFeedback(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const FeedbackPage()));
 }
 
 /// 打开记录搜索；结果里打开学习页或讨论仍交回记录页的入口。
