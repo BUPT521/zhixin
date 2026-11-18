@@ -514,6 +514,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
     final signedIn = _account?.signedIn ?? false;
+    final update = _updates?.current;
     final configured =
         _config != null &&
         (_config!.isConfigured || (_config!.isServer && signedIn));
@@ -523,10 +524,10 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
-        if (_updates?.current != null) ...[
+        if (update != null) ...[
           UpdateNoticeCard(
-            update: _updates!.current!,
-            onDownload: () => _openDownload(_updates!.current!),
+            update: update,
+            onDownload: () => _openDownload(update),
             onDismiss: () => _updates!.dismiss(),
           ),
           SizedBox(height: theme.space.md),

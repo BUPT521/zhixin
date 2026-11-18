@@ -93,6 +93,11 @@ class AccountService {
 
   void _advanceEpoch() => _epoch++;
 
+  /// 网络往返期间身份代次变了：这次结果属于旧实例或旧账号，直接丢弃。
+  void _ensureIdentityUnchanged(int epoch) {
+    if (epoch != _epoch) throw const AccountSignedOut();
+  }
+
   /// 当前实例的来源；会话与同步游标都按它与账号一起区分。
   Future<String> serverOrigin() async =>
       ServerClient.originOf(await serverBaseUrl());
@@ -154,12 +159,14 @@ class AccountService {
     required String email,
     required String password,
   }) async {
+    final epoch = _epoch;
     final client = await _requireClient();
     final tokens = await client.register(
       email: email.trim().toLowerCase(),
       password: password,
       deviceName: _deviceName,
     );
+    _ensureIdentityUnchanged(epoch);
     return _adopt(tokens, email: email.trim().toLowerCase());
   }
 
@@ -167,17 +174,20 @@ class AccountService {
     required String email,
     required String password,
   }) async {
+    final epoch = _epoch;
     final client = await _requireClient();
     final tokens = await client.login(
       email: email.trim().toLowerCase(),
       password: password,
       deviceName: _deviceName,
     );
+    _ensureIdentityUnchanged(epoch);
     return _adopt(tokens, email: email.trim().toLowerCase());
   }
 
   /// 退出当前设备；服务端不可达时也要清掉本机会话。
   Future<void> logout() async {
+    final epoch = _epoch;
     final session = await _readSession();
     if (session != null) {
       try {
@@ -187,6 +197,8 @@ class AccountService {
         // 退出登录以本机为准：网络失败时服务端会话到期后自然失效。
       }
     }
+    // 退出途中换了账号或实例：不能清掉新的登录状态。
+    if (epoch != _epoch) return;
     _advanceEpoch();
     await store.clear();
   }
@@ -196,6 +208,7 @@ class AccountService {
   /// 服务端要求重新提交当前密码：密码错误时抛出 `invalid_credentials`，本机
   /// 会话与页面状态都不改动，也不刷新令牌重试，避免多消耗一次失败预算。
   Future<void> deleteAccount({required String password}) async {
+    final epoch = _epoch;
     final session = await _requireSession();
     final client = await _requireClient();
     final token = (await _fresh(session)).accessToken;
@@ -206,6 +219,8 @@ class AccountService {
       final retry = await _refreshStale(token);
       await client.deleteMe(retry.accessToken, password: password);
     }
+    // 删除请求途中切了账号：不能清掉新会话，也不能当作旧账号已经删除。
+    _ensureIdentityUnchanged(epoch);
     _advanceEpoch();
     await store.clear();
     await preferences.clearSyncState();
@@ -215,10 +230,12 @@ class AccountService {
   ///
   /// 清空之后服务端位置回到 0，下一次同步会按当前本机数据重新上传一份基线。
   Future<void> clearCloudData() async {
+    final epoch = _epoch;
     await call<void>((client, token) async {
       await client.deleteAllBackups(token);
       await client.deleteSyncLog(token);
     });
+    _ensureIdentityUnchanged(epoch);
     await preferences.clearSyncState();
   }
 
@@ -230,12 +247,15 @@ class AccountService {
 
   /// 重新读一次服务端的账号信息，更新邮箱验证状态；网络失败时沿用本机记录。
   Future<AccountSnapshot> refreshAccount() async {
+    final epoch = _epoch;
     final session = await _readSession();
     if (session == null) return snapshot();
     try {
       final remote = await call<ServerAccount>(
         (client, token) => client.me(token),
       );
+      // 核对途中换了账号或实例：旧账号的验证状态不能写到新会话上。
+      if (epoch != _epoch) return await snapshot();
       final updated = session.copyWith(emailVerified: remote.emailVerified);
       if (updated.emailVerified != session.emailVerified) {
         await store.save(updated);
@@ -258,9 +278,11 @@ class AccountService {
 
   /// 用六位验证码确认邮箱。
   Future<void> confirmEmailVerification(String code) async {
+    final epoch = _epoch;
     await call<void>(
       (client, token) => client.confirmEmailVerification(token, code),
     );
+    _ensureIdentityUnchanged(epoch);
     final session = await _readSession();
     if (session != null) {
       await store.save(session.copyWith(emailVerified: true));
@@ -279,12 +301,14 @@ class AccountService {
     required String code,
     required String newPassword,
   }) async {
+    final epoch = _epoch;
     final client = await _requireClient();
     await client.resetPassword(
       email: email,
       code: code,
       newPassword: newPassword,
     );
+    _ensureIdentityUnchanged(epoch);
     _advanceEpoch();
     await store.clear();
     await preferences.clearSyncState();
@@ -362,6 +386,10 @@ class AccountService {
     ServerTokens tokens, {
     required String email,
   }) async {
+    final epoch = _epoch;
+    // 会话绑定到签发它的实例：来源在请求之前读好，网络往返期间切换实例时
+    // 下面的代次检查会丢弃这次登录结果。
+    final origin = await serverOrigin();
     // 登录响应不带邮箱验证状态，多读一次 /v1/me；读不到不影响这次登录，
     // 账号页下一次打开会再核对。
     var emailVerified = false;
@@ -371,7 +399,7 @@ class AccountService {
     } catch (_) {
       // 忽略：首屏仍可进入，验证状态稍后重试。
     }
-    final origin = await serverOrigin();
+    _ensureIdentityUnchanged(epoch);
     final session = AccountSession(
       userId: tokens.userId,
       email: email,

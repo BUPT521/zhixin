@@ -115,9 +115,10 @@ class UpdateService {
 
   bool get checked => _finished;
 
-  /// 启动后与打开设置页时都调这里；同一次检查只跑一遍，已经关闭的提示不再出现。
+  /// 启动后与打开设置页时都调这里；一次运行里只检查一遍，已经关闭的提示不再出现。
   Future<AppUpdate?> ensureChecked() {
     if (!enabled || _dismissed) return Future.value(notice.value);
+    if (_finished) return Future.value(notice.value);
     final pending = _pending;
     if (pending != null) return pending;
     final future = _check();
@@ -203,7 +204,7 @@ class UpdateService {
     final key = (publicKeyBase64 ?? zhixinReleasePublicKey).trim();
     if (key.isEmpty) return ReleaseSignatureState.skippedNoKey;
     final verified = verifyReleaseSignature(
-      sha256: release.sha256,
+      sha256: release.sha256.trim(),
       signature: release.signature,
       publicKeyBase64: key,
     );

@@ -61,6 +61,12 @@ class FakeServer {
   /// 附件上传先等这个信号再处理，用来模拟上传途中切换实例或账号。
   Future<void>? delayBlobUpload;
 
+  /// 登录请求先等这个信号再处理，用来模拟登录途中切换实例。
+  Future<void>? delayLogin;
+
+  /// 收到的登录请求次数，配合 [delayLogin] 判断请求已经发出。
+  int loginRequests = 0;
+
   int _nextToken = 1;
 
   /// 打开之后下一次带令牌的请求返回 401，客户端应当先刷新再重试。
@@ -377,7 +383,10 @@ class FakeServer {
     return _tokens(userId, body['device_name'] as String? ?? '');
   }
 
-  http.Response _login(Map<String, Object?> body) {
+  Future<http.Response> _login(Map<String, Object?> body) async {
+    loginRequests++;
+    final gate = delayLogin;
+    if (gate != null) await gate;
     final email = (body['email'] as String? ?? '').trim().toLowerCase();
     if (_passwords[email] == null ||
         _passwords[email] != (body['password'] as String? ?? '')) {

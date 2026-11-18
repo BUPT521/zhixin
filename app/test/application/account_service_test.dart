@@ -324,6 +324,26 @@ void main() {
     expect((await account.snapshot()).signedIn, isFalse);
   });
 
+  test('登录途中切换实例时丢弃这次登录结果', () async {
+    await account.register(email: 'q@example.com', password: 'password123');
+    await account.logout();
+    final gate = Completer<void>();
+    server.delayLogin = gate.future;
+
+    final pending = account.login(
+      email: 'q@example.com',
+      password: 'password123',
+    );
+    while (server.loginRequests == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await account.setServerBaseUrl('http://other.test');
+    gate.complete();
+
+    await expectLater(pending, throwsA(isA<AccountSignedOut>()));
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
   test('登录另一个账号时暂停自动同步并清掉旧游标', () async {
     final first = await account.register(
       email: 'o@example.com',
