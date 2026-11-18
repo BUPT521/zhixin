@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"sync"
 	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -41,6 +42,13 @@ type Proxy struct {
 	// verifyEmail 判断账号是否已经确认邮箱；由 server.New 注入账号库的 UserByID。
 	// 没有注入时按已认证处理，现有内存装配与测试因此不需要真实账号也能走通。
 	verifyEmail func(ctx context.Context, userID string) (bool, error)
+
+	// maxPerUser 是同一账号同时进行的托管请求上限，由 SetConcurrencyLimit 设置，
+	// 小于等于 0 表示不限制。inflight 记在途请求数，由 mu 保护；计数归零时删键，
+	// map 不随注册过的账号数增长。
+	mu         sync.Mutex
+	maxPerUser int
+	inflight   map[string]int
 }
 
 // NewHandler 组装模型代理；构造函数与另外四个业务包同名。
@@ -48,7 +56,7 @@ func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog
 	// No overall client timeout: streams legitimately last minutes. The
 	// client's own per-event deadlines (docs/00 §9) cancel the request,
 	// which cancels r.Context() and with it the upstream call.
-	return &Proxy{cfg: cfg, quota: quota, client: &http.Client{}, loc: loc, now: time.Now, log: log}
+	return &Proxy{cfg: cfg, quota: quota, client: &http.Client{}, loc: loc, now: time.Now, log: log, inflight: map[string]int{}}
 }
 
 // dayTime 返回配置时区下的当前时间；自然日只从它取，响应里的 date 与用量
@@ -62,6 +70,42 @@ func (p *Proxy) day() string { return p.dayTime().Format("2006-01-02") }
 // 不需要账号库也能使用托管额度。
 func (p *Proxy) SetEmailVerifier(fn func(ctx context.Context, userID string) (bool, error)) {
 	p.verifyEmail = fn
+}
+
+// SetConcurrencyLimit 设置同一账号同时进行的托管请求上限，由 server.New 按
+// ZHIXIN_LLM_CONCURRENT_PER_USER 注入；小于等于 0 表示不限制。
+func (p *Proxy) SetConcurrencyLimit(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.maxPerUser = n
+}
+
+// acquireConcurrency 给账号占一个并发名额；达到上限时返回 false。名额在请求
+// 结束时由 defer 归还，上游失败、超时与客户端断开都不例外。
+func (p *Proxy) acquireConcurrency(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.maxPerUser <= 0 {
+		return true
+	}
+	if p.inflight[userID] >= p.maxPerUser {
+		return false
+	}
+	p.inflight[userID]++
+	return true
+}
+
+// releaseConcurrency 归还并发名额；计数归零时删除键，长时间运行也不会留下空项。
+func (p *Proxy) releaseConcurrency(userID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.maxPerUser <= 0 {
+		return
+	}
+	p.inflight[userID]--
+	if p.inflight[userID] <= 0 {
+		delete(p.inflight, userID)
+	}
 }
 
 // models answers in the OpenAI list shape so the client's connection test works unchanged.
@@ -126,6 +170,13 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 并发上限同样在读取请求体之前检查：超出时回 429 与 Retry-After，不占请求体
+	// 读取、额度预留与上游连接。名额在请求结束（含流式转发）时由 defer 归还。
+	if !p.acquireConcurrency(pr.UserID) {
+		httpx.TooMany(w, r, 1)
+		return
+	}
+	defer p.releaseConcurrency(pr.UserID)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, p.cfg.MaxRequestBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError

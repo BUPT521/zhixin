@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,6 +58,78 @@ func signIn(t *testing.T, svc *auth.Service, email string) string {
 		t.Fatalf("register %s: %v", email, err)
 	}
 	return tokens.AccessToken
+}
+
+// failingReader 模拟一个一读就失败的请求体：并发上限在读取请求体之前生效，所以
+// 被挡下的请求应拿到 429 而不是 400，这个读取器同时守住检查顺序。
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("请求体不应被读取") }
+
+// TestHandlerConcurrencyLimit 核对同一账号的第 n+1 个在途请求在读取请求体之前
+// 被 429 挡下，名额归还之后同一个账号恢复可用。
+func TestHandlerConcurrencyLimit(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseAll()
+
+	var forwarded atomic.Int32
+	var once sync.Once
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		once.Do(func() { close(entered) })
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":5}}`)
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, proxy := newTestServer(t, config.LLMConfig{
+		BaseURL:         upstream.URL,
+		APIKey:          "sk-server",
+		Models:          []string{"deepseek-flash"},
+		DailyTokens:     1000,
+		MaxRequestBytes: 1 << 20,
+	})
+	proxy.SetConcurrencyLimit(1)
+	token := signIn(t, authSvc, "concurrent@b.cn")
+	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := make(chan *http.Response, 1)
+	go func() {
+		first <- c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(body), map[string]string{"Content-Type": "application/json"})
+	}()
+	<-entered
+
+	resp := c.Do(http.MethodPost, "/v1/llm/chat/completions", token, failingReader{}, nil)
+	problem := testutil.ReadProblem(t, resp)
+	if resp.StatusCode != http.StatusTooManyRequests || problem.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("第 2 个在途请求应回 429，得到 %d %+v", resp.StatusCode, problem)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "1" {
+		t.Fatalf("429 应带 Retry-After: 1，得到 %q", got)
+	}
+	if forwarded.Load() != 1 {
+		t.Fatalf("被挡下的请求不应转发上游，上游收到 %d 次", forwarded.Load())
+	}
+
+	releaseAll()
+	resp1 := <-first
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("放行之后首个请求应成功，得到 %d", resp1.StatusCode)
+	}
+
+	// 名额归还之后同一个账号可以继续请求，计数没有残留。
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
+		t.Fatalf("名额归还后应恢复可用，得到 %d", code)
+	}
 }
 
 // TestHandlerRequiresVerifiedEmail 核对未确认邮箱的账号在读取请求体之前被挡下：
