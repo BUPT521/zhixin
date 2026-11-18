@@ -1,89 +1,37 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/routepolicy"
 )
 
-// securedRoutes 是契约里要求 Bearer 的路径，写法与 openapi.yaml 的分段一致：
-// `{name}` 匹配任意一段。只列需要鉴权的；公开路径与契约之外的路径都直接放行，
-// 后者仍由 mux 的兜底处理器返回 404。管理接口 /admin/v1/ 不用账号令牌，由
-// internal/admin 的中间件按管理令牌校验，也不列在这里。
+// WithPrincipal 把调用者放进请求上下文，供 PrincipalFrom 与 MustPrincipal 取回。
+// 鉴权中间件在生成路由的中间件链里被调用，装配处与测试也可以用它在鉴权之前
+// 注入一个调用者。
+func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	return withPrincipal(ctx, p)
+}
+
+// Middleware 对除公开操作以外的已匹配路由校验 Bearer 令牌，并把调用者放进
+// 请求上下文。
 //
-// 这张表放在代码里而不是从生成结果读取，是因为 oapi-codegen 的中间件拿不到当前
-// 操作的 security 声明；契约增删接口时要同时改这里。
-var securedRoutes = []struct {
-	method  string
-	pattern string
-}{
-	{"POST", "/v1/auth/logout"},
-	{"POST", "/v1/auth/email/verify/request"},
-	{"POST", "/v1/auth/email/verify/confirm"},
-	{"GET", "/v1/me"},
-	{"DELETE", "/v1/me"},
-	{"GET", "/v1/sync/head"},
-	{"GET", "/v1/sync/commits"},
-	{"POST", "/v1/sync/commits"},
-	{"DELETE", "/v1/sync/commits"},
-	{"HEAD", "/v1/blobs/{sha256}"},
-	{"GET", "/v1/blobs/{sha256}"},
-	{"PUT", "/v1/blobs/{sha256}"},
-	{"GET", "/v1/backups"},
-	{"POST", "/v1/backups"},
-	{"DELETE", "/v1/backups"},
-	{"GET", "/v1/backups/{id}"},
-	{"DELETE", "/v1/backups/{id}"},
-	{"GET", "/v1/llm/models"},
-	{"GET", "/v1/llm/quota"},
-	{"POST", "/v1/llm/chat/completions"},
-	{"POST", "/v1/llm/embeddings"},
-}
-
-// matchPath 比较契约写法与实际路径：{name} 匹配一段非空路径。
-func matchPath(pattern, path string) bool {
-	want := strings.Split(strings.Trim(pattern, "/"), "/")
-	got := strings.Split(strings.Trim(path, "/"), "/")
-	if len(want) != len(got) {
-		return false
-	}
-	for i, seg := range want {
-		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-			if got[i] == "" {
-				return false
-			}
-			continue
-		}
-		if seg != got[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// needsAuth 报告这条请求是否落在需要 Bearer 的路由上。标准库路由的 GET 模式
-// 也接 HEAD，所以 HEAD 按 GET 判断，否则 HEAD 请求会绕过鉴权落进处理器。
-func needsAuth(method, path string) bool {
-	for _, rt := range securedRoutes {
-		sameMethod := rt.method == method || (method == "HEAD" && rt.method == "GET")
-		if sameMethod && matchPath(rt.pattern, path) {
-			return true
-		}
-	}
-	return false
-}
-
-// Middleware 给需要鉴权的路由加上 Bearer 校验，并把调用者放进请求上下文。
+// 是否要求令牌只由 r.Pattern 决定：生成的路由处理器里，mux 已经把注册模式
+// （例如 "GET /v1/me"）写进 r.Pattern。编码路径先归一再匹配，HEAD 落到 GET
+// 路由时同样带 "GET ..."，所以这里不需要再自己拼路径表，也不会被写法差异绕过。
+// 没有匹配到契约路由的请求不会进入生成的处理器，mux 的兜底处理器直接回 404。
 //
 // 只有 ErrInvalidToken（缺失、过期、已轮换掉）回 401；存储不可用等其余错误走
 // WriteInternal，回 500 并记日志，不再把数据库故障报成“令牌无效”。
 func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !needsAuth(r.Method, r.URL.Path) {
+			if !requiresAuth(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -108,8 +56,37 @@ func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler 
 						slog.String("error", err.Error()),
 					)
 				}
-				next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
+				next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 			}
 		})
 	}
+}
+
+// requiresAuth 报告这次请求是否要求 Bearer。
+//
+// 正常装配下中间件在生成路由的中间件链里，mux 已经把注册模式写进 r.Pattern，
+// 判定只看这张表。r.Pattern 为空说明中间件被装在了 mux 外层：共享的测试装配
+// （testutil.NewServer）与旧的装配方式仍是这种位置，此时按 URL.Path 默认拒绝，
+// 只有契约里明确公开的操作按原路径放行，编码路径等写法差异一律要求令牌，宁可
+// 更严也不放行。生产装配里 r.Pattern 恒非空，走不到这一支。
+func requiresAuth(r *http.Request) bool {
+	if r.Pattern != "" {
+		return routepolicy.RequiresAuth(r.Pattern)
+	}
+	return !routepolicy.IsPublic(methodPattern(r.Method, r.URL.Path))
+}
+
+// methodPattern 把方法与被请求的路径拼成契约写法，HEAD 按 GET 判断：标准库的
+// GET 路由也接 HEAD。
+func methodPattern(method, path string) string {
+	if method == http.MethodHead {
+		method = http.MethodGet
+	}
+	return method + " " + path
+}
+
+// needsAuth 保留给包内测试核对“HEAD 按 GET 判断、公开路由不要求令牌”的口径；
+// 实际判定见 requiresAuth。
+func needsAuth(method, path string) bool {
+	return !routepolicy.IsPublic(methodPattern(method, path))
 }

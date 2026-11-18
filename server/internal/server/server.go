@@ -168,17 +168,24 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
+	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。因此按执行顺序
+	// 反过来写：运行起来依次是 记录路由 → 校验身份 → 按账号限流 → 处理器。
+	// 记录路由在最外层，访问日志能拿到注册模式；鉴权在限流之前，未认证的请求
+	// 不会消耗账号的上传额度；限流在处理器之前，请求体落盘之前就被拦住。
 	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
-		BaseRouter:       mux,
-		Middlewares:      []api.MiddlewareFunc{httpx.RecordPattern},
+		BaseRouter: mux,
+		Middlewares: []api.MiddlewareFunc{
+			uploadLimit(uploadLimits),
+			auth.Middleware(authSvc, log),
+			httpx.RecordPattern,
+		},
 		ErrorHandlerFunc: httpx.BindingErrorHandler,
 	})
 
-	// 顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/429 也
-	// 因此有编号并进日志），然后恢复 panic，再鉴权。鉴权放在访问日志之内，
-	// 被拒绝的请求仍然会留下一行记录。上传限流在鉴权之后，按账号计。
-	secured := withUploadLimit(mux, uploadLimits)
-	return httpx.Chain(auth.Middleware(authSvc, log)(secured),
+	// 外层顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/404/429
+	// 也因此有编号并进日志），然后恢复 panic。鉴权与限流已经移进生成的中间件链，
+	// 这里不再包一层。
+	return httpx.Chain(mux,
 		httpx.RequestID,
 		httpx.AccessLog(log),
 		httpx.Recover(log),
