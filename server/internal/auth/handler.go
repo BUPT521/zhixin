@@ -98,9 +98,14 @@ func (h *Handler) SetLoginFailLimiter(l *ratelimit.Limiter) {
 }
 
 // loginKey 把邮箱规范成限流键，与服务层登录时的规范化保持一致：同一账号换大小
-// 写或带空白提交，扣的是同一个桶。
+// 写或带空白提交，扣的是同一个桶。长度截到邮箱上限，避免异常超长的邮箱让限流表
+// 的键无限变大。
 func loginKey(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
+	key := strings.ToLower(strings.TrimSpace(email))
+	if len(key) > 254 {
+		key = key[:254]
+	}
+	return key
 }
 
 // cooldownSeconds 把发送验证码的冷却写成 Retry-After 的整秒数。
