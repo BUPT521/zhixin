@@ -44,6 +44,17 @@ class FakeServer {
 
   final Map<String, _Session> _access = {};
   final Map<String, _Session> _refresh = {};
+
+  /// 已经轮换、仍在宽限期内的刷新令牌：记下原请求标识与当时的响应，用来模拟
+  /// 服务端把“同一标识的重试”和“旧刷新令牌被盗用”区分开。
+  final Map<String, _RefreshReplay> _refreshReplays = {};
+
+  /// 每次刷新请求的刷新令牌与 request_id，用例据此核对重试是否同号。
+  final List<({String refreshToken, String requestId})> refreshRequests = [];
+
+  /// 打开之后下一次刷新在服务端完成轮换、但响应在返回客户端之前断开。
+  bool dropNextRefreshResponse = false;
+
   int _nextToken = 1;
 
   /// 打开之后下一次带令牌的请求返回 401，客户端应当先刷新再重试。
@@ -342,10 +353,40 @@ class FakeServer {
 
   http.Response _refreshToken(Map<String, Object?> body) {
     final refresh = body['refresh_token'] as String? ?? '';
+    final requestId = (body['request_id'] as String? ?? '').trim();
+    refreshRequests.add((refreshToken: refresh, requestId: requestId));
+    final replay = _refreshReplays[refresh];
+    if (replay != null) {
+      if (requestId.isEmpty ||
+          requestId != replay.requestId ||
+          DateTime.now().isAfter(replay.expiresAt)) {
+        // 换了标识、没带标识或超过宽限期：按旧刷新令牌被盗用处理，撤销会话。
+        _revoke(replay.userId);
+        _refreshReplays.remove(refresh);
+        return _problem(401, 'unauthorized');
+      }
+      return replay.response;
+    }
     final session = _refresh.remove(refresh);
     if (session == null) return _problem(401, 'unauthorized');
     _access.remove(session.accessToken);
-    return _tokens(session.userId, '', refresh: false);
+    final response = _tokens(session.userId, '', refresh: false);
+    _refreshReplays[refresh] = _RefreshReplay(
+      userId: session.userId,
+      requestId: requestId,
+      expiresAt: DateTime.now().add(const Duration(seconds: 60)),
+      response: response,
+    );
+    if (dropNextRefreshResponse) {
+      dropNextRefreshResponse = false;
+      throw http.ClientException('连接在刷新响应返回之前断开');
+    }
+    return response;
+  }
+
+  void _revoke(String userId) {
+    _access.removeWhere((_, session) => session.userId == userId);
+    _refresh.removeWhere((_, session) => session.userId == userId);
   }
 
   _FakeCode _newCode() {
@@ -463,6 +504,21 @@ class _Session {
   final String userId;
   final String accessToken;
   final String refreshToken;
+}
+
+/// 一次已经完成的刷新：原刷新令牌、请求标识、当时的响应与重试宽限期。
+class _RefreshReplay {
+  const _RefreshReplay({
+    required this.userId,
+    required this.requestId,
+    required this.expiresAt,
+    required this.response,
+  });
+
+  final String userId;
+  final String requestId;
+  final DateTime expiresAt;
+  final http.Response response;
 }
 
 class FakeBackup {

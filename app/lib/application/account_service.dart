@@ -4,6 +4,7 @@ import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
+import '../domain/rules/uuid_v7.dart';
 
 /// 还没有登录，或登录已经失效；需要用户重新登录之后才能继续。
 class AccountSignedOut implements Exception {
@@ -395,7 +396,20 @@ class AccountService {
   Future<AccountSession> _refresh(AccountSession current) async {
     try {
       final client = await _requireClient();
-      final tokens = await client.refresh(current.refreshToken);
+      // 一次逻辑刷新只生成一个标识；两次请求都带上它，服务端才把第二次当作
+      // 同一次刷新的重试，而不是拿旧刷新令牌盗用。
+      final requestId = newUuidV7();
+      Future<ServerTokens> attempt() =>
+          client.refresh(current.refreshToken, requestId: requestId);
+      ServerTokens tokens;
+      try {
+        tokens = await attempt();
+      } on ServerProblem catch (error) {
+        if (error.code != 'offline') rethrow;
+        // 轮换可能已经在服务端完成、只是响应没有回来；宽限期内换一组新令牌
+        // 会被服务端当成盗用并撤销会话，所以只按同一标识重试一次。
+        tokens = await attempt();
+      }
       final next = current.copyWith(
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,

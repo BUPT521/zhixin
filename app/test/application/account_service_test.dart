@@ -94,6 +94,24 @@ void main() {
     expect(snapshot.signedIn, isTrue);
   });
 
+  test('刷新响应丢失时用同一个 request_id 重试旧刷新令牌', () async {
+    await account.register(email: 'l@example.com', password: 'password123');
+    // 下一次带令牌的请求被判过期，客户端先刷新；刷新在服务端已经轮换成功，
+    // 但响应在返回之前断开，客户端应当用同一个标识与旧刷新令牌再试一次。
+    server.expireAccess = true;
+    server.dropNextRefreshResponse = true;
+
+    final quota = await account.quota();
+    expect(quota.dailyTokens, 200000);
+    expect(server.refreshRequests, hasLength(2));
+    final first = server.refreshRequests[0];
+    final retry = server.refreshRequests[1];
+    expect(first.refreshToken, retry.refreshToken);
+    expect(first.requestId, isNotEmpty);
+    expect(retry.requestId, first.requestId);
+    expect((await account.snapshot()).signedIn, isTrue);
+  });
+
   test('登录时密码错误返回 invalid_credentials', () async {
     await account.register(email: 'c@example.com', password: 'password123');
     await account.logout();

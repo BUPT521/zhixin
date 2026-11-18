@@ -452,11 +452,18 @@ class ServerClient {
   }
 
   /// 用刷新令牌换一组新令牌；旧的两枚立即失效。
-  Future<ServerTokens> refresh(String refreshToken) async {
+  ///
+  /// [requestId] 是这次逻辑刷新的标识，网络在响应回来之前断开时用同一个标识与
+  /// 旧刷新令牌重试，服务端才按重试处理；换一个标识重试会被当成盗用并撤销会话。
+  Future<ServerTokens> refresh(String refreshToken, {String? requestId}) async {
     final json = await _json(
       'POST',
       '/v1/auth/refresh',
-      body: {'refresh_token': refreshToken},
+      body: {
+        'refresh_token': refreshToken,
+        if (requestId != null && requestId.trim().isNotEmpty)
+          'request_id': requestId.trim(),
+      },
     );
     return ServerTokens.fromJson(json);
   }

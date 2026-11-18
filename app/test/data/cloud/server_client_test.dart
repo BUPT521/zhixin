@@ -125,6 +125,68 @@ void main() {
     });
   });
 
+  group('刷新令牌', () {
+    test('同一 request_id 重试旧刷新令牌按重试处理', () async {
+      final server = FakeServer();
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: server.client,
+      );
+      final tokens = await client.register(
+        email: 'refresh-a@example.com',
+        password: 'password123',
+      );
+
+      final refreshed = await client.refresh(
+        tokens.refreshToken,
+        requestId: 'request-1',
+      );
+      expect(refreshed.accessToken, isNot(tokens.accessToken));
+      final replay = await client.refresh(
+        tokens.refreshToken,
+        requestId: 'request-1',
+      );
+      expect(replay.accessToken, refreshed.accessToken);
+      expect(server.refreshRequests.map((entry) => entry.requestId), [
+        'request-1',
+        'request-1',
+      ]);
+    });
+
+    test('换一个 request_id 使用旧刷新令牌会撤销会话', () async {
+      final server = FakeServer();
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: server.client,
+      );
+      final tokens = await client.register(
+        email: 'refresh-b@example.com',
+        password: 'password123',
+      );
+      final refreshed = await client.refresh(
+        tokens.refreshToken,
+        requestId: 'request-1',
+      );
+
+      await expectLater(
+        client.refresh(tokens.refreshToken, requestId: 'request-2'),
+        throwsA(
+          isA<ServerProblem>().having(
+            (error) => error.code,
+            'code',
+            'unauthorized',
+          ),
+        ),
+      );
+      await expectLater(
+        client.head(refreshed.accessToken),
+        throwsA(
+          isA<ServerProblem>().having((error) => error.status, 'status', 401),
+        ),
+      );
+    });
+  });
+
   test('注册与登录返回令牌，重复注册说明邮箱已占用', () async {
     final server = FakeServer();
     final client = ServerClient(
