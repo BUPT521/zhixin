@@ -19,6 +19,7 @@ import 'application/embedding_settings.dart';
 import 'application/discussion_service.dart';
 import 'application/evidence_service.dart';
 import 'application/learning_service.dart';
+import 'application/material_search.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
@@ -243,6 +244,7 @@ class AppScopeState extends State<AppScope> {
     ),
     library: LibraryServices(
       material: _material,
+      materialSearch: _materialSearch,
       search: _search,
       searchIndexFactory: () => _searchIndex,
     ),
@@ -309,6 +311,11 @@ class AppScopeState extends State<AppScope> {
     materials: _materials,
     transactions: _transactions,
     runtime: _runtime,
+  );
+
+  /// 材料查找：列表、详情与选择器共用，全部在本机完成。
+  late final MaterialSearchService _materialSearch = MaterialSearchService(
+    materials: _materials,
   );
 
   late final SearchService _search = SearchService(evidence: _evidence);

@@ -124,6 +124,51 @@ String searchSnippet(String content, Iterable<String> terms, {int limit = 80}) {
       '${end < text.length ? '…' : ''}';
 }
 
+/// 字面命中：查询原文出现在 [text] 中，且命中之后不紧接数字、字母或下划线，
+/// 没有命中时返回 -1，命中时返回第一个位置。
+///
+/// 边界规则与检索 SQL 里的字面命中表达式一致，“例 3-2”因此不会命中
+/// “例 3-20”，“a_b”不会命中“a_bc”。材料列表与材料选择器用它决定一条命中
+/// 是否成立、写哪一种原因，记录检索在 SQL 里用同一条规则。
+int literalMatchIndex(String text, String query) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return -1;
+  final haystack = text.toLowerCase();
+  final index = haystack.indexOf(needle);
+  if (index < 0) return -1;
+  final after = index + needle.length;
+  if (after < haystack.length && _isWordCodeUnit(haystack.codeUnitAt(after))) {
+    return -1;
+  }
+  return index;
+}
+
+/// 一段正文里与查询逐字相同的全部位置，按先后排列，用于在材料内定位与高亮。
+///
+/// 与 [literalMatchIndex] 不同，这里不排除近似写法，也不检查边界：用户在
+/// 材料详情里输入的是自己刚想找的词，所有出现过的地方都要能翻到。
+List<int> literalOccurrences(String text, String query) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return const [];
+  final haystack = text.toLowerCase();
+  final positions = <int>[];
+  var from = 0;
+  while (from <= haystack.length - needle.length) {
+    final index = haystack.indexOf(needle, from);
+    if (index < 0) break;
+    positions.add(index);
+    from = index + needle.length;
+  }
+  return positions;
+}
+
+/// 数字、ASCII 字母与下划线：字面命中之后紧接这些字符时按近似写法处理。
+bool _isWordCodeUnit(int code) =>
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code == 0x5f;
+
 bool _isWord(int rune) =>
     bigramRanges.any((range) => rune >= range.$1 && rune <= range.$2);
 

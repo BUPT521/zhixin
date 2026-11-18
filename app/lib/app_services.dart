@@ -8,6 +8,7 @@ import 'application/context_service.dart';
 import 'application/discussion_service.dart';
 import 'application/embedding_settings.dart';
 import 'application/learning_service.dart';
+import 'application/material_search.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
@@ -81,11 +82,16 @@ class StudyServices {
 class LibraryServices {
   const LibraryServices({
     required this.material,
+    required this.materialSearch,
     required this.search,
     required this.searchIndexFactory,
   });
 
   final MaterialService material;
+
+  /// 材料列表、材料详情与材料选择器共用的本地查找；不调用模型。
+  final MaterialSearchService materialSearch;
+
   final SearchService search;
 
   /// 检索索引按需创建；索引同时服务关键词与语义，没有配置时只建全文索引。
