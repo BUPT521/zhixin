@@ -16,6 +16,13 @@ type AppUser struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type Attachment struct {
+	UserID    string
+	Sha256    string
+	Size      int64
+	CreatedAt pgtype.Timestamptz
+}
+
 type AuthCode struct {
 	UserID    string
 	Purpose   string
