@@ -430,3 +430,147 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 		}
 	})
 }
+
+// TestHandlerRejectsOversizedResponse 核对非流式响应超过上限时回 502
+// upstream_failed：此时响应头还没写，客户端拿到的是代理自己的 problem，而不是
+// 上游的半截内容。
+func TestHandlerRejectsOversizedResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}],"usage":{"total_tokens":10}}`, strings.Repeat("x", 128))
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
+		BaseURL:          upstream.URL,
+		APIKey:           "sk-server",
+		Models:           []string{"deepseek-flash"},
+		DailyTokens:      1000,
+		MaxRequestBytes:  1 << 20,
+		MaxResponseBytes: 64,
+	})
+	token := signIn(t, authSvc, "oversize@b.cn")
+	chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusBadGateway || p.Code != string(httpx.CodeUpstreamFailed) {
+		t.Fatalf("超限响应应回 502 upstream_failed，得到 %d %+v", code, p)
+	}
+	if !strings.Contains(p.Detail, "exceeds") {
+		t.Fatalf("detail 应说明响应过大，得到 %q", p.Detail)
+	}
+}
+
+// TestHandlerStreamIdleTimeout 核对流式响应两次数据之间超过空闲时限时中断上游
+// 请求并结束响应：已经收到的数据照常交给客户端，连接不会一直挂着。
+func TestHandlerStreamIdleTimeout(t *testing.T) {
+	canceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+			close(canceled)
+		case <-time.After(5 * time.Second):
+			// 代理没有按时中断上游，交给用例在断言处失败。
+		}
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
+		BaseURL:           upstream.URL,
+		APIKey:            "sk-server",
+		Models:            []string{"deepseek-flash"},
+		DailyTokens:       1000,
+		MaxRequestBytes:   1 << 20,
+		StreamIdleTimeout: 100 * time.Millisecond,
+	})
+	token := signIn(t, authSvc, "idle@b.cn")
+	chat := map[string]any{
+		"model": "deepseek-flash", "stream": true,
+		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
+	}
+
+	start := time.Now()
+	body := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(mustJSON(t, chat)), nil))
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("空闲超时应在时限附近结束响应，实际用了 %v", elapsed)
+	}
+	if !strings.Contains(string(body), "你") {
+		t.Fatalf("超时之前收到的数据应照常转给客户端，得到 %q", body)
+	}
+	if strings.Contains(string(body), "[DONE]") {
+		t.Fatalf("上游没有结束，响应里不应出现结束标记，得到 %q", body)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("空闲超时应中断上游请求")
+	}
+}
+
+// TestHandlerStreamTotalTimeout 核对流式响应的总时限：上游一直有数据也会在总
+// 时限到达时中断，空闲时限不参与这个判断。
+func TestHandlerStreamTotalTimeout(t *testing.T) {
+	canceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				close(canceled)
+				return
+			case <-ticker.C:
+				fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n")
+				flusher.Flush()
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
+		BaseURL:            upstream.URL,
+		APIKey:             "sk-server",
+		Models:             []string{"deepseek-flash"},
+		DailyTokens:        1000,
+		MaxRequestBytes:    1 << 20,
+		StreamIdleTimeout:  5 * time.Second,
+		StreamTotalTimeout: 150 * time.Millisecond,
+	})
+	token := signIn(t, authSvc, "total@b.cn")
+	chat := map[string]any{
+		"model": "deepseek-flash", "stream": true,
+		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
+	}
+
+	start := time.Now()
+	body := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(mustJSON(t, chat)), nil))
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("总时限应在时限附近结束响应，实际用了 %v", elapsed)
+	}
+	if len(body) == 0 {
+		t.Fatal("总时限之前收到的数据应照常转给客户端")
+	}
+	if strings.Contains(string(body), "[DONE]") {
+		t.Fatalf("上游没有结束，响应里不应出现结束标记，得到 %q", body)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("总时限超时应中断上游请求")
+	}
+}
+
+// mustJSON 把测试请求编码成转发用字节，编码失败直接结束用例。
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}

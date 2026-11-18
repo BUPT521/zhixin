@@ -222,8 +222,31 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	up, err := http.NewRequestWithContext(r.Context(), http.MethodPost, p.cfg.BaseURL+"/chat/completions", bytes.NewReader(body))
+	// 预留之后的所有出口都结算一次：请求构造失败、上游不可达、响应读不完、超时
+	// 都会走到这里，预留不会永远挂在账上。默认按预留保守记账，确实没有产生用量
+	// 的路径在返回前改成 0。
+	actual := reserved
+	defer func() {
+		// 用独立 context 结算：客户端可能在最后一个数据块之后已经断开，但用量已经
+		// 发生。结算失败只记日志，响应已经写出，不能让客户端以为请求失败。
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+		defer cancel()
+		if err := p.quota.Settle(ctx, pr.UserID, day, reserved, actual); err != nil {
+			p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
+		}
+	}()
+
+	// 流式响应套一层守卫：总时限从发起上游请求时开始，空闲时限从收到响应体之后
+	// 开始；超时取消上游请求，阻塞中的读取随即返回。非流式沿用请求自身的 context。
+	reqCtx := r.Context()
+	var guard *streamGuard
+	if stream {
+		reqCtx, guard = p.newStreamGuard(reqCtx)
+		defer guard.stop()
+	}
+	up, err := http.NewRequestWithContext(reqCtx, http.MethodPost, p.cfg.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
+		actual = 0
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
@@ -234,6 +257,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := p.client.Do(up)
 	if err != nil {
+		actual = 0 // 没有拿到响应，按没有产生用量退回预留。
 		if r.Context().Err() != nil {
 			return // client went away
 		}
@@ -245,20 +269,33 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	// Pass the provider's status and body through, including errors: the
 	// client already reads provider error bodies to explain key, quota and
 	// model-name problems (app/README §模型).
-	for _, h := range []string{"Content-Type", "Cache-Control"} {
-		if v := resp.Header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-
+	//
+	// 非流式先把整个响应读进内存再写响应头：超过上限时还没有写出任何字节，可以
+	// 换成代理自己的 502，客户端不会收到半截响应。
 	var tokens int64
 	if stream {
-		tokens = p.copyStream(w, resp.Body)
+		guard.watch(resp.Body, p.cfg.StreamIdleTimeout)
+		copyResponseHeaders(w, resp)
+		w.WriteHeader(resp.StatusCode)
+		tokens = p.copyStream(w, guard)
 	} else {
-		tokens = p.copyWhole(w, resp.Body)
+		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
+		if errors.Is(err, errResponseTooLarge) {
+			httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed,
+				fmt.Sprintf("provider response exceeds %d bytes", p.cfg.MaxResponseBytes))
+			return
+		}
+		if err != nil {
+			httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not read the provider response")
+			return
+		}
+		copyResponseHeaders(w, resp)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(b)
+		tokens = usageTokens(b)
 	}
-	actual := tokens
+
+	actual = tokens
 	switch {
 	case resp.StatusCode >= http.StatusBadRequest:
 		// 上游错误没有产生回答，预留全部退回。
@@ -267,13 +304,6 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		// 提供方没有给出 usage（例如流式请求没带 include_usage）时保留预留，
 		// 不能按 0 全部退掉，否则调用方只受估算值的约束。
 		actual = reserved
-	}
-	// 用独立 context 结算：客户端可能在最后一个数据块之后已经断开，但用量已经
-	// 发生。结算失败只记日志，响应已经写出，不能让客户端以为请求失败。
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
-	defer cancel()
-	if err := p.quota.Settle(ctx, pr.UserID, day, reserved, actual); err != nil {
-		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
 	}
 }
 
@@ -312,17 +342,92 @@ type usageEnvelope struct {
 	} `json:"usage"`
 }
 
-func (p *Proxy) copyWhole(w http.ResponseWriter, body io.Reader) int64 {
-	b, err := io.ReadAll(body)
-	_, _ = w.Write(b)
-	if err != nil {
-		return 0
+// errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
+// 方可以按 upstream_failed 回 problem，而不是把半截响应交给客户端。
+var errResponseTooLarge = errors.New("llmproxy: 上游响应过大")
+
+// readResponse 最多读 maxBytes；maxBytes 非正表示不限制。超限时返回
+// errResponseTooLarge，不返回部分内容。
+func readResponse(body io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return io.ReadAll(body)
 	}
+	b, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxBytes {
+		return nil, errResponseTooLarge
+	}
+	return b, nil
+}
+
+// copyResponseHeaders 只复制客户端解释响应需要的头；其余头由代理自己决定。
+func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
+	for _, h := range []string{"Content-Type", "Cache-Control"} {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
+	}
+}
+
+// usageTokens 从非流式响应体里取 usage.total_tokens；没有 usage 时返回 0。
+func usageTokens(b []byte) int64 {
 	var env usageEnvelope
 	if json.Unmarshal(b, &env) == nil && env.Usage != nil {
 		return env.Usage.TotalTokens
 	}
 	return 0
+}
+
+// streamGuard 在流式转发期间守住空闲与总时限。总时限从发起上游请求时开始，空闲
+// 时限在两次读到数据之间计时；任一超时都取消上游请求，阻塞中的 Read 返回错误，
+// 响应到此结束。不用 http.Client.Timeout，因为它只能给整次请求一个硬时限，分不
+// 出空闲与总量，也无法在响应头已经写出之后换成 problem 响应。
+type streamGuard struct {
+	body        io.Reader
+	cancel      context.CancelFunc
+	idleTimeout time.Duration
+	idle        *time.Timer
+	total       *time.Timer
+}
+
+// newStreamGuard 创建可取消的上游 context 与守卫；总时限立即开始计时。
+func (p *Proxy) newStreamGuard(ctx context.Context) (context.Context, *streamGuard) {
+	ctx, cancel := context.WithCancel(ctx)
+	guard := &streamGuard{cancel: cancel}
+	if p.cfg.StreamTotalTimeout > 0 {
+		guard.total = time.AfterFunc(p.cfg.StreamTotalTimeout, cancel)
+	}
+	return ctx, guard
+}
+
+// watch 绑定上游响应体并开始空闲计时；之后每次读到数据由 Read 重置计时器。
+func (g *streamGuard) watch(body io.Reader, idleTimeout time.Duration) {
+	g.body = body
+	g.idleTimeout = idleTimeout
+	if idleTimeout > 0 {
+		g.idle = time.AfterFunc(idleTimeout, g.cancel)
+	}
+}
+
+func (g *streamGuard) Read(b []byte) (int, error) {
+	n, err := g.body.Read(b)
+	if n > 0 && g.idle != nil {
+		g.idle.Reset(g.idleTimeout)
+	}
+	return n, err
+}
+
+// stop 在转发结束时停掉计时器并取消 context；响应已经结束，取消不再影响客户端。
+func (g *streamGuard) stop() {
+	if g.idle != nil {
+		g.idle.Stop()
+	}
+	if g.total != nil {
+		g.total.Stop()
+	}
+	g.cancel()
 }
 
 // copyStream forwards SSE line by line, flushing at each blank line (event
