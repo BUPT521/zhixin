@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -353,6 +355,147 @@ func TestPostgresDeleteAllClearsLeftoverObjects(t *testing.T) {
 	}
 	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "b2")); err != nil {
 		t.Fatalf("another account's object must stay: %v", err)
+	}
+}
+
+// TestPostgresBlobQuota 覆盖附件索引的配额语义：重复内容不重复计数、超限带
+// 已用量与上限、保存失败回滚但字节已存在时保留索引、账号间互不影响、回填幂等、
+// 清账号与删账号都清掉索引与字节。
+func TestPostgresBlobQuota(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	bs := NewBlobStore(st)
+	for _, id := range []string{"u1", "u2"} {
+		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+			t.Fatalf("user %s: %v", id, err)
+		}
+	}
+	shaA := strings.Repeat("a", 64)
+	shaB := strings.Repeat("b", 64)
+	shaC := strings.Repeat("c", 64)
+
+	if used, err := bs.Reserve(ctx, "u1", shaA, 4, 10); err != nil || used != 4 {
+		t.Fatalf("first reserve: used %d, err %v", used, err)
+	}
+	if used, err := bs.Reserve(ctx, "u1", shaA, 4, 10); err != nil || used != 4 {
+		t.Fatalf("duplicate reserve: used %d, err %v", used, err)
+	}
+	used, err := bs.Reserve(ctx, "u1", shaB, 7, 10)
+	var full *blobs.StorageFullError
+	if !errors.Is(err, blobs.ErrStorageFull) || !errors.As(err, &full) || used != 4 || full.Used != 4 || full.Limit != 10 {
+		t.Fatalf("over limit: used %d, err %v", used, err)
+	}
+
+	// 保存之后字节可读；模拟一次失败重传触发 Release，字节还在时索引不动。
+	body := []byte("four")
+	if err := bs.Save(ctx, "u1", shaA, int64(len(body)), bytes.NewReader(body)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if size, err := bs.Stat(ctx, "u1", shaA); err != nil || size != int64(len(body)) {
+		t.Fatalf("stat = %d, %v", size, err)
+	}
+	rc, _, err := bs.Open(ctx, "u1", shaA)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	got, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if !bytes.Equal(got, body) {
+		t.Fatalf("open content = %q", got)
+	}
+	if err := bs.Release(ctx, "u1", shaA, int64(len(body))); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 4 {
+		t.Fatalf("release removed the index while bytes exist: used %d, %v", used, err)
+	}
+
+	// 另一个账号的总量单独计算。
+	if used, err := bs.Reserve(ctx, "u2", shaA, 4, 10); err != nil || used != 4 {
+		t.Fatalf("other account reserve: used %d, err %v", used, err)
+	}
+
+	// 回填：对象已经在存储里、索引没有时补一行，幂等。
+	orphan := []byte("five!")
+	if err := st.objects.Put(ctx, objectstore.AttachmentKey("u1", shaC), bytes.NewReader(orphan),
+		objectstore.Info{Size: int64(len(orphan))}); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	if added, err := bs.BackfillAttachment(ctx, "u1", shaC, int64(len(orphan))); err != nil || !added {
+		t.Fatalf("backfill: added %v, err %v", added, err)
+	}
+	if added, err := bs.BackfillAttachment(ctx, "u1", shaC, int64(len(orphan))); err != nil || added {
+		t.Fatalf("second backfill must be a no-op: added %v, err %v", added, err)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 4+int64(len(orphan)) {
+		t.Fatalf("used after backfill = %d, %v", used, err)
+	}
+
+	// 清账号（保留账号行）删索引与字节。
+	if err := bs.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("delete attachments: %v", err)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 0 {
+		t.Fatalf("used after clear = %d, %v", used, err)
+	}
+	if _, err := bs.Stat(ctx, "u1", shaA); !errors.Is(err, blobs.ErrNotFound) {
+		t.Fatalf("bytes after clear: %v", err)
+	}
+
+	// 删账号时 attachment 行按外键级联删除。
+	if err := st.DeleteUser(ctx, "u2"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM attachment`).Scan(&rows); err != nil {
+		t.Fatalf("count attachment: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("attachment rows should cascade with the account, got %d", rows)
+	}
+}
+
+// TestPostgresBlobReserveIsSerialized 核对同一账号的并发预留：两个各 6 字节的
+// 预留同时进入事务，账号行锁让它们排队，只有一个通过上限 10 的检查。
+func TestPostgresBlobReserveIsSerialized(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	bs := NewBlobStore(st)
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	shas := []string{strings.Repeat("a", 64), strings.Repeat("b", 64)}
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = bs.Reserve(ctx, "u1", shas[i], 6, 10)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	okCount := 0
+	for _, err := range errs {
+		var full *blobs.StorageFullError
+		switch {
+		case err == nil:
+			okCount++
+		case errors.As(err, &full):
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if okCount != 1 {
+		t.Fatalf("exactly one reservation must succeed, got %d (%v)", okCount, errs)
+	}
+	if used, err := bs.Used(ctx, "u1"); err != nil || used != 6 {
+		t.Fatalf("used = %d, %v", used, err)
 	}
 }
 
