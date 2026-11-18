@@ -23,6 +23,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
+	"github.com/BUPT521/zhixin/server/internal/routepolicy"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -175,6 +176,7 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
+			cachePublic,
 			uploadLimit(uploadLimits),
 			auth.Middleware(authSvc, log),
 			httpx.RecordPattern,
@@ -183,11 +185,26 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	})
 
 	// 外层顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/404/429
-	// 也因此有编号并进日志），然后恢复 panic。鉴权与限流已经移进生成的中间件链，
-	// 这里不再包一层。
+	// 也因此有编号并进日志），然后统一响应头，再恢复 panic，最后是请求体读空闲
+	// 期限。统一响应头在恢复 panic 之外，panic 转成的 500 也带 no-store 与
+	// nosniff；鉴权与限流已经移进生成的中间件链，这里不再包一层。
 	return httpx.Chain(mux,
 		httpx.RequestID,
 		httpx.AccessLog(log),
+		httpx.SecurityHeaders,
 		httpx.Recover(log),
+		httpx.BodyIdleTimeout(cfg.BodyIdleTimeout),
 	)
+}
+
+// cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。
+// 其余响应保持默认，账号数据不会被中间层缓存。放在生成链的最内层：先鉴权、
+// 再限流，只有真正要进处理器的响应才会被标记。
+func cachePublic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if seconds, ok := routepolicy.CacheSeconds(r.Pattern); ok {
+			httpx.Cacheable(w, seconds)
+		}
+		next.ServeHTTP(w, r)
+	})
 }

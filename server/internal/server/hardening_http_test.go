@@ -1,10 +1,17 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 // 本文件收本轮加固的验收用例：路由鉴权与上传限流、统一响应头与请求体时限、
@@ -100,5 +107,90 @@ func TestForwardedForFromUntrustedPeerDoesNotSplitBuckets(t *testing.T) {
 	}
 	if code := submit("203.0.113.9"); code != http.StatusTooManyRequests {
 		t.Fatalf("换一个伪造头仍应落在同一个桶，得到 %d，想要 429", code)
+	}
+}
+
+// TestSecurityHeadersOnEveryResponse 核对统一响应头在成功与拒绝路径上都在：
+// X-Content-Type-Options 固定 nosniff，Cache-Control 默认 no-store，401/404/429
+// 也不例外。
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	h := newHarness(t, nil)
+	check := func(name string, resp *http.Response) {
+		t.Helper()
+		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Fatalf("%s：X-Content-Type-Options = %q", name, got)
+		}
+		if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%s：Cache-Control = %q，想要 no-store", name, got)
+		}
+	}
+	check("healthz", h.do(http.MethodGet, "/healthz", "", nil, nil))
+	check("unauthorized", h.do(http.MethodGet, "/v1/me", "", nil, nil))
+	check("not found", h.do(http.MethodGet, "/nope", "", nil, nil))
+
+	limited := newHarness(t, map[string]string{
+		"ZHIXIN_UPLOAD_RATE":  "0.0001",
+		"ZHIXIN_UPLOAD_BURST": "1",
+	})
+	token := limited.signUp("headers@b.cn")
+	if resp := upload(limited, token, []byte("first"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("第一次上传：%d", resp.StatusCode)
+	}
+	tooMany := upload(limited, token, []byte("second"), ClientSchemaVersion)
+	if tooMany.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("第二次上传：%d，想要 429", tooMany.StatusCode)
+	}
+	check("rate limited", tooMany)
+}
+
+// TestReleaseManifestIsCacheable 核对默认 no-store 只被发布清单覆盖：公开清单
+// 可以短期缓存，其余响应保持 no-store。
+func TestReleaseManifestIsCacheable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "releases.json")
+	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"` +
+		strings.Repeat("0", 64) + `","notes":"内测"}]}`
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("写清单：%v", err)
+	}
+	h := newHarness(t, map[string]string{"ZHIXIN_RELEASE_FILE": path})
+
+	resp := h.do(http.MethodGet, "/v1/app/releases", "", nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("发布清单：%d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=60" {
+		t.Fatalf("发布清单的 Cache-Control = %q，想要 public, max-age=60", got)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("可缓存响应也要带 nosniff，得到 %q", got)
+	}
+	if got := h.do(http.MethodGet, "/healthz", "", nil, nil).Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("其它响应的 Cache-Control = %q，想要 no-store", got)
+	}
+}
+
+// TestSlowRequestBodyIsCutByServer 经完整装配发一个只写了半个请求体的请求：读
+// 空闲期限到期后处理器读到错误并回 400，而不是把连接占住。
+func TestSlowRequestBodyIsCutByServer(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_BODY_IDLE_TIMEOUT": "200ms"})
+	conn, err := net.Dial("tcp", h.srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("连接服务：%v", err)
+	}
+	defer conn.Close()
+	// Content-Length 是 100，只发一部分，剩下的永远不发。
+	if _, err := fmt.Fprintf(conn, "POST /v1/feedback HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"content\":"); err != nil {
+		t.Fatalf("写请求：%v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("设置读期限：%v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
+	if err != nil {
+		t.Fatalf("读响应：%v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("慢请求体应当读到错误并回 400，得到 %d", resp.StatusCode)
 	}
 }
