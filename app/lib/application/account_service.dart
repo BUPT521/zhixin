@@ -89,6 +89,9 @@ class AccountService {
   /// 旧账号的令牌或位置写到新身份上。
   int _epoch = 0;
 
+  /// 当前实例来源的缓存，避免在界面构建路径上反复读文件。
+  String? _origin;
+
   int get identityEpoch => _epoch;
 
   void _advanceEpoch() => _epoch++;
@@ -99,8 +102,16 @@ class AccountService {
   }
 
   /// 当前实例的来源；会话与同步游标都按它与账号一起区分。
-  Future<String> serverOrigin() async =>
-      ServerClient.originOf(await serverBaseUrl());
+  ///
+  /// 读出来之后缓存在内存里：界面会在构建与预读里同步式地取会话，如果每次都
+  /// 落文件 I/O，测试的假异步区里这个 Future 不会推进，整条读取链就会停住。
+  Future<String> serverOrigin() async {
+    final cached = _origin;
+    if (cached != null) return cached;
+    final origin = ServerClient.originOf(await serverBaseUrl());
+    _origin = origin;
+    return origin;
+  }
 
   /// 只读当前实例的会话：换了实例之后旧会话读不出来，按未登录处理。
   Future<AccountSession?> _readSession() async =>
@@ -140,6 +151,7 @@ class AccountService {
       await preferences.serverBaseUrl(),
     );
     final nextOrigin = ServerClient.originOf(normalized);
+    _origin = nextOrigin;
     await preferences.setServerBaseUrl(normalized);
     _client?.dispose();
     _client = null;
