@@ -87,6 +87,11 @@ class FakeServer {
   /// 收到的附件 PUT 次数，用例据此确认超限之后没有再上传后面的附件。
   int blobUploadAttempts = 0;
 
+  /// `DELETE /v1/cloud` 的请求次数；[cloudClearConflicts] 控制接下来几次返回
+  /// 409，模拟上一次清除还没结束。
+  int cloudClearRequests = 0;
+  int cloudClearConflicts = 0;
+
   /// 发布清单与收到的反馈；两者都是公开接口，不需要登录。
   final List<Map<String, Object?>> releases = [];
   final List<Map<String, Object?>> feedbacks = [];
@@ -208,6 +213,18 @@ class FakeServer {
     }
     if (method == 'DELETE' && path == '/v1/backups') {
       backups.remove(userId);
+      return http.Response('', 204);
+    }
+    if (method == 'DELETE' && path == '/v1/cloud') {
+      cloudClearRequests++;
+      if (cloudClearConflicts > 0) {
+        cloudClearConflicts--;
+        return _problem(409, 'conflict');
+      }
+      // 一次清空备份、提交序列、附件与遗留对象，可重复调用；账号保留。
+      backups.remove(userId);
+      commits[userId] = [];
+      blobs.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/sync/commits') {

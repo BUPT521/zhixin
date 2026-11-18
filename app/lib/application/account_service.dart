@@ -226,15 +226,13 @@ class AccountService {
     await preferences.clearSyncState();
   }
 
-  /// 清除云端备份与同步序列，保留账号与本机记录。
+  /// 一次清空云端备份、提交序列、附件与遗留对象，保留账号与本机记录。
   ///
-  /// 清空之后服务端位置回到 0，下一次同步会按当前本机数据重新上传一份基线。
+  /// 清空之后服务端位置回到 0，下一次同步需要重新确认后再上传基线。上一次
+  /// 清除还没结束时服务端返回 409 `conflict`，调用方按“稍后重试”处理。
   Future<void> clearCloudData() async {
     final epoch = _epoch;
-    await call<void>((client, token) async {
-      await client.deleteAllBackups(token);
-      await client.deleteSyncLog(token);
-    });
+    await call<void>((client, token) => client.deleteCloud(token));
     _ensureIdentityUnchanged(epoch);
     await preferences.clearSyncState();
   }

@@ -431,6 +431,10 @@ class ServerClient {
     if (uri == null || uri.host.isEmpty) {
       throw const FormatException('服务地址格式不正确');
     }
+    if (uri.userInfo.isNotEmpty) {
+      // 地址里带用户名或密码会随请求与日志外泄，服务地址只接受不含凭据的地址。
+      throw const FormatException('服务地址不能包含用户名或密码');
+    }
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw const FormatException('服务地址只支持 http 与 https');
     }
@@ -566,6 +570,12 @@ class ServerClient {
   /// 删除该账号的全部云端备份，账号保留。
   Future<void> deleteAllBackups(String accessToken) =>
       _send('DELETE', '/v1/backups', accessToken: accessToken);
+
+  /// 一次清空该账号的全部云端数据：备份、提交序列、附件与对象存储里遗留的字节。
+  ///
+  /// 可重复调用；上一次清除还没结束时服务端返回 409 `conflict`，稍后重试即可。
+  Future<void> deleteCloud(String accessToken) =>
+      _send('DELETE', '/v1/cloud', accessToken: accessToken);
 
   /// 清空该账号的同步序列，服务端位置回到 0；账号与备份保留。
   Future<void> deleteSyncLog(String accessToken) =>

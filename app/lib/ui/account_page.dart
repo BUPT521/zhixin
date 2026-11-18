@@ -51,6 +51,9 @@ class _AccountPageState extends State<AccountPage> {
   String? _notice;
   bool _failed = false;
 
+  /// 失败说明旁边可用的重试动作；成功说明与不需要重试的说明为空。
+  VoidCallback? _noticeRetry;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -108,11 +111,12 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  void _report(String message, {bool failed = false}) {
+  void _report(String message, {bool failed = false, VoidCallback? retry}) {
     if (!mounted) return;
     setState(() {
       _notice = message;
       _failed = failed;
+      _noticeRetry = retry;
     });
   }
 
@@ -445,25 +449,61 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _clearCloudData() async {
+    if (_busy) return;
     final confirmed = await confirmZhixin(
       context: context,
       title: '清除云端数据',
       content: const Text(
-        '会删除这个账号在服务端保存的全部整库备份与同步提交序列，'
-        '本机学习记录和账号保留。之后的下一次同步会把当前本机数据重新上传为基线；'
-        '其他设备需要重新同步，删除后无法恢复。',
+        '会一次删除这个账号在服务端保存的全部整库备份、同步提交序列、附件与遗留对象，'
+        '本机学习记录和账号保留。清除期间其他设备写入会被拒绝，完成后需要重新同步；'
+        '删除后无法恢复，可以重复执行。',
       ),
       confirmLabel: '清除',
       destructive: true,
     );
     if (!confirmed || !mounted || _busy) return;
     setState(() => _busy = true);
+    final scope = AppScope.of(context);
     try {
-      final scope = AppScope.of(context);
       await scope.accountServices.account.clearCloudData();
       await scope.accountServices.sync.clearState();
-      _report('云端备份与同步序列已清除；下一次同步会先确认，再从本机重新上传基线');
+      // 清除之后先停掉自动同步，再问用户要不要恢复；首次同步仍会先确认。
+      await scope.accountServices.account.setAutoSync(false);
+      if (!mounted) return;
+      final resume = await confirmEnableAutoSync(
+        context,
+        accountLabel: _snapshot?.email ?? '',
+      );
+      if (resume) {
+        await scope.accountServices.account.setAutoSync(true);
+        await scope.accountServices.sync.schedule(
+          delay: const Duration(seconds: 1),
+        );
+        _report('云端数据已清除；自动同步已恢复，首次同步会先确认是否上传本机记录');
+      } else {
+        _report('云端数据已清除；自动同步保持暂停，需要时在“自动同步”开关里重新开启');
+      }
       await _load();
+    } on ServerProblem catch (error, stack) {
+      if (!mounted) return;
+      if (error.isConflict) {
+        // 上一次清除还没结束：不是失败，稍后再点一次即可。
+        _report('云端数据还在清理中，请稍后重试');
+      } else {
+        _report(
+          describeFailure(
+            context,
+            error,
+            stack,
+            action: '清除云端数据',
+            kind: 'account_clear_cloud',
+            kept: '云端数据与本机记录没有改动',
+            next: '可以检查网络后重试',
+          ),
+          failed: true,
+          retry: _clearCloudData,
+        );
+      }
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -477,6 +517,7 @@ class _AccountPageState extends State<AccountPage> {
           next: '可以检查网络后重试',
         ),
         failed: true,
+        retry: _clearCloudData,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -588,7 +629,7 @@ class _AccountPageState extends State<AccountPage> {
       children: [
         if (_notice != null)
           _failed
-              ? InlineNotice(message: _notice!)
+              ? InlineNotice(message: _notice!, onRetry: _noticeRetry)
               : Padding(
                   padding: EdgeInsets.only(bottom: theme.space.md),
                   child: Text(_notice!, style: theme.text.bodySmall),

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_config.dart';
@@ -145,7 +146,7 @@ void main() {
     expect(server.userIdOf('d@example.com'), userId);
   });
 
-  test('清除云端数据删除备份与提交序列，账号还在', () async {
+  test('清除云端数据一次清空备份、提交序列与附件，账号还在', () async {
     final snapshot = await account.register(
       email: 'e@example.com',
       password: 'password123',
@@ -154,10 +155,55 @@ void main() {
     server.commits[userId] = [
       {'request_id': 'r1', 'seq': 1},
     ];
+    server.backups[userId] = [
+      FakeBackup(
+        meta: {'id': 'backup-1', 'sha256': '', 'size': 0},
+        bytes: Uint8List.fromList([1, 2, 3]),
+      ),
+    ];
+    server.blobs[userId] = {
+      'a' * 64: Uint8List.fromList([4, 5, 6]),
+    };
     await account.clearCloudData();
+    expect(server.cloudClearRequests, 1);
     expect(server.commits[userId], isEmpty);
+    expect(server.backups[userId], isNull);
+    expect(server.blobs[userId], isNull);
     expect((await account.snapshot()).signedIn, isTrue);
     expect(server.userIdOf('e@example.com'), userId);
+  });
+
+  test('清除期间服务端返回 409 时不算失败，游标保留并可重试', () async {
+    final snapshot = await account.register(
+      email: 'e2@example.com',
+      password: 'password123',
+    );
+    final userId = snapshot.session!.userId;
+    await preferences.saveSyncState(
+      SyncState(
+        userId: userId,
+        serverOrigin: 'http://server.test',
+        serverHead: 2,
+        pushedThrough: 1,
+      ),
+    );
+    server.cloudClearConflicts = 1;
+
+    await expectLater(
+      account.clearCloudData(),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.isConflict, 'conflict', true)
+            .having((error) => error.status, 'status', 409),
+      ),
+    );
+    // 上一次清除还没结束时不清游标，用户稍后重试即可。
+    expect(await preferences.syncState(), isNotNull);
+    expect(server.cloudClearRequests, 1);
+
+    await account.clearCloudData();
+    expect(server.cloudClearRequests, 2);
+    expect(await preferences.syncState(), isNull);
   });
 
   test('注册后邮箱未验证，确认验证码之后状态更新', () async {

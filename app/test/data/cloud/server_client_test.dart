@@ -33,6 +33,25 @@ void main() {
       );
     });
 
+    test('地址里带用户名或密码时拒绝，避免凭据外泄', () {
+      expect(
+        () => ServerClient.normalizeBaseUrl(
+          'https://user:pass@zhixin.example.com',
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('用户名或密码'),
+          ),
+        ),
+      );
+      expect(
+        ServerClient.normalizeBaseUrl('https://zhixin.example.com'),
+        'https://zhixin.example.com',
+      );
+    });
+
     test('正式构建只接受 https，显式打开联调开关时才允许 http', () {
       expect(
         ServerClient.normalizeBaseUrl(
@@ -427,6 +446,47 @@ void main() {
     await client.deleteAllBackups(tokens.accessToken);
     await client.deleteSyncLog(tokens.accessToken);
     expect(await client.head(tokens.accessToken).then((h) => h.head), 0);
+  });
+
+  test('一次清空云端数据走 DELETE /v1/cloud，清除未结束时返回 conflict', () async {
+    final server = FakeServer();
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+    final tokens = await client.register(
+      email: 'cloud@example.com',
+      password: 'password123',
+    );
+    final userId = tokens.userId;
+    server.commits[userId] = [
+      {'request_id': 'r1', 'seq': 1},
+    ];
+    server.backups[userId] = [
+      FakeBackup(
+        meta: {'id': 'backup-1', 'sha256': '', 'size': 0},
+        bytes: Uint8List.fromList([1, 2, 3]),
+      ),
+    ];
+    server.blobs[userId] = {
+      'a' * 64: Uint8List.fromList([4, 5, 6]),
+    };
+
+    await client.deleteCloud(tokens.accessToken);
+    expect(server.cloudClearRequests, 1);
+    expect(server.commits[userId], isEmpty);
+    expect(server.backups[userId], isNull);
+    expect(server.blobs[userId], isNull);
+
+    server.cloudClearConflicts = 1;
+    await expectLater(
+      client.deleteCloud(tokens.accessToken),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.isConflict, 'conflict', true)
+            .having((error) => error.status, 'status', 409),
+      ),
+    );
   });
 
   test('非 problem 响应也按状态码归类', () async {
