@@ -40,7 +40,7 @@ class _CountingExecutor implements RawExecutor {
 
 class _FakeDatabase implements RawDatabase {
   final _CountingExecutor outer = _CountingExecutor('outer');
-  late _CountingExecutor txn;
+  late _CountingExecutor currentTxn;
   int transactions = 0;
 
   @override
@@ -67,8 +67,8 @@ class _FakeDatabase implements RawDatabase {
   @override
   Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action) {
     transactions++;
-    this.txn = _CountingExecutor('txn');
-    return action(this.txn);
+    currentTxn = _CountingExecutor('txn');
+    return action(currentTxn);
   }
 
   @override
@@ -85,7 +85,7 @@ void main() {
     );
 
     expect(fake.transactions, 1);
-    expect(fake.txn.queries, ['SELECT 1 FROM app_meta']);
+    expect(fake.currentTxn.queries, ['SELECT 1 FROM app_meta']);
     expect(fake.outer.queries, isEmpty);
     expect(inside.single['source'], 'txn');
   });
