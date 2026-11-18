@@ -39,6 +39,9 @@ var ErrInvalidInput = errors.New("feedback: invalid input")
 // Store 保存反馈。生产实现写 PostgreSQL；反馈不关联账号，删号不影响它。
 type Store interface {
 	CreateFeedback(ctx context.Context, item Item) error
+	// DeleteBefore 删除创建时间早于 before 的反馈，返回删除的行数。保留期清理
+	// 每天调用一次，见 Service.PruneLoop。
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
 // MemoryStore 把反馈留在进程内存里，用于本地开发与测试。
@@ -54,6 +57,24 @@ func (m *MemoryStore) CreateFeedback(_ context.Context, item Item) error {
 	defer m.mu.Unlock()
 	m.items = append(m.items, item)
 	return nil
+}
+
+// DeleteBefore 删除创建时间早于 before 的反馈。内存实现同样保留 CreatedAt，
+// 因此清理结果与 PostgreSQL 一致。
+func (m *MemoryStore) DeleteBefore(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.items[:0]
+	var deleted int64
+	for _, item := range m.items {
+		if item.CreatedAt.Before(before) {
+			deleted++
+			continue
+		}
+		kept = append(kept, item)
+	}
+	m.items = kept
+	return deleted, nil
 }
 
 // snapshot 返回已有反馈的副本，供本包测试核对保存结果。读取入口不对外：

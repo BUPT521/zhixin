@@ -311,6 +311,16 @@ func (s *Store) CreateFeedback(ctx context.Context, item feedback.Item) error {
 	})
 }
 
+// DeleteBefore 删除创建时间早于 before 的反馈，返回删除的行数。保留期起点由
+// internal/feedback 按保留天数算出，这里只按时间条件删除。
+func (s *Store) DeleteBefore(ctx context.Context, before time.Time) (int64, error) {
+	ts, err := pgTime(before)
+	if err != nil {
+		return 0, err
+	}
+	return s.q.DeleteFeedbackBefore(ctx, ts)
+}
+
 // pgTime 把时间转成 PostgreSQL 的 timestamptz。零值说明调用方漏了赋值，直接
 // 报错，不再静默写成 NULL 或 0001-01-01 这类看不见的错误数据。
 func pgTime(t time.Time) (pgtype.Timestamptz, error) {

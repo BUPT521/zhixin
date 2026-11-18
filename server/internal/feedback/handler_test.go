@@ -164,11 +164,37 @@ func TestSubmitStopsAfterRateLimit(t *testing.T) {
 	}
 }
 
+// 全局桶与按地址的桶同时生效：地址桶放行时，全局桶用完照样限流。
+func TestSubmitStopsAfterGlobalRateLimit(t *testing.T) {
+	c, handler := newTestServerWithHandler(t, NewMemoryStore())
+	handler.SetGlobalLimiter(ratelimit.New(rate.Limit(0.001), 1, time.Minute))
+
+	if code, body := submit(t, c, map[string]any{"content": "第一条"}); code != http.StatusCreated {
+		t.Fatalf("第一条应被接受，得到 %d：%s", code, body)
+	}
+	if code, body := submit(t, c, map[string]any{"content": "第二条"}); code != http.StatusTooManyRequests {
+		t.Fatalf("全局桶用完之后应返回 429，得到 %d：%s", code, body)
+	}
+}
+
+// newTestServerWithHandler 与 newTestServer 相同，另外把处理器交给调用方，便于
+// 补装配动作，例如设置全局限流器。
+func newTestServerWithHandler(t *testing.T, store Store) (*testutil.Client, *Handler) {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewHandler(NewService(store), log, 1<<20, nil, httpx.RemoteHost)
+	return testutil.NewClient(t, testutil.NewServer(testAPI{h: handler}, httpx.RequestID)), handler
+}
+
 // failingStore 模拟数据库写入失败，用来核对处理器把存储故障报成 500，而不是
 // 当成用户输入有误。
 type failingStore struct{}
 
 func (failingStore) CreateFeedback(context.Context, Item) error { return errors.New("db down") }
+
+func (failingStore) DeleteBefore(context.Context, time.Time) (int64, error) {
+	return 0, errors.New("db down")
+}
 
 func TestSubmitReportsStoreFailure(t *testing.T) {
 	c := newTestServer(t, failingStore{}, nil)
