@@ -21,6 +21,7 @@ class DiscussionMessage extends StatelessWidget {
     required this.imagePath,
     this.footer,
     this.onOpenCitation,
+    this.highlighted = false,
   });
   final ChatMessage message;
   final String Function(String) imagePath;
@@ -28,6 +29,9 @@ class DiscussionMessage extends StatelessWidget {
 
   /// 回答下方的补充操作，例如本地规则回答的配置与重新回答入口。
   final Widget? footer;
+
+  /// 讨论内查找的当前一处：整条消息带底色与描边，切到下一处后随之消失。
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
@@ -80,47 +84,60 @@ class DiscussionMessage extends StatelessWidget {
         ],
       ],
     );
+    final Widget body;
     if (message.role != MessageRole.assistant) {
-      return _bubble(context, isUser: message.isUser, child: content);
-    }
-
-    final citations = DiscussionService.citationsOf(message)
-        .where((citation) => citation.quote.isNotEmpty);
-    return _replyCard(
-      context,
-      status: message.stopped
-          ? '已停止生成'
-          : message.interrupted
-          ? '生成中断'
-          : message.payload?.fromModel == false
-          ? '本地规则'
-          : null,
-      statusTone: message.stopped
-          ? TagTone.muted
-          : message.interrupted
-          ? TagTone.attention
-          : TagTone.neutral,
-      children: [
-        content,
-        if (citations.isNotEmpty) ...[
-          SizedBox(height: theme.space.md),
-          const Divider(height: 16),
-          SizedBox(height: theme.space.sm),
-          Text('参考依据', style: theme.text.labelLarge),
-          for (final (index, citation) in citations.indexed)
-            _CitationTile(
-              key: PageStorageKey((message.id, index)),
-              citation: citation,
-              onOpen:
-                  onOpenCitation == null ||
-                      citation.materialId.isEmpty ||
-                      citation.pageNo <= 0
-                  ? null
-                  : () => onOpenCitation!(citation),
-            ),
+      body = _bubble(context, isUser: message.isUser, child: content);
+    } else {
+      final citations = DiscussionService.citationsOf(message)
+          .where((citation) => citation.quote.isNotEmpty);
+      body = _replyCard(
+        context,
+        status: message.stopped
+            ? '已停止生成'
+            : message.interrupted
+            ? '生成中断'
+            : message.payload?.fromModel == false
+            ? '本地规则'
+            : null,
+        statusTone: message.stopped
+            ? TagTone.muted
+            : message.interrupted
+            ? TagTone.attention
+            : TagTone.neutral,
+        children: [
+          content,
+          if (citations.isNotEmpty) ...[
+            SizedBox(height: theme.space.md),
+            const Divider(height: 16),
+            SizedBox(height: theme.space.sm),
+            Text('参考依据', style: theme.text.labelLarge),
+            for (final (index, citation) in citations.indexed)
+              _CitationTile(
+                key: PageStorageKey((message.id, index)),
+                citation: citation,
+                onOpen:
+                    onOpenCitation == null ||
+                        citation.materialId.isEmpty ||
+                        citation.pageNo <= 0
+                    ? null
+                    : () => onOpenCitation!(citation),
+              ),
+          ],
+          ?footer,
         ],
-        ?footer,
-      ],
+      );
+    }
+    if (!highlighted) return body;
+    // 查找跳转到的这一条：加一圈主色描边与浅底，不用改文字颜色或字体，
+    // 切到下一处时旧标记随 [highlighted] 一起消失。
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colors.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: theme.radius.card,
+        border: Border.all(color: theme.colors.primary, width: 1.5),
+      ),
+      padding: EdgeInsets.all(theme.space.xs),
+      child: body,
     );
   }
 }

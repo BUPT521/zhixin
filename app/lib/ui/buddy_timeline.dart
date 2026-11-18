@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
@@ -107,6 +108,15 @@ abstract class BuddyTimelineAdapter {
   /// 讨论消息里的图片按应用私有目录解析。
   String imagePath(String stored);
 
+  /// 讨论内查找的当前一处：这条消息高亮。
+  bool isHighlighted(String messageId) => false;
+
+  /// 当前一处消息的定位键；只有正在查找时需要，跳转靠它滚到屏幕外的那一条。
+  Key? messageKey(String messageId) => null;
+
+  /// 查找打开时把整列消息都建出来，滚动定位才能拿到屏幕外那条的上下文。
+  bool get revealAll => false;
+
   /// 打开引用对应的材料原文；学习页的摘要不显示引用。
   void openCitation(Citation citation) {}
 
@@ -153,6 +163,10 @@ class BuddyTimeline extends StatelessWidget {
       controller: adapter.controller,
       // 倒序列表把最新一条放在偏移 0，打开长讨论时直接落在底部。
       reverse: true,
+      // 查找时要跳到屏幕外的消息：把列表整列建出来，定位键才有可用的上下文。
+      scrollCacheExtent: adapter.revealAll
+          ? const ScrollCacheExtent.pixels(_revealAllCacheExtent)
+          : null,
       padding: EdgeInsets.symmetric(vertical: context.zhixin.space.md),
       itemCount: entries.length + (adapter.hasOlder ? 1 : 0),
       itemBuilder: (context, index) {
@@ -162,6 +176,9 @@ class BuddyTimeline extends StatelessWidget {
       },
     );
   }
+
+  /// 查找期间一次建出的列表长度上限：一次查找的讨论消息远小于这个高度。
+  static const double _revealAllCacheExtent = 1000000;
 
   Widget _olderFooter(BuildContext context) {
     return Center(
@@ -185,9 +202,11 @@ class BuddyTimeline extends StatelessWidget {
       BuddyMessageEntry(:final message, :final footer) => Padding(
         padding: EdgeInsets.symmetric(horizontal: space.page),
         child: DiscussionMessage(
+          key: adapter.messageKey(message.id),
           message: message,
           imagePath: adapter.imagePath,
           footer: footer,
+          highlighted: adapter.isHighlighted(message.id),
           onOpenCitation: adapter.openCitation,
         ),
       ),
