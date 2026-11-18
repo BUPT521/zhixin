@@ -98,6 +98,10 @@ type Store interface {
 
 	SetEmailVerified(ctx context.Context, userID string, at time.Time) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
+	// ResetPassword 在一个事务里用掉验证码、换密码并删除该账号的全部会话，
+	// 三步要么一起成功，要么都不发生。验证码要同时匹配 purpose、code_hash
+	// 且未过期才算用掉，否则返回 ErrInvalidCode。
+	ResetPassword(ctx context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error
 
 	// PutCode replaces the active code for one account and purpose.
 	PutCode(ctx context.Context, c Code) error
@@ -218,6 +222,31 @@ func (m *MemoryStore) UpdatePassword(_ context.Context, userID, passwordHash str
 	}
 	u.PasswordHash = passwordHash
 	m.users[userID] = u
+	return nil
+}
+
+// ResetPassword 在同一把锁里用完验证码、换密码、删会话，三步要么都成要么都不成。
+func (m *MemoryStore) ResetPassword(_ context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := codeKey(userID, purpose)
+	c, ok := m.codes[key]
+	if !ok || c.CodeHash != expectedCodeHash || !now.Before(c.ExpiresAt) {
+		return ErrInvalidCode
+	}
+	u, ok := m.users[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(m.codes, key)
+	u.PasswordHash = newPasswordHash
+	m.users[userID] = u
+	for sid, s := range m.sessions {
+		if s.UserID == userID {
+			delete(m.sessions, sid)
+		}
+	}
+	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == userID })
 	return nil
 }
 

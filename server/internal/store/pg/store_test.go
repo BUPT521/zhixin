@@ -170,6 +170,63 @@ func TestPostgresSessionLimit(t *testing.T) {
 	}
 }
 
+// TestPostgresResetPassword 核对重设密码在一个事务里提交：摘要对不上时验证码
+// 不被用掉、密码与会话都不动；成功之后验证码消失、密码换掉、会话清空，再用
+// 同一个验证码返回 ErrInvalidCode。
+func TestPostgresResetPassword(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	u := auth.User{ID: "u1", Email: "reset@b.cn", PasswordHash: "old-hash"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	sess := auth.Session{
+		ID: "s1", UserID: u.ID,
+		AccessHash: "ah1", RefreshHash: "rh1",
+		AccessExpires:  now.Add(time.Hour),
+		RefreshExpires: now.Add(24 * time.Hour),
+	}
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if err := st.PutCode(ctx, auth.Code{
+		UserID: u.ID, Purpose: auth.PurposeResetPassword, CodeHash: "good",
+		ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("code: %v", err)
+	}
+
+	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "wrong", "new-hash", now); !errors.Is(err, auth.ErrInvalidCode) {
+		t.Fatalf("摘要对不上时应返回 ErrInvalidCode，得到 %v", err)
+	}
+	if got, err := st.UserByID(ctx, u.ID); err != nil || got.PasswordHash != "old-hash" {
+		t.Fatalf("失败的原子操作不应改密码：%+v %v", got, err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah1"); err != nil {
+		t.Fatalf("失败的原子操作不应删会话: %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); err != nil {
+		t.Fatalf("失败的原子操作不应吃掉验证码: %v", err)
+	}
+
+	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "good", "new-hash", now); err != nil {
+		t.Fatalf("正确的摘要应当成功: %v", err)
+	}
+	if got, err := st.UserByID(ctx, u.ID); err != nil || got.PasswordHash != "new-hash" {
+		t.Fatalf("密码应换成新哈希：%+v %v", got, err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("会话应被清空，得到 %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("验证码应被用掉，得到 %v", err)
+	}
+	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "good", "another-hash", now); !errors.Is(err, auth.ErrInvalidCode) {
+		t.Fatalf("验证码重复使用应返回 ErrInvalidCode，得到 %v", err)
+	}
+}
+
 // TestPostgresRefreshRotation 核对 CAS 轮换只有一个成功、旧令牌摘要能读回，
 // 并且记录随会话删除级联消失。
 func TestPostgresRefreshRotation(t *testing.T) {

@@ -147,3 +147,12 @@ RETURNING attempts;
 -- name: DeleteAuthCode :exec
 DELETE FROM auth_code
 WHERE user_id = sqlc.arg(user_id) AND purpose = sqlc.arg(purpose);
+
+-- 重设密码时用掉验证码：只有摘要匹配且未过期才删，0 行说明验证码已经被别的
+-- 请求用掉、已过期或对不上，调用方据此回 ErrInvalidCode。
+-- name: DeleteAuthCodeIfMatch :execrows
+DELETE FROM auth_code
+WHERE user_id = sqlc.arg(user_id)
+  AND purpose = sqlc.arg(purpose)
+  AND code_hash = sqlc.arg(code_hash)
+  AND expires_at > sqlc.arg(now);

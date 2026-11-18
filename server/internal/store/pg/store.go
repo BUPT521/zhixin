@@ -345,6 +345,42 @@ func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string)
 	return s.q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: passwordHash})
 }
 
+// ResetPassword 在一个事务里用掉验证码、换密码、删会话。验证码的删除带摘要与
+// 有效期条件，0 行说明它已经被别的请求用掉或过期，此时整个事务回滚，密码与
+// 会话都不动。
+func (s *Store) ResetPassword(ctx context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error {
+	at, err := pgTime(now)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	used, err := q.DeleteAuthCodeIfMatch(ctx, db.DeleteAuthCodeIfMatchParams{
+		UserID:   userID,
+		Purpose:  purpose,
+		CodeHash: expectedCodeHash,
+		Now:      at,
+	})
+	if err != nil {
+		return err
+	}
+	if used == 0 {
+		return auth.ErrInvalidCode
+	}
+	if err := q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: newPasswordHash}); err != nil {
+		return err
+	}
+	if err := q.DeleteUserSessions(ctx, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) PutCode(ctx context.Context, c auth.Code) error {
 	expires, err := pgTime(c.ExpiresAt)
 	if err != nil {

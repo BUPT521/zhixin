@@ -501,13 +501,15 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 	if err != nil {
 		return err
 	}
-	if err := s.store.UpdatePassword(ctx, u.ID, hash); err != nil {
-		return err
+	// 校验过再交给存储在事务里重新比对一次摘要：验证码用掉、密码换掉、会话
+	// 清掉三件事一起提交，两个重试请求不会都成功，也不会出现“密码换了但旧
+	// 会话还在”的中间状态。
+	err = s.store.ResetPassword(ctx, u.ID, PurposeResetPassword,
+		s.hashCode(u.ID, PurposeResetPassword, strings.TrimSpace(code)), hash, s.now())
+	if errors.Is(err, ErrInvalidCode) {
+		return ErrInvalidCode
 	}
-	if err := s.store.DeleteUserSessions(ctx, u.ID); err != nil {
-		return err
-	}
-	return s.store.DeleteCode(ctx, u.ID, PurposeResetPassword)
+	return err
 }
 
 // issueCode 生成一枚六位验证码并交给发信。发信失败时删除刚写入的记录，

@@ -107,6 +107,36 @@ func (q *Queries) DeleteAuthCode(ctx context.Context, arg DeleteAuthCodeParams) 
 	return err
 }
 
+const deleteAuthCodeIfMatch = `-- name: DeleteAuthCodeIfMatch :execrows
+DELETE FROM auth_code
+WHERE user_id = $1
+  AND purpose = $2
+  AND code_hash = $3
+  AND expires_at > $4
+`
+
+type DeleteAuthCodeIfMatchParams struct {
+	UserID   string
+	Purpose  string
+	CodeHash string
+	Now      pgtype.Timestamptz
+}
+
+// 重设密码时用掉验证码：只有摘要匹配且未过期才删，0 行说明验证码已经被别的
+// 请求用掉、已过期或对不上，调用方据此回 ErrInvalidCode。
+func (q *Queries) DeleteAuthCodeIfMatch(ctx context.Context, arg DeleteAuthCodeIfMatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAuthCodeIfMatch,
+		arg.UserID,
+		arg.Purpose,
+		arg.CodeHash,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOldestSessions = `-- name: DeleteOldestSessions :exec
 DELETE FROM session AS doomed
 WHERE doomed.user_id = $1
