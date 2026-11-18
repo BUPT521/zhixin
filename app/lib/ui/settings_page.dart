@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'package:forui/forui.dart' as forui;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'theme.dart';
 
@@ -13,9 +10,10 @@ import '../ai/llm_config.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/settings_service.dart';
-import '../application/update_service.dart';
+import '../application/update_check_service.dart';
 import '../domain/rules/time_policy.dart';
 import '../data/diagnostics/crash_log.dart';
+import '../platform/app_info.dart';
 import '../platform/diagnostics_store.dart';
 import 'failure_feedback.dart';
 import 'live_view.dart';
@@ -25,10 +23,9 @@ import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
-import 'zhixin_toast.dart';
 
 /// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
-enum _Area { model, learning, appearance, diagnostics, danger }
+enum _Area { model, learning, appearance, updates, diagnostics, danger }
 
 /// 一段操作的最近一次结果；失败用错误描边的就地说明，成功用一行小字。
 class _Result {
@@ -42,7 +39,10 @@ class _Result {
 ///
 /// 只放偏好配置；账号、记忆、人格、插件、数据版本与关于从底栏“我的”进入。
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({super.key, this.updates});
+
+  /// 手动检查更新用的服务；测试注入固定清单，生产读账号页保存的服务地址。
+  final UpdateCheckService? updates;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -66,6 +66,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _reportCrashes = true;
   bool _reportUsage = true;
+
+  /// 手动检查更新进行中：按钮禁用，副标题改成读取状态。
+  bool _checkingUpdates = false;
   bool _loading = true;
   bool _busy = false;
   final Map<_Area, _Result> _results = {};
@@ -82,9 +85,6 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 第一次读取设置项失败时的说明；重新订阅之后清除。
   String? _loadFailure;
 
-  /// 更新检查的结果由应用根在启动后写入，设置页只显示与关闭。
-  UpdateService? _updates;
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -92,37 +92,16 @@ class _SettingsPageState extends State<SettingsPage> {
     _started = true;
     final scope = AppScope.of(context);
     _stream = scope.settings.edit.watchSettings();
-    _updates = scope.settings.updates..notice.addListener(_onUpdateNotice);
-    unawaited(_updates!.ensureChecked());
     _loadLocal(scope);
   }
 
   @override
   void dispose() {
-    _updates?.notice.removeListener(_onUpdateNotice);
     _baseUrl.dispose();
     _model.dispose();
     _contextWindow.dispose();
     _key.dispose();
     super.dispose();
-  }
-
-  void _onUpdateNotice() {
-    if (mounted) setState(() {});
-  }
-
-  /// 去下载交给系统浏览器；应用内不下载也不安装安装包。
-  Future<void> _openDownload(AppUpdate update) async {
-    final uri = Uri.tryParse(update.release.url.trim());
-    var opened = false;
-    if (uri != null) {
-      try {
-        opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } catch (_) {
-        opened = false;
-      }
-    }
-    if (!opened && mounted) showToast(context, '没有可以打开下载地址的浏览器');
   }
 
   /// 重新订阅设置项：拍照方式写在 app_meta 里，保存不形成提交、没有表通知，
@@ -255,6 +234,36 @@ class _SettingsPageState extends State<SettingsPage> {
       _embeddingUsable = embedding.usable;
       _embeddingSources = embedding.sources;
     });
+  }
+
+  /// 手动检查更新：与启动检查走同一套流程，结果就地说明；有更新时另弹提示。
+  Future<void> _checkUpdates() async {
+    if (_checkingUpdates) return;
+    setState(() {
+      _checkingUpdates = true;
+      _results.remove(_Area.updates);
+    });
+    try {
+      final service =
+          widget.updates ?? AppScope.of(context).accountServices.updates;
+      final result = await service.check();
+      if (!mounted) return;
+      switch (result.status) {
+        case UpdateCheckStatus.upToDate:
+          _report(_Area.updates, '已经是最新版本（$appVersion）');
+        case UpdateCheckStatus.failed:
+          _report(_Area.updates, result.failureMessage, failed: true);
+        case UpdateCheckStatus.updateAvailable:
+          final release = result.release!;
+          _report(
+            _Area.updates,
+            '有新版本 ${release.version}（构建号 ${release.build}），可以打开下载地址更新。',
+          );
+          await showUpdateNotice(context, result);
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdates = false);
+    }
   }
 
   /// 把一份模型配置填回输入框；为空时回到默认值与空输入。
@@ -514,7 +523,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
     final signedIn = _account?.signedIn ?? false;
-    final update = _updates?.current;
     final configured =
         _config != null &&
         (_config!.isConfigured || (_config!.isServer && signedIn));
@@ -524,14 +532,6 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
-        if (update != null) ...[
-          UpdateNoticeCard(
-            update: update,
-            onDownload: () => _openDownload(update),
-            onDismiss: () => _updates!.dismiss(),
-          ),
-          SizedBox(height: theme.space.md),
-        ],
         if (_loadFailure != null)
           InlineNotice(message: _loadFailure!, onRetry: _retry),
         SectionHeading(
@@ -857,6 +857,24 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         ?_resultFor(_Area.diagnostics),
+        const SectionHeading(
+          title: '更新',
+          subtitle: '读取发布清单，核对安装包地址、哈希与签名；通过之后才提示。',
+        ),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.refreshCw),
+          title: const Text('检查更新'),
+          subtitle: Text(
+            _checkingUpdates
+                ? '正在读取发布清单…'
+                : '当前版本 $appVersion；会自动下载安装包核对哈希与签名，不在应用内安装。',
+          ),
+          suffix: _checkingUpdates
+              ? const forui.FCircularProgress(size: .sm)
+              : const Icon(FLucideIcons.chevronRight),
+          onPress: _busy || _checkingUpdates ? null : _checkUpdates,
+        ),
+        ?_resultFor(_Area.updates),
         const SectionHeading(
           title: '危险操作',
           subtitle: '这两项都无法撤销；删除模型配置只影响本机保存的模型设置。',

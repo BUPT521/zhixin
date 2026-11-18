@@ -46,22 +46,23 @@ lib/
 ├── main.dart / app.dart / app_scope.dart   ← 启动、主题、开库与依赖装配
 ├── app_services.dart                        ← 八组服务（讨论、安排、材料、记忆、设置、数据版本、插件、账号）
 ├── ai/                                     ← 模型配置、HTTP 客户端、搭子提示词与解析
-├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步
+├── application/                            ← 用例：对话、学习、计划、记忆、设置、账号与云同步、更新检查与反馈
 ├── data/
 │   ├── db/                                 ← drift 表结构与索引（docs/01 的唯一结构来源）、开库、访问协调
 │   │   └── drift/queries/                  ← 一张表一个 .drift 文件，由 build_runner 生成类型化方法
 │   ├── revisions/                          ← 触发器采集、提交历史、检查点重建、撤销、留存与两类数据包
 │   ├── backup/                             ← zip 导出、旧数据版本、暂存校验与分阶段恢复
-│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址、同步游标与匿名上报状态
+│   ├── cloud/                              ← 服务端 HTTP 客户端、账号令牌、服务地址、同步游标、发布清单验签与匿名上报状态
 │   ├── diagnostics/                        ← 本机崩溃记录与自建 Sentry 上报
 │   └── repository/                         ← 讨论、作答、目标、事项、日程、记忆与设置
 ├── domain/
 │   ├── models/                             ← 数据对象、值对象（ClockTime、TimeRange、Score、EvidenceId）与序列化
-│   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底与下一步
+│   └── rules/                              ← 时间口径、检索切词、记忆范围、本地兜底、版本比较与下一步
+├── platform/                               ← 应用信息、提示词资源、发布清单签名公钥与许可
 ├── plugins/
 │   ├── runtime/                            ← 清单、插件接口、四个权限门面、运行时与设置读写接口
 │   └── persona/                            ← 人格插件：对象与 800 字校验、内置人格、app_meta 存储
-└── ui/                                     ← 现在、记录、记录检索、讨论、材料、系统学习、学习中、安排、我的、设置、记忆、账号、云端备份、关于；页面导航在 navigation.dart，文案在 copy.dart
+└── ui/                                     ← 现在、记录、记录检索、讨论与讨论内查找、材料与材料查找、系统学习、学习中、安排与安排查找、我的、设置、记忆与记忆查找、账号、云端备份、反馈、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
 `ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
@@ -207,14 +208,16 @@ openssl pkey -in release-signing.pem -pubout -out release-signing.pub.pem
 base64 -w0 release-signing.pem   # 结果填入仓库 Secret RELEASE_SIGNING_KEY_BASE64
 ```
 
-签名对象是安装包 SHA-256 的小写十六进制字符串本身，共 64 个 ASCII 字节，不加换行，也不签文件内容；CI 用 `openssl pkeyutl -sign -rawin` 对这段字符串生成 64 字节签名，再转成 base64 写进 `app-release.apk.sig`，同时产出 `app-release.apk.sha256`，两个文件与安装包一起上传为构件，并在 step summary 里给出可以直接填进发布清单的 JSON 片段。公钥以 base64 的 32 字节 raw Ed25519 公钥在构建时注入：
-
-```bash
-flutter build apk --release --target-platform android-arm64 \
-  --dart-define=ZHIXIN_RELEASE_PUBLIC_KEY="$(base64 -w0 release-signing.pub.raw)"
-```
-
-`release-signing.pub.raw` 是公钥的 32 字节原始编码，可以用 `openssl pkey -pubin -in release-signing.pub.pem -outform DER` 之后取 Ed25519 公钥的最后 32 字节得到。未注入公钥时应用跳过签名校验，只校验清单地址是 https 与 `sha256` 是 64 位小写十六进制；注入之后清单没有 `signature` 或验签失败都不提示更新。更新提示显示版本、更新说明、`sha256` 与验签结果，点“去下载”用 `url_launcher` 交给系统浏览器打开清单地址；应用内不下载、不安装安装包，也不申请安装权限，安装交给系统浏览器与系统安装器。启动后的自动检查与设置页的“检查更新”走同一套流程，本次启动只自动检查一次。私钥与 keystore 一样只由发版人保管，不进仓库与本机工程目录；换密钥意味着旧版本应用无法验证
+签名对象是安装包 SHA-256 的小写十六进制字符串本身，共 64 个 ASCII 字节，不加换行，也不签文件内容；
+CI 用 `openssl pkeyutl -sign -rawin` 对这段字符串生成 64 字节签名，再转成 base64 写进 `app-release.apk.sig`，
+同时产出 `app-release.apk.sha256`，两个文件与安装包一起上传为构件，并在 step summary 里给出可以直接填进
+发布清单的 JSON 片段。公钥以常量形式内置在应用里：把 `release-signing.pub.pem` 的内容原样填进
+`lib/platform/release_signing_key.dart` 的常量，或者构建时用
+`--dart-define=RELEASE_PUBLIC_KEY_PEM="-----BEGIN PUBLIC KEY-----…"` 传入，两种方式取其一。更新检查先
+核对清单地址是 https、下载后的 SHA-256 与清单的 `sha256` 一致，再用内置公钥对清单 `sha256` 字段的
+64 字节十六进制字符串验签，三项都通过才提示更新，任何一项不通过都不提示；公钥留空时清单带签名按
+验签失败处理，应用不提示更新。启动后的自动检查与设置页的“检查更新”走同一套流程，本次启动只自动
+检查一次。私钥与 keystore 一样只由发版人保管，不进仓库与本机工程目录；换密钥意味着旧版本应用无法验证
 新清单，发版说明要写明这一点，并在应用内置公钥的下一次发版里同步更新。
 
 

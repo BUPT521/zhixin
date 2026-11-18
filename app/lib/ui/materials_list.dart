@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
@@ -5,6 +7,8 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 
 import '../app_scope.dart';
 import '../application/docx_import.dart';
+import '../application/material_search.dart';
+import '../application/request_gate.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/text.dart';
 import 'docx_review_dialog.dart';
@@ -98,6 +102,19 @@ class MaterialListState extends State<MaterialList> {
   /// 读取失败时就地说明；有内容时仍显示上一次读到的列表。
   String? _notice;
 
+  /// 材料查找：输入框、最后一次查询与已经取回的命中。
+  ///
+  /// 查找是本地查询，不调用模型；查询或筛选变化后只显示最后一次请求的结果，
+  /// 旧请求晚到就按编号丢弃（与记录页查找同一套 [RequestGate]）。
+  final TextEditingController _searchField = TextEditingController();
+  final RequestGate _requests = RequestGate();
+  Timer? _searchDebounce;
+  MaterialSearchResults? _results;
+  String _appliedQuery = '';
+  bool _searching = false;
+  bool _loadingMore = false;
+  String? _searchNotice;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -138,6 +155,108 @@ class MaterialListState extends State<MaterialList> {
   void _clearNotice() {
     if (_notice == null) return;
     setState(() => _notice = null);
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchField.dispose();
+    super.dispose();
+  }
+
+  /// 输入停下之后再查一次，免得每敲一个字都读一遍库。
+  void _onQueryChanged(String text) {
+    _searchDebounce?.cancel();
+    // 清除按钮跟着输入框里的字出现，不等这一次查找返回。
+    setState(() {});
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) _search(text);
+    });
+  }
+
+  /// 查询或筛选变化后只显示最后一次请求的结果：旧请求晚到时就地丢弃。
+  Future<void> _search(String text) async {
+    _searchDebounce?.cancel();
+    final query = text.trim();
+    final requestId = _requests.start();
+    if (query.isEmpty) {
+      setState(() {
+        _results = null;
+        _appliedQuery = '';
+        _searching = false;
+        _loadingMore = false;
+        _searchNotice = null;
+      });
+      return;
+    }
+    setState(() {
+      _searching = true;
+      _loadingMore = false;
+      _searchNotice = null;
+    });
+    try {
+      final results = await AppScope.of(context).library.materialSearch
+          .searchPage(query);
+      if (!mounted || !_requests.isCurrent(requestId)) return;
+      setState(() {
+        _results = results;
+        _appliedQuery = query;
+        _searching = false;
+      });
+    } catch (error, stack) {
+      if (!mounted || !_requests.isCurrent(requestId)) return;
+      setState(() {
+        _searching = false;
+        _searchNotice = describeFailure(
+          context,
+          error,
+          stack,
+          action: '查找材料',
+          kind: 'material_search',
+          kept: '已经显示的材料没有改动',
+          next: '可以再查一次',
+        );
+      });
+    }
+  }
+
+  /// 继续向后取一页命中；排序与去重已经在前一页完成，这里只追加。
+  Future<void> _loadMore() async {
+    final results = _results;
+    if (results == null || !results.hasMore || _loadingMore || _searching) {
+      return;
+    }
+    final requestId = _requests.start();
+    setState(() => _loadingMore = true);
+    try {
+      final next = await AppScope.of(context).library.materialSearch
+          .searchPage(_appliedQuery, offset: results.nextOffset);
+      if (!mounted || !_requests.isCurrent(requestId)) return;
+      setState(() {
+        _results = results.append(next);
+        _loadingMore = false;
+      });
+    } catch (error, stack) {
+      if (!mounted || !_requests.isCurrent(requestId)) return;
+      setState(() {
+        _loadingMore = false;
+        _searchNotice = describeFailure(
+          context,
+          error,
+          stack,
+          action: '继续读取材料查找结果',
+          kind: 'material_search_page',
+          kept: '已经显示的结果没有改动',
+          next: '可以再点一次“加载更多结果”',
+        );
+      });
+    }
+  }
+
+  /// 清空查询，回到原来的材料列表。
+  void _clearSearch() {
+    _searchField.clear();
+    _search('');
   }
 
   /// 打开导入对话框之前读一次目标列表；归属选项只在打开对话框时用得到。
@@ -268,11 +387,15 @@ class MaterialListState extends State<MaterialList> {
       builder: (context, materials, loading) {
         final list = materials ?? const <Material>[];
         final canImport = !loading && !_importingWord;
-        // 列表为空时导入入口由空态承担，顶栏不再重复一个同样的按钮。
-        final showTopBar = loading || list.isNotEmpty;
+        final hasMaterials = list.isNotEmpty;
+        // 有材料或有查询时才显示查找入口；空库的导入入口由空态承担。
+        final showSearchRow =
+            loading || hasMaterials || _searchField.text.isNotEmpty;
+        final showResults =
+            _results != null || _searching || _appliedQuery.isNotEmpty;
         return Column(
           children: [
-            if (showTopBar)
+            if (showSearchRow)
               Padding(
                 padding: EdgeInsets.fromLTRB(
                   theme.space.page,
@@ -281,8 +404,9 @@ class MaterialListState extends State<MaterialList> {
                   theme.space.xs,
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
+                    Expanded(child: _searchBar(theme)),
+                    SizedBox(width: theme.space.sm),
                     _ImportMaterialButton(
                       enabled: canImport,
                       onPaste: _import,
@@ -292,13 +416,26 @@ class MaterialListState extends State<MaterialList> {
                 ),
               ),
             if (_importingWord) const forui.FProgress(),
+            if (_searching) const forui.FProgress(),
             if (_notice != null)
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: theme.space.page),
                 child: InlineNotice(message: _notice!, onRetry: reload),
               ),
+            if (_searchNotice != null)
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                child: InlineNotice(
+                  message: _searchNotice!,
+                  onRetry: () => _search(
+                    _appliedQuery.isEmpty ? _searchField.text : _appliedQuery,
+                  ),
+                ),
+              ),
             Expanded(
-              child: loading
+              child: showResults
+                  ? _searchArea(theme)
+                  : loading
                   ? SingleChildScrollView(
                       child: ListSkeleton(
                         rowHeight: 73,
@@ -353,6 +490,140 @@ class MaterialListState extends State<MaterialList> {
           ],
         );
       },
+    );
+  }
+
+  /// 查找输入框：回车立即查一次，输入停下 250 毫秒之后自动查。
+  Widget _searchBar(ZhixinTheme theme) {
+    return forui.FTextField(
+      key: const ValueKey('materials-search-entry'),
+      control: .managed(
+        controller: _searchField,
+        onChange: (value) => _onQueryChanged(value.text),
+      ),
+      textInputAction: TextInputAction.search,
+      onSubmit: _search,
+      hint: '按标题、来源或页标签查找材料',
+      prefixBuilder: (context, style, variants) =>
+          forui.FTextField.prefixIconBuilder(
+            context,
+            style,
+            variants,
+            const Icon(FLucideIcons.search, size: 16),
+          ),
+      suffixBuilder: (_, style, _) => _searchField.text.isEmpty
+          ? const SizedBox.shrink()
+          : ZhixinIconButton(
+              tooltip: '清除查询',
+              onPressed: _clearSearch,
+              icon: FLucideIcons.x,
+              size: forui.FButtonSizeVariant.sm,
+              style: style.clearButtonStyle,
+            ),
+    );
+  }
+
+  /// 查找结果：命中的材料按列表顺序排列，写清命中原因与片段，底部继续加载。
+  Widget _searchArea(ZhixinTheme theme) {
+    final results = _results;
+    if (results == null) {
+      return SingleChildScrollView(
+        child: ListSkeleton(rowHeight: 73, padding: theme.space.pageInsets()),
+      );
+    }
+    if (results.isEmpty) {
+      return SingleChildScrollView(
+        child: EmptyState(
+          icon: FLucideIcons.searchX,
+          title: '没有找到「${results.query}」',
+          description: '可以换一个标题、来源、页标签或正文片段再试。',
+          action: forui.FButton(
+            variant: forui.FButtonVariant.outline,
+            mainAxisSize: MainAxisSize.min,
+            onPress: _clearSearch,
+            child: const Text('清除查询'),
+          ),
+        ),
+      );
+    }
+    final showEnd =
+        !results.hasMore &&
+        results.matches.length >= MaterialSearchService.pageSize;
+    return ListView(
+      padding: theme.space.pageInsets(),
+      children: [
+        for (final match in results.matches) _searchResultTile(theme, match),
+        if (results.hasMore)
+          LoadMoreFooter(
+            label: '加载更多结果',
+            loading: _loadingMore,
+            onPressed: _loadMore,
+          )
+        else if (showEnd)
+          Padding(
+            padding: EdgeInsets.only(top: theme.space.md),
+            child: Center(child: Text('已经到最后一条', style: theme.text.bodySmall)),
+          ),
+      ],
+    );
+  }
+
+  /// 一条查找命中；页内命中打开详情时直接落到那一页。
+  Widget _searchResultTile(ZhixinTheme theme, MaterialMatch match) {
+    final material = match.material;
+    final snippet = match.snippet;
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.tight),
+      child: forui.FTile(
+        prefix: const LeadingIcon(FLucideIcons.bookOpen, tone: TagTone.muted),
+        title: Text(
+          material.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TagRow(
+              children: [
+                StatusTag(match.reason, tone: TagTone.accent),
+                if (material.sourceRef != null)
+                  StatusTag(material.sourceRef!, tone: TagTone.muted),
+              ],
+            ),
+            SizedBox(height: theme.space.xs),
+            if (snippet != null && snippet.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.only(bottom: theme.space.xs),
+                child: Text(
+                  snippet,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurface,
+                  ),
+                ),
+              ),
+            Text(
+              '${material.kindLabel} · ${material.pageCount} '
+              '${material.isDocx ? '个片段' : '页'}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.text.bodySmall.copyWith(
+                color: theme.colors.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        suffix: const Icon(FLucideIcons.chevronRight),
+        onPress: () => openMaterial(
+          context,
+          material.id,
+          pageFrom: match.pageNo,
+          pageTo: match.pageNo,
+          stepTitle: match.pageNo == null ? null : '查找命中的原文',
+        ),
+      ),
     );
   }
 }

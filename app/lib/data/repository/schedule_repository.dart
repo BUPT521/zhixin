@@ -89,6 +89,22 @@ class ScheduleRepository {
         itemStatus: PlanItemStatus.fromValue(r.pStatus),
       );
 
+  static ScheduledItem _scheduledOfSearch(SearchPlanBlocksResult r) =>
+      ScheduledItem(
+        block: _blockOf(
+          id: r.id,
+          planItemId: r.planItemId,
+          startAt: r.startAt,
+          endAt: r.endAt,
+          source: PlanItemSource.fromValue(r.source),
+          status: r.status,
+          locked: r.locked,
+        ),
+        itemTitle: r.pTitle,
+        itemNote: r.pNote,
+        itemStatus: PlanItemStatus.fromValue(r.pStatus),
+      );
+
   ScheduleRepository(this._db, {this._clock = systemClock});
 
   final RawDatabase _db;
@@ -167,6 +183,29 @@ class ScheduleRepository {
     );
     if (rows.isEmpty) return null;
     return _scheduledOfNext(rows.first);
+  }
+
+  /// 安排查找的预约：目标、状态与日期在库里筛，关键词由应用层按事项筛。
+  ///
+  /// 日期条件按预约开始时间落在自然日区间内判断，与事项按截止时间判断用
+  /// 同一个区间；三个条件都为空时返回全部预约（docs/02 第 3.14 节）。
+  Future<List<ScheduledItem>> searchBlocks({
+    String? goalId,
+    PlanItemStatus? status,
+    DateTime? dayStart,
+    DateTime? dayEnd,
+  }) async {
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .searchPlanBlocks(
+            goalId ?? '',
+            status?.value ?? '',
+            dayStart == null ? '' : formatDateTime(dayStart),
+            dayEnd == null ? '' : formatDateTime(dayEnd),
+          )
+          .get(),
+    );
+    return [for (final row in rows) _scheduledOfSearch(row)];
   }
 
   Future<String> addBlock({

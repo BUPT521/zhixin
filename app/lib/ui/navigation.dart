@@ -22,12 +22,15 @@ import 'data_version_page.dart';
 import 'discussion_page.dart';
 import 'embedding_settings_page.dart';
 import 'failure_feedback.dart';
+import 'feedback_page.dart';
 import 'learning_page.dart';
 import 'materials_page.dart';
 import 'memory_page.dart';
 import 'memory_proposal_page.dart';
+import 'memory_search_page.dart';
 import 'persona_page.dart';
 import 'plan_page.dart';
+import 'plan_search_page.dart';
 import 'plugins_page.dart';
 import 'question_crop_page.dart';
 import 'records_search_page.dart';
@@ -119,6 +122,15 @@ Future<void> openStudyPlan(BuildContext context, String planId) {
   );
 }
 
+/// 打开安排查找：按标题、目标、状态与日期查事项、计划步骤与预约。
+///
+/// 页面里的结果点开仍走本文件的 [openPlanDetail] 与 [openPlanItem]，查找入口
+/// 不另造导航逻辑。
+Future<void> openPlanSearch(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const PlanSearchPage()));
+}
+
 /// 打开设置页。
 Future<void> openSettings(BuildContext context) {
   return Navigator.of(context)
@@ -129,6 +141,12 @@ Future<void> openSettings(BuildContext context) {
 Future<void> openMemory(BuildContext context) {
   return Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const MemoryPage()));
+}
+
+/// 打开记忆查找页：按正文、类别、适用范围与状态查找。
+Future<void> openMemorySearch(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const MemorySearchPage()));
 }
 
 /// 打开插件设置页：启停随应用编译的第一方插件。
@@ -179,6 +197,12 @@ Future<void> openEmbeddingSettings(BuildContext context) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(builder: (_) => const EmbeddingSettingsPage()),
   );
+}
+
+/// 打开反馈页：正文必填，可附联系邮箱与本机诊断摘要，不要求登录。
+Future<void> openFeedback(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const FeedbackPage()));
 }
 
 /// 打开记录搜索；结果里打开学习页或讨论仍交回记录页的入口。

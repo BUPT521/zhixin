@@ -379,7 +379,7 @@ class ServerRelease {
   /// 安装包的 SHA-256，契约要求 64 位小写十六进制。
   final String sha256;
 
-  /// 对 [sha256] 十六进制字符串的 Ed25519 签名（base64），可选。
+  /// 安装包 SHA-256 的 Ed25519 签名（base64）；清单没有签名时为空。
   final String signature;
   final int size;
   final String minVersion;

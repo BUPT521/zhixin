@@ -303,6 +303,13 @@ class DiscussionService {
     limit: limit,
   );
 
+  /// 讨论内查找要读的消息：这条记录的全部消息，按从旧到新排列。
+  ///
+  /// 查找在页面里按正文完成，匹配与高亮不写库、不调用模型；“读取较早讨论”
+  /// 只读到当前一页时，查找仍覆盖整条讨论，因此这里不按页截断。
+  Future<List<ChatMessage>> messagesForSearch(String conversationId) =>
+      conversations.recent(conversationId, limit: null);
+
   /// 新建一条还没有消息的讨论，用于从材料页开始或从记录里手动开一条。
   Future<String> createConversation({
     String? title,

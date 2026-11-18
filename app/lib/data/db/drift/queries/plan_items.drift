@@ -153,6 +153,23 @@ SELECT p.*,
 FROM plan_item p
 WHERE p.id IN (SELECT value FROM json_each(:itemIds));
 
+-- 安排查找的事项：目标、状态与截止日期在库里筛，关键词由应用层筛。
+--
+-- 三个条件都传空串表示不限；日期条件是自然日区间 [dayStart, dayEnd)，
+-- 截止时间为空的事项不进入带日期的结果。关键词的切词与大小写规则在应用层
+-- 只留一份，不写进 SQL（docs/02 第 3.14 节）。
+searchPlanItems:
+SELECT p.*,
+  (SELECT m.source_file_name FROM study_plan sp
+    JOIN material m ON m.id = sp.material_id
+    WHERE sp.id = p.study_plan_id) AS source_file_name
+FROM plan_item p
+WHERE (:goalId = '' OR p.goal_id = :goalId)
+  AND (:status = '' OR p.status = :status)
+  AND (:dayStart = '' OR
+    (p.due_at IS NOT NULL AND p.due_at >= :dayStart AND p.due_at < :dayEnd))
+ORDER BY p.due_at IS NULL, p.due_at DESC, p.id DESC;
+
 -- 待办里截止最近的一条；所属目标已暂停的事项不参与推荐。
 nextDueItem:
 SELECT p.*,

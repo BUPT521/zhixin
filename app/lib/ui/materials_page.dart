@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
@@ -7,6 +9,7 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../domain/models/material.dart';
 import '../domain/models/study.dart';
+import '../domain/rules/search_terms.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
@@ -18,6 +21,7 @@ import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
+import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
 import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
@@ -66,6 +70,19 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   /// 读取失败时就地说明；已经显示的材料与页面保持上一份。
   String? _notice;
 
+  /// 在材料内查找正文：输入框、已经生效的查询、当前这一处与全部命中的位置。
+  ///
+  /// 命中处由页面按页高亮，上一处、下一处只改当前序号并滚到对应页；查找全部
+  /// 在本机完成，不调用模型。
+  final TextEditingController _find = TextEditingController();
+  final ScrollController _scroll = ScrollController();
+  final Map<int, GlobalKey> _pageKeys = {};
+  Timer? _findDebounce;
+  String _findQuery = '';
+  int _findIndex = 0;
+  List<MaterialPage> _allPages = const [];
+  List<_PageMatch> _findMatches = const [];
+
   bool get _hasRange => widget.pageFrom != null || widget.pageTo != null;
 
   /// 按本次学习步骤的页码范围筛出要显示的页；页面本身仍读这份材料的全部页。
@@ -90,6 +107,122 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     final service = AppScope.of(context).library.material;
     _materialStream = service.watchMaterial(widget.materialId);
     _pagesStream = service.watchPages(widget.materialId);
+  }
+
+  @override
+  void dispose() {
+    _findDebounce?.cancel();
+    _find.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// 输入停下之后再在材料内找一次，免得每敲一个字都把全部页面扫一遍。
+  void _onFindChanged(String text) {
+    _findDebounce?.cancel();
+    setState(() {});
+    _findDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) _applyFind(text);
+    });
+  }
+
+  /// 生效这次查询，并把当前一处定位到第一处命中。
+  void _applyFind(String text) {
+    _findDebounce?.cancel();
+    setState(() {
+      _findQuery = text.trim();
+      _findIndex = 0;
+    });
+    if (_findQuery.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToMatch());
+  }
+
+  /// 清空材料内查找；查询与高亮一起撤掉，页面回到原来的样子。
+  void _clearFind() {
+    _findDebounce?.cancel();
+    _find.clear();
+    setState(() {
+      _findQuery = '';
+      _findIndex = 0;
+    });
+  }
+
+  /// 上一处、下一处；到头之后从另一头继续，按键始终可用。
+  void _stepFind(int delta) {
+    if (_findMatches.isEmpty) return;
+    setState(() {
+      _findIndex =
+          (_findIndex + delta + _findMatches.length) % _findMatches.length;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToMatch());
+  }
+
+  /// 滚到当前这一处所在的页；命中页在本次范围之外时先展开全部页面。
+  Future<void> _jumpToMatch() async {
+    if (!mounted || _findMatches.isEmpty) return;
+    final match = _findMatches[_findIndex.clamp(0, _findMatches.length - 1)];
+    if (!_showAllPages && _hasRange && !_inRange(match.pageNo)) {
+      setState(() => _showAllPages = true);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+    await _scrollToPage(match.pageNo);
+  }
+
+  bool _inRange(int pageNo) {
+    final from = widget.pageFrom ?? 1;
+    final to = widget.pageTo ?? 1 << 30;
+    return pageNo >= from && pageNo <= to;
+  }
+
+  /// 滚到某一页：已经建出来的页直接精确对齐，远处的页先按页序滚过去再对齐。
+  Future<void> _scrollToPage(int pageNo) async {
+    final key = _pageKeys.putIfAbsent(pageNo, () => GlobalKey());
+    final built = key.currentContext;
+    if (built != null) {
+      await Scrollable.ensureVisible(
+        built,
+        alignment: 0.05,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+      );
+      return;
+    }
+    final pages = _visiblePages(_allPages);
+    final index = pages.indexWhere((page) => page.pageNo == pageNo);
+    if (index < 0 || !_scroll.hasClients) return;
+    // ListView 只建可视范围附近的页：先按页序滚到大致位置，让目标页进入
+    // 建树范围，再精确对到这一页。
+    await _scroll.animateTo(
+      _scroll.position.maxScrollExtent * index / (pages.length + 1),
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+    );
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final after = key.currentContext;
+    if (after != null && after.mounted) {
+      await Scrollable.ensureVisible(
+        after,
+        alignment: 0.05,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  /// 这一份材料里与查询逐字相同的每一处，按页码与位置先后排列。
+  static List<_PageMatch> _findIn(List<MaterialPage> pages, String query) {
+    if (query.isEmpty) return const [];
+    final matches = <_PageMatch>[];
+    for (final page in pages) {
+      for (final start in literalOccurrences(page.content, query)) {
+        matches.add(
+          _PageMatch(pageNo: page.pageNo, start: start, length: query.length),
+        );
+      }
+    }
+    return matches;
   }
 
   /// 读取失败后的重试：换两条新流，读到结果之前保留已经显示的内容。
@@ -443,6 +576,9 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   }
 
   /// 材料信息与逐页原文；首读页码时先放与页面卡片同高的骨架。
+  ///
+  /// 有原文时顶部多一行材料内查找：命中数量与当前是第几处固定在列表上方，
+  /// 上一处、下一处滚到对应页；每页正文里的命中按页高亮，继续向下翻也能看到。
   Widget _body(
     ZhixinTheme theme,
     Material material,
@@ -451,91 +587,190 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   ) {
     final all = pages ?? const <MaterialPage>[];
     final visible = loading ? const <MaterialPage>[] : _visiblePages(all);
-    return ListView(
-      padding: theme.space.pageInsets(),
+    // 命中位置与当前一处按最后一次建出来的页面计算：高亮、计数与翻页读同一份。
+    _allPages = all;
+    _findMatches = _findIn(all, _findQuery);
+    _findIndex = _findMatches.isEmpty
+        ? 0
+        : _findIndex.clamp(0, _findMatches.length - 1);
+    return Column(
       children: [
-        if (_notice != null) InlineNotice(message: _notice!, onRetry: _reload),
-        TagRow(
-          children: [
-            StatusTag(material.kindLabel),
-            _GoalTag(material: material),
-            if (material.sourceRef != null)
-              StatusTag(material.sourceRef!, tone: TagTone.muted),
-          ],
-        ),
-        if (_hasRange) ...[
-          SizedBox(height: theme.space.gap),
-          forui.FCard(
-            child: Padding(
-              padding: EdgeInsets.all(theme.space.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        if (!loading && all.isNotEmpty) _findBar(theme),
+        Expanded(
+          child: ListView(
+            controller: _scroll,
+            padding: theme.space.pageInsets(),
+            children: [
+              if (_notice != null)
+                InlineNotice(message: _notice!, onRetry: _reload),
+              TagRow(
                 children: [
-                  Text(
-                    widget.stepTitle ?? '本次学习步骤',
-                    style: theme.text.titleSmall,
-                  ),
-                  SizedBox(height: theme.space.xs),
-                  Text(
-                    '本次范围：${_rangeLabel(material)}',
-                    style: theme.text.bodySmall.copyWith(
-                      color: theme.colors.onSurfaceVariant,
-                    ),
-                  ),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.ghost,
-                    size: forui.FButtonSizeVariant.sm,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () =>
-                        setState(() => _showAllPages = !_showAllPages),
-                    child: Text(_showAllPages ? '只看本次范围' : '查看全部页面'),
-                  ),
+                  StatusTag(material.kindLabel),
+                  _GoalTag(material: material),
+                  if (material.sourceRef != null)
+                    StatusTag(material.sourceRef!, tone: TagTone.muted),
                 ],
               ),
-            ),
+              if (_hasRange) ...[
+                SizedBox(height: theme.space.gap),
+                forui.FCard(
+                  child: Padding(
+                    padding: EdgeInsets.all(theme.space.md),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.stepTitle ?? '本次学习步骤',
+                          style: theme.text.titleSmall,
+                        ),
+                        SizedBox(height: theme.space.xs),
+                        Text(
+                          '本次范围：${_rangeLabel(material)}',
+                          style: theme.text.bodySmall.copyWith(
+                            color: theme.colors.onSurfaceVariant,
+                          ),
+                        ),
+                        forui.FButton(
+                          variant: forui.FButtonVariant.ghost,
+                          size: forui.FButtonSizeVariant.sm,
+                          mainAxisSize: MainAxisSize.min,
+                          onPress: () =>
+                              setState(() => _showAllPages = !_showAllPages),
+                          child: Text(_showAllPages ? '只看本次范围' : '查看全部页面'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              SizedBox(height: theme.space.gap),
+              if (loading)
+                const ListSkeleton(rows: 3)
+              else if (all.isEmpty)
+                EmptyState(
+                  icon: FLucideIcons.fileText,
+                  title: '这份材料还没有原文',
+                  description: material.isDocx
+                      ? 'Word 材料的片段随导入写入，这里不逐段添加；可以重新导入一份。'
+                      : '补充这一页的原文之后，可以引用原文或从这一页开始讨论。',
+                  action: material.isDocx
+                      ? null
+                      : forui.FButton(
+                          mainAxisSize: MainAxisSize.min,
+                          onPress: () => addMaterialPage(context, material),
+                          prefix: const Icon(FLucideIcons.filePlus),
+                          child: const Text('添加一页'),
+                        ),
+                )
+              else if (visible.isEmpty)
+                EmptyState(
+                  icon: FLucideIcons.fileText,
+                  title: '这一步的页码还没有原文',
+                  description: '可以查看全部页面，或先补充这一页。',
+                  action: material.isDocx
+                      ? null
+                      : forui.FButton(
+                          variant: forui.FButtonVariant.outline,
+                          mainAxisSize: MainAxisSize.min,
+                          onPress: () => addMaterialPage(context, material),
+                          child: const Text('添加一页'),
+                        ),
+                )
+              else
+                for (final page in visible) _pageCard(theme, material, page),
+            ],
           ),
-        ],
-        SizedBox(height: theme.space.gap),
-        if (loading)
-          const ListSkeleton(rows: 3)
-        else if (all.isEmpty)
-          EmptyState(
-            icon: FLucideIcons.fileText,
-            title: '这份材料还没有原文',
-            description: material.isDocx
-                ? 'Word 材料的片段随导入写入，这里不逐段添加；可以重新导入一份。'
-                : '补充这一页的原文之后，可以引用原文或从这一页开始讨论。',
-            action: material.isDocx
-                ? null
-                : forui.FButton(
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () => addMaterialPage(context, material),
-                    prefix: const Icon(FLucideIcons.filePlus),
-                    child: const Text('添加一页'),
-                  ),
-          )
-        else if (visible.isEmpty)
-          EmptyState(
-            icon: FLucideIcons.fileText,
-            title: '这一步的页码还没有原文',
-            description: '可以查看全部页面，或先补充这一页。',
-            action: material.isDocx
-                ? null
-                : forui.FButton(
-                    variant: forui.FButtonVariant.outline,
-                    mainAxisSize: MainAxisSize.min,
-                    onPress: () => addMaterialPage(context, material),
-                    child: const Text('添加一页'),
-                  ),
-          )
-        else
-          for (final page in visible) _pageCard(theme, material, page),
+        ),
       ],
     );
   }
 
-  Widget _pageCard(ZhixinTheme theme, Material material, MaterialPage page) {
+  /// 材料内查找：输入框、命中计数与上一处、下一处；没有命中时保留查询并给清除。
+  Widget _findBar(ZhixinTheme theme) {
+    final matches = _findMatches;
+    final hasQuery = _findQuery.isNotEmpty;
     return Padding(
+      padding: EdgeInsets.fromLTRB(
+        theme.space.page,
+        theme.space.xs,
+        theme.space.page,
+        0,
+      ),
+      child: Column(
+        children: [
+          forui.FTextField(
+            key: const ValueKey('material-find-entry'),
+            control: .managed(
+              controller: _find,
+              onChange: (value) => _onFindChanged(value.text),
+            ),
+            textInputAction: TextInputAction.search,
+            onSubmit: _applyFind,
+            hint: '在本材料内查找正文',
+            prefixBuilder: (context, style, variants) =>
+                forui.FTextField.prefixIconBuilder(
+                  context,
+                  style,
+                  variants,
+                  const Icon(FLucideIcons.search, size: 16),
+                ),
+            suffixBuilder: (_, style, _) => _find.text.isEmpty
+                ? const SizedBox.shrink()
+                : ZhixinIconButton(
+                    tooltip: '清除查找',
+                    onPressed: _clearFind,
+                    icon: FLucideIcons.x,
+                    size: forui.FButtonSizeVariant.sm,
+                    style: style.clearButtonStyle,
+                  ),
+          ),
+          if (hasQuery)
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.xs),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      matches.isEmpty
+                          ? '没有找到「$_findQuery」'
+                          : '第 ${_findIndex + 1} 处 / 共 ${matches.length} 处',
+                      style: theme.text.bodySmall,
+                    ),
+                  ),
+                  if (matches.isEmpty)
+                    forui.FButton(
+                      variant: forui.FButtonVariant.ghost,
+                      size: forui.FButtonSizeVariant.sm,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _clearFind,
+                      child: const Text('清除查找'),
+                    )
+                  else ...[
+                    ZhixinIconButton(
+                      tooltip: '上一处',
+                      onPressed: () => _stepFind(-1),
+                      icon: FLucideIcons.chevronUp,
+                      size: forui.FButtonSizeVariant.sm,
+                    ),
+                    ZhixinIconButton(
+                      tooltip: '下一处',
+                      onPressed: () => _stepFind(1),
+                      icon: FLucideIcons.chevronDown,
+                      size: forui.FButtonSizeVariant.sm,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pageCard(ZhixinTheme theme, Material material, MaterialPage page) {
+    final pageKey = _pageKeys.putIfAbsent(page.pageNo, () => GlobalKey());
+    return Padding(
+      key: pageKey,
       padding: EdgeInsets.only(top: theme.space.sm),
       child: forui.FCard(
         child: Padding(
@@ -549,7 +784,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
                 style: theme.text.labelLarge,
               ),
               SizedBox(height: theme.space.tight),
-              SelectableText(page.content, style: theme.text.bodyMedium),
+              _pageContent(theme, page),
               SizedBox(height: theme.space.sm),
               // 每页只有一个主操作；更正与记录收进菜单，卡片底部不再并排三个按钮。
               Row(
@@ -582,6 +817,66 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       ),
     );
   }
+
+  /// 一页的正文：没有查找时按原样可选，有查找时把每一处命中标出来。
+  Widget _pageContent(ZhixinTheme theme, MaterialPage page) {
+    if (_findQuery.isEmpty) {
+      return SelectableText(page.content, style: theme.text.bodyMedium);
+    }
+    return SelectableText.rich(
+      TextSpan(children: _highlightSpans(theme, page)),
+      style: theme.text.bodyMedium,
+    );
+  }
+
+  /// 一页正文按命中位置切成若干段，当前这一处用留意色，其余命中用主色浅底。
+  List<InlineSpan> _highlightSpans(ZhixinTheme theme, MaterialPage page) {
+    final content = page.content;
+    final positions = literalOccurrences(content, _findQuery);
+    if (positions.isEmpty) return [TextSpan(text: content)];
+    final current = _findMatches.isEmpty ? null : _findMatches[_findIndex];
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final start in positions) {
+      if (start > cursor) {
+        spans.add(TextSpan(text: content.substring(cursor, start)));
+      }
+      final end = start + _findQuery.length;
+      final isCurrent =
+          current != null &&
+          current.pageNo == page.pageNo &&
+          current.start == start;
+      spans.add(
+        TextSpan(
+          text: content.substring(start, end),
+          style: TextStyle(
+            backgroundColor: isCurrent
+                ? theme.colors.attentionContainer
+                : theme.colors.primaryContainer,
+            color: isCurrent ? theme.colors.onAttentionContainer : null,
+          ),
+        ),
+      );
+      cursor = end;
+    }
+    if (cursor < content.length) {
+      spans.add(TextSpan(text: content.substring(cursor)));
+    }
+    return spans;
+  }
+}
+
+/// 材料正文里的一处命中：第几页、从第几个字符开始、有多长。
+class _PageMatch {
+  const _PageMatch({
+    required this.pageNo,
+    required this.start,
+    required this.length,
+  });
+
+  final int pageNo;
+  final int start;
+  final int length;
 }
 
 /// 材料当前归属的目标名：归属只存标识，目标改名之后这里跟着订阅重读。
