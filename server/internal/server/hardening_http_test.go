@@ -46,7 +46,7 @@ func TestEncodedPathsDoNotBypassAuth(t *testing.T) {
 		// %6d 是 m：归一后匹配 GET /v1/me。
 		{http.MethodGet, "/v1/%6de", []int{http.StatusUnauthorized}},
 		// 归一后是 /v1/backups/..，会落在 GET /v1/backups/{id} 上（{id} 匹配 ".."），
-		// 或者在没有匹配到路由时由兜底处理器回 404；两种都要求先鉴权。
+		// 或者在没有匹配到路由时由兜底处理器回 404；两种都不会落进处理器。
 		{http.MethodGet, "/v1/backups/%2e%2e", []int{http.StatusUnauthorized, http.StatusNotFound}},
 		// 归一后是 /v1/blobs/../..，仍落在 PUT /v1/blobs/{sha256} 上。
 		{http.MethodPut, "/v1/blobs/%2e%2e%2f%2e%2e", []int{http.StatusUnauthorized}},

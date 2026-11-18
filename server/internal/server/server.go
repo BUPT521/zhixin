@@ -173,9 +173,10 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
 	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。因此按执行顺序
-	// 反过来写：运行起来依次是 记录路由 → 校验身份 → 按账号限流 → 处理器。
-	// 记录路由在最外层，访问日志能拿到注册模式；鉴权在限流之前，未认证的请求
-	// 不会消耗账号的上传额度；限流在处理器之前，请求体落盘之前就被拦住。
+	// 反过来写：运行起来依次是 记录路由 → 校验身份 → 按账号限流 → 标记可缓存
+	// → 处理器。记录路由在最外层，访问日志能拿到注册模式；鉴权在限流之前，未
+	// 认证的请求不会消耗账号的上传额度；限流在处理器之前，请求体落盘之前就被
+	// 拦住；可缓存标记在最内层，只有真正要进处理器的公开响应才会被标记。
 	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
