@@ -75,9 +75,9 @@ server/
 - 响应统一带 `X-Content-Type-Options: nosniff` 与 `Cache-Control: no-store`：接口响应里可能出现账号信息与学习数据，禁止浏览器猜测内容类型，也禁止中间层缓存。
 - JSON 请求体拒绝未知字段与多余内容，超过上限返回 413。读取请求体时，两次读到数据之间最多等待 `ZHIXIN_BODY_IDLE_TIMEOUT`（默认 60 秒），超时中断本次请求；读完、请求体关闭或出错时清除这个时限，不影响之后的 SSE 响应。
 - 中间件顺序固定为 request_id、访问日志、安全响应头、异常恢复、鉴权、上传限流、业务；401 与 429 都带 `request_id` 并进访问日志。上传限流在鉴权之后，按账号计数，备份与附件两类请求共用一个桶。
-- 鉴权默认要求 Bearer：中间件按路由模式 `r.Pattern` 判断，只有契约里标了 `security: []` 的操作公开，即存活与就绪检查、注册、登录、刷新令牌、找回密码与重设密码、发布清单、反馈与匿名活跃上报，其余一律要求访问令牌。公开操作表集中在一处（`internal/auth` 的 routepolicy），内容与契约的 `security: []` 对齐；增删接口时要改契约，并在同一个 push 里同步这张表。令牌无效返回 401，读取令牌时存储故障走统一的 500 problem，两者都带 `request_id`。
+- 鉴权默认要求 Bearer：中间件按路由模式 `r.Pattern` 判断，只有契约里标了 `security: []` 的操作公开，即存活与就绪检查、注册、登录、刷新令牌、找回密码与重设密码、发布清单、反馈与匿名活跃上报，其余一律要求访问令牌。公开操作表集中在一处（`internal/routepolicy`），内容与契约的 `security: []` 对齐；增删接口时要改契约，并在同一个 push 里同步这张表。令牌无效返回 401，读取令牌时存储故障走统一的 500 problem，两者都带 `request_id`。
 - 来源地址只信配置的反向代理网段：`ZHIXIN_TRUSTED_PROXIES` 写逗号分隔的 IP 或 CIDR，只有直接对端落在其中时才取 `X-Forwarded-For` 的最后一项作为客户端地址，前面的项由客户端自己写，不可信；没有配置时只看直接对端，客户端自己写这个头也换不到另一个限流桶。IPv6 地址按 /64 归并成同一个桶，因为一台机器可以用同一个 /64 内的不同地址绕过按地址的限流。
-- 登录失败按规范化邮箱计预算，默认每秒补 0.017 个令牌、最多攒 10 个，超出时短暂返回 429，注册、登录与删号共用同一个口径；argon2id 密码哈希同时占用的内存受 `ZHIXIN_ARGON2_MEMORY_BUDGET_MIB` 约束，并发哈希数由预算除以单次约 19 MiB 得出，超出时排队而不是继续申请内存。
+- 登录失败按规范化邮箱计预算，默认每秒补 0.017 个令牌、最多攒 10 个，超出时短暂返回 429，登录与删号的密码确认共用一个口径；argon2id 密码哈希同时占用的内存受 `ZHIXIN_ARGON2_MEMORY_BUDGET_MIB` 约束，并发哈希数由预算除以单次约 19 MiB 得出，超出时排队而不是继续申请内存。
 - 每个账号最多保留 `ZHIXIN_MAX_SESSIONS_PER_USER` 个会话，新登录超过上限时删最旧的，过期会话每天清理一次。刷新令牌轮换之后，旧刷新令牌只在固定的 60 秒宽限内、且客户端带同一个 `request_id` 重试时才被接受；其他重放按盗用处理，撤销这个账号的全部会话并记录安全事件，因此客户端每次刷新都要带 `request_id`。
 - 删除账号要重新提交当前密码：`DELETE /v1/me` 的请求体是 `{"password":"..."}`，密码错误返回 401 `invalid_credentials`，应用只提示密码错误并保留当前登录。清除云端数据统一走 `DELETE /v1/cloud`，清除期间这个账号的写入返回 409 `conflict`，见[同步协议](#同步协议)。
 - 模型代理在账号未验证邮箱时返回 403 `email_unverified`；每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，非流式响应不超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES`，流式响应有空闲与总时限；额度在请求开始时预留、按实际用量结算，账号当日额度与实例当日总预算任一用完都返回 429 `quota_exceeded`。
@@ -117,7 +117,7 @@ server/
 
 客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端核对模型名是否在 `ZHIXIN_LLM_MODELS` 中、账号是否已经确认邮箱、当日用量是否低于这个账号的每日额度，然后换上服务端持有的 key 转发，流式响应按事件边界逐块刷新，提供方的错误状态与响应体原样返回。账号还没有确认邮箱时托管请求返回 403 `email_unverified`，客户端在模型入口提示先验证邮箱；这个检查默认打开（`ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL=1`），设成 `0` 只在本地联调或临时放行时使用。
 
-每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号当日额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算是一个进程内的总账，防止单个实例的提供方账单失控。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待内测用量出来之后再定。
+每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号当日额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算按库里同一天所有账号的用量求和，防止单个实例的提供方账单失控。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
 每日额度默认取 `ZHIXIN_LLM_DAILY_TOKENS`，需要单独调整某个账号时在 `llm_quota` 表里写一行，下一次请求就按新数字判定，不用重启服务；删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 与聊天接口的 429 里返回的都是这个账号的生效额度。调整是运营动作，不另开管理接口，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
 
