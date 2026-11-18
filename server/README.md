@@ -4,13 +4,15 @@
 
 ## 当前状态
 
-路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、邮箱验证与找回密码、提交序列的推送与拉取、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。应用内的更新检查与反馈接口也已经在 2026-11-18 实现：`GET /v1/app/releases` 公开返回发布清单，`POST /v1/feedback` 公开接收反馈并写入 `feedback` 表，两者都不需要登录，取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。留存统计的服务端部分同日完成：登录账号按服务端收到的请求日期记活跃，未登录设备通过 `POST /v1/telemetry/active` 匿名上报，安装标识只保存 HMAC-SHA256，匿名数据按 180 天滚动删除；模型额度也支持按账号单独调整（`llm_quota` 表），调整不用重启服务（[留存统计](#留存统计)、[模型代理](#模型代理)）。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据、反馈、活跃数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`。
+路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、邮箱验证与找回密码、提交序列的推送与拉取、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。应用内的更新检查与反馈接口也已经在 2026-11-18 实现：`GET /v1/app/releases` 公开返回发布清单，`POST /v1/feedback` 公开接收反馈并写入 `feedback` 表，两者都不需要登录，取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。留存统计的服务端部分同日完成：登录账号按服务端收到的请求日期记活跃，未登录设备通过 `POST /v1/telemetry/active` 匿名上报，安装标识只保存 HMAC-SHA256，匿名数据按 180 天滚动删除；模型额度也支持按账号单独调整（`llm_quota` 表），调整不用重启服务（[留存统计](#留存统计)、[模型代理](#模型代理)）。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据、反馈、活跃数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`，一个账号的全部附件另有总量上限 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`，超限时上传返回 413 `storage_full`。
 
-`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。
+2026-11-18 的加固轮次把服务端的默认行为收紧：启动时自检生产配置（配置了数据库时验证码不能写进日志、验证码与匿名统计的 HMAC 密钥必须固定、带凭据的上游地址必须走 https），公开写入接口在按地址的桶之外增加全局上限，反馈按保留期每日清理，登录失败按规范化邮箱计预算，密码哈希受 Argon2 内存预算约束，每个账号的会话数有上限并在每天清理过期会话，刷新令牌轮换后只保留固定 60 秒的重试宽限，附件增加账号总量配额，清除云端数据统一为 `DELETE /v1/cloud`，模型代理增加未验证邮箱拒绝、账号并发上限、响应体上限、额度预留与实例总预算，发布清单强制 https 与 sha256、签名可选。配置项见下表，取舍与已知代价见 [ADR-0028](../docs/adr/0028-服务端加固的默认拒绝与预算.md)。
+
+`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。
 
 CI 使用临时 PostgreSQL 实例执行服务端存储测试；在开发机上可以设置 `ZHIXIN_TEST_DATABASE_URL` 执行同一组用例，连接串须指向允许重建表的专用测试库。
 
-账号保留时可以单独清空云端数据：`DELETE /v1/backups` 删除该账号的全部备份，元数据行与对象存储里的字节一并删除，`DELETE /v1/sync/commits` 清空全部提交并把服务端 head 重置为 0，两者都返回 204，账号本身不受影响。客户端据此在设置页提供“清除云端数据”，调用前应提示用户会失去云端副本，本机数据库不受影响。
+账号保留时可以单独清空云端数据：`DELETE /v1/cloud` 依次删除该账号的全部备份、提交序列、附件与对象存储里遗留的字节，成功返回 204，可重复调用，中途失败时重试从剩下的部分继续；清除期间这个账号的写入请求返回 409 `conflict`，客户端退避之后重试，账号、会话与本机数据都不受影响。原来的 `DELETE /v1/backups` 与 `DELETE /v1/sync/commits` 仍然保留，分别清空备份与提交序列；客户端设置页的“清除云端数据”改为调用 `DELETE /v1/cloud`，并在完成后显示状态、询问是否恢复自动同步。
 
 第一套实例已经在一台单机 Debian 13 上跑起来，备份与附件的字节放阿里云 OSS 的 S3 兼容接口，部署方式见[部署与凭据](#部署与凭据)。客户端已经接入登录、邮箱验证、找回密码、整库备份、按提交的增量同步与“知新服务”模型来源，首次同步上传当前数据为基线的取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md)。更新检查与反馈的服务端接口也于 2026-11-18 就绪，应用内的提示与入口由吴闻杰在 M1 接入；接下来的顺序是两台设备的同步走查与限额调整。邮箱验证与找回密码按 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 第 5 条已经落地。
 
@@ -22,30 +24,46 @@ go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2 -config a
 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 ```
 
+## 表结构
+
+服务端 PostgreSQL 的表与索引以 [internal/store/schema.sql](internal/store/schema.sql) 为唯一真相，本节只说明用途；客户端本机 SQLite 的表在 [01](../docs/01-ER数据模型.md)，两份文档不互相复制。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），结构变化时按当前文件重建库。
+
+2026-11-18 的加固轮次新增了三张表：
+
+| 表 | 用途 | 关键列与约束 |
+|---|---|---|
+| `attachment` | 附件索引，按账号与内容哈希去重，用于账号附件总量配额与回填 | `user_id` 外键级联删除，`sha256`、`size`，主键 `(user_id, sha256)`；对象字节仍在 `attachments/<账号>/<sha256>`，删号时按前缀清理 |
+| `user_purge` | `DELETE /v1/cloud` 的清除标记，存在时该账号的写入返回 409 | `user_id` 主键，`started_at`；超过十分钟视为中断，可以接管重做 |
+| `session_refresh_used` | 已用刷新令牌的摘要与重试宽限，支撑轮换与 60 秒宽限 | `token_hash` 主键，`session_id` 与 `user_id` 外键级联删除，`request_id`，`rotated_at`、`grace_until` 与轮换前后的访问令牌、刷新令牌摘要；重放不带匹配 `request_id` 或超出宽限时撤销该账号全部会话并记录安全事件 |
+
+同轮新增的索引是 `session(refresh_expires)`、`session(user_id, created_at DESC)` 与 `auth_code(expires_at)`。字段与索引以 `schema.sql` 为准，本节只用于说明用途，不复制建表语句。
+
 ## 目录
 
 ```
 server/
 ├── api/openapi.yaml            ← 接口契约，唯一真相
 ├── cmd/zhixin-api/             ← 入口：读配置、选存储、启动与优雅退出
+├── cmd/backfill-attachments/   ← 回填附件索引的一次性命令，见[附件与备份的字节](#附件与备份的字节)
 ├── 运维手册.md                  ← 资源清单、授权方式与配置
 ├── internal/
 │   ├── config/                 ← ZHIXIN_* 环境变量与发布清单文件
 │   ├── httpx/                  ← problem+json、JSON 解码与大小上限、请求编号、访问日志、异常恢复、请求体落盘校验、429
-│   ├── auth/                   ← 账号、argon2id 密码与不透明令牌、鉴权中间件
+│   ├── auth/                   ← 账号、argon2id 密码与不透明令牌、鉴权中间件与登录失败预算
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
 │   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
 │   ├── llmproxy/               ← Chat Completions 代理与每日额度
 │   ├── release/                ← 发布清单的读取、校验与更新检查接口
-│   ├── feedback/               ← 应用内反馈：校验、限流与保存
+│   ├── feedback/               ← 应用内反馈：校验、限流、保存与保留期清理
 │   ├── retention/              ← 留存统计：匿名活跃上报、登录活跃记录与保留期清理
+│   ├── ratelimit/              ← 按地址、账号与全局键的进程内令牌桶
 │   ├── objectstore/            ← 字节存储：S3 兼容、本地目录与内存三种实现
 │   ├── api/                    ← 生成的路由与类型（来自 api/openapi.yaml）
 │   ├── server/                 ← 装配路由与中间件，端到端测试与两台设备的同步走查
 │   ├── testutil/               ← 各包处理器测试共用的进程内客户端与 problem 解码
 │   ├── store/                  ← 表结构（schema.sql，唯一真相）与 sqlc 查询
-│   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、用量、反馈、活跃数据
+│   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、附件索引、用量、反馈、活跃数据
 └── Dockerfile
 ```
 
@@ -54,10 +72,16 @@ server/
 ## 约定
 
 - 路径带 `/v1` 前缀，请求与响应用 JSON。错误一律是 `application/problem+json`，`code` 取 [契约](api/openapi.yaml) 里的 `ProblemCode` 枚举，客户端按 `code` 分支，`detail` 只给开发者看，不能写入学习内容、SQL、令牌或路径。
-- JSON 请求体拒绝未知字段与多余内容，超过上限返回 413。
-- 中间件顺序固定为 request_id、访问日志、异常恢复、鉴权、上传限流、业务；401 与 429 都带 `request_id` 并进访问日志。
-- 公开路由不要求 Bearer：存活与就绪检查、注册、登录、刷新令牌、找回密码、发布清单、反馈与匿名活跃上报。需要 Bearer 的路径列在 `internal/auth/middleware.go` 的 `securedRoutes`，契约增删接口时同步改那张表；漏改时鉴权不会生效，处理器里的 `auth.MustPrincipal` 会直接 panic，由异常恢复变成 500。
-- 按来源地址的限流默认只看直接对端。第一套实例的 `zhixin-api` 只监听回环地址、前面是项目组的 nginx，这时把 `ZHIXIN_TRUSTED_PROXY` 设为 `1`，按 `X-Forwarded-For` 的最后一项取来源地址，前面的项由客户端自己写，不可信。服务直接对外监听时必须保持 `0`，否则客户端自己写这个头就能换一个桶、绕过限流。
+- 响应统一带 `X-Content-Type-Options: nosniff` 与 `Cache-Control: no-store`：接口响应里可能出现账号信息与学习数据，禁止浏览器猜测内容类型，也禁止中间层缓存。
+- JSON 请求体拒绝未知字段与多余内容，超过上限返回 413。读取请求体时，两次读到数据之间最多等待 `ZHIXIN_BODY_IDLE_TIMEOUT`（默认 60 秒），超时中断本次请求；读完、请求体关闭或出错时清除这个时限，不影响之后的 SSE 响应。
+- 中间件顺序固定为 request_id、访问日志、安全响应头、异常恢复、鉴权、上传限流、业务；401 与 429 都带 `request_id` 并进访问日志。上传限流在鉴权之后，按账号计数，备份与附件两类请求共用一个桶。
+- 鉴权默认要求 Bearer：中间件按路由模式 `r.Pattern` 判断，只有契约里标了 `security: []` 的操作公开，即存活与就绪检查、注册、登录、刷新令牌、找回密码与重设密码、发布清单、反馈与匿名活跃上报，其余一律要求访问令牌。公开操作表集中在一处（`internal/auth` 的 routepolicy），内容与契约的 `security: []` 对齐；增删接口时要改契约，并在同一个 push 里同步这张表。令牌无效返回 401，读取令牌时存储故障走统一的 500 problem，两者都带 `request_id`。
+- 来源地址只信配置的反向代理网段：`ZHIXIN_TRUSTED_PROXIES` 写逗号分隔的 IP 或 CIDR，只有直接对端落在其中时才取 `X-Forwarded-For` 的最后一项作为客户端地址，前面的项由客户端自己写，不可信；没有配置时只看直接对端，客户端自己写这个头也换不到另一个限流桶。IPv6 地址按 /64 归并成同一个桶，因为一台机器可以用同一个 /64 内的不同地址绕过按地址的限流。
+- 登录失败按规范化邮箱计预算，默认每秒补 0.017 个令牌、最多攒 10 个，超出时短暂返回 429，注册、登录与删号共用同一个口径；argon2id 密码哈希同时占用的内存受 `ZHIXIN_ARGON2_MEMORY_BUDGET_MIB` 约束，并发哈希数由预算除以单次约 19 MiB 得出，超出时排队而不是继续申请内存。
+- 每个账号最多保留 `ZHIXIN_MAX_SESSIONS_PER_USER` 个会话，新登录超过上限时删最旧的，过期会话每天清理一次。刷新令牌轮换之后，旧刷新令牌只在固定的 60 秒宽限内、且客户端带同一个 `request_id` 重试时才被接受；其他重放按盗用处理，撤销这个账号的全部会话并记录安全事件，因此客户端每次刷新都要带 `request_id`。
+- 删除账号要重新提交当前密码：`DELETE /v1/me` 的请求体是 `{"password":"..."}`，密码错误返回 401 `invalid_credentials`，应用只提示密码错误并保留当前登录。清除云端数据统一走 `DELETE /v1/cloud`，清除期间这个账号的写入返回 409 `conflict`，见[同步协议](#同步协议)。
+- 模型代理在账号未验证邮箱时返回 403 `email_unverified`；每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，非流式响应不超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES`，流式响应有空闲与总时限；额度在请求开始时预留、按实际用量结算，账号当日额度与实例当日总预算任一用完都返回 429 `quota_exceeded`。
+- 附件的单个上限、账号总量上限与 `storage_full` 见[附件与备份的字节](#附件与备份的字节)；发布清单的地址必须是 https、`sha256` 必填、`signature` 可选，见[更新检查](#更新检查)。
 - 契约绑定的参数由生成的路由解析后传入处理器，缺 header 或参数不是整数由统一的错误处理函数返回 problem+json，处理器不再自己解析一遍；存储查询的参数统一用 `sqlc.arg`，日期与时间解析失败直接报错。
 - 访问日志只记录路由模式、状态码、字节数与耗时，不记录请求体、查询串与请求头；模型代理不保存请求与回答正文，只记 token 数。
 - 服务端接受的客户端数据版本是 `server.ClientSchemaVersion`，必须与 [01](../docs/01-ER数据模型.md) 开头的 schema 编号一致。客户端升 schema 时同一个 push 里改这个常量；其他版本的提交与备份一律拒绝，与 [ADR-0002](../docs/adr/0002-本地数据不做迁移.md) 相同。
@@ -67,9 +91,9 @@ server/
 
 服务端为每个账号保存一条线性的提交序列，不合并、不解析内容。客户端推送时带上自己所知的 `base_seq`，等于服务端 head 才追加，否则返回 409 和最新 head；客户端先拉取 `after=<本机已同步位置>` 的提交，在本机按现有的净变化应用为新的本地提交（撤销与数据版本页因此照常可用），再重新推送。每条提交带客户端的 `request_id`，已经收到过的会被跳过，所以丢失响应之后原样重试是安全的。同一字段在两台设备上并发修改时，后到达服务端的覆盖先到达的，被覆盖的值留在提交历史里；这条规则在 2026-11-18 的协议走查中确认可用，真机走查待内测阶段补做。
 
-客户端第一次同步时先拉取这个账号已有的提交并在本机应用，再把当前业务投影作为一份或几份基线提交上传，之后只推送新提交，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md)。基线提交的来源记为 `system`、动作写“首次同步基线”，服务端与其他提交一样只做校验和保存，不区分基线；本机提交编号与同步游标不进入提交内容，保存在客户端应用私有目录里，恢复备份或换机之后按当前数据重新对齐。提交里引用的附件在推送之后按哈希上传、拉取之后按哈希下载，服务端按内容寻址核对，业务行只保存哈希。
+客户端第一次同步时先拉取这个账号已有的提交并在本机应用，再把当前业务投影作为一份或几份基线提交上传，之后只推送新提交，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md)。基线提交的来源记为 `system`、动作写“首次同步基线”，服务端与其他提交一样只做校验和保存，不区分基线；本机提交编号与同步游标不进入提交内容，保存在客户端应用私有目录里，恢复备份或换机之后按当前数据重新对齐。提交里引用的附件在推送之后按哈希上传、拉取之后按哈希下载，服务端按内容寻址核对，业务行只保存哈希。一次拉取响应的字节数上限是 `ZHIXIN_SYNC_PULL_MAX_BYTES`，超过时服务端提前收尾并把 `has_more` 置为真，客户端按同样的 `after` 继续拉下一页。
 
-清空一个账号的同步序列走 `DELETE /v1/sync/commits`，删除全部提交并把 head 重置为 0，账号与备份保留；清空备份走 `DELETE /v1/backups`，两者都返回 204，可以重复调用。客户端在设置页“清除云端数据”里同时调用这两个接口，之后下一次同步重新上传基线。
+清空一个账号的云端数据走 `DELETE /v1/cloud`：依次删除全部备份、提交序列、附件索引与对象存储里遗留的字节，可重复调用，失败之后重试从剩下的部分继续，返回 204。清除期间这个账号的写入请求返回 409 `conflict`，账号、会话与本机数据保留；下一次同步重新上传基线。旧的 `DELETE /v1/sync/commits` 与 `DELETE /v1/backups` 仍然分别可用，只清空提交序列或备份，客户端设置页的“清除云端数据”改用 `DELETE /v1/cloud`。删除账号本身走 `DELETE /v1/me`，需要重新提交密码，删除之后账号、会话与云端数据一并消失。
 
 两台设备的走查在 2026-11-18 按这套协议完成了一遍，用例是 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，用同一个账号的两次登录模拟两台设备：设备 A 以 `base_seq=0` 上传基线；设备 B 拉取 `after=0`、应用之后推自己的编辑；两台设备交替拉取与推送；两台设备基于同一个 head 修改同一行时，先到的成功、后到的得到 409 与最新 head，后到的设备拉取之后在本机应用为新的提交再推；丢失响应之后用同一个 `request_id` 原样重推，head 与历史都不变；设备 A 上传附件之后设备 B 按哈希检查并取回；`DELETE /v1/sync/commits` 之后两台设备都从 0 重新上传基线。走查确认了本节写的规则：服务端只保证序列线性、不合并字段，同一字段并发修改时后到达的覆盖先到达的，被覆盖的值留在提交历史里，可以从数据版本页找回；真机上的两台设备走查仍待内测阶段补做。
 
@@ -78,6 +102,8 @@ server/
 整库备份是客户端导出的 zip 原样保存，服务端只核对 `X-Content-SHA256` 与大小，不打开内容。附件走 `/v1/blobs/{sha256}`，路径里的 `sha256` 就是内容的哈希：`PUT` 把请求体写到临时文件并计算哈希，与路径一致才保存，`HEAD` 在同步前判断哪些附件已经上传过，`GET` 取回原始字节。两者都按账号隔离，键分别是 `backups/<账号>/<id>.zip` 与 `attachments/<账号>/<sha256>`，删除账号时按前缀清理；附件在同一个账号里按内容去重，不同账号之间不共享对象，因此 `HEAD` 也不会泄露别的账号有没有传过同样的内容。
 
 设置了 `ZHIXIN_S3_ENDPOINT` 时用 S3 兼容存储，没设时写到 `ZHIXIN_BLOB_DIR`，不设数据库时用内存实现。上传的请求体先落到系统临时目录再入库，备份上限 256 MB，附件的上限见配置表；并发上传时临时目录要放得下这些字节。预签名直传的取舍见 [ADR-0016](../docs/adr/0016-对象存储与附件接口.md)，本期仍由服务端转发字节。
+
+附件另有账号总量配额。每写入一个新对象之前，服务端按 `attachment` 表核对这个账号已用的字节数加上本次大小是否超过 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`（默认 2 GiB），超过时返回 413 `storage_full`，`extra` 里带 `used_bytes` 与 `limit_bytes`，客户端提示用户清理附件或换一个账号；同一账号重复上传相同内容命中同一个对象与同一行索引，不重复计入总量。配额与用量读的是 `attachment` 索引，历史上只按对象前缀写入过字节、没有索引行的实例需要先回填：在 `server/` 目录下设置 `ZHIXIN_DATABASE_URL` 与对象存储变量之后执行 `go run ./cmd/backfill-attachments`，命令按 `attachments/<账号>/` 前缀列出对象、核对大小并补写索引行，可重复执行，已有的行不会重复插入。回填完成之前配额只按索引里的字节计算，账面数字偏小，不影响上传与下载本身。
 
 ## 邮箱验证与找回密码
 
@@ -89,7 +115,9 @@ server/
 
 ## 模型代理
 
-客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端核对模型名是否在 `ZHIXIN_LLM_MODELS` 中、当日用量是否低于这个账号的每日额度，然后换上服务端持有的 key 转发，流式响应按事件边界逐块刷新，提供方的错误状态与响应体原样返回。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待内测用量出来之后再定。
+客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端核对模型名是否在 `ZHIXIN_LLM_MODELS` 中、账号是否已经确认邮箱、当日用量是否低于这个账号的每日额度，然后换上服务端持有的 key 转发，流式响应按事件边界逐块刷新，提供方的错误状态与响应体原样返回。账号还没有确认邮箱时托管请求返回 403 `email_unverified`，客户端在模型入口提示先验证邮箱；这个检查默认打开（`ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL=1`），设成 `0` 只在本地联调或临时放行时使用。
+
+每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号当日额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算是一个进程内的总账，防止单个实例的提供方账单失控。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
 每日额度默认取 `ZHIXIN_LLM_DAILY_TOKENS`，需要单独调整某个账号时在 `llm_quota` 表里写一行，下一次请求就按新数字判定，不用重启服务；删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 与聊天接口的 429 里返回的都是这个账号的生效额度。调整是运营动作，不另开管理接口，下面的语句写在[运维手册](运维手册.md#4-常用操作)里：
 
@@ -106,7 +134,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 ## 更新检查
 
-`GET /v1/app/releases` 公开返回发布清单，登录之前也能调用。清单是一份 JSON 文件，路径由 `ZHIXIN_RELEASE_FILE` 给出，启动时读入并校验：字段是否齐全、地址是否为绝对的 http 或 https 地址、哈希是否为 64 位小写十六进制、平台是否重复。文件不存在或路径为空表示还没有对外发布过安装包，接口返回空数组，客户端据此不提示更新；文件存在但不合法时启动直接报错，不会带着一份坏清单继续跑。
+`GET /v1/app/releases` 公开返回发布清单，登录之前也能调用。清单是一份 JSON 文件，路径由 `ZHIXIN_RELEASE_FILE` 给出，启动时读入并校验：字段是否齐全、地址是否为绝对的 https 地址、`sha256` 是否必填且为 64 位小写十六进制、`signature` 是否是可选的 64 字节 Ed25519 签名 base64、平台是否重复。文件不存在或路径为空表示还没有对外发布过安装包，接口返回空数组，客户端据此不提示更新；文件存在但不合法时启动直接报错，不会带着一份坏清单继续跑。签名由发版流程用 `RELEASE_SIGNING_KEY_BASE64` 里那把 Ed25519 私钥生成，签名对象是安装包 SHA-256 的小写十六进制字符串本身，公钥内置在应用里；应用先核对清单地址是 https，再核对下载后的哈希与清单一致，最后用内置公钥验签，三项都通过才提示更新，任一不通过都不提示。
 
 ```json
 {
@@ -118,6 +146,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
       "published_at": "2026-12-21",
       "url": "https://zhixin.chensiyuan.work/downloads/zhixin-0.2.0.apk",
       "sha256": "…64 位小写十六进制…",
+      "signature": "…64 字节 Ed25519 签名的 base64…",
       "size": 48200000,
       "min_version": "0.1.0",
       "notes": "登录、云端备份与同步"
@@ -126,19 +155,19 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 }
 ```
 
-服务端只原样给出这些字段，不比较客户端版本，也不判断是否必须更新；客户端按平台取一项，自己比较 `version` 与 `build`，低于 `min_version` 时提示必须更新。发布新版本时把安装包放到清单里的地址，改清单并重启服务；清单与安装包对不上时，客户端只会按清单里的版本提示，因此两者要在同一步更新。清单格式随后端一起演进，开发阶段不承诺兼容（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。
+服务端只原样给出这些字段，不比较客户端版本，也不判断是否必须更新；客户端按平台取一项，自己比较 `version` 与 `build`，低于 `min_version` 时提示必须更新。发布新版本时把安装包放到清单里的地址，用发版流程给出的 sha256 与 signature 改清单，再重启服务；清单、签名与安装包要在同一步更新，客户端下载后核对哈希与签名，对不上时不提示更新，因此两者不一致时用户只会停留在旧版本。清单格式随后端一起演进，开发阶段不承诺兼容（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。
 
 ## 应用内反馈
 
-`POST /v1/feedback` 公开接收一条反馈，登录与否都能提交，服务端不读 `Authorization`，也不把反馈绑定到账号。正文 `content` 必填，去掉两端空白后 1 至 4000 字；`contact` 可选，必须是普通邮箱地址，用于回复；`app_version`、`platform` 与 `diagnostics` 可选，上限分别是 64、32 与 65536 字。诊断摘要由客户端先在本地说明会提交哪些内容，再截取用户看过的片段，不自动上传整份诊断记录。提交按来源地址限流，参数见下表的 `ZHIXIN_FEEDBACK_*`。
+`POST /v1/feedback` 公开接收一条反馈，登录与否都能提交，服务端不读 `Authorization`，也不把反馈绑定到账号。正文 `content` 必填，去掉两端空白后 1 至 4000 字；`contact` 可选，必须是普通邮箱地址，用于回复；`app_version`、`platform` 与 `diagnostics` 可选，上限分别是 64、32 与 65536 字。诊断摘要由客户端先在本地说明会提交哪些内容，再截取用户看过的片段，不自动上传整份诊断记录。提交按来源地址限流，参数见下表的 `ZHIXIN_FEEDBACK_*`；另有整个实例的全局写入上限，参数见 `ZHIXIN_FEEDBACK_GLOBAL_*`，换地址也绕不过这个总量。
 
-反馈写入 PostgreSQL 的 `feedback` 表，内存存储时只在进程里保留，重启即丢。接口只写不读：管理员按下面的语句查看和清理，不另开列表接口。
+反馈写入 PostgreSQL 的 `feedback` 表，内存存储时只在进程里保留，重启即丢。接口只写不读：管理员按下面的语句查看和清理，不另开列表接口。保留期由 `ZHIXIN_FEEDBACK_KEEP_DAYS` 控制，默认 365 天，`feedback.PruneLoop` 在启动时清一次、之后每天清一次，平时不需要手工删除；要立刻清理或调整保留期时才执行下面的语句。
 
 ```sql
 SELECT id, created_at, app_version, platform, contact, content, diagnostics
 FROM feedback ORDER BY created_at DESC LIMIT 50;
 
-DELETE FROM feedback WHERE created_at < '2027-01-01';
+DELETE FROM feedback WHERE created_at < now() - interval '365 days';
 ```
 
 删除账号不影响已经提交的反馈，因为反馈本来就不属于账号；删除云端数据也不涉及这张表。正文与诊断摘要不写日志，与访问日志同一口径。
@@ -148,7 +177,7 @@ DELETE FROM feedback WHERE created_at < '2027-01-01';
 S4 与 S5 要求统计一周与四周留存（[03 第 4 节](../docs/03-团队分工与协作.md#4-成功标准)），采集口径见 [ADR-0019](../docs/adr/0019-留存统计用匿名上报.md)，[00 第 7 章](../docs/00-产品定义.md#7-边界)写明不含学习内容。服务端分两路记录，都不解析学习内容：
 
 - 登录账号的活跃：鉴权中间件在每次令牌校验成功之后调用 `retention.Service.RecordUserActive`，按 `ZHIXIN_TIMEZONE` 的自然日记一行到 `user_active`，同一个账号同一天只在第一次写库。不需要客户端额外上报，也不需要客户端带日期。
-- 未登录设备的活跃：`POST /v1/telemetry/active` 公开接收 `install_id`、可选的 `app_version` 与 `platform`。服务端自己决定日期，不使用客户端时钟；安装标识校验格式之后算 HMAC-SHA256，库里只存哈希与日期，同一个标识同一天重复上报是幂等的。按来源地址限流，参数见配置表的 `ZHIXIN_TELEMETRY_*`；密钥来自 `ZHIXIN_TELEMETRY_SECRET`，为空时每次启动随机生成，重启后同一个安装会被当成新的，因此生产必须固定。
+- 未登录设备的活跃：`POST /v1/telemetry/active` 公开接收 `install_id`、可选的 `app_version` 与 `platform`。服务端自己决定日期，不使用客户端时钟；安装标识校验格式之后算 HMAC-SHA256，库里只存哈希与日期，同一个标识同一天重复上报是幂等的。按来源地址限流，参数见配置表的 `ZHIXIN_TELEMETRY_*`，并受整个实例的全局写入上限 `ZHIXIN_TELEMETRY_GLOBAL_*` 约束；密钥来自 `ZHIXIN_TELEMETRY_SECRET`，为空时每次启动随机生成，重启后同一个安装会被当成新的，因此生产必须固定。
 
 ```json
 {"install_id": "0f8fad5b-d9cb-469f-a165-70867728950e", "app_version": "0.2.0-dev+3", "platform": "android"}
@@ -203,6 +232,11 @@ ORDER BY f.first_day;
 | `ZHIXIN_REFRESH_TTL` | `720h` | 刷新令牌有效期，必须长于访问令牌 |
 | `ZHIXIN_AUTH_RATE` | `0.2` | 注册与登录按来源地址的令牌桶补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_AUTH_BURST` | `10` | 注册与登录的桶容量，两者共用一个桶 |
+| `ZHIXIN_LOGIN_FAIL_RATE` | `0.017` | 登录失败按规范化邮箱的补充速率（个/秒），约每分钟一次；注册、登录与删号共用这个预算 |
+| `ZHIXIN_LOGIN_FAIL_BURST` | `10` | 登录失败的桶容量，连续失败十次之后开始返回 429 |
+| `ZHIXIN_ARGON2_MEMORY_BUDGET_MIB` | `256` | 密码哈希同时占用的内存预算（MiB），并发哈希数由它除以单次约 19 MiB 得出 |
+| `ZHIXIN_MAX_SESSIONS_PER_USER` | `20` | 每个账号保留的会话数上限，新登录超过时删最旧的 |
+| `ZHIXIN_RATE_LIMIT_KEYS` | `100000` | 每个进程内限流器保留的最大桶数，超出时清理空闲桶或淘汰最久未用的键 |
 | `ZHIXIN_REFRESH_RATE` | `1` | 刷新令牌按账号与来源地址的补充速率，设 `0` 关闭 |
 | `ZHIXIN_REFRESH_BURST` | `30` | 刷新令牌的桶容量 |
 | `ZHIXIN_UPLOAD_RATE` | `0.5` | 备份与附件上传按账号的补充速率，设 `0` 关闭 |
@@ -212,33 +246,50 @@ ORDER BY f.first_day;
 | `ZHIXIN_SMTP_USERNAME` | 空 | SMTP 用户名，留空表示不鉴权 |
 | `ZHIXIN_SMTP_PASSWORD` | 空 | SMTP 口令；有用户名时必填 |
 | `ZHIXIN_SMTP_TLS` | `starttls` | `starttls`、`implicit`（465 端口）或 `none`（仅本机联调） |
-| `ZHIXIN_MAIL_LOG` | `0` | 设为 `1` 时把邮件写进日志；只用于本机联调，日志里会出现验证码 |
-| `ZHIXIN_CODE_SECRET` | 空 | 验证码 HMAC 的密钥；为空时每次启动随机生成，重启后旧验证码失效 |
+| `ZHIXIN_MAIL_LOG` | `0` | 设为 `1` 时把邮件写进日志；只用于本机联调，配置了数据库时启动会拒绝 |
+| `ZHIXIN_CODE_SECRET` | 空 | 验证码 HMAC 的密钥；为空时每次启动随机生成，重启后旧验证码失效，配置了数据库时必填 |
 | `ZHIXIN_CODE_TTL` | `10m` | 验证码有效期 |
 | `ZHIXIN_CODE_COOLDOWN` | `60s` | 同一账号两次发送验证码的最小间隔 |
 | `ZHIXIN_CODE_RATE` | `0.02` | 发送验证码与重设密码按账号或地址的补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_CODE_BURST` | `1` | 验证码与重设密码的桶容量 |
 | `ZHIXIN_FEEDBACK_RATE` | `0.02` | 应用内反馈按来源地址的补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_FEEDBACK_BURST` | `3` | 应用内反馈的桶容量 |
-| `ZHIXIN_TELEMETRY_SECRET` | 空 | 匿名安装标识的 HMAC 密钥；为空时每次启动随机生成，重启后留存数字偏高，生产必须固定 |
+| `ZHIXIN_FEEDBACK_GLOBAL_RATE` | `2` | 整个实例的反馈写入补充速率（个/秒），与按地址的桶同时生效 |
+| `ZHIXIN_FEEDBACK_GLOBAL_BURST` | `30` | 全局反馈桶容量 |
+| `ZHIXIN_FEEDBACK_KEEP_DAYS` | `365` | 反馈保留天数，更早的行由每日清理删除 |
+| `ZHIXIN_TELEMETRY_SECRET` | 空 | 匿名安装标识的 HMAC 密钥；为空时每次启动随机生成，重启后留存数字偏高，配置了数据库时必填 |
 | `ZHIXIN_TELEMETRY_RATE` | `0.2` | 匿名活跃上报按来源地址的补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_TELEMETRY_BURST` | `20` | 匿名活跃上报的桶容量；同一出口地址后面可能有多台设备，容量留得比反馈大 |
-| `ZHIXIN_TRUSTED_PROXY` | `0` | 设为 `1` 时按 `X-Forwarded-For` 的最后一项取来源地址，只在前面是项目组反向代理时打开 |
+| `ZHIXIN_TELEMETRY_GLOBAL_RATE` | `5` | 整个实例的匿名上报写入补充速率（个/秒） |
+| `ZHIXIN_TELEMETRY_GLOBAL_BURST` | `100` | 全局匿名上报桶容量 |
+| `ZHIXIN_TRUSTED_PROXIES` | 空 | 逗号分隔的反向代理 IP 或 CIDR；只有直接对端落在其中时才取 `X-Forwarded-For` 的末项，为空表示只看直接对端，见[约定](#约定) |
 | `ZHIXIN_RELEASE_FILE` | 空 | 发布清单文件路径；为空时更新检查返回空数组，见[更新检查](#更新检查) |
 | `ZHIXIN_MAX_JSON_BYTES` | `1048576` | 普通 JSON 请求体上限；同步推送为它的 16 倍 |
+| `ZHIXIN_BODY_IDLE_TIMEOUT` | `60s` | 读取请求体时两次读到数据之间的最长等待，超时中断本次请求 |
 | `ZHIXIN_MAX_BACKUP_BYTES` | `268435456` | 单份备份上限，与客户端历史的 256 MB 容量预算一致 |
+| `ZHIXIN_MAX_ATTACHMENT_BYTES` | `33554432` | 单个附件的上限，客户端上传前按它预检 |
+| `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES` | `2147483648` | 一个账号全部附件的总量上限，超限上传返回 413 `storage_full` |
+| `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的响应字节上限，超过时提前收尾并置 `has_more` |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |
-| `ZHIXIN_LLM_BASE_URL` | `https://api.deepseek.com/v1` | 提供方的 Chat Completions 基础地址 |
+| `ZHIXIN_LLM_BASE_URL` | `https://api.deepseek.com/v1` | 提供方的 Chat Completions 基础地址；带 key 时公网必须是 https |
 | `ZHIXIN_LLM_API_KEY` | 空 | 提供方 key；为空时代理返回 503 |
 | `ZHIXIN_LLM_MODELS` | `deepseek-flash` | 允许的模型名，逗号分隔 |
 | `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日 token 额度，也是 `llm_quota` 没有覆盖行时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
+| `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `20000000` | 整个实例一天的总 token 预算，用尽之后所有托管请求都返回 429 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
+| `ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL` | `1` | 设为 `1` 时未确认邮箱的账号不能使用托管额度，聊天入口返回 403 `email_unverified` |
+| `ZHIXIN_LLM_CONCURRENT_PER_USER` | `4` | 同一账号同时进行的托管请求上限 |
+| `ZHIXIN_LLM_MAX_RESPONSE_BYTES` | `33554432` | 非流式响应上限，超过时按 `upstream_failed` 处理 |
+| `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` | `90s` | 流式响应两次收到数据之间的最长等待 |
+| `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` | `30m` | 一次流式响应的总时限 |
 
 ## 部署与凭据
 
 第一套实例跑在一台单机 Debian 13 上，不做容器化，原因与取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 第 7 条。`zhixin-api` 由 systemd 拉起，只监听回环地址，前面的 nginx 终止 TLS 并反向代理到它；数据库用发行版包安装的 PostgreSQL 17；备份与附件的字节放 S3 兼容的对象存储，第一套实例用阿里云 OSS，端点、地域、bucket 与密钥都写在服务器的环境变量里，不配置对象存储时回落到 `ZHIXIN_BLOB_DIR` 指向的本机目录，只用于本地开发。域名由管理员在 DNS 里指向这台机器，证书由 certbot 申请并自动续期。需要注入的环境变量就是上面配置表里的那些，仓库里不写口令与 key；资源清单、地址、接入方式与操作步骤见[运维手册](运维手册.md)。
 
-部署与升级只有三步：在开发机上交叉编译 `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhixin-api ./cmd/zhixin-api`，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`。回滚是把上一个可执行文件换回去重新启动。发版时还要把安装包放到清单里的地址，更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；漏掉这一步时客户端会一直按旧版本提示。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
+加固轮次之后，启动时会自检生产配置：配置了数据库时 `ZHIXIN_MAIL_LOG` 必须为 `0`，`ZHIXIN_CODE_SECRET` 与 `ZHIXIN_TELEMETRY_SECRET` 必须固定，带认证的 SMTP 连接不允许 `none`，带 key 的模型上游公网地址必须是 https，任何一项不满足都拒绝启动；第一套实例因此需要在 `api.env` 里补上两个固定密钥。按地址的限流要分清真实用户，`ZHIXIN_TRUSTED_PROXIES` 写 `127.0.0.1/32,::1/128`（nginx 只从回环地址连进来）；服务直接对外监听时保持为空。改了 `ZHIXIN_TRUSTED_PROXIES` 或其它配置之后重启服务生效，部署前按[运维手册](运维手册.md#加固后的运维动作)的核对清单逐项确认。
+
+部署与升级只有三步：在开发机上交叉编译 `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhixin-api ./cmd/zhixin-api`，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`。回滚是把上一个可执行文件换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
 
 服务器只有一位管理员（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D7），不设第二位。数据库口令、对象存储密钥、TLS 证书与备份介质的存放位置，以及主机失联、数据库损坏、对象存储不可用三种情况下的恢复步骤，由管理员写在仓库之外的私有目录；仓库只保留需要哪些变量与恢复的先后顺序。公测准备阶段做一次恢复演练，用备份重建一台可用实例，演练日期与结果写进结题材料。
 
@@ -274,4 +325,4 @@ go test ./...
 
 改了 `schema.sql` 或 `internal/store/queries/` 下的查询要先重新运行 `sqlc`，改了 `openapi.yaml` 要先重新运行 `oapi-codegen`，生成结果随源文件一起提交；CI 会重新生成并用 `git diff --exit-code` 核对，本地少了这一步时编译与测试仍可能通过，推上去却会在生成核对上失败。
 
-端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的邮箱验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限、删除账号时清理数据，以及模型代理的转发、key 替换、用量记录、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重与保留期清理；PostgreSQL 存储用例覆盖验证码、已验证时间、`feedback` 表、两张活跃表与额度覆盖行的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。
+端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的邮箱验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限与账号总量配额、删除账号时清理数据、`DELETE /v1/cloud` 的清除与清除期间的 409，以及模型代理的转发、key 替换、用量记录、未验证邮箱的 403、账号并发上限、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流、全局写入上限、保留期清理与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取、强制 https 与 sha256、签名格式与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重、全局写入上限与保留期清理；PostgreSQL 存储用例覆盖验证码、已验证时间、`feedback` 表、两张活跃表、额度覆盖行与附件索引的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。
