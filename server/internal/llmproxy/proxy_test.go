@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,9 +33,9 @@ func (a testAPI) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request
 	a.p.Chat(w, r)
 }
 
-// newTestServer 装配本包处理器与鉴权中间件，返回客户端、账号服务与内存额度，
-// 便于用例调整个别账号的额度。
-func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.Service, *MemoryQuota) {
+// newTestServer 装配本包处理器与鉴权中间件，返回客户端、账号服务、内存额度与
+// 代理本身，便于用例调整个别账号的额度或注入邮箱确认检查。
+func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.Service, *MemoryQuota, *Proxy) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -44,7 +45,7 @@ func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.
 		testAPI{p: proxy},
 		httpx.RequestID,
 		auth.Middleware(authSvc, log),
-	)), authSvc, quota
+	)), authSvc, quota, proxy
 }
 
 // signIn 注册一个测试账号并返回访问令牌。
@@ -55,6 +56,65 @@ func signIn(t *testing.T, svc *auth.Service, email string) string {
 		t.Fatalf("register %s: %v", email, err)
 	}
 	return tokens.AccessToken
+}
+
+// TestHandlerRequiresVerifiedEmail 核对未确认邮箱的账号在读取请求体之前被挡下：
+// 契约里的 403 email_unverified 不转发上游，确认之后同一个账号可以继续使用。
+// 没有注入检查时按已认证处理，内存装配与现有测试因此不依赖真实账号库。
+func TestHandlerRequiresVerifiedEmail(t *testing.T) {
+	var forwarded atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":10}}`)
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, proxy := newTestServer(t, config.LLMConfig{
+		BaseURL:              upstream.URL,
+		APIKey:               "sk-server",
+		Models:               []string{"deepseek-flash"},
+		DailyTokens:          1000,
+		MaxRequestBytes:      1 << 20,
+		RequireVerifiedEmail: true,
+	})
+	token := signIn(t, authSvc, "unverified@b.cn")
+	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+
+	verified := false
+	calls := 0
+	proxy.SetEmailVerifier(func(_ context.Context, userID string) (bool, error) {
+		calls++
+		return verified, nil
+	})
+
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, &p); code != http.StatusForbidden || p.Code != string(httpx.CodeEmailUnverified) {
+		t.Fatalf("未确认邮箱应回 403 email_unverified，得到 %d %+v", code, p)
+	}
+	if forwarded.Load() != 0 {
+		t.Fatalf("未确认邮箱的请求不应转发上游，上游收到 %d 次", forwarded.Load())
+	}
+	if calls != 1 {
+		t.Fatalf("每次聊天请求应检查一次邮箱确认状态，得到 %d 次", calls)
+	}
+
+	verified = true
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
+		t.Fatalf("确认邮箱之后应转发，得到 %d", code)
+	}
+	if forwarded.Load() != 1 {
+		t.Fatalf("确认邮箱之后应转发一次，上游收到 %d 次", forwarded.Load())
+	}
+
+	// 没有注入检查时按已认证处理：内存装配与本地开发不接账号库也能用托管额度。
+	proxy.SetEmailVerifier(nil)
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
+		t.Fatalf("未注入检查时应按已认证处理，得到 %d", code)
+	}
+	if forwarded.Load() != 2 {
+		t.Fatalf("未注入检查时应继续转发，上游收到 %d 次", forwarded.Load())
+	}
 }
 
 func TestHandlerLLMProxy(t *testing.T) {
@@ -71,7 +131,7 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	c, authSvc, _ := newTestServer(t, config.LLMConfig{
+	c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
 		BaseURL:         upstream.URL,
 		APIKey:          "sk-server",
 		Models:          []string{"deepseek-flash"},
@@ -117,7 +177,7 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	c, authSvc, quota := newTestServer(t, config.LLMConfig{
+	c, authSvc, quota, _ := newTestServer(t, config.LLMConfig{
 		BaseURL:         upstream.URL,
 		APIKey:          "sk-server",
 		Models:          []string{"deepseek-flash"},
@@ -167,7 +227,7 @@ func TestHandlerQuotaOverride(t *testing.T) {
 }
 
 func TestHandlerLLMProxyDisabledWithoutKey(t *testing.T) {
-	c, authSvc, _ := newTestServer(t, config.LLMConfig{
+	c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
 		BaseURL:         "http://127.0.0.1:1",
 		Models:          []string{"deepseek-flash"},
 		DailyTokens:     100,

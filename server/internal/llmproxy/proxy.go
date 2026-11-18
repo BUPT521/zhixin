@@ -37,6 +37,10 @@ type Proxy struct {
 	loc    *time.Location
 	now    func() time.Time
 	log    *slog.Logger
+
+	// verifyEmail 判断账号是否已经确认邮箱；由 server.New 注入账号库的 UserByID。
+	// 没有注入时按已认证处理，现有内存装配与测试因此不需要真实账号也能走通。
+	verifyEmail func(ctx context.Context, userID string) (bool, error)
 }
 
 // NewHandler 组装模型代理；构造函数与另外四个业务包同名。
@@ -52,6 +56,13 @@ func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog
 func (p *Proxy) dayTime() time.Time { return p.now().In(p.loc) }
 
 func (p *Proxy) day() string { return p.dayTime().Format("2006-01-02") }
+
+// SetEmailVerifier 注入邮箱确认检查，由 server.New 用账号库的 UserByID 实现：
+// EmailVerifiedAt 非零即已确认。没有注入时按已认证处理，保持现有测试与内存装配
+// 不需要账号库也能使用托管额度。
+func (p *Proxy) SetEmailVerifier(fn func(ctx context.Context, userID string) (bool, error)) {
+	p.verifyEmail = fn
+}
 
 // models answers in the OpenAI list shape so the client's connection test works unchanged.
 func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +111,20 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	if p.cfg.APIKey == "" {
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
 		return
+	}
+	// 邮箱确认在读取请求体之前检查：未确认的账号拿 403，不消耗请求体读取、额度
+	// 预留与上游调用。检查失败按服务端错误处理，不能当成“未确认”放过去。
+	if p.cfg.RequireVerifiedEmail && p.verifyEmail != nil {
+		verified, err := p.verifyEmail(r.Context(), pr.UserID)
+		if err != nil {
+			httpx.WriteInternal(w, r, p.log, err)
+			return
+		}
+		if !verified {
+			httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeEmailUnverified,
+				"verify your email address on the account page to use the hosted model quota")
+			return
+		}
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, p.cfg.MaxRequestBytes))
 	if err != nil {
