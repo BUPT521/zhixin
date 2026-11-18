@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart' hide Material;
@@ -6,6 +8,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/search_index_service.dart';
+import '../data/cloud/server_client.dart';
 import '../data/vector/embedding_config_store.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/material.dart';
@@ -19,6 +22,9 @@ import 'zhixin_select.dart';
 ///
 /// 没有配置或关闭时，语义检索不可用，原文与关键词检索照常工作；远程嵌入只有
 /// 在用户选定范围之后才会发送原文。业务库与向量库都保存在本机。
+///
+/// 嵌入来源可以是自填接口、知新服务或本机哈希。选择知新服务时模型从服务端
+/// 的嵌入模型里选，后台配置了维度就直接带上，不再让用户填地址与 key。
 class EmbeddingSettingsPage extends StatefulWidget {
   const EmbeddingSettingsPage({super.key});
 
@@ -33,7 +39,19 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   final _apiKey = TextEditingController();
 
   bool _enabled = false;
-  String _provider = 'remote';
+  String _provider = EmbeddingProvider.remote.value;
+
+  /// 是否已经登录；知新服务要登录之后才能用。
+  bool _signedIn = false;
+
+  /// 服务端的嵌入模型；没有登录或读取失败时为空。
+  List<ServerModel> _serverModels = const [];
+
+  /// 知新服务选中的嵌入模型；与自填接口的模型名分开保存，切换来源不互相覆盖。
+  String _serverModel = '';
+
+  /// 服务端模型还在读取。
+  bool _serverModelsLoading = false;
   EmbeddingShareScope _shareScope = EmbeddingShareScope.off;
   final Set<String> _selectedMaterials = {};
   List<Material> _materials = const [];
@@ -87,6 +105,12 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       loadFailure = error;
       loadStack = stack;
     }
+    var signedIn = false;
+    try {
+      signedIn = (await scope.accountServices.account.snapshot()).signedIn;
+    } catch (_) {
+      // 登录状态只影响知新服务的说明；读不到时按未登录处理。
+    }
     IndexStats? stats;
     Object? statsFailure;
     StackTrace? statsStack;
@@ -129,17 +153,50 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       _stats = stats;
       _statsFailed = statsFailure != null;
       _notice = notice;
+      _signedIn = signedIn;
       if (config != null) {
         _enabled = config.enabled;
         _provider = config.provider;
         _baseUrl.text = config.baseUrl;
-        _model.text = config.model;
         _dim.text = '${config.dim}';
+        if (config.usesServer) {
+          _serverModel = config.model;
+        } else {
+          _model.text = config.model;
+        }
         _apiKey.text = config.apiKey;
         _shareScope = config.shareScope;
         _selectedMaterials
           ..clear()
           ..addAll(config.materialIds);
+      }
+    });
+    if (signedIn) unawaited(_loadServerModels(scope));
+  }
+
+  /// 读服务端的嵌入模型，要走网络，不挡住本页首读；回来之后补上选项，并按
+  /// 服务端给出的维度校正已保存的知新服务配置。
+  Future<void> _loadServerModels(AppScopeState scope) async {
+    setState(() => _serverModelsLoading = true);
+    var models = const <ServerModel>[];
+    try {
+      models = [
+        for (final model in await scope.accountServices.account.models())
+          if (model.isEmbedding) model,
+      ];
+    } catch (_) {
+      // 只用于知新服务的选项；读不到时按没有可选模型说明，不打断本页。
+    }
+    if (!mounted) return;
+    setState(() {
+      _serverModelsLoading = false;
+      _serverModels = models;
+      if (_provider == EmbeddingProvider.server.value) {
+        _applyServerModel(
+          _serverModel.isEmpty && models.isNotEmpty
+              ? models.first.id
+              : _serverModel,
+        );
       }
     });
   }
@@ -162,30 +219,63 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     IndexFailure.error => '请求失败',
   };
 
+  /// 知新服务里当前选中的模型；不在列表里时为空。
+  ServerModel? get _selectedServerModel {
+    for (final model in _serverModels) {
+      if (model.id == _serverModel) return model;
+    }
+    return null;
+  }
+
+  /// 选中知新服务的模型：后台配置了维度时直接带上。
+  void _pickServerModel(String? id) => setState(() => _applyServerModel(id));
+
+  void _applyServerModel(String? id) {
+    _serverModel = id ?? '';
+    final dimensions = _selectedServerModel?.dimensions;
+    if (dimensions != null) _dim.text = '$dimensions';
+  }
+
   Future<void> _save() async {
     final scope = AppScope.of(context);
+    final source = EmbeddingProvider.fromValue(_provider);
     final dim = int.tryParse(_dim.text.trim()) ?? 0;
     if (dim <= 0 || dim > 4096) {
       setState(() => _notice = '向量维度需要是 1 到 4096 之间的整数。');
       return;
     }
-    if (_enabled && _provider == 'remote') {
+    if (_enabled && source == EmbeddingProvider.remote) {
       if (_baseUrl.text.trim().isEmpty || _model.text.trim().isEmpty) {
         setState(() => _notice = '远程嵌入需要填写接口地址和模型名。');
         return;
       }
-      if (_shareScope == EmbeddingShareScope.off) {
-        setState(() => _notice = '远程嵌入需要明确选择可发送的原文范围，否则不会发送任何内容。');
+    }
+    if (_enabled && source == EmbeddingProvider.server) {
+      if (!_signedIn) {
+        setState(() => _notice = '知新服务要先登录；可以在“我的”里登录之后再回来保存。');
+        return;
+      }
+      if (_selectedServerModel == null) {
+        setState(() => _notice = '请先选择一个服务端提供的嵌入模型。');
         return;
       }
     }
+    if (_enabled &&
+        source != EmbeddingProvider.local &&
+        _shareScope == EmbeddingShareScope.off) {
+      setState(() => _notice = '远程嵌入需要明确选择可发送的原文范围，否则不会发送任何内容。');
+      return;
+    }
+    final server = source == EmbeddingProvider.server;
     final config = EmbeddingConfig(
       enabled: _enabled,
       provider: _provider,
-      baseUrl: _baseUrl.text.trim(),
-      model: _model.text.trim(),
+      // 知新服务的地址与令牌运行时取，不写进配置；自填接口的地址与 key 也
+      // 不随来源切换带过去。
+      baseUrl: server ? '' : _baseUrl.text.trim(),
+      model: server ? _serverModel : _model.text.trim(),
       dim: dim,
-      apiKey: _apiKey.text.trim(),
+      apiKey: server ? '' : _apiKey.text.trim(),
       shareScope: _shareScope,
       materialIds: _selectedMaterials.toList(growable: false),
     );
@@ -266,6 +356,11 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       return '本次索引更新已经取消。';
     }
     final failed = result.failed > 0 ? '，失败 ${result.failed} 条' : '';
+    final problem = result.sourceProblem;
+    if (problem != null) {
+      return '本次更新在中途停下：$problem。已经写入 ${result.embedded} 条，'
+          '其余 ${result.failed} 条等下一次更新再补。';
+    }
     if (result.total == 0) {
       return '没有需要更新的来源；下一次记录或材料变化后会自动补上。';
     }
@@ -388,7 +483,11 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final theme = context.zhixin;
     final stats = _stats;
     final configured = stats?.configured ?? false;
-    final remote = _provider == 'remote';
+    final source = EmbeddingProvider.fromValue(_provider);
+    final remote = source == EmbeddingProvider.remote;
+    final server = source == EmbeddingProvider.server;
+    final sendsText = source != EmbeddingProvider.local;
+    final serverDimensions = _selectedServerModel?.dimensions;
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
@@ -498,7 +597,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
         ),
         const SectionHeading(
           title: '嵌入来源',
-          subtitle: '远程嵌入按服务商的接口地址与模型名调用；本机哈希不联网，效果有限。',
+          subtitle: '远程嵌入按服务商的接口地址与模型名调用；知新服务用登录账号走服务端；本机哈希不联网，效果有限。',
         ),
         forui.FCard(
           child: Padding(
@@ -509,13 +608,68 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                 ZhixinSelect<String>(
                   value: _provider,
                   label: '嵌入来源',
-                  options: const {
-                    'remote': '远程嵌入（OpenAI 兼容接口）',
-                    'local': '本机哈希（不联网，效果有限）',
+                  options: {
+                    EmbeddingProvider.remote.value: '远程嵌入（OpenAI 兼容接口）',
+                    EmbeddingProvider.server.value: '知新服务（登录账号）',
+                    EmbeddingProvider.local.value: '本机哈希（不联网，效果有限）',
                   },
-                  onChange: (value) =>
-                      setState(() => _provider = value ?? 'remote'),
+                  onChange: (value) => setState(() {
+                    _provider = value ?? EmbeddingProvider.remote.value;
+                    if (_provider == EmbeddingProvider.server.value) {
+                      _applyServerModel(
+                        _serverModel.isEmpty && _serverModels.isNotEmpty
+                            ? _serverModels.first.id
+                            : _serverModel,
+                      );
+                    }
+                  }),
                 ),
+                if (server) ...[
+                  SizedBox(height: theme.space.gap),
+                  if (!_signedIn)
+                    Text(
+                      '还没有登录。知新服务用登录账号的访问令牌，按账号计每天的嵌入额度；'
+                      '登录之后回到这一页选择模型。',
+                      style: theme.text.bodyMedium,
+                    )
+                  else if (_serverModelsLoading)
+                    Text('正在读取服务端的嵌入模型…', style: theme.text.bodyMedium)
+                  else if (_serverModels.isEmpty)
+                    Text(
+                      '服务端暂时没有可用的嵌入模型，或者模型列表没有读到；'
+                      '可以稍后重新打开这一页，或者改用自填接口。',
+                      style: theme.text.bodyMedium,
+                    )
+                  else ...[
+                    ZhixinSelect<String>(
+                      value: _serverModel,
+                      label: '嵌入模型',
+                      description: '原文经知新服务转给后台配置的提供方，额度与聊天分开计。',
+                      options: {
+                        for (final model in _serverModels)
+                          model.id: model.dimensions == null
+                              ? model.id
+                              : '${model.id}（${model.dimensions} 维）',
+                      },
+                      onChange: _pickServerModel,
+                    ),
+                    SizedBox(height: theme.space.gap),
+                    if (serverDimensions != null)
+                      Text(
+                        '向量维度 $serverDimensions，由服务端给出。',
+                        style: theme.text.bodySmall.copyWith(
+                          color: theme.colors.onSurfaceVariant,
+                        ),
+                      )
+                    else
+                      forui.FTextField(
+                        control: .managed(controller: _dim),
+                        keyboardType: TextInputType.number,
+                        label: const Text('向量维度'),
+                        description: const Text('服务端没有给出维度，按模型说明填写'),
+                      ),
+                  ],
+                ],
                 if (remote) ...[
                   SizedBox(height: theme.space.gap),
                   forui.FTextField(
@@ -549,7 +703,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
         ),
         const SectionHeading(
           title: '可发送范围',
-          subtitle: '远程嵌入只发送下面选中的范围；讨论消息与作答按所属材料判断。',
+          subtitle: '远程嵌入与知新服务只发送下面选中的范围；讨论消息与作答按所属材料判断。',
         ),
         forui.FCard(
           child: Padding(
@@ -557,7 +711,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (!remote)
+                if (!sendsText)
                   Text('本机哈希不联网，不需要选择发送范围。', style: theme.text.bodyMedium)
                 else ...[
                   for (final scope in EmbeddingShareScope.values)

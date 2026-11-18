@@ -14,6 +14,16 @@ class EmbeddingUnavailable implements Exception {
   String toString() => message;
 }
 
+/// 整个嵌入来源暂时用不了：没有登录、key 被拒（401、403）或者限流与额度用完
+/// （429）。这时换一段文本重发也只会得到同样的结果，索引更新据此停下本次
+/// 剩余的请求，不再逐条重试。
+class EmbeddingSourceUnavailable extends EmbeddingUnavailable {
+  const EmbeddingSourceUnavailable(super.message);
+}
+
+/// 一次嵌入请求要用的接口地址与凭据。
+typedef EmbeddingEndpoint = ({String endpoint, String apiKey});
+
 /// 生成一段文本向量的来源；测试用固定向量，设备端没有配置时用本地哈希。
 abstract class EmbeddingClient {
   EmbeddingModelSpec get spec;
@@ -110,11 +120,15 @@ class HashingEmbeddingClient extends EmbeddingClient {
 
 /// 远程嵌入：OpenAI 兼容的 `/embeddings` 接口，只有在用户明确配置并选定了
 /// 可发送范围时才会被调用。
+///
+/// 自填 Key 时地址与 key 固定；选择知新服务时传 [credentials]，每次请求前
+/// 取一次服务地址与当前访问令牌，令牌轮换之后不需要重建客户端。
 class RemoteEmbeddingClient extends EmbeddingClient {
   RemoteEmbeddingClient({
     required this.spec,
-    required this.endpoint,
-    required this.apiKey,
+    this.endpoint = '',
+    this.apiKey = '',
+    this.credentials,
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 8),
     this.batchTimeout = const Duration(seconds: 30),
@@ -124,6 +138,11 @@ class RemoteEmbeddingClient extends EmbeddingClient {
   final EmbeddingModelSpec spec;
   final String endpoint;
   final String apiKey;
+
+  /// 每次请求前取地址与凭据；为空时用 [endpoint] 与 [apiKey]。
+  ///
+  /// 取不到时（例如还没有登录）应抛 [EmbeddingSourceUnavailable]。
+  final Future<EmbeddingEndpoint> Function()? credentials;
   final Duration timeout;
 
   /// 一次多段请求的等待上限；批量请求的计算时间比单条长。
@@ -143,19 +162,24 @@ class RemoteEmbeddingClient extends EmbeddingClient {
   }
 
   Future<List<List<double>>> _embed(List<String> texts, Duration wait) async {
-    final uri = Uri.parse('$endpoint/embeddings');
+    final source = credentials;
+    final target = source == null
+        ? (endpoint: endpoint, apiKey: apiKey)
+        : await source();
+    final uri = Uri.parse('${target.endpoint}/embeddings');
     final response = await _http
         .post(
           uri,
           headers: {
             'Content-Type': 'application/json',
-            if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+            if (target.apiKey.isNotEmpty)
+              'Authorization': 'Bearer ${target.apiKey}',
           },
           body: jsonEncode({'model': spec.id, 'input': texts}),
         )
         .timeout(wait);
     if (response.statusCode != 200) {
-      throw EmbeddingUnavailable('嵌入服务返回 ${response.statusCode}');
+      throw _failure(response);
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map) throw const EmbeddingUnavailable('嵌入服务返回的格式不对');
@@ -197,6 +221,29 @@ class RemoteEmbeddingClient extends EmbeddingClient {
       throw const EmbeddingUnavailable('嵌入服务没有返回全部向量');
     }
     return [for (final vector in vectors) vector!];
+  }
+
+  /// 非 200 的响应：401、403、429 说明整个来源暂时用不了，其余只算这一次失败。
+  ///
+  /// 知新服务的拒绝是 problem+json，只读 `code` 区分额度用完；提供方的错误体
+  /// 可能带着打码的 key，不放进异常信息。
+  static EmbeddingUnavailable _failure(http.Response response) {
+    final status = response.statusCode;
+    String? code;
+    try {
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      if (body is Map && body['code'] is String) code = body['code'] as String;
+    } catch (_) {
+      // 错误体不是 JSON 时只按状态码判断。
+    }
+    if (code == 'quota_exceeded') {
+      return const EmbeddingSourceUnavailable('今天的嵌入额度已经用完，次日重置');
+    }
+    return switch (status) {
+      401 || 403 => EmbeddingSourceUnavailable('嵌入服务拒绝了凭据（$status）'),
+      429 => const EmbeddingSourceUnavailable('嵌入服务限流（429），请稍后再试'),
+      _ => EmbeddingUnavailable('嵌入服务返回 $status'),
+    };
   }
 
   @override

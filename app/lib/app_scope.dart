@@ -38,6 +38,7 @@ import 'data/backup/restore_point_store.dart';
 import 'data/attachment_store.dart';
 import 'data/cloud/account_store.dart';
 import 'data/cloud/cloud_preferences_store.dart';
+import 'data/cloud/server_client.dart';
 import 'data/cloud/telemetry_store.dart';
 import 'data/db/app_database.dart';
 import 'data/db/database_gate.dart';
@@ -82,11 +83,15 @@ class AppScope extends StatefulWidget {
     this.crashLog,
     this.ai,
     this.clock,
+    this.serverClientFactory,
     required this.themeMode,
   });
 
   final Widget child;
   final CrashLog? crashLog;
+
+  /// 连服务端用的客户端；测试换成进程内的假服务端，为空时按地址直连。
+  final ServerClient Function(String baseUrl)? serverClientFactory;
 
   /// 回答来源；测试可以换成固定回答，为空时读取设置里的模型配置。
   final BuddyAi? ai;
@@ -204,7 +209,11 @@ class AppScopeState extends State<AppScope> {
 
   /// 检索索引配置的唯一入口：页面保存一次，应用根启动时恢复一次。
   late final EmbeddingSettingsService _embeddingSettings =
-      EmbeddingSettingsService(store: _embeddingStore, index: _searchIndex);
+      EmbeddingSettingsService(
+        store: _embeddingStore,
+        index: _searchIndex,
+        serverEndpoint: () => _account.embeddingEndpoint(),
+      );
 
   SearchIndexService? _searchIndexService;
 
@@ -492,6 +501,7 @@ class AppScopeState extends State<AppScope> {
       store: AccountStore(SecureSecretStore()),
       preferences: _cloudPreferences,
       deviceName: '知新 ${appVersion.split('+').first}',
+      clientFactory: widget.serverClientFactory,
     );
     _activeReportService = ActiveReportService(
       store: TelemetryStore(filesDir: paths.filesDir),

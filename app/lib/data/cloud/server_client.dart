@@ -274,30 +274,73 @@ class ServerBackup {
   final DateTime? createdAt;
 }
 
-/// 今天的模型用量与额度。
+/// 今天的模型用量与额度；聊天与嵌入分开计。
 class ServerQuota {
   const ServerQuota({
     required this.day,
     required this.usedTokens,
     required this.dailyTokens,
+    this.embeddingUsedTokens = 0,
+    this.embeddingDailyTokens = 0,
   });
 
   factory ServerQuota.fromJson(Map<String, Object?> json) => ServerQuota(
     day: json['day'] as String? ?? '',
     usedTokens: (json['used_tokens'] as num?)?.toInt() ?? 0,
     dailyTokens: (json['daily_tokens'] as num?)?.toInt() ?? 0,
+    embeddingUsedTokens: (json['embedding_used_tokens'] as num?)?.toInt() ?? 0,
+    embeddingDailyTokens:
+        (json['embedding_daily_tokens'] as num?)?.toInt() ?? 0,
   );
 
   final String day;
+
+  /// 聊天当天已用与每日额度。
   final int usedTokens;
   final int dailyTokens;
+
+  /// 嵌入当天已用与每日额度；旧版服务端没有这两项，读作 0。
+  final int embeddingUsedTokens;
+  final int embeddingDailyTokens;
 }
 
-/// 服务端代理允许的模型列表。
+/// 服务端模型的用途：聊天模型给回答用，嵌入模型给语义索引用。
+enum ServerModelKind {
+  chat('chat'),
+  embedding('embedding');
+
+  const ServerModelKind(this.value);
+
+  final String value;
+
+  /// 旧版服务端不带 `kind`，那时只有聊天模型，按聊天处理；不认识的值返回
+  /// null，调用方跳过这一项。
+  static ServerModelKind? fromValue(Object? value) {
+    if (value == null) return ServerModelKind.chat;
+    for (final kind in values) {
+      if (kind.value == value) return kind;
+    }
+    return null;
+  }
+}
+
+/// 服务端代理允许的一个模型。
 class ServerModel {
-  const ServerModel(this.id);
+  const ServerModel(
+    this.id, {
+    this.kind = ServerModelKind.chat,
+    this.dimensions,
+  });
 
   final String id;
+  final ServerModelKind kind;
+
+  /// 嵌入模型的向量维度；后台没有配置时为空，由用户在本机填写。
+  final int? dimensions;
+
+  bool get isChat => kind == ServerModelKind.chat;
+
+  bool get isEmbedding => kind == ServerModelKind.embedding;
 }
 
 /// 发布清单里的一项；是否需要更新由界面比较 [version] 与 [build] 决定，
@@ -611,11 +654,21 @@ class ServerClient {
 
   Future<List<ServerModel>> models(String accessToken) async {
     final json = await _json('GET', '/v1/llm/models', accessToken: accessToken);
-    return [
-      for (final item in (json['data'] as List? ?? const []))
-        if (item is Map && item['id'] is String)
-          ServerModel(item['id']! as String),
-    ];
+    final models = <ServerModel>[];
+    for (final item in (json['data'] as List? ?? const [])) {
+      if (item is! Map || item['id'] is! String) continue;
+      final kind = ServerModelKind.fromValue(item['kind']);
+      if (kind == null) continue;
+      final dimensions = item['dimensions'];
+      models.add(
+        ServerModel(
+          item['id']! as String,
+          kind: kind,
+          dimensions: dimensions is int && dimensions > 0 ? dimensions : null,
+        ),
+      );
+    }
+    return models;
   }
 
   /// 读发布清单；不需要登录，没有配置清单时返回空列表。界面按平台取一项，

@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/account_service.dart';
+import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
 import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/rules/embedding.dart';
 
 import '../support/fake_server.dart';
 
@@ -60,6 +62,59 @@ void main() {
     expect(
       (await defaultAccount.models()).map((model) => model.id),
       contains('deepseek-flash'),
+    );
+  });
+
+  test('模型列表按用途区分，嵌入模型带维度，额度分开读', () async {
+    await account.register(email: 'kind@example.com', password: 'password123');
+
+    final models = await account.models();
+    final chat = models.singleWhere((model) => model.id == 'deepseek-flash');
+    expect(chat.isChat, isTrue);
+    expect(chat.dimensions, isNull);
+    final embedding = models.singleWhere((model) => model.id == 'bge-m3');
+    expect(embedding.isEmbedding, isTrue);
+    expect(embedding.dimensions, 4);
+
+    final quota = await account.quota();
+    expect(quota.dailyTokens, 200000);
+    expect(quota.embeddingDailyTokens, 2000000);
+  });
+
+  test('旧版服务端不带 kind 时按聊天模型处理，不认识的用途跳过', () {
+    expect(ServerModelKind.fromValue(null), ServerModelKind.chat);
+    expect(ServerModelKind.fromValue('embedding'), ServerModelKind.embedding);
+    expect(ServerModelKind.fromValue('rerank'), isNull);
+  });
+
+  test('知新服务的嵌入地址与令牌每次现取，未登录时报来源不可用', () async {
+    await expectLater(
+      account.embeddingEndpoint(),
+      throwsA(isA<EmbeddingSourceUnavailable>()),
+    );
+
+    final snapshot = await account.register(
+      email: 'embed@example.com',
+      password: 'password123',
+    );
+    final endpoint = await account.embeddingEndpoint();
+    expect(endpoint.endpoint, 'http://server.test/v1/llm');
+    expect(endpoint.apiKey, snapshot.session!.accessToken);
+
+    final client = RemoteEmbeddingClient(
+      spec: const EmbeddingModelSpec(id: 'bge-m3', dim: 4, provider: 'server'),
+      credentials: account.embeddingEndpoint,
+      httpClient: server.client,
+    );
+    addTearDown(client.dispose);
+    final vectors = await client.embedBatch(['熵', '导数是什么']);
+    expect(vectors, hasLength(2));
+    expect(server.embeddingTokens, [snapshot.session!.accessToken]);
+
+    server.embeddingQuotaExceeded = true;
+    await expectLater(
+      client.embed('熵'),
+      throwsA(isA<EmbeddingSourceUnavailable>()),
     );
   });
 

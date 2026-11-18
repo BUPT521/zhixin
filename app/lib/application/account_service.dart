@@ -4,6 +4,7 @@ import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
+import 'embedding_client.dart';
 
 /// 还没有登录，或登录已经失效；需要用户重新登录之后才能继续。
 class AccountSignedOut implements Exception {
@@ -298,6 +299,22 @@ class AccountService {
     final authorized = await authorizeModelConfig(config);
     if (authorized == null) throw const AccountSignedOut();
     return authorized;
+  }
+
+  /// 语义索引选择知新服务时，每次嵌入请求前取服务地址与当前访问令牌。
+  ///
+  /// 令牌不进配置，过期或轮换之后下一次请求自然换新；没有登录或刷新失败时
+  /// 抛 [EmbeddingSourceUnavailable]，索引更新据此停下本次剩余的请求。
+  Future<EmbeddingEndpoint> embeddingEndpoint() async {
+    final token = await accessTokenOrNull();
+    if (token == null) {
+      throw const EmbeddingSourceUnavailable('还没有登录，知新服务的嵌入暂时用不了');
+    }
+    final base = await serverBaseUrl();
+    if (base.isEmpty) {
+      throw const EmbeddingSourceUnavailable('没有设置服务地址');
+    }
+    return (endpoint: '$base/v1/llm', apiKey: token);
   }
 
   Future<ServerQuota> quota() =>

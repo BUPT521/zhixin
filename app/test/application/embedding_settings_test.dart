@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/application/embedding_settings.dart';
 import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
@@ -45,6 +46,56 @@ void main() {
 
     await index.close();
     await db.close();
+  });
+
+  test('知新服务作为嵌入来源：只要模型名，地址与令牌运行时取，索引键单独区分', () async {
+    const config = EmbeddingConfig(
+      enabled: true,
+      provider: 'server',
+      model: 'bge-m3',
+      dim: 4,
+      shareScope: EmbeddingShareScope.all,
+    );
+    expect(config.usesServer, isTrue);
+    expect(config.sendsText, isTrue);
+    expect(config.usable, isTrue);
+    expect(config.spec.indexKey, startsWith('server:bge-m3|4|'));
+    expect(
+      const EmbeddingConfig(
+        enabled: true,
+        provider: 'remote',
+        model: 'bge-m3',
+      ).spec.indexKey,
+      startsWith('bge-m3|'),
+    );
+    expect(
+      const EmbeddingConfig(enabled: true, provider: 'server').usable,
+      isFalse,
+    );
+
+    final restored = EmbeddingConfig.fromJson(config.toJson())!;
+    expect(restored.provider, 'server');
+    expect(restored.model, 'bge-m3');
+    expect(
+      EmbeddingConfig.fromJson({'provider': 'unknown'})!.provider,
+      'remote',
+    );
+
+    // 测试装配没有给账号服务时，知新服务按不可用处理，不会退回别的地址。
+    expect(embeddingRuntime(config).client, isNull);
+
+    var asked = 0;
+    final runtime = embeddingRuntime(
+      config,
+      serverEndpoint: () async {
+        asked++;
+        return (endpoint: 'http://server.test/v1/llm', apiKey: 'token');
+      },
+    );
+    expect(runtime.client, isA<RemoteEmbeddingClient>());
+    expect(runtime.client!.spec.provider, 'server');
+    expect(asked, 0, reason: '构造时不取令牌，请求时才取');
+    runtime.client!.dispose();
   });
 }
 

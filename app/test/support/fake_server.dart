@@ -60,6 +60,15 @@ class FakeServer {
   /// 收到的匿名活跃上报；同样是公开接口。
   final List<Map<String, Object?>> actives = [];
 
+  /// 嵌入请求带的访问令牌，按到达顺序记录；用来核对每次请求都换成了当前令牌。
+  final List<String> embeddingTokens = [];
+
+  /// 嵌入当天已用；假服务端按输入字数累计。
+  int embeddingUsedTokens = 0;
+
+  /// 打开之后嵌入请求一律返回 429 quota_exceeded。
+  bool embeddingQuotaExceeded = false;
+
   int headOf(String userId) => commits[userId]?.length ?? 0;
 
   String userIdOf(String email) => _userIds[email]!;
@@ -300,14 +309,48 @@ class FakeServer {
         'day': '2026-11-17',
         'used_tokens': 0,
         'daily_tokens': 200000,
+        'embedding_used_tokens': embeddingUsedTokens,
+        'embedding_daily_tokens': 2000000,
       });
     }
     if (path == '/v1/llm/models') {
       return _json(200, {
         'object': 'list',
         'data': [
-          {'id': 'deepseek-flash', 'object': 'model', 'owned_by': 'zhixin'},
+          {
+            'id': 'deepseek-flash',
+            'object': 'model',
+            'owned_by': 'zhixin',
+            'kind': 'chat',
+          },
+          {
+            'id': 'bge-m3',
+            'object': 'model',
+            'owned_by': 'zhixin',
+            'kind': 'embedding',
+            'dimensions': 4,
+          },
         ],
+      });
+    }
+    if (method == 'POST' && path == '/v1/llm/embeddings') {
+      embeddingTokens.add(_bearer(request) ?? '');
+      if (embeddingQuotaExceeded) return _problem(429, 'quota_exceeded');
+      final input = body['input'];
+      final texts = input is String ? [input] : (input as List).cast<String>();
+      embeddingUsedTokens += texts.fold(0, (sum, text) => sum + text.length);
+      return _json(200, {
+        'object': 'list',
+        'model': body['model'],
+        'data': [
+          for (var index = 0; index < texts.length; index++)
+            {
+              'object': 'embedding',
+              'index': index,
+              'embedding': [texts[index].length.toDouble(), 1.0, 0.0, 0.0],
+            },
+        ],
+        'usage': {'prompt_tokens': 1, 'total_tokens': 1},
       });
     }
     return _problem(404, 'not_found');

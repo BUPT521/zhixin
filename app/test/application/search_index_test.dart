@@ -882,6 +882,90 @@ void main() {
     );
   });
 
+  test('远程嵌入每次请求前取地址与凭据，额度用完与 key 被拒按来源不可用报出', () async {
+    final seen = <String>[];
+    var status = 200;
+    var body = <String, Object?>{
+      'data': [
+        {
+          'embedding': [1, 0, 0, 0],
+        },
+      ],
+    };
+    final client = MockClient((request) async {
+      seen.add('${request.url} ${request.headers['Authorization']}');
+      return http.Response(jsonEncode(body), status);
+    });
+    var token = 0;
+    final embedding = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 'access-${++token}'),
+      httpClient: client,
+    );
+
+    await embedding.embed('甲');
+    await embedding.embed('乙');
+    expect(seen, [
+      'https://server.test/v1/llm/embeddings Bearer access-1',
+      'https://server.test/v1/llm/embeddings Bearer access-2',
+    ]);
+
+    status = 429;
+    body = {'code': 'quota_exceeded', 'title': 'quota exceeded'};
+    await expectLater(
+      embedding.embed('丙'),
+      throwsA(
+        isA<EmbeddingSourceUnavailable>().having(
+          (error) => error.message,
+          'message',
+          contains('额度'),
+        ),
+      ),
+    );
+
+    status = 401;
+    body = {
+      'error': {'message': 'Incorrect API key provided: sk-ab****cd'},
+    };
+    await expectLater(
+      embedding.embed('丁'),
+      throwsA(
+        isA<EmbeddingSourceUnavailable>().having(
+          (error) => error.message,
+          'message',
+          isNot(contains('sk-')),
+        ),
+      ),
+    );
+
+    status = 500;
+    await expectLater(
+      embedding.embed('戊'),
+      throwsA(
+        allOf(
+          isA<EmbeddingUnavailable>(),
+          isNot(isA<EmbeddingSourceUnavailable>()),
+        ),
+      ),
+    );
+  });
+
+  test('嵌入来源整个用不了时停下本次更新，不再逐条重试', () async {
+    late _SourceDownClient down;
+    final rig = await _rig(clientFor: (spec) => down = _SourceDownClient(spec));
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+
+    final refresh = await rig.service.refresh();
+    expect(refresh.failure, IndexFailure.error);
+    expect(refresh.embedded, 0);
+    expect(refresh.failed, 7);
+    expect(refresh.sourceProblem, '还没有登录');
+    // 每个并发最多发一次请求就停下，不会对每一块再逐条重发。
+    expect(down.calls, lessThanOrEqualTo(4));
+  });
+
   test('材料范围只保留这份材料的页，不带出其他材料', () async {
     final rig = await _rig();
     addTearDown(rig.db.close);
@@ -1188,6 +1272,30 @@ class _RecordingClient extends EmbeddingClient {
   Future<List<double>> embed(String text) async {
     sent.add(text);
     return inner.embed(text);
+  }
+
+  @override
+  void dispose() {}
+}
+
+/// 每次请求都报来源不可用，记录被调用的次数。
+class _SourceDownClient extends EmbeddingClient {
+  _SourceDownClient(this.spec);
+
+  @override
+  final EmbeddingModelSpec spec;
+  int calls = 0;
+
+  @override
+  Future<List<double>> embed(String text) async {
+    calls++;
+    throw const EmbeddingSourceUnavailable('还没有登录');
+  }
+
+  @override
+  Future<List<List<double>>> embedBatch(List<String> texts) async {
+    calls++;
+    throw const EmbeddingSourceUnavailable('还没有登录');
   }
 
   @override
