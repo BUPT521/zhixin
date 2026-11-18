@@ -106,3 +106,8 @@ type UserActive struct {
 	UserID string
 	Day    pgtype.Date
 }
+
+type UserPurge struct {
+	UserID    string
+	StartedAt pgtype.Timestamptz
+}

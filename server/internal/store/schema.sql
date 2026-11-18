@@ -135,3 +135,11 @@ CREATE TABLE attachment (
 );
 CREATE INDEX attachment_user_created ON attachment(user_id, created_at DESC);
 
+-- 清除云端数据的进行中标记：一行表示这个账号正在清除（或上次清除中途失败）。
+-- 清除开始写入 started_at，结束时删除行；超过 10 分钟的标记视为上次中断，新的
+-- 请求接管并从头重做各步。清除期间写请求据此返回 409。账号删除时级联删除。
+CREATE TABLE user_purge (
+  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  started_at  TIMESTAMPTZ NOT NULL
+);
+
