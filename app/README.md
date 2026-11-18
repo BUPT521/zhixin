@@ -191,8 +191,8 @@ lib/
 | `RELEASE_KEY_PASSWORD` | 密钥口令 |
 
 keystore 与口令由发版人保管，仓库与本机工程目录都不放：CI 把还原出来的 keystore 写到 runner 的临时目录，
-`key.properties` 里用绝对路径引用它，发版结束随 runner 一起销毁。发版任务的最后一步用 `apksigner` 核对证书
-不是 debug 证书，并对包体记录版本、提交与 SHA-256。
+`key.properties` 里用绝对路径引用它，发版结束随 runner 一起销毁。发版任务在构建之后用 `apksigner` 核对证书
+不是 debug 证书，并对包体记录版本、提交与 SHA-256，随后用 Ed25519 私钥产出发布清单的哈希与签名材料。
 
 ### 发布清单签名
 
