@@ -314,3 +314,119 @@ func TestHandlerLLMProxyDisabledWithoutKey(t *testing.T) {
 		t.Fatalf("got %d %+v", code, p)
 	}
 }
+
+// TestHandlerSettlesActualUsage 核对结算按提供方返回的 usage 记账，而不是按转发
+// 前预留的估算值：估算远小于实际用量时额度里记的是实际值；上游错误没有产生用量
+// 时预留全部退回。
+func TestHandlerSettlesActualUsage(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if calls.Add(1) == 1 {
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"hi"}}],"usage":{"total_tokens":300}}`)
+			return
+		}
+		// 第二次请求模拟提供方故障：既没有回答，也没有 usage。
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"message":"boom"}}`)
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
+		BaseURL:         upstream.URL,
+		APIKey:          "sk-server",
+		Models:          []string{"deepseek-flash"},
+		DailyTokens:     1000,
+		MaxRequestBytes: 1 << 20,
+	})
+	token := signIn(t, authSvc, "settle@b.cn")
+	chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+		t.Fatalf("第一次请求应通过，得到 %d", code)
+	}
+	var q struct {
+		Used int64 `json:"used_tokens"`
+	}
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 300 {
+		t.Fatalf("应按实际用量 300 结算，得到 %d %+v", code, q)
+	}
+
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusInternalServerError {
+		t.Fatalf("上游错误应原样返回，得到 %d", code)
+	}
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 300 {
+		t.Fatalf("上游错误应退回预留，用量仍为 300，得到 %d %+v", code, q)
+	}
+}
+
+// TestHandlerQuotaExceededBudget 核对账号额度与实例预算用尽时都回 429
+// quota_exceeded：额度不足但仍有剩余时按剩余预留并照常转发，一分不剩才拒绝；
+// 被拒的 extra 保留账号字段，并带上实例用量与预算。
+func TestHandlerQuotaExceededBudget(t *testing.T) {
+	t.Run("账号额度", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":300}}`)
+		}))
+		defer upstream.Close()
+
+		c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
+			BaseURL:         upstream.URL,
+			APIKey:          "sk-server",
+			Models:          []string{"deepseek-flash"},
+			DailyTokens:     10,
+			MaxRequestBytes: 1 << 20,
+		})
+		token := signIn(t, authSvc, "budget@b.cn")
+		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+
+		// 额度只剩 10：预留被截到 10 后照常转发，实际用量 300 在结算时补记。
+		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+			t.Fatalf("额度不足一次用量时应先转发，得到 %d", code)
+		}
+		var p testutil.Problem
+		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+			t.Fatalf("额度用完应回 429 quota_exceeded，得到 %d %+v", code, p)
+		}
+		if got, _ := p.Extra["used_tokens"].(float64); got != 300 {
+			t.Fatalf("extra 应带实际用量 300，得到 %v", p.Extra)
+		}
+		if got, _ := p.Extra["daily_tokens"].(float64); got != 10 {
+			t.Fatalf("extra 应带账号额度 10，得到 %v", p.Extra)
+		}
+	})
+
+	t.Run("实例预算", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":20}}`)
+		}))
+		defer upstream.Close()
+
+		c, authSvc, _, _ := newTestServer(t, config.LLMConfig{
+			BaseURL:             upstream.URL,
+			APIKey:              "sk-server",
+			Models:              []string{"deepseek-flash"},
+			DailyTokens:         1000,
+			InstanceDailyTokens: 20,
+			MaxRequestBytes:     1 << 20,
+		})
+		token := signIn(t, authSvc, "instance@b.cn")
+		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+
+		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+			t.Fatalf("实例预算还有 20 时应转发，得到 %d", code)
+		}
+		var p testutil.Problem
+		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+			t.Fatalf("实例预算用完应回 429 quota_exceeded，得到 %d %+v", code, p)
+		}
+		if got, _ := p.Extra["instance_used_tokens"].(float64); got != 20 {
+			t.Fatalf("extra 应带实例用量 20，得到 %v", p.Extra)
+		}
+		if got, _ := p.Extra["instance_daily_tokens"].(float64); got != 20 {
+			t.Fatalf("extra 应带实例预算 20，得到 %v", p.Extra)
+		}
+	})
+}

@@ -53,6 +53,11 @@ type Proxy struct {
 
 // NewHandler 组装模型代理；构造函数与另外四个业务包同名。
 func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
+	// 额度上限只有配置一处来源：装配时交给配额实现，Reserve 用它做原子比较。
+	// 接口之外的注入用可选方法，内存与 PostgreSQL 实现都支持。
+	if setter, ok := quota.(quotaLimits); ok {
+		setter.SetQuotaLimits(cfg.DailyTokens, cfg.InstanceDailyTokens)
+	}
 	// No overall client timeout: streams legitimately last minutes. The
 	// client's own per-event deadlines (docs/00 §9) cancel the request,
 	// which cancels r.Context() and with it the upstream call.
@@ -200,20 +205,20 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	stream := head.Stream != nil && *head.Stream
 	day := p.day()
-	used, err := p.quota.Used(r.Context(), pr.UserID, day)
-	if err != nil {
-		httpx.WriteInternal(w, r, p.log, err)
+	// 转发前按请求体大小估算消耗并预留：估算不追求精确，结算时按提供方返回的
+	// usage 多退少补；至少 1 个 token，避免空请求完全不占额度。账号额度与实例
+	// 预算由配额实现在同一个临界区里比较，并发请求不会各自按旧用量通过。
+	estimate := int64(len(body) / 4)
+	if estimate < 1 {
+		estimate = 1
+	}
+	reserved, err := p.quota.Reserve(r.Context(), pr.UserID, day, estimate)
+	if errors.Is(err, ErrQuotaExceeded) {
+		p.writeQuotaExceeded(w, r, pr.UserID, day)
 		return
 	}
-	limit, err := p.dailyLimit(r.Context(), pr.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
-		return
-	}
-	if used >= limit {
-		httpx.WriteProblemExtra(w, r, http.StatusTooManyRequests, httpx.CodeQuotaExceeded,
-			"daily budget used up; use your own key or try again tomorrow",
-			map[string]any{"day": day, "used_tokens": used, "daily_tokens": limit})
 		return
 	}
 
@@ -253,15 +258,52 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	} else {
 		tokens = p.copyWhole(w, resp.Body)
 	}
-	if tokens > 0 {
-		// Record with a fresh context: the client may already have hung up
-		// after the final chunk, but the tokens were spent.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
-		defer cancel()
-		if err := p.quota.Add(ctx, pr.UserID, day, tokens); err != nil {
-			p.log.Error("record llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
-		}
+	actual := tokens
+	switch {
+	case resp.StatusCode >= http.StatusBadRequest:
+		// 上游错误没有产生回答，预留全部退回。
+		actual = 0
+	case actual <= 0:
+		// 提供方没有给出 usage（例如流式请求没带 include_usage）时保留预留，
+		// 不能按 0 全部退掉，否则调用方只受估算值的约束。
+		actual = reserved
 	}
+	// 用独立 context 结算：客户端可能在最后一个数据块之后已经断开，但用量已经
+	// 发生。结算失败只记日志，响应已经写出，不能让客户端以为请求失败。
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	if err := p.quota.Settle(ctx, pr.UserID, day, reserved, actual); err != nil {
+		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
+	}
+}
+
+// writeQuotaExceeded 回 429 quota_exceeded，并带上当天的账号用量、账号额度与
+// 实例预算：客户端据此提示额度用完，响应里也能看出是哪一种额度用尽。
+func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userID, day string) {
+	used, err := p.quota.Used(r.Context(), userID, day)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
+	limit, err := p.dailyLimit(r.Context(), userID)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
+	instanceUsed, err := p.quota.InstanceUsed(r.Context(), day)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
+	httpx.WriteProblemExtra(w, r, http.StatusTooManyRequests, httpx.CodeQuotaExceeded,
+		"daily budget used up; use your own key or try again tomorrow",
+		map[string]any{
+			"day":                   day,
+			"used_tokens":           used,
+			"daily_tokens":          limit,
+			"instance_used_tokens":  instanceUsed,
+			"instance_daily_tokens": p.cfg.InstanceDailyTokens,
+		})
 }
 
 type usageEnvelope struct {
