@@ -194,6 +194,28 @@ keystore 与口令由发版人保管，仓库与本机工程目录都不放：CI
 `key.properties` 里用绝对路径引用它，发版结束随 runner 一起销毁。发版任务的最后一步用 `apksigner` 核对证书
 不是 debug 证书，并对包体记录版本、提交与 SHA-256。
 
+### 发布清单签名
+
+发布清单里的每一版安装包另有一把 Ed25519 签名密钥，用来让应用确认清单与安装包没有被替换。私钥的 PKCS8
+编码以 base64 放在仓库 Secret `RELEASE_SIGNING_KEY_BASE64` 里，CI 在发版任务的“签名与清单”一步用它签名；
+这一项与 keystore 的四项一样，缺失时发版任务直接失败，不会产出一份没有签名的清单片段。密钥的生成与保管
+由发版人完成，命令如下：
+
+```bash
+openssl genpkey -algorithm Ed25519 -out release-signing.pem
+openssl pkey -in release-signing.pem -pubout -out release-signing.pub.pem
+base64 -w0 release-signing.pem   # 结果填入仓库 Secret RELEASE_SIGNING_KEY_BASE64
+```
+
+签名对象是安装包 SHA-256 的小写十六进制字符串本身，共 64 个 ASCII 字节，不加换行，也不签文件内容；
+CI 用 `openssl pkeyutl -sign -rawin` 对这段字符串生成 64 字节签名，再转成 base64 写进 `app-release.apk.sig`，
+同时产出 `app-release.apk.sha256`，两个文件与安装包一起上传为构件，并在 step summary 里给出可以直接填进
+发布清单的 JSON 片段。公钥以常量形式内置在应用里，做法是把 `release-signing.pub.pem` 的内容原样放进应用
+代码的常量并随包编译（应用侧校验由吴闻杰接入）：更新检查先核对清单地址是 https、下载后的 SHA-256 与清单的
+`sha256` 一致，再用内置公钥对清单 `sha256` 字段的 64 字节十六进制字符串验签，三项都通过才提示更新，任何一项
+不通过都不提示。私钥与 keystore 一样只由发版人保管，不进仓库与本机工程目录；换密钥意味着旧版本应用无法验证
+新清单，发版说明要写明这一点，并在应用内置公钥的下一次发版里同步更新。
+
 
 正式包在 Actions 里手动运行“CI 与发版”，用仓库 Secrets 里的签名配置生成；本机不出正式包。版本号按 [03 第 3 节](../docs/03-团队分工与协作.md#3-交付节奏)递增，取值以本目录 `pubspec.yaml` 的 `version` 一行为准，只由发版人（见 [03 第 2 节](../docs/03-团队分工与协作.md#2-角色)）在发包前修改；开发包的版本名带 `-dev` 且按 `com.zhixin.app.dev` 另装一个应用，“我的”页的“关于”显示构建时写入的构建名与构建号，不另存版本常量；许可页同时列出知新自身的 MIT 许可与第三方组件许可，知新自身的许可从 `platform/app_license.dart` 读取，测试会核对它与仓库根目录的 `LICENSE` 同文。
 
