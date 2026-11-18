@@ -9,6 +9,7 @@ import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/learning_page.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 /// 讨论页与学习页改成订阅之后，页面之外的写入由数据层重读（ADR-0014）。
@@ -36,9 +37,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    await directory.delete(recursive: true);
   });
 
   /// 轮询到目标控件出现：读取与回填都在后台完成，不能依赖 pumpAndSettle 收尾。

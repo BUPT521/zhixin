@@ -10,6 +10,7 @@ import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ui/discussion_chat.dart';
 import 'package:zhixin/ui/settings_page.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 /// 没有模型时的提问、配置与重答入口走同一条界面流程。
@@ -51,9 +52,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    await directory.delete(recursive: true);
   });
 
   /// 轮询到目标控件出现：生成提示一直在动，不能依赖 pumpAndSettle 收尾。

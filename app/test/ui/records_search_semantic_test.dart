@@ -10,6 +10,7 @@ import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 /// 查找页的“按意思找”：本地结果先出，语义完成后按融合顺序刷新；失败、空索引
@@ -60,21 +61,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.library.searchIndex.close();
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    try {
-      await directory.delete(recursive: true);
-    } on FileSystemException {
-      // zvec 的原生库偶尔在 close() 返回之后还短暂占着几个索引文件，Windows
-      // 会因此拒绝删除目录；稍等再删，删不掉也只是留一个临时目录。
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      try {
-        await directory.delete(recursive: true);
-      } on FileSystemException {
-        // 留给系统清理临时目录。
-      }
-    }
   });
 
   Future<void> pumpUntil(
