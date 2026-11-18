@@ -19,12 +19,19 @@ import 'theme.dart';
 ///
 /// 四栏常驻，不按数据版本换 key：返回详情之后由打开它的栏目自己重读数据，
 /// 其他栏目的筛选、输入与滚动位置不跟着重建。
+///
+/// 首页先读；首帧之后过 [preloadDelay] 放行其余三栏在后台订阅，第一次切过去
+/// 直接是内容，不再在切栏动画里看一段骨架。放行之前就切过去的栏当场读。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
+
+/// 首帧之后等这么久再放行其余三栏预读：让首页的首读与淡入先走完，后台读取
+/// 不和它抢数据库与这几帧。
+const Duration preloadDelay = Duration(milliseconds: 600);
 
 class _HomeShellState extends State<HomeShell> {
   /// 当前栏与跳转请求都走 notifier：切栏只换常驻栈的下标，各栏的构造参数
@@ -35,6 +42,10 @@ class _HomeShellState extends State<HomeShell> {
         const RecordsRequest(RecordsTab.learning, 0),
       );
   final ValueNotifier<int> _scheduleRequest = ValueNotifier<int>(0);
+
+  /// 其余三栏能否在后台预读；首帧之后过 [preloadDelay] 置真，之后不再变。
+  final ValueNotifier<bool> _preload = ValueNotifier<bool>(false);
+  Timer? _preloadTimer;
 
   /// 各栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
   List<Widget>? _pages;
@@ -51,6 +62,9 @@ class _HomeShellState extends State<HomeShell> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         unawaited(showTelemetryNoticeIfNeeded(context, report));
+        _preloadTimer = Timer(preloadDelay, () {
+          if (mounted) _preload.value = true;
+        });
       });
     }
     _pages ??= [
@@ -73,6 +87,7 @@ class _HomeShellState extends State<HomeShell> {
         onOpenLearning: _openLearning,
         onOpenLearningRedo: _openLearningRedo,
         onOpenDiscussion: _openDiscussion,
+        preload: _preload,
       ),
       PlanPage(
         key: const ValueKey('plan'),
@@ -80,13 +95,20 @@ class _HomeShellState extends State<HomeShell> {
         tabIndex: 2,
         request: _scheduleRequest,
         onOpenMaterials: () => _openRecords(RecordsTab.materials),
+        preload: _preload,
       ),
-      MinePage(key: const ValueKey('mine'), activeTab: _index, tabIndex: 3),
+      MinePage(
+        key: const ValueKey('mine'),
+        activeTab: _index,
+        tabIndex: 3,
+        preload: _preload,
+      ),
     ];
   }
 
   @override
   void dispose() {
+    _preloadTimer?.cancel();
     // 这些 notifier 由各栏共享，页面卸载时还会移除自己的监听，所以不在这里
     // 销毁：跟着 HomeShell 一起被回收即可。
     super.dispose();

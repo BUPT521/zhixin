@@ -451,8 +451,10 @@ class PageLoading extends StatelessWidget {
   );
 }
 
-/// 首读时的占位骨架：几条与真实卡片同高的静态块，读完原位换成内容。
+/// 首读时的占位骨架：几张与真实卡片同高的静态卡片，读完原位换成内容。
 ///
+/// 卡片里按高度摆出标题、正文与标签的灰条，看上去是一张还没填字的卡片，
+/// 而不是一个空框；每张的条长略有不同，几张叠在一起不像复制出来的。
 /// 不做闪光或呼吸动画：动效口径里不循环，而且不断变化的占位更妨碍阅读。
 /// 高度固定，替换前后页面高度不变，下面的内容不会跟着移动。
 class ListSkeleton extends StatelessWidget {
@@ -467,9 +469,24 @@ class ListSkeleton extends StatelessWidget {
   final double rowHeight;
   final EdgeInsetsGeometry padding;
 
+  /// 各张卡片的条长（占卡片内宽的比例）：标题、第一行正文、第二行正文。
+  static const _widths = [
+    (0.46, 0.92, 0.64),
+    (0.62, 0.78, 0.5),
+    (0.38, 0.86, 0.72),
+  ];
+  static const _titleHeight = 14.0;
+  static const _lineHeight = 10.0;
+  static const _tagHeight = 18.0;
+  static const _tagWidth = 56.0;
+  static const _lineGap = 10.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
+    // 矮卡片收紧上下内边距，至少留得下标题与一行正文。
+    final vertical = rowHeight < 80 ? theme.space.md : theme.space.lg;
+    final inner = rowHeight - vertical * 2;
     return Padding(
       padding: padding,
       child: Column(
@@ -483,16 +500,71 @@ class ListSkeleton extends StatelessWidget {
                 label: '正在读取',
                 child: Container(
                   height: rowHeight,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: theme.space.lg,
+                    vertical: vertical,
+                  ),
                   decoration: BoxDecoration(
                     color: theme.colors.card,
                     borderRadius: theme.radius.card,
                     border: Border.all(color: theme.colors.outlineVariant),
+                  ),
+                  child: ExcludeSemantics(
+                    child: _bars(theme, _widths[row % _widths.length], inner),
                   ),
                 ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  /// 按卡片内高从上往下摆条：标题、正文、第二行正文、标签，放不下的不摆。
+  Widget _bars(
+    ZhixinTheme theme,
+    (double, double, double) widths,
+    double inner,
+  ) {
+    final (title, body, second) = widths;
+    final candidates = [
+      (_titleHeight, title, null),
+      (_lineHeight, body, null),
+      (_lineHeight, second, null),
+      (_tagHeight, null, _tagWidth),
+    ];
+    final bars = <Widget>[];
+    var used = 0.0;
+    for (final (height, factor, width) in candidates) {
+      final needed = height + (bars.isEmpty ? 0 : _lineGap);
+      if (used + needed > inner) break;
+      used += needed;
+      if (bars.isNotEmpty) bars.add(const SizedBox(height: _lineGap));
+      final bar = DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(width == null ? 4 : height / 2),
+        ),
+      );
+      bars.add(
+        SizedBox(
+          height: height,
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: width == null
+                ? FractionallySizedBox(
+                    widthFactor: factor,
+                    heightFactor: 1,
+                    child: bar,
+                  )
+                : SizedBox(width: width, height: height, child: bar),
+          ),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: bars,
     );
   }
 }

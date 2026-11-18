@@ -23,10 +23,19 @@ import 'zhixin_header.dart';
 /// 找回密码、删除账号这些完整操作仍在账号页。设置页只管偏好配置，记忆、人格、
 /// 插件、数据版本与关于从这里进入。
 class MinePage extends StatefulWidget {
-  const MinePage({super.key, required this.activeTab, this.tabIndex = 3});
+  const MinePage({
+    super.key,
+    required this.activeTab,
+    this.tabIndex = 3,
+    this.preload,
+  });
 
   final ValueListenable<int> activeTab;
   final int tabIndex;
+
+  /// 底栏放行预读时为真：先在后台读本机的登录与同步状态，第一次切过来
+  /// 账号卡已经就位；要走网络的额度仍等切到这一栏再读。
+  final ValueListenable<bool>? preload;
 
   @override
   State<MinePage> createState() => _MinePageState();
@@ -39,6 +48,9 @@ class _MinePageState extends State<MinePage> {
 
   /// 额度要走网络；读完本机状态先显示，额度回来再补上。
   bool _quotaLoading = false;
+
+  /// 读取的序号：预读还没回来、切栏又发起了完整读取时，丢掉预读的结果。
+  int _loadSequence = 0;
   bool _loaded = false;
   bool _syncing = false;
 
@@ -52,13 +64,19 @@ class _MinePageState extends State<MinePage> {
   void initState() {
     super.initState();
     widget.activeTab.addListener(_onActiveChanged);
+    widget.preload?.addListener(_onPreload);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 未显示的页面不在后台读；切到“我的”时再读。
-    if (!_loaded && _active) _load();
+    // 未显示的页面等底栏放行预读再读本机状态；切到“我的”时还没放行的，
+    // 当场读。
+    if (!_loaded && _active) {
+      _load();
+    } else if (!_loaded && (widget.preload?.value ?? false)) {
+      _load(quota: false);
+    }
   }
 
   @override
@@ -68,11 +86,16 @@ class _MinePageState extends State<MinePage> {
       oldWidget.activeTab.removeListener(_onActiveChanged);
       widget.activeTab.addListener(_onActiveChanged);
     }
+    if (oldWidget.preload != widget.preload) {
+      oldWidget.preload?.removeListener(_onPreload);
+      widget.preload?.addListener(_onPreload);
+    }
   }
 
   @override
   void dispose() {
     widget.activeTab.removeListener(_onActiveChanged);
+    widget.preload?.removeListener(_onPreload);
     super.dispose();
   }
 
@@ -81,12 +104,20 @@ class _MinePageState extends State<MinePage> {
     if (_active) _load();
   }
 
-  Future<void> _load() async {
+  /// 预读只读本机状态：还没显示的页面不走网络。
+  void _onPreload() {
+    if (!mounted || _loaded || _active) return;
+    if (widget.preload?.value ?? false) _load(quota: false);
+  }
+
+  /// 读登录与同步状态；[quota] 为假时跳过要走网络的额度，切到这一栏会再读。
+  Future<void> _load({bool quota = true}) async {
     final services = AppScope.of(context).accountServices;
+    final sequence = ++_loadSequence;
     try {
       final account = await services.account.snapshot();
       final sync = await services.sync.status();
-      if (!mounted) return;
+      if (!mounted || (!quota && sequence != _loadSequence)) return;
       setState(() {
         _account = account;
         _sync = sync;
@@ -94,20 +125,20 @@ class _MinePageState extends State<MinePage> {
         if (!account.signedIn) _quota = null;
         _quotaLoading = account.signedIn;
       });
-      if (!account.signedIn) return;
-      ServerQuota? quota;
+      if (!account.signedIn || !quota) return;
+      ServerQuota? remaining;
       try {
-        quota = await services.account.quota();
+        remaining = await services.account.quota();
       } catch (_) {
         // 额度只用于显示；读不到时写“暂时无法读取”，不打断其余内容。
       }
       if (!mounted) return;
       setState(() {
-        _quota = quota;
+        _quota = remaining;
         _quotaLoading = false;
       });
     } catch (error, stack) {
-      if (!mounted) return;
+      if (!mounted || (!quota && sequence != _loadSequence)) return;
       setState(() {
         _loaded = true;
         _notice = describeFailure(

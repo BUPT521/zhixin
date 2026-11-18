@@ -58,11 +58,16 @@ class RecordsPage extends StatefulWidget {
     required this.onOpenDiscussion,
     this.onOpenLearningRedo,
     this.onStartQuestion,
+    this.preload,
   });
 
   /// 底栏当前栏的下标；页面自己监听，父级切栏时不再重建这一栏。
   final ValueListenable<int> activeTab;
   final int tabIndex;
+
+  /// 底栏放行预读时为真：首页读完之后在后台先订阅第一页，第一次切过来
+  /// 直接是内容，不再在切栏动画里看一段骨架。
+  final ValueListenable<bool>? preload;
 
   /// 从别的栏目跳到记录时带的意图：切到哪个页签，第几次请求。
   final ValueListenable<RecordsRequest> request;
@@ -111,6 +116,9 @@ class _RecordsPageState extends State<RecordsPage> {
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
+  /// 当前栏，或者底栏已经放行预读：两种情况都可以开始订阅。
+  bool get _shouldRead => _active || (widget.preload?.value ?? false);
+
   /// 屏幕上正在显示的记录：第一页在前，继续读取的页去重之后接在后面。
   List<ConversationRecord> get _records {
     final first = _view?.records ?? const <ConversationRecord>[];
@@ -140,6 +148,7 @@ class _RecordsPageState extends State<RecordsPage> {
     super.initState();
     _seenRequest = widget.request.value.sequence;
     widget.activeTab.addListener(_onActiveChanged);
+    widget.preload?.addListener(_onPreload);
     widget.request.addListener(_onRequestChanged);
   }
 
@@ -148,8 +157,9 @@ class _RecordsPageState extends State<RecordsPage> {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
-    // 未显示的页面不提前订阅，也不在后台读；切到记录时再开始。
-    if (_stream == null && _active) _stream = _createStream();
+    // 未显示的页面等底栏放行预读再订阅，不和首页的首读抢；切到记录时
+    // 还没放行的，当场开始。
+    if (_stream == null && _shouldRead) _stream = _createStream();
   }
 
   @override
@@ -158,6 +168,10 @@ class _RecordsPageState extends State<RecordsPage> {
     if (oldWidget.activeTab != widget.activeTab) {
       oldWidget.activeTab.removeListener(_onActiveChanged);
       widget.activeTab.addListener(_onActiveChanged);
+    }
+    if (oldWidget.preload != widget.preload) {
+      oldWidget.preload?.removeListener(_onPreload);
+      widget.preload?.addListener(_onPreload);
     }
     if (oldWidget.request != widget.request) {
       oldWidget.request.removeListener(_onRequestChanged);
@@ -168,6 +182,7 @@ class _RecordsPageState extends State<RecordsPage> {
   @override
   void dispose() {
     widget.activeTab.removeListener(_onActiveChanged);
+    widget.preload?.removeListener(_onPreload);
     widget.request.removeListener(_onRequestChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     _searchHint.dispose();
@@ -221,6 +236,12 @@ class _RecordsPageState extends State<RecordsPage> {
     if (!mounted || !_active) return;
     if (_stream == null) setState(() => _stream = _createStream());
     if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
+  }
+
+  /// 底栏放行预读：还没订阅的话现在在后台订阅第一页，结果先留在常驻页里。
+  void _onPreload() {
+    if (!mounted || !_shouldRead || _stream != null) return;
+    setState(() => _stream = _createStream());
   }
 
   /// 从首页跳到“材料”或“学习记录”：只切页签，常驻内容不重读。

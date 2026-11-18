@@ -27,4 +27,38 @@ void main() {
     expect(PageLoading.diameter, greaterThanOrEqualTo(32));
     expect(iconTheme.data.color, zhixinForuiTheme.colors.primary);
   });
+
+  testWidgets('骨架卡片里按高度摆出标题、正文与标签的灰条', (tester) async {
+    Future<int> barsIn(double rowHeight) async {
+      await tester.pumpWidget(
+        forui.FTheme(
+          data: zhixinForuiTheme,
+          child: MaterialApp(
+            home: Scaffold(body: ListSkeleton(rows: 1, rowHeight: rowHeight)),
+          ),
+        ),
+      );
+      final bars = find.descendant(
+        of: find.descendant(
+          of: find.byType(ListSkeleton),
+          matching: find.byType(ExcludeSemantics),
+        ),
+        matching: find.byType(DecoratedBox),
+      );
+      for (final bar in bars.evaluate()) {
+        // 灰条都在卡片里面，不会把固定高度的卡片撑开。
+        final box = bar.renderObject! as RenderBox;
+        expect(box.size.height, lessThanOrEqualTo(rowHeight));
+      }
+      expect(tester.takeException(), isNull);
+      return bars.evaluate().length;
+    }
+
+    // 矮卡片至少有标题与一行正文；越高摆得越多，最多四条。
+    expect(await barsIn(64), 2);
+    expect(await barsIn(88), 3);
+    expect(await barsIn(168), 4);
+    // 读屏仍只读到一句“正在读取”，灰条不进语义树。
+    expect(find.bySemanticsLabel('正在读取'), findsOneWidget);
+  });
 }

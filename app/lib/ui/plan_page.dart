@@ -51,6 +51,7 @@ class PlanPage extends StatefulWidget {
     this.request,
     this.onOpenMaterials,
     this.watchWeek,
+    this.preload,
   }) : initialItemId = null;
 
   /// 事项详情入口：推入一条事项并展开它的操作面板，不参与底栏切栏。
@@ -59,7 +60,8 @@ class PlanPage extends StatefulWidget {
       activeTab = null,
       tabIndex = 2,
       request = null,
-      onOpenMaterials = null;
+      onOpenMaterials = null,
+      preload = null;
 
   /// 详情页要展开的事项；为空时按底栏页处理。
   final String? initialItemId;
@@ -67,6 +69,10 @@ class PlanPage extends StatefulWidget {
   /// 底栏当前栏的下标；为空时按常驻当前页处理，二级入口直接打开安排。
   final ValueListenable<int>? activeTab;
   final int tabIndex;
+
+  /// 底栏放行预读时为真：首页读完之后在后台先订阅本周，第一次切过来直接
+  /// 是内容，不再在切栏动画里看一段骨架。
+  final ValueListenable<bool>? preload;
 
   /// 从别的栏目跳到安排时带的请求；每次变化都把页签复位到日程。
   final ValueListenable<int>? request;
@@ -140,6 +146,9 @@ class _PlanPageState extends State<PlanPage> {
   bool get _active =>
       widget.activeTab == null || widget.activeTab!.value == widget.tabIndex;
 
+  /// 当前栏，或者底栏已经放行预读：两种情况都可以开始订阅。
+  bool get _shouldRead => _active || (widget.preload?.value ?? false);
+
   /// 本地写入失败时给一句可行动的说明；异常本身进本机诊断记录。
   void _reportFailure(
     Object error,
@@ -166,6 +175,7 @@ class _PlanPageState extends State<PlanPage> {
   void initState() {
     super.initState();
     widget.activeTab?.addListener(_onActiveChanged);
+    widget.preload?.addListener(_onActiveChanged);
     widget.request?.addListener(_onRequestChanged);
   }
 
@@ -174,8 +184,9 @@ class _PlanPageState extends State<PlanPage> {
     super.didChangeDependencies();
     final policy = AppScope.of(context).timePolicy;
     _weekAnchor ??= policy.naturalWeekStart(policy.now);
-    // 未显示的页面不提前订阅，也不在后台读；切到安排时再建立订阅。
-    if (_weekStream == null && _active) {
+    // 未显示的页面等底栏放行预读再订阅，不和首页的首读抢；切到安排时
+    // 还没放行的，当场建立订阅。
+    if (_weekStream == null && _shouldRead) {
       _weekStream = _createStream(_weekAnchor!);
     }
   }
@@ -191,11 +202,16 @@ class _PlanPageState extends State<PlanPage> {
       oldWidget.activeTab?.removeListener(_onActiveChanged);
       widget.activeTab?.addListener(_onActiveChanged);
     }
+    if (oldWidget.preload != widget.preload) {
+      oldWidget.preload?.removeListener(_onActiveChanged);
+      widget.preload?.addListener(_onActiveChanged);
+    }
   }
 
   @override
   void dispose() {
     widget.activeTab?.removeListener(_onActiveChanged);
+    widget.preload?.removeListener(_onActiveChanged);
     widget.request?.removeListener(_onRequestChanged);
     _doneSubscription?.cancel();
     _doneSubscription = null;
@@ -262,9 +278,10 @@ class _PlanPageState extends State<PlanPage> {
     });
   }
 
-  /// 切到这一栏时建立订阅；已经建立的订阅保留，切回来看到的仍是最新数据。
+  /// 切到这一栏或底栏放行预读时建立订阅；已经建立的订阅保留，切回来
+  /// 看到的仍是最新数据。
   void _onActiveChanged() {
-    if (!mounted || !_active) return;
+    if (!mounted || !_shouldRead) return;
     if (_weekStream != null) return;
     final weekStart = _weekAnchor;
     if (weekStart == null) return;

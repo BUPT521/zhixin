@@ -141,7 +141,17 @@ void main() {
   tearDown(() async {
     await scope?.testing.db.close();
     scope = null;
-    await directory.delete(recursive: true);
+    // Windows 上库关闭之后文件句柄会晚一点释放，预读在收尾前后还可能有一次
+    // 读取刚结束，删除临时目录因此重试几次。
+    for (var attempt = 0; ; attempt++) {
+      try {
+        await directory.delete(recursive: true);
+        return;
+      } on PathAccessException {
+        if (attempt >= 5) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
   });
 
   /// FToast 的自动收起靠定时器；在测试里推进到它收起，避免用例结束时留下未触发的计时器。
@@ -1235,6 +1245,29 @@ void main() {
     tester.platformDispatcher.textScaleFactorTestValue = 1.4;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('首页读完之后其余三栏已在后台预读，第一次切过去没有骨架', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(
+      () => scope!.chat.learning.capture(stem: '预读之后直接看到的题目'),
+    );
+    await settle(tester);
+
+    // 切栏的第一帧就是内容：记录、安排与“我的”都不再在滑入时摆一段骨架。
+    await tester.tap(find.text('记录').last);
+    await tester.pump();
+    expect(find.byType(ListSkeleton), findsNothing);
+    expect(find.widgetWithText(forui.FTile, '预读之后直接看到的题目'), findsOneWidget);
+    await settle(tester);
+
+    for (final tab in ['安排', '我的']) {
+      await tester.tap(find.text(tab).last);
+      await tester.pump();
+      expect(find.byType(ListSkeleton), findsNothing, reason: tab);
+      await settle(tester);
+    }
     expect(tester.takeException(), isNull);
   });
 
