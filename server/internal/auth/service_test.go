@@ -124,9 +124,17 @@ func TestDeleteAccountRunsCleanupFirst(t *testing.T) {
 	tok, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
 
+	// 密码不对直接回凭据错误，账号与清理都不动。
+	if err := s.DeleteAccount(ctx, p, "wrong-password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("错密码应返回凭据错误，得到 %v", err)
+	}
+	if _, err := s.Authenticate(ctx, tok.AccessToken); err != nil {
+		t.Fatal("密码错误的删号请求不应影响账号")
+	}
+
 	boom := errors.New("backup store down")
 	s.SetAccountDataDeleter(func(context.Context, string) error { return boom })
-	if err := s.DeleteAccount(ctx, p); !errors.Is(err, boom) {
+	if err := s.DeleteAccount(ctx, p, "password1"); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
 	}
 	if _, err := s.Authenticate(ctx, tok.AccessToken); err != nil {
@@ -136,7 +144,7 @@ func TestDeleteAccountRunsCleanupFirst(t *testing.T) {
 	s.deleteAccountData = nil
 	var cleaned string
 	s.SetAccountDataDeleter(func(_ context.Context, id string) error { cleaned = id; return nil })
-	if err := s.DeleteAccount(ctx, p); err != nil {
+	if err := s.DeleteAccount(ctx, p, "password1"); err != nil {
 		t.Fatal(err)
 	}
 	if cleaned != p.UserID {

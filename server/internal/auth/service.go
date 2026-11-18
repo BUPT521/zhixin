@@ -627,7 +627,21 @@ func codeBody(purpose, code string, ttl time.Duration) string {
 // caller-supplied data first, then the user row. Sessions, sync log, backups and
 // usage go with it through the schema's ON DELETE CASCADE. Any cleanup failure
 // stops before the user row is removed, so the request can be retried.
-func (s *Service) DeleteAccount(ctx context.Context, p Principal) error {
+//
+// 删号不可撤销，所以先核对一次密码：拿着别人设备上的访问令牌不能直接把账号
+// 删掉。密码校验与登录共用同一个内存预算与哈希校验规则。
+func (s *Service) DeleteAccount(ctx context.Context, p Principal, password string) error {
+	u, err := s.store.UserByID(ctx, p.UserID)
+	if errors.Is(err, ErrNotFound) {
+		return ErrInvalidCredentials
+	}
+	if err != nil {
+		return err
+	}
+	ok, err := s.verifyPassword(ctx, u.PasswordHash, password)
+	if err != nil || !ok {
+		return ErrInvalidCredentials
+	}
 	if s.deleteAccountData != nil {
 		if err := s.deleteAccountData(ctx, p.UserID); err != nil {
 			return err
