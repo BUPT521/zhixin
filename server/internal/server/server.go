@@ -23,6 +23,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
+	"github.com/BUPT521/zhixin/server/internal/routepolicy"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -96,24 +97,27 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
+	//
+	// 每个进程内限流器都带桶数量上限（cfg.RateLimitKeys）：按来源地址分桶的表
+	// 本来会随不同地址无限增长，到上限之后先清理空闲桶、再淘汰最久未用的键。
 	var byAddr, refreshLimits, uploadLimits, codeLimits, feedbackLimits, telemetryLimits *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
-		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute)
+		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	if cfg.RefreshRatePerSecond > 0 {
-		refreshLimits = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute)
+		refreshLimits = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	if cfg.UploadRatePerSecond > 0 {
-		uploadLimits = ratelimit.New(rate.Limit(cfg.UploadRatePerSecond), cfg.UploadBurst, 15*time.Minute)
+		uploadLimits = ratelimit.New(rate.Limit(cfg.UploadRatePerSecond), cfg.UploadBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	if cfg.CodeRatePerSecond > 0 {
-		codeLimits = ratelimit.New(rate.Limit(cfg.CodeRatePerSecond), cfg.CodeBurst, 15*time.Minute)
+		codeLimits = ratelimit.New(rate.Limit(cfg.CodeRatePerSecond), cfg.CodeBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	if cfg.FeedbackRatePerSecond > 0 {
-		feedbackLimits = ratelimit.New(rate.Limit(cfg.FeedbackRatePerSecond), cfg.FeedbackBurst, 15*time.Minute)
+		feedbackLimits = ratelimit.New(rate.Limit(cfg.FeedbackRatePerSecond), cfg.FeedbackBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	if cfg.TelemetryRatePerSecond > 0 {
-		telemetryLimits = ratelimit.New(rate.Limit(cfg.TelemetryRatePerSecond), cfg.TelemetryBurst, 15*time.Minute)
+		telemetryLimits = ratelimit.New(rate.Limit(cfg.TelemetryRatePerSecond), cfg.TelemetryBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	mailer, err := auth.NewMailer(auth.MailerConfig{
 		Addr:     cfg.SMTPAddr,
@@ -168,19 +172,43 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
+	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。因此按执行顺序
+	// 反过来写：运行起来依次是 记录路由 → 校验身份 → 按账号限流 → 标记可缓存
+	// → 处理器。记录路由在最外层，访问日志能拿到注册模式；鉴权在限流之前，未
+	// 认证的请求不会消耗账号的上传额度；限流在处理器之前，请求体落盘之前就被
+	// 拦住；可缓存标记在最内层，只有真正要进处理器的公开响应才会被标记。
 	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
-		BaseRouter:       mux,
-		Middlewares:      []api.MiddlewareFunc{httpx.RecordPattern},
+		BaseRouter: mux,
+		Middlewares: []api.MiddlewareFunc{
+			cachePublic,
+			uploadLimit(uploadLimits),
+			auth.Middleware(authSvc, log),
+			httpx.RecordPattern,
+		},
 		ErrorHandlerFunc: httpx.BindingErrorHandler,
 	})
 
-	// 顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/429 也
-	// 因此有编号并进日志），然后恢复 panic，再鉴权。鉴权放在访问日志之内，
-	// 被拒绝的请求仍然会留下一行记录。上传限流在鉴权之后，按账号计。
-	secured := withUploadLimit(mux, uploadLimits)
-	return httpx.Chain(auth.Middleware(authSvc, log)(secured),
+	// 外层顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/404/429
+	// 也因此有编号并进日志），然后统一响应头，再恢复 panic，最后是请求体读空闲
+	// 期限。统一响应头在恢复 panic 之外，panic 转成的 500 也带 no-store 与
+	// nosniff；鉴权与限流已经移进生成的中间件链，这里不再包一层。
+	return httpx.Chain(mux,
 		httpx.RequestID,
 		httpx.AccessLog(log),
+		httpx.SecurityHeaders,
 		httpx.Recover(log),
+		httpx.BodyIdleTimeout(cfg.BodyIdleTimeout),
 	)
+}
+
+// cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。
+// 其余响应保持默认，账号数据不会被中间层缓存。放在生成链的最内层：先鉴权、
+// 再限流，只有真正要进处理器的响应才会被标记。
+func cachePublic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if seconds, ok := routepolicy.CacheSeconds(r.Pattern); ok {
+			httpx.Cacheable(w, seconds)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
