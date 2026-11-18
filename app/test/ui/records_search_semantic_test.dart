@@ -144,6 +144,9 @@ void main() {
 
   Future<void> openSearch(WidgetTester tester) async {
     await tester.tap(find.text('记录').last);
+    // 切栏是整幅滑入，动画在换栏之后的下一帧才开始；先起一帧再把时间推过
+    // 时长，记录栏才回到原位置，可以点它的搜索入口。
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('records-search-entry')));
     await pumpUntil(tester, find.text('搜索记录'));
@@ -226,9 +229,9 @@ void main() {
     await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
-    await pumpUntil(tester, find.text('按意思的部分没有完成，下面是原文与关键词结果'));
+    await pumpUntil(tester, find.text('检索索引没有完成，下面是原文与关键词结果'));
     expect(find.text('按意思'), findsNothing);
-    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
+    expect(find.textContaining('矩阵的秩怎么求'), findsWidgets);
     expect(tester.takeException(), isNull);
     await drain(tester);
   }, skip: _skipWithoutZvec != null);
@@ -257,9 +260,9 @@ void main() {
     await pumpUntilInSearchPage(tester, find.textContaining('矩阵的秩怎么求'));
 
     await tester.tap(find.text('按意思找'));
-    await pumpUntil(tester, find.text('语义索引还没有内容，可以在设置里更新'));
+    await pumpUntil(tester, find.text('检索索引还没有内容，可以在设置里更新'));
     expect(find.text('没有找到意思相近的记录'), findsNothing);
-    expect(find.textContaining('矩阵的秩怎么求'), findsOneWidget);
+    expect(find.textContaining('矩阵的秩怎么求'), findsWidgets);
     expect(tester.takeException(), isNull);
     await drain(tester);
   }, skip: _skipWithoutZvec != null);
@@ -294,11 +297,13 @@ void main() {
 
     await openSearch(tester);
     await search(tester, '行列式');
-    await pumpUntil(tester, find.textContaining('没有找到「行列式」'));
-
-    await tester.tap(find.text('按意思找'));
-    await pumpUntil(tester, find.text('按意思'));
-    await pumpUntil(tester, find.textContaining('det(A) 的几何意义是面积缩放'));
+    // 索引接入普通查找之后，关键词没有字面命中的记录也会由语义一路返回，
+    // 页面不显示空态；“按意思”标签照常标出这条候选来自语义。
+    await pumpUntilInSearchPage(
+      tester,
+      find.textContaining('det(A) 的几何意义是面积缩放'),
+    );
+    expect(find.text('按意思'), findsWidgets);
     expect(find.textContaining('没有找到「行列式」'), findsNothing);
     expect(tester.takeException(), isNull);
     await drain(tester);
