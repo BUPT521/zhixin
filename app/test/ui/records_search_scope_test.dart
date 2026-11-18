@@ -11,6 +11,7 @@ import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 /// 记录页的查找范围选择器：切换全部、目标与材料之后，结果随范围收窄并在
@@ -38,9 +39,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    await directory.delete(recursive: true);
   });
 
   /// 换到记录栏并等滑入结束。切栏是整幅滑入，动画在换栏之后的下一帧才开始，

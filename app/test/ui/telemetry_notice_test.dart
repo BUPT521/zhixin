@@ -6,6 +6,8 @@ import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/data/cloud/telemetry_store.dart';
 
+import '../support/app_scope_teardown.dart';
+
 /// 首次使用的匿名统计说明（ADR-0019）：启动之后只弹一次，说明采集内容与用途，
 /// 并提供“关闭上报”。选择结果写进本机状态在服务层用例里覆盖，这里只核对说明
 /// 在哪一次启动出现、看了之后不再出现。
@@ -29,13 +31,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    try {
-      await directory.delete(recursive: true);
-    } catch (_) {
-      // 后台任务可能还握着目录里的文件；临时目录由系统清理。
-    }
   });
 
   Future<void> openApp(WidgetTester tester) async {
