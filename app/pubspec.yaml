@@ -60,6 +60,7 @@ dependencies:
 
   # 打开回答里的链接。
   url_launcher: ^6.3.3
+  cryptography: ^2.9.0
 
 dev_dependencies:
   flutter_test:
