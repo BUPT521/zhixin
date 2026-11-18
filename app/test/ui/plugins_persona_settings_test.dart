@@ -16,6 +16,8 @@ import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
+import '../support/app_scope_teardown.dart';
+
 /// 设置页、“我的”页的入口，以及插件与人格的列表、启停与切换写进 app_meta。
 ///
 /// 直接装配页面与 [AppScope]，不从首页推进导航：这两页的验收点是列表、文案与
@@ -40,9 +42,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    await directory.delete(recursive: true);
   });
 
   Future<void> waitFor(

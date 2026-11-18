@@ -11,6 +11,7 @@ import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 import '../support/docx_fixture.dart';
@@ -39,9 +40,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    await directory.delete(recursive: true);
   });
 
   /// 轮询到目标控件出现；读取与回填都在后台完成，不能依赖 pumpAndSettle 收尾。

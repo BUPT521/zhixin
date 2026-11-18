@@ -14,6 +14,7 @@ import 'package:zhixin/ui/memory_page.dart';
 import 'package:zhixin/ui/memory_proposal_page.dart';
 import 'package:zhixin/ui/study_plan_page.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 /// 订阅跟随写入更新（ADR-0014）：首页摘要、记忆、记忆建议与系统学习四页。
@@ -41,9 +42,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    await directory.delete(recursive: true);
   });
 
   /// 推进到所有读取、回填与过渡动画结束。

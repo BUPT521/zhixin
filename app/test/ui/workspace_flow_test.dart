@@ -48,6 +48,7 @@ import 'package:zhixin/ui/zhixin_segmented.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
+import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
 
 Finder _editableFields() => find.byWidgetPredicate(
@@ -139,19 +140,8 @@ void main() {
   });
 
   tearDown(() async {
-    await scope?.testing.db.close();
+    await closeAppScope(scope, directory);
     scope = null;
-    // Windows 上库关闭之后文件句柄会晚一点释放，预读在收尾前后还可能有一次
-    // 读取刚结束，删除临时目录因此重试几次。
-    for (var attempt = 0; ; attempt++) {
-      try {
-        await directory.delete(recursive: true);
-        return;
-      } on PathAccessException {
-        if (attempt >= 5) rethrow;
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
-    }
   });
 
   /// FToast 的自动收起靠定时器；在测试里推进到它收起，避免用例结束时留下未触发的计时器。
