@@ -11,6 +11,8 @@ import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
+import '../support/telemetry.dart';
+
 /// 记录页的查找范围选择器：切换全部、目标与材料之后，结果随范围收窄并在
 /// 页面上写明当前范围，不需要再按一次搜索。
 void main() {
@@ -22,6 +24,7 @@ void main() {
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-search-scope-');
+    await disableTelemetryForTests(directory.path);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(

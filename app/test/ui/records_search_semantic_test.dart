@@ -10,6 +10,8 @@ import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
+import '../support/telemetry.dart';
+
 /// 查找页的“按意思找”：本地结果先出，语义完成后按融合顺序刷新；失败、空索引
 /// 与只有语义命中的情况各自给出应有的状态，而不是混成一个空态。
 const _spec = EmbeddingModelSpec(id: 'ui-test-embed', dim: 4, provider: 'test');
@@ -44,6 +46,7 @@ void main() {
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-search-meaning-');
+    await disableTelemetryForTests(directory.path);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(

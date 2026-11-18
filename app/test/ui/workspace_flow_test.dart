@@ -48,6 +48,8 @@ import 'package:zhixin/ui/zhixin_segmented.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
+import '../support/telemetry.dart';
+
 Finder _editableFields() => find.byWidgetPredicate(
   (widget) => widget is EditableText && !widget.readOnly,
 );
@@ -113,6 +115,7 @@ void main() {
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('zhixin-ui-');
+    await disableTelemetryForTests(directory.path);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
