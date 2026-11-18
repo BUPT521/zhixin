@@ -210,8 +210,33 @@ void main() {
     server.commits[userId] = [
       {'request_id': 'r1', 'seq': 1},
     ];
-    await account.deleteAccount();
+    await account.deleteAccount(password: 'password123');
     expect((await account.snapshot()).signedIn, isFalse);
     expect(server.commits.containsKey(userId), isFalse);
+  });
+
+  test('删除账号时密码错误只提示密码错误，登录状态与账号保留', () async {
+    final snapshot = await account.register(
+      email: 'j@example.com',
+      password: 'password123',
+    );
+    final userId = snapshot.session!.userId;
+
+    await expectLater(
+      account.deleteAccount(password: 'wrong-password'),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'invalid_credentials')
+            .having((error) => error.userMessage, 'message', '邮箱或密码不正确'),
+      ),
+    );
+    // 密码错误不刷新令牌再试，避免叠一次失败预算。
+    expect(server.deleteAttempts, 1);
+    expect((await account.snapshot()).signedIn, isTrue);
+    expect((await account.snapshot()).session!.userId, userId);
+    expect(server.userIdOf('j@example.com'), userId);
+
+    await account.deleteAccount(password: 'password123');
+    expect((await account.snapshot()).signedIn, isFalse);
   });
 }

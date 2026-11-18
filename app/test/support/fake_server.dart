@@ -49,6 +49,9 @@ class FakeServer {
   /// 打开之后下一次带令牌的请求返回 401，客户端应当先刷新再重试。
   bool expireAccess = false;
 
+  /// 删除账号时密码错误的次数；用例据此确认密码错误没有触发令牌刷新重试。
+  int deleteAttempts = 0;
+
   final Map<String, List<Map<String, Object?>>> commits = {};
   final Map<String, List<FakeBackup>> backups = {};
   final Map<String, Map<String, Uint8List>> blobs = {};
@@ -157,12 +160,16 @@ class FakeServer {
           .where((entry) => entry.value == userId)
           .map((entry) => entry.key);
       final email = matches.isEmpty ? null : matches.first;
-      _userIds.removeWhere((_, id) => id == userId);
-      if (email != null) {
-        _passwords.remove(email);
-        _verified.remove(email);
-        _codes.removeWhere((key, _) => key.startsWith('$email|'));
+      final password = body['password'] as String? ?? '';
+      if (password.isEmpty) return _problem(400, 'invalid_request');
+      if (email == null || _passwords[email] != password) {
+        deleteAttempts++;
+        return _problem(401, 'invalid_credentials');
       }
+      _userIds.removeWhere((_, id) => id == userId);
+      _passwords.remove(email);
+      _verified.remove(email);
+      _codes.removeWhere((key, _) => key.startsWith('$email|'));
       commits.remove(userId);
       backups.remove(userId);
       blobs.remove(userId);

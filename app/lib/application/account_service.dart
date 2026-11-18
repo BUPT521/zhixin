@@ -160,10 +160,20 @@ class AccountService {
   }
 
   /// 删除账号，连同云端同步序列、附件与备份；本机学习记录保留。
-  Future<void> deleteAccount() async {
-    final session = await store.read();
-    if (session == null) throw const AccountSignedOut();
-    await call<void>((client, token) => client.deleteMe(token));
+  ///
+  /// 服务端要求重新提交当前密码：密码错误时抛出 `invalid_credentials`，本机
+  /// 会话与页面状态都不改动，也不刷新令牌重试，避免多消耗一次失败预算。
+  Future<void> deleteAccount({required String password}) async {
+    final session = await _requireSession();
+    final client = await _requireClient();
+    final token = (await _fresh(session)).accessToken;
+    try {
+      await client.deleteMe(token, password: password);
+    } on ServerProblem catch (error) {
+      if (!error.isUnauthorized || error.code == 'invalid_credentials') rethrow;
+      final retry = await _refreshStale(token);
+      await client.deleteMe(retry.accessToken, password: password);
+    }
     await store.clear();
     await preferences.clearSyncState();
   }

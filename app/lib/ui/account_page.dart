@@ -7,8 +7,9 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/sync_service.dart';
-import '../data/cloud/server_client.dart' show ServerQuota;
+import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
+import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -437,24 +438,34 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirmed = await confirmZhixin(
-      context: context,
-      title: '删除账号',
-      content: const Text(
-        '会删除这个账号在服务端保存的备份、同步序列、附件与登录会话，且无法恢复；'
-        '本机学习记录不受影响。删除之后可以用同一个邮箱重新注册。',
-      ),
-      confirmLabel: '删除账号',
-      destructive: true,
-    );
-    if (!confirmed || !mounted || _busy) return;
+    final password = await askDeleteAccountPassword(context);
+    if (password == null || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
       final scope = AppScope.of(context);
-      await scope.accountServices.account.deleteAccount();
+      await scope.accountServices.account.deleteAccount(password: password);
       await scope.accountServices.sync.clearState();
       _report('账号与云端数据已删除；本机记录仍在');
       await _load();
+    } on ServerProblem catch (error, stack) {
+      if (!mounted) return;
+      if (error.code == 'invalid_credentials') {
+        // 只是重新认证失败：会话与页面保持原样，可以再输入一次密码。
+        _report('密码不正确；账号与云端数据没有改动，登录状态保留', failed: true);
+      } else {
+        _report(
+          describeFailure(
+            context,
+            error,
+            stack,
+            action: '删除账号',
+            kind: 'account_delete',
+            kept: '账号与云端数据没有改动',
+            next: '可以检查网络后重试',
+          ),
+          failed: true,
+        );
+      }
     } catch (error, stack) {
       if (!mounted) return;
       _report(

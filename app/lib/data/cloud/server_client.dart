@@ -446,9 +446,16 @@ class ServerClient {
     return ServerAccount.fromJson(json);
   }
 
-  /// 删除账号，连同同步序列、附件、备份与用量。
-  Future<void> deleteMe(String accessToken) =>
-      _send('DELETE', '/v1/me', accessToken: accessToken);
+  /// 删除账号，连同同步序列、附件、备份与用量；删除前必须重新提交当前密码。
+  ///
+  /// 密码错误返回 401 `invalid_credentials`，与其他失败共用账号的失败预算。
+  Future<void> deleteMe(String accessToken, {required String password}) =>
+      _send(
+        'DELETE',
+        '/v1/me',
+        accessToken: accessToken,
+        body: {'password': password},
+      );
 
   /// 给当前账号的邮箱发验证码；已经确认时服务端返回 204，不重复发信。
   Future<void> requestEmailVerification(String accessToken) =>
