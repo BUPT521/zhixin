@@ -1,12 +1,14 @@
 package syncsvc
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
@@ -18,11 +20,37 @@ type Handler struct {
 	svc      *Service
 	log      *slog.Logger
 	maxBytes int64
+	// gate 在写数据之前问一次“这个账号是不是正在清除云端数据”；它由装配
+	// 注入，没有注入时不拦请求。
+	gate func(ctx context.Context, userID string) error
 }
 
 // NewHandler wires the handler.
 func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
 	return &Handler{svc: svc, log: log, maxBytes: maxBytes}
+}
+
+// SetPurgeGate 注入清除期间的写拦截。gate 返回 cloudpurge.ErrPurging 时，
+// Push 与 Reset 回 409 并且不写数据；返回其它错误按 500 处理。装配时传
+// cloudpurge.Service.Gate。
+func (h *Handler) SetPurgeGate(gate func(ctx context.Context, userID string) error) {
+	h.gate = gate
+}
+
+// allowWrite 在清除进行时写好 409 并返回 false，调用方据此直接返回。
+func (h *Handler) allowWrite(w http.ResponseWriter, r *http.Request, userID string) bool {
+	if h.gate == nil {
+		return true
+	}
+	if err := h.gate(r.Context(), userID); err != nil {
+		if errors.Is(err, cloudpurge.ErrPurging) {
+			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "cloud purge in progress")
+			return false
+		}
+		httpx.WriteInternal(w, r, h.log, err)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +83,9 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 
 func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r.Context())
+	if !h.allowWrite(w, r, p.UserID) {
+		return
+	}
 	var in api.PostV1SyncCommitsJSONBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -81,6 +112,9 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 // 状态码判断，不需要先看 head 再决定调不调用。
 func (h *Handler) Reset(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r.Context())
+	if !h.allowWrite(w, r, p.UserID) {
+		return
+	}
 	if err := h.svc.Reset(r.Context(), p.UserID); err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return

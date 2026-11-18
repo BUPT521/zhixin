@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
@@ -171,6 +173,45 @@ func TestHandlerDeleteScopesToAccountAndRejectsBadIDs(t *testing.T) {
 	// 自己的备份也还在：非法删除没有误伤。
 	if items := listBackups(t, c, mine); len(items) != 1 {
 		t.Fatalf("own backup changed by invalid delete: %+v", items)
+	}
+}
+
+// TestHandlerWriteBlockedDuringPurge 守住清除期间的写拦截：gate 返回
+// cloudpurge.ErrPurging 时上传与两个删除入口回 409 conflict，列表仍然可读，
+// 且确实没有写入；gate 自身出错时按 500 处理，不把故障当成清除中。
+func TestHandlerWriteBlockedDuringPurge(t *testing.T) {
+	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewHandler(NewService(NewMemoryStore(), testMaxBytes, testKept, testSchemaVersion), log)
+	handler.SetPurgeGate(func(context.Context, string) error { return cloudpurge.ErrPurging })
+	c := testutil.NewClient(t, testutil.NewServer(
+		testAPI{h: handler},
+		httpx.RequestID,
+		auth.Middleware(authSvc, log),
+	))
+	token := signIn(t, authSvc, "a@b.cn")
+
+	p := testutil.ReadProblem(t, upload(t, c, token, []byte("zip"), testSchemaVersion))
+	if p.Status != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
+		t.Fatalf("upload during purge: %+v", p)
+	}
+	p = testutil.ReadProblem(t, c.Do(http.MethodDelete, "/v1/backups", token, nil, nil))
+	if p.Status != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
+		t.Fatalf("clear during purge: %+v", p)
+	}
+	// 读取不受影响，而且被拦下的上传没有写进去。
+	if code := c.JSON(http.MethodGet, "/v1/backups", token, nil, nil); code != http.StatusOK {
+		t.Fatalf("list during purge: %d", code)
+	}
+	if items := listBackups(t, c, token); len(items) != 0 {
+		t.Fatalf("blocked upload was stored: %+v", items)
+	}
+
+	// gate 自身失败是 500，不是“清除中”的 409。
+	handler.SetPurgeGate(func(context.Context, string) error { return errors.New("标记存储不可用") })
+	p = testutil.ReadProblem(t, upload(t, c, token, []byte("zip"), testSchemaVersion))
+	if p.Status != http.StatusInternalServerError || p.Code != string(httpx.CodeInternal) {
+		t.Fatalf("gate failure: %+v", p)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/blobs"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -496,6 +497,64 @@ func TestPostgresBlobReserveIsSerialized(t *testing.T) {
 	}
 	if used, err := bs.Used(ctx, "u1"); err != nil || used != 6 {
 		t.Fatalf("used = %d, %v", used, err)
+	}
+}
+
+// TestPostgresPurgeMarker 核对清除标记的存储语义：没有标记、取得后拒绝新请求
+// 覆盖、超过有效期可接管、结束时删除；删账号时标记按外键级联删除。
+func TestPostgresPurgeMarker(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+
+	if _, ok, err := st.PurgeStartedAt(ctx, "u1"); err != nil || ok {
+		t.Fatalf("marker before purge: ok=%v err=%v", ok, err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	claimed, err := st.ClaimPurge(ctx, "u1", now, now.Add(-cloudpurge.StaleAfter))
+	if err != nil || !claimed {
+		t.Fatalf("claim: claimed %v, err %v", claimed, err)
+	}
+	started, ok, err := st.PurgeStartedAt(ctx, "u1")
+	if err != nil || !ok || !started.Equal(now) {
+		t.Fatalf("marker = %v, ok %v, err %v", started, ok, err)
+	}
+	// 标记还新：第二次取得被拒绝。
+	if claimed, err := st.ClaimPurge(ctx, "u1", now.Add(time.Minute), now.Add(time.Minute-cloudpurge.StaleAfter)); err != nil || claimed {
+		t.Fatalf("fresh marker must reject a second claim: claimed %v, err %v", claimed, err)
+	}
+	// 超过有效期：接管并刷新时间。
+	later := now.Add(cloudpurge.StaleAfter + time.Minute)
+	if claimed, err := st.ClaimPurge(ctx, "u1", later, later.Add(-cloudpurge.StaleAfter)); err != nil || !claimed {
+		t.Fatalf("stale marker takeover: claimed %v, err %v", claimed, err)
+	}
+	if started, _, _ := st.PurgeStartedAt(ctx, "u1"); !started.Equal(later) {
+		t.Fatalf("marker after takeover = %v, want %v", started, later)
+	}
+
+	// 结束时删除标记。
+	if err := st.EndPurge(ctx, "u1"); err != nil {
+		t.Fatalf("end purge: %v", err)
+	}
+	if _, ok, err := st.PurgeStartedAt(ctx, "u1"); err != nil || ok {
+		t.Fatalf("marker after end: ok=%v err=%v", ok, err)
+	}
+
+	// 删账号时标记级联删除，不会留下指向不存在账号的行。
+	if _, err := st.ClaimPurge(ctx, "u1", later, later.Add(-cloudpurge.StaleAfter)); err != nil {
+		t.Fatalf("claim before account deletion: %v", err)
+	}
+	if err := st.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM user_purge`).Scan(&rows); err != nil {
+		t.Fatalf("count user_purge: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("user_purge rows should cascade with the account, got %d", rows)
 	}
 }
 
