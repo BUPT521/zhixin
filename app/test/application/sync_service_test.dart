@@ -233,4 +233,43 @@ void main() {
     expect(after.baselineNeedsConfirmation, isFalse);
     expect(after.serverHead, 1);
   });
+
+  test('账号附件总量超限时停止上传，游标不写回', () async {
+    server.storageLimitBytes = 2;
+    final a = await device('a@example.com', register: true);
+    final first = [1, 2, 3];
+    final second = [4, 5, 6];
+    final firstHash = AssetStore.hashBytes(first);
+    final secondHash = AssetStore.hashBytes(second);
+    await a.rig.db.command((txn) async {
+      await a.rig.engine.assets.putBytes(
+        txn,
+        firstHash,
+        Uint8List.fromList(first),
+      );
+      await a.rig.engine.assets.putBytes(
+        txn,
+        secondHash,
+        Uint8List.fromList(second),
+      );
+    }, label: '保存附件');
+    await _insertMemory(a.rig, 'm1', firstHash);
+    await _insertMemory(a.rig, 'm2', secondHash);
+
+    await expectLater(
+      a.sync.syncNow(confirmBaseline: true),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'storage_full')
+            .having(
+              (error) => error.userMessage,
+              'message',
+              contains('云端附件空间已满'),
+            ),
+      ),
+    );
+    // 第一个附件超限之后不再尝试后面的附件，也没有写回同步游标。
+    expect(server.blobUploadAttempts, 1);
+    expect(await a.account.preferences.syncState(), isNull);
+  });
 }

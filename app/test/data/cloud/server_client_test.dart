@@ -346,6 +346,46 @@ void main() {
     expect(await client.blobDownload(tokens.accessToken, sha), bytes);
   });
 
+  test('单个附件超限与账号总量超限分别给出说明', () async {
+    final server = FakeServer()
+      ..maxAttachmentBytes = 3
+      ..storageLimitBytes = 5;
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: server.client,
+    );
+    final tokens = await client.register(
+      email: 'blob-limit@example.com',
+      password: 'password123',
+    );
+
+    final tooLarge = Uint8List.fromList([1, 2, 3, 4]);
+    await expectLater(
+      client.blobUpload(tokens.accessToken, _sha256Of(tooLarge), tooLarge),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'payload_too_large')
+            .having((error) => error.userMessage, 'message', '文件超过服务端允许的大小'),
+      ),
+    );
+
+    final first = Uint8List.fromList([1, 2, 3]);
+    await client.blobUpload(tokens.accessToken, _sha256Of(first), first);
+    final second = Uint8List.fromList([4, 5, 6]);
+    await expectLater(
+      client.blobUpload(tokens.accessToken, _sha256Of(second), second),
+      throwsA(
+        isA<ServerProblem>()
+            .having((error) => error.code, 'code', 'storage_full')
+            .having(
+              (error) => error.userMessage,
+              'message',
+              '云端附件空间已满：已用 3 B，上限 5 B',
+            ),
+      ),
+    );
+  });
+
   test('plumbing: DELETE 全量备份与同步序列返回 204', () async {
     final server = FakeServer();
     final client = ServerClient(

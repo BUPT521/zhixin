@@ -46,6 +46,7 @@ class ServerProblem implements Exception {
           ? '尝试过于频繁，请稍后再试'
           : '尝试过于频繁，请 $retryAfterSeconds 秒后再试',
     'payload_too_large' => '文件超过服务端允许的大小',
+    'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
     'quota_exceeded' => '今日模型额度已经用完，可以改用自己的 API Key',
@@ -56,6 +57,32 @@ class ServerProblem implements Exception {
     'not_implemented' => '服务端还没有实现这个操作',
     _ => '服务端没有完成这次请求',
   };
+
+  /// 附件总量超限时把服务端给出的已用与上限写成一句说明；数字缺失时只说明
+  /// 空间已满，不编造额度。
+  String get _storageFullMessage {
+    final used = _byteCount(extra['used_bytes']);
+    final limit = _byteCount(extra['limit_bytes']);
+    if (used == null || limit == null) {
+      return '云端附件空间已满，请先清理云端数据或删掉不再需要的附件';
+    }
+    return '云端附件空间已满：已用 ${_formatBytes(used)}，上限 ${_formatBytes(limit)}';
+  }
+
+  static int? _byteCount(Object? value) => switch (value) {
+    num number => number.toInt(),
+    String text => int.tryParse(text.trim()),
+    _ => null,
+  };
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(1)} GB';
+  }
 
   @override
   String toString() => 'ServerProblem($status $code): $detail';

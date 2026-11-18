@@ -70,6 +70,14 @@ class FakeServer {
   final Map<String, List<FakeBackup>> backups = {};
   final Map<String, Map<String, Uint8List>> blobs = {};
 
+  /// 单个附件的上限与单账号附件总量上限；为空时不限制，与契约里的两个环境
+  /// 变量对应。超限时分别返回 `payload_too_large` 与 `storage_full`。
+  int? maxAttachmentBytes;
+  int? storageLimitBytes;
+
+  /// 收到的附件 PUT 次数，用例据此确认超限之后没有再上传后面的附件。
+  int blobUploadAttempts = 0;
+
   /// 发布清单与收到的反馈；两者都是公开接口，不需要登录。
   final List<Map<String, Object?>> releases = [];
   final List<Map<String, Object?>> feedbacks = [];
@@ -241,8 +249,27 @@ class FakeServer {
       final hash = path.substring('/v1/blobs/'.length);
       final userBlobs = blobs.putIfAbsent(userId, () => {});
       if (method == 'PUT') {
+        blobUploadAttempts++;
         final bytes = Uint8List.fromList(request.bodyBytes);
         if (_sha256Hex(bytes) != hash) return _problem(400, 'invalid_request');
+        final singleLimit = maxAttachmentBytes;
+        if (singleLimit != null && bytes.length > singleLimit) {
+          return _problem(413, 'payload_too_large');
+        }
+        final totalLimit = storageLimitBytes;
+        final used = userBlobs.values.fold<int>(
+          0,
+          (sum, current) => sum + current.length,
+        );
+        if (totalLimit != null &&
+            !userBlobs.containsKey(hash) &&
+            used + bytes.length > totalLimit) {
+          return _problem(
+            413,
+            'storage_full',
+            extra: {'used_bytes': used, 'limit_bytes': totalLimit},
+          );
+        }
         userBlobs[hash] = bytes;
         return http.Response('', 201);
       }

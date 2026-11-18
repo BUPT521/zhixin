@@ -638,6 +638,8 @@ class SyncService {
       if (exists != null) continue;
       final bytes = await assets.readBytes(database.raw, hash);
       if (bytes == null) continue;
+      // 账号附件总量已满时服务端返回 storage_full；异常向上抛出，这一轮上传
+      // 到此停止，界面按已用与上限说明，不静默跳过也不反复重试。
       await account.call(
         (client, token) => client.blobUpload(token, hash, bytes),
       );
