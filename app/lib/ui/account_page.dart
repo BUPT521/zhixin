@@ -10,6 +10,7 @@ import '../application/sync_service.dart';
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import 'account_dialogs.dart';
+import 'cloud_sync_prompts.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -182,7 +183,7 @@ class _AccountPageState extends State<AccountPage> {
       );
       _report(
         '${register ? '注册并登录' : '登录'}成功：${result.email}；'
-        '云端备份与知新服务已经可用，同步会在后台开始',
+        '云端备份与知新服务已经可用，首次同步会先确认是否把本机记录上传到这个账号',
       );
       await _load();
     } on FormatException catch (error) {
@@ -348,9 +349,48 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _syncNow() async {
     if (_busy) return;
+    final scope = AppScope.of(context);
+    var confirmBaseline = false;
+    try {
+      final status = await scope.accountServices.sync.status();
+      if (status.baselineNeedsConfirmation) {
+        if (!mounted) return;
+        final confirmed = await confirmBaselineUpload(
+          context,
+          localCommits: status.localHead,
+        );
+        if (!confirmed) {
+          // 取消就不上传，并把自动同步停下来；恢复要在开关上再确认一次。
+          await scope.accountServices.account.setAutoSync(false);
+          if (!mounted) return;
+          _report('已取消首次同步，没有上传本机记录；自动同步已暂停');
+          await _load();
+          return;
+        }
+        confirmBaseline = true;
+      }
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '读取同步状态',
+          kind: 'account_sync_status',
+          kept: '本机记录没有改动',
+          next: '可以稍后再试',
+        ),
+        failed: true,
+      );
+      return;
+    }
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).accountServices.sync.syncNow();
+      final result = await scope.accountServices.sync.syncNow(
+        confirmBaseline: confirmBaseline,
+      );
       _report(
         result.changed
             ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
@@ -422,7 +462,7 @@ class _AccountPageState extends State<AccountPage> {
       final scope = AppScope.of(context);
       await scope.accountServices.account.clearCloudData();
       await scope.accountServices.sync.clearState();
-      _report('云端备份与同步序列已清除；下一次同步会从本机重新开始');
+      _report('云端备份与同步序列已清除；下一次同步会先确认，再从本机重新上传基线');
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -492,6 +532,13 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _setAutoSync(bool value) async {
+    if (value) {
+      final confirmed = await confirmEnableAutoSync(
+        context,
+        accountLabel: _snapshot?.email ?? '',
+      );
+      if (!confirmed || !mounted) return;
+    }
     try {
       await AppScope.of(context).accountServices.account.setAutoSync(value);
       if (!mounted) return;
@@ -813,6 +860,16 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_syncSummary(sync), style: theme.text.bodyMedium),
+              if (sync?.baselineNeedsConfirmation == true) ...[
+                SizedBox(height: theme.space.xs),
+                Text(
+                  '首次同步需要确认：会把本机现有的 ${sync!.localHead} 条提交上传到'
+                  '这个账号；点“立即同步”之后确认。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (sync?.lastError != null) ...[
                 SizedBox(height: theme.space.sm),
                 InlineNotice(

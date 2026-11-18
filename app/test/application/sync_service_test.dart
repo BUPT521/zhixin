@@ -124,7 +124,7 @@ void main() {
   test('首次同步上传当前数据为基线，另一台设备拉取后得到同一条记录', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
 
     final userId = (await a.account.snapshot()).session!.userId;
     expect(server.headOf(userId), 1);
@@ -147,7 +147,7 @@ void main() {
   test('之后的本机写入按提交推送，另一台设备拉取后看到新记录与附件', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
 
     final b = await device('a@example.com');
     await b.sync.syncNow();
@@ -175,13 +175,13 @@ void main() {
   test('服务端序列被清空之后重新上传基线', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
     final userId = (await a.account.snapshot()).session!.userId;
     expect(server.headOf(userId), 1);
 
     await a.account.clearCloudData();
     await a.sync.clearState();
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
     // 清除云端数据之后服务端位置回到 0，同步重新上传了一份基线。
     expect(server.headOf(userId), 1);
     final last = server.commits[userId]!.last;
@@ -191,7 +191,7 @@ void main() {
   test('换实例重新登录后不复用旧同步游标，自动同步先暂停', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
-    await a.sync.syncNow();
+    await a.sync.syncNow(confirmBaseline: true);
     expect((await a.sync.status()).serverHead, isNotNull);
 
     await a.account.setServerBaseUrl('http://other.test');
@@ -205,5 +205,32 @@ void main() {
     final status = await a.sync.status();
     expect(status.serverHead, isNull);
     expect(status.needsBootstrap, isTrue);
+  });
+
+  test('首次基线上传前必须确认，未确认时不向服务端写任何记录', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    await expectLater(
+      a.sync.syncNow(),
+      throwsA(
+        isA<BaselineConfirmationRequired>().having(
+          (error) => error.localCommits,
+          'localCommits',
+          1,
+        ),
+      ),
+    );
+    expect(server.headOf(userId), 0);
+    final status = await a.sync.status();
+    expect(status.baselineNeedsConfirmation, isTrue);
+    expect(status.needsBootstrap, isTrue);
+
+    await a.sync.syncNow(confirmBaseline: true);
+    expect(server.headOf(userId), 1);
+    final after = await a.sync.status();
+    expect(after.baselineNeedsConfirmation, isFalse);
+    expect(after.serverHead, 1);
   });
 }

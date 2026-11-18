@@ -36,6 +36,21 @@ class SyncIdentityChanged implements Exception {
   String toString() => '账号或服务实例已经变化，这次同步没有完成';
 }
 
+/// 这个账号第一次同步：需要先把本机现有记录作为基线上传，必须由用户确认。
+class BaselineConfirmationRequired implements Exception {
+  const BaselineConfirmationRequired(this.localCommits);
+
+  /// 本机当前 HEAD 对应的提交数，用来告诉用户会上传多少。
+  final int localCommits;
+
+  String get message =>
+      '这个账号还没有同步过。首次同步会把本机现有的 $localCommits 条提交作为基线'
+      '完整上传到这个账号的云端，其他登录这个账号的设备也会看到这些记录。';
+
+  @override
+  String toString() => message;
+}
+
 /// 增量同步一屏读到的状态，设置页与账号页据此显示登录、待推送与上次同步。
 class SyncStatus {
   const SyncStatus({
@@ -47,6 +62,7 @@ class SyncStatus {
     required this.localHead,
     required this.serverHead,
     required this.needsBootstrap,
+    this.baselineNeedsConfirmation = false,
     this.lastSyncedAt,
     this.lastError,
   });
@@ -59,6 +75,9 @@ class SyncStatus {
   final int localHead;
   final int? serverHead;
   final bool needsBootstrap;
+
+  /// 首次基线上传还没得到用户确认；界面据此在同步前询问一次。
+  final bool baselineNeedsConfirmation;
   final DateTime? lastSyncedAt;
   final String? lastError;
 }
@@ -178,25 +197,42 @@ class SyncService {
       localHead: localHead,
       serverHead: ownState?.serverHead,
       needsBootstrap: ownState == null || ownState.pushedThrough > localHead,
+      baselineNeedsConfirmation: ownState == null && localHead > 0,
       lastSyncedAt: ownState?.syncedAt,
       lastError: _lastError,
     );
   }
 
   /// 立即同步；同时只跑一次，重复调用等同一个结果。
-  Future<SyncResult> syncNow() {
+  ///
+  /// [confirmBaseline] 表示用户已经在界面上确认过首次基线上传；没有确认时
+  /// 遇到需要上传本机记录的情况会抛出 [BaselineConfirmationRequired]。
+  Future<SyncResult> syncNow({bool confirmBaseline = false}) {
     final running = _running;
     if (running != null) return running;
-    final future = _sync();
+    final future = _sync(confirmBaseline: confirmBaseline);
     _running = future.whenComplete(() => _running = null);
     return _running!;
   }
 
   /// 写入、登录与应用启动之后延迟同步一次：连续写入只排一次，失败只留说明。
+  ///
+  /// 首次基线上传需要用户确认，没有确认之前不自动上传，也不反复重试；账号页
+  /// 的“立即同步”会先问一次。
   Future<void> schedule({Duration delay = const Duration(seconds: 5)}) async {
     if (_disposed) return;
     final snapshot = await account.snapshot();
     if (!snapshot.signedIn || !snapshot.autoSync) return;
+    final state = await preferences.syncState();
+    final origin = await account.serverOrigin();
+    final localHead = await engine.headId(database.raw);
+    final ownState =
+        state != null &&
+            state.userId == snapshot.session!.userId &&
+            state.serverOrigin == origin
+        ? state
+        : null;
+    if (ownState == null && localHead > 0) return;
     _timer?.cancel();
     _timer = Timer(delay, () {
       _timer = null;
@@ -219,7 +255,7 @@ class SyncService {
     _timer = null;
   }
 
-  Future<SyncResult> _sync() async {
+  Future<SyncResult> _sync({bool confirmBaseline = false}) async {
     _lastError = null;
     var pulled = 0;
     var pushed = 0;
@@ -258,6 +294,11 @@ class SyncService {
       }
 
       if (state == null) {
+        // 首次同步（或服务端被清空后重建）会把本机记录整份上传，必须先确认；
+        // 本机没有记录时不需要确认。
+        if (localHead > 0 && !confirmBaseline) {
+          throw BaselineConfirmationRequired(localHead);
+        }
         final boot = await _bootstrap(deviceId, origin);
         pulled += boot.pulled;
         pushed += boot.pushed;
@@ -295,7 +336,8 @@ class SyncService {
       );
     } catch (error, stack) {
       _lastError = _describe(error);
-      if (error is! SyncIdentityChanged) {
+      if (error is! SyncIdentityChanged &&
+          error is! BaselineConfirmationRequired) {
         recordFailure(error, stack, kind: 'cloud_sync');
       }
       rethrow;
@@ -680,6 +722,7 @@ class SyncService {
     AccountSignedOut(:final userMessage) => userMessage,
     SyncSchemaMismatch() => error.toString(),
     SyncIdentityChanged() => error.toString(),
+    BaselineConfirmationRequired(:final message) => message,
     _ => '同步没有完成',
   };
 }
