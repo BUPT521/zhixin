@@ -42,6 +42,31 @@ VALUES (
   sqlc.arg(access_expires), sqlc.arg(refresh_expires)
 );
 
+-- 建会话之前锁住账号行：同一账号的并发登录在锁上串行，先删最旧再插入，会话
+-- 数不会因为并发而超上限。锁的是一行账号，不同账号互不影响。
+-- name: LockUser :one
+SELECT id FROM app_user WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- 只保留最新的 keep 条会话，更旧的删掉。排序带上 id，创建时间相同时结果稳定。
+-- name: DeleteOldestSessions :exec
+DELETE FROM session AS doomed
+WHERE doomed.user_id = sqlc.arg(user_id)
+  AND doomed.id NOT IN (
+    SELECT kept.id
+    FROM session AS kept
+    WHERE kept.user_id = sqlc.arg(user_id)
+    ORDER BY kept.created_at DESC, kept.id DESC
+    LIMIT sqlc.arg(keep)
+  );
+
+-- name: PruneExpiredSessions :exec
+DELETE FROM session
+WHERE refresh_expires < sqlc.arg(now);
+
+-- name: PruneExpiredAuthCodes :exec
+DELETE FROM auth_code
+WHERE expires_at < sqlc.arg(now);
+
 -- name: SessionByAccessHash :one
 SELECT id, user_id, device_name, access_hash, refresh_hash,
   access_expires, refresh_expires, created_at

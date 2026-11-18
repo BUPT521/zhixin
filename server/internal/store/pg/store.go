@@ -149,7 +149,13 @@ func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
 	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
-func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
+// CreateSession 在一个事务里先锁住账号行、删掉超出上限的旧会话，再插入新会话。
+// 锁让同一账号的并发登录串行执行，会话数不会被并发推过上限；等待锁的时间很短，
+// 因为整个事务只碰会话表与锁住的那一行账号。
+func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser int) error {
+	if maxPerUser < 1 {
+		maxPerUser = 1
+	}
 	accessExpires, err := pgTime(sess.AccessExpires)
 	if err != nil {
 		return err
@@ -158,7 +164,27 @@ func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
 	if err != nil {
 		return err
 	}
-	return s.q.CreateSession(ctx, db.CreateSessionParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	if _, err := q.LockUser(ctx, sess.UserID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// 账号在登录过程中被删掉了；新会话没有可依附的账号行。
+			return auth.ErrNotFound
+		}
+		return err
+	}
+	if err := q.DeleteOldestSessions(ctx, db.DeleteOldestSessionsParams{
+		UserID: sess.UserID,
+		Keep:   int32(maxPerUser - 1),
+	}); err != nil {
+		return err
+	}
+	if err := q.CreateSession(ctx, db.CreateSessionParams{
 		ID:             sess.ID,
 		UserID:         sess.UserID,
 		DeviceName:     sess.DeviceName,
@@ -166,7 +192,10 @@ func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
 		RefreshHash:    sess.RefreshHash,
 		AccessExpires:  accessExpires,
 		RefreshExpires: refreshExpires,
-	})
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) SessionByAccessHash(ctx context.Context, hash string) (auth.Session, error) {
@@ -219,6 +248,20 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	return s.q.DeleteUserSessions(ctx, userID)
+}
+
+// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码，两张表的清理互相
+// 独立，一条失败时另一条照常执行会让接口语义含糊，所以按顺序执行并在第一条
+// 出错时返回；每日清理下一次还会再试。
+func (s *Store) PruneExpired(ctx context.Context, now time.Time) error {
+	at, err := pgTime(now)
+	if err != nil {
+		return err
+	}
+	if err := s.q.PruneExpiredSessions(ctx, at); err != nil {
+		return err
+	}
+	return s.q.PruneExpiredAuthCodes(ctx, at)
 }
 
 func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Time) error {

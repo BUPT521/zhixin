@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -70,7 +71,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 		AccessExpires:  time.Now().Add(time.Hour).UTC(),
 		RefreshExpires: time.Now().Add(24 * time.Hour).UTC(),
 	}
-	if err := st.CreateSession(ctx, sess); err != nil {
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	byAccess, err := st.SessionByAccessHash(ctx, "ah")
@@ -118,7 +119,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	// 删会话之后再建一条，供下面核对账号级联删除。
 	sess2 := sess
 	sess2.ID, sess2.AccessHash, sess2.RefreshHash = "s2", "ah2", "rh2"
-	if err := st.CreateSession(ctx, sess2); err != nil {
+	if err := st.CreateSession(ctx, sess2, 20); err != nil {
 		t.Fatalf("create second session: %v", err)
 	}
 	// 会话随账号行级联删除（schema.sql 的 ON DELETE CASCADE），服务层不再单独
@@ -131,6 +132,99 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	}
 }
 
+// TestPostgresSessionLimit 核对会话上限在事务里生效：超过上限时删最旧的一条，
+// 记录条数与“删掉的是最早那条”都对得上。
+func TestPostgresSessionLimit(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u := auth.User{ID: "u1", Email: "sessions@b.cn", PasswordHash: "h"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		sess := auth.Session{
+			ID:             fmt.Sprintf("s%d", i),
+			UserID:         u.ID,
+			AccessHash:     fmt.Sprintf("ah%d", i),
+			RefreshHash:    fmt.Sprintf("rh%d", i),
+			AccessExpires:  now.Add(time.Hour),
+			RefreshExpires: now.Add(24 * time.Hour),
+		}
+		if err := st.CreateSession(ctx, sess, 2); err != nil {
+			t.Fatalf("第 %d 条会话: %v", i+1, err)
+		}
+	}
+	var count int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM session WHERE user_id = 'u1'`).Scan(&count); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("上限 2 时应保留 2 条会话，得到 %d", count)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah0"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("最早的一条应被删掉，得到 %v", err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah2"); err != nil {
+		t.Fatalf("最新的会话应保留，得到 %v", err)
+	}
+}
+
+// TestPostgresPruneExpired 核对过期会话与过期验证码会被清理，未过期的不动。
+func TestPostgresPruneExpired(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u := auth.User{ID: "u1", Email: "prune@b.cn", PasswordHash: "h"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now().UTC()
+	sess := auth.Session{
+		ID: "s1", UserID: u.ID,
+		AccessHash: "ah1", RefreshHash: "rh1",
+		AccessExpires:  now.Add(time.Hour),
+		RefreshExpires: now.Add(24 * time.Hour),
+	}
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	// 把这条会话与两枚验证码分别改成过期与未过期，清理之后只留下未过期的。
+	if _, err := st.pool.Exec(ctx, `UPDATE session SET refresh_expires = $1 WHERE id = 's1'`, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("expire session: %v", err)
+	}
+	for _, userID := range []string{u.ID, "u2"} {
+		if userID == "u2" {
+			if err := st.CreateUser(ctx, auth.User{ID: "u2", Email: "keep@b.cn", PasswordHash: "h"}); err != nil {
+				t.Fatalf("second user: %v", err)
+			}
+		}
+		expires := now.Add(-time.Minute)
+		if userID == "u2" {
+			expires = now.Add(10 * time.Minute)
+		}
+		if err := st.PutCode(ctx, auth.Code{
+			UserID: userID, Purpose: auth.PurposeResetPassword, CodeHash: "hash-" + userID,
+			ExpiresAt: expires, CreatedAt: now.Add(-time.Hour),
+		}); err != nil {
+			t.Fatalf("code %s: %v", userID, err)
+		}
+	}
+
+	if err := st.PruneExpired(ctx, now); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("过期会话应被清理，得到 %v", err)
+	}
+	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("过期验证码应被清理，得到 %v", err)
+	}
+	if _, err := st.Code(ctx, "u2", auth.PurposeResetPassword); err != nil {
+		t.Fatalf("未过期验证码应保留，得到 %v", err)
+	}
+}
+
+// TestPostgresDeleteUserAndObjects 检查删号之后对象字节由独立步骤清理。
 func TestPostgresDeleteUserAndObjects(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

@@ -23,6 +23,8 @@ CREATE TABLE auth_code (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, purpose)
 );
+-- 每日清理过期验证码按 expires_at 扫。
+CREATE INDEX auth_code_by_expires ON auth_code(expires_at);
 
 -- 一台登录的设备一行；只存令牌的 SHA-256。
 CREATE TABLE session (
@@ -35,7 +37,11 @@ CREATE TABLE session (
   refresh_expires  TIMESTAMPTZ NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX session_by_user ON session(user_id);
+-- 登录时锁住账号行、按创建时间倒序只保留最新的若干条，会话上限因此不受并发
+-- 影响；user_id 上的这条复合索引同时承担按账号查会话的查询。
+CREATE INDEX session_by_user ON session(user_id, created_at DESC);
+-- 每日清理过期会话按 refresh_expires 扫。
+CREATE INDEX session_by_refresh_expires ON session(refresh_expires);
 
 -- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
 -- 锁住 sync_head，核对 base_seq = head 之后再追加。

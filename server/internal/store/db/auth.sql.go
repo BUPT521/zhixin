@@ -107,6 +107,29 @@ func (q *Queries) DeleteAuthCode(ctx context.Context, arg DeleteAuthCodeParams) 
 	return err
 }
 
+const deleteOldestSessions = `-- name: DeleteOldestSessions :exec
+DELETE FROM session AS doomed
+WHERE doomed.user_id = $1
+  AND doomed.id NOT IN (
+    SELECT kept.id
+    FROM session AS kept
+    WHERE kept.user_id = $1
+    ORDER BY kept.created_at DESC, kept.id DESC
+    LIMIT $2
+  )
+`
+
+type DeleteOldestSessionsParams struct {
+	UserID string
+	Keep   int32
+}
+
+// 只保留最新的 keep 条会话，更旧的删掉。排序带上 id，创建时间相同时结果稳定。
+func (q *Queries) DeleteOldestSessions(ctx context.Context, arg DeleteOldestSessionsParams) error {
+	_, err := q.db.Exec(ctx, deleteOldestSessions, arg.UserID, arg.Keep)
+	return err
+}
+
 const deleteSession = `-- name: DeleteSession :execrows
 DELETE FROM session
 WHERE id = $1
@@ -161,6 +184,39 @@ func (q *Queries) IncrementAuthCodeAttempts(ctx context.Context, arg IncrementAu
 	var attempts int32
 	err := row.Scan(&attempts)
 	return attempts, err
+}
+
+const lockUser = `-- name: LockUser :one
+SELECT id FROM app_user WHERE id = $1 FOR UPDATE
+`
+
+// 建会话之前锁住账号行：同一账号的并发登录在锁上串行，先删最旧再插入，会话
+// 数不会因为并发而超上限。锁的是一行账号，不同账号互不影响。
+func (q *Queries) LockUser(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockUser, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const pruneExpiredAuthCodes = `-- name: PruneExpiredAuthCodes :exec
+DELETE FROM auth_code
+WHERE expires_at < $1
+`
+
+func (q *Queries) PruneExpiredAuthCodes(ctx context.Context, now pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, pruneExpiredAuthCodes, now)
+	return err
+}
+
+const pruneExpiredSessions = `-- name: PruneExpiredSessions :exec
+DELETE FROM session
+WHERE refresh_expires < $1
+`
+
+func (q *Queries) PruneExpiredSessions(ctx context.Context, now pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, pruneExpiredSessions, now)
+	return err
 }
 
 const putAuthCode = `-- name: PutAuthCode :exec

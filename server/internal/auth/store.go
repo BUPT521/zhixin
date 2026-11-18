@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -62,11 +63,16 @@ type Store interface {
 	// its sessions.
 	DeleteUser(ctx context.Context, id string) error
 
-	CreateSession(ctx context.Context, s Session) error
+	// CreateSession 保存一条会话。maxPerUser 是这个账号保留的会话数上限，
+	// 超出时在同一个事务或锁内先删最旧的再插入，并发登录也守得住。
+	CreateSession(ctx context.Context, s Session, maxPerUser int) error
 	SessionByAccessHash(ctx context.Context, hash string) (Session, error)
 	SessionByRefreshHash(ctx context.Context, hash string) (Session, error)
 	DeleteSession(ctx context.Context, id string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
+	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
+	// 行不受影响。过期数据留在库里不影响正确性，清理只控制表的大小。
+	PruneExpired(ctx context.Context, now time.Time) error
 
 	SetEmailVerified(ctx context.Context, userID string, at time.Time) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
@@ -226,10 +232,62 @@ func (m *MemoryStore) DeleteCode(_ context.Context, userID, purpose string) erro
 	return nil
 }
 
-func (m *MemoryStore) CreateSession(_ context.Context, s Session) error {
+// CreateSession 先按上限删掉最旧的会话再插入，两步在同一把锁内完成，同一个
+// 账号的并发登录不会把会话数推过上限。
+func (m *MemoryStore) CreateSession(_ context.Context, s Session, maxPerUser int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if maxPerUser < 1 {
+		maxPerUser = 1
+	}
+	m.trimSessionsLocked(s.UserID, maxPerUser-1)
 	m.sessions[s.ID] = s
+	return nil
+}
+
+// trimSessionsLocked 保留账号最新的 keep 条会话，删掉更旧的。调用方已持有锁。
+func (m *MemoryStore) trimSessionsLocked(userID string, keep int) {
+	if keep < 0 {
+		keep = 0
+	}
+	type owned struct {
+		id      string
+		created time.Time
+	}
+	list := make([]owned, 0, len(m.sessions))
+	for id, s := range m.sessions {
+		if s.UserID == userID {
+			list = append(list, owned{id: id, created: s.CreatedAt})
+		}
+	}
+	if len(list) <= keep {
+		return
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].created.Equal(list[j].created) {
+			return list[i].id < list[j].id
+		}
+		return list[i].created.Before(list[j].created)
+	})
+	for _, o := range list[:len(list)-keep] {
+		delete(m.sessions, o.id)
+	}
+}
+
+// PruneExpired 删除刷新令牌已经过期的会话与过期的验证码。
+func (m *MemoryStore) PruneExpired(_ context.Context, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, s := range m.sessions {
+		if !now.Before(s.RefreshExpires) {
+			delete(m.sessions, id)
+		}
+	}
+	for key, c := range m.codes {
+		if !now.Before(c.ExpiresAt) {
+			delete(m.codes, key)
+		}
+	}
 	return nil
 }
 

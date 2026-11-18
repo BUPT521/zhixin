@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/mail"
 	"strings"
@@ -74,6 +75,10 @@ type Service struct {
 	// 按内存预算设置之后才生效。
 	passwords *PasswordBudget
 
+	// maxSessions 是每个账号保留的会话数上限，新登录超过时删最旧的。默认值
+	// 与配置 ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致，装配处可以覆盖。
+	maxSessions int
+
 	// 邮箱验证与找回密码。mailer 为 nil 时请求返回 ErrMailUnavailable；
 	// codeSecret 用来给六位验证码做 HMAC，避免库里的哈希被穷举。
 	mailer       Mailer
@@ -84,8 +89,15 @@ type Service struct {
 
 const maxCodeAttempts = 5
 
+// defaultMaxSessions 是每个账号保留的会话数上限的默认值，与配置
+// ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致。
+const defaultMaxSessions = 20
+
 func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
-	return &Service{store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL}
+	return &Service{
+		store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL,
+		maxSessions: defaultMaxSessions,
+	}
 }
 
 // ConfigureCodes 装上发信与验证码参数；不调用时邮箱验证与找回密码一律返回
@@ -114,6 +126,35 @@ func (s *Service) SetPasswordBudget(mib int) {
 		return
 	}
 	s.passwords = NewPasswordBudget(mib)
+}
+
+// SetMaxSessions 设定每个账号保留的会话数上限；小于等于零的值忽略，避免把
+// 账号锁在“一登录就踢掉自己”的状态里。
+func (s *Service) SetMaxSessions(n int) {
+	if n > 0 {
+		s.maxSessions = n
+	}
+}
+
+// PruneLoop 启动时清理一次过期会话与验证码，之后每天清理一次，直到 ctx 结束。
+// 节奏与 retention.PruneLoop 一致：过期行不影响正确性，清理只控制表的大小。
+func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) {
+	prune := func() {
+		if err := store.PruneExpired(ctx, s.now()); err != nil {
+			log.Error("prune expired auth rows", slog.String("error", err.Error()))
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }
 
 // hashPassword 在预算内生成哈希。等待名额期间 ctx 结束时直接返回错误，不再
@@ -501,7 +542,7 @@ func (s *Service) issue(ctx context.Context, userID, device string) (Tokens, err
 		RefreshExpires: now.Add(s.refreshTTL),
 		CreatedAt:      now,
 	}
-	if err := s.store.CreateSession(ctx, sess); err != nil {
+	if err := s.store.CreateSession(ctx, sess, s.maxSessions); err != nil {
 		return Tokens{}, err
 	}
 	return Tokens{
