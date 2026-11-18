@@ -79,6 +79,36 @@ SELECT id, user_id, device_name, access_hash, refresh_hash,
 FROM session
 WHERE refresh_hash = sqlc.arg(refresh_hash);
 
+-- 刷新令牌轮换用 CAS：只有当前的 refresh_hash 还等于旧摘要时才换成新的一对。
+-- 并发刷新因此只有一个成功，其余 0 行，调用方据此回 ErrInvalidToken。
+-- name: RotateSession :execrows
+UPDATE session
+SET access_hash = sqlc.arg(new_access_hash),
+    refresh_hash = sqlc.arg(new_refresh_hash),
+    access_expires = sqlc.arg(access_expires),
+    refresh_expires = sqlc.arg(refresh_expires)
+WHERE id = sqlc.arg(id) AND refresh_hash = sqlc.arg(old_refresh_hash);
+
+-- 轮换成功时记下旧令牌摘要，供旧令牌再次出现时判断是重试还是盗用。同一个
+-- 摘要重复写入（并发重试）忽略即可。
+-- name: InsertRefreshUsed :exec
+INSERT INTO session_refresh_used (
+  token_hash, session_id, user_id, request_id, rotated_at, grace_until,
+  replaced_access_hash, replaced_refresh_hash
+)
+VALUES (
+  sqlc.arg(token_hash), sqlc.arg(session_id), sqlc.arg(user_id),
+  sqlc.arg(request_id), sqlc.arg(rotated_at), sqlc.arg(grace_until),
+  sqlc.arg(replaced_access_hash), sqlc.arg(replaced_refresh_hash)
+)
+ON CONFLICT (token_hash) DO NOTHING;
+
+-- name: RefreshUsed :one
+SELECT token_hash, session_id, user_id, request_id, rotated_at, grace_until,
+  replaced_access_hash, replaced_refresh_hash
+FROM session_refresh_used
+WHERE token_hash = sqlc.arg(token_hash);
+
 -- name: DeleteSession :execrows
 DELETE FROM session
 WHERE id = sqlc.arg(id);

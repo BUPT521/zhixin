@@ -170,6 +170,67 @@ func TestPostgresSessionLimit(t *testing.T) {
 	}
 }
 
+// TestPostgresRefreshRotation 核对 CAS 轮换只有一个成功、旧令牌摘要能读回，
+// 并且记录随会话删除级联消失。
+func TestPostgresRefreshRotation(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u := auth.User{ID: "u1", Email: "rotate@b.cn", PasswordHash: "h"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	sess := auth.Session{
+		ID: "s1", UserID: u.ID,
+		AccessHash: "ah1", RefreshHash: "rh1",
+		AccessExpires:  now.Add(time.Hour),
+		RefreshExpires: now.Add(24 * time.Hour),
+	}
+	if err := st.CreateSession(ctx, sess, 20); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
+	if err := st.RotateSession(ctx, "s1", "rh1", "ah2", "rh2", now.Add(2*time.Hour), now.Add(48*time.Hour)); err != nil {
+		t.Fatalf("第一次轮换: %v", err)
+	}
+	// 用同一个旧摘要再轮换（并发输家）应当返回 ErrInvalidToken。
+	if err := st.RotateSession(ctx, "s1", "rh1", "ah3", "rh3", now.Add(3*time.Hour), now.Add(72*time.Hour)); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("旧摘要再轮换应返回 ErrInvalidToken，得到 %v", err)
+	}
+	if _, err := st.SessionByRefreshHash(ctx, "rh2"); err != nil {
+		t.Fatalf("轮换后的刷新摘要应能查到: %v", err)
+	}
+
+	used := auth.RefreshUsed{
+		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
+		RotatedAt: now, GraceUntil: now.Add(time.Minute),
+		ReplacedAccessHash: "ah2", ReplacedRefreshHash: "rh2",
+	}
+	// 同一个摘要重复写入是并发重试的常态，应当忽略而不是报主键冲突。
+	for i := 0; i < 2; i++ {
+		if err := st.RecordRefreshUsed(ctx, used); err != nil {
+			t.Fatalf("第 %d 次记录旧令牌: %v", i+1, err)
+		}
+	}
+	got, err := st.UsedRefresh(ctx, "rh1")
+	if err != nil {
+		t.Fatalf("读取旧令牌记录: %v", err)
+	}
+	if got.RequestID != "req-1" || got.SessionID != "s1" || got.ReplacedRefreshHash != "rh2" {
+		t.Fatalf("旧令牌记录不符合预期: %+v", got)
+	}
+	if !got.GraceUntil.Equal(used.GraceUntil) {
+		t.Fatalf("宽限截止时间应原样保存：%v vs %v", got.GraceUntil, used.GraceUntil)
+	}
+
+	if err := st.DeleteSession(ctx, "s1"); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+	if _, err := st.UsedRefresh(ctx, "rh1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("会话删除之后旧令牌记录应级联消失，得到 %v", err)
+	}
+}
+
 // TestPostgresPruneExpired 核对过期会话与过期验证码会被清理，未过期的不动。
 func TestPostgresPruneExpired(t *testing.T) {
 	st := newTestStore(t)

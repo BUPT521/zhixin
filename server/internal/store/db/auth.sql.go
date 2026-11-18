@@ -186,6 +186,46 @@ func (q *Queries) IncrementAuthCodeAttempts(ctx context.Context, arg IncrementAu
 	return attempts, err
 }
 
+const insertRefreshUsed = `-- name: InsertRefreshUsed :exec
+INSERT INTO session_refresh_used (
+  token_hash, session_id, user_id, request_id, rotated_at, grace_until,
+  replaced_access_hash, replaced_refresh_hash
+)
+VALUES (
+  $1, $2, $3,
+  $4, $5, $6,
+  $7, $8
+)
+ON CONFLICT (token_hash) DO NOTHING
+`
+
+type InsertRefreshUsedParams struct {
+	TokenHash           string
+	SessionID           string
+	UserID              string
+	RequestID           string
+	RotatedAt           pgtype.Timestamptz
+	GraceUntil          pgtype.Timestamptz
+	ReplacedAccessHash  string
+	ReplacedRefreshHash string
+}
+
+// 轮换成功时记下旧令牌摘要，供旧令牌再次出现时判断是重试还是盗用。同一个
+// 摘要重复写入（并发重试）忽略即可。
+func (q *Queries) InsertRefreshUsed(ctx context.Context, arg InsertRefreshUsedParams) error {
+	_, err := q.db.Exec(ctx, insertRefreshUsed,
+		arg.TokenHash,
+		arg.SessionID,
+		arg.UserID,
+		arg.RequestID,
+		arg.RotatedAt,
+		arg.GraceUntil,
+		arg.ReplacedAccessHash,
+		arg.ReplacedRefreshHash,
+	)
+	return err
+}
+
 const lockUser = `-- name: LockUser :one
 SELECT id FROM app_user WHERE id = $1 FOR UPDATE
 `
@@ -252,6 +292,64 @@ func (q *Queries) PutAuthCode(ctx context.Context, arg PutAuthCodeParams) error 
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const refreshUsed = `-- name: RefreshUsed :one
+SELECT token_hash, session_id, user_id, request_id, rotated_at, grace_until,
+  replaced_access_hash, replaced_refresh_hash
+FROM session_refresh_used
+WHERE token_hash = $1
+`
+
+func (q *Queries) RefreshUsed(ctx context.Context, tokenHash string) (SessionRefreshUsed, error) {
+	row := q.db.QueryRow(ctx, refreshUsed, tokenHash)
+	var i SessionRefreshUsed
+	err := row.Scan(
+		&i.TokenHash,
+		&i.SessionID,
+		&i.UserID,
+		&i.RequestID,
+		&i.RotatedAt,
+		&i.GraceUntil,
+		&i.ReplacedAccessHash,
+		&i.ReplacedRefreshHash,
+	)
+	return i, err
+}
+
+const rotateSession = `-- name: RotateSession :execrows
+UPDATE session
+SET access_hash = $1,
+    refresh_hash = $2,
+    access_expires = $3,
+    refresh_expires = $4
+WHERE id = $5 AND refresh_hash = $6
+`
+
+type RotateSessionParams struct {
+	NewAccessHash  string
+	NewRefreshHash string
+	AccessExpires  pgtype.Timestamptz
+	RefreshExpires pgtype.Timestamptz
+	ID             string
+	OldRefreshHash string
+}
+
+// 刷新令牌轮换用 CAS：只有当前的 refresh_hash 还等于旧摘要时才换成新的一对。
+// 并发刷新因此只有一个成功，其余 0 行，调用方据此回 ErrInvalidToken。
+func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateSession,
+		arg.NewAccessHash,
+		arg.NewRefreshHash,
+		arg.AccessExpires,
+		arg.RefreshExpires,
+		arg.ID,
+		arg.OldRefreshHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sessionByAccessHash = `-- name: SessionByAccessHash :one

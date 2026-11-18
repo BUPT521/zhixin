@@ -48,6 +48,20 @@ type Session struct {
 	CreatedAt      time.Time
 }
 
+// RefreshUsed 是一次已经轮换掉的刷新令牌摘要。旧令牌再次出现时，服务层用它
+// 判断是同一客户端的重试还是令牌被复制：宽限期内且 request_id 一致算重试，
+// 其余算盗用。只存摘要，不存令牌本身。
+type RefreshUsed struct {
+	TokenHash           string
+	SessionID           string
+	UserID              string
+	RequestID           string
+	RotatedAt           time.Time
+	GraceUntil          time.Time
+	ReplacedAccessHash  string
+	ReplacedRefreshHash string
+}
+
 var (
 	ErrNotFound   = errors.New("auth: not found")
 	ErrEmailTaken = errors.New("auth: email already registered")
@@ -68,6 +82,14 @@ type Store interface {
 	CreateSession(ctx context.Context, s Session, maxPerUser int) error
 	SessionByAccessHash(ctx context.Context, hash string) (Session, error)
 	SessionByRefreshHash(ctx context.Context, hash string) (Session, error)
+	// RotateSession 用 CAS 换掉一条会话的两个令牌摘要：只有当前的 refresh_hash
+	// 仍等于 oldRefreshHash 时才更新。并发刷新因此只有一个成功，其余返回
+	// ErrInvalidToken。
+	RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error
+	// UsedRefresh 返回已经轮换掉的刷新令牌摘要；没有记录时返回 ErrNotFound。
+	UsedRefresh(ctx context.Context, tokenHash string) (RefreshUsed, error)
+	// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要；同一个摘要重复写入忽略。
+	RecordRefreshUsed(ctx context.Context, u RefreshUsed) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
 	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
@@ -88,19 +110,21 @@ type Store interface {
 
 // MemoryStore is a Store kept in process memory.
 type MemoryStore struct {
-	mu       sync.Mutex
-	users    map[string]User
-	byEmail  map[string]string
-	sessions map[string]Session
-	codes    map[string]Code
+	mu          sync.Mutex
+	users       map[string]User
+	byEmail     map[string]string
+	sessions    map[string]Session
+	codes       map[string]Code
+	refreshUsed map[string]RefreshUsed
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:    map[string]User{},
-		byEmail:  map[string]string{},
-		sessions: map[string]Session{},
-		codes:    map[string]Code{},
+		users:       map[string]User{},
+		byEmail:     map[string]string{},
+		sessions:    map[string]Session{},
+		codes:       map[string]Code{},
+		refreshUsed: map[string]RefreshUsed{},
 	}
 }
 
@@ -157,6 +181,7 @@ func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 			delete(m.codes, key)
 		}
 	}
+	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == id })
 	return nil
 }
 
@@ -168,6 +193,7 @@ func (m *MemoryStore) DeleteUserSessions(_ context.Context, userID string) error
 			delete(m.sessions, sid)
 		}
 	}
+	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == userID })
 	return nil
 }
 
@@ -278,10 +304,15 @@ func (m *MemoryStore) trimSessionsLocked(userID string, keep int) {
 func (m *MemoryStore) PruneExpired(_ context.Context, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	gone := map[string]bool{}
 	for id, s := range m.sessions {
 		if !now.Before(s.RefreshExpires) {
 			delete(m.sessions, id)
+			gone[id] = true
 		}
+	}
+	if len(gone) > 0 {
+		m.purgeUsedLocked(func(u RefreshUsed) bool { return gone[u.SessionID] })
 	}
 	for key, c := range m.codes {
 		if !now.Before(c.ExpiresAt) {
@@ -310,6 +341,52 @@ func (m *MemoryStore) SessionByRefreshHash(_ context.Context, hash string) (Sess
 	return m.findSession(func(s Session) bool { return s.RefreshHash == hash })
 }
 
+// RotateSession 在锁内做 CAS：refresh_hash 还是旧摘要才换成新的一对。
+func (m *MemoryStore) RotateSession(_ context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok || s.RefreshHash != oldRefreshHash {
+		return ErrInvalidToken
+	}
+	s.AccessHash = newAccessHash
+	s.RefreshHash = newRefreshHash
+	s.AccessExpires = accessExpires
+	s.RefreshExpires = refreshExpires
+	m.sessions[id] = s
+	return nil
+}
+
+func (m *MemoryStore) UsedRefresh(_ context.Context, tokenHash string) (RefreshUsed, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.refreshUsed[tokenHash]
+	if !ok {
+		return RefreshUsed{}, ErrNotFound
+	}
+	return u, nil
+}
+
+func (m *MemoryStore) RecordRefreshUsed(_ context.Context, u RefreshUsed) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.refreshUsed[u.TokenHash]; ok {
+		return nil
+	}
+	m.refreshUsed[u.TokenHash] = u
+	return nil
+}
+
+// purgeUsedLocked 删掉不再需要判断重放的旧令牌记录，与 PostgreSQL 实现里
+// session_refresh_used 的 ON DELETE CASCADE 一致。调用方已持有锁。
+func (m *MemoryStore) purgeUsedLocked(match func(RefreshUsed) bool) {
+	for hash, u := range m.refreshUsed {
+		if match(u) {
+			delete(m.refreshUsed, hash)
+		}
+	}
+}
+
 func (m *MemoryStore) DeleteSession(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -317,5 +394,6 @@ func (m *MemoryStore) DeleteSession(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.sessions, id)
+	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.SessionID == id })
 	return nil
 }

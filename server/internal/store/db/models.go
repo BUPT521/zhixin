@@ -77,6 +77,17 @@ type Session struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type SessionRefreshUsed struct {
+	TokenHash           string
+	SessionID           string
+	UserID              string
+	RequestID           string
+	RotatedAt           pgtype.Timestamptz
+	GraceUntil          pgtype.Timestamptz
+	ReplacedAccessHash  string
+	ReplacedRefreshHash string
+}
+
 type SyncCommit struct {
 	UserID        string
 	Seq           int64

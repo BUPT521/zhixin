@@ -246,6 +246,75 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
+// RotateSession 用 CAS 换掉令牌摘要。0 行说明这条会话的刷新令牌已经被换过，
+// 返回 ErrInvalidToken，让并发的第二个刷新请求失败。
+func (s *Store) RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error {
+	access, err := pgTime(accessExpires)
+	if err != nil {
+		return err
+	}
+	refresh, err := pgTime(refreshExpires)
+	if err != nil {
+		return err
+	}
+	updated, err := s.q.RotateSession(ctx, db.RotateSessionParams{
+		NewAccessHash:  newAccessHash,
+		NewRefreshHash: newRefreshHash,
+		AccessExpires:  access,
+		RefreshExpires: refresh,
+		ID:             id,
+		OldRefreshHash: oldRefreshHash,
+	})
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return auth.ErrInvalidToken
+	}
+	return nil
+}
+
+func (s *Store) UsedRefresh(ctx context.Context, tokenHash string) (auth.RefreshUsed, error) {
+	row, err := s.q.RefreshUsed(ctx, tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.RefreshUsed{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.RefreshUsed{}, err
+	}
+	return auth.RefreshUsed{
+		TokenHash:           row.TokenHash,
+		SessionID:           row.SessionID,
+		UserID:              row.UserID,
+		RequestID:           row.RequestID,
+		RotatedAt:           row.RotatedAt.Time,
+		GraceUntil:          row.GraceUntil.Time,
+		ReplacedAccessHash:  row.ReplacedAccessHash,
+		ReplacedRefreshHash: row.ReplacedRefreshHash,
+	}, nil
+}
+
+func (s *Store) RecordRefreshUsed(ctx context.Context, u auth.RefreshUsed) error {
+	rotated, err := pgTime(u.RotatedAt)
+	if err != nil {
+		return err
+	}
+	grace, err := pgTime(u.GraceUntil)
+	if err != nil {
+		return err
+	}
+	return s.q.InsertRefreshUsed(ctx, db.InsertRefreshUsedParams{
+		TokenHash:           u.TokenHash,
+		SessionID:           u.SessionID,
+		UserID:              u.UserID,
+		RequestID:           u.RequestID,
+		RotatedAt:           rotated,
+		GraceUntil:          grace,
+		ReplacedAccessHash:  u.ReplacedAccessHash,
+		ReplacedRefreshHash: u.ReplacedRefreshHash,
+	})
+}
+
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	return s.q.DeleteUserSessions(ctx, userID)
 }

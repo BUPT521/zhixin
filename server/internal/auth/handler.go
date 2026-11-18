@@ -166,7 +166,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var accountDelay int64
-	t, err := h.svc.refresh(r.Context(), in.RefreshToken, func(userID string) bool {
+	t, err := h.svc.refresh(r.Context(), in.RefreshToken, optional(in.RequestId), func(userID string) bool {
 		accountDelay = h.refreshLimits.Take("account:" + userID)
 		return accountDelay == 0
 	})
