@@ -10,10 +10,10 @@ void main() {
       StateError("database error sql 'SELECT * FROM message' args [真实的学习内容]"),
       action: '读取学习记录',
       kept: '本机记录没有改动',
-      next: '下拉刷新可以再试',
+      next: '可以点重试再试',
     );
 
-    expect(text, '读取学习记录没有完成，本机记录没有改动。下拉刷新可以再试。');
+    expect(text, '读取学习记录没有完成，本机记录没有改动。可以点重试再试。');
     expect(text, isNot(contains('database')));
     expect(text, isNot(contains('真实的学习内容')));
   });

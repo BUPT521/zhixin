@@ -62,8 +62,8 @@ class _NowPageState extends State<NowPage> {
   /// 切到这一栏时才建立，之后常驻；跳去学习、讨论再回来不再手动重读。
   Stream<NowHome>? _stream;
 
-  /// 下拉刷新之后等新结果回来再收起转圈；没有结果时按超时放行。
-  Completer<void>? _refreshWaiter;
+  /// 还没有读到内容时读取失败：内容区留下说明与重试，不留一个空白的骨架。
+  String? _loadFailure;
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
@@ -95,8 +95,6 @@ class _NowPageState extends State<NowPage> {
   void dispose() {
     widget.activeTab.removeListener(_onActiveChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     _input.dispose();
     super.dispose();
   }
@@ -104,23 +102,20 @@ class _NowPageState extends State<NowPage> {
   Stream<NowHome> _createStream() =>
       AppScope.of(context).study.continueLast.watchHome();
 
-  /// 换一条新流：下拉刷新走这里，写入之后的重读由数据层完成。
-  Future<void> _refresh() {
-    final waiter = Completer<void>();
-    _refreshWaiter = waiter;
-    setState(() => _stream = _createStream());
-    return waiter.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+  /// 换一条新流：读取失败之后就地点重试走这里，写入之后的重读由数据层完成。
+  void _retry() {
+    setState(() {
+      _loadFailure = null;
+      _stream = _createStream();
+    });
   }
 
-  /// 新结果回来了：放行等待中的刷新转圈。
+  /// 新结果回来了：清掉上一次失败留下的说明。
   void _onHome(NowHome _) {
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
+    if (_loadFailure != null) setState(() => _loadFailure = null);
   }
 
   void _onHomeError(Object error, StackTrace stack) {
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     if (!mounted) return;
     final message = describeFailure(
       context,
@@ -129,8 +124,9 @@ class _NowPageState extends State<NowPage> {
       action: '读取首页的学习安排',
       kind: 'now_read',
       kept: '屏幕上已经显示的内容保持不变',
-      next: '可以下拉刷新再读一次',
+      next: '可以点重试再读一次',
     );
+    setState(() => _loadFailure = message);
     showToast(context, message);
   }
 
@@ -224,8 +220,8 @@ class _NowPageState extends State<NowPage> {
 
   /// 一屏内容：当前活动在输入区之前，继续入口在最后。
   ///
-  /// 首读用与卡片同高的骨架占位，读完原位替换；下拉刷新换一条新流，新结果
-  /// 回来时收起转圈（ADR-0014）。
+  /// 首读用与卡片同高的骨架占位，读完原位替换；读取失败时就地留下说明与
+  /// 重试（ADR-0014）。
   Widget _homeBody(ZhixinTheme theme, NowHome? home, {required bool loading}) {
     final activity = home?.activity;
     final showActivity = !loading && activity != null && !activity.isEmpty;
@@ -279,32 +275,28 @@ class _NowPageState extends State<NowPage> {
         ),
       ),
     ];
-    return RefreshIndicator(
-      onRefresh: _refresh,
-      child: CustomScrollView(
-        key: const PageStorageKey('now-scroll'),
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverPadding(
-            padding: theme.space.pageInsets(),
-            sliver: SliverMainAxisGroup(
-              slivers: [
-                SliverList.builder(
-                  key: const ValueKey('now-actions'),
-                  itemCount: sections.length,
-                  itemBuilder: (context, index) => sections[index](context),
-                ),
-                FadeIn.sliver(
-                  key: const ValueKey('continue-content'),
-                  trigger: loading,
-                  playOnInit: false,
-                  child: _continueList(theme, entries, loading: loading),
-                ),
-              ],
-            ),
+    return CustomScrollView(
+      key: const PageStorageKey('now-scroll'),
+      slivers: [
+        SliverPadding(
+          padding: theme.space.pageInsets(),
+          sliver: SliverMainAxisGroup(
+            slivers: [
+              SliverList.builder(
+                key: const ValueKey('now-actions'),
+                itemCount: sections.length,
+                itemBuilder: (context, index) => sections[index](context),
+              ),
+              FadeIn.sliver(
+                key: const ValueKey('continue-content'),
+                trigger: loading,
+                playOnInit: false,
+                child: _continueList(theme, entries, loading: loading),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -313,6 +305,13 @@ class _NowPageState extends State<NowPage> {
     List<ContinueEntry> entries, {
     required bool loading,
   }) {
+    final failure = _loadFailure;
+    // 首读失败：说明与重试占用继续入口的位置，输入区照常可用。
+    if (failure != null && loading) {
+      return SliverToBoxAdapter(
+        child: InlineNotice(message: failure, onRetry: _retry),
+      );
+    }
     if (!loading && entries.isEmpty) {
       return const SliverToBoxAdapter(
         child: forui.FCard(

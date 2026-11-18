@@ -15,7 +15,7 @@ import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 /// 安排页的换周订阅：换周只保留最新一条订阅，迟到的旧周数据不再写回；
-/// 写入之后的新数据由订阅带回，下拉刷新重新订阅当前目标周。
+/// 写入之后的新数据由订阅带回，读取失败之后就地点重试并重新订阅当前目标周。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
@@ -254,7 +254,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('下拉刷新重新订阅当前目标周，不回到最初那一周', (tester) async {
+  testWidgets('读取失败之后就地点重试，重新订阅当前目标周，不回到最初那一周', (tester) async {
     final policy = TimePolicy(clock: DateTime.now);
     final thisWeek = policy.naturalWeekStart(policy.now);
     final nextWeek = DateTime(thisWeek.year, thisWeek.month, thisWeek.day + 7);
@@ -275,32 +275,29 @@ void main() {
     await settle(tester);
     expect(find.text(weekTitle(nextWeek)), findsOneWidget);
 
-    // 下拉刷新只重新订阅当前目标周，最初那一周不再重读。
-    final refresh = tester
-        .widget<RefreshIndicator>(find.byType(RefreshIndicator).first)
-        .onRefresh;
-    late Future<void> pending;
-    await tester.runAsync(() async {
-      pending = refresh();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    });
-    await tester.pump();
+    // 读取失败留下说明与重试入口，已经显示的一周不换成错误页。
+    streams[nextWeek]!.addError(StateError('读取失败'));
+    await settle(tester);
+    expect(find.text('重试'), findsOneWidget);
+    expect(find.text('下一周的预约'), findsOneWidget);
+
+    // 重试只重新订阅当前目标周，最初那一周不再重读。
+    await tester.tap(find.text('重试'));
+    await settle(tester);
     expect(requested.last, nextWeek);
     expect(requested.where((week) => week == thisWeek), hasLength(1));
 
     emit(
       nextWeek,
-      weekData(nextWeek, blockTitle: '刷新后的预约', timetableTitle: '刷新后的课'),
+      weekData(nextWeek, blockTitle: '重试后的预约', timetableTitle: '重试后的课'),
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.runAsync(() => pending);
     await settle(tester);
 
     expect(find.text(weekTitle(nextWeek)), findsOneWidget);
-    expect(find.text('刷新后的预约'), findsOneWidget);
-    expect(find.text('刷新后的课'), findsOneWidget);
+    expect(find.text('重试后的预约'), findsOneWidget);
+    expect(find.text('重试后的课'), findsOneWidget);
     expect(find.text('下一周的预约'), findsNothing);
+    expect(find.text('重试'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

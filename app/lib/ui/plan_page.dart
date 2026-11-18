@@ -94,15 +94,12 @@ class _PlanPageState extends State<PlanPage> {
 
   /// 当前目标周的订阅；为空表示还没有切到过安排页。
   ///
-  /// 换周与刷新都只换一条流，写入之后的重读、迟到结果的丢弃都由数据层与
+  /// 换周与重试都只换一条流，写入之后的重读、迟到结果的丢弃都由数据层与
   /// [LiveView] 完成（ADR-0014）。
   Stream<WeekSnapshot>? _weekStream;
 
   /// 首读失败的说明；已经显示过内容时保留那一份，不换成错误页。
   String? _error;
-
-  /// 下拉刷新之后等新的一份数据回来再收起转圈；没有结果时按超时放行。
-  Completer<void>? _refreshWaiter;
 
   bool _openedInitial = false;
   int _tab = 0;
@@ -200,8 +197,6 @@ class _PlanPageState extends State<PlanPage> {
   void dispose() {
     widget.activeTab?.removeListener(_onActiveChanged);
     widget.request?.removeListener(_onRequestChanged);
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     _doneSubscription?.cancel();
     _doneSubscription = null;
     super.dispose();
@@ -213,18 +208,15 @@ class _PlanPageState extends State<PlanPage> {
     return read(weekStart).map((week) => (weekStart: weekStart, week: week));
   }
 
-  /// 重新订阅当前目标周：下拉刷新与手动刷新都只换一条新流。
-  Future<void> _reload() {
+  /// 重新订阅当前目标周：读取失败之后就地点重试走这里。
+  void _reload() {
     final weekStart = _weekAnchor;
-    if (weekStart == null) return Future<void>.value();
-    final waiter = Completer<void>();
-    _refreshWaiter = waiter;
+    if (weekStart == null) return;
     setState(() {
       _error = null;
       _weekStream = _createStream(weekStart);
       _resetDone();
     });
-    return waiter.future.timeout(const Duration(seconds: 3), onTimeout: () {});
   }
 
   /// 新的一份周数据：换周过程中迟到的旧结果直接丢掉，界面不会对着别的周显示。
@@ -235,15 +227,11 @@ class _PlanPageState extends State<PlanPage> {
       _shownAnchor = snapshot.weekStart;
       _error = null;
     });
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     unawaited(_openInitial(snapshot));
   }
 
   /// 读取失败：已经显示的一周保持不变，只提示一次；还没有内容时留下重试入口。
   void _onWeekError(Object error, StackTrace stack) {
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     if (!mounted) return;
     final message = describeFailure(
       context,
@@ -252,7 +240,7 @@ class _PlanPageState extends State<PlanPage> {
       action: '读取安排',
       kind: 'plan_read',
       kept: '已经保存的安排没有改动',
-      next: '可以点右上角刷新，或切换页面再回来',
+      next: '可以点重试再读一次',
     );
     setState(() => _error = message);
     showToast(context, message);
@@ -1224,6 +1212,17 @@ class _PlanPageState extends State<PlanPage> {
       child: Column(
         children: [
           _tabBar(theme),
+          // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
+          if (_error != null)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                0,
+                theme.space.page,
+                theme.space.sm,
+              ),
+              child: InlineNotice(message: _error!, onRetry: _reload),
+            ),
           Expanded(
             // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
             child: SlideSwap(
@@ -1277,32 +1276,28 @@ class _PlanPageState extends State<PlanPage> {
 
   /// 每个页签保留自己的滚动位置，卡片进入视口缓存范围时才构建。
   Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
-      RefreshIndicator(
-        onRefresh: _reload,
-        child: NotificationListener<ScrollNotification>(
-          onNotification: tab == 1 ? _onItemsScroll : null,
-          child: CustomScrollView(
-            key: PageStorageKey<String>('plan-tab-$tab'),
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(
-                  theme.space.page,
-                  theme.space.xs,
-                  theme.space.page,
-                  theme.space.section,
-                ),
-                sliver: SliverMainAxisGroup(
-                  slivers: switch (tab) {
-                    0 => _scheduleTab(theme, week),
-                    1 => _itemsTab(theme, week),
-                    2 => _goalsTab(theme, week),
-                    _ => _operationsTab(theme, week),
-                  },
-                ),
+      NotificationListener<ScrollNotification>(
+        onNotification: tab == 1 ? _onItemsScroll : null,
+        child: CustomScrollView(
+          key: PageStorageKey<String>('plan-tab-$tab'),
+          slivers: [
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                theme.space.xs,
+                theme.space.page,
+                theme.space.section,
               ),
-            ],
-          ),
+              sliver: SliverMainAxisGroup(
+                slivers: switch (tab) {
+                  0 => _scheduleTab(theme, week),
+                  1 => _itemsTab(theme, week),
+                  2 => _goalsTab(theme, week),
+                  _ => _operationsTab(theme, week),
+                },
+              ),
+            ),
+          ],
         ),
       );
 

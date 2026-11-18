@@ -109,9 +109,6 @@ class _RecordsPageState extends State<RecordsPage> {
   bool _hasMore = false;
   bool _loadingMore = false;
 
-  /// 下拉刷新之后等第一页回来再收起转圈；没有结果时按超时放行。
-  Completer<void>? _refreshWaiter;
-
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
   /// 屏幕上正在显示的记录：第一页在前，继续读取的页去重之后接在后面。
@@ -173,8 +170,6 @@ class _RecordsPageState extends State<RecordsPage> {
     widget.activeTab.removeListener(_onActiveChanged);
     widget.request.removeListener(_onRequestChanged);
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     _searchHint.dispose();
     super.dispose();
   }
@@ -189,10 +184,8 @@ class _RecordsPageState extends State<RecordsPage> {
     );
   }
 
-  /// 重新订阅第一页：筛选变了、下拉刷新与手动刷新都走这里。
-  Future<void> _reload() {
-    final waiter = Completer<void>();
-    _refreshWaiter = waiter;
+  /// 重新订阅第一页：筛选变了与右上角的刷新按钮都走这里。
+  void _reload() {
     setState(() {
       _older = const [];
       _olderQuestions = const {};
@@ -201,20 +194,15 @@ class _RecordsPageState extends State<RecordsPage> {
       _loadingMore = false;
       _stream = _createStream();
     });
-    return waiter.future.timeout(const Duration(seconds: 3), onTimeout: () {});
   }
 
-  /// 第一页回来了：换掉屏幕上的一屏，并放行等待中的刷新。
+  /// 第一页回来了：换掉屏幕上的一屏。
   void _onRecords(RecordsView view) {
     _view = view;
     if (_older.isEmpty) _hasMore = view.records.length == _pageSize;
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
   }
 
   void _onRecordsError(Object error, StackTrace stack) {
-    _refreshWaiter?.complete();
-    _refreshWaiter = null;
     if (!mounted) return;
     final message = describeFailure(
       context,
@@ -592,10 +580,7 @@ class _RecordsPageState extends State<RecordsPage> {
                                       ),
                               ),
                             )
-                          : RefreshIndicator(
-                              onRefresh: _reload,
-                              child: _recordList(theme, records),
-                            ),
+                          : _recordList(theme, records),
                     ),
             ),
           ],
@@ -618,7 +603,6 @@ class _RecordsPageState extends State<RecordsPage> {
       for (final entry in groups.entries) ...[entry.key, ...entry.value],
     ];
     return ListView.builder(
-      physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(
         theme.space.page,
         theme.space.xs,

@@ -21,7 +21,7 @@
 | 项 | 选择 |
 |---|---|
 | 客户端 | Flutter 3.47.9（Dart 3.13.7），本期只交付 Android；版本固定在 [ci.yml](.github/workflows/ci.yml) 的 `FLUTTER_VERSION` |
-| 界面组件 | Forui 0.27.7 承担页面骨架、按钮、表单、列表、对话框、提示、进度与主题；底部面板与日期时间选择用 `material_ui` 的对应控件，基础控件、路由、Markdown、本地化，以及 Forui 没有的控件（如下拉刷新）也用 `material_ui`，图标统一用 Lucide（`forui_lucide`） |
+| 界面组件 | Forui 0.27.7 承担页面骨架、按钮、表单、列表、对话框、提示、进度与主题；底部面板与日期时间选择用 `material_ui` 的对应控件，基础控件、路由、Markdown 与本地化也用 `material_ui`，图标统一用 Lucide（`forui_lucide`） |
 | 最低系统 | Android 11（API 30）；只出 arm64 包，不兼容 32 位设备 |
 | 本地数据 | SQLite 单文件（drift，连接使用随包的 sqlite3），业务表、提交历史与附件同库，表结构与当前版本见 [01](docs/01-ER数据模型.md) |
 | 模型 | 用户自填 key，默认 `deepseek-flash`，接口地址与模型名可配置；登录后可改用服务端代理 |
