@@ -13,7 +13,6 @@ import (
 	"time"
 	_ "time/tzdata" // the container image may not ship zoneinfo
 
-	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/retention"
@@ -55,7 +54,9 @@ func run(log *slog.Logger) error {
 			}
 		}
 		log.Info("using PostgreSQL stores")
-		blobStore := blobs.NewStore(objects)
+		// 附件索引与配额写在 attachment 表里，BlobStore 负责索引与字节两件事；
+		// 备份与附件的字节仍共用同一份对象存储。
+		blobStore := pg.NewBlobStore(pgStore)
 		stores = server.Stores{
 			Auth:      pgStore,
 			Sync:      pgStore,
@@ -64,6 +65,8 @@ func run(log *slog.Logger) error {
 			Quota:     pgStore,
 			Feedback:  pgStore,
 			Retention: pgStore,
+			Cloud:     pgStore,
+			Objects:   objects,
 			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
 			// 由这里按前缀清理。
 			DeleteAccount: server.DeleteAccountData(
@@ -87,17 +90,19 @@ func run(log *slog.Logger) error {
 		log.Info("loaded the release manifest", slog.Int("releases", len(cfg.Releases)))
 	}
 
+	// 清理循环（会话与验证码过期行、反馈保留期）随 ctx 一起停止，所以先建
+	// 信号上下文，再构造处理器。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           server.New(cfg, stores, log),
+		Handler:           server.New(ctx, cfg, stores, log),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: model streams and backup downloads can run for
 		// minutes. Idle connections are still reaped.
 		IdleTimeout: 120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// 匿名活跃按保留期滚动删除：启动时清一次，之后每天一次，与进程重启无关。
 	go retention.PruneLoop(ctx, stores.Retention, cfg.Location, log)

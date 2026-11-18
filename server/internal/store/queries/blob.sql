@@ -36,10 +36,7 @@ FROM attachment
 WHERE user_id = sqlc.arg(user_id)
 ORDER BY created_at DESC, sha256 DESC;
 
--- 预留配额前锁住账号行：同一账号的两次上传因此排队，求和与写入不会同时读到
--- 旧的已用量。账号行不存在时返回零行，存储层按账号不存在处理。
--- name: LockUser :one
-SELECT id
-FROM app_user
-WHERE id = sqlc.arg(id)
-FOR UPDATE;
+-- 预留配额前锁住账号行（复用 auth.sql 的 LockUser ... FOR UPDATE）：同一账号的
+-- 两次上传因此排队，求和与写入不会同时读到旧的已用量。账号行不存在时返回零行，
+-- 存储层按账号不存在处理。
+

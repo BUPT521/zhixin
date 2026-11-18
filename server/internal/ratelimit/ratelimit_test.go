@@ -96,6 +96,8 @@ func TestWouldBlockDoesNotConsume(t *testing.T) {
 	}
 }
 
+// TestWouldBlockChecksAllKeys 核对预检查覆盖传入的每一个键：任一键用完都报告
+// 等待，且检查不会扣减其他键的令牌。
 func TestWouldBlockChecksAllKeys(t *testing.T) {
 	now := time.Now()
 	l := New(rate.Limit(0), 1, 0)
@@ -231,36 +233,5 @@ func TestMaxKeysBoundsGrowth(t *testing.T) {
 	}
 	if l.Len() != 5 {
 		t.Fatalf("键数应停在上限 5，得到 %d", l.Len())
-	}
-}
-
-// TestWouldBlockDoesNotConsume 核对预检查不扣令牌：报告需要等待之后，桶的状态与
-// 没问过一样，别的键也不受影响。
-func TestWouldBlockDoesNotConsume(t *testing.T) {
-	now := time.Now()
-	l := New(rate.Limit(0.5), 1, 0)
-	l.nowFn = func() time.Time { return now }
-
-	if wait := l.WouldBlock("a"); wait != 0 {
-		t.Fatalf("还没用过的键不该报告等待，得到 %d", wait)
-	}
-	if l.Take("a") != 0 {
-		t.Fatal("a 第一次应当放行")
-	}
-	wait := l.WouldBlock("a")
-	if wait <= 0 {
-		t.Fatal("用完令牌的键应报告等待")
-	}
-	// 非消费：再问一次结果不变，说明没有扣令牌。
-	if again := l.WouldBlock("a"); again != wait {
-		t.Fatalf("预检查不应改变桶的状态，得到 %d 与 %d", wait, again)
-	}
-	// 别的键不受影响。
-	if l.Take("b") != 0 {
-		t.Fatal("b 第一次应当放行")
-	}
-	now = now.Add(2 * time.Second) // 每秒补 0.5 个，两秒补回一个
-	if wait := l.WouldBlock("a"); wait != 0 {
-		t.Fatalf("令牌补回后不该再报告等待，得到 %d", wait)
 	}
 }

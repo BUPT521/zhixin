@@ -118,22 +118,6 @@ func (q *Queries) ListAttachments(ctx context.Context, userID string) ([]ListAtt
 	return items, nil
 }
 
-const lockUser = `-- name: LockUser :one
-SELECT id
-FROM app_user
-WHERE id = $1
-FOR UPDATE
-`
-
-// 预留配额前锁住账号行：同一账号的两次上传因此排队，求和与写入不会同时读到
-// 旧的已用量。账号行不存在时返回零行，存储层按账号不存在处理。
-func (q *Queries) LockUser(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, lockUser, id)
-	var id_2 string
-	err := row.Scan(&id_2)
-	return id_2, err
-}
-
 const sumAttachmentBytes = `-- name: SumAttachmentBytes :one
 SELECT COALESCE(SUM(size), 0)::bigint AS used
 FROM attachment

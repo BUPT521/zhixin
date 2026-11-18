@@ -15,6 +15,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/blobs"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
@@ -42,6 +43,10 @@ type Stores struct {
 	Quota     llmproxy.Quota
 	Feedback  feedback.Store
 	Retention retention.Store
+	// Cloud 保存云端清除的进行中标记；Objects 与备份、附件共用同一份对象
+	// 存储，清除时按账号前缀兜底清理遗留对象。
+	Cloud   cloudpurge.Store
+	Objects objectstore.Store
 	// DeleteAccount removes per-account data owned outside the auth store.
 	// It runs once before the account row disappears.
 	DeleteAccount auth.AccountDeleter
@@ -54,7 +59,10 @@ func MemoryStores() Stores {
 	authStore := auth.NewMemoryStore()
 	syncStore := syncsvc.NewMemoryStore()
 	backupStore := backup.NewMemoryStore()
-	blobStore := blobs.NewStore(objectstore.NewMemory())
+	// 附件字节、附件配额索引与云清除兜底共用同一份内存对象存储；分两次
+	// NewMemory 会让清除看不到附件对象。
+	objects := objectstore.NewMemory()
+	blobStore := blobs.NewStore(objects)
 	quotaStore := llmproxy.NewMemoryQuota()
 	return Stores{
 		Auth:      authStore,
@@ -64,6 +72,8 @@ func MemoryStores() Stores {
 		Quota:     quotaStore,
 		Feedback:  feedback.NewMemoryStore(),
 		Retention: retention.NewMemoryStore(),
+		Cloud:     cloudpurge.NewMemoryStore(),
+		Objects:   objects,
 		DeleteAccount: DeleteAccountData(
 			syncStore.DeleteUser,
 			backupStore.DeleteUser,
@@ -86,14 +96,21 @@ func DeleteAccountData(deleters ...func(ctx context.Context, userID string) erro
 	}
 }
 
-// New builds the complete handler.
-func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
+// New builds the complete handler. ctx 只用于每日清理循环：会话与验证码的过期行、
+// 反馈保留期都在启动时清一次，之后每天一次，进程退出时随 ctx 一起停止。
+func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
 	// 账号删除只登记一次：调用方提供的清理先删对象与各包数据，auth 再删会话
 	// 与账号行。失败时停在账号行之前，同一个请求可以重试。
 	authSvc.SetAccountDataDeleter(st.DeleteAccount)
+	// Argon2 并发受内存预算约束；会话数有上限；重放事件只记 user_id、session_id
+	// 与 request_id，不含令牌。
+	authSvc.SetPasswordBudget(cfg.Argon2MemoryBudgetMiB)
+	authSvc.SetMaxSessions(cfg.MaxSessionsPerUser)
+	authSvc.SetSecurityLog(log)
+	go authSvc.PruneLoop(ctx, st.Auth, log)
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
@@ -101,8 +118,12 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	// 每个进程内限流器都带桶数量上限（cfg.RateLimitKeys）：按来源地址分桶的表
 	// 本来会随不同地址无限增长，到上限之后先清理空闲桶、再淘汰最久未用的键。
 	var byAddr, refreshLimits, uploadLimits, codeLimits, feedbackLimits, telemetryLimits *ratelimit.Limiter
+	var loginFails *ratelimit.Limiter
 	if cfg.AuthRatePerSecond > 0 {
 		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute, cfg.RateLimitKeys)
+	}
+	if cfg.LoginFailRatePerSecond > 0 {
+		loginFails = ratelimit.New(rate.Limit(cfg.LoginFailRatePerSecond), cfg.LoginFailBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	if cfg.RefreshRatePerSecond > 0 {
 		refreshLimits = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute, cfg.RateLimitKeys)
@@ -118,6 +139,14 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	}
 	if cfg.TelemetryRatePerSecond > 0 {
 		telemetryLimits = ratelimit.New(rate.Limit(cfg.TelemetryRatePerSecond), cfg.TelemetryBurst, 15*time.Minute, cfg.RateLimitKeys)
+	}
+	// 反馈与匿名上报除按地址限流外还有全局写入上限，换地址也刷不满表。
+	var feedbackGlobal, telemetryGlobal *ratelimit.Limiter
+	if cfg.FeedbackGlobalRatePerSecond > 0 {
+		feedbackGlobal = ratelimit.New(rate.Limit(cfg.FeedbackGlobalRatePerSecond), cfg.FeedbackGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
+	}
+	if cfg.TelemetryGlobalRatePerSecond > 0 {
+		telemetryGlobal = ratelimit.New(rate.Limit(cfg.TelemetryGlobalRatePerSecond), cfg.TelemetryGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	mailer, err := auth.NewMailer(auth.MailerConfig{
 		Addr:     cfg.SMTPAddr,
@@ -155,15 +184,63 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	authSvc.SetActivityRecorder(retentionSvc)
 
 	clientHost := httpx.NewClientHost(cfg.TrustedProxies)
+
+	authHandler := auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost)
+	// 登录与删号的密码失败共用一个按账号的失败预算；不配置速率时关闭。
+	authHandler.SetLoginFailLimiter(loginFails)
+
+	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion).SetMaxPullBytes(cfg.SyncPullMaxBytes)
+	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
+
+	backupHandler := backup.NewHandler(
+		backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log)
+
+	// 账号附件总量上限必须显式设置，否则只受单附件上限约束。
+	blobSvc := blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes).SetAccountBytes(cfg.MaxAccountAttachmentBytes)
+	blobHandler := blobs.NewHandler(blobSvc, log)
+
+	// 云端清除编排备份、提交序列、附件与遗留对象；清除期间三个写处理器由 gate
+	// 回 409，读接口不受影响。
+	purgeSvc := cloudpurge.New(st.Cloud, st.Backups, st.Sync, st.Blobs, st.Objects)
+	syncHandler.SetPurgeGate(purgeSvc.Gate)
+	backupHandler.SetPurgeGate(purgeSvc.Gate)
+	blobHandler.SetPurgeGate(purgeSvc.Gate)
+
+	llmProxy := llmproxy.NewHandler(cfg.LLM, st.Quota, cfg.Location, log)
+	llmProxy.SetConcurrencyLimit(cfg.LLM.ConcurrentPerUser)
+	if cfg.LLM.RequireVerifiedEmail {
+		llmProxy.SetEmailVerifier(func(ctx context.Context, userID string) (bool, error) {
+			u, err := st.Auth.UserByID(ctx, userID)
+			if errors.Is(err, auth.ErrNotFound) {
+				// 账号在鉴权之后、切到模型之前被删掉：按未验证挡下，不回 500。
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			return !u.EmailVerifiedAt.IsZero(), nil
+		})
+	}
+
+	feedbackSvc := feedback.NewService(st.Feedback)
+	feedbackSvc.SetKeepDays(cfg.FeedbackKeepDays)
+	feedbackHandler := feedback.NewHandler(feedbackSvc, log, cfg.MaxJSONBytes, feedbackLimits, clientHost)
+	feedbackHandler.SetGlobalLimiter(feedbackGlobal)
+	go feedbackSvc.PruneLoop(ctx, log)
+
+	retentionHandler := retention.NewHandler(retentionSvc, log, cfg.MaxJSONBytes, telemetryLimits, clientHost)
+	retentionHandler.SetGlobalLimiter(telemetryGlobal)
+
 	handlers := routes{
-		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost),
-		sync:          syncsvc.NewHandler(syncsvc.NewService(st.Sync, ClientSchemaVersion), log, 16*cfg.MaxJSONBytes),
-		backups:       backup.NewHandler(backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log),
-		blobs:         blobs.NewHandler(blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes), log),
-		llm:           llmproxy.NewHandler(cfg.LLM, st.Quota, cfg.Location, log),
-		feedback:      feedback.NewHandler(feedback.NewService(st.Feedback), log, cfg.MaxJSONBytes, feedbackLimits, clientHost),
+		auth:          authHandler,
+		sync:          syncHandler,
+		backups:       backupHandler,
+		blobs:         blobHandler,
+		llm:           llmProxy,
+		feedback:      feedbackHandler,
 		release:       release.NewHandler(cfg.Releases),
-		retention:     retention.NewHandler(retentionSvc, log, cfg.MaxJSONBytes, telemetryLimits, clientHost),
+		retention:     retentionHandler,
+		cloud:         cloudpurge.NewHandler(purgeSvc, log).Purge,
 		schemaVersion: ClientSchemaVersion,
 		ready:         st.Ready,
 	}

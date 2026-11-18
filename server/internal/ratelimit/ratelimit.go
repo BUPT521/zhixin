@@ -94,32 +94,6 @@ func (l *Limiter) check(take bool, keys []string) int64 {
 	return 0
 }
 
-// WouldBlock 报告 keys 里是否已经有键用完令牌，返回需要等待的秒数；不消耗任何
-// 令牌。调用方在真正执行动作之前用它做失败预算的预检查（例如登录失败计数），
-// 只有不会超预算时才计数，避免把本来会失败的尝试记进预算。
-func (l *Limiter) WouldBlock(keys ...string) int64 {
-	if len(keys) == 0 {
-		return 0
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := l.nowFn()
-	l.reapIfDue(now)
-	var delay int64
-	for _, key := range keys {
-		e, ok := l.buckets[key]
-		if !ok {
-			continue
-		}
-		if tokens := e.bucket.TokensAt(now); tokens < 1 {
-			if wait := retryAfter(tokens, l.limit); wait > delay {
-				delay = wait
-			}
-		}
-	}
-	return delay
-}
-
 // bucketFor 取或建一个键的令牌桶，负责在上限处清理与淘汰。
 func (l *Limiter) bucketFor(key string, now time.Time) *rate.Limiter {
 	if e, ok := l.buckets[key]; ok {
