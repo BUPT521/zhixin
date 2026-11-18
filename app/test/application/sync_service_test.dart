@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -270,6 +271,29 @@ void main() {
     );
     // 第一个附件超限之后不再尝试后面的附件，也没有写回同步游标。
     expect(server.blobUploadAttempts, 1);
+    expect(await a.account.preferences.syncState(), isNull);
+  });
+
+  test('上传途中切换实例，进行中的同步结果被丢弃', () async {
+    final a = await device('a@example.com', register: true);
+    final bytes = [1, 2, 3];
+    final hash = AssetStore.hashBytes(bytes);
+    await a.rig.db.command((txn) async {
+      await a.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
+    }, label: '保存附件');
+    await _insertMemory(a.rig, 'm1', hash);
+
+    final gate = Completer<void>();
+    server.delayBlobUpload = gate.future;
+    final pending = a.sync.syncNow(confirmBaseline: true);
+    while (server.blobUploadAttempts == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    // 附件已经发到旧实例，但同步还没收尾；这时切走，旧结果不能写回。
+    await a.account.setServerBaseUrl('http://other.test');
+    gate.complete();
+
+    await expectLater(pending, throwsA(isA<SyncIdentityChanged>()));
     expect(await a.account.preferences.syncState(), isNull);
   });
 }

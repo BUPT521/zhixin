@@ -58,6 +58,9 @@ class FakeServer {
   /// 刷新请求先等这个信号再处理；用例用它把刷新卡在途中，模拟切换身份。
   Future<void>? delayRefresh;
 
+  /// 附件上传先等这个信号再处理，用来模拟上传途中切换实例或账号。
+  Future<void>? delayBlobUpload;
+
   int _nextToken = 1;
 
   /// 打开之后下一次带令牌的请求返回 401，客户端应当先刷新再重试。
@@ -250,6 +253,8 @@ class FakeServer {
       final userBlobs = blobs.putIfAbsent(userId, () => {});
       if (method == 'PUT') {
         blobUploadAttempts++;
+        final gate = delayBlobUpload;
+        if (gate != null) await gate;
         final bytes = Uint8List.fromList(request.bodyBytes);
         if (_sha256Hex(bytes) != hash) return _problem(400, 'invalid_request');
         final singleLimit = maxAttachmentBytes;

@@ -233,6 +233,34 @@ void main() {
     );
   });
 
+  test('限流按 Retry-After 给出等待秒数', () async {
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'type': 'urn:zhixin:problem:rate_limited',
+            'title': 'rate_limited',
+            'status': 429,
+            'code': 'rate_limited',
+          }),
+          429,
+          headers: {'retry-after': '30'},
+        ),
+      ),
+    );
+    await expectLater(
+      client.deleteMe('token', password: 'wrong-password'),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.userMessage,
+          'message',
+          '尝试过于频繁，请 30 秒后再试',
+        ),
+      ),
+    );
+  });
+
   test('推送在服务端位置变化时给出 conflict 与最新 head', () async {
     final server = FakeServer();
     final client = ServerClient(
