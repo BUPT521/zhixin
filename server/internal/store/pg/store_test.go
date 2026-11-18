@@ -24,12 +24,19 @@ import (
 // 连接串必须指向专用测试库，因为用例会删除其中的业务表。
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
+	return newTestStoreWith(t, objectstore.NewMemory())
+}
+
+// newTestStoreWith 与 newTestStore 相同，只是允许用例换一种对象存储实现：
+// 核对目录存储的键边界时要看到真实的路径归一化。
+func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
+	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("ZHIXIN_TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("未设置 ZHIXIN_TEST_DATABASE_URL，跳过 PostgreSQL 用例")
 	}
 	ctx := context.Background()
-	st, err := Open(ctx, dsn, Options{Objects: objectstore.NewMemory()})
+	st, err := Open(ctx, dsn, Options{Objects: objects})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -242,6 +249,110 @@ func TestPostgresClearAccountData(t *testing.T) {
 	}
 	if err := st.Reset(ctx, "u1"); err != nil {
 		t.Fatalf("second reset: %v", err)
+	}
+}
+
+// seedBackup 建一个账号并写一份备份；用例只关心归属与对象键。
+func seedBackup(t *testing.T, st *Store, userID, email, id string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := st.CreateUser(ctx, auth.User{ID: userID, Email: email, PasswordHash: "h"}); err != nil {
+		t.Fatalf("user %s: %v", userID, err)
+	}
+	body := []byte("zip-" + id)
+	meta := backup.Meta{
+		ID: id, SHA256: "sha-" + id, Size: int64(len(body)), SchemaVersion: 27,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := st.Put(ctx, userID, meta, bytes.NewReader(body), 5); err != nil {
+		t.Fatalf("put %s/%s: %v", userID, id, err)
+	}
+}
+
+// TestPostgresBackupDeleteScopesToAccount 守住删除的归属：拿另一个账号的 id 删除
+// 停在 ErrNotFound，元数据与对象都不动；0 行时不会按 id 拼出的键去删对象。
+func TestPostgresBackupDeleteScopesToAccount(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedBackup(t, st, "u1", "a@b.cn", "mine")
+	seedBackup(t, st, "u2", "c@d.cn", "other")
+
+	if err := st.Delete(ctx, "u1", "other"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("cross-account delete: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "other")); err != nil {
+		t.Fatalf("another account's object must stay: %v", err)
+	}
+	if list, err := st.List(ctx, "u2"); err != nil || len(list) != 1 {
+		t.Fatalf("another account's metadata must stay: %+v, %v", list, err)
+	}
+
+	// 形状像 ../u2/other 的 id：删不到行，也就不会去碰 u2 的对象。
+	if err := st.Delete(ctx, "u1", "../u2/other"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("path-shaped id: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "other")); err != nil {
+		t.Fatalf("path-shaped id touched another account: %v", err)
+	}
+
+	// 自己的能删一次，第二次停在 ErrNotFound。
+	if err := st.Delete(ctx, "u1", "mine"); err != nil {
+		t.Fatalf("delete own backup: %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u1", "mine")); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("own object should be deleted, got %v", err)
+	}
+	if err := st.Delete(ctx, "u1", "mine"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("second delete: want ErrNotFound, got %v", err)
+	}
+}
+
+// TestPostgresBackupDeleteDoesNotEscapeDirStore 用目录存储核对 ../ 形状的 id：
+// 目录实现会把 backups/u1/../u2/target.zip 归一成另一个账号的路径；服务层的
+// id 校验之外，存储层“0 行不动对象”是第二道保险。
+func TestPostgresBackupDeleteDoesNotEscapeDirStore(t *testing.T) {
+	dir, err := objectstore.NewDir(t.TempDir())
+	if err != nil {
+		t.Fatalf("dir: %v", err)
+	}
+	st := newTestStoreWith(t, dir)
+	ctx := context.Background()
+	seedBackup(t, st, "u1", "a@b.cn", "mine")
+	seedBackup(t, st, "u2", "c@d.cn", "target")
+
+	if err := st.Delete(ctx, "u1", "../u2/target"); !errors.Is(err, backup.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if _, err := dir.Stat(ctx, objectstore.BackupKey("u2", "target")); err != nil {
+		t.Fatalf("another account's object was deleted through a path-shaped id: %v", err)
+	}
+}
+
+// TestPostgresDeleteAllClearsLeftoverObjects 守住清空备份的最后一步：元数据已经
+// 不在、对象还留着的孤儿会被账号前缀清理删掉，另一个账号不受影响。
+func TestPostgresDeleteAllClearsLeftoverObjects(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedBackup(t, st, "u1", "a@b.cn", "b1")
+	seedBackup(t, st, "u2", "c@d.cn", "b2")
+
+	orphan := objectstore.BackupKey("u1", "orphan")
+	body := []byte("left-behind")
+	if err := st.objects.Put(ctx, orphan, bytes.NewReader(body), objectstore.Info{Size: int64(len(body))}); err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+
+	if err := st.DeleteAll(ctx, "u1"); err != nil {
+		t.Fatalf("delete all: %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, orphan); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("leftover object should be removed, got %v", err)
+	}
+	if list, err := st.List(ctx, "u1"); err != nil || len(list) != 0 {
+		t.Fatalf("metadata after clear = %+v, %v", list, err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.BackupKey("u2", "b2")); err != nil {
+		t.Fatalf("another account's object must stay: %v", err)
 	}
 }
 

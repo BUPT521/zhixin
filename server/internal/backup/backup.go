@@ -36,9 +36,13 @@ type Store interface {
 	Put(ctx context.Context, userID string, m Meta, data io.Reader, keep int) error
 	List(ctx context.Context, userID string) ([]Meta, error)
 	Open(ctx context.Context, userID, id string) (Meta, io.ReadCloser, error)
+	// Delete removes one snapshot of the account. It must return ErrNotFound
+	// without touching object storage when the (user_id, id) row is missing,
+	// so a guessed id cannot delete another account's bytes.
 	Delete(ctx context.Context, userID, id string) error
-	// DeleteAll removes every snapshot of the account, metadata and bytes.
-	// An empty account is not an error; a failure anywhere is returned.
+	// DeleteAll removes every snapshot of the account, metadata and bytes, and
+	// then clears leftover objects under the account prefix. An empty account
+	// is not an error; a failure anywhere is returned.
 	DeleteAll(ctx context.Context, userID string) error
 }
 

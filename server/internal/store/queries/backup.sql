@@ -23,7 +23,9 @@ SELECT id, sha256, size, schema_version, device_name, created_at
 FROM backup
 WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
--- name: DeleteBackup :exec
+-- 按 (user_id, id) 删一行并返回影响行数：存储层只有删到一行才删除对象键，
+-- 0 行表示这不是当前账号的备份，绝不能拿 id 去拼键删别人的字节。
+-- name: DeleteBackup :execrows
 DELETE FROM backup
 WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
