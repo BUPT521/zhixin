@@ -9,6 +9,7 @@ import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../domain/models/study_plan.dart';
 import 'command_ids.dart';
+import 'plan_search.dart';
 import 'service_runtime.dart';
 
 /// 一份系统学习计划的摘要：下一步与最近一次预约，给日程页直接展示。
@@ -197,6 +198,52 @@ class PlanService {
   /// 已完成事项按页读取；安排页展开“已完成”时逐页调用。
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) =>
       tasks.doneItems(limit: limit, offset: offset);
+
+  /// 安排查找的一页：事项与预约一起读回，关键词在应用层筛，再按时间排序分页。
+  ///
+  /// 日期条件只算一次自然日区间，同时用于事项截止时间与预约开始时间，两个
+  /// 结果来源因此共用同一个日期条件；条件全空时直接返回空页，不读库。
+  /// 查询是用户发起的快照，不跟随写入更新（ADR-0014 的按次读取）。
+  Future<PlanSearchPageResult> searchPage(
+    PlanSearchQuery query, {
+    int offset = 0,
+    int pageSize = planSearchPageSize,
+  }) async {
+    if (query.isEmpty) return PlanSearchPageResult(query: query);
+    final day = query.day;
+    final range = day == null ? null : runtime.policy.naturalDayRange(day);
+    final (items, blocks) = await (
+      tasks.searchItems(
+        goalId: query.goalId,
+        status: query.status,
+        dayStart: range?.start,
+        dayEnd: range?.endExclusive,
+      ),
+      schedule.searchBlocks(
+        goalId: query.goalId,
+        status: query.status,
+        dayStart: range?.start,
+        dayEnd: range?.endExclusive,
+      ),
+    ).wait;
+    final hits = <PlanSearchHit>[
+      for (final item in items)
+        if (planSearchMatches(
+          query.keyword,
+          title: item.title,
+          note: item.note,
+        ))
+          PlanSearchHit.item(item),
+      for (final block in blocks)
+        if (planSearchMatches(
+          query.keyword,
+          title: block.itemTitle,
+          note: block.itemNote,
+        ))
+          PlanSearchHit.block(block),
+    ];
+    return pagePlanSearchHits(query, hits, offset: offset, pageSize: pageSize);
+  }
 
   /// 按编号读一项事项；周视图点到的预约可能不在本页读回的事项里。
   Future<PlanItem?> itemById(String id) => tasks.byId(id);

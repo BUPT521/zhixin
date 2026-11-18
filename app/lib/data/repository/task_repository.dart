@@ -267,6 +267,27 @@ class TaskRepository {
     r.sourceFileName,
   );
 
+  static PlanItem _itemOfSearch(SearchPlanItemsResult r) => _item(
+    r.id,
+    r.goalId,
+    r.conversationId,
+    r.studyPlanId,
+    r.seq,
+    r.title,
+    r.note,
+    r.pageFrom,
+    r.pageTo,
+    r.dueAt,
+    r.estMinutes,
+    r.priority,
+    r.status,
+    r.source,
+    r.completedAt,
+    r.createdAt,
+    r.updatedAt,
+    r.sourceFileName,
+  );
+
   Future<LearningGoal?> goalById(
     String id, {
     WriteTransaction? transaction,
@@ -437,6 +458,29 @@ class TaskRepository {
           .get(),
     );
     return rows.isEmpty ? null : _itemOfNextDue(rows.first);
+  }
+
+  /// 安排查找的事项：目标、状态与截止日期在库里筛，关键词由应用层筛。
+  ///
+  /// 日期条件是自然日区间，截止时间为空的事项不进入带日期的结果；三个条件
+  /// 都为空时返回全部事项，由调用方按关键词再筛一遍（docs/02 第 3.14 节）。
+  Future<List<PlanItem>> searchItems({
+    String? goalId,
+    PlanItemStatus? status,
+    DateTime? dayStart,
+    DateTime? dayEnd,
+  }) async {
+    final rows = await _db.selectGenerated(
+      (db) => db
+          .searchPlanItems(
+            goalId ?? '',
+            status?.value ?? '',
+            dayStart == null ? '' : formatDateTime(dayStart),
+            dayEnd == null ? '' : formatDateTime(dayEnd),
+          )
+          .get(),
+    );
+    return rows.map(_itemOfSearch).toList(growable: false);
   }
 
   /// 新建事项只保留一段说明。

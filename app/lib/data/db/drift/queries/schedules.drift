@@ -10,6 +10,19 @@ JOIN plan_item p ON p.id = b.plan_item_id
 WHERE b.start_at < :endAt AND b.end_at > :startAt
 ORDER BY b.start_at;
 
+-- 安排查找的预约：条件与事项同一套，日期改按预约开始时间落在自然日区间内。
+--
+-- 关键词由应用层按事项标题与说明筛，这里只筛目标、状态与日期（docs/02
+-- 第 3.14 节）。
+searchPlanBlocks:
+SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status
+FROM schedule_block b
+JOIN plan_item p ON p.id = b.plan_item_id
+WHERE (:goalId = '' OR p.goal_id = :goalId)
+  AND (:status = '' OR p.status = :status)
+  AND (:dayStart = '' OR (b.start_at >= :dayStart AND b.start_at < :dayEnd))
+ORDER BY b.start_at DESC, b.id DESC;
+
 -- 最近一条还没开始的待开始预约。
 nextPlannedBlock:
 SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status
