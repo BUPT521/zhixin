@@ -134,6 +134,9 @@ class _AccountPageState extends State<AccountPage> {
         failed: !matches,
       );
       await _load();
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _report(error.message, failed: true);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -182,6 +185,9 @@ class _AccountPageState extends State<AccountPage> {
         '云端备份与知新服务已经可用，同步会在后台开始',
       );
       await _load();
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _report(error.message, failed: true);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -575,7 +581,8 @@ class _AccountPageState extends State<AccountPage> {
                 label: const Text('服务地址'),
                 hint: 'https://zhixin.example.com',
                 description: const Text(
-                  '只填域名时按 https 处理；本地联调可以填 http://127.0.0.1:8080。',
+                  '只填域名时按 https 处理；正式版只接受 https 地址，'
+                  '本地联调要用 http 时需要在构建时显式打开明文开关。',
                 ),
               ),
               SizedBox(height: theme.space.sm),

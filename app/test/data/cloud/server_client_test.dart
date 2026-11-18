@@ -32,6 +32,97 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     });
+
+    test('正式构建只接受 https，显式打开联调开关时才允许 http', () {
+      expect(
+        ServerClient.normalizeBaseUrl(
+          'https://zhixin.example.com/',
+          requireHttps: true,
+        ),
+        'https://zhixin.example.com',
+      );
+      expect(
+        () => ServerClient.normalizeBaseUrl(
+          'http://127.0.0.1:8080',
+          requireHttps: true,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('https'),
+          ),
+        ),
+      );
+      expect(
+        ServerClient.normalizeBaseUrl(
+          'http://127.0.0.1:8080',
+          requireHttps: false,
+        ),
+        'http://127.0.0.1:8080',
+      );
+    });
+  });
+
+  group('重定向', () {
+    test('同源 30x 跟随，并保留访问令牌', () async {
+      final seen = <String>[];
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient((request) async {
+          seen.add(request.url.toString());
+          if (request.url.path == '/v1/sync/head') {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': '/v1/sync/head2'},
+            );
+          }
+          expect(
+            request.headers['authorization'] ??
+                request.headers['Authorization'],
+            'Bearer token',
+          );
+          return http.Response(
+            jsonEncode({'head': 3, 'schema_version': 27}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final head = await client.head('token');
+      expect(head.head, 3);
+      expect(seen, [
+        'http://server.test/v1/sync/head',
+        'http://server.test/v1/sync/head2',
+      ]);
+    });
+
+    test('跨域 30x 直接按失败处理，不把带令牌的请求带到别的域', () async {
+      var requests = 0;
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient((request) async {
+          requests++;
+          return http.Response(
+            '',
+            302,
+            headers: {'location': 'https://evil.test/v1/sync/head'},
+          );
+        }),
+      );
+
+      await expectLater(
+        client.head('token'),
+        throwsA(
+          isA<ServerProblem>()
+              .having((error) => error.code, 'code', 'redirect_blocked')
+              .having((error) => error.userMessage, 'message', contains('跨域')),
+        ),
+      );
+      expect(requests, 1);
+    });
   });
 
   test('注册与登录返回令牌，重复注册说明邮箱已占用', () async {
