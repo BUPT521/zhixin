@@ -79,6 +79,25 @@ func (l *Limiter) Take(keys ...string) int64 {
 	return 0
 }
 
+// Peek 返回这个键还要等几秒才有令牌，不消耗令牌；没有记录的键返回 0。用于
+// 只在失败时计数、但已经超限时连成功也要挡住的场景（管理令牌）。
+func (l *Limiter) Peek(key string) int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, ok := l.buckets[key]
+	if !ok {
+		return 0
+	}
+	if tokens := e.bucket.TokensAt(l.nowFn()); tokens < 1 {
+		seconds := math.Ceil((1 - tokens) / float64(l.limit))
+		if seconds >= math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(seconds)
+	}
+	return 0
+}
+
 // reap 回收长时间没用的键，避免按地址限流时表无限增长。
 func (l *Limiter) reap(now time.Time) {
 	if l.idle <= 0 {

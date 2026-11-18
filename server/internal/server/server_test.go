@@ -731,7 +731,7 @@ func TestQuotaOverrideIsPerAccount(t *testing.T) {
 	if code := h.json("DELETE", "/v1/me", first, nil, nil); code != http.StatusNoContent {
 		t.Fatalf("delete account: %d", code)
 	}
-	if limit, ok, err := quota.DailyLimit(context.Background(), me.UserID); err != nil || ok {
+	if limit, ok, err := quota.DailyLimit(context.Background(), me.UserID, llmproxy.KindChat); err != nil || ok {
 		t.Fatalf("删号后覆盖行应被清掉：limit=%d ok=%v err=%v", limit, ok, err)
 	}
 }

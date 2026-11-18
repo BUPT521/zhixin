@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 )
@@ -132,8 +133,8 @@ func (s *Store) DeleteAll(ctx context.Context, userID string) error {
 	return s.q.DeleteBackups(ctx, userID)
 }
 
-// Used 返回当天已用的 token 数；没有记录时是 0。
-func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
+// Used 返回当天某类模型已用的 token 数；没有记录时是 0。
+func (s *Store) Used(ctx context.Context, userID, day string, kind llmproxy.Kind) (int64, error) {
 	date, err := pgDate(day)
 	if err != nil {
 		return 0, err
@@ -141,6 +142,7 @@ func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
 	used, err := s.q.UsedTokens(ctx, db.UsedTokensParams{
 		UserID: userID,
 		Day:    date,
+		Kind:   string(kind),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
@@ -148,8 +150,8 @@ func (s *Store) Used(ctx context.Context, userID, day string) (int64, error) {
 	return used, err
 }
 
-// Add 累加当天用量。
-func (s *Store) Add(ctx context.Context, userID, day string, tokens int64) error {
+// Add 累加当天某类模型的用量。
+func (s *Store) Add(ctx context.Context, userID, day string, kind llmproxy.Kind, tokens int64) error {
 	date, err := pgDate(day)
 	if err != nil {
 		return err
@@ -157,21 +159,26 @@ func (s *Store) Add(ctx context.Context, userID, day string, tokens int64) error
 	return s.q.AddTokens(ctx, db.AddTokensParams{
 		UserID: userID,
 		Day:    date,
+		Kind:   string(kind),
 		Tokens: tokens,
 	})
 }
 
-// DailyLimit 返回这个账号单独调整过的每日额度；没有覆盖行时 ok 为 false，
-// 由调用方用配置的默认值。
-func (s *Store) DailyLimit(ctx context.Context, userID string) (int64, bool, error) {
-	limit, err := s.q.LLMQuotaOverride(ctx, userID)
+// DailyLimit 返回这个账号单独调整过的某类模型每日额度；没有覆盖行或者对应
+// 列为空时 ok 为 false，由调用方用配置的默认值。
+func (s *Store) DailyLimit(ctx context.Context, userID string, kind llmproxy.Kind) (int64, bool, error) {
+	row, err := s.q.LLMQuotaOverride(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, err
 	}
-	return limit, true, nil
+	limit := row.DailyTokens
+	if kind == llmproxy.KindEmbedding {
+		limit = row.EmbeddingDailyTokens
+	}
+	return limit.Int64, limit.Valid, nil
 }
 
 // pgDate 把 YYYY-MM-DD 转成 PostgreSQL 的 date。格式不对时返回错误并由调用方

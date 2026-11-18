@@ -1,0 +1,546 @@
+package llmproxy
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/secretbox"
+)
+
+// Admin 是管理后台的模型来源与路由接口。鉴权由 internal/admin 的中间件完成，
+// 这里只做校验、保存与刷新路由快照。key 只进不出：保存时加密，列表只给末四位。
+type Admin struct {
+	proxy   *Proxy
+	catalog Catalog
+	box     *secretbox.Box
+	maxJSON int64
+	now     func() time.Time
+}
+
+// NewAdmin 组装管理接口。box 为 nil 时不能保存带 key 的来源。
+func NewAdmin(proxy *Proxy, catalog Catalog, box *secretbox.Box, maxJSON int64) *Admin {
+	return &Admin{proxy: proxy, catalog: catalog, box: box, maxJSON: maxJSON, now: time.Now}
+}
+
+func (a *Admin) router() *Router { return a.proxy.router }
+
+// fresh 先从存储重新读一遍，让列表反映直接改库或其他实例的修改。
+func (a *Admin) fresh(w http.ResponseWriter, r *http.Request) (*snapshot, bool) {
+	if err := a.router().Reload(r.Context()); err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return nil, false
+	}
+	return a.router().current(), true
+}
+
+func (a *Admin) providerView(p *liveProvider) api.AdminProvider {
+	h := a.router().health.view(p.ID)
+	state := api.AdminProviderHealthStateOk
+	switch {
+	case p.KeyBroken:
+		state = api.AdminProviderHealthStateKeyError
+	case a.router().health.cooling(p.ID):
+		state = api.AdminProviderHealthStateCooling
+	}
+	v := api.AdminProvider{
+		Id: p.ID, Name: p.Name, BaseUrl: p.BaseURL, Enabled: p.Enabled,
+		HasKey: p.APIKeySealed != "" || p.APIKey != "", Note: p.Note,
+		Source: api.AdminProviderSource(p.Source),
+		Health: api.AdminProviderHealth{State: state, ConsecutiveFailures: h.failures},
+	}
+	if p.KeyHint != "" {
+		hint := p.KeyHint
+		v.KeyHint = &hint
+	}
+	if !p.UpdatedAt.IsZero() {
+		t := p.UpdatedAt
+		v.UpdatedAt = &t
+	}
+	if h.lastError != "" {
+		msg, at := h.lastError, h.lastErrorAt
+		v.Health.LastError, v.Health.LastErrorAt = &msg, &at
+	}
+	if !h.lastSuccessAt.IsZero() {
+		at := h.lastSuccessAt
+		v.Health.LastSuccessAt = &at
+	}
+	if !h.coolingUntil.IsZero() && a.router().health.cooling(p.ID) {
+		at := h.coolingUntil
+		v.Health.CoolingUntil = &at
+	}
+	return v
+}
+
+func modelView(m *liveModel) api.AdminModel {
+	v := api.AdminModel{
+		Name: m.Name, Kind: api.ModelKind(m.Kind), Enabled: m.Enabled, Note: m.Note,
+		Source: api.AdminModelSource(m.Source), Routes: make([]api.AdminRoute, 0, len(m.Routes)),
+	}
+	if m.Dimensions > 0 {
+		d := m.Dimensions
+		v.Dimensions = &d
+	}
+	if !m.UpdatedAt.IsZero() {
+		t := m.UpdatedAt
+		v.UpdatedAt = &t
+	}
+	for _, rt := range m.Routes {
+		v.Routes = append(v.Routes, api.AdminRoute{
+			ProviderId: rt.ProviderID, UpstreamModel: rt.UpstreamModel,
+			Priority: rt.Priority, Weight: rt.Weight, MaxBatch: rt.MaxBatch, Enabled: rt.Enabled,
+		})
+	}
+	return v
+}
+
+func (a *Admin) ListProviders(w http.ResponseWriter, r *http.Request) {
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	out := api.AdminProviderList{Data: make([]api.AdminProvider, 0, len(snap.providers))}
+	for _, p := range snap.providers {
+		out.Data = append(out.Data, a.providerView(p))
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// validBaseURL 要求绝对的 http 或 https 地址，不带用户名、查询串与片段；
+// 返回去掉末尾斜杠的形式，请求时直接拼接 /chat/completions。
+func validBaseURL(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	return strings.TrimRight(u.String(), "/"), true
+}
+
+func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
+	if id == EnvProviderID {
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "env is reserved for the provider from environment variables")
+		return
+	}
+	if !ValidProviderID(id) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "id: lowercase letters, digits, - and _, at most 32")
+		return
+	}
+	var in api.AdminProviderInput
+	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
+		return
+	}
+	base, ok := validBaseURL(in.BaseUrl)
+	if !ok {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url: want an absolute http or https URL without query")
+		return
+	}
+	rec, err := a.catalog.Provider(r.Context(), id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	// 只换地址、不重新填 key 时，key 会被发到新地址。换了主机就要求重新填写，
+	// 管理令牌因此不能把已保存的 key 引到别处；同一主机下改路径照常保留。
+	if rec.APIKeySealed != "" && in.ApiKey == nil && origin(rec.BaseURL) != origin(base) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url host changed: enter api_key again")
+		return
+	}
+	rec.ID = id
+	rec.BaseURL = base
+	rec.Name = strings.TrimSpace(deref(in.Name, ""))
+	if rec.Name == "" {
+		rec.Name = id
+	}
+	rec.Note = strings.TrimSpace(deref(in.Note, ""))
+	if utf8.RuneCountInString(rec.Name) > 64 || utf8.RuneCountInString(rec.Note) > 200 {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name or note is too long")
+		return
+	}
+	rec.Enabled = deref(in.Enabled, true)
+	if in.ApiKey != nil {
+		key := strings.TrimSpace(*in.ApiKey)
+		if strings.ContainsAny(key, " \t\r\n") {
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "api_key must not contain whitespace")
+			return
+		}
+		if key != "" && a.box == nil {
+			httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "ZHIXIN_SECRET_KEY is not set; keys cannot be stored")
+			return
+		}
+		rec.APIKeySealed, rec.KeyHint = "", ""
+		if key != "" {
+			sealed, err := a.box.Seal(key, KeyAAD(id, base))
+			if err != nil {
+				httpx.WriteInternal(w, r, a.proxy.log, err)
+				return
+			}
+			rec.APIKeySealed, rec.KeyHint = sealed, keyHint(key)
+		}
+	}
+	rec.UpdatedAt = a.now().UTC()
+	if err := a.catalog.PutProvider(r.Context(), rec); err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	saved, found := snap.byID[id]
+	if !found {
+		httpx.WriteInternal(w, r, a.proxy.log, errors.New("saved provider missing from the reloaded routes"))
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.providerView(saved))
+}
+
+func (a *Admin) DeleteProvider(w http.ResponseWriter, r *http.Request, id string) {
+	if id == EnvProviderID {
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "the env provider is configured by environment variables")
+		return
+	}
+	err := a.catalog.DeleteProvider(r.Context(), id)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+		return
+	case errors.Is(err, ErrProviderInUse):
+		models, lerr := a.catalog.Models(r.Context())
+		if lerr != nil {
+			httpx.WriteInternal(w, r, a.proxy.log, lerr)
+			return
+		}
+		httpx.WriteProblemExtra(w, r, http.StatusConflict, httpx.CodeConflict,
+			"remove the routes that use this provider first", map[string]any{"models": ModelsUsingProvider(models, id)})
+		return
+	case err != nil:
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	if _, ok := a.fresh(w, r); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestProvider 用来源自己的 key 请求一次 GET /models，检查地址与 key。
+func (a *Admin) TestProvider(w http.ResponseWriter, r *http.Request, id string) {
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	p, found := snap.byID[id]
+	if !found {
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+		return
+	}
+	out := api.AdminProbe{ProviderId: &p.ID}
+	if p.KeyBroken {
+		msg := "保存的 key 无法用当前的 ZHIXIN_SECRET_KEY 解密，请重新填写 key"
+		out.Error = &msg
+		httpx.WriteJSON(w, http.StatusOK, out)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.BaseURL+"/models", nil)
+	if err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	if p.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	resp, err := a.proxy.client.Do(req)
+	out.LatencyMs = time.Since(start).Milliseconds()
+	if err != nil {
+		msg := "连接失败：" + err.Error()
+		out.Error = &msg
+		httpx.WriteJSON(w, http.StatusOK, out)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	status := resp.StatusCode
+	out.Status = &status
+	if status >= 300 {
+		msg := fmt.Sprintf("HTTP %d %s", status, providerMessage(body))
+		out.Error = &msg
+		httpx.WriteJSON(w, http.StatusOK, out)
+		return
+	}
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &list)
+	names := make([]string, 0, len(list.Data))
+	for _, d := range list.Data {
+		if d.ID != "" {
+			names = append(names, d.ID)
+		}
+	}
+	sort.Strings(names)
+	if len(names) > 500 {
+		names = names[:500]
+	}
+	out.Ok = true
+	out.Models = &names
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (a *Admin) ListModels(w http.ResponseWriter, r *http.Request) {
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	out := api.AdminModelList{Data: make([]api.AdminModel, 0, len(snap.models))}
+	for _, m := range snap.models {
+		out.Data = append(out.Data, modelView(m))
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
+	if !ValidModelName(name) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name: letters, digits, . _ : -, at most 64, no slash")
+		return
+	}
+	var in api.AdminModelInput
+	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
+		return
+	}
+	rec := ModelRecord{
+		Name: name, Kind: Kind(in.Kind), Enabled: deref(in.Enabled, true),
+		Note: strings.TrimSpace(deref(in.Note, "")), UpdatedAt: a.now().UTC(),
+	}
+	bad := func(detail string) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, detail)
+	}
+	switch rec.Kind {
+	case KindChat:
+		if in.Dimensions != nil {
+			bad("dimensions only applies to embedding models")
+			return
+		}
+	case KindEmbedding:
+		if in.Dimensions != nil {
+			if *in.Dimensions < 1 || *in.Dimensions > 8192 {
+				bad("dimensions: 1 to 8192")
+				return
+			}
+			rec.Dimensions = *in.Dimensions
+		}
+	default:
+		bad("kind: chat or embedding")
+		return
+	}
+	if utf8.RuneCountInString(rec.Note) > 200 {
+		bad("note is too long")
+		return
+	}
+	if len(in.Routes) == 0 || len(in.Routes) > 16 {
+		bad("routes: 1 to 16")
+		return
+	}
+	seen := map[[2]string]bool{}
+	for _, ri := range in.Routes {
+		rt := Route{
+			ProviderID:    strings.TrimSpace(ri.ProviderId),
+			UpstreamModel: strings.TrimSpace(ri.UpstreamModel),
+			Priority:      deref(ri.Priority, 0),
+			Weight:        deref(ri.Weight, 1),
+			MaxBatch:      deref(ri.MaxBatch, 0),
+			Enabled:       deref(ri.Enabled, true),
+		}
+		switch {
+		case rt.ProviderID == EnvProviderID:
+			bad("routes: the env provider only serves ZHIXIN_LLM_MODELS; add the source in the admin page instead")
+			return
+		case rt.UpstreamModel == "" || utf8.RuneCountInString(rt.UpstreamModel) > 128:
+			bad("routes: upstream_model is required, at most 128 characters")
+			return
+		case rt.Priority < 0 || rt.Priority > 100:
+			bad("routes: priority 0 to 100")
+			return
+		case rt.Weight < 1 || rt.Weight > 1000:
+			bad("routes: weight 1 to 1000")
+			return
+		case rt.MaxBatch < 0 || rt.MaxBatch > 2048:
+			bad("routes: max_batch 0 to 2048")
+			return
+		case seen[[2]string{rt.ProviderID, rt.UpstreamModel}]:
+			bad("routes: duplicate provider_id and upstream_model")
+			return
+		}
+		seen[[2]string{rt.ProviderID, rt.UpstreamModel}] = true
+		rec.Routes = append(rec.Routes, rt)
+	}
+	if err := a.catalog.PutModel(r.Context(), rec); err != nil {
+		if errors.Is(err, ErrUnknownProvider) {
+			bad("routes: provider_id does not exist")
+			return
+		}
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	saved, found := snap.model(name)
+	if !found {
+		httpx.WriteInternal(w, r, a.proxy.log, errors.New("saved model missing from the reloaded routes"))
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, modelView(saved))
+}
+
+func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string) {
+	err := a.catalog.DeleteModel(r.Context(), name)
+	if errors.Is(err, ErrNotFound) {
+		if m, ok := a.router().current().model(name); ok && m.Source == sourceEnv {
+			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "this model comes from ZHIXIN_LLM_MODELS or ZHIXIN_LLM_EMBEDDING_MODELS")
+			return
+		}
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+		return
+	}
+	if err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	if _, ok := a.fresh(w, r); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestModel 按路由发一次最小请求。不计入任何账号的额度，结果会更新来源的
+// 健康状态，与真实请求同一口径。
+func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	m, found := snap.model(name)
+	if !found {
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	cands := a.router().candidates(m, a.proxy.cfg.MaxAttempts)
+	out := api.AdminProbe{}
+	fail := func(msg string) {
+		out.Error = &msg
+		httpx.WriteJSON(w, http.StatusOK, out)
+	}
+	if len(cands) == 0 {
+		fail("没有可用的路由：检查路由与来源是否启用、key 是否能解密")
+		return
+	}
+	start := time.Now()
+	if m.Kind == KindEmbedding {
+		input, _ := json.Marshal([]string{"知新：把学过的内容找回来"})
+		fields := map[string]json.RawMessage{"input": input}
+		res := a.proxy.embed(ctx, m, cands, fields, []string{"知新：把学过的内容找回来"})
+		out.LatencyMs = time.Since(start).Milliseconds()
+		if res.route.Provider != nil {
+			out.ProviderId, out.UpstreamModel = &res.route.Provider.ID, &res.route.UpstreamModel
+		}
+		switch {
+		case res.passthrough != nil:
+			status := res.passthrough.status
+			out.Status = &status
+			fail(fmt.Sprintf("HTTP %d %s", status, providerMessage(res.passthrough.body)))
+		case res.err != nil:
+			fail(res.failure())
+		default:
+			status := http.StatusOK
+			out.Status, out.Ok = &status, true
+			if res.dimensions > 0 {
+				d := res.dimensions
+				out.Dimensions = &d
+			}
+			httpx.WriteJSON(w, http.StatusOK, out)
+		}
+		return
+	}
+	fields := map[string]json.RawMessage{
+		"messages":   json.RawMessage(`[{"role":"user","content":"ping"}]`),
+		"max_tokens": json.RawMessage(`1`),
+		"stream":     json.RawMessage(`false`),
+	}
+	resp, rt, err := a.proxy.dispatch(ctx, cands, "/chat/completions", fields, false)
+	out.LatencyMs = time.Since(start).Milliseconds()
+	if err != nil {
+		fail("所有来源都无法连接：" + err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	status := resp.StatusCode
+	out.Status, out.ProviderId, out.UpstreamModel = &status, &rt.Provider.ID, &rt.UpstreamModel
+	if status >= 300 {
+		fail(fmt.Sprintf("HTTP %d %s", status, providerMessage(body)))
+		return
+	}
+	out.Ok = true
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+var keyLike = regexp.MustCompile(`(sk-|key-)[A-Za-z0-9_\-]{4,}`)
+
+// providerMessage 从提供方的错误体里取一句说明给管理员看，截到 300 字，并把
+// 形似 key 的片段遮掉。
+func providerMessage(body []byte) string {
+	var env struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	msg := ""
+	if json.Unmarshal(body, &env) == nil {
+		var nested struct {
+			Message string `json:"message"`
+		}
+		var flat string
+		switch {
+		case json.Unmarshal(env.Error, &nested) == nil && nested.Message != "":
+			msg = nested.Message
+		case json.Unmarshal(env.Error, &flat) == nil && flat != "":
+			msg = flat
+		default:
+			msg = env.Message
+		}
+	}
+	if msg == "" && utf8.Valid(body) {
+		msg = strings.TrimSpace(string(body))
+	}
+	msg = keyLike.ReplaceAllString(msg, "$1***")
+	if r := []rune(msg); len(r) > 300 {
+		msg = string(r[:300]) + "…"
+	}
+	return msg
+}
+
+func deref[T any](p *T, def T) T {
+	if p == nil {
+		return def
+	}
+	return *p
+}

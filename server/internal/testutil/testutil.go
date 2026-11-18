@@ -169,6 +169,33 @@ func (Base) PutV1BlobsSha256(w http.ResponseWriter, _ *http.Request, _ string) {
 func (Base) PostV1LlmChatCompletions(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) PostV1LlmEmbeddings(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) GetAdminV1Providers(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PutAdminV1ProvidersId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) DeleteAdminV1ProvidersId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostAdminV1ProvidersIdTest(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) GetAdminV1Models(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PutAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) DeleteAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostAdminV1ModelsNameTest(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
 
 func (Base) GetV1LlmModels(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)

@@ -22,6 +22,7 @@ tags:
   - name: backup
   - name: llm
   - name: app
+  - name: admin
 
 paths:
   /healthz:
@@ -389,7 +390,11 @@ paths:
   /v1/llm/models:
     get:
       tags: [llm]
-      summary: 代理允许的模型，OpenAI 列表格式
+      summary: 当前可用的模型，OpenAI 列表格式
+      description: |
+        列出管理后台与环境变量里启用、并且至少有一条可用路由的对外模型。每一项带
+        `kind`，聊天模型是 `chat`，嵌入模型是 `embedding`；嵌入模型配置了维度时带
+        `dimensions`，客户端据此建立索引。
       responses:
         "200":
           description: OK
@@ -411,11 +416,16 @@ paths:
       tags: [llm]
       summary: OpenAI Chat Completions 代理
       description: |
-        请求体按 Chat Completions 原样转发，服务端只读取 `model` 与 `stream`。
-        流式请求应带 `stream_options.include_usage`，服务端据此记录用量。
-        提供方的状态码与响应体原样返回；代理自身的拒绝用 problem+json：
-        `model_not_allowed`（400）、`quota_exceeded`（429）、`unavailable`（503，未配置提供方 key）、
-        `upstream_failed`（502）。
+        请求体按 Chat Completions 转发，服务端只读取 `model` 与 `stream`，并把 `model`
+        换成路由选中的来源侧模型名，其余字段原样保留。一个对外模型可以配置多个来源，
+        按优先级与权重选择；连接失败、429、5xx、401 与 403 在还没有向客户端写出任何
+        字节之前换下一个来源重试，其余状态码直接返回。流式请求由服务端打开
+        `stream_options.include_usage`，用量从最后一块的 `usage` 读取；提供方没有给出
+        或者连接提前断开时，按请求与已转发的字节估算。提供方的状态码与响应体原样返回，
+        只有最后一个来源拒绝服务端 key（401、403）时改为 `upstream_failed`，不转发它的
+        错误体。代理自身的拒绝用 problem+json：`model_not_allowed`（400，模型不存在、
+        停用或不是聊天模型）、`quota_exceeded`（429）、`unavailable`（503，没有配置任何
+        模型）、`upstream_failed`（502，所有来源都无法连接或拒绝了 key）。
       requestBody:
         required: true
         content:
@@ -430,6 +440,36 @@ paths:
         "200":
           description: 提供方的响应，流式时为 text/event-stream
         "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/llm/embeddings:
+    post:
+      tags: [llm]
+      summary: OpenAI Embeddings 代理，支持批量
+      description: |
+        请求体与 OpenAI Embeddings 相同，`input` 只接受字符串或字符串数组，条数上限
+        由 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 决定。服务端按路由的 `max_batch` 把一次
+        请求拆成几批并发发给同一个来源，再按原顺序合并，`index` 从 0 连续编号；一批
+        失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。
+        用量记入账号当天的嵌入额度，与聊天额度分开计；提供方没有返回 `usage` 时按
+        输入字符数估算。代理自身的拒绝与聊天接口相同，另有 `invalid_request`（400，
+        `input` 为空、超过条数上限或含有非字符串，或者 `dimensions` 与模型配置的维度
+        不一致）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmbeddingRequest" }
+      responses:
+        "200":
+          description: 合并之后的向量列表；提供方的错误状态与响应体原样返回
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmbeddingList" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
@@ -497,12 +537,141 @@ paths:
         "413": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /admin/v1/providers:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 列出模型来源与健康状态
+      description: |
+        包括管理后台保存的来源与环境变量生成的只读来源 `env`。key 不返回，只给出
+        是否已设置与末四位。健康状态来自本进程的最近调用，重启后清空。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProviderList" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /admin/v1/providers/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" } }
+    put:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 新建或修改一个模型来源
+      description: |
+        `api_key` 省略时保留原来的 key，传空字符串时清除。key 用 `ZHIXIN_SECRET_KEY`
+        加密后入库，没有配置这个密钥时保存带 key 的来源返回 503。`env` 是保留名。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminProviderInput" }
+      responses:
+        "200":
+          description: 保存之后的来源
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProvider" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 删除一个模型来源
+      description: 还有模型路由指向它时返回 409，`extra.models` 列出这些模型。
+      responses:
+        "204": { description: 已删除 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/v1/providers/{id}/test:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 用来源的 key 请求一次 /models，检查地址与 key
+      responses:
+        "200":
+          description: 检查结果；连不上或被拒时 ok 为 false，不返回错误状态
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProbe" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /admin/v1/models:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 列出对外模型与各自的路由
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminModelList" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /admin/v1/models/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" } }
+    put:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 新建或修改一个对外模型及其全部路由
+      description: |
+        路由整体替换。同名的环境变量模型被管理后台的配置覆盖。嵌入模型的各条路由
+        必须产出同一个向量空间（同一个模型的不同部署），服务端不核对这一点。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminModelInput" }
+      responses:
+        "200":
+          description: 保存之后的模型
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminModel" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 删除一个对外模型
+      responses:
+        "204": { description: 已删除 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /admin/v1/models/{name}/test:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 按路由发一次最小请求，检查这个模型能否调用
+      description: 聊天模型发一句“ping”并限制一个 token，嵌入模型嵌入一个短句；不计入任何账号的额度。
+      responses:
+        "200":
+          description: 检查结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProbe" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearer:
       type: http
       scheme: bearer
       description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。
+    admin:
+      type: http
+      scheme: bearer
+      description: 管理令牌，等于服务端的 `ZHIXIN_ADMIN_TOKEN`；没有配置时管理接口一律 404。
   responses:
     RateLimited:
       description: 尝试过于频繁，`code` 为 `rate_limited`；`Retry-After` 给出建议的等待秒数
@@ -520,6 +689,147 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    EmbeddingRequest:
+      type: object
+      required: [model, input]
+      additionalProperties: true
+      properties:
+        model: { type: string }
+        input:
+          description: 一段文本或文本数组
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+    EmbeddingList:
+      type: object
+      required: [object, data, model, usage]
+      properties:
+        object: { type: string, examples: [list] }
+        model: { type: string, description: 对外模型名 }
+        data:
+          type: array
+          items:
+            type: object
+            required: [object, index, embedding]
+            properties:
+              object: { type: string, examples: [embedding] }
+              index: { type: integer }
+              embedding: { description: 浮点数组；请求带 encoding_format=base64 时是字符串 }
+        usage:
+          type: object
+          required: [prompt_tokens, total_tokens]
+          properties:
+            prompt_tokens: { type: integer, format: int64 }
+            total_tokens: { type: integer, format: int64 }
+    AdminProbe:
+      type: object
+      required: [ok, latency_ms]
+      properties:
+        ok: { type: boolean }
+        status: { type: integer, description: 提供方的 HTTP 状态码，连不上时省略 }
+        latency_ms: { type: integer, format: int64 }
+        provider_id: { type: string }
+        upstream_model: { type: string }
+        models: { type: array, items: { type: string }, description: 来源 /models 返回的模型名，最多 500 个 }
+        dimensions: { type: integer, description: 嵌入模型实际返回的维度 }
+        error: { type: string, description: 失败原因，不含 key }
+    AdminProviderHealth:
+      type: object
+      required: [state, consecutive_failures]
+      properties:
+        state: { type: string, enum: [ok, cooling, key_error] }
+        consecutive_failures: { type: integer }
+        last_error: { type: string }
+        last_error_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        cooling_until: { type: string, format: date-time }
+    AdminProvider:
+      type: object
+      required: [id, name, base_url, enabled, has_key, note, source, health]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        base_url: { type: string }
+        enabled: { type: boolean }
+        has_key: { type: boolean }
+        key_hint: { type: string, description: key 的末四位 }
+        note: { type: string }
+        source: { type: string, enum: [admin, env], description: env 来自环境变量，只读 }
+        updated_at: { type: string, format: date-time }
+        health: { $ref: "#/components/schemas/AdminProviderHealth" }
+    AdminProviderList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AdminProvider" }
+    AdminProviderInput:
+      type: object
+      required: [base_url]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 64 }
+        base_url: { type: string, maxLength: 512, description: OpenAI 兼容的基础地址，例如 https://api.deepseek.com/v1 }
+        api_key: { type: string, maxLength: 512, description: 省略时保留原值，空字符串表示清除 }
+        enabled: { type: boolean, default: true }
+        note: { type: string, maxLength: 200 }
+    AdminRoute:
+      type: object
+      required: [provider_id, upstream_model, priority, weight, max_batch, enabled]
+      properties:
+        provider_id: { type: string }
+        upstream_model: { type: string, description: 来源侧的模型名，例如 BAAI/bge-m3 }
+        priority: { type: integer, description: 数字小的先试 }
+        weight: { type: integer, description: 同一优先级内按权重分流 }
+        max_batch: { type: integer, description: 嵌入一次发给来源的最多条数，0 表示不拆分 }
+        enabled: { type: boolean }
+    AdminRouteInput:
+      type: object
+      required: [provider_id, upstream_model]
+      additionalProperties: false
+      properties:
+        provider_id: { type: string }
+        upstream_model: { type: string, minLength: 1, maxLength: 128 }
+        priority: { type: integer, minimum: 0, maximum: 100, default: 0 }
+        weight: { type: integer, minimum: 1, maximum: 1000, default: 1 }
+        max_batch: { type: integer, minimum: 0, maximum: 2048, default: 0 }
+        enabled: { type: boolean, default: true }
+    AdminModel:
+      type: object
+      required: [name, kind, enabled, note, source, routes]
+      properties:
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/ModelKind" }
+        enabled: { type: boolean }
+        dimensions: { type: integer }
+        note: { type: string }
+        source: { type: string, enum: [admin, env] }
+        updated_at: { type: string, format: date-time }
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/AdminRoute" }
+    AdminModelList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AdminModel" }
+    AdminModelInput:
+      type: object
+      required: [kind, routes]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/ModelKind" }
+        enabled: { type: boolean, default: true }
+        dimensions: { type: integer, minimum: 1, maximum: 8192, description: 只用于嵌入模型 }
+        note: { type: string, maxLength: 200 }
+        routes:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/AdminRouteInput" }
     Problem:
       type: object
       required: [type, title, status, code]
@@ -662,11 +972,13 @@ components:
         status: { type: string, const: ok }
     LLMQuota:
       type: object
-      required: [day, used_tokens, daily_tokens]
+      required: [day, used_tokens, daily_tokens, embedding_used_tokens, embedding_daily_tokens]
       properties:
         day: { type: string, format: date }
-        used_tokens: { type: integer, format: int64 }
-        daily_tokens: { type: integer, format: int64 }
+        used_tokens: { type: integer, format: int64, description: 聊天当天已用 }
+        daily_tokens: { type: integer, format: int64, description: 聊天每日额度 }
+        embedding_used_tokens: { type: integer, format: int64, description: 嵌入当天已用 }
+        embedding_daily_tokens: { type: integer, format: int64, description: 嵌入每日额度 }
     Me:
       type: object
       required: [user_id, email, email_verified, created_at]
@@ -677,11 +989,16 @@ components:
         created_at: { type: string, format: date-time }
     Model:
       type: object
-      required: [id, object, owned_by]
+      required: [id, object, owned_by, kind]
       properties:
         id: { type: string }
         object: { type: string, examples: [model] }
         owned_by: { type: string }
+        kind: { $ref: "#/components/schemas/ModelKind" }
+        dimensions: { type: integer, description: 嵌入模型的向量维度，没有配置时省略 }
+    ModelKind:
+      type: string
+      enum: [chat, embedding]
     ModelList:
       type: object
       required: [object, data]

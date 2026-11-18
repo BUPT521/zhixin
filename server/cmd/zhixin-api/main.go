@@ -62,6 +62,7 @@ func run(log *slog.Logger) error {
 			Backups:   pgStore,
 			Blobs:     blobStore,
 			Quota:     pgStore,
+			Catalog:   pgStore,
 			Feedback:  pgStore,
 			Retention: pgStore,
 			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
@@ -79,7 +80,10 @@ func run(log *slog.Logger) error {
 		}
 	}
 	if cfg.LLM.APIKey == "" {
-		log.Warn("ZHIXIN_LLM_API_KEY is empty: the model proxy answers 503")
+		log.Warn("ZHIXIN_LLM_API_KEY is empty: only model sources configured in the admin page are served")
+	}
+	if cfg.AdminToken == "" {
+		log.Info("ZHIXIN_ADMIN_TOKEN is empty: the admin page and /admin/v1 answer 404")
 	}
 	if len(cfg.Releases) == 0 {
 		log.Warn("ZHIXIN_RELEASE_FILE is empty or lists no release: the update check returns an empty list")
@@ -87,9 +91,10 @@ func run(log *slog.Logger) error {
 		log.Info("loaded the release manifest", slog.Int("releases", len(cfg.Releases)))
 	}
 
+	handler, router := server.Build(cfg, stores, log)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           server.New(cfg, stores, log),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: model streams and backup downloads can run for
 		// minutes. Idle connections are still reaped.
@@ -101,6 +106,8 @@ func run(log *slog.Logger) error {
 
 	// 匿名活跃按保留期滚动删除：启动时清一次，之后每天一次，与进程重启无关。
 	go retention.PruneLoop(ctx, stores.Retention, cfg.Location, log)
+	// 模型路由在管理接口保存时立即刷新；周期刷新只为直接改库与多实例部署。
+	go router.RunReloadLoop(ctx, cfg.ModelReloadInterval)
 
 	errc := make(chan error, 1)
 	go func() {

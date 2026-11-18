@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/BUPT521/zhixin/server/internal/admin"
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
@@ -23,6 +24,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
+	"github.com/BUPT521/zhixin/server/internal/secretbox"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -34,11 +36,13 @@ const ClientSchemaVersion = 27
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth      auth.Store
-	Sync      syncsvc.Store
-	Backups   backup.Store
-	Blobs     blobs.Store
-	Quota     llmproxy.Quota
+	Auth    auth.Store
+	Sync    syncsvc.Store
+	Backups backup.Store
+	Blobs   blobs.Store
+	Quota   llmproxy.Quota
+	// Catalog 保存管理后台配置的模型来源与路由（ADR-0028）。
+	Catalog   llmproxy.Catalog
 	Feedback  feedback.Store
 	Retention retention.Store
 	// DeleteAccount removes per-account data owned outside the auth store.
@@ -61,6 +65,7 @@ func MemoryStores() Stores {
 		Backups:   backupStore,
 		Blobs:     blobStore,
 		Quota:     quotaStore,
+		Catalog:   llmproxy.NewMemoryCatalog(),
 		Feedback:  feedback.NewMemoryStore(),
 		Retention: retention.NewMemoryStore(),
 		DeleteAccount: DeleteAccountData(
@@ -87,6 +92,12 @@ func DeleteAccountData(deleters ...func(ctx context.Context, userID string) erro
 
 // New builds the complete handler.
 func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
+	h, _ := Build(cfg, st, log)
+	return h
+}
+
+// Build 组装完整的 handler，并返回模型路由器，让 main 按周期重新读取路由。
+func Build(cfg config.Config, st Stores, log *slog.Logger) (http.Handler, *llmproxy.Router) {
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
@@ -151,12 +162,37 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	authSvc.SetActivityRecorder(retentionSvc)
 
 	clientHost := httpx.NewClientHost(cfg.TrustedProxy)
+
+	// 模型来源的 key 加密入库。没有配置密钥时，内存存储用一把随进程消失的
+	// 随机密钥（数据本来也随进程消失）；数据库存储则无法保存或解密 key，
+	// config.Load 在打开后台时已经要求配置。
+	var box *secretbox.Box
+	if len(cfg.SecretKey) > 0 {
+		b, err := secretbox.New(cfg.SecretKey)
+		if err != nil {
+			log.Error("ZHIXIN_SECRET_KEY is unusable", slog.String("error", err.Error()))
+		}
+		box = b
+	} else if cfg.DatabaseURL == "" {
+		box = secretbox.Random()
+	}
+	router := llmproxy.NewRouter(st.Catalog, box, llmproxy.EnvSourceFrom(cfg.LLM), log)
+	if err := router.Reload(context.Background()); err != nil {
+		log.Error("load model routes; serving env models only until the next reload", slog.String("error", err.Error()))
+	}
+	llm := llmproxy.NewHandler(cfg.LLM, router, st.Quota, cfg.Location, log)
+	var adminLimits *ratelimit.Limiter
+	if cfg.AdminRatePerSecond > 0 {
+		adminLimits = ratelimit.New(rate.Limit(cfg.AdminRatePerSecond), cfg.AdminBurst, 15*time.Minute)
+	}
+
 	handlers := routes{
 		auth:          auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost),
 		sync:          syncsvc.NewHandler(syncsvc.NewService(st.Sync, ClientSchemaVersion), log, 16*cfg.MaxJSONBytes),
 		backups:       backup.NewHandler(backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log),
 		blobs:         blobs.NewHandler(blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes), log),
-		llm:           llmproxy.NewHandler(cfg.LLM, st.Quota, cfg.Location, log),
+		llm:           llm,
+		llmAdmin:      llmproxy.NewAdmin(llm, st.Catalog, box, cfg.MaxJSONBytes),
 		feedback:      feedback.NewHandler(feedback.NewService(st.Feedback), log, cfg.MaxJSONBytes, feedbackLimits, clientHost),
 		release:       release.NewHandler(cfg.Releases),
 		retention:     retention.NewHandler(retentionSvc, log, cfg.MaxJSONBytes, telemetryLimits, clientHost),
@@ -168,6 +204,8 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
+	// 管理后台的静态页面不在契约里；没有配置管理令牌时由 admin.Middleware 回 404。
+	admin.RegisterUI(mux)
 	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
 		BaseRouter:       mux,
 		Middlewares:      []api.MiddlewareFunc{httpx.RecordPattern},
@@ -176,11 +214,14 @@ func New(cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 
 	// 顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/429 也
 	// 因此有编号并进日志），然后恢复 panic，再鉴权。鉴权放在访问日志之内，
-	// 被拒绝的请求仍然会留下一行记录。上传限流在鉴权之后，按账号计。
+	// 被拒绝的请求仍然会留下一行记录。账号鉴权只管契约里要求 Bearer 的路径，
+	// 管理后台由其后的 admin.Middleware 按管理令牌校验。上传限流在鉴权之后，
+	// 按账号计。
 	secured := withUploadLimit(mux, uploadLimits)
-	return httpx.Chain(auth.Middleware(authSvc, log)(secured),
+	guarded := admin.Middleware(admin.Options{Token: cfg.AdminToken, Limiter: adminLimits, ClientHost: clientHost})(secured)
+	return httpx.Chain(auth.Middleware(authSvc, log)(guarded),
 		httpx.RequestID,
 		httpx.AccessLog(log),
 		httpx.Recover(log),
-	)
+	), router
 }

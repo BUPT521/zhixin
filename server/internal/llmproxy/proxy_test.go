@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/secretbox"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
 
@@ -27,24 +30,58 @@ type testAPI struct {
 
 func (a testAPI) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { a.p.Models(w, r) }
 func (a testAPI) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { a.p.QuotaStatus(w, r) }
-
 func (a testAPI) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
 	a.p.Chat(w, r)
 }
+func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
+	a.p.Embeddings(w, r)
+}
 
-// newTestServer 装配本包处理器与鉴权中间件，返回客户端、账号服务与内存额度，
-// 便于用例调整个别账号的额度。
-func newTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.Service, *MemoryQuota) {
+type testEnv struct {
+	c       *testutil.Client
+	authSvc *auth.Service
+	quota   *MemoryQuota
+	catalog *MemoryCatalog
+	box     *secretbox.Box
+	proxy   *Proxy
+}
+
+func baseConfig() config.LLMConfig {
+	return config.LLMConfig{
+		DailyTokens:          100,
+		EmbeddingDailyTokens: 10000,
+		MaxRequestBytes:      1 << 20,
+		EmbeddingMaxInputs:   8,
+		MaxAttempts:          3,
+		HeaderTimeout:        2 * time.Second,
+	}
+}
+
+// newTestServer 装配本包处理器与鉴权中间件。cfg 里的 BaseURL 与 APIKey 构成
+// 环境变量来源；setup 可以在第一次读路由之前往内存 Catalog 里写来源与模型。
+func newTestServer(t *testing.T, cfg config.LLMConfig, setup func(*MemoryCatalog, *secretbox.Box)) *testEnv {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	quota := NewMemoryQuota()
-	proxy := NewHandler(cfg, quota, time.UTC, log)
-	return testutil.NewClient(t, testutil.NewServer(
+	catalog := NewMemoryCatalog()
+	box := secretbox.Random()
+	if setup != nil {
+		setup(catalog, box)
+	}
+	router := NewRouter(catalog, box, EnvSourceFrom(cfg), log)
+	// 测试里不随机：同一优先级保持配置顺序。
+	router.shuffle = func([]liveRoute) {}
+	if err := router.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	proxy := NewHandler(cfg, router, quota, time.UTC, log)
+	c := testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
 		httpx.RequestID,
 		auth.Middleware(authSvc, log),
-	)), authSvc, quota
+	))
+	return &testEnv{c: c, authSvc: authSvc, quota: quota, catalog: catalog, box: box, proxy: proxy}
 }
 
 // signIn 注册一个测试账号并返回访问令牌。
@@ -55,6 +92,34 @@ func signIn(t *testing.T, svc *auth.Service, email string) string {
 		t.Fatalf("register %s: %v", email, err)
 	}
 	return tokens.AccessToken
+}
+
+func putProvider(t *testing.T, c *MemoryCatalog, box *secretbox.Box, id, url, key string) {
+	t.Helper()
+	sealed, err := box.Seal(key, KeyAAD(id, url))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutProvider(context.Background(), ProviderRecord{
+		ID: id, Name: id, BaseURL: url, APIKeySealed: sealed, KeyHint: keyHint(key), Enabled: true, UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func putModel(t *testing.T, c *MemoryCatalog, m ModelRecord) {
+	t.Helper()
+	m.Enabled = true
+	m.UpdatedAt = time.Now()
+	for i := range m.Routes {
+		m.Routes[i].Enabled = true
+		if m.Routes[i].Weight == 0 {
+			m.Routes[i].Weight = 1
+		}
+	}
+	if err := c.PutModel(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHandlerLLMProxy(t *testing.T) {
@@ -71,14 +136,11 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	c, authSvc, _ := newTestServer(t, config.LLMConfig{
-		BaseURL:         upstream.URL,
-		APIKey:          "sk-server",
-		Models:          []string{"deepseek-flash"},
-		DailyTokens:     100,
-		MaxRequestBytes: 1 << 20,
-	})
-	token := signIn(t, authSvc, "a@b.cn")
+	cfg := baseConfig()
+	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk-server", []string{"deepseek-flash"}
+	env := newTestServer(t, cfg, nil)
+	c := env.c
+	token := signIn(t, env.authSvc, "a@b.cn")
 
 	var p testutil.Problem
 	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "gpt-x"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
@@ -94,14 +156,15 @@ func TestHandlerLLMProxy(t *testing.T) {
 	if gotAuth != "Bearer sk-server" {
 		t.Fatalf("upstream auth = %q; the client token must not be forwarded", gotAuth)
 	}
-	if gotBody["model"] != "deepseek-flash" {
+	if gotBody["model"] != "deepseek-flash" || gotBody["stream"] != true {
 		t.Fatalf("body not forwarded: %+v", gotBody)
 	}
 
 	var q struct {
-		Used int64 `json:"used_tokens"`
+		Used         int64 `json:"used_tokens"`
+		EmbeddingCap int64 `json:"embedding_daily_tokens"`
 	}
-	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 120 {
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 120 || q.EmbeddingCap != 10000 {
 		t.Fatalf("usage: %d %+v", code, q)
 	}
 	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
@@ -117,14 +180,11 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	c, authSvc, quota := newTestServer(t, config.LLMConfig{
-		BaseURL:         upstream.URL,
-		APIKey:          "sk-server",
-		Models:          []string{"deepseek-flash"},
-		DailyTokens:     100,
-		MaxRequestBytes: 1 << 20,
-	})
-	tokens, err := authSvc.Register(context.Background(), "override@b.cn", "password1", "")
+	cfg := baseConfig()
+	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk-server", []string{"deepseek-flash"}
+	env := newTestServer(t, cfg, nil)
+	c, quota := env.c, env.quota
+	tokens, err := env.authSvc.Register(context.Background(), "override@b.cn", "password1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,16 +227,564 @@ func TestHandlerQuotaOverride(t *testing.T) {
 }
 
 func TestHandlerLLMProxyDisabledWithoutKey(t *testing.T) {
-	c, authSvc, _ := newTestServer(t, config.LLMConfig{
-		BaseURL:         "http://127.0.0.1:1",
-		Models:          []string{"deepseek-flash"},
-		DailyTokens:     100,
-		MaxRequestBytes: 1 << 20,
-	})
-	token := signIn(t, authSvc, "a@b.cn")
+	cfg := baseConfig()
+	cfg.BaseURL, cfg.Models = "http://127.0.0.1:1", []string{"deepseek-flash"}
+	env := newTestServer(t, cfg, nil)
+	token := signIn(t, env.authSvc, "a@b.cn")
 
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "deepseek-flash"}, &p); code != http.StatusServiceUnavailable || p.Code != string(httpx.CodeUnavailable) {
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "deepseek-flash"}, &p); code != http.StatusServiceUnavailable || p.Code != string(httpx.CodeUnavailable) {
 		t.Fatalf("got %d %+v", code, p)
+	}
+	var list struct {
+		Data []any `json:"data"`
+	}
+	if code := env.c.JSON(http.MethodGet, "/v1/llm/models", token, nil, &list); code != http.StatusOK || len(list.Data) != 0 {
+		t.Fatalf("没有可用来源时模型列表应为空：%d %+v", code, list)
+	}
+}
+
+// fakeSource 是一个可编程的上游：status 决定返回码，记录收到的模型名与 key。
+type fakeSource struct {
+	*httptest.Server
+	calls  atomic.Int64
+	status atomic.Int64
+	mu     sync.Mutex
+	models []string
+	keys   []string
+}
+
+func newFakeSource(t *testing.T, tag string) *fakeSource {
+	t.Helper()
+	f := &fakeSource{}
+	f.status.Store(http.StatusOK)
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.calls.Add(1)
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.models = append(f.models, body.Model)
+		f.keys = append(f.keys, r.Header.Get("Authorization"))
+		f.mu.Unlock()
+		status := int(f.status.Load())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if status != http.StatusOK {
+			fmt.Fprintf(w, `{"error":{"message":"%s says %d"}}`, tag, status)
+			return
+		}
+		fmt.Fprintf(w, `{"choices":[{"message":{"content":"%s"}}],"usage":{"total_tokens":7}}`, tag)
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func TestChatFailsOverToNextSource(t *testing.T) {
+	primary := newFakeSource(t, "primary")
+	backup := newFakeSource(t, "backup")
+	primary.status.Store(http.StatusServiceUnavailable)
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "primary", primary.URL, "sk-primary")
+		putProvider(t, c, box, "backup", backup.URL, "sk-backup")
+		putModel(t, c, ModelRecord{Name: "zhixin-chat", Kind: KindChat, Routes: []Route{
+			{ProviderID: "primary", UpstreamModel: "deepseek-chat", Priority: 0},
+			{ProviderID: "backup", UpstreamModel: "qwen-plus", Priority: 1},
+		}})
+	})
+	token := signIn(t, env.authSvc, "f@b.cn")
+	chat := map[string]any{"model": "zhixin-chat", "messages": []any{}}
+
+	for i := range 3 {
+		var out struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &out); code != http.StatusOK || out.Choices[0].Message.Content != "backup" {
+			t.Fatalf("第 %d 次应由备用来源回答：%d %+v", i+1, code, out)
+		}
+	}
+	if primary.models[0] != "deepseek-chat" || backup.models[0] != "qwen-plus" {
+		t.Fatalf("model 应换成来源侧名字：%v %v", primary.models, backup.models)
+	}
+	if primary.keys[0] != "Bearer sk-primary" || backup.keys[0] != "Bearer sk-backup" {
+		t.Fatalf("各来源应收到自己的 key：%v %v", primary.keys, backup.keys)
+	}
+	// 连续失败三次之后主来源进入冷却，第四次直接先试备用来源。
+	if !env.proxy.router.health.cooling("primary") {
+		t.Fatal("主来源连续失败三次后应进入冷却")
+	}
+	before := primary.calls.Load()
+	env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil)
+	if primary.calls.Load() != before {
+		t.Fatal("冷却中的来源不应先被尝试")
+	}
+	var used struct {
+		Used int64 `json:"used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &used)
+	if used.Used != 4*7 {
+		t.Fatalf("用量应只记成功的那次：%+v", used)
+	}
+}
+
+func TestChatPassesThroughClientErrorsWithoutFailover(t *testing.T) {
+	primary := newFakeSource(t, "primary")
+	backup := newFakeSource(t, "backup")
+	primary.status.Store(http.StatusBadRequest)
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "primary", primary.URL, "sk-primary")
+		putProvider(t, c, box, "backup", backup.URL, "sk-backup")
+		putModel(t, c, ModelRecord{Name: "zhixin-chat", Kind: KindChat, Routes: []Route{
+			{ProviderID: "primary", UpstreamModel: "a"}, {ProviderID: "backup", UpstreamModel: "b", Priority: 1},
+		}})
+	})
+	token := signIn(t, env.authSvc, "g@b.cn")
+	resp := env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"zhixin-chat"}`), nil)
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "primary says 400") {
+		t.Fatalf("400 应原样返回：%d %s", resp.StatusCode, body)
+	}
+	if backup.calls.Load() != 0 {
+		t.Fatal("请求本身有问题时不应换来源")
+	}
+
+	// 最后一个来源也失败时，把它的状态与响应体交给客户端。
+	primary.status.Store(http.StatusTooManyRequests)
+	backup.status.Store(http.StatusInternalServerError)
+	resp = env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"zhixin-chat"}`), nil)
+	body = testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "backup says 500") {
+		t.Fatalf("全部失败时应返回最后一个来源的响应：%d %s", resp.StatusCode, body)
+	}
+}
+
+func TestChatUnreachableSourcesGive502(t *testing.T) {
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "dead", "http://127.0.0.1:1", "sk-dead")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{{ProviderID: "dead", UpstreamModel: "x"}}})
+	})
+	token := signIn(t, env.authSvc, "h@b.cn")
+	var p testutil.Problem
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "m"}, &p); code != http.StatusBadGateway || p.Code != string(httpx.CodeUpstreamFailed) {
+		t.Fatalf("got %d %+v", code, p)
+	}
+}
+
+func TestCandidatesOrder(t *testing.T) {
+	a := &liveProvider{ProviderRecord: ProviderRecord{ID: "a", Enabled: true}}
+	b := &liveProvider{ProviderRecord: ProviderRecord{ID: "b", Enabled: true}}
+	c := &liveProvider{ProviderRecord: ProviderRecord{ID: "c", Enabled: true}}
+	off := &liveProvider{ProviderRecord: ProviderRecord{ID: "off", Enabled: false}}
+	broken := &liveProvider{ProviderRecord: ProviderRecord{ID: "broken", Enabled: true}, KeyBroken: true}
+	m := &liveModel{ModelRecord: ModelRecord{Enabled: true}, Live: []liveRoute{
+		{Route: Route{Priority: 5, Weight: 1, Enabled: true}, Provider: c},
+		{Route: Route{Priority: 0, Weight: 1, Enabled: true}, Provider: off},
+		{Route: Route{Priority: 0, Weight: 1, Enabled: true}, Provider: a},
+		{Route: Route{Priority: 0, Weight: 1, Enabled: false}, Provider: b},
+		{Route: Route{Priority: 1, Weight: 1, Enabled: true}, Provider: b},
+		{Route: Route{Priority: 0, Weight: 1, Enabled: true}, Provider: broken},
+	}}
+	r := &Router{health: newHealthBook(time.Now), shuffle: func([]liveRoute) {}}
+	ids := func(rs []liveRoute) string {
+		var s []string
+		for _, rt := range rs {
+			s = append(s, rt.Provider.ID)
+		}
+		return strings.Join(s, ",")
+	}
+	if got := ids(r.candidates(m, 0)); got != "a,b,c" {
+		t.Fatalf("按优先级排列并跳过停用与 key 损坏的来源：%s", got)
+	}
+	if got := ids(r.candidates(m, 2)); got != "a,b" {
+		t.Fatalf("应截到 max 条：%s", got)
+	}
+	for range coolAfterFailures {
+		r.health.fail("a", "HTTP 503")
+	}
+	if got := ids(r.candidates(m, 0)); got != "b,c,a" {
+		t.Fatalf("冷却中的来源应排到最后：%s", got)
+	}
+	r.health.succeed("a")
+	if got := ids(r.candidates(m, 0)); got != "a,b,c" {
+		t.Fatalf("成功一次后冷却解除：%s", got)
+	}
+}
+
+func TestWeightedShuffleFavoursHeavierRoutes(t *testing.T) {
+	heavy := &liveProvider{ProviderRecord: ProviderRecord{ID: "heavy"}}
+	light := &liveProvider{ProviderRecord: ProviderRecord{ID: "light"}}
+	first := map[string]int{}
+	for range 2000 {
+		rs := []liveRoute{{Route: Route{Weight: 1}, Provider: light}, {Route: Route{Weight: 9}, Provider: heavy}}
+		weightedShuffle(rs)
+		first[rs[0].Provider.ID]++
+	}
+	// 权重 9:1，重的一条排第一的概率是 0.9；给足余量避免偶发失败。
+	if first["heavy"] < 1600 || first["light"] < 80 {
+		t.Fatalf("权重分流不符合预期：%v", first)
+	}
+}
+
+func TestBrokenKeyMakesModelUnavailable(t *testing.T) {
+	src := newFakeSource(t, "x")
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, _ *secretbox.Box) {
+		// 用另一把密钥加密：当前密钥解不开。
+		putProvider(t, c, secretbox.Random(), "p", src.URL, "sk-other")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{{ProviderID: "p", UpstreamModel: "x"}}})
+	})
+	token := signIn(t, env.authSvc, "k@b.cn")
+	var p testutil.Problem
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "m"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
+		t.Fatalf("key 无法解密时模型不可用：%d %+v", code, p)
+	}
+	if src.calls.Load() != 0 {
+		t.Fatal("不应带着空 key 去请求来源")
+	}
+}
+
+// embedSource 返回的向量第一个分量是来源编号，第二个分量是输入 text-N 里的
+// N，便于核对合并顺序与来源。data 按倒序返回，核对服务端按 index 排序。
+type embedSource struct {
+	*httptest.Server
+	calls   atomic.Int64
+	batches [][]string
+	mu      sync.Mutex
+	failOn  int // 第几次调用返回 500，0 表示不失败
+	dims    int
+	noUsage bool
+}
+
+func newEmbedSource(t *testing.T, tag float64, dims int) *embedSource {
+	t.Helper()
+	e := &embedSource{dims: dims}
+	e.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := e.calls.Add(1)
+		var body struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		e.mu.Lock()
+		e.batches = append(e.batches, body.Input)
+		e.mu.Unlock()
+		if e.failOn != 0 && int(n) == e.failOn {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var data []string
+		for i := len(body.Input) - 1; i >= 0; i-- {
+			vec := make([]string, e.dims)
+			for d := range vec {
+				vec[d] = "0"
+			}
+			vec[0] = fmt.Sprint(tag)
+			vec[1] = body.Input[i][len("text-"):]
+			data = append(data, fmt.Sprintf(`{"object":"embedding","index":%d,"embedding":[%s]}`, i, strings.Join(vec, ",")))
+		}
+		usage := fmt.Sprintf(`,"usage":{"prompt_tokens":%d,"total_tokens":%d}`, 3*len(body.Input), 3*len(body.Input))
+		if e.noUsage {
+			usage = ""
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"object":"list","model":"%s","data":[%s]%s}`, body.Model, strings.Join(data, ","), usage)
+	}))
+	t.Cleanup(e.Close)
+	return e
+}
+
+type embedOut struct {
+	Model string `json:"model"`
+	Data  []struct {
+		Index     int       `json:"index"`
+		Embedding []float64 `json:"embedding"`
+	} `json:"data"`
+	Usage struct {
+		TotalTokens int64 `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+func inputs(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("text-%d", i)
+	}
+	return out
+}
+
+func TestEmbeddingsSplitAndMerge(t *testing.T) {
+	src := newEmbedSource(t, 1, 4)
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "sf", src.URL, "sk-sf")
+		putModel(t, c, ModelRecord{Name: "zhixin-embed", Kind: KindEmbedding, Dimensions: 4, Routes: []Route{
+			{ProviderID: "sf", UpstreamModel: "BAAI/bge-m3", MaxBatch: 2},
+		}})
+	})
+	token := signIn(t, env.authSvc, "e@b.cn")
+
+	var out embedOut
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "zhixin-embed", "input": inputs(5)}, &out); code != http.StatusOK {
+		t.Fatalf("embeddings: %d", code)
+	}
+	if src.calls.Load() != 3 {
+		t.Fatalf("5 条按每批 2 条应拆成 3 批，实际 %d", src.calls.Load())
+	}
+	if out.Model != "zhixin-embed" || len(out.Data) != 5 {
+		t.Fatalf("响应：%+v", out)
+	}
+	for i, d := range out.Data {
+		if d.Index != i || len(d.Embedding) != 4 {
+			t.Fatalf("第 %d 条：%+v", i, d)
+		}
+	}
+	// 第二个分量是输入的编号：来源按倒序返回，合并之后仍按原顺序排列。
+	for i, d := range out.Data {
+		if d.Embedding[1] != float64(i) {
+			t.Fatalf("合并顺序不对：第 %d 条 %v", i, d.Embedding)
+		}
+	}
+	if out.Usage.TotalTokens != 15 {
+		t.Fatalf("用量应合计：%+v", out.Usage)
+	}
+
+	var q struct {
+		Used    int64 `json:"used_tokens"`
+		EmbUsed int64 `json:"embedding_used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q)
+	if q.Used != 0 || q.EmbUsed != 15 {
+		t.Fatalf("嵌入用量应记在嵌入额度上：%+v", q)
+	}
+
+	var list struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Kind       string `json:"kind"`
+			Dimensions int    `json:"dimensions"`
+		} `json:"data"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/models", token, nil, &list)
+	if len(list.Data) != 1 || list.Data[0].Kind != "embedding" || list.Data[0].Dimensions != 4 {
+		t.Fatalf("模型列表应带种类与维度：%+v", list)
+	}
+
+	// 单个字符串也接受。
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "zhixin-embed", "input": "text-9"}, &out); code != http.StatusOK || len(out.Data) != 1 {
+		t.Fatalf("single input: %d %+v", code, out)
+	}
+	// 聊天接口不接受嵌入模型。
+	var p testutil.Problem
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "zhixin-embed"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
+		t.Fatalf("嵌入模型不能用于聊天：%d %+v", code, p)
+	}
+}
+
+func TestEmbeddingsFailoverRedoesWholeRequest(t *testing.T) {
+	first := newEmbedSource(t, 1, 4)
+	first.failOn = 2 // 第二批失败
+	second := newEmbedSource(t, 2, 4)
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "one", first.URL, "sk-1")
+		putProvider(t, c, box, "two", second.URL, "sk-2")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{
+			{ProviderID: "one", UpstreamModel: "bge-m3", MaxBatch: 2},
+			{ProviderID: "two", UpstreamModel: "bge-m3", MaxBatch: 4, Priority: 1},
+		}})
+	})
+	token := signIn(t, env.authSvc, "ef@b.cn")
+	var out embedOut
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": inputs(4)}, &out); code != http.StatusOK {
+		t.Fatalf("embeddings: %d", code)
+	}
+	for _, d := range out.Data {
+		if d.Embedding[0] != 2 {
+			t.Fatalf("一批失败后整次请求应改由第二个来源完成，不能混用：%+v", out.Data)
+		}
+	}
+	if second.calls.Load() != 1 {
+		t.Fatalf("第二个来源每批 4 条，应只调用一次：%d", second.calls.Load())
+	}
+}
+
+func TestEmbeddingsDimensionMismatchTriesNextSource(t *testing.T) {
+	wrong := newEmbedSource(t, 1, 3)
+	right := newEmbedSource(t, 2, 4)
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "wrong", wrong.URL, "sk-1")
+		putProvider(t, c, box, "right", right.URL, "sk-2")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Dimensions: 4, Routes: []Route{
+			{ProviderID: "wrong", UpstreamModel: "m"}, {ProviderID: "right", UpstreamModel: "m", Priority: 1},
+		}})
+	})
+	token := signIn(t, env.authSvc, "ed@b.cn")
+	var out embedOut
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": inputs(2)}, &out); code != http.StatusOK || out.Data[0].Embedding[0] != 2 {
+		t.Fatalf("维度不符应换来源：%d %+v", code, out)
+	}
+	if h := env.proxy.router.health.view("wrong"); h.failures != 1 || !strings.Contains(h.lastError, "dimensions") {
+		t.Fatalf("维度不符应记为来源失败：%+v", h)
+	}
+}
+
+func TestEmbeddingsInputValidationAndEstimate(t *testing.T) {
+	src := newEmbedSource(t, 1, 4)
+	src.noUsage = true
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "p", src.URL, "sk")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
+	})
+	token := signIn(t, env.authSvc, "ev@b.cn")
+	for _, in := range []any{nil, "", []string{}, []string{"a", ""}, []int{1, 2}, inputs(9)} {
+		var p testutil.Problem
+		body := map[string]any{"model": "emb"}
+		if in != nil {
+			body["input"] = in
+		}
+		if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeInvalidRequest) {
+			t.Fatalf("input %v: %d %+v", in, code, p)
+		}
+	}
+	if src.calls.Load() != 0 {
+		t.Fatal("不合法的输入不应转发")
+	}
+	var out embedOut
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": []string{"text-1", "text-22"}}, &out); code != http.StatusOK {
+		t.Fatalf("embeddings: %d", code)
+	}
+	// 来源没有返回 usage：按字数估算 6+7。
+	if out.Usage.TotalTokens != 13 {
+		t.Fatalf("缺 usage 时按字数估算：%+v", out.Usage)
+	}
+}
+
+func TestEmbeddingQuotaIsSeparateFromChat(t *testing.T) {
+	src := newEmbedSource(t, 1, 4)
+	cfg := baseConfig()
+	cfg.EmbeddingDailyTokens = 5
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "p", src.URL, "sk")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
+	})
+	tokens, _ := env.authSvc.Register(context.Background(), "eq@b.cn", "password1", "")
+	token := tokens.AccessToken
+	env.quota.SetDailyLimit(tokens.UserID, 1) // 聊天额度很小，不影响嵌入
+	body := map[string]any{"model": "emb", "input": inputs(2)}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, nil); code != http.StatusOK {
+		t.Fatalf("first: %d", code)
+	}
+	var p testutil.Problem
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, &p); code != http.StatusTooManyRequests || p.Extra["kind"] != "embedding" {
+		t.Fatalf("嵌入额度用完应 429：%d %+v", code, p)
+	}
+	env.quota.SetKindLimit(tokens.UserID, KindEmbedding, 1000)
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, nil); code != http.StatusOK {
+		t.Fatalf("调高嵌入额度后应通过：%d", code)
+	}
+}
+
+func TestArrayLen(t *testing.T) {
+	for in, want := range map[string]int{`[]`: 0, `[ ]`: 0, `[1]`: 1, `[0.1,-2e-3, 3]`: 3, `"AAAA"`: -1} {
+		if got := arrayLen(json.RawMessage(in)); got != want {
+			t.Fatalf("%s: got %d want %d", in, got, want)
+		}
+	}
+}
+
+func TestProviderMessageMasksKeys(t *testing.T) {
+	got := providerMessage([]byte(`{"error":{"message":"Incorrect API key provided: sk-abcdef123456"}}`))
+	if strings.Contains(got, "abcdef") || !strings.Contains(got, "sk-***") {
+		t.Fatalf("应遮掉 key：%q", got)
+	}
+	if got := providerMessage([]byte(`{"error":"quota"}`)); got != "quota" {
+		t.Fatalf("flat error: %q", got)
+	}
+}
+
+func TestStreamAlwaysAsksForUsageAndEstimatesWithoutIt(t *testing.T) {
+	var gotOpts map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotOpts, _ = body["stream_options"].(map[string]any)
+		w.Header().Set("Content-Type", "text/event-stream")
+		// 不带 usage：服务端应按字节估算。
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"一二三四五六七八九十\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	cfg := baseConfig()
+	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk", []string{"m"}
+	env := newTestServer(t, cfg, nil)
+	token := signIn(t, env.authSvc, "su@b.cn")
+	req := map[string]any{"model": "m", "stream": true, "stream_options": map[string]any{"foo": 1}}
+	b, _ := json.Marshal(req)
+	testutil.ReadBody(t, env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(b), nil))
+	if gotOpts["include_usage"] != true || gotOpts["foo"] != float64(1) {
+		t.Fatalf("应强制 include_usage 并保留其他选项：%+v", gotOpts)
+	}
+	var q struct {
+		Used int64 `json:"used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q)
+	if q.Used <= 0 {
+		t.Fatalf("没有 usage 时也要估算用量：%+v", q)
+	}
+}
+
+func TestRejectedServerKeyIsNotPassedThrough(t *testing.T) {
+	src := newFakeSource(t, "org-secret")
+	src.status.Store(http.StatusUnauthorized)
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "p", src.URL, "sk")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{{ProviderID: "p", UpstreamModel: "x"}}})
+	})
+	token := signIn(t, env.authSvc, "kr@b.cn")
+	resp := env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"m"}`), nil)
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || strings.Contains(string(body), "org-secret") {
+		t.Fatalf("key 被拒应返回 502 且不转发提供方的错误体：%d %s", resp.StatusCode, body)
+	}
+}
+
+func TestEmbeddingsRejectConflictingDimensions(t *testing.T) {
+	src := newEmbedSource(t, 1, 4)
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "p", src.URL, "sk")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Dimensions: 4, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
+	})
+	token := signIn(t, env.authSvc, "dm@b.cn")
+	var p testutil.Problem
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": "text-1", "dimensions": 3}, &p); code != http.StatusBadRequest {
+		t.Fatalf("与配置不一致的 dimensions 应 400：%d %+v", code, p)
+	}
+	if src.calls.Load() != 0 {
+		t.Fatal("不应转发")
+	}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": "text-1", "dimensions": 4}, nil); code != http.StatusOK {
+		t.Fatalf("一致的 dimensions 可以通过：%d", code)
+	}
+}
+
+func TestParseEmbedChunkIndexRules(t *testing.T) {
+	cases := map[string]bool{
+		`{"data":[{"embedding":[1]},{"embedding":[2]}]}`:                         true,  // 全部省略
+		`{"data":[{"index":0,"embedding":[1]},{"index":0,"embedding":[2]}]}`:     true,  // 全部为 0
+		`{"data":[{"index":1,"embedding":[2]},{"index":0,"embedding":[1]}]}`:     true,  // 乱序但完整
+		`{"data":[{"index":1,"embedding":[2]},{"index":1,"embedding":[1]}]}`:     false, // 重复
+		`{"data":[{"index":0,"embedding":[1]},{"index":5,"embedding":[2]}]}`:     false, // 越界
+		`{"data":[{"index":0,"embedding":[1]},{"index":1,"embedding":null}]}`:    false, // 缺向量
+		`{"data":[{"index":0,"embedding":[1,2]},{"index":1,"embedding":[1,2]}]}`: false, // 维度不符
+	}
+	for body, ok := range cases {
+		_, _, err := parseEmbedChunk([]byte(body), 2, 1)
+		if (err == nil) != ok {
+			t.Fatalf("%s: ok=%v err=%v", body, ok, err)
+		}
 	}
 }

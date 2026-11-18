@@ -53,16 +53,49 @@ type InstallActive struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type LlmModel struct {
+	Name       string
+	Kind       string
+	Enabled    bool
+	Dimensions pgtype.Int4
+	Note       string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type LlmProvider struct {
+	ID           string
+	Name         string
+	BaseUrl      string
+	ApiKeySealed string
+	KeyHint      string
+	Enabled      bool
+	Note         string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type LlmQuotum struct {
-	UserID      string
-	DailyTokens int64
-	Note        string
-	UpdatedAt   pgtype.Timestamptz
+	UserID               string
+	DailyTokens          pgtype.Int8
+	EmbeddingDailyTokens pgtype.Int8
+	Note                 string
+	UpdatedAt            pgtype.Timestamptz
+}
+
+type LlmRoute struct {
+	Model         string
+	ProviderID    string
+	UpstreamModel string
+	Priority      int32
+	Weight        int32
+	MaxBatch      int32
+	Enabled       bool
+	Position      int32
 }
 
 type LlmUsage struct {
 	UserID string
 	Day    pgtype.Date
+	Kind   string
 	Tokens int64
 }
 

@@ -139,3 +139,46 @@ func TestLoadRejectsBadReleaseManifest(t *testing.T) {
 		t.Fatalf("清单不合法时启动应报错，得到 %v", err)
 	}
 }
+
+func TestLoadModelRoutingDefaults(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"ZHIXIN_LLM_EMBEDDING_MODELS": " bge-m3 , ,text-embedding-v4"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := strings.Join(cfg.LLM.EmbeddingModels, ","); got != "bge-m3,text-embedding-v4" {
+		t.Fatalf("embedding models = %q", got)
+	}
+	if cfg.LLM.EmbeddingDailyTokens != 2000000 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
+		t.Fatalf("unexpected routing defaults: %+v", cfg.LLM)
+	}
+	if cfg.AdminToken != "" || cfg.SecretKey != nil || cfg.ModelReloadInterval != 30*time.Second {
+		t.Fatalf("后台默认关闭：%+v", cfg)
+	}
+}
+
+func TestLoadAdminAndSecretKey(t *testing.T) {
+	key := "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" // 32 字节
+	long := strings.Repeat("a", 32)
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string // 空表示应当通过
+	}{
+		{"short token", map[string]string{"ZHIXIN_ADMIN_TOKEN": "short"}, "ZHIXIN_ADMIN_TOKEN"},
+		{"bad key", map[string]string{"ZHIXIN_SECRET_KEY": "c2hvcnQ="}, "ZHIXIN_SECRET_KEY"},
+		{"db without key", map[string]string{"ZHIXIN_ADMIN_TOKEN": long, "ZHIXIN_DATABASE_URL": "postgres://x"}, "ZHIXIN_SECRET_KEY is required"},
+		{"db with key", map[string]string{"ZHIXIN_ADMIN_TOKEN": long, "ZHIXIN_DATABASE_URL": "postgres://x", "ZHIXIN_SECRET_KEY": key}, ""},
+		{"memory without key", map[string]string{"ZHIXIN_ADMIN_TOKEN": long}, ""},
+	}
+	for _, c := range cases {
+		cfg, err := Load(env(c.env))
+		switch {
+		case c.want == "" && err != nil:
+			t.Fatalf("%s: %v", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Fatalf("%s: want error containing %q, got %v", c.name, c.want, err)
+		case c.name == "db with key" && len(cfg.SecretKey) != 32:
+			t.Fatalf("%s: key not parsed", c.name)
+		}
+	}
+}

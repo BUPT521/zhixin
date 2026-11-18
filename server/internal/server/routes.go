@@ -26,6 +26,7 @@ type routes struct {
 	backups   *backup.Handler
 	blobs     *blobs.Handler
 	llm       *llmproxy.Proxy
+	llmAdmin  *llmproxy.Admin
 	feedback  *feedback.Handler
 	release   *release.Handler
 	retention *retention.Handler
@@ -37,7 +38,7 @@ type routes struct {
 var _ api.ServerInterface = routes{}
 
 func (rt routes) GetHealthz(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, api.Health{Status: api.Ok})
+	httpx.WriteJSON(w, http.StatusOK, api.Health{Status: api.HealthStatusOk})
 }
 
 func (rt routes) GetReadyz(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +107,35 @@ func (rt routes) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { rt.llm
 func (rt routes) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { rt.llm.QuotaStatus(w, r) }
 func (rt routes) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
 	rt.llm.Chat(w, r)
+}
+func (rt routes) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
+	rt.llm.Embeddings(w, r)
+}
+
+// 管理接口：管理令牌由 internal/admin.Middleware 校验，这里只转发。
+func (rt routes) GetAdminV1Providers(w http.ResponseWriter, r *http.Request) {
+	rt.llmAdmin.ListProviders(w, r)
+}
+func (rt routes) PutAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.llmAdmin.PutProvider(w, r, id)
+}
+func (rt routes) DeleteAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.llmAdmin.DeleteProvider(w, r, id)
+}
+func (rt routes) PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Request, id string) {
+	rt.llmAdmin.TestProvider(w, r, id)
+}
+func (rt routes) GetAdminV1Models(w http.ResponseWriter, r *http.Request) {
+	rt.llmAdmin.ListModels(w, r)
+}
+func (rt routes) PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string) {
+	rt.llmAdmin.PutModel(w, r, name)
+}
+func (rt routes) DeleteAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string) {
+	rt.llmAdmin.DeleteModel(w, r, name)
+}
+func (rt routes) PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request, name string) {
+	rt.llmAdmin.TestModel(w, r, name)
 }
 
 func (rt routes) GetV1AppReleases(w http.ResponseWriter, r *http.Request) { rt.release.Releases(w, r) }

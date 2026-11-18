@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>知新 · 模型后台</title>
+<link rel="stylesheet" href="/admin/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">知新<span>模型后台</span></div>
+  <form id="login" class="login" autocomplete="off">
+    <input id="token" type="password" placeholder="管理令牌（ZHIXIN_ADMIN_TOKEN）" aria-label="管理令牌" required>
+    <button type="submit">进入</button>
+  </form>
+  <div id="session" class="session" hidden>
+    <span class="dot"></span><span>已连接</span>
+    <button id="logout" class="ghost" type="button">退出</button>
+  </div>
+</header>
+
+<main id="app" hidden>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="providers" aria-selected="true">模型来源</button>
+    <button role="tab" data-tab="models" aria-selected="false">对外模型与路由</button>
+  </nav>
+
+  <section id="tab-providers" class="panel">
+    <div class="panel-head">
+      <p class="hint">一个来源是一个 OpenAI 兼容的基础地址加一把 key，例如 DeepSeek、硅基流动、阿里云百炼的兼容模式，或者自建的 vLLM、Ollama。key 加密保存，列表只显示末四位。</p>
+      <button id="add-provider" type="button">新增来源</button>
+    </div>
+    <div class="scroll"><table class="grid">
+      <thead><tr><th>编号</th><th>名称</th><th>地址</th><th>key</th><th>状态</th><th></th></tr></thead>
+      <tbody id="providers"></tbody>
+    </table></div>
+  </section>
+
+  <section id="tab-models" class="panel" hidden>
+    <div class="panel-head">
+      <p class="hint">客户端请求里写的是对外模型名，服务端按路由换成某个来源上的模型名。数字小的优先级先试，同一优先级按权重分流；连接失败、限流、5xx 与 key 被拒时自动换下一条。嵌入模型的各条路由必须是同一个模型，否则向量不在同一个空间里。</p>
+      <button id="add-model" type="button">新增模型</button>
+    </div>
+    <div class="scroll"><table class="grid">
+      <thead><tr><th>模型名</th><th>种类</th><th>路由</th><th>状态</th><th></th></tr></thead>
+      <tbody id="models"></tbody>
+    </table></div>
+  </section>
+
+  <section id="probe" class="probe" hidden>
+    <div class="probe-head"><strong id="probe-title"></strong><button id="probe-close" class="ghost" type="button">关闭</button></div>
+    <div id="probe-body"></div>
+  </section>
+</main>
+
+<p id="toast" class="toast" role="status" hidden></p>
+
+<dialog id="provider-dialog">
+  <form id="provider-form" method="dialog">
+    <h2 id="provider-title">新增来源</h2>
+    <label>编号<input name="id" required pattern="[a-z0-9][a-z0-9_\-]{0,31}" placeholder="例如 deepseek、siliconflow"></label>
+    <label>名称<input name="name" maxlength="64" placeholder="显示用，可以留空"></label>
+    <label>基础地址<input name="base_url" required placeholder="https://api.deepseek.com/v1"></label>
+    <label>API key<input name="api_key" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
+    <label class="check"><input name="clear_key" type="checkbox">清除已保存的 key（自建服务不需要 key 时）</label>
+    <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
+    <label>备注<input name="note" maxlength="200"></label>
+    <p class="error" id="provider-error" hidden></p>
+    <div class="actions"><button value="cancel" formnovalidate class="ghost">取消</button><button value="save" id="provider-save">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="model-dialog" class="wide">
+  <form id="model-form" method="dialog">
+    <h2 id="model-title">新增模型</h2>
+    <div class="row">
+      <label>对外模型名<input name="name" required pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,63}" placeholder="例如 deepseek-flash、zhixin-embed"></label>
+      <label>种类<select name="kind"><option value="chat">聊天</option><option value="embedding">嵌入</option></select></label>
+      <label class="emb-only">维度<input name="dimensions" type="number" min="1" max="8192" placeholder="例如 1024"></label>
+    </div>
+    <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
+    <label>备注<input name="note" maxlength="200"></label>
+    <h3>路由</h3>
+    <table class="routes">
+      <thead><tr><th>来源</th><th>来源侧模型名</th><th>优先级</th><th>权重</th><th class="emb-only">每批条数</th><th>启用</th><th></th></tr></thead>
+      <tbody id="route-rows"></tbody>
+    </table>
+    <button type="button" id="add-route" class="ghost">添加一条路由</button>
+    <datalist id="upstream-names"></datalist>
+    <p class="error" id="model-error" hidden></p>
+    <div class="actions"><button value="cancel" formnovalidate class="ghost">取消</button><button value="save" id="model-save">保存</button></div>
+  </form>
+</dialog>
+
+<script src="/admin/app.js"></script>
+</body>
+</html>

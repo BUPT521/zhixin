@@ -16,6 +16,63 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AdminModelSource.
+const (
+	AdminModelSourceAdmin AdminModelSource = "admin"
+	AdminModelSourceEnv   AdminModelSource = "env"
+)
+
+// Valid indicates whether the value is a known member of the AdminModelSource enum.
+func (e AdminModelSource) Valid() bool {
+	switch e {
+	case AdminModelSourceAdmin:
+		return true
+	case AdminModelSourceEnv:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminProviderSource.
+const (
+	AdminProviderSourceAdmin AdminProviderSource = "admin"
+	AdminProviderSourceEnv   AdminProviderSource = "env"
+)
+
+// Valid indicates whether the value is a known member of the AdminProviderSource enum.
+func (e AdminProviderSource) Valid() bool {
+	switch e {
+	case AdminProviderSourceAdmin:
+		return true
+	case AdminProviderSourceEnv:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminProviderHealthState.
+const (
+	AdminProviderHealthStateCooling  AdminProviderHealthState = "cooling"
+	AdminProviderHealthStateKeyError AdminProviderHealthState = "key_error"
+	AdminProviderHealthStateOk       AdminProviderHealthState = "ok"
+)
+
+// Valid indicates whether the value is a known member of the AdminProviderHealthState enum.
+func (e AdminProviderHealthState) Valid() bool {
+	switch e {
+	case AdminProviderHealthStateCooling:
+		return true
+	case AdminProviderHealthStateKeyError:
+		return true
+	case AdminProviderHealthStateOk:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChangeOp.
 const (
 	Delete ChangeOp = "delete"
@@ -60,13 +117,31 @@ func (e CommitActor) Valid() bool {
 
 // Defines values for HealthStatus.
 const (
-	Ok HealthStatus = "ok"
+	HealthStatusOk HealthStatus = "ok"
 )
 
 // Valid indicates whether the value is a known member of the HealthStatus enum.
 func (e HealthStatus) Valid() bool {
 	switch e {
-	case Ok:
+	case HealthStatusOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ModelKind.
+const (
+	Chat      ModelKind = "chat"
+	Embedding ModelKind = "embedding"
+)
+
+// Valid indicates whether the value is a known member of the ModelKind enum.
+func (e ModelKind) Valid() bool {
+	switch e {
+	case Chat:
+		return true
+	case Embedding:
 		return true
 	default:
 		return false
@@ -160,6 +235,134 @@ func (e TokensTokenType) Valid() bool {
 	}
 }
 
+// AdminModel defines model for AdminModel.
+type AdminModel struct {
+	Dimensions *int             `json:"dimensions,omitempty"`
+	Enabled    bool             `json:"enabled"`
+	Kind       ModelKind        `json:"kind"`
+	Name       string           `json:"name"`
+	Note       string           `json:"note"`
+	Routes     []AdminRoute     `json:"routes"`
+	Source     AdminModelSource `json:"source"`
+	UpdatedAt  *time.Time       `json:"updated_at,omitempty"`
+}
+
+// AdminModelSource defines model for AdminModel.Source.
+type AdminModelSource string
+
+// AdminModelInput defines model for AdminModelInput.
+type AdminModelInput struct {
+	// Dimensions 只用于嵌入模型
+	Dimensions *int              `json:"dimensions,omitempty"`
+	Enabled    *bool             `json:"enabled,omitempty"`
+	Kind       ModelKind         `json:"kind"`
+	Note       *string           `json:"note,omitempty"`
+	Routes     []AdminRouteInput `json:"routes"`
+}
+
+// AdminModelList defines model for AdminModelList.
+type AdminModelList struct {
+	Data []AdminModel `json:"data"`
+}
+
+// AdminProbe defines model for AdminProbe.
+type AdminProbe struct {
+	// Dimensions 嵌入模型实际返回的维度
+	Dimensions *int `json:"dimensions,omitempty"`
+
+	// Error 失败原因，不含 key
+	Error     *string `json:"error,omitempty"`
+	LatencyMs int64   `json:"latency_ms"`
+
+	// Models 来源 /models 返回的模型名，最多 500 个
+	Models     *[]string `json:"models,omitempty"`
+	Ok         bool      `json:"ok"`
+	ProviderId *string   `json:"provider_id,omitempty"`
+
+	// Status 提供方的 HTTP 状态码，连不上时省略
+	Status        *int    `json:"status,omitempty"`
+	UpstreamModel *string `json:"upstream_model,omitempty"`
+}
+
+// AdminProvider defines model for AdminProvider.
+type AdminProvider struct {
+	BaseUrl string              `json:"base_url"`
+	Enabled bool                `json:"enabled"`
+	HasKey  bool                `json:"has_key"`
+	Health  AdminProviderHealth `json:"health"`
+	Id      string              `json:"id"`
+
+	// KeyHint key 的末四位
+	KeyHint *string `json:"key_hint,omitempty"`
+	Name    string  `json:"name"`
+	Note    string  `json:"note"`
+
+	// Source env 来自环境变量，只读
+	Source    AdminProviderSource `json:"source"`
+	UpdatedAt *time.Time          `json:"updated_at,omitempty"`
+}
+
+// AdminProviderSource env 来自环境变量，只读
+type AdminProviderSource string
+
+// AdminProviderHealth defines model for AdminProviderHealth.
+type AdminProviderHealth struct {
+	ConsecutiveFailures int                      `json:"consecutive_failures"`
+	CoolingUntil        *time.Time               `json:"cooling_until,omitempty"`
+	LastError           *string                  `json:"last_error,omitempty"`
+	LastErrorAt         *time.Time               `json:"last_error_at,omitempty"`
+	LastSuccessAt       *time.Time               `json:"last_success_at,omitempty"`
+	State               AdminProviderHealthState `json:"state"`
+}
+
+// AdminProviderHealthState defines model for AdminProviderHealth.State.
+type AdminProviderHealthState string
+
+// AdminProviderInput defines model for AdminProviderInput.
+type AdminProviderInput struct {
+	// ApiKey 省略时保留原值，空字符串表示清除
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// BaseUrl OpenAI 兼容的基础地址，例如 https://api.deepseek.com/v1
+	BaseUrl string  `json:"base_url"`
+	Enabled *bool   `json:"enabled,omitempty"`
+	Name    *string `json:"name,omitempty"`
+	Note    *string `json:"note,omitempty"`
+}
+
+// AdminProviderList defines model for AdminProviderList.
+type AdminProviderList struct {
+	Data []AdminProvider `json:"data"`
+}
+
+// AdminRoute defines model for AdminRoute.
+type AdminRoute struct {
+	Enabled bool `json:"enabled"`
+
+	// MaxBatch 嵌入一次发给来源的最多条数，0 表示不拆分
+	MaxBatch int `json:"max_batch"`
+
+	// Priority 数字小的先试
+	Priority   int    `json:"priority"`
+	ProviderId string `json:"provider_id"`
+
+	// UpstreamModel 来源侧的模型名，例如 BAAI/bge-m3
+	UpstreamModel string `json:"upstream_model"`
+
+	// Weight 同一优先级内按权重分流
+	Weight int `json:"weight"`
+}
+
+// AdminRouteInput defines model for AdminRouteInput.
+type AdminRouteInput struct {
+	Enabled       *bool  `json:"enabled,omitempty"`
+	MaxBatch      *int   `json:"max_batch,omitempty"`
+	Priority      *int   `json:"priority,omitempty"`
+	ProviderId    string `json:"provider_id"`
+	UpstreamModel string `json:"upstream_model"`
+	Weight        *int   `json:"weight,omitempty"`
+}
+
 // Backup defines model for Backup.
 type Backup struct {
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
@@ -222,6 +425,47 @@ type Credentials struct {
 	Password   string              `json:"password"`
 }
 
+// EmbeddingList defines model for EmbeddingList.
+type EmbeddingList struct {
+	Data []struct {
+		// Embedding 浮点数组；请求带 encoding_format=base64 时是字符串
+		Embedding interface{} `json:"embedding"`
+		Index     int         `json:"index"`
+
+		// Object Examples: embedding
+		Object string `json:"object"`
+	} `json:"data"`
+
+	// Model 对外模型名
+	Model string `json:"model"`
+
+	// Object Examples: list
+	Object string `json:"object"`
+	Usage  struct {
+		PromptTokens int64 `json:"prompt_tokens"`
+		TotalTokens  int64 `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+// EmbeddingRequest defines model for EmbeddingRequest.
+type EmbeddingRequest struct {
+	// Input 一段文本或文本数组
+	Input                EmbeddingRequest_Input `json:"input"`
+	Model                string                 `json:"model"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// EmbeddingRequestInput0 defines model for EmbeddingRequest.Input.0.
+type EmbeddingRequestInput0 = string
+
+// EmbeddingRequestInput1 defines model for EmbeddingRequest.Input.1.
+type EmbeddingRequestInput1 = []string
+
+// EmbeddingRequest_Input 一段文本或文本数组
+type EmbeddingRequest_Input struct {
+	union json.RawMessage
+}
+
 // Feedback defines model for Feedback.
 type Feedback struct {
 	// AppVersion 客户端版本名，例如 0.2.0-dev+3
@@ -256,9 +500,18 @@ type HealthStatus string
 
 // LLMQuota defines model for LLMQuota.
 type LLMQuota struct {
+	// DailyTokens 聊天每日额度
 	DailyTokens int64              `json:"daily_tokens"`
 	Day         openapi_types.Date `json:"day"`
-	UsedTokens  int64              `json:"used_tokens"`
+
+	// EmbeddingDailyTokens 嵌入每日额度
+	EmbeddingDailyTokens int64 `json:"embedding_daily_tokens"`
+
+	// EmbeddingUsedTokens 嵌入当天已用
+	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
+
+	// UsedTokens 聊天当天已用
+	UsedTokens int64 `json:"used_tokens"`
 }
 
 // Me defines model for Me.
@@ -273,12 +526,18 @@ type Me struct {
 
 // Model defines model for Model.
 type Model struct {
-	Id string `json:"id"`
+	// Dimensions 嵌入模型的向量维度，没有配置时省略
+	Dimensions *int      `json:"dimensions,omitempty"`
+	Id         string    `json:"id"`
+	Kind       ModelKind `json:"kind"`
 
 	// Object Examples: model
 	Object  string `json:"object"`
 	OwnedBy string `json:"owned_by"`
 }
+
+// ModelKind defines model for ModelKind.
+type ModelKind string
 
 // ModelList defines model for ModelList.
 type ModelList struct {
@@ -432,6 +691,12 @@ type PostV1SyncCommitsJSONBody struct {
 	Commits []Commit `json:"commits"`
 }
 
+// PutAdminV1ModelsNameJSONRequestBody defines body for PutAdminV1ModelsName for application/json ContentType.
+type PutAdminV1ModelsNameJSONRequestBody = AdminModelInput
+
+// PutAdminV1ProvidersIdJSONRequestBody defines body for PutAdminV1ProvidersId for application/json ContentType.
+type PutAdminV1ProvidersIdJSONRequestBody = AdminProviderInput
+
 // PostV1AuthEmailVerifyConfirmJSONRequestBody defines body for PostV1AuthEmailVerifyConfirm for application/json ContentType.
 type PostV1AuthEmailVerifyConfirmJSONRequestBody PostV1AuthEmailVerifyConfirmJSONBody
 
@@ -456,14 +721,182 @@ type PostV1FeedbackJSONRequestBody = Feedback
 // PostV1LlmChatCompletionsJSONRequestBody defines body for PostV1LlmChatCompletions for application/json ContentType.
 type PostV1LlmChatCompletionsJSONRequestBody PostV1LlmChatCompletionsJSONBody
 
+// PostV1LlmEmbeddingsJSONRequestBody defines body for PostV1LlmEmbeddings for application/json ContentType.
+type PostV1LlmEmbeddingsJSONRequestBody = EmbeddingRequest
+
 // PostV1SyncCommitsJSONRequestBody defines body for PostV1SyncCommits for application/json ContentType.
 type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
 
 // PostV1TelemetryActiveJSONRequestBody defines body for PostV1TelemetryActive for application/json ContentType.
 type PostV1TelemetryActiveJSONRequestBody = TelemetryPing
 
+// Getter for additional properties for EmbeddingRequest. Returns the specified
+// element and whether it was found
+func (a EmbeddingRequest) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for EmbeddingRequest
+func (a *EmbeddingRequest) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for EmbeddingRequest to handle AdditionalProperties
+func (a *EmbeddingRequest) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["input"]; found {
+		err = json.Unmarshal(raw, &a.Input)
+		if err != nil {
+			return fmt.Errorf("error reading 'input': %w", err)
+		}
+		delete(object, "input")
+	}
+
+	if raw, found := object["model"]; found {
+		err = json.Unmarshal(raw, &a.Model)
+		if err != nil {
+			return fmt.Errorf("error reading 'model': %w", err)
+		}
+		delete(object, "model")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for EmbeddingRequest to handle AdditionalProperties
+func (a EmbeddingRequest) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["input"], err = json.Marshal(a.Input)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'input': %w", err)
+	}
+
+	object["model"], err = json.Marshal(a.Model)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'model': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// AsEmbeddingRequestInput0 returns the union data inside the EmbeddingRequest_Input as a EmbeddingRequestInput0
+func (t EmbeddingRequest_Input) AsEmbeddingRequestInput0() (EmbeddingRequestInput0, error) {
+	var body EmbeddingRequestInput0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEmbeddingRequestInput0 overwrites any union data inside the EmbeddingRequest_Input as the provided EmbeddingRequestInput0
+func (t *EmbeddingRequest_Input) FromEmbeddingRequestInput0(v EmbeddingRequestInput0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEmbeddingRequestInput0 performs a merge with any union data inside the EmbeddingRequest_Input, using the provided EmbeddingRequestInput0
+func (t *EmbeddingRequest_Input) MergeEmbeddingRequestInput0(v EmbeddingRequestInput0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsEmbeddingRequestInput1 returns the union data inside the EmbeddingRequest_Input as a EmbeddingRequestInput1
+func (t EmbeddingRequest_Input) AsEmbeddingRequestInput1() (EmbeddingRequestInput1, error) {
+	var body EmbeddingRequestInput1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEmbeddingRequestInput1 overwrites any union data inside the EmbeddingRequest_Input as the provided EmbeddingRequestInput1
+func (t *EmbeddingRequest_Input) FromEmbeddingRequestInput1(v EmbeddingRequestInput1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEmbeddingRequestInput1 performs a merge with any union data inside the EmbeddingRequest_Input, using the provided EmbeddingRequestInput1
+func (t *EmbeddingRequest_Input) MergeEmbeddingRequestInput1(v EmbeddingRequestInput1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t EmbeddingRequest_Input) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *EmbeddingRequest_Input) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetAdminV1Models 列出对外模型与各自的路由
+	// (GET /admin/v1/models)
+	GetAdminV1Models(w http.ResponseWriter, r *http.Request)
+	// DeleteAdminV1ModelsName 删除一个对外模型
+	// (DELETE /admin/v1/models/{name})
+	DeleteAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string)
+	// PutAdminV1ModelsName 新建或修改一个对外模型及其全部路由
+	// (PUT /admin/v1/models/{name})
+	PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string)
+	// PostAdminV1ModelsNameTest 按路由发一次最小请求，检查这个模型能否调用
+	// (POST /admin/v1/models/{name}/test)
+	PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request, name string)
+	// GetAdminV1Providers 列出模型来源与健康状态
+	// (GET /admin/v1/providers)
+	GetAdminV1Providers(w http.ResponseWriter, r *http.Request)
+	// DeleteAdminV1ProvidersId 删除一个模型来源
+	// (DELETE /admin/v1/providers/{id})
+	DeleteAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string)
+	// PutAdminV1ProvidersId 新建或修改一个模型来源
+	// (PUT /admin/v1/providers/{id})
+	PutAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string)
+	// PostAdminV1ProvidersIdTest 用来源的 key 请求一次 /models，检查地址与 key
+	// (POST /admin/v1/providers/{id}/test)
+	PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Request, id string)
 	// GetHealthz 进程存活
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -527,7 +960,10 @@ type ServerInterface interface {
 	// PostV1LlmChatCompletions OpenAI Chat Completions 代理
 	// (POST /v1/llm/chat/completions)
 	PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request)
-	// GetV1LlmModels 代理允许的模型，OpenAI 列表格式
+	// PostV1LlmEmbeddings OpenAI Embeddings 代理，支持批量
+	// (POST /v1/llm/embeddings)
+	PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request)
+	// GetV1LlmModels 当前可用的模型，OpenAI 列表格式
 	// (GET /v1/llm/models)
 	GetV1LlmModels(w http.ResponseWriter, r *http.Request)
 	// GetV1LlmQuota 今日用量与额度
@@ -564,6 +1000,190 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAdminV1Models operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1Models(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1Models(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAdminV1ModelsName operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminV1ModelsName(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAdminV1ModelsName(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAdminV1ModelsName operation middleware
+func (siw *ServerInterfaceWrapper) PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAdminV1ModelsName(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminV1ModelsNameTest operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminV1ModelsNameTest(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminV1Providers operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1Providers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1Providers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAdminV1ProvidersId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminV1ProvidersId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAdminV1ProvidersId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAdminV1ProvidersId operation middleware
+func (siw *ServerInterfaceWrapper) PutAdminV1ProvidersId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAdminV1ProvidersId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminV1ProvidersIdTest operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminV1ProvidersIdTest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetHealthz operation middleware
 func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Request) {
@@ -992,6 +1612,20 @@ func (siw *ServerInterfaceWrapper) PostV1LlmChatCompletions(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// PostV1LlmEmbeddings operation middleware
+func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1LlmEmbeddings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetV1LlmModels operation middleware
 func (siw *ServerInterfaceWrapper) GetV1LlmModels(w http.ResponseWriter, r *http.Request) {
 
@@ -1297,9 +1931,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/models", wrapper.GetV1LlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/chat/completions", wrapper.PostV1LlmChatCompletions)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings", wrapper.PostV1LlmEmbeddings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/app/releases", wrapper.GetV1AppReleases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/telemetry/active", wrapper.PostV1TelemetryActive)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback", wrapper.PostV1Feedback)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/providers", wrapper.GetAdminV1Providers)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.DeleteAdminV1ProvidersId)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.PutAdminV1ProvidersId)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers/{id}/test", wrapper.PostAdminV1ProvidersIdTest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/models", wrapper.GetAdminV1Models)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.DeleteAdminV1ModelsName)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.PutAdminV1ModelsName)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/models/{name}/test", wrapper.PostAdminV1ModelsNameTest)
 
 	return m
 }
