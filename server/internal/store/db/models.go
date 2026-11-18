@@ -16,6 +16,13 @@ type AppUser struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type Attachment struct {
+	UserID    string
+	Sha256    string
+	Size      int64
+	CreatedAt pgtype.Timestamptz
+}
+
 type AuthCode struct {
 	UserID    string
 	Purpose   string
@@ -98,4 +105,9 @@ type SyncHead struct {
 type UserActive struct {
 	UserID string
 	Day    pgtype.Date
+}
+
+type UserPurge struct {
+	UserID    string
+	StartedAt pgtype.Timestamptz
 }

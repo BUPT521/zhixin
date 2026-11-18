@@ -46,6 +46,22 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 	if err := s.Put(ctx, "attachments/u2/bb", bytes.NewReader(body), Info{Size: int64(len(body))}); err != nil {
 		t.Fatalf("Put other attachment: %v", err)
 	}
+	// 列目录：前缀下的键与字节数都能读到，不存在的前缀返回空切片。
+	objects, err := s.List(ctx, "attachments/")
+	if err != nil || len(objects) != 2 {
+		t.Fatalf("List(attachments/) = %+v, %v", objects, err)
+	}
+	objects, err = s.List(ctx, "attachments/u1/")
+	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].Size != int64(len(body)) {
+		t.Fatalf("List(attachments/u1/) = %+v, %v", objects, err)
+	}
+	if objects, err = s.List(ctx, "missing/"); err != nil || len(objects) != 0 {
+		t.Fatalf("List(missing/) = %+v, %v", objects, err)
+	}
+	if _, err := s.List(ctx, ""); err == nil {
+		t.Fatal("List with an empty prefix must be rejected")
+	}
+
 	if err := s.RemovePrefix(ctx, "attachments/u1/"); err != nil {
 		t.Fatalf("RemovePrefix: %v", err)
 	}

@@ -63,7 +63,7 @@ func (q *Queries) BackupByID(ctx context.Context, arg BackupByIDParams) (BackupB
 	return i, err
 }
 
-const deleteBackup = `-- name: DeleteBackup :exec
+const deleteBackup = `-- name: DeleteBackup :execrows
 DELETE FROM backup
 WHERE user_id = $1 AND id = $2
 `
@@ -73,9 +73,14 @@ type DeleteBackupParams struct {
 	ID     string
 }
 
-func (q *Queries) DeleteBackup(ctx context.Context, arg DeleteBackupParams) error {
-	_, err := q.db.Exec(ctx, deleteBackup, arg.UserID, arg.ID)
-	return err
+// 按 (user_id, id) 删一行并返回影响行数：存储层只有删到一行才删除对象键，
+// 0 行表示这不是当前账号的备份，绝不能拿 id 去拼键删别人的字节。
+func (q *Queries) DeleteBackup(ctx context.Context, arg DeleteBackupParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteBackup, arg.UserID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteBackups = `-- name: DeleteBackups :exec

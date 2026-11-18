@@ -18,6 +18,8 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
+	"github.com/BUPT521/zhixin/server/internal/blobs"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
@@ -48,6 +50,8 @@ var (
 	_ llmproxy.Quota       = (*Store)(nil)
 	_ feedback.Store       = (*Store)(nil)
 	_ retention.Store      = (*Store)(nil)
+	_ blobs.Store          = (*BlobStore)(nil)
+	_ cloudpurge.Store     = (*Store)(nil)
 	_ interface{ Close() } = (*Store)(nil)
 )
 

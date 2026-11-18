@@ -130,6 +130,55 @@ func (d *Dir) RemovePrefix(_ context.Context, prefix string) error {
 	return nil
 }
 
+// List 按前缀列出对象。前缀按斜杠分段，最后一段可能只是键的开头，所以走前缀
+// 所在的目录、再按完整前缀过滤；前缀目录不存在时返回空切片，不算错误。
+func (d *Dir) List(_ context.Context, prefix string) ([]Object, error) {
+	if prefix == "" {
+		return nil, errors.New("objectstore: 拒绝列出空前缀")
+	}
+	dirKey := strings.TrimSuffix(prefix, "/")
+	if i := strings.LastIndex(dirKey, "/"); i >= 0 {
+		dirKey = dirKey[:i]
+	} else {
+		dirKey = ""
+	}
+	root := d.root
+	if dirKey != "" {
+		rel := filepath.FromSlash(dirKey)
+		if !filepath.IsLocal(rel) {
+			return nil, fmt.Errorf("objectstore: 前缀 %q 不在根目录内", dirKey)
+		}
+		root = filepath.Join(d.root, rel)
+	}
+	out := make([]Object, 0)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(d.root, path)
+		if err != nil {
+			return err
+		}
+		key := filepath.ToSlash(rel)
+		if !strings.HasPrefix(key, prefix) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		out = append(out, Object{Key: key, Size: info.Size()})
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	return out, err
+}
+
 func (d *Dir) Ping(_ context.Context) error {
 	st, err := os.Stat(d.root)
 	if err != nil {

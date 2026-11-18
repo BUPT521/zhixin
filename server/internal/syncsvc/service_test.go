@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
@@ -70,6 +71,57 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 	page, err := svc.Pull(ctx, "u1", nil, nil)
 	if err != nil || len(page.Commits) != 1 || page.Head != 1 || page.HasMore {
 		t.Fatalf("pull = %+v, %v", page, err)
+	}
+}
+
+// TestServicePullStopsAtByteLimit 守住拉取分页的响应字节上限：累计序列化字节
+// 超过上限时截断本页并让 has_more 为真，下一页从截断处继续，拉完不再有更多；
+// 单条提交本身超过上限时仍然返回一条，避免客户端停在同一位置反复拉取。
+func TestServicePullStopsAtByteLimit(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryStore(), 27)
+	batch := make([]Commit, 0, 5)
+	for i := range 5 {
+		batch = append(batch, testCommit(fmt.Sprintf("r%d", i), 27))
+	}
+	if _, err := svc.Push(ctx, "u1", 0, batch); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	// 先不限字节拉一整页，量出两条提交的累计字节作为上限。
+	all, err := svc.Pull(ctx, "u1", nil, nil)
+	if err != nil || len(all.Commits) != 5 {
+		t.Fatalf("pull all = %+v, %v", all, err)
+	}
+	first, err := json.Marshal(all.Commits[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	second, err := json.Marshal(all.Commits[1])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	svc.SetMaxPullBytes(int64(len(first) + len(second)))
+
+	page, err := svc.Pull(ctx, "u1", nil, nil)
+	if err != nil || len(page.Commits) != 2 || !page.HasMore {
+		t.Fatalf("first limited page = %+v, %v", page, err)
+	}
+	after := *page.Commits[1].Seq
+	page, err = svc.Pull(ctx, "u1", &after, nil)
+	if err != nil || len(page.Commits) != 2 || !page.HasMore {
+		t.Fatalf("second limited page = %+v, %v", page, err)
+	}
+	after = *page.Commits[1].Seq
+	page, err = svc.Pull(ctx, "u1", &after, nil)
+	if err != nil || len(page.Commits) != 1 || page.HasMore {
+		t.Fatalf("last page = %+v, %v", page, err)
+	}
+
+	// 单条超过上限时仍然返回一条，has_more 说明后面还有。
+	svc.SetMaxPullBytes(1)
+	if page, err = svc.Pull(ctx, "u1", nil, nil); err != nil || len(page.Commits) != 1 || !page.HasMore {
+		t.Fatalf("oversized single commit = %+v, %v", page, err)
 	}
 }
 

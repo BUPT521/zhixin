@@ -106,6 +106,22 @@ func (s *S3) RemovePrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
+// List 按前缀列出对象；没有对象时返回空切片，回填附件索引靠它读出现有键。
+func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
+	if prefix == "" {
+		return nil, errors.New("objectstore: 拒绝列出空前缀")
+	}
+	out := make([]Object, 0)
+	objs := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true})
+	for obj := range objs {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("objectstore: 列出前缀 %q 失败: %w", prefix, obj.Err)
+		}
+		out = append(out, Object{Key: obj.Key, Size: obj.Size})
+	}
+	return out, nil
+}
+
 func (s *S3) Ping(ctx context.Context) error {
 	ok, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {

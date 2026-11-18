@@ -76,12 +76,41 @@ func (s *Service) List(ctx context.Context, userID string) ([]Meta, error) {
 	return s.store.List(ctx, userID)
 }
 
+// Open 返回一份备份的元数据与字节。id 形状不对时按“没有这份备份”处理，不把
+// 数据库或对象存储的查询交给一个客户端随手拼出来的字符串。
 func (s *Service) Open(ctx context.Context, userID, id string) (Meta, io.ReadCloser, error) {
+	if !validID(id) {
+		return Meta{}, nil, ErrNotFound
+	}
 	return s.store.Open(ctx, userID, id)
 }
 
+// Delete 删除一份备份。归属校验分两层：这里先拒绝形状不合法的 id，存储层再按
+// (user_id, id) 一起查条件，删到一行才动对象键。
 func (s *Service) Delete(ctx context.Context, userID, id string) error {
+	if !validID(id) {
+		return ErrNotFound
+	}
 	return s.store.Delete(ctx, userID, id)
+}
+
+// validID 报告 id 是不是服务端生成的备份 id：32 位小写十六进制（16 字节随机数的
+// hex 编码）。
+//
+// 这一层校验不能省：id 会直接拼进对象存储的键 backups/<账号>/<id>.zip，而
+// filepath.IsLocal 只保证键不逃出存储根目录，不保证不跨账号——像
+// "backups/u1/../u2/<id>.zip" 这样的键在清理之后仍是目录内的相对路径，会被
+// 目录实现放行。形状校验加上数据库的 (user_id, id) 条件，才是账号隔离。
+func validID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // DeleteAll 清空账号在云端的全部备份。保留账号只清云端数据是设置页的独立动作，

@@ -13,6 +13,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
@@ -61,6 +62,35 @@ func signIn(t *testing.T, svc *auth.Service, email string) string {
 		t.Fatalf("register %s: %v", email, err)
 	}
 	return tokens.AccessToken
+}
+
+// TestHandlerWriteBlockedDuringPurge 守住清除期间的写拦截：gate 返回
+// cloudpurge.ErrPurging 时 Push 与 Reset 回 409 conflict，拉取仍可读，且没有
+// 写入任何提交。
+func TestHandlerWriteBlockedDuringPurge(t *testing.T) {
+	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewHandler(NewService(NewMemoryStore(), testSchemaVersion), log, 16*testMaxJSON)
+	handler.SetPurgeGate(func(context.Context, string) error { return cloudpurge.ErrPurging })
+	c := testutil.NewClient(t, testutil.NewServer(
+		testAPI{h: handler},
+		httpx.RequestID,
+		auth.Middleware(authSvc, log),
+	))
+	token := signIn(t, authSvc, "a@b.cn")
+
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token,
+		map[string]any{"base_seq": 0, "commits": []any{commitBody("r1")}}, &p); code != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
+		t.Fatalf("push during purge: %d %+v", code, p)
+	}
+	if code := c.JSON(http.MethodDelete, "/v1/sync/commits", token, nil, nil); code != http.StatusConflict {
+		t.Fatalf("reset during purge: %d", code)
+	}
+	var page api.CommitPage
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits", token, nil, &page); code != http.StatusOK || len(page.Commits) != 0 {
+		t.Fatalf("pull during purge: %d %+v", code, page)
+	}
 }
 
 func commitBody(reqID string) map[string]any {

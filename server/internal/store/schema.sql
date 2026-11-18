@@ -122,3 +122,24 @@ CREATE TABLE llm_quota (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 附件索引：字节在对象存储的 attachments/<user_id>/<sha256>，这张表只记“这个
+-- 账号有这份内容、占多少字节”。账号总量配额按它求和；同一账号相同内容只有一行，
+-- 重复上传因此不重复计入。主键的前缀 (user_id) 已能支持按账号求和，另按
+-- created_at 建索引供回填与排查时按时间列出。
+CREATE TABLE attachment (
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  sha256      TEXT NOT NULL,
+  size        BIGINT NOT NULL CHECK (size >= 0),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, sha256)
+);
+CREATE INDEX attachment_user_created ON attachment(user_id, created_at DESC);
+
+-- 清除云端数据的进行中标记：一行表示这个账号正在清除（或上次清除中途失败）。
+-- 清除开始写入 started_at，结束时删除行；超过 10 分钟的标记视为上次中断，新的
+-- 请求接管并从头重做各步。清除期间写请求据此返回 409。账号删除时级联删除。
+CREATE TABLE user_purge (
+  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  started_at  TIMESTAMPTZ NOT NULL
+);
+
