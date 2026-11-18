@@ -187,4 +187,23 @@ void main() {
     final last = server.commits[userId]!.last;
     expect(last['action'], '首次同步基线');
   });
+
+  test('换实例重新登录后不复用旧同步游标，自动同步先暂停', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow();
+    expect((await a.sync.status()).serverHead, isNotNull);
+
+    await a.account.setServerBaseUrl('http://other.test');
+    final snapshot = await a.account.login(
+      email: 'a@example.com',
+      password: 'password123',
+    );
+    expect(snapshot.signedIn, isTrue);
+    expect(snapshot.autoSync, isFalse);
+    expect(await a.account.preferences.syncState(), isNull);
+    final status = await a.sync.status();
+    expect(status.serverHead, isNull);
+    expect(status.needsBootstrap, isTrue);
+  });
 }

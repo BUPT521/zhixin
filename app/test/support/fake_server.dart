@@ -55,6 +55,9 @@ class FakeServer {
   /// 打开之后下一次刷新在服务端完成轮换、但响应在返回客户端之前断开。
   bool dropNextRefreshResponse = false;
 
+  /// 刷新请求先等这个信号再处理；用例用它把刷新卡在途中，模拟切换身份。
+  Future<void>? delayRefresh;
+
   int _nextToken = 1;
 
   /// 打开之后下一次带令牌的请求返回 401，客户端应当先刷新再重试。
@@ -351,10 +354,16 @@ class FakeServer {
     return _tokens(_userIds[email]!, body['device_name'] as String? ?? '');
   }
 
-  http.Response _refreshToken(Map<String, Object?> body) {
+  Future<http.Response> _refreshToken(Map<String, Object?> body) async {
     final refresh = body['refresh_token'] as String? ?? '';
     final requestId = (body['request_id'] as String? ?? '').trim();
     refreshRequests.add((refreshToken: refresh, requestId: requestId));
+    final gate = delayRefresh;
+    if (gate != null) await gate;
+    return _refreshTokenResponse(refresh, requestId);
+  }
+
+  http.Response _refreshTokenResponse(String refresh, String requestId) {
     final replay = _refreshReplays[refresh];
     if (replay != null) {
       if (requestId.isEmpty ||

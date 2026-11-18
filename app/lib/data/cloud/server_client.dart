@@ -410,6 +410,13 @@ class ServerClient {
     return normalized;
   }
 
+  /// 服务地址的来源（协议、主机与端口）；账号会话与同步游标按它区分实例。
+  static String originOf(String baseUrl) {
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri == null || uri.host.isEmpty) return baseUrl.trim();
+    return uri.origin;
+  }
+
   /// 读一次就绪检查；依赖不可用时服务端返回 503，客户端按 [ServerProblem] 抛出。
   Future<ServerReady> ready() async {
     final json = await _json('GET', '/readyz');

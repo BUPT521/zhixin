@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -256,5 +257,95 @@ void main() {
 
     await account.deleteAccount(password: 'password123');
     expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('会话按实例来源保存，别的实例读不到旧令牌', () async {
+    final secrets = MemorySecretStore();
+    final store = AccountStore(secrets);
+    final now = DateTime.now();
+    await store.save(
+      AccountSession(
+        userId: 'user-1',
+        email: 'bound@example.com',
+        serverOrigin: 'https://a.test',
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        accessExpiresAt: now.add(const Duration(hours: 1)),
+        refreshExpiresAt: now.add(const Duration(days: 30)),
+      ),
+    );
+    expect(await store.read(origin: 'https://a.test'), isNotNull);
+    expect(await store.read(origin: 'https://b.test'), isNull);
+    expect((await store.read())!.serverOrigin, 'https://a.test');
+  });
+
+  test('切换服务实例后不复用旧会话，同步游标清掉并暂停自动同步', () async {
+    final snapshot = await account.register(
+      email: 'm@example.com',
+      password: 'password123',
+    );
+    final userId = snapshot.session!.userId;
+    await preferences.setAutoSync(true);
+    await preferences.saveSyncState(
+      SyncState(
+        userId: userId,
+        serverOrigin: 'http://server.test',
+        serverHead: 3,
+        pushedThrough: 1,
+      ),
+    );
+
+    await account.setServerBaseUrl('http://other.test');
+    final after = await account.snapshot();
+    expect(after.signedIn, isFalse);
+    expect(after.autoSync, isFalse);
+    expect(await preferences.syncState(), isNull);
+
+    // 切回旧实例也不会把旧会话还回来，需要重新登录。
+    await account.setServerBaseUrl('http://server.test');
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('切换实例时进行中的刷新结果被丢弃', () async {
+    await account.register(email: 'n@example.com', password: 'password123');
+    server.expireAccess = true;
+    final gate = Completer<void>();
+    server.delayRefresh = gate.future;
+
+    final pending = account.quota();
+    while (server.refreshRequests.isEmpty) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    // 刷新还卡在途中时换到另一个实例：这次刷新属于旧实例，结果不能写回。
+    await account.setServerBaseUrl('http://other.test');
+    gate.complete();
+
+    await expectLater(pending, throwsA(isA<AccountSignedOut>()));
+    expect((await account.snapshot()).signedIn, isFalse);
+  });
+
+  test('登录另一个账号时暂停自动同步并清掉旧游标', () async {
+    final first = await account.register(
+      email: 'o@example.com',
+      password: 'password123',
+    );
+    await preferences.setAutoSync(true);
+    await preferences.saveSyncState(
+      SyncState(
+        userId: first.session!.userId,
+        serverOrigin: 'http://server.test',
+        serverHead: 2,
+        pushedThrough: 1,
+      ),
+    );
+
+    await account.logout();
+    final second = await account.register(
+      email: 'p@example.com',
+      password: 'password123',
+    );
+    expect(second.session!.userId, isNot(first.session!.userId));
+    expect(second.autoSync, isFalse);
+    expect(await preferences.syncState(), isNull);
   });
 }

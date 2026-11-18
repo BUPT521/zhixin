@@ -28,6 +28,14 @@ class SyncSchemaMismatch implements Exception {
   String toString() => '服务端接受 schema $server，本机是 $client；升级应用或服务端后再同步';
 }
 
+/// 同步途中切换了服务实例或账号：这次同步的结果属于旧身份，直接丢弃。
+class SyncIdentityChanged implements Exception {
+  const SyncIdentityChanged();
+
+  @override
+  String toString() => '账号或服务实例已经变化，这次同步没有完成';
+}
+
 /// 增量同步一屏读到的状态，设置页与账号页据此显示登录、待推送与上次同步。
 class SyncStatus {
   const SyncStatus({
@@ -119,7 +127,18 @@ class SyncService {
   String? _lastError;
   bool _disposed = false;
 
+  /// 这次同步开始时的身份代次；切换账号或实例之后进行中的同步据此丢弃结果。
+  int? _runEpoch;
+
   bool get syncing => _running != null;
+
+  /// 身份在同步途中变化时抛出 [SyncIdentityChanged]，不再写回旧账号的游标。
+  void _ensureIdentity() {
+    final expected = _runEpoch;
+    if (expected != null && account.identityEpoch != expected) {
+      throw const SyncIdentityChanged();
+    }
+  }
 
   Future<SyncStatus> status() async {
     final snapshot = await account.snapshot();
@@ -138,7 +157,13 @@ class SyncService {
         lastError: _lastError,
       );
     }
-    final ownState = state?.userId == snapshot.session!.userId ? state : null;
+    final origin = await account.serverOrigin();
+    final ownState =
+        state != null &&
+            state.userId == snapshot.session!.userId &&
+            state.serverOrigin == origin
+        ? state
+        : null;
     final pending = ownState == null
         ? localHead
         : (await revisions.commitsAfter(ownState.pushedThrough))
@@ -201,6 +226,9 @@ class SyncService {
     var uploaded = 0;
     var downloaded = 0;
     final deviceId = await account.deviceId();
+    final epoch = account.identityEpoch;
+    final origin = await account.serverOrigin();
+    _runEpoch = epoch;
     try {
       final snapshot = await account.snapshot();
       if (!snapshot.signedIn) throw const AccountSignedOut();
@@ -217,8 +245,9 @@ class SyncService {
       final localHead = await engine.headId(database.raw);
       if (state != null &&
           (state.userId != snapshot.session!.userId ||
+              state.serverOrigin != origin ||
               state.pushedThrough > localHead)) {
-        // 换了账号，或本机数据被清空、换库：游标不再对应本机提交编号。
+        // 换了账号或实例，或本机数据被清空、换库：游标不再对应本机提交编号。
         await preferences.clearSyncState();
         state = null;
       }
@@ -229,7 +258,7 @@ class SyncService {
       }
 
       if (state == null) {
-        final boot = await _bootstrap(deviceId);
+        final boot = await _bootstrap(deviceId, origin);
         pulled += boot.pulled;
         pushed += boot.pushed;
         uploaded += boot.uploaded;
@@ -255,6 +284,7 @@ class SyncService {
         pushed += push.pushed;
         state = push.state;
       }
+      _ensureIdentity();
       final finalState = state.copyWith(syncedAt: clock());
       await preferences.saveSyncState(finalState);
       return SyncResult(
@@ -265,8 +295,12 @@ class SyncService {
       );
     } catch (error, stack) {
       _lastError = _describe(error);
-      recordFailure(error, stack, kind: 'cloud_sync');
+      if (error is! SyncIdentityChanged) {
+        recordFailure(error, stack, kind: 'cloud_sync');
+      }
       rethrow;
+    } finally {
+      _runEpoch = null;
     }
   }
 
@@ -275,7 +309,7 @@ class SyncService {
   Future<
     ({SyncState state, int pulled, int pushed, int uploaded, int downloaded})
   >
-  _bootstrap(String deviceId) async {
+  _bootstrap(String deviceId, String origin) async {
     var pulled = 0;
     var downloaded = 0;
     final remoteHead = await account.call(
@@ -284,6 +318,7 @@ class SyncService {
     final localHead = await engine.headId(database.raw);
     var state = SyncState(
       userId: (await account.snapshot()).session!.userId,
+      serverOrigin: origin,
       serverHead: 0,
       pushedThrough: localHead,
     );
@@ -320,6 +355,7 @@ class SyncService {
     var baseSeq = state.serverHead;
     final userId = state.userId;
     for (var index = 0; index < changes.length; index += _baselineChunk) {
+      _ensureIdentity();
       final end = (index + _baselineChunk).clamp(0, changes.length);
       final chunk = changes.sublist(index, end);
       final commit = ServerCommit(
@@ -340,8 +376,10 @@ class SyncService {
     final uploaded = await _uploadAssets(
       AssetStore.hashesInProjection(projection),
     );
+    _ensureIdentity();
     state = SyncState(
       userId: userId,
+      serverOrigin: origin,
       serverHead: baseSeq,
       pushedThrough: headAfterPull,
       syncedAt: clock(),
@@ -367,6 +405,7 @@ class SyncService {
     var pulled = 0;
     var downloadCount = 0;
     while (true) {
+      _ensureIdentity();
       final page = await account.call(
         (client, token) => client.pull(token, after: current.serverHead),
       );
@@ -377,6 +416,7 @@ class SyncService {
       }
       final hashes = <String>{};
       for (final commit in page.commits) {
+        _ensureIdentity();
         final applied = await _applyRemote(commit);
         hashes.addAll(applied.assetHashes);
         pulled++;
@@ -390,6 +430,7 @@ class SyncService {
         serverHead: page.commits.last.seq ?? page.head,
         syncedAt: clock(),
       );
+      _ensureIdentity();
       if (persist) await preferences.saveSyncState(current);
       final fetched = await _downloadAssets(hashes);
       downloadCount += fetched;
@@ -408,6 +449,7 @@ class SyncService {
   }) async {
     var current = state;
     for (var attempt = 0; attempt < 3; attempt++) {
+      _ensureIdentity();
       final headNow = await account.call((client, token) => client.head(token));
       if (headNow.head != current.serverHead) {
         final pulled = await _pull(
@@ -427,6 +469,7 @@ class SyncService {
       ];
       if (pending.isEmpty) {
         current = current.copyWith(pushedThrough: localHead);
+        _ensureIdentity();
         await preferences.saveSyncState(current);
         return (state: current, pushed: 0);
       }
@@ -461,6 +504,7 @@ class SyncService {
           );
           pushed += payload.length;
           current = current.copyWith(serverHead: baseSeq);
+          _ensureIdentity();
           await preferences.saveSyncState(current);
         }
       } on ServerProblem catch (error) {
@@ -469,6 +513,7 @@ class SyncService {
         current = current.copyWith(
           serverHead: head is num ? head.toInt() : current.serverHead,
         );
+        _ensureIdentity();
         await preferences.saveSyncState(current);
         continue;
       }
@@ -481,6 +526,7 @@ class SyncService {
         },
         syncedAt: clock(),
       );
+      _ensureIdentity();
       await preferences.saveSyncState(current);
       return (state: current, pushed: pushed);
     }
@@ -542,6 +588,7 @@ class SyncService {
     final local = await assets.objectHashes(database.raw);
     var uploaded = 0;
     for (final hash in hashes) {
+      _ensureIdentity();
       if (!local.contains(hash)) continue;
       final exists = await account.call(
         (client, token) => client.blobExists(token, hash),
@@ -562,6 +609,7 @@ class SyncService {
     final local = await assets.objectHashes(database.raw);
     final fetched = <String, List<int>>{};
     for (final hash in hashes) {
+      _ensureIdentity();
       if (local.contains(hash)) continue;
       final bytes = await account.call(
         (client, token) => client.blobDownload(token, hash),
@@ -631,6 +679,7 @@ class SyncService {
     ServerProblem(:final userMessage) => userMessage,
     AccountSignedOut(:final userMessage) => userMessage,
     SyncSchemaMismatch() => error.toString(),
+    SyncIdentityChanged() => error.toString(),
     _ => '同步没有完成',
   };
 }
