@@ -58,7 +58,16 @@ func New(limit rate.Limit, burst int, idle time.Duration, maxKeys ...int) *Limit
 func Disabled() *Limiter { return New(rate.Inf, 1, 0) }
 
 // Take consumes a token per key, or returns the seconds until a retry.
-func (l *Limiter) Take(keys ...string) int64 {
+func (l *Limiter) Take(keys ...string) int64 { return l.check(true, keys) }
+
+// WouldBlock 只检查这些键当前是否还有令牌，不消费；返回 0 表示可以继续。
+//
+// 登录失败预算要“先看再做”：校验密码本身要花 CPU 和内存，超限的请求应当在校验
+// 之前就回 429，所以检查不能扣令牌，令牌只在校验失败之后由调用方 Take 扣掉。
+func (l *Limiter) WouldBlock(keys ...string) int64 { return l.check(false, keys) }
+
+// check 是所有按键判定的共同实现；take 为假时只看不扣。
+func (l *Limiter) check(take bool, keys []string) int64 {
 	if len(keys) == 0 {
 		return 0
 	}
@@ -76,6 +85,9 @@ func (l *Limiter) Take(keys ...string) int64 {
 		buckets = append(buckets, bucket)
 	}
 	for _, b := range buckets {
+		if !take {
+			continue
+		}
 		// 上一步已经确认都还有令牌，这里一定成功；非阻塞，不占请求时间。
 		_ = b.AllowN(now, 1)
 	}

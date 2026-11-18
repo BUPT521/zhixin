@@ -107,6 +107,59 @@ func (q *Queries) DeleteAuthCode(ctx context.Context, arg DeleteAuthCodeParams) 
 	return err
 }
 
+const deleteAuthCodeIfMatch = `-- name: DeleteAuthCodeIfMatch :execrows
+DELETE FROM auth_code
+WHERE user_id = $1
+  AND purpose = $2
+  AND code_hash = $3
+  AND expires_at > $4
+`
+
+type DeleteAuthCodeIfMatchParams struct {
+	UserID   string
+	Purpose  string
+	CodeHash string
+	Now      pgtype.Timestamptz
+}
+
+// 重设密码时用掉验证码：只有摘要匹配且未过期才删，0 行说明验证码已经被别的
+// 请求用掉、已过期或对不上，调用方据此回 ErrInvalidCode。
+func (q *Queries) DeleteAuthCodeIfMatch(ctx context.Context, arg DeleteAuthCodeIfMatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAuthCodeIfMatch,
+		arg.UserID,
+		arg.Purpose,
+		arg.CodeHash,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteOldestSessions = `-- name: DeleteOldestSessions :exec
+DELETE FROM session AS doomed
+WHERE doomed.user_id = $1
+  AND doomed.id NOT IN (
+    SELECT kept.id
+    FROM session AS kept
+    WHERE kept.user_id = $1
+    ORDER BY kept.created_at DESC, kept.id DESC
+    LIMIT $2
+  )
+`
+
+type DeleteOldestSessionsParams struct {
+	UserID string
+	Keep   int32
+}
+
+// 只保留最新的 keep 条会话，更旧的删掉。排序带上 id，创建时间相同时结果稳定。
+func (q *Queries) DeleteOldestSessions(ctx context.Context, arg DeleteOldestSessionsParams) error {
+	_, err := q.db.Exec(ctx, deleteOldestSessions, arg.UserID, arg.Keep)
+	return err
+}
+
 const deleteSession = `-- name: DeleteSession :execrows
 DELETE FROM session
 WHERE id = $1
@@ -163,6 +216,83 @@ func (q *Queries) IncrementAuthCodeAttempts(ctx context.Context, arg IncrementAu
 	return attempts, err
 }
 
+const insertRefreshUsed = `-- name: InsertRefreshUsed :exec
+INSERT INTO session_refresh_used (
+  token_hash, session_id, user_id, request_id, rotated_at, grace_until,
+  replaced_access_hash, replaced_refresh_hash
+)
+VALUES (
+  $1, $2, $3,
+  $4, $5, $6,
+  $7, $8
+)
+ON CONFLICT (token_hash) DO UPDATE SET
+  rotated_at = excluded.rotated_at,
+  replaced_access_hash = excluded.replaced_access_hash,
+  replaced_refresh_hash = excluded.replaced_refresh_hash
+`
+
+type InsertRefreshUsedParams struct {
+	TokenHash           string
+	SessionID           string
+	UserID              string
+	RequestID           string
+	RotatedAt           pgtype.Timestamptz
+	GraceUntil          pgtype.Timestamptz
+	ReplacedAccessHash  string
+	ReplacedRefreshHash string
+}
+
+// 轮换成功时记下旧令牌摘要，供旧令牌再次出现时判断是重试还是盗用。同一个
+// 摘要重复写入（并发或连续重试）时只更新“本次发出的令牌”，宽限截止时间与
+// request_id 保持第一次的值：重试因此不延长宽限期。
+func (q *Queries) InsertRefreshUsed(ctx context.Context, arg InsertRefreshUsedParams) error {
+	_, err := q.db.Exec(ctx, insertRefreshUsed,
+		arg.TokenHash,
+		arg.SessionID,
+		arg.UserID,
+		arg.RequestID,
+		arg.RotatedAt,
+		arg.GraceUntil,
+		arg.ReplacedAccessHash,
+		arg.ReplacedRefreshHash,
+	)
+	return err
+}
+
+const lockUser = `-- name: LockUser :one
+SELECT id FROM app_user WHERE id = $1 FOR UPDATE
+`
+
+// 建会话之前锁住账号行：同一账号的并发登录在锁上串行，先删最旧再插入，会话
+// 数不会因为并发而超上限。锁的是一行账号，不同账号互不影响。
+func (q *Queries) LockUser(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockUser, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const pruneExpiredAuthCodes = `-- name: PruneExpiredAuthCodes :exec
+DELETE FROM auth_code
+WHERE expires_at < $1
+`
+
+func (q *Queries) PruneExpiredAuthCodes(ctx context.Context, now pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, pruneExpiredAuthCodes, now)
+	return err
+}
+
+const pruneExpiredSessions = `-- name: PruneExpiredSessions :exec
+DELETE FROM session
+WHERE refresh_expires < $1
+`
+
+func (q *Queries) PruneExpiredSessions(ctx context.Context, now pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, pruneExpiredSessions, now)
+	return err
+}
+
 const putAuthCode = `-- name: PutAuthCode :exec
 
 INSERT INTO auth_code (user_id, purpose, code_hash, expires_at, attempts, created_at)
@@ -196,6 +326,64 @@ func (q *Queries) PutAuthCode(ctx context.Context, arg PutAuthCodeParams) error 
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const refreshUsed = `-- name: RefreshUsed :one
+SELECT token_hash, session_id, user_id, request_id, rotated_at, grace_until,
+  replaced_access_hash, replaced_refresh_hash
+FROM session_refresh_used
+WHERE token_hash = $1
+`
+
+func (q *Queries) RefreshUsed(ctx context.Context, tokenHash string) (SessionRefreshUsed, error) {
+	row := q.db.QueryRow(ctx, refreshUsed, tokenHash)
+	var i SessionRefreshUsed
+	err := row.Scan(
+		&i.TokenHash,
+		&i.SessionID,
+		&i.UserID,
+		&i.RequestID,
+		&i.RotatedAt,
+		&i.GraceUntil,
+		&i.ReplacedAccessHash,
+		&i.ReplacedRefreshHash,
+	)
+	return i, err
+}
+
+const rotateSession = `-- name: RotateSession :execrows
+UPDATE session
+SET access_hash = $1,
+    refresh_hash = $2,
+    access_expires = $3,
+    refresh_expires = $4
+WHERE id = $5 AND refresh_hash = $6
+`
+
+type RotateSessionParams struct {
+	NewAccessHash  string
+	NewRefreshHash string
+	AccessExpires  pgtype.Timestamptz
+	RefreshExpires pgtype.Timestamptz
+	ID             string
+	OldRefreshHash string
+}
+
+// 刷新令牌轮换用 CAS：只有当前的 refresh_hash 还等于旧摘要时才换成新的一对。
+// 并发刷新因此只有一个成功，其余 0 行，调用方据此回 ErrInvalidToken。
+func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateSession,
+		arg.NewAccessHash,
+		arg.NewRefreshHash,
+		arg.AccessExpires,
+		arg.RefreshExpires,
+		arg.ID,
+		arg.OldRefreshHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sessionByAccessHash = `-- name: SessionByAccessHash :one

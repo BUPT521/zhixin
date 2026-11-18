@@ -56,6 +56,9 @@ type Handler struct {
 	// clientHost 取来源地址；直接对端是反向代理时由装配处换成读
 	// X-Forwarded-For 的实现，见 httpx.NewClientHost。
 	clientHost func(*http.Request) string
+	// loginFails 是按账号的登录失败预算：登录前非消费地检查，只有密码错误才
+	// 扣一个令牌。DELETE /v1/me 的密码确认共用它，键为 "delete:" + 账号。
+	loginFails *ratelimit.Limiter
 }
 
 func NewHandler(
@@ -80,8 +83,29 @@ func NewHandler(
 	return &Handler{
 		svc: svc, log: log, maxBytes: maxBytes,
 		byAddr: byAddr, refreshLimits: refreshLimits, codeLimits: codeLimits,
-		clientHost: clientHost,
+		clientHost: clientHost, loginFails: ratelimit.Disabled(),
 	}
+}
+
+// SetLoginFailLimiter 装上按账号的登录失败预算，由 server.New 按配置建好注入。
+// 计数键是规范化之后的邮箱（小写、去两端空白）加 "login:" 前缀；删号前的密码
+// 确认用 "delete:" 加账号 id，共用同一个限流器，两种失败互相不占额度。
+func (h *Handler) SetLoginFailLimiter(l *ratelimit.Limiter) {
+	if l == nil {
+		l = ratelimit.Disabled()
+	}
+	h.loginFails = l
+}
+
+// loginKey 把邮箱规范成限流键，与服务层登录时的规范化保持一致：同一账号换大小
+// 写或带空白提交，扣的是同一个桶。长度截到邮箱上限，避免异常超长的邮箱让限流表
+// 的键无限变大。
+func loginKey(email string) string {
+	key := strings.ToLower(strings.TrimSpace(email))
+	if len(key) > 254 {
+		key = key[:254]
+	}
+	return key
 }
 
 // cooldownSeconds 把发送验证码的冷却写成 Retry-After 的整秒数。
@@ -145,9 +169,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
+	// 先看预算再校验密码：超限的请求不该先花一次 argon2 计算。检查不扣令牌，
+	// 只有校验失败才扣，登录成功不消耗预算。
+	email := loginKey(string(in.Email))
+	if delay := h.loginFails.WouldBlock("login:" + email); delay > 0 {
+		httpx.TooMany(w, r, delay)
+		return
+	}
 	t, err := h.svc.Login(r.Context(), string(in.Email), in.Password, optional(in.DeviceName))
 	switch {
 	case errors.Is(err, ErrInvalidCredentials):
+		h.loginFails.Take("login:" + email)
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeInvalidCredentials, "")
 	case err != nil:
 		httpx.WriteInternal(w, r, h.log, err)
@@ -166,7 +198,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var accountDelay int64
-	t, err := h.svc.refresh(r.Context(), in.RefreshToken, func(userID string) bool {
+	t, err := h.svc.refresh(r.Context(), in.RefreshToken, optional(in.RequestId), func(userID string) bool {
 		accountDelay = h.refreshLimits.Take("account:" + userID)
 		return accountDelay == 0
 	})
@@ -303,11 +335,25 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DeleteMe 删号前要求再输一次密码。密码错误回 401 invalid_credentials 并扣一次
+// 按账号的失败预算；只有密码正确才做原有清理并回 204。
 func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	p := MustPrincipal(r.Context())
-	if err := h.svc.DeleteAccount(r.Context(), p); err != nil {
-		httpx.WriteInternal(w, r, h.log, err)
+	if delay := h.loginFails.WouldBlock("delete:" + p.UserID); delay > 0 {
+		httpx.TooMany(w, r, delay)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	var in api.DeleteV1MeJSONRequestBody
+	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	switch err := h.svc.DeleteAccount(r.Context(), p, in.Password); {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidCredentials):
+		h.loginFails.Take("delete:" + p.UserID)
+		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeInvalidCredentials, "")
+	default:
+		httpx.WriteInternal(w, r, h.log, err)
+	}
 }

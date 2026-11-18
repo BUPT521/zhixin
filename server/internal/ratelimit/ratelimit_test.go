@@ -76,6 +76,39 @@ func TestDisabledAlwaysTakes(t *testing.T) {
 	}
 }
 
+// TestWouldBlockDoesNotConsume 守住“先检查再决定”的语义：检查本身不扣令牌，
+// 只有检查通过后调用 Take 才扣。
+func TestWouldBlockDoesNotConsume(t *testing.T) {
+	now := time.Now()
+	l := New(rate.Limit(0), 1, 0) // 不补充，只看初始的 burst 令牌
+	l.nowFn = func() time.Time { return now }
+
+	for i := 0; i < 3; i++ {
+		if delay := l.WouldBlock("a"); delay != 0 {
+			t.Fatalf("第 %d 次检查应当放行，得到 %d 秒", i+1, delay)
+		}
+	}
+	if l.Take("a") != 0 {
+		t.Fatal("检查之后第一次 Take 应当成功")
+	}
+	if delay := l.WouldBlock("a"); delay == 0 {
+		t.Fatal("令牌用完之后的检查应当拒绝")
+	}
+}
+
+func TestWouldBlockChecksAllKeys(t *testing.T) {
+	now := time.Now()
+	l := New(rate.Limit(0), 1, 0)
+	l.nowFn = func() time.Time { return now }
+	l.Take("used")
+	if l.WouldBlock("free", "used") == 0 {
+		t.Fatal("任一键用完时整个检查应当拒绝")
+	}
+	if l.WouldBlock("free") != 0 {
+		t.Fatal("检查不应扣减其他键的令牌")
+	}
+}
+
 func TestConcurrentTakeIsSafe(t *testing.T) {
 	now := time.Now()
 	l := New(rate.Limit(1000), 100, 0)

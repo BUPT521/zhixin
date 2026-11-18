@@ -163,6 +163,34 @@ func TestPasswordResetRevokesSessions(t *testing.T) {
 	}
 }
 
+// TestPasswordResetCodeSingleUse 核对验证码只能用一次：第二次提交返回
+// ErrInvalidCode，密码保持第一次改成的值。
+func TestPasswordResetCodeSingleUse(t *testing.T) {
+	ctx := context.Background()
+	s, _, m := newCodeService(t)
+	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
+	p, _ := s.Authenticate(ctx, tok.AccessToken)
+	if err := s.RequestEmailVerification(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmEmailVerification(ctx, p, m.lastCode(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestPasswordReset(ctx, "student@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	code := m.lastCode(t)
+	if err := s.ResetPassword(ctx, "student@example.com", code, "new-password1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResetPassword(ctx, "student@example.com", code, "another-pass1"); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("重放验证码应返回 ErrInvalidCode，得到 %v", err)
+	}
+	if _, err := s.Login(ctx, "student@example.com", "new-password1", ""); err != nil {
+		t.Fatalf("重放不应改动密码: %v", err)
+	}
+}
+
 func TestPasswordResetIgnoresUnverifiedEmail(t *testing.T) {
 	ctx := context.Background()
 	s, _, m := newCodeService(t)

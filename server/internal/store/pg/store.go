@@ -159,7 +159,13 @@ func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
 	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
-func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
+// CreateSession 在一个事务里先锁住账号行、删掉超出上限的旧会话，再插入新会话。
+// 锁让同一账号的并发登录串行执行，会话数不会被并发推过上限；等待锁的时间很短，
+// 因为整个事务只碰会话表与锁住的那一行账号。
+func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser int) error {
+	if maxPerUser < 1 {
+		maxPerUser = 1
+	}
 	accessExpires, err := pgTime(sess.AccessExpires)
 	if err != nil {
 		return err
@@ -168,7 +174,27 @@ func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
 	if err != nil {
 		return err
 	}
-	return s.q.CreateSession(ctx, db.CreateSessionParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	if _, err := q.LockUser(ctx, sess.UserID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// 账号在登录过程中被删掉了；新会话没有可依附的账号行。
+			return auth.ErrNotFound
+		}
+		return err
+	}
+	if err := q.DeleteOldestSessions(ctx, db.DeleteOldestSessionsParams{
+		UserID: sess.UserID,
+		Keep:   int32(maxPerUser - 1),
+	}); err != nil {
+		return err
+	}
+	if err := q.CreateSession(ctx, db.CreateSessionParams{
 		ID:             sess.ID,
 		UserID:         sess.UserID,
 		DeviceName:     sess.DeviceName,
@@ -176,7 +202,10 @@ func (s *Store) CreateSession(ctx context.Context, sess auth.Session) error {
 		RefreshHash:    sess.RefreshHash,
 		AccessExpires:  accessExpires,
 		RefreshExpires: refreshExpires,
-	})
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) SessionByAccessHash(ctx context.Context, hash string) (auth.Session, error) {
@@ -227,8 +256,91 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
+// RotateSession 用 CAS 换掉令牌摘要。0 行说明这条会话的刷新令牌已经被换过，
+// 返回 ErrInvalidToken，让并发的第二个刷新请求失败。
+func (s *Store) RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error {
+	access, err := pgTime(accessExpires)
+	if err != nil {
+		return err
+	}
+	refresh, err := pgTime(refreshExpires)
+	if err != nil {
+		return err
+	}
+	updated, err := s.q.RotateSession(ctx, db.RotateSessionParams{
+		NewAccessHash:  newAccessHash,
+		NewRefreshHash: newRefreshHash,
+		AccessExpires:  access,
+		RefreshExpires: refresh,
+		ID:             id,
+		OldRefreshHash: oldRefreshHash,
+	})
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return auth.ErrInvalidToken
+	}
+	return nil
+}
+
+func (s *Store) UsedRefresh(ctx context.Context, tokenHash string) (auth.RefreshUsed, error) {
+	row, err := s.q.RefreshUsed(ctx, tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.RefreshUsed{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.RefreshUsed{}, err
+	}
+	return auth.RefreshUsed{
+		TokenHash:           row.TokenHash,
+		SessionID:           row.SessionID,
+		UserID:              row.UserID,
+		RequestID:           row.RequestID,
+		RotatedAt:           row.RotatedAt.Time,
+		GraceUntil:          row.GraceUntil.Time,
+		ReplacedAccessHash:  row.ReplacedAccessHash,
+		ReplacedRefreshHash: row.ReplacedRefreshHash,
+	}, nil
+}
+
+func (s *Store) RecordRefreshUsed(ctx context.Context, u auth.RefreshUsed) error {
+	rotated, err := pgTime(u.RotatedAt)
+	if err != nil {
+		return err
+	}
+	grace, err := pgTime(u.GraceUntil)
+	if err != nil {
+		return err
+	}
+	return s.q.InsertRefreshUsed(ctx, db.InsertRefreshUsedParams{
+		TokenHash:           u.TokenHash,
+		SessionID:           u.SessionID,
+		UserID:              u.UserID,
+		RequestID:           u.RequestID,
+		RotatedAt:           rotated,
+		GraceUntil:          grace,
+		ReplacedAccessHash:  u.ReplacedAccessHash,
+		ReplacedRefreshHash: u.ReplacedRefreshHash,
+	})
+}
+
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	return s.q.DeleteUserSessions(ctx, userID)
+}
+
+// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码，两张表的清理互相
+// 独立，一条失败时另一条照常执行会让接口语义含糊，所以按顺序执行并在第一条
+// 出错时返回；每日清理下一次还会再试。
+func (s *Store) PruneExpired(ctx context.Context, now time.Time) error {
+	at, err := pgTime(now)
+	if err != nil {
+		return err
+	}
+	if err := s.q.PruneExpiredSessions(ctx, at); err != nil {
+		return err
+	}
+	return s.q.PruneExpiredAuthCodes(ctx, at)
 }
 
 func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Time) error {
@@ -241,6 +353,42 @@ func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Tim
 
 func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	return s.q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: passwordHash})
+}
+
+// ResetPassword 在一个事务里用掉验证码、换密码、删会话。验证码的删除带摘要与
+// 有效期条件，0 行说明它已经被别的请求用掉或过期，此时整个事务回滚，密码与
+// 会话都不动。
+func (s *Store) ResetPassword(ctx context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error {
+	at, err := pgTime(now)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	used, err := q.DeleteAuthCodeIfMatch(ctx, db.DeleteAuthCodeIfMatchParams{
+		UserID:   userID,
+		Purpose:  purpose,
+		CodeHash: expectedCodeHash,
+		Now:      at,
+	})
+	if err != nil {
+		return err
+	}
+	if used == 0 {
+		return auth.ErrInvalidCode
+	}
+	if err := q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: newPasswordHash}); err != nil {
+		return err
+	}
+	if err := q.DeleteUserSessions(ctx, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) PutCode(ctx context.Context, c auth.Code) error {

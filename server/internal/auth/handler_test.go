@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
 
@@ -93,6 +96,114 @@ func TestHandlerAuthFlow(t *testing.T) {
 	}
 	if code := c.JSON(http.MethodGet, "/v1/me", tok.AccessToken, nil, nil); code != http.StatusUnauthorized {
 		t.Fatalf("token survived logout: %d", code)
+	}
+}
+
+// newTestServerWithLoginLimit 装配一个失败预算只有 burst 个令牌的处理器，其他
+// 限流照常关闭；令牌不补充，用例不依赖真实时钟。
+func newTestServerWithLoginLimit(t *testing.T, burst int) *testutil.Client {
+	t.Helper()
+	svc := NewService(NewMemoryStore(), time.Hour, 24*time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewHandler(svc, log, testMaxJSON, nil, nil, nil, httpx.RemoteHost)
+	h.SetLoginFailLimiter(ratelimit.New(rate.Limit(0), burst, 0))
+	return testutil.NewClient(t, testutil.NewServer(
+		testAPI{h: h},
+		httpx.RequestID,
+		Middleware(svc, log),
+	))
+}
+
+// TestHandlerDeleteMeRequiresPassword 核对删号要先确认密码：密码错误回 401 且
+// 账号仍在，密码正确才回 204 并清空账号。
+func TestHandlerDeleteMeRequiresPassword(t *testing.T) {
+	c := newTestServer(t)
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if code := c.JSON(http.MethodPost, "/v1/auth/register", "", map[string]string{
+		"email": "a@b.cn", "password": "password1",
+	}, &tok); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+
+	var p testutil.Problem
+	if code := c.JSON(http.MethodDelete, "/v1/me", tok.AccessToken, map[string]string{
+		"password": "wrong-password",
+	}, &p); code != http.StatusUnauthorized || p.Code != string(httpx.CodeInvalidCredentials) {
+		t.Fatalf("错密码删号: %d %+v", code, p)
+	}
+	if code := c.JSON(http.MethodGet, "/v1/me", tok.AccessToken, nil, nil); code != http.StatusOK {
+		t.Fatalf("密码错误的删号不应影响账号: %d", code)
+	}
+	if code := c.JSON(http.MethodDelete, "/v1/me", tok.AccessToken, nil, nil); code != http.StatusBadRequest {
+		t.Fatalf("缺请求体应回 400: %d", code)
+	}
+
+	if code := c.JSON(http.MethodDelete, "/v1/me", tok.AccessToken, map[string]string{
+		"password": "password1",
+	}, nil); code != http.StatusNoContent {
+		t.Fatalf("对密码删号: %d", code)
+	}
+	if code := c.JSON(http.MethodGet, "/v1/me", tok.AccessToken, nil, nil); code != http.StatusUnauthorized {
+		t.Fatalf("删号之后访问令牌应失效: %d", code)
+	}
+	if code := c.JSON(http.MethodPost, "/v1/auth/login", "", map[string]string{
+		"email": "a@b.cn", "password": "password1",
+	}, &p); code != http.StatusUnauthorized {
+		t.Fatalf("删号之后账号应不存在: %d", code)
+	}
+}
+
+// TestHandlerLoginFailBudget 核对按账号的登录失败预算：猜错一次扣一个令牌，
+// 用完之后在密码校验之前就回 429，正确密码同样被挡。
+func TestHandlerLoginFailBudget(t *testing.T) {
+	c := newTestServerWithLoginLimit(t, 1)
+	if code := c.JSON(http.MethodPost, "/v1/auth/register", "", map[string]string{
+		"email": "a@b.cn", "password": "password1",
+	}, nil); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/auth/login", "", map[string]string{
+		"email": " A@B.cn ", "password": "wrong-password",
+	}, &p); code != http.StatusUnauthorized {
+		t.Fatalf("第一次错密码: %d %+v", code, p)
+	}
+	// 邮箱大小写与两端空白不同也扣同一个桶，超限之后正确密码同样被挡。
+	if code := c.JSON(http.MethodPost, "/v1/auth/login", "", map[string]string{
+		"email": "a@b.cn", "password": "password1",
+	}, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("预算用尽应回 429: %d %+v", code, p)
+	}
+}
+
+// TestHandlerDeleteMeFailBudget 核对连续输错删号密码会触发 429，且账号还在。
+func TestHandlerDeleteMeFailBudget(t *testing.T) {
+	c := newTestServerWithLoginLimit(t, 2)
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if code := c.JSON(http.MethodPost, "/v1/auth/register", "", map[string]string{
+		"email": "a@b.cn", "password": "password1",
+	}, &tok); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+	var p testutil.Problem
+	for i := 0; i < 2; i++ {
+		if code := c.JSON(http.MethodDelete, "/v1/me", tok.AccessToken, map[string]string{
+			"password": "wrong-password",
+		}, &p); code != http.StatusUnauthorized {
+			t.Fatalf("第 %d 次错密码: %d %+v", i+1, code, p)
+		}
+	}
+	if code := c.JSON(http.MethodDelete, "/v1/me", tok.AccessToken, map[string]string{
+		"password": "password1",
+	}, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("预算用尽应回 429: %d %+v", code, p)
+	}
+	if code := c.JSON(http.MethodGet, "/v1/me", tok.AccessToken, nil, nil); code != http.StatusOK {
+		t.Fatalf("限流期间账号应当仍在: %d", code)
 	}
 }
 
