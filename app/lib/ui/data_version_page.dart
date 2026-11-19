@@ -19,6 +19,7 @@ import '../data/revisions/revision_service.dart' show RevisionDetails;
 import '../domain/models/result.dart';
 import '../platform/data_package_export.dart';
 import 'copy.dart';
+import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'live_view.dart';
@@ -41,7 +42,8 @@ class DataVersionPage extends StatefulWidget {
   State<DataVersionPage> createState() => _DataVersionPageState();
 }
 
-class _DataVersionPageState extends State<DataVersionPage> {
+class _DataVersionPageState extends State<DataVersionPage>
+    with DataVersionWatcher<DataVersionPage> {
   /// 一屏订阅：历史、撤销判断、存储占用与恢复点随写入更新（ADR-0014）。
   Stream<DataVersionOverview>? _stream;
   DataVersionOverview? _view;
@@ -67,6 +69,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
     super.didChangeDependencies();
     // 页面一进入就订阅整屏读取，写入之后的重新读取由数据层完成。
     final scope = AppScope.of(context);
+    watchDataVersion(scope.dataVersion);
     _stream ??= _createStream();
     // 从“我的”打开时，一级界面切进来之后已经在后台读过一屏。
     _initial ??= scope.prefetch.peek<DataVersionOverview>(
@@ -77,6 +80,18 @@ class _DataVersionPageState extends State<DataVersionPage> {
 
   Stream<DataVersionOverview> _createStream() =>
       AppScope.of(context).data.versions.watchOverview();
+
+  /// 恢复、撤销或清理之后换一条新流：预读的快照可能早于这次写入，不能继续用。
+  @override
+  void onDataVersionChanged() {
+    if (!mounted) return;
+    setState(() {
+      _initial = null;
+      _view = null;
+      _loadFailure = null;
+      _stream = _createStream();
+    });
+  }
 
   /// 重试：换一条新流，首读失败的说明随之清除。
   void _reload() {
