@@ -38,6 +38,19 @@ void main() {
     expect(policyAt(at, cutoff: 6).cutoffHour, 6);
   });
 
+  test('归属日的当天零点用于记录分组，凌晨按截止小时落到前一天', () {
+    // 截止 6 点：凌晨 2 点 30 分的记录仍属于 11 月 19 日。
+    final now = DateTime(2026, 11, 20, 2, 30);
+    final policy = policyAt(now, cutoff: 6);
+    expect(policy.attributionDate(now), DateTime(2026, 11, 19));
+    final early = DateTime(2026, 11, 20, 1, 30);
+    expect(policy.attributionDate(early), DateTime(2026, 11, 19));
+    final morning = DateTime(2026, 11, 20, 7);
+    expect(policy.attributionDate(morning), DateTime(2026, 11, 20));
+    // 日程仍按自然日期。
+    expect(policy.naturalDate(now), DateTime(2026, 11, 20));
+  });
+
   test('自然周从周一零点起算，凌晨不回到上一周', () {
     final monday = DateTime(2026, 11, 9, 0, 56);
     final policy = policyAt(monday);

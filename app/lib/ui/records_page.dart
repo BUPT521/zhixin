@@ -630,10 +630,15 @@ class _RecordsPageState extends State<RecordsPage> {
 
   Widget _recordList(ZhixinTheme theme, Iterable<ConversationRecord> records) {
     final groups = <String, List<ConversationRecord>>{};
-    final now = AppScope.of(context).timePolicy.now;
+    final policy = AppScope.of(context).timePolicy;
+    // 分组按学习记录的归属日算，凌晨的记录按每日截止小时归到前一天；日程仍按
+    // 自然日期，两处不共用这里的口径。
+    final today = policy.attributionDate(policy.now);
     for (final record in records) {
       final date = record.updatedAt ?? record.createdAt;
-      final key = date == null ? '更早' : relativeDayHeading(date, now: now);
+      final key = date == null
+          ? '更早'
+          : relativeDayHeading(policy.attributionDate(date), now: today);
       groups.putIfAbsent(key, () => []).add(record);
     }
     // 列表项按“日期标题、一条记录”铺平，交给 ListView.builder 只建可视范围

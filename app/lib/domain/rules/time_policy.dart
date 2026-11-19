@@ -56,4 +56,8 @@ class TimePolicy {
 
   /// 学习记录的归属日，返回 `YYYY-MM-DD`；只用于记录展示与分组。
   String attributionDay(DateTime at) => dayKey(at, cutoffHour: cutoffHour);
+
+  /// 学习记录归属日的当天零点：记录页按它分组，凌晨的记录按截止小时算到前一天。
+  DateTime attributionDate(DateTime at) =>
+      naturalDay(DateTime.parse(attributionDay(at)));
 }
