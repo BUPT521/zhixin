@@ -73,7 +73,7 @@ class CrashLog {
       {
         'at': formatDateTime(_clock()),
         'kind': kind,
-        'message': _clip(_localDescription(error), maxMessageLength),
+        'message': _clip(describe(error), maxMessageLength),
         'stack': _clip(_sanitize(stack?.toString() ?? ''), maxStackLength),
       },
     ];
@@ -84,7 +84,8 @@ class CrashLog {
     if (report && reportEnabled) unawaited(_report(error, stack, kind));
   }
 
-  static String _localDescription(Object error) => switch (error) {
+  /// 错误说明只取程序定义的类别和 SQLite 数字错误码。
+  static String describe(Object error) => switch (error) {
     SqliteException(:final extendedResultCode) =>
       'SqliteException($extendedResultCode)',
     _ => _sanitize(error.toString()),

@@ -65,6 +65,13 @@ dependencies:
   url_launcher: ^6.3.3
   cryptography: ^2.9.0
 
+# jni 1.2.0（2026-11-18 发布）在真机上解析 android.content.Context 时抛
+# ClassNotFoundException，path_provider_android 2.3.x 走它取数据目录，应用启动
+# 即打不开数据库。先固定回 1.1.2 与配套的 jni_flutter 1.0.4+1，等上游修正。
+dependency_overrides:
+  jni: 1.1.2
+  jni_flutter: 1.0.4+1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
