@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:forui/forui.dart' as forui;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
@@ -867,7 +865,9 @@ class _SettingsPageState extends State<SettingsPage> {
           prefix: const LeadingIcon(FLucideIcons.refreshCw),
           title: const Text('检查更新'),
           subtitle: Text(
-            _checkingUpdates ? '正在读取发布清单…' : '当前版本 $appVersion；不会自动下载或安装。',
+            _checkingUpdates
+                ? '正在读取发布清单…'
+                : '当前版本 $appVersion；会自动下载安装包核对哈希与签名，不在应用内安装。',
           ),
           suffix: _checkingUpdates
               ? const forui.FCircularProgress(size: .sm)
