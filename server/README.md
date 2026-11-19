@@ -8,9 +8,11 @@
 
 2026-11-18 的加固轮次把服务端的默认行为收紧：启动时自检生产配置（配置了数据库时验证码不能写进日志、验证码与匿名统计的 HMAC 密钥必须固定、带凭据的上游地址必须走 https），公开写入接口在按地址的桶之外增加全局上限，反馈按保留期每日清理，登录失败按规范化邮箱计预算，密码哈希受 Argon2 内存预算约束，每个账号的会话数有上限并在每天清理过期会话，刷新令牌轮换后只保留固定 60 秒的重试宽限，附件增加账号总量配额，清除云端数据统一为 `DELETE /v1/cloud`，模型代理增加未验证邮箱拒绝、账号并发上限、响应体上限、额度预留与实例总预算，发布清单要求 HTTPS、SHA-256 和 Ed25519 签名。配置项见下表，跨模块取舍与代价见 [ADR-0028](../docs/adr/0028-服务端加固的默认拒绝与预算.md) 和 [ADR-0031](../docs/adr/0031-云端写入与托管模型的资源预算.md)。
 
-`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。
+`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。2026-11-19 又增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 第一步）。
 
 模型代理按优先级与权重从多个来源选择路由，嵌入接口按路由配置拆批，聊天与嵌入分别计入账号额度。模型来源与路由可在[管理后台](#管理后台)配置，取舍见 [ADR-0029](../docs/adr/0029-模型来源路由与嵌入代理.md)。
+
+服务端按 [ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 的第一步实现了嵌入向量缓存与查找接口：检索索引仍由客户端维护，服务端只承担“模型与文本到向量”这一层，换机、索引重建与切换模型时先查缓存、只补算未命中的片段。`POST /v1/llm/embeddings/lookup` 按账号与对外模型返回已经算过的向量，`POST /v1/llm/embeddings` 带 `X-Zhixin-Embedding-Cache: 1` 时写入缓存；缓存按账号隔离、有字节上限，随清除云端数据与删除账号一起删除。客户端接入还没开始，旧客户端不调用查找接口，行为不变。
 
 CI 使用临时 PostgreSQL 实例执行服务端存储测试；在开发机上可以设置 `ZHIXIN_TEST_DATABASE_URL` 执行同一组用例，连接串须指向允许重建表的专用测试库。
 
@@ -40,6 +42,14 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 
 同轮新增的索引是 `session(refresh_expires)`、`session(user_id, created_at DESC)` 与 `auth_code(expires_at)`。字段与索引以 `schema.sql` 为准，本节只用于说明用途，不复制建表语句。
 
+2026-11-19 增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md)）：
+
+| 表 | 用途 | 关键列与约束 |
+|---|---|---|
+| `embedding_cache` | 嵌入向量缓存，消掉换机、索引重建与切换模型时的重复嵌入；属于派生数据，可以从业务库与嵌入服务重建，不进入数据包与整库备份 | `user_id` 外键级联删除，`model` 是对外模型名，`text_hash` 是片段文本的 SHA-256 小写十六进制，`dim` 与 `vector`（FP16 小端序）按长度 CHECK 绑定，主键 `(user_id, model, text_hash)`；`(user_id, last_used_at)` 支撑每账号的字节上限淘汰，`model` 上的索引支撑删模型时清理 |
+
+`embedding_cache` 的表与索引同样以 `schema.sql` 为准；它不属于业务数据，重建库之后客户端重新查缓存、补算未命中的片段即可。
+
 ## 目录
 
 ```
@@ -55,7 +65,7 @@ server/
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
 │   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
-│   ├── llmproxy/               ← 模型来源与路由、聊天与嵌入代理、每日额度、管理接口
+│   ├── llmproxy/               ← 模型来源与路由、聊天与嵌入代理、嵌入向量缓存与查找、每日额度、管理接口
 │   ├── admin/                  ← 管理令牌校验与后台页面（ui/ 编进可执行文件）
 │   ├── secretbox/              ← 来源 key 的 AES-256-GCM 加密
 │   ├── release/                ← 发布清单的读取、校验与更新检查接口
@@ -67,7 +77,7 @@ server/
 │   ├── server/                 ← 装配路由与中间件，端到端测试与两台设备的同步走查
 │   ├── testutil/               ← 各包处理器测试共用的进程内客户端与 problem 解码
 │   ├── store/                  ← 表结构（schema.sql，唯一真相）与 sqlc 查询
-│   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、附件索引、用量、反馈、活跃数据
+│   └── store/pg/               ← PostgreSQL 实现：账号、会话、提交序列、备份、附件索引、用量、反馈、活跃数据、嵌入向量缓存
 └── Dockerfile
 ```
 
@@ -125,6 +135,8 @@ server/
 一个对外模型可以有多条路由。请求按优先级从小到大尝试，同一优先级内按权重随机排列，最多尝试 `ZHIXIN_LLM_MAX_ATTEMPTS` 条；连接失败、响应头超时、408、429、5xx、401 与 403 在向客户端写出任何字节之前换下一条，400、404、422 结束尝试。一个来源连续失败三次后冷却 30 秒，之后每次失败翻倍，最长 5 分钟，冷却中的来源排到最后；客户端收到统一的 `upstream_failed` 错误正文，来源拒绝服务端 key 时返回 502。聊天只允许一个候选，输出 token 上限为 8192，省略时使用 1024。每次尝试按请求字节与输出上限预留，然后按上游用量结算。流式聊天由服务端要求返回用量，缺少用量或连接提前结束时保留预留。嵌入按输入字节预留与估算，批次已提交但结果不确定时仍计入，发生错误或换路由时也结算已发出的批次。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
 嵌入走 `POST /v1/llm/embeddings`，请求与响应是 OpenAI 的格式，`input` 只接受字符串或字符串数组，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，客户端在语义索引页选“知新服务”时，`RemoteEmbeddingClient` 每次请求前取 `<服务地址>/v1/llm` 与当前访问令牌，模型从列表里 `kind` 为 `embedding` 的项中选。路由的 `max_batch` 大于 0 时，服务端把一次请求拆成每批不超过这个数的几批，同时最多发出四批，再按原顺序合并、`index` 从 0 连续编号；一批失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。模型配置了维度时逐条核对向量长度，维度不符按来源故障处理；客户端请求的 `dimensions` 与配置不一致时返回 400。`GET /v1/llm/models` 的每一项带 `kind`（`chat` 或 `embedding`），嵌入模型配置了维度时带 `dimensions`。
+
+嵌入向量另有按账号隔离的缓存，目的是消掉换机、索引重建与模型在 A、B 之间切换时的重复嵌入与费用（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 决定第 2、3 条）。客户端在自动同步开启、且这次是索引刷新时，给 `POST /v1/llm/embeddings` 带 `X-Zhixin-Embedding-Cache: 1`，服务端在嵌入成功之后按每条输入的 SHA-256 写进 `embedding_cache`，重复写入不覆盖已有的行；检索查询的嵌入不带这个头，未登录、同步关闭与自填 key 直连的用户因此不会留下派生数据。索引刷新先调 `POST /v1/llm/embeddings/lookup`，请求体是 `model` 与 `hashes`（UTF-8 字节的 SHA-256 小写十六进制，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条）；命中返回小端序 FP16 的 base64 向量与 `dimensions`，全部未命中时 `vectors` 为空数组、不是错误，查找不消耗额度、不写 `llm_usage`。缓存随 `DELETE /v1/cloud` 与删除账号一起删除，清除期间带缓存头的嵌入照常返回但不写缓存；每账号上限由 `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` 控制，写入之后按 `last_used_at` 删除最久未用的行。同名模型必须保持同一个向量空间：更换部署要换对外模型名，管理后台删除模型或改变维度时会先删掉这个模型的缓存行，再保存或删除，旧名字再次出现时不会命中上一个向量空间的向量。
 
 账号尚未验证邮箱时，聊天与嵌入请求均返回 403 `email_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号的用途额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算按库里同一天所有账号的两类模型用量求和，防止单个实例的提供方账单失控。
 
@@ -310,7 +322,8 @@ ORDER BY f.first_day;
 | `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日聊天 token 额度，也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
 | `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS` | `2000000` | 每个账号每日嵌入 token 额度，也是 `llm_quota.embedding_daily_tokens` 为空时的默认值；占位数字，待内测用量出来再定 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
-| `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` | `256` | 一次嵌入请求最多的输入条数 |
+| `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` | `256` | 一次嵌入请求最多的输入条数，查找接口的 `hashes` 上限相同 |
+| `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` | `1073741824` | 每个账号的嵌入向量缓存上限（字节，默认 1 GiB）；写入之后按 `last_used_at` 删除最久未用的行，磁盘与出口流量要按实际用量监控 |
 | `ZHIXIN_LLM_MAX_ATTEMPTS` | `3` | 一次请求最多尝试的路由条数 |
 | `ZHIXIN_LLM_HEADER_TIMEOUT` | `60s` | 流式聊天与嵌入等待来源响应头的时间，超时换下一个来源；非流式聊天不设这个期限 |
 | `ZHIXIN_ADMIN_TOKEN` | 空 | 管理后台的令牌，至少 32 个字符；为空时 `/admin` 一律 404 |
