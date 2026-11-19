@@ -624,7 +624,7 @@ void main() {
     final index = SearchIndexService(
       repository: repository,
       indexPath: '',
-      vectorStoreOpener: () async =>
+      textStoreOpener: () async =>
           DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
     );
     addTearDown(index.close);

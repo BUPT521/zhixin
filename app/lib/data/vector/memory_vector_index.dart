@@ -5,6 +5,9 @@ import '../../domain/rules/search_terms.dart';
 import 'vector_index.dart';
 
 /// 纯 Dart 的索引实现，供服务层测试使用；关键词匹配口径与 zvec 的实现一致。
+///
+/// 与 zvec 的实现一样按 spec 分成两种 collection：纯文本 spec 只接受正文、
+/// 提供关键词检索；其余 spec 只接受向量与文本哈希、提供向量检索。
 class MemoryVectorIndex implements VectorIndex {
   MemoryVectorIndex(this.spec);
 
@@ -14,9 +17,11 @@ class MemoryVectorIndex implements VectorIndex {
   final _metadata = <String, String>{'epoch': '0', 'source_count': '0'};
   final _sources = <String, _MemorySource>{};
 
+  bool get _textOnly => spec.id == textOnlyModelSpec.id;
+
   @override
   int get entryCount =>
-      _sources.values.fold(0, (count, source) => count + source.chunks.length);
+      _sources.values.fold(0, (count, source) => count + source.count);
 
   @override
   int get sourceCount => int.parse(_metadata['source_count']!);
@@ -29,7 +34,7 @@ class MemoryVectorIndex implements VectorIndex {
       if (source == null) continue;
       result[key] = IndexedSource(
         sourceVersion: source.version,
-        chunks: source.chunks.length,
+        chunks: source.count,
       );
     }
     return result;
@@ -60,23 +65,30 @@ class MemoryVectorIndex implements VectorIndex {
   void replaceSource({
     required SemanticLocator locator,
     required String sourceVersion,
-    required List<String> chunks,
-    required List<List<double>> vectors,
+    List<String> chunks = const [],
+    List<String> hashes = const [],
+    List<List<double>> vectors = const [],
     required String createdAt,
   }) {
-    if (chunks.length != vectors.length && vectors.isNotEmpty) {
+    final sourceKey = locator.sourceKey;
+    // 文本 collection 按正文条数写，向量 collection 按向量条数写；另一组参数
+    // 在各自的实现里被忽略，与 zvec 实现的取舍一致。
+    final count = _textOnly ? chunks.length : hashes.length;
+    if (!_textOnly && hashes.length != vectors.length) {
       throw ArgumentError('片段数与向量数不一致');
     }
-    final sourceKey = locator.sourceKey;
-    if (chunks.isEmpty) {
+    if (count == 0) {
       _sources.remove(sourceKey);
       return;
     }
     _sources[sourceKey] = _MemorySource(
       locator: locator,
       version: sourceVersion,
-      chunks: List.of(chunks),
-      vectors: vectors.map(_prepareVector).toList(),
+      count: count,
+      chunks: _textOnly ? List.of(chunks) : const [],
+      vectors: _textOnly
+          ? const []
+          : [for (final vector in vectors) _prepareVector(vector)],
     );
   }
 
@@ -97,18 +109,19 @@ class MemoryVectorIndex implements VectorIndex {
     int k = 20,
     VectorPrefilter? prefilter,
   }) {
-    if (spec.id == textOnlyModelSpec.id) return const [];
+    if (_textOnly || k <= 0) return const [];
     final vector = _prepareVector(query);
     final matches = <StoredVector>[];
     for (final source in _sources.values) {
       if (prefilter != null && !prefilter.allows(source.locator)) continue;
       final locatorJson = VectorIndex.jsonOf(source.locator);
-      for (var chunk = 0; chunk < source.chunks.length; chunk++) {
+      for (var chunk = 0; chunk < source.vectors.length; chunk++) {
         matches.add(
           StoredVector(
             sourceKey: source.locator.sourceKey,
             chunk: chunk,
-            content: source.chunks[chunk],
+            // 向量 collection 不存正文，摘要由应用层按当前记录重新计算。
+            content: '',
             sourceVersion: source.version,
             locatorJson: locatorJson,
             distance: cosineDistance(vector, source.vectors[chunk]),
@@ -120,33 +133,31 @@ class MemoryVectorIndex implements VectorIndex {
     return matches.take(k).toList();
   }
 
+  /// 关键词检索：按查询二元组在正文里的出现次数排序，分数越大越相关。
   @override
-  List<StoredVector> searchHybrid(
+  List<StoredVector> searchText(
     String text, {
-    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
   }) {
-    if (k <= 0) return const [];
-    const rankConstant = 60;
+    if (!_textOnly || k <= 0) return const [];
     final terms = bigrams(text.trim()).toSet();
-    final byKey = <String, StoredVector>{};
-    final keywordRanks = <String, int>{};
-    if (terms.isNotEmpty) {
-      final matches = <StoredVector>[];
-      for (final source in _sources.values) {
-        if (prefilter != null && !prefilter.allows(source.locator)) continue;
-        final locatorJson = VectorIndex.jsonOf(source.locator);
-        for (var chunk = 0; chunk < source.chunks.length; chunk++) {
-          final content = source.chunks[chunk];
-          // 测试替身按子串出现次数判断关键词相关度，与引擎按词频排序的口径
-          // 接近；分词细节不必逐字一致。
-          final overlap = terms.fold(
-            0,
-            (count, term) => count + _occurrences(content, term),
-          );
-          if (overlap == 0) continue;
-          final match = StoredVector(
+    if (terms.isEmpty) return const [];
+    final matches = <StoredVector>[];
+    for (final source in _sources.values) {
+      if (prefilter != null && !prefilter.allows(source.locator)) continue;
+      final locatorJson = VectorIndex.jsonOf(source.locator);
+      for (var chunk = 0; chunk < source.chunks.length; chunk++) {
+        final content = source.chunks[chunk];
+        // 测试替身按子串出现次数判断关键词相关度，与引擎按词频排序的口径
+        // 接近；分词细节不必逐字一致。
+        final overlap = terms.fold(
+          0,
+          (count, term) => count + _occurrences(content, term),
+        );
+        if (overlap == 0) continue;
+        matches.add(
+          StoredVector(
             sourceKey: source.locator.sourceKey,
             chunk: chunk,
             content: content,
@@ -154,56 +165,16 @@ class MemoryVectorIndex implements VectorIndex {
             locatorJson: locatorJson,
             distance: 0,
             score: overlap.toDouble(),
-          );
-          matches.add(match);
-          byKey['${match.sourceKey}#${match.chunk}'] = match;
-        }
-      }
-      matches.sort((left, right) {
-        final byScore = right.score.compareTo(left.score);
-        if (byScore != 0) return byScore;
-        return _entryKey(left).compareTo(_entryKey(right));
-      });
-      for (var index = 0; index < matches.length; index++) {
-        keywordRanks[_entryKey(matches[index])] = index + 1;
+          ),
+        );
       }
     }
-    final semanticRanks = <String, int>{};
-    final query = vector;
-    if (query != null && query.isNotEmpty) {
-      final semantic = search(query, k: k * 4, prefilter: prefilter);
-      for (var index = 0; index < semantic.length; index++) {
-        final match = semantic[index];
-        semanticRanks[_entryKey(match)] = index + 1;
-        byKey.putIfAbsent(_entryKey(match), () => match);
-      }
-    }
-    final fused = <StoredVector>[];
-    for (final entry in byKey.entries) {
-      final keywordRank = keywordRanks[entry.key];
-      final semanticRank = semanticRanks[entry.key];
-      var score = 0.0;
-      if (keywordRank != null) score += 1 / (rankConstant + keywordRank);
-      if (semanticRank != null) score += 1 / (rankConstant + semanticRank);
-      final match = entry.value;
-      fused.add(
-        StoredVector(
-          sourceKey: match.sourceKey,
-          chunk: match.chunk,
-          content: match.content,
-          sourceVersion: match.sourceVersion,
-          locatorJson: match.locatorJson,
-          distance: 0,
-          score: score,
-        ),
-      );
-    }
-    fused.sort((left, right) {
+    matches.sort((left, right) {
       final byScore = right.score.compareTo(left.score);
       if (byScore != 0) return byScore;
       return _entryKey(left).compareTo(_entryKey(right));
     });
-    return fused.take(k).toList();
+    return matches.take(k).toList();
   }
 
   static String _entryKey(StoredVector match) =>
@@ -243,12 +214,16 @@ class _MemorySource {
   const _MemorySource({
     required this.locator,
     required this.version,
+    required this.count,
     required this.chunks,
     required this.vectors,
   });
 
   final SemanticLocator locator;
   final String version;
+
+  /// 片段条数；文本 collection 取正文条数，向量 collection 取向量条数。
+  final int count;
   final List<String> chunks;
   final List<Float32List> vectors;
 }

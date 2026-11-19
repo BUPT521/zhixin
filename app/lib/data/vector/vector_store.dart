@@ -24,26 +24,29 @@ abstract interface class VectorStore {
     required int writtenEntries,
   });
 
+  /// 写入一个来源的全部片段；文本 collection 读 [chunks]，向量 collection 读
+  /// [hashes] 与 [vectors]，片段数为零表示删除这个来源。
   Future<void> replaceSource({
     required SemanticLocator locator,
     required String sourceVersion,
-    required List<String> chunks,
-    required List<List<double>> vectors,
+    List<String> chunks = const [],
+    List<String> hashes = const [],
+    List<List<double>> vectors = const [],
     required String createdAt,
   });
 
   Future<int> pruneSources(Set<String> keep);
 
+  /// 向量检索；只有向量 collection 支持，文本 collection 返回空列表。
   Future<List<StoredVector>> search(
     List<double> query, {
     int k = 20,
     VectorPrefilter? prefilter,
   });
 
-  /// 一次取关键词与语义候选，按名次融合后返回。
-  Future<List<StoredVector>> searchHybrid(
+  /// 关键词检索；只有文本 collection 支持，向量 collection 返回空列表。
+  Future<List<StoredVector>> searchText(
     String text, {
-    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
   });
@@ -97,14 +100,16 @@ class DirectVectorStore implements VectorStore {
   Future<void> replaceSource({
     required SemanticLocator locator,
     required String sourceVersion,
-    required List<String> chunks,
-    required List<List<double>> vectors,
+    List<String> chunks = const [],
+    List<String> hashes = const [],
+    List<List<double>> vectors = const [],
     required String createdAt,
   }) async {
     index.replaceSource(
       locator: locator,
       sourceVersion: sourceVersion,
       chunks: chunks,
+      hashes: hashes,
       vectors: vectors,
       createdAt: createdAt,
     );
@@ -121,13 +126,11 @@ class DirectVectorStore implements VectorStore {
   }) async => index.search(query, k: k, prefilter: prefilter);
 
   @override
-  Future<List<StoredVector>> searchHybrid(
+  Future<List<StoredVector>> searchText(
     String text, {
-    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
-  }) async =>
-      index.searchHybrid(text, vector: vector, k: k, prefilter: prefilter);
+  }) async => index.searchText(text, k: k, prefilter: prefilter);
 
   @override
   Future<void> clear() async => index.clear();

@@ -363,6 +363,10 @@ class RemoteEmbeddingClient extends EmbeddingClient {
     if (code == 'quota_exceeded') {
       return const EmbeddingSourceUnavailable('今天的嵌入额度已经用完，次日重置');
     }
+    if (code == 'email_unverified') {
+      // 托管额度要求先确认邮箱；这条说明比“凭据被拒”更接近用户要做的事。
+      return const EmbeddingSourceUnavailable('知新服务要求先确认邮箱，暂时不能使用托管嵌入');
+    }
     return switch (status) {
       401 || 403 => EmbeddingSourceUnavailable('嵌入服务拒绝了凭据（$status）'),
       429 => const EmbeddingSourceUnavailable('嵌入服务限流（429），请稍后再试'),

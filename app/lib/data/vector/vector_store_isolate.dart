@@ -6,11 +6,12 @@ import 'vector_index.dart';
 import 'vector_store.dart';
 import 'zvec_vector_index.dart';
 
-/// 后台 isolate 里的向量索引句柄。
+/// 后台 isolate 里的索引句柄。
 ///
 /// zvec 的句柄与原生内存只存在于后台线程，界面线程发送写入与查询请求、等待
 /// 结果，因此打开索引、建表与检索都不会占用界面帧。所有请求按发送顺序执行，
-/// 同一时刻只有一个线程碰这份索引。
+/// 同一时刻只有一个线程碰这份索引。文本 collection 与向量 collection 各用
+/// 一个句柄，各自一个后台线程与一个目录。
 class IsolateVectorStore implements VectorStore {
   IsolateVectorStore._(this.spec, this._responses);
 
@@ -29,9 +30,11 @@ class IsolateVectorStore implements VectorStore {
 
   /// 打开索引；引擎初始化、打开 collection 与建表都在后台线程完成。
   ///
-  /// [path] 是 `filesDir/vector_index/` 这一层目录，[logDirectory] 给出时把 zvec
-  /// 的警告日志写进缓存目录。索引结构损坏被重建时，[onRebuild] 在界面线程收到
-  /// 一次说明，用于写本机诊断记录。
+  /// [path] 是这一份 collection 的根目录：文本 collection 用
+  /// `filesDir/vector_index/text`，向量 collection 用
+  /// `filesDir/vector_index/vector`。[logDirectory] 给出时把 zvec 的警告日志写进
+  /// 缓存目录。索引结构损坏被重建时，[onRebuild] 在界面线程收到一次说明，用于
+  /// 写本机诊断记录。
   static Future<IsolateVectorStore> open({
     required String path,
     required EmbeddingModelSpec spec,
@@ -150,14 +153,16 @@ class IsolateVectorStore implements VectorStore {
   Future<void> replaceSource({
     required SemanticLocator locator,
     required String sourceVersion,
-    required List<String> chunks,
-    required List<List<double>> vectors,
+    List<String> chunks = const [],
+    List<String> hashes = const [],
+    List<List<double>> vectors = const [],
     required String createdAt,
   }) async {
     await _send('replaceSource', [
       VectorIndex.jsonOf(locator),
       sourceVersion,
       chunks,
+      hashes,
       vectors,
       createdAt,
     ]);
@@ -189,15 +194,13 @@ class IsolateVectorStore implements VectorStore {
   }
 
   @override
-  Future<List<StoredVector>> searchHybrid(
+  Future<List<StoredVector>> searchText(
     String text, {
-    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
   }) async {
-    final value = await _send('searchHybrid', [
+    final value = await _send('searchText', [
       text,
-      vector,
       k,
       _encodePrefilter(prefilter),
     ]) as List;
@@ -385,10 +388,11 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
         locator: locator,
         sourceVersion: args[1] as String,
         chunks: (args[2] as List).cast<String>(),
+        hashes: (args[3] as List).cast<String>(),
         vectors: [
-          for (final vector in args[3] as List) (vector as List).cast<double>(),
+          for (final vector in args[4] as List) (vector as List).cast<double>(),
         ],
-        createdAt: args[4] as String,
+        createdAt: args[5] as String,
       );
       return null;
     case 'pruneSources':
@@ -409,14 +413,12 @@ Object? _runOperation(VectorIndex index, String op, List<Object?> args) {
             'distance': row.distance,
           },
       ];
-    case 'searchHybrid':
-      final vector = args[1] as List?;
+    case 'searchText':
       return [
-        for (final row in index.searchHybrid(
+        for (final row in index.searchText(
           args[0] as String,
-          vector: vector?.cast<double>(),
-          k: args[2] as int,
-          prefilter: _decodePrefilter(args[3] as Map?),
+          k: args[1] as int,
+          prefilter: _decodePrefilter(args[2] as Map?),
         ))
           {
             'sourceKey': row.sourceKey,

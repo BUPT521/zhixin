@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/vector/embedding_codec.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/data/vector/vector_store_isolate.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
@@ -15,6 +16,21 @@ const _locator = SemanticLocator(
 );
 
 const _builtAt = '2026-11-16 10:00:00';
+
+/// 写入一个来源；向量集合取按正文算出的哈希与固定向量。
+Future<void> _replace(
+  VectorStore store, {
+  required List<String> chunks,
+  required List<List<double>> vectors,
+  String version = 'v1',
+}) => store.replaceSource(
+  locator: _locator,
+  sourceVersion: version,
+  chunks: chunks,
+  hashes: [for (final chunk in chunks) embeddingTextHash(chunk)],
+  vectors: vectors,
+  createdAt: _builtAt,
+);
 
 /// 没有设置库路径时返回跳过原因；zvec 实现打开索引需要本机 C 库。
 String? _zvecSkipReason() {
@@ -64,14 +80,12 @@ void main() {
     addTearDown(store.close);
 
     expect(store.spec.indexKey, contains('isolate-embed'));
-    await store.replaceSource(
-      locator: _locator,
-      sourceVersion: 'v1',
+    await _replace(
+      store,
       chunks: const ['熵是系统混乱程度的度量。'],
       vectors: const [
         [1, 0, 0, 0],
       ],
-      createdAt: _builtAt,
     );
 
     expect(await store.entryCount(), 1);
@@ -83,12 +97,14 @@ void main() {
     final matches = await store.search([0.99, 0.05, 0, 0], k: 3);
     expect(matches, hasLength(1));
     expect(matches.single.sourceKey, _locator.sourceKey);
-    expect(matches.single.content, '熵是系统混乱程度的度量。');
+    // 向量集合不存正文，摘要由服务层按当前记录重新计算。
+    expect(matches.single.content, isEmpty);
     expect(
       matches.single.locatorJson,
       contains('"source_key":"message:msg-1"'),
     );
     expect(matches.single.distance, lessThan(0.1));
+    expect(await store.searchText('熵', k: 3), isEmpty);
 
     await store.close();
     expect(Directory(indexPath()).existsSync(), isTrue);
@@ -96,15 +112,13 @@ void main() {
 
   test('刷新统计随索引持久化，重启后仍在，清理后归零', () async {
     final first = await IsolateVectorStore.open(path: indexPath(), spec: _spec);
-    await first.replaceSource(
-      locator: _locator,
-      sourceVersion: 'v1',
+    await _replace(
+      first,
       chunks: const ['片段一', '片段二'],
       vectors: const [
         [1, 0, 0, 0],
         [0, 1, 0, 0],
       ],
-      createdAt: _builtAt,
     );
     await first.finishRefresh(
       builtAt: _builtAt,
@@ -140,14 +154,12 @@ void main() {
 
   test('两个 isolate 先后打开、关闭之后，引擎仍可再用', () async {
     final first = await IsolateVectorStore.open(path: indexPath(), spec: _spec);
-    await first.replaceSource(
-      locator: _locator,
-      sourceVersion: 'v1',
+    await _replace(
+      first,
       chunks: const ['熵增'],
       vectors: const [
         [1, 0, 0, 0],
       ],
-      createdAt: _builtAt,
     );
     await first.close();
 
@@ -169,6 +181,36 @@ void main() {
       ]))[_locator.sourceKey]!.sourceVersion,
       'v1',
     );
+  }, skip: skip);
+
+  test('文本集合在后台 isolate 里写入与关键词检索', () async {
+    final store = await IsolateVectorStore.open(
+      path: '${directory.path}/text',
+      spec: textOnlyModelSpec,
+    );
+    addTearDown(store.close);
+    await store.replaceSource(
+      locator: _locator,
+      sourceVersion: 'v1',
+      chunks: const ['熵是系统混乱程度的度量。', '时间箭头与熵增有关。'],
+      createdAt: _builtAt,
+    );
+    expect(await store.entryCount(), 2);
+    expect(await store.search([1, 0, 0, 0], k: 3), isEmpty);
+
+    final hits = await store.searchText('熵', k: 3);
+    expect(hits, hasLength(2));
+    expect(hits.every((hit) => hit.content.contains('熵')), isTrue);
+    expect(hits.every((hit) => hit.score > 0), isTrue);
+
+    // 两个参数都为空表示删除这个来源，按 source_key 删除两套集合的片段。
+    await store.replaceSource(
+      locator: _locator,
+      sourceVersion: 'v2',
+      createdAt: _builtAt,
+    );
+    expect(await store.entryCount(), 0);
+    expect(await store.searchText('熵', k: 3), isEmpty);
   }, skip: skip);
 
   test('索引路径被文件占住时把异常交回调用方', () async {

@@ -11,11 +11,14 @@ import '../../domain/rules/embedding.dart';
 import 'vector_index.dart';
 import 'vector_store.dart';
 
-/// zvec 语义索引：一个嵌入模型键对应一个 collection 目录与一个状态文件。
+/// zvec 语义索引：一个 collection 目录与一个状态文件。
 ///
-/// 磁盘布局是 `<rootPath>/<模型键短哈希>/` 与 `<rootPath>/<模型键短哈希>.json`，
-/// 模型、维度或文本处理版本改变时换目录。状态文件只在打开、清空与一次刷新结束
-/// 时写入，先写临时文件再改名；collection 的写入顺序与失败处理见 ADR-0022。
+/// 文本 collection 与向量 collection 各自打开一个实例：文本 collection 用固定
+/// 的纯文本 spec、目录名 `text`，向量 collection 用当前嵌入来源的 spec、目录名
+/// `vector`。磁盘布局仍是 `<rootPath>/<模型键短哈希>/` 与
+/// `<rootPath>/<模型键短哈希>.json`，换模型只影响向量 collection 这一份。
+/// 状态文件只在打开、清空与一次刷新结束时写入，先写临时文件再改名；
+/// collection 的写入顺序与失败处理见 ADR-0022。
 ///
 /// zvec 的引擎按进程只初始化一次，这里不调用 `Zvec.shutdown`；同一个 collection
 /// 同一时刻只允许一个句柄，打开时遇到占用按退避重试，仍失败就报“索引正被占用”
@@ -33,8 +36,8 @@ class ZvecVectorIndex implements VectorIndex {
   static const String _embeddingField = 'embedding';
   static const String _contentField = 'content';
 
-  /// 融合检索的名次平滑常数，与应用层融合的取值一致。
-  static const int _rrfRankConstant = 60;
+  /// 向量 collection 保存的片段文本哈希；用来在重建时跳过没有变化的片段。
+  static const String _textHashField = 'text_hash';
 
   /// 状态文件与 collection 目录共用的短哈希长度。
   static const int _hashLength = 16;
@@ -170,13 +173,16 @@ class ZvecVectorIndex implements VectorIndex {
     }
   }
 
-  /// 纯文本索引：没有配置嵌入模型时只建全文与标量字段。
+  /// 纯文本 collection：固定 schema，只建全文与标量字段，不存向量。
   static bool _isTextOnly(EmbeddingModelSpec spec) =>
       spec.id == textOnlyModelSpec.id;
 
+  /// 两套 collection 的 schema 由此分开：文本 collection 存正文并建全文索引，
+  /// 向量 collection 存向量与文本哈希、不存正文，维度随嵌入来源变化。
   static Collection _createCollection(String path, EmbeddingModelSpec spec) {
+    final textOnly = _isTextOnly(spec);
     final fields = <FieldSchema>[
-      if (!_isTextOnly(spec))
+      if (!textOnly)
         VectorSchema(
           _embeddingField,
           spec.dim,
@@ -190,8 +196,11 @@ class ZvecVectorIndex implements VectorIndex {
         ..setIndexParams(InvertIndexParams()),
       FieldSchema(name: 'conversation_id', dataType: DataType.string)
         ..setIndexParams(InvertIndexParams()),
-      FieldSchema(name: 'content', dataType: DataType.string)
-        ..setIndexParams(FtsIndexParams(tokenizerName: 'jieba')),
+      if (textOnly)
+        FieldSchema(name: _contentField, dataType: DataType.string)
+          ..setIndexParams(FtsIndexParams(tokenizerName: 'jieba'))
+      else
+        FieldSchema(name: _textHashField, dataType: DataType.string),
       FieldSchema(name: 'source_version', dataType: DataType.string),
       FieldSchema(name: 'locator_json', dataType: DataType.string),
       FieldSchema(name: 'created_at', dataType: DataType.string),
@@ -460,18 +469,21 @@ class ZvecVectorIndex implements VectorIndex {
   void replaceSource({
     required SemanticLocator locator,
     required String sourceVersion,
-    required List<String> chunks,
-    required List<List<double>> vectors,
+    List<String> chunks = const [],
+    List<String> hashes = const [],
+    List<List<double>> vectors = const [],
     required String createdAt,
   }) {
     _ensureOpen();
     final textOnly = _isTextOnly(spec);
-    if (chunks.length != vectors.length && !(textOnly && vectors.isEmpty)) {
+    // 文本 collection 按正文条数写，向量 collection 按向量条数写；两者都必须
+    // 与各自的输入对齐，否则会在检索时读到错位的片段。
+    final count = textOnly ? chunks.length : hashes.length;
+    if (!textOnly && hashes.length != vectors.length) {
       throw ArgumentError('片段数与向量数不一致');
     }
     final sourceKey = locator.sourceKey;
     _validateKey(sourceKey);
-    final count = chunks.length;
     if (count == 0) {
       _collection.deleteByFilter("source_key = '$sourceKey'");
       return;
@@ -486,9 +498,10 @@ class ZvecVectorIndex implements VectorIndex {
             sourceVersion: sourceVersion,
             chunk: index,
             chunkCount: count,
-            content: chunks[index],
+            content: textOnly ? chunks[index] : null,
+            textHash: textOnly ? null : hashes[index],
             createdAt: createdAt,
-            vector: vectors.isEmpty ? null : vectors[index],
+            vector: textOnly ? null : vectors[index],
           ),
         );
       }
@@ -502,9 +515,10 @@ class ZvecVectorIndex implements VectorIndex {
         sourceVersion: sourceVersion,
         chunk: 0,
         chunkCount: count,
-        content: chunks[0],
+        content: textOnly ? chunks[0] : null,
+        textHash: textOnly ? null : hashes[0],
         createdAt: createdAt,
-        vector: vectors.isEmpty ? null : vectors[0],
+        vector: textOnly ? null : vectors[0],
       );
       _writeBatch([head]);
     } finally {
@@ -520,7 +534,8 @@ class ZvecVectorIndex implements VectorIndex {
     required String sourceVersion,
     required int chunk,
     required int chunkCount,
-    required String content,
+    required String? content,
+    required String? textHash,
     required String createdAt,
     required List<double>? vector,
   }) {
@@ -546,7 +561,8 @@ class ZvecVectorIndex implements VectorIndex {
       } else {
         doc.setField('conversation_id', conversationId);
       }
-      doc.setField('content', content);
+      if (content != null) doc.setField(_contentField, content);
+      if (textHash != null) doc.setField(_textHashField, textHash);
       doc.setField('source_version', sourceVersion);
       doc.setField('locator_json', VectorIndex.jsonOf(locator));
       doc.setField('created_at', createdAt);
@@ -609,7 +625,6 @@ class ZvecVectorIndex implements VectorIndex {
       outputFields: const [
         'source_key',
         'chunk',
-        'content',
         'source_version',
         'locator_json',
       ],
@@ -621,12 +636,10 @@ class ZvecVectorIndex implements VectorIndex {
       for (final doc in docs) {
         final sourceKey = doc.getString('source_key');
         final chunk = doc.getInt64('chunk');
-        final content = doc.getString('content');
         final sourceVersion = doc.getString('source_version');
         final locatorJson = doc.getString('locator_json');
         if (sourceKey == null ||
             chunk == null ||
-            content == null ||
             sourceVersion == null ||
             locatorJson == null) {
           continue;
@@ -635,7 +648,8 @@ class ZvecVectorIndex implements VectorIndex {
           StoredVector(
             sourceKey: sourceKey,
             chunk: chunk,
-            content: content,
+            // 向量 collection 不存正文，摘要由应用层按当前记录重新计算。
+            content: '',
             sourceVersion: sourceVersion,
             locatorJson: locatorJson,
             distance: doc.score,
@@ -651,48 +665,36 @@ class ZvecVectorIndex implements VectorIndex {
     }
   }
 
-  /// 关键词与语义两路候选在同一次查询里融合，融合方式为名次倒数相加。
+  /// 关键词检索：同一条全文子查询发两次，按名次倒数相加融合。
   ///
-  /// [vector] 为空时只做关键词一路；zvec 的 MultiQuery 至少要有两路子查询，
-  /// 这时把同一条关键词查询发两次，融合后的先后与单路的 BM25 顺序一致。
+  /// zvec 的 MultiQuery 至少要有两路子查询，这里不需要第二路数据，发两次相同
+  /// 的全文查询即可；融合之后名次与单路 BM25 一致，分数是两倍的
+  /// 1/(常数 + 名次)，比较先后仍然有效。
   @override
-  List<StoredVector> searchHybrid(
+  List<StoredVector> searchText(
     String text, {
-    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
   }) {
     _ensureOpen();
+    if (!_isTextOnly(spec)) return const [];
     if (k <= 0) return const [];
     final queryText = text.trim();
-    final hasVector = vector != null && vector.isNotEmpty;
-    if (queryText.isEmpty && !hasVector) return const [];
+    if (queryText.isEmpty) return const [];
     final candidates = math.min(400, math.max(k, k * 4));
-    final subQueries = <SubQuery>[
-      if (queryText.isNotEmpty)
-        SubQuery(
-          fieldName: _contentField,
-          fts: FtsQuery(matchString: queryText),
-          numCandidates: candidates,
-        ),
-      if (hasVector)
-        SubQuery(
-          fieldName: _embeddingField,
-          vector: Float32List.fromList(normalizeVector(vector)),
-          numCandidates: candidates,
-        ),
-    ];
-    if (subQueries.length == 1) {
-      subQueries.add(
-        SubQuery(
-          fieldName: _contentField,
-          fts: FtsQuery(matchString: queryText),
-          numCandidates: candidates,
-        ),
-      );
-    }
     final request = MultiQuery(
-      subQueries: subQueries,
+      subQueries: [
+        SubQuery(
+          fieldName: _contentField,
+          fts: FtsQuery(matchString: queryText),
+          numCandidates: candidates,
+        ),
+        SubQuery(
+          fieldName: _contentField,
+          fts: FtsQuery(matchString: queryText),
+          numCandidates: candidates,
+        ),
+      ],
       topk: k,
       filter: _filterFor(prefilter),
       includeVector: false,
@@ -703,7 +705,7 @@ class ZvecVectorIndex implements VectorIndex {
         'source_version',
         'locator_json',
       ],
-      rerank: const RrfRerank(rankConstant: _rrfRankConstant),
+      rerank: const RrfRerank(rankConstant: vectorFusionRankConstant),
     );
     final docs = <Doc>[];
     try {

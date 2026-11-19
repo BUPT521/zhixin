@@ -378,6 +378,10 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     }
     final failed = result.failed > 0 ? '，失败 ${result.failed} 条' : '';
     final cached = result.cached > 0 ? '，有 ${result.cached} 条片段直接取自缓存' : '';
+    // 换模型只重建向量：正文没有变化的来源也会写进文本集合，但不重新嵌入。
+    final text = result.textWritten > 0 && result.textWritten != result.embedded
+        ? '，另更新正文 ${result.textWritten} 条来源'
+        : '';
     final problem = result.sourceProblem;
     if (problem != null) {
       return '本次更新在中途停下：$problem。已经写入 ${result.embedded} 条，'
@@ -386,7 +390,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     if (result.total == 0) {
       return '没有需要更新的来源；下一次记录或材料变化后会自动补上。';
     }
-    return '本次检查 ${result.total} 条来源：写入 ${result.embedded} 条$cached，'
+    return '本次检查 ${result.total} 条来源：写入 ${result.embedded} 条$cached$text，'
         '跳过 ${result.skipped} 条$failed，清理 ${result.removed} 条旧向量。';
   }
 
@@ -412,7 +416,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
         if (result.failure == IndexFailure.none) {
           _status =
               '测试查询成功，找到 ${result.hits.length} 条相关记录；'
-              '索引里现在有 ${result.entries} 条向量。';
+              '索引里现在有 ${result.entries} 条片段。';
           _statusDetail =
               '嵌入耗时 ${result.timings.embedMs} 毫秒，'
               '查索引 ${result.timings.indexMs} 毫秒，'
@@ -439,13 +443,13 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     }
   }
 
-  /// 清空索引会删掉本机全部向量；先做危险确认，入口放在页底。
+  /// 清空索引会删掉本机全部正文与向量索引；先做危险确认，入口放在页底。
   Future<void> _clearIndex() async {
     final confirmed = await confirmZhixin(
       context: context,
       title: '清空语义索引',
       content: const Text(
-        '将删除本机保存的全部向量索引，原文、作答与材料不受影响，'
+        '将删除本机保存的语义索引（正文与向量两部分），原文、作答与材料不受影响，'
         '之后可以按当前数据重新更新。此操作无法撤销。',
       ),
       confirmLabel: '清空',
@@ -463,7 +467,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
         _stats = stats;
         _statsFailed = false;
         _notice = null;
-        _status = '向量索引已经清空，可以按当前数据重新更新。';
+        _status = '语义索引已经清空，可以按当前数据重新更新。';
         _statusDetail = null;
       });
     } catch (error, stack) {
@@ -550,7 +554,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                   TagRow(
                     children: [
                       StatusTag('${stats.sources} 条来源'),
-                      StatusTag('${stats.entries} 条向量'),
+                      StatusTag('${stats.entries} 条片段'),
                     ],
                   ),
                   SizedBox(height: theme.space.xs),

@@ -36,8 +36,8 @@ class IndexResult {
   final IndexFailure failure;
   final EvidenceTimings timings;
 
-  /// 索引里现有的向量条数；界面据此区分“没有找到”和“索引还没有内容”。
-  /// 没有配置、超时或取消时不知道索引规模，保持为零。
+  /// 索引里现有的片段条数（取文本集合）；界面据此区分“没有找到”和“索引还
+  /// 没有内容”。没有配置、超时或取消时不知道索引规模，保持为零。
   final int entries;
 
   bool get usable => failure == IndexFailure.none;
@@ -47,6 +47,7 @@ class IndexResult {
 class IndexRefreshResult {
   const IndexRefreshResult({
     this.embedded = 0,
+    this.textWritten = 0,
     this.skipped = 0,
     this.lateSkipped = 0,
     this.failed = 0,
@@ -59,14 +60,20 @@ class IndexRefreshResult {
     this.sourceProblem,
   });
 
+  /// 这一次重新计算并向向量集合写入的来源数；没有配置嵌入来源时，是写入
+  /// 文本集合的来源数。
   final int embedded;
+
+  /// 写入文本集合的来源数；换模型之后正文没有变化的来源也计入，但它们不重新
+  /// 嵌入，因此不计入 [embedded]。
+  final int textWritten;
   final int skipped;
 
   /// 等待嵌入期间来源被更正、删除或撤销，写回前放弃的条数。
   final int lateSkipped;
   final int failed;
 
-  /// 清理时删除的向量条数。
+  /// 向量集合清理时删除的向量条数。
   final int removed;
   final int total;
 
@@ -92,11 +99,16 @@ class IndexCancelToken {
 
 /// 检索索引服务：后台按来源版本补建索引，查询时先取候选再核对业务记录。
 ///
-/// 索引同时服务关键词与语义：没有配置嵌入模型时只建全文索引，关键词检索照常
-/// 可用；配置之后加上向量字段，两路在引擎内一次融合。索引按模型、维度与文本
-/// 处理版本区分；数据代次变化（恢复、导入、清空）时整份索引重建。写入前重新
+/// 索引拆成两个 collection（ADR-0030 决定第 4 条）：文本 collection 的 schema
+/// 固定，只存正文与全文索引，不随嵌入配置变化；向量 collection 按嵌入模型键
+/// 与文本处理版本分目录，只存向量、来源键与文本哈希。文本 collection 总是
+/// 使用，向量 collection 只在配置了嵌入来源时打开。关键词与向量两路各取候选，
+/// 由应用层按名次倒数相加融合，再逐条回读业务记录核对版本与范围；向量集合
+/// 打不开时关键词一路仍然可用。
+///
+/// 数据代次变化（恢复、导入、清空）时两份集合都按当前数据重建。写入前重新
 /// 读取来源版本，等待嵌入期间被更正或删除的内容不会进入索引。查询有独立的
-/// 超时与取消，失败时返回空结果，调用方继续使用字面命中。
+/// 超时与取消，文本集合失败时返回空结果，调用方继续使用字面命中。
 ///
 /// 同一个后台 isolate 里还有一套记忆索引（[rankMemories]）：材料页、消息与作答
 /// 的 collection 要按证据记录逐条核对范围与版本，记忆按记忆表的有效性判断，
@@ -113,12 +125,14 @@ class SearchIndexService implements MemoryRelevanceRanker {
     bool Function(SemanticSource source)? initialShareFilter,
     this.queryTimeout = const Duration(seconds: 4),
     Future<VectorStore> Function()? vectorStoreOpener,
+    Future<VectorStore> Function()? textStoreOpener,
     Future<VectorStore> Function()? memoryStoreOpener,
     this.recordFailure,
     this.cacheWrites,
   }) : _client = initialClient,
        _canSend = initialShareFilter,
-       _openStore = vectorStoreOpener,
+       _openVectorStore = vectorStoreOpener,
+       _openTextStore = textStoreOpener,
        _openMemoryStore = memoryStoreOpener;
 
   /// 一次刷新在内存里保留的片段上限；一个窗口写完再取下一批，内存不随来源
@@ -148,7 +162,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
   /// 索引结构损坏被重建时写本机诊断记录；界面不弹窗。
   final ModelFailureRecorder? recordFailure;
 
-  /// 当前嵌入来源；为空表示没有配置，关键词仍按全文索引检索。
+  /// 当前嵌入来源；为空表示没有配置，关键词仍按文本集合检索。
   EmbeddingClient? get client => _client;
 
   /// 是否允许把这条来源的原文发送给远程嵌入服务；本地来源不需要判断。
@@ -159,7 +173,10 @@ class SearchIndexService implements MemoryRelevanceRanker {
   final Future<String> Function()? epoch;
   final Clock clock;
   final Duration queryTimeout;
-  final Future<VectorStore> Function()? _openStore;
+  final Future<VectorStore> Function()? _openVectorStore;
+
+  /// 文本集合的注入入口；测试用它换成内存实现。没有注入时用后台 isolate。
+  final Future<VectorStore> Function()? _openTextStore;
 
   /// 这一次刷新该不该把嵌入写进服务端缓存：登录且自动同步开启时返回真。
   ///
@@ -171,7 +188,10 @@ class SearchIndexService implements MemoryRelevanceRanker {
   final String? memoryIndexPath;
   final Future<VectorStore> Function()? _openMemoryStore;
 
-  /// 换一套嵌入来源；模型或维度改变时旧索引关闭，下一次更新按新模型重建。
+  /// 换一套嵌入来源；模型或维度改变时只关闭向量集合，文本集合保持打开。
+  ///
+  /// 下一次刷新按新模型重建向量 collection；已经写好的正文不必重新写，缓存
+  /// 查找逻辑照旧跳过没有变化的片段。
   void configure({
     EmbeddingClient? client,
     bool Function(SemanticSource source)? canSend,
@@ -189,16 +209,18 @@ class SearchIndexService implements MemoryRelevanceRanker {
     if (current != null && !identical(current, client)) current.dispose();
     _client = client;
     _canSend = canSend;
-    final store = _store;
-    if (store != null && store.spec.indexKey != nextModel) {
-      _store = null;
-      unawaited(_queueStoreOperation(store.close));
+    final vector = _vectorHandle.store;
+    if (vector != null && vector.spec.indexKey != nextModel) {
+      _vectorHandle.store = null;
+      _vectorHandle.opening = null;
+      unawaited(_queueStoreOperation(vector.close));
     }
     if (previousModel != nextModel) _lastRefresh = null;
   }
 
-  VectorStore? _store;
-  Future<VectorStore>? _opening;
+  /// 一份 collection 的句柄与正在进行的打开；文本与向量各一份。
+  final _StoreHandle _textHandle = _StoreHandle();
+  final _StoreHandle _vectorHandle = _StoreHandle();
   Future<void> _storeOperations = Future<void>.value();
   Future<void>? _closing;
   int _generation = 0;
@@ -212,7 +234,9 @@ class SearchIndexService implements MemoryRelevanceRanker {
 
   void _invalidateOperations() {
     _generation++;
-    _opening = null;
+    // 进行中的打开会因为代次变化自行关闭，这里的句柄留空，等下一次重新打开。
+    _textHandle.opening = null;
+    _vectorHandle.opening = null;
     _refreshing = null;
   }
 
@@ -236,39 +260,76 @@ class SearchIndexService implements MemoryRelevanceRanker {
         return use();
       });
 
-  /// 配了嵌入模型时用它的 spec，没配时用纯文本索引的 spec。
-  EmbeddingModelSpec get _indexSpec => client?.spec ?? textOnlyModelSpec;
+  /// 文本 collection 的根目录；固定 schema，不随嵌入配置变化。
+  String get textIndexDirectory =>
+      p.join(indexPath, textCollectionDirectoryName);
 
-  /// 取当前索引句柄；第一次用时才打开，打开与建表都在后台 isolate 里完成。
-  Future<VectorStore> _requireStore(int generation) async {
+  /// 向量 collection 的根目录；按当前嵌入来源的 spec 分 collection 目录。
+  String get vectorIndexDirectory =>
+      p.join(indexPath, vectorCollectionDirectoryName);
+
+  /// 取一份 collection 的句柄；第一次用时才打开，打开与建表都在后台 isolate
+  /// 里完成。两份 collection 各自按代次检查，代次变化时旧句柄关闭、不写回。
+  Future<VectorStore> _requireStoreHandle(
+    _StoreHandle handle,
+    int generation,
+    Future<VectorStore> Function() open,
+  ) async {
     _requireCurrent(generation);
-    final spec = _indexSpec;
-    final opening = _opening;
+    final opening = handle.opening;
     if (opening != null) {
       final store = await opening;
       _requireCurrent(generation);
       return store;
     }
-    final future = _queueStoreOperation(() => _open(spec, generation));
-    _opening = future;
+    final future = _queueStoreOperation(() async {
+      _requireCurrent(generation);
+      final existing = handle.store;
+      if (existing != null) return existing;
+      final store = await open();
+      if (generation != _generation) {
+        await store.close();
+        _requireCurrent(generation);
+      }
+      handle.store = store;
+      return store;
+    });
+    handle.opening = future;
     try {
       final store = await future;
       _requireCurrent(generation);
       return store;
     } finally {
-      if (identical(_opening, future)) _opening = null;
+      if (identical(handle.opening, future)) handle.opening = null;
     }
   }
 
-  Future<VectorStore> _open(EmbeddingModelSpec spec, int generation) async {
+  Future<VectorStore> _requireTextStore(int generation) =>
+      _requireStoreHandle(_textHandle, generation, () => _openText(generation));
+
+  Future<VectorStore> _requireVectorStore(int generation) {
+    final spec = client?.spec;
+    if (spec == null) {
+      throw const EmbeddingUnavailable('没有配置嵌入来源，不打开向量集合');
+    }
+    return _requireStoreHandle(
+      _vectorHandle,
+      generation,
+      () => _openVector(spec, generation),
+    );
+  }
+
+  Future<VectorStore> _openCollection({
+    required String path,
+    required EmbeddingModelSpec spec,
+    required Future<VectorStore> Function()? opener,
+    required int generation,
+  }) async {
     _requireCurrent(generation);
-    final existing = _store;
-    if (existing != null) return existing;
-    final opener = _openStore;
     final store = opener != null
         ? await opener()
         : await IsolateVectorStore.open(
-            path: indexPath,
+            path: path,
             spec: spec,
             logDirectory: indexLogPath,
             onRebuild: _recordRebuild,
@@ -277,9 +338,23 @@ class SearchIndexService implements MemoryRelevanceRanker {
       await store.close();
       _requireCurrent(generation);
     }
-    _store = store;
     return store;
   }
+
+  Future<VectorStore> _openText(int generation) => _openCollection(
+    path: textIndexDirectory,
+    spec: textOnlyModelSpec,
+    opener: _openTextStore,
+    generation: generation,
+  );
+
+  Future<VectorStore> _openVector(EmbeddingModelSpec spec, int generation) =>
+      _openCollection(
+        path: vectorIndexDirectory,
+        spec: spec,
+        opener: _openVectorStore,
+        generation: generation,
+      );
 
   /// 结构损坏时重建空索引只记本机诊断，不弹窗、不打断检索。
   void _recordRebuild(String reason) {
@@ -402,7 +477,6 @@ class SearchIndexService implements MemoryRelevanceRanker {
             locator: memoryLocator(memory.id),
             sourceVersion: version,
             chunks: texts,
-            vectors: const [],
             createdAt: formatDateTime(now),
           ),
         );
@@ -421,7 +495,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
       final candidates = {for (final id in candidateIds) memorySourceKey(id)};
       final hits = await _useCurrentStore(
         generation,
-        () => store.searchHybrid(
+        () => store.searchText(
           text,
           k: candidateIds.length,
           prefilter: SourceKeysVectorPrefilter(candidates),
@@ -487,94 +561,55 @@ class SearchIndexService implements MemoryRelevanceRanker {
       // 先读数据代次再打开索引：打开、初始化 zvec 引擎与建表都由后台 isolate
       // 承接，界面线程在这里只等一个 Future，启动首帧不再执行这些同步调用。
       final currentEpoch = await epoch?.call() ?? '0';
-      final store = await _requireStore(generation);
-      if (await store.meta('epoch') != currentEpoch) {
+      final textStore = await _requireTextStore(generation);
+      if (await textStore.meta('epoch') != currentEpoch) {
         await _useCurrentStore(generation, () async {
-          await store.clear();
-          await store.setMeta('epoch', currentEpoch);
+          await textStore.clear();
+          await textStore.setMeta('epoch', currentEpoch);
         });
       }
       final sources = await repository.semanticSources();
       _requireCurrent(generation);
 
-      // 嵌入数量可以分批限制，清理与统计仍以全部允许进入索引的来源为准。
-      // 没有配置嵌入来源时只建全文索引，正文不出本机，分享范围不参与筛选。
+      // 正文不离开本机，文本集合收下全部来源；分享范围只影响向量集合，不再
+      // 允许发送的来源在向量集合里删除，正文仍然保留。嵌入数量可以分批限制，
+      // 清理与统计仍以全部来源为准。
+      final textKeep = {for (final source in sources) source.locator.sourceKey};
       final sendAllowed = embedding == null ? null : canSend;
-      final keep = {
+      final vectorKeep = {
         for (final source in sources)
           if (sendAllowed?.call(source) ?? true) source.locator.sourceKey,
       };
-      final indexed = await store.indexedSources(keep.toList(growable: false));
-      final committed = indexed.keys.toSet();
+      final textIndexed = await textStore.indexedSources(
+        textKeep.toList(growable: false),
+      );
+      final textCommitted = textIndexed.keys.toSet();
       final targets = maxSources == null
           ? sources
           : sources.take(maxSources).toList(growable: false);
-      var embedded = 0;
-      var writtenEntries = 0;
-      var skipped = 0;
+      var textWritten = 0;
+      var textEntries = 0;
       var lateSkipped = 0;
-      var failed = 0;
       var cached = 0;
       var embedMs = 0;
       var writeMs = 0;
       EmbeddingSourceUnavailable? sourceDown;
 
-      // 先把本次要重写的来源挑出来；等待嵌入期间来源被更正、删除或撤销时，
-      // 写回之前还会再核对一次版本。
+      // 先把本次要写的来源挑出来；文本集合的版本或片段数不一致，或者配置了
+      // 嵌入时向量集合的版本或片段数不一致，都算需要处理。换模型之后正文没变
+      // 也属于后者：只重建向量，不重新写正文。
       final pending = <_PendingSource>[];
       for (final source in targets) {
         _requireCurrent(generation);
-        final sourceKey = source.locator.sourceKey;
-        if (!keep.contains(sourceKey)) {
-          // 用户缩小了可发送范围：这条来源不再进入 keep，索引里的旧向量在最后
-          // 统一删除，避免继续参与检索。
-          skipped++;
-          continue;
-        }
         final chunks = semanticChunks(source.content);
-        final existing = indexed[sourceKey];
-        final unchanged =
-            existing != null &&
-            existing.sourceVersion == source.sourceVersion &&
-            existing.chunks == chunks.length;
-        if (unchanged && !force) {
-          skipped++;
-          continue;
-        }
-        pending.add(_PendingSource(source, chunks));
-      }
-
-      Future<void> writeSource(
-        _PendingSource item,
-        List<List<double>> vectors,
-      ) async {
-        _requireCurrent(generation);
-        final sourceKey = item.source.locator.sourceKey;
-        final writeStarted = DateTime.now();
-        try {
-          await _useCurrentStore(
-            generation,
-            () => store.replaceSource(
-              locator: item.source.locator,
-              sourceVersion: item.source.sourceVersion,
-              chunks: [for (final chunk in item.chunks) chunk.text],
-              vectors: vectors,
-              createdAt: formatDateTime(now),
-            ),
-          );
-          embedded++;
-          writtenEntries += item.chunks.length;
-          if (item.chunks.isEmpty) {
-            committed.remove(sourceKey);
-          } else {
-            committed.add(sourceKey);
-          }
-        } catch (_) {
-          if (_closed || generation != _generation) rethrow;
-          failed++;
-        } finally {
-          writeMs += DateTime.now().difference(writeStarted).inMilliseconds;
-        }
+        final existing = textIndexed[source.locator.sourceKey];
+        final textStale =
+            existing == null ||
+            existing.sourceVersion != source.sourceVersion ||
+            existing.chunks != chunks.length;
+        pending.add(
+          _PendingSource(source, chunks, needsText: textStale || force),
+        );
       }
 
       Future<bool> sourceCurrent(_PendingSource item) async {
@@ -583,35 +618,145 @@ class SearchIndexService implements MemoryRelevanceRanker {
             fresh.sourceVersion == item.source.sourceVersion;
       }
 
-      if (embedding == null) {
-        // 纯文本索引不调用嵌入来源，直接写正文。
-        for (final item in pending) {
-          _requireCurrent(generation);
-          if (!await sourceCurrent(item)) {
-            lateSkipped++;
-            continue;
-          }
-          await writeSource(item, const <List<double>>[]);
+      // 文本集合不调用嵌入来源，先把正文写进索引：即使随后向量集合打不开或
+      // 嵌入失败，关键词检索也已经是最新的。
+      for (final item in pending) {
+        if (!item.needsText) continue;
+        _requireCurrent(generation);
+        final writeStarted = DateTime.now();
+        if (!await sourceCurrent(item)) {
+          // 读取期间来源被更正、删除或撤销：这一条放弃，等下一次更新再处理。
+          lateSkipped++;
+          item.abandoned = true;
+          continue;
         }
-      } else {
+        try {
+          await _useCurrentStore(
+            generation,
+            () => textStore.replaceSource(
+              locator: item.source.locator,
+              sourceVersion: item.source.sourceVersion,
+              chunks: [for (final chunk in item.chunks) chunk.text],
+              createdAt: formatDateTime(now),
+            ),
+          );
+          textWritten++;
+          item.textWritten = true;
+          textEntries += item.chunks.length;
+          final key = item.source.locator.sourceKey;
+          if (item.chunks.isEmpty) {
+            textCommitted.remove(key);
+          } else {
+            textCommitted.add(key);
+          }
+        } catch (_) {
+          if (_closed || generation != _generation) rethrow;
+          item.failed = true;
+        } finally {
+          writeMs += DateTime.now().difference(writeStarted).inMilliseconds;
+        }
+      }
+
+      await _useCurrentStore(generation, () async {
+        await textStore.pruneSources(textKeep);
+        await textStore.finishRefresh(
+          builtAt: formatDateTime(now),
+          sourceCount: textCommitted.length,
+          writtenEntries: textEntries,
+        );
+      });
+      _requireCurrent(generation);
+
+      // 没有配置嵌入来源时，写入正文的来源数就是这一次处理的来源数。
+      var embedded = textWritten;
+      var removed = 0;
+      if (embedding != null) {
+        final vectorStore = await _requireVectorStore(generation);
+        if (await vectorStore.meta('epoch') != currentEpoch) {
+          await _useCurrentStore(generation, () async {
+            await vectorStore.clear();
+            await vectorStore.setMeta('epoch', currentEpoch);
+          });
+        }
+        final vectorIndexed = await vectorStore.indexedSources(
+          textKeep.toList(growable: false),
+        );
+        final vectorCommitted = {
+          for (final key in vectorIndexed.keys)
+            if (vectorKeep.contains(key)) key,
+        };
+        var vectorWritten = 0;
+        var vectorEntries = 0;
+
+        // 向量集合按自己的版本与片段数判断：正文没有变化而模型换了，也要重建。
+        final vectorPending = <_PendingSource>[];
+        for (final item in pending) {
+          if (item.abandoned || item.failed) continue;
+          if (!vectorKeep.contains(item.source.locator.sourceKey)) continue;
+          final existing = vectorIndexed[item.source.locator.sourceKey];
+          final stale =
+              existing == null ||
+              existing.sourceVersion != item.source.sourceVersion ||
+              existing.chunks != item.chunks.length;
+          if (!stale && !force) continue;
+          vectorPending.add(item);
+        }
+
+        Future<void> writeVector(
+          _PendingSource item,
+          List<List<double>> vectors,
+        ) async {
+          _requireCurrent(generation);
+          final writeStarted = DateTime.now();
+          try {
+            await _useCurrentStore(
+              generation,
+              () => vectorStore.replaceSource(
+                locator: item.source.locator,
+                sourceVersion: item.source.sourceVersion,
+                hashes: [
+                  for (final chunk in item.chunks)
+                    embeddingTextHash(chunk.text),
+                ],
+                vectors: vectors,
+                createdAt: formatDateTime(now),
+              ),
+            );
+            vectorWritten++;
+            item.vectorWritten = true;
+            vectorEntries += item.chunks.length;
+            final key = item.source.locator.sourceKey;
+            if (item.chunks.isEmpty) {
+              vectorCommitted.remove(key);
+            } else {
+              vectorCommitted.add(key);
+            }
+          } catch (_) {
+            if (_closed || generation != _generation) rethrow;
+            item.failed = true;
+          } finally {
+            writeMs += DateTime.now().difference(writeStarted).inMilliseconds;
+          }
+        }
+
         final embedder = embedding;
         final writeCache = await _shouldWriteCache();
         // 按块数与字符数切批，跨来源合并请求；一个窗口内的来源全部写完再进入
         // 下一个窗口，向量只在窗口内保留，内存不随来源总数增长。
         var start = 0;
-        while (start < pending.length && sourceDown == null) {
+        while (start < vectorPending.length && sourceDown == null) {
           _requireCurrent(generation);
           var end = start;
           var windowChunks = 0;
-          while (end < pending.length) {
-            final size = pending[end].chunks.length;
+          while (end < vectorPending.length) {
+            final size = vectorPending[end].chunks.length;
             if (end > start && windowChunks + size > _refreshWindowChunks) {
               break;
             }
             windowChunks += size;
             end++;
           }
-          final window = pending.sublist(start, end);
+          final window = vectorPending.sublist(start, end);
           // 同一段正文只算一次：按文本哈希归并，先查缓存，再嵌入未命中的片段。
           final byHash = <String, List<_ChunkJob>>{};
           for (var index = 0; index < window.length; index++) {
@@ -728,7 +873,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
 
           for (final item in window) {
             if (item.failed || !item.complete) {
-              failed++;
+              item.failed = true;
               continue;
             }
             _requireCurrent(generation);
@@ -736,30 +881,48 @@ class SearchIndexService implements MemoryRelevanceRanker {
             // 就放弃这一条，等下一次更新再处理。
             if (!await sourceCurrent(item)) {
               lateSkipped++;
+              item.abandoned = true;
               continue;
             }
-            await writeSource(item, [
+            await writeVector(item, [
               for (final vector in item.vectors) vector!,
             ]);
           }
           start = end;
         }
         // 来源停用之后没有请求的那些来源同样记为失败，下一次更新再补。
-        failed += pending.length - start;
+        for (final item in vectorPending.skip(start)) {
+          item.failed = true;
+        }
+
+        removed = await _useCurrentStore(generation, () async {
+          final removed = await vectorStore.pruneSources(vectorKeep);
+          await vectorStore.finishRefresh(
+            builtAt: formatDateTime(now),
+            sourceCount: vectorCommitted.length,
+            writtenEntries: vectorEntries,
+          );
+          return removed;
+        });
+        _requireCurrent(generation);
+        embedded = vectorWritten;
       }
 
-      final removed = await _useCurrentStore(generation, () async {
-        final removed = await store.pruneSources(keep);
-        await store.finishRefresh(
-          builtAt: formatDateTime(now),
-          sourceCount: committed.length,
-          writtenEntries: writtenEntries,
-        );
-        return removed;
-      });
-      _requireCurrent(generation);
+      // 两份集合都已经处理完，再按来源逐条结算：正文与向量都没有写的算跳过，
+      // 文本写失败或嵌入失败的算失败。
+      var skipped = 0;
+      var failed = 0;
+      for (final item in pending) {
+        if (item.failed) {
+          failed++;
+          continue;
+        }
+        if (item.abandoned) continue;
+        if (!item.textWritten && !item.vectorWritten) skipped++;
+      }
       final result = IndexRefreshResult(
         embedded: embedded,
+        textWritten: textWritten,
         skipped: skipped,
         lateSkipped: lateSkipped,
         failed: failed,
@@ -817,7 +980,11 @@ class SearchIndexService implements MemoryRelevanceRanker {
     return batches;
   }
 
-  /// 按查询向量取候选，并逐条读取当前记录核对范围与版本。
+  /// 分别取关键词与向量两路候选，按名次融合后逐条读取当前记录核对范围与版本。
+  ///
+  /// 查询向量只在配置了嵌入来源时计算；向量集合不可用时只用文本一路，检索
+  /// 仍然可用。文本摘要按核对之后的当前记录重新计算，因此向量集合不存正文也
+  /// 能显示命中片段。
   Future<IndexResult> search(
     String query, {
     required EvidenceScope scope,
@@ -873,37 +1040,50 @@ class SearchIndexService implements MemoryRelevanceRanker {
     final embedMs = embedStarted.elapsedMilliseconds;
     final indexStarted = Stopwatch()..start();
     try {
-      final store = await _requireStore(generation);
-      final entries = await store.entryCount();
+      // 文本集合总是参与；它的条数就是索引里现有的片段数。
+      final textStore = await _requireTextStore(generation);
+      final entries = await textStore.entryCount();
       _requireCurrent(generation);
       // 范围能下推时引擎在索引内部先过滤，候选保留四倍；不能下推的目标范围
-      // 仍取二十倍并封顶 400，避免收窄范围后漏召回。
+      // 仍取二十倍并封顶 400，避免收窄范围后漏召回。两路用同一个 k。
       final prefilter = vectorPrefilterFor(scope);
       final candidateLimit = prefilter == null
           ? (scope.limitsToAll ? limit * 4 : limit * 20)
           : limit * 4;
       final k = math.min(400, math.max(limit, candidateLimit));
-      final candidates = await store.searchHybrid(
+      final textCandidates = await textStore.searchText(
         query,
-        vector: vector,
         k: k,
         prefilter: prefilter,
       );
       _requireCurrent(generation);
-      // 只由语义命中的来源：与关键词一路的来源键比较，用来决定“按意思”标签。
-      final keywordKeys = <String>{};
+      // 向量集合打不开或查询失败时只用关键词一路：索引坏了不该让关键词检索
+      // 一起不可用，这种情况不置 failure。
+      var vectorCandidates = const <StoredVector>[];
       if (vector != null) {
-        final keywordOnly = await store.searchHybrid(
-          query,
-          k: k,
-          prefilter: prefilter,
-        );
-        for (final match in keywordOnly) {
-          keywordKeys.add(match.sourceKey);
+        try {
+          final vectorStore = await _requireVectorStore(generation);
+          vectorCandidates = await vectorStore.search(
+            vector,
+            k: k,
+            prefilter: prefilter,
+          );
+          _requireCurrent(generation);
+        } catch (_) {
+          if (_closed || generation != _generation) rethrow;
+          vectorCandidates = const [];
         }
-        _requireCurrent(generation);
       }
+      // 应用层按名次倒数相加融合两路候选（ADR-0030 决定第 4 条）；同一片段
+      // 在两路都出现时分数据说它更相关，只在一路出现时保留那一路的名次。
+      final candidates = _fuseCandidates([textCandidates, vectorCandidates]);
+      // 只由向量一路命中的来源才标“按意思”；两路都命中的按下关键词处理。
+      final textKeys = {for (final match in textCandidates) match.sourceKey};
+      final vectorKeys = {
+        for (final match in vectorCandidates) match.sourceKey,
+      };
       final indexMs = indexStarted.elapsedMilliseconds;
+      final terms = searchTerms(query);
       final hits = <EvidenceHit>[];
       var verifiedOut = 0;
       for (final candidate in candidates) {
@@ -913,8 +1093,9 @@ class SearchIndexService implements MemoryRelevanceRanker {
           continue;
         }
         final semanticOnly =
-            vector != null && !keywordKeys.contains(candidate.sourceKey);
-        final hit = _hitFor(locator, candidate, query, semantic: semanticOnly);
+            vectorKeys.contains(candidate.sourceKey) &&
+            !textKeys.contains(candidate.sourceKey);
+        final hit = _hitFor(locator, candidate, semantic: semanticOnly);
         final fresh = await repository.current(hit);
         if (fresh == null ||
             fresh.sourceVersion != candidate.sourceVersion ||
@@ -922,11 +1103,13 @@ class SearchIndexService implements MemoryRelevanceRanker {
           verifiedOut++;
           continue;
         }
+        // 摘要按当前记录重新计算：向量集合不存正文，候选里也可能只有片段。
         hits.add(
           fresh.copyWith(
             literal: false,
             semantic: semanticOnly,
             score: hit.score,
+            snippet: searchSnippet(fresh.text, terms, limit: 100),
           ),
         );
         if (hits.length >= limit) break;
@@ -944,7 +1127,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         ),
       );
     } catch (_) {
-      // 索引打不开或读取失败时退回原文与关键词；调用方只看 usable。
+      // 文本集合打不开或读取失败时退回原文；调用方只看 usable。
       return IndexResult(
         failure: generation == _generation
             ? IndexFailure.error
@@ -957,10 +1140,46 @@ class SearchIndexService implements MemoryRelevanceRanker {
     }
   }
 
+  /// 把两路候选按名次倒数相加，返回融合后的候选。
+  ///
+  /// 同一片段在文本与向量两路都出现时分数相加；名次相同、分数也相同时按
+  /// 来源键与片段号排序，保证结果稳定。常数与文本集合内部全文子查询的平滑
+  /// 常数一致，拆分前后的差异只来自两路各自排序。
+  static List<StoredVector> _fuseCandidates(List<List<StoredVector>> routes) {
+    final scores = <String, double>{};
+    final rows = <String, StoredVector>{};
+    for (final route in routes) {
+      for (var index = 0; index < route.length; index++) {
+        final row = route[index];
+        final key = '${row.sourceKey}#${row.chunk}';
+        scores[key] =
+            (scores[key] ?? 0) + 1 / (vectorFusionRankConstant + index + 1);
+        rows.putIfAbsent(key, () => row);
+      }
+    }
+    final keys = rows.keys.toList(growable: false);
+    keys.sort((left, right) {
+      final byScore = scores[right]!.compareTo(scores[left]!);
+      if (byScore != 0) return byScore;
+      return left.compareTo(right);
+    });
+    return [for (final key in keys) _withScore(rows[key]!, scores[key]!)];
+  }
+
+  static StoredVector _withScore(StoredVector row, double score) =>
+      StoredVector(
+        sourceKey: row.sourceKey,
+        chunk: row.chunk,
+        content: row.content,
+        sourceVersion: row.sourceVersion,
+        locatorJson: row.locatorJson,
+        distance: row.distance,
+        score: score,
+      );
+
   EvidenceHit _hitFor(
     SemanticLocator locator,
-    StoredVector candidate,
-    String query, {
+    StoredVector candidate, {
     required bool semantic,
   }) {
     final kind = switch (locator.kind) {
@@ -970,7 +1189,6 @@ class SearchIndexService implements MemoryRelevanceRanker {
       'message' => EvidenceKind.message,
       _ => EvidenceKind.message,
     };
-    final terms = searchTerms(query);
     return EvidenceHit(
       kind: kind,
       identity: locator.sourceKey,
@@ -981,7 +1199,8 @@ class SearchIndexService implements MemoryRelevanceRanker {
         EvidenceKind.message => '一次讨论',
         EvidenceKind.unknown => '来源未知',
       },
-      snippet: searchSnippet(candidate.content, terms, limit: 100),
+      // 片段正文只用来占位，核对之后按当前记录重算摘要。
+      snippet: candidate.content,
       text: candidate.content,
       matchedText: candidate.content,
       literal: false,
@@ -1000,10 +1219,13 @@ class SearchIndexService implements MemoryRelevanceRanker {
 
   /// 索引规模与最近一次更新的结果，给设置页显示。
   ///
-  /// 读取状态会打开索引库；打不开时异常交给调用方，设置页据此显示失败说明，
-  /// 不停在“还没有读取索引状态”。
+  /// 条数与来源数取文本集合：它总是参与检索，也是检索结果条数的来源。模型键
+  /// 直接取当前嵌入来源，不由向量句柄给出，这样向量集合结构损坏时设置页仍能
+  /// 读出正文索引的规模。读取状态会打开索引库；文本集合打不开时异常交给调用
+  /// 方，设置页据此显示失败说明。
   Future<IndexStats> stats() async {
-    if (client == null) {
+    final spec = client?.spec;
+    if (spec == null) {
       return const IndexStats(
         configured: false,
         entries: 0,
@@ -1012,15 +1234,15 @@ class SearchIndexService implements MemoryRelevanceRanker {
       );
     }
     final generation = _generation;
-    final store = await _requireStore(generation);
+    final textStore = await _requireTextStore(generation);
     final stats = await _useCurrentStore(
       generation,
       () async => IndexStats(
         configured: true,
-        entries: await store.entryCount(),
-        sources: await store.sourceCount(),
-        modelKey: store.spec.indexKey,
-        builtAt: await store.meta('built_at'),
+        entries: await textStore.entryCount(),
+        sources: await textStore.sourceCount(),
+        modelKey: spec.indexKey,
+        builtAt: await textStore.meta('built_at'),
         lastRefresh: _lastRefresh,
       ),
     );
@@ -1035,33 +1257,41 @@ class SearchIndexService implements MemoryRelevanceRanker {
   Future<void> release() async {
     if (_closed) return;
     _invalidateOperations();
-    final store = _store;
+    final text = _textHandle.store;
+    final vector = _vectorHandle.store;
     final memory = _memoryStore;
-    _store = null;
+    _textHandle.store = null;
+    _vectorHandle.store = null;
     _memoryStore = null;
     _lastRefresh = null;
     await _queueStoreOperation(() async {
-      await store?.close();
+      await text?.close();
+      await vector?.close();
       await memory?.close();
     });
   }
 
   /// 清空两份索引的条目；记忆索引与嵌入配置无关，已经在用时一并清空。
+  ///
+  /// 文本集合即使这次运行还没有打开过也要打开再清空，避免磁盘上留着旧索引；
+  /// 向量集合只在配置了嵌入来源、知道该开哪个模型目录时清理。清空复用已经
+  /// 打开的句柄，不另开一份：同一个 collection 同一时刻只允许一个句柄，另开
+  /// 会撞上“索引正被占用”，也会把旧句柄留在后台线程里。
   Future<void> clear() async {
     if (_closed) return;
     _invalidateOperations();
     final generation = _generation;
     final spec = client?.spec;
-    await _queueStoreOperation(() async {
-      // 没有打开过的记忆索引不在这里新建：它只保存记忆正文，下一次召回会按
-      // 记忆表重新同步。
-      await _memoryStore?.clear();
-      if (spec == null) return;
-      final store = await _open(spec, generation);
-      _requireCurrent(generation);
-      await store.clear();
-      if (generation == _generation) _lastRefresh = null;
-    });
+    final textStore = await _requireTextStore(generation);
+    await _useCurrentStore(generation, textStore.clear);
+    if (spec != null) {
+      final vectorStore = await _requireVectorStore(generation);
+      await _useCurrentStore(generation, vectorStore.clear);
+    }
+    // 没有打开过的记忆索引不在这里新建：它只保存记忆正文，下一次召回会按
+    // 记忆表重新同步。
+    await _useCurrentStore(generation, () async => _memoryStore?.clear());
+    if (generation == _generation) _lastRefresh = null;
   }
 
   Future<void> close() {
@@ -1069,18 +1299,30 @@ class SearchIndexService implements MemoryRelevanceRanker {
     if (closing != null) return closing;
     _closed = true;
     _invalidateOperations();
-    final store = _store;
+    final text = _textHandle.store;
+    final vector = _vectorHandle.store;
     final memory = _memoryStore;
-    _store = null;
+    _textHandle.store = null;
+    _vectorHandle.store = null;
     _memoryStore = null;
     final next = _closing = _queueStoreOperation(() async {
-      await store?.close();
+      await text?.close();
+      await vector?.close();
       await memory?.close();
     });
     _client?.dispose();
     _client = null;
     return next;
   }
+}
+
+/// 一份 collection 的句柄与正在进行的打开。
+///
+/// 文本与向量各一份：换模型只把向量这一份关掉，另一份保持打开；打开期间另一
+/// 个调用复用同一个 Future，不重复建表。
+class _StoreHandle {
+  VectorStore? store;
+  Future<VectorStore>? opening;
 }
 
 /// 索引规模与状态；界面只显示这些信息，不读取向量内容。
@@ -1102,14 +1344,23 @@ class IndexStats {
   final IndexRefreshResult? lastRefresh;
 }
 
-/// 一次刷新里等待嵌入的一条来源；向量按片段序号回填。
+/// 一次刷新里等待写入的一条来源；向量按片段序号回填。
 class _PendingSource {
-  _PendingSource(this.source, this.chunks)
+  _PendingSource(this.source, this.chunks, {required this.needsText})
     : vectors = List<List<double>?>.filled(chunks.length, null);
 
   final SemanticSource source;
   final List<({int index, String text})> chunks;
   final List<List<double>?> vectors;
+
+  /// 文本集合里的版本或片段数与当前来源不一致，需要重写正文。
+  final bool needsText;
+
+  bool textWritten = false;
+  bool vectorWritten = false;
+
+  /// 来源在等待期间被更正、删除或撤销，这一条本次放弃。
+  bool abandoned = false;
   bool failed = false;
 
   bool get complete => vectors.every((vector) => vector != null);

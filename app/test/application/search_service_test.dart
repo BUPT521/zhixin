@@ -36,12 +36,12 @@ Iterable<int?> _materialPages(SearchResults results) =>
         .where((hit) => hit.kind == EvidenceKind.materialPage)
         .map((hit) => hit.location.pageNo);
 
-/// 关键词与语义候选都从索引取；测试用纯文本索引，种子数据写入后刷新一次。
+/// 关键词与语义候选都从索引取；测试用纯文本集合，种子数据写入后刷新一次。
 SearchIndexService _textIndex(EvidenceRepository repository) =>
     SearchIndexService(
       repository: repository,
       indexPath: '',
-      vectorStoreOpener: () async =>
+      textStoreOpener: () async =>
           DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
     );
 

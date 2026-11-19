@@ -157,6 +157,7 @@ Future<
     RawDatabase db,
     EvidenceRepository repository,
     MemoryVectorIndex index,
+    MemoryVectorIndex textIndex,
     SearchIndexService service,
     _Corpus corpus,
   })
@@ -171,6 +172,7 @@ _rig({
   final corpus = await _seed(db);
   final repository = EvidenceRepository(db);
   final index = MemoryVectorIndex(_spec);
+  final textIndex = MemoryVectorIndex(textOnlyModelSpec);
   final client =
       clientFor?.call(_spec) ??
       FixedEmbeddingClient(spec: _spec, vectors: _vectors());
@@ -179,6 +181,7 @@ _rig({
     initialClient: client,
     indexPath: '',
     epoch: () async => epoch?.call() ?? '0',
+    textStoreOpener: () async => DirectVectorStore(textIndex),
     vectorStoreOpener: () async => DirectVectorStore(index),
     initialShareFilter: canSend,
     queryTimeout: const Duration(seconds: 2),
@@ -188,6 +191,7 @@ _rig({
     db: db,
     repository: repository,
     index: index,
+    textIndex: textIndex,
     service: service,
     corpus: corpus,
   );
@@ -245,6 +249,7 @@ void main() {
       locator: locator,
       sourceVersion: 'v1',
       chunks: const [_pageEntropy],
+      hashes: [embeddingTextHash(_pageEntropy)],
       vectors: const [
         [1, 0, 0, 0],
       ],
@@ -373,31 +378,79 @@ void main() {
     expect(cleared.builtAt, isNull);
   });
 
-  test('清空全部记录前释放索引句柄，之后按同一路径重新打开', () async {
+  test('清空全部记录前释放两份索引句柄，之后按同一路径重新打开', () async {
     final db = await openTestDb();
     addTearDown(db.close);
     await _seed(db);
-    var opens = 0;
-    var closes = 0;
+    var textOpens = 0;
+    var textCloses = 0;
+    var vectorOpens = 0;
+    var vectorCloses = 0;
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
     final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       indexPath: '',
+      textStoreOpener: () async {
+        textOpens++;
+        return _TrackedStore(textIndex, () async => textCloses++);
+      },
       vectorStoreOpener: () async {
-        opens++;
-        return _TrackedStore(MemoryVectorIndex(_spec), () async => closes++);
+        vectorOpens++;
+        return _TrackedStore(
+          MemoryVectorIndex(_spec),
+          () async => vectorCloses++,
+        );
       },
     );
     addTearDown(service.close);
 
     expect((await service.refresh()).embedded, 7);
-    expect(opens, 1);
+    expect(textOpens, 1);
+    expect(vectorOpens, 1);
     await service.release();
-    expect(closes, 1);
+    expect(textCloses, 1);
+    expect(vectorCloses, 1);
     expect(service.lastRefresh, isNull);
 
     expect((await service.refresh()).embedded, 7);
-    expect(opens, 2);
+    expect(textOpens, 2);
+    expect(vectorOpens, 2);
+  });
+
+  test('清空索引复用已经打开的句柄，不另开一份', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    await _seed(db);
+    var textOpens = 0;
+    var vectorOpens = 0;
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    final vectorIndex = MemoryVectorIndex(_spec);
+    final service = SearchIndexService(
+      repository: EvidenceRepository(db),
+      initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+      indexPath: '',
+      textStoreOpener: () async {
+        textOpens++;
+        return DirectVectorStore(textIndex);
+      },
+      vectorStoreOpener: () async {
+        vectorOpens++;
+        return DirectVectorStore(vectorIndex);
+      },
+    );
+    addTearDown(service.close);
+    await service.refresh();
+    expect(textOpens, 1);
+    expect(vectorOpens, 1);
+
+    // 清空复用这两个句柄：同一个 collection 同时只允许一个句柄，另开一份会
+    // 撞上“索引正被占用”，也会把旧句柄留在后台线程里。
+    await service.clear();
+    expect(textOpens, 1);
+    expect(vectorOpens, 1);
+    expect(textIndex.entryCount, 0);
+    expect(vectorIndex.entryCount, 0);
   });
 
   test('限制更新来源数时保留批次以外已有的有效索引', () async {
@@ -457,6 +510,8 @@ void main() {
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: {}),
       indexPath: '',
+      textStoreOpener: () async =>
+          DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
       vectorStoreOpener: () async {
         final spec = requestedSpec;
         transitions.add('open ${spec.id}');
@@ -479,13 +534,15 @@ void main() {
       await service.close();
     });
 
-    expect((await service.stats()).modelKey, _spec.indexKey);
+    // 打开用一次刷新驱动：没有来源时不调用嵌入，只打开两份句柄。
+    expect((await service.refresh()).failure, IndexFailure.none);
+    expect(transitions, ['open ${_spec.id}']);
+
     requestedSpec = specB;
     service.configure(
       client: FixedEmbeddingClient(spec: specB, vectors: {}),
     );
-    final statsB = service.stats();
-    final rejectedB = expectLater(statsB, throwsA(isA<EmbeddingUnavailable>()));
+    final refreshB = service.refresh();
     await closingA.future;
     expect(openingB.isCompleted, isFalse);
     releaseA.complete();
@@ -495,15 +552,17 @@ void main() {
     service.configure(
       client: FixedEmbeddingClient(spec: _spec, vectors: {}),
     );
-    final statsA = service.stats();
+    final refreshA = service.refresh();
+    // 上一次的打开还在等 B 释放，A 的第二次打开要排在它后面。
     expect(
       transitions.where((event) => event == 'open ${_spec.id}'),
       hasLength(1),
     );
     releaseB.complete();
 
-    await rejectedB;
-    expect((await statsA).modelKey, _spec.indexKey);
+    expect((await refreshB).failure, IndexFailure.cancelled);
+    expect((await refreshA).failure, IndexFailure.none);
+    expect((await service.stats()).modelKey, _spec.indexKey);
     expect(transitions, [
       'open ${_spec.id}',
       'close ${_spec.id}',
@@ -530,6 +589,8 @@ void main() {
         },
       ),
       indexPath: '',
+      textStoreOpener: () async =>
+          DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
       vectorStoreOpener: () async {
         opened++;
         return DirectVectorStore(MemoryVectorIndex(specB));
@@ -557,6 +618,8 @@ void main() {
     final corpus = await _seed(db);
     final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    addTearDown(textIndex.close);
     final client = _MutatingClient(
       inner: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       onEmbed: (text) async {
@@ -574,13 +637,16 @@ void main() {
       repository: EvidenceRepository(db),
       initialClient: client,
       indexPath: '',
+      textStoreOpener: () async => DirectVectorStore(textIndex),
       vectorStoreOpener: () async => DirectVectorStore(index),
     );
 
     final result = await service.refresh();
     expect(result.lateSkipped, greaterThanOrEqualTo(1));
+    // 正文在等待嵌入之前已经写好，因此文本集合仍有这一条；向量因为迟到放弃。
     final stats = await service.stats();
-    expect(stats.sources, 6);
+    expect(stats.sources, 7);
+    expect(index.sourceCount, 6);
   });
 
   test('更正后的来源版本与索引不一致时，语义候选不再进入回答', () async {
@@ -646,20 +712,23 @@ void main() {
     expect(evidence, isNotEmpty);
   });
 
-  test('没有配置嵌入来源时只建全文索引，关键词仍然可用', () async {
+  test('没有配置嵌入来源时文本集合照常写入与检索，不标按意思', () async {
     final db = await openTestDb();
     addTearDown(db.close);
     await _seed(db);
     final repository = EvidenceRepository(db);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
     final service = SearchIndexService(
       repository: repository,
       indexPath: '',
-      vectorStoreOpener: () async =>
-          DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
+      textStoreOpener: () async => DirectVectorStore(textIndex),
     );
+    addTearDown(service.close);
     final refresh = await service.refresh();
     expect(refresh.failure, IndexFailure.none);
     expect(refresh.embedded, greaterThan(0));
+    expect(refresh.textWritten, refresh.embedded);
+    expect(textIndex.entryCount, 7);
     final result = await service.search(
       '熵',
       scope: const EvidenceScope.userAll(),
@@ -667,10 +736,11 @@ void main() {
     expect(result.usable, isTrue);
     expect(result.hits, isNotEmpty);
     expect(result.hits.every((hit) => !hit.semantic), isTrue);
+    expect(result.entries, 7);
     expect((await service.stats()).configured, isFalse);
   });
 
-  test('索引打不开时语义检索退回原文，刷新把异常交给调用方', () async {
+  test('文本集合打不开时语义检索退回原文，刷新把异常交给调用方', () async {
     final db = await openTestDb();
     addTearDown(db.close);
     await _seed(db);
@@ -678,9 +748,11 @@ void main() {
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
       indexPath: '',
+      textStoreOpener: () async => throw const VectorStoreFailure('测试里文本索引打不开'),
       vectorStoreOpener: () async =>
-          throw const VectorStoreFailure('测试里向量库打不开'),
+          DirectVectorStore(MemoryVectorIndex(_spec)),
     );
+    addTearDown(service.close);
 
     final result = await service.search(
       '系统混乱程度怎么衡量',
@@ -690,6 +762,35 @@ void main() {
     expect(result.failure, IndexFailure.error);
     expect(result.hits, isEmpty);
     await expectLater(service.refresh(), throwsA(isA<VectorStoreFailure>()));
+  });
+
+  test('向量集合打不开时关键词仍然可用，刷新把异常交给调用方', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    await _seed(db);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    final service = SearchIndexService(
+      repository: EvidenceRepository(db),
+      initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+      indexPath: '',
+      textStoreOpener: () async => DirectVectorStore(textIndex),
+      vectorStoreOpener: () async =>
+          throw const VectorStoreFailure('测试里向量索引打不开'),
+    );
+    addTearDown(service.close);
+
+    // 先写正文，再打开向量集合；向量打不开时刷新失败，正文已经是最新的。
+    await expectLater(service.refresh(), throwsA(isA<VectorStoreFailure>()));
+    expect(textIndex.entryCount, 7);
+
+    final result = await service.search(
+      '系统混乱程度怎么衡量',
+      scope: const EvidenceScope.userAll(),
+    );
+    expect(result.usable, isTrue);
+    expect(result.failure, IndexFailure.none);
+    expect(result.hits, isNotEmpty);
+    expect(result.hits.every((hit) => !hit.semantic), isTrue);
   });
 
   test('数据代次变化后按当前数据重建索引', () async {
@@ -742,6 +843,8 @@ void main() {
     final corpus = await _seed(db);
     final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    addTearDown(textIndex.close);
     final sent = <String>[];
     final config = EmbeddingConfig(
       enabled: true,
@@ -761,17 +864,21 @@ void main() {
         sent: sent,
       ),
       indexPath: '',
+      textStoreOpener: () async => DirectVectorStore(textIndex),
       vectorStoreOpener: () async => DirectVectorStore(index),
       initialShareFilter: runtime.canSend,
     );
+    addTearDown(service.close);
 
     final refresh = await service.refresh();
     expect(refresh.failed, 0);
     expect(sent, isNotEmpty);
     // 没有选中材料归属的记录不发送原文。
     expect(sent.any((text) => text.contains('矩阵的列向量')), isFalse);
-    expect(refresh.skipped, greaterThanOrEqualTo(1));
-    expect((await service.stats()).sources, lessThan(6));
+    // 正文不离开本机：文本集合收下全部来源，向量集合只收允许发送的来源。
+    expect(refresh.textWritten, 7);
+    expect(index.sourceCount, lessThan(6));
+    expect(refresh.embedded, index.sourceCount);
   });
 
   test('远程嵌入按 OpenAI 兼容格式发送，并拒绝维度不符的响应', () async {
@@ -1037,7 +1144,13 @@ void main() {
     );
     await expectLater(
       denied.lookupVectors(['aa']),
-      throwsA(isA<EmbeddingSourceUnavailable>()),
+      throwsA(
+        isA<EmbeddingSourceUnavailable>().having(
+          (error) => error.message,
+          'message',
+          contains('确认邮箱'),
+        ),
+      ),
     );
 
     final throttled = RemoteEmbeddingClient(
@@ -1065,6 +1178,49 @@ void main() {
     );
     expect(await embedding.lookupVectors(['aa']), isEmpty);
     expect(calls, 0);
+  });
+
+  test('查找超过单次上限时分批请求，维度不符的条目按未命中处理', () async {
+    final requests = <http.Request>[];
+    final server = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        final hashes = (jsonDecode(request.body) as Map)['hashes'] as List;
+        // 每次只回这一批的第一个哈希：第一次给足维度，第二次少一个分量，
+        // 后者按未命中处理，由调用方补算。
+        final first = hashes.first as String;
+        return http.Response(
+          jsonEncode({
+            'vectors': [
+              {
+                'hash': first,
+                'embedding': requests.length == 1
+                    ? base64Encode(const [0, 0x3c, 0, 0x38, 0, 0xc0, 0, 0])
+                    : base64Encode(const [0, 0x3c, 0, 0x38, 0, 0x00]),
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final hashes = [for (var index = 0; index < 300; index++) 'h$index'];
+    final hits = await server.lookupVectors(hashes);
+    expect(requests, hasLength(2));
+    expect(
+      ((jsonDecode(requests.first.body) as Map)['hashes'] as List),
+      hasLength(256),
+    );
+    expect(
+      ((jsonDecode(requests.last.body) as Map)['hashes'] as List),
+      hasLength(44),
+    );
+    // 只有维度正确的那一条算命中。
+    expect(hits.keys, ['h0']);
   });
 
   test('写缓存标记只加在知新服务的请求上，且只在要求写入时', () async {
@@ -1182,12 +1338,16 @@ void main() {
     };
     final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    addTearDown(textIndex.close);
     final service = SearchIndexService(
       repository: EvidenceRepository(db),
       initialClient: FixedEmbeddingClient(spec: _spec, vectors: vectors),
       indexPath: '',
+      textStoreOpener: () async => DirectVectorStore(textIndex),
       vectorStoreOpener: () async => DirectVectorStore(index),
     );
+    addTearDown(service.close);
 
     final refresh = await service.refresh();
     expect(refresh.embedded, 11);
@@ -1222,6 +1382,8 @@ void main() {
     await _seed(db);
     final index = MemoryVectorIndex(_spec);
     addTearDown(index.close);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    addTearDown(textIndex.close);
     final client = _CountingClient(
       FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
     );
@@ -1229,8 +1391,10 @@ void main() {
       repository: EvidenceRepository(db),
       initialClient: client,
       indexPath: '',
+      textStoreOpener: () async => DirectVectorStore(textIndex),
       vectorStoreOpener: () async => DirectVectorStore(index),
     );
+    addTearDown(service.close);
 
     final first = service.refresh();
     final second = service.refresh();
@@ -1271,6 +1435,8 @@ void main() {
     expect(refresh.cached, 2);
     expect(refresh.failed, 0);
     expect(client.lookedUp, hasLength(7));
+    // 查找用的是片段正文的 SHA-256，与服务端的缓存键同一口径。
+    expect(client.lookedUp, contains(embeddingTextHash(_pageEntropy)));
     expect(client.embedded, isNot(contains(_pageEntropy)));
     expect(client.embedded, isNot(contains(_messageEntropy)));
     expect(client.embedded, hasLength(5));
@@ -1338,6 +1504,112 @@ void main() {
     expect(refresh.failed, 7);
     expect(client.embedded, isEmpty);
     expect(rig.index.entryCount, 0);
+  });
+
+  test('查找报其他错误时按全部未命中处理，刷新照常完成', () async {
+    final rig = await _rig(
+      clientFor: (spec) => _LookupClient(
+        spec: spec,
+        vectors: _vectors(),
+        lookupFailure: const EmbeddingUnavailable('查找接口返回了意外的结果'),
+      ),
+    );
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+
+    final refresh = await rig.service.refresh();
+    final client = rig.service.client! as _LookupClient;
+    expect(refresh.failed, 0);
+    expect(refresh.sourceProblem, isNull);
+    expect(client.embedded, hasLength(7));
+    expect(rig.index.sourceCount, 7);
+  });
+
+  test('换模型只重建向量集合，文本集合的条目数不变', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    await _seed(db);
+    final textIndex = MemoryVectorIndex(textOnlyModelSpec);
+    var textOpens = 0;
+    var requestedSpec = _spec;
+    final vectorIndexes = <MemoryVectorIndex>[];
+    final service = SearchIndexService(
+      repository: EvidenceRepository(db),
+      initialClient: FixedEmbeddingClient(spec: _spec, vectors: _vectors()),
+      indexPath: '',
+      textStoreOpener: () async {
+        textOpens++;
+        return DirectVectorStore(textIndex);
+      },
+      vectorStoreOpener: () async {
+        final index = MemoryVectorIndex(requestedSpec);
+        vectorIndexes.add(index);
+        return DirectVectorStore(index);
+      },
+    );
+    addTearDown(service.close);
+
+    final first = await service.refresh();
+    expect(first.embedded, 7);
+    expect(first.textWritten, 7);
+    expect(textIndex.entryCount, 7);
+    expect(vectorIndexes.single.entryCount, 7);
+
+    // 换一个维度不同的模型：向量集合关闭后按新 spec 重建；正文没有变化，
+    // 文本集合只打开一次，也不重写。
+    const specB = EmbeddingModelSpec(id: 'another-embed', dim: 8);
+    requestedSpec = specB;
+    service.configure(
+      client: FixedEmbeddingClient(
+        spec: specB,
+        vectors: {
+          for (final entry in _vectors().entries)
+            entry.key: [...entry.value, 0, 0, 0, 0],
+        },
+      ),
+    );
+    final second = await service.refresh();
+    expect(second.embedded, 7);
+    expect(second.textWritten, 0);
+    expect(second.skipped, 0);
+    expect(textIndex.entryCount, 7);
+    expect(textOpens, 1);
+    expect(vectorIndexes, hasLength(2));
+    expect(vectorIndexes.last.entryCount, 7);
+  });
+
+  test('只有向量一路命中的记录标按意思，两路都命中的不标', () async {
+    final rig = await _twoRouteRig();
+    final result = await rig.service.search(
+      '矩阵',
+      scope: const EvidenceScope.userAll(),
+      limit: 5,
+    );
+    expect(result.usable, isTrue);
+    final byIdentity = {for (final hit in result.hits) hit.identity: hit};
+    expect(byIdentity[rig.textHit]!.semantic, isFalse, reason: '两路都命中');
+    expect(byIdentity[rig.vectorHit]!.semantic, isTrue, reason: '只有向量一路命中');
+    // 向量集合不存正文，摘要按当前记录重新计算，命中片段仍然显示得出来。
+    expect(byIdentity[rig.vectorHit]!.snippet, contains('线性无关'));
+  });
+
+  test('两路融合按名次倒数相加，与拆分前的评测语义一致', () async {
+    final rig = await _twoRouteRig();
+    final result = await rig.service.search(
+      '矩阵',
+      scope: const EvidenceScope.userAll(),
+      limit: 5,
+    );
+    // 关键词第一 + 向量第二的分数是 1/61+1/62，大于向量第一的 1/61：同一组
+    // 候选在拆分前的引擎内融合（同样的名次倒数与常数 60）也是这个先后。
+    expect(result.hits.map((hit) => hit.identity).toList(), [
+      rig.textHit,
+      rig.vectorHit,
+    ]);
+    expect(
+      result.hits.first.score.value,
+      greaterThan(result.hits.last.score.value),
+    );
   });
 
   test('记忆索引按关键词相关性排序，改、删随之同步，不调用嵌入来源', () async {
@@ -1444,6 +1716,51 @@ void main() {
     );
     expect(ordered, isNull);
   });
+}
+
+/// 两路各命中一条的固定装配：`矩阵的秩怎么求` 由关键词与向量两路命中，
+/// `线性无关的行向量个数` 只由向量一路命中；查询向量更接近后者，关键词只命中前者。
+Future<({SearchIndexService service, String textHit, String vectorHit})>
+_twoRouteRig() async {
+  final db = await openTestDb();
+  addTearDown(db.close);
+  final conversations = ConversationRepository(db);
+  final textConversation = await conversations.create(title: '矩阵讨论');
+  final textMessage = (await conversations.append(
+    textConversation,
+    role: MessageRole.user,
+    content: '矩阵的秩怎么求',
+  )).id;
+  final vectorConversation = await conversations.create(title: '线性无关');
+  final vectorMessage = (await conversations.append(
+    vectorConversation,
+    role: MessageRole.user,
+    content: '线性无关的行向量个数',
+  )).id;
+  final service = SearchIndexService(
+    repository: EvidenceRepository(db),
+    initialClient: FixedEmbeddingClient(
+      spec: _spec,
+      vectors: {
+        '矩阵': [1, 0, 0, 0],
+        '矩阵的秩怎么求': [0.2, 0.9, 0, 0],
+        '线性无关的行向量个数': [0.98, 0.1, 0, 0],
+      },
+    ),
+    indexPath: '',
+    textStoreOpener: () async =>
+        DirectVectorStore(MemoryVectorIndex(textOnlyModelSpec)),
+    vectorStoreOpener: () async => DirectVectorStore(MemoryVectorIndex(_spec)),
+  );
+  addTearDown(service.close);
+  final refresh = await service.refresh();
+  expect(refresh.failed, 0);
+  expect(refresh.embedded, 2);
+  return (
+    service: service,
+    textHit: 'message:$textMessage',
+    vectorHit: 'message:$vectorMessage',
+  );
 }
 
 class _TrackedStore extends DirectVectorStore {

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:zhixin/data/vector/embedding_codec.dart';
 import 'package:zhixin/data/vector/memory_vector_index.dart';
 import 'package:zhixin/data/vector/vector_index.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
@@ -15,6 +16,11 @@ import 'package:zhixin/domain/rules/embedding.dart';
 /// 用例范围见 ADR-0022 实施方案第 8 节。内存实现是服务层测试的替身，zvec 实现
 /// 是运行时真正使用的索引；两者对同一个调用序列必须给出相同的可观察结果
 /// （条数、来源状态、检索来源集合、统计），服务层才不需要区分引擎。
+///
+/// 关键词与向量拆成两个 collection（ADR-0030 决定第 4 条）：文本 collection
+/// 用 [textOnlyModelSpec] 打开，只接受正文、提供 [VectorIndex.searchText]；
+/// 向量 collection 用嵌入来源的 spec 打开，只接受向量与文本哈希、提供
+/// [VectorIndex.search]。写入辅助函数同时给两套参数，各实现取自己那一组。
 ///
 /// zvec 实现需要本机 C 库：设置 `ZVEC_LIBRARY_PATH` 指向 `zvec_c_api.dll`
 /// （Linux 为 `libzvec_c_api.so`），并把它的目录加进 `PATH`；没有设置时
@@ -78,6 +84,9 @@ String? _zvecSkipReason() {
 }
 
 /// 写入一个来源的片段；与 `SearchIndexService` 的调用方式一致。
+///
+/// 文本 collection 取 [chunks]，向量 collection 取按正文算出的哈希与
+/// [vectors]，一次调用同时覆盖两套参数。
 void _replace(
   VectorIndex index,
   SemanticLocator locator, {
@@ -89,6 +98,7 @@ void _replace(
     locator: locator,
     sourceVersion: version,
     chunks: chunks,
+    hashes: [for (final chunk in chunks) embeddingTextHash(chunk)],
     vectors: vectors,
     createdAt: _createdAt,
   );
@@ -167,7 +177,8 @@ void runVectorIndexContract(
         '${_pageA.sourceKey}#0',
         '${_pageA.sourceKey}#1',
       });
-      expect(first.first.content, '甲-0');
+      // 向量 collection 不存正文，检索结果只带来源、片段号与版本。
+      expect(first.first.content, isEmpty);
       expect(first.first.sourceVersion, 'v1');
       expect(first.first.chunk, 0);
       expect(first.first.distance, lessThan(0.001));
@@ -194,7 +205,7 @@ void runVectorIndexContract(
       expect(index.entryCount, 1);
       final second = index.search(const [0, 1, 0, 0], k: 10);
       expect(second, hasLength(1));
-      expect(second.single.content, '乙-0');
+      expect(second.single.content, isEmpty);
       expect(second.single.sourceVersion, 'v2');
       expect(second.single.chunk, 0);
       expect(
@@ -434,7 +445,7 @@ void runVectorIndexContract(
       }
     }, skip: skip);
 
-    test('searchHybrid 的关键词一路与两路融合', () {
+    test('search 只走向量一路，关键词集合对它是空的', () {
       final index = openIndex();
       _replace(
         index,
@@ -464,34 +475,21 @@ void runVectorIndexContract(
         ],
       );
 
-      // 只有关键词一路时，命中按关键词相关性排在前面。
-      final keywordOnly = index.searchHybrid('矩阵', k: 10);
-      expect(keywordOnly, isNotEmpty);
-      expect(keywordOnly.first.sourceKey, _pageA.sourceKey);
+      // 向量一路自己就能给出候选：查询向量接近哪一段，哪一段排在最前。
+      final nearest = index.search(const [0, 1, 0, 0], k: 3);
+      expect(nearest.first.sourceKey, _message.sourceKey);
       expect(
-        keywordOnly.every((match) => match.content.contains('矩阵')),
-        isTrue,
+        nearest.map((match) => match.sourceKey),
+        contains(_pageA.sourceKey),
       );
 
-      // 两路融合：关键词命中与向量相近的来源都在结果里，分数降序。
-      final hybrid = index.searchHybrid(
-        '矩阵',
-        vector: const [0, 1, 0, 0],
-        k: 10,
-      );
-      final keys = {for (final match in hybrid) match.sourceKey};
-      expect(keys, containsAll({_pageA.sourceKey, _message.sourceKey}));
-      for (var index = 1; index < hybrid.length; index++) {
-        expect(
-          hybrid[index - 1].score,
-          greaterThanOrEqualTo(hybrid[index].score),
-        );
-      }
+      // 向量 collection 不存正文，也没有全文索引，关键词一路对它没有结果。
+      expect(index.searchText('矩阵', k: 10), isEmpty);
+      expect(index.searchText('线性代数', k: 10), isEmpty);
 
-      // 预过滤在融合的两路上都生效。
-      final filtered = index.searchHybrid(
-        '矩阵',
-        vector: const [0, 1, 0, 0],
+      // 预过滤在向量一路同样生效。
+      final filtered = index.search(
+        const [0, 1, 0, 0],
         k: 10,
         prefilter: const MaterialVectorPrefilter('mat-b'),
       );
@@ -501,7 +499,7 @@ void runVectorIndexContract(
     }, skip: skip);
 
     if (openTextOnly != null) {
-      test('没有嵌入模型时只按关键词检索', () {
+      test('searchText 只走关键词一路，向量集合对它是空的', () {
         final textIndex = openTextOnly(root);
         addTearDown(textIndex.close);
         _replace(
@@ -519,23 +517,24 @@ void runVectorIndexContract(
           vectors: const [],
         );
 
-        // 关键词检索走索引的全文子查询，不需要向量。
-        final hits = textIndex.searchHybrid('矩阵', k: 10);
+        // 关键词检索走索引的全文子查询，不需要向量，分数越大越相关。
+        final hits = textIndex.searchText('矩阵', k: 10);
         expect(hits.map((match) => match.sourceKey), [_pageA.sourceKey]);
+        expect(hits.single.content, '矩阵的秩');
         expect(hits.single.score, greaterThan(0));
         // 没有向量字段时向量检索没有结果，正文里没有查询词时也不命中。
         expect(textIndex.search(_unitVector, k: 10), isEmpty);
-        expect(textIndex.searchHybrid('拓扑', k: 10), isEmpty);
+        expect(textIndex.searchText('拓扑', k: 10), isEmpty);
 
         // 记忆召回按来源键把排序限制在本次候选里，空候选一条也不返回。
-        final scoped = textIndex.searchHybrid(
+        final scoped = textIndex.searchText(
           '矩阵',
           k: 10,
           prefilter: SourceKeysVectorPrefilter([_pageA.sourceKey]),
         );
         expect(scoped.map((match) => match.sourceKey), [_pageA.sourceKey]);
         expect(
-          textIndex.searchHybrid(
+          textIndex.searchText(
             '矩阵',
             k: 10,
             prefilter: SourceKeysVectorPrefilter(const []),

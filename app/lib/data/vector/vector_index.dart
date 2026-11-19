@@ -7,6 +7,19 @@ import '../../domain/rules/embedding.dart';
 /// 记忆按记忆表的有效性核对，与证据来源的核对规则不同，因此单独一个 collection。
 const String memoryIndexDirectoryName = 'memory_index';
 
+/// 语义索引拆成的两个 collection 的目录名；两者各有独立目录与状态文件。
+///
+/// 文本 collection 的 schema 固定，只存正文与全文索引；向量 collection 按嵌入
+/// 模型键分目录，只存向量、来源键与文本哈希。见 ADR-0030 决定第 4 条。
+const String textCollectionDirectoryName = 'text';
+const String vectorCollectionDirectoryName = 'vector';
+
+/// 名次融合的平滑常数：两路候选按 1/(常数 + 名次) 相加，名次越靠前贡献越大。
+///
+/// 文本 collection 的全文子查询与 `SearchIndexService` 的两路融合共用这个值，
+/// 拆分前后的顺序差异只来自“两路各自排序”而不是常数变化。
+const int vectorFusionRankConstant = 60;
+
 /// 索引里的一条命中：来源、片段正文与写入时的版本。
 class StoredVector {
   const StoredVector({
@@ -21,16 +34,19 @@ class StoredVector {
 
   final String sourceKey;
   final int chunk;
+
+  /// 片段正文；只有文本 collection 保存正文，向量 collection 返回空串。
   final String content;
   final String sourceVersion;
   final String locatorJson;
   final double distance;
 
-  /// 融合检索的得分，越大越相关；只有 [VectorIndex.searchHybrid] 会填。
+  /// 检索得分，越大越相关；文本 collection 的 [VectorIndex.searchText] 会填，
+  /// 应用层按名次融合之后也由这里带出融合分。
   final double score;
 }
 
-/// 索引条目的当前状态：用于判断来源是否需要重新嵌入。
+/// 索引条目的当前状态：用于判断来源是否需要重写正文或重新嵌入。
 class IndexedSource {
   const IndexedSource({required this.sourceVersion, required this.chunks});
 
@@ -106,28 +122,37 @@ abstract interface class VectorIndex {
     required int writtenEntries,
   });
 
+  /// 写入一个来源的全部片段；片段数为零表示删除这个来源。
+  ///
+  /// 文本 collection 读 [chunks]（正文），向量 collection 读 [hashes] 与
+  /// [vectors]；另一个参数在各自的实现里被忽略。写入顺序仍然是先写 1..n 号
+  /// 片段、删除多余片段、最后写 0 号片段作为这个来源的提交记录。
   void replaceSource({
     required SemanticLocator locator,
     required String sourceVersion,
-    required List<String> chunks,
-    required List<List<double>> vectors,
+    List<String> chunks = const [],
+    List<String> hashes = const [],
+    List<List<double>> vectors = const [],
     required String createdAt,
   });
 
   /// 删除未保留的来源，返回被删除的向量条数。
   int pruneSources(Set<String> keep);
 
+  /// 向量检索；只有向量 collection 支持，文本 collection 返回空列表。
   List<StoredVector> search(
     List<double> query, {
     int k = 20,
     VectorPrefilter? prefilter,
   });
 
-  /// 一次查询同时取关键词与语义候选，按名次融合后返回；[vector] 为空时只做
-  /// 关键词一路。返回值按融合分从高到低，[StoredVector.score] 已填。
-  List<StoredVector> searchHybrid(
+  /// 关键词检索；只有文本 collection 支持，向量 collection 返回空列表。
+  ///
+  /// 返回值按相关度从高到低，[StoredVector.score] 已填。引擎要求多路查询至少
+  /// 两路，实现把同一条全文查询发两次再按名次倒数相加融合，先后与单路全文
+  /// 检索一致；两路结果在应用层再由 `SearchIndexService` 融合一次。
+  List<StoredVector> searchText(
     String text, {
-    List<double>? vector,
     int k = 20,
     VectorPrefilter? prefilter,
   });
