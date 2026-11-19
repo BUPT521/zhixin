@@ -1,11 +1,13 @@
-// Package llmproxy forwards OpenAI Chat Completions requests to the provider
-// with the server-held key (ADR-0008, ADR-0009).
+// Package llmproxy forwards OpenAI-compatible requests to the model sources
+// configured by the administrator, with server-held keys (ADR-0008, ADR-0029).
 //
-// The client keeps its existing Chat Completions request builder and SSE
-// parser: it points the base URL at <server>/v1/llm and sends its access
-// token as the key. The proxy checks the model allow-list and the daily
-// budget, swaps the credential, and copies the response through, flushing
-// every chunk. Request and response bodies are never logged or stored; only
+// The client keeps its existing Chat Completions and Embeddings request
+// builders: it points the base URL at <server>/v1/llm and sends its access
+// token as the key. The proxy looks the model name up in the routing table,
+// checks the account's daily budget for that kind of model, swaps in the
+// source's model name and key, and copies the response through. Chat streams
+// are flushed chunk by chunk; embedding batches are split per route and merged
+// back in order. Request and response bodies are never logged or stored; only
 // the token count from the provider's "usage" object is recorded.
 package llmproxy
 
@@ -18,8 +20,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
-	"slices"
 	"sync"
 	"time"
 
@@ -33,6 +35,7 @@ import (
 
 type Proxy struct {
 	cfg    config.LLMConfig
+	router *Router
 	quota  Quota
 	client *http.Client
 	loc    *time.Location
@@ -51,18 +54,53 @@ type Proxy struct {
 	inflight   map[string]int
 }
 
-// NewHandler 组装模型代理；构造函数与另外四个业务包同名。
-func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
-	// 额度上限只有配置一处来源：装配时交给配额实现，Reserve 用它做原子比较。
-	// 接口之外的注入用可选方法，内存与 PostgreSQL 实现都支持。
-	if setter, ok := quota.(quotaLimits); ok {
-		setter.SetQuotaLimits(cfg.DailyTokens, cfg.InstanceDailyTokens)
+// EnvSourceFrom 取出配置里的环境变量来源。
+func EnvSourceFrom(cfg config.LLMConfig) EnvSource {
+	return EnvSource{
+		BaseURL:         cfg.BaseURL,
+		APIKey:          cfg.APIKey,
+		ChatModels:      cfg.Models,
+		EmbeddingModels: cfg.EmbeddingModels,
 	}
-	// No overall client timeout: streams legitimately last minutes. The
-	// client's own per-event deadlines (docs/00 §9) cancel the request,
-	// which cancels r.Context() and with it the upstream call.
-	return &Proxy{cfg: cfg, quota: quota, client: &http.Client{}, loc: loc, now: time.Now, log: log, inflight: map[string]int{}}
 }
+
+// NewHandler 使用环境变量里的模型来源，供单独装配代理时使用。
+func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
+	return NewRoutedHandler(cfg, NewRouter(nil, nil, EnvSourceFrom(cfg), log), quota, loc, log)
+}
+
+// NewRoutedHandler 使用服务端与管理后台共同维护的路由快照。
+func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
+	if setter, ok := quota.(quotaLimits); ok {
+		setter.SetQuotaLimits(cfg.DailyTokens, cfg.EmbeddingDailyTokens, cfg.InstanceDailyTokens)
+	}
+
+	// No overall client timeout: chat streams legitimately last minutes. The
+	// client's own per-event deadlines (docs/00 §9) cancel the request, which
+	// cancels r.Context() and with it the upstream call. Streams and
+	// embeddings get a response-header deadline per attempt (see attempt).
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+	return &Proxy{
+		cfg: cfg, router: router, quota: quota,
+		// 不跟随重定向：同主机从 https 跳到 http 时标准库会带着 Authorization
+		// 再发一次，key 会以明文出现在网络上。来源的地址应当直接写对。
+		client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
+		loc: loc, now: time.Now, log: log, inflight: map[string]int{},
+	}
+}
+
+// Router 返回代理使用的路由器，管理接口与它共用同一份快照。
+func (p *Proxy) Router() *Router { return p.router }
 
 // dayTime 返回配置时区下的当前时间；自然日只从它取，响应里的 date 与用量
 // 记录的字符串因此不会落到不同的一天。
@@ -113,11 +151,21 @@ func (p *Proxy) releaseConcurrency(userID string) {
 	}
 }
 
-// models answers in the OpenAI list shape so the client's connection test works unchanged.
+// Models answers in the OpenAI list shape so the client's connection test
+// works unchanged; kind and dimensions tell chat and embedding models apart.
 func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
-	data := make([]api.Model, 0, len(p.cfg.Models))
-	for _, m := range p.cfg.Models {
-		data = append(data, api.Model{Id: m, Object: "model", OwnedBy: "zhixin"})
+	snap := p.router.current()
+	data := make([]api.Model, 0, len(snap.models))
+	for _, m := range snap.models {
+		if !m.usable() {
+			continue
+		}
+		item := api.Model{Id: m.Name, Object: "model", OwnedBy: "zhixin", Kind: api.ModelKind(m.Kind)}
+		if m.Kind == KindEmbedding && m.Dimensions > 0 {
+			d := m.Dimensions
+			item.Dimensions = &d
+		}
+		data = append(data, item)
 	}
 	httpx.WriteJSON(w, http.StatusOK, api.ModelList{Object: "list", Data: data})
 }
@@ -125,116 +173,166 @@ func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 	pr := auth.MustPrincipal(r.Context())
 	day := p.day()
-	used, err := p.quota.Used(r.Context(), pr.UserID, day)
-	if err != nil {
-		httpx.WriteInternal(w, r, p.log, err)
-		return
+	out := api.LLMQuota{Day: openapi_types.Date{Time: p.dayTime()}}
+	for _, k := range []Kind{KindChat, KindEmbedding} {
+		used, err := p.quota.Used(r.Context(), pr.UserID, day, k)
+		if err != nil {
+			httpx.WriteInternal(w, r, p.log, err)
+			return
+		}
+		limit, err := p.dailyLimit(r.Context(), pr.UserID, k)
+		if err != nil {
+			httpx.WriteInternal(w, r, p.log, err)
+			return
+		}
+		if k == KindChat {
+			out.UsedTokens, out.DailyTokens = used, limit
+		} else {
+			out.EmbeddingUsedTokens, out.EmbeddingDailyTokens = used, limit
+		}
 	}
-	limit, err := p.dailyLimit(r.Context(), pr.UserID)
-	if err != nil {
-		httpx.WriteInternal(w, r, p.log, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, api.LLMQuota{
-		Day:         openapi_types.Date{Time: p.dayTime()},
-		UsedTokens:  used,
-		DailyTokens: limit,
-	})
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// dailyLimit 返回账号当天可用的 token 上限：先看有没有按账号调整过的额度，
-// 没有时用配置的默认值。调整写 llm_quota 表，不重启服务，下一次请求生效。
-func (p *Proxy) dailyLimit(ctx context.Context, userID string) (int64, error) {
-	limit, ok, err := p.quota.DailyLimit(ctx, userID)
+// dailyLimit 返回账号当天某类模型可用的 token 上限：先看有没有按账号调整过的
+// 额度，没有时用配置的默认值。调整写 llm_quota 表，不重启服务，下一次请求生效。
+func (p *Proxy) dailyLimit(ctx context.Context, userID string, kind Kind) (int64, error) {
+	limit, ok, err := p.quota.DailyLimit(ctx, userID, kind)
 	if err != nil {
 		return 0, err
 	}
 	if ok {
 		return limit, nil
 	}
+	if kind == KindEmbedding {
+		return p.cfg.EmbeddingDailyTokens, nil
+	}
 	return p.cfg.DailyTokens, nil
 }
 
-func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
-	pr := auth.MustPrincipal(r.Context())
-	if p.cfg.APIKey == "" {
-		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
-		return
-	}
-	// 邮箱确认在读取请求体之前检查：未确认的账号拿 403，不消耗请求体读取、额度
-	// 预留与上游调用。检查失败按服务端错误处理，不能当成“未确认”放过去。
-	if p.cfg.RequireVerifiedEmail && p.verifyEmail != nil {
-		verified, err := p.verifyEmail(r.Context(), pr.UserID)
-		if err != nil {
-			httpx.WriteInternal(w, r, p.log, err)
-			return
-		}
-		if !verified {
-			httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeEmailUnverified,
-				"verify your email address on the account page to use the hosted model quota")
-			return
-		}
-	}
-	// 并发上限同样在读取请求体之前检查：超出时回 429 与 Retry-After，不占请求体
-	// 读取、额度预留与上游连接。名额在请求结束（含流式转发）时由 defer 归还。
-	if !p.acquireConcurrency(pr.UserID) {
-		httpx.TooMany(w, r, 1)
-		return
-	}
-	defer p.releaseConcurrency(pr.UserID)
+// readBody 读入请求体并解成顶层字段；失败时已经写好 problem。
+func (p *Proxy) readBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, p.cfg.MaxRequestBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, fmt.Sprintf("request exceeds %d bytes", p.cfg.MaxRequestBytes))
-			return
+			return nil, false
 		}
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "could not read body")
-		return
+		return nil, false
 	}
-	// 只解释契约里声明的 model 与 stream，其余字段按原始字节转发给提供方：请求体
-	// 是提供方的格式，服务端不重新编码。
-	var head api.PostV1LlmChatCompletionsJSONBody
-	if err := json.Unmarshal(body, &head); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "body is not a JSON object")
-		return
+		return nil, false
 	}
-	if !slices.Contains(p.cfg.Models, head.Model) {
-		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeModelNotAllowed, "", map[string]any{"models": p.cfg.Models})
-		return
+	return fields, true
+}
+
+// beginRequest 在读请求体之前核对邮箱状态并占用账号的并发名额。
+func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID string) bool {
+	if len(p.router.current().models) == 0 {
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
+		return false
 	}
-	stream := head.Stream != nil && *head.Stream
-	day := p.day()
-	// 转发前按请求体大小估算消耗并预留：估算不追求精确，结算时按提供方返回的
-	// usage 多退少补；至少 1 个 token，避免空请求完全不占额度。账号额度与实例
-	// 预算由配额实现在同一个临界区里比较，并发请求不会各自按旧用量通过。
-	estimate := int64(len(body) / 4)
-	if estimate < 1 {
-		estimate = 1
+	// 邮箱确认在读取请求体之前检查：未确认的账号拿 403，不消耗请求体读取、额度
+	// 预留与上游调用。检查失败按服务端错误处理，不能当成“未确认”放过去。
+	if p.cfg.RequireVerifiedEmail && p.verifyEmail != nil {
+		verified, err := p.verifyEmail(r.Context(), userID)
+		if err != nil {
+			httpx.WriteInternal(w, r, p.log, err)
+			return false
+		}
+		if !verified {
+			httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeEmailUnverified,
+				"verify your email address on the account page to use the hosted model quota")
+			return false
+		}
 	}
-	reserved, err := p.quota.Reserve(r.Context(), pr.UserID, day, estimate)
+	// 并发上限同样在读取请求体之前检查：超出时回 429 与 Retry-After，不占请求体
+	// 读取、额度预留与上游连接。名额在请求结束（含流式转发）时由 defer 归还。
+	if !p.acquireConcurrency(userID) {
+		httpx.TooMany(w, r, 1)
+		return false
+	}
+	return true
+}
+
+// findModel 解析当前快照中的同用途模型；失败时写入 problem。
+func (p *Proxy) findModel(w http.ResponseWriter, r *http.Request, fields map[string]json.RawMessage, kind Kind) *liveModel {
+	snap := p.router.current()
+	if len(snap.models) == 0 {
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
+		return nil
+	}
+	var name string
+	_ = json.Unmarshal(fields["model"], &name)
+	m, ok := snap.model(name)
+	if !ok || m.Kind != kind || !m.usable() {
+		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeModelNotAllowed, "", map[string]any{"models": snap.modelNames(kind)})
+		return nil
+	}
+	return m
+}
+
+func (p *Proxy) reserve(w http.ResponseWriter, r *http.Request, userID, day string, kind Kind, estimate int64) int64 {
+	reserved, err := p.quota.Reserve(r.Context(), userID, day, kind, max(1, estimate))
 	if errors.Is(err, ErrQuotaExceeded) {
-		p.writeQuotaExceeded(w, r, pr.UserID, day)
-		return
+		p.writeQuotaExceeded(w, r, userID, day, kind)
+		return 0
 	}
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
+		return 0
+	}
+	return reserved
+}
+
+// settle 即使客户端断开也结算本次预留。
+func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved, actual int64) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	if err := p.quota.Settle(ctx, userID, day, kind, reserved, actual); err != nil {
+		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
+	}
+}
+
+func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
+	userID := auth.MustPrincipal(r.Context()).UserID
+	if !p.beginRequest(w, r, userID) {
 		return
 	}
-
-	// 预留之后的所有出口都结算一次：请求构造失败、上游不可达、响应读不完、超时
-	// 都会走到这里，预留不会永远挂在账上。默认按预留保守记账，确实没有产生用量
-	// 的路径在返回前改成 0。
-	actual := reserved
-	defer func() {
-		// 用独立 context 结算：客户端可能在最后一个数据块之后已经断开，但用量已经
-		// 发生。结算失败只记日志，响应已经写出，不能让客户端以为请求失败。
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
-		defer cancel()
-		if err := p.quota.Settle(ctx, pr.UserID, day, reserved, actual); err != nil {
-			p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
+	defer p.releaseConcurrency(userID)
+	fields, ok := p.readBody(w, r)
+	if !ok {
+		return
+	}
+	model := p.findModel(w, r, fields, KindChat)
+	if model == nil {
+		return
+	}
+	var stream bool
+	if raw, ok := fields["stream"]; ok {
+		if err := json.Unmarshal(raw, &stream); err != nil {
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "stream must be a boolean")
+			return
 		}
-	}()
+	}
+	if stream {
+		fields["stream_options"] = withIncludeUsage(fields["stream_options"])
+	}
+	var bodyBytes int64
+	for key, field := range fields {
+		bodyBytes += int64(len(key) + len(field))
+	}
+	day := p.day()
+	reserved := p.reserve(w, r, userID, day, KindChat, bodyBytes/4)
+	if reserved == 0 {
+		return
+	}
+	actual := reserved
+	defer func() { p.settle(r, userID, day, KindChat, reserved, actual) }()
 
 	// 流式响应套一层守卫：总时限从发起上游请求时开始，空闲时限从收到响应体之后
 	// 开始；超时取消上游请求，阻塞中的读取随即返回。非流式沿用请求自身的 context。
@@ -244,27 +342,21 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		reqCtx, guard = p.newStreamGuard(reqCtx)
 		defer guard.stop()
 	}
-	up, err := http.NewRequestWithContext(reqCtx, http.MethodPost, p.cfg.BaseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		actual = 0
-		httpx.WriteInternal(w, r, p.log, err)
-		return
-	}
-	up.Header.Set("Content-Type", "application/json")
-	up.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
-	if stream {
-		up.Header.Set("Accept", "text/event-stream")
-	}
-	resp, err := p.client.Do(up)
+	resp, _, err := p.dispatch(reqCtx, p.router.candidates(model, p.cfg.MaxAttempts), "/chat/completions", fields, stream)
 	if err != nil {
 		actual = 0 // 没有拿到响应，按没有产生用量退回预留。
 		if r.Context().Err() != nil {
 			return // client went away
 		}
-		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not reach the model provider")
+		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not reach any model source")
 		return
 	}
 	defer resp.Body.Close()
+	if keyRejected(resp.StatusCode) {
+		actual = 0
+		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "the model sources rejected the server key")
+		return
+	}
 
 	// Pass the provider's status and body through, including errors: the
 	// client already reads provider error bodies to explain key, quota and
@@ -307,15 +399,139 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// keyRejected 表示最后一个来源拒绝了服务端的 key。这是服务端的配置问题，
+// 提供方的错误体里可能带着打码的 key、组织名与来源侧模型名，不转给客户端。
+func keyRejected(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
+}
+
+// withIncludeUsage 在 stream_options 里打开 include_usage，保留客户端的其他字段。
+func withIncludeUsage(raw json.RawMessage) json.RawMessage {
+	opts := map[string]json.RawMessage{}
+	_ = json.Unmarshal(raw, &opts)
+	if opts == nil {
+		opts = map[string]json.RawMessage{}
+	}
+	opts["include_usage"] = json.RawMessage("true")
+	out, _ := json.Marshal(opts)
+	return out
+}
+
+// retryable 报告这个状态码是否换下一个来源再试：限流、服务端错误与 key 被拒
+// 都可能只是这个来源的问题；400、404、422 这类说明请求本身有问题，换来源也
+// 一样，直接返回给客户端。
+func retryable(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden ||
+		status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
+		status >= 500
+}
+
+// withModel 返回把 model 换成来源侧名字之后的请求体。其余字段按原始字节保留。
+func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, error) {
+	out := make(map[string]json.RawMessage, len(fields))
+	for k, v := range fields {
+		out[k] = v
+	}
+	name, err := json.Marshal(upstream)
+	if err != nil {
+		return nil, err
+	}
+	out["model"] = name
+	return json.Marshal(out)
+}
+
+// dispatch 按候选顺序尝试，直到某个来源给出不需要换来源的响应。所有来源都
+// 连不上时返回错误；最后一个来源返回可重试状态时把它的响应原样交给调用方。
+func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, path string, fields map[string]json.RawMessage, stream bool) (*http.Response, liveRoute, error) {
+	var lastErr error = errors.New("no usable route")
+	for i, rt := range cands {
+		body, err := withModel(fields, rt.UpstreamModel)
+		if err != nil {
+			return nil, rt, err
+		}
+		resp, err := p.attempt(ctx, rt.Provider, path, body, stream || path != "/chat/completions")
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, rt, ctx.Err()
+			}
+			p.router.health.fail(rt.Provider.ID, "连接失败："+err.Error())
+			lastErr = err
+			continue
+		}
+		if retryable(resp.StatusCode) {
+			p.router.health.fail(rt.Provider.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
+			if i < len(cands)-1 {
+				resp.Body.Close()
+				continue
+			}
+			return resp, rt, nil
+		}
+		if resp.StatusCode < 400 {
+			p.router.health.succeed(rt.Provider.ID)
+		}
+		return resp, rt, nil
+	}
+	return nil, liveRoute{}, lastErr
+}
+
+// attempt 向一个来源发一次请求。headerDeadline 为真时，响应头必须在
+// HeaderTimeout 内到达，否则按连接失败处理，便于换下一个来源；非流式聊天
+// 要等整段回答生成完才有响应头，不设这个期限。
+func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, headerDeadline bool) (*http.Response, error) {
+	actx, cancel := context.WithCancel(ctx)
+	req, err := http.NewRequestWithContext(actx, http.MethodPost, prov.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if prov.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+prov.APIKey)
+	}
+	if path == "/chat/completions" && headerDeadline {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+	var timer *time.Timer
+	if headerDeadline && p.cfg.HeaderTimeout > 0 {
+		timer = time.AfterFunc(p.cfg.HeaderTimeout, cancel)
+	}
+	resp, err := p.client.Do(req)
+	if timer != nil && !timer.Stop() {
+		// 期限在 Do 返回前后到点：响应体已经被取消，当作超时。
+		if err == nil {
+			resp.Body.Close()
+		}
+		cancel()
+		return nil, fmt.Errorf("no response within %s", p.cfg.HeaderTimeout)
+	}
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
 // writeQuotaExceeded 回 429 quota_exceeded，并带上当天的账号用量、账号额度与
 // 实例预算：客户端据此提示额度用完，响应里也能看出是哪一种额度用尽。
-func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userID, day string) {
-	used, err := p.quota.Used(r.Context(), userID, day)
+func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userID, day string, kind Kind) {
+	used, err := p.quota.Used(r.Context(), userID, day, kind)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
-	limit, err := p.dailyLimit(r.Context(), userID)
+	limit, err := p.dailyLimit(r.Context(), userID, kind)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
@@ -329,6 +545,7 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 		"daily budget used up; use your own key or try again tomorrow",
 		map[string]any{
 			"day":                   day,
+			"kind":                  string(kind),
 			"used_tokens":           used,
 			"daily_tokens":          limit,
 			"instance_used_tokens":  instanceUsed,
@@ -338,8 +555,19 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 
 type usageEnvelope struct {
 	Usage *struct {
-		TotalTokens int64 `json:"total_tokens"`
+		PromptTokens int64 `json:"prompt_tokens"`
+		TotalTokens  int64 `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+func (u usageEnvelope) tokens() int64 {
+	if u.Usage == nil {
+		return 0
+	}
+	if u.Usage.TotalTokens > 0 {
+		return u.Usage.TotalTokens
+	}
+	return u.Usage.PromptTokens
 }
 
 // errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用

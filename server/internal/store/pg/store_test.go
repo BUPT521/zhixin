@@ -18,6 +18,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
+	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -46,7 +47,7 @@ func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS llm_route, llm_model, llm_provider, attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_head, auth_code, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -866,17 +867,24 @@ func TestPostgresBackupsAndQuota(t *testing.T) {
 		t.Fatalf("元数据大小应与字节一致: %d vs %d", meta.Size, len(data))
 	}
 
-	if used, err := st.Used(ctx, "u1", "2026-11-15"); err != nil || used != 0 {
+	chat, emb := llmproxy.KindChat, llmproxy.KindEmbedding
+	if used, err := st.Used(ctx, "u1", "2026-11-15", chat); err != nil || used != 0 {
 		t.Fatalf("未用过的日子应为 0，得到 %d %v", used, err)
 	}
-	if err := st.Add(ctx, "u1", "2026-11-15", 120); err != nil {
+	if err := st.Add(ctx, "u1", "2026-11-15", chat, 120); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if err := st.Add(ctx, "u1", "2026-11-15", 30); err != nil {
+	if err := st.Add(ctx, "u1", "2026-11-15", chat, 30); err != nil {
 		t.Fatalf("add again: %v", err)
 	}
-	if used, err := st.Used(ctx, "u1", "2026-11-15"); err != nil || used != 150 {
-		t.Fatalf("用量应累加到 150，得到 %d %v", used, err)
+	if err := st.Add(ctx, "u1", "2026-11-15", emb, 9000); err != nil {
+		t.Fatalf("add embedding: %v", err)
+	}
+	if used, err := st.Used(ctx, "u1", "2026-11-15", chat); err != nil || used != 150 {
+		t.Fatalf("聊天用量应累加到 150，得到 %d %v", used, err)
+	}
+	if used, err := st.Used(ctx, "u1", "2026-11-15", emb); err != nil || used != 9000 {
+		t.Fatalf("嵌入用量应单独计，得到 %d %v", used, err)
 	}
 }
 
@@ -979,16 +987,26 @@ func TestPostgresQuotaOverride(t *testing.T) {
 	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "quota@b.cn", PasswordHash: "h"}); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	if _, ok, err := st.DailyLimit(ctx, "u1"); err != nil || ok {
+	if _, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindChat); err != nil || ok {
 		t.Fatalf("没有覆盖行时应回落到默认值：ok=%v err=%v", ok, err)
 	}
 
 	if _, err := st.pool.Exec(ctx, `INSERT INTO llm_quota (user_id, daily_tokens, note) VALUES ('u1', 5000, '内测')`); err != nil {
 		t.Fatalf("insert override: %v", err)
 	}
-	limit, ok, err := st.DailyLimit(ctx, "u1")
+	limit, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindChat)
 	if err != nil || !ok || limit != 5000 {
 		t.Fatalf("覆盖额度没有读到：limit=%d ok=%v err=%v", limit, ok, err)
+	}
+	// 嵌入那一列为空：回落到嵌入的默认值。
+	if _, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindEmbedding); err != nil || ok {
+		t.Fatalf("嵌入列为空时应回落到默认值：ok=%v err=%v", ok, err)
+	}
+	if _, err := st.pool.Exec(ctx, `UPDATE llm_quota SET embedding_daily_tokens = 900000 WHERE user_id = 'u1'`); err != nil {
+		t.Fatalf("update override: %v", err)
+	}
+	if limit, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindEmbedding); err != nil || !ok || limit != 900000 {
+		t.Fatalf("嵌入覆盖额度没有读到：limit=%d ok=%v err=%v", limit, ok, err)
 	}
 
 	if err := st.DeleteUser(ctx, "u1"); err != nil {
@@ -1032,5 +1050,78 @@ func TestPgTimeRejectsZero(t *testing.T) {
 	}
 	if !got.Valid || !got.Time.Equal(at) {
 		t.Fatalf("pgTime = %+v", got)
+	}
+}
+
+// TestPostgresCatalog 核对模型来源与路由的读写：路由整体替换并保持顺序，
+// 指向不存在的来源时报 ErrUnknownProvider，来源被路由引用时不能删除，删除
+// 模型时路由随外键级联删除。
+func TestPostgresCatalog(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	if _, err := st.Provider(ctx, "sf"); !errors.Is(err, llmproxy.ErrNotFound) {
+		t.Fatalf("不存在的来源应返回 ErrNotFound，得到 %v", err)
+	}
+	p := llmproxy.ProviderRecord{ID: "sf", Name: "硅基流动", BaseURL: "https://api.siliconflow.cn/v1", APIKeySealed: "v1:xxx", KeyHint: "abcd", Enabled: true, Note: "嵌入", UpdatedAt: now}
+	if err := st.PutProvider(ctx, p); err != nil {
+		t.Fatalf("put provider: %v", err)
+	}
+	p.Name = "SiliconFlow"
+	if err := st.PutProvider(ctx, p); err != nil {
+		t.Fatalf("update provider: %v", err)
+	}
+	got, err := st.Provider(ctx, "sf")
+	if err != nil || got.Name != "SiliconFlow" || got.APIKeySealed != "v1:xxx" || got.KeyHint != "abcd" || !got.UpdatedAt.Equal(now) {
+		t.Fatalf("provider round trip: %+v %v", got, err)
+	}
+	if err := st.PutProvider(ctx, llmproxy.ProviderRecord{ID: "ds", BaseURL: "https://api.deepseek.com/v1", Enabled: true, UpdatedAt: now}); err != nil {
+		t.Fatalf("put second provider: %v", err)
+	}
+
+	m := llmproxy.ModelRecord{Name: "zhixin-embed", Kind: llmproxy.KindEmbedding, Enabled: true, Dimensions: 1024, UpdatedAt: now, Routes: []llmproxy.Route{
+		{ProviderID: "sf", UpstreamModel: "BAAI/bge-m3", Priority: 0, Weight: 3, MaxBatch: 32, Enabled: true},
+		{ProviderID: "ds", UpstreamModel: "bge-m3", Priority: 1, Weight: 1, Enabled: false},
+	}}
+	if err := st.PutModel(ctx, m); err != nil {
+		t.Fatalf("put model: %v", err)
+	}
+	bad := m
+	bad.Routes = []llmproxy.Route{{ProviderID: "missing", UpstreamModel: "x", Weight: 1}}
+	if err := st.PutModel(ctx, bad); !errors.Is(err, llmproxy.ErrUnknownProvider) {
+		t.Fatalf("指向不存在的来源应报 ErrUnknownProvider，得到 %v", err)
+	}
+	models, err := st.Models(ctx)
+	if err != nil || len(models) != 1 {
+		t.Fatalf("models: %v %+v", err, models)
+	}
+	got2 := models[0]
+	if got2.Dimensions != 1024 || len(got2.Routes) != 2 || got2.Routes[0].ProviderID != "sf" || got2.Routes[0].MaxBatch != 32 || got2.Routes[1].Enabled {
+		t.Fatalf("事务失败后应保留原来的路由并按顺序读回：%+v", got2)
+	}
+
+	if err := st.DeleteProvider(ctx, "sf"); !errors.Is(err, llmproxy.ErrProviderInUse) {
+		t.Fatalf("被路由引用的来源不能删除，得到 %v", err)
+	}
+	m.Routes = m.Routes[1:]
+	if err := st.PutModel(ctx, m); err != nil {
+		t.Fatalf("replace routes: %v", err)
+	}
+	if err := st.DeleteProvider(ctx, "sf"); err != nil {
+		t.Fatalf("没有路由引用之后可以删除：%v", err)
+	}
+	if err := st.DeleteProvider(ctx, "sf"); !errors.Is(err, llmproxy.ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，得到 %v", err)
+	}
+	if err := st.DeleteModel(ctx, "zhixin-embed"); err != nil {
+		t.Fatalf("delete model: %v", err)
+	}
+	var routes int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM llm_route`).Scan(&routes); err != nil || routes != 0 {
+		t.Fatalf("删除模型后路由应级联删除：%d %v", routes, err)
+	}
+	if err := st.DeleteModel(ctx, "zhixin-embed"); !errors.Is(err, llmproxy.ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，得到 %v", err)
 	}
 }

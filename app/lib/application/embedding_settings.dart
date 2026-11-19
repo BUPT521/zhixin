@@ -5,26 +5,37 @@ import 'search_index_service.dart';
 
 /// 按配置构造嵌入来源与发送范围。
 ///
-/// 远程来源只允许发送用户选定的范围：`all` 发送本机记录，`selectedMaterials`
-/// 只发送属于选定材料的来源，`off` 不发送。本机哈希不联网，不做范围限制。
-/// 没有配置或配置不完整时返回空来源，语义检索按不可用处理，原文与关键词
-/// 检索照常完成。
+/// 远程来源（自填接口与知新服务）只允许发送用户选定的范围：`all` 发送本机
+/// 记录，`selectedMaterials` 只发送属于选定材料的来源，`off` 不发送。本机哈希
+/// 不联网，不做范围限制。没有配置或配置不完整时返回空来源，语义检索按不可用
+/// 处理，原文与关键词检索照常完成。
+///
+/// 知新服务的地址与令牌由 [serverEndpoint] 在每次请求前给出；没有传入时
+/// （测试装配）这一来源按不可用处理。
 ({EmbeddingClient? client, bool Function(SemanticSource source)? canSend})
-embeddingRuntime(EmbeddingConfig? config) {
+embeddingRuntime(
+  EmbeddingConfig? config, {
+  Future<EmbeddingEndpoint> Function()? serverEndpoint,
+}) {
   if (config == null || !config.usable) {
     return (client: null, canSend: null);
   }
-  if (!config.usesRemote) {
+  if (!config.sendsText) {
     return (
       client: HashingEmbeddingClient(dim: config.dim, id: config.spec.id),
       canSend: null,
     );
   }
-  final client = RemoteEmbeddingClient(
-    spec: config.spec,
-    endpoint: config.baseUrl.trim().replaceAll(RegExp(r'/+$'), ''),
-    apiKey: config.apiKey,
-  );
+  if (config.usesServer && serverEndpoint == null) {
+    return (client: null, canSend: null);
+  }
+  final client = config.usesServer
+      ? RemoteEmbeddingClient(spec: config.spec, credentials: serverEndpoint)
+      : RemoteEmbeddingClient(
+          spec: config.spec,
+          endpoint: config.baseUrl.trim().replaceAll(RegExp(r'/+$'), ''),
+          apiKey: config.apiKey,
+        );
   final scope = config.shareScope;
   final allowed = config.materialIds.toSet();
   bool canSend(SemanticSource source) {
@@ -44,10 +55,18 @@ embeddingRuntime(EmbeddingConfig? config) {
 /// 队列，下一次打开等这次关闭完成。应用根启动时用 [read] 与 [apply] 恢复上次
 /// 保存的配置。
 class EmbeddingSettingsService {
-  EmbeddingSettingsService({required this.store, required this.index});
+  EmbeddingSettingsService({
+    required this.store,
+    required this.index,
+    this.serverEndpoint,
+  });
 
   final EmbeddingConfigStore store;
   final SearchIndexService index;
+
+  /// 选择知新服务时每次嵌入请求前取服务地址与当前访问令牌；应用根传入账号
+  /// 服务的实现，未登录时它抛 [EmbeddingSourceUnavailable]。
+  final Future<EmbeddingEndpoint> Function()? serverEndpoint;
 
   EmbeddingConfig? _current;
 
@@ -71,7 +90,7 @@ class EmbeddingSettingsService {
   /// 应用一套配置，不写入存储；启动恢复与测试装配走这里。
   void apply(EmbeddingConfig? config) {
     _current = config;
-    final runtime = embeddingRuntime(config);
+    final runtime = embeddingRuntime(config, serverEndpoint: serverEndpoint);
     index.configure(client: runtime.client, canSend: runtime.canSend);
   }
 }

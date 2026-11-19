@@ -141,8 +141,9 @@ class _SettingsPageState extends State<SettingsPage> {
       if (account.signedIn) {
         try {
           serverModels = [
+            // 嵌入模型给语义索引用，回答选不了，不放进这里的提示。
             for (final model in await scope.accountServices.account.models())
-              model.id,
+              if (model.isChat) model.id,
           ];
         } catch (_) {
           // 模型列表只用于提示；读不到时保持空，不打断设置页。

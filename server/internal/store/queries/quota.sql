@@ -16,11 +16,12 @@ WHERE day = sqlc.arg(day)::date;
 -- 好，这里仍然用 upsert，重复结算或异常顺序都不会写坏数据；插入与更新两个分支都
 -- 把结果限在 0 以上，异常参数也不会留下负用量。
 -- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, tokens)
+INSERT INTO llm_usage (user_id, day, kind, tokens)
 VALUES (
   sqlc.arg(user_id),
   sqlc.arg(day)::date,
+  sqlc.arg(kind),
   GREATEST(sqlc.arg(delta)::bigint, 0)
 )
-ON CONFLICT (user_id, day)
+ON CONFLICT (user_id, day, kind)
 DO UPDATE SET tokens = GREATEST(llm_usage.tokens + sqlc.arg(delta)::bigint, 0);

@@ -92,12 +92,14 @@ CREATE TABLE backup (
 );
 CREATE INDEX backup_user_created ON backup(user_id, created_at DESC);
 
--- 模型代理用量：只记 token 数，不记请求与回答正文。
+-- 模型代理用量：只记 token 数，不记请求与回答正文。聊天与嵌入分开计，
+-- 各有各的每日额度（ADR-0029）。
 CREATE TABLE llm_usage (
   user_id  TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   day      DATE NOT NULL,                      -- ZHIXIN_TIMEZONE 下的自然日
+  kind     TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
   tokens   BIGINT NOT NULL DEFAULT 0,
-  PRIMARY KEY (user_id, day)
+  PRIMARY KEY (user_id, day, kind)
 );
 
 -- 应用内反馈：登录与否都可以提交，不关联账号，删号也不影响已经提交的反馈。
@@ -134,13 +136,15 @@ CREATE TABLE install_active (
 );
 CREATE INDEX install_active_day ON install_active(day);
 
--- 按账号调整每日模型额度：没有行时用 ZHIXIN_LLM_DAILY_TOKENS。管理员直接写
--- 这张表调整个别账号，不重启服务，也不另开管理接口。
+-- 按账号调整每日模型额度：没有行或者某一列为空时用 ZHIXIN_LLM_DAILY_TOKENS
+-- 与 ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS。管理员直接写这张表调整个别账号，不重启
+-- 服务。
 CREATE TABLE llm_quota (
-  user_id       TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-  daily_tokens  BIGINT NOT NULL CHECK (daily_tokens > 0),
-  note          TEXT NOT NULL DEFAULT '',
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  daily_tokens            BIGINT CHECK (daily_tokens > 0),
+  embedding_daily_tokens  BIGINT CHECK (embedding_daily_tokens > 0),
+  note                    TEXT NOT NULL DEFAULT '',
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 附件索引：字节在对象存储的 attachments/<user_id>/<sha256>，这张表只记“这个
@@ -163,4 +167,44 @@ CREATE TABLE user_purge (
   user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
   started_at  TIMESTAMPTZ NOT NULL
 );
+
+-- 模型来源：一个 OpenAI 兼容的基础地址与一把 key，由管理后台维护（ADR-0029）。
+-- key 只存 AES-256-GCM 密文，密钥是环境变量 ZHIXIN_SECRET_KEY，不在库里；
+-- key_hint 是末四位，列表不用解密。环境变量里的来源不进这张表。
+CREATE TABLE llm_provider (
+  id             TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9_-]{0,31}$' AND id <> 'env'),
+  name           TEXT NOT NULL DEFAULT '',
+  base_url       TEXT NOT NULL,
+  api_key_sealed TEXT NOT NULL DEFAULT '',
+  key_hint       TEXT NOT NULL DEFAULT '',
+  enabled        BOOLEAN NOT NULL DEFAULT true,
+  note           TEXT NOT NULL DEFAULT '',
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 对外模型：客户端请求里写的名字。dimensions 只用于嵌入模型。
+CREATE TABLE llm_model (
+  name        TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL CHECK (kind IN ('chat', 'embedding')),
+  enabled     BOOLEAN NOT NULL DEFAULT true,
+  dimensions  INTEGER CHECK (dimensions BETWEEN 1 AND 8192),
+  note        TEXT NOT NULL DEFAULT '',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 路由：对外模型到某个来源上的模型名。priority 小的先试，同一优先级按 weight
+-- 分流；max_batch 是嵌入一次发给来源的最多条数，0 表示不拆分。删除来源前要先
+-- 删掉指向它的路由，所以外键不级联。
+CREATE TABLE llm_route (
+  model           TEXT NOT NULL REFERENCES llm_model(name) ON DELETE CASCADE,
+  provider_id     TEXT NOT NULL REFERENCES llm_provider(id),
+  upstream_model  TEXT NOT NULL,
+  priority        INTEGER NOT NULL DEFAULT 0 CHECK (priority BETWEEN 0 AND 100),
+  weight          INTEGER NOT NULL DEFAULT 1 CHECK (weight BETWEEN 1 AND 1000),
+  max_batch       INTEGER NOT NULL DEFAULT 0 CHECK (max_batch BETWEEN 0 AND 2048),
+  enabled         BOOLEAN NOT NULL DEFAULT true,
+  position        INTEGER NOT NULL,              -- 管理后台里的排列顺序
+  PRIMARY KEY (model, provider_id, upstream_model)
+);
+CREATE INDEX llm_route_provider ON llm_route(provider_id);
 

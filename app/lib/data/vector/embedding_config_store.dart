@@ -22,10 +22,32 @@ enum EmbeddingShareScope {
   }
 }
 
+/// 嵌入来源：自填接口直连提供方、登录后走知新服务，或者本机哈希。
+enum EmbeddingProvider {
+  remote('remote'),
+  server('server'),
+  local('local');
+
+  const EmbeddingProvider(this.value);
+
+  final String value;
+
+  /// 不认识的值按自填接口处理，与加入知新服务之前的读法一致。
+  static EmbeddingProvider fromValue(Object? value) {
+    for (final provider in values) {
+      if (provider.value == value) return provider;
+    }
+    return EmbeddingProvider.remote;
+  }
+}
+
 /// 语义索引的配置。
 ///
 /// 远程嵌入必须由用户明确选择提供方、接口地址与可发送范围；没有配置或关闭
 /// 时语义检索不可用，原文与关键词检索照常工作。业务库与向量库都保存在本机。
+///
+/// 选择知新服务时地址与凭据不存进配置，每次请求前由账号服务给出服务地址与
+/// 当前访问令牌；原文经服务端转给后台配置的提供方，可发送范围同样生效。
 class EmbeddingConfig {
   const EmbeddingConfig({
     required this.enabled,
@@ -41,7 +63,8 @@ class EmbeddingConfig {
 
   final bool enabled;
 
-  /// `remote`（OpenAI 兼容接口）或 `local`（本机哈希，不联网）。
+  /// `remote`（自填 OpenAI 兼容接口）、`server`（知新服务）或 `local`（本机
+  /// 哈希，不联网），取值见 [EmbeddingProvider]。
   final String provider;
   final String baseUrl;
   final String model;
@@ -51,12 +74,25 @@ class EmbeddingConfig {
   final List<String> materialIds;
   final String textVersion;
 
-  bool get usesRemote => provider == 'remote';
+  EmbeddingProvider get source => EmbeddingProvider.fromValue(provider);
+
+  /// 自填接口：地址与 key 都由用户填写。
+  bool get usesRemote => source == EmbeddingProvider.remote;
+
+  /// 知新服务：地址与令牌运行时由账号服务给出。
+  bool get usesServer => source == EmbeddingProvider.server;
+
+  /// 会把原文发出本机；可发送范围只对这两种来源生效。
+  bool get sendsText => usesRemote || usesServer;
 
   bool get usable =>
       enabled &&
-      (provider == 'local' ||
-          (usesRemote && baseUrl.trim().isNotEmpty && model.trim().isNotEmpty));
+      switch (source) {
+        EmbeddingProvider.local => true,
+        EmbeddingProvider.remote =>
+          baseUrl.trim().isNotEmpty && model.trim().isNotEmpty,
+        EmbeddingProvider.server => model.trim().isNotEmpty,
+      };
 
   EmbeddingModelSpec get spec => EmbeddingModelSpec(
     id: provider == 'local' ? 'local-hash-v1' : model.trim(),
@@ -79,11 +115,10 @@ class EmbeddingConfig {
 
   static EmbeddingConfig? fromJson(Object? value) {
     if (value is! Map) return null;
-    final provider = value['provider'];
     final dim = value['dim'];
     return EmbeddingConfig(
       enabled: value['enabled'] == true,
-      provider: provider is String && provider == 'local' ? 'local' : 'remote',
+      provider: EmbeddingProvider.fromValue(value['provider']).value,
       baseUrl: (value['base_url'] as String?) ?? '',
       model: (value['model'] as String?) ?? '',
       dim: dim is int && dim > 0 ? dim : 1024,

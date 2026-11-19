@@ -18,7 +18,11 @@ class EmbeddingModelSpec {
   final String textVersion;
   final String provider;
 
-  String get indexKey => '$id|$dim|$textVersion';
+  /// 索引复用的依据。知新服务的模型名由后台决定，可能与自填接口的模型同名
+  /// 却是另一套向量，所以单独加前缀；其余来源保持原来的写法，已有索引不失效。
+  String get indexKey => provider == 'server'
+      ? 'server:$id|$dim|$textVersion'
+      : '$id|$dim|$textVersion';
 
   Map<String, Object?> toJson() => {
     'id': id,

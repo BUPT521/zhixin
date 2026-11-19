@@ -5,6 +5,7 @@ import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
 import '../domain/rules/uuid_v7.dart';
+import 'embedding_client.dart';
 
 /// 还没有登录，或登录已经失效；需要用户重新登录之后才能继续。
 class AccountSignedOut implements Exception {
@@ -324,18 +325,9 @@ class AccountService {
     await preferences.clearSyncState();
   }
 
-  /// 当前账号的访问令牌；过期时先刷新，登录失效时清掉会话并抛出
-  /// [AccountSignedOut]。没有登录时返回 null，供模型来源判断是否可用。
-  Future<String?> accessTokenOrNull() async {
-    final session = await _readSession();
-    if (session == null || session.isExpired) return null;
-    try {
-      return (await _fresh(session)).accessToken;
-    } catch (_) {
-      // 刷新失败（含断网）按暂时不可用处理，回答退回本地兜底。
-      return null;
-    }
-  }
+  /// 当前账号的访问令牌，过期时先刷新。未登录或刷新失败时返回 null。
+  Future<String?> accessTokenOrNull() async =>
+      (await _hostedModelEndpoint())?.apiKey;
 
   /// 发一次需要登录的请求；401 时刷新令牌后重试一次。
   Future<T> call<T>(
@@ -359,14 +351,12 @@ class AccountService {
   /// 设置页说明要先登录。
   Future<LlmConfig?> authorizeModelConfig(LlmConfig? stored) async {
     if (stored == null || !stored.isServer) return stored;
-    final token = await accessTokenOrNull();
-    if (token == null) return null;
-    final base = await serverBaseUrl();
-    if (base.isEmpty) return null;
+    final target = await _hostedModelEndpoint();
+    if (target == null) return null;
     return stored.copyWith(
       api: LlmApi.chat,
-      baseUrl: '$base/v1/llm',
-      apiKey: token,
+      baseUrl: target.endpoint,
+      apiKey: target.apiKey,
     );
   }
 
@@ -376,6 +366,43 @@ class AccountService {
     final authorized = await authorizeModelConfig(config);
     if (authorized == null) throw const AccountSignedOut();
     return authorized;
+  }
+
+  /// 语义索引选择知新服务时，每次嵌入请求前取服务地址与当前访问令牌。
+  ///
+  /// 令牌不进配置，过期或轮换之后下一次请求自然换新；没有登录或刷新失败时
+  /// 抛 [EmbeddingSourceUnavailable]，索引更新据此停下本次剩余的请求。
+  Future<EmbeddingEndpoint> embeddingEndpoint() async {
+    final target = await _hostedModelEndpoint();
+    if (target == null) {
+      throw const EmbeddingSourceUnavailable('当前登录不可用，暂时无法使用知新服务的嵌入');
+    }
+    return target;
+  }
+
+  Future<EmbeddingEndpoint?> _hostedModelEndpoint() async {
+    final epoch = _epoch;
+    final base = await serverBaseUrl();
+    if (base.isEmpty) return null;
+    final origin = ServerClient.originOf(base);
+    final session = await _readSession();
+    if (epoch != _epoch ||
+        session == null ||
+        session.isExpired ||
+        session.serverOrigin != origin) {
+      return null;
+    }
+    try {
+      final current = await _fresh(session);
+      if (epoch != _epoch ||
+          _origin != origin ||
+          current.serverOrigin != origin) {
+        return null;
+      }
+      return (endpoint: '$base/v1/llm', apiKey: current.accessToken);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<ServerQuota> quota() =>
@@ -482,6 +509,10 @@ class AccountService {
     final epoch = _epoch;
     try {
       final client = await _requireClient();
+      _ensureIdentityUnchanged(epoch);
+      if (ServerClient.originOf(client.baseUrl) != current.serverOrigin) {
+        throw const AccountSignedOut();
+      }
       // 一次逻辑刷新只生成一个标识；两次请求都带上它，服务端才把第二次当作
       // 同一次刷新的重试，而不是拿旧刷新令牌盗用。
       final requestId = newUuidV7();

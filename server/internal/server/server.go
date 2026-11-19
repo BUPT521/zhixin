@@ -7,10 +7,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
 
+	"github.com/BUPT521/zhixin/server/internal/admin"
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
@@ -25,6 +27,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/routepolicy"
+	"github.com/BUPT521/zhixin/server/internal/secretbox"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -36,11 +39,13 @@ const ClientSchemaVersion = 27
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth      auth.Store
-	Sync      syncsvc.Store
-	Backups   backup.Store
-	Blobs     blobs.Store
-	Quota     llmproxy.Quota
+	Auth    auth.Store
+	Sync    syncsvc.Store
+	Backups backup.Store
+	Blobs   blobs.Store
+	Quota   llmproxy.Quota
+	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
+	Catalog   llmproxy.Catalog
 	Feedback  feedback.Store
 	Retention retention.Store
 	// Cloud 保存云端清除的进行中标记；Objects 与备份、附件共用同一份对象
@@ -70,6 +75,7 @@ func MemoryStores() Stores {
 		Backups:   backupStore,
 		Blobs:     blobStore,
 		Quota:     quotaStore,
+		Catalog:   llmproxy.NewMemoryCatalog(),
 		Feedback:  feedback.NewMemoryStore(),
 		Retention: retention.NewMemoryStore(),
 		Cloud:     cloudpurge.NewMemoryStore(),
@@ -99,6 +105,12 @@ func DeleteAccountData(deleters ...func(ctx context.Context, userID string) erro
 // New builds the complete handler. ctx 只用于每日清理循环：会话与验证码的过期行、
 // 反馈保留期都在启动时清一次，之后每天一次，进程退出时随 ctx 一起停止。
 func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) http.Handler {
+	handler, _ := Build(ctx, cfg, st, log)
+	return handler
+}
+
+// Build 组装服务并返回模型路由器，供进程定期刷新路由。
+func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) (http.Handler, *llmproxy.Router) {
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
@@ -206,7 +218,31 @@ func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) ht
 	backupHandler.SetPurgeGate(purgeSvc.Gate)
 	blobHandler.SetPurgeGate(purgeSvc.Gate)
 
-	llmProxy := llmproxy.NewHandler(cfg.LLM, st.Quota, cfg.Location, log)
+	// 模型来源的 key 加密入库。没有配置密钥时，内存存储用一把随进程消失的
+	// 随机密钥（数据本来也随进程消失）；数据库存储则无法保存或解密 key，
+	// config.Load 在打开后台时已经要求配置。
+	var box *secretbox.Box
+	if len(cfg.SecretKey) > 0 {
+		b, err := secretbox.New(cfg.SecretKey)
+		if err != nil {
+			log.Error("ZHIXIN_SECRET_KEY is unusable", slog.String("error", err.Error()))
+		}
+		box = b
+	} else if cfg.DatabaseURL == "" {
+		box = secretbox.Random()
+	}
+	router := llmproxy.NewRouter(st.Catalog, box, llmproxy.EnvSourceFrom(cfg.LLM), log)
+	if err := router.Reload(ctx); err != nil {
+		log.Error("load model routes; serving env models only until the next reload", slog.String("error", err.Error()))
+	}
+	var adminLimits *ratelimit.Limiter
+	if cfg.AdminRatePerSecond > 0 {
+		adminLimits = ratelimit.New(rate.Limit(cfg.AdminRatePerSecond), cfg.AdminBurst, 15*time.Minute, cfg.RateLimitKeys)
+	}
+
+	adminGuard := admin.Middleware(admin.Options{Token: cfg.AdminToken, Limiter: adminLimits, ClientHost: clientHost})
+
+	llmProxy := llmproxy.NewRoutedHandler(cfg.LLM, router, st.Quota, cfg.Location, log)
 	llmProxy.SetConcurrencyLimit(cfg.LLM.ConcurrentPerUser)
 	if cfg.LLM.RequireVerifiedEmail {
 		llmProxy.SetEmailVerifier(func(ctx context.Context, userID string) (bool, error) {
@@ -237,6 +273,7 @@ func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) ht
 		backups:       backupHandler,
 		blobs:         blobHandler,
 		llm:           llmProxy,
+		llmAdmin:      llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
 		feedback:      feedbackHandler,
 		release:       release.NewHandler(cfg.Releases),
 		retention:     retentionHandler,
@@ -249,6 +286,8 @@ func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) ht
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
+	admin.RegisterUI(mux, adminGuard)
+	accountGuard := auth.Middleware(authSvc, log)
 	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。因此按执行顺序
 	// 反过来写：运行起来依次是 记录路由 → 校验身份 → 按账号限流 → 标记可缓存
 	// → 处理器。记录路由在最外层，访问日志能拿到注册模式；鉴权在限流之前，未
@@ -259,7 +298,18 @@ func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) ht
 		Middlewares: []api.MiddlewareFunc{
 			cachePublic,
 			uploadLimit(uploadLimits),
-			auth.Middleware(authSvc, log),
+			func(next http.Handler) http.Handler {
+				account := accountGuard(next)
+				management := adminGuard(next)
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, path, _ := strings.Cut(r.Pattern, " ")
+					if strings.HasPrefix(path, "/admin/v1/") {
+						management.ServeHTTP(w, r)
+						return
+					}
+					account.ServeHTTP(w, r)
+				})
+			},
 			httpx.RecordPattern,
 		},
 		ErrorHandlerFunc: httpx.BindingErrorHandler,
@@ -275,7 +325,7 @@ func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) ht
 		httpx.SecurityHeaders,
 		httpx.Recover(log),
 		httpx.BodyIdleTimeout(cfg.BodyIdleTimeout),
-	)
+	), router
 }
 
 // cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。

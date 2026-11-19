@@ -12,20 +12,26 @@ import (
 )
 
 const addTokens = `-- name: AddTokens :exec
-INSERT INTO llm_usage (user_id, day, tokens)
-VALUES ($1, $2::date, $3)
-ON CONFLICT (user_id, day)
+INSERT INTO llm_usage (user_id, day, kind, tokens)
+VALUES ($1, $2::date, $3, $4)
+ON CONFLICT (user_id, day, kind)
 DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens
 `
 
 type AddTokensParams struct {
 	UserID string
 	Day    pgtype.Date
+	Kind   string
 	Tokens int64
 }
 
 func (q *Queries) AddTokens(ctx context.Context, arg AddTokensParams) error {
-	_, err := q.db.Exec(ctx, addTokens, arg.UserID, arg.Day, arg.Tokens)
+	_, err := q.db.Exec(ctx, addTokens,
+		arg.UserID,
+		arg.Day,
+		arg.Kind,
+		arg.Tokens,
+	)
 	return err
 }
 
@@ -134,17 +140,22 @@ func (q *Queries) InsertBackup(ctx context.Context, arg InsertBackupParams) erro
 }
 
 const lLMQuotaOverride = `-- name: LLMQuotaOverride :one
-SELECT daily_tokens
+SELECT daily_tokens, embedding_daily_tokens
 FROM llm_quota
 WHERE user_id = $1
 `
 
-// 按账号调整的每日额度；没有行时用 ZHIXIN_LLM_DAILY_TOKENS。
-func (q *Queries) LLMQuotaOverride(ctx context.Context, userID string) (int64, error) {
+type LLMQuotaOverrideRow struct {
+	DailyTokens          pgtype.Int8
+	EmbeddingDailyTokens pgtype.Int8
+}
+
+// 按账号调整的每日额度；没有行或者对应列为空时用配置的默认值。
+func (q *Queries) LLMQuotaOverride(ctx context.Context, userID string) (LLMQuotaOverrideRow, error) {
 	row := q.db.QueryRow(ctx, lLMQuotaOverride, userID)
-	var daily_tokens int64
-	err := row.Scan(&daily_tokens)
-	return daily_tokens, err
+	var i LLMQuotaOverrideRow
+	err := row.Scan(&i.DailyTokens, &i.EmbeddingDailyTokens)
+	return i, err
 }
 
 const listBackups = `-- name: ListBackups :many
@@ -231,16 +242,17 @@ func (q *Queries) TrimBackups(ctx context.Context, arg TrimBackupsParams) ([]str
 const usedTokens = `-- name: UsedTokens :one
 SELECT tokens
 FROM llm_usage
-WHERE user_id = $1 AND day = $2::date
+WHERE user_id = $1 AND day = $2::date AND kind = $3
 `
 
 type UsedTokensParams struct {
 	UserID string
 	Day    pgtype.Date
+	Kind   string
 }
 
 func (q *Queries) UsedTokens(ctx context.Context, arg UsedTokensParams) (int64, error) {
-	row := q.db.QueryRow(ctx, usedTokens, arg.UserID, arg.Day)
+	row := q.db.QueryRow(ctx, usedTokens, arg.UserID, arg.Day, arg.Kind)
 	var tokens int64
 	err := row.Scan(&tokens)
 	return tokens, err

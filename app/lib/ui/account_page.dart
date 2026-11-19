@@ -943,7 +943,8 @@ class _AccountPageState extends State<AccountPage> {
       ),
       SectionHeading(
         title: '模型额度',
-        subtitle: '知新服务按账号计每天可用的 token；额度用完时可以改用自己的 API Key，或等次日重置。',
+        subtitle:
+            '知新服务按账号计每天可用的 token，聊天与语义索引的嵌入分开计；额度用完时可以改用自己的 API Key，或等次日重置。',
       ),
       forui.FCard(
         child: Padding(
@@ -954,9 +955,16 @@ class _AccountPageState extends State<AccountPage> {
               Text(
                 _quota == null
                     ? '额度暂时无法读取'
-                    : '今日已用 ${_quota!.usedTokens} / ${_quota!.dailyTokens} token',
+                    : '聊天今日已用 ${_quota!.usedTokens} / ${_quota!.dailyTokens} token',
                 style: theme.text.bodyMedium,
               ),
+              // 旧版服务端不返回嵌入额度，读作 0，这时不显示这一行。
+              if ((_quota?.embeddingDailyTokens ?? 0) > 0)
+                Text(
+                  '嵌入今日已用 ${_quota!.embeddingUsedTokens} / '
+                  '${_quota!.embeddingDailyTokens} token',
+                  style: theme.text.bodyMedium,
+                ),
               SizedBox(height: theme.space.xs),
               Text(
                 _quota == null

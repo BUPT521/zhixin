@@ -14,15 +14,16 @@ import (
 
 // SetQuotaLimits 注入配置里的默认每日额度与实例预算；由 llmproxy.NewHandler
 // 装配时调用一次，运行期间不再修改，因此不加锁。
-func (s *Store) SetQuotaLimits(dailyTokens, instanceDailyTokens int64) {
+func (s *Store) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyTokens int64) {
 	s.dailyTokens = dailyTokens
+	s.embeddingDailyTokens = embeddingDailyTokens
 	s.instanceDailyTokens = instanceDailyTokens
 }
 
 // Reserve 在一个事务里完成“比较上限、写入预留”。同一天的预留用事务级 advisory
 // lock 排成队，因为实例预算是当天所有账号的合计，行锁管不住并发插入的新行；账
 // 号额度与实例预算因此在同一个临界区里检查并扣减，不会各自按旧值通过。
-func (s *Store) Reserve(ctx context.Context, userID, day string, want int64) (int64, error) {
+func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.Kind, want int64) (int64, error) {
 	if want <= 0 {
 		return 0, llmproxy.ErrQuotaExceeded
 	}
@@ -41,11 +42,18 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, want int64) (in
 		return 0, fmt.Errorf("pg: 锁定当日额度失败: %w", err)
 	}
 	q := db.New(tx)
-	limit, limited, err := quotaLimit(ctx, q, userID, s.dailyTokens)
+	fallback := s.dailyTokens
+	if kind == llmproxy.KindEmbedding {
+		fallback = s.embeddingDailyTokens
+	}
+	limit, limited, err := quotaOverride(ctx, q, userID, kind)
+	if !limited && fallback > 0 {
+		limit, limited = fallback, true
+	}
 	if err != nil {
 		return 0, err
 	}
-	used, err := usedTokens(ctx, q, userID, date)
+	used, err := usedTokens(ctx, q, userID, date, kind)
 	if err != nil {
 		return 0, err
 	}
@@ -63,7 +71,7 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, want int64) (in
 	if reserved <= 0 {
 		return 0, llmproxy.ErrQuotaExceeded
 	}
-	if err := q.AddTokens(ctx, db.AddTokensParams{UserID: userID, Day: date, Tokens: reserved}); err != nil {
+	if err := q.AddTokens(ctx, db.AddTokensParams{UserID: userID, Day: date, Kind: string(kind), Tokens: reserved}); err != nil {
 		return 0, fmt.Errorf("pg: 写入额度预留失败: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -72,25 +80,9 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, want int64) (in
 	return reserved, nil
 }
 
-// quotaLimit 返回账号当天的额度：llm_quota 的覆盖值优先，其次配置的默认值；两
-// 者都没有时 ok 为 false，表示不限额度。
-func quotaLimit(ctx context.Context, q *db.Queries, userID string, fallback int64) (int64, bool, error) {
-	limit, err := q.LLMQuotaOverride(ctx, userID)
-	if err == nil {
-		return limit, true, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, fmt.Errorf("pg: 读取账号额度失败: %w", err)
-	}
-	if fallback > 0 {
-		return fallback, true, nil
-	}
-	return 0, false, nil
-}
-
 // usedTokens 返回账号当天已用的 token 数；没有行时是 0。
-func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Date) (int64, error) {
-	used, err := q.UsedTokens(ctx, db.UsedTokensParams{UserID: userID, Day: day})
+func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Date, kind llmproxy.Kind) (int64, error) {
+	used, err := q.UsedTokens(ctx, db.UsedTokensParams{UserID: userID, Day: day, Kind: string(kind)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -101,7 +93,7 @@ func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Da
 }
 
 // Settle 按实际用量调整预留；差额为 0 时不写库。
-func (s *Store) Settle(ctx context.Context, userID, day string, reserved, actual int64) error {
+func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, reserved, actual int64) error {
 	delta := actual - reserved
 	if delta == 0 {
 		return nil
@@ -110,7 +102,7 @@ func (s *Store) Settle(ctx context.Context, userID, day string, reserved, actual
 	if err != nil {
 		return err
 	}
-	if err := s.q.SettleTokens(ctx, db.SettleTokensParams{UserID: userID, Day: date, Delta: delta}); err != nil {
+	if err := s.q.SettleTokens(ctx, db.SettleTokensParams{UserID: userID, Day: date, Kind: string(kind), Delta: delta}); err != nil {
 		return fmt.Errorf("pg: 结算额度失败: %w", err)
 	}
 	return nil

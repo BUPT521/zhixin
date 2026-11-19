@@ -54,6 +54,7 @@ class IndexRefreshResult {
     this.failure = IndexFailure.none,
     this.embedMs = 0,
     this.writeMs = 0,
+    this.sourceProblem,
   });
 
   final int embedded;
@@ -69,6 +70,10 @@ class IndexRefreshResult {
   final IndexFailure failure;
   final int embedMs;
   final int writeMs;
+
+  /// 嵌入来源整个用不了时的说明（没有登录、凭据被拒、额度用完）；这时本次
+  /// 剩余的来源不再请求，全部记为失败，下一次更新再补。
+  final String? sourceProblem;
 }
 
 /// 取消标记：查询开始后界面关闭或用户离开，不再等待嵌入结果。
@@ -499,6 +504,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
       var failed = 0;
       var embedMs = 0;
       var writeMs = 0;
+      EmbeddingSourceUnavailable? sourceDown;
 
       // 先把本次要重写的来源挑出来；等待嵌入期间来源被更正、删除或撤销时，
       // 写回之前还会再核对一次版本。
@@ -579,7 +585,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         // 按块数与字符数切批，跨来源合并请求；一个窗口内的来源全部写完再进入
         // 下一个窗口，向量只在窗口内保留，内存不随来源总数增长。
         var start = 0;
-        while (start < pending.length) {
+        while (start < pending.length && sourceDown == null) {
           _requireCurrent(generation);
           var end = start;
           var windowChunks = 0;
@@ -601,7 +607,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
           final embedStarted = Stopwatch()..start();
           var nextBatch = 0;
           Future<void> worker() async {
-            while (true) {
+            while (sourceDown == null) {
               final index = nextBatch++;
               if (index >= batches.length) return;
               _requireCurrent(generation);
@@ -613,6 +619,11 @@ class SearchIndexService implements MemoryRelevanceRanker {
                 try {
                   vectors = await embedder.embedBatch(texts);
                   ok = vectors.length == texts.length;
+                } on EmbeddingSourceUnavailable catch (error) {
+                  if (_closed || generation != _generation) rethrow;
+                  // 来源整个用不了：重发与逐条定位都没有意义，停下所有并发。
+                  sourceDown ??= error;
+                  return;
                 } catch (_) {
                   if (_closed || generation != _generation) rethrow;
                   ok = false;
@@ -633,6 +644,10 @@ class SearchIndexService implements MemoryRelevanceRanker {
                 try {
                   final vector = await embedder.embed(job.text);
                   window[job.source].vectors[job.chunk] = vector;
+                } on EmbeddingSourceUnavailable catch (error) {
+                  if (_closed || generation != _generation) rethrow;
+                  sourceDown ??= error;
+                  return;
                 } catch (_) {
                   if (_closed || generation != _generation) rethrow;
                   window[job.source].failed = true;
@@ -669,6 +684,8 @@ class SearchIndexService implements MemoryRelevanceRanker {
           }
           start = end;
         }
+        // 来源停用之后没有请求的那些来源同样记为失败，下一次更新再补。
+        failed += pending.length - start;
       }
 
       final removed = await _useCurrentStore(generation, () async {
@@ -691,6 +708,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         failure: failed == 0 ? IndexFailure.none : IndexFailure.error,
         embedMs: embedMs,
         writeMs: writeMs,
+        sourceProblem: sourceDown?.message,
       );
       _lastRefresh = result;
       return result;

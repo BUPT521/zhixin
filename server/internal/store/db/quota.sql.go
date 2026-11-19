@@ -34,19 +34,21 @@ func (q *Queries) InstanceTokens(ctx context.Context, day pgtype.Date) (int64, e
 }
 
 const settleTokens = `-- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, tokens)
+INSERT INTO llm_usage (user_id, day, kind, tokens)
 VALUES (
   $1,
   $2::date,
-  GREATEST($3::bigint, 0)
+  $3,
+  GREATEST($4::bigint, 0)
 )
-ON CONFLICT (user_id, day)
-DO UPDATE SET tokens = GREATEST(llm_usage.tokens + $3::bigint, 0)
+ON CONFLICT (user_id, day, kind)
+DO UPDATE SET tokens = GREATEST(llm_usage.tokens + $4::bigint, 0)
 `
 
 type SettleTokensParams struct {
 	UserID string
 	Day    pgtype.Date
+	Kind   string
 	Delta  int64
 }
 
@@ -54,6 +56,11 @@ type SettleTokensParams struct {
 // 好，这里仍然用 upsert，重复结算或异常顺序都不会写坏数据；插入与更新两个分支都
 // 把结果限在 0 以上，异常参数也不会留下负用量。
 func (q *Queries) SettleTokens(ctx context.Context, arg SettleTokensParams) error {
-	_, err := q.db.Exec(ctx, settleTokens, arg.UserID, arg.Day, arg.Delta)
+	_, err := q.db.Exec(ctx, settleTokens,
+		arg.UserID,
+		arg.Day,
+		arg.Kind,
+		arg.Delta,
+	)
 	return err
 }

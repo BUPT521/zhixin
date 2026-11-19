@@ -1,6 +1,7 @@
 // Package config reads the server configuration from environment variables.
 //
-// Every secret (database password, upstream model key) arrives through the
+// Every secret (database password, upstream model key, admin token, the key
+// that encrypts provider keys in the database) arrives through the
 // environment; nothing is read from files in the repository. The one exception
 // is the release manifest: its path comes from ZHIXIN_RELEASE_FILE and the file
 // itself lives outside the repository. See ADR-0009 and ADR-0025.
@@ -19,6 +20,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/release"
+	"github.com/BUPT521/zhixin/server/internal/secretbox"
 )
 
 // Config is the complete runtime configuration of zhixin-api.
@@ -138,25 +140,45 @@ type Config struct {
 	Releases []release.Entry
 
 	LLM LLMConfig
+
+	// AdminToken 是管理后台的令牌；为空时 /admin 一律 404。
+	AdminToken string
+	// AdminRatePerSecond 与 AdminBurst 限制管理令牌校验失败的次数，按来源地址
+	// 计；设 0 关闭。
+	AdminRatePerSecond float64
+	AdminBurst         int
+	// SecretKey 是加密数据库里模型来源 key 的 32 字节密钥（ZHIXIN_SECRET_KEY）。
+	// 为空时不能保存带 key 的来源，已保存的 key 也无法解密。
+	SecretKey []byte
+	// ModelReloadInterval 是从数据库重新读取模型路由的周期；管理接口保存之后
+	// 立即生效，这个周期只用于直接改库或多实例部署。
+	ModelReloadInterval time.Duration
 }
 
 // LLMConfig configures the model proxy.
+//
+// BaseURL, APIKey, Models and EmbeddingModels describe the read-only "env"
+// source. Sources configured in the admin page live in the database and are
+// merged with it by llmproxy.Router (ADR-0029); a model of the same name in
+// the admin page wins.
 type LLMConfig struct {
 	// BaseURL is the upstream OpenAI-compatible base, e.g. https://api.deepseek.com/v1.
 	BaseURL string
-	// APIKey is the provider key held by the server. Empty disables the proxy.
+	// APIKey is the provider key held by the server. Empty disables the env source.
 	APIKey string
-	// Models is the allow-list of model names clients may request.
+	// Models are chat model names served by the env source.
 	Models []string
-	// DailyTokens is the per-account daily token budget. The real number is
-	// still to be decided (ADR-0008); this is only a configurable default.
+	// EmbeddingModels are embedding model names served by the env source.
+	EmbeddingModels []string
+	// DailyTokens is the per-account daily chat token budget. The real number
+	// is still to be decided (ADR-0008); this is only a configurable default.
 	DailyTokens int64
 	// InstanceDailyTokens 是整个实例一天的总 token 预算；用尽之后所有账号的
 	// 托管请求都返回 429，防止单个实例的提供方账单失控。
 	InstanceDailyTokens int64
 	// MaxRequestBytes caps a proxied request body (images are inlined as base64).
 	MaxRequestBytes int64
-	// RequireVerifiedEmail 要求账号先确认邮箱才开放托管额度；为真时聊天入口对
+	// RequireVerifiedEmail 要求账号先确认邮箱才开放托管额度；为真时聊天与嵌入入口对
 	// 未确认的账号返回 403 email_unverified。
 	RequireVerifiedEmail bool
 	// ConcurrentPerUser 是同一账号同时进行的托管请求上限；在读取请求体之前就
@@ -170,6 +192,16 @@ type LLMConfig struct {
 	StreamIdleTimeout time.Duration
 	// StreamTotalTimeout 是一次流式响应的总时限。
 	StreamTotalTimeout time.Duration
+	// EmbeddingDailyTokens is the per-account daily embedding token budget,
+	// counted separately from chat (ADR-0029).
+	EmbeddingDailyTokens int64
+	// EmbeddingMaxInputs caps the number of inputs in one embeddings request.
+	EmbeddingMaxInputs int
+	// MaxAttempts caps how many sources one request may try.
+	MaxAttempts int
+	// HeaderTimeout is how long a source may take to send response headers for
+	// a streamed chat or an embeddings request before the next source is tried.
+	HeaderTimeout time.Duration
 }
 
 // Load builds a Config from getenv (normally os.Getenv).
@@ -210,11 +242,14 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("ZHIXIN_TIMEZONE: %w", err))
 	}
 
-	var models []string
-	for _, m := range strings.Split(get("ZHIXIN_LLM_MODELS", "deepseek-flash"), ",") {
-		if m = strings.TrimSpace(m); m != "" {
-			models = append(models, m)
+	list := func(key, def string) []string {
+		var out []string
+		for _, m := range strings.Split(get(key, def), ",") {
+			if m = strings.TrimSpace(m); m != "" {
+				out = append(out, m)
+			}
 		}
+		return out
 	}
 
 	proxies, err := parseTrustedProxies(get("ZHIXIN_TRUSTED_PROXIES", ""))
@@ -289,7 +324,7 @@ func Load(getenv func(string) string) (Config, error) {
 		LLM: LLMConfig{
 			BaseURL:              strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:               get("ZHIXIN_LLM_API_KEY", ""),
-			Models:               models,
+			Models:               list("ZHIXIN_LLM_MODELS", "deepseek-flash"),
 			DailyTokens:          num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
 			InstanceDailyTokens:  num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "20000000"),
 			MaxRequestBytes:      num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
@@ -298,7 +333,31 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxResponseBytes:     num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
 			StreamIdleTimeout:    dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
 			StreamTotalTimeout:   dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
+			EmbeddingModels:      list("ZHIXIN_LLM_EMBEDDING_MODELS", ""),
+			EmbeddingDailyTokens: num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
+			EmbeddingMaxInputs:   int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
+			MaxAttempts:          int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
+			HeaderTimeout:        dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
 		},
+
+		AdminToken:          get("ZHIXIN_ADMIN_TOKEN", ""),
+		AdminRatePerSecond:  fnum("ZHIXIN_ADMIN_RATE", "0.05"),
+		AdminBurst:          int(num("ZHIXIN_ADMIN_BURST", "5")),
+		ModelReloadInterval: dur("ZHIXIN_MODEL_RELOAD_INTERVAL", "30s"),
+	}
+	if cfg.AdminToken != "" && len(cfg.AdminToken) < 32 {
+		errs = append(errs, errors.New("ZHIXIN_ADMIN_TOKEN: use at least 32 characters, e.g. `openssl rand -base64 32`"))
+	}
+	if raw := get("ZHIXIN_SECRET_KEY", ""); raw != "" {
+		key, err := secretbox.ParseKey(raw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("ZHIXIN_SECRET_KEY: %w", err))
+		}
+		cfg.SecretKey = key
+	} else if cfg.AdminToken != "" && cfg.DatabaseURL != "" {
+		// 后台打开、数据库也在用时，key 必须加密入库；没有密钥就等于后台只能
+		// 配置不带 key 的来源，这多半是漏配，直接报错比悄悄降级好。
+		errs = append(errs, errors.New("ZHIXIN_SECRET_KEY is required when ZHIXIN_ADMIN_TOKEN and ZHIXIN_DATABASE_URL are set"))
 	}
 	if cfg.S3.Configured() {
 		if cfg.S3.AccessKey == "" || cfg.S3.SecretKey == "" {

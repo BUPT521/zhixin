@@ -21,34 +21,34 @@ func TestPostgresQuotaReserveAndSettle(t *testing.T) {
 		}
 	}
 	// 实例预算为 0 表示不限制，先只验账号额度。
-	st.SetQuotaLimits(100, 0)
+	st.SetQuotaLimits(100, 200, 0)
 	const day = "2026-11-18"
 
-	if got, err := st.Reserve(ctx, "u1", day, 40); err != nil || got != 40 {
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 40); err != nil || got != 40 {
 		t.Fatalf("第一次预留应为 40，得到 %d %v", got, err)
 	}
 	// 只剩 60：预留按剩余量截断，调用方照常转发。
-	if got, err := st.Reserve(ctx, "u1", day, 100); err != nil || got != 60 {
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 100); err != nil || got != 60 {
 		t.Fatalf("剩余 60 时应截断为 60，得到 %d %v", got, err)
 	}
-	if _, err := st.Reserve(ctx, "u1", day, 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
 		t.Fatalf("额度用完应返回 ErrQuotaExceeded，得到 %v", err)
 	}
-	if used, err := st.Used(ctx, "u1", day); err != nil || used != 100 {
+	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 100 {
 		t.Fatalf("预留之后用量应为 100，得到 %d %v", used, err)
 	}
 
 	// 实际用量超过预留时补记差额，少于预留时退回。
-	if err := st.Settle(ctx, "u1", day, 60, 90); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, 60, 90); err != nil {
 		t.Fatalf("settle 补记: %v", err)
 	}
-	if used, err := st.Used(ctx, "u1", day); err != nil || used != 130 {
+	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 130 {
 		t.Fatalf("实际超过预留后用量应为 130，得到 %d %v", used, err)
 	}
-	if err := st.Settle(ctx, "u1", day, 40, 10); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, 40, 10); err != nil {
 		t.Fatalf("settle 退回: %v", err)
 	}
-	if used, err := st.Used(ctx, "u1", day); err != nil || used != 100 {
+	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 100 {
 		t.Fatalf("退回之后用量应为 100，得到 %d %v", used, err)
 	}
 
@@ -56,12 +56,12 @@ func TestPostgresQuotaReserveAndSettle(t *testing.T) {
 	if _, err := st.pool.Exec(ctx, `INSERT INTO llm_quota (user_id, daily_tokens, note) VALUES ('u2', 5000, '测试')`); err != nil {
 		t.Fatalf("insert override: %v", err)
 	}
-	if got, err := st.Reserve(ctx, "u2", day, 1000); err != nil || got != 1000 {
+	if got, err := st.Reserve(ctx, "u2", day, llmproxy.KindChat, 1000); err != nil || got != 1000 {
 		t.Fatalf("覆盖额度应允许预留 1000，得到 %d %v", got, err)
 	}
 
 	// 自然日互不影响。
-	if got, err := st.Reserve(ctx, "u1", "2026-11-19", 80); err != nil || got != 80 {
+	if got, err := st.Reserve(ctx, "u1", "2026-11-19", llmproxy.KindChat, 80); err != nil || got != 80 {
 		t.Fatalf("另一个自然日应独立计额度，得到 %d %v", got, err)
 	}
 
@@ -80,17 +80,17 @@ func TestPostgresQuotaInstanceBudget(t *testing.T) {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
-	st.SetQuotaLimits(1000, 250)
+	st.SetQuotaLimits(1000, 200, 250)
 	const day = "2026-11-18"
 
-	if got, err := st.Reserve(ctx, "u1", day, 200); err != nil || got != 200 {
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 200); err != nil || got != 200 {
 		t.Fatalf("第一次预留应为 200，得到 %d %v", got, err)
 	}
 	// 实例只剩 50，账号额度还很宽。
-	if got, err := st.Reserve(ctx, "u2", day, 100); err != nil || got != 50 {
+	if got, err := st.Reserve(ctx, "u2", day, llmproxy.KindEmbedding, 100); err != nil || got != 50 {
 		t.Fatalf("实例只剩 50 时应截断为 50，得到 %d %v", got, err)
 	}
-	if _, err := st.Reserve(ctx, "u1", day, 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
 		t.Fatalf("实例预算用完应返回 ErrQuotaExceeded，得到 %v", err)
 	}
 	if used, err := st.InstanceUsed(ctx, day); err != nil || used != 250 {
@@ -98,13 +98,13 @@ func TestPostgresQuotaInstanceBudget(t *testing.T) {
 	}
 
 	// 结算退回 30，实例预算重新有 30 可用。
-	if err := st.Settle(ctx, "u2", day, 50, 20); err != nil {
+	if err := st.Settle(ctx, "u2", day, llmproxy.KindEmbedding, 50, 20); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, err := st.InstanceUsed(ctx, day); err != nil || used != 220 {
 		t.Fatalf("退回之后实例用量应为 220，得到 %d %v", used, err)
 	}
-	if got, err := st.Reserve(ctx, "u2", day, 100); err != nil || got != 30 {
+	if got, err := st.Reserve(ctx, "u2", day, llmproxy.KindEmbedding, 100); err != nil || got != 30 {
 		t.Fatalf("退回之后应能再预留 30，得到 %d %v", got, err)
 	}
 }
@@ -117,7 +117,7 @@ func TestPostgresQuotaReserveIsAtomic(t *testing.T) {
 	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "atomic@b.cn", PasswordHash: "h"}); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	st.SetQuotaLimits(100, 0)
+	st.SetQuotaLimits(100, 200, 0)
 	const day = "2026-11-18"
 
 	var wg sync.WaitGroup
@@ -128,7 +128,7 @@ func TestPostgresQuotaReserveIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			got, err := st.Reserve(ctx, "u1", day, 20)
+			got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 20)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -151,7 +151,7 @@ func TestPostgresQuotaReserveIsAtomic(t *testing.T) {
 	if reserved != 100 {
 		t.Fatalf("成功的预留应合计 100，得到 %d", reserved)
 	}
-	if used, err := st.Used(ctx, "u1", day); err != nil || used != 100 {
+	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 100 {
 		t.Fatalf("预留之后用量应为 100，得到 %d %v", used, err)
 	}
 }

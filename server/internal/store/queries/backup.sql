@@ -51,16 +51,16 @@ RETURNING id;
 -- name: UsedTokens :one
 SELECT tokens
 FROM llm_usage
-WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date;
+WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND kind = sqlc.arg(kind);
 
 -- name: AddTokens :exec
-INSERT INTO llm_usage (user_id, day, tokens)
-VALUES (sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(tokens))
-ON CONFLICT (user_id, day)
+INSERT INTO llm_usage (user_id, day, kind, tokens)
+VALUES (sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(kind), sqlc.arg(tokens))
+ON CONFLICT (user_id, day, kind)
 DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens;
 
--- 按账号调整的每日额度；没有行时用 ZHIXIN_LLM_DAILY_TOKENS。
+-- 按账号调整的每日额度；没有行或者对应列为空时用配置的默认值。
 -- name: LLMQuotaOverride :one
-SELECT daily_tokens
+SELECT daily_tokens, embedding_daily_tokens
 FROM llm_quota
 WHERE user_id = sqlc.arg(user_id);

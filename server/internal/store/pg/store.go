@@ -39,8 +39,9 @@ type Store struct {
 	// dailyTokens 与 instanceDailyTokens 是配置里的默认每日额度与实例预算，由
 	// llmproxy.NewHandler 装配时经 SetQuotaLimits 注入（见 quota.go），运行期间
 	// 不再修改，因此不加锁。
-	dailyTokens         int64
-	instanceDailyTokens int64
+	dailyTokens          int64
+	embeddingDailyTokens int64
+	instanceDailyTokens  int64
 }
 
 var (

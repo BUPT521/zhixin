@@ -1,6 +1,6 @@
 # 知新 · API 后端
 
-> 本目录是知新的自建 API 服务，第一期负责账号与登录、整库备份与增量同步、模型请求代理，另外提供应用内的更新检查与反馈接口。为什么要有服务端、它不负责什么，见 [ADR-0008](../docs/adr/0008-取消单机边界引入账号同步与模型代理.md)；为什么用 Go、怎样分层，见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)。接口以 [api/openapi.yaml](api/openapi.yaml) 为准，本文只说明工程结构、约定与本地运行。
+> 本目录是知新的自建 API 服务，第一期负责账号与登录、整库备份与增量同步、模型请求代理（聊天与嵌入，可以配置多个来源），另外提供应用内的更新检查与反馈接口，以及管理模型来源的后台。为什么要有服务端、它不负责什么，见 [ADR-0008](../docs/adr/0008-取消单机边界引入账号同步与模型代理.md)；为什么用 Go、怎样分层，见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)。接口以 [api/openapi.yaml](api/openapi.yaml) 为准，本文只说明工程结构、约定与本地运行。
 
 ## 当前状态
 
@@ -8,7 +8,9 @@
 
 2026-11-18 的加固轮次把服务端的默认行为收紧：启动时自检生产配置（配置了数据库时验证码不能写进日志、验证码与匿名统计的 HMAC 密钥必须固定、带凭据的上游地址必须走 https），公开写入接口在按地址的桶之外增加全局上限，反馈按保留期每日清理，登录失败按规范化邮箱计预算，密码哈希受 Argon2 内存预算约束，每个账号的会话数有上限并在每天清理过期会话，刷新令牌轮换后只保留固定 60 秒的重试宽限，附件增加账号总量配额，清除云端数据统一为 `DELETE /v1/cloud`，模型代理增加未验证邮箱拒绝、账号并发上限、响应体上限、额度预留与实例总预算，发布清单强制 https 与 sha256、签名可选。配置项见下表，取舍与已知代价见 [ADR-0028](../docs/adr/0028-服务端加固的默认拒绝与预算.md)。
 
-`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。
+`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。
+
+模型代理按优先级与权重从多个来源选择路由，嵌入接口按路由配置拆批，聊天与嵌入分别计入账号额度。模型来源与路由可在[管理后台](#管理后台)配置，取舍见 [ADR-0029](../docs/adr/0029-模型来源路由与嵌入代理.md)。
 
 CI 使用临时 PostgreSQL 实例执行服务端存储测试；在开发机上可以设置 `ZHIXIN_TEST_DATABASE_URL` 执行同一组用例，连接串须指向允许重建表的专用测试库。
 
@@ -53,7 +55,9 @@ server/
 │   ├── syncsvc/                ← 每个账号一条线性提交序列
 │   ├── backup/                 ← 整库备份快照
 │   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
-│   ├── llmproxy/               ← Chat Completions 代理与每日额度
+│   ├── llmproxy/               ← 模型来源与路由、聊天与嵌入代理、每日额度、管理接口
+│   ├── admin/                  ← 管理令牌校验与后台页面（ui/ 编进可执行文件）
+│   ├── secretbox/              ← 来源 key 的 AES-256-GCM 加密
 │   ├── release/                ← 发布清单的读取、校验与更新检查接口
 │   ├── feedback/               ← 应用内反馈：校验、限流、保存与保留期清理
 │   ├── retention/              ← 留存统计：匿名活跃上报、登录活跃记录与保留期清理
@@ -80,8 +84,9 @@ server/
 - 登录失败按规范化邮箱计预算，默认每秒补 0.017 个令牌、最多攒 10 个，超出时短暂返回 429，登录与删号的密码确认共用一个口径；argon2id 密码哈希同时占用的内存受 `ZHIXIN_ARGON2_MEMORY_BUDGET_MIB` 约束，并发哈希数由预算除以单次约 19 MiB 得出，超出时排队而不是继续申请内存。
 - 每个账号最多保留 `ZHIXIN_MAX_SESSIONS_PER_USER` 个会话，新登录超过上限时删最旧的，过期会话每天清理一次。刷新令牌轮换之后，旧刷新令牌只在固定的 60 秒宽限内、且客户端带同一个 `request_id` 重试时才被接受；其他重放按盗用处理，撤销这个账号的全部会话并记录安全事件，因此客户端每次刷新都要带 `request_id`。
 - 删除账号要重新提交当前密码：`DELETE /v1/me` 的请求体是 `{"password":"..."}`，密码错误返回 401 `invalid_credentials`，应用只提示密码错误并保留当前登录。清除云端数据统一走 `DELETE /v1/cloud`，清除期间这个账号的写入返回 409 `conflict`，见[同步协议](#同步协议)。
-- 模型代理在账号未验证邮箱时返回 403 `email_unverified`；每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，非流式响应不超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES`，流式响应有空闲与总时限；额度在请求开始时预留、按实际用量结算，账号当日额度与实例当日总预算任一用完都返回 429 `quota_exceeded`。
+- 模型代理在账号未验证邮箱时返回 403 `email_unverified`；每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，非流式响应不超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES`，流式响应有空闲与总时限；额度在请求开始时预留、按实际用量结算，账号用途额度与实例当日总预算任一用完都返回 429 `quota_exceeded`。
 - 附件的单个上限、账号总量上限与 `storage_full` 见[附件与备份的字节](#附件与备份的字节)；发布清单的地址必须是 https、`sha256` 必填、`signature` 可选，见[更新检查](#更新检查)。
+- `/admin/v1/` 下的管理操作按匹配到的路由校验独立的管理令牌，配置方式见[管理后台](#管理后台)。
 - 契约绑定的参数由生成的路由解析后传入处理器，缺 header 或参数不是整数由统一的错误处理函数返回 problem+json，处理器不再自己解析一遍；存储查询的参数统一用 `sqlc.arg`，日期与时间解析失败直接报错。
 - 访问日志只记录路由模式、状态码、字节数与耗时，不记录请求体、查询串与请求头；模型代理不保存请求与回答正文，只记 token 数。
 - 服务端接受的客户端数据版本是 `server.ClientSchemaVersion`，必须与 [01](../docs/01-ER数据模型.md) 开头的 schema 编号一致。客户端升 schema 时同一个 push 里改这个常量；其他版本的提交与备份一律拒绝，与 [ADR-0002](../docs/adr/0002-本地数据不做迁移.md) 相同。
@@ -115,22 +120,49 @@ server/
 
 ## 模型代理
 
-客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端核对模型名是否在 `ZHIXIN_LLM_MODELS` 中、账号是否已经确认邮箱、当日用量是否低于这个账号的每日额度，然后换上服务端持有的 key 转发，流式响应按事件边界逐块刷新，提供方的错误状态与响应体原样返回。账号还没有确认邮箱时托管请求返回 403 `email_unverified`，客户端在模型入口提示先验证邮箱；这个检查默认打开（`ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL=1`），设成 `0` 只在本地联调或临时放行时使用。
+客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端按请求里的 `model` 查路由表，核对这个账号当天这一类模型的用量是否低于额度，然后把 `model` 换成路由选中的来源侧模型名、换上这个来源的 key 转发，流式响应按事件边界逐块刷新，可转交的提供方错误由客户端读取。路由表由两部分合成：管理后台配置的来源与模型（`llm_provider`、`llm_model`、`llm_route` 三张表），以及环境变量 `ZHIXIN_LLM_BASE_URL`、`ZHIXIN_LLM_API_KEY`、`ZHIXIN_LLM_MODELS` 与 `ZHIXIN_LLM_EMBEDDING_MODELS` 生成的只读来源 `env`；同名模型以后台的配置为准。没有配置任何模型时聊天与嵌入接口返回 503。
 
-每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号当日额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算按库里同一天所有账号的用量求和，防止单个实例的提供方账单失控。用量从响应的 `usage.total_tokens` 读取，所以流式请求要带 `stream_options.include_usage`，客户端已经这样做。额度默认值只是占位，实际数字待内测用量出来之后再定。
+一个对外模型可以有多条路由。请求按优先级从小到大尝试，同一优先级内按权重随机排列，最多尝试 `ZHIXIN_LLM_MAX_ATTEMPTS` 条；连接失败、响应头超时、408、429、5xx、401 与 403 在向客户端写出任何字节之前换下一条，400、404、422 直接返回。一个来源连续失败三次后冷却 30 秒，之后每次失败翻倍，最长 5 分钟，冷却中的来源排到最后；最后一个来源拒绝服务端的 key（401、403）时，客户端收到 `upstream_failed`，提供方的错误体不转发。流式聊天由服务端打开 `stream_options.include_usage`，用量从最后一块的 `usage.total_tokens` 读取；提供方没有给出或者连接提前断开时，保留转发前的预留额度。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
-每日额度默认取 `ZHIXIN_LLM_DAILY_TOKENS`，需要单独调整某个账号时在 `llm_quota` 表里写一行，下一次请求就按新数字判定，不用重启服务；删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 与聊天接口的 429 里返回的都是这个账号的生效额度。调整是运营动作，不另开管理接口，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
+嵌入走 `POST /v1/llm/embeddings`，请求与响应是 OpenAI 的格式，`input` 只接受字符串或字符串数组，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，客户端在语义索引页选“知新服务”时，`RemoteEmbeddingClient` 每次请求前取 `<服务地址>/v1/llm` 与当前访问令牌，模型从列表里 `kind` 为 `embedding` 的项中选。路由的 `max_batch` 大于 0 时，服务端把一次请求拆成每批不超过这个数的几批，同时最多发出四批，再按原顺序合并、`index` 从 0 连续编号；一批失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。模型配置了维度时逐条核对向量长度，维度不符按来源故障处理；客户端请求的 `dimensions` 与配置不一致时返回 400。`GET /v1/llm/models` 的每一项带 `kind`（`chat` 或 `embedding`），嵌入模型配置了维度时带 `dimensions`。
+
+账号尚未验证邮箱时，聊天与嵌入请求均返回 403 `email_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前就返回 429；非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按 `upstream_failed` 结束，流式响应两次收到数据之间的最长等待与整次请求的总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，超时中断上游请求并结束响应。额度在请求开始时先按预估预留、结束后按响应的 `usage.total_tokens` 结算，账号的用途额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算按库里同一天所有账号的两类模型用量求和，防止单个实例的提供方账单失控。
+
+聊天与嵌入各有一份每日额度，默认分别取 `ZHIXIN_LLM_DAILY_TOKENS` 与 `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS`，用量按账号、自然日与种类分别记在 `llm_usage`。嵌入的提供方没有返回 `usage` 时按输入字数估算。需要单独调整某个账号时在 `llm_quota` 表里写一行，两列分别对应聊天与嵌入，为空的一列用默认值；下一次请求就按新数字判定，不用重启服务，删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 同时返回两类的用量与额度，429 的 `extra.kind` 表示请求用途，响应同时给出实例总用量与预算。额度调整是运营动作，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
 
 ```sql
--- 调高或新建一个账号的额度
-INSERT INTO llm_quota (user_id, daily_tokens, note)
-VALUES ('<账号 id>', 500000, '内测高频用户')
+-- 调高或新建一个账号的额度；只调一类时另一列写 NULL
+INSERT INTO llm_quota (user_id, daily_tokens, embedding_daily_tokens, note)
+VALUES ('<账号 id>', 500000, 5000000, '内测高频用户')
 ON CONFLICT (user_id) DO UPDATE
-SET daily_tokens = EXCLUDED.daily_tokens, note = EXCLUDED.note, updated_at = now();
+SET daily_tokens = EXCLUDED.daily_tokens,
+    embedding_daily_tokens = EXCLUDED.embedding_daily_tokens,
+    note = EXCLUDED.note, updated_at = now();
 
 -- 回到默认值
 DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 ```
+
+## 管理后台
+
+设置 `ZHIXIN_ADMIN_TOKEN`（至少 32 个字符，可以用 `openssl rand -base64 32` 生成）之后，浏览器打开 `<服务地址>/admin/`，输入这个令牌即可管理模型来源与路由；没有设置时整个 `/admin` 返回 404。页面与脚本编进可执行文件，令牌只保存在浏览器标签页的 `sessionStorage` 里。页面上能做的事都对应 `/admin/v1/` 下的接口，契约写在 `openapi.yaml` 的 `admin` 标签下，用 `Authorization: Bearer <管理令牌>` 调用：
+
+| 接口 | 用途 |
+|---|---|
+| `GET /admin/v1/providers` | 列出来源、key 末四位与健康状态（连续失败次数、最近错误、冷却到何时） |
+| `PUT /admin/v1/providers/{id}` | 新建或修改来源；`api_key` 省略时保留原值，空字符串表示清除 |
+| `DELETE /admin/v1/providers/{id}` | 删除来源；还有路由指向它时返回 409，`extra.models` 列出这些模型 |
+| `POST /admin/v1/providers/{id}/test` | 用来源自己的 key 请求一次 `/models`，返回可用的模型名，编辑路由时可以直接选 |
+| `GET /admin/v1/models` | 列出对外模型与各自的路由 |
+| `PUT /admin/v1/models/{name}` | 新建或修改模型，路由整体替换 |
+| `DELETE /admin/v1/models/{name}` | 删除模型，路由随之删除 |
+| `POST /admin/v1/models/{name}/test` | 按路由发一次最小请求，报告实际走的来源、耗时与嵌入维度，不计入任何账号的额度 |
+
+来源的 key 用 `ZHIXIN_SECRET_KEY`（32 字节的 base64，`openssl rand -base64 32`）加密入库，附加数据是来源编号与地址的协议和主机，所以直接修改数据库、把地址换到别的主机时 key 无法解密；后台修改地址时换了主机，也必须重新填写 key。打开后台并使用数据库时这个密钥必须配置，否则启动失败；内存存储时缺省用一把随进程消失的随机密钥。换掉密钥之后，已保存的 key 全部显示为 `key_error`，需要在后台重新填写。环境变量来源 `env` 在后台只读，不能修改、删除，也不能被后台的路由引用。
+
+保存之后路由立即生效；服务另外每 `ZHIXIN_MODEL_RELOAD_INTERVAL` 从数据库重新读一次，直接修改数据库也会生效。令牌校验失败按来源地址限流（`ZHIXIN_ADMIN_RATE`、`ZHIXIN_ADMIN_BURST`），超限期间这个地址的管理请求全部返回 429。后台没有操作审计，令牌等同于管理员本人，生产上应在 nginx 里把 `/admin` 限制在管理员的地址，或者只经 SSH 隧道访问，做法见[运维手册](运维手册.md#3-配置)。
+
+嵌入模型的几条路由必须是同一个模型的不同部署，例如两家服务商提供的 `BAAI/bge-m3`，服务端只能核对维度，向量空间是否一致由管理员保证。取舍与代价见 [ADR-0029](../docs/adr/0029-模型来源路由与嵌入代理.md)。
 
 ## 更新检查
 
@@ -271,17 +303,27 @@ ORDER BY f.first_day;
 | `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES` | `2147483648` | 一个账号全部附件的总量上限，超限上传返回 413 `storage_full` |
 | `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的响应字节上限，超过时提前收尾并置 `has_more` |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |
-| `ZHIXIN_LLM_BASE_URL` | `https://api.deepseek.com/v1` | 提供方的 Chat Completions 基础地址；带 key 时公网必须是 https |
-| `ZHIXIN_LLM_API_KEY` | 空 | 提供方 key；为空时代理返回 503 |
-| `ZHIXIN_LLM_MODELS` | `deepseek-flash` | 允许的模型名，逗号分隔 |
-| `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日 token 额度，也是 `llm_quota` 没有覆盖行时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
-| `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `20000000` | 整个实例一天的总 token 预算，用尽之后所有托管请求都返回 429 |
+| `ZHIXIN_LLM_BASE_URL` | `https://api.deepseek.com/v1` | 环境变量来源 `env` 的 OpenAI 兼容基础地址，带 key 时公网必须使用 HTTPS |
+| `ZHIXIN_LLM_API_KEY` | 空 | 环境变量来源的 key；为空时没有 `env` 来源，只用后台配置的来源 |
+| `ZHIXIN_LLM_MODELS` | `deepseek-flash` | 环境变量来源提供的聊天模型名，逗号分隔 |
+| `ZHIXIN_LLM_EMBEDDING_MODELS` | 空 | 环境变量来源提供的嵌入模型名，逗号分隔 |
+| `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日聊天 token 额度，也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
+| `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS` | `2000000` | 每个账号每日嵌入 token 额度，也是 `llm_quota.embedding_daily_tokens` 为空时的默认值；占位数字，待内测用量出来再定 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
-| `ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL` | `1` | 设为 `1` 时未确认邮箱的账号不能使用托管额度，聊天入口返回 403 `email_unverified` |
+| `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` | `256` | 一次嵌入请求最多的输入条数 |
+| `ZHIXIN_LLM_MAX_ATTEMPTS` | `3` | 一次请求最多尝试的路由条数 |
+| `ZHIXIN_LLM_HEADER_TIMEOUT` | `60s` | 流式聊天与嵌入等待来源响应头的时间，超时换下一个来源；非流式聊天不设这个期限 |
+| `ZHIXIN_ADMIN_TOKEN` | 空 | 管理后台的令牌，至少 32 个字符；为空时 `/admin` 一律 404 |
+| `ZHIXIN_ADMIN_RATE` | `0.05` | 管理令牌校验失败按来源地址的补充速率（个/秒），设 `0` 关闭 |
+| `ZHIXIN_ADMIN_BURST` | `5` | 管理令牌校验失败的桶容量 |
+| `ZHIXIN_SECRET_KEY` | 空 | 加密来源 key 的 32 字节密钥（base64）；打开后台并使用数据库时必填 |
+| `ZHIXIN_MODEL_RELOAD_INTERVAL` | `30s` | 从数据库重新读取模型路由的周期 |
+| `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `20000000` | 整个实例一天的总 token 预算，用尽之后所有托管请求都返回 429 |
+| `ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL` | `1` | 设为 `1` 时未确认邮箱的账号不能使用托管额度，聊天与嵌入入口均返回 403 `email_unverified` |
 | `ZHIXIN_LLM_CONCURRENT_PER_USER` | `4` | 同一账号同时进行的托管请求上限 |
 | `ZHIXIN_LLM_MAX_RESPONSE_BYTES` | `33554432` | 非流式响应上限，超过时按 `upstream_failed` 处理 |
 | `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` | `90s` | 流式响应两次收到数据之间的最长等待 |
-| `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` | `30m` | 一次流式响应的总时限 |
+| `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` | `30m` | 一次流式聊天或嵌入请求的总时限 |
 
 ## 部署与凭据
 
@@ -326,3 +368,5 @@ go test ./...
 改了 `schema.sql` 或 `internal/store/queries/` 下的查询要先重新运行 `sqlc`，改了 `openapi.yaml` 要先重新运行 `oapi-codegen`，生成结果随源文件一起提交；CI 会重新生成并用 `git diff --exit-code` 核对，本地少了这一步时编译与测试仍可能通过，推上去却会在生成核对上失败。
 
 端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的邮箱验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限与账号总量配额、删除账号时清理数据、`DELETE /v1/cloud` 的清除与清除期间的 409，以及模型代理的转发、key 替换、用量记录、未验证邮箱的 403、账号并发上限、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流、全局写入上限、保留期清理与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取、强制 https 与 sha256、签名格式与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重、全局写入上限与保留期清理；PostgreSQL 存储用例覆盖验证码、已验证时间、`feedback` 表、两张活跃表、额度覆盖行与附件索引的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。
+
+模型路由测试覆盖来源优先级、权重与冷却、失败后换来源、嵌入拆批及合并和按用途计量。PostgreSQL 存储用例另覆盖来源、模型与路由的配置读写。
