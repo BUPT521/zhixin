@@ -152,9 +152,21 @@ Future<({bool? configured, String? notice})> openModelSettingsPage(
   await openSettings(context);
   if (!context.mounted) return (configured: null, notice: null);
   try {
-    final config = await AppScope.of(context).settings.edit.config();
+    final read = await AppScope.of(context).settings.edit.config();
     if (!context.mounted) return (configured: null, notice: null);
-    return (configured: config?.isConfigured ?? false, notice: null);
+    if (read.failureOrNull case final failure?) {
+      return (
+        configured: null,
+        notice: describeFailureReason(
+          context,
+          failure,
+          kind: kind,
+          kept: kept,
+          next: '可以回到设置页重新保存一次',
+        ),
+      );
+    }
+    return (configured: read.valueOrNull?.isConfigured ?? false, notice: null);
   } catch (error, stack) {
     if (!context.mounted) return (configured: null, notice: null);
     return (

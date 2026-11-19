@@ -29,11 +29,12 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
 
+import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 class _FixedAi implements BuddyAi {
   @override
-  Future<LlmConfig?> config() async => null;
+  Future<Result<LlmConfig?>> config() async => const Success(null);
 
   @override
   Future<BuddyReply> ask({

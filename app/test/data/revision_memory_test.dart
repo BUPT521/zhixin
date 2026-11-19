@@ -16,6 +16,7 @@ import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/domain/models/memory.dart';
+import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
@@ -23,7 +24,7 @@ import '../support/test_db.dart';
 
 class _NoAi implements BuddyAi {
   @override
-  Future<LlmConfig?> config() async => null;
+  Future<Result<LlmConfig?>> config() async => const Success(null);
 
   @override
   Future<BuddyReply> ask({

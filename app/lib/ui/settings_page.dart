@@ -135,7 +135,9 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 读本机保存的模型配置与诊断设置，以及语义索引的规模。
   Future<void> _loadLocal(AppScopeState scope) async {
     try {
-      final config = await scope.settings.edit.config();
+      final read = await scope.settings.edit.config();
+      final config = read.valueOrNull;
+      final configFailure = read.failureOrNull;
       final account = await scope.accountServices.account.snapshot();
       var serverModels = const <String>[];
       if (account.signedIn) {
@@ -170,6 +172,17 @@ class _SettingsPageState extends State<SettingsPage> {
         _embeddingSources = embedding.sources;
         _loading = false;
       });
+      if (configFailure != null && mounted) {
+        setState(() {
+          _loadFailure = describeFailureReason(
+            context,
+            configFailure,
+            kind: 'settings_config_read',
+            kept: '其他设置照常显示',
+            next: '可以回到这一页重新保存一次模型配置',
+          );
+        });
+      }
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {

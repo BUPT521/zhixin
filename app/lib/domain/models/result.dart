@@ -23,6 +23,15 @@ sealed class Result<T> {
     Success<T>() => null,
     Failure<T>(:final reason) => reason,
   };
+
+  /// 读取结果中的值：失败时返回调用方给的兜底值。
+  ///
+  /// 读取失败本身仍要由调用方按 [failureOrNull] 判断；只有“失败时沿用上一份
+  /// 内容”这类场景才用它。
+  T fallback(T value) => switch (this) {
+    Success<T>(:final value) => value,
+    Failure<T>() => value,
+  };
 }
 
 final class Success<T> extends Result<T> {

@@ -809,7 +809,7 @@ class LearningService {
         broughtIdentities: broughtIdentities,
       ),
     );
-    final config = await ai.config();
+    final config = (await ai.config()).valueOrNull;
     final prepared = await AttachmentService(filesDir: () => runtime.filesDir)
         .prepare(question.imagePaths, enabled: config?.allowImages ?? false);
     if (question.stem.trim().isEmpty && prepared.images.isEmpty) {

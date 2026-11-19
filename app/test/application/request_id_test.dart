@@ -18,6 +18,7 @@ import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
+import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/service_runtime.dart';
@@ -29,7 +30,7 @@ class _SilentAi implements BuddyAi {
   final BuddyReply reply;
 
   @override
-  Future<LlmConfig?> config() async => null;
+  Future<Result<LlmConfig?>> config() async => const Success(null);
 
   @override
   Future<BuddyReply> ask({

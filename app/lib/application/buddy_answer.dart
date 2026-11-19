@@ -55,12 +55,13 @@ Future<({LlmConfig? config, List<Notice> notices})> readModelConfig(
   BuddyAi ai, {
   ModelFailureRecorder? recordFailure,
 }) async {
-  try {
-    return (config: await ai.config(), notices: const <Notice>[]);
-  } catch (error, stack) {
-    recordFailure?.call(error, stack, kind: 'model_config_read');
+  final read = await ai.config();
+  final failure = read.failureOrNull;
+  if (failure != null) {
+    recordFailure?.call(failure, StackTrace.current, kind: 'model_config_read');
     return (config: null, notices: const [Notice.modelConfigReadFailed]);
   }
+  return (config: read.valueOrNull, notices: const <Notice>[]);
 }
 
 Future<BuddyAnswerRun> askBuddyModel({

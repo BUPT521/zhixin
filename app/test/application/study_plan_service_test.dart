@@ -26,6 +26,7 @@ import '../support/docx_fixture.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 class _FakeAi implements BuddyAi {
@@ -45,7 +46,7 @@ class _FakeAi implements BuddyAi {
   String lastText = '';
 
   @override
-  Future<LlmConfig?> config() async => configValue;
+  Future<Result<LlmConfig?>> config() async => Success(configValue);
 
   @override
   Future<BuddyReply> ask({

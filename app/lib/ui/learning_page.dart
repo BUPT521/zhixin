@@ -140,9 +140,9 @@ class _LearningPageState extends State<LearningPage> {
   /// 模型配置决定帮助下方的恢复入口；它不随这些表写入变化，只读一次。
   Future<void> _readConfigured() async {
     try {
-      final config = await AppScope.of(context).settings.edit.config();
+      final read = await AppScope.of(context).settings.edit.config();
       if (!mounted) return;
-      setState(() => _configured = config?.isConfigured ?? false);
+      setState(() => _configured = read.valueOrNull?.isConfigured ?? false);
     } catch (_) {
       // 配置读不到时按未配置显示，不打断题目与作答本身的读取。
     }

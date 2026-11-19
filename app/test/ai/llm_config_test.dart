@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
+import 'package:zhixin/domain/models/result.dart';
 
 class _MemorySecrets implements SecretStore {
   String? value;
@@ -30,7 +31,7 @@ void main() {
     await store.save(
       const LlmConfig(apiKey: 'test-key', contextWindowTokens: 8192),
     );
-    final saved = (await store.read())!;
+    final saved = (await store.read()).valueOrNull!;
     expect(saved.contextWindowTokens, 8192);
     expect(saved.outputTokenLimit, 2048);
     expect(LlmConfig.fromJson(const {}).contextWindowTokens, 65536);
@@ -68,19 +69,23 @@ void main() {
     );
   });
 
-  test('Keystore 读不出来时抛出读取失败，而不是当成没配置', () async {
+  test('Keystore 读不出来时返回读取失败，而不是当成没配置', () async {
     final secrets = _MemorySecrets()..failRead = true;
     final store = LlmConfigStore(secrets);
-    await expectLater(store.read(), throwsA(isA<LlmConfigReadFailure>()));
+    final read = await store.read();
+    expect(read, isA<Failure<LlmConfig?>>());
+    expect(read.failureOrNull!.message, '读取模型配置失败');
   });
 
-  test('配置读坏或为空时当作没配置', () async {
+  test('配置读坏时按读取失败交回，没有配置时返回空值', () async {
     final secrets = _MemorySecrets()..value = '不是 JSON';
     final store = LlmConfigStore(secrets);
-    expect(await store.read(), isNull);
+    expect(await store.read(), isA<Failure<LlmConfig?>>());
 
     secrets.value = '';
-    expect(await store.read(), isNull);
+    final empty = await store.read();
+    expect(empty.isSuccess, isTrue);
+    expect(empty.valueOrNull, isNull);
   });
 
   test('一次读取失败沿用上一次读到的配置，删掉后仍返回空', () async {
@@ -92,14 +97,18 @@ void main() {
       apiKey: 'sk-test',
     );
     await service.store.save(config);
-    expect(await service.config(), isNotNull);
-    expect((await service.config())!.apiKey, 'sk-test');
+    expect((await service.config()).valueOrNull, isNotNull);
+    expect((await service.config()).valueOrNull!.apiKey, 'sk-test');
 
     secrets.failRead = true;
-    expect((await service.config())!.apiKey, 'sk-test');
+    final failed = await service.config();
+    expect(failed, isA<Failure<LlmConfig?>>());
+    // 失败的那一次不再交出配置，回答路径用失败前的快照兜底。
+    expect(failed.valueOrNull, isNull);
+    expect(service.configSnapshot!.apiKey, 'sk-test');
 
     secrets.failRead = false;
     await service.store.clear();
-    expect(await service.config(), isNull);
+    expect((await service.config()).valueOrNull, isNull);
   });
 }

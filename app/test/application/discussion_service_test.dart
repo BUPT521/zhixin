@@ -36,6 +36,7 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 /// 固定回答的模型替身；不联网，也不碰 Keystore。
@@ -56,9 +57,9 @@ class _FakeAi implements BuddyAi {
   Completer<void>? resume;
 
   @override
-  Future<LlmConfig?> config() async {
+  Future<Result<LlmConfig?>> config() async {
     configCalls++;
-    return configValue;
+    return Success(configValue);
   }
 
   @override

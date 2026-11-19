@@ -412,9 +412,9 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 模型配置决定回答下方的恢复入口；它不随这些表写入变化，只读一次。
   Future<void> _readConfigured() async {
     try {
-      final config = await AppScope.of(context).settings.edit.config();
+      final read = await AppScope.of(context).settings.edit.config();
       if (!mounted) return;
-      setState(() => _configured = config?.isConfigured ?? false);
+      setState(() => _configured = read.valueOrNull?.isConfigured ?? false);
     } catch (_) {
       // 配置读不到时按未配置显示，不打断讨论本身的读取与输入。
     }

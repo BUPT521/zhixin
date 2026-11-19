@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../domain/models/chat_message.dart';
+import '../domain/models/result.dart';
 import '../domain/rules/content_identity.dart';
 import 'agent_loop.dart';
 import 'buddy_prompt.dart';
@@ -13,7 +14,10 @@ import 'llm_context_budget.dart';
 
 /// 回答来源的接口；应用只依赖它，测试可以换成固定回答。
 abstract class BuddyAi {
-  Future<LlmConfig?> config();
+  /// 当前的模型配置；没有配置时返回 [Success] 里的空值，读取失败返回
+  /// [Failure]。回答路径可以把失败当成“暂时没有可用配置”继续走本地兜底，
+  /// 设置页则要把两种情况分开说明。
+  Future<Result<LlmConfig?>> config();
 
   /// [onText] 不为空时边生成边回调已经可以显示的正文；回调只用于展示，
   /// 最终结果仍以返回的 [BuddyReply] 为准。
@@ -103,27 +107,33 @@ class AiChatService implements BuddyAi {
   /// 读取失败当成未配置而退回本地。
   LlmConfig? _lastConfig;
 
+  /// 当前运行时沿用的配置快照；读取失败时回答路径用它兜底。
+  LlmConfig? get configSnapshot => _lastConfig;
+
   /// 用户明确保存或删除配置后，同步更新运行时配置快照。
   void setConfigSnapshot(LlmConfig? value) => _lastConfig = value;
 
   @override
-  Future<LlmConfig?> config() async {
+  Future<Result<LlmConfig?>> config() async {
     final source = configSource;
-    if (source != null) {
-      try {
-        final value = await source();
-        _lastConfig = value;
-        return value;
-      } on LlmConfigReadFailure {
-        return _lastConfig;
-      }
-    }
+    final read = source == null
+        ? await store.read()
+        : await _readConfigSource(source);
+    _lastConfig = read.fallback(_lastConfig);
+    return read;
+  }
+
+  /// 读一次配置来源；来源读不出来时给出失败原因，由调用方决定沿用还是说明。
+  ///
+  /// 「知新服务」的来源会把配置补上当前令牌，失败一次不能当成未配置而退回
+  /// 本地，所以按 [Failure] 记下来。
+  Future<Result<LlmConfig?>> _readConfigSource(
+    Future<LlmConfig?> Function() source,
+  ) async {
     try {
-      final value = await store.read();
-      _lastConfig = value;
-      return value;
-    } on LlmConfigReadFailure {
-      return _lastConfig;
+      return Success(await source());
+    } on LlmConfigReadFailure catch (error) {
+      return Failure(FailureReason('读取模型配置失败', detail: error.cause.toString()));
     }
   }
 
@@ -139,7 +149,7 @@ class AiChatService implements BuddyAi {
     LlmConfigSnapshot? configSnapshot,
   }) async {
     final current = configSnapshot == null
-        ? await config()
+        ? (await config()).fallback(_lastConfig)
         : configSnapshot.value;
     if (current == null || !current.isConfigured) {
       throw const LlmException(LlmFailure.notConfigured, '模型尚未配置');

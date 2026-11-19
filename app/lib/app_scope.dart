@@ -627,7 +627,11 @@ class AppScopeState extends State<AppScope> {
   /// 令牌不进 Keystore，每次回答前从这里取；没有登录时返回 null，回答按未
   /// 配置退回本地兜底，设置页另有说明。
   Future<LlmConfig?> _configuredModelConfig() async {
-    final stored = await _llmStore.read();
+    final read = await _llmStore.read();
+    final stored = read.valueOrNull;
+    if (read.failureOrNull case final failure?) {
+      throw LlmConfigReadFailure(failure.detail ?? failure.message);
+    }
     return _account.authorizeModelConfig(stored);
   }
 
