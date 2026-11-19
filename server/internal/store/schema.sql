@@ -57,6 +57,7 @@ CREATE TABLE session_refresh_used (
   replaced_refresh_hash TEXT NOT NULL           -- 本次轮换发出的刷新令牌摘要
 );
 CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);
+CREATE INDEX session_refresh_used_rotated_at ON session_refresh_used(rotated_at);
 
 -- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
 -- 锁住 sync_head，核对 base_seq = head 之后再追加。

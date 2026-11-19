@@ -43,7 +43,7 @@ func TestTakeChecksAllKeysBeforeConsuming(t *testing.T) {
 	if l.Take("x", "y") == 0 {
 		t.Fatal("任一键用完时整个请求应当拒绝")
 	}
-	if got := l.buckets["x"].bucket.TokensAt(now); got < 1 {
+	if got := l.buckets["x"].tokens; got < 1 {
 		t.Fatalf("拒绝时不应扣减其他键的令牌，x 剩余 %v", got)
 	}
 }
@@ -145,7 +145,7 @@ func TestReapRunsAtMostEveryQuarterIdle(t *testing.T) {
 	l.nowFn = func() time.Time { return now }
 	l.lastReap = now
 	// 放一个空闲时间已超过 idle 的键，只有回收真正执行时才会被删。
-	l.buckets["old"] = &entry{bucket: rate.NewLimiter(rate.Limit(1), 1), seen: now.Add(-5 * time.Minute)}
+	l.buckets["old"] = &entry{tokens: 1, seen: now.Add(-5 * time.Minute)}
 
 	now = now.Add(10 * time.Second) // 不足 idle/4（1 分钟）
 	if l.Take("a") != 0 {

@@ -11,6 +11,7 @@ package syncsvc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -31,7 +32,17 @@ var (
 	// ErrHeadMoved means the push was not based on the current server head.
 	ErrHeadMoved = errors.New("sync: server head moved")
 	// ErrInvalid means a commit failed validation.
-	ErrInvalid = errors.New("sync: invalid commit")
+	ErrInvalid      = errors.New("sync: invalid commit")
+	ErrPushTooLarge = errors.New("sync: push exceeds byte limit")
+	ErrStorageFull  = errors.New("sync: account storage limit reached")
+	ErrPullTooLarge = errors.New("sync: a stored commit exceeds the pull limit")
+)
+
+const (
+	MaxPushBytes     = 16 << 20
+	MaxCommitBytes   = 2 << 20
+	MaxAccountBytes  = 256 << 20
+	DefaultPullBytes = 4 << 20
 )
 
 // Store is the per-account commit log.
@@ -41,8 +52,8 @@ type Store interface {
 	// Append atomically checks base == head and appends commits whose
 	// request_id is new. It returns the resulting head.
 	Append(ctx context.Context, userID string, base int64, commits []Commit) (int64, error)
-	// After returns up to limit commits with seq > after, in order.
-	After(ctx context.Context, userID string, after int64, limit int) ([]Commit, error)
+	// After bounds the page before loading commit contents.
+	After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error)
 	// Reset deletes every commit of the account and sets the head back to 0.
 	// An empty log is not an error; a failure anywhere is returned.
 	Reset(ctx context.Context, userID string) error
@@ -50,13 +61,14 @@ type Store interface {
 
 // MemoryStore is a Store kept in process memory.
 type MemoryStore struct {
-	mu   sync.Mutex
-	logs map[string][]Commit
-	now  func() time.Time
+	mu    sync.Mutex
+	logs  map[string][]Commit
+	bytes map[string]int64
+	now   func() time.Time
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{logs: map[string][]Commit{}, now: time.Now}
+	return &MemoryStore{logs: map[string][]Commit{}, bytes: map[string]int64{}, now: time.Now}
 }
 
 func (m *MemoryStore) Head(_ context.Context, userID string) (int64, error) {
@@ -106,6 +118,17 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	if len(fresh) == 0 {
 		return int64(len(log)), nil
 	}
+	used := m.bytes[userID]
+	for _, c := range fresh {
+		b, err := json.Marshal(c)
+		if err != nil {
+			return int64(len(log)), err
+		}
+		used += int64(len(b)) + 256
+	}
+	if used > MaxAccountBytes {
+		return int64(len(log)), ErrStorageFull
+	}
 	received := m.now()
 	for _, c := range fresh {
 		seq := int64(len(log)) + 1
@@ -114,10 +137,11 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 		log = append(log, c)
 	}
 	m.logs[userID] = log
+	m.bytes[userID] = used
 	return newHead, nil
 }
 
-func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int) ([]Commit, error) {
+func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	log := m.logs[userID]
@@ -128,13 +152,14 @@ func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit
 		return nil, nil
 	}
 	end := min(after+int64(limit), int64(len(log)))
-	return append([]Commit(nil), log[after:end]...), nil
+	return append([]Commit(nil), trimPullBytes(log[after:end], maxBytes)...), nil
 }
 
 func (m *MemoryStore) DeleteUser(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.logs, userID)
+	delete(m.bytes, userID)
 	return nil
 }
 
@@ -144,6 +169,7 @@ func (m *MemoryStore) Reset(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.logs, userID)
+	delete(m.bytes, userID)
 	return nil
 }
 

@@ -181,6 +181,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		log.Warn("ZHIXIN_CODE_SECRET is empty: verification codes stop working after a restart")
 	}
 	authSvc.ConfigureCodes(mailer, codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
+	authSvc.SetMailLimiter(ratelimit.New(rate.Limit(4/(24*time.Hour).Seconds()), 4, 48*time.Hour, cfg.RateLimitKeys))
 
 	// 匿名活跃的安装标识用 HMAC 保存；密钥为空时每次启动随机生成，重启后同一个
 	// 安装会被当成新的，留存数字偏高，因此生产必须固定。
@@ -245,16 +246,8 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	llmProxy := llmproxy.NewRoutedHandler(cfg.LLM, router, st.Quota, cfg.Location, log)
 	llmProxy.SetConcurrencyLimit(cfg.LLM.ConcurrentPerUser)
 	if cfg.LLM.RequireVerifiedEmail {
-		llmProxy.SetEmailVerifier(func(ctx context.Context, userID string) (bool, error) {
-			u, err := st.Auth.UserByID(ctx, userID)
-			if errors.Is(err, auth.ErrNotFound) {
-				// 账号在鉴权之后、切到模型之前被删掉：按未验证挡下，不回 500。
-				return false, nil
-			}
-			if err != nil {
-				return false, err
-			}
-			return !u.EmailVerifiedAt.IsZero(), nil
+		llmProxy.SetEmailVerifier(func(ctx context.Context, _ string) (bool, error) {
+			return auth.MustPrincipal(ctx).EmailVerified, nil
 		})
 	}
 
@@ -297,7 +290,10 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
 			cachePublic,
+			syncConcurrency(),
+			temporaryUploadBudget(cfg.MaxBackupBytes, cfg.MaxAttachmentBytes),
 			uploadLimit(uploadLimits),
+			cloudOperations(cfg.DatabaseURL != ""),
 			func(next http.Handler) http.Handler {
 				account := accountGuard(next)
 				management := adminGuard(next)

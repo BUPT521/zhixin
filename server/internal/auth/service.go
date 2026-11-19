@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
 
 var (
@@ -47,8 +49,9 @@ type Tokens struct {
 
 // Principal is the authenticated caller of a request.
 type Principal struct {
-	UserID    string
-	SessionID string
+	UserID        string
+	SessionID     string
+	EmailVerified bool
 }
 
 // AccountDeleter removes data owned by the other services before the account
@@ -89,7 +92,12 @@ type Service struct {
 	codeSecret   []byte
 	codeTTL      time.Duration
 	codeCooldown time.Duration
+	mailLimits   *ratelimit.Limiter
 }
+
+type mailRateError struct{ retryAfter int64 }
+
+func (mailRateError) Error() string { return "auth: recipient mail budget exhausted" }
 
 const maxCodeAttempts = 5
 
@@ -113,6 +121,9 @@ func (s *Service) ConfigureCodes(mailer Mailer, secret []byte, ttl, cooldown tim
 	s.codeTTL = ttl
 	s.codeCooldown = cooldown
 }
+
+// SetMailLimiter shares the same recipient budget across both code purposes.
+func (s *Service) SetMailLimiter(limiter *ratelimit.Limiter) { s.mailLimits = limiter }
 
 // SetAccountDataDeleter registers the one cleanup that runs before the account
 // row is removed.
@@ -148,7 +159,8 @@ func (s *Service) SetMaxSessions(n int) {
 // 节奏与 retention.PruneLoop 一致：过期行不影响正确性，清理只控制表的大小。
 func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) {
 	prune := func() {
-		if err := store.PruneExpired(ctx, s.now()); err != nil {
+		now := s.now()
+		if err := store.PruneExpired(ctx, now, now.Add(-max(s.refreshTTL, refreshGrace))); err != nil {
 			log.Error("prune expired auth rows", slog.String("error", err.Error()))
 		}
 	}
@@ -240,7 +252,7 @@ func (s *Service) Register(ctx context.Context, email, password, device string) 
 	if err := s.store.CreateUser(ctx, u); err != nil {
 		return Tokens{}, err
 	}
-	return s.issue(ctx, u.ID, device)
+	return s.issue(ctx, u.ID, device, hash)
 }
 
 // Login checks the password and opens a new session for the device.
@@ -268,7 +280,7 @@ func (s *Service) Login(ctx context.Context, email, password, device string) (To
 	if !ok {
 		return Tokens{}, ErrInvalidCredentials
 	}
-	return s.issue(ctx, u.ID, device)
+	return s.issue(ctx, u.ID, device, u.PasswordHash)
 }
 
 var dummyHash, _ = HashPassword("zhixin-dummy-password")
@@ -415,7 +427,7 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (Princip
 	if !s.now().Before(sess.AccessExpires) {
 		return Principal{}, ErrInvalidToken
 	}
-	return Principal{UserID: sess.UserID, SessionID: sess.ID}, nil
+	return Principal{UserID: sess.UserID, SessionID: sess.ID, EmailVerified: sess.EmailVerified}, nil
 }
 
 // Logout ends one session.
@@ -456,13 +468,15 @@ func (s *Service) ConfirmEmailVerification(ctx context.Context, p Principal, cod
 	return s.store.DeleteCode(ctx, p.UserID, PurposeVerifyEmail)
 }
 
-// RequestPasswordReset sends a reset code to a verified address. Unknown or
-// unverified addresses are ignored on purpose: the caller always sees the same
-// result, so the endpoint cannot be used to find out which emails are registered.
+// RequestPasswordReset sends a code to the registered address. The recipient
+// can recover an account even if its address was never confirmed.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
 	email, err := normalizeEmail(email)
 	if err != nil {
 		return ErrInvalidInput
+	}
+	if s.mailer == nil || len(s.codeSecret) == 0 {
+		return ErrMailUnavailable
 	}
 	u, err := s.store.UserByEmail(ctx, email)
 	if errors.Is(err, ErrNotFound) {
@@ -471,10 +485,11 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 	if err != nil {
 		return err
 	}
-	if u.EmailVerifiedAt.IsZero() {
+	err = s.issueCode(ctx, u, PurposeResetPassword)
+	if errors.Is(err, ErrCodeTooSoon) || errors.As(err, new(mailRateError)) {
 		return nil
 	}
-	return s.issueCode(ctx, u, PurposeResetPassword)
+	return err
 }
 
 // ResetPassword replaces the password and ends every session of the account,
@@ -493,9 +508,6 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 	}
 	if err != nil {
 		return err
-	}
-	if u.EmailVerifiedAt.IsZero() {
-		return ErrInvalidCode
 	}
 	if err := s.checkCode(ctx, u.ID, PurposeResetPassword, code); err != nil {
 		return err
@@ -527,6 +539,11 @@ func (s *Service) issueCode(ctx context.Context, u User, purpose string) error {
 		return ErrCodeTooSoon
 	case err != nil && !errors.Is(err, ErrNotFound):
 		return err
+	}
+	if s.mailLimits != nil {
+		if delay := s.mailLimits.Take(u.Email); delay > 0 {
+			return mailRateError{retryAfter: delay}
+		}
 	}
 	code, err := newCode()
 	if err != nil {
@@ -633,7 +650,7 @@ func codeBody(purpose, code string, ttl time.Duration) string {
 //
 // 删号不可撤销，所以先核对一次密码：拿着别人设备上的访问令牌不能直接把账号
 // 删掉。密码校验与登录共用同一个内存预算与哈希校验规则。
-func (s *Service) DeleteAccount(ctx context.Context, p Principal, password string) error {
+func (s *Service) VerifyCurrentPassword(ctx context.Context, p Principal, password string) error {
 	u, err := s.store.UserByID(ctx, p.UserID)
 	if errors.Is(err, ErrNotFound) {
 		return ErrInvalidCredentials
@@ -645,6 +662,13 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, password strin
 	if err != nil || !ok {
 		return ErrInvalidCredentials
 	}
+	return nil
+}
+
+func (s *Service) DeleteAccount(ctx context.Context, p Principal, password string) error {
+	if err := s.VerifyCurrentPassword(ctx, p, password); err != nil {
+		return err
+	}
 	if s.deleteAccountData != nil {
 		if err := s.deleteAccountData(ctx, p.UserID); err != nil {
 			return err
@@ -653,7 +677,7 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, password strin
 	return s.store.DeleteUser(ctx, p.UserID)
 }
 
-func (s *Service) issue(ctx context.Context, userID, device string) (Tokens, error) {
+func (s *Service) issue(ctx context.Context, userID, device, checkedHash string) (Tokens, error) {
 	now := s.now()
 	access, refresh := newToken(), newToken()
 	sess := Session{
@@ -666,7 +690,7 @@ func (s *Service) issue(ctx context.Context, userID, device string) (Tokens, err
 		RefreshExpires: now.Add(s.refreshTTL),
 		CreatedAt:      now,
 	}
-	if err := s.store.CreateSession(ctx, sess, s.maxSessions); err != nil {
+	if err := s.store.CreateSession(ctx, sess, s.maxSessions, checkedHash); err != nil {
 		return Tokens{}, err
 	}
 	return Tokens{

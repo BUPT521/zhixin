@@ -3,11 +3,9 @@ package llmproxy
 import (
 	"context"
 	"errors"
-	"net/url"
 	"regexp"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -86,20 +84,9 @@ var (
 	modelNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 )
 
-// KeyAAD 是加密来源 key 时的附加数据：来源编号加上地址的协议与主机。密文
-// 因此绑定在这个来源与这台主机上，直接改库把地址换成别的主机时 key 无法解密，
-// 不会被发到新地址；同一主机下改路径不受影响。
+// KeyAAD 将密文绑定到来源编号和规范化后的完整上游地址。
 func KeyAAD(id, baseURL string) string {
-	return id + "\n" + origin(baseURL)
-}
-
-// origin 返回地址的协议与主机部分，解析失败时返回原样。
-func origin(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return raw
-	}
-	return strings.ToLower(u.Scheme + "://" + u.Host)
+	return id + "\n" + baseURL
 }
 
 // ValidProviderID 报告来源编号是否合法；env 留给环境变量。

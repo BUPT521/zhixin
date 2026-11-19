@@ -215,7 +215,7 @@ func TestTwoDeviceSyncWalkthrough(t *testing.T) {
 	t.Logf("步骤 8：设备 A 上传附件，设备 B 按哈希检查并取回原始字节")
 
 	// ---- 8. 清空云端数据之后，两台设备从 0 重新上传基线 ----
-	if code := h.json("DELETE", "/v1/sync/commits", deviceA, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/sync/commits", deviceA, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("清空提交：%d", code)
 	}
 	if page := pull(deviceB, 0); len(page.Commits) != 0 || page.Head != 0 {

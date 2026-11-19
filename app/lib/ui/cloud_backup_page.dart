@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../data/cloud/server_client.dart';
+import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -190,17 +191,17 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
   }
 
   Future<void> _deleteAll() async {
-    final confirmed = await confirmZhixin(
-      context: context,
+    final password = await askDestructiveActionPassword(
+      context,
       title: '删除全部云端备份',
-      content: const Text('会删除这个账号在服务端保存的全部整库备份，账号与同步序列保留；删除后无法恢复。'),
+      message: '会永久删除这个账号在服务端保存的全部整库备份，账号与同步序列会保留。',
       confirmLabel: '全部删除',
-      destructive: true,
     );
-    if (!confirmed || !mounted || _busy) return;
+    if (password == null || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).accountServices.backups.deleteAll();
+      await AppScope.of(context).accountServices.backups
+          .deleteAll(password: password);
       _report('已删除全部云端备份');
       await _load();
     } catch (error, stack) {

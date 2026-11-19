@@ -14,7 +14,6 @@ import 'cloud_sync_prompts.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
-import 'zhixin_dialog.dart';
 import 'zhixin_header.dart';
 import 'workspace_widgets.dart';
 
@@ -450,22 +449,19 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _clearCloudData() async {
     if (_busy) return;
-    final confirmed = await confirmZhixin(
-      context: context,
+    final password = await askDestructiveActionPassword(
+      context,
       title: '清除云端数据',
-      content: const Text(
-        '会一次删除这个账号在服务端保存的全部整库备份、同步提交序列、附件与遗留对象，'
-        '本机学习记录和账号保留。清除期间其他设备写入会被拒绝，完成后需要重新同步；'
-        '删除后无法恢复，可以重复执行。',
-      ),
+      message:
+          '会永久删除这个账号在服务端保存的全部整库备份、同步提交序列与附件。'
+          '本机学习记录和账号会保留，清除后需要重新同步。',
       confirmLabel: '清除',
-      destructive: true,
     );
-    if (!confirmed || !mounted || _busy) return;
+    if (password == null || !mounted || _busy) return;
     setState(() => _busy = true);
     final scope = AppScope.of(context);
     try {
-      await scope.accountServices.account.clearCloudData();
+      await scope.accountServices.account.clearCloudData(password: password);
       await scope.accountServices.sync.clearState();
       // 清除之后先停掉自动同步，再问用户要不要恢复；首次同步仍会先确认。
       await scope.accountServices.account.setAutoSync(false);
@@ -487,8 +483,9 @@ class _AccountPageState extends State<AccountPage> {
     } on ServerProblem catch (error, stack) {
       if (!mounted) return;
       if (error.isConflict) {
-        // 上一次清除还没结束：不是失败，稍后再点一次即可。
-        _report('云端数据还在清理中，请稍后重试');
+        _report('该账号还有云端操作在进行，请稍后重试');
+      } else if (error.code == 'invalid_credentials') {
+        _report('密码不正确，请重新输入', failed: true);
       } else {
         _report(
           describeFailure(

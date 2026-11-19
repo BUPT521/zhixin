@@ -36,6 +36,10 @@ type Item struct {
 // 客户端按这个错误提示修改，不需要知道具体是哪一项。
 var ErrInvalidInput = errors.New("feedback: invalid input")
 
+var ErrCapacity = errors.New("feedback: retained feedback limit reached")
+
+const MaxRetainedItems = 10_000
+
 // Store 保存反馈。生产实现写 PostgreSQL；反馈不关联账号，删号不影响它。
 type Store interface {
 	CreateFeedback(ctx context.Context, item Item) error
@@ -55,6 +59,9 @@ func NewMemoryStore() *MemoryStore { return &MemoryStore{} }
 func (m *MemoryStore) CreateFeedback(_ context.Context, item Item) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.items) >= MaxRetainedItems {
+		return ErrCapacity
+	}
 	m.items = append(m.items, item)
 	return nil
 }
@@ -73,6 +80,7 @@ func (m *MemoryStore) DeleteBefore(_ context.Context, before time.Time) (int64, 
 		}
 		kept = append(kept, item)
 	}
+	clear(m.items[len(kept):])
 	m.items = kept
 	return deleted, nil
 }

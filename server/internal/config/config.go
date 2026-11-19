@@ -162,6 +162,8 @@ type Config struct {
 // merged with it by llmproxy.Router (ADR-0029); a model of the same name in
 // the admin page wins.
 type LLMConfig struct {
+	// RestrictProviders requires public HTTPS endpoints for database sources.
+	RestrictProviders bool
 	// BaseURL is the upstream OpenAI-compatible base, e.g. https://api.deepseek.com/v1.
 	BaseURL string
 	// APIKey is the provider key held by the server. Empty disables the env source.
@@ -322,6 +324,7 @@ func Load(getenv func(string) string) (Config, error) {
 		ReleaseFile: get("ZHIXIN_RELEASE_FILE", ""),
 
 		LLM: LLMConfig{
+			RestrictProviders:    get("ZHIXIN_DATABASE_URL", "") != "",
 			BaseURL:              strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
 			APIKey:               get("ZHIXIN_LLM_API_KEY", ""),
 			Models:               list("ZHIXIN_LLM_MODELS", "deepseek-flash"),

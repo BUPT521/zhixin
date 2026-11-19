@@ -169,21 +169,22 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	// 先看预算再校验密码：超限的请求不该先花一次 argon2 计算。检查不扣令牌，
-	// 只有校验失败才扣，登录成功不消耗预算。
+	// 先为本次校验扣除一枚令牌，密码校验结束后仅对失败的凭据保留扣减。
 	email := loginKey(string(in.Email))
-	if delay := h.loginFails.WouldBlock("login:" + email); delay > 0 {
+	refund, delay := h.loginFails.TakeRefundable("login:" + email)
+	if delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return
 	}
 	t, err := h.svc.Login(r.Context(), string(in.Email), in.Password, optional(in.DeviceName))
 	switch {
 	case errors.Is(err, ErrInvalidCredentials):
-		h.loginFails.Take("login:" + email)
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeInvalidCredentials, "")
 	case err != nil:
+		refund()
 		httpx.WriteInternal(w, r, h.log, err)
 	default:
+		refund()
 		httpx.WriteJSON(w, http.StatusOK, tokensJSON(t))
 	}
 }
@@ -232,11 +233,14 @@ func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	err := h.svc.RequestEmailVerification(r.Context(), p)
+	var mailRate mailRateError
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, ErrCodeTooSoon):
 		httpx.TooMany(w, r, h.cooldownSeconds())
+	case errors.As(err, &mailRate):
+		httpx.TooMany(w, r, mailRate.retryAfter)
 	case errors.Is(err, ErrMailUnavailable):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
 	default:
@@ -266,8 +270,7 @@ func (h *Handler) ConfirmEmailVerification(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// ForgotPassword 向已验证的邮箱发重设验证码。邮箱不存在或未验证时也返回 204，
-// 这个接口因此不能被用来判断哪些邮箱注册过。
+// ForgotPassword 向账号登记的邮箱发送重设验证码。邮箱不存在时也返回 204。
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if delay := h.codeLimits.Take("forgot-address:" + h.clientHost(r)); delay > 0 {
 		httpx.TooMany(w, r, delay)
@@ -338,22 +341,36 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 // DeleteMe 删号前要求再输一次密码。密码错误回 401 invalid_credentials 并扣一次
 // 按账号的失败预算；只有密码正确才做原有清理并回 204。
 func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
-	p := MustPrincipal(r.Context())
-	if delay := h.loginFails.WouldBlock("delete:" + p.UserID); delay > 0 {
-		httpx.TooMany(w, r, delay)
-		return
+	if h.checkPassword(w, r, h.svc.DeleteAccount) {
+		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// ConfirmPassword 在不可撤销的云端批量删除前重新核对密码。
+func (h *Handler) ConfirmPassword(w http.ResponseWriter, r *http.Request) bool {
+	return h.checkPassword(w, r, h.svc.VerifyCurrentPassword)
+}
+
+func (h *Handler) checkPassword(w http.ResponseWriter, r *http.Request, check func(context.Context, Principal, string) error) bool {
+	p := MustPrincipal(r.Context())
 	var in api.DeleteV1MeJSONRequestBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
-		return
+		return false
 	}
-	switch err := h.svc.DeleteAccount(r.Context(), p, in.Password); {
+	refund, delay := h.loginFails.TakeRefundable("delete:" + p.UserID)
+	if delay > 0 {
+		httpx.TooMany(w, r, delay)
+		return false
+	}
+	switch err := check(r.Context(), p, in.Password); {
 	case err == nil:
-		w.WriteHeader(http.StatusNoContent)
+		refund()
+		return true
 	case errors.Is(err, ErrInvalidCredentials):
-		h.loginFails.Take("delete:" + p.UserID)
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeInvalidCredentials, "")
 	default:
+		refund()
 		httpx.WriteInternal(w, r, h.log, err)
 	}
+	return false
 }

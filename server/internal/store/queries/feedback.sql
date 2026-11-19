@@ -12,6 +12,9 @@ VALUES (
   sqlc.arg(platform), sqlc.arg(diagnostics), sqlc.arg(created_at)
 );
 
+-- name: FeedbackCount :one
+SELECT count(*) FROM feedback;
+
 -- name: DeleteFeedbackBefore :execrows
 -- 保留期清理：删除创建时间早于 before 的反馈，返回删除的行数（internal/feedback
 -- 的 PruneLoop 每天调用一次，见 server/README 的应用内反馈）。

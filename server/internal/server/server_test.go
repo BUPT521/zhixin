@@ -136,7 +136,7 @@ func TestHealthAndUnknownRoute(t *testing.T) {
 }
 
 // TestEmailVerificationWithoutMailer 守住没配发信时的行为：登录与备份照常，
-// 验证码接口回 503，找回密码对未验证的邮箱仍然回 204（不暴露邮箱是否存在）。
+// 验证码接口回 503，找回密码统一回 503。
 func TestEmailVerificationWithoutMailer(t *testing.T) {
 	h := newHarness(t, nil)
 	token := h.signUp("mail@example.com")
@@ -151,7 +151,7 @@ func TestEmailVerificationWithoutMailer(t *testing.T) {
 	if code := h.json("POST", "/v1/auth/email/verify/request", token, nil, &p); code != http.StatusServiceUnavailable || p.Code != "unavailable" {
 		t.Fatalf("request code without mail: %d %+v", code, p)
 	}
-	if code := h.json("POST", "/v1/auth/password/forgot", "", map[string]string{"email": "mail@example.com"}, nil); code != http.StatusNoContent {
+	if code := h.json("POST", "/v1/auth/password/forgot", "", map[string]string{"email": "mail@example.com"}, nil); code != http.StatusServiceUnavailable {
 		t.Fatalf("forgot for unverified email: %d", code)
 	}
 }
@@ -240,10 +240,10 @@ func TestClearCloudDataKeepsAccount(t *testing.T) {
 	push(owner, "r-owner")
 	push(other, "r-other")
 
-	if code := h.json("DELETE", "/v1/backups", owner, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/backups", owner, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("clear backups: %d", code)
 	}
-	if code := h.json("DELETE", "/v1/sync/commits", owner, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/sync/commits", owner, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("clear commits: %d", code)
 	}
 
@@ -281,10 +281,10 @@ func TestClearCloudDataKeepsAccount(t *testing.T) {
 		t.Fatalf("upload after clear: %d", resp.StatusCode)
 	}
 	push(owner, "r-again")
-	if code := h.json("DELETE", "/v1/backups", owner, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/backups", owner, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("second clear backups: %d", code)
 	}
-	if code := h.json("DELETE", "/v1/sync/commits", owner, nil, nil); code != http.StatusNoContent {
+	if code := h.json("DELETE", "/v1/sync/commits", owner, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 		t.Fatalf("second clear commits: %d", code)
 	}
 
@@ -475,7 +475,7 @@ func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit)
 	return 0, errors.New("database is down")
 }
 
-func (failingSyncStore) After(context.Context, string, int64, int) ([]syncsvc.Commit, error) {
+func (failingSyncStore) After(context.Context, string, int64, int, int64) ([]syncsvc.Commit, error) {
 	return nil, errors.New("database is down")
 }
 
@@ -594,7 +594,7 @@ func TestUploadRateLimitReturns429(t *testing.T) {
 // ZHIXIN_RELEASE_FILE 读入，接口不带令牌也返回同一个版本。
 func TestReleaseManifestIsPublic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
-	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"` + strings.Repeat("0", 64) + `","notes":"内测"}]}`
+	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"` + strings.Repeat("0", 64) + `","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==","notes":"内测"}]}`
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}

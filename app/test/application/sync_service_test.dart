@@ -180,7 +180,7 @@ void main() {
     final userId = (await a.account.snapshot()).session!.userId;
     expect(server.headOf(userId), 1);
 
-    await a.account.clearCloudData();
+    await a.account.clearCloudData(password: 'password1');
     await a.sync.clearState();
     await a.sync.syncNow(confirmBaseline: true);
     // 清除云端数据之后服务端位置回到 0，同步重新上传了一份基线。

@@ -80,7 +80,9 @@ func (rt routes) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "cloud purge is not wired")
 		return
 	}
-	rt.cloud(w, r)
+	if rt.auth.ConfirmPassword(w, r) {
+		rt.cloud(w, r)
+	}
 }
 
 func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { rt.sync.Head(w, r) }
@@ -90,7 +92,11 @@ func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params
 func (rt routes) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 	rt.sync.Push(w, r)
 }
-func (rt routes) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) { rt.sync.Reset(w, r) }
+func (rt routes) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
+	if rt.auth.ConfirmPassword(w, r) {
+		rt.sync.Reset(w, r)
+	}
+}
 
 func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
 	rt.blobs.Get(w, r, sha256)
@@ -104,7 +110,9 @@ func (rt routes) PutV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256
 
 func (rt routes) GetV1Backups(w http.ResponseWriter, r *http.Request) { rt.backups.List(w, r) }
 func (rt routes) DeleteV1Backups(w http.ResponseWriter, r *http.Request) {
-	rt.backups.DeleteAll(w, r)
+	if rt.auth.ConfirmPassword(w, r) {
+		rt.backups.DeleteAll(w, r)
+	}
 }
 func (rt routes) PostV1Backups(w http.ResponseWriter, r *http.Request, params api.PostV1BackupsParams) {
 	rt.backups.Upload(w, r, params)

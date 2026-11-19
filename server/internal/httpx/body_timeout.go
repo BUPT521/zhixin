@@ -36,6 +36,7 @@ func BodyIdleTimeout(d time.Duration) func(http.Handler) http.Handler {
 				ReadCloser: r.Body,
 				controller: http.NewResponseController(w),
 				timeout:    d,
+				expires:    time.Now().Add(10 * time.Minute),
 			}
 			r.Body = body
 			defer body.finish()
@@ -49,12 +50,13 @@ type idleBody struct {
 	io.ReadCloser
 	controller *http.ResponseController
 	timeout    time.Duration
+	expires    time.Time
 	settled    bool
 }
 
 func (b *idleBody) Read(p []byte) (int, error) {
 	if !b.settled {
-		if err := b.controller.SetReadDeadline(time.Now().Add(b.timeout)); err != nil {
+		if err := b.controller.SetReadDeadline(b.deadline()); err != nil {
 			if !errors.Is(err, http.ErrNotSupported) {
 				return 0, fmt.Errorf("httpx: 设置请求体读期限失败: %w", err)
 			}
@@ -101,5 +103,13 @@ func (b *idleBody) finish() {
 		return
 	}
 	b.settled = true
-	_ = b.controller.SetReadDeadline(time.Now().Add(b.timeout))
+	_ = b.controller.SetReadDeadline(b.deadline())
+}
+
+func (b *idleBody) deadline() time.Time {
+	idle := time.Now().Add(b.timeout)
+	if b.expires.Before(idle) {
+		return b.expires
+	}
+	return idle
 }

@@ -243,9 +243,11 @@ class AccountService {
   ///
   /// 清空之后服务端位置回到 0，下一次同步需要重新确认后再上传基线。上一次
   /// 清除还没结束时服务端返回 409 `conflict`，调用方按“稍后重试”处理。
-  Future<void> clearCloudData() async {
+  Future<void> clearCloudData({required String password}) async {
     final epoch = _epoch;
-    await call<void>((client, token) => client.deleteCloud(token));
+    await call<void>(
+      (client, token) => client.deleteCloud(token, password: password),
+    );
     _ensureIdentityUnchanged(epoch);
     await preferences.clearSyncState();
   }
@@ -339,7 +341,7 @@ class AccountService {
     try {
       return await action(client, token);
     } on ServerProblem catch (error) {
-      if (!error.isUnauthorized) rethrow;
+      if (!error.isUnauthorized || error.code == 'invalid_credentials') rethrow;
       final retry = await _refreshStale(token);
       return action(client, retry.accessToken);
     }

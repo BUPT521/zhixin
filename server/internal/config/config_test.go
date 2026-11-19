@@ -268,7 +268,7 @@ func TestLoadLLMUpstreamRequiresHTTPS(t *testing.T) {
 
 func TestLoadReadsReleaseManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
-	body := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]}`
+	body := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"0000000000000000000000000000000000000000000000000000000000000000","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}]}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}

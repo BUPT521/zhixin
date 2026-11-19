@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -146,15 +146,21 @@ func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url: want an absolute http or https URL without query")
 		return
 	}
+	if a.proxy.cfg.RestrictProviders {
+		u, _ := url.Parse(base)
+		addr, ipErr := netip.ParseAddr(u.Hostname())
+		if u.Scheme != "https" || (ipErr == nil && !publicProviderIP(addr)) {
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, errProviderAddress.Error())
+			return
+		}
+	}
 	rec, err := a.catalog.Provider(r.Context(), id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		httpx.WriteInternal(w, r, a.proxy.log, err)
 		return
 	}
-	// 只换地址、不重新填 key 时，key 会被发到新地址。换了主机就要求重新填写，
-	// 管理令牌因此不能把已保存的 key 引到别处；同一主机下改路径照常保留。
-	if rec.APIKeySealed != "" && in.ApiKey == nil && origin(rec.BaseURL) != origin(base) {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url host changed: enter api_key again")
+	if rec.APIKeySealed != "" && in.ApiKey == nil && rec.BaseURL != base {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url changed: enter api_key again")
 		return
 	}
 	rec.ID = id
@@ -264,10 +270,10 @@ func (a *Admin) TestProvider(w http.ResponseWriter, r *http.Request, id string) 
 	if p.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
-	resp, err := a.proxy.client.Do(req)
+	resp, err := a.proxy.sendToProvider(req, p)
 	out.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil {
-		msg := "连接失败：" + err.Error()
+		msg := "无法连接模型来源"
 		out.Error = &msg
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
@@ -277,7 +283,7 @@ func (a *Admin) TestProvider(w http.ResponseWriter, r *http.Request, id string) 
 	status := resp.StatusCode
 	out.Status = &status
 	if status >= 300 {
-		msg := fmt.Sprintf("HTTP %d %s", status, providerMessage(body))
+		msg := fmt.Sprintf("HTTP %d", status)
 		out.Error = &msg
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
@@ -458,7 +464,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
 	if m.Kind == KindEmbedding {
 		input, _ := json.Marshal([]string{"知新：把学过的内容找回来"})
 		fields := map[string]json.RawMessage{"input": input}
-		res := a.proxy.embed(ctx, m, cands, fields, []string{"知新：把学过的内容找回来"})
+		res := a.proxy.embed(ctx, m, cands, fields, []string{"知新：把学过的内容找回来"}, nil)
 		out.LatencyMs = time.Since(start).Milliseconds()
 		if res.route.Provider != nil {
 			out.ProviderId, out.UpstreamModel = &res.route.Provider.ID, &res.route.UpstreamModel
@@ -467,7 +473,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
 		case res.passthrough != nil:
 			status := res.passthrough.status
 			out.Status = &status
-			fail(fmt.Sprintf("HTTP %d %s", status, providerMessage(res.passthrough.body)))
+			fail(fmt.Sprintf("HTTP %d", status))
 		case res.err != nil:
 			fail(res.failure())
 		default:
@@ -486,56 +492,21 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
 		"max_tokens": json.RawMessage(`1`),
 		"stream":     json.RawMessage(`false`),
 	}
-	resp, rt, err := a.proxy.dispatch(ctx, cands, "/chat/completions", fields, false)
+	resp, rt, _, err := a.proxy.dispatch(ctx, cands, fields, false, 0, nil)
 	out.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil {
-		fail("所有来源都无法连接：" + err.Error())
+		fail("无法连接任何模型来源")
 		return
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	status := resp.StatusCode
 	out.Status, out.ProviderId, out.UpstreamModel = &status, &rt.Provider.ID, &rt.UpstreamModel
 	if status >= 300 {
-		fail(fmt.Sprintf("HTTP %d %s", status, providerMessage(body)))
+		fail(fmt.Sprintf("HTTP %d", status))
 		return
 	}
 	out.Ok = true
 	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-var keyLike = regexp.MustCompile(`(sk-|key-)[A-Za-z0-9_\-]{4,}`)
-
-// providerMessage 从提供方的错误体里取一句说明给管理员看，截到 300 字，并把
-// 形似 key 的片段遮掉。
-func providerMessage(body []byte) string {
-	var env struct {
-		Error   json.RawMessage `json:"error"`
-		Message string          `json:"message"`
-	}
-	msg := ""
-	if json.Unmarshal(body, &env) == nil {
-		var nested struct {
-			Message string `json:"message"`
-		}
-		var flat string
-		switch {
-		case json.Unmarshal(env.Error, &nested) == nil && nested.Message != "":
-			msg = nested.Message
-		case json.Unmarshal(env.Error, &flat) == nil && flat != "":
-			msg = flat
-		default:
-			msg = env.Message
-		}
-	}
-	if msg == "" && utf8.Valid(body) {
-		msg = strings.TrimSpace(string(body))
-	}
-	msg = keyLike.ReplaceAllString(msg, "$1***")
-	if r := []rune(msg); len(r) > 300 {
-		msg = string(r[:300]) + "…"
-	}
-	return msg
 }
 
 func deref[T any](p *T, def T) T {

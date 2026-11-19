@@ -52,15 +52,15 @@ const globalLimiterKey = "global"
 // Report 接收一次匿名活跃。成功与“今天已经记录过”都返回 204，客户端不需要
 // 区分；字段不合法返回 400，由客户端检查自己的安装标识生成逻辑。
 func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
+	if delay := h.limits.Take("address:" + h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
+		return
+	}
 	if h.globalLimits != nil {
 		if delay := h.globalLimits.Take(globalLimiterKey); delay > 0 {
 			httpx.TooMany(w, r, delay)
 			return
 		}
-	}
-	if delay := h.limits.Take("address:" + h.clientHost(r)); delay > 0 {
-		httpx.TooMany(w, r, delay)
-		return
 	}
 	var in api.TelemetryPing
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {

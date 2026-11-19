@@ -323,6 +323,13 @@ jobs:
           KEY="$RUNNER_TEMP/release-signing-key.pem"
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$KEY"
           chmod 600 "$KEY"
+          APP_PUBLIC_KEY="$RUNNER_TEMP/release-app-public-key.pem"
+          sed -n '/^-----BEGIN PUBLIC KEY-----$/,/^-----END PUBLIC KEY-----$/p' \
+            lib/platform/release_signing_key.dart > "$APP_PUBLIC_KEY"
+          if ! openssl pkey -in "$KEY" -pubout | cmp -s - "$APP_PUBLIC_KEY"; then
+            echo '::error::发版签名私钥与应用内置公钥不匹配'
+            exit 1
+          fi
 
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
           printf '%s\n' "$SHA" > "$OUT/app-release.apk.sha256"

@@ -45,7 +45,9 @@ class ServerProblem implements Exception {
       retryAfterSeconds == null
           ? '尝试过于频繁，请稍后再试'
           : '尝试过于频繁，请 $retryAfterSeconds 秒后再试',
-    'payload_too_large' => '文件超过服务端允许的大小',
+    'payload_too_large' =>
+      extra['resource'] == 'sync' ? '单条同步提交超过服务端允许的大小' : '文件超过服务端允许的大小',
+    'email_unverified' => '请先在账号页验证邮箱',
     'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
@@ -61,6 +63,9 @@ class ServerProblem implements Exception {
   /// 附件总量超限时把服务端给出的已用与上限写成一句说明；数字缺失时只说明
   /// 空间已满，不编造额度。
   String get _storageFullMessage {
+    if (extra['resource'] == 'sync') {
+      return '云端同步空间已满，仍可在本机使用和备份学习记录';
+    }
     final used = _byteCount(extra['used_bytes']);
     final limit = _byteCount(extra['limit_bytes']);
     if (used == null || limit == null) {
@@ -422,7 +427,7 @@ class ServerRelease {
   /// 安装包的 SHA-256，契约要求 64 位小写十六进制。
   final String sha256;
 
-  /// 对 [sha256] 十六进制字符串的 Ed25519 签名（base64），可选；清单没有签名时为空。
+  /// 对 [sha256] 十六进制字符串的 Ed25519 签名（base64）。
   final String signature;
   final int size;
   final String minVersion;
@@ -588,7 +593,7 @@ class ServerClient {
         body: {'code': code},
       );
 
-  /// 向已验证的邮箱发重设验证码；邮箱不存在或未验证时服务端同样返回 204。
+  /// 向账号登记的邮箱发送重设验证码；邮箱不存在时服务端同样返回 204。
   Future<void> requestPasswordReset(String email) => _send(
     'POST',
     '/v1/auth/password/forgot',
@@ -611,18 +616,35 @@ class ServerClient {
   );
 
   /// 删除该账号的全部云端备份，账号保留。
-  Future<void> deleteAllBackups(String accessToken) =>
-      _send('DELETE', '/v1/backups', accessToken: accessToken);
+  Future<void> deleteAllBackups(
+    String accessToken, {
+    required String password,
+  }) => _send(
+    'DELETE',
+    '/v1/backups',
+    accessToken: accessToken,
+    body: {'password': password},
+  );
 
   /// 一次清空该账号的全部云端数据：备份、提交序列、附件与对象存储里遗留的字节。
   ///
   /// 可重复调用；上一次清除还没结束时服务端返回 409 `conflict`，稍后重试即可。
-  Future<void> deleteCloud(String accessToken) =>
-      _send('DELETE', '/v1/cloud', accessToken: accessToken);
+  Future<void> deleteCloud(String accessToken, {required String password}) =>
+      _send(
+        'DELETE',
+        '/v1/cloud',
+        accessToken: accessToken,
+        body: {'password': password},
+      );
 
   /// 清空该账号的同步序列，服务端位置回到 0；账号与备份保留。
-  Future<void> deleteSyncLog(String accessToken) =>
-      _send('DELETE', '/v1/sync/commits', accessToken: accessToken);
+  Future<void> deleteSyncLog(String accessToken, {required String password}) =>
+      _send(
+        'DELETE',
+        '/v1/sync/commits',
+        accessToken: accessToken,
+        body: {'password': password},
+      );
 
   Future<ServerHead> head(String accessToken) async {
     final json = await _json('GET', '/v1/sync/head', accessToken: accessToken);

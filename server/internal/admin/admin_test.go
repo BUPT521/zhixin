@@ -45,8 +45,8 @@ func TestMiddlewareGuardsOnlyAdminPaths(t *testing.T) {
 	if code := do("/admin/v1/models", "nope"); code != http.StatusTooManyRequests {
 		t.Fatalf("桶容量 1，第二次失败应 429：%d", code)
 	}
-	if code := do("/admin/v1/models", "t0123456789abcdef0123456789abcdef"); code != http.StatusTooManyRequests {
-		t.Fatalf("超限期间正确令牌也应先被挡住：%d", code)
+	if code := do("/admin/v1/models", "t0123456789abcdef0123456789abcdef"); code != http.StatusTeapot {
+		t.Fatalf("失败预算不应挡住正确令牌：%d", code)
 	}
 	if code := do("/admin/", ""); code != http.StatusTeapot {
 		t.Fatalf("页面本身不受限流影响：%d", code)

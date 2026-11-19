@@ -25,7 +25,7 @@ import 'zhixin_header.dart';
 /// 反馈正文与服务端口径一致：去掉两端空白后 1 至 4000 字。
 const int feedbackContentLimit = 4000;
 
-/// 诊断摘要里最多带最近几条错误；整体远低于服务端 65536 字的上限。
+/// 诊断摘要只包含最近几条错误，服务端按 65536 字节限制长度。
 const int feedbackDiagnosticsEntries = 5;
 
 class FeedbackPage extends StatefulWidget {

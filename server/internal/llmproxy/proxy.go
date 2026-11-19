@@ -34,13 +34,14 @@ import (
 )
 
 type Proxy struct {
-	cfg    config.LLMConfig
-	router *Router
-	quota  Quota
-	client *http.Client
-	loc    *time.Location
-	now    func() time.Time
-	log    *slog.Logger
+	cfg          config.LLMConfig
+	router       *Router
+	quota        Quota
+	client       *http.Client
+	publicClient *http.Client
+	loc          *time.Location
+	now          func() time.Time
+	log          *slog.Logger
 
 	// verifyEmail 判断账号是否已经确认邮箱；由 server.New 注入账号库的 UserByID。
 	// 没有注入时按已认证处理，现有内存装配与测试因此不需要真实账号也能走通。
@@ -88,13 +89,19 @@ func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *ti
 		IdleConnTimeout:       90 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
+	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	var publicClient *http.Client
+	if cfg.RestrictProviders {
+		publicTransport := transport.Clone()
+		publicTransport.Proxy = nil
+		publicTransport.DialContext = dialPublicProvider
+		publicClient = &http.Client{Transport: publicTransport, CheckRedirect: noRedirect}
+	}
 	return &Proxy{
 		cfg: cfg, router: router, quota: quota,
 		// 不跟随重定向：同主机从 https 跳到 http 时标准库会带着 Authorization
 		// 再发一次，key 会以明文出现在网络上。来源的地址应当直接写对。
-		client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
+		client: &http.Client{Transport: transport, CheckRedirect: noRedirect}, publicClient: publicClient,
 		loc: loc, now: time.Now, log: log, inflight: map[string]int{},
 	}
 }
@@ -276,17 +283,32 @@ func (p *Proxy) findModel(w http.ResponseWriter, r *http.Request, fields map[str
 	return m
 }
 
-func (p *Proxy) reserve(w http.ResponseWriter, r *http.Request, userID, day string, kind Kind, estimate int64) int64 {
-	reserved, err := p.quota.Reserve(r.Context(), userID, day, kind, max(1, estimate))
-	if errors.Is(err, ErrQuotaExceeded) {
-		p.writeQuotaExceeded(w, r, userID, day, kind)
-		return 0
+// attemptBudget holds enough quota for one upstream attempt. A negative result
+// retains the estimate when the provider may have billed but gave no usage.
+type attemptBudget func(int64) (func(int64), error)
+
+type quotaReservationError struct{ cause error }
+
+func (e quotaReservationError) Error() string { return e.cause.Error() }
+func (e quotaReservationError) Unwrap() error { return e.cause }
+
+func (p *Proxy) budget(r *http.Request, userID, day string, kind Kind) attemptBudget {
+	return func(estimate int64) (func(int64), error) {
+		reserved, err := p.quota.Reserve(r.Context(), userID, day, kind, estimate)
+		if err != nil {
+			return nil, quotaReservationError{cause: err}
+		}
+		if reserved < estimate {
+			p.settle(r, userID, day, kind, reserved, 0)
+			return nil, ErrQuotaExceeded
+		}
+		return func(actual int64) {
+			if actual < 0 {
+				actual = reserved
+			}
+			p.settle(r, userID, day, kind, reserved, actual)
+		}, nil
 	}
-	if err != nil {
-		httpx.WriteInternal(w, r, p.log, err)
-		return 0
-	}
-	return reserved
 }
 
 // settle 即使客户端断开也结算本次预留。
@@ -312,6 +334,13 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	if model == nil {
 		return
 	}
+	if !allowFields(w, r, fields, chatFields) {
+		return
+	}
+	if raw, ok := fields["tools"]; ok && !functionToolsOnly(raw) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "tools must be a list of functions")
+		return
+	}
 	var stream bool
 	if raw, ok := fields["stream"]; ok {
 		if err := json.Unmarshal(raw, &stream); err != nil {
@@ -320,19 +349,17 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if stream {
-		fields["stream_options"] = withIncludeUsage(fields["stream_options"])
+		fields["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	} else {
+		delete(fields, "stream_options")
 	}
-	var bodyBytes int64
-	for key, field := range fields {
-		bodyBytes += int64(len(key) + len(field))
-	}
-	day := p.day()
-	reserved := p.reserve(w, r, userID, day, KindChat, bodyBytes/4)
-	if reserved == 0 {
+	output, err := chatOutputLimit(fields)
+	if err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
-	actual := reserved
-	defer func() { p.settle(r, userID, day, KindChat, reserved, actual) }()
+	day := p.day()
+	reserve := p.budget(r, userID, day, KindChat)
 
 	// 流式响应套一层守卫：总时限从发起上游请求时开始，空闲时限从收到响应体之后
 	// 开始；超时取消上游请求，阻塞中的读取随即返回。非流式沿用请求自身的 context。
@@ -341,35 +368,49 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	if stream {
 		reqCtx, guard = p.newStreamGuard(reqCtx)
 		defer guard.stop()
+	} else if p.cfg.StreamTotalTimeout > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(reqCtx, p.cfg.StreamTotalTimeout)
+		defer cancel()
 	}
-	resp, _, err := p.dispatch(reqCtx, p.router.candidates(model, p.cfg.MaxAttempts), "/chat/completions", fields, stream)
+	resp, _, settle, err := p.dispatch(reqCtx, p.router.candidates(model, p.cfg.MaxAttempts), fields, stream, output, reserve)
 	if err != nil {
-		actual = 0 // 没有拿到响应，按没有产生用量退回预留。
 		if r.Context().Err() != nil {
 			return // client went away
+		}
+		if errors.Is(err, ErrQuotaExceeded) {
+			p.writeQuotaExceeded(w, r, userID, day, KindChat)
+			return
+		}
+		var budgetError quotaReservationError
+		if errors.As(err, &budgetError) {
+			httpx.WriteInternal(w, r, p.log, err)
+			return
 		}
 		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not reach any model source")
 		return
 	}
+	actual := int64(-1)
+	defer func() { settle(actual) }()
 	defer resp.Body.Close()
-	if keyRejected(resp.StatusCode) {
-		actual = 0
-		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "the model sources rejected the server key")
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		actual = rejectedUsage(resp.StatusCode)
+		writeUpstreamStatus(w, r, resp.StatusCode)
 		return
 	}
 
-	// Pass the provider's status and body through, including errors: the
-	// client already reads provider error bodies to explain key, quota and
-	// model-name problems (app/README §模型).
-	//
 	// 非流式先把整个响应读进内存再写响应头：超过上限时还没有写出任何字节，可以
 	// 换成代理自己的 502，客户端不会收到半截响应。
 	var tokens int64
 	if stream {
 		guard.watch(resp.Body, p.cfg.StreamIdleTimeout)
-		copyResponseHeaders(w, resp)
+		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(resp.StatusCode)
-		tokens = p.copyStream(w, guard)
+		var body io.Reader = guard
+		if p.cfg.MaxResponseBytes > 0 {
+			body = io.LimitReader(body, p.cfg.MaxResponseBytes)
+		}
+		tokens = p.copyStream(w, body)
 	} else {
 		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
 		if errors.Is(err, errResponseTooLarge) {
@@ -381,22 +422,57 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not read the provider response")
 			return
 		}
-		copyResponseHeaders(w, resp)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(b)
-		tokens = usageTokens(b)
+		tokens = usageTokens(b, KindChat)
 	}
 
-	actual = tokens
-	switch {
-	case resp.StatusCode >= http.StatusBadRequest:
-		// 上游错误没有产生回答，预留全部退回。
-		actual = 0
-	case actual <= 0:
-		// 提供方没有给出 usage（例如流式请求没带 include_usage）时保留预留，
-		// 不能按 0 全部退掉，否则调用方只受估算值的约束。
-		actual = reserved
+	if tokens > 0 {
+		actual = tokens
 	}
+}
+
+// chatOutputLimit accepts the two OpenAI-compatible names for the same limit.
+func chatOutputLimit(fields map[string]json.RawMessage) (int64, error) {
+	if raw, ok := fields["n"]; ok && string(raw) != "1" {
+		return 0, errors.New("n must be 1")
+	}
+	key := "max_tokens"
+	if _, ok := fields["max_completion_tokens"]; ok {
+		if _, duplicate := fields[key]; duplicate {
+			return 0, errors.New("only one completion token limit may be set")
+		}
+		key = "max_completion_tokens"
+	}
+	const defaultOutput = 1024
+	const maxOutput = 8192
+	var output int64
+	if raw, ok := fields[key]; ok {
+		if json.Unmarshal(raw, &output) != nil || output < 1 || output > maxOutput {
+			return 0, fmt.Errorf("%s must be between 1 and %d", key, maxOutput)
+		}
+	} else {
+		output = defaultOutput
+		fields[key] = json.RawMessage("1024")
+	}
+	return output, nil
+}
+
+func rejectedUsage(status int) int64 {
+	switch status {
+	case 400, 401, 403, 404, 413, 422, 429:
+		return 0
+	default:
+		return -1
+	}
+}
+
+func writeUpstreamStatus(w http.ResponseWriter, r *http.Request, status int) {
+	if keyRejected(status) || status < 400 {
+		status = http.StatusBadGateway
+	}
+	httpx.WriteProblem(w, r, status, httpx.CodeUpstreamFailed, "model source could not complete the request")
 }
 
 // keyRejected 表示最后一个来源拒绝了服务端的 key。这是服务端的配置问题，
@@ -405,16 +481,37 @@ func keyRejected(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }
 
-// withIncludeUsage 在 stream_options 里打开 include_usage，保留客户端的其他字段。
-func withIncludeUsage(raw json.RawMessage) json.RawMessage {
-	opts := map[string]json.RawMessage{}
-	_ = json.Unmarshal(raw, &opts)
-	if opts == nil {
-		opts = map[string]json.RawMessage{}
+var chatFields = map[string]bool{
+	"model": true, "messages": true, "max_tokens": true, "max_completion_tokens": true,
+	"n": true, "stream": true, "stream_options": true, "temperature": true,
+	"top_p": true, "stop": true, "presence_penalty": true, "frequency_penalty": true,
+	"tools": true, "tool_choice": true, "parallel_tool_calls": true,
+	"thinking": true, "reasoning_effort": true, "response_format": true,
+}
+
+func functionToolsOnly(raw json.RawMessage) bool {
+	var tools []struct {
+		Type string `json:"type"`
 	}
-	opts["include_usage"] = json.RawMessage("true")
-	out, _ := json.Marshal(opts)
-	return out
+	if json.Unmarshal(raw, &tools) != nil || tools == nil {
+		return false
+	}
+	for _, tool := range tools {
+		if tool.Type != "function" {
+			return false
+		}
+	}
+	return true
+}
+
+func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.RawMessage, allowed map[string]bool) bool {
+	for name := range fields {
+		if !allowed[name] {
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "unsupported model request field")
+			return false
+		}
+	}
+	return true
 }
 
 // retryable 报告这个状态码是否换下一个来源再试：限流、服务端错误与 key 被拒
@@ -442,19 +539,27 @@ func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, erro
 
 // dispatch 按候选顺序尝试，直到某个来源给出不需要换来源的响应。所有来源都
 // 连不上时返回错误；最后一个来源返回可重试状态时把它的响应原样交给调用方。
-func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, path string, fields map[string]json.RawMessage, stream bool) (*http.Response, liveRoute, error) {
+func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[string]json.RawMessage, stream bool, output int64, reserve attemptBudget) (*http.Response, liveRoute, func(int64), error) {
 	var lastErr error = errors.New("no usable route")
 	for i, rt := range cands {
 		body, err := withModel(fields, rt.UpstreamModel)
 		if err != nil {
-			return nil, rt, err
+			return nil, rt, nil, err
 		}
-		resp, err := p.attempt(ctx, rt.Provider, path, body, stream || path != "/chat/completions")
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, rt, ctx.Err()
+		settle := func(int64) {}
+		if reserve != nil {
+			settle, err = reserve(int64(len(body)) + output)
+			if err != nil {
+				return nil, rt, nil, err
 			}
-			p.router.health.fail(rt.Provider.ID, "连接失败："+err.Error())
+		}
+		resp, err := p.attempt(ctx, rt.Provider, "/chat/completions", body, stream)
+		if err != nil {
+			settle(-1)
+			if ctx.Err() != nil {
+				return nil, rt, nil, ctx.Err()
+			}
+			p.router.health.fail(rt.Provider.ID, "无法连接模型来源")
 			lastErr = err
 			continue
 		}
@@ -462,16 +567,17 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, path string, fi
 			p.router.health.fail(rt.Provider.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
 			if i < len(cands)-1 {
 				resp.Body.Close()
+				settle(rejectedUsage(resp.StatusCode))
 				continue
 			}
-			return resp, rt, nil
+			return resp, rt, settle, nil
 		}
 		if resp.StatusCode < 400 {
 			p.router.health.succeed(rt.Provider.ID)
 		}
-		return resp, rt, nil
+		return resp, rt, settle, nil
 	}
-	return nil, liveRoute{}, lastErr
+	return nil, liveRoute{}, nil, lastErr
 }
 
 // attempt 向一个来源发一次请求。headerDeadline 为真时，响应头必须在
@@ -495,7 +601,7 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 	if headerDeadline && p.cfg.HeaderTimeout > 0 {
 		timer = time.AfterFunc(p.cfg.HeaderTimeout, cancel)
 	}
-	resp, err := p.client.Do(req)
+	resp, err := p.sendToProvider(req, prov)
 	if timer != nil && !timer.Stop() {
 		// 期限在 Do 返回前后到点：响应体已经被取消，当作超时。
 		if err == nil {
@@ -555,19 +661,26 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 
 type usageEnvelope struct {
 	Usage *struct {
-		PromptTokens int64 `json:"prompt_tokens"`
-		TotalTokens  int64 `json:"total_tokens"`
+		PromptTokens     int64  `json:"prompt_tokens"`
+		TotalTokens      int64  `json:"total_tokens"`
+		CompletionTokens *int64 `json:"completion_tokens"`
 	} `json:"usage"`
 }
 
-func (u usageEnvelope) tokens() int64 {
+func (u usageEnvelope) tokens(kind Kind) int64 {
 	if u.Usage == nil {
 		return 0
 	}
 	if u.Usage.TotalTokens > 0 {
 		return u.Usage.TotalTokens
 	}
-	return u.Usage.PromptTokens
+	if kind == KindEmbedding {
+		return u.Usage.PromptTokens
+	}
+	if u.Usage.CompletionTokens != nil && *u.Usage.CompletionTokens >= 0 {
+		return u.Usage.PromptTokens + *u.Usage.CompletionTokens
+	}
+	return 0
 }
 
 // errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
@@ -591,19 +704,11 @@ func readResponse(body io.Reader, maxBytes int64) ([]byte, error) {
 }
 
 // copyResponseHeaders 只复制客户端解释响应需要的头；其余头由代理自己决定。
-func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
-	for _, h := range []string{"Content-Type", "Cache-Control"} {
-		if v := resp.Header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-}
-
-// usageTokens 从非流式响应体里取 usage.total_tokens；没有 usage 时返回 0。
-func usageTokens(b []byte) int64 {
+// usageTokens 从非流式响应体里取可以结算的用量。
+func usageTokens(b []byte, kind Kind) int64 {
 	var env usageEnvelope
-	if json.Unmarshal(b, &env) == nil && env.Usage != nil {
-		return env.Usage.TotalTokens
+	if json.Unmarshal(b, &env) == nil {
+		return env.tokens(kind)
 	}
 	return 0
 }
@@ -667,16 +772,18 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) int64 {
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 0 {
-			if _, werr := w.Write(line); werr != nil {
-				return tokens
-			}
 			trimmed := bytes.TrimRight(line, "\r\n")
 			if data, ok := bytes.CutPrefix(trimmed, []byte("data:")); ok {
 				data = bytes.TrimSpace(data)
 				var env usageEnvelope
-				if bytes.Contains(data, []byte(`"usage"`)) && json.Unmarshal(data, &env) == nil && env.Usage != nil {
-					tokens = env.Usage.TotalTokens
+				if bytes.Contains(data, []byte(`"usage"`)) && json.Unmarshal(data, &env) == nil {
+					if used := env.tokens(KindChat); used > 0 {
+						tokens = used
+					}
 				}
+			}
+			if _, werr := w.Write(line); werr != nil {
+				return tokens
 			}
 			if len(trimmed) == 0 && flusher != nil {
 				flusher.Flush()

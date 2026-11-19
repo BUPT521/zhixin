@@ -27,6 +27,11 @@ UPDATE app_user
 SET password_hash = sqlc.arg(password_hash)
 WHERE id = sqlc.arg(id);
 
+-- name: RecoverPassword :exec
+UPDATE app_user SET password_hash = sqlc.arg(password_hash),
+  email_verified_at = coalesce(email_verified_at, sqlc.arg(verified_at)::timestamptz)
+WHERE id = sqlc.arg(id);
+
 -- name: DeleteUser :execrows
 DELETE FROM app_user
 WHERE id = sqlc.arg(id);
@@ -46,6 +51,9 @@ VALUES (
 -- 数不会因为并发而超上限。锁的是一行账号，不同账号互不影响。
 -- name: LockUser :one
 SELECT id FROM app_user WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- name: LockUserPassword :one
+SELECT password_hash FROM app_user WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- 只保留最新的 keep 条会话，更旧的删掉。排序带上 id，创建时间相同时结果稳定。
 -- name: DeleteOldestSessions :exec
@@ -67,11 +75,15 @@ WHERE refresh_expires < sqlc.arg(now);
 DELETE FROM auth_code
 WHERE expires_at < sqlc.arg(now);
 
+-- name: PruneUsedRefreshTokens :exec
+DELETE FROM session_refresh_used WHERE rotated_at < sqlc.arg(used_before);
+
 -- name: SessionByAccessHash :one
-SELECT id, user_id, device_name, access_hash, refresh_hash,
-  access_expires, refresh_expires, created_at
-FROM session
-WHERE access_hash = sqlc.arg(access_hash);
+SELECT s.id, s.user_id, s.device_name, s.access_hash, s.refresh_hash,
+  s.access_expires, s.refresh_expires, s.created_at,
+  (u.email_verified_at IS NOT NULL)::boolean AS email_verified
+FROM session s JOIN app_user u ON u.id = s.user_id
+WHERE s.access_hash = sqlc.arg(access_hash);
 
 -- name: SessionByRefreshHash :one
 SELECT id, user_id, device_name, access_hash, refresh_hash,

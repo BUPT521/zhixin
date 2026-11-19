@@ -49,7 +49,7 @@ type testEnv struct {
 
 func baseConfig() config.LLMConfig {
 	return config.LLMConfig{
-		DailyTokens:          100,
+		DailyTokens:          10000,
 		EmbeddingDailyTokens: 10000,
 		MaxRequestBytes:      1 << 20,
 		EmbeddingMaxInputs:   8,
@@ -138,6 +138,7 @@ func TestHandlerLLMProxy(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := baseConfig()
+	cfg.DailyTokens = 1200
 	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk-server", []string{"deepseek-flash"}
 	env := newTestServer(t, cfg, nil)
 	c := env.c
@@ -182,6 +183,7 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := baseConfig()
+	cfg.DailyTokens = 1200
 	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk-server", []string{"deepseek-flash"}
 	env := newTestServer(t, cfg, nil)
 	c, quota := env.c, env.quota
@@ -195,7 +197,7 @@ func TestHandlerQuotaOverride(t *testing.T) {
 		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
 	}
 
-	// 默认额度 100：第一次花掉 120，第二次按默认额度会被拒。
+	// 默认额度 1200：第一次花掉 120，剩余额度不足以覆盖第二次预留。
 	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
 		t.Fatalf("第一次请求应通过，得到 %d", code)
 	}
@@ -329,8 +331,8 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 		Used int64 `json:"used_tokens"`
 	}
 	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &used)
-	if used.Used != 4*7 {
-		t.Fatalf("用量应只记成功的那次：%+v", used)
+	if used.Used <= 4*7 {
+		t.Fatalf("总用量应包含三次结果不确定的尝试：%+v", used)
 	}
 }
 
@@ -349,8 +351,8 @@ func TestChatPassesThroughClientErrorsWithoutFailover(t *testing.T) {
 	token := signIn(t, env.authSvc, "g@b.cn")
 	resp := env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"zhixin-chat"}`), nil)
 	body := testutil.ReadBody(t, resp)
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "primary says 400") {
-		t.Fatalf("400 应原样返回：%d %s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusBadRequest || strings.Contains(string(body), "primary says 400") {
+		t.Fatalf("400 应保留状态并替换响应体：%d %s", resp.StatusCode, body)
 	}
 	if backup.calls.Load() != 0 {
 		t.Fatal("请求本身有问题时不应换来源")
@@ -361,8 +363,8 @@ func TestChatPassesThroughClientErrorsWithoutFailover(t *testing.T) {
 	backup.status.Store(http.StatusInternalServerError)
 	resp = env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"zhixin-chat"}`), nil)
 	body = testutil.ReadBody(t, resp)
-	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "backup says 500") {
-		t.Fatalf("全部失败时应返回最后一个来源的响应：%d %s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusInternalServerError || strings.Contains(string(body), "backup says 500") {
+		t.Fatalf("全部失败时应保留最后一个来源的状态：%d %s", resp.StatusCode, body)
 	}
 }
 
@@ -667,7 +669,7 @@ func TestEmbeddingsInputValidationAndEstimate(t *testing.T) {
 func TestEmbeddingQuotaIsSeparateFromChat(t *testing.T) {
 	src := newEmbedSource(t, 1, 4)
 	cfg := baseConfig()
-	cfg.EmbeddingDailyTokens = 5
+	cfg.EmbeddingDailyTokens = 12
 	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "p", src.URL, "sk")
 		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
@@ -697,16 +699,6 @@ func TestArrayLen(t *testing.T) {
 	}
 }
 
-func TestProviderMessageMasksKeys(t *testing.T) {
-	got := providerMessage([]byte(`{"error":{"message":"Incorrect API key provided: sk-abcdef123456"}}`))
-	if strings.Contains(got, "abcdef") || !strings.Contains(got, "sk-***") {
-		t.Fatalf("应遮掉 key：%q", got)
-	}
-	if got := providerMessage([]byte(`{"error":"quota"}`)); got != "quota" {
-		t.Fatalf("flat error: %q", got)
-	}
-}
-
 func TestStreamAlwaysAsksForUsageAndEstimatesWithoutIt(t *testing.T) {
 	var gotOpts map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -726,8 +718,8 @@ func TestStreamAlwaysAsksForUsageAndEstimatesWithoutIt(t *testing.T) {
 	req := map[string]any{"model": "m", "stream": true, "stream_options": map[string]any{"foo": 1}}
 	b, _ := json.Marshal(req)
 	testutil.ReadBody(t, env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(b), nil))
-	if gotOpts["include_usage"] != true || gotOpts["foo"] != float64(1) {
-		t.Fatalf("应强制 include_usage 并保留其他选项：%+v", gotOpts)
+	if gotOpts["include_usage"] != true || len(gotOpts) != 1 {
+		t.Fatalf("应仅转发服务端设定的 include_usage：%+v", gotOpts)
 	}
 	var q struct {
 		Used int64 `json:"used_tokens"`
@@ -783,7 +775,7 @@ func TestParseEmbedChunkIndexRules(t *testing.T) {
 		`{"data":[{"index":0,"embedding":[1,2]},{"index":1,"embedding":[1,2]}]}`: false, // 维度不符
 	}
 	for body, ok := range cases {
-		_, _, err := parseEmbedChunk([]byte(body), 2, 1)
+		_, err := parseEmbedChunk([]byte(body), 2, 1)
 		if (err == nil) != ok {
 			t.Fatalf("%s: ok=%v err=%v", body, ok, err)
 		}
@@ -832,7 +824,7 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 		BaseURL:         upstream.URL,
 		APIKey:          "sk-server",
 		Models:          []string{"deepseek-flash"},
-		DailyTokens:     1000,
+		DailyTokens:     10000,
 		MaxRequestBytes: 1 << 20,
 	})
 	proxy.SetConcurrencyLimit(1)
@@ -890,7 +882,7 @@ func TestHandlerRequiresVerifiedEmail(t *testing.T) {
 		BaseURL:              upstream.URL,
 		APIKey:               "sk-server",
 		Models:               []string{"deepseek-flash"},
-		DailyTokens:          1000,
+		DailyTokens:          10000,
 		MaxRequestBytes:      1 << 20,
 		RequireVerifiedEmail: true,
 	})
@@ -954,7 +946,7 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 		BaseURL:         upstream.URL,
 		APIKey:          "sk-server",
 		Models:          []string{"deepseek-flash"},
-		DailyTokens:     1000,
+		DailyTokens:     10000,
 		MaxRequestBytes: 1 << 20,
 	})
 	token := signIn(t, authSvc, "settle@b.cn")
@@ -973,13 +965,13 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusInternalServerError {
 		t.Fatalf("上游错误应原样返回，得到 %d", code)
 	}
-	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 300 {
-		t.Fatalf("上游错误应退回预留，用量仍为 300，得到 %d %+v", code, q)
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used <= 300 {
+		t.Fatalf("上游结果不确定时应保留预留，得到 %d %+v", code, q)
 	}
 }
 
 // TestHandlerQuotaExceededBudget 核对账号额度与实例预算用尽时都回 429
-// quota_exceeded：额度不足但仍有剩余时按剩余预留并照常转发，一分不剩才拒绝；
+// quota_exceeded：剩余额度不足以覆盖整次预留时拒绝转发；
 // 被拒的 extra 保留账号字段，并带上实例用量与预算。
 func TestHandlerQuotaExceededBudget(t *testing.T) {
 	t.Run("账号额度", func(t *testing.T) {
@@ -999,16 +991,12 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 		token := signIn(t, authSvc, "budget@b.cn")
 		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
-		// 额度只剩 10：预留被截到 10 后照常转发，实际用量 300 在结算时补记。
-		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
-			t.Fatalf("额度不足一次用量时应先转发，得到 %d", code)
-		}
 		var p testutil.Problem
 		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 			t.Fatalf("额度用完应回 429 quota_exceeded，得到 %d %+v", code, p)
 		}
-		if got, _ := p.Extra["used_tokens"].(float64); got != 300 {
-			t.Fatalf("extra 应带实际用量 300，得到 %v", p.Extra)
+		if got, _ := p.Extra["used_tokens"].(float64); got != 0 {
+			t.Fatalf("未转发的请求不应消耗额度，得到 %v", p.Extra)
 		}
 		if got, _ := p.Extra["daily_tokens"].(float64); got != 10 {
 			t.Fatalf("extra 应带账号额度 10，得到 %v", p.Extra)
@@ -1033,15 +1021,12 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 		token := signIn(t, authSvc, "instance@b.cn")
 		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
-		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
-			t.Fatalf("实例预算还有 20 时应转发，得到 %d", code)
-		}
 		var p testutil.Problem
 		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 			t.Fatalf("实例预算用完应回 429 quota_exceeded，得到 %d %+v", code, p)
 		}
-		if got, _ := p.Extra["instance_used_tokens"].(float64); got != 20 {
-			t.Fatalf("extra 应带实例用量 20，得到 %v", p.Extra)
+		if got, _ := p.Extra["instance_used_tokens"].(float64); got != 0 {
+			t.Fatalf("未转发的请求不应消耗实例预算，得到 %v", p.Extra)
 		}
 		if got, _ := p.Extra["instance_daily_tokens"].(float64); got != 20 {
 			t.Fatalf("extra 应带实例预算 20，得到 %v", p.Extra)
@@ -1063,7 +1048,7 @@ func TestHandlerRejectsOversizedResponse(t *testing.T) {
 		BaseURL:          upstream.URL,
 		APIKey:           "sk-server",
 		Models:           []string{"deepseek-flash"},
-		DailyTokens:      1000,
+		DailyTokens:      10000,
 		MaxRequestBytes:  1 << 20,
 		MaxResponseBytes: 64,
 	})
@@ -1100,7 +1085,7 @@ func TestHandlerStreamIdleTimeout(t *testing.T) {
 		BaseURL:           upstream.URL,
 		APIKey:            "sk-server",
 		Models:            []string{"deepseek-flash"},
-		DailyTokens:       1000,
+		DailyTokens:       10000,
 		MaxRequestBytes:   1 << 20,
 		StreamIdleTimeout: 100 * time.Millisecond,
 	})
@@ -1154,7 +1139,7 @@ func TestHandlerStreamTotalTimeout(t *testing.T) {
 		BaseURL:            upstream.URL,
 		APIKey:             "sk-server",
 		Models:             []string{"deepseek-flash"},
-		DailyTokens:        1000,
+		DailyTokens:        10000,
 		MaxRequestBytes:    1 << 20,
 		StreamIdleTimeout:  5 * time.Second,
 		StreamTotalTimeout: 150 * time.Millisecond,

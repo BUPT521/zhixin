@@ -78,6 +78,7 @@ class CloudBackupService {
       account.call((client, token) => client.backupDelete(token, id));
 
   /// 删除该账号的全部云端备份，账号与同步序列保留。
-  Future<void> deleteAll() =>
-      account.call((client, token) => client.deleteAllBackups(token));
+  Future<void> deleteAll({required String password}) => account.call(
+    (client, token) => client.deleteAllBackups(token, password: password),
+  );
 }

@@ -155,12 +155,13 @@ void main() {
     expect(result.failure, UpdateFailure.signatureMismatch);
   });
 
-  test('清单没有签名时只核对哈希，通过后提示更新', () async {
+  test('清单没有签名时拒绝更新', () async {
     final result = await service(
       releases: () => [release(signature: '')],
       signatureValid: false,
     ).check();
-    expect(result.status, UpdateCheckStatus.updateAvailable);
+    expect(result.status, UpdateCheckStatus.failed);
+    expect(result.failure, UpdateFailure.signatureMismatch);
   });
 
   test('读取发布清单失败时返回失败并写一条诊断', () async {

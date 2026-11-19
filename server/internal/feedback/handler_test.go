@@ -113,7 +113,7 @@ func TestSubmitRejectsInvalidFields(t *testing.T) {
 		{"联系邮箱不合法", map[string]any{"content": "有问题", "contact": "not-an-email"}},
 		{"版本名太长", map[string]any{"content": "有问题", "app_version": strings.Repeat("v", MaxAppVersionRunes+1)}},
 		{"平台太长", map[string]any{"content": "有问题", "platform": strings.Repeat("p", MaxPlatformRunes+1)}},
-		{"诊断摘要太长", map[string]any{"content": "有问题", "diagnostics": strings.Repeat("d", MaxDiagnosticsRunes+1)}},
+		{"诊断摘要字节过多", map[string]any{"content": "有问题", "diagnostics": strings.Repeat("字", MaxDiagnosticsBytes/3+1)}},
 		{"未知字段", map[string]any{"content": "有问题", "screenshot": "base64"}},
 	}
 	for _, tc := range cases {
@@ -137,7 +137,7 @@ func TestSubmitRejectsInvalidFields(t *testing.T) {
 func TestSubmitAcceptsBoundaries(t *testing.T) {
 	cases := []map[string]any{
 		{"content": strings.Repeat("字", MaxContentRunes)},
-		{"content": "x", "diagnostics": strings.Repeat("d", MaxDiagnosticsRunes)},
+		{"content": "x", "diagnostics": strings.Repeat("d", MaxDiagnosticsBytes)},
 		{"content": "x", "app_version": strings.Repeat("v", MaxAppVersionRunes), "platform": strings.Repeat("p", MaxPlatformRunes)},
 	}
 	for i, body := range cases {

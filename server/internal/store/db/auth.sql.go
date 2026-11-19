@@ -273,6 +273,17 @@ func (q *Queries) LockUser(ctx context.Context, id string) (string, error) {
 	return id_2, err
 }
 
+const lockUserPassword = `-- name: LockUserPassword :one
+SELECT password_hash FROM app_user WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockUserPassword(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockUserPassword, id)
+	var password_hash string
+	err := row.Scan(&password_hash)
+	return password_hash, err
+}
+
 const pruneExpiredAuthCodes = `-- name: PruneExpiredAuthCodes :exec
 DELETE FROM auth_code
 WHERE expires_at < $1
@@ -290,6 +301,15 @@ WHERE refresh_expires < $1
 
 func (q *Queries) PruneExpiredSessions(ctx context.Context, now pgtype.Timestamptz) error {
 	_, err := q.db.Exec(ctx, pruneExpiredSessions, now)
+	return err
+}
+
+const pruneUsedRefreshTokens = `-- name: PruneUsedRefreshTokens :exec
+DELETE FROM session_refresh_used WHERE rotated_at < $1
+`
+
+func (q *Queries) PruneUsedRefreshTokens(ctx context.Context, usedBefore pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, pruneUsedRefreshTokens, usedBefore)
 	return err
 }
 
@@ -325,6 +345,23 @@ func (q *Queries) PutAuthCode(ctx context.Context, arg PutAuthCodeParams) error 
 		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const recoverPassword = `-- name: RecoverPassword :exec
+UPDATE app_user SET password_hash = $1,
+  email_verified_at = coalesce(email_verified_at, $2::timestamptz)
+WHERE id = $3
+`
+
+type RecoverPasswordParams struct {
+	PasswordHash string
+	VerifiedAt   pgtype.Timestamptz
+	ID           string
+}
+
+func (q *Queries) RecoverPassword(ctx context.Context, arg RecoverPasswordParams) error {
+	_, err := q.db.Exec(ctx, recoverPassword, arg.PasswordHash, arg.VerifiedAt, arg.ID)
 	return err
 }
 
@@ -387,15 +424,28 @@ func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (i
 }
 
 const sessionByAccessHash = `-- name: SessionByAccessHash :one
-SELECT id, user_id, device_name, access_hash, refresh_hash,
-  access_expires, refresh_expires, created_at
-FROM session
-WHERE access_hash = $1
+SELECT s.id, s.user_id, s.device_name, s.access_hash, s.refresh_hash,
+  s.access_expires, s.refresh_expires, s.created_at,
+  (u.email_verified_at IS NOT NULL)::boolean AS email_verified
+FROM session s JOIN app_user u ON u.id = s.user_id
+WHERE s.access_hash = $1
 `
 
-func (q *Queries) SessionByAccessHash(ctx context.Context, accessHash string) (Session, error) {
+type SessionByAccessHashRow struct {
+	ID             string
+	UserID         string
+	DeviceName     string
+	AccessHash     string
+	RefreshHash    string
+	AccessExpires  pgtype.Timestamptz
+	RefreshExpires pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	EmailVerified  bool
+}
+
+func (q *Queries) SessionByAccessHash(ctx context.Context, accessHash string) (SessionByAccessHashRow, error) {
 	row := q.db.QueryRow(ctx, sessionByAccessHash, accessHash)
-	var i Session
+	var i SessionByAccessHashRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -405,6 +455,7 @@ func (q *Queries) SessionByAccessHash(ctx context.Context, accessHash string) (S
 		&i.AccessExpires,
 		&i.RefreshExpires,
 		&i.CreatedAt,
+		&i.EmailVerified,
 	)
 	return i, err
 }

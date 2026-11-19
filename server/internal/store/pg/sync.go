@@ -64,11 +64,28 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 		return head, nil
 	}
 
+	incoming := make([][]byte, len(fresh))
+	var metadataBytes int64
 	for i, c := range fresh {
 		changes, err := json.Marshal(c.Changes)
 		if err != nil {
 			return 0, err
 		}
+		incoming[i] = changes
+		metadataBytes += int64(len(c.Action) + len(c.RequestId) + len(c.DeviceId) + 256)
+	}
+	used, err := q.SyncStorageBytes(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	added, err := q.SyncIncomingBytes(ctx, incoming)
+	if err != nil {
+		return 0, err
+	}
+	if used+added+metadataBytes > syncsvc.MaxAccountBytes {
+		return head, syncsvc.ErrStorageFull
+	}
+	for i, c := range fresh {
 		if err := q.InsertSyncCommit(ctx, db.InsertSyncCommitParams{
 			UserID:        userID,
 			Seq:           head + int64(i) + 1,
@@ -78,7 +95,7 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 			Actor:         string(c.Actor),
 			Action:        c.Action,
 			CreatedAt:     c.CreatedAt,
-			Changes:       changes,
+			Changes:       incoming[i],
 		}); err != nil {
 			return 0, err
 		}
@@ -121,11 +138,12 @@ func (s *Store) Reset(ctx context.Context, userID string) error {
 }
 
 // After 返回 seq 大于 after 的提交，按顺序最多 limit 条。
-func (s *Store) After(ctx context.Context, userID string, after int64, limit int) ([]syncsvc.Commit, error) {
+func (s *Store) After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]syncsvc.Commit, error) {
 	rows, err := s.q.CommitsAfter(ctx, db.CommitsAfterParams{
 		UserID:    userID,
 		AfterSeq:  after,
 		PageLimit: int32(limit),
+		MaxBytes:  maxBytes,
 	})
 	if err != nil {
 		return nil, err

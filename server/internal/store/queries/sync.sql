@@ -19,6 +19,10 @@ SELECT head
 FROM sync_head
 WHERE user_id = sqlc.arg(user_id);
 
+-- name: SyncIncomingBytes :one
+SELECT coalesce(sum(pg_column_size(contents.data)), 0)::bigint
+FROM unnest(sqlc.arg(changes)::jsonb[]) AS contents(data);
+
 -- name: ExistingRequestIDs :many
 SELECT request_id
 FROM sync_commit
@@ -48,9 +52,27 @@ SET head = sqlc.arg(head)
 WHERE user_id = sqlc.arg(user_id);
 
 -- name: CommitsAfter :many
-SELECT seq, request_id, device_id, schema_version, actor, action,
-  created_at, received_at, changes
+WITH page AS MATERIALIZED (
+  SELECT p.seq AS page_seq, octet_length(p.changes::text)::bigint + octet_length(p.action)
+    + octet_length(p.request_id) + octet_length(p.device_id) + 256 AS bytes
+  FROM sync_commit p
+  WHERE p.user_id = sqlc.arg(user_id) AND p.seq > sqlc.arg(after_seq)
+  ORDER BY p.seq
+  LIMIT sqlc.arg(page_limit)
+), budget AS (
+  SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
+)
+SELECT c.seq, c.request_id, c.device_id, c.schema_version, c.actor, c.action,
+  c.created_at, c.received_at, c.changes
+FROM sync_commit c
+WHERE c.user_id = sqlc.arg(user_id) AND c.seq IN (
+  SELECT budget.page_seq FROM budget
+  WHERE budget.total <= sqlc.arg(max_bytes)::bigint
+)
+ORDER BY c.seq;
+
+-- name: SyncStorageBytes :one
+SELECT coalesce(sum(pg_column_size(changes)::bigint + octet_length(action)
+  + octet_length(request_id) + octet_length(device_id) + 256), 0)::bigint
 FROM sync_commit
-WHERE user_id = sqlc.arg(user_id) AND seq > sqlc.arg(after_seq)
-ORDER BY seq
-LIMIT sqlc.arg(page_limit);
+WHERE user_id = sqlc.arg(user_id);

@@ -34,8 +34,7 @@ type Options struct {
 }
 
 // Middleware 拦住 /admin 开头的请求：后台关闭时一律 404；/admin/v1/ 下的接口
-// 要求 Authorization: Bearer <管理令牌>，错误的令牌计入失败限流，超限之后这个
-// 地址的所有管理请求都先返回 429。页面本身不含
+// 要求 Authorization: Bearer <管理令牌>，凭据无效且来源超限时返回 429。页面本身不含
 // 任何数据，不需要令牌，打开之后由页面向接口出示令牌。
 func Middleware(opt Options) func(http.Handler) http.Handler {
 	want := sha256.Sum256([]byte(opt.Token))
@@ -63,13 +62,6 @@ func Middleware(opt Options) func(http.Handler) http.Handler {
 					httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many failed admin attempts")
 				}
 				key := "admin:" + opt.ClientHost(r)
-				// 已经超限的地址连正确的令牌也先挡住，猜测者不能靠成功与否区分。
-				if opt.Limiter != nil {
-					if delay := opt.Limiter.WouldBlock(key); delay > 0 {
-						tooMany(delay)
-						return
-					}
-				}
 				got, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 				sum := sha256.Sum256([]byte(got))
 				if got == "" || subtle.ConstantTimeCompare(sum[:], want[:]) != 1 {

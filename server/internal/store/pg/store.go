@@ -163,7 +163,7 @@ func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
 // CreateSession 在一个事务里先锁住账号行、删掉超出上限的旧会话，再插入新会话。
 // 锁让同一账号的并发登录串行执行，会话数不会被并发推过上限；等待锁的时间很短，
 // 因为整个事务只碰会话表与锁住的那一行账号。
-func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser int) error {
+func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser int, checkedHash string) error {
 	if maxPerUser < 1 {
 		maxPerUser = 1
 	}
@@ -182,12 +182,16 @@ func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
 
-	if _, err := q.LockUser(ctx, sess.UserID); err != nil {
+	currentHash, err := q.LockUserPassword(ctx, sess.UserID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// 账号在登录过程中被删掉了；新会话没有可依附的账号行。
 			return auth.ErrNotFound
 		}
 		return err
+	}
+	if checkedHash != "" && currentHash != checkedHash {
+		return auth.ErrInvalidCredentials
 	}
 	if err := q.DeleteOldestSessions(ctx, db.DeleteOldestSessionsParams{
 		UserID: sess.UserID,
@@ -226,6 +230,7 @@ func (s *Store) SessionByAccessHash(ctx context.Context, hash string) (auth.Sess
 		AccessExpires:  row.AccessExpires.Time,
 		RefreshExpires: row.RefreshExpires.Time,
 		CreatedAt:      row.CreatedAt.Time,
+		EmailVerified:  row.EmailVerified,
 	}, nil
 }
 
@@ -333,7 +338,7 @@ func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 // PruneExpired 删除刷新令牌已过期的会话与已过期的验证码，两张表的清理互相
 // 独立，一条失败时另一条照常执行会让接口语义含糊，所以按顺序执行并在第一条
 // 出错时返回；每日清理下一次还会再试。
-func (s *Store) PruneExpired(ctx context.Context, now time.Time) error {
+func (s *Store) PruneExpired(ctx context.Context, now, usedBefore time.Time) error {
 	at, err := pgTime(now)
 	if err != nil {
 		return err
@@ -341,7 +346,14 @@ func (s *Store) PruneExpired(ctx context.Context, now time.Time) error {
 	if err := s.q.PruneExpiredSessions(ctx, at); err != nil {
 		return err
 	}
-	return s.q.PruneExpiredAuthCodes(ctx, at)
+	if err := s.q.PruneExpiredAuthCodes(ctx, at); err != nil {
+		return err
+	}
+	cutoff, err := pgTime(usedBefore)
+	if err != nil {
+		return err
+	}
+	return s.q.PruneUsedRefreshTokens(ctx, cutoff)
 }
 
 func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Time) error {
@@ -383,7 +395,7 @@ func (s *Store) ResetPassword(ctx context.Context, userID, purpose, expectedCode
 	if used == 0 {
 		return auth.ErrInvalidCode
 	}
-	if err := q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: newPasswordHash}); err != nil {
+	if err := q.RecoverPassword(ctx, db.RecoverPasswordParams{ID: userID, PasswordHash: newPasswordHash, VerifiedAt: at}); err != nil {
 		return err
 	}
 	if err := q.DeleteUserSessions(ctx, userID); err != nil {
@@ -453,7 +465,23 @@ func (s *Store) CreateFeedback(ctx context.Context, item feedback.Item) error {
 	if err != nil {
 		return err
 	}
-	return s.q.InsertFeedback(ctx, db.InsertFeedbackParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('feedback_capacity'))`); err != nil {
+		return err
+	}
+	q := s.q.WithTx(tx)
+	count, err := q.FeedbackCount(ctx)
+	if err != nil {
+		return err
+	}
+	if count >= feedback.MaxRetainedItems {
+		return feedback.ErrCapacity
+	}
+	if err := q.InsertFeedback(ctx, db.InsertFeedbackParams{
 		ID:          item.ID,
 		Content:     item.Content,
 		Contact:     item.Contact,
@@ -461,7 +489,10 @@ func (s *Store) CreateFeedback(ctx context.Context, item feedback.Item) error {
 		Platform:    item.Platform,
 		Diagnostics: item.Diagnostics,
 		CreatedAt:   created,
-	})
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // DeleteBefore 删除创建时间早于 before 的反馈，返回删除的行数。保留期起点由

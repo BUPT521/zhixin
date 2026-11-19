@@ -23,19 +23,20 @@ type PullResult struct {
 type Service struct {
 	store         Store
 	schemaVersion int
-	// maxPullBytes 是一页提交内容的累计字节上限；0 表示不设上限。
+	// maxPullBytes 是一页提交内容的累计字节目标。
 	maxPullBytes int64
 }
 
 func NewService(store Store, schemaVersion int) *Service {
-	return &Service{store: store, schemaVersion: schemaVersion}
+	return &Service{store: store, schemaVersion: schemaVersion, maxPullBytes: DefaultPullBytes}
 }
 
 // SetMaxPullBytes 设置一次拉取返回的提交内容累计字节上限，装配时传
-// ZHIXIN_SYNC_PULL_MAX_BYTES。超过时本页在这里截断并把 has_more 置真，客户端
-// 接着拉下一页；没有它时一页最多 1000 条，单条的大小又没有上限，响应可能很大。
+// ZHIXIN_SYNC_PULL_MAX_BYTES。非正值使用默认上限。
 func (s *Service) SetMaxPullBytes(n int64) *Service {
-	s.maxPullBytes = n
+	if n > 0 {
+		s.maxPullBytes = min(n, int64(MaxPushBytes))
+	}
 	return s
 }
 
@@ -71,14 +72,17 @@ func (s *Service) Pull(
 	if err != nil {
 		return PullResult{}, err
 	}
-	commits, err := s.store.After(ctx, userID, position, pageSize)
+	commits, err := s.store.After(ctx, userID, position, pageSize, s.maxPullBytes)
 	if err != nil {
 		return PullResult{}, err
 	}
 	if commits == nil {
 		commits = []Commit{}
 	}
-	commits = s.trimPullBytes(commits)
+	commits = trimPullBytes(commits, s.maxPullBytes)
+	if len(commits) == 0 && position < head {
+		return PullResult{}, ErrPullTooLarge
+	}
 	last := position
 	if n := len(commits); n > 0 {
 		if seq := commits[n-1].Seq; seq != nil {
@@ -88,13 +92,8 @@ func (s *Service) Pull(
 	return PullResult{Commits: commits, Head: head, HasMore: last < head}, nil
 }
 
-// trimPullBytes 按序列化后的字节数截断本页。单个提交本身就超过上限时仍然保留
-// 它：否则客户端永远越不过这一条，会停在同一位置反复拉取同一页。响应里
-// has_more 由截断后的末尾序号与 head 比较得出，截断天然表现为还有下一页。
-func (s *Service) trimPullBytes(commits []Commit) []Commit {
-	if s.maxPullBytes <= 0 {
-		return commits
-	}
+// trimPullBytes 按实际序列化后的累计字节数截断本页。
+func trimPullBytes(commits []Commit, maxBytes int64) []Commit {
 	var total int64
 	for i := range commits {
 		// 契约类型都能序列化，这里忽略编码错误；真出错时按整页返回，交给
@@ -103,7 +102,7 @@ func (s *Service) trimPullBytes(commits []Commit) []Commit {
 		if err == nil {
 			total += int64(len(b))
 		}
-		if total > s.maxPullBytes && i > 0 {
+		if total > maxBytes {
 			return commits[:i]
 		}
 	}
@@ -120,11 +119,23 @@ func (s *Service) Push(
 	if len(commits) == 0 || len(commits) > maxPushCommits {
 		return 0, ErrInvalid
 	}
+	var total int64
 	for i := range commits {
 		// seq 由服务端分配（契约里是 readOnly），客户端带上来的值一律作废。
 		commits[i].Seq = nil
+		commits[i].ReceivedAt = nil
 		if err := Validate(commits[i], s.schemaVersion); err != nil {
 			return 0, err
+		}
+		b, err := json.Marshal(commits[i])
+		if err != nil {
+			return 0, ErrInvalid
+		}
+		total += int64(len(b))
+		// PostgreSQL 的 JSONB 文本会为键值与数组元素补空格。为这部分及
+		// 服务端生成的元数据留空间，保证新提交能够独立拉取。
+		if len(b) > MaxCommitBytes || 2*int64(len(b))+256 > s.maxPullBytes || total > MaxPushBytes {
+			return 0, ErrPushTooLarge
 		}
 	}
 	return s.store.Append(ctx, userID, base, commits)

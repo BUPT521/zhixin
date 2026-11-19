@@ -483,7 +483,7 @@ type Feedback struct {
 	// Content 用户填写的反馈正文
 	Content string `json:"content"`
 
-	// Diagnostics 可选的诊断摘要，客户端先说明附带哪些内容
+	// Diagnostics 可选的诊断摘要，UTF-8 编码后至多 65536 字节，客户端先说明附带哪些内容
 	Diagnostics *string `json:"diagnostics,omitempty"`
 
 	// Platform 平台，例如 android
@@ -606,10 +606,10 @@ type Release struct {
 	// Sha256 安装包的 SHA-256，64 位小写十六进制
 	Sha256 string `json:"sha256"`
 
-	// Signature 安装包 SHA-256 的 Ed25519 签名（base64），可选。应用用内置公钥核对，
-	// 签名对不上时不提示更新；服务端只校验格式。
-	Signature *string `json:"signature,omitempty"`
-	Size      *int64  `json:"size,omitempty"`
+	// Signature 安装包 SHA-256 的 Ed25519 签名（base64）。应用使用内置公钥验证签名，
+	// 验签通过之后才下载安装包。
+	Signature string `json:"signature"`
+	Size      *int64 `json:"size,omitempty"`
 
 	// Url 安装包地址，必须是 https
 	Url string `json:"url"`
@@ -654,6 +654,11 @@ type TokensTokenType string
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
 
+// ConfirmPassword defines model for ConfirmPassword.
+type ConfirmPassword struct {
+	Password string `json:"password"`
+}
+
 // PostV1AuthEmailVerifyConfirmJSONBody defines parameters for PostV1AuthEmailVerifyConfirm.
 type PostV1AuthEmailVerifyConfirmJSONBody struct {
 	Code string `json:"code"`
@@ -681,11 +686,21 @@ type PostV1AuthRefreshJSONBody struct {
 	RequestId *string `json:"request_id,omitempty"`
 }
 
+// DeleteV1BackupsJSONBody defines parameters for DeleteV1Backups.
+type DeleteV1BackupsJSONBody struct {
+	Password string `json:"password"`
+}
+
 // PostV1BackupsParams defines parameters for PostV1Backups.
 type PostV1BackupsParams struct {
 	XContentSHA256 string  `json:"X-Content-SHA256"`
 	XSchemaVersion int     `json:"X-Schema-Version"`
 	XDeviceName    *string `json:"X-Device-Name,omitempty"`
+}
+
+// DeleteV1CloudJSONBody defines parameters for DeleteV1Cloud.
+type DeleteV1CloudJSONBody struct {
+	Password string `json:"password"`
 }
 
 // PostV1LlmChatCompletionsJSONBody defines parameters for PostV1LlmChatCompletions.
@@ -696,6 +711,11 @@ type PostV1LlmChatCompletionsJSONBody struct {
 
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
 type DeleteV1MeJSONBody struct {
+	Password string `json:"password"`
+}
+
+// DeleteV1SyncCommitsJSONBody defines parameters for DeleteV1SyncCommits.
+type DeleteV1SyncCommitsJSONBody struct {
 	Password string `json:"password"`
 }
 
@@ -735,6 +755,12 @@ type PostV1AuthRefreshJSONRequestBody PostV1AuthRefreshJSONBody
 // PostV1AuthRegisterJSONRequestBody defines body for PostV1AuthRegister for application/json ContentType.
 type PostV1AuthRegisterJSONRequestBody = Credentials
 
+// DeleteV1BackupsJSONRequestBody defines body for DeleteV1Backups for application/json ContentType.
+type DeleteV1BackupsJSONRequestBody DeleteV1BackupsJSONBody
+
+// DeleteV1CloudJSONRequestBody defines body for DeleteV1Cloud for application/json ContentType.
+type DeleteV1CloudJSONRequestBody DeleteV1CloudJSONBody
+
 // PostV1FeedbackJSONRequestBody defines body for PostV1Feedback for application/json ContentType.
 type PostV1FeedbackJSONRequestBody = Feedback
 
@@ -746,6 +772,9 @@ type PostV1LlmEmbeddingsJSONRequestBody = EmbeddingRequest
 
 // DeleteV1MeJSONRequestBody defines body for DeleteV1Me for application/json ContentType.
 type DeleteV1MeJSONRequestBody DeleteV1MeJSONBody
+
+// DeleteV1SyncCommitsJSONRequestBody defines body for DeleteV1SyncCommits for application/json ContentType.
+type DeleteV1SyncCommitsJSONRequestBody DeleteV1SyncCommitsJSONBody
 
 // PostV1SyncCommitsJSONRequestBody defines body for PostV1SyncCommits for application/json ContentType.
 type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
@@ -941,7 +970,7 @@ type ServerInterface interface {
 	// PostV1AuthLogout 退出当前设备
 	// (POST /v1/auth/logout)
 	PostV1AuthLogout(w http.ResponseWriter, r *http.Request)
-	// PostV1AuthPasswordForgot 向已验证的邮箱发一封重设密码验证码
+	// PostV1AuthPasswordForgot 向账号登记的邮箱发送重设密码验证码
 	// (POST /v1/auth/password/forgot)
 	PostV1AuthPasswordForgot(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthPasswordReset 用验证码重设密码，并作废该账号的全部会话

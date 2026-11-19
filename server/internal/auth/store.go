@@ -46,6 +46,7 @@ type Session struct {
 	AccessExpires  time.Time
 	RefreshExpires time.Time
 	CreatedAt      time.Time
+	EmailVerified  bool // Set on access-token lookup from the current account row.
 }
 
 // RefreshUsed 是一次已经轮换掉的刷新令牌摘要。旧令牌再次出现时，服务层用它
@@ -79,7 +80,7 @@ type Store interface {
 
 	// CreateSession 保存一条会话。maxPerUser 是这个账号保留的会话数上限，
 	// 超出时在同一个事务或锁内先删最旧的再插入，并发登录也守得住。
-	CreateSession(ctx context.Context, s Session, maxPerUser int) error
+	CreateSession(ctx context.Context, s Session, maxPerUser int, checkedHash string) error
 	SessionByAccessHash(ctx context.Context, hash string) (Session, error)
 	SessionByRefreshHash(ctx context.Context, hash string) (Session, error)
 	// RotateSession 用 CAS 换掉一条会话的两个令牌摘要：只有当前的 refresh_hash
@@ -95,7 +96,7 @@ type Store interface {
 	DeleteUserSessions(ctx context.Context, userID string) error
 	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
 	// 行不受影响。过期数据留在库里不影响正确性，清理只控制表的大小。
-	PruneExpired(ctx context.Context, now time.Time) error
+	PruneExpired(ctx context.Context, now, usedBefore time.Time) error
 
 	SetEmailVerified(ctx context.Context, userID string, at time.Time) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
@@ -241,6 +242,9 @@ func (m *MemoryStore) ResetPassword(_ context.Context, userID, purpose, expected
 	}
 	delete(m.codes, key)
 	u.PasswordHash = newPasswordHash
+	if u.EmailVerifiedAt.IsZero() {
+		u.EmailVerifiedAt = now
+	}
 	m.users[userID] = u
 	for sid, s := range m.sessions {
 		if s.UserID == userID {
@@ -290,9 +294,12 @@ func (m *MemoryStore) DeleteCode(_ context.Context, userID, purpose string) erro
 
 // CreateSession 先按上限删掉最旧的会话再插入，两步在同一把锁内完成，同一个
 // 账号的并发登录不会把会话数推过上限。
-func (m *MemoryStore) CreateSession(_ context.Context, s Session, maxPerUser int) error {
+func (m *MemoryStore) CreateSession(_ context.Context, s Session, maxPerUser int, checkedHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if checkedHash != "" && m.users[s.UserID].PasswordHash != checkedHash {
+		return ErrInvalidCredentials
+	}
 	if maxPerUser < 1 {
 		maxPerUser = 1
 	}
@@ -331,7 +338,7 @@ func (m *MemoryStore) trimSessionsLocked(userID string, keep int) {
 }
 
 // PruneExpired 删除刷新令牌已经过期的会话与过期的验证码。
-func (m *MemoryStore) PruneExpired(_ context.Context, now time.Time) error {
+func (m *MemoryStore) PruneExpired(_ context.Context, now, usedBefore time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	gone := map[string]bool{}
@@ -341,9 +348,7 @@ func (m *MemoryStore) PruneExpired(_ context.Context, now time.Time) error {
 			gone[id] = true
 		}
 	}
-	if len(gone) > 0 {
-		m.purgeUsedLocked(func(u RefreshUsed) bool { return gone[u.SessionID] })
-	}
+	m.purgeUsedLocked(func(u RefreshUsed) bool { return gone[u.SessionID] || u.RotatedAt.Before(usedBefore) })
 	for key, c := range m.codes {
 		if !now.Before(c.ExpiresAt) {
 			delete(m.codes, key)
@@ -357,6 +362,7 @@ func (m *MemoryStore) findSession(match func(Session) bool) (Session, error) {
 	defer m.mu.Unlock()
 	for _, s := range m.sessions {
 		if match(s) {
+			s.EmailVerified = !m.users[s.UserID].EmailVerifiedAt.IsZero()
 			return s, nil
 		}
 	}

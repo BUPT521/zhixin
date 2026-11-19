@@ -105,7 +105,7 @@ func TestPruneExpiredRows(t *testing.T) {
 		CreatedAt: now,
 	}
 	for _, sess := range []Session{expired, live} {
-		if err := st.CreateSession(ctx, sess, 20); err != nil {
+		if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,7 +116,7 @@ func TestPruneExpiredRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := st.PruneExpired(ctx, now); err != nil {
+	if err := st.PruneExpired(ctx, now, now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.SessionByRefreshHash(ctx, "old-refresh"); !errors.Is(err, ErrNotFound) {
@@ -143,7 +143,7 @@ func TestPruneLoopCleansAtStartup(t *testing.T) {
 		ID: "old", UserID: "u1", RefreshHash: "old-refresh",
 		AccessExpires: c.t.Add(-time.Minute), RefreshExpires: c.t.Add(-time.Minute),
 		CreatedAt: c.t.Add(-2 * time.Hour),
-	}, 20); err != nil {
+	}, 20, ""); err != nil {
 		t.Fatal(err)
 	}
 

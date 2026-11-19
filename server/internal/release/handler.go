@@ -30,19 +30,16 @@ func (h *Handler) Releases(w http.ResponseWriter, r *http.Request) {
 // 按字段是否存在决定显示什么，不显示空串。
 func entryJSON(e Entry) api.Release {
 	out := api.Release{
-		Platform: e.Platform,
-		Version:  e.Version,
-		Build:    e.Build,
-		Url:      e.URL,
-		Sha256:   e.SHA256,
+		Platform:  e.Platform,
+		Version:   e.Version,
+		Build:     e.Build,
+		Url:       e.URL,
+		Sha256:    e.SHA256,
+		Signature: e.Signature,
 	}
 	if e.PublishedAt != "" {
 		v := e.PublishedAt
 		out.PublishedAt = &v
-	}
-	if e.Signature != "" {
-		v := e.Signature
-		out.Signature = &v
 	}
 	if e.Size > 0 {
 		v := e.Size

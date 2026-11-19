@@ -140,6 +140,8 @@ class SyncService {
 
   /// 首次基线一条提交最多带的变化数：控制单次请求体大小，避免超过服务端上限。
   static const int _baselineChunk = 100;
+  static const int _pushBytes = (16 << 20) - 1024;
+  static const int _commitBytes = (2 << 20) - 512;
 
   Future<SyncResult>? _running;
   Timer? _timer;
@@ -396,25 +398,14 @@ class SyncService {
     var pushed = 0;
     var baseSeq = state.serverHead;
     final userId = state.userId;
-    for (var index = 0; index < changes.length; index += _baselineChunk) {
-      _ensureIdentity();
-      final end = (index + _baselineChunk).clamp(0, changes.length);
-      final chunk = changes.sublist(index, end);
-      final commit = ServerCommit(
-        requestId: _baselineRequestId(deviceId, index, chunk),
-        deviceId: deviceId,
-        schemaVersion: zhixinSchemaVersion,
-        actor: 'system',
-        action: '首次同步基线',
-        createdAt: formatDateTime(clock()),
-        changes: [for (final change in chunk) _toServerChange(change)],
-      );
-      baseSeq = await account.call(
-        (client, token) =>
-            client.push(token, baseSeq: baseSeq, commits: [commit]),
-      );
-      pushed++;
-    }
+    await _pushBatches(
+      Stream.fromIterable(_baselineCommits(deviceId, changes)),
+      baseSeq,
+      (head, count) async {
+        baseSeq = head;
+        pushed += count;
+      },
+    );
     final uploaded = await _uploadAssets(
       AssetStore.hashesInProjection(projection),
     );
@@ -435,6 +426,107 @@ class SyncService {
       downloaded: downloaded,
     );
   }
+
+  Iterable<ServerCommit> _baselineCommits(
+    String deviceId,
+    List<RevisionChange> changes,
+  ) sync* {
+    var index = 0;
+    while (index < changes.length) {
+      final start = index;
+      final payload = <ServerChange>[];
+      var bytes = 512; // 提交元数据和数组分隔符。
+      while (index < changes.length && payload.length < _baselineChunk) {
+        final change = _toServerChange(changes[index]);
+        final size = _syncBytes(change.toJson()) + 1;
+        if (bytes + size > _commitBytes) {
+          if (payload.isEmpty) throw _oversizedCommit;
+          break;
+        }
+        bytes += size;
+        payload.add(change);
+        index++;
+      }
+      yield ServerCommit(
+        requestId: _baselineRequestId(
+          deviceId,
+          start,
+          changes.sublist(start, index),
+        ),
+        deviceId: deviceId,
+        schemaVersion: zhixinSchemaVersion,
+        actor: 'system',
+        action: '首次同步基线',
+        createdAt: formatDateTime(clock()),
+        changes: payload,
+      );
+    }
+  }
+
+  Future<void> _pushBatches(
+    Stream<ServerCommit> commits,
+    int baseSeq,
+    Future<void> Function(int head, int count) saved,
+  ) async {
+    final batch = <ServerCommit>[];
+    var bytes = 0;
+    Future<void> flush() async {
+      if (batch.isEmpty) return;
+      for (var attempt = 0; ; attempt++) {
+        _ensureIdentity();
+        try {
+          baseSeq = await account.call(
+            (client, token) =>
+                client.push(token, baseSeq: baseSeq, commits: batch),
+          );
+          break;
+        } on ServerProblem catch (error) {
+          final retry = error.retryAfterSeconds;
+          if (error.code != 'rate_limited' ||
+              attempt >= 2 ||
+              retry == null ||
+              retry < 1 ||
+              retry > 5) {
+            rethrow;
+          }
+          await Future<void>.delayed(Duration(seconds: retry));
+        }
+      }
+      await saved(baseSeq, batch.length);
+      batch.clear();
+      bytes = 0;
+    }
+
+    await for (final commit in commits) {
+      _ensureIdentity();
+      final size = _syncBytes(commit.toJson());
+      if (size > _commitBytes) throw _oversizedCommit;
+      if (batch.length == _pushBatch || bytes + size + 1 > _pushBytes) {
+        await flush();
+      }
+      batch.add(commit);
+      bytes += size + 1;
+    }
+    await flush();
+  }
+
+  static final _goJsonEscapes = RegExp('[<>&\u2028\u2029]');
+
+  static int _syncBytes(Object value) {
+    final json = jsonEncode(value);
+    // Go 的 JSON 序列化会将这些字符写成六字节转义序列。
+    return utf8.encode(json).length +
+        _goJsonEscapes.allMatches(json).fold(0, (extra, match) {
+          return extra + (json.codeUnitAt(match.start) > 127 ? 3 : 5);
+        });
+  }
+
+  static const _oversizedCommit = ServerProblem(
+    code: 'payload_too_large',
+    status: 413,
+    extra: {'resource': 'sync'},
+    detail: '单条同步提交超过服务端允许的大小',
+  );
 
   /// 拉取 `state.serverHead` 之后的提交并应用到本机，返回推进后的游标。
   Future<({SyncState state, int pulled, int downloaded})> _pull({
@@ -518,37 +610,28 @@ class SyncService {
       final assetHashes = <String>{};
       var pushed = 0;
       try {
-        var baseSeq = current.serverHead;
-        for (var index = 0; index < pending.length; index += _pushBatch) {
-          final end = (index + _pushBatch).clamp(0, pending.length);
-          final batch = pending.sublist(index, end);
-          final payload = <ServerCommit>[];
-          for (final commit in batch) {
+        Stream<ServerCommit> payloads() async* {
+          for (final commit in pending) {
             final changes = await engine.changesFor(database.raw, commit.id);
             assetHashes.addAll(AssetStore.hashesInChanges(changes));
-            payload.add(
-              ServerCommit(
-                requestId: _requestIdFor(commit, deviceId),
-                deviceId: deviceId,
-                schemaVersion: zhixinSchemaVersion,
-                actor: _actorOf(commit.actor),
-                action: commit.action,
-                createdAt: formatDateTime(commit.createdAt ?? clock()),
-                changes: [
-                  for (final change in changes) _toServerChange(change),
-                ],
-              ),
+            yield ServerCommit(
+              requestId: _requestIdFor(commit, deviceId),
+              deviceId: deviceId,
+              schemaVersion: zhixinSchemaVersion,
+              actor: _actorOf(commit.actor),
+              action: commit.action,
+              createdAt: formatDateTime(commit.createdAt ?? clock()),
+              changes: [for (final change in changes) _toServerChange(change)],
             );
           }
-          baseSeq = await account.call(
-            (client, token) =>
-                client.push(token, baseSeq: baseSeq, commits: payload),
-          );
-          pushed += payload.length;
-          current = current.copyWith(serverHead: baseSeq);
+        }
+
+        await _pushBatches(payloads(), current.serverHead, (head, count) async {
+          pushed += count;
+          current = current.copyWith(serverHead: head);
           _ensureIdentity();
           await preferences.saveSyncState(current);
-        }
+        });
       } on ServerProblem catch (error) {
         if (!error.isConflict) rethrow;
         final head = error.extra['head'];

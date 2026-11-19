@@ -19,7 +19,7 @@ func TestMemoryResetPasswordIsAtomic(t *testing.T) {
 	if err := st.CreateSession(ctx, Session{
 		ID: "s1", UserID: "u1", AccessHash: "ah", RefreshHash: "rh",
 		AccessExpires: now.Add(time.Hour), RefreshExpires: now.Add(time.Hour), CreatedAt: now,
-	}, 20); err != nil {
+	}, 20, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutCode(ctx, Code{

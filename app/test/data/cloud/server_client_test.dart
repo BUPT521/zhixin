@@ -443,8 +443,8 @@ void main() {
       email: 'e@example.com',
       password: 'password123',
     );
-    await client.deleteAllBackups(tokens.accessToken);
-    await client.deleteSyncLog(tokens.accessToken);
+    await client.deleteAllBackups(tokens.accessToken, password: 'password1');
+    await client.deleteSyncLog(tokens.accessToken, password: 'password1');
     expect(await client.head(tokens.accessToken).then((h) => h.head), 0);
   });
 
@@ -472,7 +472,7 @@ void main() {
       'a' * 64: Uint8List.fromList([4, 5, 6]),
     };
 
-    await client.deleteCloud(tokens.accessToken);
+    await client.deleteCloud(tokens.accessToken, password: 'password123');
     expect(server.cloudClearRequests, 1);
     expect(server.commits[userId], isEmpty);
     expect(server.backups[userId], isNull);
@@ -480,7 +480,7 @@ void main() {
 
     server.cloudClearConflicts = 1;
     await expectLater(
-      client.deleteCloud(tokens.accessToken),
+      client.deleteCloud(tokens.accessToken, password: 'password123'),
       throwsA(
         isA<ServerProblem>()
             .having((error) => error.isConflict, 'conflict', true)

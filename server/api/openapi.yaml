@@ -165,10 +165,10 @@ paths:
     post:
       tags: [auth]
       security: []
-      summary: 向已验证的邮箱发一封重设密码验证码
+      summary: 向账号登记的邮箱发送重设密码验证码
       description: |
-        邮箱不存在或还没有验证时同样返回 204，不区分两种情况，避免用这个接口
-        探测哪些邮箱注册过。发信失败返回 503，客户端提示稍后再试。
+        邮箱尚未验证时，持有该邮箱的用户可以凭验证码恢复账号并确认邮箱归属。
+        邮箱不存在时返回 204。发信失败返回 503，客户端提示稍后再试。
       requestBody:
         required: true
         content:
@@ -180,7 +180,7 @@ paths:
               properties:
                 email: { type: string, format: email, maxLength: 254 }
       responses:
-        "204": { description: 已发送；邮箱不存在或未验证时不发信 }
+        "204": { description: 已受理 }
         "400": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Problem" }
@@ -262,11 +262,13 @@ paths:
         中途失败时重试会从剩下的部分继续。清除期间这个账号的写入请求返回 409
         `conflict`，客户端退避之后重试；账号、会话与本机数据不受影响。应用在设置
         页显示完成状态，再询问是否恢复自动同步。
+      requestBody: { $ref: "#/components/requestBodies/ConfirmPassword" }
       responses:
         "204": { description: 已清空；本来就是空的也返回 204 }
         "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "409":
-          description: "`conflict`：上一次清除还没结束，稍后重试"
+          description: "`conflict`：该账号还有写入或清除请求在途，稍后重试"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -287,12 +289,13 @@ paths:
       summary: 清空该账号的提交序列，服务端 head 重置为 0
       description: |
         删除这个账号在服务端保存的全部提交，并把 head 重置为 0，账号与整库备份不受影响。
-        客户端在设置页“清除云端数据”时调用，与 `DELETE /v1/backups` 一起把云端恢复到空白状态。
-        操作不可撤销：清空后其他设备无法再拉取这些提交，未推送的本机改动不会再出现在云端，
-        因此调用前客户端应提示用户确认。成功返回 204，没有响应体。
+        操作不可撤销，调用前须重新确认当前密码。成功返回 204，没有响应体。
+      requestBody: { $ref: "#/components/requestBodies/ConfirmPassword" }
       responses:
         "204": { description: 已清空 }
         "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
     get:
       tags: [sync]
       summary: 拉取 seq 大于 after 的提交
@@ -305,13 +308,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CommitPage" }
+        "413": { $ref: "#/components/responses/Problem" }
     post:
       tags: [sync]
       summary: 推送本机提交
       description: |
         `base_seq` 必须等于服务端当前 head，否则返回 409，`extra.head` 给出最新位置；
         客户端先拉取、在本机应用为新的提交，再重新推送。已经收到过的 `request_id`
-        会被跳过，因此丢失响应后原样重试是安全的。每次 1 到 200 条。
+        会被跳过，因此丢失响应后原样重试是安全的。每次 1 到 200 条，单条最多 2 MiB，
+        请求最多 16 MiB。生产实例要求已验证邮箱，账号同步日志预算为 256 MiB。
       requestBody:
         required: true
         content:
@@ -333,7 +338,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PushResult" }
         "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /v1/blobs/{sha256}:
     parameters:
@@ -376,6 +384,9 @@ paths:
       responses:
         "201": { description: 已保存 }
         "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "413":
           description: "`payload_too_large` 或 `storage_full`"
           content:
@@ -388,12 +399,13 @@ paths:
       summary: 清空该账号的全部整库备份
       description: |
         删除这个账号在服务端保存的全部备份，元数据行与对象存储里的字节一并删除，账号与同步
-        提交序列不受影响。客户端在设置页“清除云端数据”时调用，与 `DELETE /v1/sync/commits`
-        一起把云端恢复到空白状态。操作不可撤销：云端副本删除之后无法再下载，只剩本机数据库
-        里的数据，因此调用前客户端应提示用户确认。成功返回 204，没有响应体。
+        提交序列不受影响。操作不可撤销，调用前须重新确认当前密码。
+      requestBody: { $ref: "#/components/requestBodies/ConfirmPassword" }
       responses:
         "204": { description: 已清空 }
         "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
     get:
       tags: [backup]
       summary: 列出整库备份，新的在前
@@ -421,7 +433,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Backup" }
         "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/backups/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -724,6 +739,17 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
 
 components:
+  requestBodies:
+    ConfirmPassword:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [password]
+            additionalProperties: false
+            properties:
+              password: { type: string, minLength: 1, maxLength: 128 }
   securitySchemes:
     bearer:
       type: http
@@ -1021,7 +1047,7 @@ components:
         diagnostics:
           type: string
           maxLength: 65536
-          description: 可选的诊断摘要，客户端先说明附带哪些内容
+          description: 可选的诊断摘要，UTF-8 编码后至多 65536 字节，客户端先说明附带哪些内容
     FeedbackReceipt:
       type: object
       required: [id, created_at]
@@ -1083,7 +1109,7 @@ components:
         schema_version: { type: integer, examples: [27] }
     Release:
       type: object
-      required: [platform, version, build, url, sha256]
+      required: [platform, version, build, url, sha256, signature]
       properties:
         platform: { type: string, examples: [android] }
         version: { type: string, examples: ["0.2.0"] }
@@ -1094,8 +1120,8 @@ components:
         signature:
           type: string
           description: |
-            安装包 SHA-256 的 Ed25519 签名（base64），可选。应用用内置公钥核对，
-            签名对不上时不提示更新；服务端只校验格式。
+            安装包 SHA-256 的 Ed25519 签名（base64）。应用使用内置公钥验证签名，
+            验签通过之后才下载安装包。
         size: { type: integer, format: int64 }
         min_version: { type: string, description: 低于它的客户端应提示必须更新 }
         notes: { type: string, description: 这一版的更新说明 }

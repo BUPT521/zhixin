@@ -229,7 +229,7 @@ void main() {
     server.blobs[userId] = {
       'a' * 64: Uint8List.fromList([4, 5, 6]),
     };
-    await account.clearCloudData();
+    await account.clearCloudData(password: 'password1');
     expect(server.cloudClearRequests, 1);
     expect(server.commits[userId], isEmpty);
     expect(server.backups[userId], isNull);
@@ -255,7 +255,7 @@ void main() {
     server.cloudClearConflicts = 1;
 
     await expectLater(
-      account.clearCloudData(),
+      account.clearCloudData(password: 'password1'),
       throwsA(
         isA<ServerProblem>()
             .having((error) => error.isConflict, 'conflict', true)
@@ -266,7 +266,7 @@ void main() {
     expect(await preferences.syncState(), isNotNull);
     expect(server.cloudClearRequests, 1);
 
-    await account.clearCloudData();
+    await account.clearCloudData(password: 'password1');
     expect(server.cloudClearRequests, 2);
     expect(await preferences.syncState(), isNull);
   });

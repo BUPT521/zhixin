@@ -27,7 +27,7 @@ type Handler struct {
 
 // NewHandler wires the handler.
 func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
-	return &Handler{svc: svc, log: log, maxBytes: maxBytes}
+	return &Handler{svc: svc, log: log, maxBytes: min(maxBytes, MaxPushBytes)}
 }
 
 // SetPurgeGate 注入清除期间的写拦截。gate 返回 cloudpurge.ErrPurging 时，
@@ -67,6 +67,10 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 	p := auth.MustPrincipal(r.Context())
 	result, err := h.svc.Pull(r.Context(), p.UserID, params.After, params.Limit)
 	if err != nil {
+		if errors.Is(err, ErrPullTooLarge) {
+			httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, err.Error(), map[string]any{"resource": "sync"})
+			return
+		}
 		if errors.Is(err, ErrInvalid) {
 			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "after must be non-negative and limit between 1 and 1000")
 			return
@@ -91,6 +95,14 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	head, err := h.svc.Push(r.Context(), p.UserID, in.BaseSeq, in.Commits)
+	if errors.Is(err, ErrStorageFull) {
+		httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodeStorageFull, err.Error(), map[string]any{"resource": "sync"})
+		return
+	}
+	if errors.Is(err, ErrPushTooLarge) {
+		httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, err.Error(), map[string]any{"resource": "sync"})
+		return
+	}
 	if errors.Is(err, ErrHeadMoved) {
 		httpx.WriteProblemExtra(w, r, http.StatusConflict, httpx.CodeConflict,
 			"pull and apply remote commits first", map[string]any{"head": head})

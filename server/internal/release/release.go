@@ -36,8 +36,7 @@ type Entry struct {
 	// SHA256 是安装包的哈希，必填；发布清单与安装包对不上时客户端无法发现
 	// 被替换的包，因此不再允许省略。
 	SHA256 string `json:"sha256"`
-	// Signature 是安装包 SHA-256 的 Ed25519 签名（base64），可选；应用用内置
-	// 公钥核对，签名对不上时不提示更新。
+	// Signature 是安装包 SHA-256 的 Ed25519 签名（base64），由应用使用内置公钥验证。
 	Signature string `json:"signature"`
 	// Size 是安装包的字节数，可选。
 	Size int64 `json:"size"`
@@ -106,11 +105,9 @@ func Load(path string) ([]Entry, error) {
 		if !httpx.ValidSHA256(e.SHA256) {
 			return nil, fmt.Errorf("release: %s 的 sha256 必填，且必须是 64 位小写十六进制", e.Platform)
 		}
-		if e.Signature != "" {
-			sig, err := base64.StdEncoding.DecodeString(e.Signature)
-			if err != nil || len(sig) != ed25519.SignatureSize {
-				return nil, fmt.Errorf("release: %s 的 signature 必须是 %d 字节 Ed25519 签名的 base64", e.Platform, ed25519.SignatureSize)
-			}
+		sig, err := base64.StdEncoding.DecodeString(e.Signature)
+		if err != nil || len(sig) != ed25519.SignatureSize {
+			return nil, fmt.Errorf("release: %s 的 signature 必须是 %d 字节 Ed25519 签名的 base64", e.Platform, ed25519.SignatureSize)
 		}
 	}
 	return m.Releases, nil

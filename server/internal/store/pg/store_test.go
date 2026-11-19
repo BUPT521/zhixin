@@ -82,7 +82,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 		AccessExpires:  time.Now().Add(time.Hour).UTC(),
 		RefreshExpires: time.Now().Add(24 * time.Hour).UTC(),
 	}
-	if err := st.CreateSession(ctx, sess, 20); err != nil {
+	if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	byAccess, err := st.SessionByAccessHash(ctx, "ah")
@@ -130,7 +130,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	// 删会话之后再建一条，供下面核对账号级联删除。
 	sess2 := sess
 	sess2.ID, sess2.AccessHash, sess2.RefreshHash = "s2", "ah2", "rh2"
-	if err := st.CreateSession(ctx, sess2, 20); err != nil {
+	if err := st.CreateSession(ctx, sess2, 20, ""); err != nil {
 		t.Fatalf("create second session: %v", err)
 	}
 	// 会话随账号行级联删除（schema.sql 的 ON DELETE CASCADE），服务层不再单独
@@ -162,7 +162,7 @@ func TestPostgresSessionLimit(t *testing.T) {
 			AccessExpires:  now.Add(time.Hour),
 			RefreshExpires: now.Add(24 * time.Hour),
 		}
-		if err := st.CreateSession(ctx, sess, 2); err != nil {
+		if err := st.CreateSession(ctx, sess, 2, ""); err != nil {
 			t.Fatalf("第 %d 条会话: %v", i+1, err)
 		}
 	}
@@ -198,7 +198,7 @@ func TestPostgresResetPassword(t *testing.T) {
 		AccessExpires:  now.Add(time.Hour),
 		RefreshExpires: now.Add(24 * time.Hour),
 	}
-	if err := st.CreateSession(ctx, sess, 20); err != nil {
+	if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
 		t.Fatalf("session: %v", err)
 	}
 	if err := st.PutCode(ctx, auth.Code{
@@ -254,7 +254,7 @@ func TestPostgresRefreshRotation(t *testing.T) {
 		AccessExpires:  now.Add(time.Hour),
 		RefreshExpires: now.Add(24 * time.Hour),
 	}
-	if err := st.CreateSession(ctx, sess, 20); err != nil {
+	if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
 		t.Fatalf("session: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestPostgresPruneExpired(t *testing.T) {
 		AccessExpires:  now.Add(time.Hour),
 		RefreshExpires: now.Add(24 * time.Hour),
 	}
-	if err := st.CreateSession(ctx, sess, 20); err != nil {
+	if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
 		t.Fatalf("session: %v", err)
 	}
 	// 把这条会话与两枚验证码分别改成过期与未过期，清理之后只留下未过期的。
@@ -359,7 +359,7 @@ func TestPostgresPruneExpired(t *testing.T) {
 		}
 	}
 
-	if err := st.PruneExpired(ctx, now); err != nil {
+	if err := st.PruneExpired(ctx, now, now.Add(-time.Hour)); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
@@ -468,7 +468,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 	if head, err := st.Head(ctx, "u1"); err != nil || head != 0 {
 		t.Fatalf("head after reset = %d, %v", head, err)
 	}
-	if commits, err := st.After(ctx, "u1", 0, 10); err != nil || len(commits) != 0 {
+	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 0 {
 		t.Fatalf("commits after reset = %+v, %v", commits, err)
 	}
 	// 重置之后从 0 重新推送，序号重新从 1 开始。
@@ -824,12 +824,16 @@ func TestPostgresSyncSequence(t *testing.T) {
 		t.Fatalf("base 落后应返回 ErrHeadMoved，得到 %d %v", head, err)
 	}
 
-	commits, err := st.After(ctx, "u1", 0, 10)
+	commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes)
 	if err != nil || len(commits) != 2 {
 		t.Fatalf("拉取应有两条，得到 %d %v", len(commits), err)
 	}
 	if commits[0].Seq == nil || *commits[0].Seq != 1 || commits[0].RequestId != "r1" || len(commits[0].Changes) != 1 {
 		t.Fatalf("第一条不符合预期: %+v", commits[0])
+	}
+	limited, err := st.After(ctx, "u1", 0, 10, 500)
+	if err != nil || len(limited) != 1 || limited[0].RequestId != "r1" {
+		t.Fatalf("按字节分页应保留连续前缀: %+v, %v", limited, err)
 	}
 }
 

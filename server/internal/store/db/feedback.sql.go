@@ -25,6 +25,17 @@ func (q *Queries) DeleteFeedbackBefore(ctx context.Context, before pgtype.Timest
 	return result.RowsAffected(), nil
 }
 
+const feedbackCount = `-- name: FeedbackCount :one
+SELECT count(*) FROM feedback
+`
+
+func (q *Queries) FeedbackCount(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, feedbackCount)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertFeedback = `-- name: InsertFeedback :exec
 
 INSERT INTO feedback (

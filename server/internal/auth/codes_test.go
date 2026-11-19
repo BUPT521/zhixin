@@ -191,17 +191,29 @@ func TestPasswordResetCodeSingleUse(t *testing.T) {
 	}
 }
 
-func TestPasswordResetIgnoresUnverifiedEmail(t *testing.T) {
+func TestPasswordResetRecoversUnverifiedEmail(t *testing.T) {
 	ctx := context.Background()
 	s, _, m := newCodeService(t)
-	if _, err := s.Register(ctx, "student@example.com", "password1", ""); err != nil {
+	old, err := s.Register(ctx, "student@example.com", "password1", "")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RequestPasswordReset(ctx, "student@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.sent) != 0 {
-		t.Fatalf("unverified email received a reset mail: %d", len(m.sent))
+	if err := s.ResetPassword(ctx, "student@example.com", m.lastCode(t), "new-password1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authenticate(ctx, old.AccessToken); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("old session survives recovery: %v", err)
+	}
+	fresh, err := s.Login(ctx, "student@example.com", "new-password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := s.Authenticate(ctx, fresh.AccessToken)
+	if err != nil || !principal.EmailVerified {
+		t.Fatalf("recovered email is not verified: %+v, %v", principal, err)
 	}
 }
 

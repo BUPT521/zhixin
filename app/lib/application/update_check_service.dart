@@ -115,7 +115,7 @@ class UpdateCheckService {
   /// 当前应用的版本串 `0.1.1-dev+2`；由调用方从 `platform/app_info.dart` 传入。
   final String appVersion;
 
-  /// 内置的 Ed25519 公钥 PEM；为空时清单带签名按验签失败处理。
+  /// 用于验证发布清单的 Ed25519 公钥 PEM。
   final String publicKeyPem;
 
   /// 清单里按这个平台取一项；安装包只发布 android。
@@ -185,6 +185,24 @@ class UpdateCheckService {
       return const UpdateCheckResult.failed(UpdateFailure.missingHash);
     }
 
+    final signature = release.signature.trim();
+    var valid = false;
+    try {
+      if (signature.isNotEmpty && publicKeyPem.trim().isNotEmpty) {
+        valid = await _verifySignature(
+          publicKeyPem: publicKeyPem,
+          sha256Hex: expected,
+          signatureBase64: signature,
+        );
+      }
+    } catch (error, stack) {
+      _record(error, stack);
+    }
+    if (!valid) {
+      _recordReason(UpdateFailure.signatureMismatch);
+      return const UpdateCheckResult.failed(UpdateFailure.signatureMismatch);
+    }
+
     final String actual;
     try {
       actual = await _downloadAndHash(uri);
@@ -195,24 +213,6 @@ class UpdateCheckService {
     if (actual != expected) {
       _recordReason(UpdateFailure.hashMismatch);
       return const UpdateCheckResult.failed(UpdateFailure.hashMismatch);
-    }
-
-    final signature = release.signature.trim();
-    if (signature.isNotEmpty) {
-      var valid = false;
-      try {
-        valid = await _verifySignature(
-          publicKeyPem: publicKeyPem,
-          sha256Hex: expected,
-          signatureBase64: signature,
-        );
-      } catch (error, stack) {
-        _record(error, stack);
-      }
-      if (!valid) {
-        _recordReason(UpdateFailure.signatureMismatch);
-        return const UpdateCheckResult.failed(UpdateFailure.signatureMismatch);
-      }
     }
 
     final minimum = ReleaseVersion.tryParse(release.minVersion, 0);

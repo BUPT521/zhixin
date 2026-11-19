@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
@@ -25,6 +24,8 @@ const (
 // errBadUpstream 表示来源返回了 200，但内容不能用：条数、序号或维度不对。
 var errBadUpstream = errors.New("upstream returned an unusable embedding response")
 
+var embeddingFields = map[string]bool{"model": true, "input": true, "dimensions": true, "encoding_format": true}
+
 // Embeddings 代理 OpenAI Embeddings。一次请求可以带多条输入；路由配置了
 // max_batch 时拆成几批并发发给同一个来源，再按原顺序合并。一批失败时整次请求
 // 换下一个来源重做，所以同一次请求的向量总是来自同一个来源。
@@ -35,7 +36,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	defer p.releaseConcurrency(userID)
 	fields, ok := p.readBody(w, r)
-	if !ok {
+	if !ok || !allowFields(w, r, fields, embeddingFields) {
 		return
 	}
 	inputs, err := parseInputs(fields["input"])
@@ -64,17 +65,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var estimate int64
-	for _, input := range inputs {
-		estimate += int64(utf8.RuneCountInString(input))
-	}
 	day := p.day()
-	reserved := p.reserve(w, r, userID, day, KindEmbedding, estimate)
-	if reserved == 0 {
-		return
-	}
-	actual := reserved
-	defer func() { p.settle(r, userID, day, KindEmbedding, reserved, actual) }()
 
 	ctx := r.Context()
 	if p.cfg.StreamTotalTimeout > 0 {
@@ -82,19 +73,15 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, p.cfg.StreamTotalTimeout)
 		defer cancel()
 	}
-	res := p.embed(ctx, m, p.router.candidates(m, p.cfg.MaxAttempts), fields, inputs)
+	res := p.embed(ctx, m, p.router.candidates(m, p.cfg.MaxAttempts), fields, inputs, p.budget(r, userID, day, KindEmbedding))
+	var budgetError quotaReservationError
 	switch {
-	case res.passthrough != nil && keyRejected(res.passthrough.status):
-		actual = 0
-		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "the model sources rejected the server key")
+	case errors.Is(res.err, ErrQuotaExceeded):
+		p.writeQuotaExceeded(w, r, userID, day, KindEmbedding)
+	case errors.As(res.err, &budgetError):
+		httpx.WriteInternal(w, r, p.log, res.err)
 	case res.passthrough != nil:
-		actual = 0
-		pt := res.passthrough
-		if ct := pt.header.Get("Content-Type"); ct != "" {
-			w.Header().Set("Content-Type", ct)
-		}
-		w.WriteHeader(pt.status)
-		_, _ = w.Write(pt.body)
+		writeUpstreamStatus(w, r, res.passthrough.status)
 	case res.err != nil:
 		if r.Context().Err() != nil {
 			return
@@ -104,12 +91,11 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(res.body)
-		actual = res.tokens
 	}
 }
 
 // parseInputs 接受字符串或字符串数组；token 数组之类的形式不转发，因为服务端
-// 要按条拆批，也要在缺少 usage 时按字数估算用量。
+// 要按条拆批，也要在缺少 usage 时按输入字节估算用量。
 func parseInputs(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("input is required")
@@ -138,7 +124,6 @@ func parseInputs(raw json.RawMessage) ([]string, error) {
 
 type rawResponse struct {
 	status int
-	header http.Header
 	body   []byte
 }
 
@@ -153,10 +138,19 @@ type embedResult struct {
 
 // embed 依次尝试候选路由，返回合并好的响应、需要原样转交的提供方错误，或者
 // 全部失败时的错误。
-func (p *Proxy) embed(ctx context.Context, m *liveModel, cands []liveRoute, fields map[string]json.RawMessage, inputs []string) embedResult {
+func (p *Proxy) embed(ctx context.Context, m *liveModel, cands []liveRoute, fields map[string]json.RawMessage, inputs []string, reserve attemptBudget) embedResult {
 	last := embedResult{err: errors.New("no usable route")}
-	for i, rt := range cands {
+	for _, rt := range cands {
+		settle := func(int64) {}
+		if reserve != nil {
+			var err error
+			settle, err = reserve(embeddingEstimate(inputs))
+			if err != nil {
+				return embedResult{err: err}
+			}
+		}
 		res, retry := p.embedOnce(ctx, m, rt, fields, inputs)
+		settle(res.tokens)
 		if ctx.Err() != nil {
 			return embedResult{err: ctx.Err()}
 		}
@@ -168,9 +162,6 @@ func (p *Proxy) embed(ctx context.Context, m *liveModel, cands []liveRoute, fiel
 		}
 		p.router.health.fail(rt.Provider.ID, res.failure())
 		last = res
-		if i == len(cands)-1 {
-			break
-		}
 	}
 	return last
 }
@@ -182,14 +173,23 @@ func (res embedResult) failure() string {
 	case errors.Is(res.err, errBadUpstream):
 		return "嵌入响应不可用：" + res.err.Error()
 	case res.err != nil:
-		return "连接失败：" + res.err.Error()
+		return "无法读取模型来源的响应"
 	}
 	return ""
 }
 
 type chunkOut struct {
-	resp rawResponse
-	err  error
+	resp   rawResponse
+	err    error
+	tokens int64
+}
+
+func embeddingEstimate(inputs []string) int64 {
+	var size int64
+	for _, s := range inputs {
+		size += int64(len(s))
+	}
+	return size
 }
 
 // embedOnce 用一条路由完成整次请求。retry 为真表示应该换下一个来源。
@@ -227,71 +227,62 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 				sizeMu.Lock()
 				totalBytes += int64(len(out.resp.body))
 				if p.cfg.MaxResponseBytes > 0 && totalBytes > p.cfg.MaxResponseBytes {
-					out = chunkOut{err: errResponseTooLarge}
+					out.err = errResponseTooLarge
+					out.resp = rawResponse{}
 				}
 				sizeMu.Unlock()
 			}
 			outs[i] = out
-			if outs[i].err != nil || retryable(outs[i].resp.status) {
+			if out.err != nil || out.resp.status >= 300 {
 				cancel()
 			}
 		}()
 	}
 	wg.Wait()
+	var tokens int64
+	for _, o := range outs {
+		tokens += o.tokens
+	}
 
 	// 先找真正的失败：被取消的批次只是受了别的批次连累。
 	for _, o := range outs {
 		if o.err != nil && !errors.Is(o.err, context.Canceled) {
-			return embedResult{err: o.err, route: rt}, true
+			return embedResult{err: o.err, route: rt, tokens: tokens}, true
 		}
 	}
 	for _, o := range outs {
 		if o.err == nil && retryable(o.resp.status) {
 			pt := o.resp
-			return embedResult{passthrough: &pt, route: rt}, true
+			return embedResult{passthrough: &pt, route: rt, tokens: tokens}, true
+		}
+	}
+	for _, o := range outs {
+		if o.err == nil && o.resp.status >= 300 {
+			pt := o.resp
+			return embedResult{passthrough: &pt, route: rt, tokens: tokens}, false
 		}
 	}
 	for _, o := range outs {
 		if o.err != nil {
-			return embedResult{err: o.err, route: rt}, true
-		}
-	}
-	for _, o := range outs {
-		if o.resp.status >= 300 {
-			pt := o.resp
-			return embedResult{passthrough: &pt, route: rt}, retryable(pt.status)
+			return embedResult{err: o.err, route: rt, tokens: tokens}, true
 		}
 	}
 
 	var merged []json.RawMessage
-	var tokens int64
-	usageMissing := false
 	dims := 0
 	for i, o := range outs {
-		vecs, used, err := parseEmbedChunk(o.resp.body, len(chunks[i]), m.Dimensions)
+		vecs, err := parseEmbedChunk(o.resp.body, len(chunks[i]), m.Dimensions)
 		if err != nil {
-			return embedResult{err: err, route: rt}, true
+			return embedResult{err: err, route: rt, tokens: tokens}, true
 		}
-		if used <= 0 {
-			usageMissing = true
-		}
-		tokens += used
 		merged = append(merged, vecs...)
 		if dims == 0 && len(vecs) > 0 {
 			dims = arrayLen(vecs[0])
 		}
 	}
-	if usageMissing {
-		// 有的来源不返回 usage。按字数估算：中文大致一字一 token，英文会偏高，
-		// 宁可多记也不让额度失效。
-		tokens = 0
-		for _, s := range inputs {
-			tokens += int64(utf8.RuneCountInString(s))
-		}
-	}
 	body := renderEmbeddings(m.Name, merged, tokens)
 	if p.cfg.MaxResponseBytes > 0 && int64(len(body)) > p.cfg.MaxResponseBytes {
-		return embedResult{err: errResponseTooLarge, route: rt}, true
+		return embedResult{err: errResponseTooLarge, route: rt, tokens: tokens}, true
 	}
 	return embedResult{body: body, tokens: tokens, dimensions: dims, route: rt}, false
 }
@@ -310,38 +301,52 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	if err != nil {
 		return chunkOut{err: err}
 	}
-	resp, err := p.attempt(ctx, rt.Provider, "/embeddings", body, true)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return chunkOut{err: err}
 	}
+	estimate := embeddingEstimate(chunk)
+	resp, err := p.attempt(ctx, rt.Provider, "/embeddings", body, true)
+	if err != nil {
+		return chunkOut{err: err, tokens: estimate}
+	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		used := int64(0)
+		if rejectedUsage(resp.StatusCode) < 0 {
+			used = estimate
+		}
+		return chunkOut{resp: rawResponse{status: resp.StatusCode}, tokens: used}
+	}
 	limit := int64(maxEmbedResponse)
 	if p.cfg.MaxResponseBytes > 0 {
 		limit = min(limit, p.cfg.MaxResponseBytes)
 	}
 	b, err := readResponse(resp.Body, limit)
 	if err != nil {
-		return chunkOut{err: err}
+		return chunkOut{err: err, tokens: estimate}
 	}
-	return chunkOut{resp: rawResponse{status: resp.StatusCode, header: resp.Header, body: b}}
+	used := usageTokens(b, KindEmbedding)
+	if used <= 0 {
+		used = estimate
+	}
+	return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: used}
 }
 
 // parseEmbedChunk 取出一批的向量并按 index 排好。来源省略全部 index 或者全部
 // 写成 0 时按出现顺序；其余情况 index 必须正好是 0 到 n-1 各一次，否则当作
 // 来源返回的内容不可用，不能猜顺序。dims 大于 0 时核对每个浮点数组的长度。
-func parseEmbedChunk(body []byte, want, dims int) ([]json.RawMessage, int64, error) {
+func parseEmbedChunk(body []byte, want, dims int) ([]json.RawMessage, error) {
 	var env struct {
 		Data []struct {
 			Index     *int            `json:"index"`
 			Embedding json.RawMessage `json:"embedding"`
 		} `json:"data"`
-		usageEnvelope
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, 0, fmt.Errorf("%w: not JSON", errBadUpstream)
+		return nil, fmt.Errorf("%w: not JSON", errBadUpstream)
 	}
 	if len(env.Data) != want {
-		return nil, 0, fmt.Errorf("%w: got %d vectors for %d inputs", errBadUpstream, len(env.Data), want)
+		return nil, fmt.Errorf("%w: got %d vectors for %d inputs", errBadUpstream, len(env.Data), want)
 	}
 	out := make([]json.RawMessage, want)
 	positional := true
@@ -358,22 +363,22 @@ func parseEmbedChunk(body []byte, want, dims int) ([]json.RawMessage, int64, err
 	} else {
 		for _, d := range env.Data {
 			if d.Index == nil || *d.Index < 0 || *d.Index >= want || out[*d.Index] != nil {
-				return nil, 0, fmt.Errorf("%w: index values are not 0..%d", errBadUpstream, want-1)
+				return nil, fmt.Errorf("%w: index values are not 0..%d", errBadUpstream, want-1)
 			}
 			out[*d.Index] = d.Embedding
 		}
 	}
 	for _, v := range out {
 		if len(v) == 0 || bytes.Equal(v, []byte("null")) {
-			return nil, 0, fmt.Errorf("%w: missing embedding", errBadUpstream)
+			return nil, fmt.Errorf("%w: missing embedding", errBadUpstream)
 		}
 		if dims > 0 {
 			if n := arrayLen(v); n >= 0 && n != dims {
-				return nil, 0, fmt.Errorf("%w: got %d dimensions, configured %d", errBadUpstream, n, dims)
+				return nil, fmt.Errorf("%w: got %d dimensions, configured %d", errBadUpstream, n, dims)
 			}
 		}
 	}
-	return out, env.tokens(), nil
+	return out, nil
 }
 
 // arrayLen 数一个浮点数组的元素个数；不是数组（例如 base64 字符串）时返回 -1。

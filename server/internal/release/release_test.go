@@ -16,12 +16,15 @@ const manifestBody = `{
       "published_at": "2026-12-21",
       "url": "https://example.test/zhixin-0.2.0.apk",
       "sha256": "` + zeroSHA + `",
+      "signature": "` + testSignature + `",
       "size": 48200000,
       "min_version": "0.1.0",
       "notes": "登录、云端备份与同步"
     }
   ]
 }`
+
+const testSignature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
 
 const zeroSHA = "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -58,7 +61,7 @@ func TestLoadReadsManifest(t *testing.T) {
 }
 
 func TestLoadTrimsAndAllowsEmptyList(t *testing.T) {
-	path := writeManifest(t, `{"releases":[{"platform":" android ","version":" 0.2.0 ","build":1,"url":"https://example.test/a.apk","sha256":"`+zeroSHA+`"}]}`)
+	path := writeManifest(t, `{"releases":[{"platform":" android ","version":" 0.2.0 ","build":1,"url":"https://example.test/a.apk","sha256":"`+zeroSHA+`","signature":"`+testSignature+`"}]}`)
 	entries, err := Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -109,8 +112,8 @@ func TestLoadRejectsBadManifest(t *testing.T) {
 		{"哈希格式不对", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk","sha256":"abc"}]}`},
 		{"签名格式不对", `{"releases":[{"platform":"android","version":"0.2.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `","signature":"not-base64"}]}`},
 		{"平台重复", `{"releases":[
-			{"platform":"android","version":"0.1.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `"},
-			{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/b.apk","sha256":"` + zeroSHA + `"}
+			{"platform":"android","version":"0.1.0","build":1,"url":"https://example.test/a.apk","sha256":"` + zeroSHA + `","signature":"` + testSignature + `"},
+			{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/b.apk","sha256":"` + zeroSHA + `","signature":"` + testSignature + `"}
 		]}`},
 	}
 	for _, tc := range cases {

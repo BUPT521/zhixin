@@ -38,12 +38,12 @@ func TestReleasesReturnsRequiredFieldsAndOptionalOnesOnlyWhenPresent(t *testing.
 	c := newClient(t, []Entry{
 		{
 			Platform: "android", Version: "0.2.0", Build: 2,
-			URL: "https://example.test/a.apk", SHA256: zeroSHA, Notes: "说明",
+			URL: "https://example.test/a.apk", SHA256: zeroSHA, Signature: testSignature, Notes: "说明",
 		},
 		{
 			Platform: "android-tablet", Version: "0.1.0", Build: 1,
 			URL: "https://example.test/b.apk", SHA256: zeroSHA, Size: 10,
-			Signature: "c2lnbmF0dXJl",
+			Signature: testSignature,
 		},
 	})
 	resp := c.Do(http.MethodGet, "/v1/app/releases", "", nil, nil)
@@ -66,13 +66,13 @@ func TestReleasesReturnsRequiredFieldsAndOptionalOnesOnlyWhenPresent(t *testing.
 	if _, ok := first["size"]; ok {
 		t.Fatalf("没写大小时不应出现 size：%v", first)
 	}
-	if _, ok := first["signature"]; ok {
-		t.Fatalf("没写签名时不应出现 signature：%v", first)
+	if first["signature"] != testSignature {
+		t.Fatalf("响应必须带签名：%v", first)
 	}
 	if first["notes"] != "说明" || first["version"] != "0.2.0" || first["build"] != float64(2) {
 		t.Fatalf("第一条内容不对：%v", first)
 	}
-	if second["sha256"] != zeroSHA || second["size"] != float64(10) || second["signature"] != "c2lnbmF0dXJl" {
+	if second["sha256"] != zeroSHA || second["size"] != float64(10) || second["signature"] != testSignature {
 		t.Fatalf("第二条的可选字段不对：%v", second)
 	}
 }

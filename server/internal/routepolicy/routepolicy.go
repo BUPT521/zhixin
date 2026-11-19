@@ -24,11 +24,11 @@ var publicOperations = []string{
 	"POST /v1/feedback",
 }
 
-// uploadOperations 是会把请求体先落到临时文件的写操作：备份与附件。它们按账号
-// 限流，避免一个账号反复上传把磁盘写满。
+// uploadOperations 是写入云端数据的操作，按账号限制请求频率。
 var uploadOperations = []string{
 	"POST /v1/backups",
 	"PUT /v1/blobs/{sha256}",
+	"POST /v1/sync/commits",
 }
 
 // cacheableOperations 是明确可以缓存的公开响应，值是 max-age 的秒数。目前只有

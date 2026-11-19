@@ -14,7 +14,7 @@ import (
 // 代码里而不是配置里：客户端按契约填，服务端换个实例也不应忽然拒收。
 const (
 	MaxContentRunes     = 4000
-	MaxDiagnosticsRunes = 65536
+	MaxDiagnosticsBytes = 65536
 	MaxAppVersionRunes  = 64
 	MaxPlatformRunes    = 32
 	MaxContactBytes     = 254
@@ -127,7 +127,7 @@ func prepare(sub Submission) (Item, error) {
 		return Item{}, ErrInvalidInput
 	}
 	diagnostics := strings.TrimSpace(sub.Diagnostics)
-	if !utf8.ValidString(diagnostics) || utf8.RuneCountInString(diagnostics) > MaxDiagnosticsRunes {
+	if !utf8.ValidString(diagnostics) || len(diagnostics) > MaxDiagnosticsBytes {
 		return Item{}, ErrInvalidInput
 	}
 	return Item{

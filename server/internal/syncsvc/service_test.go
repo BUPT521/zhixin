@@ -76,7 +76,7 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 
 // TestServicePullStopsAtByteLimit 守住拉取分页的响应字节上限：累计序列化字节
 // 超过上限时截断本页并让 has_more 为真，下一页从截断处继续，拉完不再有更多；
-// 单条提交本身超过上限时仍然返回一条，避免客户端停在同一位置反复拉取。
+// 单条提交超过上限时返回错误，客户端可以停止重试当前游标。
 func TestServicePullStopsAtByteLimit(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
@@ -118,9 +118,9 @@ func TestServicePullStopsAtByteLimit(t *testing.T) {
 		t.Fatalf("last page = %+v, %v", page, err)
 	}
 
-	// 单条超过上限时仍然返回一条，has_more 说明后面还有。
+	// 单条超过上限时停止分页。
 	svc.SetMaxPullBytes(1)
-	if page, err = svc.Pull(ctx, "u1", nil, nil); err != nil || len(page.Commits) != 1 || !page.HasMore {
+	if page, err = svc.Pull(ctx, "u1", nil, nil); !errors.Is(err, ErrPullTooLarge) {
 		t.Fatalf("oversized single commit = %+v, %v", page, err)
 	}
 }

@@ -148,7 +148,7 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 func TestReleaseManifestIsCacheable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
 	manifest := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"` +
-		strings.Repeat("0", 64) + `","notes":"内测"}]}`
+		strings.Repeat("0", 64) + `","signature":"` + strings.Repeat("A", 86) + `==","notes":"内测"}]}`
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatalf("写清单：%v", err)
 	}

@@ -29,7 +29,7 @@ type Limiter struct {
 }
 
 type entry struct {
-	bucket *rate.Limiter
+	tokens float64
 	seen   time.Time
 }
 
@@ -61,10 +61,29 @@ func Disabled() *Limiter { return New(rate.Inf, 1, 0) }
 func (l *Limiter) Take(keys ...string) int64 { return l.check(true, keys) }
 
 // WouldBlock 只检查这些键当前是否还有令牌，不消费；返回 0 表示可以继续。
-//
-// 登录失败预算要“先看再做”：校验密码本身要花 CPU 和内存，超限的请求应当在校验
-// 之前就回 429，所以检查不能扣令牌，令牌只在校验失败之后由调用方 Take 扣掉。
 func (l *Limiter) WouldBlock(keys ...string) int64 { return l.check(false, keys) }
+
+// TakeRefundable 在开始密码校验前扣除一个令牌。退款只作用于这一次扣减所属的桶，
+// 已被回收的桶不会因较早的退款重新创建。
+func (l *Limiter) TakeRefundable(key string) (refund func(), delay int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.nowFn()
+	l.reapIfDue(now)
+	bucket := l.bucketFor(key, now)
+	if bucket.tokens < 1 {
+		return nil, retryAfter(bucket.tokens, l.limit)
+	}
+	bucket.tokens--
+	return sync.OnceFunc(func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.buckets[key] == bucket {
+			l.refill(bucket, l.nowFn())
+			bucket.tokens = min(float64(l.burst), bucket.tokens+1)
+		}
+	}), 0
+}
 
 // check 是所有按键判定的共同实现；take 为假时只看不扣。
 func (l *Limiter) check(take bool, keys []string) int64 {
@@ -75,11 +94,10 @@ func (l *Limiter) check(take bool, keys []string) int64 {
 	defer l.mu.Unlock()
 	now := l.nowFn()
 	l.reapIfDue(now)
-	buckets := make([]*rate.Limiter, 0, len(keys))
+	buckets := make([]*entry, 0, len(keys))
 	for _, key := range keys {
 		bucket := l.bucketFor(key, now)
-		// TokensAt 按传入时间算，时钟因此可控，测试可以模拟令牌补充。
-		if tokens := bucket.TokensAt(now); tokens < 1 {
+		if tokens := bucket.tokens; tokens < 1 {
 			return retryAfter(tokens, l.limit)
 		}
 		buckets = append(buckets, bucket)
@@ -88,17 +106,16 @@ func (l *Limiter) check(take bool, keys []string) int64 {
 		if !take {
 			continue
 		}
-		// 上一步已经确认都还有令牌，这里一定成功；非阻塞，不占请求时间。
-		_ = b.AllowN(now, 1)
+		b.tokens--
 	}
 	return 0
 }
 
 // bucketFor 取或建一个键的令牌桶，负责在上限处清理与淘汰。
-func (l *Limiter) bucketFor(key string, now time.Time) *rate.Limiter {
+func (l *Limiter) bucketFor(key string, now time.Time) *entry {
 	if e, ok := l.buckets[key]; ok {
-		e.seen = now
-		return e.bucket
+		l.refill(e, now)
+		return e
 	}
 	if l.maxKeys > 0 && len(l.buckets) >= l.maxKeys {
 		// 到上限时先按空闲回收的节奏清一次，仍然满再淘汰最久未用的键。
@@ -107,9 +124,18 @@ func (l *Limiter) bucketFor(key string, now time.Time) *rate.Limiter {
 			l.evictOldest()
 		}
 	}
-	e := &entry{bucket: rate.NewLimiter(l.limit, l.burst), seen: now}
+	e := &entry{tokens: float64(l.burst), seen: now}
 	l.buckets[key] = e
-	return e.bucket
+	return e
+}
+
+func (l *Limiter) refill(e *entry, now time.Time) {
+	if l.limit == rate.Inf {
+		e.tokens = float64(l.burst)
+	} else if now.After(e.seen) {
+		e.tokens = min(float64(l.burst), e.tokens+now.Sub(e.seen).Seconds()*float64(l.limit))
+	}
+	e.seen = now
 }
 
 // reapIfDue 按 idle/4 的节奏回收空闲键；清理本身是 O(表大小)，不能让每次 Take

@@ -247,7 +247,7 @@ func TestCloudPurgeClearsAllCloudData(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		if code := h.json("DELETE", "/v1/cloud", token, nil, nil); code != http.StatusNoContent {
+		if code := h.json("DELETE", "/v1/cloud", token, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {
 			t.Fatalf("第 %d 次清除应回 204，得到 %d", i+1, code)
 		}
 	}

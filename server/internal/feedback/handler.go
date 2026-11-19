@@ -53,15 +53,15 @@ const globalLimiterKey = "global"
 // Submit 接收一条反馈。登录与否都能提交，处理器不读 Authorization，也不把
 // 反馈绑定到账号。
 func (h *Handler) Submit(w http.ResponseWriter, r *http.Request) {
+	if delay := h.limits.Take("address:" + h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
+		return
+	}
 	if h.globalLimits != nil {
 		if delay := h.globalLimits.Take(globalLimiterKey); delay > 0 {
 			httpx.TooMany(w, r, delay)
 			return
 		}
-	}
-	if delay := h.limits.Take("address:" + h.clientHost(r)); delay > 0 {
-		httpx.TooMany(w, r, delay)
-		return
 	}
 	var in api.Feedback
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
@@ -78,9 +78,11 @@ func (h *Handler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt, err := h.svc.Submit(r.Context(), sub)
 	switch {
+	case errors.Is(err, ErrCapacity):
+		httpx.TooMany(w, r, 3600)
 	case errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"content must be 1 to 4000 characters, contact must be a plain email, app_version at most 64, platform at most 32 and diagnostics at most 65536 characters")
+			"content must be 1 to 4000 characters, contact must be a plain email, app_version at most 64, platform at most 32 and diagnostics at most 65536 bytes")
 	case err != nil:
 		httpx.WriteInternal(w, r, h.log, err)
 	default:
