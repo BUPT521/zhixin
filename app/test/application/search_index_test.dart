@@ -15,6 +15,7 @@ import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
+import 'package:zhixin/data/vector/embedding_codec.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/data/vector/memory_vector_index.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
@@ -164,6 +165,7 @@ _rig({
   EmbeddingClient Function(EmbeddingModelSpec)? clientFor,
   bool Function(SemanticSource source)? canSend,
   String Function()? epoch,
+  Future<bool> Function()? cacheWrites,
 }) async {
   final db = await openTestDb();
   final corpus = await _seed(db);
@@ -180,6 +182,7 @@ _rig({
     vectorStoreOpener: () async => DirectVectorStore(index),
     initialShareFilter: canSend,
     queryTimeout: const Duration(seconds: 2),
+    cacheWrites: cacheWrites,
   );
   return (
     db: db,
@@ -199,7 +202,7 @@ class _SlowClient extends EmbeddingClient {
   EmbeddingModelSpec get spec => inner.spec;
 
   @override
-  Future<List<double>> embed(String text) async {
+  Future<List<double>> embed(String text, {bool writeCache = false}) async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
     return inner.embed(text);
   }
@@ -218,7 +221,7 @@ class _MutatingClient extends EmbeddingClient {
   EmbeddingModelSpec get spec => inner.spec;
 
   @override
-  Future<List<double>> embed(String text) async {
+  Future<List<double>> embed(String text, {bool writeCache = false}) async {
     await onEmbed(text);
     return inner.embed(text);
   }
@@ -951,6 +954,163 @@ void main() {
     );
   });
 
+  test('查找接口只对知新服务的来源发出，命中按 FP16 解码并归一化', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        jsonEncode({
+          'model': _spec.id,
+          'dimensions': 4,
+          'vectors': [
+            {'hash': 'aa', 'embedding': 'ADwAOADAAAA='},
+          ],
+        }),
+        200,
+      );
+    });
+    final embedding = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 'access-1'),
+      httpClient: client,
+    );
+
+    final hits = await embedding.lookupVectors(['aa', 'bb']);
+    expect(
+      captured.url.toString(),
+      'https://server.test/v1/llm/embeddings/lookup',
+    );
+    expect(captured.headers['Authorization'], 'Bearer access-1');
+    final body = jsonDecode(captured.body) as Map<String, Object?>;
+    expect(body['model'], _spec.id);
+    expect(body['hashes'], ['aa', 'bb']);
+    expect(hits.keys, ['aa']);
+    // [1, 0.5, -2, 0] 归一化之后长度为一，与重新嵌入的向量按同一口径参与检索。
+    final vector = hits['aa']!;
+    expect(vector, hasLength(4));
+    expect(vector[0], closeTo(0.4364357804719848, 1e-9));
+    expect(vector[1], closeTo(0.2182178902359924, 1e-9));
+    expect(vector[2], closeTo(-0.8728715609439696, 1e-9));
+    expect(vector[3], 0);
+  });
+
+  test('旧服务端、网络失败与服务器错误都退回整批嵌入，认证与限流按来源不可用', () async {
+    var calls = 0;
+    final oldServer = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient((_) async {
+        calls++;
+        return http.Response('{}', 404);
+      }),
+    );
+    expect(await oldServer.lookupVectors(['aa']), isEmpty);
+    expect(await oldServer.lookupVectors(['bb']), isEmpty);
+    // 旧版服务端返回 404 之后，本次会话不再尝试查找。
+    expect(calls, 1);
+
+    final offline = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient((_) async => throw http.ClientException('网络断了')),
+    );
+    expect(await offline.lookupVectors(['aa']), isEmpty);
+
+    final broken = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient((_) async => http.Response('{}', 503)),
+    );
+    expect(await broken.lookupVectors(['aa']), isEmpty);
+
+    final denied = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient(
+        (_) async => http.Response('{"code":"email_unverified"}', 403),
+      ),
+    );
+    await expectLater(
+      denied.lookupVectors(['aa']),
+      throwsA(isA<EmbeddingSourceUnavailable>()),
+    );
+
+    final throttled = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient((_) async => http.Response('{}', 429)),
+    );
+    await expectLater(
+      throttled.lookupVectors(['aa']),
+      throwsA(isA<EmbeddingSourceUnavailable>()),
+    );
+  });
+
+  test('自填 key 直连不查缓存', () async {
+    var calls = 0;
+    final embedding = RemoteEmbeddingClient(
+      spec: _spec,
+      endpoint: 'https://embed.example.com/v1',
+      apiKey: 'test-key',
+      httpClient: MockClient((_) async {
+        calls++;
+        return http.Response('{}', 200);
+      }),
+    );
+    expect(await embedding.lookupVectors(['aa']), isEmpty);
+    expect(calls, 0);
+  });
+
+  test('写缓存标记只加在知新服务的请求上，且只在要求写入时', () async {
+    final seen = <http.Request>[];
+    Future<http.Response> reply(http.Request request) async => http.Response(
+      jsonEncode({
+        'data': [
+          {
+            'embedding': [1, 0, 0, 0],
+          },
+        ],
+      }),
+      200,
+    );
+
+    final server = RemoteEmbeddingClient(
+      spec: _spec,
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+      httpClient: MockClient((request) {
+        seen.add(request);
+        return reply(request);
+      }),
+    );
+    await server.embed('甲', writeCache: true);
+    await server.embed('乙');
+    expect(seen[0].headers['X-Zhixin-Embedding-Cache'], '1');
+    expect(seen[1].headers.containsKey('X-Zhixin-Embedding-Cache'), isFalse);
+
+    seen.clear();
+    final direct = RemoteEmbeddingClient(
+      spec: _spec,
+      endpoint: 'https://embed.example.com/v1',
+      apiKey: 'test-key',
+      httpClient: MockClient((request) {
+        seen.add(request);
+        return reply(request);
+      }),
+    );
+    await direct.embed('甲', writeCache: true);
+    expect(
+      seen.single.headers.containsKey('X-Zhixin-Embedding-Cache'),
+      isFalse,
+    );
+  });
+
   test('嵌入来源整个用不了时停下本次更新，不再逐条重试', () async {
     late _SourceDownClient down;
     final rig = await _rig(clientFor: (spec) => down = _SourceDownClient(spec));
@@ -1095,6 +1255,91 @@ void main() {
     expect(client.chunkCalls, 7);
   });
 
+  test('查找命中的片段不再嵌入，未命中的照常补算', () async {
+    final rig = await _rig(
+      clientFor: (spec) => _LookupClient(
+        spec: spec,
+        vectors: _vectors(),
+        cached: {_pageEntropy, _messageEntropy},
+      ),
+    );
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+
+    final refresh = await rig.service.refresh();
+    final client = rig.service.client! as _LookupClient;
+    expect(refresh.cached, 2);
+    expect(refresh.failed, 0);
+    expect(client.lookedUp, hasLength(7));
+    expect(client.embedded, isNot(contains(_pageEntropy)));
+    expect(client.embedded, isNot(contains(_messageEntropy)));
+    expect(client.embedded, hasLength(5));
+    // 命中的向量与重新嵌入的向量一样进索引。
+    final result = await rig.service.search(
+      '熵是系统混乱程度的度量。',
+      scope: const EvidenceScope.userAll(),
+      limit: 3,
+    );
+    expect(result.usable, isTrue);
+  });
+
+  test('同一段正文在一次刷新里只嵌入一次', () async {
+    final rig = await _rig(
+      clientFor: (spec) => _LookupClient(spec: spec, vectors: _vectors()),
+    );
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+    await MaterialRepository(rig.db).addPage(
+      materialId: rig.corpus.materialProbability,
+      pageNo: 3,
+      content: _pageEntropy,
+    );
+
+    final refresh = await rig.service.refresh();
+    final client = rig.service.client! as _LookupClient;
+    expect(refresh.failed, 0);
+    expect(client.embedded.where((text) => text == _pageEntropy), hasLength(1));
+  });
+
+  test('只有自动同步开启时的索引刷新带写缓存标记', () async {
+    var synced = true;
+    final rig = await _rig(
+      clientFor: (spec) => _LookupClient(spec: spec, vectors: _vectors()),
+      cacheWrites: () async => synced,
+    );
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+    await rig.service.refresh();
+    final client = rig.service.client! as _LookupClient;
+    expect(client.writeCacheFlags, isNotEmpty);
+    expect(client.writeCacheFlags, everyElement(isTrue));
+
+    // 同步关闭之后重新写入的部分不再带标记。
+    synced = false;
+    await rig.service.refresh(force: true);
+    expect(client.writeCacheFlags, isNotEmpty);
+    expect(client.writeCacheFlags.last, isFalse);
+  });
+
+  test('查找报来源不可用时停下本次更新，索引不写入', () async {
+    final rig = await _rig(
+      clientFor: (spec) => _LookupClient(
+        spec: spec,
+        vectors: _vectors(),
+        lookupFailure: const EmbeddingSourceUnavailable('还没有登录'),
+      ),
+    );
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+
+    final refresh = await rig.service.refresh();
+    final client = rig.service.client! as _LookupClient;
+    expect(refresh.sourceProblem, '还没有登录');
+    expect(refresh.failed, 7);
+    expect(client.embedded, isEmpty);
+    expect(rig.index.entryCount, 0);
+  });
+
   test('记忆索引按关键词相关性排序，改、删随之同步，不调用嵌入来源', () async {
     final db = await openTestDb();
     addTearDown(db.close);
@@ -1223,7 +1468,7 @@ class _CountingClient extends EmbeddingClient {
   EmbeddingModelSpec get spec => inner.spec;
 
   @override
-  Future<List<double>> embed(String text) {
+  Future<List<double>> embed(String text, {bool writeCache = false}) {
     calls++;
     return inner.embed(text);
   }
@@ -1243,13 +1488,16 @@ class _BatchCountingClient extends EmbeddingClient {
   EmbeddingModelSpec get spec => inner.spec;
 
   @override
-  Future<List<double>> embed(String text) {
+  Future<List<double>> embed(String text, {bool writeCache = false}) {
     chunkCalls++;
     return inner.embed(text);
   }
 
   @override
-  Future<List<List<double>>> embedBatch(List<String> texts) async {
+  Future<List<List<double>>> embedBatch(
+    List<String> texts, {
+    bool writeCache = false,
+  }) async {
     batchCalls++;
     chunkCalls += texts.length;
     return [for (final text in texts) await inner.embed(text)];
@@ -1269,7 +1517,7 @@ class _RecordingClient extends EmbeddingClient {
   EmbeddingModelSpec get spec => inner.spec;
 
   @override
-  Future<List<double>> embed(String text) async {
+  Future<List<double>> embed(String text, {bool writeCache = false}) async {
     sent.add(text);
     return inner.embed(text);
   }
@@ -1287,15 +1535,78 @@ class _SourceDownClient extends EmbeddingClient {
   int calls = 0;
 
   @override
-  Future<List<double>> embed(String text) async {
+  Future<List<double>> embed(String text, {bool writeCache = false}) async {
     calls++;
     throw const EmbeddingSourceUnavailable('还没有登录');
   }
 
   @override
-  Future<List<List<double>>> embedBatch(List<String> texts) async {
+  Future<List<List<double>>> embedBatch(
+    List<String> texts, {
+    bool writeCache = false,
+  }) async {
     calls++;
     throw const EmbeddingSourceUnavailable('还没有登录');
+  }
+
+  @override
+  void dispose() {}
+}
+
+/// 查找与嵌入都记录下来：命中的片段由查找直接给出，未命中的才嵌入。
+class _LookupClient extends EmbeddingClient {
+  _LookupClient({
+    required this.spec,
+    required this.vectors,
+    this.cached = const {},
+    this.lookupFailure,
+  });
+
+  @override
+  final EmbeddingModelSpec spec;
+
+  /// 正文到固定向量；测试里的正文都很短，一段正文只有一个片段。
+  final Map<String, List<double>> vectors;
+
+  /// 由服务端缓存直接命中的正文。
+  final Set<String> cached;
+
+  /// 查找直接报出的错误；给出时不再嵌入。
+  final EmbeddingUnavailable? lookupFailure;
+
+  final List<String> lookedUp = [];
+  final List<String> embedded = [];
+  final List<bool> writeCacheFlags = [];
+
+  @override
+  Future<EmbeddingLookup> lookupVectors(List<String> hashes) async {
+    final failure = lookupFailure;
+    if (failure != null) throw failure;
+    lookedUp.addAll(hashes);
+    return {
+      for (final text in cached)
+        if (vectors[text] != null)
+          embeddingTextHash(text): normalizeVector(vectors[text]!),
+    };
+  }
+
+  @override
+  Future<List<double>> embed(String text, {bool writeCache = false}) async {
+    embedded.add(text);
+    writeCacheFlags.add(writeCache);
+    final vector = vectors[text];
+    if (vector == null) throw const EmbeddingUnavailable('没有为这段文本准备固定向量');
+    return normalizeVector(vector);
+  }
+
+  @override
+  Future<List<List<double>>> embedBatch(
+    List<String> texts, {
+    bool writeCache = false,
+  }) async {
+    embedded.addAll(texts);
+    writeCacheFlags.add(writeCache);
+    return [for (final text in texts) normalizeVector(vectors[text]!)];
   }
 
   @override

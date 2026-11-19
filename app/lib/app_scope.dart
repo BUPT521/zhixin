@@ -361,6 +361,9 @@ class AppScopeState extends State<AppScope> {
   SearchIndexService? _searchIndexService;
 
   /// 检索索引按需创建；没有配置嵌入来源时只建全文索引。
+  ///
+  /// 向量缓存只对已开始同步的账号写入：这里每次都读一次账号状态，登录且自动
+  /// 同步开启时刷新才在嵌入请求上声明写缓存（ADR-0030 决定第 3 条）。
   SearchIndexService get _searchIndex =>
       _searchIndexService ??= SearchIndexService(
         repository: _evidenceRepository,
@@ -369,6 +372,10 @@ class AppScopeState extends State<AppScope> {
         epoch: () async => '${await _engine.currentGeneration(_connection!)}',
         clock: clock,
         recordFailure: crashLog.record,
+        cacheWrites: () async {
+          final account = await _account.snapshot();
+          return account.signedIn && account.autoSync;
+        },
       );
 
   late final CrossSessionService _crossSession = CrossSessionService(

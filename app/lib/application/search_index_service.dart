@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../data/db/drift/queries/evidence_scope.dart';
 import '../data/repository/evidence_repository.dart';
+import '../data/vector/embedding_codec.dart';
 import '../data/vector/vector_index.dart';
 import '../data/vector/vector_store.dart';
 import '../data/vector/vector_store_isolate.dart';
@@ -51,6 +52,7 @@ class IndexRefreshResult {
     this.failed = 0,
     this.removed = 0,
     this.total = 0,
+    this.cached = 0,
     this.failure = IndexFailure.none,
     this.embedMs = 0,
     this.writeMs = 0,
@@ -67,6 +69,9 @@ class IndexRefreshResult {
   /// 清理时删除的向量条数。
   final int removed;
   final int total;
+
+  /// 直接取回服务端缓存、没有重新嵌入的片段数；命中时省掉的是嵌入与计费。
+  final int cached;
   final IndexFailure failure;
   final int embedMs;
   final int writeMs;
@@ -110,6 +115,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
     Future<VectorStore> Function()? vectorStoreOpener,
     Future<VectorStore> Function()? memoryStoreOpener,
     this.recordFailure,
+    this.cacheWrites,
   }) : _client = initialClient,
        _canSend = initialShareFilter,
        _openStore = vectorStoreOpener,
@@ -154,6 +160,12 @@ class SearchIndexService implements MemoryRelevanceRanker {
   final Clock clock;
   final Duration queryTimeout;
   final Future<VectorStore> Function()? _openStore;
+
+  /// 这一次刷新该不该把嵌入写进服务端缓存：登录且自动同步开启时返回真。
+  ///
+  /// 由应用根提供，每次刷新读一次；没有提供时按不写处理。缓存属于派生数据，
+  /// 未登录、同步关闭与自填 key 直连的用户不留下它（ADR-0030 决定第 3 条）。
+  final Future<bool> Function()? cacheWrites;
 
   /// 记忆索引目录；为空时放在语义索引目录的同级，随本机数据一起删除。
   final String? memoryIndexPath;
@@ -502,6 +514,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
       var skipped = 0;
       var lateSkipped = 0;
       var failed = 0;
+      var cached = 0;
       var embedMs = 0;
       var writeMs = 0;
       EmbeddingSourceUnavailable? sourceDown;
@@ -582,6 +595,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         }
       } else {
         final embedder = embedding;
+        final writeCache = await _shouldWriteCache();
         // 按块数与字符数切批，跨来源合并请求；一个窗口内的来源全部写完再进入
         // 下一个窗口，向量只在窗口内保留，内存不随来源总数增长。
         var start = 0;
@@ -598,13 +612,40 @@ class SearchIndexService implements MemoryRelevanceRanker {
             end++;
           }
           final window = pending.sublist(start, end);
-          final jobs = <_ChunkJob>[
-            for (var index = 0; index < window.length; index++)
-              for (var chunk = 0; chunk < window[index].chunks.length; chunk++)
-                _ChunkJob(index, chunk, window[index].chunks[chunk].text),
-          ];
-          final batches = _embedBatches(jobs);
+          // 同一段正文只算一次：按文本哈希归并，先查缓存，再嵌入未命中的片段。
+          final byHash = <String, List<_ChunkJob>>{};
+          for (var index = 0; index < window.length; index++) {
+            for (var chunk = 0; chunk < window[index].chunks.length; chunk++) {
+              final text = window[index].chunks[chunk].text;
+              (byHash[embeddingTextHash(text)] ??= <_ChunkJob>[]).add(
+                _ChunkJob(index, chunk, text),
+              );
+            }
+          }
+          final hashes = byHash.keys.toList(growable: false);
+          final vectors = <String, List<double>>{};
           final embedStarted = Stopwatch()..start();
+          if (hashes.isNotEmpty) {
+            try {
+              vectors.addAll(await embedder.lookupVectors(hashes));
+            } on EmbeddingSourceUnavailable catch (error) {
+              if (_closed || generation != _generation) rethrow;
+              // 来源整个用不了：与嵌入请求的处理一致，停下本次剩余的请求。
+              sourceDown ??= error;
+            } on Object {
+              if (_closed || generation != _generation) rethrow;
+              // 查找失败按全部未命中处理，照常嵌入，索引更新不中断。
+            }
+          }
+          for (final entry in byHash.entries) {
+            if (vectors.containsKey(entry.key)) cached += entry.value.length;
+          }
+          final missing = [
+            for (final hash in hashes)
+              if (!vectors.containsKey(hash))
+                (hash: hash, text: byHash[hash]!.first.text),
+          ];
+          final batches = _embedBatches(missing, (job) => job.text);
           var nextBatch = 0;
           Future<void> worker() async {
             while (sourceDown == null) {
@@ -613,12 +654,15 @@ class SearchIndexService implements MemoryRelevanceRanker {
               _requireCurrent(generation);
               final batch = batches[index];
               final texts = [for (final job in batch) job.text];
-              var vectors = const <List<double>>[];
+              var got = const <List<double>>[];
               var ok = false;
               for (var attempt = 0; attempt < _embedBatchAttempts; attempt++) {
                 try {
-                  vectors = await embedder.embedBatch(texts);
-                  ok = vectors.length == texts.length;
+                  got = await embedder.embedBatch(
+                    texts,
+                    writeCache: writeCache,
+                  );
+                  ok = got.length == texts.length;
                 } on EmbeddingSourceUnavailable catch (error) {
                   if (_closed || generation != _generation) rethrow;
                   // 来源整个用不了：重发与逐条定位都没有意义，停下所有并发。
@@ -632,25 +676,26 @@ class SearchIndexService implements MemoryRelevanceRanker {
               }
               if (ok) {
                 for (var index = 0; index < batch.length; index++) {
-                  window[batch[index].source].vectors[batch[index].chunk] =
-                      vectors[index];
+                  vectors[batch[index].hash] = got[index];
                 }
                 continue;
               }
               // 整批失败时逐条重发，定位真正失败的那一条，避免一条坏文本
-              // 让同批的其他来源一起记为失败。
+              // 让同批的其他片段一起记为失败。
               for (final job in batch) {
                 _requireCurrent(generation);
                 try {
-                  final vector = await embedder.embed(job.text);
-                  window[job.source].vectors[job.chunk] = vector;
+                  vectors[job.hash] = await embedder.embed(
+                    job.text,
+                    writeCache: writeCache,
+                  );
                 } on EmbeddingSourceUnavailable catch (error) {
                   if (_closed || generation != _generation) rethrow;
                   sourceDown ??= error;
                   return;
                 } catch (_) {
                   if (_closed || generation != _generation) rethrow;
-                  window[job.source].failed = true;
+                  // 这一段没有算出来，它所属的来源按失败处理。
                 }
               }
             }
@@ -665,6 +710,21 @@ class SearchIndexService implements MemoryRelevanceRanker {
               worker(),
           ]);
           embedMs += embedStarted.elapsedMilliseconds;
+
+          // 回填向量：相同正文的片段共用一次计算的结果；没有算出来的来源记为
+          // 失败，下一次更新再补。
+          for (final entry in byHash.entries) {
+            final vector = vectors[entry.key];
+            if (vector == null) {
+              for (final job in entry.value) {
+                window[job.source].failed = true;
+              }
+              continue;
+            }
+            for (final job in entry.value) {
+              window[job.source].vectors[job.chunk] = vector;
+            }
+          }
 
           for (final item in window) {
             if (item.failed || !item.complete) {
@@ -705,6 +765,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         failed: failed,
         removed: removed,
         total: targets.length,
+        cached: cached,
         failure: failed == 0 ? IndexFailure.none : IndexFailure.error,
         embedMs: embedMs,
         writeMs: writeMs,
@@ -721,21 +782,36 @@ class SearchIndexService implements MemoryRelevanceRanker {
     }
   }
 
-  /// 把一段窗口里的文本按条数与字符数切成若干批，供一次请求发送。
-  List<List<_ChunkJob>> _embedBatches(List<_ChunkJob> jobs) {
-    final batches = <List<_ChunkJob>>[];
-    var current = <_ChunkJob>[];
+  /// 这一次刷新该不该把嵌入写进服务端缓存。
+  ///
+  /// 读不到同步状态时按不写处理：写入属于派生数据，宁可少写一次，也不在用户
+  /// 没有开启同步时留下它。
+  Future<bool> _shouldWriteCache() async {
+    final probe = cacheWrites;
+    if (probe == null) return false;
+    try {
+      return await probe();
+    } on Object {
+      return false;
+    }
+  }
+
+  /// 把待嵌入的文本按条数与字符数切成若干批，供一次请求发送。
+  List<List<T>> _embedBatches<T>(List<T> jobs, String Function(T) textOf) {
+    final batches = <List<T>>[];
+    var current = <T>[];
     var chars = 0;
     for (final job in jobs) {
+      final length = textOf(job).length;
       if (current.isNotEmpty &&
           (current.length >= _embedBatchMaxItems ||
-              chars + job.text.length > _embedBatchMaxChars)) {
+              chars + length > _embedBatchMaxChars)) {
         batches.add(current);
-        current = <_ChunkJob>[];
+        current = <T>[];
         chars = 0;
       }
       current.add(job);
-      chars += job.text.length;
+      chars += length;
     }
     if (current.isNotEmpty) batches.add(current);
     return batches;

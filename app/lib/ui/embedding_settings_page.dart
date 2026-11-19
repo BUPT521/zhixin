@@ -377,6 +377,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       return '本次索引更新已经取消。';
     }
     final failed = result.failed > 0 ? '，失败 ${result.failed} 条' : '';
+    final cached = result.cached > 0 ? '，其中 ${result.cached} 条片段直接取自缓存' : '';
     final problem = result.sourceProblem;
     if (problem != null) {
       return '本次更新在中途停下：$problem。已经写入 ${result.embedded} 条，'
@@ -385,7 +386,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     if (result.total == 0) {
       return '没有需要更新的来源；下一次记录或材料变化后会自动补上。';
     }
-    return '本次检查 ${result.total} 条来源：写入 ${result.embedded} 条，'
+    return '本次检查 ${result.total} 条来源：写入 ${result.embedded} 条$cached，'
         '跳过 ${result.skipped} 条$failed，清理 ${result.removed} 条旧向量。';
   }
 

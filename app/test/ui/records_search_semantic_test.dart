@@ -29,7 +29,7 @@ class _FailingClient extends EmbeddingClient {
   EmbeddingModelSpec get spec => _spec;
 
   @override
-  Future<List<double>> embed(String text) async {
+  Future<List<double>> embed(String text, {bool writeCache = false}) async {
     throw const EmbeddingUnavailable('测试里的嵌入服务不可用');
   }
 
