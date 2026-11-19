@@ -166,7 +166,7 @@ Future<({bool? configured, String? notice})> openModelSettingsPage(
         ),
       );
     }
-    return (configured: read.valueOrNull?.isConfigured ?? false, notice: null);
+    return (configured: await AppScope.of(context).modelReady(), notice: null);
   } catch (error, stack) {
     if (!context.mounted) return (configured: null, notice: null);
     return (

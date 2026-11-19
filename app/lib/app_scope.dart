@@ -1005,6 +1005,21 @@ class AppScopeState extends State<AppScope> {
     super.dispose();
   }
 
+  /// 模型是否可用：自填 Key 看配置本身是否完整；“知新服务”还要有登录会话，
+  /// 因为访问令牌代替 key 发请求。页面用它决定回答下方给“用模型重新回答”还是
+  /// “配置模型”，与实际发起请求时的判断保持一致。
+  Future<bool> modelReady() async {
+    final read = await settings.edit.config();
+    final config = read.valueOrNull;
+    if (config == null) return false;
+    if (config.isConfigured) return true;
+    if (!config.isServer) return false;
+    if (config.baseUrl.trim().isEmpty || config.model.trim().isEmpty) {
+      return false;
+    }
+    return (await _account.snapshot()).session != null;
+  }
+
   /// 失败页复制与反馈用的诊断摘要：版本、平台、时间、错误和截断后的调用栈。
   /// 与崩溃记录同一套脱敏说明，不含学习正文、文件路径与密钥。
   String _startupDiagnostics(Object error, StackTrace? stack) {
