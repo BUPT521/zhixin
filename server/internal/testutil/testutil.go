@@ -193,6 +193,9 @@ func (Base) PostAdminV1ProvidersIdTest(w http.ResponseWriter, _ *http.Request, _
 func (Base) GetAdminV1Models(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) GetAdminV1Usage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1UsageParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) PutAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }

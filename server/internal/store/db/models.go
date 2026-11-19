@@ -109,6 +109,18 @@ type LlmRoute struct {
 	Position      int32
 }
 
+type LlmRouteUsage struct {
+	Day             pgtype.Date
+	Kind            string
+	Model           string
+	ProviderID      string
+	UpstreamModel   string
+	Attempts        int64
+	Successes       int64
+	Tokens          int64
+	EstimatedTokens int64
+}
+
 type LlmUsage struct {
 	UserID string
 	Day    pgtype.Date

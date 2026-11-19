@@ -485,14 +485,12 @@ paths:
       tags: [llm]
       summary: OpenAI Chat Completions 代理
       description: |
-        请求体按 Chat Completions 转发，服务端只读取 `model` 与 `stream`，并把 `model`
-        换成路由选中的来源侧模型名，其余字段原样保留。一个对外模型可以配置多个来源，
-        按优先级与权重选择；连接失败、429、5xx、401 与 403 在还没有向客户端写出任何
-        字节之前换下一个来源重试，其余状态码直接返回。流式请求由服务端打开
-        `stream_options.include_usage`，用量从最后一块的 `usage` 读取；提供方没有给出
-        或者连接提前断开时，按请求与已转发的字节估算。提供方的状态码与响应体原样返回，
-        只有最后一个来源拒绝服务端 key（401、403）时改为 `upstream_failed`，不转发它的
-        错误体。代理自身的拒绝用 problem+json：`model_not_allowed`（400，模型不存在、
+        服务端按优先级与权重选择来源，并将 `model` 替换为来源侧模型名。连接失败、
+        408、429、5xx、401 与 403，以及服务端在转发前发现的无效响应，会尝试下一条
+        路由。流式请求由服务端打开 `stream_options.include_usage`，结算使用已收到的
+        `usage`，缺少用量时保留预留值。流式响应开始转发后，当前来源中断即结束该次
+        响应。提供方报错统一返回 problem+json，来源拒绝服务端 key 时返回 502。
+        代理自身的拒绝包括 `model_not_allowed`（400，模型不存在、
         停用或不是聊天模型）、`quota_exceeded`（429）、`unavailable`（503，没有配置任何
         模型）、`upstream_failed`（502，所有来源都无法连接或拒绝了 key）。
         未验证邮箱时服务端返回 403 email_unverified，并发达到账号上限时返回 429。
@@ -720,6 +718,25 @@ paths:
               schema: { $ref: "#/components/schemas/AdminProbe" }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /admin/v1/usage:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 托管模型的每日用量与路由汇总
+      parameters:
+        - name: days
+          in: query
+          description: 包含今天，按服务端时区计算
+          schema: { type: integer, minimum: 1, maximum: 30, default: 7 }
+      responses:
+        "200":
+          description: 按日及按路由汇总的托管调用
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUsageReport" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/models:
     get:
       tags: [admin]
@@ -930,9 +947,44 @@ components:
         api_key: { type: string, maxLength: 512, description: 省略时保留原值，空字符串表示清除 }
         enabled: { type: boolean, default: true }
         note: { type: string, maxLength: 200 }
+    AdminUsageCounts:
+      type: object
+      required: [attempts, successes, tokens, estimated_tokens]
+      properties:
+        attempts: { type: integer, format: int64, description: 尝试路由的次数，嵌入拆批仍计一次 }
+        successes: { type: integer, format: int64 }
+        tokens: { type: integer, format: int64 }
+        estimated_tokens: { type: integer, format: int64, description: tokens 中按估算结算的部分 }
+    AdminUsageDay:
+      type: object
+      required: [day, chat, embedding]
+      properties:
+        day: { type: string, format: date }
+        chat: { $ref: "#/components/schemas/AdminUsageCounts" }
+        embedding: { $ref: "#/components/schemas/AdminUsageCounts" }
+    AdminUsageRoute:
+      type: object
+      required: [model, kind, provider_id, upstream_model, usage]
+      properties:
+        model: { type: string }
+        kind: { $ref: "#/components/schemas/ModelKind" }
+        provider_id: { type: string }
+        upstream_model: { type: string }
+        usage: { $ref: "#/components/schemas/AdminUsageCounts" }
+    AdminUsageReport:
+      type: object
+      required: [timezone, daily, routes]
+      properties:
+        timezone: { type: string }
+        daily:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUsageDay" }
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUsageRoute" }
     AdminRoute:
       type: object
-      required: [provider_id, upstream_model, priority, weight, max_batch, enabled]
+      required: [provider_id, upstream_model, priority, weight, max_batch, enabled, state]
       properties:
         provider_id: { type: string }
         upstream_model: { type: string, description: 来源侧的模型名，例如 BAAI/bge-m3 }
@@ -940,6 +992,7 @@ components:
         weight: { type: integer, description: 同一优先级内按权重分流 }
         max_batch: { type: integer, description: 嵌入一次发给来源的最多条数，0 表示不拆分 }
         enabled: { type: boolean }
+        state: { type: string, enum: [ready, cooling, disabled, provider_disabled, key_error, provider_missing] }
     AdminRouteInput:
       type: object
       required: [provider_id, upstream_model]
@@ -953,11 +1006,12 @@ components:
         enabled: { type: boolean, default: true }
     AdminModel:
       type: object
-      required: [name, kind, enabled, note, source, routes]
+      required: [name, kind, enabled, available, note, source, routes]
       properties:
         name: { type: string }
         kind: { $ref: "#/components/schemas/ModelKind" }
         enabled: { type: boolean }
+        available: { type: boolean, description: 模型启用且至少一条路由可参与转发，包含冷却中的备用路由 }
         dimensions: { type: integer }
         note: { type: string }
         source: { type: string, enum: [admin, env] }

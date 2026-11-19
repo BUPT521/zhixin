@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -83,9 +82,9 @@ func (a *Admin) providerView(p *liveProvider) api.AdminProvider {
 	return v
 }
 
-func modelView(m *liveModel) api.AdminModel {
+func (a *Admin) modelView(snap *snapshot, m *liveModel) api.AdminModel {
 	v := api.AdminModel{
-		Name: m.Name, Kind: api.ModelKind(m.Kind), Enabled: m.Enabled, Note: m.Note,
+		Name: m.Name, Kind: api.ModelKind(m.Kind), Enabled: m.Enabled, Available: m.usable(), Note: m.Note,
 		Source: api.AdminModelSource(m.Source), Routes: make([]api.AdminRoute, 0, len(m.Routes)),
 	}
 	if m.Dimensions > 0 {
@@ -97,9 +96,23 @@ func modelView(m *liveModel) api.AdminModel {
 		v.UpdatedAt = &t
 	}
 	for _, rt := range m.Routes {
+		provider := snap.byID[rt.ProviderID]
+		state := api.AdminRouteStateReady
+		switch {
+		case !m.Enabled || !rt.Enabled:
+			state = api.AdminRouteStateDisabled
+		case provider == nil:
+			state = api.AdminRouteStateProviderMissing
+		case !provider.Enabled:
+			state = api.AdminRouteStateProviderDisabled
+		case provider.KeyBroken:
+			state = api.AdminRouteStateKeyError
+		case a.router().health.cooling(rt.ProviderID):
+			state = api.AdminRouteStateCooling
+		}
 		v.Routes = append(v.Routes, api.AdminRoute{
 			ProviderId: rt.ProviderID, UpstreamModel: rt.UpstreamModel,
-			Priority: rt.Priority, Weight: rt.Weight, MaxBatch: rt.MaxBatch, Enabled: rt.Enabled,
+			Priority: rt.Priority, Weight: rt.Weight, MaxBatch: rt.MaxBatch, Enabled: rt.Enabled, State: state,
 		})
 	}
 	return v
@@ -279,7 +292,6 @@ func (a *Admin) TestProvider(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	status := resp.StatusCode
 	out.Status = &status
 	if status >= 300 {
@@ -288,12 +300,18 @@ func (a *Admin) TestProvider(w http.ResponseWriter, r *http.Request, id string) 
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
 	}
+	body, err := readResponse(resp.Body, 4<<20)
 	var list struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	_ = json.Unmarshal(body, &list)
+	if err != nil || json.Unmarshal(body, &list) != nil || list.Data == nil {
+		msg := "来源未返回有效的模型列表"
+		out.Error = &msg
+		httpx.WriteJSON(w, http.StatusOK, out)
+		return
+	}
 	names := make([]string, 0, len(list.Data))
 	for _, d := range list.Data {
 		if d.ID != "" {
@@ -316,7 +334,7 @@ func (a *Admin) ListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	out := api.AdminModelList{Data: make([]api.AdminModel, 0, len(snap.models))}
 	for _, m := range snap.models {
-		out.Data = append(out.Data, modelView(m))
+		out.Data = append(out.Data, a.modelView(snap, m))
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -422,7 +440,7 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 		httpx.WriteInternal(w, r, a.proxy.log, errors.New("saved model missing from the reloaded routes"))
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, modelView(saved))
+	httpx.WriteJSON(w, http.StatusOK, a.modelView(snap, saved))
 }
 
 func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string) {
@@ -525,17 +543,18 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
 		"max_tokens": json.RawMessage(`1`),
 		"stream":     json.RawMessage(`false`),
 	}
-	resp, rt, _, err := a.proxy.dispatch(ctx, cands, fields, false, 0, nil)
+	reply, err := a.proxy.dispatch(ctx, cands, fields, false, 0, nil)
 	out.LatencyMs = time.Since(start).Milliseconds()
+	if reply.route.Provider != nil {
+		out.ProviderId, out.UpstreamModel = &reply.route.ProviderID, &reply.route.UpstreamModel
+	}
 	if err != nil {
-		fail("无法连接任何模型来源")
+		fail("没有来源返回可用的聊天响应")
 		return
 	}
-	defer resp.Body.Close()
-	status := resp.StatusCode
-	out.Status, out.ProviderId, out.UpstreamModel = &status, &rt.Provider.ID, &rt.UpstreamModel
-	if status >= 300 {
-		fail(fmt.Sprintf("HTTP %d", status))
+	out.Status = &reply.status
+	if reply.status < 200 || reply.status >= 300 {
+		fail(fmt.Sprintf("HTTP %d", reply.status))
 		return
 	}
 	out.Ok = true

@@ -7,8 +7,8 @@
 // checks the account's daily budget for that kind of model, swaps in the
 // source's model name and key, and copies the response through. Chat streams
 // are flushed chunk by chunk; embedding batches are split per route and merged
-// back in order. Request and response bodies are never logged or stored; only
-// the token count from the provider's "usage" object is recorded.
+// back in order. Usage records contain counters; request and response bodies
+// are never logged or stored by the proxy.
 package llmproxy
 
 import (
@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"sync"
@@ -37,6 +38,7 @@ type Proxy struct {
 	cfg          config.LLMConfig
 	router       *Router
 	quota        Quota
+	usage        UsageStore
 	client       *http.Client
 	publicClient *http.Client
 	loc          *time.Location
@@ -289,31 +291,68 @@ func (p *Proxy) findModel(w http.ResponseWriter, r *http.Request, fields map[str
 	return m
 }
 
-// attemptBudget holds enough quota for one upstream attempt. A negative result
-// retains the estimate when the provider may have billed but gave no usage.
-type attemptBudget func(int64) (func(int64), error)
+type attemptResult struct {
+	// A negative token count keeps the reservation when usage is unknown.
+	tokens, estimated int64
+	success           bool
+}
+
+type finishAttempt func(attemptResult)
+
+// attemptBudget reserves quota and supplies a completion function for a route.
+// A nil budget is used for admin probes.
+type attemptBudget func(liveRoute, int64) (finishAttempt, error)
+
+func (budget attemptBudget) start(route liveRoute, estimate int64) (finishAttempt, error) {
+	if budget == nil {
+		return func(attemptResult) {}, nil
+	}
+	return budget(route, estimate)
+}
 
 type quotaReservationError struct{ cause error }
 
 func (e quotaReservationError) Error() string { return e.cause.Error() }
 func (e quotaReservationError) Unwrap() error { return e.cause }
 
-func (p *Proxy) budget(r *http.Request, userID, day string, kind Kind) attemptBudget {
-	return func(estimate int64) (func(int64), error) {
-		reserved, err := p.quota.Reserve(r.Context(), userID, day, kind, estimate)
+func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) attemptBudget {
+	return func(route liveRoute, estimate int64) (finishAttempt, error) {
+		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, estimate)
 		if err != nil {
 			return nil, quotaReservationError{cause: err}
 		}
 		if reserved < estimate {
-			p.settle(r, userID, day, kind, reserved, 0)
+			p.settle(r, userID, day, model.Kind, reserved, 0)
 			return nil, ErrQuotaExceeded
 		}
-		return func(actual int64) {
-			if actual < 0 {
-				actual = reserved
+		return func(result attemptResult) {
+			if result.tokens < 0 {
+				result.tokens, result.estimated = reserved, reserved
 			}
-			p.settle(r, userID, day, kind, reserved, actual)
+			p.settle(r, userID, day, model.Kind, reserved, result.tokens)
+			if p.usage != nil {
+				p.recordRouteUsage(r.Context(), RouteUsage{
+					Day: day,
+					RouteUsageKey: RouteUsageKey{
+						Kind: model.Kind, Model: model.Name, ProviderID: route.ProviderID, UpstreamModel: route.UpstreamModel,
+					},
+					UsageCounts: UsageCounts{
+						Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated,
+					},
+				}, result.success)
+			}
 		}, nil
+	}
+}
+
+func (p *Proxy) recordRouteUsage(ctx context.Context, row RouteUsage, success bool) {
+	if success {
+		row.Successes = 1
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := p.usage.AddRouteUsage(ctx, row); err != nil {
+		p.log.Error("record llm route usage", slog.String("request_id", httpx.RequestIDFrom(ctx)), slog.String("error", err.Error()))
 	}
 }
 
@@ -365,7 +404,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	day := p.day()
-	reserve := p.budget(r, userID, day, KindChat)
+	reserve := p.budget(r, userID, day, model)
 
 	// 流式响应套一层守卫：总时限从发起上游请求时开始，空闲时限从收到响应体之后
 	// 开始；超时取消上游请求，阻塞中的读取随即返回。非流式沿用请求自身的 context。
@@ -379,7 +418,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 		reqCtx, cancel = context.WithTimeout(reqCtx, p.cfg.StreamTotalTimeout)
 		defer cancel()
 	}
-	resp, _, settle, err := p.dispatch(reqCtx, p.router.candidates(model, p.cfg.MaxAttempts), fields, stream, output, reserve)
+	reply, err := p.dispatch(reqCtx, p.router.candidates(model, p.cfg.MaxAttempts), fields, stream, output, reserve)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // client went away
@@ -393,50 +432,39 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteInternal(w, r, p.log, err)
 			return
 		}
-		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not reach any model source")
-		return
-	}
-	actual := int64(-1)
-	defer func() { settle(actual) }()
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		actual = rejectedUsage(resp.StatusCode)
-		writeUpstreamStatus(w, r, resp.StatusCode)
-		return
-	}
-
-	// 非流式先把整个响应读进内存再写响应头：超过上限时还没有写出任何字节，可以
-	// 换成代理自己的 502，客户端不会收到半截响应。
-	var tokens int64
-	if stream {
-		guard.watch(resp.Body, p.cfg.StreamIdleTimeout)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(resp.StatusCode)
-		var body io.Reader = guard
-		if p.cfg.MaxResponseBytes > 0 {
-			body = io.LimitReader(body, p.cfg.MaxResponseBytes)
-		}
-		tokens = p.copyStream(w, body)
-	} else {
-		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
+		detail := "could not get a valid response from any model source"
 		if errors.Is(err, errResponseTooLarge) {
-			httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed,
-				fmt.Sprintf("provider response exceeds %d bytes", p.cfg.MaxResponseBytes))
-			return
+			detail = fmt.Sprintf("provider response exceeds %d bytes", p.cfg.MaxResponseBytes)
 		}
-		if err != nil {
-			httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, "could not read the provider response")
-			return
-		}
+		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, detail)
+		return
+	}
+	if reply.status < 200 || reply.status >= 300 {
+		writeUpstreamStatus(w, r, reply.status)
+		return
+	}
+	if !stream {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		_, _ = w.Write(b)
-		tokens = usageTokens(b, KindChat)
+		w.WriteHeader(reply.status)
+		_, _ = w.Write(reply.body)
+		return
 	}
 
-	if tokens > 0 {
-		actual = tokens
+	defer reply.stream.Close()
+	guard.watch(reply.stream, p.cfg.StreamIdleTimeout)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.WriteHeader(reply.status)
+	var body io.Reader = guard
+	if p.cfg.MaxResponseBytes > 0 {
+		body = io.LimitReader(body, p.cfg.MaxResponseBytes)
 	}
+	result, clientWriteFailed := p.copyStream(w, body)
+	if result.success {
+		p.router.health.succeed(reply.route.ProviderID)
+	} else if r.Context().Err() == nil && !clientWriteFailed {
+		p.router.health.fail(reply.route.ProviderID, "流式响应提前结束")
+	}
+	reply.finish(result)
 }
 
 // chatOutputLimit accepts the two OpenAI-compatible names for the same limit.
@@ -543,47 +571,91 @@ func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, erro
 	return json.Marshal(out)
 }
 
-// dispatch 按候选顺序尝试，直到某个来源给出不需要换来源的响应。所有来源都
-// 连不上时返回错误；最后一个来源返回可重试状态时把它的响应原样交给调用方。
-func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[string]json.RawMessage, stream bool, output int64, reserve attemptBudget) (*http.Response, liveRoute, func(int64), error) {
+type chatReply struct {
+	route  liveRoute
+	status int
+	body   []byte
+	stream io.ReadCloser
+	finish finishAttempt
+}
+
+// dispatch tries the next candidate while a response can still be replaced.
+// For a stream, ownership of its body and its settlement moves to Chat.
+func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[string]json.RawMessage, stream bool, output int64, reserve attemptBudget) (chatReply, error) {
 	var lastErr error = errors.New("no usable route")
+	var reply chatReply
 	for i, rt := range cands {
+		reply = chatReply{route: rt}
 		body, err := withModel(fields, rt.UpstreamModel)
 		if err != nil {
-			return nil, rt, nil, err
+			return reply, err
 		}
-		settle := func(int64) {}
-		if reserve != nil {
-			settle, err = reserve(int64(len(body)) + output)
-			if err != nil {
-				return nil, rt, nil, err
-			}
+		finish, err := reserve.start(rt, int64(len(body))+output)
+		if err != nil {
+			return reply, err
 		}
 		resp, err := p.attempt(ctx, rt.Provider, "/chat/completions", body, stream)
 		if err != nil {
-			settle(-1)
+			finish(attemptResult{tokens: -1})
 			if ctx.Err() != nil {
-				return nil, rt, nil, ctx.Err()
+				return reply, ctx.Err()
 			}
-			p.router.health.fail(rt.Provider.ID, "无法连接模型来源")
+			p.router.health.fail(rt.ProviderID, "无法连接模型来源")
 			lastErr = err
 			continue
 		}
-		if retryable(resp.StatusCode) {
-			p.router.health.fail(rt.Provider.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
-			if i < len(cands)-1 {
+		reply.status = resp.StatusCode
+		if reply.status < 200 || reply.status >= 300 {
+			resp.Body.Close()
+			finish(attemptResult{tokens: rejectedUsage(reply.status)})
+			if retryable(reply.status) {
+				p.router.health.fail(rt.ProviderID, fmt.Sprintf("HTTP %d", reply.status))
+				if i < len(cands)-1 {
+					continue
+				}
+			}
+			return reply, nil
+		}
+		if stream {
+			mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+			if mediaType == "application/json" || mediaType == "text/html" || mediaType == "application/problem+json" {
 				resp.Body.Close()
-				settle(rejectedUsage(resp.StatusCode))
+				finish(attemptResult{tokens: -1})
+				p.router.health.fail(rt.ProviderID, "流式响应类型不可用")
+				lastErr = errors.New("provider did not return a chat stream")
 				continue
 			}
-			return resp, rt, settle, nil
+			reply.stream, reply.finish = resp.Body, finish
+			return reply, nil
 		}
-		if resp.StatusCode < 400 {
-			p.router.health.succeed(rt.Provider.ID)
+		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
+		resp.Body.Close()
+		var completion struct {
+			usageEnvelope
+			Choices []json.RawMessage `json:"choices"`
 		}
-		return resp, rt, settle, nil
+		if err == nil && (json.Unmarshal(b, &completion) != nil || completion.Choices == nil) {
+			err = errors.New("invalid chat completion")
+		}
+		if err != nil {
+			finish(attemptResult{tokens: -1})
+			if ctx.Err() != nil {
+				return reply, ctx.Err()
+			}
+			p.router.health.fail(rt.ProviderID, "聊天响应不可用")
+			lastErr = err
+			continue
+		}
+		used := completion.tokens(KindChat)
+		if used == 0 {
+			used = -1
+		}
+		finish(attemptResult{tokens: used, success: true})
+		p.router.health.succeed(rt.ProviderID)
+		reply.body = b
+		return reply, nil
 	}
-	return nil, liveRoute{}, nil, lastErr
+	return reply, lastErr
 }
 
 // attempt 向一个来源发一次请求。headerDeadline 为真时，响应头必须在
@@ -770,36 +842,51 @@ func (g *streamGuard) stop() {
 }
 
 // copyStream forwards SSE line by line, flushing at each blank line (event
-// boundary), and picks the last usage object it sees.
-func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) int64 {
+// boundary), and picks the last usage object it sees. An explicit completion
+// marker distinguishes an upstream completion from a dropped connection.
+func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, clientWriteFailed bool) {
 	flusher, _ := w.(http.Flusher)
 	rd := bufio.NewReaderSize(body, 64*1024)
-	var tokens int64
+	result.tokens = -1
+	var done, finishReason, completeChoice bool
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 0 {
 			trimmed := bytes.TrimRight(line, "\r\n")
 			if data, ok := bytes.CutPrefix(trimmed, []byte("data:")); ok {
 				data = bytes.TrimSpace(data)
-				var env usageEnvelope
-				if bytes.Contains(data, []byte(`"usage"`)) && json.Unmarshal(data, &env) == nil {
-					if used := env.tokens(KindChat); used > 0 {
-						tokens = used
+				done = done || bytes.Equal(data, []byte("[DONE]"))
+				var chunk struct {
+					usageEnvelope
+					Choices []struct {
+						FinishReason string `json:"finish_reason"`
+					} `json:"choices"`
+				}
+				if (bytes.Contains(data, []byte(`"usage"`)) || bytes.Contains(data, []byte(`"finish_reason"`))) &&
+					json.Unmarshal(data, &chunk) == nil {
+					if used := chunk.tokens(KindChat); used > 0 {
+						result.tokens = used
 					}
+					finishReason = finishReason || (len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != "")
 				}
 			}
 			if _, werr := w.Write(line); werr != nil {
-				return tokens
+				return result, true
 			}
 			if len(trimmed) == 0 && flusher != nil {
 				flusher.Flush()
+			}
+			if len(trimmed) == 0 {
+				result.success = done
+				completeChoice = finishReason
 			}
 		}
 		if err != nil {
 			if flusher != nil {
 				flusher.Flush()
 			}
-			return tokens
+			result.success = result.success || (errors.Is(err, io.EOF) && completeChoice)
+			return result, false
 		}
 	}
 }

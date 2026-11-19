@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/BUPT521/zhixin/server/internal/api"
 )
 
 const testAdminToken = "admin-token-0123456789abcdef0123456789"
@@ -53,11 +55,125 @@ func fakeProvider(t *testing.T) (*httptest.Server, func() string) {
 
 func TestAdminDisabledWithoutToken(t *testing.T) {
 	h := newHarness(t, nil)
-	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/v1/providers"} {
+	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/v1/providers", "/admin/v1/usage?days=invalid"} {
 		resp := h.do("GET", path, testAdminToken, nil, nil)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("%s: 没有配置管理令牌时应 404，得到 %d", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "<html>Service temporarily unavailable</html>")
+	}))
+	defer primary.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/embeddings" {
+			var in struct{ Input []string }
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if len(in.Input) != 1 {
+				t.Error("expected each embedding chunk to contain one input")
+			}
+			if len(in.Input) == 1 && in.Input[0] == "one" {
+				fmt.Fprint(w, `{"data":[{"index":0,"embedding":[0.1]}],"usage":{"total_tokens":7}}`)
+			} else {
+				fmt.Fprint(w, `{"data":[{"index":0,"embedding":[0.2]}]}`)
+			}
+			return
+		}
+		var in struct{ Stream bool }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if in.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":6}}\n\n")
+			return
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"fallback"}}],"usage":{"total_tokens":9}}`)
+	}))
+	defer backup.Close()
+	h := newHarness(t, map[string]string{
+		"ZHIXIN_ADMIN_TOKEN": testAdminToken, "ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL": "0",
+		"ZHIXIN_TIMEZONE": "Asia/Shanghai",
+	})
+	admin := func(method, path string, in, out any, want int) {
+		t.Helper()
+		if code := h.json(method, path, testAdminToken, in, out); code != want {
+			t.Fatalf("%s %s: got %d, want %d", method, path, code, want)
+		}
+	}
+	var report api.AdminUsageReport
+	admin("GET", "/admin/v1/usage", nil, &report, http.StatusOK)
+	if len(report.Daily) != 7 || report.Timezone != "Asia/Shanghai" || len(report.Routes) != 0 {
+		t.Fatalf("empty report: %+v", report)
+	}
+	admin("GET", "/admin/v1/usage?days=31", nil, nil, http.StatusBadRequest)
+	admin("GET", "/admin/v1/usage?days=invalid", nil, nil, http.StatusBadRequest)
+	user := h.signUp("route-stats@example.test")
+	if code := h.json("GET", "/admin/v1/usage?days=invalid", user, nil, nil); code != http.StatusUnauthorized {
+		t.Fatalf("invalid query with account token: %d", code)
+	}
+	for id, baseURL := range map[string]string{"primary": primary.URL, "backup": backup.URL} {
+		admin("PUT", "/admin/v1/providers/"+id, map[string]string{"base_url": baseURL}, nil, http.StatusOK)
+	}
+	admin("PUT", "/admin/v1/models/chat-test", map[string]any{
+		"kind": "chat", "routes": []map[string]any{
+			{"provider_id": "primary", "upstream_model": "first"},
+			{"provider_id": "backup", "upstream_model": "second", "priority": 1},
+		},
+	}, nil, http.StatusOK)
+	admin("PUT", "/admin/v1/models/embed-test", map[string]any{
+		"kind": "embedding", "routes": []map[string]any{{"provider_id": "backup", "upstream_model": "embed", "max_batch": 1}},
+	}, nil, http.StatusOK)
+	for _, call := range []struct {
+		path string
+		body map[string]any
+	}{
+		{"/v1/llm/chat/completions", map[string]any{"model": "chat-test", "messages": []any{}}},
+		{"/v1/llm/embeddings", map[string]any{"model": "embed-test", "input": []string{"one", "two"}}},
+	} {
+		if code := h.json("POST", call.path, user, call.body, nil); code != http.StatusOK {
+			t.Fatalf("%s: %d", call.path, code)
+		}
+	}
+	stream := h.do("POST", "/v1/llm/chat/completions", user,
+		strings.NewReader(`{"model":"chat-test","messages":[],"stream":true}`), map[string]string{"Content-Type": "application/json"})
+	sse, err := io.ReadAll(stream.Body)
+	stream.Body.Close()
+	if err != nil || stream.StatusCode != http.StatusOK || !strings.Contains(string(sse), "finish_reason") {
+		t.Fatalf("stream fallback: %d %q %v", stream.StatusCode, sse, err)
+	}
+	var probe api.AdminProbe
+	admin("POST", "/admin/v1/models/chat-test/test", nil, &probe, http.StatusOK)
+	if !probe.Ok || probe.ProviderId == nil || *probe.ProviderId != "backup" {
+		t.Fatalf("probe did not use fallback: %+v", probe)
+	}
+	admin("GET", "/admin/v1/usage?days=1", nil, &report, http.StatusOK)
+	if len(report.Daily) != 1 || len(report.Routes) != 3 {
+		t.Fatalf("route usage: %+v", report)
+	}
+	day := report.Daily[0]
+	if day.Chat.Attempts != 4 || day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
+		day.Chat.Tokens-day.Chat.EstimatedTokens != 15 || day.Embedding != (api.AdminUsageCounts{
+		Attempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
+	}) {
+		t.Fatalf("daily totals: %+v", day)
+	}
+	for _, route := range report.Routes {
+		switch {
+		case route.ProviderId == "primary" && (route.Usage.Successes != 0 || route.Usage.Attempts != 2 || route.Usage.EstimatedTokens != route.Usage.Tokens):
+			t.Fatalf("primary: %+v", route)
+		case route.UpstreamModel == "second" && route.Usage != (api.AdminUsageCounts{Attempts: 2, Successes: 2, Tokens: 15}):
+			t.Fatalf("fallback: %+v", route)
+		}
+	}
+	admin("PUT", "/admin/v1/providers/backup", map[string]any{"base_url": backup.URL, "enabled": false}, nil, http.StatusOK)
+	var models api.AdminModelList
+	admin("GET", "/admin/v1/models", nil, &models, http.StatusOK)
+	for _, model := range models.Data {
+		if model.Name == "embed-test" && (model.Available || model.Routes[0].State != api.AdminRouteStateProviderDisabled) {
+			t.Fatalf("disabled provider shown as available: %+v", model)
 		}
 	}
 }

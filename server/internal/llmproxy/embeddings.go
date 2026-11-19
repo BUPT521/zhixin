@@ -73,7 +73,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, p.cfg.StreamTotalTimeout)
 		defer cancel()
 	}
-	res := p.embed(ctx, m, p.router.candidates(m, p.cfg.MaxAttempts), fields, inputs, p.budget(r, userID, day, KindEmbedding))
+	res := p.embed(ctx, m, p.router.candidates(m, p.cfg.MaxAttempts), fields, inputs, p.budget(r, userID, day, m))
 	var budgetError quotaReservationError
 	switch {
 	case errors.Is(res.err, ErrQuotaExceeded):
@@ -131,7 +131,7 @@ type rawResponse struct {
 
 type embedResult struct {
 	body        []byte
-	tokens      int64
+	usage       attemptResult
 	dimensions  int
 	route       liveRoute
 	passthrough *rawResponse
@@ -145,16 +145,12 @@ type embedResult struct {
 func (p *Proxy) embed(ctx context.Context, m *liveModel, cands []liveRoute, fields map[string]json.RawMessage, inputs []string, reserve attemptBudget) embedResult {
 	last := embedResult{err: errors.New("no usable route")}
 	for _, rt := range cands {
-		settle := func(int64) {}
-		if reserve != nil {
-			var err error
-			settle, err = reserve(embeddingEstimate(inputs))
-			if err != nil {
-				return embedResult{err: err}
-			}
+		finish, err := reserve.start(rt, embeddingEstimate(inputs))
+		if err != nil {
+			return embedResult{err: err}
 		}
 		res, retry := p.embedOnce(ctx, m, rt, fields, inputs)
-		settle(res.tokens)
+		finish(res.usage)
 		if ctx.Err() != nil {
 			return embedResult{err: ctx.Err()}
 		}
@@ -183,9 +179,9 @@ func (res embedResult) failure() string {
 }
 
 type chunkOut struct {
-	resp   rawResponse
-	err    error
-	tokens int64
+	resp              rawResponse
+	err               error
+	tokens, estimated int64
 }
 
 func embeddingEstimate(inputs []string) int64 {
@@ -243,32 +239,33 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 		}()
 	}
 	wg.Wait()
-	var tokens int64
+	var usage attemptResult
 	for _, o := range outs {
-		tokens += o.tokens
+		usage.tokens += o.tokens
+		usage.estimated += o.estimated
 	}
 
 	// 先找真正的失败：被取消的批次只是受了别的批次连累。
 	for _, o := range outs {
 		if o.err != nil && !errors.Is(o.err, context.Canceled) {
-			return embedResult{err: o.err, route: rt, tokens: tokens}, true
+			return embedResult{err: o.err, route: rt, usage: usage}, true
 		}
 	}
 	for _, o := range outs {
 		if o.err == nil && retryable(o.resp.status) {
 			pt := o.resp
-			return embedResult{passthrough: &pt, route: rt, tokens: tokens}, true
+			return embedResult{passthrough: &pt, route: rt, usage: usage}, true
 		}
 	}
 	for _, o := range outs {
 		if o.err == nil && o.resp.status >= 300 {
 			pt := o.resp
-			return embedResult{passthrough: &pt, route: rt, tokens: tokens}, false
+			return embedResult{passthrough: &pt, route: rt, usage: usage}, false
 		}
 	}
 	for _, o := range outs {
 		if o.err != nil {
-			return embedResult{err: o.err, route: rt, tokens: tokens}, true
+			return embedResult{err: o.err, route: rt, usage: usage}, true
 		}
 	}
 
@@ -277,18 +274,19 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 	for i, o := range outs {
 		vecs, err := parseEmbedChunk(o.resp.body, len(chunks[i]), m.Dimensions)
 		if err != nil {
-			return embedResult{err: err, route: rt, tokens: tokens}, true
+			return embedResult{err: err, route: rt, usage: usage}, true
 		}
 		merged = append(merged, vecs...)
 		if dims == 0 && len(vecs) > 0 {
 			dims = arrayLen(vecs[0])
 		}
 	}
-	body := renderEmbeddings(m.Name, merged, tokens)
+	body := renderEmbeddings(m.Name, merged, usage.tokens)
 	if p.cfg.MaxResponseBytes > 0 && int64(len(body)) > p.cfg.MaxResponseBytes {
-		return embedResult{err: errResponseTooLarge, route: rt, tokens: tokens}, true
+		return embedResult{err: errResponseTooLarge, route: rt, usage: usage}, true
 	}
-	return embedResult{body: body, tokens: tokens, dimensions: dims, route: rt, vectors: merged}, false
+	usage.success = true
+	return embedResult{body: body, usage: usage, dimensions: dims, route: rt, vectors: merged}, false
 }
 
 func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]json.RawMessage, chunk []string) chunkOut {
@@ -311,7 +309,7 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	estimate := embeddingEstimate(chunk)
 	resp, err := p.attempt(ctx, rt.Provider, "/embeddings", body, true)
 	if err != nil {
-		return chunkOut{err: err, tokens: estimate}
+		return chunkOut{err: err, tokens: estimate, estimated: estimate}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -319,7 +317,7 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 		if rejectedUsage(resp.StatusCode) < 0 {
 			used = estimate
 		}
-		return chunkOut{resp: rawResponse{status: resp.StatusCode}, tokens: used}
+		return chunkOut{resp: rawResponse{status: resp.StatusCode}, tokens: used, estimated: used}
 	}
 	limit := int64(maxEmbedResponse)
 	if p.cfg.MaxResponseBytes > 0 {
@@ -327,11 +325,11 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	}
 	b, err := readResponse(resp.Body, limit)
 	if err != nil {
-		return chunkOut{err: err, tokens: estimate}
+		return chunkOut{err: err, tokens: estimate, estimated: estimate}
 	}
 	used := usageTokens(b, KindEmbedding)
 	if used <= 0 {
-		used = estimate
+		return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: estimate, estimated: estimate}
 	}
 	return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: used}
 }

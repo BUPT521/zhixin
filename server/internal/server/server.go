@@ -44,6 +44,7 @@ type Stores struct {
 	Backups backup.Store
 	Blobs   blobs.Store
 	Quota   llmproxy.Quota
+	Usage   llmproxy.UsageStore
 	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
 	Catalog llmproxy.Catalog
 	// Cache 保存按账号隔离的嵌入向量缓存（ADR-0030），派生数据，清空云端数据
@@ -79,6 +80,7 @@ func MemoryStores() Stores {
 		Backups:   backupStore,
 		Blobs:     blobStore,
 		Quota:     quotaStore,
+		Usage:     llmproxy.NewMemoryUsage(),
 		Catalog:   llmproxy.NewMemoryCatalog(),
 		Cache:     cacheStore,
 		Feedback:  feedback.NewMemoryStore(),
@@ -250,6 +252,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	adminGuard := admin.Middleware(admin.Options{Token: cfg.AdminToken, Limiter: adminLimits, ClientHost: clientHost})
 
 	llmProxy := llmproxy.NewRoutedHandler(cfg.LLM, router, st.Quota, cfg.Location, log)
+	llmProxy.SetUsageStore(st.Usage)
 	// 嵌入向量缓存是派生数据：按账号隔离，命中时省掉嵌入与计费；清除云端数据
 	// 期间不写，清除与删号时一并删除（ADR-0030）。
 	llmProxy.SetEmbeddingCache(st.Cache)
@@ -318,7 +321,15 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 			},
 			httpx.RecordPattern,
 		},
-		ErrorHandlerFunc: httpx.BindingErrorHandler,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			if _, path, _ := strings.Cut(r.Pattern, " "); strings.HasPrefix(path, "/admin/v1/") {
+				adminGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					httpx.BindingErrorHandler(w, r, err)
+				})).ServeHTTP(w, r)
+				return
+			}
+			httpx.BindingErrorHandler(w, r, err)
+		},
 	})
 
 	// 外层顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/404/429

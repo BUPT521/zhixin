@@ -21,12 +21,13 @@
 </header>
 
 <main id="app" hidden>
-  <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="providers" aria-selected="true">模型来源</button>
-    <button role="tab" data-tab="models" aria-selected="false">对外模型与路由</button>
+  <nav class="tabs" role="tablist" aria-label="模型后台">
+    <button role="tab" id="nav-providers" data-tab="providers" aria-selected="true" aria-controls="tab-providers">模型来源</button>
+    <button role="tab" id="nav-models" data-tab="models" aria-selected="false" aria-controls="tab-models" tabindex="-1">对外模型与路由</button>
+    <button role="tab" id="nav-usage" data-tab="usage" aria-selected="false" aria-controls="tab-usage" tabindex="-1">用量统计</button>
   </nav>
 
-  <section id="tab-providers" class="panel">
+  <section id="tab-providers" class="panel" role="tabpanel" aria-labelledby="nav-providers">
     <div class="panel-head">
       <p class="hint">一个来源是一个 OpenAI 兼容的基础地址加一把 key，例如 DeepSeek、硅基流动、阿里云百炼的兼容模式，或者自建的 vLLM、Ollama。key 加密保存，列表只显示末四位。</p>
       <button id="add-provider" type="button">新增来源</button>
@@ -37,15 +38,68 @@
     </table></div>
   </section>
 
-  <section id="tab-models" class="panel" hidden>
+  <section id="tab-models" class="panel" role="tabpanel" aria-labelledby="nav-models" hidden>
     <div class="panel-head">
       <p class="hint">客户端请求里写的是对外模型名，服务端按路由换成某个来源上的模型名。数字小的优先级先试，同一优先级按权重分流；连接失败、限流、5xx 与 key 被拒时自动换下一条。嵌入模型的各条路由必须是同一个模型，否则向量不在同一个空间里。</p>
-      <button id="add-model" type="button">新增模型</button>
+      <div class="panel-actions">
+        <button id="refresh-models" type="button" class="ghost">刷新状态</button>
+        <button id="add-model" type="button">新增模型</button>
+      </div>
     </div>
     <div class="scroll"><table class="grid">
       <thead><tr><th>模型名</th><th>种类</th><th>路由</th><th>状态</th><th></th></tr></thead>
       <tbody id="models"></tbody>
     </table></div>
+  </section>
+
+  <section id="tab-usage" class="panel" role="tabpanel" aria-labelledby="nav-usage" hidden>
+    <div class="usage-head">
+      <div>
+        <h1>用量统计</h1>
+        <p id="usage-period" class="hint"></p>
+      </div>
+      <div class="usage-controls">
+        <label>统计范围<select id="usage-days"><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
+        <label>模型种类<select id="usage-kind"><option value="all">全部</option><option value="chat">聊天</option><option value="embedding">嵌入</option></select></label>
+        <button id="refresh-usage" class="ghost" type="button">刷新</button>
+      </div>
+    </div>
+    <p id="usage-status" class="hint" role="status" hidden></p>
+    <div id="usage-report" hidden>
+      <dl class="usage-metrics">
+        <div><dt>Token 用量</dt><dd id="usage-tokens"></dd><dd id="usage-estimate" class="usage-detail"></dd></div>
+        <div><dt>路由尝试</dt><dd id="usage-attempts"></dd><dd id="usage-unsuccessful" class="usage-detail"></dd></div>
+        <div><dt>路由成功率</dt><dd id="usage-success-rate"></dd><dd id="usage-successes" class="usage-detail"></dd></div>
+      </dl>
+      <section class="usage-card" aria-labelledby="usage-trend">
+        <div class="usage-card-head">
+          <h2 id="usage-trend">每日 Token 用量</h2>
+          <div class="usage-legend">
+            <span id="legend-chat"><i class="chat-color"></i>聊天</span>
+            <span id="legend-embedding"><i class="embedding-color"></i>嵌入</span>
+          </div>
+        </div>
+        <p id="usage-chart-empty" class="empty" hidden>这段时间没有托管模型调用。</p>
+        <div id="usage-chart-wrap" class="usage-chart-wrap">
+          <div id="usage-scale" class="usage-scale" aria-hidden="true"></div>
+          <div class="usage-chart-scroll"><div id="usage-chart" class="usage-chart"></div></div>
+        </div>
+        <p id="usage-day-detail" class="hint" aria-live="polite"></p>
+      </section>
+      <section class="usage-card" aria-labelledby="usage-breakdown">
+        <div class="usage-card-head">
+          <h2 id="usage-breakdown">用量明细</h2>
+          <label class="usage-group">聚合方式<select id="usage-group">
+            <option value="model">按对外模型</option><option value="provider">按来源</option><option value="route">按路由</option>
+          </select></label>
+        </div>
+        <div class="scroll"><table class="grid usage-table">
+          <thead><tr><th>名称</th><th>种类</th><th>Token</th><th>估算 Token</th><th>尝试</th><th>未成功</th><th>成功率</th></tr></thead>
+          <tbody id="usage-rows"></tbody>
+        </table></div>
+        <p class="hint usage-note">失败后切换来源会增加一次路由尝试，嵌入拆批仍按一次计算。统计覆盖上线后的托管调用，包含估算用量。</p>
+      </section>
+    </div>
   </section>
 
   <section id="probe" class="probe" hidden>
@@ -82,12 +136,11 @@
     <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
     <label>备注<input name="note" maxlength="200"></label>
     <h3>路由</h3>
-    <table class="routes">
+    <div class="scroll"><table class="routes">
       <thead><tr><th>来源</th><th>来源侧模型名</th><th>优先级</th><th>权重</th><th class="emb-only">每批条数</th><th>启用</th><th></th></tr></thead>
       <tbody id="route-rows"></tbody>
-    </table>
+    </table></div>
     <button type="button" id="add-route" class="ghost">添加一条路由</button>
-    <datalist id="upstream-names"></datalist>
     <p class="error" id="model-error" hidden></p>
     <div class="actions"><button value="cancel" formnovalidate class="ghost">取消</button><button value="save" id="model-save">保存</button></div>
   </form>

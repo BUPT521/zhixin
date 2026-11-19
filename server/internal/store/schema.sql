@@ -103,6 +103,20 @@ CREATE TABLE llm_usage (
   PRIMARY KEY (user_id, day, kind)
 );
 
+-- 每条模型路由的每日汇总，与账号额度各自记录。
+CREATE TABLE llm_route_usage (
+  day               DATE NOT NULL,
+  kind              TEXT NOT NULL CHECK (kind IN ('chat', 'embedding')),
+  model             TEXT NOT NULL,
+  provider_id       TEXT NOT NULL,
+  upstream_model    TEXT NOT NULL,
+  attempts          BIGINT NOT NULL,
+  successes         BIGINT NOT NULL,
+  tokens            BIGINT NOT NULL,
+  estimated_tokens  BIGINT NOT NULL,
+  PRIMARY KEY (day, kind, model, provider_id, upstream_model)
+);
+
 -- 应用内反馈：登录与否都可以提交，不关联账号，删号也不影响已经提交的反馈。
 -- 正文与诊断摘要是用户主动写的，服务端不解析；读取由管理员直接查这张表，
 -- 不另开列表接口（ADR-0025）。

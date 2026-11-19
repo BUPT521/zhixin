@@ -73,6 +73,36 @@ func (e AdminProviderHealthState) Valid() bool {
 	}
 }
 
+// Defines values for AdminRouteState.
+const (
+	AdminRouteStateCooling          AdminRouteState = "cooling"
+	AdminRouteStateDisabled         AdminRouteState = "disabled"
+	AdminRouteStateKeyError         AdminRouteState = "key_error"
+	AdminRouteStateProviderDisabled AdminRouteState = "provider_disabled"
+	AdminRouteStateProviderMissing  AdminRouteState = "provider_missing"
+	AdminRouteStateReady            AdminRouteState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the AdminRouteState enum.
+func (e AdminRouteState) Valid() bool {
+	switch e {
+	case AdminRouteStateCooling:
+		return true
+	case AdminRouteStateDisabled:
+		return true
+	case AdminRouteStateKeyError:
+		return true
+	case AdminRouteStateProviderDisabled:
+		return true
+	case AdminRouteStateProviderMissing:
+		return true
+	case AdminRouteStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChangeOp.
 const (
 	Delete ChangeOp = "delete"
@@ -243,6 +273,8 @@ func (e TokensTokenType) Valid() bool {
 
 // AdminModel defines model for AdminModel.
 type AdminModel struct {
+	// Available 模型启用且至少一条路由可参与转发，包含冷却中的备用路由
+	Available  bool             `json:"available"`
 	Dimensions *int             `json:"dimensions,omitempty"`
 	Enabled    bool             `json:"enabled"`
 	Kind       ModelKind        `json:"kind"`
@@ -349,8 +381,9 @@ type AdminRoute struct {
 	MaxBatch int `json:"max_batch"`
 
 	// Priority 数字小的先试
-	Priority   int    `json:"priority"`
-	ProviderId string `json:"provider_id"`
+	Priority   int             `json:"priority"`
+	ProviderId string          `json:"provider_id"`
+	State      AdminRouteState `json:"state"`
 
 	// UpstreamModel 来源侧的模型名，例如 BAAI/bge-m3
 	UpstreamModel string `json:"upstream_model"`
@@ -358,6 +391,9 @@ type AdminRoute struct {
 	// Weight 同一优先级内按权重分流
 	Weight int `json:"weight"`
 }
+
+// AdminRouteState defines model for AdminRoute.State.
+type AdminRouteState string
 
 // AdminRouteInput defines model for AdminRouteInput.
 type AdminRouteInput struct {
@@ -367,6 +403,40 @@ type AdminRouteInput struct {
 	ProviderId    string `json:"provider_id"`
 	UpstreamModel string `json:"upstream_model"`
 	Weight        *int   `json:"weight,omitempty"`
+}
+
+// AdminUsageCounts defines model for AdminUsageCounts.
+type AdminUsageCounts struct {
+	// Attempts 尝试路由的次数，嵌入拆批仍计一次
+	Attempts int64 `json:"attempts"`
+
+	// EstimatedTokens tokens 中按估算结算的部分
+	EstimatedTokens int64 `json:"estimated_tokens"`
+	Successes       int64 `json:"successes"`
+	Tokens          int64 `json:"tokens"`
+}
+
+// AdminUsageDay defines model for AdminUsageDay.
+type AdminUsageDay struct {
+	Chat      AdminUsageCounts   `json:"chat"`
+	Day       openapi_types.Date `json:"day"`
+	Embedding AdminUsageCounts   `json:"embedding"`
+}
+
+// AdminUsageReport defines model for AdminUsageReport.
+type AdminUsageReport struct {
+	Daily    []AdminUsageDay   `json:"daily"`
+	Routes   []AdminUsageRoute `json:"routes"`
+	Timezone string            `json:"timezone"`
+}
+
+// AdminUsageRoute defines model for AdminUsageRoute.
+type AdminUsageRoute struct {
+	Kind          ModelKind        `json:"kind"`
+	Model         string           `json:"model"`
+	ProviderId    string           `json:"provider_id"`
+	UpstreamModel string           `json:"upstream_model"`
+	Usage         AdminUsageCounts `json:"usage"`
 }
 
 // Backup defines model for Backup.
@@ -684,6 +754,12 @@ type ConfirmPassword struct {
 	Password string `json:"password"`
 }
 
+// GetAdminV1UsageParams defines parameters for GetAdminV1Usage.
+type GetAdminV1UsageParams struct {
+	// Days 包含今天，按服务端时区计算
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
 // PostV1AuthEmailVerifyConfirmJSONBody defines parameters for PostV1AuthEmailVerifyConfirm.
 type PostV1AuthEmailVerifyConfirmJSONBody struct {
 	Code string `json:"code"`
@@ -983,6 +1059,9 @@ type ServerInterface interface {
 	// PostAdminV1ProvidersIdTest 用来源的 key 请求一次 /models，检查地址与 key
 	// (POST /admin/v1/providers/{id}/test)
 	PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Request, id string)
+	// GetAdminV1Usage 托管模型的每日用量与路由汇总
+	// (GET /admin/v1/usage)
+	GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params GetAdminV1UsageParams)
 	// GetHealthz 进程存活
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -1268,6 +1347,39 @@ func (siw *ServerInterfaceWrapper) PostAdminV1ProvidersIdTest(w http.ResponseWri
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAdminV1ProvidersIdTest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminV1Usage operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1Usage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminV1UsageParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1Usage(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2088,6 +2200,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.DeleteAdminV1ProvidersId)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.PutAdminV1ProvidersId)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers/{id}/test", wrapper.PostAdminV1ProvidersIdTest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/usage", wrapper.GetAdminV1Usage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/models", wrapper.GetAdminV1Models)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.DeleteAdminV1ModelsName)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.PutAdminV1ModelsName)

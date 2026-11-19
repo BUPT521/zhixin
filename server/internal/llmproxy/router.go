@@ -225,6 +225,9 @@ func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapsh
 // candidates 给出一次请求依次尝试的路由：按优先级从小到大分组，组内按权重
 // 随机排列；正在冷却的来源挪到最后，只在其余来源都失败时才试。最多 max 条。
 func (r *Router) candidates(m *liveModel, max int) []liveRoute {
+	if !m.Enabled {
+		return nil
+	}
 	var usable []liveRoute
 	for _, rt := range m.Live {
 		if rt.usable() {

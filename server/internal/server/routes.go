@@ -152,6 +152,9 @@ func (rt routes) PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Reque
 func (rt routes) GetAdminV1Models(w http.ResponseWriter, r *http.Request) {
 	rt.llmAdmin.ListModels(w, r)
 }
+func (rt routes) GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1UsageParams) {
+	rt.llmAdmin.Usage(w, r, params)
+}
 func (rt routes) PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string) {
 	rt.llmAdmin.PutModel(w, r, name)
 }
