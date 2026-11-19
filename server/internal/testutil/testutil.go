@@ -202,7 +202,7 @@ func (Base) PutAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ strin
 func (Base) DeleteAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }
-func (Base) PostAdminV1ModelsNameTest(w http.ResponseWriter, _ *http.Request, _ string) {
+func (Base) PostAdminV1ModelsNameTest(w http.ResponseWriter, _ *http.Request, _ string, _ api.PostAdminV1ModelsNameTestParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
 

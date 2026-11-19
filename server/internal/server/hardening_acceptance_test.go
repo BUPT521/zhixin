@@ -299,7 +299,7 @@ func TestCrossAccountBackupDeleteLeavesOtherAccount(t *testing.T) {
 func TestHostedModelNeedsVerifiedEmail(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[]}`)
+		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[{"message":{"content":"ok"}}]}`)
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -339,7 +339,7 @@ func TestHostedModelConcurrencyLimit(t *testing.T) {
 		started.Done()
 		<-release
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[]}`)
+		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[{"message":{"content":"ok"}}]}`)
 	}))
 	t.Cleanup(upstream.Close)
 	t.Cleanup(func() {

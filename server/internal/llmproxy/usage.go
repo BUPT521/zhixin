@@ -109,7 +109,11 @@ func (a *Admin) Usage(w http.ResponseWriter, r *http.Request, params api.GetAdmi
 	}
 	type dayCounts struct{ chat, embedding UsageCounts }
 	byDay := make(map[string]dayCounts, days)
-	byRoute := make(map[RouteUsageKey]UsageCounts)
+	type routeCounts struct {
+		total UsageCounts
+		daily map[string]api.AdminUsageCounts
+	}
+	byRoute := make(map[RouteUsageKey]routeCounts)
 	for _, row := range rows {
 		day := byDay[row.Day]
 		if row.Kind == KindChat {
@@ -119,7 +123,11 @@ func (a *Admin) Usage(w http.ResponseWriter, r *http.Request, params api.GetAdmi
 		}
 		byDay[row.Day] = day
 		route := byRoute[row.RouteUsageKey]
-		route.add(row.UsageCounts)
+		if route.daily == nil {
+			route.daily = make(map[string]api.AdminUsageCounts)
+		}
+		route.total.add(row.UsageCounts)
+		route.daily[row.Day] = row.UsageCounts.view()
 		byRoute[row.RouteUsageKey] = route
 	}
 	out := api.AdminUsageReport{
@@ -137,7 +145,7 @@ func (a *Admin) Usage(w http.ResponseWriter, r *http.Request, params api.GetAdmi
 	for key, counts := range byRoute {
 		out.Routes = append(out.Routes, api.AdminUsageRoute{
 			Kind: api.ModelKind(key.Kind), Model: key.Model, ProviderId: key.ProviderID,
-			UpstreamModel: key.UpstreamModel, Usage: counts.view(),
+			UpstreamModel: key.UpstreamModel, Usage: counts.total.view(), Daily: counts.daily,
 		})
 	}
 	slices.SortFunc(out.Routes, func(a, b api.AdminUsageRoute) int {

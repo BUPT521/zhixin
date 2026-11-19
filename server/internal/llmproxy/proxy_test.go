@@ -820,7 +820,7 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 		once.Do(func() { close(entered) })
 		<-release
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":5}}`)
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":5}}`)
 	}))
 	defer upstream.Close()
 
@@ -878,7 +878,7 @@ func TestHandlerRequiresVerifiedEmail(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":10}}`)
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":10}}`)
 	}))
 	defer upstream.Close()
 
@@ -981,7 +981,7 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 	t.Run("账号额度", func(t *testing.T) {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":300}}`)
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":300}}`)
 		}))
 		defer upstream.Close()
 
@@ -1010,7 +1010,7 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 	t.Run("实例预算", func(t *testing.T) {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":20}}`)
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":20}}`)
 		}))
 		defer upstream.Close()
 

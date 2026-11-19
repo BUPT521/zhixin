@@ -787,13 +787,21 @@ paths:
       tags: [admin]
       security: [{ admin: [] }]
       summary: 按路由发一次最小请求，检查这个模型能否调用
-      description: 聊天模型发一句“ping”并限制一个 token，嵌入模型嵌入一个短句；不计入任何账号的额度。
+      description: 聊天模型发一句“ping”并限制一个 token，嵌入模型嵌入一个短句。两个路由参数都省略时按正常路由规则调用，同时指定时只测试该条路由。探测不计入账号额度或路由用量。
+      parameters:
+        - name: provider_id
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 32 }
+        - name: upstream_model
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 128 }
       responses:
         "200":
           description: 检查结果
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AdminProbe" }
+        "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
 
@@ -964,13 +972,17 @@ components:
         embedding: { $ref: "#/components/schemas/AdminUsageCounts" }
     AdminUsageRoute:
       type: object
-      required: [model, kind, provider_id, upstream_model, usage]
+      required: [model, kind, provider_id, upstream_model, usage, daily]
       properties:
         model: { type: string }
         kind: { $ref: "#/components/schemas/ModelKind" }
         provider_id: { type: string }
         upstream_model: { type: string }
         usage: { $ref: "#/components/schemas/AdminUsageCounts" }
+        daily:
+          type: object
+          description: 按服务端自然日汇总，键为 YYYY-MM-DD，只包含该路由有记录的日期。
+          additionalProperties: { $ref: "#/components/schemas/AdminUsageCounts" }
     AdminUsageReport:
       type: object
       required: [timezone, daily, routes]

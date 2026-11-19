@@ -75,6 +75,8 @@ function logout(msg) {
   sessionStorage.removeItem('zhixin-admin-token');
   usageRequest?.abort();
   state.usage = null;
+  usageFilters = {};
+  usageDay = null;
   state.upstreamNames.clear();
   selectTab(tabs[0]);
   showApp(false);
@@ -90,6 +92,7 @@ function showApp(on) {
 // ---- 标签页 ----
 const tabs = [...document.querySelectorAll('[role=tab]')];
 function selectTab(tab) {
+  closeProbe();
   for (const item of tabs) {
     const selected = item === tab;
     item.setAttribute('aria-selected', String(selected));
@@ -200,9 +203,10 @@ async function deleteProvider(p) {
 }
 
 async function testProvider(p) {
-  showProbe(`测试来源 ${p.id}：请求 ${p.base_url}/models`, el('p', {}, '请求中…'));
+  const signal = beginProbe(`测试来源 ${p.id}：请求 ${p.base_url}/models`);
   try {
-    const r = await api('POST', '/providers/' + encodeURIComponent(p.id) + '/test');
+    const r = await api('POST', '/providers/' + encodeURIComponent(p.id) + '/test', null, signal);
+    if (signal.aborted) return;
     const names = r.models || [];
     if (r.ok) state.upstreamNames.set(p.id, names);
     showProbe(`测试来源 ${p.id}`,
@@ -212,7 +216,9 @@ async function testProvider(p) {
       names.length ? el('p', { class: 'sub' }, `来源列出 ${names.length} 个模型，编辑模型路由时可以直接选：`) : null,
       names.length ? el('div', { class: 'chips mono' }, names.map((n) => el('span', {}, n))) : null,
     );
-  } catch (err) { showProbe('测试失败', el('p', {}, err.message)); }
+  } catch (err) {
+    if (!signal.aborted) showProbe('测试失败', el('p', {}, err.message));
+  }
 }
 
 // ---- 模型 ----
@@ -242,10 +248,16 @@ function renderModels() {
           el('span', { class: 'mono' }, `${r.provider_id} → ${r.upstream_model}`),
           el('span', { class: 'sub' }, `优先级 ${r.priority} · 权重 ${r.weight}` + (m.kind === 'embedding' && r.max_batch ? ` · 每批 ${r.max_batch}` : '')),
           el('span', { class: 'badge ' + ({ ready: 'ok', cooling: 'cooling' }[r.state] || 'off') }, routeState[r.state]),
+          el('span', { class: 'route-actions' },
+            el('button', { type: 'button', class: 'link', disabled: !(r.state in routeRank),
+              'aria-label': `探测 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
+              onclick: () => testModel(m, r) }, '探测'),
+            el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由用量`,
+              onclick: () => openRouteUsage(m, r) }, '用量')),
         ))),
       el('td', {}, el('span', { class: 'badge ' + (m.available ? 'ok' : 'off') }, m.available ? '可调用' : (m.enabled ? '无可用路由' : '已停用'))),
       el('td', { class: 'ops' },
-        el('button', { class: 'link', disabled: !m.available, onclick: () => testModel(m) }, '测试'),
+        el('button', { class: 'link', disabled: !m.available, onclick: () => testModel(m) }, '测试模型'),
         env ? null : el('button', { class: 'link', onclick: () => editModel(m) }, '编辑'),
         env ? null : el('button', { class: 'danger', onclick: () => deleteModel(m) }, '删除'),
       ),
@@ -365,19 +377,35 @@ async function deleteModel(m) {
   } catch (err) { toast(err.message); }
 }
 
-async function testModel(m) {
-  showProbe(`测试模型 ${m.name}`, el('p', {}, '请求中…'));
+async function testModel(m, route) {
+  const title = route ? `探测 ${m.name} · ${route.provider_id} / ${route.upstream_model}` : `测试模型 ${m.name}`;
+  const query = route ? '?' + new URLSearchParams({ provider_id: route.provider_id, upstream_model: route.upstream_model }) : '';
+  const signal = beginProbe(title);
   try {
-    const r = await api('POST', '/models/' + encodeURIComponent(m.name) + '/test');
-    showProbe(`测试模型 ${m.name}`,
+    const r = await api('POST', '/models/' + encodeURIComponent(m.name) + '/test' + query, null, signal);
+    if (signal.aborted) return;
+    showProbe(title,
       el('p', {}, el('span', { class: r.ok ? 'ok' : 'bad' }, r.ok ? '可用' : '不可用'),
         `　耗时 ${r.latency_ms} ms`, r.status ? `　HTTP ${r.status}` : ''),
       r.provider_id ? el('p', { class: 'mono' }, `实际走的路由：${r.provider_id} → ${r.upstream_model}`) : null,
       r.dimensions ? el('p', {}, `返回向量 ${r.dimensions} 维` + (m.dimensions && m.dimensions !== r.dimensions ? `，与配置的 ${m.dimensions} 维不一致` : '')) : null,
       r.error ? el('p', {}, r.error) : null,
     );
-    await loadAll();
-  } catch (err) { showProbe('测试失败', el('p', {}, err.message)); }
+    loadAll().catch((err) => {
+      if (!signal.aborted) toast(err.message);
+    });
+  } catch (err) {
+    if (!signal.aborted) showProbe(title, el('p', { class: 'bad' }, err.message));
+  }
+}
+
+let probeRequest;
+function beginProbe(title) {
+  probeRequest?.abort();
+  probeRequest = new AbortController();
+  showProbe(title, el('p', {}, '请求中…'));
+  $('#probe').scrollIntoView({ block: 'nearest' });
+  return probeRequest.signal;
 }
 
 function showProbe(title, ...nodes) {
@@ -385,10 +413,16 @@ function showProbe(title, ...nodes) {
   $('#probe-body').replaceChildren(...nodes.filter(Boolean));
   $('#probe').hidden = false;
 }
-$('#probe-close').addEventListener('click', () => { $('#probe').hidden = true; });
+function closeProbe() {
+  probeRequest?.abort();
+  $('#probe').hidden = true;
+}
+$('#probe-close').addEventListener('click', closeProbe);
 
 // ---- 用量统计 ----
 let usageRequest;
+let usageFilters = {};
+let usageDay = null;
 const number = new Intl.NumberFormat('zh-CN');
 const axisNumber = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 });
 const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 });
@@ -403,8 +437,62 @@ function successRate(u) {
 
 $('#usage-days').addEventListener('change', loadUsage);
 $('#refresh-usage').addEventListener('click', loadUsage);
-$('#usage-kind').addEventListener('change', renderUsage);
-$('#usage-group').addEventListener('change', renderUsageTable);
+$('#usage-kind').addEventListener('change', () => {
+  usageFilters.kind = $('#usage-kind').value;
+  renderUsage();
+});
+for (const field of ['model', 'provider', 'upstream']) {
+  $('#usage-' + field).addEventListener('change', (event) => {
+    usageFilters[field] = event.target.value;
+    if (field !== 'upstream') usageFilters.upstream = '';
+    renderUsage();
+  });
+}
+$('#clear-usage-filters').addEventListener('click', () => {
+  usageFilters = {};
+  renderUsage();
+  $('#usage-kind').focus();
+});
+$('#usage-metric').addEventListener('change', renderUsage);
+$('#usage-group').addEventListener('change', renderUsage);
+$('#clear-usage-day').addEventListener('click', () => {
+  usageDay = null;
+  renderUsage();
+  $('#usage-group').focus();
+});
+
+function openRouteUsage(model, route) {
+  usageFilters = { kind: model.kind, model: model.name, provider: route.provider_id, upstream: route.upstream_model };
+  usageDay = null;
+  $('#usage-group').value = 'route';
+  $('#nav-usage').focus();
+  selectTab($('#nav-usage'));
+}
+
+function setUsageOptions(field, items, placeholder) {
+  const select = $('#usage-' + field);
+  const selected = usageFilters[field] || '';
+  const values = [...new Set([...items, selected])].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const options = [el('option', { value: '' }, placeholder),
+    ...values.map((value) => el('option', { value }, value))];
+  select.replaceChildren(...options);
+  select.value = selected;
+}
+
+function renderUsageFilters(routes) {
+  const { kind = 'all', model, provider, upstream } = usageFilters;
+  $('#usage-kind').value = kind;
+  setUsageOptions('model', [...state.models.map((m) => m.name), ...routes.map((r) => r.model)], '全部模型');
+  setUsageOptions('provider', [...state.providers.map((p) => p.id), ...routes.map((r) => r.provider_id)], '全部来源');
+  $('#usage-upstream-field').hidden = !model || !provider;
+  if (model && provider) {
+    const configured = state.models.find((m) => m.name === model)?.routes ?? [];
+    const upstreams = [...configured.filter((r) => r.provider_id === provider),
+      ...routes.filter((r) => r.model === model && r.provider_id === provider)];
+    setUsageOptions('upstream', upstreams.map((r) => r.upstream_model), '全部来源侧模型');
+  }
+  $('#clear-usage-filters').hidden = kind === 'all' && !model && !provider && !upstream;
+}
 
 async function loadUsage() {
   usageRequest?.abort();
@@ -431,9 +519,18 @@ async function loadUsage() {
 function renderUsage() {
   const report = state.usage;
   if (!report) return;
-  const selectedKind = $('#usage-kind').value;
-  const kinds = selectedKind === 'all' ? kindList : [selectedKind];
-  const days = report.daily;
+  renderUsageFilters(report.routes);
+  const { kind = 'all', model, provider, upstream } = usageFilters;
+  const kinds = kind === 'all' ? kindList : [kind];
+  const routes = report.routes.filter((r) =>
+    kinds.includes(r.kind) && (!model || r.model === model) &&
+    (!provider || r.provider_id === provider) && (!upstream || r.upstream_model === upstream));
+  const days = report.daily.map(({ day }) => ({ day, chat: usagePart(), embedding: usagePart() }));
+  const byDate = new Map(days.map((day) => [day.day, day]));
+  for (const route of routes) {
+    for (const [date, usage] of Object.entries(route.daily)) addUsage(byDate.get(date)[route.kind], usage);
+  }
+  if (!byDate.has(usageDay)) usageDay = null;
   const totals = usagePart();
   for (const day of days) {
     for (const kind of kinds) addUsage(totals, day[kind]);
@@ -445,64 +542,68 @@ function renderUsage() {
   $('#usage-unsuccessful').textContent = `${number.format(totals.attempts - totals.successes)} 次未成功`;
   $('#usage-success-rate').textContent = successRate(totals);
   $('#usage-successes').textContent = `${number.format(totals.successes)} 次成功`;
-  renderUsageChart(days, kinds, totals.attempts > 0);
-  renderUsageTable();
+  const selectUsageDay = (date) => updateUsageDay(date, routes, byDate);
+  renderUsageChart(days, kinds, totals.attempts > 0, selectUsageDay);
+  selectUsageDay(usageDay);
 }
 
-function renderUsageChart(days, kinds, hasAttempts) {
+function renderUsageChart(days, kinds, hasAttempts, selectUsageDay) {
   for (const kind of kindList) $('#legend-' + kind).hidden = !kinds.includes(kind);
+  $('#usage-legend').hidden = !hasAttempts;
   $('#usage-chart-empty').hidden = hasAttempts;
   $('#usage-chart-wrap').hidden = !hasAttempts;
   const chart = $('#usage-chart');
-  const detail = $('#usage-day-detail');
   chart.replaceChildren();
-  detail.textContent = '';
   if (!hasAttempts) return;
 
-  const values = days.map((day) => kinds.reduce((sum, kind) => sum + day[kind].tokens, 0));
+  const metric = $('#usage-metric');
+  const amount = (u) => metric.value === 'unsuccessful' ? u.attempts - u.successes : u[metric.value];
+  const values = days.map((day) => kinds.reduce((sum, kind) => sum + amount(day[kind]), 0));
   const peak = Math.max(...values, 1);
   const step = 10 ** Math.floor(Math.log10(peak / 4));
   const ceiling = Math.max(4, 4 * step * Math.ceil(peak / (4 * step)));
   $('#usage-scale').replaceChildren(...[ceiling, ceiling / 2, 0].map((n) => el('span', {}, axisNumber.format(n))));
 
-  function selectDay(index) {
-    [...chart.children].forEach((bar, i) => bar.setAttribute('aria-pressed', String(i === index)));
-    const day = days[index];
-    const parts = kinds.map((kind) => {
-      const u = day[kind];
-      return `${kindName[kind]} ${number.format(u.tokens)} Token，${number.format(u.attempts)} 次尝试`;
-    });
-    detail.textContent = `${day.day} · ${parts.join(' · ')}`;
-  }
   for (const [index, day] of days.entries()) {
     const bars = el('span', { class: 'usage-bar-track', 'aria-hidden': 'true' });
     for (const kind of kinds) {
-      const amount = day[kind].tokens;
       const bar = el('span', { class: kind + '-color' });
-      bar.style.height = `${(amount / ceiling) * 100}%`;
+      bar.style.height = `${(amount(day[kind]) / ceiling) * 100}%`;
       bars.append(bar);
     }
     const label = days.length <= 7 || index % 5 === 0 || index === days.length - 1 ? day.day.slice(5) : '';
-    const labelText = `${day.day}，${number.format(values[index])} Token`;
-    chart.append(el('button', { type: 'button', class: 'usage-day', title: labelText, 'aria-label': labelText,
-      'aria-pressed': 'false', onclick: () => selectDay(index) }, bars, el('span', { class: 'usage-day-label', 'aria-hidden': 'true' }, label)));
+    const labelText = `${day.day}，${metric.selectedOptions[0].textContent} ${number.format(values[index])}`;
+    chart.append(el('button', { type: 'button', class: 'usage-day', title: labelText, 'aria-label': labelText, 'data-day': day.day,
+      'aria-pressed': 'false', onclick: () => selectUsageDay(usageDay === day.day ? null : day.day) },
+      bars, el('span', { class: 'usage-day-label', 'aria-hidden': 'true' }, label)));
   }
-  const lastActive = days.findLastIndex((day) => kinds.some((kind) => day[kind].attempts));
-  selectDay(lastActive);
 }
 
-function renderUsageTable() {
-  if (!state.usage) return;
+function updateUsageDay(date, routes, byDate) {
+  usageDay = date;
+  for (const button of $('#usage-chart').children) button.setAttribute('aria-pressed', String(button.dataset.day === date));
+  $('#usage-table-scope').textContent = date || '整个区间';
+  $('#clear-usage-day').hidden = !date;
+  const day = byDate.get(date);
+  const detail = $('#usage-day-detail');
+  const total = day ? addUsage(addUsage(usagePart(), day.chat), day.embedding) : null;
+  detail.textContent = total
+    ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试 · ${number.format(total.attempts - total.successes)} 次未成功`
+    : ($('#usage-chart-wrap').hidden ? '' : '选择日期查看当天明细。');
+  renderUsageTable(routes, date);
+}
+
+function renderUsageTable(routes, date) {
   const group = $('#usage-group').value;
-  const kind = $('#usage-kind').value;
   const rows = new Map();
-  for (const r of state.usage.routes) {
-    if (kind !== 'all' && r.kind !== kind) continue;
+  for (const r of routes) {
+    const usage = date ? r.daily[date] : r.usage;
+    if (!usage) continue;
     const label = group === 'provider' ? r.provider_id : r.model;
     const sub = group === 'route' ? `${r.provider_id} → ${r.upstream_model}` : '';
     const key = JSON.stringify([label, r.kind, sub]);
     if (!rows.has(key)) rows.set(key, { label, sub, kind: r.kind, usage: usagePart() });
-    addUsage(rows.get(key).usage, r.usage);
+    addUsage(rows.get(key).usage, usage);
   }
   const target = $('#usage-rows');
   target.replaceChildren();
