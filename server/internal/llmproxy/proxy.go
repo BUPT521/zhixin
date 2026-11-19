@@ -632,23 +632,26 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 		resp.Body.Close()
 		var completion struct {
 			usageEnvelope
-			Choices []json.RawMessage `json:"choices"`
+			Choices []struct {
+				Message map[string]json.RawMessage `json:"message"`
+			} `json:"choices"`
 		}
-		if err == nil && (json.Unmarshal(b, &completion) != nil || completion.Choices == nil) {
+		if err == nil && (json.Unmarshal(b, &completion) != nil || len(completion.Choices) == 0 ||
+			len(completion.Choices[0].Message) == 0) {
 			err = errors.New("invalid chat completion")
 		}
+		used := completion.tokens(KindChat)
+		if used <= 0 {
+			used = -1
+		}
 		if err != nil {
-			finish(attemptResult{tokens: -1})
+			finish(attemptResult{tokens: used})
 			if ctx.Err() != nil {
 				return reply, ctx.Err()
 			}
 			p.router.health.fail(rt.ProviderID, "聊天响应不可用")
 			lastErr = err
 			continue
-		}
-		used := completion.tokens(KindChat)
-		if used == 0 {
-			used = -1
 		}
 		finish(attemptResult{tokens: used, success: true})
 		p.router.health.succeed(rt.ProviderID)

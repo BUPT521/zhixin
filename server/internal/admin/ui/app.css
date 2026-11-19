@@ -53,6 +53,7 @@ button:disabled { opacity: .5; cursor: default; }
 .badge.key_error, .badge.off { color: var(--bad); }
 .badge.env { color: var(--muted); }
 .route { display: flex; flex-wrap: wrap; align-items: center; column-gap: 9px; row-gap: 3px; padding: 4px 0; }
+.route-actions { display: flex; gap: 2px; margin-left: auto; }
 .route + .route { border-top: 1px solid var(--line); }
 .route .mono { overflow-wrap: anywhere; }
 .route .sub { margin: 0; white-space: nowrap; }
@@ -93,14 +94,18 @@ label.check input { width: auto; }
 .usage-head h1 { font-size: 24px; margin: 0 0 4px; }
 .usage-controls { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
 .usage-controls select { min-width: 93px; }
+.usage-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.usage-filters label { min-width: min(128px, 100%); max-width: min(235px, 100%); }
+.usage-filters .link { min-height: 34px; }
 .usage-metrics { margin: 0 0 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .usage-metrics > div, .usage-card { border: 1px solid var(--line); border-radius: 8px; background: var(--card); padding: 16px; }
+.usage-metrics > div { box-shadow: inset 0 2px #b2cbc2; }
 .usage-metrics dt { color: var(--muted); }
 .usage-metrics dd { margin: 4px 0 0; font-size: 27px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .usage-metrics .usage-detail { color: var(--muted); font-size: 12px; font-weight: 400; }
 .usage-card + .usage-card { margin-top: 14px; }
 .usage-card h2 { font-size: 16px; margin: 0; }
-.usage-legend { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
+.usage-legend { display: flex; align-items: center; gap: 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .usage-legend span { display: flex; align-items: center; gap: 6px; }
 .usage-legend i { width: 9px; height: 9px; border-radius: 2px; }
 .chat-color { background: var(--accent); }
@@ -138,6 +143,8 @@ label.check input { width: auto; }
 .usage-day-label { font-size: 11px; white-space: nowrap; }
 #usage-day-detail { font-variant-numeric: tabular-nums; font-size: 12px; }
 .usage-group { flex-direction: row; align-items: center; white-space: nowrap; gap: 8px; }
+.usage-breakdown-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.usage-breakdown-heading .hint { font-size: 12px; font-variant-numeric: tabular-nums; }
 .usage-table { margin-top: 10px; min-width: 560px; }
 .usage-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .usage-table th { white-space: nowrap; }

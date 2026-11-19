@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>知新 · 模型后台</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/admin/app.css">
 </head>
 <body>
@@ -40,7 +41,7 @@
 
   <section id="tab-models" class="panel" role="tabpanel" aria-labelledby="nav-models" hidden>
     <div class="panel-head">
-      <p class="hint">客户端请求里写的是对外模型名，服务端按路由换成某个来源上的模型名。数字小的优先级先试，同一优先级按权重分流；连接失败、限流、5xx 与 key 被拒时自动换下一条。嵌入模型的各条路由必须是同一个模型，否则向量不在同一个空间里。</p>
+      <p class="hint">优先尝试健康来源，数字小的优先级先试，同一优先级按权重分流。测试模型会按此规则尝试备用路由，单条探测只调用所选路由。嵌入模型的各条路由应使用同一个向量空间。</p>
       <div class="panel-actions">
         <button id="refresh-models" type="button" class="ghost">刷新状态</button>
         <button id="add-model" type="button">新增模型</button>
@@ -59,13 +60,19 @@
         <p id="usage-period" class="hint"></p>
       </div>
       <div class="usage-controls">
-        <label>统计范围<select id="usage-days"><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
-        <label>模型种类<select id="usage-kind"><option value="all">全部</option><option value="chat">聊天</option><option value="embedding">嵌入</option></select></label>
+        <label>统计范围<select id="usage-days"><option value="1">今天</option><option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option></select></label>
         <button id="refresh-usage" class="ghost" type="button">刷新</button>
       </div>
     </div>
     <p id="usage-status" class="hint" role="status" hidden></p>
     <div id="usage-report" hidden>
+      <div class="usage-filters">
+        <label>用途<select id="usage-kind"><option value="all">全部用途</option><option value="chat">聊天</option><option value="embedding">嵌入</option></select></label>
+        <label>对外模型<select id="usage-model"></select></label>
+        <label>来源<select id="usage-provider"></select></label>
+        <label id="usage-upstream-field" hidden>来源侧模型<select id="usage-upstream"></select></label>
+        <button id="clear-usage-filters" type="button" class="link" hidden>清除筛选</button>
+      </div>
       <dl class="usage-metrics">
         <div><dt>Token 用量</dt><dd id="usage-tokens"></dd><dd id="usage-estimate" class="usage-detail"></dd></div>
         <div><dt>路由尝试</dt><dd id="usage-attempts"></dd><dd id="usage-unsuccessful" class="usage-detail"></dd></div>
@@ -73,13 +80,16 @@
       </dl>
       <section class="usage-card" aria-labelledby="usage-trend">
         <div class="usage-card-head">
-          <h2 id="usage-trend">每日 Token 用量</h2>
-          <div class="usage-legend">
-            <span id="legend-chat"><i class="chat-color"></i>聊天</span>
-            <span id="legend-embedding"><i class="embedding-color"></i>嵌入</span>
-          </div>
+          <h2 id="usage-trend">每日趋势</h2>
+          <label class="usage-group">指标<select id="usage-metric">
+            <option value="tokens">Token 用量</option><option value="attempts">路由尝试</option><option value="unsuccessful">未成功尝试</option>
+          </select></label>
         </div>
-        <p id="usage-chart-empty" class="empty" hidden>这段时间没有托管模型调用。</p>
+        <div id="usage-legend" class="usage-legend">
+          <span id="legend-chat"><i class="chat-color"></i>聊天</span>
+          <span id="legend-embedding"><i class="embedding-color"></i>嵌入</span>
+        </div>
+        <p id="usage-chart-empty" class="empty" hidden>所选范围内没有符合筛选条件的托管调用。</p>
         <div id="usage-chart-wrap" class="usage-chart-wrap">
           <div id="usage-scale" class="usage-scale" aria-hidden="true"></div>
           <div class="usage-chart-scroll"><div id="usage-chart" class="usage-chart"></div></div>
@@ -88,7 +98,11 @@
       </section>
       <section class="usage-card" aria-labelledby="usage-breakdown">
         <div class="usage-card-head">
-          <h2 id="usage-breakdown">用量明细</h2>
+          <div class="usage-breakdown-heading">
+            <h2 id="usage-breakdown">用量明细</h2>
+            <span id="usage-table-scope" class="hint"></span>
+            <button id="clear-usage-day" class="link" type="button" hidden>查看整个区间</button>
+          </div>
           <label class="usage-group">聚合方式<select id="usage-group">
             <option value="model">按对外模型</option><option value="provider">按来源</option><option value="route">按路由</option>
           </select></label>
@@ -104,7 +118,7 @@
 
   <section id="probe" class="probe" hidden>
     <div class="probe-head"><strong id="probe-title"></strong><button id="probe-close" class="ghost" type="button">关闭</button></div>
-    <div id="probe-body"></div>
+    <div id="probe-body" aria-live="polite"></div>
   </section>
 </main>
 

@@ -161,8 +161,8 @@ func (rt routes) PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, na
 func (rt routes) DeleteAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string) {
 	rt.llmAdmin.DeleteModel(w, r, name)
 }
-func (rt routes) PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request, name string) {
-	rt.llmAdmin.TestModel(w, r, name)
+func (rt routes) PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request, name string, params api.PostAdminV1ModelsNameTestParams) {
+	rt.llmAdmin.TestModel(w, r, name, params)
 }
 
 func (rt routes) GetV1AppReleases(w http.ResponseWriter, r *http.Request) { rt.release.Releases(w, r) }

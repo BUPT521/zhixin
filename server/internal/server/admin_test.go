@@ -1,16 +1,19 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 )
 
 const testAdminToken = "admin-token-0123456789abcdef0123456789"
@@ -65,8 +68,14 @@ func TestAdminDisabledWithoutToken(t *testing.T) {
 }
 
 func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "<html>Service temporarily unavailable</html>")
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Stream bool }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if in.Stream {
+			fmt.Fprint(w, "<html>Service temporarily unavailable</html>")
+			return
+		}
+		fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":2}}`)
 	}))
 	defer primary.Close()
 	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,10 +126,11 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	for id, baseURL := range map[string]string{"primary": primary.URL, "backup": backup.URL} {
 		admin("PUT", "/admin/v1/providers/"+id, map[string]string{"base_url": baseURL}, nil, http.StatusOK)
 	}
+	const backupModel = "org/second+fast"
 	admin("PUT", "/admin/v1/models/chat-test", map[string]any{
 		"kind": "chat", "routes": []map[string]any{
 			{"provider_id": "primary", "upstream_model": "first"},
-			{"provider_id": "backup", "upstream_model": "second", "priority": 1},
+			{"provider_id": "backup", "upstream_model": backupModel, "priority": 1},
 		},
 	}, nil, http.StatusOK)
 	admin("PUT", "/admin/v1/models/embed-test", map[string]any{
@@ -149,26 +159,68 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	if !probe.Ok || probe.ProviderId == nil || *probe.ProviderId != "backup" {
 		t.Fatalf("probe did not use fallback: %+v", probe)
 	}
+	const probePath = "/admin/v1/models/chat-test/test"
+	admin("POST", probePath+"?provider_id=primary", nil, nil, http.StatusBadRequest)
+	admin("POST", probePath+"?provider_id=", nil, nil, http.StatusBadRequest)
+	admin("POST", probePath+"?provider_id=backup&upstream_model=missing", nil, nil, http.StatusNotFound)
+	probe = api.AdminProbe{}
+	admin("POST", probePath+"?provider_id=primary&upstream_model=first", nil, &probe, http.StatusOK)
+	if probe.Ok || probe.ProviderId == nil || *probe.ProviderId != "primary" {
+		t.Fatalf("targeted probe did not stay on the failed route: %+v", probe)
+	}
+	probe = api.AdminProbe{}
+	admin("POST", probePath+"?provider_id=backup&upstream_model="+url.QueryEscape(backupModel), nil, &probe, http.StatusOK)
+	if !probe.Ok || probe.UpstreamModel == nil || *probe.UpstreamModel != backupModel {
+		t.Fatalf("targeted probe did not reach the selected model: %+v", probe)
+	}
 	admin("GET", "/admin/v1/usage?days=1", nil, &report, http.StatusOK)
 	if len(report.Daily) != 1 || len(report.Routes) != 3 {
 		t.Fatalf("route usage: %+v", report)
 	}
 	day := report.Daily[0]
 	if day.Chat.Attempts != 4 || day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
-		day.Chat.Tokens-day.Chat.EstimatedTokens != 15 || day.Embedding != (api.AdminUsageCounts{
+		day.Chat.Tokens-day.Chat.EstimatedTokens != 17 || day.Embedding != (api.AdminUsageCounts{
 		Attempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
 	}) {
 		t.Fatalf("daily totals: %+v", day)
 	}
 	for _, route := range report.Routes {
+		if len(route.Daily) != 1 || route.Daily[day.Day.Format("2006-01-02")] != route.Usage {
+			t.Fatalf("single-day route breakdown: %+v", route)
+		}
 		switch {
-		case route.ProviderId == "primary" && (route.Usage.Successes != 0 || route.Usage.Attempts != 2 || route.Usage.EstimatedTokens != route.Usage.Tokens):
+		case route.ProviderId == "primary" && (route.Usage.Successes != 0 || route.Usage.Attempts != 2 || route.Usage.Tokens-route.Usage.EstimatedTokens != 2):
 			t.Fatalf("primary: %+v", route)
-		case route.UpstreamModel == "second" && route.Usage != (api.AdminUsageCounts{Attempts: 2, Successes: 2, Tokens: 15}):
+		case route.UpstreamModel == backupModel && route.Usage != (api.AdminUsageCounts{Attempts: 2, Successes: 2, Tokens: 15}):
 			t.Fatalf("fallback: %+v", route)
 		}
 	}
+	yesterday := day.Day.AddDate(0, 0, -1).Format("2006-01-02")
+	if err := h.stores.Usage.AddRouteUsage(context.Background(), llmproxy.RouteUsage{
+		Day: yesterday,
+		RouteUsageKey: llmproxy.RouteUsageKey{
+			Kind: llmproxy.KindChat, Model: "chat-test", ProviderID: "backup", UpstreamModel: backupModel,
+		},
+		UsageCounts: llmproxy.UsageCounts{Attempts: 1, Successes: 1, Tokens: 4},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	admin("GET", "/admin/v1/usage?days=7", nil, &report, http.StatusOK)
+	if len(report.Daily) != 7 || len(report.Routes) != 3 {
+		t.Fatalf("seven-day report: %+v", report)
+	}
+	for _, route := range report.Routes {
+		if route.UpstreamModel == backupModel && (len(route.Daily) != 2 ||
+			route.Daily[yesterday].Tokens != 4 || route.Usage.Tokens != 19) {
+			t.Fatalf("route breakdown across dates: %+v", route)
+		}
+	}
 	admin("PUT", "/admin/v1/providers/backup", map[string]any{"base_url": backup.URL, "enabled": false}, nil, http.StatusOK)
+	probe = api.AdminProbe{}
+	admin("POST", probePath+"?provider_id=backup&upstream_model="+url.QueryEscape(backupModel), nil, &probe, http.StatusOK)
+	if probe.Ok || probe.Error == nil {
+		t.Fatalf("disabled route was probed: %+v", probe)
+	}
 	var models api.AdminModelList
 	admin("GET", "/admin/v1/models", nil, &models, http.StatusOK)
 	for _, model := range models.Data {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -487,9 +488,15 @@ func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TestModel 按路由发一次最小请求。不计入任何账号的额度，结果会更新来源的
-// 健康状态，与真实请求同一口径。
-func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
+// TestModel 使用正常路由次序或指定路由发出最小请求。探测更新来源的健康状态，
+// 不计入账号额度与路由用量。
+func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, params api.PostAdminV1ModelsNameTestParams) {
+	provider, upstream := deref(params.ProviderId, ""), deref(params.UpstreamModel, "")
+	targeted := params.ProviderId != nil || params.UpstreamModel != nil
+	if targeted && (provider == "" || len(provider) > 32 || upstream == "" || utf8.RuneCountInString(upstream) > 128) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "supply provider_id (1–32 characters) and upstream_model (1–128 characters) together")
+		return
+	}
 	snap, ok := a.fresh(w, r)
 	if !ok {
 		return
@@ -499,10 +506,23 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	cands := a.router().candidates(m, a.proxy.cfg.MaxAttempts)
 	out := api.AdminProbe{}
+	var cands []liveRoute
+	if targeted {
+		idx := slices.IndexFunc(m.Live, func(route liveRoute) bool {
+			return route.ProviderID == provider && route.UpstreamModel == upstream
+		})
+		if idx == -1 {
+			httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "route not found")
+			return
+		}
+		out.ProviderId, out.UpstreamModel = &provider, &upstream
+		if route := m.Live[idx]; m.Enabled && route.usable() {
+			cands = []liveRoute{route}
+		}
+	} else {
+		cands = a.router().candidates(m, a.proxy.cfg.MaxAttempts)
+	}
 	fail := func(msg string) {
 		out.Error = &msg
 		httpx.WriteJSON(w, http.StatusOK, out)
@@ -511,6 +531,8 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string) {
 		fail("没有可用的路由：检查路由与来源是否启用、key 是否能解密")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	start := time.Now()
 	if m.Kind == KindEmbedding {
 		input, _ := json.Marshal([]string{"知新：把学过的内容找回来"})

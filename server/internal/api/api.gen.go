@@ -432,11 +432,13 @@ type AdminUsageReport struct {
 
 // AdminUsageRoute defines model for AdminUsageRoute.
 type AdminUsageRoute struct {
-	Kind          ModelKind        `json:"kind"`
-	Model         string           `json:"model"`
-	ProviderId    string           `json:"provider_id"`
-	UpstreamModel string           `json:"upstream_model"`
-	Usage         AdminUsageCounts `json:"usage"`
+	// Daily 按服务端自然日汇总，键为 YYYY-MM-DD，只包含该路由有记录的日期。
+	Daily         map[string]AdminUsageCounts `json:"daily"`
+	Kind          ModelKind                   `json:"kind"`
+	Model         string                      `json:"model"`
+	ProviderId    string                      `json:"provider_id"`
+	UpstreamModel string                      `json:"upstream_model"`
+	Usage         AdminUsageCounts            `json:"usage"`
 }
 
 // Backup defines model for Backup.
@@ -754,6 +756,12 @@ type ConfirmPassword struct {
 	Password string `json:"password"`
 }
 
+// PostAdminV1ModelsNameTestParams defines parameters for PostAdminV1ModelsNameTest.
+type PostAdminV1ModelsNameTestParams struct {
+	ProviderId    *string `form:"provider_id,omitempty" json:"provider_id,omitempty"`
+	UpstreamModel *string `form:"upstream_model,omitempty" json:"upstream_model,omitempty"`
+}
+
 // GetAdminV1UsageParams defines parameters for GetAdminV1Usage.
 type GetAdminV1UsageParams struct {
 	// Days 包含今天，按服务端时区计算
@@ -1046,7 +1054,7 @@ type ServerInterface interface {
 	PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string)
 	// PostAdminV1ModelsNameTest 按路由发一次最小请求，检查这个模型能否调用
 	// (POST /admin/v1/models/{name}/test)
-	PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request, name string)
+	PostAdminV1ModelsNameTest(w http.ResponseWriter, r *http.Request, name string, params PostAdminV1ModelsNameTestParams)
 	// GetAdminV1Providers 列出模型来源与健康状态
 	// (GET /admin/v1/providers)
 	GetAdminV1Providers(w http.ResponseWriter, r *http.Request)
@@ -1253,8 +1261,37 @@ func (siw *ServerInterfaceWrapper) PostAdminV1ModelsNameTest(w http.ResponseWrit
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostAdminV1ModelsNameTestParams
+
+	// ------------- Optional query parameter "provider_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "provider_id", r.URL.Query(), &params.ProviderId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "provider_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "upstream_model" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "upstream_model", r.URL.Query(), &params.UpstreamModel, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "upstream_model"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upstream_model", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostAdminV1ModelsNameTest(w, r, name)
+		siw.Handler.PostAdminV1ModelsNameTest(w, r, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
