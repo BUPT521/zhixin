@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 
 import '../data/db/drift/queries/evidence_scope.dart';
+import '../data/revisions/semantic_change.dart';
 import '../data/repository/evidence_repository.dart';
 import '../data/vector/embedding_codec.dart';
 import '../data/vector/vector_index.dart';
@@ -129,6 +130,9 @@ class SearchIndexService implements MemoryRelevanceRanker {
     Future<VectorStore> Function()? memoryStoreOpener,
     this.recordFailure,
     this.cacheWrites,
+    this.headCommit,
+    this.semanticChanges,
+    this.shareSignature,
   }) : _client = initialClient,
        _canSend = initialShareFilter,
        _openVectorStore = vectorStoreOpener,
@@ -184,6 +188,22 @@ class SearchIndexService implements MemoryRelevanceRanker {
   /// 未登录、同步关闭与自填 key 直连的用户不留下它（ADR-0030 决定第 3 条）。
   final Future<bool> Function()? cacheWrites;
 
+  /// 当前 `HEAD` 的提交编号；没有提供时每次刷新都做全量扫描，也不推进已处理
+  /// 提交。读取失败按不知道处理，本次退回全量。
+  final Future<int> Function()? headCommit;
+
+  /// 读出某个提交之后的来源行变化；没有提供时不做增量刷新。
+  ///
+  /// 应用根用版本引擎读取 `revision_change` 并按材料页、消息与作答三张表筛选，
+  /// 起点提交已经被历史裁剪时返回 `usable: false`，刷新据此退回全量扫描。
+  final Future<SemanticChangeWindow> Function(int after)? semanticChanges;
+
+  /// 可发送范围签名：分享范围与选定的材料列表拼成，变化时向量集合整份重建。
+  ///
+  /// 缩小的范围内旧向量必须消失，签名与状态文件里记的不一致时清空向量集合；
+  /// 没有提供时不做这项判断。
+  final String Function()? shareSignature;
+
   /// 记忆索引目录；为空时放在语义索引目录的同级，随本机数据一起删除。
   final String? memoryIndexPath;
   final Future<VectorStore> Function()? _openMemoryStore;
@@ -227,6 +247,13 @@ class SearchIndexService implements MemoryRelevanceRanker {
   bool _closed = false;
   IndexRefreshResult? _lastRefresh;
   Future<IndexRefreshResult>? _refreshing;
+
+  /// 本次刷新处理完之后又出现了更大的 `HEAD`：在单飞清理之后补排一次刷新。
+  ///
+  /// 不能在刷新内部直接调用 [refresh]，那时 `_refreshing` 还指着本次的 Future，
+  /// 调用只会拿回同一个 Future；所以这里只记一个标记，由 [_refresh] 的清尾在
+  /// 清空 `_refreshing` 之后再排一次。
+  bool _catchUpPending = false;
 
   IndexRefreshResult? get lastRefresh => _lastRefresh;
 
@@ -546,7 +573,23 @@ class SearchIndexService implements MemoryRelevanceRanker {
         force: force,
       );
     } finally {
-      if (generation == _generation) _refreshing = null;
+      if (generation == _generation) {
+        _refreshing = null;
+        if (_catchUpPending) {
+          _catchUpPending = false;
+          // 单飞已经结束，排一次新的刷新补齐期间到达的提交；用微任务而不是
+          // 真实计时，测试与界面都不必额外等待。失败只留待下一次写入触发。
+          scheduleMicrotask(() {
+            if (_closed || generation != _generation) return;
+            unawaited(
+              refresh().then<void>(
+                (_) {},
+                onError: (Object _, StackTrace _) {},
+              ),
+            );
+          });
+        }
+      }
     }
   }
 
@@ -557,6 +600,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
   }) async {
     final embedding = client;
     final now = clock();
+    _catchUpPending = false;
     try {
       // 先读数据代次再打开索引：打开、初始化 zvec 引擎与建表都由后台 isolate
       // 承接，界面线程在这里只等一个 Future，启动首帧不再执行这些同步调用。
@@ -566,14 +610,72 @@ class SearchIndexService implements MemoryRelevanceRanker {
         await _useCurrentStore(generation, () async {
           await textStore.clear();
           await textStore.setMeta('epoch', currentEpoch);
+          // 代次变化说明数据整份换过，已处理的提交编号不再有意义，下一次从
+          // 全量扫描重新开始（ADR-0030 决定第 5 条）。
+          await textStore.setMeta('commit_id', '0');
         });
       }
-      final sources = await repository.semanticSources();
-      _requireCurrent(generation);
+
+      // 增量刷新要先知道两份集合各自的已处理提交，向量集合因此提前打开；打开
+      // 失败时先把错误记下，正文照旧写完再报出来。没有提供增量回调时保持原来
+      // 的顺序：先写正文，再打开向量集合。
+      final wantsIncrement =
+          !force &&
+          maxSources == null &&
+          headCommit != null &&
+          semanticChanges != null;
+      VectorStore? vectorStore;
+      Object? vectorOpenFailure;
+      if (embedding != null && wantsIncrement) {
+        try {
+          vectorStore = await _requireVectorStore(generation);
+          await _prepareVectorStore(generation, vectorStore, currentEpoch);
+        } on Object catch (error) {
+          if (_closed || generation != _generation) rethrow;
+          vectorOpenFailure = error;
+        }
+      }
+      final head = await _readHeadCommit();
+      final from = embedding == null
+          ? _commitIdOf(await textStore.meta('commit_id'))
+          : math.min(
+              _commitIdOf(await textStore.meta('commit_id')),
+              vectorStore == null
+                  ? 0
+                  : _commitIdOf(await vectorStore.meta('commit_id')),
+            );
+
+      // 只有两份集合都处理过提交、并且提交日志还读得出来时才做增量；起点取
+      // 较小的一份，另一份落后的部分在这一次里补齐。`HEAD` 与起点相等时仍然
+      // 走增量：窗口里没有变化，刷新因此什么都不写，也不重新读全部来源。
+      var incremental = false;
+      var window = const SemanticChangeWindow();
+      if (wantsIncrement && head != null && from > 0 && head >= from) {
+        try {
+          window = await semanticChanges!(from);
+        } on Object {
+          // 读不到变更就按全量处理：不能把漏掉的改动当成没有变化。
+          window = SemanticChangeWindow.unavailable;
+        }
+        incremental = window.usable;
+      }
+
+      final sources = <SemanticSource>[];
+      final deletions = <SemanticLocator>[];
+      final changedKeys = <String>[];
+      if (incremental) {
+        final resolved = await _resolveChanges(generation, window.changes);
+        sources.addAll(resolved.sources);
+        deletions.addAll(resolved.deletions);
+        changedKeys.addAll(resolved.keys);
+      } else {
+        sources.addAll(await repository.semanticSources());
+        _requireCurrent(generation);
+      }
 
       // 正文不离开本机，文本集合收下全部来源；分享范围只影响向量集合，不再
-      // 允许发送的来源在向量集合里删除，正文仍然保留。嵌入数量可以分批限制，
-      // 清理与统计仍以全部来源为准。
+      // 允许发送的来源在向量集合里删除，正文仍然保留。增量刷新时这里只有
+      // 本次变化涉及到的来源，不能拿来清理整份集合。
       final textKeep = {for (final source in sources) source.locator.sourceKey};
       final sendAllowed = embedding == null ? null : canSend;
       final vectorKeep = {
@@ -581,19 +683,40 @@ class SearchIndexService implements MemoryRelevanceRanker {
           if (sendAllowed?.call(source) ?? true) source.locator.sourceKey,
       };
       final textIndexed = await textStore.indexedSources(
-        textKeep.toList(growable: false),
+        incremental ? changedKeys : textKeep.toList(growable: false),
       );
-      final textCommitted = textIndexed.keys.toSet();
-      final targets = maxSources == null
+      final textCommitted = incremental ? null : textIndexed.keys.toSet();
+      var textSourceCount = incremental ? await textStore.sourceCount() : 0;
+      final targets = incremental || maxSources == null
           ? sources
           : sources.take(maxSources).toList(growable: false);
       var textWritten = 0;
       var textEntries = 0;
       var lateSkipped = 0;
+      var textFailures = 0;
       var cached = 0;
       var embedMs = 0;
       var writeMs = 0;
       EmbeddingSourceUnavailable? sourceDown;
+
+      // 增量刷新不能调用 pruneSources：没有变化的来源不在本次窗口里，按窗口里
+      // 的来源清理会把它们一起删掉。删除的来源用空的片段显式删除，片段数为零
+      // 在实现里就是删除这一条来源。
+      if (incremental) {
+        for (final locator in deletions) {
+          _requireCurrent(generation);
+          await _useCurrentStore(
+            generation,
+            () => textStore.replaceSource(
+              locator: locator,
+              sourceVersion: '',
+              createdAt: formatDateTime(now),
+            ),
+          );
+          final previous = textIndexed[locator.sourceKey];
+          if (previous != null && previous.chunks > 0) textSourceCount--;
+        }
+      }
 
       // 先把本次要写的来源挑出来；文本集合的版本或片段数不一致，或者配置了
       // 嵌入时向量集合的版本或片段数不一致，都算需要处理。换模型之后正文没变
@@ -644,24 +767,44 @@ class SearchIndexService implements MemoryRelevanceRanker {
           item.textWritten = true;
           textEntries += item.chunks.length;
           final key = item.source.locator.sourceKey;
-          if (item.chunks.isEmpty) {
-            textCommitted.remove(key);
+          if (incremental) {
+            // 增量刷新没有读到全部来源，来源总数只能用上一次的值加上新增、
+            // 减去删除；写入之前先看这一条此前在不在索引里。
+            final previous = textIndexed[key];
+            final was = previous != null && previous.chunks > 0;
+            final present = item.chunks.isNotEmpty;
+            if (present && !was) textSourceCount++;
+            if (!present && was) textSourceCount--;
+          } else if (item.chunks.isEmpty) {
+            textCommitted!.remove(key);
           } else {
-            textCommitted.add(key);
+            textCommitted!.add(key);
           }
         } catch (_) {
           if (_closed || generation != _generation) rethrow;
           item.failed = true;
+          textFailures++;
         } finally {
           writeMs += DateTime.now().difference(writeStarted).inMilliseconds;
         }
       }
 
+      // 全量扫描按全部来源清理；增量只写本次变化涉及到的来源，没有变化的来源
+      // 原样保留。提交推进放在 finishRefresh 之前，进度与统计一起落盘。
+      final textAdvance =
+          head != null &&
+          textFailures == 0 &&
+          lateSkipped == 0 &&
+          maxSources == null;
+      final textSourceCountForFinish = incremental
+          ? math.max(0, textSourceCount)
+          : textCommitted!.length;
       await _useCurrentStore(generation, () async {
-        await textStore.pruneSources(textKeep);
+        if (!incremental) await textStore.pruneSources(textKeep);
+        if (textAdvance) await textStore.setMeta('commit_id', '$head');
         await textStore.finishRefresh(
           builtAt: formatDateTime(now),
-          sourceCount: textCommitted.length,
+          sourceCount: textSourceCountForFinish,
           writtenEntries: textEntries,
         );
       });
@@ -670,35 +813,84 @@ class SearchIndexService implements MemoryRelevanceRanker {
       // 没有配置嵌入来源时，写入正文的来源数就是这一次处理的来源数。
       var embedded = textWritten;
       var removed = 0;
+      var vectorAdvance = false;
       if (embedding != null) {
-        final vectorStore = await _requireVectorStore(generation);
-        if (await vectorStore.meta('epoch') != currentEpoch) {
-          await _useCurrentStore(generation, () async {
-            await vectorStore.clear();
-            await vectorStore.setMeta('epoch', currentEpoch);
-          });
+        final VectorStore store;
+        if (vectorStore == null) {
+          final failure = vectorOpenFailure;
+          if (failure != null) throw failure;
+          store = await _requireVectorStore(generation);
+        } else {
+          store = vectorStore;
         }
-        final vectorIndexed = await vectorStore.indexedSources(
-          textKeep.toList(growable: false),
+        // 提前打开时已经按代次与可发送范围处理过一次；这里再核对一次，全量
+        // 路径第一次打开也走同一段。
+        await _prepareVectorStore(generation, store, currentEpoch);
+        final vectorIndexed = await store.indexedSources(
+          incremental ? changedKeys : textKeep.toList(growable: false),
         );
-        final vectorCommitted = {
-          for (final key in vectorIndexed.keys)
-            if (vectorKeep.contains(key)) key,
-        };
+        final vectorCommitted = incremental
+            ? null
+            : {
+                for (final key in vectorIndexed.keys)
+                  if (vectorKeep.contains(key)) key,
+              };
+        var vectorSourceCount = incremental ? await store.sourceCount() : 0;
         var vectorWritten = 0;
         var vectorEntries = 0;
+
+        // 增量刷新按提交日志里的删除显式删除向量；没有变化的来源不清理。
+        if (incremental) {
+          for (final locator in deletions) {
+            _requireCurrent(generation);
+            await _useCurrentStore(
+              generation,
+              () => store.replaceSource(
+                locator: locator,
+                sourceVersion: '',
+                createdAt: formatDateTime(now),
+              ),
+            );
+            final previous = vectorIndexed[locator.sourceKey];
+            if (previous != null && previous.chunks > 0) {
+              vectorSourceCount--;
+              removed += previous.chunks;
+            }
+          }
+        }
 
         // 向量集合按自己的版本与片段数判断：正文没有变化而模型换了，也要重建。
         final vectorPending = <_PendingSource>[];
         for (final item in pending) {
           if (item.abandoned || item.failed) continue;
-          if (!vectorKeep.contains(item.source.locator.sourceKey)) continue;
-          final existing = vectorIndexed[item.source.locator.sourceKey];
+          final key = item.source.locator.sourceKey;
+          final existing = vectorIndexed[key];
           final stale =
               existing == null ||
               existing.sourceVersion != item.source.sourceVersion ||
               existing.chunks != item.chunks.length;
-          if (!stale && !force) continue;
+          if (incremental) {
+            if (!(sendAllowed?.call(item.source) ?? true)) {
+              // 可发送范围不再包含这一条：正文保留，旧向量显式删除。
+              if (existing != null && existing.chunks > 0) {
+                await _useCurrentStore(
+                  generation,
+                  () => store.replaceSource(
+                    locator: item.source.locator,
+                    sourceVersion: item.source.sourceVersion,
+                    createdAt: formatDateTime(now),
+                  ),
+                );
+                vectorSourceCount--;
+                removed += existing.chunks;
+              }
+              continue;
+            }
+            if (!stale) continue;
+          } else {
+            if (!vectorKeep.contains(key)) continue;
+            if (!stale && !force) continue;
+          }
           vectorPending.add(item);
         }
 
@@ -711,7 +903,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
           try {
             await _useCurrentStore(
               generation,
-              () => vectorStore.replaceSource(
+              () => store.replaceSource(
                 locator: item.source.locator,
                 sourceVersion: item.source.sourceVersion,
                 hashes: [
@@ -726,10 +918,16 @@ class SearchIndexService implements MemoryRelevanceRanker {
             item.vectorWritten = true;
             vectorEntries += item.chunks.length;
             final key = item.source.locator.sourceKey;
-            if (item.chunks.isEmpty) {
-              vectorCommitted.remove(key);
+            if (incremental) {
+              final previous = vectorIndexed[key];
+              final was = previous != null && previous.chunks > 0;
+              final present = item.chunks.isNotEmpty;
+              if (present && !was) vectorSourceCount++;
+              if (!present && was) vectorSourceCount--;
+            } else if (item.chunks.isEmpty) {
+              vectorCommitted!.remove(key);
             } else {
-              vectorCommitted.add(key);
+              vectorCommitted!.add(key);
             }
           } catch (_) {
             if (_closed || generation != _generation) rethrow;
@@ -894,22 +1092,43 @@ class SearchIndexService implements MemoryRelevanceRanker {
         for (final item in vectorPending.skip(start)) {
           item.failed = true;
         }
+        final vectorFailures = vectorPending
+            .where((item) => item.failed)
+            .length;
 
-        removed = await _useCurrentStore(generation, () async {
-          final removed = await vectorStore.pruneSources(vectorKeep);
-          await vectorStore.finishRefresh(
+        // 向量集合只有在本次没有失败、没有迟到放弃、来源没有整体不可用时才推进
+        // 提交；文本写入失败的来源没有进入向量这一路，同样不能推进。
+        final vectorAdvanceNow =
+            head != null &&
+            textFailures == 0 &&
+            vectorFailures == 0 &&
+            lateSkipped == 0 &&
+            sourceDown == null &&
+            maxSources == null;
+        final vectorSourceCountForFinish = incremental
+            ? math.max(0, vectorSourceCount)
+            : vectorCommitted!.length;
+        final pruned = await _useCurrentStore(generation, () async {
+          if (incremental) return 0;
+          return store.pruneSources(vectorKeep);
+        });
+        await _useCurrentStore(generation, () async {
+          if (vectorAdvanceNow) await store.setMeta('commit_id', '$head');
+          await store.finishRefresh(
             builtAt: formatDateTime(now),
-            sourceCount: vectorCommitted.length,
+            sourceCount: vectorSourceCountForFinish,
             writtenEntries: vectorEntries,
           );
-          return removed;
         });
         _requireCurrent(generation);
+        removed += pruned;
+        vectorAdvance = vectorAdvanceNow;
         embedded = vectorWritten;
       }
 
       // 两份集合都已经处理完，再按来源逐条结算：正文与向量都没有写的算跳过，
-      // 文本写失败或嵌入失败的算失败。
+      // 文本写失败或嵌入失败的算失败。增量刷新里删除的来源已经单独处理，不计
+      // 入跳过。
       var skipped = 0;
       var failed = 0;
       for (final item in pending) {
@@ -920,6 +1139,19 @@ class SearchIndexService implements MemoryRelevanceRanker {
         if (item.abandoned) continue;
         if (!item.textWritten && !item.vectorWritten) skipped++;
       }
+
+      // 刷新成功之后再看一次 HEAD：本次窗口之后又有提交进来时，等单飞结束再排
+      // 一次刷新，期间到达的提交不丢（ADR-0030 决定第 5 条、客户端清单第 5 条）。
+      if (head != null &&
+          headCommit != null &&
+          maxSources == null &&
+          failed == 0 &&
+          lateSkipped == 0 &&
+          (embedding == null || vectorAdvance)) {
+        final nextHead = await _readHeadCommit();
+        _catchUpPending = nextHead != null && nextHead > head;
+      }
+
       final result = IndexRefreshResult(
         embedded: embedded,
         textWritten: textWritten,
@@ -927,7 +1159,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
         lateSkipped: lateSkipped,
         failed: failed,
         removed: removed,
-        total: targets.length,
+        total: targets.length + deletions.length,
         cached: cached,
         failure: failed == 0 ? IndexFailure.none : IndexFailure.error,
         embedMs: embedMs,
@@ -943,6 +1175,130 @@ class SearchIndexService implements MemoryRelevanceRanker {
       }
       rethrow;
     }
+  }
+
+  /// 把提交日志里的行变化解析成来源：当前仍是来源的读回正文，已经不是来源的
+  /// 按删除处理，同一来源键只保留一条。
+  ///
+  /// 删除行带着完整旧行，材料页要按旧行里的材料编号与页码还原来源键；其他行
+  /// 只要主键。改动之后不再是来源的行（消息正文清空、作答撤回提交等）读当前
+  /// 记录会得到空来源，与删除行同样显式删除索引里的旧条目。
+  Future<
+    ({
+      List<SemanticSource> sources,
+      List<SemanticLocator> deletions,
+      List<String> keys,
+    })
+  >
+  _resolveChanges(int generation, List<SemanticRowChange> changes) async {
+    final additions = <String, SemanticSource>{};
+    final deletions = <String, SemanticLocator>{};
+    for (final change in changes) {
+      _requireCurrent(generation);
+      if (change.removed) {
+        final locator = _locatorOfRemovedRow(change);
+        if (locator == null) continue;
+        // 删除优先：同一来源键在窗口里既有改动又有删除时，以删除为准。
+        additions.remove(locator.sourceKey);
+        deletions[locator.sourceKey] = locator;
+        continue;
+      }
+      final source = await repository.semanticSourceOfRow(
+        change.table,
+        change.rowKey,
+      );
+      if (source == null) {
+        // 行已经不存在，或者改动之后不再是来源：按删除处理。
+        final locator = _locatorOfRemovedRow(change);
+        if (locator == null) continue;
+        additions.remove(locator.sourceKey);
+        deletions[locator.sourceKey] = locator;
+        continue;
+      }
+      if (deletions.containsKey(source.locator.sourceKey)) continue;
+      additions[source.locator.sourceKey] = source;
+    }
+    return (
+      sources: additions.values.toList(growable: false),
+      deletions: deletions.values.toList(growable: false),
+      keys: [...additions.keys, ...deletions.keys],
+    );
+  }
+
+  /// 删除行的来源定位：有旧行时按旧行解析，没有时只按主键还原。
+  SemanticLocator? _locatorOfRemovedRow(SemanticRowChange change) =>
+      repository.semanticLocatorOfRemovedRow(
+        change.table,
+        change.removedRow ?? {'id': change.rowKey},
+      );
+
+  /// 两个集合状态文件里的提交编号；读不出来或旧状态没有这个字段时按零处理，
+  /// 下一次刷新因此按全量扫描开始。
+  static int _commitIdOf(String? value) => int.tryParse(value ?? '') ?? 0;
+
+  /// 读当前 `HEAD`；没有提供回调或读取失败时返回空，本次退回全量扫描。
+  Future<int?> _readHeadCommit() async {
+    final read = headCommit;
+    if (read == null) return null;
+    try {
+      return await read();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// 读当前可发送范围签名；没有提供回调或读取失败时返回空，不做这项判断。
+  String? _readShareSignature() {
+    final read = shareSignature;
+    if (read == null) return null;
+    try {
+      return read();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// 按代次与可发送范围核对向量集合，返回这一次是否清空过。
+  ///
+  /// 代次变化、可发送范围变化都要求旧向量整份消失：代次变化是数据被整份替换，
+  /// 范围变化是因为缩小的范围内不能再留下旧向量。清空之后把 `commit_id` 归零，
+  /// 下一次刷新按全量扫描重建；可发送范围签名与状态文件里记的不一致时才重建，
+  /// 范围没变时不重复清空。
+  Future<bool> _prepareVectorStore(
+    int generation,
+    VectorStore store,
+    String currentEpoch,
+  ) async {
+    final epochMatches =
+        await _useCurrentStore(generation, () => store.meta('epoch')) ==
+        currentEpoch;
+    final signature = _readShareSignature();
+    final storedSignature = signature == null
+        ? null
+        : await _useCurrentStore(
+            generation,
+            () => store.meta('share_signature'),
+          );
+    final signatureChanged = signature != null && storedSignature != signature;
+    if (!epochMatches || signatureChanged) {
+      await _useCurrentStore(generation, () async {
+        await store.clear();
+        if (!epochMatches) await store.setMeta('epoch', currentEpoch);
+        await store.setMeta('commit_id', '0');
+        if (signature != null) {
+          await store.setMeta('share_signature', signature);
+        }
+      });
+      return true;
+    }
+    if (signature != null && storedSignature == null) {
+      // 旧状态文件还没有这个字段：按当前范围补记，不重建。
+      await _useCurrentStore(
+        generation,
+        () => store.setMeta('share_signature', signature),
+      );
+    }
+    return false;
   }
 
   /// 这一次刷新该不该把嵌入写进服务端缓存。

@@ -432,6 +432,8 @@ class ZvecVectorIndex implements VectorIndex {
       'epoch' => _state.epoch,
       'built_at' => _state.builtAt,
       'source_count' => _state.sourceCount,
+      'commit_id' => _state.commitId,
+      'share_signature' => _state.shareSignature,
       _ => null,
     };
   }
@@ -446,6 +448,10 @@ class ZvecVectorIndex implements VectorIndex {
         _state.builtAt = value;
       case 'source_count':
         _state.sourceCount = value;
+      case 'commit_id':
+        _state.commitId = value;
+      case 'share_signature':
+        _state.shareSignature = value;
     }
     _writeState();
   }
@@ -819,6 +825,7 @@ class ZvecVectorIndex implements VectorIndex {
       textVersion: _state.textVersion,
       epoch: _state.epoch,
       sourceCount: '0',
+      shareSignature: _state.shareSignature,
     );
     _writeState();
     if (renamed) {
@@ -844,7 +851,7 @@ class ZvecVectorIndex implements VectorIndex {
   }
 }
 
-/// 状态文件的内容：模型键、维度、文本处理版本与刷新统计。
+/// 状态文件的内容：模型键、维度、文本处理版本、刷新统计与增量刷新位置。
 class _IndexState {
   _IndexState({
     required this.modelKey,
@@ -853,6 +860,8 @@ class _IndexState {
     required this.epoch,
     this.builtAt,
     required this.sourceCount,
+    this.commitId = '0',
+    this.shareSignature,
   });
 
   factory _IndexState.fresh(EmbeddingModelSpec spec) => _IndexState(
@@ -874,6 +883,7 @@ class _IndexState {
         return null;
       }
       final builtAt = value['built_at'];
+      final shareSignature = value['share_signature'];
       return _IndexState(
         modelKey: modelKey,
         dim: dim,
@@ -881,6 +891,10 @@ class _IndexState {
         epoch: '${value['epoch'] ?? '0'}',
         builtAt: builtAt is String ? builtAt : null,
         sourceCount: '${value['source_count'] ?? '0'}',
+        // 旧状态文件没有这两个字段：按“还没有处理过提交、范围未知”读，下一次
+        // 刷新因此按全量扫描重建，不做旧索引迁移（ADR-0001）。
+        commitId: '${value['commit_id'] ?? '0'}',
+        shareSignature: shareSignature is String ? shareSignature : null,
       );
     } catch (_) {
       return null;
@@ -894,6 +908,12 @@ class _IndexState {
   String? builtAt;
   String sourceCount;
 
+  /// 已经处理到的提交编号；`'0'` 表示还没有按提交日志推进过，下一次按全量扫描。
+  String commitId;
+
+  /// 可发送范围签名：分享范围与选定的材料列表拼成，变化时向量集合整份重建。
+  String? shareSignature;
+
   Map<String, Object?> toJson() => {
     'model_key': modelKey,
     'dim': dim,
@@ -901,5 +921,7 @@ class _IndexState {
     'epoch': epoch,
     'built_at': builtAt,
     'source_count': sourceCount,
+    'commit_id': commitId,
+    'share_signature': shareSignature,
   };
 }

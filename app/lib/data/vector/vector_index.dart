@@ -162,7 +162,15 @@ abstract interface class VectorIndex {
   void close();
 
   static void validateMetaKey(String key) {
-    const supportedKeys = {'epoch', 'built_at', 'source_count'};
+    const supportedKeys = {
+      'epoch',
+      'built_at',
+      'source_count',
+      // 已处理的提交编号与可发送范围签名：增量刷新据此只读之后的提交日志，
+      // 范围变化时清空向量集合（ADR-0030 决定第 5 条）。
+      'commit_id',
+      'share_signature',
+    };
     if (!supportedKeys.contains(key)) {
       throw ArgumentError.value(key, 'key', '未知的向量索引元数据键');
     }

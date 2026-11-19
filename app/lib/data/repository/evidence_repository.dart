@@ -594,6 +594,136 @@ class EvidenceRepository {
     }
   }
 
+  /// 按主键读取一条来源的当前版本；这一行已经不是来源时返回空。
+  ///
+  /// 增量刷新从提交日志里拿到的是业务表的主键，要先按主键读回当前行才能判断
+  /// 它是否仍是来源，规则与 [semanticSources] 一致：材料页总在来源里（正文为空
+  /// 时切不出片段，由写入方按删除处理），消息要求角色是用户或助手且正文非空，
+  /// 作答要求已经提交且三段正文至少有一段非空。行被删除或改动之后不再是来源
+  /// 时返回空，调用方按删除处理。
+  Future<SemanticSource?> semanticSourceOfRow(
+    String table,
+    String rowKey,
+  ) async {
+    switch (table) {
+      case 'material_page':
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceMaterialPageSourceById(rowKey).getSingleOrNull(),
+        );
+        if (row == null) return null;
+        return SemanticSource(
+          locator: SemanticLocator(
+            kind: EvidenceKind.materialPage.value,
+            sourceKey: EvidenceId.materialPage(
+              row.materialId,
+              row.pageNo,
+            ).value,
+            materialId: row.materialId,
+            pageNo: row.pageNo,
+          ),
+          content: row.content,
+          sourceVersion: evidenceSourceVersion(row.content, row.updatedAt),
+          updatedAt: optionalDateTime(row.updatedAt),
+        );
+      case 'message':
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceMessageSourceById(rowKey).getSingleOrNull(),
+        );
+        if (row == null) return null;
+        // 正文为空的消息不进入索引：没有可切片的正文，来源键也就没有意义。
+        if (row.content.trim().isEmpty) return null;
+        return SemanticSource(
+          locator: SemanticLocator(
+            kind: EvidenceKind.message.value,
+            sourceKey: EvidenceId.message(rowKey).value,
+            conversationId: row.conversationId,
+            materialId: row.materialId,
+            messageId: rowKey,
+          ),
+          content: row.content,
+          sourceVersion: evidenceSourceVersion(row.content, row.createdAt),
+          updatedAt: optionalDateTime(row.createdAt),
+        );
+      case 'attempt':
+        final row = await _db.selectGenerated(
+          (db) => db.evidenceAttemptSourceById(rowKey).getSingleOrNull(),
+        );
+        if (row == null) return null;
+        final parts = [
+          row.userAnswer,
+          row.solution,
+          row.feedback,
+        ].whereType<String>().where((part) => part.trim().isNotEmpty);
+        final content = parts.join('\n');
+        if (content.trim().isEmpty) return null;
+        return SemanticSource(
+          locator: SemanticLocator(
+            kind: EvidenceKind.answer.value,
+            sourceKey: EvidenceId.attempt(rowKey).value,
+            conversationId: row.conversationId,
+            materialId: row.materialId,
+            attemptId: rowKey,
+          ),
+          content: content,
+          sourceVersion: evidenceSourceVersion(content, row.submittedAt),
+          updatedAt: optionalDateTime(row.submittedAt),
+        );
+      default:
+        return null;
+    }
+  }
+
+  /// 从删除前的整行还原来源定位；字段缺失时返回空。
+  ///
+  /// 删除行在提交日志里保留完整旧行，材料页的来源键由材料编号与页码拼成，不
+  /// 能只按主键还原；消息与作答的来源键就是记录编号，旧行里有编号即可。增量
+  /// 刷新拿到定位之后用空的片段调用 `replaceSource` 显式删除这一条来源。
+  SemanticLocator? semanticLocatorOfRemovedRow(
+    String table,
+    Map<String, Object?> row,
+  ) {
+    switch (table) {
+      case 'material_page':
+        final materialId = row['material_id'];
+        final pageNo = row['page_no'];
+        if (materialId is! String || materialId.isEmpty || pageNo is! int) {
+          return null;
+        }
+        return SemanticLocator(
+          kind: EvidenceKind.materialPage.value,
+          sourceKey: EvidenceId.materialPage(materialId, pageNo).value,
+          materialId: materialId,
+          pageNo: pageNo,
+        );
+      case 'message':
+        final id = row['id'];
+        if (id is! String || id.isEmpty) return null;
+        // 正文为空的消息从来没有进入过索引；旧行里带着正文时按这一条排除，
+        // 没有正文列（只按主键还原）时不排除，交给索引里的存在性判断。
+        final content = row['content'];
+        if (content is String && content.trim().isEmpty) return null;
+        final conversationId = row['conversation_id'];
+        return SemanticLocator(
+          kind: EvidenceKind.message.value,
+          sourceKey: EvidenceId.message(id).value,
+          messageId: id,
+          conversationId: conversationId is String ? conversationId : null,
+        );
+      case 'attempt':
+        final id = row['id'];
+        if (id is! String || id.isEmpty) return null;
+        final conversationId = row['conversation_id'];
+        return SemanticLocator(
+          kind: EvidenceKind.answer.value,
+          sourceKey: EvidenceId.attempt(id).value,
+          attemptId: id,
+          conversationId: conversationId is String ? conversationId : null,
+        );
+      default:
+        return null;
+    }
+  }
+
   /// 这条命中是否仍在给定范围内；范围变化（改归属、换材料）之后不再使用。
   ///
   /// 判断与命中查询共用 [EvidenceScopeRule] 这一份规则：这里把表达式放进生成

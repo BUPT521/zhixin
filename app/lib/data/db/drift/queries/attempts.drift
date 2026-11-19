@@ -197,6 +197,18 @@ FROM attempt
 WHERE id = :attemptId AND submitted_at IS NOT NULL
 LIMIT 1;
 
+-- 增量刷新：按编号读一次已提交作答的当前内容与所属讨论，用来还原来源键。
+--
+-- 未提交的草稿不算来源，与全量读取的口径一致；作答被删除或还没有提交时查不到
+-- 结果，调用方按删除处理。
+evidenceAttemptSourceById:
+SELECT a.user_answer, a.solution, a.feedback, a.submitted_at,
+  a.conversation_id, c.material_id
+FROM attempt a
+JOIN conversation c ON c.id = a.conversation_id
+WHERE a.id = :attemptId AND a.submitted_at IS NOT NULL
+LIMIT 1;
+
 -- 沿同一道题、同一份材料页或用户选定的目标找最近的已提交作答。
 --
 -- 四条线索都传空表示不限；`from`、`to` 是显式时间条件。先按提交时间倒序取

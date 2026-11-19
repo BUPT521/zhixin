@@ -54,8 +54,10 @@ import 'data/db/write_transactions.dart';
 import 'data/diagnostics/crash_log.dart';
 import 'data/revisions/asset_store.dart';
 import 'data/revisions/revision_engine.dart';
+import 'data/revisions/revision_models.dart';
 import 'data/revisions/revision_package.dart';
 import 'data/revisions/revision_service.dart';
+import 'data/revisions/semantic_change.dart';
 import 'data/repository/assessment_repository.dart';
 import 'data/repository/attempt_repository.dart';
 import 'data/repository/conversation_repository.dart';
@@ -363,7 +365,9 @@ class AppScopeState extends State<AppScope> {
   /// 检索索引按需创建；没有配置嵌入来源时只建全文索引。
   ///
   /// 向量缓存只对已开始同步的账号写入：这里每次都读一次账号状态，登录且自动
-  /// 同步开启时刷新才在嵌入请求上声明写缓存（ADR-0030 决定第 3 条）。
+  /// 同步开启时刷新才在嵌入请求上声明写缓存（ADR-0030 决定第 3 条）。增量刷新
+  /// 由提交日志驱动：`HEAD`、来源行变化与可发送范围签名都在刷新时读取，回调在
+  /// 稍后调用，闭包对已经创建的字段只读，不会与这里的初始化互相等待。
   SearchIndexService get _searchIndex =>
       _searchIndexService ??= SearchIndexService(
         repository: _evidenceRepository,
@@ -376,7 +380,52 @@ class AppScopeState extends State<AppScope> {
           final account = await _account.snapshot();
           return account.signedIn && account.autoSync;
         },
+        headCommit: () async => await _engine.headId(_connection!),
+        semanticChanges: _semanticChangesAfter,
+        shareSignature: _embeddingShareSignature,
       );
+
+  /// 读出某个提交之后材料页、消息与作答的净变化。
+  ///
+  /// 起点提交已经被历史裁剪时返回 `usable: false`，索引退回全量扫描；删除行
+  /// 把 `before` 还原成 SQLite 值交给索引，材料页因此能按材料编号与页码还原
+  /// 来源键（ADR-0030 决定第 5 条）。
+  Future<SemanticChangeWindow> _semanticChangesAfter(int after) async {
+    final connection = _connection;
+    if (connection == null) return SemanticChangeWindow.unavailable;
+    if (await _engine.commitById(connection, after) == null) {
+      return SemanticChangeWindow.unavailable;
+    }
+    final changes = await _engine.changesAfter(
+      connection,
+      after,
+      tables: _searchIndexSourceTables,
+    );
+    return SemanticChangeWindow(
+      changes: [
+        for (final change in changes)
+          SemanticRowChange(
+            table: change.table,
+            rowKey: change.rowKey,
+            removed: change.isDelete,
+            removedRow: change.isDelete && change.before != null
+                ? sqliteRow(change.before!)
+                : null,
+          ),
+      ],
+    );
+  }
+
+  /// 可发送范围的签名：分享范围与材料列表一起决定哪些来源可以发送原文。
+  ///
+  /// 没有配置嵌入来源时是 `off`；材料列表排序之后拼接，避免同一组材料因为
+  /// 顺序不同被当成范围变化。范围变小时旧向量必须消失，向量集合整份重建。
+  String _embeddingShareSignature() {
+    final config = _embeddingSettings.current;
+    if (config == null) return 'off';
+    final materials = [...config.materialIds]..sort();
+    return '${config.shareScope.value}|${materials.join(',')}';
+  }
 
   late final CrossSessionService _crossSession = CrossSessionService(
     repository: _evidenceRepository,

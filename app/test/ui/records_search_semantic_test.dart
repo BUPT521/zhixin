@@ -323,10 +323,15 @@ void main() {
         content: '线性无关的行向量个数',
       );
       final next = await scope!.library.searchIndex.refresh();
-      expect(next.embedded, 1);
-      expect(next.skipped, 1);
+      // 增量刷新只处理提交日志里变化涉及到的来源：这一次最多只有新消息一条。
+      // 安静期的后台刷新可能已经先跑完并处理了这条变化，所以 total 允许为 0；
+      // 整份重建会重新检查两条来源、把旧的那条计入 skipped，这里都不出现。
+      expect(next.embedded, lessThanOrEqualTo(1));
+      expect(next.total, lessThanOrEqualTo(1));
+      expect(next.skipped, 0);
       // 等安静期的后台刷新跑完，收尾时没有仍在运行的索引操作。
       await Future<void>.delayed(const Duration(seconds: 5));
+      expect((await scope!.library.searchIndex.stats()).sources, 2);
     });
     await drain(tester);
   }, skip: _skipWithoutZvec != null);
@@ -356,11 +361,12 @@ void main() {
         role: MessageRole.user,
         content: '线性无关的行向量个数',
       );
-      // 不手动刷新：等安静期之后的后台刷新把新来源写进索引。
+      // 不手动刷新：等安静期之后的后台刷新把新来源写进索引。期间可能还排了
+      // 一次补齐刷新，最后一条结果不一定有写入，条数与来源数是稳定依据。
       await Future<void>.delayed(const Duration(seconds: 5));
       final stats = await scope!.library.searchIndex.stats();
       expect(stats.entries, 2);
-      expect(stats.lastRefresh?.embedded, 1);
+      expect(stats.lastRefresh, isNotNull);
     });
     await drain(tester);
   }, skip: _skipWithoutZvec != null);

@@ -14,7 +14,11 @@ class MemoryVectorIndex implements VectorIndex {
   @override
   final EmbeddingModelSpec spec;
 
-  final _metadata = <String, String>{'epoch': '0', 'source_count': '0'};
+  final _metadata = <String, String>{
+    'epoch': '0',
+    'source_count': '0',
+    'commit_id': '0',
+  };
   final _sources = <String, _MemorySource>{};
 
   bool get _textOnly => spec.id == textOnlyModelSpec.id;
@@ -204,6 +208,8 @@ class MemoryVectorIndex implements VectorIndex {
     _sources.clear();
     _metadata.remove('built_at');
     _metadata['source_count'] = '0';
+    // 清空之后没有处理过任何提交，下一次刷新按全量扫描重建。
+    _metadata['commit_id'] = '0';
   }
 
   @override

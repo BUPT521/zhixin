@@ -349,6 +349,38 @@ class RevisionEngine {
     return rows.map(RevisionChange.fromRow).toList(growable: false);
   }
 
+  /// 编号大于 [after] 的行级变化，按提交与序号升序；[tables] 给出时只取这些表。
+  ///
+  /// 检索索引的增量刷新用这个方法：已处理提交之后的改动就是需要重新解析来源键
+  /// 的行，按提交编号与序号排好序之后，删除与重建的先后不影响最终按来源键去重
+  /// 的结果。只筛选索引关心的表，其他业务表的提交不会让索引做多余的工作。
+  Future<List<RevisionChange>> changesAfter(
+    RawExecutor executor,
+    int after, {
+    Set<String>? tables,
+    int? limit,
+  }) async {
+    final filter = tables?.toList(growable: false);
+    if (filter != null && filter.isEmpty) return const [];
+    final where = StringBuffer('commit_id > ?');
+    final whereArgs = <Object?>[after];
+    if (filter != null) {
+      where.write(
+        ' AND table_name IN (${List.filled(filter.length, '?').join(', ')})',
+      );
+      whereArgs.addAll(filter);
+    }
+    final rows = await selectRows(
+      executor,
+      'revision_change',
+      where: where.toString(),
+      whereArgs: whereArgs,
+      orderBy: 'commit_id, seq',
+      limit: limit,
+    );
+    return rows.map(RevisionChange.fromRow).toList(growable: false);
+  }
+
   /// 当前命令在事务里分配的提交编号；没有进行中的命令时为空。
   Future<int?> activeCommit(RawExecutor executor) async {
     final rows = await selectRows(

@@ -70,3 +70,13 @@ SELECT content, updated_at
 FROM material_page
 WHERE material_id = :materialId AND page_no = :pageNo
 LIMIT 1;
+
+-- 增量刷新：按页编号读一页的来源定位与当前内容。
+--
+-- 提交日志里材料页的主键是页编号，来源键却由材料编号与页码拼成，因此这里要
+-- 把两者一起读回来；这一行已经被删除时没有结果，调用方按删除处理。
+evidenceMaterialPageSourceById:
+SELECT material_id, page_no, content, updated_at
+FROM material_page
+WHERE id = :pageId
+LIMIT 1;

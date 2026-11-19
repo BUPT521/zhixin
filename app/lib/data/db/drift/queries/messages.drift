@@ -86,3 +86,15 @@ SELECT content, created_at
 FROM message
 WHERE id = :messageId
 LIMIT 1;
+
+-- 增量刷新：按编号读一条消息的当前内容与所属讨论，用来还原来源键。
+--
+-- 消息的来源键只有记录编号，材料归属来自所属讨论；角色与全量读取一样只算
+-- 用户与助手，讨论被删除时消息随外键一起删除，这里查不到结果，调用方按删除
+-- 处理。
+evidenceMessageSourceById:
+SELECT m.content, m.created_at, m.conversation_id, c.material_id
+FROM message m
+JOIN conversation c ON c.id = m.conversation_id
+WHERE m.id = :messageId AND m.role IN ('user', 'assistant')
+LIMIT 1;

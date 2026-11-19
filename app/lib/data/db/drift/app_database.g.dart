@@ -13116,6 +13116,23 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<EvidenceMessageSourceByIdResult> evidenceMessageSourceById(
+    String messageId,
+  ) {
+    return customSelect(
+      'SELECT m.content, m.created_at, m.conversation_id, c.material_id FROM message AS m JOIN conversation AS c ON c.id = m.conversation_id WHERE m.id = ?1 AND m.role IN (\'user\', \'assistant\') LIMIT 1',
+      variables: [Variable<String>(messageId)],
+      readsFrom: {this.messages, this.conversations},
+    ).map(
+      (QueryRow row) => EvidenceMessageSourceByIdResult(
+        content: row.read<String>('content'),
+        createdAt: row.read<String>('created_at'),
+        conversationId: row.read<String>('conversation_id'),
+        materialId: row.readNullable<String>('material_id'),
+      ),
+    );
+  }
+
   Selectable<MemoryRow> listMemories(int activeOnly) {
     return customSelect(
       'SELECT * FROM memory WHERE(?1 = 0 OR status = \'active\')ORDER BY status, updated_at DESC, id DESC',
@@ -13495,6 +13512,22 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       readsFrom: {this.materialPages},
     ).map(
       (QueryRow row) => EvidenceMaterialPageSourceResult(
+        content: row.read<String>('content'),
+        updatedAt: row.read<String>('updated_at'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceMaterialPageSourceByIdResult>
+  evidenceMaterialPageSourceById(String pageId) {
+    return customSelect(
+      'SELECT material_id, page_no, content, updated_at FROM material_page WHERE id = ?1 LIMIT 1',
+      variables: [Variable<String>(pageId)],
+      readsFrom: {this.materialPages},
+    ).map(
+      (QueryRow row) => EvidenceMaterialPageSourceByIdResult(
+        materialId: row.read<String>('material_id'),
+        pageNo: row.read<int>('page_no'),
         content: row.read<String>('content'),
         updatedAt: row.read<String>('updated_at'),
       ),
@@ -14193,6 +14226,25 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         solution: row.readNullable<String>('solution'),
         feedback: row.readNullable<String>('feedback'),
         submittedAt: row.readNullable<String>('submitted_at'),
+      ),
+    );
+  }
+
+  Selectable<EvidenceAttemptSourceByIdResult> evidenceAttemptSourceById(
+    String attemptId,
+  ) {
+    return customSelect(
+      'SELECT a.user_answer, a.solution, a.feedback, a.submitted_at, a.conversation_id, c.material_id FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.id = ?1 AND a.submitted_at IS NOT NULL LIMIT 1',
+      variables: [Variable<String>(attemptId)],
+      readsFrom: {this.attempts, this.conversations},
+    ).map(
+      (QueryRow row) => EvidenceAttemptSourceByIdResult(
+        userAnswer: row.readNullable<String>('user_answer'),
+        solution: row.readNullable<String>('solution'),
+        feedback: row.readNullable<String>('feedback'),
+        submittedAt: row.readNullable<String>('submitted_at'),
+        conversationId: row.read<String>('conversation_id'),
+        materialId: row.readNullable<String>('material_id'),
       ),
     );
   }
@@ -15243,6 +15295,19 @@ class EvidenceMessageSourceResult {
   EvidenceMessageSourceResult({required this.content, required this.createdAt});
 }
 
+class EvidenceMessageSourceByIdResult {
+  final String content;
+  final String createdAt;
+  final String conversationId;
+  final String? materialId;
+  EvidenceMessageSourceByIdResult({
+    required this.content,
+    required this.createdAt,
+    required this.conversationId,
+    this.materialId,
+  });
+}
+
 class ActiveDifficultiesResult {
   final String id;
   final String content;
@@ -15348,6 +15413,19 @@ class EvidenceMaterialPageSourceResult {
   final String content;
   final String updatedAt;
   EvidenceMaterialPageSourceResult({
+    required this.content,
+    required this.updatedAt,
+  });
+}
+
+class EvidenceMaterialPageSourceByIdResult {
+  final String materialId;
+  final int pageNo;
+  final String content;
+  final String updatedAt;
+  EvidenceMaterialPageSourceByIdResult({
+    required this.materialId,
+    required this.pageNo,
     required this.content,
     required this.updatedAt,
   });
@@ -15696,6 +15774,23 @@ class EvidenceAnswerSourceResult {
     this.solution,
     this.feedback,
     this.submittedAt,
+  });
+}
+
+class EvidenceAttemptSourceByIdResult {
+  final String? userAnswer;
+  final String? solution;
+  final String? feedback;
+  final String? submittedAt;
+  final String conversationId;
+  final String? materialId;
+  EvidenceAttemptSourceByIdResult({
+    this.userAnswer,
+    this.solution,
+    this.feedback,
+    this.submittedAt,
+    required this.conversationId,
+    this.materialId,
   });
 }
 
