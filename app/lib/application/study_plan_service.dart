@@ -17,6 +17,7 @@ import 'buddy_answer.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'service_runtime.dart';
+import 'command_ids.dart';
 
 /// 一份学习计划与它的步骤。
 class StudyPlanView {
@@ -443,25 +444,40 @@ class StudyPlanService {
     String planId,
     String stepId,
     PlanItemStatus status,
-  ) => transactions.run((txn) async {
-    await plans.setStepStatus(
-      stepId,
-      status,
-      expectedPlanId: planId,
-      transaction: txn,
-    );
-    return txn.result();
-  }, label: '更新学习步骤');
+  ) => transactions.run(
+    (txn) async {
+      await plans.setStepStatus(
+        stepId,
+        status,
+        expectedPlanId: planId,
+        transaction: txn,
+      );
+      return txn.result();
+    },
+    label: '更新学习步骤',
+    requestId: commandId('set-step-status', [planId, stepId, status.value]),
+    onDuplicate: (commit) => WriteResult.committed(commit.id),
+  );
 
-  Future<WriteResult> pause(String planId) => transactions.run((txn) async {
-    await plans.setStatus(planId, StudyPlanStatus.paused, transaction: txn);
-    return txn.result();
-  }, label: '暂停学习计划');
+  Future<WriteResult> pause(String planId) => transactions.run(
+    (txn) async {
+      await plans.setStatus(planId, StudyPlanStatus.paused, transaction: txn);
+      return txn.result();
+    },
+    label: '暂停学习计划',
+    requestId: commandId('pause-study-plan', [planId]),
+    onDuplicate: (commit) => WriteResult.committed(commit.id),
+  );
 
-  Future<WriteResult> resume(String planId) => transactions.run((txn) async {
-    await plans.setStatus(planId, StudyPlanStatus.active, transaction: txn);
-    return txn.result();
-  }, label: '继续学习计划');
+  Future<WriteResult> resume(String planId) => transactions.run(
+    (txn) async {
+      await plans.setStatus(planId, StudyPlanStatus.active, transaction: txn);
+      return txn.result();
+    },
+    label: '继续学习计划',
+    requestId: commandId('resume-study-plan', [planId]),
+    onDuplicate: (commit) => WriteResult.committed(commit.id),
+  );
 
   /// 从当前步骤打开一次讨论；正式学习会把这一步标为进行中。
   Future<String> startAtCurrent(

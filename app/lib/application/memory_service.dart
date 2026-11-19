@@ -7,6 +7,7 @@ import '../domain/models/memory.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
 import 'service_runtime.dart';
+import 'command_ids.dart';
 
 /// 记忆页的一屏：记忆条目与适用范围的名字。
 ///
@@ -262,24 +263,34 @@ class MemoryService {
     required String content,
     DateTime? validUntil,
   }) {
-    return transactions.run((txn) async {
-      await repository.create(
-        kind: kind,
-        content: content,
-        sourceKind: MemorySourceKind.user,
-        validUntil: validUntil,
-        transaction: txn,
-      );
-      return txn.result();
-    }, label: addMemoryAction);
+    return transactions.run(
+      (txn) async {
+        await repository.create(
+          kind: kind,
+          content: content,
+          sourceKind: MemorySourceKind.user,
+          validUntil: validUntil,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: addMemoryAction,
+      requestId: commandId('add-memory', [kind.value, content, validUntil]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 删除是软删除；撤销时按反向规则把状态改回 active。
   Future<WriteResult> delete(String id) {
-    return transactions.run((txn) async {
-      await repository.delete(id, transaction: txn);
-      return txn.result();
-    }, label: deleteMemoryAction);
+    return transactions.run(
+      (txn) async {
+        await repository.delete(id, transaction: txn);
+        return txn.result();
+      },
+      label: deleteMemoryAction,
+      requestId: commandId('delete-memory', [id]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   bool _sameValidUntil(DateTime? left, DateTime? right) {

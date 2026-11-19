@@ -536,4 +536,43 @@ void main() {
     expect(undone.applied, isTrue, reason: undone.message);
     expect((await schedule.blockById(id))!.startAt.hour, 9);
   });
+
+  test('同一动作重试沿用原提交，不再写一遍', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final schedule = ScheduleRepository(rig.db);
+    final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
+    final service = _service(rig, policy: policy);
+
+    final first = await service.addGoal(title: '重试不重复', scopeText: '整章');
+    final head = await rig.engine.headId(rig.raw);
+    // 重试走同一个编号：返回原提交，目标只留一条。
+    final retry = await service.addGoal(title: '重试不重复', scopeText: '整章');
+    expect(retry.commitId, first.commitId);
+    expect(await rig.engine.headId(rig.raw), head);
+    expect(
+      (await tasks.goals()).where((goal) => goal.title == '重试不重复'),
+      hasLength(1),
+    );
+
+    final item = await tasks.createItem(title: '改状态的一项');
+    final done = await service.setStatus(item, PlanItemStatus.done);
+    expect(done.changed, isTrue);
+    final doneHead = await rig.engine.headId(rig.raw);
+    // 状态迁移不用编号去重，重试由事务内的状态比对跳过。
+    final doneRetry = await service.setStatus(item, PlanItemStatus.done);
+    expect(doneRetry.changed, isFalse);
+    expect(await rig.engine.headId(rig.raw), doneHead);
+
+    final block = await schedule.addBlock(
+      planItemId: item,
+      start: DateTime(2026, 11, 11, 9),
+      end: DateTime(2026, 11, 11, 10),
+    );
+    final cancel = await service.deleteBlock(block);
+    final cancelRetry = await service.deleteBlock(block);
+    expect(cancelRetry.commitId, cancel.commitId);
+    expect(await schedule.blockById(block), isNull);
+  });
 }

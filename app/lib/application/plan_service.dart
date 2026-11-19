@@ -323,35 +323,50 @@ class PlanService {
     bool cancelFlexibleFuture = false,
   }) {
     final now = runtime.policy.now;
-    return transactions.run((txn) async {
-      if (cancelFlexibleFuture) {
-        final blocks = await schedule.flexibleFutureBlocksForGoal(
-          id,
-          now,
-          transaction: txn,
-        );
-        await schedule.cancelBlocks(
-          blocks.map((block) => block.id),
-          transaction: txn,
-        );
-      }
-      await tasks.pauseGoal(id, transaction: txn);
-      return txn.result();
-    }, label: '暂停目标');
+    return transactions.run(
+      (txn) async {
+        if (cancelFlexibleFuture) {
+          final blocks = await schedule.flexibleFutureBlocksForGoal(
+            id,
+            now,
+            transaction: txn,
+          );
+          await schedule.cancelBlocks(
+            blocks.map((block) => block.id),
+            transaction: txn,
+          );
+        }
+        await tasks.pauseGoal(id, transaction: txn);
+        return txn.result();
+      },
+      label: '暂停目标',
+      requestId: commandId('pause-goal', [id, cancelFlexibleFuture]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   Future<WriteResult> resumeGoal(String id) {
-    return transactions.run((txn) async {
-      await tasks.resumeGoal(id, transaction: txn);
-      return txn.result();
-    }, label: '恢复目标');
+    return transactions.run(
+      (txn) async {
+        await tasks.resumeGoal(id, transaction: txn);
+        return txn.result();
+      },
+      label: '恢复目标',
+      requestId: commandId('resume-goal', [id]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   Future<WriteResult> closeGoal(String id) {
-    return transactions.run((txn) async {
-      await tasks.closeGoal(id, transaction: txn);
-      return txn.result();
-    }, label: '结束目标');
+    return transactions.run(
+      (txn) async {
+        await tasks.closeGoal(id, transaction: txn);
+        return txn.result();
+      },
+      label: '结束目标',
+      requestId: commandId('close-goal', [id]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 目标下未开始的弹性安排数量，暂停前用于说明会取消什么。
@@ -367,7 +382,8 @@ class PlanService {
   /// 同一按钮连点两次只形成一条提交。
   ///
   /// 状态迁移不用请求编号去重：同一个目标状态可能被多次进入（完成后改回、
-  /// 再完成），按编号去重会把后续动作误判成重试。
+  /// 再完成），按编号去重会把后续动作误判成重试；重试的判定交给事务内的
+  /// 状态比对。
   Future<WriteResult> setStatus(String id, PlanItemStatus status) =>
       transactions.run((txn) async {
         final current = await tasks.byId(id, transaction: txn);
@@ -379,11 +395,15 @@ class PlanService {
         return txn.result();
       }, label: '更新事项状态');
 
-  Future<WriteResult> setPriority(String id, int priority) =>
-      transactions.run((txn) async {
-        await tasks.setPriority(id, priority, transaction: txn);
-        return txn.result();
-      }, label: '调整事项优先级');
+  Future<WriteResult> setPriority(String id, int priority) => transactions.run(
+    (txn) async {
+      await tasks.setPriority(id, priority, transaction: txn);
+      return txn.result();
+    },
+    label: '调整事项优先级',
+    requestId: commandId('set-item-priority', [id, priority]),
+    onDuplicate: (commit) => WriteResult.committed(commit.id),
+  );
 
   /// 为一项安排一次时间；返回提交编号，界面据此提供撤销。
   ///
@@ -418,10 +438,15 @@ class PlanService {
     required DateTime start,
     required DateTime end,
   }) {
-    return transactions.run((txn) async {
-      await schedule.moveBlock(id, start: start, end: end, transaction: txn);
-      return txn.result();
-    }, label: '调整预约时间');
+    return transactions.run(
+      (txn) async {
+        await schedule.moveBlock(id, start: start, end: end, transaction: txn);
+        return txn.result();
+      },
+      label: '调整预约时间',
+      requestId: commandId('move-block', [id, start, end]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 一次业务动作调整多条预约；要么全部写入，要么整组保持原样。
@@ -436,29 +461,52 @@ class PlanService {
       },
       label: '调整多个预约',
       actor: 'user',
+      requestId: commandId('reschedule-group', [
+        for (final adjustment in adjustments) ...[
+          adjustment.id,
+          adjustment.start,
+          adjustment.end,
+        ],
+      ]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
 
   /// 取消、恢复、固定与删除预约各自形成一次可撤销的提交。
   Future<WriteResult> setBlockStatus(String id, ScheduleBlockStatus status) {
-    return transactions.run((txn) async {
-      await schedule.setBlockStatus(id, status, transaction: txn);
-      return txn.result();
-    }, label: '修改预约状态');
+    return transactions.run(
+      (txn) async {
+        await schedule.setBlockStatus(id, status, transaction: txn);
+        return txn.result();
+      },
+      label: '修改预约状态',
+      requestId: commandId('set-block-status', [id, status.value]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   Future<WriteResult> deleteBlock(String id) {
-    return transactions.run((txn) async {
-      await schedule.deleteBlock(id, transaction: txn);
-      return txn.result();
-    }, label: '删除预约');
+    return transactions.run(
+      (txn) async {
+        await schedule.deleteBlock(id, transaction: txn);
+        return txn.result();
+      },
+      label: '删除预约',
+      requestId: commandId('delete-block', [id]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   Future<WriteResult> setBlockLocked(String id, bool locked) {
-    return transactions.run((txn) async {
-      await schedule.setLocked(id, locked, transaction: txn);
-      return txn.result();
-    }, label: locked ? '固定这次预约' : '改为弹性预约');
+    return transactions.run(
+      (txn) async {
+        await schedule.setLocked(id, locked, transaction: txn);
+        return txn.result();
+      },
+      label: locked ? '固定这次预约' : '改为弹性预约',
+      requestId: commandId('set-block-locked', [id, locked]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   Future<WriteResult> addTimetable({
@@ -494,10 +542,15 @@ class PlanService {
 
   /// 删除一节课；返回写结果，提示条据此提供撤销。
   Future<WriteResult> deleteTimetable(String id) {
-    return transactions.run((txn) async {
-      await schedule.deleteTimetable(id, transaction: txn);
-      return txn.result();
-    }, label: '删除课表');
+    return transactions.run(
+      (txn) async {
+        await schedule.deleteTimetable(id, transaction: txn);
+        return txn.result();
+      },
+      label: '删除课表',
+      requestId: commandId('delete-timetable', [id]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 当前时刻之后最近的一个时间块，给首页“接下来”用。

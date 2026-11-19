@@ -13,6 +13,7 @@ import '../domain/rules/day_key.dart';
 import '../domain/rules/time_policy.dart';
 import 'service_runtime.dart';
 import 'time_policy_controller.dart';
+import 'command_ids.dart';
 
 /// 设置页从库里读到的设置项：每日截止小时与拍照方式。
 ///
@@ -56,7 +57,7 @@ class SettingsService {
   /// 拍照方式的设置键；值为 '1' 表示用系统相机，其余用应用内相机。
   static const String systemCameraKey = 'capture_system_camera';
 
-  Future<LlmConfig?> config() => llmStore.read();
+  Future<Result<LlmConfig?>> config() => llmStore.read();
 
   /// 保存配置；选择知新服务时先确认已经登录，令牌本身不写进本机配置。
   Future<void> saveConfig(LlmConfig config) async {
@@ -87,10 +88,19 @@ class SettingsService {
   /// 重新读取，设置页与归属日立刻使用新值。
   Future<WriteResult> saveCutoffHour(int hour) async {
     requireDayCutoffHour(hour);
-    final result = await transactions.run((txn) async {
-      await settings.setCutoffHour(hour, runtime.policy.now, transaction: txn);
-      return txn.result();
-    }, label: changeCutoffHourAction);
+    final result = await transactions.run(
+      (txn) async {
+        await settings.setCutoffHour(
+          hour,
+          runtime.policy.now,
+          transaction: txn,
+        );
+        return txn.result();
+      },
+      label: changeCutoffHourAction,
+      requestId: commandId('set-cutoff-hour', [hour]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
     await timePolicy.refresh();
     return result;
   }

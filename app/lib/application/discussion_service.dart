@@ -776,10 +776,15 @@ class DiscussionService {
       final goal = await tasks.goalById(goalId);
       if (goal == null) throw ArgumentError('未找到这个目标');
     }
-    return transactions.run((txn) async {
-      await conversations.setGoal(conversationId, goalId);
-      return txn.result();
-    }, label: '修改讨论归属');
+    return transactions.run(
+      (txn) async {
+        await conversations.setGoal(conversationId, goalId);
+        return txn.result();
+      },
+      label: '修改讨论归属',
+      requestId: commandId('set-conversation-goal', [conversationId, goalId]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 这次讨论依据的材料与页码；传空表示不再带入材料。
@@ -794,29 +799,51 @@ class DiscussionService {
           : await materials.page(materialId, pageNo);
       if (page == null) throw ArgumentError('未找到这份材料页面');
     }
-    return transactions.run((txn) async {
-      await conversations.setMaterial(
+    return transactions.run(
+      (txn) async {
+        await conversations.setMaterial(
+          conversationId,
+          materialId: materialId,
+          pageNo: pageNo,
+        );
+        return txn.result();
+      },
+      label: '修改讨论材料',
+      requestId: commandId('set-conversation-material', [
         conversationId,
-        materialId: materialId,
-        pageNo: pageNo,
-      );
-      return txn.result();
-    }, label: '修改讨论材料');
+        materialId,
+        pageNo,
+      ]),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
   }
 
   /// 结束这次求助；记录保留，之后可以从“记录”重新打开。
-  Future<WriteResult> end(String conversationId) =>
-      transactions.run((txn) async {
-        await conversations.end(conversationId);
-        return txn.result();
-      }, label: '结束求助');
+  Future<WriteResult> end(String conversationId) => transactions.run(
+    (txn) async {
+      await conversations.end(conversationId);
+      return txn.result();
+    },
+    label: '结束求助',
+    requestId: commandId('end-conversation', [conversationId]),
+    onDuplicate: (commit) => WriteResult.committed(commit.id),
+  );
 
   /// 清空一条讨论：消息与讨论记录一起删掉，题目、尝试与记忆不受影响。
   Future<WriteResult> clear(String conversationId) async {
-    final done = await transactions.run((txn) async {
-      final paths = await conversations.clear(conversationId, transaction: txn);
-      return (paths: paths, result: await txn.result());
-    }, label: '清空学习记录');
+    final done = await transactions.run(
+      (txn) async {
+        final paths = await conversations.clear(
+          conversationId,
+          transaction: txn,
+        );
+        return (paths: paths, result: await txn.result());
+      },
+      label: '清空学习记录',
+      requestId: commandId('clear-conversation', [conversationId]),
+      onDuplicate: (commit) =>
+          (paths: const <String>[], result: WriteResult.committed(commit.id)),
+    );
     await cleanupAttachmentPaths(done.paths);
     return done.result;
   }
