@@ -1,0 +1,150 @@
+name: 部署服务端
+
+# main 上 server/ 的改动通过与 CI 相同的检查之后，交叉编译 linux/amd64 可执行
+# 文件，用专用部署账号上传、重启并核对 /readyz；核对失败时换回上一份文件。
+# 取舍与代价见 ADR-0032，服务器上的账号、secrets 与手工步骤见 server/运维手册.md
+# 的「部署与凭据」一节。表结构与 api.env 的变化不在这条流水线里执行。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/deploy-server.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 部署串行：同一时间只跑一次，后一次等前一次结束，避免两个版本互相覆盖。
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 服务端检查与测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: zhixin_test
+          POSTGRES_DB: zhixin_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U zhixin_test -d zhixin_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go mod tidy -diff
+      - run: go vet ./...
+      - run: go test -race ./...
+        env:
+          ZHIXIN_TEST_DATABASE_URL: postgresql://zhixin_test@localhost:${{ job.services.postgres.ports[5432] }}/zhixin_test?sslmode=disable
+
+  deploy:
+    name: 构建并部署
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: 交叉编译 linux/amd64
+        working-directory: server
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o zhixin-api ./cmd/zhixin-api
+
+      # 私钥只放在 DEPLOY_SSH_KEY；主机指纹固定成 known_hosts，不依赖 Runner
+      # 首次连接时自动信任。两个 secret 为空时这里直接失败，不会带着默认信任部署。
+      - name: 准备 SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::缺少 DEPLOY_SSH_KEY 或 DEPLOY_KNOWN_HOSTS，配置方法见 server/运维手册.md 的「部署与凭据」一节"
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      # 远端只做四件事：备份当前文件、换上新文件、重启、轮询 /readyz。轮询不
+      # 通过就换回备份并重启，工作流标红；成功后 Runner 再核对一次公网入口。
+      - name: 上传并切换
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SHA=${GIT_SHA:0:12}
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes \
+            server/zhixin-api "$DEPLOY_USER@$DEPLOY_HOST:/opt/zhixin/bin/zhixin-api.new-$SHA"
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- $SHA" <<'REMOTE'
+          set -euo pipefail
+          SHA="$1"
+          BIN=/opt/zhixin/bin
+          cd "$BIN"
+          cp -p zhixin-api zhixin-api.prev
+          chmod 0755 "zhixin-api.new-$SHA"
+          mv -f "zhixin-api.new-$SHA" zhixin-api
+          sudo /usr/bin/systemctl restart zhixin-api
+          ready=0
+          for _ in $(seq 1 20); do
+            if curl -fsS -m 2 http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            echo "::error::部署后 /readyz 没有通过，换回上一份可执行文件"
+            mv -f zhixin-api.prev zhixin-api
+            sudo /usr/bin/systemctl restart zhixin-api
+            journalctl -u zhixin-api -n 20 -o cat --no-pager || true
+            exit 1
+          fi
+          echo "已切换到 $SHA"
+          REMOTE
+
+      - name: 核对公网入口
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 2 --retry-connrefused \
+            https://zhixin.chensiyuan.work/readyz | tee /tmp/readyz.json
+          {
+            echo "### 服务端部署"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 提交 | \`${GITHUB_SHA:0:7}\` |"
+            echo "| 就绪 | \`$(cat /tmp/readyz.json)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
