@@ -246,7 +246,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
         final theme = context.zhixin;
         final body = plan == null
             ? loading && _notice == null
-                  ? const SizedBox(height: 240, child: PageLoading())
+                  ? const ListSkeleton(rows: 2, rowHeight: 96)
                   : _failureView(theme)
             : _planView(theme, plan);
         return Padding(

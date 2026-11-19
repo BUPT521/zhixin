@@ -502,7 +502,12 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
 
   Widget _resultsArea(ZhixinTheme theme, PlanSearchPageResult? results) {
     if (results == null) {
-      if (_loading) return const PageLoading();
+      if (_loading) {
+        return ListSkeleton(
+          rows: 3,
+          padding: theme.space.pageInsets(top: theme.space.xs),
+        );
+      }
       return SingleChildScrollView(
         child: EmptyState(
           icon: FLucideIcons.search,

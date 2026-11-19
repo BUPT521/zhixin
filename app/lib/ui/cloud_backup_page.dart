@@ -225,10 +225,15 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     return DetailScaffold(
       header: const ZhixinHeader(title: Text('云端备份'), showBack: true),
+      // 首读期间保留标题栏，内容用与卡片同高的骨架占位。
       child: _loading
-          ? const PageLoading()
+          ? ListView(
+              padding: theme.space.pageInsets(bottom: 96),
+              children: const [ListSkeleton(rows: 3, rowHeight: 96)],
+            )
           : _signedIn
           ? _content(context)
           : _signedOut(context),

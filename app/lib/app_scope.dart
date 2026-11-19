@@ -789,7 +789,7 @@ class AppScopeState extends State<AppScope> {
           );
         }
         if (snapshot.connectionState != ConnectionState.done) {
-          // 启动时的等待与各页首读共用一个圈，尺寸只在这里定一次。
+          // 启动时还没有页面可以摆骨架，用整屏等待的圈；尺寸只在 PageLoading 里定。
           return const forui.FScaffold(child: PageLoading());
         }
         return _AppScopeData(state: this, child: widget.child);

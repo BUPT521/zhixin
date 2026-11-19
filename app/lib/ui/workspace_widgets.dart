@@ -429,11 +429,14 @@ class LoadMoreFooter extends StatelessWidget {
   );
 }
 
-/// 整页首读时的等待指示；列表页用 [ListSkeleton]，其余页面用这一个。
+/// 没有版面可以占位的等待所用的圈：应用启动、相机预览与照片解码。
+///
+/// 页面首读一律用 [ListSkeleton]，读完原位换成内容；只有上面这三处等待的
+/// 内容还没有形状，才居中转圈。
 ///
 /// 圈定在 [diameter]：Forui 的 `FCircularProgress` 默认取正文字号，手机上只有
 /// 18，看上去只是一个图标，读不出“正在读取”。按钮、列表行与照片上的指示仍用
-/// `sm`、`xs`，大小跟着所在控件走，只有整页等待这一处放大并取主色。
+/// `sm`、`xs`，大小跟着所在控件走，只有这类整屏等待放大并取主色。
 class PageLoading extends StatelessWidget {
   const PageLoading({super.key});
 

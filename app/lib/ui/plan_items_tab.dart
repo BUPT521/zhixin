@@ -344,7 +344,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
             if (_loadingDone) {
               return const Padding(
                 padding: EdgeInsets.all(12),
-                child: PageLoading(),
+                child: ListSkeleton(rows: 1, rowHeight: 64),
               );
             }
             return LoadMoreFooter(

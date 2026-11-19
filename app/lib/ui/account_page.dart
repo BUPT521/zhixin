@@ -611,9 +611,16 @@ class _AccountPageState extends State<AccountPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.zhixin;
     return DetailScaffold(
       header: const ZhixinHeader(title: Text('账号与云同步'), showBack: true),
-      child: _loading ? const PageLoading() : _content(context),
+      // 首读期间保留标题栏，内容用与卡片同高的骨架占位。
+      child: _loading
+          ? ListView(
+              padding: theme.space.pageInsets(bottom: 96),
+              children: const [ListSkeleton(rows: 3, rowHeight: 96)],
+            )
+          : _content(context),
     );
   }
 
