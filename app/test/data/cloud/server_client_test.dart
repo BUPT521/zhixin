@@ -363,6 +363,8 @@ void main() {
     final list = await client.backupList(tokens.accessToken);
     expect(list, hasLength(1));
     expect(list.first.id, uploaded.id);
+    // 设备名在头里编码，列表里是解码后的原文。
+    expect(list.first.deviceName, '测试设备');
 
     final response = await client.backupDownload(
       tokens.accessToken,

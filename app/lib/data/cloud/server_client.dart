@@ -708,7 +708,10 @@ class ServerClient {
         'Content-Type': 'application/zip',
         'X-Content-SHA256': sha256,
         'X-Schema-Version': '$schemaVersion',
-        if (deviceName.isNotEmpty) 'X-Device-Name': deviceName,
+        if (deviceName.isNotEmpty)
+          // HTTP 头只接受 ASCII：设备名默认带中文，按 UTF-8 百分号编码再发，
+          // 服务端解码后保存原文。
+          'X-Device-Name': Uri.encodeComponent(deviceName),
       },
     );
     return ServerBackup.fromJson(json);

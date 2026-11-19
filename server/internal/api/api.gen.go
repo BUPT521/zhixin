@@ -802,9 +802,11 @@ type DeleteV1BackupsJSONBody struct {
 
 // PostV1BackupsParams defines parameters for PostV1Backups.
 type PostV1BackupsParams struct {
-	XContentSHA256 string  `json:"X-Content-SHA256"`
-	XSchemaVersion int     `json:"X-Schema-Version"`
-	XDeviceName    *string `json:"X-Device-Name,omitempty"`
+	XContentSHA256 string `json:"X-Content-SHA256"`
+	XSchemaVersion int    `json:"X-Schema-Version"`
+
+	// XDeviceName 设备名，按 percent-encoding 编码 UTF-8 字节后放在头里；服务端解码后保存原文。
+	XDeviceName *string `json:"X-Device-Name,omitempty"`
 }
 
 // DeleteV1CloudJSONBody defines parameters for DeleteV1Cloud.

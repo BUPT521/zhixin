@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -104,6 +105,11 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 	device := ""
 	if params.XDeviceName != nil {
 		device = strings.TrimSpace(*params.XDeviceName)
+		// HTTP 头只接受 ASCII，客户端把带中文的设备名按 UTF-8 百分号编码再发；
+		// 解码失败时按原样保存，避免因为一个展示字段拒绝整份备份。
+		if decoded, err := url.PathUnescape(device); err == nil {
+			device = strings.TrimSpace(decoded)
+		}
 	}
 	body, err := spool.Reader()
 	if err != nil {

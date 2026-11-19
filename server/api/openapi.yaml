@@ -421,7 +421,10 @@ paths:
       parameters:
         - { name: X-Content-SHA256, in: header, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
         - { name: X-Schema-Version, in: header, required: true, schema: { type: integer } }
-        - { name: X-Device-Name, in: header, schema: { type: string, maxLength: 64 } }
+        - name: X-Device-Name
+          in: header
+          description: 设备名，按 percent-encoding 编码 UTF-8 字节后放在头里；服务端解码后保存原文。
+          schema: { type: string, maxLength: 256 }
       requestBody:
         required: true
         content:

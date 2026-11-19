@@ -343,7 +343,10 @@ class FakeServer {
           'sha256': sha,
           'size': bytes.length,
           'schema_version': schemaVersion,
-          'device_name': request.headers['x-device-name'] ?? '',
+          // 设备名按 UTF-8 百分号编码放在头里，与服务端一样解码后保存。
+          'device_name': Uri.decodeComponent(
+            request.headers['x-device-name'] ?? '',
+          ),
           'created_at': '2026-11-17T10:00:00Z',
         };
         backups

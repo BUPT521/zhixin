@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -278,5 +279,33 @@ func TestHandlerDeleteAllClearsOnlyCurrentAccount(t *testing.T) {
 	p := testutil.ReadProblem(t, c.Do(http.MethodDelete, "/v1/backups", "", nil, nil))
 	if p.Status != http.StatusUnauthorized || p.Code != string(httpx.CodeUnauthorized) {
 		t.Fatalf("anonymous clear: %+v", p)
+	}
+}
+
+// 设备名带中文时客户端按 UTF-8 百分号编码放在头里，服务端保存解码后的原文，
+// 不能因为一个展示字段把整份备份拒绝掉。
+func TestHandlerDecodesPercentEncodedDeviceName(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "name@b.cn")
+
+	data := []byte("zip")
+	sum := sha256.Sum256(data)
+	resp := c.Do(http.MethodPost, "/v1/backups", token, bytes.NewReader(data), map[string]string{
+		"Content-Type":     "application/zip",
+		"X-Content-SHA256": hex.EncodeToString(sum[:]),
+		"X-Schema-Version": fmt.Sprint(testSchemaVersion),
+		"X-Device-Name":    url.PathEscape("知新 0.1.1-dev"),
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: %d", resp.StatusCode)
+	}
+
+	var list api.BackupList
+	if code := c.JSON(http.MethodGet, "/v1/backups", token, nil, &list); code != http.StatusOK {
+		t.Fatalf("list: %d", code)
+	}
+	if len(list.Backups) != 1 || list.Backups[0].DeviceName == nil || *list.Backups[0].DeviceName != "知新 0.1.1-dev" {
+		t.Fatalf("device name: %+v", list.Backups)
 	}
 }
