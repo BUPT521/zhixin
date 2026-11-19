@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -295,5 +296,49 @@ void main() {
 
     await expectLater(pending, throwsA(isA<SyncIdentityChanged>()));
     expect(await a.account.preferences.syncState(), isNull);
+  });
+
+  test('推送的 request_id 不超过服务端 64 字符上限，超长时按提交编号生成', () {
+    // 更正材料页这类命令把 JSON 编码的请求标识写进提交，长度会超过 64。
+    final long = jsonEncode([
+      'correct-material-page',
+      '01a1f4d1-78ae-7000-befb-f35f122c1838',
+      '',
+      '方阵的迹为主对角元素之和。',
+    ]);
+    expect(long.length, greaterThan(64));
+
+    final first = syncRequestIdFor(
+      stored: long,
+      deviceId: '3B164M00XU700000',
+      commitId: 41,
+    );
+    expect(first, 'l-3B164M00-41');
+    expect(first.length, lessThanOrEqualTo(64));
+    // 同一提交重试时标识不变，服务端仍能按请求标识去重。
+    expect(
+      syncRequestIdFor(
+        stored: long,
+        deviceId: '3B164M00XU700000',
+        commitId: 41,
+      ),
+      first,
+    );
+    expect(
+      syncRequestIdFor(
+        stored: 'l-3B164M00-7',
+        deviceId: '3B164M00XU700000',
+        commitId: 7,
+      ),
+      'l-3B164M00-7',
+    );
+    expect(
+      syncRequestIdFor(
+        stored: '   ',
+        deviceId: '3B164M00XU700000',
+        commitId: 7,
+      ),
+      'l-3B164M00-7',
+    );
   });
 }

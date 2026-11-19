@@ -109,6 +109,22 @@ class SyncResult {
 /// 服务端只保存线性序列，不解析内容；冲突按“后到达的覆盖先到达的”处理，被覆盖
 /// 的值留在提交历史里（[server/README](../../../server/README.md) 的同步协议）。
 /// 同步只读写本机数据库与网络，不换库、不清空，界面通过数据层已有的表通知重读。
+/// 推送给服务端的请求标识。
+///
+/// 服务端要求它非空且不超过 64 个字符；本地有些命令用 JSON 编码的请求标识做重复
+/// 提交判断（例如更正材料页），长度会超过上限，整批推送因此被拒绝。超长或为空时
+/// 改用按提交编号生成的稳定标识，同一提交重试时标识不变，服务端的去重照常生效。
+String syncRequestIdFor({
+  required String? stored,
+  required String deviceId,
+  required int commitId,
+}) {
+  final existing = stored?.trim() ?? '';
+  if (existing.isNotEmpty && existing.length <= 64) return existing;
+  final prefix = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
+  return 'l-$prefix-$commitId';
+}
+
 class SyncService {
   SyncService({
     required this.account,
@@ -779,11 +795,12 @@ class SyncService {
     after: change.after == null ? null : typedRowToJson(change.after!),
   );
 
-  String _requestIdFor(RevisionCommit commit, String deviceId) {
-    final existing = commit.requestId?.trim() ?? '';
-    if (existing.isNotEmpty) return existing;
-    return 'l-${deviceId.substring(0, 8)}-${commit.id}';
-  }
+  String _requestIdFor(RevisionCommit commit, String deviceId) =>
+      syncRequestIdFor(
+        stored: commit.requestId,
+        deviceId: deviceId,
+        commitId: commit.id,
+      );
 
   String _baselineRequestId(
     String deviceId,
