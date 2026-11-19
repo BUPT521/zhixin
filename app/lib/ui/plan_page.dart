@@ -8,28 +8,21 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
-import 'plan_dialogs.dart';
 import '../application/plan_service.dart';
-import '../data/repository/schedule_repository.dart';
-import '../data/revisions/revision_models.dart';
 import '../domain/models/study.dart';
-import '../domain/models/write_result.dart';
-import 'capacity_sheet.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
-import 'format.dart';
-import 'goal_dialog.dart';
 import 'live_view.dart';
 import 'navigation.dart';
-import 'plan_week_view.dart';
+import 'plan_actions.dart';
+import 'plan_goals_tab.dart';
+import 'plan_items_tab.dart';
+import 'plan_operations_tab.dart';
+import 'plan_schedule_tab.dart';
 import 'workspace_widgets.dart';
-import 'undo_feedback.dart';
-import 'zhixin_dialog.dart';
 import 'zhixin_header.dart';
-import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
 import 'zhixin_segmented.dart';
-import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
 
 /// 一次周订阅带回的数据与对应的周一。
@@ -40,9 +33,10 @@ typedef WeekSnapshot = ({DateTime weekStart, PlanWeek week});
 
 /// 安排：每周日程、系统学习、学习事项与 AI 改动的撤销。
 ///
-/// 底栏页与事项详情共用这一份周视图，但入口分开：底栏页由 [HomeShell] 常驻，
-/// 切栏与跨栏跳转通过通知传进来；事项详情由 [PlanPage.detail] 独立推入，只认
-/// 一个事项编号，不看当前底栏。
+/// 底栏页与事项详情共用这一份周订阅与四个页签，但入口分开：底栏页由
+/// [HomeShell] 常驻，切栏与跨栏跳转通过通知传进来；事项详情由 [PlanPage.detail]
+/// 独立推入，只认一个事项编号，不看当前底栏。页签本身在
+/// `plan_*_tab.dart` 里，只接收这一周与写入动作（[PlanActions]）。
 class PlanPage extends StatefulWidget {
   const PlanPage({
     super.key,
@@ -109,39 +103,15 @@ class _PlanPageState extends State<PlanPage> {
 
   bool _openedInitial = false;
   int _tab = 0;
+
+  /// 系统学习列表是否展开全部计划；与页签状态一起留在页面上。
   bool _showAllPlans = false;
 
+  /// 周视图是否展开；换周重建页签时保持展开，滑动与滚动位置由页签自己保留。
   bool _showWeekGrid = false;
 
   /// 进过的页签常驻：切回来不再重建，滚动位置一并保住。
   final Set<int> _visited = {0};
-
-  /// 已完成事项默认不读，避免每次打开安排页都把历史读一遍。
-  ///
-  /// 第一页跟着一条订阅，写入之后自动重读；继续读取的页按页追加，按编号去重
-  /// 合并，写法与记录页的 `_older` 一致。
-  StreamSubscription<List<PlanItem>>? _doneSubscription;
-  List<PlanItem> _doneFirst = const [];
-  List<PlanItem> _doneOlder = const [];
-  bool _doneExpanded = false;
-  bool _loadingDone = false;
-  bool _doneLoadFailed = false;
-  bool _doneLoadScheduled = false;
-  static const int _donePageSize = 30;
-
-  /// 屏幕上已经读到的已完成事项：第一页在前，继续读取的页去重之后接在后面。
-  List<PlanItem> get _doneItems {
-    if (_doneOlder.isEmpty) return _doneFirst;
-    final seen = {for (final item in _doneFirst) item.id};
-    return [
-      ..._doneFirst,
-      for (final item in _doneOlder)
-        if (seen.add(item.id)) item,
-    ];
-  }
-
-  /// 还没读到的已完成事项数量由整周数据的总数决定，写入之后跟着一起更新。
-  bool get _hasMoreDone => _doneItems.length < (_week?.doneItemCount ?? 0);
 
   bool get _active =>
       widget.activeTab == null || widget.activeTab!.value == widget.tabIndex;
@@ -156,8 +126,9 @@ class _PlanPageState extends State<PlanPage> {
     required String action,
     required String kind,
     String? kept,
-    String next = '可以再试一次',
+    String? next,
   }) {
+    if (!mounted) return;
     final message = describeFailure(
       context,
       error,
@@ -182,22 +153,15 @@ class _PlanPageState extends State<PlanPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final policy = AppScope.of(context).timePolicy;
-    _weekAnchor ??= policy.naturalWeekStart(policy.now);
-    // 未显示的页面等底栏放行预读再订阅，不和首页的首读抢；切到安排时
-    // 还没放行的，当场建立订阅。
-    if (_weekStream == null && _shouldRead) {
-      _weekStream = _createStream(_weekAnchor!);
-    }
+    if (_weekStream != null || !_shouldRead) return;
+    final weekStart = _weekAnchor ?? _currentWeekStart();
+    _weekAnchor = weekStart;
+    _weekStream = _createStream(weekStart);
   }
 
   @override
   void didUpdateWidget(covariant PlanPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.request != widget.request) {
-      oldWidget.request?.removeListener(_onRequestChanged);
-      widget.request?.addListener(_onRequestChanged);
-    }
     if (oldWidget.activeTab != widget.activeTab) {
       oldWidget.activeTab?.removeListener(_onActiveChanged);
       widget.activeTab?.addListener(_onActiveChanged);
@@ -206,6 +170,15 @@ class _PlanPageState extends State<PlanPage> {
       oldWidget.preload?.removeListener(_onActiveChanged);
       widget.preload?.addListener(_onActiveChanged);
     }
+    if (oldWidget.request != widget.request) {
+      oldWidget.request?.removeListener(_onRequestChanged);
+      widget.request?.addListener(_onRequestChanged);
+    }
+    if (_weekStream == null && _shouldRead) {
+      final weekStart = _weekAnchor ?? _currentWeekStart();
+      _weekAnchor = weekStart;
+      setState(() => _weekStream = _createStream(weekStart));
+    }
   }
 
   @override
@@ -213,31 +186,31 @@ class _PlanPageState extends State<PlanPage> {
     widget.activeTab?.removeListener(_onActiveChanged);
     widget.preload?.removeListener(_onActiveChanged);
     widget.request?.removeListener(_onRequestChanged);
-    _doneSubscription?.cancel();
-    _doneSubscription = null;
     super.dispose();
   }
 
-  /// 一个目标周的订阅；页面只决定读哪一周，写入之后的重读由数据层负责。
+  DateTime _currentWeekStart() =>
+      AppScope.of(context).timePolicy
+          .naturalWeekStart(AppScope.of(context).timePolicy.now);
+
   Stream<WeekSnapshot> _createStream(DateTime weekStart) {
     final read = widget.watchWeek ?? AppScope.of(context).study.plan.watchWeek;
     return read(weekStart).map((week) => (weekStart: weekStart, week: week));
   }
 
-  /// 重新订阅当前目标周：读取失败之后就地点重试走这里。
+  /// 重试首读：只换一条订阅，已经显示的一周保留到新数据回来。
   void _reload() {
-    final weekStart = _weekAnchor;
+    final weekStart = _weekAnchor ?? _shownAnchor;
     if (weekStart == null) return;
     setState(() {
-      _error = null;
       _weekStream = _createStream(weekStart);
-      _resetDone();
+      _error = null;
     });
   }
 
-  /// 新的一份周数据：换周过程中迟到的旧结果直接丢掉，界面不会对着别的周显示。
+  /// 订阅带回一份数据：按周一是哪一周决定保留还是丢掉。
   void _onWeek(WeekSnapshot snapshot) {
-    if (!mounted || snapshot.weekStart != _weekAnchor) return;
+    if (snapshot.weekStart != _weekAnchor) return;
     setState(() {
       _week = snapshot.week;
       _shownAnchor = snapshot.weekStart;
@@ -246,7 +219,6 @@ class _PlanPageState extends State<PlanPage> {
     unawaited(_openInitial(snapshot));
   }
 
-  /// 读取失败：已经显示的一周保持不变，只提示一次；还没有内容时留下重试入口。
   void _onWeekError(Object error, StackTrace stack) {
     if (!mounted) return;
     final message = describeFailure(
@@ -254,60 +226,52 @@ class _PlanPageState extends State<PlanPage> {
       error,
       stack,
       action: '读取安排',
-      kind: 'plan_read',
-      kept: '已经保存的安排没有改动',
-      next: '可以点重试再读一次',
+      kind: 'plan_week_read',
+      kept: '已经显示的一周保持不变',
+      next: '可以在页面内重试',
     );
     setState(() => _error = message);
     showToast(context, message);
   }
 
-  /// 详情入口按编号展开一次事项；一周数据第一次到达之后才做。
+  /// 详情入口：首份数据回来之后按编号补读事项并展开它。
   Future<void> _openInitial(WeekSnapshot snapshot) async {
     final itemId = widget.initialItemId;
-    if (_openedInitial || itemId == null) return;
-    final item =
-        snapshot.week.items.where((item) => item.id == itemId).firstOrNull ??
-        await _itemById(itemId);
-    if (!mounted || _openedInitial || snapshot.weekStart != _weekAnchor) return;
-    if (item == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _openedInitial) return;
-      _openedInitial = true;
-      _showItem(item);
+    if (itemId == null || _openedInitial) return;
+    _openedInitial = true;
+    final item = await _itemById(itemId);
+    if (!mounted || item == null) return;
+    await _actions().openItem(item);
+  }
+
+  /// 底栏切到安排、或预读放行时开始订阅，只建一次。
+  void _onActiveChanged() {
+    if (_weekStream != null || !_shouldRead) return;
+    final weekStart = _weekAnchor ?? _currentWeekStart();
+    setState(() {
+      _weekAnchor = weekStart;
+      _weekStream = _createStream(weekStart);
     });
   }
 
-  /// 切到这一栏或底栏放行预读时建立订阅；已经建立的订阅保留，切回来
-  /// 看到的仍是最新数据。
-  void _onActiveChanged() {
-    if (!mounted || !_shouldRead) return;
-    if (_weekStream != null) return;
-    final weekStart = _weekAnchor;
-    if (weekStart == null) return;
-    setState(() => _weekStream = _createStream(weekStart));
-  }
-
-  /// 从别的栏目跳到安排：页签复位到日程，内容由订阅照常更新。
+  /// 从别的栏目跳过来：把页签复位到日程，并保证已经订阅周数据。
   void _onRequestChanged() {
-    if (!mounted) return;
     setState(() {
       _tab = 0;
       _visited.add(0);
     });
+    _onActiveChanged();
   }
 
-  /// 所有选周入口都走这里：上一周、下一周、横滑与回到本周。
-  ///
-  /// 同一周不重复订阅；换周只换一条新的流，旧订阅由 [LiveView] 退订。
+  /// 换周只换一条新的流，旧订阅由 [LiveView] 退订。
   void _selectWeek(DateTime date) {
-    final weekStart = AppScope.of(context).timePolicy.naturalWeekStart(date);
+    final policy = AppScope.of(context).timePolicy;
+    final weekStart = policy.naturalWeekStart(date);
     if (weekStart == _weekAnchor) return;
     setState(() {
       _weekAnchor = weekStart;
       _weekStream = _createStream(weekStart);
       _error = null;
-      _resetDone();
     });
   }
 
@@ -318,31 +282,11 @@ class _PlanPageState extends State<PlanPage> {
     _selectWeek(DateTime(from.year, from.month, from.day + 7 * weeks));
   }
 
-  /// 换周与刷新之后收起已完成：那一页按目标周与新的写入重新订阅。
-  void _resetDone() {
-    _doneSubscription?.cancel();
-    _doneSubscription = null;
-    _doneFirst = const [];
-    _doneOlder = const [];
-    _doneExpanded = false;
-    _loadingDone = false;
-    _doneLoadFailed = false;
-  }
-
-  /// 已完成列表目前读回的事项；日程里点到的已完成事项可能还不在这一页里。
-  PlanItem? _cachedItem(String id) {
+  /// 已完成列表里可能读到的事项目前不在这一份数据里：先查已读到的，再补读。
+  Future<PlanItem?> _itemById(String id) async {
     for (final item in _week?.items ?? const <PlanItem>[]) {
       if (item.id == id) return item;
     }
-    for (final item in _doneItems) {
-      if (item.id == id) return item;
-    }
-    return null;
-  }
-
-  Future<PlanItem?> _itemById(String id) async {
-    final cached = _cachedItem(id);
-    if (cached != null) return cached;
     try {
       return await AppScope.of(context).study.plan.itemById(id);
     } catch (_) {
@@ -350,787 +294,39 @@ class _PlanPageState extends State<PlanPage> {
     }
   }
 
-  /// 展开或收起已完成事项；展开时订阅第一页，收起时退订。
-  void _toggleDone() {
-    if (_loadingDone) return;
-    if (_doneExpanded) {
-      // 已经读出的内容留到收起动画结束，下次展开再重新订阅第一页。
-      setState(() => _doneExpanded = false);
-      _doneSubscription?.cancel();
-      _doneSubscription = null;
-      return;
-    }
-    setState(() => _doneExpanded = true);
-    _subscribeDone();
+  /// 页面这一周的写入动作；每次重建换一份，页签按需调用。
+  PlanActions _actions() => PlanActions(
+    context: context,
+    week: _week,
+    onReportFailure: _reportFailure,
+    goalName: _goalName,
+    openStudy: openPlanItem,
+    openDiscussion: openDiscussion,
+    openStudyPlan: openStudyPlan,
+  );
+
+  String _goalName(String? id) {
+    if (id == null) return '无归属';
+    final goals = _week?.goals ?? const <LearningGoal>[];
+    return goals.where((goal) => goal.id == id).firstOrNull?.title ?? '目标已删除';
   }
 
-  /// 已完成事项第一页跟着一条订阅：写入之后自动重读，页面不再自己刷新。
-  void _subscribeDone() {
-    _doneSubscription?.cancel();
-    _doneSubscription = null;
-    final service = AppScope.of(context).study.plan;
-    setState(() {
-      _doneFirst = const [];
-      _doneOlder = const [];
-      _loadingDone = true;
-      _doneLoadFailed = false;
-    });
-    _doneSubscription = service
-        .watchDoneItems(limit: _donePageSize)
-        .listen(
-          (page) {
-            if (!mounted) return;
-            setState(() {
-              _doneFirst = page;
-              _loadingDone = false;
-              _doneLoadFailed = false;
-            });
-          },
-          onError: (Object error, StackTrace stack) {
-            if (!mounted) return;
-            setState(() {
-              _loadingDone = false;
-              _doneLoadFailed = true;
-            });
-            _reportFailure(
-              error,
-              stack,
-              action: '读取已完成事项',
-              kind: 'plan_done_read',
-              kept: '已经读出的内容保持不变',
-              next: '可以在列表底部重试',
-            );
-          },
-        );
-  }
-
-  /// 继续读取已完成的下一页；已经读到的内容保持不变，失败时留下重试入口。
-  Future<void> _loadMoreDone() async {
-    if (_loadingDone || !_hasMoreDone) return;
-    final offset = _doneItems.length;
-    setState(() {
-      _loadingDone = true;
-      _doneLoadFailed = false;
-    });
-    try {
-      final page = await AppScope.of(context).study.plan
-          .doneItems(limit: _donePageSize, offset: offset);
-      if (!mounted) return;
-      setState(() {
-        _doneOlder = [..._doneOlder, ...page];
-        _loadingDone = false;
-      });
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _loadingDone = false;
-        _doneLoadFailed = true;
-      });
-      _reportFailure(
-        error,
-        stack,
-        action: '读取已完成事项',
-        kind: 'plan_done_read',
-        kept: '已经读出的内容保持不变',
-        next: '可以在列表底部重试',
-      );
-    }
-  }
-
-  /// 读取失败之后重试：第一页还没读到时重新订阅，否则继续读下一页。
-  void _retryDone() {
-    if (_doneFirst.isEmpty) {
-      _subscribeDone();
-    } else {
-      _loadMoreDone();
-    }
-  }
-
-  /// 事项页签滚到距底部一屏以内时续读，收起列表或刷新后丢弃已排队的请求。
-  bool _onItemsScroll(ScrollNotification notification) {
-    final metrics = notification.metrics;
-    if (notification.depth != 0 ||
-        (notification is! ScrollUpdateNotification &&
-            notification is! OverscrollNotification) ||
-        metrics.extentAfter > metrics.viewportDimension ||
-        _doneLoadScheduled ||
-        !_canLoadMoreDone) {
-      return false;
-    }
-    final loaded = _doneItems.length;
-    _doneLoadScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _doneLoadScheduled = false;
-      if (mounted && _canLoadMoreDone && loaded == _doneItems.length) {
-        _loadMoreDone();
-      }
-    });
-    WidgetsBinding.instance.ensureVisualUpdate();
-    return false;
-  }
-
-  bool get _canLoadMoreDone =>
-      _active &&
-      _tab == 1 &&
-      _doneExpanded &&
-      _hasMoreDone &&
-      !_loadingDone &&
-      !_doneLoadFailed;
-
-  Future<void> _addGoal() async {
-    final draft = await showGoalDialog(context);
-    if (draft == null || !mounted) return;
-    try {
-      await AppScope.of(context).study.plan.addGoal(
-        title: draft.title,
-        scopeText: draft.scope,
-        dueDate: draft.dueDate,
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '保存目标',
-        kind: 'plan_goal_save',
-        kept: '目标没有创建',
-      );
-    }
-  }
-
-  Future<void> _pauseGoal(LearningGoal goal) async {
-    final scope = AppScope.of(context);
-    final service = scope.study.plan;
-    final flexible = await service.flexibleFutureCount(goal.id);
+  /// 周视图里点到一段预约：按编号补读事项，再打开它的操作面板。
+  Future<void> _openBlock(ScheduledItem entry) async {
+    final item = await _itemById(entry.block.planItemId);
     if (!mounted) return;
-    var cancelFlexible = false;
-    final confirmed = await showZhixinDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => ZhixinDialogLayout(
-          title: Text('暂停「${goal.title}」'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '暂停目标后，独立讨论、已完成记录和固定安排都会保留；'
-                '其他目标的安排照常进行。',
-              ),
-              if (flexible > 0)
-                forui.FCheckbox(
-                  value: cancelFlexible,
-                  onChange: (value) =>
-                      setDialogState(() => cancelFlexible = value),
-                  label: Text('同时取消该目标下 $flexible 项未开始的弹性安排'),
-                  description: const Text('固定安排保持原时间；取消的时间块可在安排页查看。'),
-                ),
-            ],
-          ),
-          actions: [
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.of(context).pop(false),
-              child: const Text('保留目标'),
-            ),
-            forui.FButton(
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.of(context).pop(true),
-              child: const Text('暂停'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      final result = await service.pauseGoal(
-        goal.id,
-        cancelFlexibleFuture: cancelFlexible,
-      );
-      if (!mounted || !result.changed) return;
-      showActionToast(
-        context,
-        '已暂停「${goal.title}」'
-        '${cancelFlexible ? '，并取消 $flexible 项弹性安排' : ''}',
-        label: '撤销',
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '暂停目标',
-        kind: 'plan_goal_pause',
-        kept: '目标与预约保持原样',
-      );
-    }
-  }
-
-  Future<void> _resumeGoal(LearningGoal goal) async {
-    try {
-      await AppScope.of(context).study.plan.resumeGoal(goal.id);
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '恢复目标',
-        kind: 'plan_goal_resume',
-        kept: '目标状态没有改动',
-      );
-    }
-  }
-
-  Future<void> _addItem() async {
-    final week = _week;
-    final goals = week == null
-        ? const <LearningGoal>[]
-        : week.goals.where((goal) => goal.active).toList(growable: false);
-    final draft = await showZhixinDialog<ItemDraft>(
-      context: context,
-      builder: (_) => ItemDialog(goals: goals),
-    );
-    if (draft == null || !mounted) return;
-    try {
-      await AppScope.of(context).study.plan.addItem(
-        title: draft.title,
-        goalId: draft.goalId,
-        note: draft.note,
-        dueAt: draft.dueAt,
-        minutes: draft.minutes,
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '保存学习事项',
-        kind: 'plan_item_save',
-        kept: '事项没有创建',
-      );
-    }
-  }
-
-  Future<void> _schedule({PlanItem? item}) async {
-    final week = _week;
-    if (week == null) return;
-    final items = item == null
-        ? week.items.where((item) => item.open).toList()
-        : [item];
-    if (items.isEmpty) {
-      showToast(context, '先创建学习事项，再预约时间。');
+    if (item == null) {
+      showToast(context, entry.itemTitle);
       return;
     }
-    final draft = await showZhixinDialog<BlockDraft>(
-      context: context,
-      builder: (_) => BlockDialog(items: items),
-    );
-    if (draft == null || !mounted) return;
-    try {
-      final result = await AppScope.of(context).study.plan.scheduleItem(
-        planItemId: draft.itemId,
-        start: draft.start,
-        end: draft.start.add(Duration(minutes: draft.minutes)),
-      );
-      if (!mounted) return;
-      final title = items
-          .where((item) => item.id == draft.itemId)
-          .firstOrNull
-          ?.title;
-      showActionToast(
-        context,
-        title == null ? '已预约学习时间' : '已预约「$title」',
-        label: '撤销',
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '安排学习时间',
-        kind: 'plan_schedule',
-        kept: '这次没有写入',
-        next: '可以换一个时间再试',
-      );
-    }
-  }
-
-  /// 把本周尚未开始、由搭子排的弹性预约整组顺延。
-  ///
-  /// 固定的、用户自己排的与已经开始或结束的预约保持原样；选完分钟数后先列出
-  /// 每条预约从什么时间改到什么时间，确认之后才写入。任一条与课表或其他预约
-  /// 冲突时，整组保持原样。
-  Future<void> _shiftWeek() async {
-    final week = _week;
-    if (week == null) return;
-    final now = AppScope.of(context).timePolicy.now;
-    final movable = week.blocks
-        .where((entry) {
-          final block = entry.block;
-          return block.planned &&
-              !block.locked &&
-              block.source == PlanItemSource.ai &&
-              block.startAt.isAfter(now);
-        })
-        .toList(growable: false);
-    if (movable.isEmpty) {
-      showToast(context, '本周没有可顺延的$buddyName预约；固定的、自己排的与已经开始的预约保持原时间。');
-      return;
-    }
-    final minutes = await showZhixinAlert<int>(
-      context: context,
-      title: '整组顺延',
-      cancelLabel: '取消',
-      content: Text(
-        '把本周 ${movable.length} 条尚未开始、由$buddyName排的预约一起向后移动。'
-        '固定的、自己排的与已经开始的预约保持原时间。',
-      ),
-      actions: [
-        for (final value in const [30, 60, 120])
-          forui.FButton(
-            variant: forui.FButtonVariant.ghost,
-            mainAxisSize: MainAxisSize.min,
-            onPress: () => Navigator.of(context).pop(value),
-            child: Text('$value 分钟'),
-          ),
-      ],
-    );
-    if (minutes == null || !mounted) return;
-    final adjustments = [
-      for (final entry in movable)
-        ScheduleAdjustment(
-          id: entry.block.id,
-          start: entry.block.startAt.add(Duration(minutes: minutes)),
-          end: entry.block.endAt.add(Duration(minutes: minutes)),
-        ),
-    ];
-    final confirmed = await confirmZhixin(
-      context: context,
-      title: '整组顺延预览',
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('下面 ${movable.length} 条预约会向后移动 $minutes 分钟，确认后才写入：'),
-          SizedBox(height: context.zhixin.space.gap),
-          for (final entry in movable)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                '「${entry.itemTitle}」'
-                '${_blockRange(entry.block.startAt, entry.block.endAt)} → '
-                '${_blockRange(entry.block.startAt.add(Duration(minutes: minutes)), entry.block.endAt.add(Duration(minutes: minutes)))}',
-              ),
-            ),
-          SizedBox(height: context.zhixin.space.gap),
-          Text('任一条与课表或其他预约冲突时，整组保持原样。', style: context.zhixin.text.bodySmall),
-        ],
-      ),
-      confirmLabel: '确认顺延',
-    );
-    if (!confirmed || !mounted) return;
-    final scope = AppScope.of(context);
-    try {
-      final result = await scope.study.plan.rescheduleGroup(adjustments);
-      if (!mounted) return;
-      showActionToast(
-        context,
-        '已整组顺延 $minutes 分钟，共 ${movable.length} 条预约',
-        label: '撤销',
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '整组顺延预约',
-        kind: 'plan_shift_week',
-        kept: '整组预约保持原样',
-      );
-    }
-  }
-
-  String _blockRange(DateTime start, DateTime end) {
-    final sameDay =
-        start.year == end.year &&
-        start.month == end.month &&
-        start.day == end.day;
-    final endText = sameDay ? clockOf(end) : '${dayLabel(end)} ${clockOf(end)}';
-    return '${shortTime(start)}–$endText';
-  }
-
-  Future<void> _addTimetable() async {
-    final draft = await showZhixinDialog<TimetableDraft>(
-      context: context,
-      builder: (_) => const TimetableDialog(),
-    );
-    if (draft == null || !mounted) return;
-    try {
-      await AppScope.of(context).study.plan.addTimetable(
-        weekday: draft.weekday,
-        startTime: draft.start,
-        endTime: draft.end,
-        title: draft.title,
-        location: draft.location,
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '保存课表',
-        kind: 'plan_timetable_save',
-        kept: '课表没有写入',
-      );
-    }
-  }
-
-  /// 删除一节课之前先说明影响；删除后从提示条撤销，撤销会重新核对预约冲突。
-  Future<void> _deleteTimetable(TimetableEntry entry) async {
-    final confirmed = await confirmZhixin(
-      context: context,
-      title: '删除这节课',
-      content: Text(
-        '删除「${entry.title}」后，'
-        '${weekdayLabel(entry.weekday)} ${entry.startTime}–${entry.endTime} '
-        '不再参与学习安排的冲突检查。确定删除？',
-      ),
-      confirmLabel: '删除',
-      destructive: true,
-    );
-    if (!confirmed || !mounted) return;
-    try {
-      final result = await AppScope.of(context).study.plan
-          .deleteTimetable(entry.id);
-      if (!mounted || !result.changed) return;
-      showActionToast(
-        context,
-        '已删除课表「${entry.title}」',
-        label: '撤销',
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '删除课表',
-        kind: 'plan_timetable_delete',
-        kept: '这节课还在课表里',
-      );
-    }
-  }
-
-  /// AI 改动的撤销：撤销之后的一周数据由订阅带回。
-  Future<void> _undo(RevisionCommit commit) =>
-      undoCommitWithFeedback(context, commit.id);
-
-  Future<void> _setStatus(PlanItem item, PlanItemStatus status) async {
-    try {
-      await AppScope.of(context).study.plan.setStatus(item.id, status);
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '修改事项状态',
-        kind: 'plan_item_status',
-        kept: '事项状态没有改动',
-      );
-    }
-  }
-
-  /// 这周能做什么：面板里的预约写入之后，一周数据由订阅重读。
-  Future<void> _capacity() async {
-    await showCapacitySheet(context);
-  }
-
-  ScheduleBlock? _blockForItem(PlanItem item) {
-    final blocks = _week?.blocks ?? const <ScheduledItem>[];
-    return blocks
-        .where(
-          (entry) => entry.block.planItemId == item.id && entry.block.planned,
-        )
-        .map((entry) => entry.block)
-        .firstOrNull;
-  }
-
-  Future<void> _showItem(PlanItem item) async {
-    final block = _blockForItem(item);
-    final canOpen = item.isStudyStep || item.conversationId != null;
-    final action = await showZhixinSheet<String>(
-      context: context,
-      builder: (context) {
-        final theme = context.zhixin;
-        Widget fact(IconData icon, String text) => Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 18, color: theme.colors.onSurfaceVariant),
-              const SizedBox(width: 10),
-              Expanded(child: Text(text, style: theme.text.bodyMedium)),
-            ],
-          ),
-        );
-        // 动作分三层：打开学习内容是主按钮，单独一行；跳转到来源与计划、
-        // 预约与改期是次一级；改状态的动作放在最后，用文字按钮。
-        final navigation = <Widget>[
-          if (item.conversationId != null)
-            forui.FButton(
-              variant: forui.FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(context, 'source'),
-              prefix: const Icon(FLucideIcons.messageCircle),
-              child: const Text('返回来源讨论'),
-            ),
-          if (item.studyPlanId != null)
-            forui.FButton(
-              variant: forui.FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(context, 'plan'),
-              prefix: const Icon(FLucideIcons.route),
-              child: const Text('打开学习计划'),
-            ),
-          if (item.open)
-            forui.FButton(
-              variant: forui.FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(context, 'schedule'),
-              prefix: const Icon(FLucideIcons.calendar),
-              child: Text(block == null ? '预约时间' : '改期'),
-            ),
-        ];
-        final status = <Widget>[
-          if (item.status == PlanItemStatus.todo)
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(context, 'start'),
-              child: const Text('标记进行中'),
-            ),
-          if (item.open)
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(context, 'complete'),
-              prefix: const Icon(FLucideIcons.check),
-              child: Text(item.isStudyStep ? '完成这一步' : '完成事项'),
-            ),
-          if (block != null)
-            forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(context, 'end'),
-              child: const Text('结束本次预约'),
-            ),
-        ];
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TagRow(
-                children: [
-                  StatusTag(_goalName(item.goalId), icon: FLucideIcons.flag),
-                  StatusTag(
-                    item.status.label,
-                    tone: item.open ? TagTone.accent : TagTone.muted,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(item.title, style: theme.text.headlineSmall),
-              if (item.isStudyStep)
-                fact(
-                  FLucideIcons.route,
-                  '系统学习第 ${item.seq ?? 1} 步'
-                  '${item.pageLabel.isEmpty ? '' : '，${item.pageLabel}'}',
-                ),
-              if (block != null)
-                fact(
-                  FLucideIcons.calendar,
-                  '预约：${shortTime(block.startAt)}'
-                  '–${clockOf(block.endAt)}',
-                ),
-              if (item.estMinutes != null)
-                fact(FLucideIcons.timer, '预计 ${item.estMinutes} 分钟'),
-              if (!item.open)
-                fact(
-                  FLucideIcons.circleCheck,
-                  '状态：${item.status.label}'
-                  '${item.completedAt == null ? '' : '，完成于 ${shortTime(item.completedAt!)}'}',
-                ),
-              if (item.note != null) ...[
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colors.surfaceContainerHigh,
-                    borderRadius: theme.radius.card,
-                  ),
-                  child: Text(item.note!, style: theme.text.bodyMedium),
-                ),
-              ],
-              const SizedBox(height: 20),
-              if (canOpen && !item.done) ...[
-                forui.FButton(
-                  onPress: () => Navigator.pop(context, 'study'),
-                  prefix: const Icon(FLucideIcons.play),
-                  child: Text(item.isStudyStep ? '学这一步' : '回到原题'),
-                ),
-                const SizedBox(height: 10),
-              ],
-              if (navigation.isNotEmpty)
-                Wrap(spacing: 8, runSpacing: 8, children: navigation),
-              if (status.isNotEmpty) ...[
-                SizedBox(height: context.zhixin.space.gap),
-                Wrap(spacing: 4, runSpacing: 4, children: status),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-    if (!mounted || action == null) return;
-    // 从学习页或讨论页返回之后不再重读，订阅已经带回写入的结果。
-    if (action == 'study') {
-      await openPlanItem(context, item);
-    } else if (action == 'source') {
-      await openDiscussion(context, item.conversationId!);
-    } else if (action == 'plan') {
-      await _openStudyPlan(item.studyPlanId!);
-    } else if (action == 'schedule') {
-      await _scheduleOrMove(item, block);
-    } else if (action == 'start') {
-      await _setStatus(item, PlanItemStatus.doing);
-    } else if (action == 'complete') {
-      await _setStatus(item, PlanItemStatus.done);
-    } else if (action == 'end' && block != null) {
-      await _endAppointment(block, item);
-    }
-  }
-
-  Future<void> _scheduleOrMove(PlanItem item, ScheduleBlock? block) async {
-    final draft = await showZhixinDialog<BlockDraft>(
-      context: context,
-      builder: (_) => BlockDialog(
-        items: [item],
-        initialStart: block?.startAt,
-        initialMinutes: block?.endAt.difference(block.startAt).inMinutes,
-      ),
-    );
-    if (draft == null || !mounted) return;
-    try {
-      final service = AppScope.of(context).study.plan;
-      final end = draft.start.add(Duration(minutes: draft.minutes));
-      final result = block == null
-          ? await service.scheduleItem(
-              planItemId: item.id,
-              start: draft.start,
-              end: end,
-            )
-          : await service.moveBlock(block.id, start: draft.start, end: end);
-      if (!mounted || !result.changed) return;
-      showActionToast(
-        context,
-        block == null ? '已预约「${item.title}」' : '已改约「${item.title}」',
-        label: '撤销',
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: block == null ? '预约学习时间' : '调整预约时间',
-        kind: 'plan_block_save',
-        kept: '这次没有写入',
-        next: '可以换一个时间再试',
-      );
-    }
-  }
-
-  /// 结束一次预约只改时间块；完成步骤才推进计划进度。
-  Future<void> _endAppointment(ScheduleBlock block, PlanItem? item) async {
-    final completeLabel = (item?.isStudyStep ?? false) ? '完成这一步' : '完成事项';
-    final action = await showZhixinAlert<String>(
-      context: context,
-      title: '结束本次预约',
-      cancelLabel: '取消',
-      content: Text(
-        '这次预约记为结束，学习进度不变，没做完的内容和草稿会保留。'
-        '要把它记为完成，请选择“$completeLabel”。',
-      ),
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => Navigator.of(context).pop('end'),
-          child: const Text('结束本次预约'),
-        ),
-        if (item != null && item.open)
-          forui.FButton(
-            mainAxisSize: MainAxisSize.min,
-            onPress: () => Navigator.of(context).pop('complete'),
-            child: Text(completeLabel),
-          ),
-      ],
-    );
-    if (action == null || !mounted) return;
-    try {
-      final service = AppScope.of(context).study.plan;
-      WriteResult? result;
-      if (action == 'complete' && item != null) {
-        await service.setStatus(item.id, PlanItemStatus.done);
-      } else {
-        result = await service.setBlockStatus(
-          block.id,
-          ScheduleBlockStatus.done,
-        );
-      }
-      if (!mounted) return;
-      if (result == null || !result.changed) {
-        showToast(
-          context,
-          action == 'complete' ? '已$completeLabel' : '本次预约已结束',
-        );
-      } else {
-        showActionToast(
-          context,
-          action == 'complete' ? '已$completeLabel' : '本次预约已结束',
-          label: '撤销',
-          onPressed: () => undoCommitWithFeedback(context, result!.commitId!),
-        );
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '结束本次预约',
-        kind: 'plan_block_end',
-        kept: '预约与事项保持原样',
-      );
-    }
-  }
-
-  /// 打开系统学习计划；返回之后的一周数据由订阅带回。
-  Future<void> _openStudyPlan(String id) async {
-    await openStudyPlan(context, id);
+    await _actions().openItem(item);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     final week = _week;
+    final actions = _actions();
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
@@ -1150,7 +346,7 @@ class _PlanPageState extends State<PlanPage> {
                 variant: forui.FButtonVariant.secondary,
                 size: forui.FButtonSizeVariant.sm,
                 mainAxisSize: MainAxisSize.min,
-                onPress: _capacity,
+                onPress: () => actions.capacity(),
                 prefix: const Icon(FLucideIcons.calculator),
                 child: const Text('这周能做什么'),
               ),
@@ -1165,20 +361,26 @@ class _PlanPageState extends State<PlanPage> {
                 ZhixinMenuItem(
                   label: '新建事项',
                   subtitle: '名称、说明与可选截止日期',
-                  onSelected: _addItem,
+                  onSelected: () => actions.addItem(),
                 ),
                 ZhixinMenuItem(
                   label: '预约时间',
                   subtitle: '为一项未完成的事项选一段时间',
-                  onSelected: _schedule,
+                  onSelected: () => actions.schedule(),
                 ),
                 ZhixinMenuItem(
                   label: '整组顺延',
                   subtitle: '本周$buddyName排的弹性预约一起向后移',
-                  onSelected: _shiftWeek,
+                  onSelected: () => actions.shiftWeek(),
                 ),
-                ZhixinMenuItem(label: '新建目标', onSelected: _addGoal),
-                ZhixinMenuItem(label: '添加课表', onSelected: _addTimetable),
+                ZhixinMenuItem(
+                  label: '新建目标',
+                  onSelected: () => actions.addGoal(),
+                ),
+                ZhixinMenuItem(
+                  label: '添加课表',
+                  onSelected: () => actions.addTimetable(),
+                ),
               ],
             ),
           ],
@@ -1194,7 +396,7 @@ class _PlanPageState extends State<PlanPage> {
               onError: _onWeekError,
               builder: (context, snapshot, loading) {
                 final week = _week;
-                if (week != null) return _loadedWeek(theme, week);
+                if (week != null) return _loadedWeek(theme, week, actions);
                 // 还没有内容：首读中先摆出页签与骨架，失败时留下说明与重试。
                 if (_error != null) return _errorNotice(theme);
                 if (loading) return _loadingWeek(theme);
@@ -1234,45 +436,48 @@ class _PlanPageState extends State<PlanPage> {
   );
 
   /// 读到内容之后整页淡入；之后换周按前后次序左右滑过去，换页签同样滑列表。
-  Widget _loadedWeek(ZhixinTheme theme, PlanWeek week) => FadeIn(
-    child: PageWidth(
-      child: Column(
-        children: [
-          _tabBar(theme),
-          // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
-          if (_error != null)
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                theme.space.page,
-                0,
-                theme.space.page,
-                theme.space.sm,
+  Widget _loadedWeek(ZhixinTheme theme, PlanWeek week, PlanActions actions) =>
+      FadeIn(
+        child: PageWidth(
+          child: Column(
+            children: [
+              _tabBar(theme),
+              // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
+              if (_error != null)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    theme.space.page,
+                    0,
+                    theme.space.page,
+                    theme.space.sm,
+                  ),
+                  child: InlineNotice(message: _error!, onRetry: _reload),
+                ),
+              Expanded(
+                // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
+                child: SlideSwap(
+                  identity: _shownAnchor!,
+                  order: _weekOrder(_shownAnchor!),
+                  child: TabSlideStack(
+                    index: _tab,
+                    // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
+                    // 已读到的内容都留住；首次进入某个页签时才建。
+                    children: [
+                      for (var tab = 0; tab < 4; tab++)
+                        KeyedSubtree(
+                          key: ValueKey('plan-tab-layer-$tab'),
+                          child: _visited.contains(tab)
+                              ? _tabContent(week, actions, tab)
+                              : const SizedBox.shrink(),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-              child: InlineNotice(message: _error!, onRetry: _reload),
-            ),
-          Expanded(
-            // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
-            child: SlideSwap(
-              identity: _shownAnchor!,
-              order: _weekOrder(_shownAnchor!),
-              child: TabSlideStack(
-                index: _tab,
-                // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
-                // 已读到的内容都留住；首次进入某个页签时才建。
-                children: [
-                  for (var tab = 0; tab < 4; tab++)
-                    if (_visited.contains(tab))
-                      _tabList(theme, week, tab)
-                    else
-                      const SizedBox.shrink(),
-                ],
-              ),
-            ),
+            ],
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 
   /// 周在时间上的序号，只用来判断换周的方向：往后一周变大。
   static int _weekOrder(DateTime weekStart) =>
@@ -1301,1040 +506,31 @@ class _PlanPageState extends State<PlanPage> {
     ),
   );
 
-  /// 每个页签保留自己的滚动位置，卡片进入视口缓存范围时才构建。
-  Widget _tabList(ZhixinTheme theme, PlanWeek week, int tab) =>
-      NotificationListener<ScrollNotification>(
-        onNotification: tab == 1 ? _onItemsScroll : null,
-        child: CustomScrollView(
-          key: PageStorageKey<String>('plan-tab-$tab'),
-          slivers: [
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                theme.space.page,
-                theme.space.xs,
-                theme.space.page,
-                theme.space.section,
-              ),
-              sliver: SliverMainAxisGroup(
-                slivers: switch (tab) {
-                  0 => _scheduleTab(theme, week),
-                  1 => _itemsTab(theme, week),
-                  2 => _goalsTab(theme, week),
-                  _ => _operationsTab(theme, week),
-                },
-              ),
-            ),
-          ],
-        ),
-      );
-
-  List<Widget> _scheduleTab(ZhixinTheme theme, PlanWeek week) {
-    final summaries = week.studyPlans;
-    final openPlans = summaries
-        .where((summary) => summary.plan.open)
-        .toList(growable: false);
-    final closedPlans = summaries
-        .where((summary) => !summary.plan.open)
-        .toList(growable: false);
-    final visiblePlans = _showAllPlans ? summaries : openPlans;
-    final schedule = <Object>[
-      for (final entry in _dayEntries(week.blocks)) ...[
-        entry.key,
-        ...entry.value,
-      ],
-    ];
-    return [
-      _weekOverview(theme, week),
-      SliverList.builder(
-        itemCount: schedule.length,
-        itemBuilder: (context, index) => switch (schedule[index]) {
-          final DateTime day => _dayHeading(theme, day, week.timetable),
-          final ScheduledItem entry => _blockTile(theme, entry),
-          _ => throw StateError('无效的日程行'),
-        },
+  /// 每个页签自己的滚动位置由各自的 [CustomScrollView] 与 PageStorageKey 保住。
+  Widget _tabContent(PlanWeek week, PlanActions actions, int tab) {
+    final weekStart = _shownAnchor!;
+    return switch (tab) {
+      0 => PlanScheduleTab(
+        week: week,
+        weekStart: weekStart,
+        actions: actions,
+        onSelectWeek: _selectWeek,
+        onStepWeek: _stepWeek,
+        onOpenMaterials: widget.onOpenMaterials,
+        onOpenBlock: _openBlock,
+        showAllPlans: _showAllPlans,
+        showWeekGrid: _showWeekGrid,
+        onToggleAllPlans: () => setState(() => _showAllPlans = !_showAllPlans),
+        onToggleWeekGrid: () => setState(() => _showWeekGrid = !_showWeekGrid),
       ),
-      SliverList.builder(
-        itemCount:
-            1 + (openPlans.isEmpty && !_showAllPlans ? 1 : openPlans.length),
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return SectionHeading(
-              title: '系统学习',
-              subtitle: _showAllPlans ? '全部计划' : '进行中的计划，标出下一步与最近一次预约',
-              action: widget.onOpenMaterials == null || visiblePlans.isEmpty
-                  ? null
-                  : forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      size: forui.FButtonSizeVariant.sm,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: widget.onOpenMaterials,
-                      child: const Text('选择学习材料'),
-                    ),
-            );
-          }
-          if (openPlans.isNotEmpty) {
-            return _studyPlanTile(theme, openPlans[index - 1]);
-          }
-          return forui.FCard(
-            child: EmptyState(
-              icon: FLucideIcons.route,
-              title: summaries.isEmpty ? '还没有系统学习计划' : '没有进行中的系统学习计划',
-              description: summaries.isEmpty
-                  ? '选择教材或课件，按页码建立学习顺序。'
-                  : '已暂停或已完成的计划默认收起，可以展开查看。',
-              action: widget.onOpenMaterials == null
-                  ? null
-                  : forui.FButton(
-                      variant: forui.FButtonVariant.outline,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: widget.onOpenMaterials,
-                      child: const Text('选择学习材料'),
-                    ),
-            ),
-          );
-        },
+      1 => PlanItemsTab(
+        week: week,
+        weekStart: weekStart,
+        actions: actions,
+        visible: _active && _tab == 1,
       ),
-      ExpandReveal.sliver(
-        key: const ValueKey('closed-study-plans'),
-        visible: _showAllPlans,
-        child: SliverList.builder(
-          itemCount: closedPlans.length,
-          itemBuilder: (context, index) =>
-              _studyPlanTile(theme, closedPlans[index]),
-        ),
-      ),
-      _timetableList(theme, week, showPlanToggle: closedPlans.isNotEmpty),
-    ];
-  }
-
-  Widget _weekOverview(ZhixinTheme theme, PlanWeek week) {
-    final policy = AppScope.of(context).timePolicy;
-    final range = policy.naturalWeekRange(_shownAnchor!);
-    final currentWeek =
-        range.start == policy.naturalWeekRange(policy.now).start;
-    final lastDay = DateTime(
-      range.start.year,
-      range.start.month,
-      range.start.day + 6,
-    );
-    final planned = week.blocks.where((entry) => entry.block.planned).length;
-    const gridKey = ValueKey('week-grid');
-    final showGridToggle = week.blocks.isNotEmpty || week.timetable.isNotEmpty;
-    final rows = <WidgetBuilder>[
-      (_) => forui.FCard(
-        child: Padding(
-          padding: EdgeInsets.all(theme.space.sm),
-          child: Row(
-            children: [
-              ZhixinIconButton(
-                tooltip: '上一周',
-                onPressed: () => _stepWeek(-1),
-                icon: FLucideIcons.chevronLeft,
-              ),
-              Expanded(
-                child: Column(
-                  children: [
-                    Text(
-                      monthDayRange(range.start, lastDay),
-                      textAlign: TextAlign.center,
-                      style: theme.text.titleMedium.copyWith(
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    if (planned > 0)
-                      Text(
-                        '${currentWeek ? '本周 · ' : ''}$planned 次预约',
-                        textAlign: TextAlign.center,
-                        style: theme.text.bodySmall.copyWith(
-                          color: theme.colors.onSurfaceVariant,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              ZhixinIconButton(
-                tooltip: '下一周',
-                onPressed: () => _stepWeek(1),
-                icon: FLucideIcons.chevronRight,
-              ),
-            ],
-          ),
-        ),
-      ),
-      if (!currentWeek)
-        (_) => Center(
-          child: forui.FButton(
-            variant: forui.FButtonVariant.ghost,
-            size: forui.FButtonSizeVariant.sm,
-            mainAxisSize: MainAxisSize.min,
-            onPress: () => _selectWeek(policy.now),
-            prefix: const Icon(FLucideIcons.calendarDays),
-            child: const Text('回到本周'),
-          ),
-        ),
-      (_) => SizedBox(height: theme.space.md),
-      if (showGridToggle)
-        (_) => Center(
-          child: forui.FButton(
-            variant: forui.FButtonVariant.ghost,
-            size: forui.FButtonSizeVariant.sm,
-            mainAxisSize: MainAxisSize.min,
-            onPress: () => setState(() => _showWeekGrid = !_showWeekGrid),
-            prefix: const Icon(FLucideIcons.grid3x3),
-            child: Text(_showWeekGrid ? '收起周视图' : '周视图'),
-          ),
-        ),
-      if (_showWeekGrid) ...[
-        (_) => _WeekGridKeepAlive(
-          key: gridKey,
-          child: PlanWeekView(
-            weekStart: _shownAnchor!,
-            blocks: week.blocks,
-            timetable: week.timetable,
-            onWeekSelected: _selectWeek,
-            onBlockTap: _openGridBlock,
-            onTimetableTap: _openGridTimetable,
-          ),
-        ),
-        (_) => SizedBox(height: theme.space.md),
-      ],
-      if (week.blocks.isEmpty)
-        (_) => forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.calendarCheck,
-            title: currentWeek
-                ? emptyWeekAppointments
-                : emptyOtherWeekAppointments,
-            description: '可以立即开始学习，也可以为已有事项预约时间。',
-            action: forui.FButton(
-              variant: forui.FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _schedule,
-              child: const Text('选择事项并预约'),
-            ),
-          ),
-        ),
-    ];
-    return SliverList.builder(
-      itemCount: rows.length,
-      findChildIndexCallback: (key) => _showWeekGrid && key == gridKey
-          ? 2 + (currentWeek ? 0 : 1) + (showGridToggle ? 1 : 0)
-          : null,
-      itemBuilder: (context, index) => rows[index](context),
-    );
-  }
-
-  Widget _timetableList(
-    ZhixinTheme theme,
-    PlanWeek week, {
-    required bool showPlanToggle,
-  }) {
-    final header = <WidgetBuilder>[
-      if (showPlanToggle)
-        (_) => Center(
-          child: forui.FButton(
-            variant: forui.FButtonVariant.ghost,
-            size: forui.FButtonSizeVariant.sm,
-            mainAxisSize: MainAxisSize.min,
-            onPress: () => setState(() => _showAllPlans = !_showAllPlans),
-            child: Text(
-              _showAllPlans ? '只看进行中的计划' : '显示全部计划（${week.studyPlans.length}）',
-            ),
-          ),
-        ),
-      (_) => SectionHeading(
-        title: '固定课表',
-        subtitle: '安排学习时自动避开这些时段',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: _addTimetable,
-          prefix: const Icon(FLucideIcons.plus),
-          child: const Text('添加'),
-        ),
-      ),
-      if (week.timetable.isEmpty)
-        (_) => Text(
-          '添加课程时间后，安排学习时会自动检查冲突。',
-          style: theme.text.bodySmall.copyWith(
-            color: theme.colors.onSurfaceVariant,
-          ),
-        ),
-    ];
-    return SliverList.builder(
-      itemCount: header.length + week.timetable.length,
-      itemBuilder: (context, index) {
-        if (index < header.length) return header[index](context);
-        final entry = week.timetable[index - header.length];
-        return Padding(
-          padding: EdgeInsets.only(bottom: theme.space.sm),
-          child: forui.FTile(
-            prefix: const LeadingIcon(
-              FLucideIcons.graduationCap,
-              tone: TagTone.neutral,
-            ),
-            title: Text(entry.title),
-            subtitle: Text(
-              '${weekdayLabel(entry.weekday)} ${entry.startTime}–${entry.endTime}'
-              '${entry.location == null ? '' : '，${entry.location}'}',
-            ),
-            suffix: ZhixinIconButton(
-              tooltip: '删除这节课',
-              icon: FLucideIcons.trash2,
-              onPressed: () => _deleteTimetable(entry),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// 周视图里点到一段预约：按编号补读事项，再打开它的操作面板。
-  Future<void> _openGridBlock(ScheduledItem entry) async {
-    final item = await _itemById(entry.block.planItemId);
-    if (!mounted) return;
-    if (item != null) {
-      await _showItem(item);
-      return;
-    }
-    showToast(context, entry.itemTitle);
-  }
-
-  /// 周视图里点到一节课：只读出这一节的时间，不改数据。
-  void _openGridTimetable(TimetableEntry entry) {
-    if (!mounted) return;
-    showToast(context, '${entry.title} ${entry.startTime}–${entry.endTime}');
-  }
-
-  List<Widget> _itemsTab(ZhixinTheme theme, PlanWeek week) {
-    final header = <Widget>[
-      SectionHeading(
-        first: true,
-        title: planItemName,
-        subtitle: '默认列出未完成的事项，已完成的按页查看',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: _addItem,
-          prefix: const Icon(FLucideIcons.plus),
-          child: const Text('新建'),
-        ),
-      ),
-      if (week.items.isEmpty && week.doneItemCount == 0)
-        const forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.listChecks,
-            title: emptyPlanItems,
-            description: '接受讨论中的下一步建议，或直接新建一项。',
-          ),
-        ),
-      if (week.items.isEmpty && week.doneItemCount > 0)
-        forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.circleCheck,
-            title: emptyPlanItemsNoneOpen,
-            description: '已完成的 ${week.doneItemCount} 项可以展开查看。',
-          ),
-        ),
-    ];
-    return [
-      SliverList.builder(
-        itemCount: header.length + week.items.length,
-        itemBuilder: (context, index) => index < header.length
-            ? header[index]
-            : _itemTile(theme, week.items[index - header.length]),
-      ),
-      if (week.doneItemCount > 0) ..._doneSection(theme, week),
-    ];
-  }
-
-  List<Widget> _doneSection(ZhixinTheme theme, PlanWeek week) {
-    final items = _doneItems;
-    final hasFooter = _loadingDone || _doneLoadFailed;
-    return [
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.only(top: theme.space.sm),
-          child: Center(
-            child: forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              size: forui.FButtonSizeVariant.sm,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _loadingDone ? null : _toggleDone,
-              suffix: Icon(
-                _doneExpanded
-                    ? FLucideIcons.chevronUp
-                    : FLucideIcons.chevronDown,
-              ),
-              child: Text(
-                _doneExpanded ? '收起已完成' : '显示已完成（${week.doneItemCount}）',
-              ),
-            ),
-          ),
-        ),
-      ),
-      ExpandReveal.sliver(
-        key: const ValueKey('done-items'),
-        visible: _doneExpanded,
-        child: SliverList.builder(
-          itemCount: 1 + items.length + (hasFooter ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return const SectionHeading(title: '已完成', subtitle: '按完成时间从近到远');
-            }
-            if (index <= items.length) {
-              return _itemTile(theme, items[index - 1]);
-            }
-            if (_loadingDone) {
-              return const Padding(
-                padding: EdgeInsets.all(12),
-                child: PageLoading(),
-              );
-            }
-            return LoadMoreFooter(
-              label: _doneFirst.isEmpty ? '重试读取已完成事项' : '重试读取更早的已完成事项',
-              loading: false,
-              onPressed: _retryDone,
-            );
-          },
-        ),
-      ),
-    ];
-  }
-
-  List<Widget> _goalsTab(ZhixinTheme theme, PlanWeek week) {
-    final header = <Widget>[
-      SectionHeading(
-        first: true,
-        title: '学习目标',
-        subtitle: '多个目标可以同时进行',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: _addGoal,
-          prefix: const Icon(FLucideIcons.plus),
-          child: const Text('新建'),
-        ),
-      ),
-      if (week.goals.isEmpty)
-        const forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.flag,
-            title: '按需要建立目标',
-            description: '持续学习的相关事项可以归入目标，独立问题单独保留。',
-          ),
-        ),
-    ];
-    return [
-      SliverList.builder(
-        itemCount: header.length + week.goals.length,
-        itemBuilder: (context, index) => index < header.length
-            ? header[index]
-            : _goalTile(theme, week.goals[index - header.length]),
-      ),
-    ];
-  }
-
-  List<Widget> _operationsTab(ZhixinTheme theme, PlanWeek week) {
-    final header = <Widget>[
-      const SectionHeading(
-        first: true,
-        title: aiChanges,
-        subtitle: '$buddyName执行过的变更，可以逐条撤销',
-      ),
-      if (week.operations.isEmpty)
-        const forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.history,
-            title: emptyChangesTitle,
-            description: emptyChangesDescription,
-          ),
-        ),
-    ];
-    return [
-      SliverList.builder(
-        itemCount: header.length + week.operations.length,
-        itemBuilder: (context, index) => index < header.length
-            ? header[index]
-            : _operationTile(theme, week.operations[index - header.length]),
-      ),
-    ];
-  }
-
-  String _goalName(String? id) {
-    if (id == null) return '无归属';
-    final goals = _week?.goals ?? const <LearningGoal>[];
-    return goals.where((goal) => goal.id == id).firstOrNull?.title ?? '目标已删除';
-  }
-
-  Future<void> _closeGoal(LearningGoal goal) async {
-    final confirmed = await confirmZhixin(
-      context: context,
-      title: '结束「${goal.title}」',
-      content: const Text('结束目标后，已有讨论、事项和学习结果会继续保留。'),
-      confirmLabel: '结束',
-    );
-    if (!confirmed || !mounted) return;
-    try {
-      await AppScope.of(context).study.plan.closeGoal(goal.id);
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '结束目标',
-        kind: 'plan_goal_close',
-        kept: '目标与记录保持原样',
-      );
-    }
-  }
-
-  String? _scheduledPlanTitle(ScheduledItem block) {
-    final item = _week?.items
-        .where((item) => item.id == block.block.planItemId)
-        .firstOrNull;
-    final planId = item?.studyPlanId;
-    if (planId == null) return null;
-    return _week?.studyPlans
-        .where((summary) => summary.plan.id == planId)
-        .firstOrNull
-        ?.plan
-        .title;
-  }
-
-  Map<DateTime, List<ScheduledItem>> _byDay(List<ScheduledItem> blocks) {
-    final map = <DateTime, List<ScheduledItem>>{};
-    for (final block in blocks) {
-      final day = DateTime(
-        block.block.startAt.year,
-        block.block.startAt.month,
-        block.block.startAt.day,
-      );
-      map.putIfAbsent(day, () => []).add(block);
-    }
-    return map;
-  }
-
-  /// 今天的分组排在最前，其余日期按时间顺序。
-  List<MapEntry<DateTime, List<ScheduledItem>>> _dayEntries(
-    List<ScheduledItem> blocks,
-  ) {
-    final now = AppScope.of(context).timePolicy.now;
-    final today = DateTime(now.year, now.month, now.day);
-    final entries = _byDay(blocks).entries.toList();
-    entries.sort((left, right) {
-      final leftToday = left.key == today;
-      final rightToday = right.key == today;
-      if (leftToday != rightToday) return leftToday ? -1 : 1;
-      return left.key.compareTo(right.key);
-    });
-    return entries;
-  }
-
-  Widget _goalTile(ZhixinTheme theme, LearningGoal goal) {
-    final paused = goal.status == LearningGoalStatus.paused;
-    final scope = goal.scopeText?.trim();
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.tight),
-      child: forui.FTile(
-        prefix: LeadingIcon(
-          FLucideIcons.flag,
-          tone: goal.active
-              ? TagTone.accent
-              : paused
-              ? TagTone.attention
-              : TagTone.muted,
-        ),
-        title: Text(goal.title),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            TagRow(
-              children: [
-                StatusTag(
-                  goal.status.label,
-                  tone: goal.active
-                      ? TagTone.accent
-                      : paused
-                      ? TagTone.attention
-                      : TagTone.muted,
-                ),
-                if (goal.dueDate != null)
-                  StatusTag('截止 ${goal.dueDate}', icon: FLucideIcons.calendar),
-              ],
-            ),
-            if (scope != null && scope.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  scope,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
-        ),
-        suffix: moreMenu(
-          items: [
-            if (goal.active)
-              ZhixinMenuItem(label: '暂停目标', onSelected: () => _pauseGoal(goal)),
-            if (paused)
-              ZhixinMenuItem(
-                label: '恢复目标',
-                onSelected: () => _resumeGoal(goal),
-              ),
-            ZhixinMenuItem(label: '标记结束', onSelected: () => _closeGoal(goal)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _studyPlanTile(ZhixinTheme theme, StudyPlanSummary summary) {
-    final plan = summary.plan;
-    final next = summary.nextStep;
-    final block = summary.nextBlock;
-    final muted = theme.text.bodySmall.copyWith(
-      color: theme.colors.onSurfaceVariant,
-    );
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.tight),
-      child: forui.FTile(
-        prefix: LeadingIcon(
-          plan.done ? FLucideIcons.circleCheck : FLucideIcons.route,
-          tone: plan.done ? TagTone.muted : TagTone.accent,
-        ),
-        title: Text(plan.title),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            TagRow(
-              children: [
-                StatusTag(
-                  plan.statusLabel,
-                  tone: plan.open ? TagTone.accent : TagTone.muted,
-                ),
-                StatusTag(plan.progressLabel),
-                if (plan.materialTitle != null)
-                  StatusTag(plan.materialTitle!, icon: FLucideIcons.bookOpen),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              next == null ? '全部步骤已完成' : '下一步：${next.title}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.text.bodySmall.copyWith(
-                color: theme.colors.onSurface,
-              ),
-            ),
-            Text(
-              block == null
-                  ? '尚未预约'
-                  : '最近预约：${shortTime(block.startAt)}–${clockOf(block.endAt)}',
-              style: muted,
-            ),
-          ],
-        ),
-        suffix: Icon(
-          FLucideIcons.chevronRight,
-          color: theme.colors.onSurfaceVariant,
-        ),
-        onPress: () => _openStudyPlan(plan.id),
-      ),
-    );
-  }
-
-  /// 日期与当天的课程单独占一行，标题的写法与记录页共用 [relativeDayHeading]。
-  Widget _dayHeading(
-    ZhixinTheme theme,
-    DateTime day,
-    List<TimetableEntry> timetable,
-  ) {
-    final entries = timetable.where((entry) => entry.weekday == day.weekday);
-    final now = AppScope.of(context).timePolicy.now;
-    final today = DateTime(now.year, now.month, now.day);
-    final isToday = day == today;
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                relativeDayHeading(day, now: now),
-                style: theme.text.labelLarge.copyWith(
-                  color: isToday
-                      ? theme.colors.onSurface
-                      : theme.colors.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          if (entries.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    FLucideIcons.graduationCap,
-                    size: 14,
-                    color: theme.colors.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      '课：${entries.map((entry) => '${entry.startTime} ${entry.title}').join('、')}',
-                      style: theme.text.bodySmall.copyWith(
-                        color: theme.colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _blockTile(ZhixinTheme theme, ScheduledItem entry) {
-    final block = entry.block;
-    final planned = block.planned;
-    final planTitle = _scheduledPlanTitle(entry);
-    final figures = theme.text.figures;
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.tight),
-      child: forui.FTile(
-        prefix: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 3,
-              height: 36,
-              decoration: BoxDecoration(
-                color: planned
-                    ? theme.colors.primary
-                    : theme.colors.outlineVariant,
-                borderRadius: const BorderRadius.all(Radius.circular(2)),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  clockOf(block.startAt),
-                  style: figures.copyWith(
-                    color: planned
-                        ? theme.colors.onSurface
-                        : theme.colors.onSurfaceVariant,
-                  ),
-                ),
-                Text(
-                  clockOf(block.endAt),
-                  style: figures.copyWith(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    color: theme.colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        onPress: () async {
-          final item = await _itemById(block.planItemId);
-          if (item != null && mounted) await _showItem(item);
-        },
-        title: Text(
-          entry.itemTitle,
-          style: planned
-              ? null
-              : TextStyle(color: theme.colors.onSurfaceVariant),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (planTitle != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  '所属计划：$planTitle',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            const SizedBox(height: 4),
-            TagRow(
-              children: [
-                if (block.status == ScheduleBlockStatus.cancelled)
-                  const StatusTag('已取消', tone: TagTone.muted),
-                if (block.status == ScheduleBlockStatus.done)
-                  const StatusTag('本次预约已结束', tone: TagTone.muted),
-                if (entry.itemStatus == PlanItemStatus.done)
-                  const StatusTag('这一步已完成', tone: TagTone.accent),
-                block.locked
-                    ? const StatusTag('已固定', icon: FLucideIcons.lock)
-                    : const StatusTag('弹性', tone: TagTone.muted),
-                if (block.source == PlanItemSource.ai)
-                  const StatusTag('$buddyName排的', icon: FLucideIcons.sparkles),
-              ],
-            ),
-          ],
-        ),
-        suffix: _blockMenu(entry),
-      ),
-    );
-  }
-
-  Widget _itemTile(ZhixinTheme theme, PlanItem item) {
-    final note = item.note?.trim();
-    final overdue =
-        item.open &&
-        item.dueAt != null &&
-        item.dueAt!.isBefore(AppScope.of(context).timePolicy.now);
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.tight),
-      child: forui.FTile(
-        onPress: () => _showItem(item),
-        prefix: LeadingIcon(
-          item.done
-              ? FLucideIcons.circleCheck
-              : item.isStudyStep
-              ? FLucideIcons.route
-              : FLucideIcons.circlePlay,
-          tone: item.done
-              ? TagTone.muted
-              : item.priority > 0
-              ? TagTone.attention
-              : TagTone.accent,
-        ),
-        title: Text(item.title),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            TagRow(
-              children: [
-                StatusTag(
-                  item.status.label,
-                  tone: item.open ? TagTone.accent : TagTone.muted,
-                ),
-                if (item.priority == 2)
-                  const StatusTag('最高优先', tone: TagTone.attention)
-                else if (item.priority == 1)
-                  const StatusTag('优先', tone: TagTone.attention),
-                if (item.dueAt != null)
-                  StatusTag(
-                    '截止 ${dateText(item.dueAt)}',
-                    icon: FLucideIcons.calendar,
-                    tone: overdue ? TagTone.attention : TagTone.neutral,
-                  ),
-                if (item.estMinutes != null)
-                  StatusTag('约 ${item.estMinutes} 分钟', tone: TagTone.muted),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              [
-                item.isStudyStep
-                    ? '系统学习第 ${item.seq ?? 1} 步'
-                    : _goalName(item.goalId),
-                if (item.pageLabel.isNotEmpty) item.pageLabel,
-              ].join('，'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (note != null && note.isNotEmpty)
-              Text(
-                note,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(height: 1.4),
-              ),
-          ],
-        ),
-        suffix: moreMenu(
-          items: [
-            ZhixinMenuItem(
-              label: item.isStudyStep ? '完成这一步' : '完成事项',
-              onSelected: () => _setStatus(item, PlanItemStatus.done),
-            ),
-            ZhixinMenuItem(
-              label: '恢复待办',
-              onSelected: () => _setStatus(item, PlanItemStatus.todo),
-            ),
-            ZhixinMenuItem(
-              label: '暂缓',
-              onSelected: () => _setStatus(item, PlanItemStatus.deferred),
-            ),
-            if (item.priority != 1)
-              ZhixinMenuItem(
-                label: '设为优先',
-                onSelected: () => _setPriority(item, 1),
-              ),
-            if (item.priority != 2)
-              ZhixinMenuItem(
-                label: '设为最高优先',
-                onSelected: () => _setPriority(item, 2),
-              ),
-            if (item.priority != 0)
-              ZhixinMenuItem(
-                label: '取消优先',
-                onSelected: () => _setPriority(item, 0),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _blockMenu(ScheduledItem block) {
-    final item = _cachedItem(block.block.planItemId);
-    return moreMenu(
-      items: [
-        if (block.block.planned)
-          ZhixinMenuItem(
-            label: '结束本次预约',
-            onSelected: () => _runBlockAction(block, 'end'),
-          ),
-        if (block.block.planned && item != null && item.open)
-          ZhixinMenuItem(
-            label: item.isStudyStep ? '完成这一步' : '完成事项',
-            onSelected: () => _runBlockAction(block, 'complete'),
-          ),
-        if (!block.block.planned && (item?.open ?? true))
-          ZhixinMenuItem(
-            label: '恢复为待开始',
-            onSelected: () => _runBlockAction(block, 'restore'),
-          ),
-        ZhixinMenuItem(
-          label: block.block.locked ? '改为弹性' : '固定这次',
-          onSelected: () => _runBlockAction(block, 'lock'),
-        ),
-        ZhixinMenuItem(
-          label: '取消这次',
-          onSelected: () => _runBlockAction(block, 'delete'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _runBlockAction(ScheduledItem block, String value) async {
-    final item = await _itemById(block.block.planItemId);
-    if (value == 'end') {
-      await _endAppointment(block.block, item);
-      return;
-    }
-    if (value == 'complete' && item != null) {
-      await _setStatus(item, PlanItemStatus.done);
-      return;
-    }
-    if (!mounted) return;
-    final service = AppScope.of(context).study.plan;
-    try {
-      final (result, message) = switch (value) {
-        'restore' => (
-          await service.setBlockStatus(
-            block.block.id,
-            ScheduleBlockStatus.planned,
-          ),
-          '已恢复为待开始',
-        ),
-        'delete' => (await service.deleteBlock(block.block.id), '已取消这次预约'),
-        'lock' => (
-          await service.setBlockLocked(block.block.id, !block.block.locked),
-          block.block.locked ? '已改为弹性' : '已固定这次预约',
-        ),
-        _ => (null, ''),
-      };
-      if (!mounted || result == null || !result.changed) return;
-      showActionToast(
-        context,
-        message,
-        label: '撤销',
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '修改这次预约',
-        kind: 'plan_block_menu',
-        kept: '这次没有写入',
-      );
-    }
-  }
-
-  Future<void> _setPriority(PlanItem item, int priority) async {
-    try {
-      await AppScope.of(context).study.plan.setPriority(item.id, priority);
-    } catch (error, stack) {
-      if (!mounted) return;
-      _reportFailure(
-        error,
-        stack,
-        action: '修改优先顺序',
-        kind: 'plan_item_priority',
-        kept: '优先顺序没有改动',
-      );
-    }
-  }
-
-  Widget _operationTile(ZhixinTheme theme, RevisionCommit commit) {
-    final createdAt = commit.createdAt;
-    final changes = commit.changeCount == 1
-        ? '1 项变化'
-        : '${commit.changeCount} 项变化';
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.tight),
-      child: forui.FTile(
-        prefix: const LeadingIcon(FLucideIcons.sparkles),
-        title: Text(commit.action),
-        subtitle: Text(
-          createdAt == null ? changes : '${shortTime(createdAt)}，$changes',
-        ),
-        suffix: forui.FButton(
-          variant: forui.FButtonVariant.outline,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => _undo(commit),
-          prefix: const Icon(FLucideIcons.undo2),
-          child: const Text('撤销'),
-        ),
-      ),
-    );
-  }
-}
-
-/// 周视图展开后保留自己的横向周数和纵向滚动位置。
-class _WeekGridKeepAlive extends StatefulWidget {
-  const _WeekGridKeepAlive({super.key, required this.child});
-
-  final Widget child;
-
-  @override
-  State<_WeekGridKeepAlive> createState() => _WeekGridKeepAliveState();
-}
-
-class _WeekGridKeepAliveState extends State<_WeekGridKeepAlive>
-    with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return widget.child;
+      2 => PlanGoalsTab(week: week, actions: actions),
+      _ => PlanOperationsTab(week: week, actions: actions),
+    };
   }
 }

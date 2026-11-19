@@ -79,6 +79,48 @@ void main() {
     }
   });
 
+  test('安排页的四个页签是独立组件，不依赖页面本身', () {
+    final lib = Directory('lib').absolute;
+    final page = File(p.join(lib.path, 'ui', 'plan_page.dart'));
+    expect(page.existsSync(), isTrue, reason: '安排页应保留页面壳');
+    final source = page.readAsStringSync();
+    expect(
+      source.contains('CustomScrollView('),
+      isFalse,
+      reason: '页面壳只负责周订阅与页签切换，列表与卡片放进各自的页签组件',
+    );
+
+    const tabs = {
+      'plan_schedule_tab.dart': 'PlanScheduleTab',
+      'plan_items_tab.dart': 'PlanItemsTab',
+      'plan_goals_tab.dart': 'PlanGoalsTab',
+      'plan_operations_tab.dart': 'PlanOperationsTab',
+    };
+    final pagePath = p.normalize(page.absolute.path);
+    for (final entry in tabs.entries) {
+      final tab = File(p.join(lib.path, 'ui', entry.key));
+      expect(tab.existsSync(), isTrue, reason: '安排页应拆出 ${entry.key}');
+      final directives = _directives(tab);
+      expect(
+        directives.any((uri) => uri.endsWith('/plan_page.dart')),
+        isFalse,
+        reason: '${entry.key} 不能依赖页面，页面单向依赖页签',
+      );
+      expect(
+        tab.readAsStringSync().contains('class ${entry.value}'),
+        isTrue,
+        reason: '${entry.key} 应提供 ${entry.value}',
+      );
+      for (final target in _reachableFiles(lib, tab)) {
+        expect(
+          p.equals(p.normalize(target.absolute.path), pagePath),
+          isFalse,
+          reason: '${entry.key} 不能通过其他文件绕回页面',
+        );
+      }
+    }
+  });
+
   test('插件目录不读数据层与界面，也不持有数据库连接', () {
     final lib = Directory('lib').absolute;
     final plugins = Directory(p.join(lib.path, 'plugins'));

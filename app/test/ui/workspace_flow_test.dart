@@ -46,6 +46,7 @@ import 'package:zhixin/ui/zhixin_header.dart';
 import 'package:zhixin/ui/zhixin_icon_button.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
+import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 import '../support/app_scope_teardown.dart';
@@ -85,7 +86,7 @@ class _DelayedHelpAi implements BuddyAi {
   final Completer<void> resume = Completer<void>();
 
   @override
-  Future<LlmConfig?> config() async => null;
+  Future<Result<LlmConfig?>> config() async => const Success(null);
 
   @override
   Future<BuddyReply> ask({
