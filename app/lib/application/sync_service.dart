@@ -111,16 +111,19 @@ class SyncResult {
 /// 同步只读写本机数据库与网络，不换库、不清空，界面通过数据层已有的表通知重读。
 /// 推送给服务端的请求标识。
 ///
-/// 服务端要求它非空且不超过 64 个字符；本地有些命令用 JSON 编码的请求标识做重复
-/// 提交判断（例如更正材料页），长度会超过上限，整批推送因此被拒绝。超长或为空时
-/// 改用按提交编号生成的稳定标识，同一提交重试时标识不变，服务端的去重照常生效。
+/// 服务端要求它非空且不超过 64 个字节；本地有些命令用 JSON 编码的请求标识做重复
+/// 提交判断（例如加记忆、更正材料页），既可能变长，也可能带中文，按 UTF-8 字节
+/// 算会超过上限，整批推送因此被拒绝。超长或为空时改用按提交编号生成的稳定标识，
+/// 同一提交重试时标识不变，服务端的去重照常生效。
 String syncRequestIdFor({
   required String? stored,
   required String deviceId,
   required int commitId,
 }) {
   final existing = stored?.trim() ?? '';
-  if (existing.isNotEmpty && existing.length <= 64) return existing;
+  if (existing.isNotEmpty && utf8.encode(existing).length <= 64) {
+    return existing;
+  }
   final prefix = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
   return 'l-$prefix-$commitId';
 }
@@ -497,6 +500,18 @@ class SyncService {
           );
           break;
         } on ServerProblem catch (error) {
+          if (error.status == 400 && batch.isNotEmpty) {
+            // 服务端只说“提交校验失败”，本机据此定位是哪一批、哪一条。
+            recordFailure(
+              StateError(
+                '同步被拒：批次 ${batch.length} 条，'
+                '首条 ${batch.first.requestId}，末条 ${batch.last.requestId}，'
+                'extra=${error.extra}',
+              ),
+              StackTrace.current,
+              kind: 'cloud_sync_batch',
+            );
+          }
           final retry = error.retryAfterSeconds;
           if (error.code != 'rate_limited' ||
               attempt >= 2 ||

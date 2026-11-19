@@ -340,5 +340,23 @@ void main() {
       ),
       'l-3B164M00-7',
     );
+
+    // 服务端按 UTF-8 字节算长度：这条中文标识只有 46 个字符，却有 70 个字节。
+    final chinese = jsonEncode([
+      'add-memory',
+      'preference',
+      '只能在上午学习，晚上效率低',
+      '',
+    ]);
+    expect(chinese.length, lessThanOrEqualTo(64));
+    expect(utf8.encode(chinese).length, greaterThan(64));
+    expect(
+      syncRequestIdFor(
+        stored: chinese,
+        deviceId: '3B164M00XU700000',
+        commitId: 31,
+      ),
+      'l-3B164M00-31',
+    );
   });
 }
