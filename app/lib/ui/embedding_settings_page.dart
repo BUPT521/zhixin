@@ -377,7 +377,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       return '本次索引更新已经取消。';
     }
     final failed = result.failed > 0 ? '，失败 ${result.failed} 条' : '';
-    final cached = result.cached > 0 ? '，其中 ${result.cached} 条片段直接取自缓存' : '';
+    final cached = result.cached > 0 ? '，有 ${result.cached} 条片段直接取自缓存' : '';
     final problem = result.sourceProblem;
     if (problem != null) {
       return '本次更新在中途停下：$problem。已经写入 ${result.embedded} 条，'
@@ -392,7 +392,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
 
   /// 耗时只放在折叠起来的详情里，不占摘要。
   String _describeRefreshDetail(IndexRefreshResult result) =>
-      '嵌入耗时 ${result.embedMs} 毫秒，写索引 ${result.writeMs} 毫秒。';
+      '嵌入与查找耗时 ${result.embedMs} 毫秒，写索引 ${result.writeMs} 毫秒。';
 
   /// 用一条固定查询走完整检索：嵌入、查索引与核对来源。
   Future<void> _probeQuery() async {
