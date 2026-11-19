@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/memory_service.dart';
+import '../application/prefetch_service.dart';
 import '../domain/models/memory.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
@@ -34,6 +35,9 @@ class _MemoryPageState extends State<MemoryPage> {
   /// 保存、删除与撤销之后的重新读取都由数据层完成，页面不再自己重读。
   Stream<MemoryPageView>? _stream;
 
+  /// 一级界面切进来时已经读好的首屏；有它就先显示内容，不再摆骨架。
+  MemoryPageView? _initial;
+
   /// 读取失败时就地说明；有内容时仍显示上一份结果。
   String? _notice;
 
@@ -49,7 +53,10 @@ class _MemoryPageState extends State<MemoryPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     // 页面要读应用根上的仓库，等依赖就绪之后再订阅。
-    _stream ??= AppScope.of(context).memory.edit.watchMemories();
+    final scope = AppScope.of(context);
+    _stream ??= scope.memory.edit.watchMemories();
+    // “现在”与“我的”切进来时已经在后台读过一屏，接过来直接显示。
+    _initial ??= scope.prefetch.peek<MemoryPageView>(PrefetchKey.memory);
   }
 
   void _onReadError(Object error, StackTrace stack) {
@@ -101,6 +108,7 @@ class _MemoryPageState extends State<MemoryPage> {
       ),
       child: LiveView<MemoryPageView>(
         stream: _stream,
+        initial: _initial,
         onError: _onReadError,
         onData: (_) => _clearNotice(),
         builder: (context, view, loading) => ListView(

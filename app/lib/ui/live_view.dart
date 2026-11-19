@@ -20,11 +20,16 @@ class LiveView<T> extends StatefulWidget {
     required this.builder,
     this.onError,
     this.onData,
+    this.initial,
     this.contentTransition,
   });
 
   /// 跟随写入更新的读取；为空时只显示 [builder] 的空状态。
   final Stream<T>? stream;
+
+  /// 进入页面前已经读到的第一份结果：二级界面的预读结果放在这里，首帧就有
+  /// 内容，不再先摆一段骨架；订阅的第一次结果随后照常覆盖它。
+  final T? initial;
 
   /// 数据、首读中的状态与重建；`data` 在第一次结果到达之前为空。
   final Widget Function(BuildContext context, T? data, bool loading) builder;
@@ -53,6 +58,8 @@ class _LiveViewState<T> extends State<LiveView<T>> {
   @override
   void initState() {
     super.initState();
+    _data = widget.initial;
+    _received = widget.initial != null;
     _subscribe();
   }
 

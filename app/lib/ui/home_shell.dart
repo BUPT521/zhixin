@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
 import '../application/active_report_service.dart';
+import '../application/prefetch_service.dart';
 import '../application/update_check_service.dart';
 import 'copy.dart';
 import 'mine_page.dart';
@@ -36,6 +37,9 @@ class HomeShell extends StatefulWidget {
 /// 不和它抢数据库与这几帧。
 const Duration preloadDelay = Duration(milliseconds: 600);
 
+/// 切到某一栏之后等这么久再预读它的二级界面：先让切栏动画走完，再读下一层。
+const Duration secondaryPrefetchDelay = Duration(milliseconds: 320);
+
 class _HomeShellState extends State<HomeShell> {
   /// 当前栏与跳转请求都走 notifier：切栏只换常驻栈的下标，各栏的构造参数
   /// 不变，切栏那一帧因此不必把各栏一起重建。
@@ -50,11 +54,25 @@ class _HomeShellState extends State<HomeShell> {
   final ValueNotifier<bool> _preload = ValueNotifier<bool>(false);
   Timer? _preloadTimer;
 
+  /// 二级界面的预读；每次切栏排一次，切走时取消还没到点的那一次。
+  Timer? _secondaryPrefetchTimer;
+  int _secondaryPrefetchSequence = 0;
+
   /// 各栏页面只建一次；跳转与数据版本都通过 notifier 传，不靠重建。
   List<Widget>? _pages;
 
   /// 首次说明与更新检查只安排一次，didChangeDependencies 会因主题、语言等变化被多次调用。
   bool _startupChecksScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _index.addListener(_onIndexChanged);
+    // 首页从启动起就是当前栏：首帧之后预读它的二级界面，用户点进记忆时直接有内容。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scheduleSecondaryPrefetch(_areaOf(0));
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -113,11 +131,33 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   void dispose() {
+    _index.removeListener(_onIndexChanged);
     _preloadTimer?.cancel();
+    _secondaryPrefetchTimer?.cancel();
     // 这些 notifier 由各栏共享，页面卸载时还会移除自己的监听，所以不在这里
     // 销毁：跟着 HomeShell 一起被回收即可。
     super.dispose();
   }
+
+  /// 切栏（包括首次切到某一栏）之后预读这一栏的二级界面。
+  void _onIndexChanged() => _scheduleSecondaryPrefetch(_areaOf(_index.value));
+
+  /// 预读排在切栏动画之后；连续切栏时只保留最后一次，不为中间一闪而过的栏读数据。
+  void _scheduleSecondaryPrefetch(PrefetchArea area) {
+    final sequence = ++_secondaryPrefetchSequence;
+    _secondaryPrefetchTimer?.cancel();
+    _secondaryPrefetchTimer = Timer(secondaryPrefetchDelay, () {
+      if (!mounted || sequence != _secondaryPrefetchSequence) return;
+      AppScope.of(context).prefetch.enter(area);
+    });
+  }
+
+  static PrefetchArea _areaOf(int index) => switch (index) {
+    0 => PrefetchArea.now,
+    1 => PrefetchArea.records,
+    2 => PrefetchArea.plan,
+    _ => PrefetchArea.mine,
+  };
 
   /// 首次说明与更新检查都放在启动后的空闲时机。
   ///

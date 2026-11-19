@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_service.dart';
 import '../application/search_index_service.dart';
 import '../data/cloud/server_client.dart';
 import '../data/vector/embedding_config_store.dart';
@@ -17,6 +18,14 @@ import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
+
+/// 一级界面切进来之后预读的语义索引设置首屏；字段与预读任务返回的记录一致。
+typedef _EmbeddingPrewarm = ({
+  EmbeddingConfig? config,
+  List<Material> materials,
+  bool signedIn,
+  IndexStats? stats,
+});
 
 /// 语义索引设置：索引状态、嵌入来源与可发送范围三段。
 ///
@@ -76,6 +85,15 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     // 页面要读应用根上的仓库与设置，等依赖就绪后再读一次。
     if (_loaded) return;
     _loaded = true;
+    final prewarm = AppScope.of(context).prefetch
+        .take<_EmbeddingPrewarm>(PrefetchKey.embeddingSettings);
+    if (prewarm != null) {
+      _materials = prewarm.materials;
+      _signedIn = prewarm.signedIn;
+      _stats = prewarm.stats;
+      if (prewarm.config case final config?) _applyConfig(config);
+      _loading = false;
+    }
     _load();
   }
 
@@ -154,24 +172,27 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       _statsFailed = statsFailure != null;
       _notice = notice;
       _signedIn = signedIn;
-      if (config != null) {
-        _enabled = config.enabled;
-        _provider = config.provider;
-        _baseUrl.text = config.baseUrl;
-        _dim.text = '${config.dim}';
-        if (config.usesServer) {
-          _serverModel = config.model;
-        } else {
-          _model.text = config.model;
-        }
-        _apiKey.text = config.apiKey;
-        _shareScope = config.shareScope;
-        _selectedMaterials
-          ..clear()
-          ..addAll(config.materialIds);
-      }
+      if (config != null) _applyConfig(config);
     });
     if (signedIn) unawaited(_loadServerModels(scope));
+  }
+
+  /// 把一份已经保存的嵌入配置填回表单；预读与本次读取共用这一处。
+  void _applyConfig(EmbeddingConfig config) {
+    _enabled = config.enabled;
+    _provider = config.provider;
+    _baseUrl.text = config.baseUrl;
+    _dim.text = '${config.dim}';
+    if (config.usesServer) {
+      _serverModel = config.model;
+    } else {
+      _model.text = config.model;
+    }
+    _apiKey.text = config.apiKey;
+    _shareScope = config.shareScope;
+    _selectedMaterials
+      ..clear()
+      ..addAll(config.materialIds);
   }
 
   /// 读服务端的嵌入模型，要走网络，不挡住本页首读；回来之后补上选项，并按

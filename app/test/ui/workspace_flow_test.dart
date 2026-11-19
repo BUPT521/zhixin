@@ -36,6 +36,10 @@ import 'package:zhixin/ui/materials_page.dart';
 import 'package:zhixin/ui/mine_page.dart';
 import 'package:zhixin/ui/now_page.dart';
 import 'package:zhixin/ui/plan_page.dart';
+import 'package:zhixin/ui/plan_goals_tab.dart';
+import 'package:zhixin/ui/plan_items_tab.dart';
+import 'package:zhixin/ui/plan_operations_tab.dart';
+import 'package:zhixin/ui/plan_schedule_tab.dart';
 import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/study_plan_page.dart';
@@ -419,7 +423,7 @@ void main() {
   });
 
   for (final reduceMotion in [false, true]) {
-    testWidgets('材料页签首读按动效设置回填（减少动态效果：$reduceMotion）', (tester) async {
+    testWidgets('材料页签预读之后第一次打开直接是内容（减少动态效果：$reduceMotion）', (tester) async {
       tester.binding.platformDispatcher.accessibilityFeaturesTestValue =
           FakeAccessibilityFeatures(disableAnimations: reduceMotion);
       addTearDown(
@@ -449,9 +453,10 @@ void main() {
         // 等数据库读取结束，保持页签动画的测试时钟停在起点。
         await scope!.testing.gate.exclusive(() async {});
       });
-      expect(skeleton, findsOneWidget);
-      expect(find.byType(forui.FCircularProgress), findsNothing);
-      expect(tester.widget<forui.FButton>(importButton).onPress, isNull);
+      // 材料页签在底栏预读时已经建好并读完，第一次打开不再摆骨架，按钮可用。
+      expect(skeleton, findsNothing);
+      expect(find.text(title), findsOneWidget);
+      expect(tester.widget<forui.FButton>(importButton).onPress, isNotNull);
       final headingPosition = tester.getTopLeft(importButton);
       final transition = TabTransition.maybeOf(tester.element(materials))!;
       expect(
@@ -463,8 +468,8 @@ void main() {
       await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       if (!reduceMotion) {
         await tester.pump(const Duration(milliseconds: 80));
-        expect(skeleton, findsOneWidget);
-        expect(find.text(title), findsNothing);
+        expect(skeleton, findsNothing);
+        expect(find.text(title), findsOneWidget);
         await tester.pump(const ZhixinMotion().standard);
         await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       }
@@ -1259,6 +1264,81 @@ void main() {
       expect(find.byType(ListSkeleton), findsNothing, reason: tab);
       await settle(tester);
     }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('预读放行后材料页签一并建好，切过去直接是内容', (tester) async {
+    await openApp(tester);
+
+    // 学习记录与材料两个页签在预读放行时一起建起来，材料列表已在后台订阅。
+    expect(find.byType(MaterialList, skipOffstage: false), findsOneWidget);
+
+    await tester.tap(find.text('记录').last);
+    await settle(tester);
+    await tester.tap(find.text(recordsTabMaterials));
+    await tester.pump();
+    expect(find.byType(ListSkeleton), findsNothing);
+    expect(find.byType(MaterialList), findsOneWidget);
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('预读放行后安排的四个页签都已建好', (tester) async {
+    await openApp(tester);
+
+    for (final view in <Type>[
+      PlanScheduleTab,
+      PlanItemsTab,
+      PlanGoalsTab,
+      PlanOperationsTab,
+    ]) {
+      expect(
+        find.byType(view, skipOffstage: false),
+        findsOneWidget,
+        reason: '$view',
+      );
+    }
+
+    await tester.tap(find.text('安排').last);
+    await tester.pump();
+    expect(find.byType(ListSkeleton), findsNothing);
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('进入我的之后设置页首屏已经预读，打开不再出现骨架', (tester) async {
+    await openApp(tester);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(forui.FBottomNavigationBar),
+        matching: find.text(tabMine),
+      ),
+    );
+    // 预读在切栏动画之后开始，这里等到它读完。
+    await settle(tester);
+
+    final entry = find.descendant(
+      of: find.byType(MinePage),
+      matching: find.widgetWithText(forui.FTile, '设置'),
+    );
+    await tester.scrollUntilVisible(
+      entry,
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byType(MinePage),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(entry);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(SettingsPage), findsOneWidget);
+    expect(find.byType(ListSkeleton), findsNothing);
+    await settle(tester);
     expect(tester.takeException(), isNull);
   });
 

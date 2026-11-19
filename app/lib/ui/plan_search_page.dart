@@ -8,6 +8,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/plan_search.dart';
+import '../application/prefetch_service.dart';
 import '../application/request_gate.dart';
 import '../domain/models/study.dart';
 import '../domain/rules/time_policy.dart' show naturalDay;
@@ -78,7 +79,13 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
 
   Future<void> _loadGoals() async {
     try {
-      final goals = await AppScope.of(context).study.plan.goals();
+      final scope = AppScope.of(context);
+      // 进入“安排”时已经在后台读过目标选项，直接用这一份。
+      final goals =
+          scope.prefetch.peek<List<LearningGoal>>(
+            PrefetchKey.planSearchGoals,
+          ) ??
+          await scope.study.plan.goals();
       if (!mounted) return;
       setState(() => _goals = goals);
     } catch (_) {

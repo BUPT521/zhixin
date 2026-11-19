@@ -158,8 +158,8 @@ class _RecordsPageState extends State<RecordsPage> {
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
     // 未显示的页面等底栏放行预读再订阅，不和首页的首读抢；切到记录时
-    // 还没放行的，当场开始。
-    if (_stream == null && _shouldRead) _stream = _createStream();
+    // 还没放行的，当场开始。材料页签同时建好，切过去直接是内容。
+    if (_shouldRead) _ensurePreloaded(notify: false);
   }
 
   @override
@@ -234,14 +234,32 @@ class _RecordsPageState extends State<RecordsPage> {
   /// 切到这一栏时接着订阅；常驻页签的内容不重读。
   void _onActiveChanged() {
     if (!mounted || !_active) return;
-    if (_stream == null) setState(() => _stream = _createStream());
+    _ensurePreloaded();
     if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
   }
 
-  /// 底栏放行预读：还没订阅的话现在在后台订阅第一页，结果先留在常驻页里。
+  /// 底栏放行预读：还没订阅的话现在在后台订阅第一页，材料页签一并建好，
+  /// 两个页签第一次切过去都是内容。
   void _onPreload() {
-    if (!mounted || !_shouldRead || _stream != null) return;
-    setState(() => _stream = _createStream());
+    if (!mounted || !_shouldRead) return;
+    _ensurePreloaded();
+  }
+
+  /// 现在可以读：学习记录与材料两个页签一起建起来，只建一次。
+  void _ensurePreloaded({bool notify = true}) {
+    final first = _stream == null;
+    final materials = !_visited.contains(RecordsTab.materials);
+    if (!first && !materials) return;
+    void apply() {
+      if (first) _stream = _createStream();
+      if (materials) _visited.add(RecordsTab.materials);
+    }
+
+    if (notify) {
+      setState(apply);
+    } else {
+      apply();
+    }
   }
 
   /// 从首页跳到“材料”或“学习记录”：只切页签，常驻内容不重读。

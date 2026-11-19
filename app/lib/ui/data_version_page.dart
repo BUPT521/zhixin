@@ -11,6 +11,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_service.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_models.dart';
@@ -45,6 +46,9 @@ class _DataVersionPageState extends State<DataVersionPage> {
   Stream<DataVersionOverview>? _stream;
   DataVersionOverview? _view;
 
+  /// 一级界面切进来时已经读好的首屏；有它就先显示内容，不再摆骨架。
+  DataVersionOverview? _initial;
+
   bool _busy = false;
   int _keep = 100;
 
@@ -62,7 +66,13 @@ class _DataVersionPageState extends State<DataVersionPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     // 页面一进入就订阅整屏读取，写入之后的重新读取由数据层完成。
+    final scope = AppScope.of(context);
     _stream ??= _createStream();
+    // 从“我的”打开时，一级界面切进来之后已经在后台读过一屏。
+    _initial ??= scope.prefetch.peek<DataVersionOverview>(
+      PrefetchKey.dataVersion,
+    );
+    _view ??= _initial;
   }
 
   Stream<DataVersionOverview> _createStream() =>
@@ -792,6 +802,7 @@ class _DataVersionPageState extends State<DataVersionPage> {
       header: const ZhixinHeader(title: Text('数据版本'), showBack: true),
       child: LiveView<DataVersionOverview>(
         stream: _stream,
+        initial: _initial,
         onData: _onView,
         onError: _onViewError,
         builder: (context, view, loading) {

@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_service.dart';
 import '../application/request_gate.dart';
 import '../application/search_service.dart';
 import '../application/search_index_service.dart';
@@ -106,8 +107,14 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   Future<void> _loadScopeOptions() async {
     try {
       final scope = AppScope.of(context);
-      final goals = await scope.study.plan.activeGoals();
-      final materials = await scope.library.material.list();
+      // 进入“记录”时已经在后台读过范围选项，直接用这一份。
+      final prewarm = scope.prefetch
+          .peek<({List<LearningGoal> goals, List<Material> materials})>(
+            PrefetchKey.recordsSearchOptions,
+          );
+      final goals = prewarm?.goals ?? await scope.study.plan.activeGoals();
+      final materials =
+          prewarm?.materials ?? await scope.library.material.list();
       if (!mounted) return;
       // 结果回来时若还在推入动画里，等动画结束再填，免得滑入途中整页重建。
       await context.afterTransition();

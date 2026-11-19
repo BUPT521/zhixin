@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
@@ -27,6 +28,7 @@ import 'application/memory_service.dart';
 import 'application/search_index_service.dart';
 import 'application/memory_scope_service.dart';
 import 'application/plan_service.dart';
+import 'application/prefetch_service.dart';
 import 'application/search_service.dart';
 import 'application/service_runtime.dart';
 import 'application/settings_service.dart';
@@ -70,6 +72,7 @@ import 'data/repository/task_repository.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
 import 'platform/app_info.dart';
+import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
 import 'platform/release_signing_key.dart';
 import 'platform/secure_secret_store.dart';
@@ -175,6 +178,123 @@ class AppScopeState extends State<AppScope> {
 
   /// 用户从查找结果带入本次回答的来源；发送一次后清空。
   final BroughtSources broughtSources = BroughtSources();
+
+  /// 一级界面切进来之后预读它的二级界面首屏（见 ADR-0029）。
+  ///
+  /// 只读首屏一份结果，不保持订阅：页面打开之后照常订阅数据层的更新，写入、
+  /// 撤销与换库之后仍由数据层推送重读（ADR-0014）。
+  late final PrefetchService _prefetch = PrefetchService(
+    clock: clock,
+    tasks: {
+      PrefetchArea.now: [_warmMemoryPage],
+      PrefetchArea.records: [_warmRecordsSearchOptions, _warmEmbeddingSettings],
+      PrefetchArea.plan: [_warmPlanSearchOptions],
+      PrefetchArea.mine: [
+        _warmMemoryPage,
+        _warmDataVersionPage,
+        _warmSettingsPage,
+        _warmCloudBackups,
+      ],
+    },
+  );
+
+  /// 二级界面首屏的预读入口；页面打开时先看有没有已经读完的结果。
+  PrefetchService get prefetch => _prefetch;
+
+  /// 记忆页一屏：从这一栏进入记忆时直接有内容。
+  Future<void> _warmMemoryPage() async {
+    await _prefetch.warm(
+      PrefetchKey.memory,
+      () => _memoryEdit.watchMemories().first,
+    );
+  }
+
+  /// 数据版本页一屏：读历史、撤销判断、存储占用与恢复点，通常是这几页里最慢的一页。
+  Future<void> _warmDataVersionPage() async {
+    await _prefetch.warm(
+      PrefetchKey.dataVersion,
+      () => _dataVersions.watchOverview().first,
+    );
+  }
+
+  /// 记录查找的范围选项：目标与材料，查找页打开时不再等这两项。
+  Future<void> _warmRecordsSearchOptions() async {
+    await _prefetch.warm(PrefetchKey.recordsSearchOptions, () async {
+      final (goals, materials) = await (
+        _plan.activeGoals(),
+        _material.list(),
+      ).wait;
+      return (goals: goals, materials: materials);
+    });
+  }
+
+  /// 安排查找的目标选项。
+  Future<void> _warmPlanSearchOptions() async {
+    await _prefetch.warm(PrefetchKey.planSearchGoals, _plan.goals);
+  }
+
+  /// 设置页本机读取的一组结果：模型配置、账号、可选模型与索引概况。
+  ///
+  /// 网络读取失败只留空，与设置页自己读到失败时的处理一致，不影响本机配置。
+  Future<void> _warmSettingsPage() async {
+    await _prefetch.warm(PrefetchKey.settings, () async {
+      final config = await _settingsEdit.config();
+      final account = await _account.snapshot();
+      var models = const <String>[];
+      if (account.signedIn) {
+        try {
+          models = [
+            for (final model in await _account.models())
+              if (model.isChat) model.id,
+          ];
+        } catch (_) {
+          // 模型列表只用于提示；读不到时与设置页的处理一样留空。
+        }
+      }
+      final embedding = await _embeddingSettings.summary();
+      final reportCrashes = await DiagnosticsStore(paths.filesDir)
+          .read(fallback: !kReleaseMode);
+      CrashLog.reportEnabled = reportCrashes;
+      final reportUsage = await _activeReportService!.enabled();
+      return (
+        config: config,
+        account: account,
+        models: models,
+        embedding: embedding,
+        reportCrashes: reportCrashes,
+        reportUsage: reportUsage,
+      );
+    });
+  }
+
+  /// 云端备份列表：只有登录之后才有，未登录时这一项不读。
+  Future<void> _warmCloudBackups() async {
+    if (!(await _account.snapshot()).signedIn) return;
+    await _prefetch.warm(PrefetchKey.cloudBackups, _backups.list);
+  }
+
+  /// 语义索引设置页的一组结果：配置、材料、登录状态与索引状态。
+  Future<void> _warmEmbeddingSettings() async {
+    await _prefetch.warm(PrefetchKey.embeddingSettings, () async {
+      final config = await _embeddingSettings.read();
+      final materials = await _material.list();
+      final signedIn = (await _account.snapshot()).signedIn;
+      IndexStats? stats;
+      if (_embeddingSettings.configured) {
+        try {
+          stats = await _searchIndex.stats();
+        } catch (_) {
+          // 索引状态读不出来时页面自己读会给出同样的说明，这里只留空。
+        }
+      }
+      return (
+        config: config,
+        materials: materials,
+        signedIn: signedIn,
+        stats: stats,
+      );
+    });
+  }
 
   /// 整库恢复、清空与导入之后加一；三栏据此在原处重读数据，页面状态不重置。
   final ValueNotifier<int> dataVersion = ValueNotifier<int>(0);

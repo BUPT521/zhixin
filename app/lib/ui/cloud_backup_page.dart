@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_service.dart';
 import '../data/cloud/server_client.dart';
 import 'account_dialogs.dart';
 import 'failure_feedback.dart';
@@ -35,11 +36,22 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
   bool _busy = false;
   String? _notice;
   bool _failed = false;
+  bool _started = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_loading && _backups == null) _load();
+    if (_started) return;
+    _started = true;
+    // 进入“我的”时已经在后台读过一次列表；先用这一份，读完再刷新。
+    final prewarm = AppScope.of(context).prefetch
+        .take<List<ServerBackup>>(PrefetchKey.cloudBackups);
+    if (prewarm != null) {
+      _backups = prewarm;
+      _signedIn = true;
+      _loading = false;
+    }
+    _load();
   }
 
   Future<void> _load() async {

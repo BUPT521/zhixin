@@ -48,6 +48,17 @@ embeddingRuntime(
   return (client: client, canSend: canSend);
 }
 
+/// 设置页与语义索引入口显示的索引概况：是否启用、来源条数。
+///
+/// 来源条数只在启用之后读；索引状态读不出来时留空，页面写“暂时无法读取”，
+/// 不把一次失败当成零条来源。
+class EmbeddingSummary {
+  const EmbeddingSummary({required this.usable, this.sources});
+
+  final bool usable;
+  final int? sources;
+}
+
 /// 索引的嵌入配置入口：读写嵌入配置，并把配置应用到索引服务。
 ///
 /// 设置页只调用 [save] 一次，写入安全存储与换掉嵌入来源在同一次调用里完成；
@@ -78,6 +89,28 @@ class EmbeddingSettingsService {
 
   /// 读取保存的配置；读坏了按没有配置处理。
   Future<EmbeddingConfig?> read() => store.read();
+
+  /// 设置页与记录页入口的索引概况：是否启用，启用之后读一次来源条数。
+  ///
+  /// 两段读取各自失败时按未启用或条数未知处理，不抛给页面：这一项只决定入口
+  /// 的副标题，不影响页面其余内容，也不影响已经保存的配置。
+  Future<EmbeddingSummary> summary() async {
+    var usable = false;
+    try {
+      usable = (await read())?.usable ?? false;
+    } catch (_) {
+      // 配置读不出来时按未启用显示，入口照常可以打开。
+    }
+    int? sources;
+    if (usable) {
+      try {
+        sources = (await index.stats()).sources;
+      } catch (_) {
+        // 索引状态读不出来时副标题写说明，不停在“0 条来源”。
+      }
+    }
+    return EmbeddingSummary(usable: usable, sources: sources);
+  }
 
   /// 保存并应用配置。
   ///

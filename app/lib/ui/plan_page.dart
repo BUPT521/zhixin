@@ -119,6 +119,11 @@ class _PlanPageState extends State<PlanPage> {
   /// 当前栏，或者底栏已经放行预读：两种情况都可以开始订阅。
   bool get _shouldRead => _active || (widget.preload?.value ?? false);
 
+  /// 底栏页放行预读或切到安排之后，四个页签一次建好；详情入口不预建页签，
+  /// 它只显示调用方要展开的那一条事项。
+  bool get _shouldKeepAllTabs =>
+      widget.preload?.value == true || (_active && widget.activeTab != null);
+
   /// 本地写入失败时给一句可行动的说明；异常本身进本机诊断记录。
   void _reportFailure(
     Object error,
@@ -153,10 +158,15 @@ class _PlanPageState extends State<PlanPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_weekStream != null || !_shouldRead) return;
+    if (_weekStream != null) {
+      _preloadTabs(notify: false);
+      return;
+    }
+    if (!_shouldRead) return;
     final weekStart = _weekAnchor ?? _currentWeekStart();
     _weekAnchor = weekStart;
     _weekStream = _createStream(weekStart);
+    _preloadTabs(notify: false);
   }
 
   @override
@@ -177,7 +187,12 @@ class _PlanPageState extends State<PlanPage> {
     if (_weekStream == null && _shouldRead) {
       final weekStart = _weekAnchor ?? _currentWeekStart();
       _weekAnchor = weekStart;
-      setState(() => _weekStream = _createStream(weekStart));
+      setState(() {
+        _weekStream = _createStream(weekStart);
+        _preloadTabs(notify: false);
+      });
+    } else {
+      _preloadTabs(notify: false);
     }
   }
 
@@ -244,14 +259,34 @@ class _PlanPageState extends State<PlanPage> {
     await _actions().openItem(item);
   }
 
-  /// 底栏切到安排、或预读放行时开始订阅，只建一次。
+  /// 底栏切到安排、或预读放行时开始订阅，并把四个页签一次建好。
   void _onActiveChanged() {
-    if (_weekStream != null || !_shouldRead) return;
-    final weekStart = _weekAnchor ?? _currentWeekStart();
-    setState(() {
+    if (!mounted || !_shouldRead) return;
+    final needStream = _weekStream == null;
+    final needTabs = _shouldKeepAllTabs && _visited.length < 4;
+    if (!needStream && !needTabs) return;
+    if (needStream) {
+      final weekStart = _weekAnchor ?? _currentWeekStart();
       _weekAnchor = weekStart;
-      _weekStream = _createStream(weekStart);
-    });
+      setState(() {
+        _weekStream = _createStream(weekStart);
+        _preloadTabs(notify: false);
+      });
+      return;
+    }
+    _preloadTabs();
+  }
+
+  /// 四个页签一次建好：页签只接收这一周的数据，建好不额外读库；切页签时
+  /// 直接显示内容，滚动位置与展开状态也一起留住。
+  void _preloadTabs({bool notify = true}) {
+    if (!_shouldKeepAllTabs || _visited.length == 4) return;
+    void apply() => _visited.addAll(const [1, 2, 3]);
+    if (notify) {
+      setState(apply);
+    } else {
+      apply();
+    }
   }
 
   /// 从别的栏目跳过来：把页签复位到日程，并保证已经订阅周数据。
@@ -259,6 +294,7 @@ class _PlanPageState extends State<PlanPage> {
     setState(() {
       _tab = 0;
       _visited.add(0);
+      if (_shouldKeepAllTabs) _visited.addAll(const [1, 2, 3]);
     });
     _onActiveChanged();
   }

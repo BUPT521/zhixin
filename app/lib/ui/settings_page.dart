@@ -9,8 +9,11 @@ import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
+import '../application/embedding_settings.dart';
+import '../application/prefetch_service.dart';
 import '../application/settings_service.dart';
 import '../application/update_check_service.dart';
+import '../domain/models/result.dart';
 import '../domain/rules/time_policy.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
@@ -26,6 +29,16 @@ import 'zhixin_select.dart';
 
 /// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
 enum _Area { model, learning, appearance, updates, diagnostics, danger }
+
+/// 一级界面切进来之后预读的设置页首屏；字段与预读任务返回的记录一致。
+typedef _SettingsPrewarm = ({
+  Result<LlmConfig?> config,
+  AccountSnapshot account,
+  List<String> models,
+  EmbeddingSummary embedding,
+  bool reportCrashes,
+  bool reportUsage,
+});
 
 /// 一段操作的最近一次结果；失败用错误描边的就地说明，成功用一行小字。
 class _Result {
@@ -79,6 +92,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _started = false;
 
+  /// 首屏已经从预读结果填过；设置项的订阅第一次回来之前不再摆骨架。
+  bool _prewarmed = false;
+
   /// 库里设置项的订阅：截止小时与拍照方式随写入更新（ADR-0014）。
   Stream<SettingsView>? _stream;
 
@@ -91,6 +107,21 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_started) return;
     _started = true;
     final scope = AppScope.of(context);
+    _themeMode = scope.themeMode.value;
+    // 从“我的”打开时，一级界面切进来之后已经在后台读过这一页的首屏；
+    // 先填上，再让下面这一次完整读取刷新。
+    final prewarm = scope.prefetch.take<_SettingsPrewarm>(PrefetchKey.settings);
+    if (prewarm != null) {
+      _account = prewarm.account;
+      _serverModels = prewarm.models;
+      _applyConfig(prewarm.config.valueOrNull);
+      _reportCrashes = prewarm.reportCrashes;
+      _reportUsage = prewarm.reportUsage;
+      _embeddingUsable = prewarm.embedding.usable;
+      _embeddingSources = prewarm.embedding.sources;
+      _loading = false;
+      _prewarmed = true;
+    }
     _stream = scope.settings.edit.watchSettings();
     _loadLocal(scope);
   }
@@ -211,26 +242,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 语义索引是否可用与来源条数；读取失败时按没有索引状态处理，不影响整页。
-  Future<({bool usable, int? sources})> _readEmbeddingSummary(
-    AppScopeState scope,
-  ) async {
-    var usable = false;
-    try {
-      final config = await scope.settings.embedding.read();
-      usable = config?.usable ?? false;
-    } catch (_) {
-      // 配置读不出来时按未启用显示，入口照常可以打开。
-    }
-    int? sources;
-    if (usable) {
-      try {
-        sources = (await scope.library.searchIndex.stats()).sources;
-      } catch (_) {
-        // 索引状态读不出来时副标题写说明，不停在“0 条来源”。
-      }
-    }
-    return (usable: usable, sources: sources);
-  }
+  Future<EmbeddingSummary> _readEmbeddingSummary(AppScopeState scope) =>
+      scope.settings.embedding.summary();
 
   String get _embeddingSubtitle {
     if (!_embeddingUsable) return '未启用';
@@ -516,8 +529,9 @@ class _SettingsPageState extends State<SettingsPage> {
       onData: _onSettings,
       onError: _onSettingsError,
       builder: (context, settings, loading) {
-        // 首读期间保留标题栏，内容用与卡片同高的骨架占位。
-        if (_loading || (loading && _loadFailure == null)) {
+        // 首读期间保留标题栏，内容用与卡片同高的骨架占位；预读结果已经填过
+        // 首屏时直接显示，设置项的订阅回来再补。
+        if (_loading || (loading && !_prewarmed && _loadFailure == null)) {
           return DetailScaffold(
             header: const ZhixinHeader(title: Text('设置'), showBack: true),
             child: ListView(

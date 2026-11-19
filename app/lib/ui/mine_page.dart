@@ -34,8 +34,8 @@ class MinePage extends StatefulWidget {
   final ValueListenable<int> activeTab;
   final int tabIndex;
 
-  /// 底栏放行预读时为真：先在后台读本机的登录与同步状态，第一次切过来
-  /// 账号卡已经就位；要走网络的额度仍等切到这一栏再读。
+  /// 底栏放行预读时为真：先在后台读本机的登录与同步状态，额度也一起读好，
+  /// 第一次切过来账号卡已经就位，不再等网络。
   final ValueListenable<bool>? preload;
 
   @override
@@ -71,12 +71,10 @@ class _MinePageState extends State<MinePage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 未显示的页面等底栏放行预读再读本机状态；切到“我的”时还没放行的，
-    // 当场读。
-    if (!_loaded && _active) {
+    // 未显示的页面等底栏放行预读再读；切到“我的”时还没放行的，当场读。
+    // 预读与切栏读同一份内容，额度也一起读好，切过来不再看到“正在读取”。
+    if (!_loaded && (_active || (widget.preload?.value ?? false))) {
       _load();
-    } else if (!_loaded && (widget.preload?.value ?? false)) {
-      _load(quota: false);
     }
   }
 
@@ -105,20 +103,20 @@ class _MinePageState extends State<MinePage> {
     if (_active) _load();
   }
 
-  /// 预读只读本机状态：还没显示的页面不走网络。
+  /// 预读与切栏读同一份内容：登录状态、同步状态与今日额度一起读好。
   void _onPreload() {
     if (!mounted || _loaded || _active) return;
-    if (widget.preload?.value ?? false) _load(quota: false);
+    if (widget.preload?.value ?? false) _load();
   }
 
-  /// 读登录与同步状态；[quota] 为假时跳过要走网络的额度，切到这一栏会再读。
-  Future<void> _load({bool quota = true}) async {
+  /// 读登录状态、同步状态与今日额度；后一次读取会丢掉前一次还没回来的结果。
+  Future<void> _load() async {
     final services = AppScope.of(context).accountServices;
     final sequence = ++_loadSequence;
     try {
       final account = await services.account.snapshot();
       final sync = await services.sync.status();
-      if (!mounted || (!quota && sequence != _loadSequence)) return;
+      if (!mounted || sequence != _loadSequence) return;
       setState(() {
         _account = account;
         _sync = sync;
@@ -126,20 +124,20 @@ class _MinePageState extends State<MinePage> {
         if (!account.signedIn) _quota = null;
         _quotaLoading = account.signedIn;
       });
-      if (!account.signedIn || !quota) return;
+      if (!account.signedIn) return;
       ServerQuota? remaining;
       try {
         remaining = await services.account.quota();
       } catch (_) {
         // 额度只用于显示；读不到时写“暂时无法读取”，不打断其余内容。
       }
-      if (!mounted) return;
+      if (!mounted || sequence != _loadSequence) return;
       setState(() {
         _quota = remaining;
         _quotaLoading = false;
       });
     } catch (error, stack) {
-      if (!mounted || (!quota && sequence != _loadSequence)) return;
+      if (!mounted || sequence != _loadSequence) return;
       setState(() {
         _loaded = true;
         _notice = describeFailure(
