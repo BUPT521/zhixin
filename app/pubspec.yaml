@@ -5,7 +5,8 @@ publish_to: 'none'
 version: 0.1.1+2
 
 environment:
-  sdk: ^3.13.7
+  sdk: ^3.14.0
+  flutter: '>=3.50.0'
 
 dependencies:
   flutter:
@@ -17,9 +18,9 @@ dependencies:
   path_provider: ^2.1.6
 
   # 导出/恢复：zip 数据包。
-  archive: ^4.6.0
+  archive: ^4.7.1
   crypto: ^3.0.8
-  file_picker: ^13.3.3
+  file_picker: ^13.4.0
   xml: ^7.0.1
 
   # 语义索引：进程内的 zvec 向量库，只用它保存可从业务库重建的向量。
@@ -36,7 +37,7 @@ dependencies:
   # 拍照用应用内相机：快门之后直接框选，不经过系统相机的确认界面。
   camera: ^0.12.2
   # 裁剪题目图片：纯 Dart 解码、裁剪与 JPEG 编码，不引原生库。
-  image: ^4.12.0
+  image: ^4.13.1
   # 框选交互用现成控件，裁剪在 compute 里完成。
   crop_your_image: ^2.0.1
   speech_to_text: ^7.5.0
@@ -45,18 +46,20 @@ dependencies:
   gpt_markdown: ^1.4.1
 
   # 基础控件、路由、Markdown 与本地化，以及 Forui 没有的控件（如底部面板、日期时间选择）。
-  material_ui: ^1.11.0
+  material_ui: ^1.11.1
+  # iOS 与 macOS 路由过渡。
+  cupertino_ui: ^1.1.7
 
   # 界面组件与主题：页面骨架、按钮、表单、列表、对话框、面板、提示与日期时间选择。
-  forui: 0.27.7
+  forui: 0.28.0
   # 界面图标：业务图标与 Forui 控件内部用同一套 Lucide 图形。
-  forui_lucide: ^0.27.0
+  forui_lucide: ^0.28.0
 
   # 安排页的周视图，只提供网格、事件块与翻周手势。
   calendar_view: ^2.0.0
 
   # 崩溃与诊断上报：自建 Sentry，DSN 由构建参数注入。
-  sentry_flutter: ^10.4.0
+  sentry_flutter: ^10.5.0
 
   # 打开回答里的链接。
   url_launcher: ^6.3.3

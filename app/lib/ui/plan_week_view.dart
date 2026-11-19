@@ -1,4 +1,6 @@
 import 'package:calendar_view/calendar_view.dart';
+// calendar_view 的 InkWell 需要 Flutter SDK 中的 Material 祖先。
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart'
     as flutter_material
     show Material, MaterialType;

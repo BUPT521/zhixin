@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart' show ValueListenable;
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';

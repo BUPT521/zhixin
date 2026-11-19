@@ -1,4 +1,5 @@
-import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoPageTransitionsBuilder;
 import 'package:forui/forui.dart' as forui;
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:material_ui/material_ui.dart';

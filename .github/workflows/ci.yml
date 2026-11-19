@@ -16,8 +16,7 @@ on:
 
 env:
   # Flutter 版本的唯一来源：升级只改这一行，再同步 docs 里的说法。
-  # 当前 3.47.9 是 2026-10-29 发布的最新稳定版；不要用 beta。
-  FLUTTER_VERSION: '3.47.9'
+  FLUTTER_VERSION: '3.50.0'
 
 permissions:
   contents: read

@@ -5,7 +5,8 @@ publish_to: 'none'
 version: 0.1.0+1
 
 environment:
-  sdk: ^3.13.7
+  sdk: ^3.14.0
+  flutter: '>=3.50.0'
 
 dependencies:
   flutter:
@@ -16,6 +17,7 @@ dependencies:
   sqlite3: ^3.9.1
   sqlite3_vec: ^0.1.2
 
+  material_ui: ^1.11.1
   path: ^1.9.1
   path_provider: ^2.1.6
 
