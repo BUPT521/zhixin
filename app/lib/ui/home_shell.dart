@@ -24,8 +24,8 @@ import 'update_notice.dart';
 /// 四栏常驻，不按数据版本换 key：返回详情之后由打开它的栏目自己重读数据，
 /// 其他栏目的筛选、输入与滚动位置不跟着重建。
 ///
-/// 首页先读；首帧之后过 [preloadDelay] 放行其余三栏在后台订阅，第一次切过去
-/// 直接是内容，不再在切栏动画里看一段骨架。放行之前就切过去的栏当场读。
+/// 首页先读；首读完成之后（最迟 [preloadDelay]）放行其余三栏在后台订阅，第一次
+/// 切过去直接是内容，不再在切栏动画里看一段骨架。放行之前就切过去的栏当场读。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -33,8 +33,7 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-/// 首帧之后等这么久再放行其余三栏预读：让首页的首读与淡入先走完，后台读取
-/// 不和它抢数据库与这几帧。
+/// 首页首读完成之前最多等这么久；读取失败或变慢时由这个时限放行其余三栏。
 const Duration preloadDelay = Duration(milliseconds: 600);
 
 /// 切到某一栏之后等这么久再预读它的二级界面：先让切栏动画走完，再读下一层。
@@ -50,7 +49,7 @@ class _HomeShellState extends State<HomeShell> {
       );
   final ValueNotifier<int> _scheduleRequest = ValueNotifier<int>(0);
 
-  /// 其余三栏能否在后台预读；首帧之后过 [preloadDelay] 置真，之后不再变。
+  /// 其余三栏能否在后台预读；首页首读完成或到 [preloadDelay] 时置真，之后不再变。
   final ValueNotifier<bool> _preload = ValueNotifier<bool>(false);
   Timer? _preloadTimer;
 
@@ -85,9 +84,7 @@ class _HomeShellState extends State<HomeShell> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         unawaited(_runStartupChecks(report, updates));
-        _preloadTimer = Timer(preloadDelay, () {
-          if (mounted) _preload.value = true;
-        });
+        _preloadTimer = Timer(preloadDelay, _releasePreload);
       });
     }
     _pages ??= [
@@ -100,6 +97,7 @@ class _HomeShellState extends State<HomeShell> {
         onOpenRecords: () => _openRecords(RecordsTab.learning),
         onOpenMaterials: () => _openRecords(RecordsTab.materials),
         onOpenMemory: _openMemory,
+        onFirstRead: _releasePreload,
       ),
       RecordsPage(
         key: const ValueKey('records'),
@@ -141,6 +139,14 @@ class _HomeShellState extends State<HomeShell> {
 
   /// 切栏（包括首次切到某一栏）之后预读这一栏的二级界面。
   void _onIndexChanged() => _scheduleSecondaryPrefetch(_areaOf(_index.value));
+
+  /// 首页首读完成（或到 [preloadDelay]）时放行其余三栏预读，只放行一次。
+  void _releasePreload() {
+    if (!mounted || _preload.value) return;
+    _preloadTimer?.cancel();
+    _preloadTimer = null;
+    _preload.value = true;
+  }
 
   /// 预读排在切栏动画之后；连续切栏时只保留最后一次，不为中间一闪而过的栏读数据。
   void _scheduleSecondaryPrefetch(PrefetchArea area) {

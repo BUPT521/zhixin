@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/account_service.dart';
+import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
@@ -16,6 +17,13 @@ import 'format.dart';
 import 'navigation.dart';
 import 'zhixin_header.dart';
 import 'workspace_widgets.dart';
+
+/// 一级界面切进来之后预读的账号页首屏；字段与预读任务返回的记录一致。
+typedef _AccountPrewarm = ({
+  AccountSnapshot snapshot,
+  SyncStatus sync,
+  ServerQuota? quota,
+});
 
 /// 账号与云同步：服务地址、登录注册、同步状态与云端数据操作。
 ///
@@ -53,10 +61,25 @@ class _AccountPageState extends State<AccountPage> {
   /// 失败说明旁边可用的重试动作；成功说明与不需要重试的说明为空。
   VoidCallback? _noticeRetry;
 
+  bool _started = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_snapshot == null && _loading) _load();
+    if (_started) return;
+    _started = true;
+    // 进入“我的”时已经在后台读过账号、同步状态与额度；先用这一份，
+    // 这一次完整读取再把邮箱验证与额度刷新到最新。
+    final prewarm = AppScope.of(context).prefetch
+        .take<_AccountPrewarm>(PrefetchKey.accountPage);
+    if (prewarm != null) {
+      _snapshot = prewarm.snapshot;
+      _sync = prewarm.sync;
+      _quota = prewarm.quota;
+      _server.text = prewarm.snapshot.serverBaseUrl;
+      _loading = false;
+    }
+    _load();
   }
 
   @override

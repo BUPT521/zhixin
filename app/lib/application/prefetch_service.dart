@@ -29,6 +29,12 @@ class PrefetchKey {
   /// 云端备份列表；未登录时不读。
   static const cloudBackups = PrefetchKey._('cloud_backups');
 
+  /// 账号与云同步页的首屏：账号、同步状态与今日额度。
+  static const accountPage = PrefetchKey._('account_page');
+
+  /// “这周还能做什么”面板的结果；只算当前自然周。
+  static const capacityPlan = PrefetchKey._('capacity_plan');
+
   /// 记录查找的范围选项：目标与材料。
   static const recordsSearchOptions = PrefetchKey._('records_search_options');
 
@@ -37,6 +43,9 @@ class PrefetchKey {
 
   /// 语义索引设置页的一组结果。
   static const embeddingSettings = PrefetchKey._('embedding_settings');
+
+  /// 人格与插件页读的 `app_meta`：运行时加载一次，两页共用。
+  static const pluginSettings = PrefetchKey._('plugin_settings');
 
   @override
   String toString() => 'PrefetchKey($name)';
@@ -88,7 +97,8 @@ class PrefetchService {
   /// 已经完成的结果（[peek]），没有完成就按原来的路径自己读。
   Future<T> warm<T>(PrefetchKey key, Future<T> Function() read) {
     final existing = _live(key.name);
-    if (existing != null) return existing.future as Future<T>;
+    if (existing?.future != null) return existing!.future as Future<T>;
+    if (existing != null) _entries.remove(key.name);
     final entry = _Entry(clock().add(ttl));
     _entries[key.name] = entry;
     final Future<T> future;
@@ -127,6 +137,12 @@ class PrefetchService {
     final value = peek<T>(key);
     if (value != null) _entries.remove(key.name);
     return value;
+  }
+
+  /// 把一级界面已经读到的结果留给二级界面：账号卡与账号页读的是同一份账号、
+  /// 同步状态与额度，这样打开账号页不再重复请求一次额度。
+  void put<T>(PrefetchKey key, T value) {
+    _entries[key.name] = _Entry(clock().add(ttl))..value = value;
   }
 
   /// 还有效的预读项；过期时顺手移除。

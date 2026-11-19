@@ -2,6 +2,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_service.dart';
 import '../plugins/persona/persona.dart';
 import 'copy.dart';
 import 'data_version_watcher.dart';
@@ -34,7 +35,13 @@ class _PersonaPageState extends State<PersonaPage>
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
-    watchDataVersion(AppScope.of(context).dataVersion);
+    final scope = AppScope.of(context);
+    watchDataVersion(scope.dataVersion);
+    // 进入“我的”时已经加载过同一份 app_meta，打开直接用。
+    if (scope.prefetch.peek<bool>(PrefetchKey.pluginSettings) == true) {
+      _loading = false;
+      return;
+    }
     _load();
   }
 

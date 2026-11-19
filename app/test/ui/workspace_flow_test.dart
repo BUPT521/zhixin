@@ -26,6 +26,7 @@ import 'package:zhixin/domain/models/time_values.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/platform/data_package_export.dart';
+import 'package:zhixin/ui/account_page.dart';
 import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/copy.dart';
 import 'package:zhixin/ui/discussion_page.dart';
@@ -1338,6 +1339,44 @@ void main() {
 
     expect(find.byType(SettingsPage), findsOneWidget);
     expect(find.byType(ListSkeleton), findsNothing);
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('进入我的之后账号页首屏已经预读，打开不再出现骨架', (tester) async {
+    await openApp(tester);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(forui.FBottomNavigationBar),
+        matching: find.text(tabMine),
+      ),
+    );
+    // 预读在切栏动画之后开始，这里等到它读完。
+    await settle(tester);
+
+    final signIn = find.text('登录或注册');
+    expect(signIn, findsOneWidget);
+    await tester.tap(signIn);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(AccountPage), findsOneWidget);
+    expect(find.byType(ListSkeleton), findsNothing);
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('进入安排之后容量面板已经算好，打开不再出现骨架', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('安排').last);
+    await settle(tester);
+    await tester.tap(find.text('这周能做什么'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('这周还能做什么'), findsOneWidget);
+    expect(find.byType(ListSkeleton), findsNothing);
+    expect(find.textContaining('本周剩余'), findsOneWidget);
     await settle(tester);
     expect(tester.takeException(), isNull);
   });

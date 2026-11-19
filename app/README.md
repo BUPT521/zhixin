@@ -128,7 +128,7 @@ lib/
 
 页面之间的跳转统一经 [ui/navigation.dart](lib/ui/navigation.dart) 的一页一个函数打开，页面不互相 import，路由也只在这个文件里构造；`PlanPage` 的底栏入口与 `PlanPage.detail` 详情入口分开，详情不参与切栏。忙碌指示用 `FProgress` 与按钮内 `FCircularProgress`，错误与失败说明统一用 `InlineNotice`（可带重试），表单字段的就地校验文字保留在字段旁。确认框统一经 `confirmZhixin` 与 `showZhixinAlert` 打开，按钮形状与取消文案不再由调用方各写一份。文案集中在 [ui/copy.dart](lib/ui/copy.dart)（角色名、页签名与空态句式），时钟与日期格式集中在 [ui/format.dart](lib/ui/format.dart)，间距与圆角从 `ZhixinSpace`、`ZhixinRadius` 取，动效时长与曲线只从 [ui/motion.dart](lib/ui/motion.dart) 取。页面数据统一用 [ui/live_view.dart](lib/ui/live_view.dart) 的 `LiveView` 订阅应用服务给出的流：写入、撤销、导入与换库之后的重读由数据层推送，页面不再在保存或跳转返回后自己重读（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md)）。读取没有完成时不提供下拉刷新这类手势：数据本来就跟着写入回来，手势重跑的是同一条读法，恢复交给内容区的 `InlineNotice` 与“重试”，已经显示的内容保持不动。插件页与人格页读的是不形成提交的 `app_meta`，仍用 [ui/data_version_watcher.dart](lib/ui/data_version_watcher.dart) 在整库恢复与清空之后重读。
 
-一级界面切进来时，[application/prefetch_service.dart](lib/application/prefetch_service.dart) 在后台读它下面几个二级界面的首屏（[ADR-0033](../docs/adr/0033-一级界面预读二级页面首屏.md)）：记忆页与数据版本页各一屏，设置页的模型配置、账号、可选模型与索引概况，云端备份列表（只在登录之后），语义索引设置，以及记录查找与安排查找的范围选项。预读只在对应的一栏切进来之后开始，首页启动时不读这些内容；结果保留 5 分钟，页面打开时先用这一份结果，`LiveView` 的 `initial` 因此不必先摆骨架，随后按各页原来的读法继续订阅或刷新。设置、云端备份与语义索引设置只取用一次，之后再打开按当前状态重新读。学习、讨论、材料详情、系统学习与事项详情按具体条目打开，进入一级界面时还不知道要打开哪一条，仍在打开时读。
+一级界面切进来时，[application/prefetch_service.dart](lib/application/prefetch_service.dart) 在后台读它下面几个二级界面的首屏（[ADR-0033](../docs/adr/0033-一级界面预读二级页面首屏.md)）：记忆页与数据版本页各一屏，设置页的模型配置、账号、可选模型与索引概况，云端备份列表（只在登录之后），账号与云同步页的首屏（与“我的”的账号卡共用同一份账号、同步状态与额度），“这周能做什么”的当前周结果，语义索引设置，人格与插件页的 `app_meta`，以及记录查找与安排查找的范围选项。预读只在对应的一栏切进来之后开始，首页启动时不读这些内容；结果保留 5 分钟，页面打开时先用这一份结果，`LiveView` 的 `initial` 因此不必先摆骨架，随后按各页原来的读法继续订阅或刷新。设置、云端备份、账号与语义索引设置只取用一次，之后再打开按当前状态重新读。学习、讨论、材料详情、系统学习与事项详情按具体条目打开，进入一级界面时还不知道要打开哪一条，仍在打开时读。
 
 ## 外观
 

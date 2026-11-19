@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_service.dart';
 import '../domain/models/capacity.dart';
 import '../domain/models/time_values.dart';
 import 'date_time_dialogs.dart';
@@ -24,15 +25,21 @@ enum _BookingAction { replace, append }
 ///
 /// 面板标题与左右边距由 [showZhixinSheet] 统一给出，与其它面板一致。
 Future<void> showCapacitySheet(BuildContext context) async {
+  // 进入“安排”时已经按本周课表与已排时间算过一次，面板打开直接用结果。
+  final initial = AppScope.of(context).prefetch
+      .peek<CapacityPlan>(PrefetchKey.capacityPlan);
   await showZhixinSheet<void>(
     context: context,
     title: '这周还能做什么',
-    builder: (_) => const _CapacitySheet(),
+    builder: (_) => _CapacitySheet(initial: initial),
   );
 }
 
 class _CapacitySheet extends StatefulWidget {
-  const _CapacitySheet();
+  const _CapacitySheet({this.initial});
+
+  /// 一级界面切进来时已经算好的本周结果；为空时按原来的路径自己算。
+  final CapacityPlan? initial;
 
   @override
   State<_CapacitySheet> createState() => _CapacitySheetState();
@@ -240,6 +247,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
   Widget build(BuildContext context) {
     return LiveView<CapacityPlan>(
       stream: _stream,
+      initial: widget.initial,
       onData: _onPlan,
       onError: _onPlanError,
       builder: (context, plan, loading) {

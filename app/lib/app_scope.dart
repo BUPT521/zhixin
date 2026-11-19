@@ -188,12 +188,13 @@ class AppScopeState extends State<AppScope> {
     tasks: {
       PrefetchArea.now: [_warmMemoryPage],
       PrefetchArea.records: [_warmRecordsSearchOptions, _warmEmbeddingSettings],
-      PrefetchArea.plan: [_warmPlanSearchOptions],
+      PrefetchArea.plan: [_warmPlanSearchOptions, _warmCapacityPlan],
       PrefetchArea.mine: [
         _warmMemoryPage,
         _warmDataVersionPage,
         _warmSettingsPage,
         _warmCloudBackups,
+        _warmPluginSettings,
       ],
     },
   );
@@ -231,6 +232,14 @@ class AppScopeState extends State<AppScope> {
   /// 安排查找的目标选项。
   Future<void> _warmPlanSearchOptions() async {
     await _prefetch.warm(PrefetchKey.planSearchGoals, _plan.goals);
+  }
+
+  /// “这周还能做什么”面板：按本周课表与已排时间先算一次，打开时直接有结果。
+  Future<void> _warmCapacityPlan() async {
+    await _prefetch.warm(
+      PrefetchKey.capacityPlan,
+      () => _capacity.watchThisWeek().first,
+    );
   }
 
   /// 设置页本机读取的一组结果：模型配置、账号、可选模型与索引概况。
@@ -271,6 +280,14 @@ class AppScopeState extends State<AppScope> {
   Future<void> _warmCloudBackups() async {
     if (!(await _account.snapshot()).signedIn) return;
     await _prefetch.warm(PrefetchKey.cloudBackups, _backups.list);
+  }
+
+  /// 人格与插件页读的 `app_meta`：运行时提前加载一次，两页打开时不再摆骨架。
+  Future<void> _warmPluginSettings() async {
+    await _prefetch.warm(PrefetchKey.pluginSettings, () async {
+      await _pluginRuntime!.load();
+      return true;
+    });
   }
 
   /// 语义索引设置页的一组结果：配置、材料、登录状态与索引状态。

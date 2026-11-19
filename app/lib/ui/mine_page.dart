@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
 import '../application/account_service.dart';
+import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/server_client.dart' show ServerQuota;
 import '../platform/app_info.dart';
@@ -111,7 +112,8 @@ class _MinePageState extends State<MinePage> {
 
   /// 读登录状态、同步状态与今日额度；后一次读取会丢掉前一次还没回来的结果。
   Future<void> _load() async {
-    final services = AppScope.of(context).accountServices;
+    final scope = AppScope.of(context);
+    final services = scope.accountServices;
     final sequence = ++_loadSequence;
     try {
       final account = await services.account.snapshot();
@@ -124,7 +126,15 @@ class _MinePageState extends State<MinePage> {
         if (!account.signedIn) _quota = null;
         _quotaLoading = account.signedIn;
       });
-      if (!account.signedIn) return;
+      if (!account.signedIn) {
+        // 账号页读的是同一份数据，留给它之后打开直接用。
+        scope.prefetch.put(PrefetchKey.accountPage, (
+          snapshot: account,
+          sync: sync,
+          quota: null,
+        ));
+        return;
+      }
       ServerQuota? remaining;
       try {
         remaining = await services.account.quota();
@@ -136,6 +146,11 @@ class _MinePageState extends State<MinePage> {
         _quota = remaining;
         _quotaLoading = false;
       });
+      scope.prefetch.put(PrefetchKey.accountPage, (
+        snapshot: account,
+        sync: sync,
+        quota: remaining,
+      ));
     } catch (error, stack) {
       if (!mounted || sequence != _loadSequence) return;
       setState(() {

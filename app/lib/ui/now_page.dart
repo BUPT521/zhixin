@@ -38,6 +38,7 @@ class NowPage extends StatefulWidget {
     required this.onOpenRecords,
     required this.onOpenMaterials,
     required this.onOpenMemory,
+    this.onFirstRead,
   });
 
   /// 底栏当前栏的下标；页面自己监听，父级切栏时不再重建这一栏。
@@ -48,6 +49,9 @@ class NowPage extends StatefulWidget {
   final VoidCallback onOpenRecords;
   final VoidCallback onOpenMaterials;
   final VoidCallback onOpenMemory;
+
+  /// 首页首读完成之后调用一次；底栏用它尽早放行其余三栏的预读。
+  final VoidCallback? onFirstRead;
 
   @override
   State<NowPage> createState() => _NowPageState();
@@ -64,6 +68,9 @@ class _NowPageState extends State<NowPage> {
 
   /// 还没有读到内容时读取失败：内容区留下说明与重试，不留一个空白的骨架。
   String? _loadFailure;
+
+  /// 首读只通知一次；底栏据此放行其余三栏的预读。
+  bool _firstReadReported = false;
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
@@ -113,6 +120,9 @@ class _NowPageState extends State<NowPage> {
   /// 新结果回来了：清掉上一次失败留下的说明。
   void _onHome(NowHome _) {
     if (_loadFailure != null) setState(() => _loadFailure = null);
+    if (_firstReadReported) return;
+    _firstReadReported = true;
+    widget.onFirstRead?.call();
   }
 
   void _onHomeError(Object error, StackTrace stack) {

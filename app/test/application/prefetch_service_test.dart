@@ -28,7 +28,7 @@ void main() {
     expect(service.peek<String>(PrefetchKey.memory), '第一份');
   });
 
-  test('peek 可以反复取，take 取走之后不再命中', () async {
+  test('取走之后不再命中，之后再读重新取一份', () async {
     final service = build();
     await service.warm(PrefetchKey.settings, () async => 42);
 
@@ -36,6 +36,18 @@ void main() {
     expect(service.peek<int>(PrefetchKey.settings), 42);
     expect(service.take<int>(PrefetchKey.settings), 42);
     expect(service.peek<int>(PrefetchKey.settings), isNull);
+  });
+
+  test('一级界面读到的结果可以留给二级界面，warm 不会复用没有读取的项', () async {
+    final service = build();
+    service.put<String>(PrefetchKey.accountPage, '账号与额度');
+
+    expect(service.peek<String>(PrefetchKey.accountPage), '账号与额度');
+    expect(
+      await service.warm(PrefetchKey.accountPage, () async => '重新读取'),
+      '重新读取',
+    );
+    expect(service.peek<String>(PrefetchKey.accountPage), '重新读取');
   });
 
   test('读取失败时移除这一项，页面可以自己再读一次', () async {
