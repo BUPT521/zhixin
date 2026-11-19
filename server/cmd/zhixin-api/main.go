@@ -64,6 +64,7 @@ func run(log *slog.Logger) error {
 			Blobs:     blobStore,
 			Quota:     pgStore,
 			Catalog:   pgStore,
+			Cache:     pg.NewEmbeddingCache(pgStore),
 			Feedback:  pgStore,
 			Retention: pgStore,
 			Cloud:     pgStore,

@@ -453,6 +453,31 @@ type EmbeddingList struct {
 	} `json:"usage"`
 }
 
+// EmbeddingLookupRequest defines model for EmbeddingLookupRequest.
+type EmbeddingLookupRequest struct {
+	// Hashes 片段文本按 UTF-8 字节计算的 SHA-256，小写十六进制
+	Hashes []string `json:"hashes"`
+	Model  string   `json:"model"`
+}
+
+// EmbeddingLookupResult defines model for EmbeddingLookupResult.
+type EmbeddingLookupResult struct {
+	// Dimensions 模型配置的维度；没有配置时取命中行的维度，全部未命中时省略
+	Dimensions *int `json:"dimensions,omitempty"`
+
+	// Model 对外模型名
+	Model string `json:"model"`
+
+	// Vectors 命中的条目，顺序与请求无关
+	Vectors []struct {
+		// Embedding 小端序 FP16 的 base64
+		Embedding string `json:"embedding"`
+
+		// Hash 请求里的文本哈希
+		Hash string `json:"hash"`
+	} `json:"vectors"`
+}
+
 // EmbeddingRequest defines model for EmbeddingRequest.
 type EmbeddingRequest struct {
 	// Input 一段文本或文本数组
@@ -709,6 +734,12 @@ type PostV1LlmChatCompletionsJSONBody struct {
 	Stream *bool  `json:"stream,omitempty"`
 }
 
+// PostV1LlmEmbeddingsParams defines parameters for PostV1LlmEmbeddings.
+type PostV1LlmEmbeddingsParams struct {
+	// XZhixinEmbeddingCache 值为 `1` 时把这次嵌入的结果写入按账号隔离的向量缓存
+	XZhixinEmbeddingCache *string `json:"X-Zhixin-Embedding-Cache,omitempty"`
+}
+
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
 type DeleteV1MeJSONBody struct {
 	Password string `json:"password"`
@@ -769,6 +800,9 @@ type PostV1LlmChatCompletionsJSONRequestBody PostV1LlmChatCompletionsJSONBody
 
 // PostV1LlmEmbeddingsJSONRequestBody defines body for PostV1LlmEmbeddings for application/json ContentType.
 type PostV1LlmEmbeddingsJSONRequestBody = EmbeddingRequest
+
+// PostV1LlmEmbeddingsLookupJSONRequestBody defines body for PostV1LlmEmbeddingsLookup for application/json ContentType.
+type PostV1LlmEmbeddingsLookupJSONRequestBody = EmbeddingLookupRequest
 
 // DeleteV1MeJSONRequestBody defines body for DeleteV1Me for application/json ContentType.
 type DeleteV1MeJSONRequestBody DeleteV1MeJSONBody
@@ -1017,7 +1051,10 @@ type ServerInterface interface {
 	PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request)
 	// PostV1LlmEmbeddings OpenAI Embeddings 代理，支持批量
 	// (POST /v1/llm/embeddings)
-	PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request)
+	PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, params PostV1LlmEmbeddingsParams)
+	// PostV1LlmEmbeddingsLookup 批量查找已缓存的嵌入向量
+	// (POST /v1/llm/embeddings/lookup)
+	PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request)
 	// GetV1LlmModels 当前可用的模型，OpenAI 列表格式
 	// (GET /v1/llm/models)
 	GetV1LlmModels(w http.ResponseWriter, r *http.Request)
@@ -1684,8 +1721,49 @@ func (siw *ServerInterfaceWrapper) PostV1LlmChatCompletions(w http.ResponseWrite
 // PostV1LlmEmbeddings operation middleware
 func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV1LlmEmbeddingsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Zhixin-Embedding-Cache" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Zhixin-Embedding-Cache")]; found {
+		var XZhixinEmbeddingCache string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Zhixin-Embedding-Cache", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Zhixin-Embedding-Cache", valueList[0], &XZhixinEmbeddingCache, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Zhixin-Embedding-Cache", Err: err})
+			return
+		}
+
+		params.XZhixinEmbeddingCache = &XZhixinEmbeddingCache
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1LlmEmbeddings(w, r)
+		siw.Handler.PostV1LlmEmbeddings(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1LlmEmbeddingsLookup operation middleware
+func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1LlmEmbeddingsLookup(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2002,6 +2080,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/chat/completions", wrapper.PostV1LlmChatCompletions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings", wrapper.PostV1LlmEmbeddings)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings/lookup", wrapper.PostV1LlmEmbeddingsLookup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/app/releases", wrapper.GetV1AppReleases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/telemetry/active", wrapper.PostV1TelemetryActive)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback", wrapper.PostV1Feedback)

@@ -91,6 +91,8 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(res.body)
+		// 响应已经写出，再把向量写进缓存；客户端带缓存请求头时才有这一步。
+		p.cacheEmbeddings(r, userID, m.Name, inputs, res.vectors)
 	}
 }
 
@@ -134,6 +136,8 @@ type embedResult struct {
 	route       liveRoute
 	passthrough *rawResponse
 	err         error
+	// vectors 是按输入顺序合并好的向量，用来写入嵌入缓存；只有成功时才有值。
+	vectors []json.RawMessage
 }
 
 // embed 依次尝试候选路由，返回合并好的响应、需要原样转交的提供方错误，或者
@@ -284,7 +288,7 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 	if p.cfg.MaxResponseBytes > 0 && int64(len(body)) > p.cfg.MaxResponseBytes {
 		return embedResult{err: errResponseTooLarge, route: rt, tokens: tokens}, true
 	}
-	return embedResult{body: body, tokens: tokens, dimensions: dims, route: rt}, false
+	return embedResult{body: body, tokens: tokens, dimensions: dims, route: rt, vectors: merged}, false
 }
 
 func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]json.RawMessage, chunk []string) chunkOut {

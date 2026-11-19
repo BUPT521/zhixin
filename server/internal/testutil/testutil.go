@@ -172,7 +172,10 @@ func (Base) PutV1BlobsSha256(w http.ResponseWriter, _ *http.Request, _ string) {
 func (Base) PostV1LlmChatCompletions(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
-func (Base) PostV1LlmEmbeddings(w http.ResponseWriter, _ *http.Request) {
+func (Base) PostV1LlmEmbeddings(w http.ResponseWriter, _ *http.Request, _ api.PostV1LlmEmbeddingsParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 func (Base) GetAdminV1Providers(w http.ResponseWriter, _ *http.Request) {

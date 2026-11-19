@@ -209,3 +209,24 @@ CREATE TABLE llm_route (
 );
 CREATE INDEX llm_route_provider ON llm_route(provider_id);
 
+-- 嵌入向量缓存：按账号、对外模型与文本哈希保存已经算过的向量（ADR-0030）。
+-- 检索索引由客户端维护，服务端只承担“模型与文本到向量”这一层；缓存是派生数据，
+-- 可以从业务库与嵌入服务重建，不进入数据包与整库备份。向量是小端序 FP16，dim
+-- 是分量数，长度由 CHECK 与 dim 绑定。只给自动同步开启、且这次是索引刷新的嵌入
+-- 请求写入；每账号的字节上限由 ZHIXIN_LLM_EMBEDDING_CACHE_BYTES 控制，写入之后
+-- 按 last_used_at 删除最久未用的行，命中时同一条语句更新 last_used_at。
+CREATE TABLE embedding_cache (
+  user_id       TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  model         TEXT NOT NULL,                     -- 对外模型名
+  text_hash     TEXT NOT NULL CHECK (text_hash ~ '^[0-9a-f]{64}$'),
+  dim           INTEGER NOT NULL CHECK (dim BETWEEN 1 AND 8192),
+  vector        BYTEA NOT NULL CHECK (octet_length(vector) = dim * 2),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, model, text_hash)
+);
+-- 上限清理按账号与 last_used_at 扫，命中时按批更新 last_used_at。
+CREATE INDEX embedding_cache_by_user_used ON embedding_cache(user_id, last_used_at);
+-- 管理后台删除模型或改变维度时按模型删除。
+CREATE INDEX embedding_cache_by_model ON embedding_cache(model);
+

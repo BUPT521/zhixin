@@ -53,36 +53,46 @@ type Attachments interface {
 	DeleteUser(ctx context.Context, userID string) error
 }
 
+// Embeddings 是清空嵌入向量缓存需要的能力，由 llmproxy.EmbeddingCache 满足。
+// 缓存是派生数据，清除云端数据时一并删除；删号时这些行随外键级联，也要在
+// 删除账号行之前清一遍，重试才能从头再走。
+type Embeddings interface {
+	DeleteUser(ctx context.Context, userID string) error
+}
+
 // Service 编排一次清除。三个数据接口只声明用得到的方法，所以这个包不引用
 // backup、blobs、syncsvc，处理器可以反过来引用这里的 ErrPurging 而不形成循环。
 type Service struct {
-	store   Store
-	backups Backups
-	syncLog SyncLog
-	blobs   Attachments
-	objects objectstore.Store
-	now     func() time.Time
+	store      Store
+	backups    Backups
+	syncLog    SyncLog
+	blobs      Attachments
+	embeddings Embeddings
+	objects    objectstore.Store
+	now        func() time.Time
 }
 
 // New 组装清除服务。objects 与备份、附件共用同一份对象存储；时钟只在测试里
 // 替换，用来模拟 10 分钟的标记过期。
-func New(store Store, backups Backups, syncLog SyncLog, blobs Attachments, objects objectstore.Store) *Service {
+func New(store Store, backups Backups, syncLog SyncLog, blobs Attachments, embeddings Embeddings, objects objectstore.Store) *Service {
 	return &Service{
-		store:   store,
-		backups: backups,
-		syncLog: syncLog,
-		blobs:   blobs,
-		objects: objects,
-		now:     time.Now,
+		store:      store,
+		backups:    backups,
+		syncLog:    syncLog,
+		blobs:      blobs,
+		embeddings: embeddings,
+		objects:    objects,
+		now:        time.Now,
 	}
 }
 
 // Purge 清除账号的云端数据。
 //
-// 顺序固定：备份、提交序列、附件（索引与字节），最后按 backups/<账号>/ 与
-// attachments/<账号>/ 前缀各清一次遗留对象。任何一步失败都保留标记并原样返回
-// 错误，由处理器回 500；重试从头执行，各步幂等，所以中断不会留下清了一半的
-// 状态。标记还新时返回 ErrInProgress（409），超过 StaleAfter 则接管重做。
+// 顺序固定：备份、提交序列、附件（索引与字节）、嵌入向量缓存，最后按
+// backups/<账号>/ 与 attachments/<账号>/ 前缀各清一次遗留对象。任何一步失败都
+// 保留标记并原样返回错误，由处理器回 500；重试从头执行，各步幂等，所以中断不会
+// 留下清了一半的状态。标记还新时返回 ErrInProgress（409），超过 StaleAfter 则
+// 接管重做。
 func (s *Service) Purge(ctx context.Context, userID string) error {
 	now := s.now().UTC()
 	claimed, err := s.store.ClaimPurge(ctx, userID, now, now.Add(-StaleAfter))
@@ -100,6 +110,14 @@ func (s *Service) Purge(ctx context.Context, userID string) error {
 	}
 	if err := s.blobs.DeleteUser(ctx, userID); err != nil {
 		return err
+	}
+	// 向量缓存是派生数据，清除之后客户端下次索引刷新重新查缓存、补算未命中的
+	// 片段。清除期间的写入由各处理器调 Gate 拦住，嵌入请求带缓存头时也不写。
+	// 装配没有缓存实现时跳过：没有缓存就没有可清的内容。
+	if s.embeddings != nil {
+		if err := s.embeddings.DeleteUser(ctx, userID); err != nil {
+			return err
+		}
 	}
 	// 备份与附件的清空方法已经按账号清过前缀；这里再清一次，兜住历史遗留的
 	// 孤儿对象，例如元数据或索引早已删除、字节还留着的那些。

@@ -42,6 +42,16 @@ type Backup struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type EmbeddingCache struct {
+	UserID     string
+	Model      string
+	TextHash   string
+	Dim        int32
+	Vector     []byte
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+}
+
 type Feedback struct {
 	ID          string
 	Content     string

@@ -42,6 +42,18 @@ func (f *fakeBlobs) DeleteUser(context.Context, string) error {
 	return popErr(&f.errs)
 }
 
+// fakeEmbeddings 是嵌入向量缓存的清空步骤。缓存是派生数据，仍然要和其余几类
+// 数据一起清，清除顺序与失败保留标记的行为都要覆盖。
+type fakeEmbeddings struct {
+	calls int
+	errs  []error
+}
+
+func (f *fakeEmbeddings) DeleteUser(context.Context, string) error {
+	f.calls++
+	return popErr(&f.errs)
+}
+
 func popErr(errs *[]error) error {
 	if len(*errs) == 0 {
 		return nil
@@ -79,13 +91,15 @@ func TestPurgeClearsEverythingAndLeftoverObjects(t *testing.T) {
 	backups := &fakeBackups{}
 	syncLog := &fakeSync{}
 	blobs := &fakeBlobs{}
-	svc := New(NewMemoryStore(), backups, syncLog, blobs, objects)
+	embeddings := &fakeEmbeddings{}
+	svc := New(NewMemoryStore(), backups, syncLog, blobs, embeddings, objects)
 
 	if err := svc.Purge(ctx, "u1"); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
-	if backups.calls != 1 || syncLog.calls != 1 || blobs.calls != 1 {
-		t.Fatalf("calls: backups %d, sync %d, blobs %d", backups.calls, syncLog.calls, blobs.calls)
+	if backups.calls != 1 || syncLog.calls != 1 || blobs.calls != 1 || embeddings.calls != 1 {
+		t.Fatalf("calls: backups %d, sync %d, blobs %d, embeddings %d",
+			backups.calls, syncLog.calls, blobs.calls, embeddings.calls)
 	}
 	for _, key := range []string{
 		objectstore.BackupKey("u1", "b1"),
@@ -117,7 +131,7 @@ func TestPurgeRejectsConcurrentRequestAndGatesWrites(t *testing.T) {
 	ctx := context.Background()
 	marker := NewMemoryStore()
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, objectstore.NewMemory())
+	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, &fakeEmbeddings{}, objectstore.NewMemory())
 	svc.now = func() time.Time { return now }
 
 	if err := svc.Gate(ctx, "u1"); err != nil {
@@ -159,14 +173,16 @@ func TestPurgeFailureKeepsMarkerAndRetryCompletes(t *testing.T) {
 	backups := &fakeBackups{errs: []error{boom}}
 	syncLog := &fakeSync{}
 	blobs := &fakeBlobs{}
-	svc := New(marker, backups, syncLog, blobs, objectstore.NewMemory())
+	embeddings := &fakeEmbeddings{}
+	svc := New(marker, backups, syncLog, blobs, embeddings, objectstore.NewMemory())
 	svc.now = func() time.Time { return now }
 
 	if err := svc.Purge(ctx, "u1"); !errors.Is(err, boom) {
 		t.Fatalf("purge failure: want %v, got %v", boom, err)
 	}
-	if syncLog.calls != 0 || blobs.calls != 0 {
-		t.Fatalf("steps after the failure must not run: sync %d, blobs %d", syncLog.calls, blobs.calls)
+	if syncLog.calls != 0 || blobs.calls != 0 || embeddings.calls != 0 {
+		t.Fatalf("steps after the failure must not run: sync %d, blobs %d, embeddings %d",
+			syncLog.calls, blobs.calls, embeddings.calls)
 	}
 	if _, ok, err := marker.PurgeStartedAt(ctx, "u1"); err != nil || !ok {
 		t.Fatalf("marker must survive a failure, ok=%v err=%v", ok, err)
@@ -180,8 +196,9 @@ func TestPurgeFailureKeepsMarkerAndRetryCompletes(t *testing.T) {
 	if err := svc.Purge(ctx, "u1"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if backups.calls != 2 || syncLog.calls != 1 || blobs.calls != 1 {
-		t.Fatalf("retry calls: backups %d, sync %d, blobs %d", backups.calls, syncLog.calls, blobs.calls)
+	if backups.calls != 2 || syncLog.calls != 1 || blobs.calls != 1 || embeddings.calls != 1 {
+		t.Fatalf("retry calls: backups %d, sync %d, blobs %d, embeddings %d",
+			backups.calls, syncLog.calls, blobs.calls, embeddings.calls)
 	}
 	if _, ok, _ := marker.PurgeStartedAt(ctx, "u1"); ok {
 		t.Fatal("marker should be removed after a successful retry")

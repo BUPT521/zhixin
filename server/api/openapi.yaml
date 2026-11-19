@@ -532,7 +532,15 @@ paths:
         用量记入账号当天的嵌入额度，与聊天额度分开计；提供方没有返回 `usage` 时按
         输入字符数估算。代理自身的拒绝与聊天接口相同，另有 `invalid_request`（400，
         `input` 为空、超过条数上限或含有非字符串，或者 `dimensions` 与模型配置的维度
-        不一致）。
+        不一致）。请求头带 `X-Zhixin-Embedding-Cache: 1` 时，服务端在嵌入成功之后
+        按输入的 SHA-256 把这些向量写入这个账号的缓存，重复写入不覆盖已有行；只有
+        自动同步开启、且这次是索引刷新的客户端才带这个头（ADR-0030）。
+      parameters:
+        - name: X-Zhixin-Embedding-Cache
+          in: header
+          required: false
+          description: 值为 `1` 时把这次嵌入的结果写入按账号隔离的向量缓存
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -548,6 +556,40 @@ paths:
         "413": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/llm/embeddings/lookup:
+    post:
+      tags: [llm]
+      summary: 批量查找已缓存的嵌入向量
+      description: |
+        按账号与对外模型查找已经算过的向量，命中时客户端不再重复嵌入。`hashes` 是
+        片段文本按 UTF-8 字节计算的 SHA-256 小写十六进制，单次最多
+        `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，与 `/v1/llm/embeddings` 一致。响应只含
+        命中的条目，全部未命中不是错误；查找不消耗额度，不写 `llm_usage`，访问日志
+        与嵌入接口一样只记录路由、状态与字节数。`embedding` 是小端序 FP16 的 base64，
+        客户端解码之后按现有方式归一化。缓存属于派生数据，可以从业务库与嵌入服务
+        重建：只在客户端带 `X-Zhixin-Embedding-Cache: 1` 的嵌入请求成功之后写入，
+        随清除云端数据与删除账号一起删除，不进入数据包与整库备份（ADR-0030）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmbeddingLookupRequest" }
+      responses:
+        "200":
+          description: 命中的向量；全部未命中时 `vectors` 为空数组并省略 `dimensions`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmbeddingLookupResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403":
+          description: "`email_unverified`：账号还没确认邮箱，托管额度未开放"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
 
   /v1/app/releases:
@@ -808,6 +850,33 @@ components:
           properties:
             prompt_tokens: { type: integer, format: int64 }
             total_tokens: { type: integer, format: int64 }
+    EmbeddingLookupRequest:
+      type: object
+      required: [model, hashes]
+      additionalProperties: false
+      properties:
+        model: { type: string }
+        hashes:
+          type: array
+          description: 片段文本按 UTF-8 字节计算的 SHA-256，小写十六进制
+          items: { type: string }
+    EmbeddingLookupResult:
+      type: object
+      required: [model, vectors]
+      properties:
+        model: { type: string, description: 对外模型名 }
+        dimensions:
+          type: integer
+          description: 模型配置的维度；没有配置时取命中行的维度，全部未命中时省略
+        vectors:
+          type: array
+          description: 命中的条目，顺序与请求无关
+          items:
+            type: object
+            required: [hash, embedding]
+            properties:
+              hash: { type: string, description: 请求里的文本哈希 }
+              embedding: { type: string, description: 小端序 FP16 的 base64 }
     AdminProbe:
       type: object
       required: [ok, latency_ms]

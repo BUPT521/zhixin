@@ -45,7 +45,10 @@ type Stores struct {
 	Blobs   blobs.Store
 	Quota   llmproxy.Quota
 	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
-	Catalog   llmproxy.Catalog
+	Catalog llmproxy.Catalog
+	// Cache 保存按账号隔离的嵌入向量缓存（ADR-0030），派生数据，清空云端数据
+	// 与删号时一并删除。
+	Cache     llmproxy.EmbeddingCache
 	Feedback  feedback.Store
 	Retention retention.Store
 	// Cloud 保存云端清除的进行中标记；Objects 与备份、附件共用同一份对象
@@ -69,6 +72,7 @@ func MemoryStores() Stores {
 	objects := objectstore.NewMemory()
 	blobStore := blobs.NewStore(objects)
 	quotaStore := llmproxy.NewMemoryQuota()
+	cacheStore := llmproxy.NewMemoryEmbeddingCache()
 	return Stores{
 		Auth:      authStore,
 		Sync:      syncStore,
@@ -76,6 +80,7 @@ func MemoryStores() Stores {
 		Blobs:     blobStore,
 		Quota:     quotaStore,
 		Catalog:   llmproxy.NewMemoryCatalog(),
+		Cache:     cacheStore,
 		Feedback:  feedback.NewMemoryStore(),
 		Retention: retention.NewMemoryStore(),
 		Cloud:     cloudpurge.NewMemoryStore(),
@@ -85,6 +90,7 @@ func MemoryStores() Stores {
 			backupStore.DeleteUser,
 			blobStore.DeleteUser,
 			quotaStore.DeleteUser,
+			cacheStore.DeleteUser,
 		),
 	}
 }
@@ -214,7 +220,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 
 	// 云端清除编排备份、提交序列、附件与遗留对象；清除期间三个写处理器由 gate
 	// 回 409，读接口不受影响。
-	purgeSvc := cloudpurge.New(st.Cloud, st.Backups, st.Sync, st.Blobs, st.Objects)
+	purgeSvc := cloudpurge.New(st.Cloud, st.Backups, st.Sync, st.Blobs, st.Cache, st.Objects)
 	syncHandler.SetPurgeGate(purgeSvc.Gate)
 	backupHandler.SetPurgeGate(purgeSvc.Gate)
 	blobHandler.SetPurgeGate(purgeSvc.Gate)
@@ -244,6 +250,10 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	adminGuard := admin.Middleware(admin.Options{Token: cfg.AdminToken, Limiter: adminLimits, ClientHost: clientHost})
 
 	llmProxy := llmproxy.NewRoutedHandler(cfg.LLM, router, st.Quota, cfg.Location, log)
+	// 嵌入向量缓存是派生数据：按账号隔离，命中时省掉嵌入与计费；清除云端数据
+	// 期间不写，清除与删号时一并删除（ADR-0030）。
+	llmProxy.SetEmbeddingCache(st.Cache)
+	llmProxy.SetEmbeddingCacheGate(purgeSvc.Gate)
 	llmProxy.SetConcurrencyLimit(cfg.LLM.ConcurrentPerUser)
 	if cfg.LLM.RequireVerifiedEmail {
 		llmProxy.SetEmailVerifier(func(ctx context.Context, _ string) (bool, error) {

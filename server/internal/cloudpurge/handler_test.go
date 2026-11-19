@@ -30,7 +30,7 @@ func newTestServer(t *testing.T) (*testutil.Client, *auth.Service, *MemoryStore)
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	marker := NewMemoryStore()
-	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, objectstore.NewMemory())
+	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, &fakeEmbeddings{}, objectstore.NewMemory())
 	handler := NewHandler(svc, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},

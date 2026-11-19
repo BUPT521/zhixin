@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
@@ -34,8 +35,11 @@ func (a testAPI) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { a.p.Qu
 func (a testAPI) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
 	a.p.Chat(w, r)
 }
-func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
+func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmEmbeddingsParams) {
 	a.p.Embeddings(w, r)
+}
+func (a testAPI) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request) {
+	a.p.EmbeddingLookup(w, r)
 }
 
 type testEnv struct {

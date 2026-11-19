@@ -129,8 +129,11 @@ func (rt routes) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { rt.llm
 func (rt routes) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
 	rt.llm.Chat(w, r)
 }
-func (rt routes) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
+func (rt routes) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmEmbeddingsParams) {
 	rt.llm.Embeddings(w, r)
+}
+func (rt routes) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request) {
+	rt.llm.EmbeddingLookup(w, r)
 }
 
 // 管理接口：管理令牌由 internal/admin.Middleware 校验，这里只转发。

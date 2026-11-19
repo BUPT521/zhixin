@@ -199,6 +199,9 @@ type LLMConfig struct {
 	EmbeddingDailyTokens int64
 	// EmbeddingMaxInputs caps the number of inputs in one embeddings request.
 	EmbeddingMaxInputs int
+	// EmbeddingCacheBytes 是每个账号的嵌入向量缓存上限（ADR-0030）：写入之后按
+	// last_used_at 删除最久未用的行，超出的向量下一次刷新重新嵌入。
+	EmbeddingCacheBytes int64
 	// MaxAttempts caps how many sources one request may try.
 	MaxAttempts int
 	// HeaderTimeout is how long a source may take to send response headers for
@@ -339,6 +342,7 @@ func Load(getenv func(string) string) (Config, error) {
 			EmbeddingModels:      list("ZHIXIN_LLM_EMBEDDING_MODELS", ""),
 			EmbeddingDailyTokens: num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
 			EmbeddingMaxInputs:   int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
+			EmbeddingCacheBytes:  num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
 			MaxAttempts:          int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
 			HeaderTimeout:        dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
 		},

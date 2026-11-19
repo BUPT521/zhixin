@@ -396,6 +396,15 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 		seen[[2]string{rt.ProviderID, rt.UpstreamModel}] = true
 		rec.Routes = append(rec.Routes, rt)
 	}
+	// 改维度或改用途之后旧向量不再可用：先删这个模型的缓存，再保存。缓存删除
+	// 失败时模型还没改，重试仍然会走清理；同名模型必须是同一个向量空间，换部署
+	// 要换对外模型名，这条约束见 ADR-0029（ADR-0030 第 7 条）。
+	if old, ok := a.router().current().model(name); ok && (old.Kind != rec.Kind || old.Dimensions != rec.Dimensions) {
+		if err := a.proxy.DeleteEmbeddingCache(r.Context(), name); err != nil {
+			httpx.WriteInternal(w, r, a.proxy.log, err)
+			return
+		}
+	}
 	if err := a.catalog.PutModel(r.Context(), rec); err != nil {
 		if errors.Is(err, ErrUnknownProvider) {
 			bad("routes: provider_id does not exist")
@@ -417,8 +426,20 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string) {
-	err := a.catalog.DeleteModel(r.Context(), name)
-	if errors.Is(err, ErrNotFound) {
+	// 先确认这是管理后台的模型，环境变量来源的模型只读，不能连带删掉缓存。
+	models, err := a.catalog.Models(r.Context())
+	if err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	found := false
+	for _, m := range models {
+		if m.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
 		if m, ok := a.router().current().model(name); ok && m.Source == sourceEnv {
 			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "this model comes from ZHIXIN_LLM_MODELS or ZHIXIN_LLM_EMBEDDING_MODELS")
 			return
@@ -426,7 +447,19 @@ func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string)
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
 	}
-	if err != nil {
+	// 先删缓存再删模型：缓存删除失败时模型还在，重试删除仍然可用。缓存是派生
+	// 数据，多删一次只是让客户端重新嵌入（ADR-0030 第 7 条）。
+	if err := a.proxy.DeleteEmbeddingCache(r.Context(), name); err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	if err := a.catalog.DeleteModel(r.Context(), name); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			// 另一个管理请求已经先删掉了：缓存也已清空，按删除成功处理没有意义，
+			// 回 404 让调用方知道模型不在。
+			httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+			return
+		}
 		httpx.WriteInternal(w, r, a.proxy.log, err)
 		return
 	}
