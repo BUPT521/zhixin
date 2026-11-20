@@ -9291,6 +9291,15 @@ class $RevisionCommitsTable extends RevisionCommits
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _uidMeta = const VerificationMeta('uid');
+  @override
+  late final GeneratedColumn<String> uid = GeneratedColumn<String>(
+    'uid',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _actionMeta = const VerificationMeta('action');
   @override
   late final GeneratedColumn<String> action = GeneratedColumn<String>(
@@ -9389,6 +9398,7 @@ class $RevisionCommitsTable extends RevisionCommits
     generation,
     actor,
     kind,
+    uid,
     action,
     requestId,
     restoredCommitId,
@@ -9442,6 +9452,14 @@ class $RevisionCommitsTable extends RevisionCommits
       );
     } else if (isInserting) {
       context.missing(_kindMeta);
+    }
+    if (data.containsKey('uid')) {
+      context.handle(
+        _uidMeta,
+        uid.isAcceptableOrUnknown(data['uid']!, _uidMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_uidMeta);
     }
     if (data.containsKey('action')) {
       context.handle(
@@ -9536,6 +9554,10 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.string,
         data['${effectivePrefix}kind'],
       )!,
+      uid: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}uid'],
+      )!,
       action: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}action'],
@@ -9588,8 +9610,16 @@ class RevisionCommitRow extends DataClass
   /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
   final String kind;
 
+  /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
+  ///
+  /// 本机提交在 [_appendCommit] 里生成 UUIDv7，远端提交沿用远端的 uid；不按提交
+  /// 编号或请求编号派生，因为编号会在整库恢复旧备份后重复（ADR-0040）。
+  final String uid;
+
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   final String action;
+
+  /// 同一次用户动作的重试编号：只用于两分钟内的重试去重，不再是提交身份。
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
@@ -9607,6 +9637,7 @@ class RevisionCommitRow extends DataClass
     required this.generation,
     required this.actor,
     required this.kind,
+    required this.uid,
     required this.action,
     this.requestId,
     this.restoredCommitId,
@@ -9626,6 +9657,7 @@ class RevisionCommitRow extends DataClass
     map['generation'] = Variable<int>(generation);
     map['actor'] = Variable<String>(actor);
     map['kind'] = Variable<String>(kind);
+    map['uid'] = Variable<String>(uid);
     map['action'] = Variable<String>(action);
     if (!nullToAbsent || requestId != null) {
       map['request_id'] = Variable<String>(requestId);
@@ -9652,6 +9684,7 @@ class RevisionCommitRow extends DataClass
       generation: Value(generation),
       actor: Value(actor),
       kind: Value(kind),
+      uid: Value(uid),
       action: Value(action),
       requestId: requestId == null && nullToAbsent
           ? const Value.absent()
@@ -9680,6 +9713,7 @@ class RevisionCommitRow extends DataClass
       generation: serializer.fromJson<int>(json['generation']),
       actor: serializer.fromJson<String>(json['actor']),
       kind: serializer.fromJson<String>(json['kind']),
+      uid: serializer.fromJson<String>(json['uid']),
       action: serializer.fromJson<String>(json['action']),
       requestId: serializer.fromJson<String?>(json['requestId']),
       restoredCommitId: serializer.fromJson<int?>(json['restoredCommitId']),
@@ -9699,6 +9733,7 @@ class RevisionCommitRow extends DataClass
       'generation': serializer.toJson<int>(generation),
       'actor': serializer.toJson<String>(actor),
       'kind': serializer.toJson<String>(kind),
+      'uid': serializer.toJson<String>(uid),
       'action': serializer.toJson<String>(action),
       'requestId': serializer.toJson<String?>(requestId),
       'restoredCommitId': serializer.toJson<int?>(restoredCommitId),
@@ -9716,6 +9751,7 @@ class RevisionCommitRow extends DataClass
     int? generation,
     String? actor,
     String? kind,
+    String? uid,
     String? action,
     Value<String?> requestId = const Value.absent(),
     Value<int?> restoredCommitId = const Value.absent(),
@@ -9730,6 +9766,7 @@ class RevisionCommitRow extends DataClass
     generation: generation ?? this.generation,
     actor: actor ?? this.actor,
     kind: kind ?? this.kind,
+    uid: uid ?? this.uid,
     action: action ?? this.action,
     requestId: requestId.present ? requestId.value : this.requestId,
     restoredCommitId: restoredCommitId.present
@@ -9752,6 +9789,7 @@ class RevisionCommitRow extends DataClass
           : this.generation,
       actor: data.actor.present ? data.actor.value : this.actor,
       kind: data.kind.present ? data.kind.value : this.kind,
+      uid: data.uid.present ? data.uid.value : this.uid,
       action: data.action.present ? data.action.value : this.action,
       requestId: data.requestId.present ? data.requestId.value : this.requestId,
       restoredCommitId: data.restoredCommitId.present
@@ -9781,6 +9819,7 @@ class RevisionCommitRow extends DataClass
           ..write('generation: $generation, ')
           ..write('actor: $actor, ')
           ..write('kind: $kind, ')
+          ..write('uid: $uid, ')
           ..write('action: $action, ')
           ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
@@ -9800,6 +9839,7 @@ class RevisionCommitRow extends DataClass
     generation,
     actor,
     kind,
+    uid,
     action,
     requestId,
     restoredCommitId,
@@ -9818,6 +9858,7 @@ class RevisionCommitRow extends DataClass
           other.generation == this.generation &&
           other.actor == this.actor &&
           other.kind == this.kind &&
+          other.uid == this.uid &&
           other.action == this.action &&
           other.requestId == this.requestId &&
           other.restoredCommitId == this.restoredCommitId &&
@@ -9834,6 +9875,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   final Value<int> generation;
   final Value<String> actor;
   final Value<String> kind;
+  final Value<String> uid;
   final Value<String> action;
   final Value<String?> requestId;
   final Value<int?> restoredCommitId;
@@ -9848,6 +9890,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     this.generation = const Value.absent(),
     this.actor = const Value.absent(),
     this.kind = const Value.absent(),
+    this.uid = const Value.absent(),
     this.action = const Value.absent(),
     this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
@@ -9863,6 +9906,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     required int generation,
     required String actor,
     required String kind,
+    required String uid,
     required String action,
     this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
@@ -9874,6 +9918,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   }) : generation = Value(generation),
        actor = Value(actor),
        kind = Value(kind),
+       uid = Value(uid),
        action = Value(action),
        createdAt = Value(createdAt);
   static Insertable<RevisionCommitRow> custom({
@@ -9882,6 +9927,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     Expression<int>? generation,
     Expression<String>? actor,
     Expression<String>? kind,
+    Expression<String>? uid,
     Expression<String>? action,
     Expression<String>? requestId,
     Expression<int>? restoredCommitId,
@@ -9897,6 +9943,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
       if (generation != null) 'generation': generation,
       if (actor != null) 'actor': actor,
       if (kind != null) 'kind': kind,
+      if (uid != null) 'uid': uid,
       if (action != null) 'action': action,
       if (requestId != null) 'request_id': requestId,
       if (restoredCommitId != null) 'restored_commit_id': restoredCommitId,
@@ -9914,6 +9961,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     Value<int>? generation,
     Value<String>? actor,
     Value<String>? kind,
+    Value<String>? uid,
     Value<String>? action,
     Value<String?>? requestId,
     Value<int?>? restoredCommitId,
@@ -9929,6 +9977,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
       generation: generation ?? this.generation,
       actor: actor ?? this.actor,
       kind: kind ?? this.kind,
+      uid: uid ?? this.uid,
       action: action ?? this.action,
       requestId: requestId ?? this.requestId,
       restoredCommitId: restoredCommitId ?? this.restoredCommitId,
@@ -9957,6 +10006,9 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
+    }
+    if (uid.present) {
+      map['uid'] = Variable<String>(uid.value);
     }
     if (action.present) {
       map['action'] = Variable<String>(action.value);
@@ -9993,6 +10045,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
           ..write('generation: $generation, ')
           ..write('actor: $actor, ')
           ..write('kind: $kind, ')
+          ..write('uid: $uid, ')
           ..write('action: $action, ')
           ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
@@ -13275,6 +13328,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_revision_request',
     'CREATE UNIQUE INDEX idx_revision_request ON revision_commit (request_id) WHERE request_id IS NOT NULL',
   );
+  late final Index idxRevisionUid = Index(
+    'idx_revision_uid',
+    'CREATE UNIQUE INDEX idx_revision_uid ON revision_commit (uid)',
+  );
   late final Index idxRevisionCommitParent = Index(
     'idx_revision_commit_parent',
     'CREATE INDEX idx_revision_commit_parent ON revision_commit (parent_id)',
@@ -15984,6 +16041,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxMemoryStatus,
     idxMemoryValid,
     idxRevisionRequest,
+    idxRevisionUid,
     idxRevisionCommitParent,
     idxRevisionChangeTarget,
     idxRevisionChangeCommit,

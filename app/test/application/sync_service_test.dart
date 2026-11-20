@@ -332,66 +332,54 @@ void main() {
     expect(await a.account.preferences.syncState(), isNull);
   });
 
-  test('推送的 request_id 不超过服务端 64 字符上限，超长时按提交编号生成', () {
-    // 更正材料页这类命令把 JSON 编码的请求标识写进提交，长度会超过 64。
+  test('推送填提交的 uid：命令编号再长也不影响推送，重复推送按 uid 去重', () async {
+    final a = await device('a@example.com', register: true);
+    await a.sync.syncNow();
+    final userId = (await a.account.snapshot()).session!.userId;
+    // 首次同步已经上传了本机投影（profile 一行）作为基线。
+    final baselineHead = server.headOf(userId);
+
+    // 更正材料页这类命令把 JSON 编码的请求编号写进提交，按 UTF-8 算是 70 个字节，
+    // 超过服务端对 request_id 的 64 字节上限；推送改填提交的 uid 之后不再受影响。
     final long = jsonEncode([
       'correct-material-page',
       '01a1f4d1-78ae-7000-befb-f35f122c1838',
       '',
       '方阵的迹为主对角元素之和。',
     ]);
-    expect(long.length, greaterThan(64));
+    expect(utf8.encode(long).length, greaterThan(64));
+    final outcome = await a.rig.db.commandOutcome(
+      (txn) => insertRow(txn, 'memory', {
+        'id': 'm1',
+        'kind': 'preference',
+        'content': '长编号的写入',
+        'scope': null,
+        'source_kind': 'user',
+        'source_id': null,
+        'valid_until': null,
+        'status': 'active',
+        'created_at': '2026-11-17 10:00:00',
+        'updated_at': '2026-11-17 10:00:00',
+      }),
+      label: '新增记忆',
+      requestId: long,
+    );
+    final commit = outcome.commit!;
+    expect(commit.uid, hasLength(36));
+    expect(utf8.encode(commit.uid).length, lessThanOrEqualTo(64));
 
-    final first = syncRequestIdFor(
-      stored: long,
-      deviceId: '3B164M00XU700000',
-      commitId: 41,
-    );
-    expect(first, 'l-3B164M00-41');
-    expect(first.length, lessThanOrEqualTo(64));
-    // 同一提交重试时标识不变，服务端仍能按请求标识去重。
+    await a.sync.syncNow();
+    expect(server.headOf(userId), baselineHead + 1);
+    final pushed = server.commits[userId]!.last;
+    expect(pushed['request_id'], commit.uid);
     expect(
-      syncRequestIdFor(
-        stored: long,
-        deviceId: '3B164M00XU700000',
-        commitId: 41,
-      ),
-      first,
-    );
-    expect(
-      syncRequestIdFor(
-        stored: 'l-3B164M00-7',
-        deviceId: '3B164M00XU700000',
-        commitId: 7,
-      ),
-      'l-3B164M00-7',
-    );
-    expect(
-      syncRequestIdFor(
-        stored: '   ',
-        deviceId: '3B164M00XU700000',
-        commitId: 7,
-      ),
-      'l-3B164M00-7',
+      utf8.encode(pushed['request_id']! as String).length,
+      lessThanOrEqualTo(64),
     );
 
-    // 服务端按 UTF-8 字节算长度：这条中文标识只有 46 个字符，却有 70 个字节。
-    final chinese = jsonEncode([
-      'add-memory',
-      'preference',
-      '只能在上午学习，晚上效率低',
-      '',
-    ]);
-    expect(chinese.length, lessThanOrEqualTo(64));
-    expect(utf8.encode(chinese).length, greaterThan(64));
-    expect(
-      syncRequestIdFor(
-        stored: chinese,
-        deviceId: '3B164M00XU700000',
-        commitId: 31,
-      ),
-      'l-3B164M00-31',
-    );
+    // 服务端已经见过这条 uid：同一条提交再推一次不增加序列长度。
+    await a.sync.syncNow();
+    expect(server.headOf(userId), baselineHead + 1);
   });
 
   test('同步位置写进库里的读取位置，偏好文件只留账号与实例', () async {

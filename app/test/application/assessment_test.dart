@@ -68,6 +68,9 @@ class _Harness {
   _Harness({BuddyReply? reply, LlmException? error})
     : ai = _FakeAi(reply: reply, error: error);
 
+  /// 当前时刻：数据版本的两分钟重试窗口按它判断，用例需要跨窗口时直接改。
+  late DateTime now = DateTime(2026, 11, 6, 20);
+  DateTime clock() => now;
   final _FakeAi ai;
   int epoch = 0;
   late RawDatabase db;
@@ -82,7 +85,7 @@ class _Harness {
   late LearningService service;
 
   Future<void> open() async {
-    rig = await openTestRigWithUndoRules();
+    rig = await openTestRigWithUndoRules(clock: clock);
     db = rig.db;
     attempts = AttemptRepository(db);
     assessments = AssessmentRepository(db);
@@ -92,7 +95,7 @@ class _Harness {
     memories = MemoryRepository(db);
     revisions = rig.revisions;
     final materials = MaterialRepository(db);
-    final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
+    final policy = TimePolicy(clock: clock);
     service = LearningService(
       attempts: attempts,
       conversations: conversations,
@@ -333,7 +336,9 @@ void main() {
       MemoryCardStatus.pending,
     );
 
-    // 撤销之后重新记下同一张卡是新动作，按新的提交写入。
+    // 撤销不释放目标的请求编号；用户过一会儿再点记下时已经超出两分钟重试
+    // 窗口，同编号按新动作写入（ADR-0040）。
+    h.now = DateTime(2026, 11, 6, 20, 3);
     final reaccepted = await h.service.acceptMemory(
       attemptId: stored.id,
       helpIndex: 0,

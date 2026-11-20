@@ -2,7 +2,7 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 28 的 26 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 29 的 26 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
@@ -559,6 +559,7 @@ class Memories extends Table {
   'CREATE UNIQUE INDEX idx_revision_request '
   'ON revision_commit(request_id) WHERE request_id IS NOT NULL',
 )
+@TableIndex(name: 'idx_revision_uid', columns: {#uid}, unique: true)
 @TableIndex(name: 'idx_revision_commit_parent', columns: {#parentId})
 @DataClassName('RevisionCommitRow')
 class RevisionCommits extends Table {
@@ -577,8 +578,17 @@ class RevisionCommits extends Table {
   /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
   TextColumn get kind => text().check(kind.isIn(revisionKinds))();
 
+  /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
+  ///
+  /// 本机提交在 [_appendCommit] 里生成 UUIDv7，远端提交沿用远端的 uid；不按提交
+  /// 编号或请求编号派生，因为编号会在整库恢复旧备份后重复（ADR-0040）。
+  TextColumn get uid => text()();
+
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   TextColumn get action => text()();
+
+  /// 同一次用户动作的重试编号：只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
+  /// 的重试去重，不再是提交身份。
   TextColumn get requestId => text().nullable()();
   IntColumn get restoredCommitId => integer().nullable()();
   IntColumn get revertedCommitId => integer().nullable()();

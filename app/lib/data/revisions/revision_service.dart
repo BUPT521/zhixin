@@ -41,7 +41,7 @@ class RevisionHistory {
 }
 
 /// 应用一条远端提交的结果：本机新生成的提交编号（没有净变化时为空）与因
-/// 本机状态对不上而跳过的条数；[duplicate] 表示这个请求编号已经应用过。
+/// 本机状态对不上而跳过的条数；[duplicate] 表示这个提交身份已经应用过。
 class RemoteApplyResult {
   const RemoteApplyResult({
     required this.commit,
@@ -188,18 +188,18 @@ class RevisionService {
   }
 
   /// 应用一条远端提交：本机因此生成一条同样的净变化提交，撤销与数据版本页
-  /// 照常可用；请求编号沿用远端的，服务端重复下发时不会在本机叠加第二次。
+  /// 照常可用；提交身份沿用远端的 uid，服务端重复下发时不会在本机叠加第二次。
   ///
   /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
   /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），
   /// 提交的 `conflict_count` 也随之更新。
   Future<RemoteApplyResult> applyRemoteCommit({
-    required String requestId,
+    required String uid,
     required String action,
     required String actor,
     required List<RevisionChange> changes,
   }) async {
-    final existing = await engine.commitByRequest(db.raw, requestId);
+    final existing = await engine.commitByUid(db.raw, uid);
     if (existing != null) {
       return RemoteApplyResult(commit: existing, skipped: 0, duplicate: true);
     }
@@ -208,26 +208,27 @@ class RevisionService {
     var appliedChanges = const <RevisionChange>[];
     final changed = <String>{};
     await db.gate.exclusive(() async {
-      try {
-        await raw().transaction((txn) async {
-          await engine.beginCommand(txn, requestId: requestId);
-          final applied = await engine.applyChanges(txn, changes);
-          skipped = applied.skipped;
-          appliedChanges = applied.applied;
-          await engine.finishCommand(
-            txn,
-            action: action,
-            actor: actor,
-            requestId: requestId,
-            changedTables: changed,
-            kind: RevisionKind.remote,
-            conflicts: applied.conflicts,
-          );
-        });
-      } on RevisionDuplicateRequest {
-        // 并发的同一条远端提交先落库：沿用它的结果，不再写第二次。
-        duplicate = true;
-      }
+      await raw().transaction((txn) async {
+        // 独占区外已经查过一次；并发调用可能在这之间先落库，事务里再确认一次。
+        final appliedBefore = await engine.commitByUid(txn, uid);
+        if (appliedBefore != null) {
+          duplicate = true;
+          return;
+        }
+        await engine.beginCommand(txn);
+        final applied = await engine.applyChanges(txn, changes);
+        skipped = applied.skipped;
+        appliedChanges = applied.applied;
+        await engine.finishCommand(
+          txn,
+          action: action,
+          actor: actor,
+          uid: uid,
+          changedTables: changed,
+          kind: RevisionKind.remote,
+          conflicts: applied.conflicts,
+        );
+      });
       if (changed.isNotEmpty) {
         db.notifyTables(changed);
         db.onCommitted?.call(changed);
@@ -235,12 +236,12 @@ class RevisionService {
     });
     if (duplicate) {
       return RemoteApplyResult(
-        commit: await engine.commitByRequest(db.raw, requestId),
+        commit: await engine.commitByUid(db.raw, uid),
         skipped: 0,
         duplicate: true,
       );
     }
-    final commit = await engine.commitByRequest(db.raw, requestId);
+    final commit = await engine.commitByUid(db.raw, uid);
     // 独占区已经释放；空闲检查点与索引补建在这里做（ADR-0039 第 2 条）。
     await engine.afterCommitIdle(db);
     return RemoteApplyResult(

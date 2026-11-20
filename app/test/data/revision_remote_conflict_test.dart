@@ -107,10 +107,10 @@ RevisionChange _remoteDelete(
 
 Future<RemoteApplyResult> _apply(
   TestRig rig,
-  String requestId,
+  String uid,
   List<RevisionChange> changes,
 ) => rig.revisions.applyRemoteCommit(
-  requestId: requestId,
+  uid: uid,
   action: '从其他设备同步',
   actor: 'user',
   changes: changes,

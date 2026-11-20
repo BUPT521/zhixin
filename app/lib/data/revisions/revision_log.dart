@@ -18,6 +18,7 @@ class CommitDraft {
     required this.action,
     required this.kind,
     required this.changes,
+    this.uid,
     this.requestId,
     this.restoredCommitId,
     this.revertedCommitId,
@@ -31,11 +32,22 @@ class CommitDraft {
   final String action;
   final RevisionKind kind;
   final List<RevisionChange> changes;
+
+  /// 提交身份；为空时由 [_appendCommit] 生成 UUIDv7，远端提交沿用远端的 uid。
+  final String? uid;
+
+  /// 同一次用户动作的重试编号；只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
+  /// 的重试去重。
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
   final List<RevisionConflict> conflicts;
 }
+
+/// 本机重试去重的时效：同编号的旧提交在这段时间内创建、且仍是 `HEAD` 时，才按
+/// 同一次动作的重试处理；超过之后或者中间已有别的提交，同一个编号按新的用户
+/// 动作执行（ADR-0040）。
+const Duration retryRequestWindow = Duration(minutes: 2);
 
 /// 把合并好的净变化补上提交编号；合并时编号还没定下来，先写 0。
 List<RevisionChange> _withCommitId(
@@ -103,6 +115,55 @@ mixin RevisionLogMixin {
       limit: 1,
     );
     return rows.isEmpty ? null : RevisionCommit.fromRow(rows.first);
+  }
+
+  /// 按提交身份取提交；远端提交是否已经应用按它判断。
+  Future<RevisionCommit?> commitByUid(RawExecutor executor, String uid) async {
+    final rows = await selectRows(
+      executor,
+      'revision_commit',
+      where: 'uid = ?',
+      whereArgs: [uid],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : RevisionCommit.fromRow(rows.first);
+  }
+
+  /// 同一次用户动作的重试：是则返回原提交，不是则先把旧提交的编号释放掉。
+  ///
+  /// 两条同时成立才按重试处理：旧提交在 [retryRequestWindow] 之内创建，且它仍是
+  /// 当前 `HEAD`。旧提交还在 `HEAD` 说明这次调用紧接在它之后，是界面双击或网络
+  /// 回调造成的重试；之后已经有了别的提交（暂停、恢复之后再次暂停，撤销之后
+  /// 重做同一动作），即便编号相同也是用户重新做的一次动作，必须照常执行，
+  /// 否则方案 3.1 的验收无法达成（ADR-0040）。
+  ///
+  /// 时间按本机时钟算，创建时间只精确到秒，所以两者相差按绝对值比较。旧提交的
+  /// `request_id` 置空之后，唯一索引与回执查询都按非空值判断，它不再是重试目标；
+  /// 编号由这一次的新提交继续使用。
+  Future<RevisionCommit?> retryCommit(
+    RawExecutor executor,
+    String requestId,
+  ) async {
+    final existing = await self.commitByRequest(executor, requestId);
+    if (existing == null) return null;
+    final headId = await self.headId(executor);
+    final createdAt = existing.createdAt;
+    final elapsed = createdAt == null
+        ? null
+        : self.clock().difference(createdAt).abs();
+    if (existing.id == headId &&
+        elapsed != null &&
+        elapsed <= retryRequestWindow) {
+      return existing;
+    }
+    await updateRow(
+      executor,
+      'revision_commit',
+      {'request_id': null},
+      where: 'id = ?',
+      whereArgs: [existing.id],
+    );
+    return null;
   }
 
   Future<List<RevisionCommit>> commits(
@@ -301,9 +362,13 @@ mixin RevisionLogMixin {
   ///
   /// 这里不分配提交编号：命令里显式要回执时由 [reserveCommitId] 预留，有净
   /// 变化时由 [finishCommand] 就地分配，没有净变化又不预留时序号不动（R1）。
+  ///
+  /// [requestId] 只用于同一次动作的重试去重：查到仍在时效内的原提交时抛出
+  /// [RevisionDuplicateRequest]，调用方据此返回原结果；查到过期的旧提交时先
+  /// 释放它的编号，再照常执行（[retryCommit]）。
   Future<void> beginCommand(RawExecutor txn, {String? requestId}) async {
     if (requestId != null) {
-      final existing = await self.commitByRequest(txn, requestId);
+      final existing = await self.retryCommit(txn, requestId);
       if (existing != null) throw RevisionDuplicateRequest(existing);
     }
     await updateRow(txn, 'revision_context', {
@@ -351,6 +416,7 @@ mixin RevisionLogMixin {
     required String action,
     String actor = 'user',
     String? requestId,
+    String? uid,
     Set<String>? changedTables,
     RevisionKind kind = RevisionKind.write,
     int? revertedCommitId,
@@ -375,6 +441,7 @@ mixin RevisionLogMixin {
       txn,
       CommitDraft(
         id: commitId,
+        uid: uid,
         parentId: head,
         generation: parent?.generation ?? 0,
         actor: actor,
@@ -397,14 +464,19 @@ mixin RevisionLogMixin {
   }
 
   /// 写入一条提交、它的变更明细与冲突记录，并推进 `HEAD`。
+  ///
+  /// 提交身份在落库之前定下来：本机提交生成 UUIDv7，远端提交沿用远端的 uid，
+  /// 两者都写进 `revision_commit.uid`（ADR-0040）。
   Future<RevisionCommit> _appendCommit(
     RawExecutor txn,
     CommitDraft draft,
   ) async {
     final now = formatDateTime(self.clock());
+    final uid = draft.uid ?? newUuidV7();
     final byteLength = self._changesByteLength(draft.changes);
     await insertRow(txn, 'revision_commit', {
       'id': draft.id,
+      'uid': uid,
       'parent_id': draft.parentId,
       'generation': draft.generation,
       'actor': draft.actor,
@@ -442,6 +514,7 @@ mixin RevisionLogMixin {
     );
     return RevisionCommit(
       id: draft.id,
+      uid: uid,
       parentId: draft.parentId,
       generation: draft.generation,
       actor: draft.actor,

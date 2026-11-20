@@ -98,11 +98,11 @@ class _Harness {
     LlmConfig? config,
     LlmException? error,
     this.recordFailure,
-  }) : ai = _FakeAi(reply: reply, config: config, error: error) {
-    clock = () => DateTime(2026, 11, 6, 20, 30);
-  }
+  }) : ai = _FakeAi(reply: reply, config: config, error: error);
 
-  late final DateTime Function() clock;
+  /// 当前时刻：数据版本的两分钟重试窗口按它判断，用例需要跨窗口时直接改。
+  late DateTime now = DateTime(2026, 11, 6, 20, 30);
+  DateTime clock() => now;
   final ModelFailureRecorder? recordFailure;
   int epoch = 0;
   final _FakeAi ai;
@@ -694,6 +694,19 @@ void main() {
       await h.service.history(id),
     );
     expect(afterAccept, hasLength(1));
+
+    // 同一条建议紧接着再点一次是按编号重试：旧提交仍是 HEAD，不创建第二个
+    // 事项，也不形成第二条提交。
+    final again = await h.service.acceptNextStep(
+      conversationId: id,
+      messageId: pending.first.messageId,
+      draft: pending.first.draft,
+      goalId: null,
+    );
+    expect(again.item.id, accepted.item.id);
+    expect(again.commitId, accepted.commitId);
+    expect(await h.tasks.items(), hasLength(1));
+
     final acceptedMessage = (await h.service.history(id))
         .singleWhere((message) => message.id == pending.first.messageId);
     final recoveredChanges = await h.service.changesFromMessages([
@@ -715,17 +728,6 @@ void main() {
     expect(second.item.goalId, goalId);
     expect(await h.tasks.items(), hasLength(2));
 
-    // 同一条建议再点一次是按编号重试，不创建第二个事项，也不形成第二条提交。
-    final again = await h.service.acceptNextStep(
-      conversationId: id,
-      messageId: pending.first.messageId,
-      draft: pending.first.draft,
-      goalId: null,
-    );
-    expect(again.item.id, accepted.item.id);
-    expect(again.commitId, accepted.commitId);
-    expect(await h.tasks.items(), hasLength(2));
-
     // 撤销第二条，这一条建议回到消息里；第一条仍然是已接受状态。
     await h.rig.revisions.undoCommit(second.commitId);
     expect(await h.tasks.items(), hasLength(1));
@@ -741,7 +743,9 @@ void main() {
       isNot(contains(second.commitId)),
     );
 
-    // 撤销之后重新接受同一条建议，按新的动作写入。
+    // 撤销不释放目标的请求编号；用户过一会儿再接受同一条建议时已经超出两分钟
+    // 重试窗口，同编号按新动作写入（ADR-0040）。
+    h.now = DateTime(2026, 11, 6, 20, 33);
     final restoredAccept = await h.service.acceptNextStep(
       conversationId: id,
       messageId: pending.last.messageId,

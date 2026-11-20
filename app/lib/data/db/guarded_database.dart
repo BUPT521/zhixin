@@ -137,8 +137,9 @@ class GuardedDatabase implements RawDatabase {
   /// 带业务动作标签的命令；一次动作修改多张表时仍只形成一个提交。
   ///
   /// [kind] 是提交类型，远端提交应用走 [RevisionKind.remote]，其余入口默认是
-  /// 普通写入。[requestId] 相同的第二次调用不再执行写入；提供 [onDuplicate]
-  /// 时由调用方把原提交还原成同样的结果，否则抛出 [RevisionDuplicateRequest]。
+  /// 普通写入。[requestId] 表示同一次用户动作的重试编号：仍在时效内的原提交
+  /// 不再执行写入；提供 [onDuplicate] 时由调用方把原提交还原成同样的结果，
+  /// 否则抛出 [RevisionDuplicateRequest]（ADR-0040）。
   Future<T> command<T>(
     Future<T> Function(RawExecutor txn) action, {
     required String label,
@@ -205,7 +206,7 @@ class GuardedDatabase implements RawDatabase {
           return _db
               .transaction<({T value, RevisionCommit? commit})>((txn) async {
                 if (requestId != null) {
-                  final existing = await engine.commitByRequest(txn, requestId);
+                  final existing = await engine.retryCommit(txn, requestId);
                   if (existing != null) {
                     if (onDuplicate != null) {
                       return (value: onDuplicate(existing), commit: existing);

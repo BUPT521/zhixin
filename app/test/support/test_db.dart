@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/undo_guards/undo_guards.dart';
+import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/drift/drift_raw.dart';
@@ -22,7 +23,7 @@ Future<RawDatabase> openTestDb() async {
   final raw = DriftRawDatabase(app);
   await insertRow(raw, 'app_meta', {
     'key': 'schema_version',
-    'value': '28',
+    'value': '$zhixinSchemaVersion',
     'updated_at': '2026-11-10 10:00:00',
   }, replace: true);
   await insertRow(raw, 'profile', {

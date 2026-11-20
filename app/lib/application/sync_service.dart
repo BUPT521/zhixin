@@ -112,25 +112,9 @@ class SyncResult {
 /// 服务端只保存线性序列，不解析内容；冲突按“后到达的覆盖先到达的”处理，被覆盖
 /// 的值留在提交历史里（[server/README](../../../server/README.md) 的同步协议）。
 /// 同步只读写本机数据库与网络，不换库、不清空，界面通过数据层已有的表通知重读。
-/// 推送给服务端的请求标识。
 ///
-/// 服务端要求它非空且不超过 64 个字节；本地有些命令用 JSON 编码的请求标识做重复
-/// 提交判断（例如加记忆、更正材料页），既可能变长，也可能带中文，按 UTF-8 字节
-/// 算会超过上限，整批推送因此被拒绝。超长或为空时改用按提交编号生成的稳定标识，
-/// 同一提交重试时标识不变，服务端的去重照常生效。
-String syncRequestIdFor({
-  required String? stored,
-  required String deviceId,
-  required int commitId,
-}) {
-  final existing = stored?.trim() ?? '';
-  if (existing.isNotEmpty && utf8.encode(existing).length <= 64) {
-    return existing;
-  }
-  final prefix = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
-  return 'l-$prefix-$commitId';
-}
-
+/// 推送给服务端的 `request_id` 填提交的 uid：服务端仍按这个字段跳过已经收到过的
+/// 提交，但它现在标识一条提交，不再按命令参数生成，也不再复用（ADR-0040）。
 class SyncService {
   SyncService({
     required this.account,
@@ -506,11 +490,7 @@ class SyncService {
         index++;
       }
       yield ServerCommit(
-        requestId: _baselineRequestId(
-          deviceId,
-          start,
-          changes.sublist(start, index),
-        ),
+        requestId: _baselineUid(deviceId, changes.sublist(start, index)),
         deviceId: deviceId,
         schemaVersion: zhixinSchemaVersion,
         actor: 'system',
@@ -698,7 +678,7 @@ class SyncService {
             final changes = changesByCommit[commit.id]!;
             assetHashes.addAll(AssetStore.hashesInChanges(changes));
             yield ServerCommit(
-              requestId: _requestIdFor(commit, deviceId),
+              requestId: commit.uid,
               deviceId: deviceId,
               schemaVersion: zhixinSchemaVersion,
               actor: _actorOf(commit.actor),
@@ -771,7 +751,7 @@ class SyncService {
         ? commit.actor
         : 'user';
     final result = await revisions.applyRemoteCommit(
-      requestId: commit.requestId,
+      uid: commit.requestId,
       action: commit.action.isEmpty ? '从其他设备同步' : commit.action,
       actor: actor,
       changes: changes,
@@ -911,25 +891,18 @@ class SyncService {
     after: change.after == null ? null : typedRowToJson(change.after!),
   );
 
-  String _requestIdFor(RevisionCommit commit, String deviceId) =>
-      syncRequestIdFor(
-        stored: commit.requestId,
-        deviceId: deviceId,
-        commitId: commit.id,
-      );
-
-  String _baselineRequestId(
-    String deviceId,
-    int index,
-    List<RevisionChange> chunk,
-  ) {
+  /// 基线提交的 uid：按这一块变更明细的内容与设备算出，同一块数据重试时标识
+  /// 不变，服务端的永久去重才能把失败之后的重发当成重试。基线是本机投影的
+  /// 一次性上传，没有对应的 `revision_commit` 行，因此不占用本地提交的 uid。
+  String _baselineUid(String deviceId, List<RevisionChange> chunk) {
+    final prefix = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
     final digest = sha256
         .convert(
           utf8.encode(jsonEncode([for (final change in chunk) change.toRow()])),
         )
         .toString()
-        .substring(0, 12);
-    return 'b-${deviceId.substring(0, 8)}-$index-$digest';
+        .substring(0, 32);
+    return '$prefix-$digest';
   }
 
   String _actorOf(String actor) =>

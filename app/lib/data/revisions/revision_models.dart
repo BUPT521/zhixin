@@ -77,6 +77,7 @@ const Set<String> revisionBookkeepingColumns = {'updated_at'};
 class RevisionCommit {
   const RevisionCommit({
     required this.id,
+    required this.uid,
     required this.parentId,
     required this.generation,
     required this.actor,
@@ -93,6 +94,7 @@ class RevisionCommit {
 
   factory RevisionCommit.fromRow(Map<String, Object?> row) => RevisionCommit(
     id: row['id']! as int,
+    uid: row['uid']! as String,
     parentId: row['parent_id'] as int?,
     generation: row['generation']! as int,
     actor: row['actor']! as String,
@@ -108,11 +110,16 @@ class RevisionCommit {
   );
 
   final int id;
+
+  /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
+  final String uid;
   final int? parentId;
   final int generation;
   final String actor;
   final String action;
   final RevisionKind kind;
+
+  /// 同一次用户动作的重试编号；只用于两分钟内的重试去重，不再是提交身份。
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
@@ -130,6 +137,7 @@ class RevisionCommit {
 
   Map<String, Object?> toRow() => {
     'id': id,
+    'uid': uid,
     'parent_id': parentId,
     'generation': generation,
     'actor': actor,

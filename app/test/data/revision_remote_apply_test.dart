@@ -39,7 +39,7 @@ void main() {
     addTearDown(rig.close);
 
     final applied = await rig.revisions.applyRemoteCommit(
-      requestId: 'remote-1',
+      uid: 'remote-1',
       action: '从其他设备同步',
       actor: 'user',
       changes: [_insertMemory('m1', '旧')],
@@ -53,7 +53,7 @@ void main() {
     expect(rows.single['content'], '旧');
 
     final updated = await rig.revisions.applyRemoteCommit(
-      requestId: 'remote-2',
+      uid: 'remote-2',
       action: '从其他设备同步',
       actor: 'user',
       changes: [_updateMemory('m1', '新')],
@@ -64,18 +64,18 @@ void main() {
     ]);
     expect(rows.single['content'], '新');
 
-    // 同一个请求编号重复下发时不再生成第二条提交。
+    // 同一个提交身份重复下发时不再生成第二条提交。
     final duplicate = await rig.revisions.applyRemoteCommit(
-      requestId: 'remote-2',
+      uid: 'remote-2',
       action: '从其他设备同步',
       actor: 'user',
       changes: [_updateMemory('m1', '新')],
     );
     expect(duplicate.duplicate, isTrue);
-    expect(duplicate.commit?.requestId, 'remote-2');
+    expect(duplicate.commit?.uid, 'remote-2');
 
     final deleted = await rig.revisions.applyRemoteCommit(
-      requestId: 'remote-3',
+      uid: 'remote-3',
       action: '从其他设备同步',
       actor: 'user',
       changes: [
@@ -101,7 +101,7 @@ void main() {
     addTearDown(rig.close);
 
     final skipped = await rig.revisions.applyRemoteCommit(
-      requestId: 'remote-x',
+      uid: 'remote-x',
       action: '从其他设备同步',
       actor: 'user',
       changes: [
@@ -121,7 +121,7 @@ void main() {
 
     await expectLater(
       rig.revisions.applyRemoteCommit(
-        requestId: 'remote-y',
+        uid: 'remote-y',
         action: '从其他设备同步',
         actor: 'user',
         changes: [

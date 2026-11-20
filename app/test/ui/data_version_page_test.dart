@@ -212,7 +212,7 @@ void main() {
     // 远端提交：动作文案由数据层记录，标签按 kind 显示成“其他设备”。
     await tester.runAsync(
       () => appScope.data.revisions.applyRemoteCommit(
-        requestId: 'remote-lane-v-1',
+        uid: 'remote-lane-v-1',
         action: '其他设备新增讨论',
         actor: 'system',
         changes: [
@@ -377,6 +377,7 @@ class _StubRevisions extends RevisionService {
     pendingConflicts = const [];
     return RevisionCommit(
       id: 42,
+      uid: '0190a5b3-8f2c-7a41-b0c6-5d1e2f3a4b5c',
       parentId: 41,
       generation: 1,
       actor: 'system',
