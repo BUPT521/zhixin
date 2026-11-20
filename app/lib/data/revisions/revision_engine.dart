@@ -127,6 +127,8 @@ class RevisionEngine
     this.clock = systemClock,
     AssetStore? assets,
     this.idleCheckpointBytes = 8 * 1024 * 1024,
+    this.autoRetentionCommits = revisionAutoRetentionCommits,
+    this.autoRetentionBytes = revisionHistoryBudgetBytes,
   }) : assets = assets ?? AssetStore();
 
   final Clock clock;
@@ -139,6 +141,14 @@ class RevisionEngine
   /// 空闲检查点的累计阈值：距最近检查点的提交变更明细字节数超过它时，在
   /// 写事务之外的维护事务里生成一份检查点（ADR-0039 第 2 条）。
   final int idleCheckpointBytes;
+
+  /// 自动裁剪的提交条数阈值：历史超过这么多条提交时，在空闲检查点之后按
+  /// 时间优先的口径裁剪一次（方案 3.8，对照 `git gc --auto`）。
+  final int autoRetentionCommits;
+
+  /// 自动裁剪的历史字节阈值，同时是更早历史的保留预算：提交变更明细与
+  /// 检查点字节之和超过它时触发，裁剪时更早的提交按这个预算保留。
+  final int autoRetentionBytes;
 
   Map<String, RevisionTable>? _cache;
 

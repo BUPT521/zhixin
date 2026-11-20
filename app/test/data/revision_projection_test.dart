@@ -11,11 +11,12 @@ import 'package:zhixin/data/revisions/revision_models.dart';
 import '../support/test_db.dart';
 
 /// 固定时钟的引擎；[idleCheckpointBytes] 用来把空闲检查点的阈值调小。
-RevisionEngine _engine({int idleCheckpointBytes = 8 * 1024 * 1024}) =>
-    RevisionEngine(
-      clock: () => DateTime(2026, 11, 10, 9),
-      idleCheckpointBytes: idleCheckpointBytes,
-    );
+RevisionEngine _engine({
+  int idleCheckpointBytes = 8 * 1024 * 1024,
+  DateTime Function() clock = _fixedClock,
+}) => RevisionEngine(clock: clock, idleCheckpointBytes: idleCheckpointBytes);
+
+DateTime _fixedClock() => DateTime(2026, 11, 10, 9);
 
 Future<void> _insertMemory(WriteTransaction txn, String id, String content) =>
     insertRow(txn.executor, 'memory', {
@@ -308,17 +309,20 @@ void main() {
   });
 
   test('起点之前的提交被裁掉后 compare 退回两次重建并给出正确结果', () async {
-    final rig = await openTestRig(engine: _engine());
+    final clock = MutableTestClock(DateTime(2026, 11, 10, 9));
+    final rig = await openTestRig(engine: _engine(clock: clock.call));
     addTearDown(rig.close);
     final writes = WriteTransactions(rig.db, revisions: rig.engine);
     for (var index = 0; index < 8; index++) {
+      // 每条提交隔 7 天：最近 14 天里只剩最后三条，起点是裁剪留下的断点。
+      clock.advance(const Duration(days: 7));
       await writes.run(
         (txn) => _insertMemory(txn, 'memory-$index', '第 $index 条记忆'),
         label: '写入记忆',
       );
     }
 
-    final result = await rig.revisions.prune(keepCommits: 3);
+    final result = await rig.revisions.prune(retentionDays: 14, maxBytes: 1);
     expect(result.removedCommits, greaterThan(0));
 
     final ids = (await rig.engine.commits(

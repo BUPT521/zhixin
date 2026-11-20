@@ -281,6 +281,46 @@ void main() {
     expect(find.text('提交历史'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('留存一节按保留天数选择，改动写入设置', (tester) async {
+    final page = await openPage(tester);
+    await scrollTo(tester, find.text('保留天数'));
+    // 没有保存过设置时按默认 14 天显示。
+    expect(find.text('14 天'), findsOneWidget);
+
+    final select = find.byKey(const ValueKey('data-version-retention-days'));
+    await tester.tap(
+      find
+          .descendant(of: select, matching: find.byType(forui.FTextField))
+          .first,
+    );
+    await tester.pumpAndSettle();
+    final option = find.ancestor(
+      of: find.text('30 天'),
+      matching: find.byWidgetPredicate((widget) => widget is forui.FSelectItem),
+    );
+    await tester.tap(option.last);
+    await settle(tester);
+    expect(find.text('30 天'), findsOneWidget);
+
+    // 设置保存成一条提交，自动裁剪与手动裁剪读同一个值。
+    final saved = await tester.runAsync(
+      () => page.scope.settings.edit.revisionRetentionDays(),
+    );
+    expect(saved, 30);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('按留存清理的确认写清保留天数与窗口', (tester) async {
+    await openPage(tester);
+    await scrollTo(tester, find.text('按留存清理'));
+    await tester.tap(find.text('按留存清理'));
+    await settle(tester);
+    expect(find.textContaining('最近 14 天'), findsOneWidget);
+    expect(find.textContaining('超出预算时从最早的开始删'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Widget _host(ThemeModeController themeMode, RevisionService? revisions) {

@@ -7,6 +7,7 @@ import '../data/db/write_transactions.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/repository/settings_repository.dart';
 import '../data/revisions/revision_actions.dart';
+import '../data/revisions/revision_engine.dart';
 import '../domain/models/result.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/day_key.dart';
@@ -134,6 +135,28 @@ class SettingsService {
         );
         return txn.result();
       }, label: '设置拍照方式');
+
+  /// 数据版本页的“保留天数”：最近这么多天的提交全部保留，更早的按字节预算
+  /// 裁剪。自动裁剪与手动裁剪读同一个值，没有设置时为默认 14 天。
+  Future<int> revisionRetentionDays() =>
+      dataVersions.engine.retentionDays(dataVersions.connection());
+
+  /// 保存保留天数：只写 `app_meta`，形成一条可以撤销的提交。开发阶段直接换
+  /// 键名，不读旧键（ADR-0001）。
+  Future<WriteResult> saveRevisionRetentionDays(int days) {
+    if (!revisionRetentionDayOptions.contains(days)) {
+      throw ArgumentError('保留天数只能是 ${revisionRetentionDayOptions.join('、')} 天');
+    }
+    return transactions.run((txn) async {
+      await settings.setMetadata(
+        revisionRetentionDaysKey,
+        '$days',
+        runtime.policy.now,
+        transaction: txn,
+      );
+      return txn.result();
+    }, label: changeRetentionDaysAction);
+  }
 
   String exportFileName() {
     final current = runtime.policy;

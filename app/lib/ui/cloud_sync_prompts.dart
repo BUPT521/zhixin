@@ -12,11 +12,11 @@ Future<bool> confirmBaselineUpload(
 }) {
   return confirmZhixin(
     context: context,
-    title: '首次同步会把本机记录上传到账号',
+    title: '首次同步会把本机记录合并到账号',
     content: Text(
-      '这个账号还没有同步过。继续之后会把本机现有的 $localCommits 条提交作为基线'
-      '完整上传到这个账号的云端，其他登录这个账号的设备也会看到这些记录。'
-      '取消则不上传，并暂停自动同步。',
+      '这个账号还没有同步过。继续之后会先拉取云端已有的记录，只把本机独有、云端'
+      '还没有的记录作为基线上传，本机现在有 $localCommits 条提交；其他登录这个'
+      '账号的设备也会看到这些记录。取消则不上传，并暂停自动同步。',
     ),
     confirmLabel: '上传并同步',
   );
@@ -32,7 +32,7 @@ Future<bool> confirmEnableAutoSync(
     title: '开启自动同步',
     content: Text(
       '开启之后，本机写入会在后台推送到${accountLabel.isEmpty ? '当前账号' : ' $accountLabel 对应的账号'}；'
-      '这个账号第一次同步时会先把本机现有的记录作为基线上传，届时还会再确认一次。',
+      '这个账号第一次同步时会先拉取云端已有的记录，只补传云端还没有的记录，届时还会再确认一次。',
     ),
     confirmLabel: '开启',
   );
