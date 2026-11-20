@@ -15,6 +15,7 @@ import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
+import 'package:zhixin/data/revisions/revision_cursor.dart';
 import 'package:zhixin/data/vector/embedding_codec.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
 import 'package:zhixin/data/vector/memory_vector_index.dart';
@@ -167,6 +168,8 @@ _rig({
   bool Function(SemanticSource source)? canSend,
   String Function()? epoch,
   Future<bool> Function()? cacheWrites,
+  Future<int> Function()? headCommit,
+  bool withCursors = false,
 }) async {
   final db = await openTestDb();
   final corpus = await _seed(db);
@@ -181,6 +184,10 @@ _rig({
     initialClient: client,
     indexPath: '',
     epoch: () async => epoch?.call() ?? '0',
+    headCommit: headCommit,
+    // 读取位置写在库里的非阻塞位置；不打开时每次按全量扫描，与本轮迁移之前
+    // 的行为一致（方案 3.12）。
+    indexCursors: withCursors ? () => RevisionCursors(db) : null,
     textStoreOpener: () async => DirectVectorStore(textIndex),
     vectorStoreOpener: () async => DirectVectorStore(index),
     initialShareFilter: canSend,
@@ -805,6 +812,27 @@ void main() {
     final rebuilt = await rig.service.refresh();
     expect(rebuilt.embedded, 7);
     expect(rig.index.meta('epoch'), '2');
+  });
+
+  test('已处理到的提交编号记在 revision_cursor 的非阻塞位置，状态文件不再记它', () async {
+    final rig = await _rig(withCursors: true, headCommit: () async => 7);
+    addTearDown(rig.db.close);
+    addTearDown(rig.index.close);
+
+    final refreshed = await rig.service.refresh();
+    expect(refreshed.failed, 0);
+
+    final cursor = await RevisionCursors(rig.db).read(IndexCursorNames.search);
+    expect(cursor, isNotNull);
+    expect(cursor!.position, 7);
+    // 索引落后只会退回全量重建，所以它登记成非阻塞位置，scope 为空，裁剪与
+    // 清理历史都不受它影响（方案 3.12）。
+    expect(cursor.blocking, isFalse);
+    expect(cursor.scope, isNull);
+    expect(await RevisionCursors(rig.db).minimumBlockingPosition(), isNull);
+    // 状态文件只留模型键、维度与代次；提交编号不再写在那里。
+    expect(() => rig.textIndex.meta('commit_id'), throwsArgumentError);
+    expect(() => rig.index.meta('commit_id'), throwsArgumentError);
   });
 
   test('回答前检索把语义候选与原文命中按来源标识合并', () async {

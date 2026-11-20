@@ -166,9 +166,9 @@ abstract interface class VectorIndex {
       'epoch',
       'built_at',
       'source_count',
-      // 已处理的提交编号与可发送范围签名：增量刷新据此只读之后的提交日志，
-      // 范围变化时清空向量集合（ADR-0030 决定第 5 条）。
-      'commit_id',
+      // 可发送范围签名：范围变化时清空向量集合（ADR-0030 决定第 5 条）。
+      // 已处理到的提交编号不在状态文件里，挪进了 `revision_cursor` 的非阻塞
+      // 位置（方案 3.12），所以这里不再接受 `commit_id`。
       'share_signature',
     };
     if (!supportedKeys.contains(key)) {

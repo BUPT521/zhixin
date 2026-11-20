@@ -4,6 +4,23 @@ import '../db/raw_executor.dart';
 import '../db/sql.dart';
 import 'revision_models.dart';
 
+/// 只登记位置、不阻止裁剪的读取位置的名字（方案 3.12）。
+///
+/// 检索索引与记忆索引原来把“已处理到的提交编号”写在各自的状态文件里，现在
+/// 统一写进 `revision_cursor`，名字在这里登记，读写都用这两个常量；它们落后时
+/// 只会退回全量重建，所以 `blocking` 恒为 0、`scope` 为空，裁剪与清理历史都不
+/// 受它们影响。状态文件里的模型键、维度、数据代次与可发送范围签名照旧留在
+/// 原处，不随这一项迁移。
+abstract final class IndexCursorNames {
+  /// 检索索引读到哪里：正文与向量两份 collection 共用一个位置，两份都写成功
+  /// 才前进；任何一份清空重建时归零，下一次按全量扫描重建。
+  static const String search = 'search.index';
+
+  /// 记忆索引读到哪里：每次召回按记忆表同步之后推进；位置只用于登记进度，
+  /// 召回本身仍按记忆条目的版本判断要不要重写。
+  static const String memory = 'memory.index';
+}
+
 /// 历史下游读者在库里登记的读取位置（01 `revision_cursor`）。
 ///
 /// 会丢数据的读者（同步推送）把 [RevisionCursor.blocking] 置 1，裁剪与清理
@@ -76,6 +93,25 @@ class RevisionCursors {
     if (cursor == null || !cursor.blocking) return;
     await set(name, cursor.position, blocking: false, scope: cursor.scope);
   }
+
+  /// 读取索引读者已经处理到的提交编号；没有登记过时为零，按全量重建。
+  ///
+  /// 名字取 [IndexCursorNames]；读不出来时也按零处理，原因与“没有登记过”相同：
+  /// 索引内容可以从业务表重建，多扫一次不会出错。
+  Future<int> indexPosition(String name) async {
+    try {
+      return await position(name);
+    } on Object {
+      return 0;
+    }
+  }
+
+  /// 推进索引读者的读取位置。
+  ///
+  /// 索引落后只会多扫一次，所以这里写 `blocking = 0`、`scope` 为空；位置写在
+  /// `revision_cursor`，状态文件只保留模型键、维度、数据代次与可发送范围签名。
+  Future<void> advanceIndex(String name, int position) =>
+      set(name, position, blocking: false);
 
   Future<void> delete(String name) async {
     await deleteRows(

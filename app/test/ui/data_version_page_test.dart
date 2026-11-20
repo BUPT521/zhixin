@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/revisions/revision_digest.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
@@ -210,12 +211,15 @@ void main() {
     expect(find.byIcon(FLucideIcons.flag), findsOneWidget);
     expect(find.byIcon(FLucideIcons.pencil), findsOneWidget);
 
-    // 远端提交：动作文案由数据层记录，标签按 kind 显示成“其他设备”。
+    // 远端提交：动作文案由数据层记录，标签按 kind 显示成“其他设备”。来源设备
+    // 只显示前 8 位，时间取服务端带来的作者时间（方案 3.12）。
     await tester.runAsync(
       () => appScope.data.revisions.applyRemoteCommit(
         uid: 'remote-lane-v-1',
         action: '其他设备新增讨论',
         actor: 'system',
+        originDevice: 'device-0123456789abcdef',
+        authoredAt: DateTime(2020, 1, 2, 3, 4),
         changes: [
           RevisionChange(
             commitId: 0,
@@ -241,6 +245,82 @@ void main() {
     expect(find.text('写入'), findsOneWidget);
     expect(find.textContaining('其他设备新增讨论'), findsOneWidget);
     expect(find.byIcon(FLucideIcons.cloudDownload), findsOneWidget);
+    // 只有远端提交显示来源；本机提交（初始基线）不显示。
+    expect(find.textContaining('来自另一台设备'), findsOneWidget);
+    expect(find.textContaining('来自另一台设备 device-0'), findsOneWidget);
+    expect(find.textContaining('1月2日 03:04'), findsOneWidget);
+    // 整串设备标识不出现在界面上。
+    expect(find.textContaining('0123456789abcdef'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('检查数据完整性通过时说明检查范围与核对结果', (tester) async {
+    await openPage(tester);
+
+    await scrollTo(tester, find.text('检查数据完整性'));
+    await tester.tap(find.text('检查数据完整性'));
+    await settle(tester);
+
+    expect(find.text('数据完整性检查'), findsOneWidget);
+    expect(find.textContaining('检查范围：保留历史的哈希链'), findsOneWidget);
+    expect(find.textContaining('通过：哈希链与当前数据一致'), findsOneWidget);
+    expect(find.textContaining('共核对'), findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await settle(tester);
+    expect(find.text('数据完整性检查'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('发现问题时列出第几处不一致与建议，导出前检查让用户决定是否继续', (tester) async {
+    final page = await openPage(
+      tester,
+      revisionsFactory: (rig) =>
+          _StubRevisions(rig, integrityProblems: const ['提交 3 的哈希与变更明细不一致']),
+    );
+    addTearDown(() => tester.runAsync(page.rig!.close));
+    final saves = <String>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const channel = MethodChannel('com.zhixin.app/data_package');
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      saves.add((call.arguments as Map)['fileName'] as String);
+      return 'content://test/repository.zip';
+    });
+
+    // 手动入口：逐条列出第几处不一致，并给出处理建议。
+    await scrollTo(tester, find.text('检查数据完整性'));
+    await tester.tap(find.text('检查数据完整性'));
+    await settle(tester);
+    expect(find.text('数据完整性检查'), findsOneWidget);
+    expect(find.textContaining('发现 1 处不一致'), findsOneWidget);
+    expect(find.textContaining('第 1 处：提交 3 的哈希与变更明细不一致'), findsOneWidget);
+    expect(find.textContaining('建议：'), findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await settle(tester);
+
+    // 导出前自动检查：先说明，再让用户选取消或继续。
+    await scrollTo(tester, find.text('备份版本库'));
+    await tester.tap(find.text('备份版本库'));
+    await settle(tester);
+    expect(find.text('备份版本库前发现不一致'), findsOneWidget);
+    expect(find.textContaining('第 1 处：提交 3 的哈希与变更明细不一致'), findsOneWidget);
+    expect(find.text('仍然备份版本库'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await settle(tester);
+    expect(find.text('已取消备份'), findsOneWidget);
+    expect(saves, isEmpty, reason: '取消之后不生成备份文件');
+
+    // 继续导出：仍然生成备份。
+    await tester.tap(find.text('备份版本库'));
+    await settle(tester);
+    await tester.tap(find.text('仍然备份版本库'));
+    await settle(tester, rounds: 40);
+    expect(saves, hasLength(1));
+    expect(
+      find.textContaining('已备份版本库：content://test/repository.zip'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -474,12 +554,13 @@ RevisionConflict _deletedLocallyConflict() => RevisionConflict(
   remoteAfter: typedRow({'title': '其他设备改后的标题'}),
 );
 
-/// 版本服务替身：只改同步冲突、清理阻塞与写回本机值这三处读取。
+/// 版本服务替身：只改同步冲突、清理阻塞、完整性检查与写回本机值这几处读取。
 class _StubRevisions extends RevisionService {
   _StubRevisions(
     TestRig rig, {
     List<RevisionConflict> pendingConflicts = const [],
     this.blockers = const [],
+    this.integrityProblems = const [],
   }) : pendingConflicts = List.of(pendingConflicts),
        super(
          db: rig.db,
@@ -491,9 +572,23 @@ class _StubRevisions extends RevisionService {
 
   List<RevisionConflict> pendingConflicts;
   final List<String> blockers;
+
+  /// 完整性检查报出的问题；为空表示通过。附件核对项在这里恒通过。
+  final List<String> integrityProblems;
   final List<bool> blockerRequests = [];
   int? keptConflictId;
   int? dismissedConflictId;
+
+  @override
+  Future<RevisionIntegrityReport> verifyIntegrity() async =>
+      RevisionIntegrityReport(
+        commitId: 12,
+        checkedCommits: 13,
+        problems: integrityProblems,
+      );
+
+  @override
+  Future<List<String>> verifyAssets() async => const [];
 
   @override
   Future<bool> dismissConflict(int conflictId) async {

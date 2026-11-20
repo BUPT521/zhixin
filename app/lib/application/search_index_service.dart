@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 
 import '../data/db/drift/queries/evidence_scope.dart';
+import '../data/revisions/revision_cursor.dart';
 import '../data/revisions/semantic_change.dart';
 import '../data/repository/evidence_repository.dart';
 import '../data/vector/embedding_codec.dart';
@@ -111,6 +112,10 @@ class IndexCancelToken {
 /// 读取来源版本，等待嵌入期间被更正或删除的内容不会进入索引。查询有独立的
 /// 超时与取消，文本集合失败时返回空结果，调用方继续使用字面命中。
 ///
+/// “已处理到的提交编号”记在库里的 `revision_cursor` 非阻塞位置（[IndexCursorNames]），
+/// 两份状态文件只留模型键、维度、数据代次与可发送范围签名；位置落后只会退回
+/// 全量重建，不阻止历史裁剪与清理（方案 3.12）。
+///
 /// 同一个后台 isolate 里还有一套记忆索引（[rankMemories]）：材料页、消息与作答
 /// 的 collection 要按证据记录逐条核对范围与版本，记忆按记忆表的有效性判断，
 /// 两者核对规则不同，所以分成两个 collection，记忆的候选不会占掉记录的候选位。
@@ -133,6 +138,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
     this.headCommit,
     this.semanticChanges,
     this.shareSignature,
+    this.indexCursors,
   }) : _client = initialClient,
        _canSend = initialShareFilter,
        _openVectorStore = vectorStoreOpener,
@@ -203,6 +209,14 @@ class SearchIndexService implements MemoryRelevanceRanker {
   /// 缩小的范围内旧向量必须消失，签名与状态文件里记的不一致时清空向量集合；
   /// 没有提供时不做这项判断。
   final String Function()? shareSignature;
+
+  /// 索引读取位置的读写入口；没有提供时每次按全量扫描，也不登记位置。
+  ///
+  /// 检索索引与记忆索引“已处理到的提交编号”记在 `revision_cursor` 的非阻塞
+  /// 位置（[IndexCursorNames]），不再写在各自的状态文件里；状态文件只保留模型
+  /// 键、维度、数据代次与可发送范围签名（方案 3.12）。位置落后只会多扫一次，
+  /// 所以它不阻止裁剪与清理历史。
+  final RevisionCursors Function()? indexCursors;
 
   /// 记忆索引目录；为空时放在语义索引目录的同级，随本机数据一起删除。
   final String? memoryIndexPath;
@@ -462,11 +476,15 @@ class SearchIndexService implements MemoryRelevanceRanker {
     try {
       final store = await _requireMemoryStore(generation);
       final currentEpoch = await epoch?.call() ?? '0';
+      // 读取位置在同步之前读：这一轮同步之后再推进，期间到达的提交留给下一轮。
+      final memoryHead = await _readHeadCommit();
       final storedEpoch = await _useCurrentStore(
         generation,
         () => store.meta('epoch'),
       );
       if (storedEpoch != currentEpoch) {
+        // 与检索索引同一处理：先归零再清空，下一次按当前记忆表整份同步。
+        await _resetIndexPosition(IndexCursorNames.memory);
         await _useCurrentStore(generation, () async {
           await store.clear();
           await store.setMeta('epoch', currentEpoch);
@@ -519,6 +537,9 @@ class SearchIndexService implements MemoryRelevanceRanker {
           );
         }
       });
+      // 记忆索引的读取位置只登记进度，不阻止裁剪；召回本身每次按记忆表的版本
+      // 判断要不要重写，所以位置落后不会漏掉内容（方案 3.12）。
+      await _advanceIndexPosition(IndexCursorNames.memory, memoryHead);
       final candidates = {for (final id in candidateIds) memorySourceKey(id)};
       final hits = await _useCurrentStore(
         generation,
@@ -606,17 +627,23 @@ class SearchIndexService implements MemoryRelevanceRanker {
       // 承接，界面线程在这里只等一个 Future，启动首帧不再执行这些同步调用。
       final currentEpoch = await epoch?.call() ?? '0';
       final textStore = await _requireTextStore(generation);
-      if (await textStore.meta('epoch') != currentEpoch) {
+      final textEpoch = await textStore.meta('epoch');
+      final textFinished = await textStore.meta('built_at');
+      if (textEpoch != currentEpoch) {
+        // 先把读取位置归零再清空：清空成功而位置没归零时，下一次增量刷新会
+        // 跳过已经不在索引里的提交（方案 3.12）。
+        await _resetIndexPosition(IndexCursorNames.search);
         await _useCurrentStore(generation, () async {
           await textStore.clear();
           await textStore.setMeta('epoch', currentEpoch);
-          // 代次变化说明数据整份换过，已处理的提交编号不再有意义，下一次从
-          // 全量扫描重新开始（ADR-0030 决定第 5 条）。
-          await textStore.setMeta('commit_id', '0');
         });
+      } else if (textFinished == null) {
+        // 结构损坏被重建之后状态文件里还没有一次刷新记录，内容是空的而读取
+        // 位置可能停在旧提交；按全量重建，不能从 `HEAD` 附近接着读。
+        await _resetIndexPosition(IndexCursorNames.search);
       }
 
-      // 增量刷新要先知道两份集合各自的已处理提交，向量集合因此提前打开；打开
+      // 增量刷新要先知道两份集合各自读到了哪里，向量集合因此提前打开；打开
       // 失败时先把错误记下，正文照旧写完再报出来。没有提供增量回调时保持原来
       // 的顺序：先写正文，再打开向量集合。
       final wantsIncrement =
@@ -636,18 +663,14 @@ class SearchIndexService implements MemoryRelevanceRanker {
         }
       }
       final head = await _readHeadCommit();
-      final from = embedding == null
-          ? _commitIdOf(await textStore.meta('commit_id'))
-          : math.min(
-              _commitIdOf(await textStore.meta('commit_id')),
-              vectorStore == null
-                  ? 0
-                  : _commitIdOf(await vectorStore.meta('commit_id')),
-            );
+      // 正文与向量两份 collection 共用一个读取位置：两份都写成功才前进，所以
+      // 这个位置就是两份都处理到的地方。向量集合被清空重建时它已经归零，这里
+      // 读到零就按全量扫描重建。
+      final from = await _indexPosition(IndexCursorNames.search);
 
-      // 只有两份集合都处理过提交、并且提交日志还读得出来时才做增量；起点取
-      // 较小的一份，另一份落后的部分在这一次里补齐。`HEAD` 与起点相等时仍然
-      // 走增量：窗口里没有变化，刷新因此什么都不写，也不重新读全部来源。
+      // 只有两份集合都处理过提交、并且提交日志还读得出来时才做增量。`HEAD`
+      // 与起点相等时仍然走增量：窗口里没有变化，刷新因此什么都不写，也不重新
+      // 读全部来源。
       var incremental = false;
       var window = const SemanticChangeWindow();
       if (wantsIncrement && head != null && from > 0 && head >= from) {
@@ -790,18 +813,12 @@ class SearchIndexService implements MemoryRelevanceRanker {
       }
 
       // 全量扫描按全部来源清理；增量只写本次变化涉及到的来源，没有变化的来源
-      // 原样保留。提交推进放在 finishRefresh 之前，进度与统计一起落盘。
-      final textAdvance =
-          head != null &&
-          textFailures == 0 &&
-          lateSkipped == 0 &&
-          maxSources == null;
+      // 原样保留。读取位置在向量这一份也处理完之后再推进，两份共用一个位置。
       final textSourceCountForFinish = incremental
           ? math.max(0, textSourceCount)
           : textCommitted!.length;
       await _useCurrentStore(generation, () async {
         if (!incremental) await textStore.pruneSources(textKeep);
-        if (textAdvance) await textStore.setMeta('commit_id', '$head');
         await textStore.finishRefresh(
           builtAt: formatDateTime(now),
           sourceCount: textSourceCountForFinish,
@@ -1112,18 +1129,29 @@ class SearchIndexService implements MemoryRelevanceRanker {
           if (incremental) return 0;
           return store.pruneSources(vectorKeep);
         });
-        await _useCurrentStore(generation, () async {
-          if (vectorAdvanceNow) await store.setMeta('commit_id', '$head');
-          await store.finishRefresh(
+        await _useCurrentStore(
+          generation,
+          () => store.finishRefresh(
             builtAt: formatDateTime(now),
             sourceCount: vectorSourceCountForFinish,
             writtenEntries: vectorEntries,
-          );
-        });
+          ),
+        );
         _requireCurrent(generation);
         removed += pruned;
         vectorAdvance = vectorAdvanceNow;
         embedded = vectorWritten;
+      }
+
+      // 两份 collection 都处理完才推进读取位置：一份失败时位置停在原处，下一次
+      // 从提交日志重读这一段，索引写入是幂等的。没有配置嵌入来源时只有正文
+      // 这一份，正文写完并且没有失败就推进。
+      if (head != null &&
+          textFailures == 0 &&
+          lateSkipped == 0 &&
+          maxSources == null &&
+          (embedding == null || vectorAdvance)) {
+        await _advanceIndexPosition(IndexCursorNames.search, head);
       }
 
       // 两份集合都已经处理完，再按来源逐条结算：正文与向量都没有写的算跳过，
@@ -1232,9 +1260,46 @@ class SearchIndexService implements MemoryRelevanceRanker {
         change.removedRow ?? {'id': change.rowKey},
       );
 
-  /// 两个集合状态文件里的提交编号；读不出来或旧状态没有这个字段时按零处理，
-  /// 下一次刷新因此按全量扫描开始。
-  static int _commitIdOf(String? value) => int.tryParse(value ?? '') ?? 0;
+  /// 索引读者已经处理到的提交编号；没有提供读取位置或读不出来时为零，下一次
+  /// 刷新因此按全量扫描开始。
+  Future<int> _indexPosition(String name) async {
+    final cursors = indexCursors;
+    if (cursors == null) return 0;
+    try {
+      return await cursors().indexPosition(name);
+    } on Object {
+      // 库还没打开或读取失败：不知道进度就按全量扫描，不能当成已经处理过。
+      return 0;
+    }
+  }
+
+  /// 清空索引时把读取位置归零，下一次按全量扫描重建。
+  ///
+  /// 这里让写入失败向上抛：如果索引已经清空而位置还停在旧提交，下一次增量
+  /// 刷新会以为这些提交处理过了，漏掉的内容只能等再下一次全量重建才能补上。
+  Future<void> _resetIndexPosition(String name) async {
+    final cursors = indexCursors;
+    if (cursors == null) return;
+    await cursors().advanceIndex(name, 0);
+  }
+
+  /// 推进索引读者的读取位置。
+  ///
+  /// 位置只决定下一次从哪里接着读，写不进去最多多扫一次，所以失败只留待下次
+  /// 刷新补上，不能把已经写进索引的内容报成失败。位置没变时不重写，记忆索引
+  /// 每次召回都会走到这里。
+  Future<void> _advanceIndexPosition(String name, int? position) async {
+    if (position == null || position <= 0) return;
+    final cursors = indexCursors;
+    if (cursors == null) return;
+    try {
+      final reader = cursors();
+      if (await reader.indexPosition(name) == position) return;
+      await reader.advanceIndex(name, position);
+    } on Object {
+      // 下一次刷新按旧位置重读这一段，索引写入是幂等的。
+    }
+  }
 
   /// 读当前 `HEAD`；没有提供回调或读取失败时返回空，本次退回全量扫描。
   Future<int?> _readHeadCommit() async {
@@ -1261,9 +1326,10 @@ class SearchIndexService implements MemoryRelevanceRanker {
   /// 按代次与可发送范围核对向量集合，返回这一次是否清空过。
   ///
   /// 代次变化、可发送范围变化都要求旧向量整份消失：代次变化是数据被整份替换，
-  /// 范围变化是因为缩小的范围内不能再留下旧向量。清空之后把 `commit_id` 归零，
-  /// 下一次刷新按全量扫描重建；可发送范围签名与状态文件里记的不一致时才重建，
-  /// 范围没变时不重复清空。
+  /// 范围变化是因为缩小的范围内不能再留下旧向量。清空之前先把读取位置归零，
+  /// 下一次刷新按全量扫描重建。可发送范围签名与状态文件里记的不一致时才重建，
+  /// 范围没变时不重复清空。结构损坏被重建之后状态文件里没有刷新记录（`built_at`
+  /// 为空），同样把读取位置归零，否则空集合会从旧位置之后接着读而一直空着。
   Future<bool> _prepareVectorStore(
     int generation,
     VectorStore store,
@@ -1272,6 +1338,10 @@ class SearchIndexService implements MemoryRelevanceRanker {
     final epochMatches =
         await _useCurrentStore(generation, () => store.meta('epoch')) ==
         currentEpoch;
+    final finished = await _useCurrentStore(
+      generation,
+      () => store.meta('built_at'),
+    );
     final signature = _readShareSignature();
     final storedSignature = signature == null
         ? null
@@ -1280,15 +1350,18 @@ class SearchIndexService implements MemoryRelevanceRanker {
             () => store.meta('share_signature'),
           );
     final signatureChanged = signature != null && storedSignature != signature;
-    if (!epochMatches || signatureChanged) {
-      await _useCurrentStore(generation, () async {
-        await store.clear();
-        if (!epochMatches) await store.setMeta('epoch', currentEpoch);
-        await store.setMeta('commit_id', '0');
-        if (signature != null) {
-          await store.setMeta('share_signature', signature);
-        }
-      });
+    final needsRebuild = !epochMatches || signatureChanged || finished == null;
+    if (needsRebuild) {
+      await _resetIndexPosition(IndexCursorNames.search);
+      if (!epochMatches || signatureChanged) {
+        await _useCurrentStore(generation, () async {
+          await store.clear();
+          if (!epochMatches) await store.setMeta('epoch', currentEpoch);
+          if (signature != null) {
+            await store.setMeta('share_signature', signature);
+          }
+        });
+      }
       return true;
     }
     if (signature != null && storedSignature == null) {

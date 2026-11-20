@@ -56,6 +56,7 @@ import 'data/db/local_data_reset.dart';
 import 'data/db/write_transactions.dart';
 import 'data/diagnostics/crash_log.dart';
 import 'data/revisions/asset_store.dart';
+import 'data/revisions/revision_cursor.dart';
 import 'data/revisions/revision_engine.dart';
 import 'data/revisions/revision_models.dart';
 import 'data/revisions/revision_package.dart';
@@ -392,6 +393,9 @@ class AppScopeState extends State<AppScope> {
         headCommit: () async => await _engine.headId(_connection!),
         semanticChanges: _semanticChangesAfter,
         shareSignature: _embeddingShareSignature,
+        // 索引读到哪里记在库里的非阻塞读取位置，状态文件只留模型键、维度、
+        // 数据代次与可发送范围签名；与同步位置使用同一张表（方案 3.12）。
+        indexCursors: () => RevisionCursors(_connection!),
       );
 
   /// 读出某个提交之后材料页、消息与作答的净变化。

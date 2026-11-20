@@ -25,6 +25,7 @@ import 'copy.dart';
 import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'integrity_check.dart';
 import 'live_view.dart';
 import 'navigation.dart';
 import 'restore_flow.dart';
@@ -697,9 +698,78 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
   }
 
+  /// 手动检查数据完整性：哈希链、当前摘要与附件；结果框说明检查范围与建议。
+  ///
+  /// 检查只读，不改数据；发现问题时逐条列出第几处不一致，并给出处理建议。
+  Future<void> _checkIntegrity() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final result = await checkRepositoryIntegrity(_revisions);
+      if (!mounted) return;
+      await showIntegrityReport(context, result);
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '检查数据完整性',
+          kind: 'data_version_integrity_check',
+          kept: '本机数据没有改动',
+          next: '可以再试一次',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 导出前自动检查：通过时返回真，发现不一致时先说明再由用户决定是否继续。
+  ///
+  /// 检查本身失败时给出提示并返回空，调用方据此不继续导出：没有核对过的备份
+  /// 不能当成完整。返回空与用户取消（假）分开，取消时给一句“已取消”。
+  Future<bool?> _confirmIntegrityBeforeExport(String action) async {
+    if (_busy) return null;
+    setState(() => _busy = true);
+    try {
+      final result = await checkRepositoryIntegrity(_revisions);
+      if (!mounted) return null;
+      return await confirmExportAfterIntegrityCheck(
+        context,
+        result,
+        action: action,
+      );
+    } catch (error, stack) {
+      if (!mounted) return null;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '检查数据完整性',
+          kind: 'data_version_integrity_check',
+          kept: '本机数据没有改动',
+          next: '可以稍后再试',
+        ),
+      );
+      return null;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 备份版本库：先自动检查完整性，发现不一致时说明并让用户决定是否继续。
   Future<void> _backupRepository() async {
     if (_busy) return;
     final scope = AppScope.of(context);
+    final confirmed = await _confirmIntegrityBeforeExport('备份版本库');
+    if (confirmed == null || !mounted) return;
+    if (!confirmed) {
+      _report('已取消备份');
+      return;
+    }
     final day = scope.timePolicy.now;
     final fileName = 'zhixin-repository-${compactDate(day)}.zip';
     setState(() => _busy = true);
@@ -1179,6 +1249,13 @@ class _DataVersionPageState extends State<DataVersionPage>
           ),
           const SectionHeading(title: '导出与备份'),
           forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.shieldCheck),
+            title: const Text('检查数据完整性'),
+            subtitle: const Text('核对历史哈希链、当前摘要与附件；备份版本库与上传云端备份前也会自动检查。'),
+            onPress: _busy ? null : _checkIntegrity,
+          ),
+          SizedBox(height: theme.space.sm),
+          forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.download),
             title: const Text('导出当前数据'),
             subtitle: const Text('业务数据与仍在使用的图片。'),
@@ -1357,7 +1434,7 @@ class _DataVersionPageState extends State<DataVersionPage>
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          '${commit.action} · ${_timeText(commit.createdAt)} · '
+          '${commit.action} · ${_commitTimeAndSource(commit)} · '
           '${_actorLabel(commit.actor)} · ${commit.changeCount} 处'
           '${names.isEmpty ? '' : ' · ${names.map((ref) => ref.name).join('、')}'}',
         ),
@@ -1565,6 +1642,25 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   String _timeText(DateTime? time) => time == null ? '时间未知' : shortTime(time);
+
+  /// 提交列表里的时间与来源：远端提交写“来自另一台设备 · 某时某分”，本机提交
+  /// 只写时间。
+  ///
+  /// 时间取作者时间（服务端没有带来时退回落库时间）；设备标识只显示前 8 位，
+  /// 不把整串设备标识放到界面上（方案 3.12）。
+  String _commitTimeAndSource(RevisionCommit commit) {
+    final time = _timeText(commit.authoredAt ?? commit.createdAt);
+    if (!commit.isRemote) return time;
+    final device = _maskedDevice(commit.originDevice);
+    return device == null ? '来自另一台设备 · $time' : '来自另一台设备 $device · $time';
+  }
+
+  /// 设备标识脱敏：只保留前 8 位，短的标识原样显示。
+  static String? _maskedDevice(String? device) {
+    final value = device?.trim() ?? '';
+    if (value.isEmpty) return null;
+    return value.length <= 8 ? value : value.substring(0, 8);
+  }
 
   String _actorLabel(String actor) => switch (actor) {
     'ai' => buddyName,

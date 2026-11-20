@@ -10,6 +10,7 @@ import '../data/cloud/server_client.dart';
 import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
+import 'integrity_check.dart';
 import 'navigation.dart';
 import 'restore_flow.dart';
 import 'zhixin_dialog.dart';
@@ -99,11 +100,25 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
     });
   }
 
+  /// 上传前先做一次完整性检查：上传的字节与“备份版本库”生成的是同一份快照，
+  /// 发现不一致时先说明，再由用户决定是否继续（方案 3.10）。
   Future<void> _upload() async {
     if (_busy) return;
     setState(() => _busy = true);
-    _report('正在生成并上传版本库备份…');
     try {
+      final revisions = AppScope.of(context).data.revisions;
+      final integrity = await checkRepositoryIntegrity(revisions);
+      if (!mounted) return;
+      final confirmed = await confirmExportAfterIntegrityCheck(
+        context,
+        integrity,
+        action: '上传云端备份',
+      );
+      if (!confirmed || !mounted) {
+        if (mounted) _report('已取消上传');
+        return;
+      }
+      _report('正在生成并上传版本库备份…');
       final backup = await AppScope.of(context).accountServices.backups
           .upload();
       _report(

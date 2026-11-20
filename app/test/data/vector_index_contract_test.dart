@@ -658,6 +658,30 @@ void _runZvecOnlyTests(String? skip) {
       });
     }, skip: skip);
 
+    test('旧状态文件里的已处理提交编号仍能读，重写时不再带它', () {
+      // 迁移之前的状态文件里有 `commit_id`：同一版本内产生的旧文件要能继续读，
+      // 多出来的键被忽略；已处理到的提交编号改记在 `revision_cursor` 的非阻塞
+      // 位置，所以任意一次状态写入都按当前字段重写（方案 3.12）。
+      writeAndClose();
+      final stateFile = File(_statePath(root, _spec));
+      final legacy =
+          jsonDecode(stateFile.readAsStringSync()) as Map<String, Object?>;
+      legacy['commit_id'] = '12';
+      stateFile.writeAsStringSync(jsonEncode(legacy));
+
+      final reopened = openZvec();
+      addTearDown(reopened.close);
+      expect(reopened.sourceCount, 1);
+      expect(reopened.meta('built_at'), _builtAt);
+      expect(() => reopened.meta('commit_id'), throwsArgumentError);
+
+      reopened.setMeta('epoch', '3');
+      final rewritten =
+          jsonDecode(stateFile.readAsStringSync()) as Map<String, Object?>;
+      expect(rewritten.containsKey('commit_id'), isFalse);
+      expect(rewritten['epoch'], '3');
+    }, skip: skip);
+
     test('模型 A→B→A 快速切换后 A 的内容还在', () {
       // 顺序按实施方案第 2 节：A 开着的时候打开 B，B 打开时删不掉 A 的目录；
       // 之后关闭 A 再打开 A，A 的 collection 与状态文件应当完整。

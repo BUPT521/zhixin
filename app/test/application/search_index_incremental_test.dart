@@ -9,6 +9,8 @@ import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
+import 'package:zhixin/data/revisions/revision_cursor.dart';
+import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/semantic_change.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/vector/memory_vector_index.dart';
@@ -227,8 +229,9 @@ Future<_Rig> _buildRig({
   String Function()? shareSignature,
   Future<SemanticChangeWindow> Function(int after)? semanticChanges,
   Future<int> Function()? headCommit,
+  RevisionEngine? engine,
 }) async {
-  final rig = await openTestRig();
+  final rig = await openTestRig(engine: engine);
   final corpus = await _seed(rig);
   final repository = _CountingRepository(rig.db);
   final textIndex = MemoryVectorIndex(textOnlyModelSpec);
@@ -245,6 +248,7 @@ Future<_Rig> _buildRig({
     semanticChanges: semanticChanges ?? (after) => _changesAfter(rig, after),
     shareSignature: shareSignature,
     initialShareFilter: canSend,
+    indexCursors: () => RevisionCursors(rig.raw),
     textStoreOpener: () async => DirectVectorStore(textIndex),
     vectorStoreOpener: () async => DirectVectorStore(vectorIndex),
   );
@@ -264,6 +268,11 @@ Future<_Rig> _buildRig({
 
 String _pageKey(String materialId, int pageNo) =>
     EvidenceId.materialPage(materialId, pageNo).value;
+
+/// 检索索引的读取位置：写在 `revision_cursor` 的非阻塞位置里，不再写在各份
+/// 状态文件的 `commit_id` 上（方案 3.12）。
+Future<int> _searchPosition(TestRig rig) =>
+    RevisionCursors(rig.raw).indexPosition(IndexCursorNames.search);
 
 /// 固定向量来源外加失败集合：出现在失败集合里的正文按不可用抛出。
 class _FailableClient extends EmbeddingClient {
@@ -345,8 +354,16 @@ void main() {
     expect(r.repository.fullScans, 1);
     final head = await r.rig.engine.headId(r.rig.raw);
     expect(head, greaterThan(0));
-    expect(r.textIndex.meta('commit_id'), '$head');
-    expect(r.vectorIndex.meta('commit_id'), '$head');
+    expect(await _searchPosition(r.rig), head);
+    // 状态文件里不再记已处理到的提交编号：读取位置统一写在 revision_cursor，
+    // 两份 collection 的状态文件只留模型键、维度与代次（方案 3.12）。
+    expect(() => r.textIndex.meta('commit_id'), throwsArgumentError);
+    expect(() => r.vectorIndex.meta('commit_id'), throwsArgumentError);
+    final cursor = await RevisionCursors(r.rig.raw)
+        .read(IndexCursorNames.search);
+    expect(cursor, isNotNull);
+    expect(cursor!.blocking, isFalse, reason: '索引只登记位置，不阻止裁剪');
+    expect(cursor.scope, isNull);
 
     final second = await r.service.refresh();
     expect(second.total, 0);
@@ -465,7 +482,7 @@ void main() {
     final refresh = await r.service.refresh();
 
     expect(refresh.failed, 1);
-    expect(r.vectorIndex.meta('commit_id'), '$beforeHead');
+    expect(await _searchPosition(r.rig), beforeHead, reason: '向量失败时位置不前进');
     final key = _pageKey(r.corpus.materialA, 1);
     final stale = r.vectorIndex.indexedSources([key])[key]!;
     final source = await r.repository.semanticSourceOfRow(
@@ -473,12 +490,17 @@ void main() {
       r.corpus.pageA1,
     );
     expect(stale.sourceVersion, isNot(source!.sourceVersion));
+    // 正文一路不受嵌入失败影响，已经按新版本写好；下一次只补向量。
+    expect(
+      r.textIndex.indexedSources([key])[key]!.sourceVersion,
+      source.sourceVersion,
+    );
 
     client.failing.remove(_revisedEntropy);
     final retry = await r.service.refresh();
     expect(retry.embedded, 1);
     expect(retry.failed, 0);
-    expect(r.vectorIndex.meta('commit_id'), '$newHead');
+    expect(await _searchPosition(r.rig), newHead);
     expect(
       (r.vectorIndex.indexedSources([key]))[key]!.sourceVersion,
       source.sourceVersion,
@@ -530,8 +552,7 @@ void main() {
 
     final head = await r.rig.engine.headId(r.rig.raw);
     expect(head, greaterThan(catchUpFrom));
-    expect(r.textIndex.meta('commit_id'), '$head');
-    expect(r.vectorIndex.meta('commit_id'), '$head');
+    expect(await _searchPosition(r.rig), head);
     final addedKey = _pageKey(r.corpus.materialA, 3);
     expect(r.textIndex.indexedSources([addedKey]), isNotEmpty);
     expect(r.vectorIndex.indexedSources([addedKey]), isNotEmpty);
@@ -630,5 +651,101 @@ void main() {
       );
     }
     expect(r.repository.fullScans, 1);
+  });
+
+  test('数据代次变化时读取位置归零，索引按当前数据全量重建', () async {
+    final r = await _buildRig();
+    addTearDown(r.close);
+    await r.service.refresh();
+    final before = await _searchPosition(r.rig);
+    expect(before, greaterThan(0));
+
+    // 清理历史推进代次：索引里的内容对不上当前数据，读取位置先归零再清空。
+    await r.rig.engine.clearHistory(r.rig.raw);
+
+    final refresh = await r.service.refresh();
+    expect(refresh.failed, 0);
+    expect(r.repository.fullScans, 2, reason: '代次变化之后退回全量扫描');
+    expect(
+      await _searchPosition(r.rig),
+      await r.rig.engine.headId(r.rig.raw),
+      reason: '重建完成之后位置推进到当前 HEAD',
+    );
+    expect(r.textIndex.entryCount, 7);
+    expect(r.vectorIndex.sourceCount, 7);
+  });
+
+  test('索引读取位置丢失时按全量扫描重建，位置随后重新登记', () async {
+    final r = await _buildRig();
+    addTearDown(r.close);
+    await r.service.refresh();
+    final head = await r.rig.engine.headId(r.rig.raw);
+    expect(await _searchPosition(r.rig), head);
+
+    // 位置被清掉（换库、恢复旧备份或旧版本状态文件没有登记位置）：按全量扫描
+    // 重建，不能把“没有登记过”当成“已经处理到 HEAD”。
+    await RevisionCursors(r.rig.raw).delete(IndexCursorNames.search);
+    await r.materials.correctPage(
+      pageId: r.corpus.pageA1,
+      content: _revisedEntropy,
+    );
+
+    final refresh = await r.service.refresh();
+    expect(r.repository.fullScans, 2);
+    expect(refresh.textWritten, 1);
+    expect(refresh.embedded, 1);
+    expect(await _searchPosition(r.rig), await r.rig.engine.headId(r.rig.raw));
+  });
+
+  test('索引被重建成空集合之后位置归零并按全量重建，不从旧位置接着读', () async {
+    final r = await _buildRig();
+    addTearDown(r.close);
+    await r.service.refresh();
+    expect(r.textIndex.entryCount, 7);
+    expect(r.vectorIndex.sourceCount, 7);
+
+    // 模拟结构损坏被重建：两份集合都是空的，状态文件里没有刷新记录，读取位置
+    // 却还停在旧提交。下一次刷新必须从头重建，否则空集合会一直空着。
+    r.textIndex.clear();
+    r.vectorIndex.clear();
+
+    final refresh = await r.service.refresh();
+    expect(r.repository.fullScans, 2, reason: '空集合要从头重建');
+    expect(refresh.failed, 0);
+    expect(refresh.textWritten, 7);
+    expect(refresh.embedded, 7);
+    expect(r.textIndex.entryCount, 7);
+    expect(r.vectorIndex.sourceCount, 7);
+    expect(await _searchPosition(r.rig), await r.rig.engine.headId(r.rig.raw));
+  });
+
+  test('非阻塞的索引读取位置不阻止裁剪与清理历史', () async {
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final r = await _buildRig(engine: RevisionEngine(clock: clock.call));
+    addTearDown(r.close);
+    await r.service.refresh();
+    final indexedAt = await _searchPosition(r.rig);
+    expect(indexedAt, greaterThan(0));
+
+    // 索引之后又有提交：位置落后于 HEAD，但它是非阻塞位置，不能挡住裁剪。
+    clock.advance(const Duration(days: 30));
+    await r.materials.addPage(
+      materialId: r.corpus.materialA,
+      pageNo: 3,
+      content: _addedPage,
+    );
+    final head = await r.rig.engine.headId(r.rig.raw);
+    expect(head, greaterThan(indexedAt));
+    expect(await RevisionCursors(r.rig.raw).minimumBlockingPosition(), isNull);
+    expect(await r.rig.revisions.historyBlockers(clearing: true), isEmpty);
+
+    final pruned = await r.rig.engine.prune(
+      r.rig.raw,
+      retentionDays: 0,
+      maxBytes: 1,
+    );
+    expect(pruned.removedCommits, greaterThan(0));
+    // 位置行本身保留：它是下一次增量刷新的起点，不被裁剪清掉。
+    expect(await _searchPosition(r.rig), indexedAt);
   });
 }
