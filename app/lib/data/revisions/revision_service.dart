@@ -47,11 +47,16 @@ class RemoteApplyResult {
     required this.commit,
     required this.skipped,
     required this.duplicate,
+    this.appliedChanges = const [],
   });
 
   final RevisionCommit? commit;
   final int skipped;
   final bool duplicate;
+
+  /// 真正写进本机的变化；同步据此记下哪些格子已被远端值覆盖，推送时跳过相应
+  /// 的本机提交（ADR-0039）。
+  final List<RevisionChange> appliedChanges;
 }
 
 /// 页面与设置入口使用的一层：历史、比较、命名、撤销、整版恢复、留存与清理。
@@ -200,6 +205,7 @@ class RevisionService {
     }
     var skipped = 0;
     var duplicate = false;
+    var appliedChanges = const <RevisionChange>[];
     final changed = <String>{};
     await db.gate.exclusive(() async {
       try {
@@ -207,6 +213,7 @@ class RevisionService {
           await engine.beginCommand(txn, requestId: requestId);
           final applied = await engine.applyChanges(txn, changes);
           skipped = applied.skipped;
+          appliedChanges = applied.applied;
           await engine.finishCommand(
             txn,
             action: action,
@@ -240,6 +247,7 @@ class RevisionService {
       commit: commit,
       skipped: skipped,
       duplicate: false,
+      appliedChanges: appliedChanges,
     );
   }
 
@@ -309,6 +317,28 @@ class RevisionService {
     });
     if (commit != null) await engine.afterCommitIdle(db);
     return commit;
+  }
+
+  /// 消解一条没有可写回本机值的冲突记录（本机已经删掉那一行）。
+  ///
+  /// 这条记录只说明远端的修改没有写入，用户确认之后直接删除，不形成提交，
+  /// 也不改业务数据；其余三种冲突要写回本机值，走 [keepLocal]，这里返回 false。
+  Future<bool> dismissConflict(int conflictId) async {
+    final rows = await selectRows(
+      db.raw,
+      'revision_conflict',
+      where: 'id = ? AND resolved_commit_id IS NULL',
+      whereArgs: [conflictId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final conflict = RevisionConflict.fromRow(rows.first);
+    if (conflict.reason != RevisionConflict.deletedLocally) return false;
+    final removed = await db.execute(
+      'DELETE FROM revision_conflict WHERE id = ?',
+      [conflictId],
+    );
+    return removed > 0;
   }
 
   /// 历史下游读者是否允许裁剪或清理；[clearing] 为真时对应“清理历史”。

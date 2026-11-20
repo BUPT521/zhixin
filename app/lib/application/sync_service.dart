@@ -168,6 +168,14 @@ class SyncService {
   Future<SyncResult>? _running;
   Timer? _timer;
   String? _lastError;
+
+  /// 这次同步里被远端提交真正改过的格子（表、主键、列；整行变化记空列）。
+  ///
+  /// 推送时跳过改动落在这些格子上的本机提交：它们的值已经被拉下来的远端值
+  /// 覆盖，再推回服务端等于把旧值顶回去，另一台设备与本机就此分叉。这与 git
+  /// 先拉取再推送、推送的不是被合并掉的旧提交是同一个道理（ADR-0039）。
+  final Set<({String table, String rowKey, String? column})> _pulledOverwrites =
+      {};
   bool _disposed = false;
 
   /// 这次同步开始时的身份代次；切换账号或实例之后进行中的同步据此丢弃结果。
@@ -309,6 +317,7 @@ class SyncService {
 
   Future<SyncResult> _sync({bool confirmBaseline = false}) async {
     _lastError = null;
+    _pulledOverwrites.clear();
     var pulled = 0;
     var pushed = 0;
     var uploaded = 0;
@@ -615,6 +624,7 @@ class SyncService {
         _ensureIdentity();
         final applied = await _applyRemote(commit);
         hashes.addAll(applied.assetHashes);
+        _recordPulledChanges(applied.appliedChanges);
         pulled++;
       }
       current = page.commits.last.seq ?? page.head;
@@ -631,8 +641,9 @@ class SyncService {
   /// 推送本机推送位置之后的提交；服务端位置变化时先拉取再重试。
   ///
   /// 待推送列表已经去掉远端提交（`kind = remote`）：它们对应服务端已有的提交，
-  /// 再推回去只会在序列里多一份。推送成功之后把推送位置推进到最后一条推送的
-  /// 提交，没推任何提交时推进到当前 `HEAD`。
+  /// 再推回去只会在序列里多一份。改动已经被这次拉取覆盖的本机提交同样不推：
+  /// 远端值已经写进本机，再把这些提交推上去等于把旧值顶回服务端。推送成功之后
+  /// 把推送位置推进到最后一条考虑过的提交，没推任何提交时推进到当前 `HEAD`。
   Future<({int serverHead, int pushed})> _push({
     required int serverHead,
     required int pushedThrough,
@@ -662,12 +673,29 @@ class SyncService {
         currentPushed = localHead;
         return (serverHead: currentHead, pushed: 0);
       }
+      // 每条提交的变化只读一次：既判断它是否已经被这次拉取覆盖，也用来组装
+      // 推送内容。被覆盖的提交不再推送，位置照常前进，等同于把它们记为已被
+      // 远端值取代（ADR-0039）。
+      final changesByCommit = <int, List<RevisionChange>>{};
+      final toPush = <RevisionCommit>[];
+      for (final commit in pending) {
+        final changes = await engine.changesFor(database.raw, commit.id);
+        changesByCommit[commit.id] = changes;
+        if (_coveredByPull(changes)) continue;
+        toPush.add(commit);
+      }
+      if (toPush.isEmpty) {
+        _ensureIdentity();
+        await _savePushed(pending.last.id);
+        currentPushed = pending.last.id;
+        return (serverHead: currentHead, pushed: 0);
+      }
       final assetHashes = <String>{};
       var pushed = 0;
       try {
         Stream<ServerCommit> payloads() async* {
-          for (final commit in pending) {
-            final changes = await engine.changesFor(database.raw, commit.id);
+          for (final commit in toPush) {
+            final changes = changesByCommit[commit.id]!;
             assetHashes.addAll(AssetStore.hashesInChanges(changes));
             yield ServerCommit(
               requestId: _requestIdFor(commit, deviceId),
@@ -709,7 +737,14 @@ class SyncService {
     );
   }
 
-  Future<({RevisionCommit? commit, Set<String> assetHashes, int skipped})>
+  Future<
+    ({
+      RevisionCommit? commit,
+      Set<String> assetHashes,
+      int skipped,
+      List<RevisionChange> appliedChanges,
+    })
+  >
   _applyRemote(ServerCommit commit) async {
     final changes = <RevisionChange>[];
     var seq = 1;
@@ -752,7 +787,57 @@ class SyncService {
       commit: result.commit,
       assetHashes: AssetStore.hashesInChanges(changes),
       skipped: result.skipped,
+      appliedChanges: result.appliedChanges,
     );
+  }
+
+  /// 记下拉取时真正写进本机的格子；整行变化（新增、删除）记成空列。
+  void _recordPulledChanges(Iterable<RevisionChange> changes) {
+    for (final change in changes) {
+      if (change.op == ChangeOp.update) {
+        for (final column in {
+          ...?change.after?.keys,
+          ...?change.before?.keys,
+        }) {
+          _pulledOverwrites.add((
+            table: change.table,
+            rowKey: change.rowKey,
+            column: column,
+          ));
+        }
+        continue;
+      }
+      _pulledOverwrites.add((
+        table: change.table,
+        rowKey: change.rowKey,
+        column: null,
+      ));
+    }
+  }
+
+  /// 这条本机提交改动的地方是否都已经被拉取的远端值覆盖；是就不推。
+  bool _coveredByPull(List<RevisionChange> changes) {
+    if (_pulledOverwrites.isEmpty) return false;
+    for (final change in changes) {
+      if (_pulledOverwrites.contains((
+        table: change.table,
+        rowKey: change.rowKey,
+        column: null,
+      ))) {
+        return true;
+      }
+      if (change.op != ChangeOp.update) continue;
+      for (final column in {...?change.after?.keys, ...?change.before?.keys}) {
+        if (_pulledOverwrites.contains((
+          table: change.table,
+          rowKey: change.rowKey,
+          column: column,
+        ))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   Future<int> _uploadAssets(Set<String> hashes) async {

@@ -46,12 +46,17 @@ Future<_Device> _openDevice(
   required String email,
   required String password,
   required bool register,
+  String? deviceId,
 }) async {
   final rig = await openTestRig(clock: _fixedClock);
   final dir = await Directory.systemTemp.createTemp('zhixin_sync_test');
   final preferences = CloudPreferencesStore(filesDir: dir.path);
   final account = AccountService(
-    store: AccountStore(MemorySecretStore()),
+    store: AccountStore(
+      MemorySecretStore(
+        deviceId == null ? null : {AccountStore.deviceIdKey: deviceId},
+      ),
+    ),
     preferences: preferences,
     now: _fixedClock,
     clientFactory: (baseUrl) =>
@@ -136,12 +141,17 @@ void main() {
     }
   });
 
-  Future<_Device> device(String email, {bool register = false}) async {
+  Future<_Device> device(
+    String email, {
+    bool register = false,
+    String? deviceId,
+  }) async {
     final opened = await _openDevice(
       server,
       email: email,
       password: 'password123',
       register: register,
+      deviceId: deviceId,
     );
     devices.add(opened);
     return opened;
@@ -489,5 +499,40 @@ void main() {
     await a.sync.syncNow();
     await b.sync.syncNow();
     expect(await _memoryContent(b.rig, 'm1'), '本机偏好：先自己做');
+  });
+  test('拉取之后不把被远端覆盖的本机旧提交推回服务端', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+
+    // B 第一次同步会把自己拉到的数据再上传一份基线；A 先同步一次消化掉它，
+    // 后面这一轮只比较两边各自改过的内容。
+    final b = await device('a@example.com', deviceId: 'device-b');
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+
+    await _updateMemory(a.rig, 'm1', '本机偏好：先自己做');
+    await _updateMemory(b.rig, 'm1', '先看例子再看定义');
+    await b.sync.syncNow();
+
+    // A 在拉取之前也改过这一行：拉取把本机值覆盖成 B 的值，这条本机提交
+    // 不能再推回去，否则服务端会被旧值覆盖，两台设备从此不一致。
+    await a.sync.syncNow();
+    expect(await _memoryContent(a.rig, 'm1'), '先看例子再看定义');
+    final conflict = (await a.rig.revisions.conflicts()).singleWhere(
+      (item) =>
+          item.reason == RevisionConflict.concurrentUpdate &&
+          item.column == 'content',
+    );
+    expect(conflict.local['content']!.value, '本机偏好：先自己做');
+    expect(conflict.remoteAfter['content']!.value, '先看例子再看定义');
+
+    // 另一台设备看到的仍是自己的值，说明 A 的旧提交没有被推上去。
+    await b.sync.syncNow();
+    expect(await _memoryContent(b.rig, 'm1'), '先看例子再看定义');
   });
 }

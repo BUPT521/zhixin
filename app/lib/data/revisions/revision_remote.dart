@@ -8,7 +8,11 @@ part of 'revision_engine.dart';
 /// 一条远端提交在本机应用之后的结果：因本机状态对不上而跳过的条数，以及被
 /// 覆盖的本机修改。冲突由调用方交给 `finishCommand` 写进 `revision_conflict`，
 /// 这次提交的 `conflict_count` 随之更新。
-typedef RemoteApplyOutcome = ({int skipped, List<RevisionConflict> conflicts});
+typedef RemoteApplyOutcome = ({
+  int skipped,
+  List<RevisionConflict> conflicts,
+  List<RevisionChange> applied,
+});
 
 mixin RevisionRemoteMixin {
   /// 引擎本身；字段与同库其他文件的方法都经它访问。
@@ -34,6 +38,7 @@ mixin RevisionRemoteMixin {
     await txn.execute('PRAGMA defer_foreign_keys = ON');
     var skipped = 0;
     final conflicts = <RevisionConflict>[];
+    final appliedChanges = <RevisionChange>[];
     for (final change in changes) {
       final table = schema[change.table];
       if (table == null) {
@@ -59,9 +64,13 @@ mixin RevisionRemoteMixin {
           conflicts,
         ),
       };
-      if (!applied) skipped++;
+      if (!applied) {
+        skipped++;
+      } else {
+        appliedChanges.add(change);
+      }
     }
-    return (skipped: skipped, conflicts: conflicts);
+    return (skipped: skipped, conflicts: conflicts, applied: appliedChanges);
   }
 
   /// 把一条冲突记录里保存的本机值写回当前事务，返回是否写了行。
