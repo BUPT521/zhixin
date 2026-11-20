@@ -542,6 +542,55 @@ mixin RevisionProjectionMixin {
     });
   }
 
+  /// 整库恢复之后补记一条“回到旧状态”的恢复提交。
+  ///
+  /// 换库恢复把数据换成备份那一刻的内容，备份之后本机做过的改动不再在库里，
+  /// 但它们仍然在服务端的提交序列上；恢复之前保存的恢复点（调用方在换库之前
+  /// 读到的 [before] 投影）与恢复后的 [after] 投影之间的差异就是这次恢复的
+  /// 净变化。这里不重写业务行，只把这份差异写成一条 `restore` 提交，让下一轮
+  /// 同步可以按普通推送把它发上去，删除、新增与修改都会到达其他设备（同步
+  /// 方案 3.4 的短期修复）。
+  ///
+  /// 这条提交的父提交是恢复之后的 `HEAD`，所以本机历史连续；提交身份与普通
+  /// 提交一样由引擎生成。没有差异时不形成提交，返回空。
+  Future<RevisionCommit?> recordRestoreDiff(
+    RawDatabase db, {
+    required Projection before,
+    required Projection after,
+    required int expectedHead,
+    String action = '恢复旧备份',
+    String actor = 'user',
+  }) {
+    return db.transaction((txn) async {
+      final head = await self.headId(txn);
+      if (head != expectedHead) {
+        throw RevisionStaleHead(expected: expectedHead, actual: head);
+      }
+      if (projectionsEqual(before, after)) return null;
+      await self.beginCommand(txn);
+      final commitId = await self.reserveCommitId(txn);
+      final changes = self._changesFromDiff(before, after, commitId);
+      final parent = await self.commitById(txn, head);
+      // 整份数据被换掉：恢复前记下的遮蔽行已经不对应任何本机提交，不清掉会
+      // 让下一轮推送按旧格子去掉本机改动（ADR-0040）。
+      await RevisionShadows(txn).clear();
+      final commit = await self._appendCommit(
+        txn,
+        CommitDraft(
+          id: commitId,
+          parentId: head,
+          generation: (parent?.generation ?? 0) + 1,
+          actor: actor,
+          action: action,
+          kind: RevisionKind.restore,
+          changes: changes,
+        ),
+      );
+      await self._clearContext(txn);
+      return commit;
+    });
+  }
+
   Future<void> _replaceProjection(
     RawExecutor txn,
     Projection projection,

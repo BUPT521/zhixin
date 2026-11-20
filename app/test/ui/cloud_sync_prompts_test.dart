@@ -5,14 +5,17 @@ import 'package:zhixin/ui/cloud_sync_prompts.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/zhixin_dialog.dart';
 
-/// 首次基线上传与恢复自动同步的两个确认框：确认返回 true，取消返回 false。
+/// 首次基线上传、恢复自动同步与整库恢复之后的重新对齐三个确认框：确认返回
+/// true，取消返回 false。
 void main() {
   bool? baselineResult;
   bool? autoSyncResult;
+  bool? restoreResult;
 
   setUp(() {
     baselineResult = null;
     autoSyncResult = null;
+    restoreResult = null;
   });
 
   Widget app() => forui.FTheme(
@@ -39,6 +42,12 @@ void main() {
                 );
               },
               child: const Text('开启自动同步'),
+            ),
+            TextButton(
+              onPressed: () async {
+                restoreResult = await confirmRestoreAlignment(context);
+              },
+              child: const Text('恢复后同步'),
             ),
           ],
         ),
@@ -84,5 +93,23 @@ void main() {
     await tester.tap(find.widgetWithText(forui.FButton, '开启'));
     await tester.pumpAndSettle();
     expect(autoSyncResult, isTrue);
+  });
+
+  testWidgets('恢复之后的同步确认说明云端会改成恢复后的内容', (tester) async {
+    await open(tester, '恢复后同步');
+    expect(find.byType(ZhixinDialogLayout), findsOneWidget);
+    expect(find.text('同步会把云端改成恢复后的内容'), findsOneWidget);
+    expect(find.textContaining('恢复之前推送的多余记录会从云端删除'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '同步并覆盖云端'));
+    await tester.pumpAndSettle();
+    expect(restoreResult, isTrue);
+  });
+
+  testWidgets('恢复之后的同步确认取消返回 false', (tester) async {
+    await open(tester, '恢复后同步');
+    await tester.tap(find.widgetWithText(forui.FButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(restoreResult, isFalse);
   });
 }

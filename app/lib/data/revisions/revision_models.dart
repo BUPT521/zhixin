@@ -283,6 +283,7 @@ class RevisionCursor {
     required this.name,
     required this.position,
     this.blocking = false,
+    this.scope,
     this.updatedAt,
   });
 
@@ -290,6 +291,7 @@ class RevisionCursor {
     name: row['name']! as String,
     position: row['position']! as int,
     blocking: (row['blocking'] as int? ?? 0) != 0,
+    scope: row['scope'] as String?,
     updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
   );
 
@@ -299,15 +301,28 @@ class RevisionCursor {
   /// 服务端最近一次拉到的位置；不阻止裁剪。
   static const String syncServerHead = 'sync.server_head';
 
+  /// 整库恢复之后待重新对齐的标记：存在时下一轮同步不拉取旧位置之后的提交，
+  /// 而是先要求确认，再把恢复前后的差异推到服务端（同步方案 3.4）。
+  ///
+  /// [position] 是补记的恢复提交编号；恢复前后没有差异时为 0，这一轮只把两个
+  /// 位置挪到当前服务端位置与本机 `HEAD`；补记失败时为 -1，这一轮按首次基线
+  /// 重新对齐。
+  static const String syncRestoreAlign = 'sync.restore_align';
+
   final String name;
   final int position;
   final bool blocking;
+
+  /// 这个位置属于哪个同步身份：同步的两个位置写“账号编号 + 实例来源”的哈希，
+  /// 检索索引等读者为空（同步方案 3.3）。
+  final String? scope;
   final DateTime? updatedAt;
 
   Map<String, Object?> toRow() => {
     'name': name,
     'position': position,
     'blocking': blocking ? 1 : 0,
+    'scope': scope,
     'updated_at': updatedAt == null
         ? formatDateTime(DateTime.now())
         : formatDateTime(updatedAt!),

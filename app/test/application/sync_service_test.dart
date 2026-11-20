@@ -423,6 +423,43 @@ void main() {
     expect(state['synced_at'], isNotNull);
   });
 
+  test('同步位置带账号与实例的 scope，退出登录只解除阻塞、位置与 scope 保留', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = (await a.account.snapshot()).session!.userId;
+    final scope = syncScopeFor(userId, 'http://server.test');
+
+    Future<Map<String, Map<String, Object?>>> cursors() async {
+      final rows = await selectRows(a.rig.raw, 'revision_cursor');
+      return {for (final row in rows) row['name']! as String: row};
+    }
+
+    final before = await cursors();
+    expect(
+      before[RevisionCursor.syncPushed]!['scope'],
+      scope,
+      reason: '推送位置应当写当前账号与实例的 scope',
+    );
+    expect(before[RevisionCursor.syncServerHead]!['scope'], scope);
+    final pushedPosition = before[RevisionCursor.syncPushed]!['position'];
+    expect(before[RevisionCursor.syncPushed]!['blocking'], 1);
+
+    // 退出登录只清偏好并把推送位置改成不阻塞：位置与 scope 都留着，重新登录
+    // 同一账号时从原位置继续增量同步（同步方案 3.3）。
+    await a.account.logout();
+    await a.sync.clearState();
+    final after = await cursors();
+    expect(after[RevisionCursor.syncPushed]!['blocking'], 0);
+    expect(after[RevisionCursor.syncPushed]!['position'], pushedPosition);
+    expect(after[RevisionCursor.syncPushed]!['scope'], scope);
+    expect(after[RevisionCursor.syncServerHead]!['scope'], scope);
+  });
+
   test('拉下来的远端提交不会再推回服务端，同步两轮提交数不变', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');

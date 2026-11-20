@@ -12017,6 +12017,15 @@ class $RevisionCursorsTable extends RevisionCursors
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _scopeMeta = const VerificationMeta('scope');
+  @override
+  late final GeneratedColumn<String> scope = GeneratedColumn<String>(
+    'scope',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -12029,7 +12038,13 @@ class $RevisionCursorsTable extends RevisionCursors
     requiredDuringInsert: true,
   );
   @override
-  List<GeneratedColumn> get $columns => [name, position, blocking, updatedAt];
+  List<GeneratedColumn> get $columns => [
+    name,
+    position,
+    blocking,
+    scope,
+    updatedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -12064,6 +12079,12 @@ class $RevisionCursorsTable extends RevisionCursors
         blocking.isAcceptableOrUnknown(data['blocking']!, _blockingMeta),
       );
     }
+    if (data.containsKey('scope')) {
+      context.handle(
+        _scopeMeta,
+        scope.isAcceptableOrUnknown(data['scope']!, _scopeMeta),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -12093,6 +12114,10 @@ class $RevisionCursorsTable extends RevisionCursors
         DriftSqlType.bool,
         data['${effectivePrefix}blocking'],
       )!,
+      scope: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}scope'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}updated_at'],
@@ -12111,11 +12136,17 @@ class RevisionCursorRow extends DataClass
   final String name;
   final int position;
   final bool blocking;
+
+  /// 这个读取位置属于哪个同步身份：只有同步的两个位置写“账号编号 + 实例来源”
+  /// 的哈希，检索索引等读者为空。退出登录之后位置保留但不阻塞，重新登录同一
+  /// scope 时据此从原位置继续增量同步，而不是按首次基线整份重传（同步方案 3.3）。
+  final String? scope;
   final String updatedAt;
   const RevisionCursorRow({
     required this.name,
     required this.position,
     required this.blocking,
+    this.scope,
     required this.updatedAt,
   });
   @override
@@ -12124,6 +12155,9 @@ class RevisionCursorRow extends DataClass
     map['name'] = Variable<String>(name);
     map['position'] = Variable<int>(position);
     map['blocking'] = Variable<bool>(blocking);
+    if (!nullToAbsent || scope != null) {
+      map['scope'] = Variable<String>(scope);
+    }
     map['updated_at'] = Variable<String>(updatedAt);
     return map;
   }
@@ -12133,6 +12167,9 @@ class RevisionCursorRow extends DataClass
       name: Value(name),
       position: Value(position),
       blocking: Value(blocking),
+      scope: scope == null && nullToAbsent
+          ? const Value.absent()
+          : Value(scope),
       updatedAt: Value(updatedAt),
     );
   }
@@ -12146,6 +12183,7 @@ class RevisionCursorRow extends DataClass
       name: serializer.fromJson<String>(json['name']),
       position: serializer.fromJson<int>(json['position']),
       blocking: serializer.fromJson<bool>(json['blocking']),
+      scope: serializer.fromJson<String?>(json['scope']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
   }
@@ -12156,6 +12194,7 @@ class RevisionCursorRow extends DataClass
       'name': serializer.toJson<String>(name),
       'position': serializer.toJson<int>(position),
       'blocking': serializer.toJson<bool>(blocking),
+      'scope': serializer.toJson<String?>(scope),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
   }
@@ -12164,11 +12203,13 @@ class RevisionCursorRow extends DataClass
     String? name,
     int? position,
     bool? blocking,
+    Value<String?> scope = const Value.absent(),
     String? updatedAt,
   }) => RevisionCursorRow(
     name: name ?? this.name,
     position: position ?? this.position,
     blocking: blocking ?? this.blocking,
+    scope: scope.present ? scope.value : this.scope,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   RevisionCursorRow copyWithCompanion(RevisionCursorsCompanion data) {
@@ -12176,6 +12217,7 @@ class RevisionCursorRow extends DataClass
       name: data.name.present ? data.name.value : this.name,
       position: data.position.present ? data.position.value : this.position,
       blocking: data.blocking.present ? data.blocking.value : this.blocking,
+      scope: data.scope.present ? data.scope.value : this.scope,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -12186,13 +12228,14 @@ class RevisionCursorRow extends DataClass
           ..write('name: $name, ')
           ..write('position: $position, ')
           ..write('blocking: $blocking, ')
+          ..write('scope: $scope, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(name, position, blocking, updatedAt);
+  int get hashCode => Object.hash(name, position, blocking, scope, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -12200,6 +12243,7 @@ class RevisionCursorRow extends DataClass
           other.name == this.name &&
           other.position == this.position &&
           other.blocking == this.blocking &&
+          other.scope == this.scope &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -12207,12 +12251,14 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
   final Value<String> name;
   final Value<int> position;
   final Value<bool> blocking;
+  final Value<String?> scope;
   final Value<String> updatedAt;
   final Value<int> rowid;
   const RevisionCursorsCompanion({
     this.name = const Value.absent(),
     this.position = const Value.absent(),
     this.blocking = const Value.absent(),
+    this.scope = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -12220,6 +12266,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     required String name,
     required int position,
     this.blocking = const Value.absent(),
+    this.scope = const Value.absent(),
     required String updatedAt,
     this.rowid = const Value.absent(),
   }) : name = Value(name),
@@ -12229,6 +12276,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     Expression<String>? name,
     Expression<int>? position,
     Expression<bool>? blocking,
+    Expression<String>? scope,
     Expression<String>? updatedAt,
     Expression<int>? rowid,
   }) {
@@ -12236,6 +12284,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
       if (name != null) 'name': name,
       if (position != null) 'position': position,
       if (blocking != null) 'blocking': blocking,
+      if (scope != null) 'scope': scope,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -12245,6 +12294,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     Value<String>? name,
     Value<int>? position,
     Value<bool>? blocking,
+    Value<String?>? scope,
     Value<String>? updatedAt,
     Value<int>? rowid,
   }) {
@@ -12252,6 +12302,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
       name: name ?? this.name,
       position: position ?? this.position,
       blocking: blocking ?? this.blocking,
+      scope: scope ?? this.scope,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -12269,6 +12320,9 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     if (blocking.present) {
       map['blocking'] = Variable<bool>(blocking.value);
     }
+    if (scope.present) {
+      map['scope'] = Variable<String>(scope.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
@@ -12284,6 +12338,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
           ..write('name: $name, ')
           ..write('position: $position, ')
           ..write('blocking: $blocking, ')
+          ..write('scope: $scope, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))

@@ -7,6 +7,7 @@ import '../db/app_database.dart';
 import '../db/database_gate.dart';
 import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
+import '../revisions/revision_cursor.dart';
 import '../revisions/revision_engine.dart';
 import '../revisions/revision_models.dart';
 import '../revisions/revision_package.dart';
@@ -120,6 +121,14 @@ class DataVersionService {
         recordFailure(error, stack, kind: 'restore_point_capture');
         throw const BackupException('恢复前保存当前状态失败，本次恢复没有执行；当前数据没有改动。');
       }
+      // 恢复前的投影就是恢复点里的数据；换库之后再也读不到，先留一份，恢复
+      // 之后用它和恢复后的投影比出这次“回到旧状态”的净变化（同步方案 3.4）。
+      Projection? before;
+      try {
+        before = await engine.readProjection(connection());
+      } catch (error, stack) {
+        recordFailure(error, stack, kind: 'restore_before_projection');
+      }
       // 恢复过程中失败时保留刚写好的恢复点：它要么与回滚后的数据一致，
       // 要么就是回滚没有完成时唯一可用的旧状态，交给用户确认后再删除。
       await cache.markPendingRebuild();
@@ -129,10 +138,76 @@ class DataVersionService {
         openDb: reopen,
       );
       markPendingWorkInvalidated();
+      await _alignSyncAfterRestore(before);
       cacheWarning = await _rebuildPackageAttachments('数据已恢复');
     });
     notifyDataChanged();
     return cacheWarning;
+  }
+
+  /// 整库恢复之后的同步对齐：补记一条恢复提交，把同步位置标成待重新对齐。
+  ///
+  /// 换库恢复连同步位置一起带回备份那一刻；如果下次同步还从旧位置拉取，备份
+  /// 之后推送的改动会被重新拉回来，恢复就白做了（G5）。这里在恢复后的库里追加
+  /// 一条 `restore` 提交，净变化是“恢复点投影 → 恢复后投影”的差异，推送位置
+  /// 写成它的父提交，另记 [RevisionCursor.syncRestoreAlign]；下一轮手动同步据此
+  /// 跳过拉取，确认之后把这条差异推上去，删除、新增与修改都会到达其他设备。
+  ///
+  /// [before] 读不出来或者补记失败时只留标记（位置为 -1），下一轮同步按首次
+  /// 基线重新对齐；恢复前后没有差异时标记位置为 0，同步只把两个位置挪到当前
+  /// 服务端位置与本机 `HEAD`。两种退路都不会再从旧位置拉回恢复前的改动。
+  Future<void> _alignSyncAfterRestore(Projection? before) async {
+    final RawDatabase db = connection();
+    final cursors = RevisionCursors(db);
+    final pushed = await cursors.read(RevisionCursor.syncPushed);
+    // 这个库从来没有同步过：云端没有它的位置，恢复不涉及重新对齐。
+    if (pushed == null) return;
+    final scope = pushed.scope;
+    try {
+      final head = await engine.headId(db);
+      RevisionCommit? commit;
+      if (before != null) {
+        final after = await engine.readProjection(db);
+        commit = await engine.recordRestoreDiff(
+          db,
+          before: before,
+          after: after,
+          expectedHead: head,
+        );
+      }
+      await cursors.set(
+        RevisionCursor.syncPushed,
+        commit?.parentId ?? head,
+        blocking: true,
+        scope: scope,
+      );
+      await cursors.set(
+        RevisionCursor.syncRestoreAlign,
+        commit?.id ?? (before == null ? -1 : 0),
+        blocking: false,
+        scope: scope,
+      );
+    } catch (error, stack) {
+      recordFailure(error, stack, kind: 'sync_restore_align');
+      // 补记失败时同样先跳过旧位置：标成 -1，下一次同步按首次基线重新对齐。
+      try {
+        final head = await engine.headId(db);
+        await cursors.set(
+          RevisionCursor.syncPushed,
+          head,
+          blocking: true,
+          scope: scope,
+        );
+        await cursors.set(
+          RevisionCursor.syncRestoreAlign,
+          -1,
+          blocking: false,
+          scope: scope,
+        );
+      } catch (error, stack) {
+        recordFailure(error, stack, kind: 'sync_restore_align_cursor');
+      }
+    }
   }
 
   /// 恢复数据包前的预检：先确认包能通过校验，再返回包内规模。

@@ -74,6 +74,7 @@ class AccountService {
     DateTime Function()? now,
     String? deviceName,
     this.clientFactory,
+    this.onSyncStateCleared,
   }) : _now = now ?? DateTime.now,
        _deviceName = deviceName ?? '知新';
 
@@ -87,6 +88,11 @@ class AccountService {
 
   /// 建服务端客户端的方式；测试注入进程内的假服务，生产留空。
   final ServerClient Function(String baseUrl)? clientFactory;
+
+  /// 同步状态被清掉之后的回调：退出登录、删除账号、清除云端与重设密码都会
+  /// 调用。同步服务用它把库里的推送位置改成不阻塞并保留位置，重新登录同一
+  /// 账号时仍从原位置继续增量同步（同步方案 3.3）。
+  final Future<void> Function()? onSyncStateCleared;
 
   /// 多个请求同时发现令牌过期时只刷新一次，避免两次刷新互相作废。
   Future<AccountSession>? _refreshing;
@@ -169,7 +175,7 @@ class AccountService {
     if (previousOrigin == nextOrigin) return;
     _advanceEpoch();
     await store.clear();
-    await preferences.clearSyncState();
+    await _clearSyncState();
     await preferences.setAutoSync(false);
   }
 
@@ -248,7 +254,7 @@ class AccountService {
     _ensureIdentityUnchanged(epoch);
     _advanceEpoch();
     await store.clear();
-    await preferences.clearSyncState();
+    await _clearSyncState();
   }
 
   /// 一次清空云端备份、提交序列、附件与遗留对象，保留账号与本机记录。
@@ -261,7 +267,7 @@ class AccountService {
       (client, token) => client.deleteCloud(token, password: password),
     );
     _ensureIdentityUnchanged(epoch);
-    await preferences.clearSyncState();
+    await _clearSyncState();
   }
 
   /// 读服务端的就绪状态与它接受的客户端 schema；保存地址之后核对一次。
@@ -340,7 +346,7 @@ class AccountService {
     _ensureIdentityUnchanged(epoch);
     _advanceEpoch();
     await store.clear();
-    await preferences.clearSyncState();
+    await _clearSyncState();
   }
 
   /// 当前账号的访问令牌，过期时先刷新。未登录或刷新失败时返回 null。
@@ -432,6 +438,21 @@ class AccountService {
   /// 当前访问令牌的设备标识，用于同步基线的请求编号。
   Future<String> deviceId() => store.deviceId();
 
+  /// 清掉偏好文件里的同步状态，并让同步服务把库里的推送位置改成不阻塞。
+  ///
+  /// 位置与 scope 保留在库里，由同步服务决定重新登录同一账号时是否继续用；
+  /// 这里只负责通知，账号操作本身不依赖回调是否成功。
+  Future<void> _clearSyncState() async {
+    await preferences.clearSyncState();
+    final callback = onSyncStateCleared;
+    if (callback == null) return;
+    try {
+      await callback();
+    } catch (_) {
+      // 同步位置的簿记失败不影响退出、删除与清除云端这些账号操作。
+    }
+  }
+
   void dispose() {
     _client?.dispose();
     _client = null;
@@ -469,12 +490,12 @@ class AccountService {
     if (switched) {
       // 换了一个账号（或实例）：旧账号的同步位置不能用，自动同步先暂停，
       // 等用户在账号页确认之后再恢复。
-      await preferences.clearSyncState();
+      await _clearSyncState();
       await preferences.setAutoSync(false);
     } else if (state != null &&
         (state.userId != session.userId ||
             state.serverOrigin != session.serverOrigin)) {
-      await preferences.clearSyncState();
+      await _clearSyncState();
     }
     return AccountSnapshot(
       serverBaseUrl: await serverBaseUrl(),

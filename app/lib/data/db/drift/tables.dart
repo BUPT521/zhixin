@@ -680,6 +680,11 @@ class RevisionCursors extends Table {
   TextColumn get name => text()();
   IntColumn get position => integer()();
   BoolColumn get blocking => boolean().withDefault(const Constant(false))();
+
+  /// 这个读取位置属于哪个同步身份：只有同步的两个位置写“账号编号 + 实例来源”
+  /// 的哈希，检索索引等读者为空。退出登录之后位置保留但不阻塞，重新登录同一
+  /// scope 时据此从原位置继续增量同步，而不是按首次基线整份重传（同步方案 3.3）。
+  TextColumn get scope => text().nullable()();
   TextColumn get updatedAt => text()();
 
   @override
