@@ -16,8 +16,9 @@ import '../support/telemetry.dart';
 /// 撤销与整库恢复同样只靠订阅带回重读。这里补的是 ADR-0014 实施结果里点名还缺的
 /// 记录页订阅用例：材料、首页、记忆与系统学习已有各自的 `*_live_test.dart`。
 ///
-/// 记录本身（`conversation`）不在单项撤销支持的表里（见 `revision_undo.dart` 的
-/// 允许表与 `workspace_flow_test` 里“conversation 的改动暂不支持单项撤销”那条），
+/// 记录本身（`conversation`）不在单项撤销支持的表里（见
+/// `application/undo_guards/revision_table_undo_guard.dart` 的允许表与
+/// `workspace_flow_test` 里“conversation 的改动暂不支持单项撤销”那条），
 /// 因此撤销这一段改用记录页同一屏里的目标筛选条验证：目标新增会形成可撤销的提交，
 /// 撤销之后筛选条与记录归属都按当前数据重读。
 void main() {

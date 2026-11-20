@@ -41,7 +41,9 @@ class _NoAi implements BuddyAi {
 
 void main() {
   test('确认推断记忆后消息状态与回执一起提交', () async {
-    final rig = await openTestRig(clock: () => DateTime(2026, 11, 10, 10));
+    final rig = await openTestRigWithUndoRules(
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
     addTearDown(rig.close);
 
     final conversations = ConversationRepository(rig.db);

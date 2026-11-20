@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/application/undo_guards/undo_guards.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/drift/drift_raw.dart';
@@ -81,6 +82,45 @@ Future<TestRig> openTestRig({
     clock: clock,
     cache: cache ?? AttachmentCache(filesDir: () => dir.path),
     onDataChanged: onDataChanged,
+  );
+  return TestRig(
+    raw: raw,
+    db: db,
+    engine: revisionEngine,
+    revisions: revisions,
+    filesDir: dir.path,
+  );
+}
+
+/// 带应用层撤销规则的测试库。
+///
+/// 装配与 [openTestRig] 一致，额外注册应用层的撤销业务约束与可撤销表名单：
+/// 数据层不再内置业务规则，涉及撤销的用例都用这一份，其余用例继续用
+/// [openTestRig]。
+Future<TestRig> openTestRigWithUndoRules({
+  Clock clock = systemClock,
+  RevisionEngine? engine,
+  Future<void> Function()? onDataChanged,
+  AttachmentCache? cache,
+  void Function(Object error, StackTrace? stack)? onCacheFailure,
+}) async {
+  final dir = await Directory.systemTemp.createTemp('zhixin_test_rig');
+  final raw = await openTestDb();
+  final revisionEngine = engine ?? RevisionEngine(clock: clock);
+  final db = GuardedDatabase(
+    gate: DatabaseGate(),
+    resolve: () => raw,
+    revisions: revisionEngine,
+  );
+  final revisions = RevisionService(
+    db: db,
+    raw: () => raw,
+    engine: revisionEngine,
+    clock: clock,
+    cache: cache ?? AttachmentCache(filesDir: () => dir.path),
+    undoGuards: defaultUndoGuards,
+    onDataChanged: onDataChanged,
+    onCacheFailure: onCacheFailure,
   );
   return TestRig(
     raw: raw,

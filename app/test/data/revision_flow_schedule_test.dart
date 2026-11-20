@@ -25,7 +25,7 @@ void main() {
   setUp(() async {
     dataChanges = 0;
     itemSeq = 0;
-    rig = await openTestRig(
+    rig = await openTestRigWithUndoRules(
       clock: () => DateTime(2026, 11, 10, 10),
       onDataChanged: () async {
         dataChanges++;

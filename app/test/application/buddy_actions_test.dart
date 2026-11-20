@@ -13,7 +13,7 @@ import 'package:zhixin/data/db/sql.dart';
 
 void main() {
   test('模型给的记忆落库，并留下可按提交撤销的回执', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
 
@@ -41,7 +41,7 @@ void main() {
   });
 
   test('用户修改记忆后，旧的写入提交不能删除新内容', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final id = await memories.create(
@@ -64,7 +64,7 @@ void main() {
   });
 
   test('已接受的事项有后续预约时，撤销创建不会级联删除预约', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final schedule = ScheduleRepository(rig.db);
     final tasks = TaskRepository(rig.db);
@@ -94,7 +94,7 @@ void main() {
   });
 
   test('重复的记忆不重复写，过长的记忆被跳过', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
 
@@ -121,7 +121,7 @@ void main() {
   });
 
   test('记忆去重区分类别与范围，过期记录和本批重复项不误抑制', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     await memories.create(
@@ -164,7 +164,7 @@ void main() {
   });
 
   test('困难与进展写入本次范围，偏好与限制保持全局', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
 

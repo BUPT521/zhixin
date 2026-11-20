@@ -127,8 +127,8 @@ void main() {
   });
 
   test('导入后可按片段检索，更正可撤销，恢复数据包后保留原文件', () async {
-    final rig = await openTestRig();
-    final target = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
+    final target = await openTestRigWithUndoRules();
     addTearDown(() async {
       for (final item in [rig, target]) {
         await item.close();

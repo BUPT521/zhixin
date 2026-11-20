@@ -37,6 +37,7 @@ import 'application/settings_service.dart';
 import 'application/study_plan_service.dart';
 import 'application/sync_service.dart';
 import 'application/time_policy_controller.dart';
+import 'application/undo_guards/undo_guards.dart';
 import 'application/undo_service.dart';
 import 'application/update_check_service.dart';
 import 'data/backup/data_package_service.dart';
@@ -814,6 +815,8 @@ class AppScopeState extends State<AppScope> {
       raw: () => _connection!,
       clock: clock,
       cache: _attachmentCache,
+      // 撤销的业务约束与可撤销表名单由应用层注册，数据层只做通用核对。
+      undoGuards: defaultUndoGuards,
       onDataChanged: _invalidatePendingWork,
       onCacheFailure: (error, stack) =>
           crashLog.record(error, stack, kind: 'rebuild_attachments_restore'),

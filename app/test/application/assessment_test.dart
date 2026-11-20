@@ -82,7 +82,7 @@ class _Harness {
   late LearningService service;
 
   Future<void> open() async {
-    rig = await openTestRig();
+    rig = await openTestRigWithUndoRules();
     db = rig.db;
     attempts = AttemptRepository(db);
     assessments = AssessmentRepository(db);

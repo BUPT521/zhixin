@@ -86,7 +86,7 @@ SettingsService _settingsService(TestRig rig) {
 
 void main() {
   test('每日截止小时更新形成提交，撤销后恢复原值', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final before = (await selectRows(rig.raw, 'profile')).single;
     final hourBefore = before['day_cutoff_hour'];
@@ -104,15 +104,22 @@ void main() {
     final reasons = await rig.revisions.undoBlockReasons(history.commits);
     expect(reasons[commitId], isNull);
 
+    final startedAt = DateTime.now();
     final undone = await rig.revisions.undoCommit(commitId);
     expect(undone.applied, isTrue, reason: undone.message);
     final after = (await selectRows(rig.raw, 'profile')).single;
     expect(after['day_cutoff_hour'], hourBefore);
-    expect(after['updated_at'], updatedBefore);
+    // 维护列不写回旧值，写成撤销时刻：撤销之后这一行是“现在改过”的。
+    expect(after['updated_at'], isNot(updatedBefore));
+    expect(
+      DateTime.parse(after['updated_at']! as String)
+          .isBefore(startedAt.subtract(const Duration(seconds: 1))),
+      isFalse,
+    );
   });
 
   test('截止小时被再次修改后不能撤销更早的一次', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
 
     Future<int> setHour(int hour, String at) async {
@@ -135,7 +142,7 @@ void main() {
   });
 
   test('设置页读到的设置项随 profile 的提交更新，app_meta 写入不通知订阅', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _settingsService(rig);
     final values = <SettingsView>[];

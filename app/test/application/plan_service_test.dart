@@ -34,7 +34,7 @@ PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
 
 void main() {
   test('V2：暂停目标可以只取消该目标的弹性安排', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -121,7 +121,7 @@ void main() {
   });
 
   test('暂停目标时多条弹性安排一次取消，撤销后一起回到暂停前', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -177,7 +177,7 @@ void main() {
   });
 
   test('V2：不勾选取消时，暂停不改动任何未来安排', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -202,7 +202,7 @@ void main() {
   });
 
   test('完成事项只把实际学习过的预约记为结束，没学的旧预约取消', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -254,7 +254,7 @@ void main() {
   });
 
   test('安排页按自然周读取时间块，周一凌晨不回到上一周', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -280,7 +280,7 @@ void main() {
   });
 
   test('安排页默认只读未完成事项，已完成按页读取', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final studyPlans = StudyPlanRepository(rig.db);
@@ -311,7 +311,7 @@ void main() {
   });
 
   test('安排页只读未完成计划的步骤，已完成计划的摘要仍按计数显示', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final studyPlans = StudyPlanRepository(rig.db);
     final now = DateTime(2026, 11, 9, 12);
@@ -345,7 +345,7 @@ void main() {
   });
 
   test('安排页保留并显示全部 AI 改动，不截断较早的记录', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final now = DateTime(2026, 11, 9, 12);
@@ -382,7 +382,7 @@ void main() {
   });
 
   test('搭子建议的时间块记为搭子来源，默认仍是用户', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -412,7 +412,7 @@ void main() {
   });
 
   test('固定安排冲突时单条预约与改期都拒绝，也不生成提交', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -461,7 +461,7 @@ void main() {
   });
 
   test('整组顺延中任一条冲突时整组保持原样，也不生成提交', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -506,7 +506,7 @@ void main() {
   });
 
   test('一次改期只生成一条提交，撤销后回到原时间', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -538,7 +538,7 @@ void main() {
   });
 
   test('同一动作重试沿用原提交，不再写一遍', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
