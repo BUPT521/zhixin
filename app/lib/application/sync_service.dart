@@ -1445,6 +1445,10 @@ class SyncService {
       action: commit.action.isEmpty ? '从其他设备同步' : commit.action,
       actor: actor,
       changes: changes,
+      // 服务端带来的设备标识与作者创建时间原样落到本机提交行；本机提交的两列
+      // 仍为空与等值不变（方案 3.12）。
+      originDevice: commit.deviceId,
+      authoredAt: optionalDateTime(commit.createdAt),
     );
     if (result.skipped > 0) {
       recordFailure(
