@@ -45,5 +45,14 @@ String? _knownMessage(Object error) => switch (error) {
   AccountSignedOut(:final userMessage) => userMessage,
   AccountConfigException(:final message) => message,
   SyncSchemaMismatch() => error.toString(),
+  SyncIdentityChanged() => error.toString(),
+  // 同步侧这几类都带着已经写给人看的说明：快照重建要确认、历史压缩缺快照、
+  // 快照字节对不上、首次基线要确认；落到通用兜底会把“接下来能做什么”丢掉
+  // （ADR-0046）。
+  BaselineConfirmationRequired(:final message) => message,
+  RecloneConfirmationRequired(:final message) => message,
+  SyncHistoryCompacted(:final userMessage) => userMessage,
+  SyncSnapshotUnavailable(:final message) => message,
+  SyncSnapshotInvalid(:final message) => message,
   _ => null,
 };

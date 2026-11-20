@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/application/failure_notice.dart';
+import 'package:zhixin/application/sync_service.dart';
+import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/domain/models/backup_error.dart';
 
@@ -56,5 +58,45 @@ void main() {
     );
 
     expect(text, '数据包版本与当前应用不一致，当前库没有改动。');
+  });
+
+  test('同步的快照重建与历史压缩说明直接给用户看，不退化成通用失败', () {
+    final reclone = failureNotice(
+      const RecloneConfirmationRequired(localCommits: 3, snapshotSeq: 40),
+      action: '同步',
+      kept: '本机数据没有改动',
+    );
+    expect(reclone, contains('云端历史已经压缩，这台设备要从云端快照重新克隆'));
+    expect(reclone, contains('本机还没有推送的 3 条改动'));
+    expect(reclone, isNot(contains('同步没有完成')));
+
+    final unavailable = failureNotice(
+      const SyncSnapshotUnavailable(),
+      action: '同步',
+      kept: '本机数据没有改动',
+    );
+    expect(unavailable, contains('缺少可用快照'));
+    expect(unavailable, contains('清除云端数据后重新开始'));
+
+    final compacted = failureNotice(
+      const SyncHistoryCompacted(
+        earliestSeq: 30,
+        head: 40,
+        snapshot: ServerSnapshot(
+          seq: 30,
+          sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          digest: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        ),
+      ),
+      action: '同步',
+    );
+    expect(compacted, contains('要从云端快照重新克隆'));
+
+    final invalid = failureNotice(
+      const SyncSnapshotInvalid('摘要对不上'),
+      action: '同步',
+      kept: '本机数据没有改动',
+    );
+    expect(invalid, contains('云端快照校验失败'));
   });
 }
