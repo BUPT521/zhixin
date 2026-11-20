@@ -37,7 +37,10 @@ import 'zhixin_select.dart';
 import 'zhixin_sheet.dart';
 import 'zhixin_toast.dart';
 
-/// 数据版本：提交历史、比较、命名、撤销、整版恢复、留存清理与两类数据包。
+/// 数据版本：提交历史、比较、命名、撤销与重做、整版恢复、留存清理与两类数据包。
+///
+/// 撤销一条撤销提交就是重做：提交类型仍是撤销，列表里的标签、菜单动作与确认
+/// 文案按回指链的层数说清这次是撤销还是重做（方案 3.11）。
 class DataVersionPage extends StatefulWidget {
   const DataVersionPage({super.key, @visibleForTesting this.revisions});
 
@@ -595,8 +598,17 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
   }
 
-  Future<void> _undo(RevisionCommit commit) async {
+  /// 撤销或重做一条提交。
+  ///
+  /// 撤销普通提交直接写入；撤销一条撤销提交就是重做，先把会发生什么讲清楚再
+  /// 执行：写回它撤销掉的内容、追加一条新提交、消息里的回执不恢复。
+  Future<void> _undo(RevisionCommit commit, int undoDepth) async {
     if (_busy) return;
+    final label = _undoActionLabel(undoDepth);
+    if (undoDepth > 0) {
+      final confirmed = await _confirmUndoChain(commit, undoDepth);
+      if (!confirmed || !mounted) return;
+    }
     setState(() => _busy = true);
     try {
       final result = await AppScope.of(context).data.undo.undoCommit(commit.id);
@@ -609,8 +621,8 @@ class _DataVersionPageState extends State<DataVersionPage>
           context,
           error,
           stack,
-          action: '撤销这次操作',
-          kind: 'data_version_undo',
+          action: label,
+          kind: undoDepth.isOdd ? 'data_version_redo' : 'data_version_undo',
           kept: '原来的内容保持不变',
           next: '可以再试一次',
         ),
@@ -618,6 +630,40 @@ class _DataVersionPageState extends State<DataVersionPage>
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// 撤销一条撤销提交之前的确认：链上第奇数条撤销提交是重做，第偶数条是撤销
+  /// 这次重做，两种动作都会追加提交，区别在于写回还是去掉内容。
+  Future<bool> _confirmUndoChain(RevisionCommit commit, int undoDepth) async {
+    final theme = context.zhixin;
+    final redo = undoDepth.isOdd;
+    final impact = redo
+        ? '会把这条撤销去掉的内容按原来的样子重新写入，并追加一条新提交；'
+              '之后有人改过同一项内容时不能重做。'
+        : '会重新去掉这次重做写回的内容，回到撤销后的状态，并追加一条新提交；'
+              '之后有人改过同一项内容时不能撤销。';
+    final rollback = redo
+        ? '重做之后原提交重新可以撤销；消息里的回执不会恢复，界面按提交是否仍可撤销重新判断。'
+        : '撤销之后原来那条撤销提交重新可以重做；消息里的回执不会恢复。';
+    return confirmZhixin(
+      context: context,
+      title: redo ? '重做这次撤销' : '撤销这次重做',
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '来源：${_timeText(commit.createdAt)} 的提交 #${commit.id}'
+            '（${commit.action}）。',
+          ),
+          SizedBox(height: theme.space.xs),
+          Text(impact),
+          SizedBox(height: theme.space.gap),
+          Text(rollback, style: theme.text.bodySmall),
+        ],
+      ),
+      confirmLabel: redo ? '重做' : '撤销',
+    );
   }
 
   Future<void> _exportCurrent() async {
@@ -1102,6 +1148,8 @@ class _DataVersionPageState extends State<DataVersionPage>
     final usage = view.usage;
     final commits = history.commits;
     final shown = commits.take(_historyLimit).toList(growable: false);
+    // 撤销链的层数要看回指的提交，列表里的提交按编号建一份索引给每条提交用。
+    final commitsById = {for (final commit in commits) commit.id: commit};
     return SingleChildScrollView(
       padding: theme.space.pageInsets(bottom: 96),
       child: Column(
@@ -1267,7 +1315,8 @@ class _DataVersionPageState extends State<DataVersionPage>
             for (final point in view.restorePoints) _pointTile(theme, point),
           ],
           SectionHeading(key: _historyKey, title: '提交历史'),
-          for (final commit in shown) _commitTile(theme, view, commit),
+          for (final commit in shown)
+            _commitTile(theme, view, commit, commitsById),
           if (commits.length > shown.length)
             LoadMoreFooter(
               label: '读取更早的提交',
@@ -1284,21 +1333,25 @@ class _DataVersionPageState extends State<DataVersionPage>
     ZhixinTheme theme,
     DataVersionOverview view,
     RevisionCommit commit,
+    Map<int, RevisionCommit> commitsById,
   ) {
     final history = view.history;
     final names = history.refsByCommit[commit.id] ?? const <RevisionRef>[];
     final current = commit.id == history.head;
     final undoReason = view.undoReasons[commit.id];
+    // 撤销提交按它在回指链上的层数显示：奇数是撤销、偶数是重做。
+    final undoDepth = _undoDepth(commit, commitsById);
+    final undoLabel = _undoActionLabel(undoDepth);
     return Padding(
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         // 图标与标题都按提交类型来；动作文案只作说明，放在副标题最前面。
         prefix: Icon(
-          _kindIcon(commit.kind),
+          _kindIcon(commit.kind, undoDepth: undoDepth),
           color: current ? theme.colors.primary : theme.colors.onSurfaceVariant,
         ),
         title: Text(
-          '${commit.kind.label}${current ? '（HEAD）' : ''}',
+          '${_kindLabel(commit, undoDepth)}${current ? '（HEAD）' : ''}',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
@@ -1322,10 +1375,13 @@ class _DataVersionPageState extends State<DataVersionPage>
                 onSelected: () => _restore(commit),
               ),
             if (undoReason == null)
-              ZhixinMenuItem(label: '撤销这次操作', onSelected: () => _undo(commit))
+              ZhixinMenuItem(
+                label: undoLabel,
+                onSelected: () => _undo(commit, undoDepth),
+              )
             else
               ZhixinMenuItem(
-                label: '撤销这次操作',
+                label: undoLabel,
                 subtitle: undoReason,
                 enabled: false,
               ),
@@ -1336,11 +1392,48 @@ class _DataVersionPageState extends State<DataVersionPage>
     );
   }
 
+  /// 撤销链的层数：普通提交是 0，撤销是 1，重做是 2，再撤销是 3，依此类推。
+  ///
+  /// 链上更早的提交可能已经不在这一页的列表里，走到看不见的父提交就停下，
+  /// 按已经确定的层数显示；滚动读取更早的提交之后会重新算对。
+  int _undoDepth(RevisionCommit commit, Map<int, RevisionCommit> byId) {
+    var depth = 0;
+    var current = commit;
+    final seen = <int>{};
+    while (current.kind == RevisionKind.undo &&
+        current.revertedCommitId != null &&
+        seen.add(current.id)) {
+      depth++;
+      final parent = byId[current.revertedCommitId];
+      if (parent == null) break;
+      current = parent;
+    }
+    return depth;
+  }
+
+  /// 提交类型的中文标签：撤销提交按层数显示“撤销”或“重做”，其余按类型。
+  String _kindLabel(RevisionCommit commit, int undoDepth) {
+    if (undoDepth == 0) return commit.kind.label;
+    return undoDepth.isEven ? '重做' : '撤销';
+  }
+
+  /// 菜单里的动作名：撤销普通提交是撤销；撤销一条撤销提交是重做它撤销掉的
+  /// 操作；撤销一条重做提交又回到撤销。
+  String _undoActionLabel(int undoDepth) {
+    if (undoDepth == 0) return '撤销这次操作';
+    return undoDepth.isOdd ? '重做这次撤销' : '撤销这次重做';
+  }
+
   /// 提交类型对应的图标；类型由写入路径记录，不从动作文案推断（ADR-0039）。
-  IconData _kindIcon(RevisionKind kind) => switch (kind) {
+  ///
+  /// 撤销提交按回指链的层数区分图标：奇数是撤销，偶数是重做。
+  IconData _kindIcon(RevisionKind kind, {int undoDepth = 0}) => switch (kind) {
     RevisionKind.baseline => FLucideIcons.flag,
     RevisionKind.write => FLucideIcons.pencil,
-    RevisionKind.undo => FLucideIcons.undo2,
+    RevisionKind.undo =>
+      undoDepth > 0 && undoDepth.isEven
+          ? FLucideIcons.redo2
+          : FLucideIcons.undo2,
     RevisionKind.restore => FLucideIcons.rotateCcw,
     RevisionKind.import => FLucideIcons.upload,
     RevisionKind.maintenance => FLucideIcons.wrench,
