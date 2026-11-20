@@ -24,7 +24,7 @@ Future<void> _settle() =>
 
 void main() {
   test('材料和全部页码在同一事务内导入', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
 
@@ -44,7 +44,7 @@ void main() {
   });
 
   test('同一批导入出现重复页码时整批拒绝，不覆盖前一页', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
 
@@ -63,7 +63,7 @@ void main() {
   });
 
   test('添加一页遇到已有页码时拒绝写入，原正文保持不变', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
     final materialId = await service.importMaterial(
@@ -87,7 +87,7 @@ void main() {
   });
 
   test('按页码范围读取只返回范围内的页', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
     final materialId = await service.importMaterial(
@@ -108,7 +108,7 @@ void main() {
   });
 
   test('更正一页在提交历史里保留修改前后的整行', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
     final materialId = await service.importMaterial(
@@ -131,8 +131,8 @@ void main() {
     expect(change.after?['content']?.value, '新原文 P(A∩B)');
   });
 
-  test('更正一页返回提交编号，撤销后原文与材料时间一起恢复', () async {
-    final rig = await openTestRig();
+  test('更正一页返回提交编号，撤销后原文恢复、材料时间写成撤销时刻', () async {
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     var tick = 0;
     DateTime clock() => DateTime(2026, 11, 10, 12, 0, tick++);
@@ -163,14 +163,15 @@ void main() {
     final restored = (await service.pages(materialId)).single;
     expect(restored.content, '旧原文 P(A|B)');
     expect(restored.label, '条件概率');
-    expect(
-      (await service.byId(materialId))?.updatedAt,
-      materialBefore?.updatedAt,
-    );
+    // 维护列不写回旧值：材料行的 updated_at 写成撤销时刻，不再等于更正前的值。
+    final updatedBefore = materialBefore?.updatedAt;
+    final updatedAfter = (await service.byId(materialId))?.updatedAt;
+    expect(updatedAfter, isNot(updatedBefore));
+    expect(updatedAfter!.isAfter(updatedBefore!), isTrue);
   });
 
   test('内容没有变化时不形成提交，也不留下撤销回执', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
     final materialId = await service.importMaterial(
@@ -188,7 +189,7 @@ void main() {
   });
 
   test('更正之后又改过时拒绝撤销，当前原文保持不变', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     var tick = 0;
     DateTime clock() => DateTime(2026, 11, 10, 12, 0, tick++);
@@ -213,7 +214,7 @@ void main() {
   });
 
   test('材料详情按页读到更正记录与是否已撤销', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     var tick = 0;
     DateTime clock() => DateTime(2026, 11, 10, 12, 0, tick++);
@@ -257,7 +258,7 @@ void main() {
   });
 
   test('更正不存在的一页时拒绝写入', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig);
     final materialId = await service.create(title: '概率论讲义');
@@ -278,7 +279,7 @@ void main() {
   });
 
   test('材料列表、材料行与页码的订阅在写入之后重读', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final service = _service(rig, live: true);
     final materialId = await service.importMaterial(

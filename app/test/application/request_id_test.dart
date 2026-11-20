@@ -49,7 +49,7 @@ class _SilentAi implements BuddyAi {
 
 void main() {
   test('同一请求编号的模型判断只写一次', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final attempts = AttemptRepository(rig.db);
     final conversations = ConversationRepository(rig.db);
@@ -112,7 +112,7 @@ void main() {
   });
 
   test('同一请求编号的草稿与提交只写一次', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final attempts = AttemptRepository(rig.db);
     final conversations = ConversationRepository(rig.db);
@@ -192,7 +192,7 @@ void main() {
   });
 
   test('新建目标与事项连点两次只形成一条提交，不同内容各自提交', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final service = _planService(
@@ -226,7 +226,7 @@ void main() {
   });
 
   test('完成步骤连点两次只形成一条提交，改回后再完成仍能写入', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final service = _planService(
@@ -253,7 +253,7 @@ void main() {
   });
 
   test('保存预约时间连点两次只形成一条提交', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final schedule = ScheduleRepository(rig.db);
@@ -289,7 +289,7 @@ void main() {
   });
 
   test('撤销之后同一个动作可以重新提交', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
     final service = _planService(

@@ -9,7 +9,7 @@ import '../support/test_db.dart';
 
 void main() {
   test('撤销截止小时后重新读取设置，数据代次推进一次', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     var version = 0;
     final controller = TimePolicyController(
@@ -40,7 +40,7 @@ void main() {
   });
 
   test('撤销没有生效时不重新读取设置', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     var version = 0;
     final controller = TimePolicyController(

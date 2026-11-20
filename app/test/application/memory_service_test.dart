@@ -11,7 +11,7 @@ import '../support/test_db.dart';
 
 void main() {
   test('修改记忆后回答检索使用新内容', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
@@ -47,7 +47,7 @@ void main() {
   });
 
   test('修改记忆返回提交编号，撤销后恢复原内容与有效期', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
@@ -80,7 +80,7 @@ void main() {
   });
 
   test('修改记忆类型真正写入，撤销后回到原类型', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
@@ -111,7 +111,7 @@ void main() {
   });
 
   test('类型改成偏好时不再保留目标范围，撤销后类型与范围一起恢复', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
@@ -144,7 +144,7 @@ void main() {
   });
 
   test('删除记忆返回提交编号，撤销后状态改回 active', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
@@ -169,7 +169,7 @@ void main() {
   });
 
   test('新增记忆返回提交编号，撤销后移除这一条', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(
@@ -193,7 +193,7 @@ void main() {
   });
 
   test('订阅中的记忆页在保存与删除之后重读一次', () async {
-    final rig = await openTestRig();
+    final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
     final service = MemoryService(

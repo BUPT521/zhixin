@@ -118,7 +118,7 @@ class _Harness {
   late DiscussionService service;
 
   Future<void> open() async {
-    rig = await openTestRig(clock: clock);
+    rig = await openTestRigWithUndoRules(clock: clock);
     db = rig.db;
     conversations = ConversationRepository(db);
     tasks = TaskRepository(db);
