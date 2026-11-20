@@ -121,7 +121,7 @@ void main() {
 
     final pages = await service.pages(materialId);
     expect(pages.single.content, '新原文 P(A∩B)');
-    final commit = (await rig.engine.undoableCommits(rig.db.raw)).first;
+    final commit = (await rig.revisions.undoableCommits()).first;
     expect(commit.action, '更正材料页');
     expect(commit.actor, 'user');
     final changes = await rig.engine.changesFor(rig.db.raw, commit.id);

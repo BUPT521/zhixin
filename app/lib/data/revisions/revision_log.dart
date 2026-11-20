@@ -270,7 +270,7 @@ mixin RevisionLogMixin {
   /// 某一行在提交历史里的修改，按提交编号倒序；只取当前代次。
   ///
   /// 材料详情用它列出每一页的更正记录。撤销提交本身不进入列表，已经撤销的
-  /// 更正仍在结果里，界面按 `activeCommits` 标出状态。
+  /// 更正仍在结果里，界面按 `RevisionService.activeCommits` 标出状态。
   Future<List<RevisionCommit>> rowHistory(
     RawExecutor executor, {
     required String table,
@@ -302,85 +302,6 @@ mixin RevisionLogMixin {
       limit: 1,
     );
     return rows.isEmpty ? null : rows.first['active_commit'] as int?;
-  }
-
-  /// 仍然可以按提交撤销的编号：存在、属于当前代次、没有被撤销过。
-  ///
-  /// 整版恢复或导入会推进代次，更早的提交不再进入可撤销范围；界面的回执
-  /// 也用这个方法判断是否还显示撤销按钮。
-  Future<Set<int>> activeCommits(
-    RawExecutor executor,
-    Iterable<int> ids,
-  ) async {
-    final values = ids.toSet().toList(growable: false);
-    if (values.isEmpty) return const {};
-    final head = await self.commitById(executor, await self.headId(executor));
-    if (head == null) return const {};
-    final placeholders = List.filled(values.length, '?').join(', ');
-    final rows = await executor.rawQuery(
-      '''
-      SELECT c.id FROM revision_commit c
-      WHERE c.id IN ($placeholders) AND c.generation = ?
-        AND NOT EXISTS (
-          SELECT 1 FROM revision_commit u WHERE u.reverted_commit_id = c.id
-        )
-      ''',
-      [...values, head.generation],
-    );
-    return {for (final row in rows) row['id']! as int};
-  }
-
-  /// 当前代次里还没被撤销的提交，按编号倒序；撤销提交本身不在其中。
-  ///
-  /// 安排页的“AI 的改动”从这里挑出要展示的写入，数据版本页读的是完整历史。
-  Future<List<RevisionCommit>> undoableCommits(RawExecutor executor) async {
-    final head = await self.commitById(executor, await self.headId(executor));
-    if (head == null) return const [];
-    final rows = await executor.rawQuery(
-      '''
-      SELECT c.* FROM revision_commit c
-      WHERE c.id != 0 AND c.generation = ? AND c.reverted_commit_id IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM revision_commit u WHERE u.reverted_commit_id = c.id
-        )
-      ORDER BY c.id DESC
-      ''',
-      [head.generation],
-    );
-    return rows.map(RevisionCommit.fromRow).toList(growable: false);
-  }
-
-  /// 指定动作、且改动落在指定表里的可撤销提交，按编号倒序。
-  ///
-  /// 与 [undoableCommits] 的区别是筛选放在同一条查询里：安排页只展示真正写入
-  /// 记忆或学习事项的提交，原先要先读全部可撤销提交，再为每条读一次变更明细。
-  Future<List<RevisionCommit>> receiptCommits(
-    RawExecutor executor, {
-    required Set<String> actions,
-    required Set<String> tables,
-  }) async {
-    if (actions.isEmpty || tables.isEmpty) return const [];
-    final head = await self.commitById(executor, await self.headId(executor));
-    if (head == null) return const [];
-    final actionSlots = List.filled(actions.length, '?').join(', ');
-    final tableSlots = List.filled(tables.length, '?').join(', ');
-    final rows = await executor.rawQuery(
-      '''
-      SELECT c.* FROM revision_commit c
-      WHERE c.id != 0 AND c.generation = ? AND c.reverted_commit_id IS NULL
-        AND c.action IN ($actionSlots)
-        AND EXISTS (
-          SELECT 1 FROM revision_change ch
-          WHERE ch.commit_id = c.id AND ch.table_name IN ($tableSlots)
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM revision_commit u WHERE u.reverted_commit_id = c.id
-        )
-      ORDER BY c.id DESC
-      ''',
-      [head.generation, ...actions, ...tables],
-    );
-    return rows.map(RevisionCommit.fromRow).toList(growable: false);
   }
 
   /// 开始一次命令：标记采集并清掉暂停标记。

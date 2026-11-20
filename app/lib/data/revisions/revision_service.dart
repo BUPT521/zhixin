@@ -208,8 +208,8 @@ class RevisionService {
   ///
   /// [originDevice] 与 [authoredAt] 是服务端带来的设备标识与作者创建时间，原样
   /// 记进本机提交行；两者都是可选参数，调用方没有时按本机提交处理，`authored_at`
-  /// 取落库时间、`origin_device` 留空（方案 3.12）。取值的接线由后续同步任务做，
-  /// 这一层只留接口。
+  /// 取落库时间、`origin_device` 留空（方案 3.12）。同步服务在应用远端提交时
+  /// 把 `ServerCommit` 的两个字段传进来。
   ///
   /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
   /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），

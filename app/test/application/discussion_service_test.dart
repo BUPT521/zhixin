@@ -715,8 +715,9 @@ void main() {
     expect(recoveredChanges, hasLength(1));
     expect(recoveredChanges.single.commitId, accepted.commitId);
 
-    final acceptCommit = (await h.rig.engine.undoableCommits(h.db))
-        .firstWhere((commit) => commit.id == accepted.commitId);
+    final acceptCommit = (await h.rig.revisions.undoableCommits()).firstWhere(
+      (commit) => commit.id == accepted.commitId,
+    );
     expect(acceptCommit.action, acceptNextStepAction);
 
     final second = await h.service.acceptNextStep(
@@ -1110,8 +1111,9 @@ void main() {
     // 同一批写入落在同一条提交里，两张卡片指向同一次写入。
     expect({for (final item in items) item.commitId}, hasLength(1));
     final commitId = items.first.commitId!;
-    final commit = (await h.rig.engine.undoableCommits(h.db))
-        .firstWhere((item) => item.id == commitId);
+    final commit = (await h.rig.revisions.undoableCommits()).firstWhere(
+      (item) => item.id == commitId,
+    );
     expect(commit.action, writeMemoryAction);
 
     await h.rig.revisions.undoCommit(commitId);

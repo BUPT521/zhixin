@@ -277,8 +277,8 @@ class RevisionUndoService {
   /// 界面的回执是否仍然可以撤销；整版恢复或导入之后的旧提交与被撤销的提交
   /// 不在结果里。
   ///
-  /// 与 `RevisionEngine.activeCommits` 的区别是这里沿撤销链递归判断：重做之后
-  /// 原提交重新生效，回执入口据此重新出现；已经被重做过的撤销提交不再生效。
+  /// 沿撤销链递归判断：重做之后原提交重新生效，回执入口据此重新出现；已经
+  /// 被重做过的撤销提交不再生效。
   Future<Set<int>> activeCommits(
     RawExecutor executor,
     Iterable<int> ids,
@@ -307,9 +307,8 @@ class RevisionUndoService {
 
   /// 当前代次里还没被撤销的提交，按编号倒序；撤销提交本身不在其中。
   ///
-  /// 与 `RevisionEngine.undoableCommits` 的区别同 [activeCommits]：重做之后原
-  /// 提交重新进入结果；撤销提交本身不按普通撤销处理，界面用
-  /// [undoBlockReasons] 给出“重做”入口。
+  /// 沿撤销链递归判断：重做之后原提交重新进入结果；撤销提交本身不按普通撤销
+  /// 处理，界面用 [undoBlockReasons] 给出“重做”入口。
   Future<List<RevisionCommit>> undoableCommits(RawExecutor executor) async {
     final head = await engine.commitById(
       executor,
@@ -332,9 +331,8 @@ class RevisionUndoService {
 
   /// 指定动作、且改动落在指定表里的可撤销提交，按编号倒序。
   ///
-  /// 查询与 `RevisionEngine.receiptCommits` 相同，撤销链的判断放在 Dart 里做，
-  /// 因为 SQL 里的“有没有人回指”只能排除一层：重做之后原提交重新可撤销，
-  /// 安排页据此重新给出回执。
+  /// 查询只按动作与表筛选，撤销链的判断放在 Dart 里做，因为 SQL 里的“有没有
+  /// 人回指”只能排除一层：重做之后原提交重新可撤销，安排页据此重新给出回执。
   Future<List<RevisionCommit>> receiptCommits(
     RawExecutor executor, {
     required Set<String> actions,
