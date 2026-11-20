@@ -2,7 +2,7 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 26 的 23 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 28 的 26 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
@@ -59,6 +59,31 @@ const List<String> checkpointKinds = [
   'named',
 ];
 
+/// 提交类型：由写入路径决定，动作文案只给人看（[ADR-0039](../../../../../docs/adr/0039-数据版本的提交类型与同步冲突记录.md)）。
+const List<String> revisionKinds = [
+  'baseline',
+  'write',
+  'undo',
+  'restore',
+  'import',
+  'maintenance',
+  'remote',
+];
+
+/// 检查点投影的编码：`json` 是 UTF-8 原文，`json+gzip` 是它的 gzip 压缩。
+const List<String> checkpointEncodings = ['json', 'json+gzip'];
+
+/// 附件引用的主人：一次提交的变更明细，或者一份检查点。
+const List<String> revisionAssetOwnerKinds = ['change', 'checkpoint'];
+
+/// 远端提交覆盖本机修改时记下的冲突原因。
+const List<String> revisionConflictReasons = [
+  'concurrent_update',
+  'deleted_locally',
+  'insert_collision',
+  'deleted_remotely_modified',
+];
+
 /// 各列允许的取值集合；键是“表名.列名”。
 const Map<String, List<String>> checkValueSets = {
   'learning_goal.status': learningGoalStatuses,
@@ -77,8 +102,12 @@ const Map<String, List<String>> checkValueSets = {
   'memory.source_kind': memorySourceKinds,
   'memory.status': memoryStatuses,
   'revision_commit.actor': revisionActors,
+  'revision_commit.kind': revisionKinds,
   'revision_change.op': changeOperations,
   'revision_checkpoint.kind': checkpointKinds,
+  'revision_checkpoint.encoding': checkpointEncodings,
+  'revision_asset_ref.owner_kind': revisionAssetOwnerKinds,
+  'revision_conflict.reason': revisionConflictReasons,
 };
 
 @DataClassName('AppMetaRow')
@@ -543,10 +572,26 @@ class RevisionCommits extends Table {
   )();
   IntColumn get generation => integer()();
   TextColumn get actor => text().check(actor.isIn(revisionActors))();
+
+  /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
+  /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
+  TextColumn get kind => text().check(kind.isIn(revisionKinds))();
+
+  /// 给人看的动作说明；不参与撤销与界面类型的判断。
   TextColumn get action => text()();
   TextColumn get requestId => text().nullable()();
   IntColumn get restoredCommitId => integer().nullable()();
   IntColumn get revertedCommitId => integer().nullable()();
+
+  /// 这条提交变更明细的字节数；按容量裁剪用它估算每条提交占用的空间。
+  IntColumn get byteLength => integer()
+      .withDefault(const Constant(0))
+      .check(byteLength.isBiggerOrEqualValue(0))();
+
+  /// 应用这条远端提交时记下的冲突条数（`revision_conflict`）。
+  IntColumn get conflictCount => integer()
+      .withDefault(const Constant(0))
+      .check(conflictCount.isBiggerOrEqualValue(0))();
   IntColumn get changeCount => integer().withDefault(const Constant(0))();
   TextColumn get createdAt => text()();
 }
@@ -595,10 +640,79 @@ class RevisionCheckpoints extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get kind => text().check(kind.isIn(checkpointKinds))();
   IntColumn get commitId => integer()();
-  TextColumn get projectionJson => text()();
+
+  /// 业务投影的字节；`json` 直接存 UTF-8 原文，`json+gzip` 存它的 gzip 压缩。
+  BlobColumn get payload => blob()();
+  TextColumn get encoding => text().check(encoding.isIn(checkpointEncodings))();
+
+  /// 压缩之前的字节数，用于留存统计与按容量裁剪的估算。
+  IntColumn get rawBytes => integer().check(rawBytes.isBiggerOrEqualValue(0))();
   TextColumn get assetHashesJson => text()();
+
+  /// 按解压后的原文计算，与 [payload] 的编码无关。
   TextColumn get checksum => text()();
   TextColumn get createdAt => text()();
+}
+
+/// 历史的下游读者在库里登记读到哪里。
+///
+/// 会丢数据的读者（同步推送）把 [blocking] 置 1，裁剪与清理历史不能越过它的
+/// [position]；只会退回全量重建的读者（文本索引、记忆索引）不阻止裁剪。
+@DataClassName('RevisionCursorRow')
+class RevisionCursors extends Table {
+  @override
+  String get tableName => 'revision_cursor';
+  TextColumn get name => text()();
+  IntColumn get position => integer()();
+  BoolColumn get blocking => boolean().withDefault(const Constant(false))();
+  TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {name};
+}
+
+/// 提交与检查点引用的附件对象；附件回收与核对读这张表，不再解码全部变更明细。
+@TableIndex(name: 'idx_revision_asset_hash', columns: {#hash})
+@DataClassName('RevisionAssetRefRow')
+class RevisionAssetRefs extends Table {
+  @override
+  String get tableName => 'revision_asset_ref';
+
+  /// `change` 表示一次提交的变更明细，`checkpoint` 表示一份检查点的附件清单。
+  TextColumn get ownerKind =>
+      text().check(ownerKind.isIn(revisionAssetOwnerKinds))();
+  IntColumn get ownerId => integer()();
+  TextColumn get hash => text()();
+
+  @override
+  Set<Column> get primaryKey => {ownerKind, ownerId, hash};
+}
+
+/// 应用远端提交时被覆盖的本机修改。
+///
+/// 同步仍然是后到覆盖先到；这张表让本机能列出每一处被覆盖的本机值，并把本机
+/// 值作为一条普通提交写回（`keepLocal`）。
+@DataClassName('RevisionConflictRow')
+class RevisionConflicts extends Table {
+  @override
+  String get tableName => 'revision_conflict';
+  IntColumn get id => integer().autoIncrement()();
+
+  /// 应用远端提交时在本机形成的 `remote` 提交。
+  IntColumn get commitId =>
+      integer().references(RevisionCommits, #id, onDelete: KeyAction.cascade)();
+  TextColumn get targetTable => text().named('table_name')();
+  TextColumn get rowKey => text()();
+
+  /// 整行冲突（新增撞上同一主键）时为空。
+  TextColumn get columnName => text().nullable()();
+  TextColumn get reason => text().check(reason.isIn(revisionConflictReasons))();
+  TextColumn get localJson => text()();
+  TextColumn get remoteBeforeJson => text().nullable()();
+  TextColumn get remoteAfterJson => text()();
+
+  /// 本机值已经写回时，指回那条 `write` 提交。
+  IntColumn get resolvedCommitId => integer().nullable()();
 }
 
 @DataClassName('RevisionContextRow')
@@ -606,7 +720,14 @@ class RevisionContexts extends Table {
   @override
   String get tableName => 'revision_context';
   IntColumn get id => integer().check(id.equals(1))();
+
+  /// 已经预留、还没有落库的提交编号；没有预留时为空。
   IntColumn get activeCommit => integer().nullable()();
+
+  /// 触发器按它判断这次命令是否要采集行变化；命令开始时置 1，结束时清 0。
+  BoolColumn get capturing => boolean().withDefault(const Constant(false))();
+
+  /// 整版恢复与导入期间暂停采集，避免把整库删除与重插记成逐行历史。
   BoolColumn get suppress => boolean().withDefault(const Constant(false))();
 
   @override

@@ -11,6 +11,249 @@ import 'revision_actions.dart';
 import 'revision_engine.dart';
 import 'revision_models.dart';
 
+/// 一次撤销核对需要读到的上下文：目标提交、这条净变化、当前行、同一次提交的
+/// 全部变化，以及判断“现在”的时间。
+class UndoCheck {
+  const UndoCheck({
+    required this.executor,
+    required this.commit,
+    required this.change,
+    required this.current,
+    required this.commitChanges,
+    required this.clock,
+  });
+
+  final RawExecutor executor;
+  final RevisionCommit commit;
+  final RevisionChange change;
+
+  /// 这一行当前的值；行已经不存在时为空。
+  final TypedRow? current;
+
+  /// 目标提交里的全部净变化，供 guard 判断同一条提交是否会把状态恢复。
+  final List<RevisionChange> commitChanges;
+  final Clock clock;
+}
+
+/// 撤销的业务约束：按表声明覆盖范围，并在写回之前核对恢复后是否仍然成立。
+///
+/// 数据层只做通用核对（代次、后续修改、当前值、白名单）；预约冲突、学习事项
+/// 归属与课表这三类规则由实现方注册，阶段 0 的实现在数据层，之后移到
+/// `lib/application/undo_guards/`（ADR-0039 第 3.4 节）。
+abstract interface class UndoGuard {
+  /// 这个 guard 负责的表。
+  Set<String> get tables;
+
+  /// 只对指定动作开放的表，例如更正材料页同一条提交里的材料行。
+  Map<String, Set<String>> get actionTables;
+
+  /// 恢复后不成立时返回不能撤销的原因，成立时返回空。
+  Future<String?> check(UndoCheck check);
+}
+
+/// 预约冲突：撤销更新与撤销删除要核对恢复后的时间是否仍可执行。
+class ScheduleUndoGuard implements UndoGuard {
+  const ScheduleUndoGuard();
+
+  @override
+  Set<String> get tables => const {'schedule_block'};
+
+  @override
+  Map<String, Set<String>> get actionTables => const {};
+
+  @override
+  Future<String?> check(UndoCheck check) async {
+    final change = check.change;
+    final current = check.current;
+    // 撤销新增会删除预约，不需要再检查占用；撤销更新与撤销删除都要核对
+    // 恢复后的时间是否仍可执行。
+    if (change.op == ChangeOp.insert) return null;
+    final row = change.op == ChangeOp.delete
+        ? change.before!
+        : _merged(current!, change.before!);
+    final status = row['status']?.value as String? ?? 'planned';
+    final start = row['start_at']?.value as String?;
+    final end = row['end_at']?.value as String?;
+    final planItemId = row['plan_item_id']?.value as String?;
+    if (start == null || end == null || planItemId == null) {
+      return '预约内容不完整，不能撤销';
+    }
+    final item = await selectRows(
+      check.executor,
+      'plan_item',
+      columns: ['id', 'status', 'goal_id'],
+      where: 'id = ?',
+      whereArgs: [planItemId],
+      limit: 1,
+    );
+    if (item.isEmpty) return '预约对应的学习事项已经不存在';
+    final itemStatus = item.first['status'] as String?;
+    if ((itemStatus == 'done' || itemStatus == 'deferred') &&
+        !_restoresStatus(check.commitChanges, 'plan_item', change.rowKey)) {
+      return '预约对应的学习事项已经完成或暂缓，不再恢复这条预约';
+    }
+    final goalId = item.first['goal_id'] as String?;
+    if (goalId != null) {
+      final goals = await selectRows(
+        check.executor,
+        'learning_goal',
+        columns: ['status'],
+        where: 'id = ?',
+        whereArgs: [goalId],
+        limit: 1,
+      );
+      final goalStatus = goals.isEmpty
+          ? null
+          : goals.first['status'] as String?;
+      if (goalStatus != null &&
+          goalStatus != 'active' &&
+          !_restoresStatus(check.commitChanges, 'learning_goal', goalId)) {
+        return '预约对应的学习目标已经暂停或结束，不再恢复这条预约';
+      }
+    }
+    if (status != 'planned') return null;
+
+    final DateTime? startAt;
+    final DateTime? endAt;
+    try {
+      startAt = optionalDateTime(start);
+      endAt = optionalDateTime(end);
+    } on FormatException {
+      return '预约时间不完整，不能撤销';
+    }
+    if (startAt == null || endAt == null || !endAt.isAfter(startAt)) {
+      return '预约时间不完整，不能撤销';
+    }
+    final conflict = await findScheduleConflict(
+      check.executor,
+      start: startAt,
+      end: endAt,
+      ignoredBlockIds: {change.rowKey},
+    );
+    if (conflict != null) {
+      return '恢复后的时间与${conflict.description}冲突';
+    }
+    return null;
+  }
+}
+
+/// 学习事项的撤销要避开级联删除后续数据。
+///
+/// 撤销新建会删除这项事项，已有预约、学习场次或系统学习计划归属时不删；
+/// 撤销删除会重新插入，原来的目标、讨论或计划已经不存在时不插。
+class PlanItemUndoGuard implements UndoGuard {
+  const PlanItemUndoGuard();
+
+  @override
+  Set<String> get tables => const {'plan_item'};
+
+  @override
+  Map<String, Set<String>> get actionTables => const {};
+
+  @override
+  Future<String?> check(UndoCheck check) async {
+    final change = check.change;
+    final current = check.current;
+    if (change.op == ChangeOp.insert) {
+      if (current == null) return null;
+      final planId = current['study_plan_id'];
+      if (planId != null && !planId.isNull) {
+        return '这项任务已归入系统学习计划，不能撤销';
+      }
+      final blocks = await selectRows(
+        check.executor,
+        'schedule_block',
+        columns: ['id'],
+        where: 'plan_item_id = ?',
+        whereArgs: [change.rowKey],
+        limit: 1,
+      );
+      if (blocks.isNotEmpty) return '这项任务已有预约，不能撤销';
+      final sessions = await selectRows(
+        check.executor,
+        'study_session',
+        columns: ['id'],
+        where: 'plan_item_id = ?',
+        whereArgs: [change.rowKey],
+        limit: 1,
+      );
+      if (sessions.isNotEmpty) return '这项任务已有学习记录，不能撤销';
+      return null;
+    }
+    if (change.op == ChangeOp.delete) {
+      final row = change.before!;
+      final references = <(String table, RevisionValue?)>[
+        ('learning_goal', row['goal_id']),
+        ('conversation', row['conversation_id']),
+        ('study_plan', row['study_plan_id']),
+      ];
+      for (final (table, value) in references) {
+        if (value == null || value.isNull) continue;
+        final rows = await selectRows(
+          check.executor,
+          table,
+          columns: ['id'],
+          where: 'id = ?',
+          whereArgs: [value.value],
+          limit: 1,
+        );
+        if (rows.isEmpty) {
+          return '这项任务原来归属的目标、讨论或计划已经不存在，不能撤销删除';
+        }
+      }
+    }
+    return null;
+  }
+}
+
+/// 课表：撤销删除会把这一节课重新加回每周课表，先核对现有待开始预约。
+///
+/// 新增课表本来就会反向查预约（2026-11-11 判例），撤销删除也要走同一份规则；
+/// 撤销新增只是删除课表，不需要检查。
+class TimetableUndoGuard implements UndoGuard {
+  const TimetableUndoGuard();
+
+  @override
+  Set<String> get tables => const {'timetable_entry'};
+
+  @override
+  Map<String, Set<String>> get actionTables => const {};
+
+  @override
+  Future<String?> check(UndoCheck check) async {
+    final change = check.change;
+    final current = check.current;
+    if (change.op == ChangeOp.insert) return null;
+    final row = change.op == ChangeOp.delete
+        ? change.before!
+        : _merged(current!, change.before!);
+    final weekday = row['weekday']?.value as int?;
+    final start = row['start_time']?.value as String?;
+    final end = row['end_time']?.value as String?;
+    if (weekday == null || start == null || end == null) {
+      return '课表内容不完整，不能撤销';
+    }
+    final conflict = await findRecurringTimetableConflict(
+      check.executor,
+      weekday: weekday,
+      startTime: start,
+      endTime: end,
+      now: check.clock(),
+    );
+    if (conflict != null) {
+      return '恢复课表后的时间与${conflict.description}冲突';
+    }
+    return null;
+  }
+}
+
+/// 默认注册的三条业务约束；应用层可以按同一接口替换或追加。
+const List<UndoGuard> defaultUndoGuards = [
+  ScheduleUndoGuard(),
+  PlanItemUndoGuard(),
+  TimetableUndoGuard(),
+];
+
 /// 单项撤销：由业务动作给出反向规则，在同一个事务里核对后续修改、当前值、
 /// 依赖与约束，全部通过才整组写回，并追加一条撤销提交。
 ///
@@ -23,10 +266,15 @@ import 'revision_models.dart';
 /// 截止小时写在 `profile` 一行，撤销后应用根要重新读取设置；否则界面继续
 /// 使用启动时缓存的值，时间口径与导出文件名都和库里的设置不一致。
 class RevisionUndoService {
-  RevisionUndoService({required this.engine, this.clock = systemClock});
+  RevisionUndoService({
+    required this.engine,
+    this.clock = systemClock,
+    this.guards = defaultUndoGuards,
+  });
 
   final RevisionEngine engine;
   final Clock clock;
+  final List<UndoGuard> guards;
 
   static const Set<String> _allowedTables = {
     'learning_goal',
@@ -80,27 +328,21 @@ class RevisionUndoService {
         return RevisionUndoResult(applied: false, message: conflict);
       }
 
-      final commandId = await engine.beginCommand(txn);
+      await engine.beginCommand(txn);
       for (final change in changeRows) {
         await _apply(txn, change);
       }
       await _cleanReceipts(txn, commitId: commitId, changes: changes);
       final commit = await engine.finishCommand(
         txn,
-        commandId,
         action: '撤销操作',
         actor: 'user',
+        kind: RevisionKind.undo,
+        revertedCommitId: commitId,
       );
       if (commit == null) {
         return const RevisionUndoResult(applied: false, message: '没有产生需要写入的变化');
       }
-      await updateRow(
-        txn,
-        'revision_commit',
-        {'reverted_commit_id': commitId},
-        where: 'id = ?',
-        whereArgs: [commit.id],
-      );
       // 撤销之后这次动作不再是有效提交，释放它的请求编号：用户重新做同一个
       // 动作时按新动作处理，不会被当成重试，也不会撞上 request_id 的唯一索引。
       if (target.requestId != null) {
@@ -187,11 +429,12 @@ class RevisionUndoService {
       return '撤销提交本身不能再撤销，需要回到更早的状态请用整版恢复';
     }
     if (reverted) return '这次操作已经撤销';
-    if (target.action == clearDeadReceiptsAction) {
+    if (target.kind == RevisionKind.maintenance) {
       // 这条提交只是把失效的提交编号从消息里去掉；反向回放会把它们装回去。
       return '清理回执的记录不能单独撤销，需要回到更早的状态请用整版恢复';
     }
-    if (target.action == '恢复版本' || target.action == '导入数据') {
+    if (target.kind == RevisionKind.restore ||
+        target.kind == RevisionKind.import) {
       return '整版恢复请用恢复入口，不能按单项撤销处理';
     }
     if (changes.isEmpty) return '这次提交没有可以撤销的数据变化';
@@ -203,7 +446,7 @@ class RevisionUndoService {
       if (!allowedTables.contains(change.table)) {
         return '“${change.table}”的改动暂不支持单项撤销';
       }
-      if (change.table == 'message' && change.op != 'update') {
+      if (change.table == 'message' && change.op != ChangeOp.update) {
         return '新增或删除的消息不能按单项撤销';
       }
     }
@@ -223,14 +466,14 @@ class RevisionUndoService {
 
       final current = await _currentRow(txn, change);
       switch (change.op) {
-        case 'insert':
+        case ChangeOp.insert:
           if (current == null) return '要撤销的新增内容已经不存在';
           if (!typedRowsEqual(current, change.after!)) {
             return '新增之后内容又有变化，不能撤销';
           }
-        case 'delete':
+        case ChangeOp.delete:
           if (current != null) return '要撤销的删除位置已经有新内容';
-        case 'update':
+        case ChangeOp.update:
           if (current == null) return '要撤销的内容已经不存在';
           for (final entry in change.after!.entries) {
             final value = current[entry.key];
@@ -238,21 +481,21 @@ class RevisionUndoService {
               return '要撤销的内容已经不是原来的样子';
             }
           }
-        default:
-          return '无法处理的变更类型';
       }
 
-      if (change.table == 'schedule_block') {
-        final conflict = await _checkSchedule(txn, change, current, changes);
-        if (conflict != null) return conflict;
-      }
-      if (change.table == 'plan_item') {
-        final conflict = await _checkPlanItem(txn, change, current);
-        if (conflict != null) return conflict;
-      }
-      if (change.table == 'timetable_entry') {
-        final conflict = await _checkTimetable(txn, change, current);
-        if (conflict != null) return conflict;
+      for (final guard in guards) {
+        if (!guard.tables.contains(change.table)) continue;
+        final blocked = await guard.check(
+          UndoCheck(
+            executor: txn,
+            commit: target,
+            change: change,
+            current: current,
+            commitChanges: changes,
+            clock: clock,
+          ),
+        );
+        if (blocked != null) return blocked;
       }
     }
     return null;
@@ -277,7 +520,7 @@ class RevisionUndoService {
         ...?target.after?.keys,
         ...?target.before?.keys,
       };
-      if (target.op != 'update') {
+      if (target.op != ChangeOp.update) {
         result.add(change);
         continue;
       }
@@ -297,236 +540,34 @@ class RevisionUndoService {
       txn,
       table.name,
       where: '${quoteSqlName(table.primaryKey)} = ?',
-      whereArgs: [_keyValue(change.rowKey)],
+      whereArgs: [change.rowKey],
       limit: 1,
     );
     return rows.isEmpty ? null : typedRow(rows.first);
   }
 
-  String _keyValue(String key) => key;
-
-  Future<String?> _checkSchedule(
-    RawExecutor txn,
-    RevisionChange change,
-    TypedRow? current,
-    List<RevisionChange> commitChanges,
-  ) async {
-    // 撤销新增会删除预约，不需要再检查占用；撤销更新与撤销删除都要核对
-    // 恢复后的时间是否仍可执行。
-    if (change.op == 'insert') return null;
-    final row = change.op == 'delete'
-        ? change.before!
-        : _merged(current!, change.before!);
-    final status = row['status']?.value as String? ?? 'planned';
-    final start = row['start_at']?.value as String?;
-    final end = row['end_at']?.value as String?;
-    final planItemId = row['plan_item_id']?.value as String?;
-    if (start == null || end == null || planItemId == null) {
-      return '预约内容不完整，不能撤销';
-    }
-    final item = await selectRows(
-      txn,
-      'plan_item',
-      columns: ['id', 'status', 'goal_id'],
-      where: 'id = ?',
-      whereArgs: [planItemId],
-      limit: 1,
-    );
-    if (item.isEmpty) return '预约对应的学习事项已经不存在';
-    final itemStatus = item.first['status'] as String?;
-    if ((itemStatus == 'done' || itemStatus == 'deferred') &&
-        !_restoresStatus(commitChanges, 'plan_item', change.rowKey)) {
-      return '预约对应的学习事项已经完成或暂缓，不再恢复这条预约';
-    }
-    final goalId = item.first['goal_id'] as String?;
-    if (goalId != null) {
-      final goals = await selectRows(
-        txn,
-        'learning_goal',
-        columns: ['status'],
-        where: 'id = ?',
-        whereArgs: [goalId],
-        limit: 1,
-      );
-      final goalStatus = goals.isEmpty
-          ? null
-          : goals.first['status'] as String?;
-      if (goalStatus != null &&
-          goalStatus != 'active' &&
-          !_restoresStatus(commitChanges, 'learning_goal', goalId)) {
-        return '预约对应的学习目标已经暂停或结束，不再恢复这条预约';
-      }
-    }
-    if (status != 'planned') return null;
-
-    final DateTime? startAt;
-    final DateTime? endAt;
-    try {
-      startAt = optionalDateTime(start);
-      endAt = optionalDateTime(end);
-    } on FormatException {
-      return '预约时间不完整，不能撤销';
-    }
-    if (startAt == null || endAt == null || !endAt.isAfter(startAt)) {
-      return '预约时间不完整，不能撤销';
-    }
-    final selfId = change.rowKey;
-    final conflict = await findScheduleConflict(
-      txn,
-      start: startAt,
-      end: endAt,
-      ignoredBlockIds: {selfId},
-    );
-    if (conflict != null) {
-      return '恢复后的时间与${conflict.description}冲突';
-    }
-    return null;
-  }
-
-  /// 同一条提交是否会把事项或目标恢复为可以继续安排的状态。
-  ///
-  /// 暂停目标与取消弹性预约写在同一条提交里，撤销这条提交时目标目前仍是
-  /// 暂停状态；如果把“目标已暂停”当成硬条件，用户就无法撤销自己的暂停。
-  /// 只有提交本身不恢复状态时才拒绝。
-  bool _restoresStatus(
-    List<RevisionChange> changes,
-    String table,
-    String rowKey,
-  ) {
-    for (final change in changes) {
-      if (change.table != table ||
-          change.rowKey != rowKey ||
-          change.op != 'update') {
-        continue;
-      }
-      final status = change.before?['status']?.value;
-      if (table == 'learning_goal' && status == 'active') return true;
-      if (table == 'plan_item' && (status == 'todo' || status == 'doing')) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// 学习事项的撤销要避开级联删除后续数据。
-  ///
-  /// 撤销新建会删除这项事项，已有预约、学习场次或系统学习计划归属时不删；
-  /// 撤销删除会重新插入，原来的目标、讨论或计划已经不存在时不插。
-  /// 撤销删除课表会把这一节课重新加回每周课表，先核对现有待开始预约。
-  ///
-  /// 新增课表本来就会反向查预约（2026-11-11 判例），撤销删除也要走同一份
-  /// 规则；撤销新增只是删除课表，不需要检查。
-  Future<String?> _checkTimetable(
-    RawExecutor txn,
-    RevisionChange change,
-    TypedRow? current,
-  ) async {
-    if (change.op == 'insert') return null;
-    final row = change.op == 'delete'
-        ? change.before!
-        : _merged(current!, change.before!);
-    final weekday = row['weekday']?.value as int?;
-    final start = row['start_time']?.value as String?;
-    final end = row['end_time']?.value as String?;
-    if (weekday == null || start == null || end == null) {
-      return '课表内容不完整，不能撤销';
-    }
-    final conflict = await findRecurringTimetableConflict(
-      txn,
-      weekday: weekday,
-      startTime: start,
-      endTime: end,
-      now: clock(),
-    );
-    if (conflict != null) {
-      return '恢复课表后的时间与${conflict.description}冲突';
-    }
-    return null;
-  }
-
-  Future<String?> _checkPlanItem(
-    RawExecutor txn,
-    RevisionChange change,
-    TypedRow? current,
-  ) async {
-    if (change.op == 'insert') {
-      if (current == null) return null;
-      final planId = current['study_plan_id'];
-      if (planId != null && !planId.isNull) {
-        return '这项任务已归入系统学习计划，不能撤销';
-      }
-      final blocks = await selectRows(
-        txn,
-        'schedule_block',
-        columns: ['id'],
-        where: 'plan_item_id = ?',
-        whereArgs: [_keyValue(change.rowKey)],
-        limit: 1,
-      );
-      if (blocks.isNotEmpty) return '这项任务已有预约，不能撤销';
-      final sessions = await selectRows(
-        txn,
-        'study_session',
-        columns: ['id'],
-        where: 'plan_item_id = ?',
-        whereArgs: [_keyValue(change.rowKey)],
-        limit: 1,
-      );
-      if (sessions.isNotEmpty) return '这项任务已有学习记录，不能撤销';
-      return null;
-    }
-    if (change.op == 'delete') {
-      final row = change.before!;
-      final references = <(String table, RevisionValue?)>[
-        ('learning_goal', row['goal_id']),
-        ('conversation', row['conversation_id']),
-        ('study_plan', row['study_plan_id']),
-      ];
-      for (final (table, value) in references) {
-        if (value == null || value.isNull) continue;
-        final rows = await selectRows(
-          txn,
-          table,
-          columns: ['id'],
-          where: 'id = ?',
-          whereArgs: [value.value],
-          limit: 1,
-        );
-        if (rows.isEmpty) {
-          return '这项任务原来归属的目标、讨论或计划已经不存在，不能撤销删除';
-        }
-      }
-    }
-    return null;
-  }
-
-  TypedRow _merged(TypedRow current, TypedRow after) => {
-    ...current,
-    for (final entry in after.entries) entry.key: entry.value,
-  };
-
+  /// 按反向规则写回一行；调用前已经核对过当前值与业务约束。
   Future<void> _apply(RawExecutor txn, RevisionChange change) async {
     final schema = await engine.tables(txn);
     final table = schema[change.table]!;
-    final key = _keyValue(change.rowKey);
     final primaryKey = quoteSqlName(table.primaryKey);
     switch (change.op) {
-      case 'insert':
+      case ChangeOp.insert:
         await deleteRows(
           txn,
           table.name,
           where: '$primaryKey = ?',
-          whereArgs: [key],
+          whereArgs: [change.rowKey],
         );
-      case 'delete':
+      case ChangeOp.delete:
         await insertRow(txn, table.name, sqliteRow(change.before!));
-      case 'update':
+      case ChangeOp.update:
         await updateRow(
           txn,
           table.name,
           sqliteRow(change.before!),
           where: '$primaryKey = ?',
-          whereArgs: [key],
+          whereArgs: [change.rowKey],
         );
     }
   }
@@ -543,7 +584,9 @@ class RevisionUndoService {
     final titlesByMessage = <String, Set<String>>{};
     final stepIdsByMessage = <String, Set<String>>{};
     for (final change in changes) {
-      if (change.table != 'plan_item' || change.op != 'insert') continue;
+      if (change.table != 'plan_item' || change.op != ChangeOp.insert) {
+        continue;
+      }
       final row = change.after;
       if (row == null) continue;
       final title = row['title']?.value;
@@ -616,4 +659,30 @@ class RevisionUndoService {
       return null;
     }
   }
+}
+
+TypedRow _merged(TypedRow current, TypedRow after) => {
+  ...current,
+  for (final entry in after.entries) entry.key: entry.value,
+};
+
+/// 同一条提交是否会把事项或目标恢复为可以继续安排的状态。
+bool _restoresStatus(
+  List<RevisionChange> changes,
+  String table,
+  String rowKey,
+) {
+  for (final change in changes) {
+    if (change.table != table ||
+        change.rowKey != rowKey ||
+        change.op != ChangeOp.update) {
+      continue;
+    }
+    final status = change.before?['status']?.value;
+    if (table == 'learning_goal' && status == 'active') return true;
+    if (table == 'plan_item' && (status == 'todo' || status == 'doing')) {
+      return true;
+    }
+  }
+  return false;
 }

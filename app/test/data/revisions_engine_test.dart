@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
+import 'package:zhixin/data/revisions/revision_models.dart';
 
 import '../support/test_db.dart';
 
@@ -31,8 +32,8 @@ void main() {
     var changes = await rig.engine.changesFor(rig.db, head);
     expect(changes, hasLength(1));
     expect(changes.first.table, 'learning_goal');
-    expect(changes.first.op, 'insert');
-    expect(changes.first.after!['id']!.type, 'text');
+    expect(changes.first.op, ChangeOp.insert);
+    expect(changes.first.after!['id']!.type, RevisionValueType.text);
     expect(changes.first.after!['title']!.value, '复习线代');
 
     await updateRow(
@@ -46,7 +47,7 @@ void main() {
     expect(second, 2);
     changes = await rig.engine.changesFor(rig.db, second);
     expect(changes, hasLength(1));
-    expect(changes.first.op, 'update');
+    expect(changes.first.op, ChangeOp.update);
     expect(changes.first.before!.keys, {'title', 'updated_at'});
     expect(changes.first.after!['title']!.value, '复习线性代数');
   });

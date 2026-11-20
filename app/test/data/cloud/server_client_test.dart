@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
@@ -354,7 +355,7 @@ void main() {
       tokens.accessToken,
       bytes: bytes,
       sha256: sha,
-      schemaVersion: 27,
+      schemaVersion: zhixinSchemaVersion,
       deviceName: '测试设备',
     );
     expect(uploaded.sha256, sha);

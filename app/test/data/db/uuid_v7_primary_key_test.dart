@@ -3,6 +3,7 @@ import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart'
     show versionedTableNames;
+import 'package:zhixin/data/revisions/revision_models.dart' show ChangeOp;
 import 'package:zhixin/data/repository/assessment_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
@@ -341,7 +342,7 @@ void main() {
     expect(commit!.action, '一次写入');
     final changes = await rig.engine.changesFor(rig.raw, head);
     expect(changes.map((change) => change.op).toSet(), {
-      'insert',
+      ChangeOp.insert,
     }, reason: '一次提交里的八行都是新增');
 
     final rowKeys = <String, Set<String>>{};

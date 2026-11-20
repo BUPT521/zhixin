@@ -1,5 +1,6 @@
 import '../../domain/rules/time_policy.dart';
 import '../db/guarded_database.dart';
+import '../db/sql.dart';
 import 'asset_store.dart';
 import 'revision_actions.dart';
 import 'revision_engine.dart';
@@ -115,22 +116,7 @@ class RevisionService {
     required String table,
     required String rowKey,
     int limit = 20,
-  }) async {
-    final head = await engine.commitById(db.raw, await engine.headId(db.raw));
-    if (head == null) return const [];
-    final rows = await db.rawQuery(
-      '''
-      SELECT c.* FROM revision_commit c
-      JOIN revision_change ch ON ch.commit_id = c.id
-      WHERE ch.table_name = ? AND ch.row_key = ? AND ch.op = 'update'
-        AND c.generation = ? AND c.reverted_commit_id IS NULL
-      ORDER BY c.id DESC
-      LIMIT ?
-      ''',
-      [table, rowKey, head.generation, limit],
-    );
-    return rows.map(RevisionCommit.fromRow).toList(growable: false);
-  }
+  }) => engine.rowHistory(db.raw, table: table, rowKey: rowKey, limit: limit);
 
   Future<RevisionDiff> compare(int from, int to) =>
       engine.compare(db.raw, from, to);
@@ -204,6 +190,7 @@ class RevisionService {
       label: action,
       actor: actor,
       requestId: requestId,
+      kind: RevisionKind.remote,
       onDuplicate: (_) => null,
     );
     return RemoteApplyResult(
@@ -212,6 +199,27 @@ class RevisionService {
       duplicate: false,
     );
   }
+
+  /// 本机被远端提交覆盖的修改；[unresolved] 为真时只列还没处理过的。
+  Future<List<RevisionConflict>> conflicts({bool unresolved = true}) async {
+    final rows = await selectRows(
+      db.raw,
+      'revision_conflict',
+      where: unresolved ? 'resolved_commit_id IS NULL' : null,
+      orderBy: 'id DESC',
+    );
+    return rows.map(RevisionConflict.fromRow).toList(growable: false);
+  }
+
+  /// 把一条冲突记录里的本机值作为新的普通提交写回，并把冲突标为已处理。
+  ///
+  /// 阶段 0 为空实现，由泳道 S 接上：读 `local_json`，开一条普通写入事务写回，
+  /// 在这条提交上记 `resolved_commit_id`。
+  Future<RevisionCommit?> keepLocal(int conflictId) async => null;
+
+  /// 历史下游读者是否允许裁剪或清理；[clearing] 为真时对应“清理历史”。
+  Future<List<String>> historyBlockers({bool clearing = false}) =>
+      engine.historyBlockers(db.raw, clearing: clearing);
 
   /// 编号大于 [after] 的提交，推送前从这里取；编号已经由版本引擎分配。
   Future<List<RevisionCommit>> commitsAfter(int after) =>
@@ -285,6 +293,7 @@ class RevisionService {
     await db.command(
       (txn) => engine.stripDeadReceipts(txn),
       label: clearDeadReceiptsAction,
+      kind: RevisionKind.maintenance,
     );
   }
 

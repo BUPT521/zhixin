@@ -1,7 +1,77 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../../domain/rules/coded_enum.dart';
 import '../../domain/rules/time_format.dart';
+
+/// 提交类型（01 `revision_commit.kind`）。
+///
+/// 由写入路径决定，界面按它显示标签与图标；动作文案 [RevisionCommit.action]
+/// 只给人看，不参与类型判断（ADR-0039）。
+enum RevisionKind implements CodedEnum {
+  baseline('baseline', '初始基线'),
+  write('write', '写入'),
+  undo('undo', '撤销'),
+  restore('restore', '恢复版本'),
+  import('import', '导入数据'),
+  maintenance('maintenance', '维护'),
+  remote('remote', '其他设备');
+
+  const RevisionKind(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static RevisionKind fromValue(String value) =>
+      codedValueOrNull(RevisionKind.values, value) ??
+      (throw FormatException('未知的提交类型：$value'));
+}
+
+/// 一条净变化的类型（01 `revision_change.op`）；库与数据包里仍写稳定值。
+enum ChangeOp implements CodedEnum {
+  insert('insert', '新增'),
+  update('update', '修改'),
+  delete('delete', '删除');
+
+  const ChangeOp(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static ChangeOp fromValue(String value) =>
+      codedValueOrNull(ChangeOp.values, value) ??
+      (throw FormatException('未知的变更类型：$value'));
+}
+
+/// 版本值的类型；比较时类型和内容一起比较（01 `revision_change.before_json`）。
+enum RevisionValueType {
+  nullValue('null'),
+  integer('integer'),
+  real('real'),
+  text('text'),
+  blob('blob');
+
+  const RevisionValueType(this.value);
+
+  /// 写进库与数据包的稳定值，与 ADR-0018 之前的格式相同。
+  final String value;
+
+  static RevisionValueType fromValue(String value) {
+    for (final type in RevisionValueType.values) {
+      if (type.value == value) return type;
+    }
+    throw FormatException('未知的版本值类型：$value');
+  }
+}
+
+/// 只记录维护信息、不算内容变化的列；撤销核对与撤销写回都跳过它们。
+const Set<String> revisionBookkeepingColumns = {'updated_at'};
 
 /// 数据版本里的一次提交。
 class RevisionCommit {
@@ -11,11 +81,14 @@ class RevisionCommit {
     required this.generation,
     required this.actor,
     required this.action,
+    required this.kind,
     required this.changeCount,
     required this.createdAt,
     this.requestId,
     this.restoredCommitId,
     this.revertedCommitId,
+    this.byteLength = 0,
+    this.conflictCount = 0,
   });
 
   factory RevisionCommit.fromRow(Map<String, Object?> row) => RevisionCommit(
@@ -24,10 +97,13 @@ class RevisionCommit {
     generation: row['generation']! as int,
     actor: row['actor']! as String,
     action: row['action']! as String,
+    kind: RevisionKind.fromValue(row['kind']! as String),
     requestId: row['request_id'] as String?,
     restoredCommitId: row['restored_commit_id'] as int?,
     revertedCommitId: row['reverted_commit_id'] as int?,
     changeCount: row['change_count']! as int,
+    byteLength: row['byte_length'] as int? ?? 0,
+    conflictCount: row['conflict_count'] as int? ?? 0,
     createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
   );
 
@@ -36,14 +112,21 @@ class RevisionCommit {
   final int generation;
   final String actor;
   final String action;
+  final RevisionKind kind;
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
   final int changeCount;
+
+  /// 这条提交变更明细的字节数；按容量裁剪用它估算每条提交占用的空间。
+  final int byteLength;
+
+  /// 应用远端提交时记下的冲突条数。
+  final int conflictCount;
   final DateTime? createdAt;
 
   bool get isBaseline => id == 0;
-  bool get isUndo => revertedCommitId != null;
+  bool get isUndo => kind == RevisionKind.undo;
 
   Map<String, Object?> toRow() => {
     'id': id,
@@ -51,10 +134,13 @@ class RevisionCommit {
     'generation': generation,
     'actor': actor,
     'action': action,
+    'kind': kind.value,
     'request_id': requestId,
     'restored_commit_id': restoredCommitId,
     'reverted_commit_id': revertedCommitId,
     'change_count': changeCount,
+    'byte_length': byteLength,
+    'conflict_count': conflictCount,
     'created_at': createdAt?.toIso8601String(),
   };
 }
@@ -76,7 +162,7 @@ class RevisionChange {
     seq: row['seq']! as int,
     table: row['table_name']! as String,
     rowKey: row['row_key']! as String,
-    op: row['op']! as String,
+    op: ChangeOp.fromValue(row['op']! as String),
     before: decodeTypedRow(row['before_json'] as String?),
     after: decodeTypedRow(row['after_json'] as String?),
   );
@@ -86,22 +172,22 @@ class RevisionChange {
   final String table;
   final String rowKey;
 
-  /// `insert` / `update` / `delete`。
-  final String op;
+  /// 新增、修改或删除；库与数据包仍写 `insert`、`update`、`delete`。
+  final ChangeOp op;
 
   /// 更新只保存变化列；新增时为空，删除时为完整旧行。
   final TypedRow? before;
   final TypedRow? after;
 
-  bool get isUpdate => op == 'update';
-  bool get isDelete => op == 'delete';
+  bool get isUpdate => op == ChangeOp.update;
+  bool get isDelete => op == ChangeOp.delete;
 
   Map<String, Object?> toRow() => {
     'commit_id': commitId,
     'seq': seq,
     'table_name': table,
     'row_key': rowKey,
-    'op': op,
+    'op': op.value,
     'before_json': before == null ? null : encodeTypedRow(before!),
     'after_json': after == null ? null : encodeTypedRow(after!),
   };
@@ -140,7 +226,9 @@ class RevisionCheckpoint {
     required this.id,
     required this.kind,
     required this.commitId,
-    required this.projectionJson,
+    required this.payload,
+    required this.encoding,
+    required this.rawBytes,
     required this.assetHashes,
     required this.checksum,
     required this.createdAt,
@@ -152,7 +240,9 @@ class RevisionCheckpoint {
       id: row['id']! as int,
       kind: row['kind']! as String,
       commitId: row['commit_id']! as int,
-      projectionJson: row['projection_json']! as String,
+      payload: row['payload']! as Uint8List,
+      encoding: row['encoding']! as String,
+      rawBytes: row['raw_bytes']! as int,
       assetHashes: decodeStringList(hashes),
       checksum: row['checksum']! as String,
       createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
@@ -162,10 +252,135 @@ class RevisionCheckpoint {
   final int id;
   final String kind;
   final int commitId;
-  final String projectionJson;
+
+  /// 业务投影的字节：`json` 是 UTF-8 原文，`json+gzip` 是它的 gzip 压缩。
+  final Uint8List payload;
+  final String encoding;
+
+  /// 压缩之前的字节数。
+  final int rawBytes;
   final List<String> assetHashes;
+
+  /// 按解压后的原文计算，与 [encoding] 无关。
   final String checksum;
   final DateTime? createdAt;
+}
+
+/// 历史的下游读者在库里登记读到哪里。
+///
+/// 会丢数据的读者（同步推送）把 [blocking] 置 1，裁剪与清理历史不能越过它的
+/// [position]；只会退回全量重建的读者（索引）只登记位置，不阻止裁剪。
+class RevisionCursor {
+  const RevisionCursor({
+    required this.name,
+    required this.position,
+    this.blocking = false,
+    this.updatedAt,
+  });
+
+  factory RevisionCursor.fromRow(Map<String, Object?> row) => RevisionCursor(
+    name: row['name']! as String,
+    position: row['position']! as int,
+    blocking: (row['blocking'] as int? ?? 0) != 0,
+    updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
+  );
+
+  /// 同步推送读到哪里；落后于 `HEAD` 时阻止裁剪与清理历史。
+  static const String syncPushed = 'sync.pushed';
+
+  /// 服务端最近一次拉到的位置；不阻止裁剪。
+  static const String syncServerHead = 'sync.server_head';
+
+  final String name;
+  final int position;
+  final bool blocking;
+  final DateTime? updatedAt;
+
+  Map<String, Object?> toRow() => {
+    'name': name,
+    'position': position,
+    'blocking': blocking ? 1 : 0,
+    'updated_at': updatedAt == null
+        ? formatDateTime(DateTime.now())
+        : formatDateTime(updatedAt!),
+  };
+}
+
+/// 应用远端提交时被覆盖的本机修改。
+///
+/// 同步仍然是后到覆盖先到；这条记录让本机能列出每一处被覆盖的本机值，并把
+/// 本机值作为一条普通提交写回（`keepLocal`）。[id] 与 [commitId] 在写库之前
+/// 都是 0，由写入方补上。
+class RevisionConflict {
+  const RevisionConflict({
+    required this.table,
+    required this.rowKey,
+    required this.reason,
+    required this.local,
+    required this.remoteAfter,
+    this.id = 0,
+    this.commitId = 0,
+    this.column,
+    this.remoteBefore,
+    this.resolvedCommitId,
+  });
+
+  factory RevisionConflict.fromRow(Map<String, Object?> row) =>
+      RevisionConflict(
+        id: row['id']! as int,
+        commitId: row['commit_id']! as int,
+        table: row['table_name']! as String,
+        rowKey: row['row_key']! as String,
+        column: row['column_name'] as String?,
+        reason: row['reason']! as String,
+        local: decodeTypedRow(row['local_json'] as String?),
+        remoteBefore: decodeTypedRow(row['remote_before_json'] as String?),
+        remoteAfter: decodeTypedRow(row['remote_after_json'] as String?),
+        resolvedCommitId: row['resolved_commit_id'] as int?,
+      );
+
+  /// 本机与远端各改了一列，且本机值既不是远端旧值也不是远端新值。
+  static const String concurrentUpdate = 'concurrent_update';
+
+  /// 本机已经删掉这一行，远端提交还在改它；写入仍然跳过。
+  static const String deletedLocally = 'deleted_locally';
+
+  /// 远端新增撞上本机已有的同一主键，且内容不同。
+  static const String insertCollision = 'insert_collision';
+
+  /// 本机改过这一行，远端把它删掉了。
+  static const String deletedRemotelyModified = 'deleted_remotely_modified';
+
+  final int id;
+  final int commitId;
+  final String table;
+  final String rowKey;
+
+  /// 整行冲突（新增撞上同一主键）时为空。
+  final String? column;
+  final String reason;
+
+  /// 被覆盖之前本机的值，只含 [column]；整行冲突时是整行。
+  final TypedRow local;
+  final TypedRow? remoteBefore;
+  final TypedRow remoteAfter;
+  final int? resolvedCommitId;
+
+  bool get isResolved => resolvedCommitId != null;
+
+  Map<String, Object?> toRow() => {
+    'commit_id': commitId,
+    'table_name': table,
+    'row_key': rowKey,
+    'column_name': column,
+    'reason': reason,
+    'local_json': encodeTypedRow(local),
+    'remote_before_json': remoteBefore == null
+        ? null
+        : encodeTypedRow(remoteBefore!),
+    'remote_after_json': encodeTypedRow(remoteAfter),
+    'resolved_commit_id': resolvedCommitId,
+  };
 }
 
 List<String> decodeStringList(String raw) {
@@ -193,9 +408,12 @@ class RevisionDiff {
   final int after;
   final List<RevisionDiffEntry> entries;
 
-  int get insertCount => entries.where((entry) => entry.op == 'insert').length;
-  int get updateCount => entries.where((entry) => entry.op == 'update').length;
-  int get deleteCount => entries.where((entry) => entry.op == 'delete').length;
+  int get insertCount =>
+      entries.where((entry) => entry.op == ChangeOp.insert).length;
+  int get updateCount =>
+      entries.where((entry) => entry.op == ChangeOp.update).length;
+  int get deleteCount =>
+      entries.where((entry) => entry.op == ChangeOp.delete).length;
   bool get isEmpty => entries.isEmpty;
 }
 
@@ -209,7 +427,7 @@ class RevisionDiffEntry {
 
   final String table;
   final String rowKey;
-  final String op;
+  final ChangeOp op;
   final Set<String> columns;
 }
 
@@ -284,59 +502,65 @@ class RevisionValue {
   const RevisionValue._(this.type, this.value);
 
   factory RevisionValue.of(Object? value) {
-    if (value == null) return const RevisionValue._('null', null);
-    if (value is int) return RevisionValue._('integer', value);
-    if (value is double) return RevisionValue._('real', value);
-    if (value is String) return RevisionValue._('text', value);
+    if (value == null) {
+      return const RevisionValue._(RevisionValueType.nullValue, null);
+    }
+    if (value is int) {
+      return RevisionValue._(RevisionValueType.integer, value);
+    }
+    if (value is double) {
+      return RevisionValue._(RevisionValueType.real, value);
+    }
+    if (value is String) {
+      return RevisionValue._(RevisionValueType.text, value);
+    }
     if (value is Uint8List) {
-      return RevisionValue._('blob', base64Encode(value));
+      return RevisionValue._(RevisionValueType.blob, base64Encode(value));
     }
     if (value is List<int>) {
-      return RevisionValue._('blob', base64Encode(value));
+      return RevisionValue._(RevisionValueType.blob, base64Encode(value));
     }
     throw ArgumentError.value(value, 'value', '不支持的 SQLite 值类型');
   }
 
   factory RevisionValue.fromJson(Object? json) {
     if (json is! Map) throw const FormatException('版本值不是对象');
-    final type = json['t'];
+    final type = RevisionValueType.fromValue(json['t']! as String);
     final value = json['v'];
     switch (type) {
-      case 'null':
-        return const RevisionValue._('null', null);
-      case 'integer':
+      case RevisionValueType.nullValue:
+        return const RevisionValue._(RevisionValueType.nullValue, null);
+      case RevisionValueType.integer:
         if (value is! int) throw const FormatException('整数格式不对');
-        return RevisionValue._('integer', value);
-      case 'real':
+        return RevisionValue._(RevisionValueType.integer, value);
+      case RevisionValueType.real:
         if (value is! num) throw const FormatException('实数格式不对');
-        return RevisionValue._('real', value.toDouble());
-      case 'text':
+        return RevisionValue._(RevisionValueType.real, value.toDouble());
+      case RevisionValueType.text:
         if (value is! String) throw const FormatException('文本格式不对');
-        return RevisionValue._('text', value);
-      case 'blob':
+        return RevisionValue._(RevisionValueType.text, value);
+      case RevisionValueType.blob:
         if (value is! String) throw const FormatException('BLOB 格式不对');
-        return RevisionValue._('blob', value);
-      default:
-        throw FormatException('未知的版本值类型：$type');
+        return RevisionValue._(RevisionValueType.blob, value);
     }
   }
 
-  final String type;
+  final RevisionValueType type;
   final Object? value;
 
-  bool get isNull => type == 'null';
+  bool get isNull => type == RevisionValueType.nullValue;
 
   Object? get sqliteValue {
-    if (type != 'blob') return value;
+    if (type != RevisionValueType.blob) return value;
     final decoded = base64Decode(value! as String);
     return Uint8List.fromList(decoded);
   }
 
-  Map<String, Object?> toJson() => {'t': type, 'v': value};
+  Map<String, Object?> toJson() => {'t': type.value, 'v': value};
 
   bool equals(RevisionValue other) {
     if (type != other.type) return false;
-    if (type == 'blob') return value == other.value;
+    if (type == RevisionValueType.blob) return value == other.value;
     return value == other.value;
   }
 
@@ -347,7 +571,7 @@ class RevisionValue {
   int get hashCode => Object.hash(type, value);
 
   @override
-  String toString() => '$type:$value';
+  String toString() => '${type.value}:$value';
 }
 
 /// 行在某个版本里的值，按列名保存 [RevisionValue]。

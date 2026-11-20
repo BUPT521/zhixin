@@ -134,19 +134,22 @@ class GuardedDatabase implements RawDatabase {
 
   /// 带业务动作标签的命令；一次动作修改多张表时仍只形成一个提交。
   ///
-  /// [requestId] 相同的第二次调用不再执行写入；提供 [onDuplicate] 时由调用方
-  /// 把原提交还原成同样的结果，否则抛出 [RevisionDuplicateRequest]。
+  /// [kind] 是提交类型，远端提交应用走 [RevisionKind.remote]，其余入口默认是
+  /// 普通写入。[requestId] 相同的第二次调用不再执行写入；提供 [onDuplicate]
+  /// 时由调用方把原提交还原成同样的结果，否则抛出 [RevisionDuplicateRequest]。
   Future<T> command<T>(
     Future<T> Function(RawExecutor txn) action, {
     required String label,
     String actor = 'user',
     String? requestId,
+    RevisionKind kind = RevisionKind.write,
     T Function(RevisionCommit commit)? onDuplicate,
   }) => _run(
     action,
     label: label,
     actor: actor,
     requestId: requestId,
+    kind: kind,
     onDuplicate: onDuplicate,
   );
 
@@ -155,55 +158,61 @@ class GuardedDatabase implements RawDatabase {
     String? label,
     String actor = 'user',
     String? requestId,
+    RevisionKind kind = RevisionKind.write,
     T Function(RevisionCommit commit)? onDuplicate,
   }) {
     final active = _currentTxn;
     if (active != null) {
       throw StateError('数据库事务不能嵌套；当前写入请使用传入的 WriteTransaction');
     }
-    return gate.exclusive(() {
-      final engine = revisions;
-      if (engine == null) {
-        return _db.transaction(
-          (txn) => runZoned(() => action(txn), zoneValues: {_txnScope: txn}),
-        );
-      }
-      final changed = <String>{};
-      return _db
-          .transaction((txn) async {
-            if (requestId != null) {
-              final existing = await engine.commitByRequest(txn, requestId);
-              if (existing != null) {
-                if (onDuplicate != null) return onDuplicate(existing);
-                throw RevisionDuplicateRequest(existing);
-              }
-            }
-            final commitId = await engine.beginCommand(
-              txn,
-              requestId: requestId,
+    final engine = revisions;
+    return gate
+        .exclusive(() {
+          if (engine == null) {
+            return _db.transaction(
+              (txn) =>
+                  runZoned(() => action(txn), zoneValues: {_txnScope: txn}),
             );
-            return runZoned(() async {
-              final result = await action(txn);
-              await engine.finishCommand(
-                txn,
-                commitId,
-                action: label ?? defaultAction,
-                actor: actor,
-                requestId: requestId,
-                changedTables: changed,
-              );
-              return result;
-            }, zoneValues: {_txnScope: txn});
-          })
-          .then((result) {
-            // 提交已经落库、独占区还没释放：这时发布表变更，订阅中的读取都排在
-            // 独占区之后，读到的就是这次提交之后的数据（ADR-0014 第 2 条）。
-            _changes.publish(changed);
-            final committed = onCommitted;
-            if (committed != null && changed.isNotEmpty) committed(changed);
-            return result;
-          });
-    });
+          }
+          final changed = <String>{};
+          return _db
+              .transaction((txn) async {
+                if (requestId != null) {
+                  final existing = await engine.commitByRequest(txn, requestId);
+                  if (existing != null) {
+                    if (onDuplicate != null) return onDuplicate(existing);
+                    throw RevisionDuplicateRequest(existing);
+                  }
+                }
+                await engine.beginCommand(txn, requestId: requestId);
+                return runZoned(() async {
+                  final result = await action(txn);
+                  await engine.finishCommand(
+                    txn,
+                    action: label ?? defaultAction,
+                    actor: actor,
+                    requestId: requestId,
+                    changedTables: changed,
+                    kind: kind,
+                  );
+                  return result;
+                }, zoneValues: {_txnScope: txn});
+              })
+              .then((result) {
+                // 提交已经落库、独占区还没释放：这时发布表变更，订阅中的读取都排在
+                // 独占区之后，读到的就是这次提交之后的数据（ADR-0014 第 2 条）。
+                _changes.publish(changed);
+                final committed = onCommitted;
+                if (committed != null && changed.isNotEmpty) committed(changed);
+                return result;
+              });
+        })
+        .then((result) async {
+          // 独占区已经释放；空闲检查点与检索索引补建在这里做，不占用写事务
+          // （ADR-0039 第 2 条）。
+          if (engine != null) await engine.afterCommitIdle(_db);
+          return result;
+        });
   }
 
   /// 独立的写语句各自形成一个提交；事务里的写直接使用本次事务。

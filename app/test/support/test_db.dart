@@ -21,7 +21,7 @@ Future<RawDatabase> openTestDb() async {
   final raw = DriftRawDatabase(app);
   await insertRow(raw, 'app_meta', {
     'key': 'schema_version',
-    'value': '27',
+    'value': '28',
     'updated_at': '2026-11-10 10:00:00',
   }, replace: true);
   await insertRow(raw, 'profile', {

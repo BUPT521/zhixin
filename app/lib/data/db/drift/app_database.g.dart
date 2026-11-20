@@ -9281,6 +9281,16 @@ class $RevisionCommitsTable extends RevisionCommits
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    check: () => kind.isIn(revisionKinds),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _actionMeta = const VerificationMeta('action');
   @override
   late final GeneratedColumn<String> action = GeneratedColumn<String>(
@@ -9323,6 +9333,32 @@ class $RevisionCommitsTable extends RevisionCommits
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _byteLengthMeta = const VerificationMeta(
+    'byteLength',
+  );
+  @override
+  late final GeneratedColumn<int> byteLength = GeneratedColumn<int>(
+    'byte_length',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(byteLength).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _conflictCountMeta = const VerificationMeta(
+    'conflictCount',
+  );
+  @override
+  late final GeneratedColumn<int> conflictCount = GeneratedColumn<int>(
+    'conflict_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(conflictCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _changeCountMeta = const VerificationMeta(
     'changeCount',
   );
@@ -9352,10 +9388,13 @@ class $RevisionCommitsTable extends RevisionCommits
     parentId,
     generation,
     actor,
+    kind,
     action,
     requestId,
     restoredCommitId,
     revertedCommitId,
+    byteLength,
+    conflictCount,
     changeCount,
     createdAt,
   ];
@@ -9396,6 +9435,14 @@ class $RevisionCommitsTable extends RevisionCommits
     } else if (isInserting) {
       context.missing(_actorMeta);
     }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
     if (data.containsKey('action')) {
       context.handle(
         _actionMeta,
@@ -9425,6 +9472,21 @@ class $RevisionCommitsTable extends RevisionCommits
         revertedCommitId.isAcceptableOrUnknown(
           data['reverted_commit_id']!,
           _revertedCommitIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('byte_length')) {
+      context.handle(
+        _byteLengthMeta,
+        byteLength.isAcceptableOrUnknown(data['byte_length']!, _byteLengthMeta),
+      );
+    }
+    if (data.containsKey('conflict_count')) {
+      context.handle(
+        _conflictCountMeta,
+        conflictCount.isAcceptableOrUnknown(
+          data['conflict_count']!,
+          _conflictCountMeta,
         ),
       );
     }
@@ -9470,6 +9532,10 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.string,
         data['${effectivePrefix}actor'],
       )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
       action: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}action'],
@@ -9486,6 +9552,14 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.int,
         data['${effectivePrefix}reverted_commit_id'],
       ),
+      byteLength: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}byte_length'],
+      )!,
+      conflictCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}conflict_count'],
+      )!,
       changeCount: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}change_count'],
@@ -9509,10 +9583,22 @@ class RevisionCommitRow extends DataClass
   final int? parentId;
   final int generation;
   final String actor;
+
+  /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
+  /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
+  final String kind;
+
+  /// 给人看的动作说明；不参与撤销与界面类型的判断。
   final String action;
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
+
+  /// 这条提交变更明细的字节数；按容量裁剪用它估算每条提交占用的空间。
+  final int byteLength;
+
+  /// 应用这条远端提交时记下的冲突条数（`revision_conflict`）。
+  final int conflictCount;
   final int changeCount;
   final String createdAt;
   const RevisionCommitRow({
@@ -9520,10 +9606,13 @@ class RevisionCommitRow extends DataClass
     this.parentId,
     required this.generation,
     required this.actor,
+    required this.kind,
     required this.action,
     this.requestId,
     this.restoredCommitId,
     this.revertedCommitId,
+    required this.byteLength,
+    required this.conflictCount,
     required this.changeCount,
     required this.createdAt,
   });
@@ -9536,6 +9625,7 @@ class RevisionCommitRow extends DataClass
     }
     map['generation'] = Variable<int>(generation);
     map['actor'] = Variable<String>(actor);
+    map['kind'] = Variable<String>(kind);
     map['action'] = Variable<String>(action);
     if (!nullToAbsent || requestId != null) {
       map['request_id'] = Variable<String>(requestId);
@@ -9546,6 +9636,8 @@ class RevisionCommitRow extends DataClass
     if (!nullToAbsent || revertedCommitId != null) {
       map['reverted_commit_id'] = Variable<int>(revertedCommitId);
     }
+    map['byte_length'] = Variable<int>(byteLength);
+    map['conflict_count'] = Variable<int>(conflictCount);
     map['change_count'] = Variable<int>(changeCount);
     map['created_at'] = Variable<String>(createdAt);
     return map;
@@ -9559,6 +9651,7 @@ class RevisionCommitRow extends DataClass
           : Value(parentId),
       generation: Value(generation),
       actor: Value(actor),
+      kind: Value(kind),
       action: Value(action),
       requestId: requestId == null && nullToAbsent
           ? const Value.absent()
@@ -9569,6 +9662,8 @@ class RevisionCommitRow extends DataClass
       revertedCommitId: revertedCommitId == null && nullToAbsent
           ? const Value.absent()
           : Value(revertedCommitId),
+      byteLength: Value(byteLength),
+      conflictCount: Value(conflictCount),
       changeCount: Value(changeCount),
       createdAt: Value(createdAt),
     );
@@ -9584,10 +9679,13 @@ class RevisionCommitRow extends DataClass
       parentId: serializer.fromJson<int?>(json['parentId']),
       generation: serializer.fromJson<int>(json['generation']),
       actor: serializer.fromJson<String>(json['actor']),
+      kind: serializer.fromJson<String>(json['kind']),
       action: serializer.fromJson<String>(json['action']),
       requestId: serializer.fromJson<String?>(json['requestId']),
       restoredCommitId: serializer.fromJson<int?>(json['restoredCommitId']),
       revertedCommitId: serializer.fromJson<int?>(json['revertedCommitId']),
+      byteLength: serializer.fromJson<int>(json['byteLength']),
+      conflictCount: serializer.fromJson<int>(json['conflictCount']),
       changeCount: serializer.fromJson<int>(json['changeCount']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
     );
@@ -9600,10 +9698,13 @@ class RevisionCommitRow extends DataClass
       'parentId': serializer.toJson<int?>(parentId),
       'generation': serializer.toJson<int>(generation),
       'actor': serializer.toJson<String>(actor),
+      'kind': serializer.toJson<String>(kind),
       'action': serializer.toJson<String>(action),
       'requestId': serializer.toJson<String?>(requestId),
       'restoredCommitId': serializer.toJson<int?>(restoredCommitId),
       'revertedCommitId': serializer.toJson<int?>(revertedCommitId),
+      'byteLength': serializer.toJson<int>(byteLength),
+      'conflictCount': serializer.toJson<int>(conflictCount),
       'changeCount': serializer.toJson<int>(changeCount),
       'createdAt': serializer.toJson<String>(createdAt),
     };
@@ -9614,10 +9715,13 @@ class RevisionCommitRow extends DataClass
     Value<int?> parentId = const Value.absent(),
     int? generation,
     String? actor,
+    String? kind,
     String? action,
     Value<String?> requestId = const Value.absent(),
     Value<int?> restoredCommitId = const Value.absent(),
     Value<int?> revertedCommitId = const Value.absent(),
+    int? byteLength,
+    int? conflictCount,
     int? changeCount,
     String? createdAt,
   }) => RevisionCommitRow(
@@ -9625,6 +9729,7 @@ class RevisionCommitRow extends DataClass
     parentId: parentId.present ? parentId.value : this.parentId,
     generation: generation ?? this.generation,
     actor: actor ?? this.actor,
+    kind: kind ?? this.kind,
     action: action ?? this.action,
     requestId: requestId.present ? requestId.value : this.requestId,
     restoredCommitId: restoredCommitId.present
@@ -9633,6 +9738,8 @@ class RevisionCommitRow extends DataClass
     revertedCommitId: revertedCommitId.present
         ? revertedCommitId.value
         : this.revertedCommitId,
+    byteLength: byteLength ?? this.byteLength,
+    conflictCount: conflictCount ?? this.conflictCount,
     changeCount: changeCount ?? this.changeCount,
     createdAt: createdAt ?? this.createdAt,
   );
@@ -9644,6 +9751,7 @@ class RevisionCommitRow extends DataClass
           ? data.generation.value
           : this.generation,
       actor: data.actor.present ? data.actor.value : this.actor,
+      kind: data.kind.present ? data.kind.value : this.kind,
       action: data.action.present ? data.action.value : this.action,
       requestId: data.requestId.present ? data.requestId.value : this.requestId,
       restoredCommitId: data.restoredCommitId.present
@@ -9652,6 +9760,12 @@ class RevisionCommitRow extends DataClass
       revertedCommitId: data.revertedCommitId.present
           ? data.revertedCommitId.value
           : this.revertedCommitId,
+      byteLength: data.byteLength.present
+          ? data.byteLength.value
+          : this.byteLength,
+      conflictCount: data.conflictCount.present
+          ? data.conflictCount.value
+          : this.conflictCount,
       changeCount: data.changeCount.present
           ? data.changeCount.value
           : this.changeCount,
@@ -9666,10 +9780,13 @@ class RevisionCommitRow extends DataClass
           ..write('parentId: $parentId, ')
           ..write('generation: $generation, ')
           ..write('actor: $actor, ')
+          ..write('kind: $kind, ')
           ..write('action: $action, ')
           ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
           ..write('revertedCommitId: $revertedCommitId, ')
+          ..write('byteLength: $byteLength, ')
+          ..write('conflictCount: $conflictCount, ')
           ..write('changeCount: $changeCount, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -9682,10 +9799,13 @@ class RevisionCommitRow extends DataClass
     parentId,
     generation,
     actor,
+    kind,
     action,
     requestId,
     restoredCommitId,
     revertedCommitId,
+    byteLength,
+    conflictCount,
     changeCount,
     createdAt,
   );
@@ -9697,10 +9817,13 @@ class RevisionCommitRow extends DataClass
           other.parentId == this.parentId &&
           other.generation == this.generation &&
           other.actor == this.actor &&
+          other.kind == this.kind &&
           other.action == this.action &&
           other.requestId == this.requestId &&
           other.restoredCommitId == this.restoredCommitId &&
           other.revertedCommitId == this.revertedCommitId &&
+          other.byteLength == this.byteLength &&
+          other.conflictCount == this.conflictCount &&
           other.changeCount == this.changeCount &&
           other.createdAt == this.createdAt);
 }
@@ -9710,10 +9833,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   final Value<int?> parentId;
   final Value<int> generation;
   final Value<String> actor;
+  final Value<String> kind;
   final Value<String> action;
   final Value<String?> requestId;
   final Value<int?> restoredCommitId;
   final Value<int?> revertedCommitId;
+  final Value<int> byteLength;
+  final Value<int> conflictCount;
   final Value<int> changeCount;
   final Value<String> createdAt;
   const RevisionCommitsCompanion({
@@ -9721,10 +9847,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     this.parentId = const Value.absent(),
     this.generation = const Value.absent(),
     this.actor = const Value.absent(),
+    this.kind = const Value.absent(),
     this.action = const Value.absent(),
     this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
     this.revertedCommitId = const Value.absent(),
+    this.byteLength = const Value.absent(),
+    this.conflictCount = const Value.absent(),
     this.changeCount = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
@@ -9733,14 +9862,18 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     this.parentId = const Value.absent(),
     required int generation,
     required String actor,
+    required String kind,
     required String action,
     this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
     this.revertedCommitId = const Value.absent(),
+    this.byteLength = const Value.absent(),
+    this.conflictCount = const Value.absent(),
     this.changeCount = const Value.absent(),
     required String createdAt,
   }) : generation = Value(generation),
        actor = Value(actor),
+       kind = Value(kind),
        action = Value(action),
        createdAt = Value(createdAt);
   static Insertable<RevisionCommitRow> custom({
@@ -9748,10 +9881,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     Expression<int>? parentId,
     Expression<int>? generation,
     Expression<String>? actor,
+    Expression<String>? kind,
     Expression<String>? action,
     Expression<String>? requestId,
     Expression<int>? restoredCommitId,
     Expression<int>? revertedCommitId,
+    Expression<int>? byteLength,
+    Expression<int>? conflictCount,
     Expression<int>? changeCount,
     Expression<String>? createdAt,
   }) {
@@ -9760,10 +9896,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
       if (parentId != null) 'parent_id': parentId,
       if (generation != null) 'generation': generation,
       if (actor != null) 'actor': actor,
+      if (kind != null) 'kind': kind,
       if (action != null) 'action': action,
       if (requestId != null) 'request_id': requestId,
       if (restoredCommitId != null) 'restored_commit_id': restoredCommitId,
       if (revertedCommitId != null) 'reverted_commit_id': revertedCommitId,
+      if (byteLength != null) 'byte_length': byteLength,
+      if (conflictCount != null) 'conflict_count': conflictCount,
       if (changeCount != null) 'change_count': changeCount,
       if (createdAt != null) 'created_at': createdAt,
     });
@@ -9774,10 +9913,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     Value<int?>? parentId,
     Value<int>? generation,
     Value<String>? actor,
+    Value<String>? kind,
     Value<String>? action,
     Value<String?>? requestId,
     Value<int?>? restoredCommitId,
     Value<int?>? revertedCommitId,
+    Value<int>? byteLength,
+    Value<int>? conflictCount,
     Value<int>? changeCount,
     Value<String>? createdAt,
   }) {
@@ -9786,10 +9928,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
       parentId: parentId ?? this.parentId,
       generation: generation ?? this.generation,
       actor: actor ?? this.actor,
+      kind: kind ?? this.kind,
       action: action ?? this.action,
       requestId: requestId ?? this.requestId,
       restoredCommitId: restoredCommitId ?? this.restoredCommitId,
       revertedCommitId: revertedCommitId ?? this.revertedCommitId,
+      byteLength: byteLength ?? this.byteLength,
+      conflictCount: conflictCount ?? this.conflictCount,
       changeCount: changeCount ?? this.changeCount,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -9810,6 +9955,9 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     if (actor.present) {
       map['actor'] = Variable<String>(actor.value);
     }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
     if (action.present) {
       map['action'] = Variable<String>(action.value);
     }
@@ -9821,6 +9969,12 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     }
     if (revertedCommitId.present) {
       map['reverted_commit_id'] = Variable<int>(revertedCommitId.value);
+    }
+    if (byteLength.present) {
+      map['byte_length'] = Variable<int>(byteLength.value);
+    }
+    if (conflictCount.present) {
+      map['conflict_count'] = Variable<int>(conflictCount.value);
     }
     if (changeCount.present) {
       map['change_count'] = Variable<int>(changeCount.value);
@@ -9838,10 +9992,13 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
           ..write('parentId: $parentId, ')
           ..write('generation: $generation, ')
           ..write('actor: $actor, ')
+          ..write('kind: $kind, ')
           ..write('action: $action, ')
           ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
           ..write('revertedCommitId: $revertedCommitId, ')
+          ..write('byteLength: $byteLength, ')
+          ..write('conflictCount: $conflictCount, ')
           ..write('changeCount: $changeCount, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -10725,15 +10882,39 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _projectionJsonMeta = const VerificationMeta(
-    'projectionJson',
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
   );
   @override
-  late final GeneratedColumn<String> projectionJson = GeneratedColumn<String>(
-    'projection_json',
+  late final GeneratedColumn<Uint8List> payload = GeneratedColumn<Uint8List>(
+    'payload',
     aliasedName,
     false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _encodingMeta = const VerificationMeta(
+    'encoding',
+  );
+  @override
+  late final GeneratedColumn<String> encoding = GeneratedColumn<String>(
+    'encoding',
+    aliasedName,
+    false,
+    check: () => encoding.isIn(checkpointEncodings),
     type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rawBytesMeta = const VerificationMeta(
+    'rawBytes',
+  );
+  @override
+  late final GeneratedColumn<int> rawBytes = GeneratedColumn<int>(
+    'raw_bytes',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(rawBytes).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
   static const VerificationMeta _assetHashesJsonMeta = const VerificationMeta(
@@ -10774,7 +10955,9 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     id,
     kind,
     commitId,
-    projectionJson,
+    payload,
+    encoding,
+    rawBytes,
     assetHashesJson,
     checksum,
     createdAt,
@@ -10810,16 +10993,29 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     } else if (isInserting) {
       context.missing(_commitIdMeta);
     }
-    if (data.containsKey('projection_json')) {
+    if (data.containsKey('payload')) {
       context.handle(
-        _projectionJsonMeta,
-        projectionJson.isAcceptableOrUnknown(
-          data['projection_json']!,
-          _projectionJsonMeta,
-        ),
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
       );
     } else if (isInserting) {
-      context.missing(_projectionJsonMeta);
+      context.missing(_payloadMeta);
+    }
+    if (data.containsKey('encoding')) {
+      context.handle(
+        _encodingMeta,
+        encoding.isAcceptableOrUnknown(data['encoding']!, _encodingMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_encodingMeta);
+    }
+    if (data.containsKey('raw_bytes')) {
+      context.handle(
+        _rawBytesMeta,
+        rawBytes.isAcceptableOrUnknown(data['raw_bytes']!, _rawBytesMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rawBytesMeta);
     }
     if (data.containsKey('asset_hashes_json')) {
       context.handle(
@@ -10869,9 +11065,17 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
         DriftSqlType.int,
         data['${effectivePrefix}commit_id'],
       )!,
-      projectionJson: attachedDatabase.typeMapping.read(
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}payload'],
+      )!,
+      encoding: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
-        data['${effectivePrefix}projection_json'],
+        data['${effectivePrefix}encoding'],
+      )!,
+      rawBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}raw_bytes'],
       )!,
       assetHashesJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -10899,15 +11103,25 @@ class RevisionCheckpointRow extends DataClass
   final int id;
   final String kind;
   final int commitId;
-  final String projectionJson;
+
+  /// 业务投影的字节；`json` 直接存 UTF-8 原文，`json+gzip` 存它的 gzip 压缩。
+  final Uint8List payload;
+  final String encoding;
+
+  /// 压缩之前的字节数，用于留存统计与按容量裁剪的估算。
+  final int rawBytes;
   final String assetHashesJson;
+
+  /// 按解压后的原文计算，与 [payload] 的编码无关。
   final String checksum;
   final String createdAt;
   const RevisionCheckpointRow({
     required this.id,
     required this.kind,
     required this.commitId,
-    required this.projectionJson,
+    required this.payload,
+    required this.encoding,
+    required this.rawBytes,
     required this.assetHashesJson,
     required this.checksum,
     required this.createdAt,
@@ -10918,7 +11132,9 @@ class RevisionCheckpointRow extends DataClass
     map['id'] = Variable<int>(id);
     map['kind'] = Variable<String>(kind);
     map['commit_id'] = Variable<int>(commitId);
-    map['projection_json'] = Variable<String>(projectionJson);
+    map['payload'] = Variable<Uint8List>(payload);
+    map['encoding'] = Variable<String>(encoding);
+    map['raw_bytes'] = Variable<int>(rawBytes);
     map['asset_hashes_json'] = Variable<String>(assetHashesJson);
     map['checksum'] = Variable<String>(checksum);
     map['created_at'] = Variable<String>(createdAt);
@@ -10930,7 +11146,9 @@ class RevisionCheckpointRow extends DataClass
       id: Value(id),
       kind: Value(kind),
       commitId: Value(commitId),
-      projectionJson: Value(projectionJson),
+      payload: Value(payload),
+      encoding: Value(encoding),
+      rawBytes: Value(rawBytes),
       assetHashesJson: Value(assetHashesJson),
       checksum: Value(checksum),
       createdAt: Value(createdAt),
@@ -10946,7 +11164,9 @@ class RevisionCheckpointRow extends DataClass
       id: serializer.fromJson<int>(json['id']),
       kind: serializer.fromJson<String>(json['kind']),
       commitId: serializer.fromJson<int>(json['commitId']),
-      projectionJson: serializer.fromJson<String>(json['projectionJson']),
+      payload: serializer.fromJson<Uint8List>(json['payload']),
+      encoding: serializer.fromJson<String>(json['encoding']),
+      rawBytes: serializer.fromJson<int>(json['rawBytes']),
       assetHashesJson: serializer.fromJson<String>(json['assetHashesJson']),
       checksum: serializer.fromJson<String>(json['checksum']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
@@ -10959,7 +11179,9 @@ class RevisionCheckpointRow extends DataClass
       'id': serializer.toJson<int>(id),
       'kind': serializer.toJson<String>(kind),
       'commitId': serializer.toJson<int>(commitId),
-      'projectionJson': serializer.toJson<String>(projectionJson),
+      'payload': serializer.toJson<Uint8List>(payload),
+      'encoding': serializer.toJson<String>(encoding),
+      'rawBytes': serializer.toJson<int>(rawBytes),
       'assetHashesJson': serializer.toJson<String>(assetHashesJson),
       'checksum': serializer.toJson<String>(checksum),
       'createdAt': serializer.toJson<String>(createdAt),
@@ -10970,7 +11192,9 @@ class RevisionCheckpointRow extends DataClass
     int? id,
     String? kind,
     int? commitId,
-    String? projectionJson,
+    Uint8List? payload,
+    String? encoding,
+    int? rawBytes,
     String? assetHashesJson,
     String? checksum,
     String? createdAt,
@@ -10978,7 +11202,9 @@ class RevisionCheckpointRow extends DataClass
     id: id ?? this.id,
     kind: kind ?? this.kind,
     commitId: commitId ?? this.commitId,
-    projectionJson: projectionJson ?? this.projectionJson,
+    payload: payload ?? this.payload,
+    encoding: encoding ?? this.encoding,
+    rawBytes: rawBytes ?? this.rawBytes,
     assetHashesJson: assetHashesJson ?? this.assetHashesJson,
     checksum: checksum ?? this.checksum,
     createdAt: createdAt ?? this.createdAt,
@@ -10988,9 +11214,9 @@ class RevisionCheckpointRow extends DataClass
       id: data.id.present ? data.id.value : this.id,
       kind: data.kind.present ? data.kind.value : this.kind,
       commitId: data.commitId.present ? data.commitId.value : this.commitId,
-      projectionJson: data.projectionJson.present
-          ? data.projectionJson.value
-          : this.projectionJson,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      encoding: data.encoding.present ? data.encoding.value : this.encoding,
+      rawBytes: data.rawBytes.present ? data.rawBytes.value : this.rawBytes,
       assetHashesJson: data.assetHashesJson.present
           ? data.assetHashesJson.value
           : this.assetHashesJson,
@@ -11005,7 +11231,9 @@ class RevisionCheckpointRow extends DataClass
           ..write('id: $id, ')
           ..write('kind: $kind, ')
           ..write('commitId: $commitId, ')
-          ..write('projectionJson: $projectionJson, ')
+          ..write('payload: $payload, ')
+          ..write('encoding: $encoding, ')
+          ..write('rawBytes: $rawBytes, ')
           ..write('assetHashesJson: $assetHashesJson, ')
           ..write('checksum: $checksum, ')
           ..write('createdAt: $createdAt')
@@ -11018,7 +11246,9 @@ class RevisionCheckpointRow extends DataClass
     id,
     kind,
     commitId,
-    projectionJson,
+    $driftBlobEquality.hash(payload),
+    encoding,
+    rawBytes,
     assetHashesJson,
     checksum,
     createdAt,
@@ -11030,7 +11260,9 @@ class RevisionCheckpointRow extends DataClass
           other.id == this.id &&
           other.kind == this.kind &&
           other.commitId == this.commitId &&
-          other.projectionJson == this.projectionJson &&
+          $driftBlobEquality.equals(other.payload, this.payload) &&
+          other.encoding == this.encoding &&
+          other.rawBytes == this.rawBytes &&
           other.assetHashesJson == this.assetHashesJson &&
           other.checksum == this.checksum &&
           other.createdAt == this.createdAt);
@@ -11041,7 +11273,9 @@ class RevisionCheckpointsCompanion
   final Value<int> id;
   final Value<String> kind;
   final Value<int> commitId;
-  final Value<String> projectionJson;
+  final Value<Uint8List> payload;
+  final Value<String> encoding;
+  final Value<int> rawBytes;
   final Value<String> assetHashesJson;
   final Value<String> checksum;
   final Value<String> createdAt;
@@ -11049,7 +11283,9 @@ class RevisionCheckpointsCompanion
     this.id = const Value.absent(),
     this.kind = const Value.absent(),
     this.commitId = const Value.absent(),
-    this.projectionJson = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.encoding = const Value.absent(),
+    this.rawBytes = const Value.absent(),
     this.assetHashesJson = const Value.absent(),
     this.checksum = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -11058,13 +11294,17 @@ class RevisionCheckpointsCompanion
     this.id = const Value.absent(),
     required String kind,
     required int commitId,
-    required String projectionJson,
+    required Uint8List payload,
+    required String encoding,
+    required int rawBytes,
     required String assetHashesJson,
     required String checksum,
     required String createdAt,
   }) : kind = Value(kind),
        commitId = Value(commitId),
-       projectionJson = Value(projectionJson),
+       payload = Value(payload),
+       encoding = Value(encoding),
+       rawBytes = Value(rawBytes),
        assetHashesJson = Value(assetHashesJson),
        checksum = Value(checksum),
        createdAt = Value(createdAt);
@@ -11072,7 +11312,9 @@ class RevisionCheckpointsCompanion
     Expression<int>? id,
     Expression<String>? kind,
     Expression<int>? commitId,
-    Expression<String>? projectionJson,
+    Expression<Uint8List>? payload,
+    Expression<String>? encoding,
+    Expression<int>? rawBytes,
     Expression<String>? assetHashesJson,
     Expression<String>? checksum,
     Expression<String>? createdAt,
@@ -11081,7 +11323,9 @@ class RevisionCheckpointsCompanion
       if (id != null) 'id': id,
       if (kind != null) 'kind': kind,
       if (commitId != null) 'commit_id': commitId,
-      if (projectionJson != null) 'projection_json': projectionJson,
+      if (payload != null) 'payload': payload,
+      if (encoding != null) 'encoding': encoding,
+      if (rawBytes != null) 'raw_bytes': rawBytes,
       if (assetHashesJson != null) 'asset_hashes_json': assetHashesJson,
       if (checksum != null) 'checksum': checksum,
       if (createdAt != null) 'created_at': createdAt,
@@ -11092,7 +11336,9 @@ class RevisionCheckpointsCompanion
     Value<int>? id,
     Value<String>? kind,
     Value<int>? commitId,
-    Value<String>? projectionJson,
+    Value<Uint8List>? payload,
+    Value<String>? encoding,
+    Value<int>? rawBytes,
     Value<String>? assetHashesJson,
     Value<String>? checksum,
     Value<String>? createdAt,
@@ -11101,7 +11347,9 @@ class RevisionCheckpointsCompanion
       id: id ?? this.id,
       kind: kind ?? this.kind,
       commitId: commitId ?? this.commitId,
-      projectionJson: projectionJson ?? this.projectionJson,
+      payload: payload ?? this.payload,
+      encoding: encoding ?? this.encoding,
+      rawBytes: rawBytes ?? this.rawBytes,
       assetHashesJson: assetHashesJson ?? this.assetHashesJson,
       checksum: checksum ?? this.checksum,
       createdAt: createdAt ?? this.createdAt,
@@ -11120,8 +11368,14 @@ class RevisionCheckpointsCompanion
     if (commitId.present) {
       map['commit_id'] = Variable<int>(commitId.value);
     }
-    if (projectionJson.present) {
-      map['projection_json'] = Variable<String>(projectionJson.value);
+    if (payload.present) {
+      map['payload'] = Variable<Uint8List>(payload.value);
+    }
+    if (encoding.present) {
+      map['encoding'] = Variable<String>(encoding.value);
+    }
+    if (rawBytes.present) {
+      map['raw_bytes'] = Variable<int>(rawBytes.value);
     }
     if (assetHashesJson.present) {
       map['asset_hashes_json'] = Variable<String>(assetHashesJson.value);
@@ -11141,7 +11395,9 @@ class RevisionCheckpointsCompanion
           ..write('id: $id, ')
           ..write('kind: $kind, ')
           ..write('commitId: $commitId, ')
-          ..write('projectionJson: $projectionJson, ')
+          ..write('payload: $payload, ')
+          ..write('encoding: $encoding, ')
+          ..write('rawBytes: $rawBytes, ')
           ..write('assetHashesJson: $assetHashesJson, ')
           ..write('checksum: $checksum, ')
           ..write('createdAt: $createdAt')
@@ -11177,6 +11433,21 @@ class $RevisionContextsTable extends RevisionContexts
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _capturingMeta = const VerificationMeta(
+    'capturing',
+  );
+  @override
+  late final GeneratedColumn<bool> capturing = GeneratedColumn<bool>(
+    'capturing',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("capturing" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _suppressMeta = const VerificationMeta(
     'suppress',
   );
@@ -11193,7 +11464,7 @@ class $RevisionContextsTable extends RevisionContexts
     defaultValue: const Constant(false),
   );
   @override
-  List<GeneratedColumn> get $columns => [id, activeCommit, suppress];
+  List<GeneratedColumn> get $columns => [id, activeCommit, capturing, suppress];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -11216,6 +11487,12 @@ class $RevisionContextsTable extends RevisionContexts
           data['active_commit']!,
           _activeCommitMeta,
         ),
+      );
+    }
+    if (data.containsKey('capturing')) {
+      context.handle(
+        _capturingMeta,
+        capturing.isAcceptableOrUnknown(data['capturing']!, _capturingMeta),
       );
     }
     if (data.containsKey('suppress')) {
@@ -11241,6 +11518,10 @@ class $RevisionContextsTable extends RevisionContexts
         DriftSqlType.int,
         data['${effectivePrefix}active_commit'],
       ),
+      capturing: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}capturing'],
+      )!,
       suppress: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}suppress'],
@@ -11257,11 +11538,19 @@ class $RevisionContextsTable extends RevisionContexts
 class RevisionContextRow extends DataClass
     implements Insertable<RevisionContextRow> {
   final int id;
+
+  /// 已经预留、还没有落库的提交编号；没有预留时为空。
   final int? activeCommit;
+
+  /// 触发器按它判断这次命令是否要采集行变化；命令开始时置 1，结束时清 0。
+  final bool capturing;
+
+  /// 整版恢复与导入期间暂停采集，避免把整库删除与重插记成逐行历史。
   final bool suppress;
   const RevisionContextRow({
     required this.id,
     this.activeCommit,
+    required this.capturing,
     required this.suppress,
   });
   @override
@@ -11271,6 +11560,7 @@ class RevisionContextRow extends DataClass
     if (!nullToAbsent || activeCommit != null) {
       map['active_commit'] = Variable<int>(activeCommit);
     }
+    map['capturing'] = Variable<bool>(capturing);
     map['suppress'] = Variable<bool>(suppress);
     return map;
   }
@@ -11281,6 +11571,7 @@ class RevisionContextRow extends DataClass
       activeCommit: activeCommit == null && nullToAbsent
           ? const Value.absent()
           : Value(activeCommit),
+      capturing: Value(capturing),
       suppress: Value(suppress),
     );
   }
@@ -11293,6 +11584,7 @@ class RevisionContextRow extends DataClass
     return RevisionContextRow(
       id: serializer.fromJson<int>(json['id']),
       activeCommit: serializer.fromJson<int?>(json['activeCommit']),
+      capturing: serializer.fromJson<bool>(json['capturing']),
       suppress: serializer.fromJson<bool>(json['suppress']),
     );
   }
@@ -11302,6 +11594,7 @@ class RevisionContextRow extends DataClass
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
       'activeCommit': serializer.toJson<int?>(activeCommit),
+      'capturing': serializer.toJson<bool>(capturing),
       'suppress': serializer.toJson<bool>(suppress),
     };
   }
@@ -11309,10 +11602,12 @@ class RevisionContextRow extends DataClass
   RevisionContextRow copyWith({
     int? id,
     Value<int?> activeCommit = const Value.absent(),
+    bool? capturing,
     bool? suppress,
   }) => RevisionContextRow(
     id: id ?? this.id,
     activeCommit: activeCommit.present ? activeCommit.value : this.activeCommit,
+    capturing: capturing ?? this.capturing,
     suppress: suppress ?? this.suppress,
   );
   RevisionContextRow copyWithCompanion(RevisionContextsCompanion data) {
@@ -11321,6 +11616,7 @@ class RevisionContextRow extends DataClass
       activeCommit: data.activeCommit.present
           ? data.activeCommit.value
           : this.activeCommit,
+      capturing: data.capturing.present ? data.capturing.value : this.capturing,
       suppress: data.suppress.present ? data.suppress.value : this.suppress,
     );
   }
@@ -11330,44 +11626,51 @@ class RevisionContextRow extends DataClass
     return (StringBuffer('RevisionContextRow(')
           ..write('id: $id, ')
           ..write('activeCommit: $activeCommit, ')
+          ..write('capturing: $capturing, ')
           ..write('suppress: $suppress')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, activeCommit, suppress);
+  int get hashCode => Object.hash(id, activeCommit, capturing, suppress);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is RevisionContextRow &&
           other.id == this.id &&
           other.activeCommit == this.activeCommit &&
+          other.capturing == this.capturing &&
           other.suppress == this.suppress);
 }
 
 class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
   final Value<int> id;
   final Value<int?> activeCommit;
+  final Value<bool> capturing;
   final Value<bool> suppress;
   const RevisionContextsCompanion({
     this.id = const Value.absent(),
     this.activeCommit = const Value.absent(),
+    this.capturing = const Value.absent(),
     this.suppress = const Value.absent(),
   });
   RevisionContextsCompanion.insert({
     this.id = const Value.absent(),
     this.activeCommit = const Value.absent(),
+    this.capturing = const Value.absent(),
     this.suppress = const Value.absent(),
   });
   static Insertable<RevisionContextRow> custom({
     Expression<int>? id,
     Expression<int>? activeCommit,
+    Expression<bool>? capturing,
     Expression<bool>? suppress,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (activeCommit != null) 'active_commit': activeCommit,
+      if (capturing != null) 'capturing': capturing,
       if (suppress != null) 'suppress': suppress,
     });
   }
@@ -11375,11 +11678,13 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
   RevisionContextsCompanion copyWith({
     Value<int>? id,
     Value<int?>? activeCommit,
+    Value<bool>? capturing,
     Value<bool>? suppress,
   }) {
     return RevisionContextsCompanion(
       id: id ?? this.id,
       activeCommit: activeCommit ?? this.activeCommit,
+      capturing: capturing ?? this.capturing,
       suppress: suppress ?? this.suppress,
     );
   }
@@ -11393,6 +11698,9 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
     if (activeCommit.present) {
       map['active_commit'] = Variable<int>(activeCommit.value);
     }
+    if (capturing.present) {
+      map['capturing'] = Variable<bool>(capturing.value);
+    }
     if (suppress.present) {
       map['suppress'] = Variable<bool>(suppress.value);
     }
@@ -11404,6 +11712,7 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
     return (StringBuffer('RevisionContextsCompanion(')
           ..write('id: $id, ')
           ..write('activeCommit: $activeCommit, ')
+          ..write('capturing: $capturing, ')
           ..write('suppress: $suppress')
           ..write(')'))
         .toString();
@@ -11613,6 +11922,1225 @@ class RevisionSequencesCompanion extends UpdateCompanion<RevisionSequenceRow> {
   }
 }
 
+class $RevisionCursorsTable extends RevisionCursors
+    with TableInfo<$RevisionCursorsTable, RevisionCursorRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RevisionCursorsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _positionMeta = const VerificationMeta(
+    'position',
+  );
+  @override
+  late final GeneratedColumn<int> position = GeneratedColumn<int>(
+    'position',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _blockingMeta = const VerificationMeta(
+    'blocking',
+  );
+  @override
+  late final GeneratedColumn<bool> blocking = GeneratedColumn<bool>(
+    'blocking',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("blocking" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [name, position, blocking, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'revision_cursor';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RevisionCursorRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('position')) {
+      context.handle(
+        _positionMeta,
+        position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_positionMeta);
+    }
+    if (data.containsKey('blocking')) {
+      context.handle(
+        _blockingMeta,
+        blocking.isAcceptableOrUnknown(data['blocking']!, _blockingMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {name};
+  @override
+  RevisionCursorRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RevisionCursorRow(
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      position: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}position'],
+      )!,
+      blocking: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}blocking'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $RevisionCursorsTable createAlias(String alias) {
+    return $RevisionCursorsTable(attachedDatabase, alias);
+  }
+}
+
+class RevisionCursorRow extends DataClass
+    implements Insertable<RevisionCursorRow> {
+  final String name;
+  final int position;
+  final bool blocking;
+  final String updatedAt;
+  const RevisionCursorRow({
+    required this.name,
+    required this.position,
+    required this.blocking,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['name'] = Variable<String>(name);
+    map['position'] = Variable<int>(position);
+    map['blocking'] = Variable<bool>(blocking);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  RevisionCursorsCompanion toCompanion(bool nullToAbsent) {
+    return RevisionCursorsCompanion(
+      name: Value(name),
+      position: Value(position),
+      blocking: Value(blocking),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory RevisionCursorRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RevisionCursorRow(
+      name: serializer.fromJson<String>(json['name']),
+      position: serializer.fromJson<int>(json['position']),
+      blocking: serializer.fromJson<bool>(json['blocking']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'name': serializer.toJson<String>(name),
+      'position': serializer.toJson<int>(position),
+      'blocking': serializer.toJson<bool>(blocking),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  RevisionCursorRow copyWith({
+    String? name,
+    int? position,
+    bool? blocking,
+    String? updatedAt,
+  }) => RevisionCursorRow(
+    name: name ?? this.name,
+    position: position ?? this.position,
+    blocking: blocking ?? this.blocking,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  RevisionCursorRow copyWithCompanion(RevisionCursorsCompanion data) {
+    return RevisionCursorRow(
+      name: data.name.present ? data.name.value : this.name,
+      position: data.position.present ? data.position.value : this.position,
+      blocking: data.blocking.present ? data.blocking.value : this.blocking,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionCursorRow(')
+          ..write('name: $name, ')
+          ..write('position: $position, ')
+          ..write('blocking: $blocking, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(name, position, blocking, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RevisionCursorRow &&
+          other.name == this.name &&
+          other.position == this.position &&
+          other.blocking == this.blocking &&
+          other.updatedAt == this.updatedAt);
+}
+
+class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
+  final Value<String> name;
+  final Value<int> position;
+  final Value<bool> blocking;
+  final Value<String> updatedAt;
+  final Value<int> rowid;
+  const RevisionCursorsCompanion({
+    this.name = const Value.absent(),
+    this.position = const Value.absent(),
+    this.blocking = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RevisionCursorsCompanion.insert({
+    required String name,
+    required int position,
+    this.blocking = const Value.absent(),
+    required String updatedAt,
+    this.rowid = const Value.absent(),
+  }) : name = Value(name),
+       position = Value(position),
+       updatedAt = Value(updatedAt);
+  static Insertable<RevisionCursorRow> custom({
+    Expression<String>? name,
+    Expression<int>? position,
+    Expression<bool>? blocking,
+    Expression<String>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (name != null) 'name': name,
+      if (position != null) 'position': position,
+      if (blocking != null) 'blocking': blocking,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RevisionCursorsCompanion copyWith({
+    Value<String>? name,
+    Value<int>? position,
+    Value<bool>? blocking,
+    Value<String>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return RevisionCursorsCompanion(
+      name: name ?? this.name,
+      position: position ?? this.position,
+      blocking: blocking ?? this.blocking,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (position.present) {
+      map['position'] = Variable<int>(position.value);
+    }
+    if (blocking.present) {
+      map['blocking'] = Variable<bool>(blocking.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionCursorsCompanion(')
+          ..write('name: $name, ')
+          ..write('position: $position, ')
+          ..write('blocking: $blocking, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $RevisionAssetRefsTable extends RevisionAssetRefs
+    with TableInfo<$RevisionAssetRefsTable, RevisionAssetRefRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RevisionAssetRefsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _ownerKindMeta = const VerificationMeta(
+    'ownerKind',
+  );
+  @override
+  late final GeneratedColumn<String> ownerKind = GeneratedColumn<String>(
+    'owner_kind',
+    aliasedName,
+    false,
+    check: () => ownerKind.isIn(revisionAssetOwnerKinds),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _ownerIdMeta = const VerificationMeta(
+    'ownerId',
+  );
+  @override
+  late final GeneratedColumn<int> ownerId = GeneratedColumn<int>(
+    'owner_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
+  @override
+  late final GeneratedColumn<String> hash = GeneratedColumn<String>(
+    'hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [ownerKind, ownerId, hash];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'revision_asset_ref';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RevisionAssetRefRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('owner_kind')) {
+      context.handle(
+        _ownerKindMeta,
+        ownerKind.isAcceptableOrUnknown(data['owner_kind']!, _ownerKindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_ownerKindMeta);
+    }
+    if (data.containsKey('owner_id')) {
+      context.handle(
+        _ownerIdMeta,
+        ownerId.isAcceptableOrUnknown(data['owner_id']!, _ownerIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_ownerIdMeta);
+    }
+    if (data.containsKey('hash')) {
+      context.handle(
+        _hashMeta,
+        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_hashMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {ownerKind, ownerId, hash};
+  @override
+  RevisionAssetRefRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RevisionAssetRefRow(
+      ownerKind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}owner_kind'],
+      )!,
+      ownerId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}owner_id'],
+      )!,
+      hash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}hash'],
+      )!,
+    );
+  }
+
+  @override
+  $RevisionAssetRefsTable createAlias(String alias) {
+    return $RevisionAssetRefsTable(attachedDatabase, alias);
+  }
+}
+
+class RevisionAssetRefRow extends DataClass
+    implements Insertable<RevisionAssetRefRow> {
+  /// `change` 表示一次提交的变更明细，`checkpoint` 表示一份检查点的附件清单。
+  final String ownerKind;
+  final int ownerId;
+  final String hash;
+  const RevisionAssetRefRow({
+    required this.ownerKind,
+    required this.ownerId,
+    required this.hash,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['owner_kind'] = Variable<String>(ownerKind);
+    map['owner_id'] = Variable<int>(ownerId);
+    map['hash'] = Variable<String>(hash);
+    return map;
+  }
+
+  RevisionAssetRefsCompanion toCompanion(bool nullToAbsent) {
+    return RevisionAssetRefsCompanion(
+      ownerKind: Value(ownerKind),
+      ownerId: Value(ownerId),
+      hash: Value(hash),
+    );
+  }
+
+  factory RevisionAssetRefRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RevisionAssetRefRow(
+      ownerKind: serializer.fromJson<String>(json['ownerKind']),
+      ownerId: serializer.fromJson<int>(json['ownerId']),
+      hash: serializer.fromJson<String>(json['hash']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'ownerKind': serializer.toJson<String>(ownerKind),
+      'ownerId': serializer.toJson<int>(ownerId),
+      'hash': serializer.toJson<String>(hash),
+    };
+  }
+
+  RevisionAssetRefRow copyWith({
+    String? ownerKind,
+    int? ownerId,
+    String? hash,
+  }) => RevisionAssetRefRow(
+    ownerKind: ownerKind ?? this.ownerKind,
+    ownerId: ownerId ?? this.ownerId,
+    hash: hash ?? this.hash,
+  );
+  RevisionAssetRefRow copyWithCompanion(RevisionAssetRefsCompanion data) {
+    return RevisionAssetRefRow(
+      ownerKind: data.ownerKind.present ? data.ownerKind.value : this.ownerKind,
+      ownerId: data.ownerId.present ? data.ownerId.value : this.ownerId,
+      hash: data.hash.present ? data.hash.value : this.hash,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionAssetRefRow(')
+          ..write('ownerKind: $ownerKind, ')
+          ..write('ownerId: $ownerId, ')
+          ..write('hash: $hash')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(ownerKind, ownerId, hash);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RevisionAssetRefRow &&
+          other.ownerKind == this.ownerKind &&
+          other.ownerId == this.ownerId &&
+          other.hash == this.hash);
+}
+
+class RevisionAssetRefsCompanion extends UpdateCompanion<RevisionAssetRefRow> {
+  final Value<String> ownerKind;
+  final Value<int> ownerId;
+  final Value<String> hash;
+  final Value<int> rowid;
+  const RevisionAssetRefsCompanion({
+    this.ownerKind = const Value.absent(),
+    this.ownerId = const Value.absent(),
+    this.hash = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RevisionAssetRefsCompanion.insert({
+    required String ownerKind,
+    required int ownerId,
+    required String hash,
+    this.rowid = const Value.absent(),
+  }) : ownerKind = Value(ownerKind),
+       ownerId = Value(ownerId),
+       hash = Value(hash);
+  static Insertable<RevisionAssetRefRow> custom({
+    Expression<String>? ownerKind,
+    Expression<int>? ownerId,
+    Expression<String>? hash,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (ownerKind != null) 'owner_kind': ownerKind,
+      if (ownerId != null) 'owner_id': ownerId,
+      if (hash != null) 'hash': hash,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RevisionAssetRefsCompanion copyWith({
+    Value<String>? ownerKind,
+    Value<int>? ownerId,
+    Value<String>? hash,
+    Value<int>? rowid,
+  }) {
+    return RevisionAssetRefsCompanion(
+      ownerKind: ownerKind ?? this.ownerKind,
+      ownerId: ownerId ?? this.ownerId,
+      hash: hash ?? this.hash,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (ownerKind.present) {
+      map['owner_kind'] = Variable<String>(ownerKind.value);
+    }
+    if (ownerId.present) {
+      map['owner_id'] = Variable<int>(ownerId.value);
+    }
+    if (hash.present) {
+      map['hash'] = Variable<String>(hash.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionAssetRefsCompanion(')
+          ..write('ownerKind: $ownerKind, ')
+          ..write('ownerId: $ownerId, ')
+          ..write('hash: $hash, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $RevisionConflictsTable extends RevisionConflicts
+    with TableInfo<$RevisionConflictsTable, RevisionConflictRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RevisionConflictsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _commitIdMeta = const VerificationMeta(
+    'commitId',
+  );
+  @override
+  late final GeneratedColumn<int> commitId = GeneratedColumn<int>(
+    'commit_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES revision_commit (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _targetTableMeta = const VerificationMeta(
+    'targetTable',
+  );
+  @override
+  late final GeneratedColumn<String> targetTable = GeneratedColumn<String>(
+    'table_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rowKeyMeta = const VerificationMeta('rowKey');
+  @override
+  late final GeneratedColumn<String> rowKey = GeneratedColumn<String>(
+    'row_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _columnNameMeta = const VerificationMeta(
+    'columnName',
+  );
+  @override
+  late final GeneratedColumn<String> columnName = GeneratedColumn<String>(
+    'column_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _reasonMeta = const VerificationMeta('reason');
+  @override
+  late final GeneratedColumn<String> reason = GeneratedColumn<String>(
+    'reason',
+    aliasedName,
+    false,
+    check: () => reason.isIn(revisionConflictReasons),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _localJsonMeta = const VerificationMeta(
+    'localJson',
+  );
+  @override
+  late final GeneratedColumn<String> localJson = GeneratedColumn<String>(
+    'local_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _remoteBeforeJsonMeta = const VerificationMeta(
+    'remoteBeforeJson',
+  );
+  @override
+  late final GeneratedColumn<String> remoteBeforeJson = GeneratedColumn<String>(
+    'remote_before_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _remoteAfterJsonMeta = const VerificationMeta(
+    'remoteAfterJson',
+  );
+  @override
+  late final GeneratedColumn<String> remoteAfterJson = GeneratedColumn<String>(
+    'remote_after_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _resolvedCommitIdMeta = const VerificationMeta(
+    'resolvedCommitId',
+  );
+  @override
+  late final GeneratedColumn<int> resolvedCommitId = GeneratedColumn<int>(
+    'resolved_commit_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    commitId,
+    targetTable,
+    rowKey,
+    columnName,
+    reason,
+    localJson,
+    remoteBeforeJson,
+    remoteAfterJson,
+    resolvedCommitId,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'revision_conflict';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RevisionConflictRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('commit_id')) {
+      context.handle(
+        _commitIdMeta,
+        commitId.isAcceptableOrUnknown(data['commit_id']!, _commitIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_commitIdMeta);
+    }
+    if (data.containsKey('table_name')) {
+      context.handle(
+        _targetTableMeta,
+        targetTable.isAcceptableOrUnknown(
+          data['table_name']!,
+          _targetTableMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetTableMeta);
+    }
+    if (data.containsKey('row_key')) {
+      context.handle(
+        _rowKeyMeta,
+        rowKey.isAcceptableOrUnknown(data['row_key']!, _rowKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rowKeyMeta);
+    }
+    if (data.containsKey('column_name')) {
+      context.handle(
+        _columnNameMeta,
+        columnName.isAcceptableOrUnknown(data['column_name']!, _columnNameMeta),
+      );
+    }
+    if (data.containsKey('reason')) {
+      context.handle(
+        _reasonMeta,
+        reason.isAcceptableOrUnknown(data['reason']!, _reasonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_reasonMeta);
+    }
+    if (data.containsKey('local_json')) {
+      context.handle(
+        _localJsonMeta,
+        localJson.isAcceptableOrUnknown(data['local_json']!, _localJsonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_localJsonMeta);
+    }
+    if (data.containsKey('remote_before_json')) {
+      context.handle(
+        _remoteBeforeJsonMeta,
+        remoteBeforeJson.isAcceptableOrUnknown(
+          data['remote_before_json']!,
+          _remoteBeforeJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('remote_after_json')) {
+      context.handle(
+        _remoteAfterJsonMeta,
+        remoteAfterJson.isAcceptableOrUnknown(
+          data['remote_after_json']!,
+          _remoteAfterJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_remoteAfterJsonMeta);
+    }
+    if (data.containsKey('resolved_commit_id')) {
+      context.handle(
+        _resolvedCommitIdMeta,
+        resolvedCommitId.isAcceptableOrUnknown(
+          data['resolved_commit_id']!,
+          _resolvedCommitIdMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  RevisionConflictRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RevisionConflictRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      commitId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}commit_id'],
+      )!,
+      targetTable: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}table_name'],
+      )!,
+      rowKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}row_key'],
+      )!,
+      columnName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}column_name'],
+      ),
+      reason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}reason'],
+      )!,
+      localJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}local_json'],
+      )!,
+      remoteBeforeJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}remote_before_json'],
+      ),
+      remoteAfterJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}remote_after_json'],
+      )!,
+      resolvedCommitId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}resolved_commit_id'],
+      ),
+    );
+  }
+
+  @override
+  $RevisionConflictsTable createAlias(String alias) {
+    return $RevisionConflictsTable(attachedDatabase, alias);
+  }
+}
+
+class RevisionConflictRow extends DataClass
+    implements Insertable<RevisionConflictRow> {
+  final int id;
+
+  /// 应用远端提交时在本机形成的 `remote` 提交。
+  final int commitId;
+  final String targetTable;
+  final String rowKey;
+
+  /// 整行冲突（新增撞上同一主键）时为空。
+  final String? columnName;
+  final String reason;
+  final String localJson;
+  final String? remoteBeforeJson;
+  final String remoteAfterJson;
+
+  /// 本机值已经写回时，指回那条 `write` 提交。
+  final int? resolvedCommitId;
+  const RevisionConflictRow({
+    required this.id,
+    required this.commitId,
+    required this.targetTable,
+    required this.rowKey,
+    this.columnName,
+    required this.reason,
+    required this.localJson,
+    this.remoteBeforeJson,
+    required this.remoteAfterJson,
+    this.resolvedCommitId,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['commit_id'] = Variable<int>(commitId);
+    map['table_name'] = Variable<String>(targetTable);
+    map['row_key'] = Variable<String>(rowKey);
+    if (!nullToAbsent || columnName != null) {
+      map['column_name'] = Variable<String>(columnName);
+    }
+    map['reason'] = Variable<String>(reason);
+    map['local_json'] = Variable<String>(localJson);
+    if (!nullToAbsent || remoteBeforeJson != null) {
+      map['remote_before_json'] = Variable<String>(remoteBeforeJson);
+    }
+    map['remote_after_json'] = Variable<String>(remoteAfterJson);
+    if (!nullToAbsent || resolvedCommitId != null) {
+      map['resolved_commit_id'] = Variable<int>(resolvedCommitId);
+    }
+    return map;
+  }
+
+  RevisionConflictsCompanion toCompanion(bool nullToAbsent) {
+    return RevisionConflictsCompanion(
+      id: Value(id),
+      commitId: Value(commitId),
+      targetTable: Value(targetTable),
+      rowKey: Value(rowKey),
+      columnName: columnName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(columnName),
+      reason: Value(reason),
+      localJson: Value(localJson),
+      remoteBeforeJson: remoteBeforeJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteBeforeJson),
+      remoteAfterJson: Value(remoteAfterJson),
+      resolvedCommitId: resolvedCommitId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(resolvedCommitId),
+    );
+  }
+
+  factory RevisionConflictRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RevisionConflictRow(
+      id: serializer.fromJson<int>(json['id']),
+      commitId: serializer.fromJson<int>(json['commitId']),
+      targetTable: serializer.fromJson<String>(json['targetTable']),
+      rowKey: serializer.fromJson<String>(json['rowKey']),
+      columnName: serializer.fromJson<String?>(json['columnName']),
+      reason: serializer.fromJson<String>(json['reason']),
+      localJson: serializer.fromJson<String>(json['localJson']),
+      remoteBeforeJson: serializer.fromJson<String?>(json['remoteBeforeJson']),
+      remoteAfterJson: serializer.fromJson<String>(json['remoteAfterJson']),
+      resolvedCommitId: serializer.fromJson<int?>(json['resolvedCommitId']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'commitId': serializer.toJson<int>(commitId),
+      'targetTable': serializer.toJson<String>(targetTable),
+      'rowKey': serializer.toJson<String>(rowKey),
+      'columnName': serializer.toJson<String?>(columnName),
+      'reason': serializer.toJson<String>(reason),
+      'localJson': serializer.toJson<String>(localJson),
+      'remoteBeforeJson': serializer.toJson<String?>(remoteBeforeJson),
+      'remoteAfterJson': serializer.toJson<String>(remoteAfterJson),
+      'resolvedCommitId': serializer.toJson<int?>(resolvedCommitId),
+    };
+  }
+
+  RevisionConflictRow copyWith({
+    int? id,
+    int? commitId,
+    String? targetTable,
+    String? rowKey,
+    Value<String?> columnName = const Value.absent(),
+    String? reason,
+    String? localJson,
+    Value<String?> remoteBeforeJson = const Value.absent(),
+    String? remoteAfterJson,
+    Value<int?> resolvedCommitId = const Value.absent(),
+  }) => RevisionConflictRow(
+    id: id ?? this.id,
+    commitId: commitId ?? this.commitId,
+    targetTable: targetTable ?? this.targetTable,
+    rowKey: rowKey ?? this.rowKey,
+    columnName: columnName.present ? columnName.value : this.columnName,
+    reason: reason ?? this.reason,
+    localJson: localJson ?? this.localJson,
+    remoteBeforeJson: remoteBeforeJson.present
+        ? remoteBeforeJson.value
+        : this.remoteBeforeJson,
+    remoteAfterJson: remoteAfterJson ?? this.remoteAfterJson,
+    resolvedCommitId: resolvedCommitId.present
+        ? resolvedCommitId.value
+        : this.resolvedCommitId,
+  );
+  RevisionConflictRow copyWithCompanion(RevisionConflictsCompanion data) {
+    return RevisionConflictRow(
+      id: data.id.present ? data.id.value : this.id,
+      commitId: data.commitId.present ? data.commitId.value : this.commitId,
+      targetTable: data.targetTable.present
+          ? data.targetTable.value
+          : this.targetTable,
+      rowKey: data.rowKey.present ? data.rowKey.value : this.rowKey,
+      columnName: data.columnName.present
+          ? data.columnName.value
+          : this.columnName,
+      reason: data.reason.present ? data.reason.value : this.reason,
+      localJson: data.localJson.present ? data.localJson.value : this.localJson,
+      remoteBeforeJson: data.remoteBeforeJson.present
+          ? data.remoteBeforeJson.value
+          : this.remoteBeforeJson,
+      remoteAfterJson: data.remoteAfterJson.present
+          ? data.remoteAfterJson.value
+          : this.remoteAfterJson,
+      resolvedCommitId: data.resolvedCommitId.present
+          ? data.resolvedCommitId.value
+          : this.resolvedCommitId,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionConflictRow(')
+          ..write('id: $id, ')
+          ..write('commitId: $commitId, ')
+          ..write('targetTable: $targetTable, ')
+          ..write('rowKey: $rowKey, ')
+          ..write('columnName: $columnName, ')
+          ..write('reason: $reason, ')
+          ..write('localJson: $localJson, ')
+          ..write('remoteBeforeJson: $remoteBeforeJson, ')
+          ..write('remoteAfterJson: $remoteAfterJson, ')
+          ..write('resolvedCommitId: $resolvedCommitId')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    commitId,
+    targetTable,
+    rowKey,
+    columnName,
+    reason,
+    localJson,
+    remoteBeforeJson,
+    remoteAfterJson,
+    resolvedCommitId,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RevisionConflictRow &&
+          other.id == this.id &&
+          other.commitId == this.commitId &&
+          other.targetTable == this.targetTable &&
+          other.rowKey == this.rowKey &&
+          other.columnName == this.columnName &&
+          other.reason == this.reason &&
+          other.localJson == this.localJson &&
+          other.remoteBeforeJson == this.remoteBeforeJson &&
+          other.remoteAfterJson == this.remoteAfterJson &&
+          other.resolvedCommitId == this.resolvedCommitId);
+}
+
+class RevisionConflictsCompanion extends UpdateCompanion<RevisionConflictRow> {
+  final Value<int> id;
+  final Value<int> commitId;
+  final Value<String> targetTable;
+  final Value<String> rowKey;
+  final Value<String?> columnName;
+  final Value<String> reason;
+  final Value<String> localJson;
+  final Value<String?> remoteBeforeJson;
+  final Value<String> remoteAfterJson;
+  final Value<int?> resolvedCommitId;
+  const RevisionConflictsCompanion({
+    this.id = const Value.absent(),
+    this.commitId = const Value.absent(),
+    this.targetTable = const Value.absent(),
+    this.rowKey = const Value.absent(),
+    this.columnName = const Value.absent(),
+    this.reason = const Value.absent(),
+    this.localJson = const Value.absent(),
+    this.remoteBeforeJson = const Value.absent(),
+    this.remoteAfterJson = const Value.absent(),
+    this.resolvedCommitId = const Value.absent(),
+  });
+  RevisionConflictsCompanion.insert({
+    this.id = const Value.absent(),
+    required int commitId,
+    required String targetTable,
+    required String rowKey,
+    this.columnName = const Value.absent(),
+    required String reason,
+    required String localJson,
+    this.remoteBeforeJson = const Value.absent(),
+    required String remoteAfterJson,
+    this.resolvedCommitId = const Value.absent(),
+  }) : commitId = Value(commitId),
+       targetTable = Value(targetTable),
+       rowKey = Value(rowKey),
+       reason = Value(reason),
+       localJson = Value(localJson),
+       remoteAfterJson = Value(remoteAfterJson);
+  static Insertable<RevisionConflictRow> custom({
+    Expression<int>? id,
+    Expression<int>? commitId,
+    Expression<String>? targetTable,
+    Expression<String>? rowKey,
+    Expression<String>? columnName,
+    Expression<String>? reason,
+    Expression<String>? localJson,
+    Expression<String>? remoteBeforeJson,
+    Expression<String>? remoteAfterJson,
+    Expression<int>? resolvedCommitId,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (commitId != null) 'commit_id': commitId,
+      if (targetTable != null) 'table_name': targetTable,
+      if (rowKey != null) 'row_key': rowKey,
+      if (columnName != null) 'column_name': columnName,
+      if (reason != null) 'reason': reason,
+      if (localJson != null) 'local_json': localJson,
+      if (remoteBeforeJson != null) 'remote_before_json': remoteBeforeJson,
+      if (remoteAfterJson != null) 'remote_after_json': remoteAfterJson,
+      if (resolvedCommitId != null) 'resolved_commit_id': resolvedCommitId,
+    });
+  }
+
+  RevisionConflictsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? commitId,
+    Value<String>? targetTable,
+    Value<String>? rowKey,
+    Value<String?>? columnName,
+    Value<String>? reason,
+    Value<String>? localJson,
+    Value<String?>? remoteBeforeJson,
+    Value<String>? remoteAfterJson,
+    Value<int?>? resolvedCommitId,
+  }) {
+    return RevisionConflictsCompanion(
+      id: id ?? this.id,
+      commitId: commitId ?? this.commitId,
+      targetTable: targetTable ?? this.targetTable,
+      rowKey: rowKey ?? this.rowKey,
+      columnName: columnName ?? this.columnName,
+      reason: reason ?? this.reason,
+      localJson: localJson ?? this.localJson,
+      remoteBeforeJson: remoteBeforeJson ?? this.remoteBeforeJson,
+      remoteAfterJson: remoteAfterJson ?? this.remoteAfterJson,
+      resolvedCommitId: resolvedCommitId ?? this.resolvedCommitId,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (commitId.present) {
+      map['commit_id'] = Variable<int>(commitId.value);
+    }
+    if (targetTable.present) {
+      map['table_name'] = Variable<String>(targetTable.value);
+    }
+    if (rowKey.present) {
+      map['row_key'] = Variable<String>(rowKey.value);
+    }
+    if (columnName.present) {
+      map['column_name'] = Variable<String>(columnName.value);
+    }
+    if (reason.present) {
+      map['reason'] = Variable<String>(reason.value);
+    }
+    if (localJson.present) {
+      map['local_json'] = Variable<String>(localJson.value);
+    }
+    if (remoteBeforeJson.present) {
+      map['remote_before_json'] = Variable<String>(remoteBeforeJson.value);
+    }
+    if (remoteAfterJson.present) {
+      map['remote_after_json'] = Variable<String>(remoteAfterJson.value);
+    }
+    if (resolvedCommitId.present) {
+      map['resolved_commit_id'] = Variable<int>(resolvedCommitId.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionConflictsCompanion(')
+          ..write('id: $id, ')
+          ..write('commitId: $commitId, ')
+          ..write('targetTable: $targetTable, ')
+          ..write('rowKey: $rowKey, ')
+          ..write('columnName: $columnName, ')
+          ..write('reason: $reason, ')
+          ..write('localJson: $localJson, ')
+          ..write('remoteBeforeJson: $remoteBeforeJson, ')
+          ..write('remoteAfterJson: $remoteAfterJson, ')
+          ..write('resolvedCommitId: $resolvedCommitId')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   late final $TimetableEntriesTable timetableEntries = $TimetableEntriesTable(
@@ -11648,6 +13176,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $RevisionSequencesTable revisionSequences =
       $RevisionSequencesTable(this);
+  late final $RevisionCursorsTable revisionCursors = $RevisionCursorsTable(
+    this,
+  );
+  late final $RevisionAssetRefsTable revisionAssetRefs =
+      $RevisionAssetRefsTable(this);
+  late final $RevisionConflictsTable revisionConflicts =
+      $RevisionConflictsTable(this);
   late final Index idxAssetChunkHash = Index(
     'idx_asset_chunk_hash',
     'CREATE INDEX idx_asset_chunk_hash ON asset_chunk (hash, seq)',
@@ -11755,6 +13290,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxRevisionCheckpointCommit = Index(
     'idx_revision_checkpoint_commit',
     'CREATE INDEX idx_revision_checkpoint_commit ON revision_checkpoint (commit_id, id)',
+  );
+  late final Index idxRevisionAssetHash = Index(
+    'idx_revision_asset_hash',
+    'CREATE INDEX idx_revision_asset_hash ON revision_asset_ref (hash)',
   );
   Future<int> insertTimetableEntry(
     String id,
@@ -14419,6 +15958,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     revisionCheckpoints,
     revisionContexts,
     revisionSequences,
+    revisionCursors,
+    revisionAssetRefs,
+    revisionConflicts,
     idxAssetChunkHash,
     idxMaterialGoal,
     idxMaterialPageMaterial,
@@ -14446,6 +15988,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxRevisionChangeTarget,
     idxRevisionChangeCommit,
     idxRevisionCheckpointCommit,
+    idxRevisionAssetHash,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -14602,6 +16145,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('revision_change', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'revision_commit',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('revision_conflict', kind: UpdateKind.delete)],
     ),
   ]);
 }

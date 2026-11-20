@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 
 /// 测试使用的内存 SecretStore：不碰平台通道。
 class MemorySecretStore implements SecretStore {
@@ -27,7 +28,7 @@ class MemorySecretStore implements SecretStore {
 /// 测试用来验证登录、令牌刷新、备份、提交序列与附件的往返；服务端自己的行为
 /// 由 server/ 下的 Go 用例覆盖，这里不重复实现业务规则。
 class FakeServer {
-  FakeServer({this.schemaVersion = 27});
+  FakeServer({this.schemaVersion = zhixinSchemaVersion});
 
   final int schemaVersion;
 

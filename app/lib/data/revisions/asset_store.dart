@@ -117,7 +117,7 @@ class AssetStore {
     for (final table in projection.values) {
       for (final row in table.values) {
         for (final value in row.values) {
-          if (value.type != 'text') continue;
+          if (value.type != RevisionValueType.text) continue;
           final text = value.value as String;
           if (isHash(text)) {
             result.add(text);
@@ -146,7 +146,7 @@ class AssetStore {
       for (final row in [change.before, change.after]) {
         if (row == null) continue;
         for (final value in row.values) {
-          if (value.type != 'text') continue;
+          if (value.type != RevisionValueType.text) continue;
           final text = value.value as String;
           if (isHash(text)) {
             result.add(text);

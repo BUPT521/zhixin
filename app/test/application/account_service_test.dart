@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/embedding_client.dart';
@@ -54,7 +55,7 @@ void main() {
 
     final ready = await defaultAccount.checkServer();
     expect(ready.ready, isTrue);
-    expect(ready.schemaVersion, 27);
+    expect(ready.schemaVersion, zhixinSchemaVersion);
 
     await defaultAccount.register(
       identifier: 'default@example.com',

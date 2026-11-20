@@ -410,7 +410,7 @@ class SyncService {
             seq: seq++,
             table: table,
             rowKey: entry.key,
-            op: 'insert',
+            op: ChangeOp.insert,
             after: entry.value,
           ),
         );
@@ -712,7 +712,7 @@ class SyncService {
           seq: seq++,
           table: change.table,
           rowKey: change.rowKey,
-          op: change.op,
+          op: ChangeOp.fromValue(change.op),
           before: before,
           after: after,
         ),
@@ -807,7 +807,7 @@ class SyncService {
   ServerChange _toServerChange(RevisionChange change) => ServerChange(
     table: change.table,
     rowKey: change.rowKey,
-    op: change.op,
+    op: change.op.value,
     before: change.before == null ? null : typedRowToJson(change.before!),
     after: change.after == null ? null : typedRowToJson(change.after!),
   );

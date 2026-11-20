@@ -1188,11 +1188,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     _ => table,
   };
 
-  String _opLabel(String op) => switch (op) {
-    'insert' => '新增',
-    'delete' => '删除',
-    _ => '修改',
-  };
+  String _opLabel(ChangeOp op) => op.label;
 
   /// 明细里显示的字段名；不在这张表里的内部字段不显示。
   static const Map<String, String> _fieldLabels = {
@@ -1272,9 +1268,9 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 明细值：状态、类型与来源换成中文，时间按界面习惯显示，其余原样。
   String _fieldText(String table, String key, RevisionValue? value) {
     if (value == null || value.isNull) return '空';
-    if (value.type == 'blob') return '二进制内容';
+    if (value.type == RevisionValueType.blob) return '二进制内容';
     final raw = '${value.value}';
-    if (key == 'op') return _opLabel(raw);
+    if (key == 'op') return _opLabel(ChangeOp.fromValue(raw));
     if (_booleanFields.contains(key)) {
       return raw == '1'
           ? '是'

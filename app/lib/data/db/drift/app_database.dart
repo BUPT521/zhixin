@@ -9,7 +9,7 @@ part 'app_database.g.dart';
 /// drift 版的本地库：表结构与索引来自 [tables.dart]，打开时建立外键与 WAL。
 ///
 /// 结构变化仍按 ADR-0002 清空重建，不写迁移函数。采集暂存表与触发器由版本
-/// 引擎在打开后安装，这里负责 23 张基础表与表类上声明的索引。
+/// 引擎在打开后安装，这里负责 26 张基础表与表类上声明的索引。
 ///
 /// 仓库层的查询写在 `queries/` 下的 `.drift` 文件里，由 [include] 挂进来：
 /// 表名、列名、参数与结果列的可空性在生成阶段检查（ADR-0011）。
@@ -56,6 +56,9 @@ part 'app_database.g.dart';
     RevisionCheckpoints,
     RevisionContexts,
     RevisionSequences,
+    RevisionCursors,
+    RevisionAssetRefs,
+    RevisionConflicts,
   ],
 )
 class AppDatabase extends _$AppDatabase {

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
@@ -125,7 +126,7 @@ void main() {
     expect(commit.actor, 'user');
     final changes = await rig.engine.changesFor(rig.db.raw, commit.id);
     final change = changes.singleWhere((item) => item.table == 'material_page');
-    expect(change.op, 'update');
+    expect(change.op, ChangeOp.update);
     expect(change.before?['content']?.value, '旧原文 P(A|B)');
     expect(change.after?['content']?.value, '新原文 P(A∩B)');
   });
