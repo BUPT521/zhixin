@@ -15,6 +15,7 @@ import '../db/schema.dart' show schemaTableNames, schemaTables;
 import '../db/sql.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
+import 'revision_digest.dart';
 import 'revision_models.dart';
 import 'revision_shadow.dart';
 
@@ -224,11 +225,23 @@ class RevisionEngine
       if (heads.isEmpty) {
         final projection = await readProjection(txn);
         final now = formatDateTime(clock());
+        final uid = newUuidV7();
+        // 初始基线与普通提交一样补齐四列：父哈希取哈希链初值、摘要是当前投影
+        // 的整库重算、哈希按基线提交与空变更明细计算，本机提交没有来源设备
+        // （方案 3.5、3.10、3.12）。
         await insertRow(txn, 'revision_commit', {
           'id': 0,
-          'uid': newUuidV7(),
+          'uid': uid,
           'parent_id': null,
+          'parent_hash': revisionChainGenesis,
           'generation': 0,
+          'state_digest': revisionStateDigest(projection),
+          'hash': revisionCommitHash(
+            parentHash: revisionChainGenesis,
+            uid: uid,
+            kind: RevisionKind.baseline,
+            changes: const [],
+          ),
           'actor': 'system',
           'action': '初始基线',
           'kind': RevisionKind.baseline.value,
@@ -238,6 +251,8 @@ class RevisionEngine
           'change_count': 0,
           'byte_length': 0,
           'conflict_count': 0,
+          'origin_device': null,
+          'authored_at': now,
           'created_at': now,
         });
         await insertRow(txn, 'revision_sequence', {

@@ -9,6 +9,10 @@ part of 'revision_engine.dart';
 ///
 /// 普通写入、撤销、恢复与远端应用都从这里写提交行，不再各自拼一份 INSERT；
 /// 撤销提交的回指字段随 [CommitDraft] 一次写入，不再事后补 UPDATE（R10）。
+///
+/// 一致性摘要与哈希链的四列（`state_digest`、`hash`、`origin_device`、
+/// `authored_at`）也在这里定下：采集路径给出 [digestDelta]，整版恢复与导入直接
+/// 给出 [stateDigest]，两条路径都落到同一次写入里（方案 3.5、3.10、3.12）。
 class CommitDraft {
   const CommitDraft({
     required this.id,
@@ -23,6 +27,11 @@ class CommitDraft {
     this.restoredCommitId,
     this.revertedCommitId,
     this.conflicts = const [],
+    this.digestDelta,
+    this.stateDigest,
+    this.parentHash,
+    this.originDevice,
+    this.authoredAt,
   });
 
   final int id;
@@ -42,6 +51,22 @@ class CommitDraft {
   final int? restoredCommitId;
   final int? revertedCommitId;
   final List<RevisionConflict> conflicts;
+
+  /// 采集路径算出的一致性摘要增量；与父提交的摘要相加得到这条提交的摘要。
+  final BigInt? digestDelta;
+
+  /// 直接给定这条提交之后的状态摘要；整版恢复与导入用它，因为目标投影当场
+  /// 可用，不必再经过暂存表。
+  final String? stateDigest;
+
+  /// 直接给定父提交的哈希；为空时读父提交或取哈希链初值。
+  final String? parentHash;
+
+  /// 远端提交由服务端带来的设备标识；本机提交为空。
+  final String? originDevice;
+
+  /// 远端提交的作者创建时间；本机提交为空，写入时取 `created_at`。
+  final DateTime? authoredAt;
 }
 
 /// 本机重试去重的时效：同编号的旧提交在这段时间内创建、且仍是 `HEAD` 时，才按
@@ -408,6 +433,10 @@ mixin RevisionLogMixin {
   /// 提交编号在确定有净变化之后才分配：命令里预留过就沿用预留的编号，没有
   /// 预留就地分配；没有净变化且没有预留时序号不动，预留过也不回退。
   ///
+  /// [originDevice] 与 [authoredAt] 只在应用远端提交时给：服务端带来的设备标识
+  /// 与作者创建时间原样记进提交行；本机提交两者都为空，`authored_at` 写成本次
+  /// 提交的创建时间（方案 3.12）。
+  ///
   /// [changedTables] 是输出参数：形成提交时填入这次改到的表与版本元数据表，
   /// 由调用方在事务提交之后发布给订阅中的页面（ADR-0014 第 2 条）；没有净
   /// 变化时不填，回滚时调用方也不会发布。
@@ -421,9 +450,12 @@ mixin RevisionLogMixin {
     RevisionKind kind = RevisionKind.write,
     int? revertedCommitId,
     List<RevisionConflict> conflicts = const [],
+    String? originDevice,
+    DateTime? authoredAt,
   }) async {
     final reserved = await self.activeCommit(txn);
-    final drafts = await self._collect(txn);
+    final captured = await self._collect(txn);
+    final drafts = captured.changes;
     await self._clearStage(txn);
 
     if (drafts.isEmpty) {
@@ -451,6 +483,10 @@ mixin RevisionLogMixin {
         revertedCommitId: revertedCommitId,
         changes: net,
         conflicts: conflicts,
+        digestDelta: captured.digestDelta,
+        parentHash: parent?.hash,
+        originDevice: originDevice,
+        authoredAt: authoredAt,
       ),
     );
     // 这次提交改到的表与版本元数据表；发布由调用方在提交之后做。
@@ -466,19 +502,48 @@ mixin RevisionLogMixin {
   /// 写入一条提交、它的变更明细与冲突记录，并推进 `HEAD`。
   ///
   /// 提交身份在落库之前定下来：本机提交生成 UUIDv7，远端提交沿用远端的 uid，
-  /// 两者都写进 `revision_commit.uid`（ADR-0040）。
+  /// 两者都写进 `revision_commit.uid`（ADR-0040）。同一处一次算好四列：
+  /// `parent_hash` 接上父提交的哈希，`state_digest` 由父提交摘要加上这次命令的
+  /// 增量（整版恢复与导入直接给目标投影的摘要），`hash` 按提交内容重算，
+  /// `origin_device` 与 `authored_at` 按本机或远端规则写入（方案 3.5、3.10、
+  /// 3.12）。
   Future<RevisionCommit> _appendCommit(
     RawExecutor txn,
     CommitDraft draft,
   ) async {
-    final now = formatDateTime(self.clock());
+    final createdAt = self.clock();
+    final now = formatDateTime(createdAt);
     final uid = draft.uid ?? newUuidV7();
     final byteLength = self._changesByteLength(draft.changes);
+    final parent = draft.parentId == null
+        ? null
+        : await self.commitById(txn, draft.parentId!);
+    final parentHash = draft.parentHash ?? parent?.hash ?? revisionChainGenesis;
+    final parentDigest = BigInt.parse(
+      parent?.stateDigest ?? revisionEmptyStateDigest,
+      radix: 16,
+    );
+    final stateDigest =
+        draft.stateDigest ??
+        revisionStateDigestHex(
+          (parentDigest + (draft.digestDelta ?? BigInt.zero)) %
+              revisionDigestModulus,
+        );
+    final hash = revisionCommitHash(
+      parentHash: parentHash,
+      uid: uid,
+      kind: draft.kind,
+      changes: draft.changes,
+    );
+    final authoredAt = draft.authoredAt ?? createdAt;
     await insertRow(txn, 'revision_commit', {
       'id': draft.id,
       'uid': uid,
       'parent_id': draft.parentId,
+      'parent_hash': parentHash,
       'generation': draft.generation,
+      'state_digest': stateDigest,
+      'hash': hash,
       'actor': draft.actor,
       'action': draft.action,
       'kind': draft.kind.value,
@@ -488,6 +553,8 @@ mixin RevisionLogMixin {
       'change_count': draft.changes.length,
       'byte_length': byteLength,
       'conflict_count': draft.conflicts.length,
+      'origin_device': draft.originDevice,
+      'authored_at': formatDateTime(authoredAt),
       'created_at': now,
     });
     for (final change in draft.changes) {
@@ -516,7 +583,10 @@ mixin RevisionLogMixin {
       id: draft.id,
       uid: uid,
       parentId: draft.parentId,
+      parentHash: parentHash,
       generation: draft.generation,
+      stateDigest: stateDigest,
+      hash: hash,
       actor: draft.actor,
       action: draft.action,
       kind: draft.kind,
@@ -526,7 +596,9 @@ mixin RevisionLogMixin {
       changeCount: draft.changes.length,
       byteLength: byteLength,
       conflictCount: draft.conflicts.length,
-      createdAt: self.clock(),
+      originDevice: draft.originDevice,
+      authoredAt: authoredAt,
+      createdAt: createdAt,
     );
   }
 
@@ -541,5 +613,87 @@ mixin RevisionLogMixin {
       if (after != null) total += utf8.encode(encodeTypedRow(after)).length;
     }
     return total;
+  }
+
+  /// 哈希链的锚点：最早保留提交记录的父哈希；空库返回哈希链初值。
+  ///
+  /// 裁剪之后最早的保留提交指向的父提交已经不在库里，这个哈希就是还能校验的
+  /// 边界；命名版本让更早的提交留在库里时，锚点是编号最小的那一行记录的父哈希
+  /// （方案 3.10）。
+  Future<String> chainAnchor(RawExecutor executor) async {
+    final rows = await selectRows(
+      executor,
+      'revision_commit',
+      columns: ['parent_hash'],
+      orderBy: 'id',
+      limit: 1,
+    );
+    if (rows.isEmpty) return revisionChainGenesis;
+    return rows.first['parent_hash']! as String;
+  }
+
+  /// 当前数据的摘要，按当前业务表整库重算（方案 3.5）。
+  ///
+  /// 同步摘要交换与完整性检查都用它；与 `HEAD` 记录的 `state_digest` 比对，
+  /// 能发现绕过命令事务的写入。
+  Future<String> currentStateDigest(RawExecutor executor) async =>
+      revisionStateDigest(await self.readProjection(executor));
+
+  /// 数据完整性检查：核对保留历史的哈希链，再把整库重算的摘要与 `HEAD` 比对。
+  ///
+  /// 逐条重算 `sha256(parent_hash, uid, kind, 规范化变更明细)`，父提交还在库里
+  /// 时顺带核对父哈希；最后按当前表重算摘要，与 `HEAD` 记录的 `state_digest`
+  /// 比较，因此改动业务行、改动变更明细、改动提交身份都会进 [problems]。裁剪
+  /// 之后的锚点无法回溯，最早保留提交的父哈希只作起点，不参与核对。这个方法只
+  /// 读不写，界面入口与导出前检查由后续任务接入（方案 3.10）。
+  Future<RevisionIntegrityReport> verifyIntegrity(RawExecutor executor) async {
+    final rows = await selectRows(executor, 'revision_commit', orderBy: 'id');
+    if (rows.isEmpty) {
+      return const RevisionIntegrityReport(
+        commitId: 0,
+        checkedCommits: 0,
+        problems: ['提交历史为空'],
+      );
+    }
+    final changesByCommit = <int, List<RevisionChange>>{};
+    for (final row in await selectRows(
+      executor,
+      'revision_change',
+      orderBy: 'commit_id, seq',
+    )) {
+      final change = RevisionChange.fromRow(row);
+      changesByCommit.putIfAbsent(change.commitId, () => []).add(change);
+    }
+    final commits = <int, RevisionCommit>{};
+    for (final row in rows) {
+      final commit = RevisionCommit.fromRow(row);
+      commits[commit.id] = commit;
+    }
+    final problems = <String>[];
+    for (final commit in commits.values) {
+      final expected = revisionCommitHash(
+        parentHash: commit.parentHash,
+        uid: commit.uid,
+        kind: commit.kind,
+        changes: changesByCommit[commit.id] ?? const [],
+      );
+      if (expected != commit.hash) {
+        problems.add('提交 ${commit.id} 的哈希与变更明细不一致');
+      }
+      final parent = commit.parentId == null ? null : commits[commit.parentId];
+      if (parent != null && parent.hash != commit.parentHash) {
+        problems.add('提交 ${commit.id} 记录的父哈希与提交 ${parent.id} 的哈希不一致');
+      }
+    }
+    final head = commits.values.last;
+    final digest = await self.currentStateDigest(executor);
+    if (head.stateDigest != digest) {
+      problems.add('当前数据的摘要与提交 ${head.id} 的记录不一致');
+    }
+    return RevisionIntegrityReport(
+      commitId: head.id,
+      checkedCommits: commits.length,
+      problems: problems,
+    );
   }
 }

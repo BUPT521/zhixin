@@ -182,6 +182,12 @@ mixin RevisionProjectionMixin {
     } catch (error) {
       throw RevisionCorruption('检查点 ${checkpoint.id} 投影格式不正确：$error');
     }
+    // 检查点记录的摘要必须等于按投影重算的值：投影与摘要对不上说明检查点本身
+    // 坏了，不能拿来当重建起点（方案 3.5）。
+    final digest = revisionStateDigest(projection);
+    if (digest != checkpoint.stateDigest) {
+      throw RevisionCorruption('检查点 ${checkpoint.id} 的摘要与投影不一致');
+    }
     final rows = await selectRows(
       executor,
       'revision_change',
@@ -535,6 +541,10 @@ mixin RevisionProjectionMixin {
               : RevisionKind.import,
           restoredCommitId: restoredCommitId,
           changes: changes,
+          // 整份数据被替换成目标投影：摘要直接按目标投影整库重算，不必经过
+          // 暂存表的增量（方案 3.5）。
+          stateDigest: revisionStateDigest(targetProjection),
+          parentHash: parent?.hash,
         ),
       );
       await self._clearContext(txn);
@@ -584,6 +594,9 @@ mixin RevisionProjectionMixin {
           action: action,
           kind: RevisionKind.restore,
           changes: changes,
+          // 换库恢复之后的数据就是 [after]；摘要按它整库重算（方案 3.5）。
+          stateDigest: revisionStateDigest(after),
+          parentHash: parent?.hash,
         ),
       );
       await self._clearContext(txn);
@@ -656,6 +669,8 @@ mixin RevisionProjectionMixin {
       'raw_bytes': raw.length,
       'asset_hashes_json': jsonEncode(hashes),
       'checksum': self._checksum(projectionJson, hashes),
+      // 检查点也存一份投影摘要：重建之后不必从当前表重新取数就能比对。
+      'state_digest': revisionStateDigest(projection),
       'created_at': formatDateTime(self.clock()),
     });
     await self.recordAssetRefs(

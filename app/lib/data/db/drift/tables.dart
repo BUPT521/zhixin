@@ -566,6 +566,7 @@ class Memories extends Table {
 )
 @TableIndex(name: 'idx_revision_uid', columns: {#uid}, unique: true)
 @TableIndex(name: 'idx_revision_commit_parent', columns: {#parentId})
+@TableIndex(name: 'idx_revision_commit_reverted', columns: {#revertedCommitId})
 @DataClassName('RevisionCommitRow')
 class RevisionCommits extends Table {
   @override
@@ -576,7 +577,16 @@ class RevisionCommits extends Table {
     #id,
     onDelete: KeyAction.setNull,
   )();
+
+  /// 父提交的哈希；基线提交写 64 个 `0`，裁剪之后最早保留提交的这一列是锚点。
+  TextColumn get parentHash => text()();
   IntColumn get generation => integer()();
+
+  /// 这条提交落库之后全部业务行的一致性摘要（方案 3.5）。
+  TextColumn get stateDigest => text()();
+
+  /// 这条提交的哈希：`sha256(父哈希, uid, kind, 规范化变更明细)`（方案 3.10）。
+  TextColumn get hash => text()();
   TextColumn get actor => text().check(actor.isIn(revisionActors))();
 
   /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
@@ -609,6 +619,12 @@ class RevisionCommits extends Table {
       .check(conflictCount.isBiggerOrEqualValue(0))();
   IntColumn get changeCount => integer().withDefault(const Constant(0))();
   TextColumn get createdAt => text()();
+
+  /// 远端提交由服务端带来的设备标识；本机提交为空（方案 3.12）。
+  TextColumn get originDevice => text().nullable()();
+
+  /// 远端提交的作者创建时间；本机提交等于 [createdAt]（方案 3.12）。
+  TextColumn get authoredAt => text().nullable()();
 }
 
 @TableIndex(
@@ -666,6 +682,9 @@ class RevisionCheckpoints extends Table {
 
   /// 按解压后的原文计算，与 [payload] 的编码无关。
   TextColumn get checksum => text()();
+
+  /// 这份投影的一致性摘要；重建之后可以直接与当前表比对（方案 3.5）。
+  TextColumn get stateDigest => text()();
   TextColumn get createdAt => text()();
 }
 

@@ -73,6 +73,17 @@ enum RevisionValueType {
 /// 只记录维护信息、不算内容变化的列；撤销核对与撤销写回都跳过它们。
 const Set<String> revisionBookkeepingColumns = {'updated_at'};
 
+/// 哈希链的初值：基线提交没有父提交，它记录的父哈希取这个值。
+///
+/// 裁剪之后最早的保留提交记录的父哈希就是哈希链的锚点，更早的提交已经不在库
+/// 里、无法校验；没有历史的空库也返回这个值，所以锚点读取在任何时候都有确定
+/// 结果（方案 3.10）。写成 64 个 `0`，与空状态摘要的表示相同但含义不同。
+const String revisionChainGenesis =
+    '0000000000000000000000000000000000000000000000000000000000000000';
+
+/// 没有任何业务行时的一致性摘要：多重集为空，和为零（方案 3.5）。
+const String revisionEmptyStateDigest = revisionChainGenesis;
+
 /// 数据版本里的一次提交。
 class RevisionCommit {
   const RevisionCommit({
@@ -90,6 +101,11 @@ class RevisionCommit {
     this.revertedCommitId,
     this.byteLength = 0,
     this.conflictCount = 0,
+    this.parentHash = revisionChainGenesis,
+    this.stateDigest = revisionEmptyStateDigest,
+    this.hash = '',
+    this.originDevice,
+    this.authoredAt,
   });
 
   factory RevisionCommit.fromRow(Map<String, Object?> row) => RevisionCommit(
@@ -106,6 +122,11 @@ class RevisionCommit {
     changeCount: row['change_count']! as int,
     byteLength: row['byte_length'] as int? ?? 0,
     conflictCount: row['conflict_count'] as int? ?? 0,
+    parentHash: row['parent_hash'] as String? ?? revisionChainGenesis,
+    stateDigest: row['state_digest'] as String? ?? revisionEmptyStateDigest,
+    hash: row['hash'] as String? ?? '',
+    originDevice: row['origin_device'] as String?,
+    authoredAt: optionalDateTime(row['authored_at'] as String? ?? ''),
     createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
   );
 
@@ -114,6 +135,19 @@ class RevisionCommit {
   /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
   final String uid;
   final int? parentId;
+
+  /// 父提交的哈希：这条提交接在前一条提交的哈希链上。
+  ///
+  /// 基线提交写 [revisionChainGenesis]；裁剪之后最早保留提交的这一列是哈希链
+  /// 的锚点，它指向的父提交已经不在库里（方案 3.10）。
+  final String parentHash;
+
+  /// 这条提交落库之后全部业务行的一致性摘要（方案 3.5）。
+  final String stateDigest;
+
+  /// 这条提交的哈希：`sha256(父哈希, uid, kind, 规范化变更明细)`；本机构造、
+  /// 不在库里的占位对象为空串（方案 3.10）。
+  final String hash;
   final int generation;
   final String actor;
   final String action;
@@ -130,16 +164,28 @@ class RevisionCommit {
 
   /// 应用远端提交时记下的冲突条数。
   final int conflictCount;
+
+  /// 远端提交由服务端带来的设备标识；本机提交为空（方案 3.12）。
+  final String? originDevice;
+
+  /// 远端提交的作者创建时间；本机提交等于 [createdAt]（方案 3.12）。
+  final DateTime? authoredAt;
   final DateTime? createdAt;
 
   bool get isBaseline => id == 0;
   bool get isUndo => kind == RevisionKind.undo;
 
+  /// 是否来自其他设备；界面据此显示“来自另一台设备”（方案 3.12）。
+  bool get isRemote => originDevice != null;
+
   Map<String, Object?> toRow() => {
     'id': id,
     'uid': uid,
     'parent_id': parentId,
+    'parent_hash': parentHash,
     'generation': generation,
+    'state_digest': stateDigest,
+    'hash': hash,
     'actor': actor,
     'action': action,
     'kind': kind.value,
@@ -149,6 +195,8 @@ class RevisionCommit {
     'change_count': changeCount,
     'byte_length': byteLength,
     'conflict_count': conflictCount,
+    'origin_device': originDevice,
+    'authored_at': authoredAt == null ? null : formatDateTime(authoredAt!),
     'created_at': createdAt?.toIso8601String(),
   };
 }
@@ -240,6 +288,7 @@ class RevisionCheckpoint {
     required this.assetHashes,
     required this.checksum,
     required this.createdAt,
+    this.stateDigest = revisionEmptyStateDigest,
   });
 
   factory RevisionCheckpoint.fromRow(Map<String, Object?> row) {
@@ -253,6 +302,7 @@ class RevisionCheckpoint {
       rawBytes: row['raw_bytes']! as int,
       assetHashes: decodeStringList(hashes),
       checksum: row['checksum']! as String,
+      stateDigest: row['state_digest'] as String? ?? revisionEmptyStateDigest,
       createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
     );
   }
@@ -271,6 +321,9 @@ class RevisionCheckpoint {
 
   /// 按解压后的原文计算，与 [encoding] 无关。
   final String checksum;
+
+  /// 这份投影的一致性摘要；重建之后可以直接与当前表比对（方案 3.5）。
+  final String stateDigest;
   final DateTime? createdAt;
 }
 
