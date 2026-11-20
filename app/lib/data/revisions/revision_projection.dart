@@ -71,6 +71,18 @@ Projection decodeProjection(String raw) {
   return projection;
 }
 
+/// 快照的字节：与检查点相同的 `json+gzip` 编码（ADR-0043）。
+///
+/// 快照由客户端生成并当作附件上传，服务端只保存字节、不解析内容；沿用检查点
+/// 的编码让“写检查点、导数据、传快照”三处共用同一段投影序列化，不会各自演化出
+/// 不同格式。
+Uint8List encodeSnapshotBytes(Projection projection) =>
+    Uint8List.fromList(gzip.encode(utf8.encode(encodeProjection(projection))));
+
+/// 解出快照的投影；不是 `json+gzip` 编码的字节按格式错误抛出。
+Projection decodeSnapshotBytes(Uint8List bytes) =>
+    decodeProjection(utf8.decode(gzip.decode(bytes)));
+
 /// 两份投影的差异：新增与删除给出整行，修改只给出真正发生净变化的列。
 ///
 /// 比较按“表名＋主键”进行，表按 [versionedTableNames] 的依赖顺序、行按主键
@@ -840,6 +852,89 @@ mixin RevisionProjectionMixin {
       actor: actor,
       attachments: attachments,
     );
+  }
+
+  /// 用云端快照的投影替换本机数据，并追加一条“来自云端快照”的本机提交。
+  ///
+  /// 与 [importProjection] 的区别有两处。一是提交类型记成 [RevisionKind.baseline]：
+  /// 新库没有可以与快照对照的本地历史，把整库差异逐行写成变更明细等于在
+  /// `revision_change` 里再存一份与快照等量的数据，而快照本身又是可重建的
+  /// 起点；这条提交因此只记摘要并写一条 `initial` 检查点，之后的重建从检查点
+  /// 起算，与“清理历史”留下的基线提交同一做法（ADR-0039 第 2 条）。二是代次
+  /// 照常推进，快照上重放的本机提交与之后的推送都按新代次走。
+  ///
+  /// 调用方要先让用户确认：替换会改写本机的数据版本历史（同步方案 3.7）。
+  Future<RevisionCommit> importSnapshotProjection(
+    RawDatabase db,
+    Projection projection, {
+    required int expectedHead,
+    String action = '从云端快照重建',
+    String actor = 'system',
+  }) {
+    return db.transaction((txn) async {
+      final head = await self.headId(txn);
+      if (head != expectedHead) {
+        throw RevisionStaleHead(expected: expectedHead, actual: head);
+      }
+      await self.beginCommand(txn);
+      final commitId = await self.reserveCommitId(txn);
+      await updateRow(txn, 'revision_context', {
+        'suppress': 1,
+      }, where: 'id = 1');
+      await self._replaceProjection(txn, projection);
+      await self._verifyProjection(txn, projection);
+      final parent = await self.commitById(txn, head);
+      // 整份数据被替换：旧的遮蔽行对应的格子可能已经不存在，清空它免得下一次
+      // 推送按旧格子去掉本机改动（ADR-0040）。
+      await RevisionShadows(txn).clear();
+      final commit = await self._appendCommit(
+        txn,
+        CommitDraft(
+          id: commitId,
+          parentId: head,
+          generation: (parent?.generation ?? 0) + 1,
+          actor: actor,
+          action: action,
+          kind: RevisionKind.baseline,
+          changes: const [],
+          stateDigest: revisionStateDigest(projection),
+          parentHash: parent?.hash,
+        ),
+      );
+      // 这条提交没有变更明细可回放，写一条 `initial` 检查点作为重建起点，与
+      // “清理历史”留下的基线提交同一做法（ADR-0039 第 2 条）。
+      await self._writeCheckpoint(
+        txn,
+        commitId: commitId,
+        kind: 'initial',
+        projection: projection,
+      );
+      await self._clearContext(txn);
+      return commit;
+    });
+  }
+
+  /// 把本机未推送的提交在快照之上重放成本机的新提交（同步方案 3.7）。
+  ///
+  /// [changes] 是原提交去掉被云端遮蔽的格子之后的剩余部分，按原顺序写入；写入
+  /// 经过业务表触发器采集，形成一条普通本机提交，之后随正常推送发上去。返回这次
+  /// 形成的提交（净变化为空时为空）与因本机状态对不上而跳过的条数。
+  Future<({RevisionCommit? commit, int skipped})> replayLocalChanges(
+    RawDatabase db,
+    List<RevisionChange> changes, {
+    required String action,
+    String actor = 'system',
+  }) {
+    return db.transaction((txn) async {
+      await self.beginCommand(txn);
+      final applied = await self.applyChanges(txn, changes);
+      final commit = await self.finishCommand(
+        txn,
+        action: action,
+        actor: actor,
+      );
+      return (commit: commit, skipped: applied.skipped);
+    });
   }
 
   /// 导入与换库恢复共用的整版替换入口：开事务、核对 `HEAD`、装入目标投影。

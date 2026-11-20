@@ -235,16 +235,40 @@ class _MinePageState extends State<MinePage> {
       _notice = null;
     });
     try {
-      final result = await services.sync.syncNow(
-        confirmBaseline: confirmBaseline,
-      );
-      if (!mounted) return;
-      setState(() {
-        _failed = false;
-        _notice = result.changed
-            ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交'
-            : '同步完成，没有需要推送的改动';
-      });
+      // 云端历史被压缩时同步会抛出 RecloneConfirmationRequired：先说明再确认，
+      // 确认之后带 confirmReclone 再跑一轮，本机数据不在未确认时被替换（3.7）。
+      var confirmReclone = false;
+      while (true) {
+        try {
+          final result = await services.sync.syncNow(
+            confirmBaseline: confirmBaseline,
+            confirmReclone: confirmReclone,
+          );
+          if (!mounted) return;
+          setState(() {
+            _failed = false;
+            _notice = result.changed
+                ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交'
+                : '同步完成，没有需要推送的改动';
+          });
+          break;
+        } on RecloneConfirmationRequired catch (required) {
+          if (!mounted) return;
+          final confirmed = await confirmSnapshotRebuild(
+            context,
+            localCommits: required.localCommits,
+          );
+          if (!confirmed) {
+            if (!mounted) return;
+            setState(() {
+              _failed = false;
+              _notice = '已取消同步；本机数据保持不变，需要时可以再点“立即同步”';
+            });
+            break;
+          }
+          confirmReclone = true;
+        }
+      }
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {

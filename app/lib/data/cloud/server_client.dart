@@ -34,6 +34,9 @@ class ServerProblem implements Exception {
   bool get isUnauthorized => status == 401;
   bool get isConflict => status == 409;
 
+  /// 拉取位置落在已经压缩的区间：客户端要按快照重新克隆（ADR-0043）。
+  bool get isHistoryCompacted => status == 410 || code == 'history_compacted';
+
   /// 给界面看的一句说明；未知错误保持笼统，不把 `detail` 带进界面。
   String get userMessage => switch (code) {
     'offline' => '无法连接服务端，请检查网络与服务地址',
@@ -48,7 +51,7 @@ class ServerProblem implements Exception {
     'payload_too_large' =>
       extra['resource'] == 'sync' ? '单条同步提交超过服务端允许的大小' : '文件超过服务端允许的大小',
     'contact_unverified' => '请先在账号页验证一种登录方式',
-    'history_compacted' => '云端历史已经压缩，暂时不能按云端修复这台设备',
+    'history_compacted' => '云端历史已经压缩，这台设备要用云端快照重新克隆',
     'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
@@ -286,12 +289,96 @@ class ServerCommit {
   };
 }
 
+/// 账号当前快照的指针：覆盖到的服务端位置、附件哈希与整库摘要。
+///
+/// 快照由已经同步到某个位置的设备按检查点格式压缩之后当作附件上传，服务端只
+/// 保存字节与指针，不解析内容（ADR-0043）。客户端按 [sha256] 走附件下载接口
+/// 取字节，解出投影之后把本机数据换成快照内容，再从 [seq] 继续增量拉取。
+class ServerSnapshot {
+  const ServerSnapshot({
+    required this.seq,
+    required this.sha256,
+    required this.digest,
+    this.createdAt,
+  });
+
+  factory ServerSnapshot.fromJson(Map<String, Object?> json) => ServerSnapshot(
+    seq: (json['seq'] as num?)?.toInt() ?? 0,
+    sha256: json['sha256'] as String? ?? '',
+    digest: json['digest'] as String? ?? '',
+    createdAt: _parseTime(json['created_at']),
+  );
+
+  /// 快照覆盖到的服务端序列位置；快照之后的提交仍然按增量拉取。
+  final int seq;
+
+  /// 快照附件的 SHA-256，64 位小写十六进制；下载之后要按它核对字节。
+  final String sha256;
+
+  /// 客户端登记时给出的整库摘要（改进方案 3.5），服务端原样保存。
+  final String digest;
+  final DateTime? createdAt;
+}
+
+/// 拉取要的下一条提交已经被服务端压缩删掉：本机要按快照重新克隆。
+///
+/// 服务端返回 410 `history_compacted`，`extra` 里带保留下界、head 与当前快照
+/// 的序号、哈希和摘要（ADR-0043）。[snapshot] 为空表示服务端没有登记快照，
+/// 这种情况下客户端无法自动重建，只能给用户明确说明。
+class SyncHistoryCompacted implements Exception {
+  const SyncHistoryCompacted({
+    required this.earliestSeq,
+    required this.head,
+    this.after = 0,
+    this.snapshot,
+  });
+
+  /// 从 410 problem 的 `extra` 还原；缺字段时按“读不出”处理，交给调用方判断。
+  factory SyncHistoryCompacted.fromProblem(ServerProblem problem) {
+    final extra = problem.extra;
+    final seq = _intOf(extra['snapshot_seq']);
+    final sha256 = _stringOf(extra['snapshot_sha256']);
+    final digest = _stringOf(extra['snapshot_digest']);
+    return SyncHistoryCompacted(
+      earliestSeq: _intOf(extra['earliest_seq']) ?? 2,
+      head: _intOf(extra['head']) ?? 0,
+      after: _intOf(extra['after']) ?? 0,
+      snapshot: seq == null || sha256 == null
+          ? null
+          : ServerSnapshot(seq: seq, sha256: sha256, digest: digest ?? ''),
+    );
+  }
+
+  /// 保留下界：第一条仍然可以拉取的序号。
+  final int earliestSeq;
+
+  /// 服务端当前最新位置。
+  final int head;
+
+  /// 这次拉取请求的 `after`。
+  final int after;
+
+  /// 服务端登记的当前快照；没有登记时为空。
+  final ServerSnapshot? snapshot;
+
+  /// 给界面看的一句说明。
+  String get userMessage =>
+      snapshot == null ? '云端历史已经压缩，这台设备暂时不能自动重建' : '云端历史已经压缩，这台设备要从云端快照重新克隆';
+
+  @override
+  String toString() =>
+      'SyncHistoryCompacted(earliest=$earliestSeq, after=$after, '
+      'head=$head, snapshot=${snapshot?.seq})';
+}
+
 /// 一页远端提交与它到达的服务端位置。
 class ServerCommitPage {
   const ServerCommitPage({
     required this.commits,
     required this.head,
     required this.hasMore,
+    this.earliestSeq = 1,
+    this.snapshot,
   });
 
   factory ServerCommitPage.fromJson(Map<String, Object?> json) =>
@@ -303,11 +390,19 @@ class ServerCommitPage {
         ],
         head: (json['head'] as num?)?.toInt() ?? 0,
         hasMore: json['has_more'] == true,
+        earliestSeq: (json['earliest_seq'] as num?)?.toInt() ?? 1,
+        snapshot: _snapshotOf(json['snapshot']),
       );
 
   final List<ServerCommit> commits;
   final int head;
   final bool hasMore;
+
+  /// 保留下界：第一条仍然可以拉取的序号，没有删除过提交时为 1。
+  final int earliestSeq;
+
+  /// 当前快照指针；没有登记时为空。
+  final ServerSnapshot? snapshot;
 }
 
 /// 服务端的就绪状态与它接受的客户端 schema 版本。
@@ -323,17 +418,33 @@ class ServerReady {
   final int schemaVersion;
 }
 
-/// 服务端序列的最新位置与它接受的客户端 schema 版本。
+/// 服务端序列的最新位置、保留下界与当前快照。
 class ServerHead {
-  const ServerHead({required this.head, required this.schemaVersion});
+  const ServerHead({
+    required this.head,
+    required this.schemaVersion,
+    this.earliestSeq = 1,
+    this.snapshot,
+  });
 
   factory ServerHead.fromJson(Map<String, Object?> json) => ServerHead(
     head: (json['head'] as num?)?.toInt() ?? 0,
     schemaVersion: (json['schema_version'] as num?)?.toInt() ?? 0,
+    earliestSeq: (json['earliest_seq'] as num?)?.toInt() ?? 1,
+    snapshot: _snapshotOf(json['snapshot']),
   );
 
   final int head;
   final int schemaVersion;
+
+  /// 保留下界：第一条仍然可以拉取的序号，没有删除过提交时为 1。
+  final int earliestSeq;
+
+  /// 当前快照指针；没有登记时为空。
+  final ServerSnapshot? snapshot;
+
+  /// 拉取位置之后的提交是否已经被压缩删掉；为真时要从快照重建。
+  bool get historyCompacted => earliestSeq > 1;
 }
 
 /// 云端一份整库备份的元数据。
@@ -706,18 +817,53 @@ class ServerClient {
     return ServerHead.fromJson(json);
   }
 
+  /// 读当前快照指针；与 [head] 同形，没有登记过快照时 [ServerHead.snapshot] 为空。
+  Future<ServerHead> snapshot(String accessToken) async {
+    final json = await _json(
+      'GET',
+      '/v1/sync/snapshot',
+      accessToken: accessToken,
+    );
+    return ServerHead.fromJson(json);
+  }
+
+  /// 登记当前序列位置上的快照：`seq` 是覆盖到的位置，`sha256` 是已经上传的
+  /// 快照附件，`digest` 是整库摘要。位置比已经登记的快照小时服务端返回 409
+  /// `conflict`（`extra.snapshot_seq` 给出当前位置），相同位置按幂等重试接受。
+  Future<ServerHead> registerSnapshot(
+    String accessToken, {
+    required int seq,
+    required String sha256,
+    required String digest,
+  }) async {
+    final json = await _json(
+      'PUT',
+      '/v1/sync/snapshot',
+      accessToken: accessToken,
+      body: {'seq': seq, 'sha256': sha256, 'digest': digest},
+    );
+    return ServerHead.fromJson(json);
+  }
+
+  /// 拉取一页提交。`after` 落在已经压缩的区间时抛 [SyncHistoryCompacted]，
+  /// 调用方据此下载快照、把本机换成快照内容之后从快照位置继续拉取。
   Future<ServerCommitPage> pull(
     String accessToken, {
     int after = 0,
     int limit = 200,
   }) async {
-    final json = await _json(
-      'GET',
-      '/v1/sync/commits',
-      accessToken: accessToken,
-      query: {'after': '$after', 'limit': '$limit'},
-    );
-    return ServerCommitPage.fromJson(json);
+    try {
+      final json = await _json(
+        'GET',
+        '/v1/sync/commits',
+        accessToken: accessToken,
+        query: {'after': '$after', 'limit': '$limit'},
+      );
+      return ServerCommitPage.fromJson(json);
+    } on ServerProblem catch (error) {
+      if (!error.isHistoryCompacted) rethrow;
+      throw SyncHistoryCompacted.fromProblem(error);
+    }
   }
 
   /// 基于 `baseSeq` 推送一批提交；服务端位置已经变化时抛出 `conflict`，
@@ -1063,3 +1209,19 @@ DateTime? _parseTime(Object? value) {
   if (value is! String || value.isEmpty) return null;
   return DateTime.tryParse(value)?.toLocal();
 }
+
+/// problem 的 `extra` 里可能是数字，也可能是字符串形式的数字。
+int? _intOf(Object? value) => switch (value) {
+  num number => number.toInt(),
+  String text => int.tryParse(text.trim()),
+  _ => null,
+};
+
+String? _stringOf(Object? value) =>
+    value is String && value.trim().isNotEmpty ? value.trim() : null;
+
+/// 响应里的 `snapshot` 字段：对象时解析，缺失或为空时返回空。
+ServerSnapshot? _snapshotOf(Object? value) => switch (value) {
+  final Map map => ServerSnapshot.fromJson(map.cast<String, Object?>()),
+  _ => null,
+};

@@ -447,21 +447,43 @@ class _AccountPageState extends State<AccountPage> {
     if (!mounted) return;
     setState(() => _busy = true);
     try {
-      final result = await scope.accountServices.sync.syncNow(
-        confirmBaseline: confirmBaseline,
-      );
-      await _load();
-      if (!mounted) return;
-      // 重读状态之后再给结论：摘要不一致时不能声称两边已经一致，否则状态卡显示
-      // “待修复”而提示说一致（ADR-0045）。
-      _report(
-        result.changed
-            ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
-                  '上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件'
-            : (_sync?.digestMismatch ?? false)
-            ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
-            : '同步完成，本机与云端已经一致',
-      );
+      // 云端历史被压缩时同步会抛出 RecloneConfirmationRequired：先说明再确认，
+      // 确认之后带 confirmReclone 再跑一轮，本机数据不在未确认时被替换（3.7）。
+      var confirmReclone = false;
+      while (true) {
+        try {
+          final result = await scope.accountServices.sync.syncNow(
+            confirmBaseline: confirmBaseline,
+            confirmReclone: confirmReclone,
+          );
+          await _load();
+          if (!mounted) return;
+          // 重读状态之后再给结论：摘要不一致时不能声称两边已经一致，否则状态卡
+          // 显示“待修复”而提示说一致（ADR-0045）。
+          _report(
+            result.changed
+                ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
+                      '上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件'
+                : (_sync?.digestMismatch ?? false)
+                ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
+                : '同步完成，本机与云端已经一致',
+          );
+          return;
+        } on RecloneConfirmationRequired catch (required) {
+          if (!mounted) return;
+          final confirmed = await confirmSnapshotRebuild(
+            context,
+            localCommits: required.localCommits,
+          );
+          if (!confirmed) {
+            if (!mounted) return;
+            _report('已取消同步；本机数据保持不变，需要时可以再点“立即同步”');
+            await _load();
+            return;
+          }
+          confirmReclone = true;
+        }
+      }
     } catch (error, stack) {
       if (!mounted) return;
       _report(

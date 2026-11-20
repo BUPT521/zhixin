@@ -2,6 +2,27 @@ import 'package:material_ui/material_ui.dart';
 
 import 'zhixin_dialog.dart';
 
+/// 云端历史已经压缩、本机要用快照重建之前的确认（改进方案 3.7）。
+///
+/// 返回 true 表示用户同意用云端快照替换本机的数据版本历史；取消或关闭都返回
+/// false，调用方据此不同步，本机数据保持不变（重建不会静默执行）。
+Future<bool> confirmSnapshotRebuild(
+  BuildContext context, {
+  required int localCommits,
+}) {
+  return confirmZhixin(
+    context: context,
+    title: '云端历史已经压缩，这台设备要从云端快照重建',
+    content: Text(
+      '继续之后会用云端快照替换本机的数据版本历史：撤销窗口、命名版本与更早的'
+      '提交按快照重建，本机还没有推送的 $localCommits 条改动会作为新提交重放到'
+      '快照之上，其他登录这个账号的设备看到的内容不变。取消则不同步，本机数据'
+      '保持不变。',
+    ),
+    confirmLabel: '按快照重建',
+  );
+}
+
 /// 首次把本机记录上传到某个账号之前的确认。
 ///
 /// 返回 true 表示用户同意上传；取消或关闭都返回 false，调用方据此不上传并

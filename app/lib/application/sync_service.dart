@@ -68,6 +68,61 @@ class BaselineConfirmationRequired implements Exception {
   String toString() => message;
 }
 
+/// 云端历史已经压缩，这台设备要用云端快照重新克隆，替换本机的数据版本历史。
+///
+/// 重建会改写本机历史：撤销窗口、命名版本与更早的提交按快照重建，本机还没有
+/// 推送的提交会作为新提交重放到快照之上。调用方必须先向用户说明再确认，不能
+/// 静默替换（同步方案 3.7）；与 [BaselineConfirmationRequired] 一样先从
+/// `syncNow` 抛出，用户确认之后用 `confirmReclone: true` 再调一次。
+class RecloneConfirmationRequired implements Exception {
+  const RecloneConfirmationRequired({
+    required this.localCommits,
+    this.snapshotSeq,
+  });
+
+  /// 本机待推送的提交数，界面据此说明有多少本机改动会被重放。
+  final int localCommits;
+
+  /// 云端快照覆盖到的服务端序列位置；读不到时为空。
+  final int? snapshotSeq;
+
+  String get message =>
+      '云端历史已经压缩，这台设备要从云端快照重新克隆。继续之后会用快照替换'
+      '本机的数据版本历史：撤销窗口、命名版本与更早的提交按快照重建，本机还没有'
+      '推送的 $localCommits 条改动会作为新提交重放到快照之上，其他登录这个账号的'
+      '设备看到的内容不变。取消则不同步，本机数据保持不变。';
+
+  @override
+  String toString() => message;
+}
+
+/// 云端历史已经压缩，但服务端没有登记可用的快照，无法自动重建本机。
+///
+/// 这种情况下客户端不猜、不静默清空：给用户明确说明，让仍在保留完整历史的设备
+/// 登记一份快照之后重试，或者清除云端数据重新开始（同步方案 3.7）。
+class SyncSnapshotUnavailable implements Exception {
+  const SyncSnapshotUnavailable();
+
+  String get message =>
+      '云端历史已经压缩，缺少可用快照，暂时不能自动重建这台设备。'
+      '可以先在一台还保留完整历史的设备上同步一次（它会登记快照），或者清除云端数据后重新开始。';
+
+  @override
+  String toString() => message;
+}
+
+/// 云端快照的字节、哈希或摘要对不上：这次没有替换本机数据。
+class SyncSnapshotInvalid implements Exception {
+  const SyncSnapshotInvalid(this.reason);
+
+  final String reason;
+
+  String get message => '云端快照校验失败，这次没有重建本机数据：$reason';
+
+  @override
+  String toString() => message;
+}
+
 /// 同步位置归属的 scope：账号编号与实例来源的 SHA-256 前 32 位。
 ///
 /// 库里的两个同步位置（推送与服务端）都写这个值。退出登录、删除账号与清除
@@ -141,9 +196,12 @@ class SyncResult {
 }
 
 /// 按提交序列与服务端同步：首次同步先把远端提交全部拉下来，只把本机独有、
-/// 云端还没有的行作为基线上传（同步方案 3.6，相当于 git 的 clone）；之后拉取
+/// 云端还没有的行作为基线上传（同步方案 3.6，相当于 git 的 clone）；云端历史
+/// 已经压缩时改按云端快照浅克隆，用快照替换本机投影、重放本机还没有推送的提交
+/// 之后再增量同步（同步方案 3.7，相当于 git 的 `clone --depth`）。之后拉取
 /// 远端提交、在本机应用为新的提交，再推送本机新提交，并把提交里引用的附件按
-/// 哈希补齐。
+/// 哈希补齐；同步到最新位置且没有待推送提交时，把当前投影压缩成快照登记到
+/// 服务端，服务端据此可以压缩提交序列。
 ///
 /// 库里的两个同步位置带一个 `scope`（账号编号与实例来源的哈希）：退出登录、
 /// 删除账号与清除云端只把推送位置改成不阻塞、位置与 `scope` 保留，重新登录
@@ -222,6 +280,10 @@ class SyncService {
   /// 后云端就等于本机”；摘要因此等到比较确认一致、或者用户做了一次修复之后再
   /// 带（同步方案 3.5）。
   bool _knownDigestMismatch = false;
+
+  /// 上一次成功登记的快照内容哈希：同一份内容不重复上传与登记，避免每轮同步都
+  /// 重新上传一整份快照（同步方案 3.7 第 3 条）。
+  String? _lastSnapshotHash;
 
   bool get syncing => _running != null;
 
@@ -343,10 +405,20 @@ class SyncService {
   ///
   /// [confirmBaseline] 表示用户已经在界面上确认过首次基线上传；没有确认时
   /// 遇到需要上传本机记录的情况会抛出 [BaselineConfirmationRequired]。
-  Future<SyncResult> syncNow({bool confirmBaseline = false}) {
+  ///
+  /// [confirmReclone] 表示用户已经在界面上确认过“云端历史已经压缩、要用快照
+  /// 重建本机”；没有确认而本机已有数据时会抛出 [RecloneConfirmationRequired]，
+  /// 不静默替换本机投影（同步方案 3.7）。
+  Future<SyncResult> syncNow({
+    bool confirmBaseline = false,
+    bool confirmReclone = false,
+  }) {
     final running = _running;
     if (running != null) return running;
-    final future = _sync(confirmBaseline: confirmBaseline);
+    final future = _sync(
+      confirmBaseline: confirmBaseline,
+      confirmReclone: confirmReclone,
+    );
     _running = future.whenComplete(() => _running = null);
     return _running!;
   }
@@ -422,13 +494,13 @@ class SyncService {
   /// “以云端为准修复”：按云端的提交序列重放出一份投影，把本机被改动、与云端
   /// 不同的行改成云端值，再把本机独有的行作为基线上传（同步方案 3.5）。
   ///
-  /// 3.7 的客户端快照克隆还没有落地。这里不直接清掉位置重拉：本机已经应用过的
-  /// 远端提交按 uid 去重，重新拉取不会再写一遍，漏掉的内容不会自己回来。于是按
-  /// 方案里“按差异重放”的退路实现：从服务端第 1 条开始只读地重放全部提交，得到
-  /// 云端投影与云端碰过的行；这些行在本机与云端不同的改写成云端值并形成一条本机
-  /// 提交（它的内容云端已经有了，所以随后把推送位置一起推进，不再推上去），没有
-  /// 被云端碰过的本机行照旧作为基线补传。调用方必须先让用户确认。成功之后清掉
-  /// 不一致标记。
+  /// 这里不直接清掉位置重拉：本机已经应用过的远端提交按 uid 去重，重新拉取不会
+  /// 再写一遍，漏掉的内容不会自己回来。于是按方案里“按差异重放”的退路实现：
+  /// 从服务端第 1 条开始只读地重放全部提交，得到云端投影与云端碰过的行；这些行在
+  /// 本机与云端不同的改写成云端值并形成一条本机提交（它的内容云端已经有了，所以
+  /// 随后把推送位置一起推进，不再推上去），没有被云端碰过的本机行照旧作为基线
+  /// 补传。云端历史被压缩之后第 1 条已经读不到，这时改走快照重新克隆（同步方案
+  /// 3.7 第 4 条）。调用方必须先让用户确认。成功之后清掉不一致标记。
   Future<SyncResult> repairFromCloud() async {
     final snapshot = await account.snapshot();
     if (!snapshot.signedIn) throw const AccountSignedOut();
@@ -445,40 +517,65 @@ class SyncService {
       // 先清掉两个同步位置与遮蔽行：这次修复不从旧位置接着增量，而是按服务端
       // 序列重新对齐一遍，收尾时再写回新的位置。
       await _forgetSyncPosition();
+      // 云端历史被压缩过时按第 1 条重放不可行：有快照就走快照重新克隆，没有
+      // 快照时给明确说明，不静默清空本机数据。
+      final remoteHead = await account.call(
+        (client, token) => client.head(token),
+      );
+      if (remoteHead.schemaVersion != zhixinSchemaVersion) {
+        throw SyncSchemaMismatch(
+          server: remoteHead.schemaVersion,
+          client: zhixinSchemaVersion,
+        );
+      }
+      if (remoteHead.historyCompacted) {
+        final covered = remoteHead.snapshot;
+        if (covered == null) throw const SyncSnapshotUnavailable();
+        return await _repairFromCloudBySnapshot(covered, deviceId: deviceId);
+      }
       final cloud = <String, Map<String, TypedRow>>{};
       final touched = <(String, String)>{};
       var serverHead = 0;
       var pulled = 0;
-      while (true) {
-        _ensureIdentity();
-        final page = await account.call(
-          (client, token) => client.pull(token, after: serverHead),
-        );
-        if (page.commits.isEmpty) {
-          // 再读一页确认真实的位置：修复期间另一台设备也可能在推，按最后一页
-          // 的 head 推送基线才不会撞上 409。
-          serverHead = page.head;
-          break;
-        }
-        for (final commit in page.commits) {
-          for (final change in commit.changes) {
-            touched.add((change.table, change.rowKey));
-            final rows = cloud.putIfAbsent(change.table, () => {});
-            if (change.op == 'delete') {
-              rows.remove(change.rowKey);
-              continue;
-            }
-            final after = decodeTypedRow(jsonEncode(change.after));
-            if (change.op == 'insert') {
-              rows[change.rowKey] = after;
-            } else {
-              // 更新只带变化列，重放时要并进上一条提交留下的整行。
-              rows[change.rowKey] = {...?rows[change.rowKey], ...after};
+      try {
+        while (true) {
+          _ensureIdentity();
+          final page = await account.call(
+            (client, token) => client.pull(token, after: serverHead),
+          );
+          if (page.commits.isEmpty) {
+            // 再读一页确认真实的位置：修复期间另一台设备也可能在推，按最后一页
+            // 的 head 推送基线才不会撞上 409。
+            serverHead = page.head;
+            break;
+          }
+          for (final commit in page.commits) {
+            for (final change in commit.changes) {
+              touched.add((change.table, change.rowKey));
+              final rows = cloud.putIfAbsent(change.table, () => {});
+              if (change.op == 'delete') {
+                rows.remove(change.rowKey);
+                continue;
+              }
+              final after = decodeTypedRow(jsonEncode(change.after));
+              if (change.op == 'insert') {
+                rows[change.rowKey] = after;
+              } else {
+                // 更新只带变化列，重放时要并进上一条提交留下的整行。
+                rows[change.rowKey] = {...?rows[change.rowKey], ...after};
+              }
             }
           }
+          pulled += page.commits.length;
+          serverHead = page.commits.last.seq ?? serverHead;
         }
-        pulled += page.commits.length;
-        serverHead = page.commits.last.seq ?? serverHead;
+      } on SyncHistoryCompacted {
+        // 读 head 时还没压缩、拉取时已经被压缩：按快照重新克隆。
+        final covered = (await account.call(
+          (client, token) => client.head(token),
+        )).snapshot;
+        if (covered == null) throw const SyncSnapshotUnavailable();
+        return await _repairFromCloudBySnapshot(covered, deviceId: deviceId);
       }
       // 云端碰过的行按云端值改写，没有被云端碰过的本机行保留下来补传。
       final local = await engine.readProjection(database.raw);
@@ -597,6 +694,101 @@ class SyncService {
     }
   }
 
+  /// 云端历史被压缩时的“以云端为准修复”：按快照重新克隆，再补传云端没有的
+  /// 本机行（同步方案 3.7 第 4 条，入口口径与 3.5 的差异重放一致）。
+  ///
+  /// 本机独有的行在替换之前先合并进快照投影一起装入本机，这样修复完成时本机
+  /// 仍然有这些行；它们随后作为基线提交补传。云端已有的行一律以快照与快照之后
+  /// 的提交为准，本机与云端不同的副本被覆盖，与差异重放路径的“以云端为准”
+  /// 相同。
+  Future<SyncResult> _repairFromCloudBySnapshot(
+    ServerSnapshot snapshot, {
+    required String deviceId,
+  }) async {
+    // 云端没有的本机行照旧补传：替换之前先留一份本机投影。
+    final local = await engine.readProjection(database.raw);
+    final fetched = await _downloadSnapshotProjection(snapshot);
+    _ensureIdentity();
+    final projection = fetched.projection;
+    final touched = <(String, String)>{
+      for (final entry in projection.entries)
+        for (final key in entry.value.keys) (entry.key, key),
+    };
+    // 把本机独有的行并进快照投影：修复完成时本机仍然有这些行，随后按基线补传。
+    final merged = <String, Map<String, TypedRow>>{
+      for (final entry in projection.entries)
+        entry.key: <String, TypedRow>{...entry.value},
+    };
+    final localOnly = <RevisionChange>[];
+    var seq = 1;
+    for (final table in versionedTableNames) {
+      final rows = local[table] ?? const <String, TypedRow>{};
+      for (final entry in rows.entries) {
+        if (touched.contains((table, entry.key))) continue;
+        merged.putIfAbsent(table, () => {})[entry.key] = entry.value;
+        localOnly.add(
+          RevisionChange(
+            commitId: 0,
+            seq: seq++,
+            table: table,
+            rowKey: entry.key,
+            op: ChangeOp.insert,
+            after: entry.value,
+          ),
+        );
+      }
+    }
+    final imported = await _importSnapshotProjection(merged);
+    _ensureIdentity();
+    await _saveServerHead(snapshot.seq);
+    await _savePushed(imported.id);
+    final pulled = await _pull(
+      serverHead: snapshot.seq,
+      deviceId: deviceId,
+      downloaded: (_) {},
+      touchedRows: touched,
+    );
+    var serverHead = pulled.serverHead;
+    // 快照之后的提交也可能碰到这些行：碰到过的行已经由远端提交表达，不再补传。
+    final changes = [
+      for (final change in localOnly)
+        if (!touched.contains((change.table, change.rowKey))) change,
+    ];
+    var pushed = 0;
+    var baseSeq = serverHead;
+    String? baselineDigest;
+    if (changes.isNotEmpty && _pulledSkipped == 0) {
+      final headBefore = await engine.headId(database.raw);
+      final digest = await revisions.currentStateDigest();
+      if (await engine.headId(database.raw) == headBefore) {
+        baselineDigest = digest;
+      }
+    }
+    await _pushBatches(
+      Stream.fromIterable(
+        _baselineCommits(deviceId, changes, stateDigest: baselineDigest),
+      ),
+      baseSeq,
+      (head, count) async {
+        baseSeq = head;
+        pushed += count;
+      },
+    );
+    final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
+    _ensureIdentity();
+    await _saveServerHead(baseSeq);
+    await _savePushed(imported.id);
+    await _shadows.clear();
+    await _saveDigestMismatch(false);
+    await _markSynced();
+    return SyncResult(
+      pulledCommits: pulled.pulled,
+      pushedCommits: pushed,
+      uploadedAssets: uploaded,
+      downloadedAssets: fetched.downloaded,
+    );
+  }
+
   /// “以本机为准修复”：把本机独有的行按首次基线的方式推上去（同步方案 3.5、
   /// 3.6）。
   ///
@@ -630,8 +822,12 @@ class SyncService {
             : null,
       )) {
         // 还没有同步位置（这个账号第一次同步）：按首次基线重新对齐，确认之后
-        // 上传本机独有的行，与“立即同步”的第一步相同。
-        final result = await syncNow(confirmBaseline: true);
+        // 上传本机独有的行，与“立即同步”的第一步相同。用户已经确认过“以本机
+        // 为准修复”，云端历史压缩时按快照重建同样带上确认，不再多问一次。
+        final result = await syncNow(
+          confirmBaseline: true,
+          confirmReclone: true,
+        );
         await _saveDigestMismatch(false);
         return result;
       }
@@ -651,8 +847,9 @@ class SyncService {
         );
         serverHead = result.serverHead;
         pulled = result.pulled;
-      } on ServerProblem catch (error) {
-        if (error.code != 'history_compacted') rethrow;
+      } on SyncHistoryCompacted {
+        // 云端历史已经压缩：按本机已有的远端提交判断哪些行已经由远端表达过，
+        // 再从当前位置增量拉取；快照重建只由“以云端为准修复”负责。
         pushedRows.addAll(await _remoteTouchedRows());
         final result = await _pull(
           serverHead: serverHead,
@@ -761,7 +958,10 @@ class SyncService {
     _timer = null;
   }
 
-  Future<SyncResult> _sync({bool confirmBaseline = false}) async {
+  Future<SyncResult> _sync({
+    bool confirmBaseline = false,
+    bool confirmReclone = false,
+  }) async {
     _lastError = null;
     var pulled = 0;
     var pushed = 0;
@@ -839,9 +1039,9 @@ class SyncService {
         serverHead = realigned.serverHead;
         state = SyncState(userId: userId, serverOrigin: origin);
       } else if (!linked) {
-        // 首次同步（或恢复之后按首次基线重新对齐）会先拉取云端已有的记录，
-        // 再把本机独有、云端没有的行作为基线上传；本机没有记录时不会上传任何
-        // 东西，也就不需要确认（同步方案 3.6）。
+        // 首次同步（或恢复之后按首次基线重新对齐）会先读服务端的 head：有快照
+        // 时按快照浅克隆，否则先拉取云端已有的记录，再把本机独有、云端没有的
+        // 行作为基线上传；本机没有记录时不上传任何东西（同步方案 3.6、3.7）。
         await _clearRestoreMarker();
         if (localHead > 0 && !confirmBaseline) {
           throw BaselineConfirmationRequired(
@@ -849,33 +1049,68 @@ class SyncService {
             afterRestore: restoreFallback,
           );
         }
-        final boot = await _bootstrap(deviceId);
-        pulled += boot.pulled;
-        pushed += boot.pushed;
-        uploaded += boot.uploaded;
-        downloaded += boot.downloaded;
-        serverHead = boot.serverHead;
+        try {
+          final boot = await _bootstrap(
+            deviceId,
+            remoteHead: remoteHead,
+            confirmReclone: confirmReclone,
+          );
+          pulled += boot.pulled;
+          pushed += boot.pushed;
+          uploaded += boot.uploaded;
+          downloaded += boot.downloaded;
+          serverHead = boot.serverHead;
+        } on SyncHistoryCompacted catch (compaction) {
+          // 读 head 时还没压缩、拉取时已经被压缩：按快照重建。
+          final clone = await _recloneAfterCompaction(
+            compaction,
+            deviceId: deviceId,
+            pushedThrough: 0,
+            confirmReclone: confirmReclone,
+          );
+          pulled += clone.pulled;
+          pushed += clone.pushed;
+          uploaded += clone.uploaded;
+          downloaded += clone.downloaded;
+          serverHead = clone.serverHead;
+        }
         state = SyncState(userId: userId, serverOrigin: origin);
       } else {
-        final current = await _pull(
-          serverHead: serverHead,
-          deviceId: deviceId,
-          downloaded: (count) => downloaded += count,
-        );
-        pulled += current.pulled;
-        serverHead = current.serverHead;
-        final push = await _push(
-          serverHead: serverHead,
-          pushedThrough: pushedThrough,
-          deviceId: deviceId,
-          uploaded: (count) => uploaded += count,
-          onPulled: (result) {
-            pulled += result.pulled;
-            downloaded += result.downloaded;
-          },
-        );
-        pushed += push.pushed;
-        serverHead = push.serverHead;
+        try {
+          final current = await _pull(
+            serverHead: serverHead,
+            deviceId: deviceId,
+            downloaded: (count) => downloaded += count,
+          );
+          pulled += current.pulled;
+          serverHead = current.serverHead;
+          final push = await _push(
+            serverHead: serverHead,
+            pushedThrough: pushedThrough,
+            deviceId: deviceId,
+            uploaded: (count) => uploaded += count,
+            onPulled: (result) {
+              pulled += result.pulled;
+              downloaded += result.downloaded;
+            },
+          );
+          pushed += push.pushed;
+          serverHead = push.serverHead;
+        } on SyncHistoryCompacted catch (compaction) {
+          // 拉取位置落在已经压缩的区间：用云端快照重建本机，再重放本机还没有
+          // 推送的提交（同步方案 3.7 第 2 条）。
+          final clone = await _recloneAfterCompaction(
+            compaction,
+            deviceId: deviceId,
+            pushedThrough: pushedThrough,
+            confirmReclone: confirmReclone,
+          );
+          pulled += clone.pulled;
+          pushed += clone.pushed;
+          uploaded += clone.uploaded;
+          downloaded += clone.downloaded;
+          serverHead = clone.serverHead;
+        }
         state = state ?? SyncState(userId: userId, serverOrigin: origin);
       }
       _ensureIdentity();
@@ -887,6 +1122,12 @@ class SyncService {
           : state;
       final finalState = base.copyWith(syncedAt: clock());
       await preferences.saveSyncState(finalState);
+      // 空闲登记：同步到 N、没有待推送提交时把当前投影压缩成快照登记到服务端，
+      // 服务端据此可以压缩提交序列（同步方案 3.7 第 3 条）。失败只记诊断。
+      await _registerSnapshotQuietly(
+        serverHead: serverHead,
+        knownSnapshot: remoteHead.snapshot,
+      );
       return SyncResult(
         pulledCommits: pulled,
         pushedCommits: pushed,
@@ -896,7 +1137,9 @@ class SyncService {
     } catch (error, stack) {
       _lastError = _describe(error);
       if (error is! SyncIdentityChanged &&
-          error is! BaselineConfirmationRequired) {
+          error is! BaselineConfirmationRequired &&
+          error is! RecloneConfirmationRequired &&
+          error is! SyncSnapshotUnavailable) {
         recordFailure(error, stack, kind: 'cloud_sync');
       }
       rethrow;
@@ -944,8 +1187,42 @@ class SyncService {
     await _shadows.clear();
   }
 
-  /// 第一次同步：先把服务端已有的提交全部拉下来，再把本机独有、云端还没有的
-  /// 行作为基线提交上传，最后补齐这些行引用到的附件（同步方案 3.6）。
+  /// 第一次同步：按服务端 head 决定用云端快照浅克隆还是全量回放。
+  ///
+  /// 保留下界大于 1 说明快照之前的提交已经被压缩删除，全量回放读不到它们，这时
+  /// 必须用快照：按 [ServerSnapshot.sha256] 下载快照、核对哈希与整库摘要，把投影
+  /// 装进本机并追加一条本机提交，两个位置写成快照位置，再按 `after=snapshot.seq`
+  /// 增量拉取（同步方案 3.7）。新库只有空基线，装完之后直接就能继续追加提交与
+  /// 同步；本机已有历史时这条路径会替换本机历史，先由用户确认才执行，本机还没有
+  /// 推送的提交在快照之上重放。
+  ///
+  /// 保留下界是 1 时快照之前的提交仍然可以拉取，首次同步继续走全量回放：先拉取
+  /// 云端已有的记录，再把本机独有、云端还没有的行作为基线上传（同步方案 3.6）。
+  /// 已经在保留期内登记的快照因此不会让落后不多的设备白白改写本机历史。
+  /// 保留下界大于 1 却没有快照时无法自动重建，抛出 [SyncSnapshotUnavailable]。
+  Future<
+    ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
+  >
+  _bootstrap(
+    String deviceId, {
+    required ServerHead remoteHead,
+    required bool confirmReclone,
+  }) async {
+    if (remoteHead.historyCompacted) {
+      final snapshot = remoteHead.snapshot;
+      if (snapshot == null) throw const SyncSnapshotUnavailable();
+      return _recloneFromSnapshot(
+        snapshot,
+        deviceId: deviceId,
+        pushedThrough: 0,
+        confirmReclone: confirmReclone,
+      );
+    }
+    return _bootstrapByReplay(deviceId);
+  }
+
+  /// 首次同步的全量回放：把服务端已有的提交全部拉下来，再把本机独有、云端还
+  /// 没有的行作为基线提交上传，最后补齐这些行引用到的附件（同步方案 3.6）。
   ///
   /// 服务端的每一行都来自某条远端提交，所以拉取时记下被远端提交触及过的
   /// “表名 + 主键”，组装基线时跳过这些行：它们已经由服务端序列表达，本机这份
@@ -960,7 +1237,7 @@ class SyncService {
   Future<
     ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
   >
-  _bootstrap(String deviceId) async {
+  _bootstrapByReplay(String deviceId) async {
     var pulled = 0;
     var downloaded = 0;
     var serverHead = 0;
@@ -1041,6 +1318,263 @@ class SyncService {
       uploaded: uploaded,
       downloaded: downloaded,
     );
+  }
+
+  /// 拉取遇到 410：从服务端解析出快照，本机已有数据时先要用户确认再重建。
+  ///
+  /// 410 的 `extra` 里没有带上快照（旧版服务端、或者字段缺失）时再读一次 head，
+  /// 服务端登记过快照就照常重建；两边都没有快照时抛出 [SyncSnapshotUnavailable]，
+  /// 不静默清空本机数据。
+  Future<
+    ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
+  >
+  _recloneAfterCompaction(
+    SyncHistoryCompacted compaction, {
+    required String deviceId,
+    required int pushedThrough,
+    required bool confirmReclone,
+  }) async {
+    var snapshot = compaction.snapshot;
+    if (snapshot == null) {
+      final remoteHead = await account.call(
+        (client, token) => client.head(token),
+      );
+      snapshot = remoteHead.snapshot;
+    }
+    if (snapshot == null) throw const SyncSnapshotUnavailable();
+    return _recloneFromSnapshot(
+      snapshot,
+      deviceId: deviceId,
+      pushedThrough: pushedThrough,
+      confirmReclone: confirmReclone,
+    );
+  }
+
+  /// 按云端快照重新克隆本机（同步方案 3.7 第 1、2 条）。
+  ///
+  /// 步骤依次是：取出本机还没有推送的提交与它们的剩余变化；下载快照、核对
+  /// 哈希与整库摘要、解出投影并补齐它引用到的附件；用投影替换本机数据并追加
+  /// 一条“来自云端快照”的本机提交；两个位置写成快照位置与本机 `HEAD`；按
+  /// `after=snapshot.seq` 增量拉取快照之后的提交；最后把本机未推送的提交去掉被
+  /// 云端遮蔽的格子之后在快照之上重放，写成本机新提交再按普通推送发上去。
+  ///
+  /// 本机已有历史（`HEAD` 大于 0）而用户没有确认时抛出
+  /// [RecloneConfirmationRequired]，替换之前不写任何东西：重建会改写本机的数据
+  /// 版本历史，不能静默执行。
+  Future<
+    ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
+  >
+  _recloneFromSnapshot(
+    ServerSnapshot snapshot, {
+    required String deviceId,
+    required int pushedThrough,
+    required bool confirmReclone,
+  }) async {
+    final localHead = await engine.headId(database.raw);
+    final pending = await revisions.commitsAfter(pushedThrough);
+    if (localHead > 0 && !confirmReclone) {
+      throw RecloneConfirmationRequired(
+        localCommits: pending.length,
+        snapshotSeq: snapshot.seq,
+      );
+    }
+    var downloaded = 0;
+    var uploaded = 0;
+    // 替换投影之后库里读不到本机原有的提交与遮蔽行，先取出这次要重放的内容。
+    final shadowsBefore = await _shadows.list();
+    final replay =
+        <
+          ({int id, String action, String actor, List<RevisionChange> changes})
+        >[];
+    for (final commit in pending) {
+      replay.add((
+        id: commit.id,
+        action: commit.action,
+        actor: commit.actor,
+        changes: await engine.changesFor(database.raw, commit.id),
+      ));
+    }
+    final fetched = await _downloadSnapshotProjection(snapshot);
+    downloaded += fetched.downloaded;
+    _ensureIdentity();
+    final imported = await _importSnapshotProjection(fetched.projection);
+    // 快照之前的提交已经由快照表达：服务端位置写成快照位置，这条本机提交是
+    // 重建起点、不上传，推送位置直接写成它的编号，之后的增量从这里接着走。
+    _ensureIdentity();
+    await _saveServerHead(snapshot.seq);
+    await _savePushed(imported.id);
+    final pulled = await _pull(
+      serverHead: snapshot.seq,
+      deviceId: deviceId,
+      downloaded: (count) => downloaded += count,
+    );
+    var pulledCount = pulled.pulled;
+    var serverHead = pulled.serverHead;
+    // 重放本机未推送的提交：遮蔽行取替换之后库里的全部（含这次拉取刚登记的），
+    // 原来那份只在替换前可用，这里合并两边，按格去掉云端已经覆盖的改动。
+    final shadows = [...shadowsBefore, ...await _shadows.list()];
+    var skipped = 0;
+    for (final item in replay) {
+      final remaining = _rebaseChanges(item.changes, item.id, shadows);
+      if (remaining.isEmpty) continue;
+      final result = await database.gate.exclusive(
+        () => engine.replayLocalChanges(
+          database.resolve(),
+          remaining,
+          action: item.action.isEmpty ? '从云端快照重建后重放' : item.action,
+          actor: _actorOf(item.actor),
+        ),
+      );
+      skipped += result.skipped;
+      if (result.commit != null) {
+        database.notifyTables({for (final change in remaining) change.table});
+      }
+    }
+    if (skipped > 0) {
+      recordFailure(
+        StateError('按云端快照重建时跳过 $skipped 条对不上的本机变化'),
+        StackTrace.current,
+        kind: 'cloud_sync_reclone_replay',
+      );
+    }
+    final push = await _push(
+      serverHead: serverHead,
+      pushedThrough: imported.id,
+      deviceId: deviceId,
+      uploaded: (count) => uploaded += count,
+      onPulled: (result) {
+        pulledCount += result.pulled;
+        downloaded += result.downloaded;
+      },
+    );
+    serverHead = push.serverHead;
+    return (
+      serverHead: serverHead,
+      pulled: pulledCount,
+      pushed: push.pushed,
+      uploaded: uploaded,
+      downloaded: downloaded,
+    );
+  }
+
+  /// 下载并核对一份云端快照：校验附件哈希、解出投影、比对整库摘要，再把投影
+  /// 引用到的附件补齐到本机。
+  ///
+  /// 快照是内容寻址的附件，服务端不解析内容，正确性由客户端保证（ADR-0043）；
+  /// 哈希或摘要对不上时抛出 [SyncSnapshotInvalid]，这次不替换本机数据。
+  Future<({Projection projection, int downloaded})> _downloadSnapshotProjection(
+    ServerSnapshot snapshot,
+  ) async {
+    final bytes = await account.call(
+      (client, token) => client.blobDownload(token, snapshot.sha256),
+    );
+    if (AssetStore.hashBytes(bytes) != snapshot.sha256) {
+      throw const SyncSnapshotInvalid('快照附件的哈希与登记的不一致');
+    }
+    final Projection projection;
+    try {
+      projection = decodeSnapshotBytes(bytes);
+    } catch (error) {
+      throw SyncSnapshotInvalid('快照解不开：$error');
+    }
+    if (snapshot.digest.isNotEmpty &&
+        revisionStateDigest(projection) != snapshot.digest) {
+      throw const SyncSnapshotInvalid('快照的整库摘要与登记的不一致');
+    }
+    final downloaded = await _downloadAssets(
+      AssetStore.hashesInProjection(projection),
+    );
+    _ensureIdentity();
+    return (projection: projection, downloaded: downloaded);
+  }
+
+  /// 用快照投影替换本机数据并追加一条本机提交；页面按业务表与版本表重读。
+  Future<RevisionCommit> _importSnapshotProjection(
+    Projection projection,
+  ) async {
+    late RevisionCommit imported;
+    await database.gate.exclusive(() async {
+      final connection = database.resolve();
+      final head = await engine.headId(connection);
+      imported = await engine.importSnapshotProjection(
+        connection,
+        projection,
+        expectedHead: head,
+        action: '从云端快照重建',
+        actor: 'system',
+      );
+    });
+    database.notifyTables({
+      ...versionedTableNames,
+      ...revisionHistoryTables,
+      'revision_checkpoint',
+    });
+    return imported;
+  }
+
+  /// 空闲登记快照：同步到 [serverHead]、没有待推送提交时把当前投影按检查点格式
+  /// 压缩上传，再登记 `{seq, sha256, digest}`，服务端据此可以压缩提交序列。
+  ///
+  /// 只在完全同步、摘要一致、本机没有绕过提交的写入时登记：登记错的快照会让
+  /// 之后克隆的设备得到错误数据，服务端不校验内容（ADR-0043）。同一位置或更
+  /// 新的位置已有快照、同一份内容刚登记过、以及服务端已经有这个附件时都跳过；
+  /// 409 表示服务端已有更新的快照（或正在清除云端数据），放弃本次；其他失败只
+  /// 记诊断，不影响这一轮同步的结果。
+  Future<void> _registerSnapshotQuietly({
+    required int serverHead,
+    required ServerSnapshot? knownSnapshot,
+  }) async {
+    try {
+      if (serverHead <= 0) return;
+      if (_pulledSkipped > 0 || _knownDigestMismatch) return;
+      final pushed = await _pushedPosition();
+      if ((await revisions.commitsAfter(pushed)).isNotEmpty) return;
+      if (knownSnapshot != null && knownSnapshot.seq >= serverHead) return;
+      final remoteHead = await account.call(
+        (client, token) => client.head(token),
+      );
+      if (remoteHead.snapshot != null &&
+          remoteHead.snapshot!.seq >= serverHead) {
+        return;
+      }
+      final head = await engine.headId(database.raw);
+      final headCommit = await engine.commitById(database.raw, head);
+      final projection = await engine.readProjection(database.raw);
+      final digest = revisionStateDigest(projection);
+      // 本机表与 HEAD 记录的摘要对不上说明有绕过提交的写入，这份状态不作为快照。
+      if (headCommit?.stateDigest != digest) return;
+      final bytes = encodeSnapshotBytes(projection);
+      final hash = AssetStore.hashBytes(bytes);
+      if (hash == _lastSnapshotHash) return;
+      _ensureIdentity();
+      final exists = await account.call(
+        (client, token) => client.blobExists(token, hash),
+      );
+      if (exists == null) {
+        await account.call(
+          (client, token) => client.blobUpload(token, hash, bytes),
+        );
+      }
+      _ensureIdentity();
+      await account.call(
+        (client, token) => client.registerSnapshot(
+          token,
+          seq: serverHead,
+          sha256: hash,
+          digest: digest,
+        ),
+      );
+      _lastSnapshotHash = hash;
+    } on ServerProblem catch (error) {
+      if (error.isConflict) {
+        // 409：服务端已有更新的快照，或者账号正在清除云端数据；这次放弃，
+        // 下一轮同步按当时的位置重新判断。
+        return;
+      }
+      recordFailure(error, StackTrace.current, kind: 'cloud_sync_snapshot');
+    } catch (error, stack) {
+      recordFailure(error, stack, kind: 'cloud_sync_snapshot');
+    }
   }
 
   /// 把本机独有的行按每片最多 [_baselineChunk] 处变化组装成基线提交。
@@ -1619,6 +2153,10 @@ class SyncService {
     SyncSchemaMismatch() => error.toString(),
     SyncIdentityChanged() => error.toString(),
     BaselineConfirmationRequired(:final message) => message,
+    RecloneConfirmationRequired(:final message) => message,
+    SyncSnapshotUnavailable(:final message) => message,
+    SyncSnapshotInvalid(:final message) => message,
+    SyncHistoryCompacted(:final userMessage) => userMessage,
     _ => '同步没有完成',
   };
 }

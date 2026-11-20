@@ -97,6 +97,21 @@ class FakeServer {
   final Map<String, List<FakeBackup>> backups = {};
   final Map<String, Map<String, Uint8List>> blobs = {};
 
+  /// 每个账号已经压缩删除到哪个序号：保留下界等于它加一（ADR-0043）。
+  final Map<String, int> trimmedThrough = {};
+
+  /// 每个账号当前登记的快照指针；没有登记时为空。
+  final Map<String, FakeSnapshot> snapshots = {};
+
+  /// 收到的快照登记请求次数，用例据此确认有没有重复登记。
+  int snapshotRegistrations = 0;
+
+  /// 接下来几次快照登记返回 503 `unavailable`，用来验证登记失败只记诊断。
+  int snapshotFailures = 0;
+
+  /// 打开之后快照登记一律返回 409：模拟服务端已有更新的快照。
+  bool snapshotAlwaysConflicts = false;
+
   /// 单个附件的上限与单账号附件总量上限；为空时不限制，与契约里的两个环境
   /// 变量对应。超限时分别返回 `payload_too_large` 与 `storage_full`。
   int? maxAttachmentBytes;
@@ -127,6 +142,35 @@ class FakeServer {
   bool embeddingQuotaExceeded = false;
 
   int headOf(String userId) => commits[userId]?.length ?? 0;
+
+  /// 保留下界：第一条仍然可以拉取的序号，没有压缩过时为 1。
+  int earliestSeqOf(String userId) => (trimmedThrough[userId] ?? 0) + 1;
+
+  /// 账号当前快照指针。
+  FakeSnapshot? snapshotOf(String userId) => snapshots[userId];
+
+  /// 模拟保留期到达之后服务端删掉到 [through] 为止的提交。
+  void compactThrough(String userId, int through) {
+    final current = trimmedThrough[userId] ?? 0;
+    if (through > current) trimmedThrough[userId] = through;
+  }
+
+  /// 直接登记一份快照，不经过接口：用例用它构造“云端已经有一份快照”的前置状态。
+  void putSnapshot(
+    String userId, {
+    required int seq,
+    required Uint8List bytes,
+    String? digest,
+  }) {
+    final hash = _sha256Hex(bytes);
+    blobs.putIfAbsent(userId, () => {})[hash] = bytes;
+    snapshots[userId] = FakeSnapshot(
+      seq: seq,
+      sha256: hash,
+      digest: digest ?? _sha256Hex(Uint8List(0)),
+      createdAt: '2026-11-20T10:00:00Z',
+    );
+  }
 
   /// 按登录方式的值取账号 id；假服务端一个账号只有一条邮箱登录方式。
   String userIdOf(String identifier) => _userIds[identifier]!;
@@ -256,6 +300,8 @@ class FakeServer {
       commits.remove(userId);
       backups.remove(userId);
       blobs.remove(userId);
+      trimmedThrough.remove(userId);
+      snapshots.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/backups') {
@@ -272,18 +318,27 @@ class FakeServer {
       backups.remove(userId);
       commits[userId] = [];
       blobs.remove(userId);
+      trimmedThrough.remove(userId);
+      snapshots.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/sync/commits') {
       commits[userId] = [];
+      trimmedThrough.remove(userId);
+      snapshots.remove(userId);
       return http.Response('', 204);
+    }
+    if (path == '/v1/sync/snapshot') {
+      if (method == 'GET') {
+        return _json(200, _syncHeadBody(userId));
+      }
+      if (method == 'PUT') {
+        return _registerSnapshot(userId, body);
+      }
     }
     if (method == 'GET' && path == '/v1/sync/head') {
       await onHead?.call();
-      return _json(200, {
-        'head': headOf(userId),
-        'schema_version': schemaVersion,
-      });
+      return _json(200, _syncHeadBody(userId));
     }
     if (method == 'GET' && path == '/v1/sync/commits') {
       await onPull?.call();
@@ -292,11 +347,37 @@ class FakeServer {
       final limit =
           int.tryParse(request.url.queryParameters['limit'] ?? '200') ?? 200;
       final log = commits[userId] ?? const [];
-      final slice = log.skip(after).take(limit).toList();
+      final earliest = earliestSeqOf(userId);
+      if (after + 1 < earliest) {
+        // 客户端要的下一条已经被压缩删掉：按契约返回 410，extra 带上快照。
+        final snapshot = snapshots[userId];
+        return _problem(
+          410,
+          'history_compacted',
+          extra: {
+            'after': after,
+            'earliest_seq': earliest,
+            'head': log.length,
+            if (snapshot != null) ...{
+              'snapshot_seq': snapshot.seq,
+              'snapshot_sha256': snapshot.sha256,
+              'snapshot_digest': snapshot.digest,
+            },
+          },
+        );
+      }
+      final slice = [
+        for (final commit in log)
+          if ((commit['seq']! as int) > after &&
+              (commit['seq']! as int) >= earliest)
+            commit,
+      ].take(limit).toList();
       return _json(200, {
+        ..._syncHeadBody(userId),
         'commits': slice,
-        'head': log.length,
-        'has_more': after + slice.length < log.length,
+        'has_more':
+            slice.isNotEmpty &&
+            (slice.last['seq']! as int) < (log.last['seq']! as int? ?? 0),
       });
     }
     if (method == 'POST' && path == '/v1/sync/commits') {
@@ -480,6 +561,54 @@ class FakeServer {
   }
 
   int _backupSeq = 1;
+
+  /// 同步 head、快照查询与拉取响应的公共字段：最新位置、保留下界与快照指针。
+  Map<String, Object?> _syncHeadBody(String userId) {
+    final snapshot = snapshots[userId];
+    return {
+      'head': headOf(userId),
+      'schema_version': schemaVersion,
+      'earliest_seq': earliestSeqOf(userId),
+      if (snapshot != null) 'snapshot': snapshot.toJson(),
+    };
+  }
+
+  /// 登记快照：校验位置、两个哈希与附件归属，位置比已登记的小时返回 409。
+  http.Response _registerSnapshot(String userId, Map<String, Object?> body) {
+    snapshotRegistrations++;
+    if (snapshotFailures > 0) {
+      snapshotFailures--;
+      return _problem(503, 'unavailable');
+    }
+    final seq = (body['seq'] as num?)?.toInt() ?? 0;
+    final sha = body['sha256'] as String? ?? '';
+    final digest = body['digest'] as String? ?? '';
+    final hex = RegExp(r'^[0-9a-f]{64}$');
+    if (seq < 1 ||
+        seq > headOf(userId) ||
+        !hex.hasMatch(sha) ||
+        !hex.hasMatch(digest)) {
+      return _problem(400, 'invalid_request');
+    }
+    if (!(blobs[userId]?.containsKey(sha) ?? false)) {
+      return _problem(400, 'invalid_request');
+    }
+    final current = snapshots[userId];
+    if (snapshotAlwaysConflicts || (current != null && seq < current.seq)) {
+      return _problem(
+        409,
+        'conflict',
+        extra: {'snapshot_seq': current?.seq ?? headOf(userId)},
+      );
+    }
+    snapshots[userId] = FakeSnapshot(
+      seq: seq,
+      sha256: sha,
+      digest: digest,
+      createdAt: '2026-11-21T10:00:00Z',
+    );
+    return _json(200, _syncHeadBody(userId));
+  }
 
   http.Response _register(Map<String, Object?> body) {
     final identifier = (body['identifier'] as String? ?? '')
@@ -703,6 +832,28 @@ class FakeBackup {
 
   final Map<String, Object?> meta;
   final Uint8List bytes;
+}
+
+/// 假服务端保存的快照指针：覆盖到的序号、附件哈希、整库摘要与登记时间。
+class FakeSnapshot {
+  const FakeSnapshot({
+    required this.seq,
+    required this.sha256,
+    required this.digest,
+    required this.createdAt,
+  });
+
+  final int seq;
+  final String sha256;
+  final String digest;
+  final String createdAt;
+
+  Map<String, Object?> toJson() => {
+    'seq': seq,
+    'sha256': sha256,
+    'digest': digest,
+    'created_at': createdAt,
+  };
 }
 
 String _sha256Hex(Uint8List bytes) => sha256.convert(bytes).toString();

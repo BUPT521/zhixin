@@ -5,12 +5,13 @@ import 'package:zhixin/ui/cloud_sync_prompts.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/zhixin_dialog.dart';
 
-/// 首次基线上传、恢复自动同步、整库恢复之后的重新对齐与两个摘要修复入口的
-/// 确认框：确认返回 true，取消返回 false。
+/// 首次基线上传、恢复自动同步、整库恢复之后的重新对齐、云端快照重建与两个摘要
+/// 修复入口的确认框：确认返回 true，取消返回 false。
 void main() {
   bool? baselineResult;
   bool? autoSyncResult;
   bool? restoreResult;
+  bool? snapshotRebuildResult;
   bool? repairCloudResult;
   bool? repairLocalResult;
 
@@ -18,6 +19,7 @@ void main() {
     baselineResult = null;
     autoSyncResult = null;
     restoreResult = null;
+    snapshotRebuildResult = null;
     repairCloudResult = null;
     repairLocalResult = null;
   });
@@ -52,6 +54,15 @@ void main() {
                 restoreResult = await confirmRestoreAlignment(context);
               },
               child: const Text('恢复后同步'),
+            ),
+            TextButton(
+              onPressed: () async {
+                snapshotRebuildResult = await confirmSnapshotRebuild(
+                  context,
+                  localCommits: 2,
+                );
+              },
+              child: const Text('按快照重建'),
             ),
             TextButton(
               onPressed: () async {
@@ -127,6 +138,25 @@ void main() {
     await tester.tap(find.widgetWithText(forui.FButton, '取消'));
     await tester.pumpAndSettle();
     expect(restoreResult, isFalse);
+  });
+
+  testWidgets('去云端快照重建确认说明会改写本机历史，取消返回 false', (tester) async {
+    await open(tester, '按快照重建');
+    expect(find.byType(ZhixinDialogLayout), findsOneWidget);
+    expect(find.text('云端历史已经压缩，这台设备要从云端快照重建'), findsOneWidget);
+    expect(find.textContaining('本机还没有推送的 2 条改动会作为新提交重放'), findsOneWidget);
+    expect(find.textContaining('取消则不同步，本机数据保持不变'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(snapshotRebuildResult, isFalse);
+  });
+
+  testWidgets('去云端快照重建确认点按快照重建返回 true', (tester) async {
+    await open(tester, '按快照重建');
+    await tester.tap(find.widgetWithText(forui.FButton, '按快照重建'));
+    await tester.pumpAndSettle();
+    expect(snapshotRebuildResult, isTrue);
   });
 
   testWidgets('以云端为准修复确认说明会重新拉取云端内容', (tester) async {
