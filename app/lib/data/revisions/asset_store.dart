@@ -100,19 +100,40 @@ class AssetStore {
   ///
   /// 调用方给出的 [keep] 是当前投影的附件哈希加上 `revision_asset_ref` 里仍
   /// 有主人的哈希，不再解码全部变更明细与检查点清单（ADR-0039 第 4 节泳道 B）。
+  ///
+  /// 删除用一条 `DELETE ... WHERE hash NOT IN (...)` 完成，附件多时不必逐条
+  /// 执行语句；[keep] 超过 [_keepParameterLimit] 时退回逐条删除，不同平台的
+  /// SQLite 变量上限不一样，结果相同，只是慢一些。
   Future<int> collectGarbage(
     RawExecutor executor, {
     required Set<String> keep,
   }) async {
     final hashes = await objectHashes(executor);
-    var removed = 0;
-    for (final hash in hashes) {
-      if (keep.contains(hash)) continue;
-      await executor.execute('DELETE FROM asset_object WHERE hash = ?', [hash]);
-      removed++;
+    final removed = hashes.difference(keep).length;
+    if (removed == 0) return 0;
+    if (keep.isEmpty) {
+      await executor.execute('DELETE FROM asset_object');
+      return removed;
     }
+    if (keep.length > _keepParameterLimit) {
+      for (final hash in hashes) {
+        if (keep.contains(hash)) continue;
+        await executor.execute('DELETE FROM asset_object WHERE hash = ?', [
+          hash,
+        ]);
+      }
+      return removed;
+    }
+    final placeholders = List.filled(keep.length, '?').join(', ');
+    await executor.execute(
+      'DELETE FROM asset_object WHERE hash NOT IN ($placeholders)',
+      keep.toList(growable: false),
+    );
     return removed;
   }
+
+  /// 一条 DELETE 最多带多少个哈希；留出余量，不同平台的 SQLite 变量上限不同。
+  static const int _keepParameterLimit = 20000;
 
   /// 投影里被业务行引用的附件哈希。
   static Set<String> hashesInProjection(Projection projection) {

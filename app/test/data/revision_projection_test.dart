@@ -396,4 +396,72 @@ void main() {
       throwsA(anything),
     );
   });
+  test('随机写入序列上任意两个提交点的 foldChanges 都与两次重建一致', () async {
+    // 60 次随机写入、任取两点全组合（1770 对）；每个提交点的投影先算一次，
+    // 公共测试的超时放得下，数量再大就只能抽样。
+    final rig = await openTestRig(engine: _engine());
+    addTearDown(rig.close);
+    final writes = WriteTransactions(rig.db, revisions: rig.engine);
+    final random = Random(20261121);
+    final memories = <String>[];
+    final deleted = <String>[];
+    final points = <int>[await rig.engine.headId(rig.raw)];
+
+    for (var step = 0; step < 60; step++) {
+      final choice = random.nextInt(100);
+      await writes.run((txn) async {
+        if (choice < 40 || (memories.isEmpty && deleted.isEmpty)) {
+          final id = 'memory-$step';
+          await _insertMemory(txn, id, '第 $step 条');
+          memories.add(id);
+        } else if (choice < 70 && memories.isNotEmpty) {
+          final id = memories[random.nextInt(memories.length)];
+          await updateRow(
+            txn.executor,
+            'memory',
+            {'content': '改写 $step'},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        } else if (choice < 85 && memories.isNotEmpty) {
+          final id = memories.removeAt(random.nextInt(memories.length));
+          await deleteRows(
+            txn.executor,
+            'memory',
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+          deleted.add(id);
+        } else if (deleted.isNotEmpty) {
+          // 删掉之后又用同一个主键写回来：净变化可能是新增，也可能是修改。
+          final id = deleted.removeAt(random.nextInt(deleted.length));
+          await _insertMemory(txn, id, '恢复 $step');
+          memories.add(id);
+        }
+      }, label: '随机写入 $step');
+      points.add(await rig.engine.headId(rig.raw));
+    }
+
+    final projections = <int, Projection>{};
+    for (final point in points) {
+      projections[point] = await rig.engine.projectionAt(rig.raw, point);
+    }
+    var compared = 0;
+    for (var left = 0; left < points.length; left++) {
+      for (var right = left + 1; right < points.length; right++) {
+        final from = points[left];
+        final to = points[right];
+        final folded = await rig.engine.foldChanges(rig.raw, from, to);
+        final rebuilt = diffProjections(projections[from]!, projections[to]!);
+        expect(
+          _describeChanges(folded),
+          _describeChanges(rebuilt),
+          reason: 'foldChanges($from, $to)',
+        );
+        compared++;
+      }
+    }
+    expect(compared, points.length * (points.length - 1) ~/ 2);
+    expect(compared, greaterThan(1500));
+  });
 }
