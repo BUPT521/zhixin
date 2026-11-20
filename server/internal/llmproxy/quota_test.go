@@ -66,7 +66,32 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	}
 }
 
-// TestMemoryQuotaInstanceBudget 核对实例预算：所有账号的用量合计达到上限之后，
+// TestMemoryQuotaInstanceLedgerSurvivesDelete 核对实例账本与账号用量分开：删号
+// 清掉账号当天的用量，实例当天的预算不因此重新腾出来（ADR-0036）。
+func TestMemoryQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
+	ctx := context.Background()
+	q := NewMemoryQuota()
+	q.SetQuotaLimits(1000, 200, 300)
+	const day = "2026-11-18"
+
+	if got, err := q.Reserve(ctx, "u1", day, KindChat, 300); err != nil || got != 300 {
+		t.Fatalf("第一次预留应为 300，得到 %d %v", got, err)
+	}
+	if err := q.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("删除账号: %v", err)
+	}
+	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 0 {
+		t.Fatalf("删号之后账号用量应为 0，得到 %d", used)
+	}
+	if used, _ := q.InstanceUsed(ctx, day); used != 300 {
+		t.Fatalf("删号不应减少实例用量，仍应为 300，得到 %d", used)
+	}
+	if _, err := q.Reserve(ctx, "u2", day, KindChat, 1); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("实例预算已被占满，应返回 ErrQuotaExceeded，得到 %v", err)
+	}
+}
+
+// TestMemoryQuotaInstanceBudget 核对实例预算：所有账号的合计达到上限之后，
 // 任何账号都预留不到，结算退回的部分重新变成可用预算。
 func TestMemoryQuotaInstanceBudget(t *testing.T) {
 	ctx := context.Background()

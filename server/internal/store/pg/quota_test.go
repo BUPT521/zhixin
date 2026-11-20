@@ -109,6 +109,36 @@ func TestPostgresQuotaInstanceBudget(t *testing.T) {
 	}
 }
 
+// TestPostgresQuotaInstanceLedgerSurvivesDelete 核对实例账本不随账号删除减少：删号
+// 级联删掉账号当天的用量行，实例当天的预算仍然按已经发生的用量计算（ADR-0036）。
+func TestPostgresQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"u1", "u2"} {
+		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+			t.Fatalf("user %s: %v", id, err)
+		}
+	}
+	st.SetQuotaLimits(1000, 200, 300)
+	const day = "2026-11-18"
+
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, 300); err != nil || got != 300 {
+		t.Fatalf("第一次预留应为 300，得到 %d %v", got, err)
+	}
+	if err := st.DeleteUser(ctx, "u1"); err != nil {
+		t.Fatalf("删除账号: %v", err)
+	}
+	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 0 {
+		t.Fatalf("删号之后账号用量应为 0，得到 %d %v", used, err)
+	}
+	if used, err := st.InstanceUsed(ctx, day); err != nil || used != 300 {
+		t.Fatalf("删号不应减少实例用量，仍应为 300，得到 %d %v", used, err)
+	}
+	if _, err := st.Reserve(ctx, "u2", day, llmproxy.KindChat, 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+		t.Fatalf("实例预算已被占满，应返回 ErrQuotaExceeded，得到 %v", err)
+	}
+}
+
 // TestPostgresQuotaReserveIsAtomic 核对同一天的并发预留不会各自按旧用量通过：
 // 10 个并发请求各要 20，总预算 100，正好 5 个成功，其余返回 ErrQuotaExceeded。
 func TestPostgresQuotaReserveIsAtomic(t *testing.T) {

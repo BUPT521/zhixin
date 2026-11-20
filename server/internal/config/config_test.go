@@ -135,6 +135,9 @@ func TestLoadDefaultsForHardening(t *testing.T) {
 	if cfg.LLM.MaxResponseBytes != 32<<20 {
 		t.Fatalf("llm response bytes = %d", cfg.LLM.MaxResponseBytes)
 	}
+	if cfg.LLM.MaxInstanceBytes != 256<<20 {
+		t.Fatalf("llm instance bytes = %d", cfg.LLM.MaxInstanceBytes)
+	}
 	if cfg.LLM.StreamIdleTimeout <= 0 || cfg.LLM.StreamTotalTimeout <= cfg.LLM.StreamIdleTimeout {
 		t.Fatalf("llm stream timeouts = %+v", cfg.LLM)
 	}

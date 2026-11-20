@@ -61,6 +61,11 @@ type Proxy struct {
 	mu         sync.Mutex
 	maxPerUser int
 	inflight   map[string]int
+
+	// mem 是整个实例同时在途的字节预算（ADR-0036）。账号并发上限只约束单个
+	// 账号，账号数量增加时实例总内存仍会跟着涨；请求体、非流式响应与嵌入批次都
+	// 从这一份预算里预留，占不到时在读写之前拒绝。
+	mem *byteBudget
 }
 
 // NewRoutedHandler 使用服务端从数据库读出的路由快照。
@@ -96,6 +101,7 @@ func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *ti
 		// 再发一次，key 会以明文出现在网络上。来源的地址应当直接写对。
 		client: &http.Client{Transport: transport, CheckRedirect: noRedirect}, publicClient: publicClient,
 		loc: loc, now: time.Now, log: log, inflight: map[string]int{},
+		mem: newByteBudget(cfg.MaxInstanceBytes),
 	}
 }
 
@@ -230,11 +236,13 @@ func (p *Proxy) readBody(w http.ResponseWriter, r *http.Request) (map[string]jso
 	return fields, true
 }
 
-// beginRequest 在读请求体之前核对邮箱状态并占用账号的并发名额。
-func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID string) bool {
+// beginRequest 在读请求体之前核对邮箱状态、占用账号的并发名额与实例的内存预算。
+// 返回的 done 在请求结束时调用一次，归还并发名额与预算；返回 false 时已经写好
+// problem，调用方直接结束。
+func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID string) (done func(), ok bool) {
 	if len(p.router.current().models) == 0 {
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
-		return false
+		return nil, false
 	}
 	// 邮箱确认在读取请求体之前检查：未确认的账号拿 403，不消耗请求体读取、额度
 	// 预留与上游调用。检查失败按服务端错误处理，不能当成“未确认”放过去。
@@ -242,21 +250,47 @@ func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID stri
 		verified, err := p.verifyEmail(r.Context(), userID)
 		if err != nil {
 			httpx.WriteInternal(w, r, p.log, err)
-			return false
+			return nil, false
 		}
 		if !verified {
 			httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeEmailUnverified,
 				"verify your email address on the account page to use the hosted model quota")
-			return false
+			return nil, false
 		}
 	}
 	// 并发上限同样在读取请求体之前检查：超出时回 429 与 Retry-After，不占请求体
 	// 读取、额度预留与上游连接。名额在请求结束（含流式转发）时由 defer 归还。
 	if !p.acquireConcurrency(userID) {
 		httpx.TooMany(w, r, 1)
-		return false
+		return nil, false
 	}
-	return true
+	// 实例预算按请求体大小预留：读到内存里的正文与替换模型名时重新编码的那一份
+	// 各占一份，长度未知（chunked）时按上限算。占不到时同样回 429，账号并发名额
+	// 立即归还。
+	release, reserved := p.mem.reserve(p.requestBytes(r))
+	if !reserved {
+		p.releaseConcurrency(userID)
+		httpx.TooMany(w, r, 1)
+		return nil, false
+	}
+	return func() {
+		release()
+		p.releaseConcurrency(userID)
+	}, true
+}
+
+// requestBytes 是请求体在实例预算里占用的字节数。转发前要把模型名换成来源侧的
+// 名字，`withModel` 会按解析后的字段重新编码一份正文，所以预留两倍；声明长度缺失
+// 或超过上限时按上限算，客户端不能靠少写 Content-Length 少占预算。
+func (p *Proxy) requestBytes(r *http.Request) int64 {
+	if p.cfg.MaxRequestBytes <= 0 {
+		return 0
+	}
+	size := r.ContentLength
+	if size < 0 || size > p.cfg.MaxRequestBytes {
+		size = p.cfg.MaxRequestBytes
+	}
+	return 2 * size
 }
 
 // findModel 解析当前快照中的同用途模型；失败时写入 problem。
@@ -352,10 +386,11 @@ func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved,
 
 func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	userID := auth.MustPrincipal(r.Context()).UserID
-	if !p.beginRequest(w, r, userID) {
+	done, ok := p.beginRequest(w, r, userID)
+	if !ok {
 		return
 	}
-	defer p.releaseConcurrency(userID)
+	defer done()
 	fields, ok := p.readBody(w, r)
 	if !ok {
 		return
@@ -407,6 +442,10 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // client went away
+		}
+		if errors.Is(err, errInstanceBusy) {
+			httpx.TooMany(w, r, 1)
+			return
 		}
 		if errors.Is(err, ErrQuotaExceeded) {
 			p.writeQuotaExceeded(w, r, userID, day, KindChat)
@@ -613,8 +652,17 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 			reply.stream, reply.finish = resp.Body, finish
 			return reply, nil
 		}
+		// 非流式响应要整段读进内存再写回客户端：先按上限从实例预算里预留，
+		// 占不到时没有写出任何内容，整次请求按实例繁忙结束，不换来源重试。
+		release, reserved := p.mem.reserve(p.cfg.MaxResponseBytes)
+		if !reserved {
+			resp.Body.Close()
+			finish(attemptResult{tokens: -1})
+			return reply, errInstanceBusy
+		}
 		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
 		resp.Body.Close()
+		release()
 		var completion struct {
 			usageEnvelope
 			Choices []struct {
@@ -752,6 +800,11 @@ func (u usageEnvelope) tokens(kind Kind) int64 {
 // errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
 // 方可以按 upstream_failed 回 problem，而不是把半截响应交给客户端。
 var errResponseTooLarge = errors.New("llmproxy: 上游响应过大")
+
+// errInstanceBusy 表示实例的在途字节预算已经用完。发现时还没有写出任何响应内容，
+// 调用方按 429 回 problem，客户端稍后重试；这里不排队等待，托管请求本身可能持续
+// 几分钟，排队只是把内存压力换成 goroutine 积压。
+var errInstanceBusy = errors.New("llmproxy: 实例在途内存预算已用完")
 
 // readResponse 最多读 maxBytes；maxBytes 非正表示不限制。超限时返回
 // errResponseTooLarge，不返回部分内容。

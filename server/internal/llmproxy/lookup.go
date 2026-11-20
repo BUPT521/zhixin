@@ -42,10 +42,11 @@ type embeddingLookupVector struct {
 // 全部未命中不是错误，客户端据此只嵌入剩下的文本。
 func (p *Proxy) EmbeddingLookup(w http.ResponseWriter, r *http.Request) {
 	userID := auth.MustPrincipal(r.Context()).UserID
-	if !p.beginRequest(w, r, userID) {
+	done, ok := p.beginRequest(w, r, userID)
+	if !ok {
 		return
 	}
-	defer p.releaseConcurrency(userID)
+	defer done()
 	fields, ok := p.readBody(w, r)
 	if !ok {
 		return

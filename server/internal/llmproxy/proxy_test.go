@@ -882,6 +882,51 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 	}
 }
 
+// TestHandlerInstanceMemoryBudget 核对实例级字节预算：请求体两倍大小超过预算时在
+// 读取之前回 429；请求体进门之后非流式响应占不到响应预算时同样回 429，实例内存
+// 因此不再由并发数决定（ADR-0036）。
+func TestHandlerInstanceMemoryBudget(t *testing.T) {
+	var forwarded atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":5}}`)
+	}))
+	defer upstream.Close()
+
+	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
+		DailyTokens:      10000,
+		MaxRequestBytes:  1 << 20,
+		MaxResponseBytes: 1 << 20,
+		MaxInstanceBytes: 4096,
+	}, upstream.URL)
+	token := signIn(t, authSvc, "budget@b.cn")
+
+	// 正文约 3 KiB，两倍已经超过 4096 字节的预算。
+	big, err := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": strings.Repeat("x", 3000)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(big), map[string]string{"Content-Type": "application/json"})
+	problem := testutil.ReadProblem(t, resp)
+	if resp.StatusCode != http.StatusTooManyRequests || problem.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("超过实例预算应回 429，得到 %d %+v", resp.StatusCode, problem)
+	}
+	if forwarded.Load() != 0 {
+		t.Fatalf("被挡下的请求不应转发，上游收到 %d 次", forwarded.Load())
+	}
+
+	// 小请求能进门，但非流式响应上限大于剩余预算，占不到时不写出任何内容。
+	small := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, small, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("响应预算不足应回 429，得到 %d %+v", code, p)
+	}
+	if forwarded.Load() != 1 {
+		t.Fatalf("响应预算不足时上游已经被调用一次，得到 %d", forwarded.Load())
+	}
+}
+
 // TestHandlerRequiresVerifiedEmail 核对未确认邮箱的账号在读取请求体之前被挡下：
 // 契约里的 403 email_unverified 不转发上游，确认之后同一个账号可以继续使用。
 // 没有注入检查时按已认证处理，内存装配与现有测试因此不依赖真实账号库。

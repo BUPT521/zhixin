@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -31,10 +32,11 @@ var embeddingFields = map[string]bool{"model": true, "input": true, "dimensions"
 // 换下一个来源重做，所以同一次请求的向量总是来自同一个来源。
 func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 	userID := auth.MustPrincipal(r.Context()).UserID
-	if !p.beginRequest(w, r, userID) {
+	done, ok := p.beginRequest(w, r, userID)
+	if !ok {
 		return
 	}
-	defer p.releaseConcurrency(userID)
+	defer done()
 	fields, ok := p.readBody(w, r)
 	if !ok || !allowFields(w, r, fields, embeddingFields) {
 		return
@@ -78,6 +80,8 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(res.err, ErrQuotaExceeded):
 		p.writeQuotaExceeded(w, r, userID, day, KindEmbedding)
+	case errors.Is(res.err, errInstanceBusy):
+		httpx.TooMany(w, r, 1)
 	case errors.As(res.err, &budgetError):
 		httpx.WriteInternal(w, r, p.log, res.err)
 	case res.passthrough != nil:
@@ -143,6 +147,13 @@ type embedResult struct {
 // embed 依次尝试候选路由，返回合并好的响应、需要原样转交的提供方错误，或者
 // 全部失败时的错误。
 func (p *Proxy) embed(ctx context.Context, m *liveModel, cands []liveRoute, fields map[string]json.RawMessage, inputs []string, reserve attemptBudget) embedResult {
+	// 一次嵌入请求的响应整段留在内存里：各批正文合起来不超过一个响应上限，合并后
+	// 的正文再有同样大小的一份。先从实例预算里预留，占不到时按实例繁忙结束。
+	release, reserved := p.mem.reserve(p.embedBytes())
+	if !reserved {
+		return embedResult{err: errInstanceBusy}
+	}
+	defer release()
 	last := embedResult{err: errors.New("no usable route")}
 	for _, rt := range cands {
 		finish, err := reserve.start(rt, embeddingEstimate(inputs))
@@ -192,6 +203,15 @@ func embeddingEstimate(inputs []string) int64 {
 	return size
 }
 
+// embedBytes 是一次嵌入请求在实例预算里占用的字节数：各批正文合计不超过一个
+// 响应上限，合并后的正文再有一份同样大小的。
+func (p *Proxy) embedBytes() int64 {
+	if p.cfg.MaxResponseBytes <= 0 {
+		return 0
+	}
+	return 2 * p.cfg.MaxResponseBytes
+}
+
 // embedOnce 用一条路由完成整次请求。retry 为真表示应该换下一个来源。
 func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, fields map[string]json.RawMessage, inputs []string) (embedResult, bool) {
 	batch := rt.MaxBatch
@@ -202,6 +222,9 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 	for start := 0; start < len(inputs); start += batch {
 		chunks = append(chunks, inputs[start:min(start+batch, len(inputs))])
 	}
+	// 各批并发读取，响应字节由一次请求共享同一份额度：任何一批都不能把别的批
+	// 挤到内存之外，四批同时读满时合计仍不超过一个响应上限（ADR-0036）。
+	allowance := newChunkAllowance(p.cfg.MaxResponseBytes)
 
 	// 一批失败时取消其余几批：整次请求反正要换来源重做，不必等它们跑完。
 	bctx, cancel := context.WithCancel(ctx)
@@ -209,8 +232,6 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 	outs := make([]chunkOut, len(chunks))
 	sem := make(chan struct{}, embedConcurrency)
 	var wg sync.WaitGroup
-	var sizeMu sync.Mutex
-	var totalBytes int64
 	for i, chunk := range chunks {
 		wg.Add(1)
 		go func() {
@@ -222,16 +243,7 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 				return
 			}
 			defer func() { <-sem }()
-			out := p.embedChunk(bctx, rt, fields, chunk)
-			if out.err == nil {
-				sizeMu.Lock()
-				totalBytes += int64(len(out.resp.body))
-				if p.cfg.MaxResponseBytes > 0 && totalBytes > p.cfg.MaxResponseBytes {
-					out.err = errResponseTooLarge
-					out.resp = rawResponse{}
-				}
-				sizeMu.Unlock()
-			}
+			out := p.embedChunk(bctx, rt, fields, chunk, allowance)
 			outs[i] = out
 			if out.err != nil || out.resp.status >= 300 {
 				cancel()
@@ -289,7 +301,7 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 	return embedResult{body: body, usage: usage, dimensions: dims, route: rt, vectors: merged}, false
 }
 
-func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]json.RawMessage, chunk []string) chunkOut {
+func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]json.RawMessage, chunk []string, allowance *chunkAllowance) chunkOut {
 	in, err := json.Marshal(chunk)
 	if err != nil {
 		return chunkOut{err: err}
@@ -323,7 +335,7 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	if p.cfg.MaxResponseBytes > 0 {
 		limit = min(limit, p.cfg.MaxResponseBytes)
 	}
-	b, err := readResponse(resp.Body, limit)
+	b, err := readResponse(allowanceReader{r: resp.Body, a: allowance}, limit)
 	if err != nil {
 		return chunkOut{err: err, tokens: estimate, estimated: estimate}
 	}
@@ -332,6 +344,61 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 		return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: estimate, estimated: estimate}
 	}
 	return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: used}
+}
+
+// chunkAllowance 是一次嵌入请求里各批共享的响应字节额度。批次并发读取，合计不能
+// 超过一个请求的响应上限，否则四批各自读满时内存会被放大到四倍（ADR-0036）。
+type chunkAllowance struct {
+	mu   sync.Mutex
+	left int64
+}
+
+// newChunkAllowance 按请求的响应上限建一份额度；limit 小于等于 0 表示不限制。
+func newChunkAllowance(limit int64) *chunkAllowance {
+	if limit <= 0 {
+		limit = maxEmbedResponse
+	}
+	return &chunkAllowance{left: limit}
+}
+
+// take 返回这一轮最多允许读取的字节数：额度用完时返回 0，读取方据此按响应过大
+// 处理，不必先读进内存再判断合计。
+func (a *chunkAllowance) take(n int64) int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.left <= 0 {
+		return 0
+	}
+	if n > a.left {
+		n = a.left
+	}
+	a.left -= n
+	return n
+}
+
+// allowanceReader 把共享额度接到上游响应体上。读满额度之后再读一次返回
+// errResponseTooLarge，读到的字节数因此不会超过整次请求的响应上限。
+type allowanceReader struct {
+	r io.Reader
+	a *chunkAllowance
+}
+
+func (r allowanceReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	n := r.a.take(int64(len(p)))
+	if n <= 0 {
+		// 额度用尽之后再读一次只为确认是否正好读完：来源正好写满上限时这里应当
+		// 得到 EOF，多出一个字节才按响应过大处理。
+		var probe [1]byte
+		read, err := r.r.Read(probe[:])
+		if read > 0 {
+			return 0, errResponseTooLarge
+		}
+		return 0, err
+	}
+	return r.r.Read(p[:n])
 }
 
 // parseEmbedChunk 取出一批的向量并按 index 排好。来源省略全部 index 或者全部

@@ -74,6 +74,11 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if err := q.AddTokens(ctx, db.AddTokensParams{UserID: userID, Day: date, Kind: string(kind), Tokens: reserved}); err != nil {
 		return 0, fmt.Errorf("pg: 写入额度预留失败: %w", err)
 	}
+	// 实例账本与账号用量在同一个事务里增加：实例预算读的是这份账本，它不随账号
+	// 删除，删号因此不会把已经占用的实例预算重新腾出来（ADR-0036）。
+	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: reserved}); err != nil {
+		return 0, fmt.Errorf("pg: 写入实例额度预留失败: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("pg: 提交额度预留失败: %w", err)
 	}
@@ -92,7 +97,8 @@ func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Da
 	return used, nil
 }
 
-// Settle 按实际用量调整预留；差额为 0 时不写库。
+// Settle 按实际用量调整预留；差额为 0 时不写库。账号用量与实例账本在同一个事务
+// 里改，任何一步失败都整体回滚，两边的数字不会各写一半。
 func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, reserved, actual int64) error {
 	delta := actual - reserved
 	if delta == 0 {
@@ -102,13 +108,26 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	if err != nil {
 		return err
 	}
-	if err := s.q.SettleTokens(ctx, db.SettleTokensParams{UserID: userID, Day: date, Kind: string(kind), Delta: delta}); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pg: 开始额度结算事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := db.New(tx)
+	if err := q.SettleTokens(ctx, db.SettleTokensParams{UserID: userID, Day: date, Kind: string(kind), Delta: delta}); err != nil {
 		return fmt.Errorf("pg: 结算额度失败: %w", err)
+	}
+	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: delta}); err != nil {
+		return fmt.Errorf("pg: 结算实例额度失败: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pg: 提交额度结算失败: %w", err)
 	}
 	return nil
 }
 
-// InstanceUsed 返回实例当天所有账号的总用量，供实例预算展示与测试核对。
+// InstanceUsed 返回实例当天的总用量，供实例预算与展示使用。读数来自
+// llm_instance_usage，与账号是否还在无关。
 func (s *Store) InstanceUsed(ctx context.Context, day string) (int64, error) {
 	date, err := pgDate(day)
 	if err != nil {

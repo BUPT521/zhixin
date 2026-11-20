@@ -103,6 +103,14 @@ CREATE TABLE llm_usage (
   PRIMARY KEY (user_id, day, kind)
 );
 
+-- 实例当天的模型用量：只有自然日与 token 数，不与账号关联，删号与清空云端数据
+-- 都不会减少它。实例日预算据此判断，删号因此不会把已经发生的提供方费用重新变成
+-- 可用额度（ADR-0036）。
+CREATE TABLE llm_instance_usage (
+  day     DATE PRIMARY KEY,                     -- ZHIXIN_TIMEZONE 下的自然日
+  tokens  BIGINT NOT NULL DEFAULT 0
+);
+
 -- 每条模型路由的每日汇总，与账号额度各自记录。
 CREATE TABLE llm_route_usage (
   day               DATE NOT NULL,

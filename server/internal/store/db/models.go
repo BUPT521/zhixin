@@ -70,6 +70,11 @@ type InstallActive struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type LlmInstanceUsage struct {
+	Day    pgtype.Date
+	Tokens int64
+}
+
 type LlmModel struct {
 	Name       string
 	Kind       string

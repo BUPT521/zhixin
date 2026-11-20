@@ -24,7 +24,8 @@ type Quota interface {
 	Reserve(ctx context.Context, userID, day string, kind Kind, want int64) (reserved int64, err error)
 	// Settle 按实际用量调整预留：actual 大于 reserved 时补记差额，小于时退回。
 	Settle(ctx context.Context, userID, day string, kind Kind, reserved, actual int64) error
-	// InstanceUsed 返回实例当天所有账号的总用量，用于展示与判断实例预算。
+	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
+	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
 }
 
@@ -44,6 +45,9 @@ type MemoryQuota struct {
 	mu     sync.Mutex
 	used   map[[3]string]int64
 	limits map[[2]string]int64
+	// instance 是实例当天的账本，按自然日记 token 数；它与 used 分开保存，删号
+	// 只清 used，已经占用的实例预算因此不会重新腾出来（ADR-0036）。
+	instance map[string]int64
 
 	// dailyTokens 与 instanceTokens 是配置里的默认额度与实例预算，由 NewHandler
 	// 装配时注入；小于等于 0 表示不限。
@@ -53,7 +57,11 @@ type MemoryQuota struct {
 }
 
 func NewMemoryQuota() *MemoryQuota {
-	return &MemoryQuota{used: map[[3]string]int64{}, limits: map[[2]string]int64{}}
+	return &MemoryQuota{
+		used:     map[[3]string]int64{},
+		limits:   map[[2]string]int64{},
+		instance: map[string]int64{},
+	}
 }
 
 // SetQuotaLimits 注入配置里的默认每日额度与实例预算；由 NewHandler 在装配时调用。
@@ -91,12 +99,13 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 		reserved = min(reserved, limit-m.used[key])
 	}
 	if m.instanceTokens > 0 {
-		reserved = min(reserved, m.instanceTokens-m.instanceUsedLocked(day))
+		reserved = min(reserved, m.instanceTokens-m.instance[day])
 	}
 	if reserved <= 0 {
 		return 0, ErrQuotaExceeded
 	}
 	m.used[key] += reserved
+	m.instance[day] += reserved
 	return reserved, nil
 }
 
@@ -114,13 +123,18 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, r
 		used = 0
 	}
 	m.used[key] = used
+	instance := m.instance[day] + actual - reserved
+	if instance < 0 {
+		instance = 0
+	}
+	m.instance[day] = instance
 	return nil
 }
 
 func (m *MemoryQuota) InstanceUsed(_ context.Context, day string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.instanceUsedLocked(day), nil
+	return m.instance[day], nil
 }
 
 // accountLimitLocked 返回账号当天的额度：覆盖值优先，其次配置的默认值；都没有
@@ -134,17 +148,6 @@ func (m *MemoryQuota) accountLimitLocked(userID string, kind Kind) (int64, bool)
 		limit = m.embeddingDailyTokens
 	}
 	return limit, limit > 0
-}
-
-// instanceUsedLocked 汇总当天所有账号的用量。调用方必须持有 m.mu。
-func (m *MemoryQuota) instanceUsedLocked(day string) int64 {
-	var total int64
-	for key, tokens := range m.used {
-		if key[1] == day {
-			total += tokens
-		}
-	}
-	return total
 }
 
 // SetDailyLimit 调整一个账号的每日额度，供本地联调与测试使用；生产上改
@@ -167,6 +170,8 @@ func (m *MemoryQuota) DailyLimit(_ context.Context, userID string, kind Kind) (i
 	return limit, ok, nil
 }
 
+// DeleteUser 清掉账号自己的用量与额度覆盖值。实例账本不在这里清：它记录的是
+// 提供方已经计费的用量，删号不会让那笔费用消失（ADR-0036）。
 func (m *MemoryQuota) DeleteUser(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
