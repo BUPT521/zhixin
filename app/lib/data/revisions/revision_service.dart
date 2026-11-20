@@ -65,6 +65,7 @@ class RevisionService {
     AssetStore? assets,
     this.onDataChanged,
     this.onCacheFailure,
+    this.undoGuards = const [],
   }) : assets = assets ?? AssetStore();
 
   final GuardedDatabase db;
@@ -73,6 +74,10 @@ class RevisionService {
   final Clock clock;
   final AssetStore assets;
   final AttachmentCache cache;
+
+  /// 撤销的业务约束与可撤销表白名单；由应用层在装配时传入
+  /// （`lib/application/undo_guards/`），数据层不内置业务规则（ADR-0039）。
+  final List<UndoGuard> undoGuards;
 
   /// 版本恢复或单项撤销真正改了当前数据之后通知应用根推进代次：恢复前
   /// 发出的模型回答与判断不能再写回，三栏也要重读。
@@ -84,6 +89,7 @@ class RevisionService {
   late final RevisionUndoService undo = RevisionUndoService(
     engine: engine,
     clock: clock,
+    guards: undoGuards,
   );
 
   /// 命名版本、裁剪与清理会改到的版本表；历史页订阅的就是这几张。
@@ -249,14 +255,27 @@ class RevisionService {
     });
   }
 
+  /// 撤销一次提交：数据事务提交后就算成功；图片缓存重建单独处理，失败只返回
+  /// 一条说明，不能把已经生效的撤销报成失败（与 [restore] 同一处理方式）。
   Future<RevisionUndoResult> undoCommit(int commitId) {
     return db.gate.exclusive(() async {
       final result = await undo.undo(raw(), commitId);
-      if (result.applied) {
+      if (!result.applied) return result;
+      String? cacheWarning;
+      try {
+        await cache.markPendingRebuild();
         await cache.rebuild(raw(), assets);
-        await onDataChanged?.call();
+        await cache.clearPendingRebuild();
+      } catch (error, stack) {
+        cacheWarning = '已撤销，但图片缓存没有重建完成，下次打开应用会再试。';
+        onCacheFailure?.call(error, stack);
       }
-      return result;
+      await onDataChanged?.call();
+      return RevisionUndoResult(
+        applied: true,
+        message: cacheWarning ?? result.message,
+        commit: result.commit,
+      );
     });
   }
 
