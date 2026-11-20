@@ -204,6 +204,33 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
   }
 
+  /// 消解一条本机已删的覆盖记录：没有可写回的本机值，确认之后直接删掉记录。
+  Future<void> _dismissConflict(RevisionConflict conflict) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final dismissed = await _revisions.dismissConflict(conflict.id);
+      if (!mounted) return;
+      _report(dismissed ? '已忽略这条同步覆盖记录' : '这条记录已经处理过了');
+      _loadConflicts();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '忽略同步覆盖',
+          kind: 'data_version_dismiss_conflict',
+          kept: '本机数据没有改动',
+          next: '可以再试一次',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   void _onViewError(Object error, StackTrace stack) {
     if (!mounted) return;
     final message = describeFailure(
@@ -1309,10 +1336,14 @@ class _DataVersionPageState extends State<DataVersionPage>
           ],
         ),
         suffix: switch (conflict.reason) {
-          // 本机已经删掉这一行，远端的修改没有写入，没有可以写回的本机值。
-          RevisionConflict.deletedLocally => Text(
-            '已经删除',
-            style: theme.text.bodySmall,
+          // 本机已经删掉这一行，远端的修改没有写入，没有可以写回的本机值；
+          // 用户确认之后把这条说明删掉即可。
+          RevisionConflict.deletedLocally => forui.FButton(
+            variant: forui.FButtonVariant.outline,
+            size: forui.FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: _busy ? null : () => _dismissConflict(conflict),
+            child: const Text('知道了'),
           ),
           _ => forui.FButton(
             variant: forui.FButtonVariant.outline,

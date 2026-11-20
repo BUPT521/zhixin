@@ -147,6 +147,12 @@ void main() {
     expect(find.textContaining('已经删除'), findsWidgets);
     expect(find.text('保留本机修改'), findsNothing);
     expect(find.textContaining('conversation'), findsNothing);
+
+    // 没有可以写回的本机值：确认之后把这条说明删掉。
+    await tester.tap(find.text('知道了'));
+    await settle(tester);
+    expect(page.stub!.dismissedConflictId, 8);
+    expect(find.text('同步覆盖'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -346,6 +352,14 @@ class _StubRevisions extends RevisionService {
   final List<String> blockers;
   final List<bool> blockerRequests = [];
   int? keptConflictId;
+  int? dismissedConflictId;
+
+  @override
+  Future<bool> dismissConflict(int conflictId) async {
+    dismissedConflictId = conflictId;
+    pendingConflicts = const [];
+    return true;
+  }
 
   @override
   Future<List<RevisionConflict>> conflicts({bool unresolved = true}) async =>

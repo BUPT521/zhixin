@@ -273,4 +273,43 @@ void main() {
     expect(await rig.revisions.keepLocal(conflict.id), isNull);
     expect(await rig.revisions.keepLocal(9999), isNull);
   });
+  test('本机已删的覆盖记录可以忽略，其余冲突不能这样消解', () async {
+    final rig = await openTestRig(clock: _fixedClock);
+    addTearDown(rig.close);
+    await _insertMemory(rig, 'm1', '本机旧值');
+    await _deleteMemory(rig, 'm1');
+    // 同一批里要有一条能真正写入的变化，否则没有净变化、不形成提交，冲突
+    // 也就没有可以挂载的提交行。
+    await _apply(rig, 'remote-update', [
+      _remoteUpdate('m1', before: '本机旧值', after: '远端新值', seq: 1),
+      _remoteInsert('m2', '另一条', seq: 2),
+    ]);
+
+    final conflict = (await rig.revisions.conflicts()).single;
+    expect(conflict.reason, RevisionConflict.deletedLocally);
+    // 本机已经删掉这一行，没有可以写回的值。
+    expect(await rig.revisions.keepLocal(conflict.id), isNull);
+
+    expect(await rig.revisions.dismissConflict(conflict.id), isTrue);
+    expect(await rig.revisions.conflicts(), isEmpty);
+    expect(await _memory(rig, 'm1'), isNull);
+    // 已经忽略过的记录再操作返回假，不存在的记录也是。
+    expect(await rig.revisions.dismissConflict(conflict.id), isFalse);
+    expect(await rig.revisions.dismissConflict(9999), isFalse);
+  });
+
+  test('并发更新这类要写回本机值的冲突不能用忽略消解', () async {
+    final rig = await openTestRig(clock: _fixedClock);
+    addTearDown(rig.close);
+    await _insertMemory(rig, 'm1', '本机旧值');
+    await _updateMemoryContent(rig, 'm1', '本机新值');
+    await _apply(rig, 'remote-update', [
+      _remoteUpdate('m1', before: '远端旧值', after: '远端新值'),
+    ]);
+
+    final conflict = (await rig.revisions.conflicts()).single;
+    expect(conflict.reason, RevisionConflict.concurrentUpdate);
+    expect(await rig.revisions.dismissConflict(conflict.id), isFalse);
+    expect(await rig.revisions.conflicts(), hasLength(1));
+  });
 }
