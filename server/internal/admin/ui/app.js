@@ -118,6 +118,7 @@ async function loadAll() {
   state.models = m.data;
   renderProviders();
   renderModels();
+  renderEnvNote();
 }
 
 // ---- 来源 ----
@@ -140,7 +141,7 @@ function renderProviders() {
     );
     const env = p.source === 'env';
     body.append(el('tr', {},
-      el('td', {}, el('span', { class: 'mono' }, p.id), env ? el('div', { class: 'sub' }, el('span', { class: 'badge env' }, '只读')) : null),
+      el('td', {}, el('span', { class: 'mono' }, p.id), env ? el('div', { class: 'sub' }, el('span', { class: 'badge env' }, '只读'), ' 不能作为后台模型的路由') : null),
       el('td', { class: 'name' }, p.name, p.note ? el('div', { class: 'sub' }, p.note) : null),
       el('td', { class: 'mono url' }, p.base_url),
       el('td', { class: 'mono' }, p.has_key ? '••••' + (p.key_hint || '') : '未设置'),
@@ -277,6 +278,12 @@ function syncKind() {
 
 function adminProviders() { return state.providers.filter((p) => p.source === 'admin'); }
 
+// 环境变量来源不能作为路由，只有它的时候后台建不了模型；在模型页直接说明，
+// 免得“新增模型”的提示和来源列表里那个来源看起来矛盾。
+function renderEnvNote() {
+  $('#models-env-note').hidden = !(adminProviders().length === 0 && state.providers.some((p) => p.source === 'env'));
+}
+
 let routeRowID = 0;
 function addRouteRow(r) {
   const select = el('select', { name: 'provider_id', required: true },
@@ -320,7 +327,13 @@ function addRouteRow(r) {
 }
 
 function editModel(m) {
-  if (!adminProviders().length) { toast('先新增至少一个来源'); return; }
+  if (!adminProviders().length) {
+    // 环境变量来源只读，后台的模型路由引用不了它，所以有这个来源也新建不了模型。
+    toast(state.providers.some((p) => p.source === 'env')
+      ? '环境变量来源只读，不能作为路由；先在“模型来源”新增一个来源'
+      : '先新增至少一个来源');
+    return;
+  }
   const f = $('#model-form');
   f.reset();
   $('#model-title').textContent = m ? '编辑模型 ' + m.name : '新增模型';
