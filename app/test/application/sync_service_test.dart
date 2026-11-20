@@ -12,6 +12,7 @@ import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/revisions/revision_models.dart';
 
 import '../support/fake_server.dart';
 import '../support/test_db.dart';
@@ -358,5 +359,75 @@ void main() {
       ),
       'l-3B164M00-31',
     );
+  });
+
+  test('同步位置写进库里的读取位置，偏好文件只留账号与实例', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    final rows = await a.rig.raw.rawQuery(
+      'SELECT name, position, blocking FROM revision_cursor ORDER BY name',
+    );
+    final byName = {for (final row in rows) row['name']! as String: row};
+    expect(
+      byName.keys,
+      containsAll([RevisionCursor.syncPushed, RevisionCursor.syncServerHead]),
+    );
+    // 推送会丢数据：没有推完的位置阻止裁剪与清理历史。
+    expect(byName[RevisionCursor.syncPushed]!['blocking'], 1);
+    expect(
+      byName[RevisionCursor.syncPushed]!['position'],
+      await a.rig.engine.headId(a.rig.raw),
+    );
+    // 服务端位置只登记，不阻塞裁剪。
+    expect(byName[RevisionCursor.syncServerHead]!['blocking'], 0);
+    expect(
+      byName[RevisionCursor.syncServerHead]!['position'],
+      server.headOf(userId),
+    );
+    expect((await a.sync.status()).serverHead, server.headOf(userId));
+
+    // 同步位置不再写进偏好文件，只留账号与实例的标识。
+    final file = File(CloudPreferencesStore(filesDir: a.dir.path).path);
+    final raw = await file.readAsString();
+    expect(raw, isNot(contains('pushed_through')));
+    expect(raw, isNot(contains('remote_local_ids')));
+    expect(raw, isNot(contains('server_head')));
+    final decoded = (jsonDecode(raw) as Map).cast<String, Object?>();
+    final state = (decoded['sync_state']! as Map).cast<String, Object?>();
+    expect(state['user_id'], userId);
+    expect(state['server_origin'], 'http://server.test');
+    expect(state['synced_at'], isNotNull);
+  });
+
+  test('拉下来的远端提交不会再推回服务端，同步两轮提交数不变', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    final b = await device('a@example.com');
+    await b.sync.syncNow();
+    final afterBootstrap = server.headOf(userId);
+
+    // 设备 A 再写一条并推送；设备 B 拉取时把它应用为一条 remote 提交。
+    await _insertMemory(a.rig, 'm2', '晚上效率低');
+    await a.sync.syncNow();
+    final afterPush = server.headOf(userId);
+    expect(afterPush, greaterThan(afterBootstrap));
+
+    final pulled = await b.sync.syncNow();
+    expect(pulled.pulledCommits, greaterThanOrEqualTo(1));
+    expect(pulled.pushedCommits, 0);
+    expect(server.headOf(userId), afterPush);
+
+    // 再同步一轮：本机没有新写入，服务端提交数不变。
+    final again = await b.sync.syncNow();
+    expect(again.pushedCommits, 0);
+    expect(server.headOf(userId), afterPush);
+    final kinds = await b.rig.engine.commitsAfter(b.rig.raw, 0);
+    expect(kinds.map((commit) => commit.kind), contains(RevisionKind.remote));
   });
 }

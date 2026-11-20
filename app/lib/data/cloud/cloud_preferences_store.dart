@@ -3,32 +3,24 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-/// 增量同步的本机游标：服务端已经对齐到 [serverHead]，本机编号不超过
-/// [pushedThrough] 的提交都已经在服务端序列里。
+/// 增量同步的账号标识：这个账号在这个服务实例上已经初始化过同步，下次同步
+/// 按增量走，不再上传首次基线。
 ///
-/// [serverOrigin] 与 [userId] 一起标识游标所属的服务实例与账号：切换实例或
-/// 账号之后旧游标不能再用，否则会把一个实例的位置带到另一个实例上。
-/// [remoteLocalIds] 是拉取远端提交之后在本机新生成的提交编号：它们对应服务端
-/// 已有的提交，推送时要跳过，成功推送之后随 [pushedThrough] 一起清空。
+/// 同步位置（推送读到哪里、服务端拉到哪个位置）不在这里，而是随库保存在
+/// `revision_cursor` 表里：整库恢复时位置跟着回去，恢复旧备份得到较小的位置
+/// 会把服务端已有的提交再推一次，服务端按请求编号去重，结果不变（ADR-0039）。
+/// [serverOrigin] 与 [userId] 一起标识这份状态属于哪个服务实例与账号：切换
+/// 实例或账号之后旧状态不能再用，否则会把一个实例的同步进度带到另一个实例上。
 class SyncState {
   const SyncState({
     required this.userId,
     required this.serverOrigin,
-    required this.serverHead,
-    required this.pushedThrough,
-    this.remoteLocalIds = const {},
     this.syncedAt,
   });
 
   factory SyncState.fromJson(Map<String, Object?> json) => SyncState(
     userId: json['user_id'] as String? ?? '',
     serverOrigin: json['server_origin'] as String? ?? '',
-    serverHead: (json['server_head'] as num?)?.toInt() ?? 0,
-    pushedThrough: (json['pushed_through'] as num?)?.toInt() ?? 0,
-    remoteLocalIds: {
-      for (final id in (json['remote_local_ids'] as List? ?? const []))
-        if (id is num) id.toInt(),
-    },
     syncedAt: DateTime.tryParse(json['synced_at'] as String? ?? ''),
   );
 
@@ -36,33 +28,17 @@ class SyncState {
 
   /// 游标所属服务实例的来源（协议、主机与端口）。
   final String serverOrigin;
-  final int serverHead;
-  final int pushedThrough;
-  final Set<int> remoteLocalIds;
   final DateTime? syncedAt;
 
-  SyncState copyWith({
-    int? serverHead,
-    int? pushedThrough,
-    Set<int>? remoteLocalIds,
-    DateTime? syncedAt,
-  }) {
-    return SyncState(
-      userId: userId,
-      serverOrigin: serverOrigin,
-      serverHead: serverHead ?? this.serverHead,
-      pushedThrough: pushedThrough ?? this.pushedThrough,
-      remoteLocalIds: remoteLocalIds ?? this.remoteLocalIds,
-      syncedAt: syncedAt ?? this.syncedAt,
-    );
-  }
+  SyncState copyWith({DateTime? syncedAt}) => SyncState(
+    userId: userId,
+    serverOrigin: serverOrigin,
+    syncedAt: syncedAt ?? this.syncedAt,
+  );
 
   Map<String, Object?> toJson() => {
     'user_id': userId,
     'server_origin': serverOrigin,
-    'server_head': serverHead,
-    'pushed_through': pushedThrough,
-    'remote_local_ids': remoteLocalIds.toList()..sort(),
     'synced_at': syncedAt?.toUtc().toIso8601String(),
   };
 }
@@ -77,11 +53,12 @@ const String defaultServerBaseUrl = String.fromEnvironment(
   defaultValue: 'https://zhixin.chensiyuan.work',
 );
 
-/// 云同步相关的本机偏好：服务地址、是否自动同步，以及当前账号的同步游标。
+/// 云同步相关的本机偏好：服务地址、是否自动同步，以及当前账号的同步状态。
 ///
-/// 这些值不进入数据库，也不进数据包与整库备份：服务地址按这台设备重新填写，
-/// 同步游标跟着本机提交编号走，换机或恢复备份之后应从头对齐，而不是沿用别的
-/// 设备的位置。文件写在应用私有目录，卸载应用时一起删除。
+/// 这里只保存这台设备自己的配置与账号标识。同步位置属于库内数据，存在
+/// `revision_cursor` 表里，随整库备份与恢复一起走；换机时按当前数据重新对齐，
+/// 而不是沿用别的设备的位置（ADR-0039）。文件写在应用私有目录，卸载应用时
+/// 一起删除。
 class CloudPreferencesStore {
   CloudPreferencesStore({required this.filesDir});
 

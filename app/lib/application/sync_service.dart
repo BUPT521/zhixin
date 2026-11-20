@@ -10,6 +10,7 @@ import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import '../data/db/guarded_database.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/asset_store.dart';
+import '../data/revisions/revision_cursor.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
@@ -174,6 +175,27 @@ class SyncService {
 
   bool get syncing => _running != null;
 
+  /// 同步位置：推送读到哪里与服务端拉到哪个位置，都存在库里的
+  /// `revision_cursor` 表，随整库恢复一起回去（ADR-0039）。
+  RevisionCursors get _cursors => RevisionCursors(database.raw, clock: clock);
+
+  Future<int> _pushedPosition() => _cursors.position(RevisionCursor.syncPushed);
+
+  Future<int> _serverHeadPosition() =>
+      _cursors.position(RevisionCursor.syncServerHead);
+
+  /// 记下服务端拉到哪个位置；这个读者不阻塞裁剪。
+  Future<void> _saveServerHead(int position) =>
+      _cursors.set(RevisionCursor.syncServerHead, position, blocking: false);
+
+  /// 记下本机已经推送到哪里；推送会丢数据，落后的位置阻止裁剪与清理历史。
+  Future<void> _savePushed(int position) =>
+      _cursors.set(RevisionCursor.syncPushed, position, blocking: true);
+
+  /// 账号与实例是否还是这份同步状态对应的那一个；换过之后旧状态不能用。
+  bool _sameIdentity(SyncState? state, String userId, String origin) =>
+      state != null && state.userId == userId && state.serverOrigin == origin;
+
   /// 身份在同步途中变化时抛出 [SyncIdentityChanged]，不再写回旧账号的游标。
   void _ensureIdentity() {
     final expected = _runEpoch;
@@ -200,28 +222,35 @@ class SyncService {
       );
     }
     final origin = await account.serverOrigin();
-    final ownState =
-        state != null &&
-            state.userId == snapshot.session!.userId &&
-            state.serverOrigin == origin
+    final ownState = _sameIdentity(state, snapshot.session!.userId, origin)
         ? state
         : null;
-    final pending = ownState == null
-        ? localHead
-        : (await revisions.commitsAfter(ownState.pushedThrough))
-              .where((commit) => !ownState.remoteLocalIds.contains(commit.id))
-              .length;
+    if (ownState == null) {
+      // 还没有为这个账号建立同步状态：本机现有记录会整份作为首次基线上传。
+      return SyncStatus(
+        signedIn: true,
+        accountLabel: snapshot.displayLabel,
+        autoSync: snapshot.autoSync,
+        syncing: syncing,
+        pendingCommits: localHead,
+        localHead: localHead,
+        serverHead: null,
+        needsBootstrap: true,
+        baselineNeedsConfirmation: localHead > 0,
+        lastError: _lastError,
+      );
+    }
+    final pushed = await _pushedPosition();
     return SyncStatus(
       signedIn: true,
       accountLabel: snapshot.displayLabel,
       autoSync: snapshot.autoSync,
       syncing: syncing,
-      pendingCommits: pending,
+      pendingCommits: (await revisions.commitsAfter(pushed)).length,
       localHead: localHead,
-      serverHead: ownState?.serverHead,
-      needsBootstrap: ownState == null || ownState.pushedThrough > localHead,
-      baselineNeedsConfirmation: ownState == null && localHead > 0,
-      lastSyncedAt: ownState?.syncedAt,
+      serverHead: await _serverHeadPosition(),
+      needsBootstrap: false,
+      lastSyncedAt: ownState.syncedAt,
       lastError: _lastError,
     );
   }
@@ -249,10 +278,7 @@ class SyncService {
     final state = await preferences.syncState();
     final origin = await account.serverOrigin();
     final localHead = await engine.headId(database.raw);
-    final ownState =
-        state != null &&
-            state.userId == snapshot.session!.userId &&
-            state.serverOrigin == origin
+    final ownState = _sameIdentity(state, snapshot.session!.userId, origin)
         ? state
         : null;
     if (ownState == null && localHead > 0) return;
@@ -269,7 +295,10 @@ class SyncService {
     });
   }
 
-  /// 退出登录、删除账号或清除云端数据之后清掉本机游标。
+  /// 退出登录、删除账号或清除云端数据之后清掉账号的同步状态。
+  ///
+  /// 库里的同步位置不在这里删：下次同步按首次基线重新对齐时会连同两个位置
+  /// 一起重写，旧位置不会把新账号的提交当成已经推送过。
   Future<void> clearState() => preferences.clearSyncState();
 
   void dispose() {
@@ -300,20 +329,23 @@ class SyncService {
           client: zhixinSchemaVersion,
         );
       }
-      var state = await preferences.syncState();
+      final userId = snapshot.session!.userId;
       final localHead = await engine.headId(database.raw);
-      if (state != null &&
-          (state.userId != snapshot.session!.userId ||
-              state.serverOrigin != origin ||
-              state.pushedThrough > localHead)) {
-        // 换了账号或实例，或本机数据被清空、换库：游标不再对应本机提交编号。
+      var state = await preferences.syncState();
+      if (state != null && !_sameIdentity(state, userId, origin)) {
+        // 换了账号或实例：旧状态与库里的同步位置都不再对应这个身份。
         await preferences.clearSyncState();
         state = null;
       }
-      if (state != null && remoteHead.head < state.serverHead) {
-        // 服务端序列被清空过，服务端位置回到 0，需要重新上传基线。
+      var serverHead = state == null ? 0 : await _serverHeadPosition();
+      var pushedThrough = state == null ? 0 : await _pushedPosition();
+      if (state != null && remoteHead.head < serverHead) {
+        // 服务端序列被清空过，服务端位置回到 0，需要重新上传基线；位置在
+        // 首次同步收尾时随基线一起重写。
         await preferences.clearSyncState();
         state = null;
+        serverHead = 0;
+        pushedThrough = 0;
       }
 
       if (state == null) {
@@ -322,22 +354,24 @@ class SyncService {
         if (localHead > 0 && !confirmBaseline) {
           throw BaselineConfirmationRequired(localHead);
         }
-        final boot = await _bootstrap(deviceId, origin);
+        final boot = await _bootstrap(deviceId, origin, userId);
         pulled += boot.pulled;
         pushed += boot.pushed;
         uploaded += boot.uploaded;
         downloaded += boot.downloaded;
-        state = boot.state;
+        serverHead = boot.serverHead;
+        state = SyncState(userId: userId, serverOrigin: origin);
       } else {
-        var current = await _pull(
-          state: state,
+        final current = await _pull(
+          serverHead: serverHead,
           deviceId: deviceId,
           downloaded: (count) => downloaded += count,
         );
         pulled += current.pulled;
-        state = current.state;
+        serverHead = current.serverHead;
         final push = await _push(
-          state: state,
+          serverHead: serverHead,
+          pushedThrough: pushedThrough,
           deviceId: deviceId,
           uploaded: (count) => uploaded += count,
           onPulled: (result) {
@@ -346,7 +380,7 @@ class SyncService {
           },
         );
         pushed += push.pushed;
-        state = push.state;
+        serverHead = push.serverHead;
       }
       _ensureIdentity();
       final finalState = state.copyWith(syncedAt: clock());
@@ -371,31 +405,29 @@ class SyncService {
 
   /// 第一次同步：先把服务端已有的提交拉下来，再把本机当前数据作为一份基线
   /// 上传，最后补齐附件。本机历史仍然完整，后续写入按提交增量推送。
+  ///
+  /// 收尾时把两个同步位置写进库里的 `revision_cursor`：拉取之后的本机 `HEAD`
+  /// 都已经在服务端序列里（推送位置从这里开始），服务端位置记下基线推完之后的
+  /// 序列长度。
   Future<
-    ({SyncState state, int pulled, int pushed, int uploaded, int downloaded})
+    ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
   >
-  _bootstrap(String deviceId, String origin) async {
+  _bootstrap(String deviceId, String origin, String userId) async {
     var pulled = 0;
     var downloaded = 0;
+    var serverHead = 0;
     final remoteHead = await account.call(
       (client, token) => client.head(token),
     );
-    final localHead = await engine.headId(database.raw);
-    var state = SyncState(
-      userId: (await account.snapshot()).session!.userId,
-      serverOrigin: origin,
-      serverHead: 0,
-      pushedThrough: localHead,
-    );
     if (remoteHead.head > 0) {
       final result = await _pull(
-        state: state,
+        serverHead: 0,
         deviceId: deviceId,
         persist: false,
         downloaded: (count) => downloaded += count,
       );
       pulled = result.pulled;
-      state = result.state;
+      serverHead = result.serverHead;
     }
     final headAfterPull = await engine.headId(database.raw);
     final projection = await engine.readProjection(database.raw);
@@ -417,8 +449,7 @@ class SyncService {
       }
     }
     var pushed = 0;
-    var baseSeq = state.serverHead;
-    final userId = state.userId;
+    var baseSeq = serverHead;
     await _pushBatches(
       Stream.fromIterable(_baselineCommits(deviceId, changes)),
       baseSeq,
@@ -431,16 +462,13 @@ class SyncService {
       AssetStore.hashesInProjection(projection),
     );
     _ensureIdentity();
-    state = SyncState(
-      userId: userId,
-      serverOrigin: origin,
-      serverHead: baseSeq,
-      pushedThrough: headAfterPull,
-      syncedAt: clock(),
+    await _saveServerHead(baseSeq);
+    await _savePushed(headAfterPull);
+    await preferences.saveSyncState(
+      SyncState(userId: userId, serverOrigin: origin, syncedAt: clock()),
     );
-    await preferences.saveSyncState(state);
     return (
-      state: state,
+      serverHead: baseSeq,
       pulled: pulled,
       pushed: pushed,
       uploaded: uploaded,
@@ -561,24 +589,25 @@ class SyncService {
     detail: '单条同步提交超过服务端允许的大小',
   );
 
-  /// 拉取 `state.serverHead` 之后的提交并应用到本机，返回推进后的游标。
-  Future<({SyncState state, int pulled, int downloaded})> _pull({
-    required SyncState state,
+  /// 拉取服务端位置 [serverHead] 之后的提交并应用到本机，返回推进后的服务端
+  /// 位置；[persist] 为真时每页推进之后都写进库里的读取位置。
+  Future<({int serverHead, int pulled, int downloaded})> _pull({
+    required int serverHead,
     required String deviceId,
     required void Function(int count) downloaded,
     bool persist = true,
   }) async {
-    var current = state;
+    var current = serverHead;
     var pulled = 0;
     var downloadCount = 0;
     while (true) {
       _ensureIdentity();
       final page = await account.call(
-        (client, token) => client.pull(token, after: current.serverHead),
+        (client, token) => client.pull(token, after: current),
       );
       if (page.commits.isEmpty) {
-        current = current.copyWith(serverHead: page.head);
-        if (persist) await preferences.saveSyncState(current);
+        current = page.head;
+        if (persist) await _saveServerHead(current);
         break;
       }
       final hashes = <String>{};
@@ -587,58 +616,51 @@ class SyncService {
         final applied = await _applyRemote(commit);
         hashes.addAll(applied.assetHashes);
         pulled++;
-        if (applied.commit != null) {
-          current = current.copyWith(
-            remoteLocalIds: {...current.remoteLocalIds, applied.commit!.id},
-          );
-        }
       }
-      current = current.copyWith(
-        serverHead: page.commits.last.seq ?? page.head,
-        syncedAt: clock(),
-      );
+      current = page.commits.last.seq ?? page.head;
       _ensureIdentity();
-      if (persist) await preferences.saveSyncState(current);
+      if (persist) await _saveServerHead(current);
       final fetched = await _downloadAssets(hashes);
       downloadCount += fetched;
       downloaded(fetched);
       if (!page.hasMore) break;
     }
-    return (state: current, pulled: pulled, downloaded: downloadCount);
+    return (serverHead: current, pulled: pulled, downloaded: downloadCount);
   }
 
-  /// 推送本机游标之后的提交；服务端位置变化时先拉取再重试。
-  Future<({SyncState state, int pushed})> _push({
-    required SyncState state,
+  /// 推送本机推送位置之后的提交；服务端位置变化时先拉取再重试。
+  ///
+  /// 待推送列表已经去掉远端提交（`kind = remote`）：它们对应服务端已有的提交，
+  /// 再推回去只会在序列里多一份。推送成功之后把推送位置推进到最后一条推送的
+  /// 提交，没推任何提交时推进到当前 `HEAD`。
+  Future<({int serverHead, int pushed})> _push({
+    required int serverHead,
+    required int pushedThrough,
     required String deviceId,
     required void Function(int count) uploaded,
     required void Function(({int pulled, int downloaded}) result) onPulled,
   }) async {
-    var current = state;
+    var currentHead = serverHead;
+    var currentPushed = pushedThrough;
     for (var attempt = 0; attempt < 3; attempt++) {
       _ensureIdentity();
       final headNow = await account.call((client, token) => client.head(token));
-      if (headNow.head != current.serverHead) {
+      if (headNow.head != currentHead) {
         final pulled = await _pull(
-          state: current,
+          serverHead: currentHead,
           deviceId: deviceId,
           downloaded: (count) {},
         );
-        current = pulled.state;
+        currentHead = pulled.serverHead;
         onPulled((pulled: pulled.pulled, downloaded: pulled.downloaded));
       }
       final localHead = await engine.headId(database.raw);
-      final pending = [
-        for (final commit in await revisions.commitsAfter(
-          current.pushedThrough,
-        ))
-          if (!current.remoteLocalIds.contains(commit.id)) commit,
-      ];
+      final pending = await revisions.commitsAfter(currentPushed);
       if (pending.isEmpty) {
-        current = current.copyWith(pushedThrough: localHead);
         _ensureIdentity();
-        await preferences.saveSyncState(current);
-        return (state: current, pushed: 0);
+        await _savePushed(localHead);
+        currentPushed = localHead;
+        return (serverHead: currentHead, pushed: 0);
       }
       final assetHashes = <String>{};
       var pushed = 0;
@@ -659,34 +681,26 @@ class SyncService {
           }
         }
 
-        await _pushBatches(payloads(), current.serverHead, (head, count) async {
+        await _pushBatches(payloads(), currentHead, (head, count) async {
           pushed += count;
-          current = current.copyWith(serverHead: head);
+          currentHead = head;
           _ensureIdentity();
-          await preferences.saveSyncState(current);
+          await _saveServerHead(currentHead);
         });
       } on ServerProblem catch (error) {
         if (!error.isConflict) rethrow;
         final head = error.extra['head'];
-        current = current.copyWith(
-          serverHead: head is num ? head.toInt() : current.serverHead,
-        );
+        currentHead = head is num ? head.toInt() : currentHead;
         _ensureIdentity();
-        await preferences.saveSyncState(current);
+        await _saveServerHead(currentHead);
         continue;
       }
       uploaded(await _uploadAssets(assetHashes));
-      current = current.copyWith(
-        pushedThrough: localHead,
-        remoteLocalIds: {
-          for (final id in current.remoteLocalIds)
-            if (id > localHead) id,
-        },
-        syncedAt: clock(),
-      );
       _ensureIdentity();
-      await preferences.saveSyncState(current);
-      return (state: current, pushed: pushed);
+      // 推送位置只覆盖这次真正推上去的提交；同步途中新产生的提交留下一轮。
+      await _savePushed(pending.last.id);
+      currentPushed = pending.last.id;
+      return (serverHead: currentHead, pushed: pushed);
     }
     throw const ServerProblem(
       code: 'conflict',

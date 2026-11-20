@@ -258,12 +258,7 @@ void main() {
     );
     final userId = snapshot.session!.userId;
     await preferences.saveSyncState(
-      SyncState(
-        userId: userId,
-        serverOrigin: 'http://server.test',
-        serverHead: 2,
-        pushedThrough: 1,
-      ),
+      SyncState(userId: userId, serverOrigin: 'http://server.test'),
     );
     server.cloudClearConflicts = 1;
 
@@ -452,12 +447,7 @@ void main() {
     final userId = snapshot.session!.userId;
     await preferences.setAutoSync(true);
     await preferences.saveSyncState(
-      SyncState(
-        userId: userId,
-        serverOrigin: 'http://server.test',
-        serverHead: 3,
-        pushedThrough: 1,
-      ),
+      SyncState(userId: userId, serverOrigin: 'http://server.test'),
     );
 
     await account.setServerBaseUrl('http://other.test');
@@ -525,8 +515,6 @@ void main() {
       SyncState(
         userId: first.session!.userId,
         serverOrigin: 'http://server.test',
-        serverHead: 2,
-        pushedThrough: 1,
       ),
     );
 

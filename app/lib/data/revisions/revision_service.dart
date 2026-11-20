@@ -8,6 +8,9 @@ import '../db/raw_executor.dart';
 import 'revision_models.dart';
 import 'revision_undo.dart';
 
+/// 把同步冲突里的本机值写回时留的提交说明；只给人看，不参与类型判断。
+const String _keepLocalAction = '保留本机修改';
+
 /// 提交详情：一条提交与它的净变化。
 class RevisionDetails {
   const RevisionDetails({required this.commit, required this.changes});
@@ -171,6 +174,10 @@ class RevisionService {
 
   /// 应用一条远端提交：本机因此生成一条同样的净变化提交，撤销与数据版本页
   /// 照常可用；请求编号沿用远端的，服务端重复下发时不会在本机叠加第二次。
+  ///
+  /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
+  /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），
+  /// 提交的 `conflict_count` 也随之更新。
   Future<RemoteApplyResult> applyRemoteCommit({
     required String requestId,
     required String action,
@@ -182,19 +189,45 @@ class RevisionService {
       return RemoteApplyResult(commit: existing, skipped: 0, duplicate: true);
     }
     var skipped = 0;
-    await db.command<RevisionCommit?>(
-      (txn) async {
-        skipped = await engine.applyChanges(txn, changes);
-        return null;
-      },
-      label: action,
-      actor: actor,
-      requestId: requestId,
-      kind: RevisionKind.remote,
-      onDuplicate: (_) => null,
-    );
+    var duplicate = false;
+    final changed = <String>{};
+    await db.gate.exclusive(() async {
+      try {
+        await raw().transaction((txn) async {
+          await engine.beginCommand(txn, requestId: requestId);
+          final applied = await engine.applyChanges(txn, changes);
+          skipped = applied.skipped;
+          await engine.finishCommand(
+            txn,
+            action: action,
+            actor: actor,
+            requestId: requestId,
+            changedTables: changed,
+            kind: RevisionKind.remote,
+            conflicts: applied.conflicts,
+          );
+        });
+      } on RevisionDuplicateRequest {
+        // 并发的同一条远端提交先落库：沿用它的结果，不再写第二次。
+        duplicate = true;
+      }
+      if (changed.isNotEmpty) {
+        db.notifyTables(changed);
+        db.onCommitted?.call(changed);
+      }
+    });
+    if (duplicate) {
+      return RemoteApplyResult(
+        commit: await engine.commitByRequest(db.raw, requestId),
+        skipped: 0,
+        duplicate: true,
+      );
+    }
+    final commit = await engine.commitByRequest(db.raw, requestId);
+    // 独占区已经释放；空闲检查点与索引补建在这里做（ADR-0039 第 2 条）。
+    await engine.afterCommitIdle(db);
     return RemoteApplyResult(
-      commit: await engine.commitByRequest(db.raw, requestId),
+      commit: commit,
       skipped: skipped,
       duplicate: false,
     );
@@ -213,17 +246,75 @@ class RevisionService {
 
   /// 把一条冲突记录里的本机值作为新的普通提交写回，并把冲突标为已处理。
   ///
-  /// 阶段 0 为空实现，由泳道 S 接上：读 `local_json`，开一条普通写入事务写回，
-  /// 在这条提交上记 `resolved_commit_id`。
-  Future<RevisionCommit?> keepLocal(int conflictId) async => null;
+  /// 写回的是冲突行 `local_json` 里的值：并发更新只写冲突列，新增撞上本机
+  /// 已有主键与远端删掉本机改过的行写回整行。写回的提交照常推送，在其他设备
+  /// 上就是一次正常的后到覆盖。本机已经删掉那一行（`deleted_locally`）时没有
+  /// 可以写回的本机值，接口返回空并保留记录；记录不存在或已经处理时同样返回空。
+  Future<RevisionCommit?> keepLocal(int conflictId) async {
+    final rows = await selectRows(
+      db.raw,
+      'revision_conflict',
+      where: 'id = ?',
+      whereArgs: [conflictId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final conflict = RevisionConflict.fromRow(rows.first);
+    if (conflict.isResolved) return null;
+    RevisionCommit? commit;
+    final changed = <String>{};
+    await db.gate.exclusive(() async {
+      await raw().transaction((txn) async {
+        final fresh = await selectRows(
+          txn,
+          'revision_conflict',
+          where: 'id = ? AND resolved_commit_id IS NULL',
+          whereArgs: [conflictId],
+          limit: 1,
+        );
+        if (fresh.isEmpty) return;
+        await engine.beginCommand(txn);
+        final written = await engine.restoreConflictLocal(txn, conflict);
+        final applied = await engine.finishCommand(
+          txn,
+          action: _keepLocalAction,
+          kind: RevisionKind.write,
+          changedTables: changed,
+        );
+        if (written && applied != null) {
+          await updateRow(
+            txn,
+            'revision_conflict',
+            {'resolved_commit_id': applied.id},
+            where: 'id = ?',
+            whereArgs: [conflictId],
+          );
+          commit = applied;
+        }
+      });
+      if (changed.isNotEmpty) {
+        db.notifyTables(changed);
+        db.onCommitted?.call(changed);
+      }
+    });
+    if (commit != null) await engine.afterCommitIdle(db);
+    return commit;
+  }
 
   /// 历史下游读者是否允许裁剪或清理；[clearing] 为真时对应“清理历史”。
   Future<List<String>> historyBlockers({bool clearing = false}) =>
       engine.historyBlockers(db.raw, clearing: clearing);
 
   /// 编号大于 [after] 的提交，推送前从这里取；编号已经由版本引擎分配。
-  Future<List<RevisionCommit>> commitsAfter(int after) =>
-      engine.commitsAfter(db.raw, after);
+  ///
+  /// 远端提交（`kind = remote`）对应服务端已有的提交，不在待推送范围里。
+  Future<List<RevisionCommit>> commitsAfter(int after) async {
+    final commits = await engine.commitsAfter(db.raw, after);
+    return [
+      for (final commit in commits)
+        if (commit.kind != RevisionKind.remote) commit,
+    ];
+  }
 
   Future<RevisionRef> name(
     int commitId, {
