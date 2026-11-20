@@ -458,7 +458,7 @@ class _AccountPageState extends State<AccountPage> {
         result.changed
             ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
                   '上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件'
-            : (sync?.digestMismatch ?? false)
+            : (_sync?.digestMismatch ?? false)
             ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
             : '同步完成，本机与云端已经一致',
       );
