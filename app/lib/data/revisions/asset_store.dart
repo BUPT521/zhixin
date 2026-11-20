@@ -96,7 +96,10 @@ class AssetStore {
     return {for (final row in rows) row['hash']! as String};
   }
 
-  /// 只保留仍被当前数据、保留提交、检查点或进行中任务引用的附件。
+  /// 只保留 [keep] 里的附件对象，其余删除并返回删掉的个数。
+  ///
+  /// 调用方给出的 [keep] 是当前投影的附件哈希加上 `revision_asset_ref` 里仍
+  /// 有主人的哈希，不再解码全部变更明细与检查点清单（ADR-0039 第 4 节泳道 B）。
   Future<int> collectGarbage(
     RawExecutor executor, {
     required Set<String> keep,

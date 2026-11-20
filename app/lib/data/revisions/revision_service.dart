@@ -281,8 +281,12 @@ class RevisionService {
     });
   }
 
+  /// 清理历史；有阻塞的历史读取位置时抛出 [RevisionBlocked]，界面据此显示
+  /// 原因并禁用确认。
   Future<void> clearHistory() {
     return db.gate.exclusive(() async {
+      final blockers = await engine.historyBlockers(raw(), clearing: true);
+      if (blockers.isNotEmpty) throw RevisionBlocked(blockers);
       await engine.clearHistory(raw());
       await _stripDeadReceipts();
       db.notifyTables(_historyTables);
