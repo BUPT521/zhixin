@@ -33,7 +33,7 @@ class ZhixinHeader extends StatelessWidget {
         EdgeInsets.symmetric(horizontal: theme.space.page, vertical: 6),
       ),
       titleTextStyle: .value(
-        nested ? theme.text.titleLarge : theme.text.headlineMedium,
+        nested ? theme.text.titleLarge : theme.text.pageTitle,
       ),
       constraints: BoxConstraints(minHeight: nested ? 56 : 62),
       actionSpacing: theme.space.xs,

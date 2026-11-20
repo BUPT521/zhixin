@@ -30,7 +30,7 @@ class AboutPage extends StatelessWidget {
           Text(
             appName,
             textAlign: TextAlign.center,
-            style: theme.text.headlineMedium,
+            style: theme.text.pageTitle,
           ),
           const SizedBox(height: 4),
           Text(

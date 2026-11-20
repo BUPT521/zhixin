@@ -140,6 +140,13 @@ void main() {
     expect(zhixin.text.bodyMedium.fontSize, 14);
     expect(zhixin.text.bodyMedium.height, 1.5);
     expect(zhixin.text.titleMedium.fontWeight, FontWeight.w600);
+    // 字重分三档：一屏一个的主标题最重，页面标题与节标题次之，正文与二级
+    // 页面标题回到常规。
+    expect(zhixin.text.headlineMedium.fontWeight, FontWeight.w700);
+    expect(zhixin.text.pageTitle.fontWeight, FontWeight.w500);
+    expect(zhixin.text.headlineSmall.fontWeight, FontWeight.w600);
+    expect(zhixin.text.titleLarge.fontSize, 22);
+    expect(zhixin.text.titleLarge.fontWeight, FontWeight.w400);
     // 页面颜色与 Material 的 ColorScheme 同名同值，只从 Forui 主题取。
     expect(zhixin.colors.primary, zhixinTheme.colorScheme.primary);
     expect(zhixin.colors.error, zhixinTheme.colorScheme.error);
@@ -147,11 +154,13 @@ void main() {
     expect(zhixin.radius.card, const BorderRadius.all(Radius.circular(20)));
     // Forui 的表单与列表按 body.sm 排正文，取的是同一份 bodyMedium 字号。
     expect(zhixinForuiTheme.typography.body.sm.fontSize, 14);
-    // 页面文字与 Forui 控件同一个字族，同一屏里的数字与字母不再两种字形。
-    expect(
-      zhixin.text.bodyMedium.fontFamily,
-      zhixinForuiTheme.typography.body.sm.fontFamily,
-    );
+    // 页面文字与 Forui 控件都不指定字族，中文与西文都跟随手机系统字体。
+    expect(zhixin.text.bodyMedium.fontFamily, isNull);
+    expect(zhixinForuiTheme.typography.body.sm.fontFamily, isNull);
+    expect(zhixinForuiTheme.typography.body.md.fontFamily, isNull);
+    expect(zhixinForuiTheme.typography.display.xl2.fontFamily, isNull);
+    // 只有时间与计数用 Inter 的等宽数字。
+    expect(zhixin.text.figures.fontFamily, forui.FTypeface.defaultFontFamily);
     expect(
       zhixin.text.figures.fontFeatures,
       contains(const FontFeature.tabularFigures()),

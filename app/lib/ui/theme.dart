@@ -79,6 +79,7 @@ class ZhixinTextStyles {
   const ZhixinTextStyles({
     required this.headlineMedium,
     required this.headlineSmall,
+    required this.pageTitle,
     required this.titleLarge,
     required this.titleMedium,
     required this.titleSmall,
@@ -96,6 +97,10 @@ class ZhixinTextStyles {
 
   final TextStyle headlineMedium;
   final TextStyle headlineSmall;
+
+  /// 一级页面标题栏的标题与关于页的应用名；首页的“知新”同用这一档。
+  final TextStyle pageTitle;
+
   final TextStyle titleLarge;
   final TextStyle titleMedium;
   final TextStyle titleSmall;
@@ -271,13 +276,13 @@ forui.FThemeData _buildForui(_Palette palette) {
   );
   final text = _textStyles(palette);
   final typography = base.typography.copyWith(
-    display: base.typography.display.copyWith(
+    display: _systemFace(base.typography.display).copyWith(
       xl2: text.headlineMedium,
       xl: text.titleLarge,
       lg: text.titleMedium,
       md: text.titleMedium,
     ),
-    body: base.typography.body.copyWith(
+    body: _systemFace(base.typography.body).copyWith(
       sm: text.bodyMedium,
       xs: text.bodyMedium,
       xs2: text.bodySmall,
@@ -309,7 +314,9 @@ forui.FThemeData _buildForui(_Palette palette) {
           side: BorderSide(color: colors.border),
         ),
       ),
-      titleTextStyle: forui.TextStyleDelta.value(text.titleLarge),
+      titleTextStyle: forui.TextStyleDelta.value(
+        text.titleLarge.copyWith(fontWeight: FontWeight.w600),
+      ),
       insetPadding: const .value(
         EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       ),
@@ -330,9 +337,9 @@ ZhixinTextStyles _textStyles(_Palette palette) {
     required double letterSpacing,
     FontWeight weight = FontWeight.w400,
   }) => TextStyle(
-    // 与 Forui 控件同一个字族：原来页面文字落到系统默认字体，按钮与输入框
-    // 用 Inter，同一屏里的数字与字母两种字形；中文仍由系统字体补齐。
-    fontFamily: forui.FTypeface.defaultFontFamily,
+    // 不指定字族，中文与西文都跟随手机系统字体：指定自定义字族时，中文会
+    // 回落到思源黑体，绕过厂商的系统字体，而且回退字重往往只有常规与粗体
+    // 两档，w500、w600 会被就近取成粗体，整屏显得处处都粗。
     fontSize: fontSize,
     height: height,
     letterSpacing: letterSpacing,
@@ -340,13 +347,21 @@ ZhixinTextStyles _textStyles(_Palette palette) {
     color: palette.ink,
   );
 
+  // 只有时间与计数用 Inter 的等宽数字，其余文字跟随系统字体。
+  final figures =
+      style(
+        fontSize: 14,
+        height: 1.3,
+        letterSpacing: 0,
+        weight: FontWeight.w600,
+      ).copyWith(
+        fontFamily: forui.FTypeface.defaultFontFamily,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      );
+
   return ZhixinTextStyles(
-    figures: style(
-      fontSize: 14,
-      height: 1.3,
-      letterSpacing: 0,
-      weight: FontWeight.w600,
-    ).copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+    figures: figures,
+    // 一屏一个的主标题，例如首页没有当前活动时的“提出一个问题”。
     headlineMedium: style(
       fontSize: 30,
       height: 1.26,
@@ -357,14 +372,15 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       fontSize: 24,
       height: 1.33,
       letterSpacing: 0,
-      weight: FontWeight.w700,
+      weight: FontWeight.w600,
     ),
-    titleLarge: style(
-      fontSize: 20,
-      height: 1.35,
-      letterSpacing: 0,
-      weight: FontWeight.w700,
+    pageTitle: style(
+      fontSize: 30,
+      height: 1.26,
+      letterSpacing: -0.5,
+      weight: FontWeight.w500,
     ),
+    titleLarge: style(fontSize: 22, height: 1.27, letterSpacing: 0),
     titleMedium: style(
       fontSize: 16,
       height: 1.5,
@@ -400,6 +416,51 @@ ZhixinTextStyles _textStyles(_Palette palette) {
     ),
   );
 }
+
+/// 把 Forui 的每一档文字换成系统字体：控件默认带 Inter 字族，逐档去掉字族
+/// 之后，字号、行高、字重与颜色仍按 Forui 的取值，只有字形改由系统字体
+/// 提供。`FTypeface` 的 `fontFamily` 字段要求非空，且只用于没有单独给出的
+/// 档位；这里每一档都给出了样式，字段本身不参与渲染。
+forui.FTypeface _systemFace(forui.FTypeface base) => base.copyWith(
+  xs3: _systemText(base.xs3),
+  xs2: _systemText(base.xs2),
+  xs: _systemText(base.xs),
+  sm: _systemText(base.sm),
+  md: _systemText(base.md),
+  lg: _systemText(base.lg),
+  xl: _systemText(base.xl),
+  xl2: _systemText(base.xl2),
+  xl3: _systemText(base.xl3),
+  xl4: _systemText(base.xl4),
+  xl5: _systemText(base.xl5),
+  xl6: _systemText(base.xl6),
+  xl7: _systemText(base.xl7),
+  xl8: _systemText(base.xl8),
+);
+
+/// 复制一份不带字族的文字样式；[TextStyle.copyWith] 无法清空字族，只能重建。
+TextStyle _systemText(TextStyle style) => TextStyle(
+  color: style.color,
+  foreground: style.foreground,
+  backgroundColor: style.backgroundColor,
+  fontSize: style.fontSize,
+  fontWeight: style.fontWeight,
+  fontStyle: style.fontStyle,
+  letterSpacing: style.letterSpacing,
+  wordSpacing: style.wordSpacing,
+  textBaseline: style.textBaseline,
+  height: style.height,
+  leadingDistribution: style.leadingDistribution,
+  locale: style.locale,
+  decoration: style.decoration,
+  decorationColor: style.decorationColor,
+  decorationStyle: style.decorationStyle,
+  decorationThickness: style.decorationThickness,
+  fontFeatures: style.fontFeatures,
+  fontVariations: style.fontVariations,
+  shadows: style.shadows,
+  background: style.background,
+);
 
 ZhixinColors _colors(_Palette palette) => ZhixinColors(
   primary: palette.moss,
@@ -451,7 +512,6 @@ ThemeData _buildMaterial(_Palette palette) {
     colorScheme: colors,
     scaffoldBackgroundColor: palette.paper,
     dividerColor: palette.border,
-    fontFamily: forui.FTypeface.defaultFontFamily,
   );
   final text = _textStyles(palette);
   return base.copyWith(
