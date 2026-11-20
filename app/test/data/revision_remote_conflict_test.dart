@@ -54,6 +54,19 @@ Future<void> _updateMemoryContent(TestRig rig, String id, String content) {
   }, label: '修改记忆');
 }
 
+/// 只改维护列；内容列保持不变，用来核对维护列不记冲突。
+Future<void> _touchUpdatedAt(TestRig rig, String id, String updatedAt) {
+  return rig.db.command((txn) async {
+    await updateRow(
+      txn,
+      'memory',
+      {'updated_at': updatedAt},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }, label: '修改记忆');
+}
+
 Future<void> _deleteMemory(TestRig rig, String id) {
   return rig.db.command((txn) async {
     await deleteRows(txn, 'memory', where: 'id = ?', whereArgs: [id]);
@@ -82,14 +95,24 @@ RevisionChange _remoteUpdate(
   required String before,
   required String after,
   int seq = 1,
+  String? remoteBeforeUpdatedAt,
+  String? remoteAfterUpdatedAt,
 }) => RevisionChange(
   commitId: 0,
   seq: seq,
   table: 'memory',
   rowKey: id,
   op: ChangeOp.update,
-  before: {'content': RevisionValue.of(before)},
-  after: {'content': RevisionValue.of(after)},
+  before: {
+    'content': RevisionValue.of(before),
+    if (remoteBeforeUpdatedAt != null)
+      'updated_at': RevisionValue.of(remoteBeforeUpdatedAt),
+  },
+  after: {
+    'content': RevisionValue.of(after),
+    if (remoteAfterUpdatedAt != null)
+      'updated_at': RevisionValue.of(remoteAfterUpdatedAt),
+  },
 );
 
 RevisionChange _remoteDelete(
@@ -311,5 +334,47 @@ void main() {
     expect(conflict.reason, RevisionConflict.concurrentUpdate);
     expect(await rig.revisions.dismissConflict(conflict.id), isFalse);
     expect(await rig.revisions.conflicts(), hasLength(1));
+  });
+
+  test('远端更新只差维护列时不记冲突，冲突记录只留内容列', () async {
+    final rig = await openTestRig(clock: _fixedClock);
+    addTearDown(rig.close);
+    await _insertMemory(rig, 'm1', '本机旧值');
+    // 本机只改过维护列：内容与远端的旧值一致，只有 updated_at 各写了一次。
+    await _touchUpdatedAt(rig, 'm1', '2026-11-17 10:05:00');
+
+    final applied = await _apply(rig, 'remote-bookkeeping', [
+      _remoteUpdate(
+        'm1',
+        before: '本机旧值',
+        after: '远端新值',
+        remoteBeforeUpdatedAt: _createdAt,
+        remoteAfterUpdatedAt: '2026-11-17 10:06:00',
+      ),
+    ]);
+    expect(applied.skipped, 0);
+    // 内容列按三方比较不冲突（本机值就是远端旧值）；维护列按合并驱动处理，
+    // 远端的值照常写入但不记冲突，界面上不再出现“更新时间被覆盖”。
+    expect(applied.commit!.conflictCount, 0, reason: '维护列不记冲突');
+    expect(await rig.revisions.conflicts(), isEmpty);
+    expect((await _memory(rig, 'm1'))!['content'], '远端新值');
+    expect((await _memory(rig, 'm1'))!['updated_at'], '2026-11-17 10:06:00');
+  });
+
+  test('远端新增撞上本机同一主键、只有维护列不同时也不记冲突', () async {
+    final rig = await openTestRig(clock: _fixedClock);
+    addTearDown(rig.close);
+    await _insertMemory(rig, 'm1', '同样的内容');
+    await _touchUpdatedAt(rig, 'm1', '2026-11-17 10:05:00');
+
+    final applied = await _apply(rig, 'remote-insert-bookkeeping', [
+      _remoteInsert('m1', '同样的内容'),
+    ]);
+    expect(applied.skipped, 0);
+    // 内容列一致、只有维护列不同：不重写本机行，也不记“新增撞上同一主键”。
+    expect(applied.commit, isNull);
+    expect(await rig.revisions.conflicts(), isEmpty);
+    expect((await _memory(rig, 'm1'))!['content'], '同样的内容');
+    expect((await _memory(rig, 'm1'))!['updated_at'], '2026-11-17 10:05:00');
   });
 }

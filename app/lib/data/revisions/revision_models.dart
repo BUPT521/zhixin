@@ -314,6 +314,42 @@ class RevisionCursor {
   };
 }
 
+/// 已被远端提交取代的一个本机格子（01 `sync_shadow`）。
+///
+/// [uptoCommit] 是应用那条远端提交之前的本机 `HEAD`：编号不大于它的本机提交
+/// 在这个格子上的改动作废，推送时去掉这个格子（ADR-0040）。[column] 为空字符串
+/// 表示整行变化，整行遮蔽把这一行的变化整条去掉。
+class RevisionShadow {
+  const RevisionShadow({
+    required this.table,
+    required this.rowKey,
+    required this.column,
+    required this.uptoCommit,
+  });
+
+  factory RevisionShadow.fromRow(Map<String, Object?> row) => RevisionShadow(
+    table: row['table_name']! as String,
+    rowKey: row['row_key']! as String,
+    column: row['column_name']! as String,
+    uptoCommit: row['upto_commit']! as int,
+  );
+
+  final String table;
+  final String rowKey;
+  final String column;
+  final int uptoCommit;
+
+  /// 整行被覆盖：新增、删除与整行覆盖记空列，不细分到列。
+  bool get isWholeRow => column.isEmpty;
+
+  Map<String, Object?> toRow() => {
+    'table_name': table,
+    'row_key': rowKey,
+    'column_name': column,
+    'upto_commit': uptoCommit,
+  };
+}
+
 /// 应用远端提交时被覆盖的本机修改。
 ///
 /// 同步仍然是后到覆盖先到；这条记录让本机能列出每一处被覆盖的本机值，并把

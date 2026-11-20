@@ -523,4 +523,137 @@ void main() {
     await b.sync.syncNow();
     expect(await _memoryContent(b.rig, 'm1'), '先看例子再看定义');
   });
+
+  test('拉取把被覆盖的格子写进 sync_shadow，推送失败不丢，推完清掉', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    final b = await device('a@example.com', deviceId: 'device-b');
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    await _updateMemory(b.rig, 'm1', '先看例子再看定义');
+    await b.sync.syncNow();
+
+    // A 在拉取之前也改过这一行：拉取会把本机值覆盖成 B 的值，这条本机提交的
+    // 格子要登记成遮蔽行。另加一条不受覆盖的写入，这一轮才会真的发推送请求。
+    await _updateMemory(a.rig, 'm1', '本机偏好：先自己做');
+    await _insertMemory(a.rig, 'm2', 'A 新增的一行');
+    final headBeforePull = await a.rig.engine.headId(a.rig.raw);
+    final headBeforeServer = server.headOf(userId);
+
+    server.pushFailures = 1;
+    await expectLater(
+      a.sync.syncNow(),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.code,
+          'code',
+          'unavailable',
+        ),
+      ),
+      reason: '准备阶段：这一轮应当拉取成功、推送失败',
+    );
+
+    // 遮蔽行在应用远端提交的事务里落库，推送失败之后仍然在，`upto_commit` 是
+    // 拉取之前的本机 HEAD：编号不大于它的本机提交在这些格子上作废。
+    final shadows = await selectRows(a.rig.raw, 'sync_shadow');
+    expect(
+      [
+        for (final row in shadows)
+          '${row['table_name']}/${row['row_key']}/${row['column_name']}',
+      ],
+      containsAll(['memory/m1/content', 'memory/m1/updated_at']),
+      reason: '拉取应用远端提交时应当把它写进本机的格子登记下来：$shadows',
+    );
+    for (final row in shadows) {
+      expect(
+        row['upto_commit'],
+        headBeforePull,
+        reason: '遮蔽行的 upto_commit 取应用远端提交之前的本机 HEAD',
+      );
+    }
+    expect(server.headOf(userId), headBeforeServer, reason: '准备阶段：推送失败时序列没有前进');
+
+    // 下一轮同步：被覆盖的格子不再推，只推剩下的那条新增；推送位置越过之后
+    // 遮蔽行删掉。
+    final next = await a.sync.syncNow();
+    expect(next.pushedCommits, 1, reason: '只有不受遮蔽的那条提交需要推送');
+    expect(
+      await selectRows(a.rig.raw, 'sync_shadow'),
+      isEmpty,
+      reason: '推送位置越过 upto_commit 之后遮蔽行应当删掉',
+    );
+    final pushed = server.commits[userId]!.last['changes']! as List;
+    expect(
+      [for (final change in pushed) (change as Map)['row_key']],
+      ['m2'],
+      reason: '被遮蔽的 m1 不能再推回服务端，剩下的 m2 照常推',
+    );
+
+    await b.sync.syncNow();
+    expect(
+      await _memoryContent(b.rig, 'm1'),
+      '先看例子再看定义',
+      reason: '被远端覆盖的旧值不应该在下一轮又被推上去',
+    );
+    expect(await _memoryContent(b.rig, 'm2'), 'A 新增的一行');
+  });
+
+  test('一条提交同时改两行时，被遮蔽的行去掉、剩下的行照常推送', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '第一条');
+    await _insertMemory(a.rig, 'm2', '第二条');
+    await a.sync.syncNow(confirmBaseline: true);
+    final b = await device('a@example.com', deviceId: 'device-b');
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    await _updateMemory(b.rig, 'm1', 'B 的新内容');
+    await b.sync.syncNow();
+
+    // A 一条提交同时改两行：m1 会被远端提交覆盖，m2 只有本机改过。
+    await a.rig.db.command((txn) async {
+      await updateRow(
+        txn,
+        'memory',
+        {'content': 'A 改的 m1', 'updated_at': '2026-11-17 10:06:00'},
+        where: 'id = ?',
+        whereArgs: ['m1'],
+      );
+      await updateRow(
+        txn,
+        'memory',
+        {'content': 'A 改的 m2', 'updated_at': '2026-11-17 10:06:00'},
+        where: 'id = ?',
+        whereArgs: ['m2'],
+      );
+    }, label: '一次改两条记忆');
+
+    await a.sync.syncNow();
+
+    // 推上去的是按格变基之后的剩余部分：只有 m2 那一行，m1 的格子已经被远端
+    // 覆盖，不再推。
+    final changes = server.commits[userId]!.last['changes']! as List;
+    expect(changes, hasLength(1), reason: '一条提交只推剩下的那一行');
+    final change = changes.single as Map;
+    expect(change['row_key'], 'm2');
+    final after = change['after']! as Map;
+    expect((after['content']! as Map)['v'], 'A 改的 m2');
+
+    await b.sync.syncNow();
+    expect(await _memoryContent(b.rig, 'm2'), 'A 改的 m2');
+    expect(await _memoryContent(b.rig, 'm1'), 'B 的新内容');
+    expect(await _memoryContent(a.rig, 'm1'), 'B 的新内容');
+  });
 }

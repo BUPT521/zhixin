@@ -519,6 +519,9 @@ mixin RevisionProjectionMixin {
         commitId,
       );
       final parent = await self.commitById(txn, head);
+      // 整版恢复与导入推进代次，整份数据被换掉：旧的遮蔽行对应的格子可能已经
+      // 不存在，清空它免得下一次推送按旧格子去掉本机改动（ADR-0040）。
+      await RevisionShadows(txn).clear();
       final commit = await self._appendCommit(
         txn,
         CommitDraft(

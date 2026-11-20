@@ -2,16 +2,21 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 29 的 26 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 29 的 27 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 
-/// 不参与业务变更采集的版本元数据与附件对象表名前缀。
+/// 不参与业务变更采集的版本元数据、同步元数据与附件对象表名前缀。
 ///
 /// 新增这类表时沿用前缀即可，版本引擎按前缀把它归入元数据；其余新表默认
-/// 参与采集，写入才会进入数据版本历史。
-const List<String> revisionMetadataTablePrefixes = ['revision_', 'asset_'];
+/// 参与采集，写入才会进入数据版本历史。同步元数据是同步过程的簿记，不是用户
+/// 数据（ADR-0040），因此与版本元数据一样排除在采集、检查点投影与数据包之外。
+const List<String> revisionMetadataTablePrefixes = [
+  'revision_',
+  'asset_',
+  'sync_',
+];
 
 /// 保留在库里、但不参与版本采集的内部设置表。
 const Set<String> nonVersionedPersistentTableNames = {'app_meta'};
@@ -723,6 +728,26 @@ class RevisionConflicts extends Table {
 
   /// 本机值已经写回时，指回那条 `write` 提交。
   IntColumn get resolvedCommitId => integer().nullable()();
+}
+
+/// 已被远端提交取代的本机格子：推送时按格变基，去掉这些格子再推（ADR-0040）。
+///
+/// 同步的簿记表，不参与版本采集、检查点投影与数据包（表名前缀 `sync_`）。
+/// `upto_commit` 是应用这条远端提交之前的本机 `HEAD`，含义是编号不大于它的
+/// 本机提交在这个格子上的改动作废。[columnName] 用空字符串表示整行变化：
+/// SQLite 的唯一约束认为两个 NULL 互不相同，用空字符串才能让整行遮蔽与列级
+/// 遮蔽一样每个格子只留一行。
+@DataClassName('SyncShadowRow')
+class SyncShadows extends Table {
+  @override
+  String get tableName => 'sync_shadow';
+  TextColumn get targetTable => text().named('table_name')();
+  TextColumn get rowKey => text()();
+  TextColumn get columnName => text()();
+  IntColumn get uptoCommit => integer()();
+
+  @override
+  Set<Column> get primaryKey => {targetTable, rowKey, columnName};
 }
 
 @DataClassName('RevisionContextRow')

@@ -23,9 +23,14 @@ mixin RevisionRemoteMixin {
   /// 远端提交已经由服务端按到达顺序排好，这里按原顺序应用。同步仍然是后到
   /// 覆盖先到：远端值一律写入本机，只在按列做三方比较发现本机也改过同一处时
   /// 记一条冲突，交给调用方随提交一起写进 `revision_conflict`，用户可以据此
-  /// 把本机值作为新提交写回。新增遇到本机已有同一主键时整行覆盖并记冲突，
-  /// 更新遇到本机没有这一行时跳过并记冲突，删除遇到本机改过的行时先记下本机
-  /// 整行再删除。外键检查延迟到事务提交，先写子行再写父行的顺序不会失败。
+  /// 把本机值作为新提交写回。`revisionBookkeepingColumns` 里的维护列（目前是
+  /// `updated_at`）按合并驱动的规则处理：远端值照常写入，但不记冲突，冲突记录
+  /// 只留用户看得懂的内容列（ADR-0040）。新增遇到本机已有同一主键时整行覆盖并
+  /// 记冲突，更新遇到本机没有这一行时跳过并记冲突，删除遇到本机改过的行时先记下
+  /// 本机整行再删除。外键检查延迟到事务提交，先写子行再写父行的顺序不会失败。
+  ///
+  /// 真正写进本机的格子同时登记进 `sync_shadow`：编号不大于应用之前本机 `HEAD`
+  /// 的本机提交在这些格子上的改动作废，推送时按格去掉（ADR-0040）。
   ///
   /// 返回因本机状态对不上而跳过的条数，调用方只把它写进诊断记录，不中断整批
   /// 同步。冲突与提交行一起落库，所以一条远端提交的所有变化都被跳过时不会形成
@@ -36,6 +41,9 @@ mixin RevisionRemoteMixin {
   ) async {
     final schema = await self.tables(txn);
     await txn.execute('PRAGMA defer_foreign_keys = ON');
+    // 应用这条远端提交之前的本机 HEAD：编号不大于它的本机提交在这个事务写进
+    // 的格子上作废，推送时按格去掉（ADR-0040）。
+    final uptoCommit = await self.headId(txn);
     var skipped = 0;
     final conflicts = <RevisionConflict>[];
     final appliedChanges = <RevisionChange>[];
@@ -69,6 +77,12 @@ mixin RevisionRemoteMixin {
       } else {
         appliedChanges.add(change);
       }
+    }
+    // 遮蔽行与这条远端提交在本机形成的 remote 提交同属一个事务：拉取成功、推送
+    // 失败之后它仍然在库里，下一轮推送不会再把这些格子推回去。
+    final shadows = RevisionShadows(txn);
+    for (final change in appliedChanges) {
+      await shadows.recordChange(change, uptoCommit: uptoCommit);
     }
     return (skipped: skipped, conflicts: conflicts, applied: appliedChanges);
   }
@@ -138,6 +152,7 @@ mixin RevisionRemoteMixin {
       return true;
     }
     final differs = columns.any((column) {
+      if (revisionBookkeepingColumns.contains(column)) return false;
       final local = current[column];
       return local == null || !local.equals(after[column]!);
     });
@@ -192,6 +207,10 @@ mixin RevisionRemoteMixin {
     }
     final before = change.before ?? const <String, RevisionValue>{};
     for (final column in columns) {
+      // 维护列（`updated_at`）按合并驱动处理：远端值照常写入，但不记冲突。
+      // 两台设备改了同一行的不同内容列时，维护列几乎每次都会各写一次，记下来
+      // 就是“更新时间被覆盖”这种用户看不懂的噪音（ADR-0040）。
+      if (revisionBookkeepingColumns.contains(column)) continue;
       final local = current[column] ?? RevisionValue.of(null);
       final remoteAfter = after[column]!;
       final remoteBefore = before[column];
@@ -231,7 +250,9 @@ mixin RevisionRemoteMixin {
     if (current == null) return false;
     final before = change.before ?? const <String, RevisionValue>{};
     final modified = before.keys.any((column) {
-      if (column == table.primaryKey || !table.columns.contains(column)) {
+      if (column == table.primaryKey ||
+          !table.columns.contains(column) ||
+          revisionBookkeepingColumns.contains(column)) {
         return false;
       }
       final local = current[column];

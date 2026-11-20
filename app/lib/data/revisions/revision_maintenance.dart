@@ -228,6 +228,9 @@ mixin RevisionMaintenanceMixin {
       await deleteRows(txn, 'revision_change');
       await deleteRows(txn, 'revision_checkpoint');
       await deleteRows(txn, 'revision_asset_ref');
+      // 代次推进之后旧的遮蔽行不再对应任何保留的本机提交，清空它免得下一次
+      // 推送按旧格子去掉本机改动（ADR-0040）。
+      await RevisionShadows(txn).clear();
       await deleteRows(
         txn,
         'revision_commit',
@@ -336,6 +339,9 @@ mixin RevisionMaintenanceMixin {
       final blocking = await _minimumBlockingPosition(txn);
       var oldest = ids.length <= keep ? ids.first : ids[ids.length - keep];
       if (blocking != null && blocking + 1 < oldest) oldest = blocking + 1;
+      // 下界之前的本机提交要删掉了，指向它们的遮蔽行也一并删掉；下界之后的
+      // 遮蔽行还对应待推送的本机提交，留着（ADR-0040）。
+      await RevisionShadows(txn).deleteBefore(oldest);
       if (ids.length <= keep || oldest <= ids.first) {
         final projection = await self.readProjection(txn);
         return RevisionRetentionResult(

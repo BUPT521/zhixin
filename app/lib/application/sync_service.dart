@@ -14,6 +14,7 @@ import '../data/revisions/revision_cursor.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
+import '../data/revisions/revision_shadow.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
 import 'account_service.dart';
@@ -113,6 +114,10 @@ class SyncResult {
 /// 的值留在提交历史里（[server/README](../../../server/README.md) 的同步协议）。
 /// 同步只读写本机数据库与网络，不换库、不清空，界面通过数据层已有的表通知重读。
 ///
+/// 拉取之后推送相当于 git 的 `pull --rebase`，粒度是格子：被远端提交取代的本机
+/// 格子登记在库里的 `sync_shadow`，推送时去掉这些格子再推，剩余为空的提交不推
+/// 但位置照常前进（ADR-0040）。
+///
 /// 推送给服务端的 `request_id` 填提交的 uid：服务端仍按这个字段跳过已经收到过的
 /// 提交，但它现在标识一条提交，不再按命令参数生成，也不再复用（ADR-0040）。
 class SyncService {
@@ -153,19 +158,16 @@ class SyncService {
   Timer? _timer;
   String? _lastError;
 
-  /// 这次同步里被远端提交真正改过的格子（表、主键、列；整行变化记空列）。
-  ///
-  /// 推送时跳过改动落在这些格子上的本机提交：它们的值已经被拉下来的远端值
-  /// 覆盖，再推回服务端等于把旧值顶回去，另一台设备与本机就此分叉。这与 git
-  /// 先拉取再推送、推送的不是被合并掉的旧提交是同一个道理（ADR-0039）。
-  final Set<({String table, String rowKey, String? column})> _pulledOverwrites =
-      {};
   bool _disposed = false;
 
   /// 这次同步开始时的身份代次；切换账号或实例之后进行中的同步据此丢弃结果。
   int? _runEpoch;
 
   bool get syncing => _running != null;
+
+  /// 已被远端提交取代的本机格子：拉取时由版本引擎在应用远端提交的事务里登记，
+  /// 推送时按格去掉，作用相当于 git 的 `pull --rebase`（ADR-0040）。
+  RevisionShadows get _shadows => RevisionShadows(database.raw);
 
   /// 同步位置：推送读到哪里与服务端拉到哪个位置，都存在库里的
   /// `revision_cursor` 表，随整库恢复一起回去（ADR-0039）。
@@ -301,7 +303,6 @@ class SyncService {
 
   Future<SyncResult> _sync({bool confirmBaseline = false}) async {
     _lastError = null;
-    _pulledOverwrites.clear();
     var pulled = 0;
     var pushed = 0;
     var uploaded = 0;
@@ -457,6 +458,9 @@ class SyncService {
     _ensureIdentity();
     await _saveServerHead(baseSeq);
     await _savePushed(headAfterPull);
+    // 首次基线把本机现有内容整份上传，编号不大于它的本机提交不再单独推送，
+    // 换账号或服务端清空后重建时留下的遮蔽行一并清掉。
+    await _shadows.deleteSettled(headAfterPull);
     await preferences.saveSyncState(
       SyncState(userId: userId, serverOrigin: origin, syncedAt: clock()),
     );
@@ -602,9 +606,10 @@ class SyncService {
       final hashes = <String>{};
       for (final commit in page.commits) {
         _ensureIdentity();
+        // 被这条远端提交取代的本机格子由 `applyChanges` 在同一个事务里登记进
+        // `sync_shadow`，这一层不用再记（ADR-0040）。
         final applied = await _applyRemote(commit);
         hashes.addAll(applied.assetHashes);
-        _recordPulledChanges(applied.appliedChanges);
         pulled++;
       }
       current = page.commits.last.seq ?? page.head;
@@ -621,9 +626,11 @@ class SyncService {
   /// 推送本机推送位置之后的提交；服务端位置变化时先拉取再重试。
   ///
   /// 待推送列表已经去掉远端提交（`kind = remote`）：它们对应服务端已有的提交，
-  /// 再推回去只会在序列里多一份。改动已经被这次拉取覆盖的本机提交同样不推：
-  /// 远端值已经写进本机，再把这些提交推上去等于把旧值顶回服务端。推送成功之后
-  /// 把推送位置推进到最后一条考虑过的提交，没推任何提交时推进到当前 `HEAD`。
+  /// 再推回去只会在序列里多一份。每条本机提交按格变基：被 `sync_shadow` 遮蔽的
+  /// 格子（编号不大于遮蔽行 `upto_commit` 的改动）不再推送，剩下多少推多少；剩余
+  /// 为空的提交不推，推送位置照常前进。推送成功之后把推送位置推进到最后一条
+  /// 考虑过的提交，没推任何提交时推进到当前 `HEAD`，并删掉已经越过推送位置的
+  /// 遮蔽行（ADR-0040）。
   Future<({int serverHead, int pushed})> _push({
     required int serverHead,
     required int pushedThrough,
@@ -650,23 +657,26 @@ class SyncService {
       if (pending.isEmpty) {
         _ensureIdentity();
         await _savePushed(localHead);
+        await _shadows.deleteSettled(localHead);
         currentPushed = localHead;
         return (serverHead: currentHead, pushed: 0);
       }
-      // 每条提交的变化只读一次：既判断它是否已经被这次拉取覆盖，也用来组装
-      // 推送内容。被覆盖的提交不再推送，位置照常前进，等同于把它们记为已被
-      // 远端值取代（ADR-0039）。
-      final changesByCommit = <int, List<RevisionChange>>{};
+      // 遮蔽行一次读出，再按提交编号逐条判断：每条提交的变化只读一次，既算出
+      // 剩余部分，也用来组装推送内容与附件哈希。
+      final shadows = await _shadows.list();
+      final remainingByCommit = <int, List<RevisionChange>>{};
       final toPush = <RevisionCommit>[];
       for (final commit in pending) {
         final changes = await engine.changesFor(database.raw, commit.id);
-        changesByCommit[commit.id] = changes;
-        if (_coveredByPull(changes)) continue;
+        final remaining = _rebaseChanges(changes, commit.id, shadows);
+        if (remaining.isEmpty) continue;
+        remainingByCommit[commit.id] = remaining;
         toPush.add(commit);
       }
       if (toPush.isEmpty) {
         _ensureIdentity();
         await _savePushed(pending.last.id);
+        await _shadows.deleteSettled(pending.last.id);
         currentPushed = pending.last.id;
         return (serverHead: currentHead, pushed: 0);
       }
@@ -675,7 +685,7 @@ class SyncService {
       try {
         Stream<ServerCommit> payloads() async* {
           for (final commit in toPush) {
-            final changes = changesByCommit[commit.id]!;
+            final changes = remainingByCommit[commit.id]!;
             assetHashes.addAll(AssetStore.hashesInChanges(changes));
             yield ServerCommit(
               requestId: commit.uid,
@@ -705,8 +715,9 @@ class SyncService {
       }
       uploaded(await _uploadAssets(assetHashes));
       _ensureIdentity();
-      // 推送位置只覆盖这次真正推上去的提交；同步途中新产生的提交留下一轮。
+      // 推送位置只覆盖这次真正考虑过的提交；同步途中新产生的提交留下一轮。
       await _savePushed(pending.last.id);
+      await _shadows.deleteSettled(pending.last.id);
       currentPushed = pending.last.id;
       return (serverHead: currentHead, pushed: pushed);
     }
@@ -717,14 +728,7 @@ class SyncService {
     );
   }
 
-  Future<
-    ({
-      RevisionCommit? commit,
-      Set<String> assetHashes,
-      int skipped,
-      List<RevisionChange> appliedChanges,
-    })
-  >
+  Future<({RevisionCommit? commit, Set<String> assetHashes, int skipped})>
   _applyRemote(ServerCommit commit) async {
     final changes = <RevisionChange>[];
     var seq = 1;
@@ -767,57 +771,68 @@ class SyncService {
       commit: result.commit,
       assetHashes: AssetStore.hashesInChanges(changes),
       skipped: result.skipped,
-      appliedChanges: result.appliedChanges,
     );
   }
 
-  /// 记下拉取时真正写进本机的格子；整行变化（新增、删除）记成空列。
-  void _recordPulledChanges(Iterable<RevisionChange> changes) {
+  /// 一条待推送提交去掉被遮蔽的格子之后的剩余部分。
+  ///
+  /// 遮蔽行只在编号不大于它的提交上生效：这些格子已经被远端值取代，再推回去
+  /// 等于把旧值顶回服务端；编号更大的提交是拉取之后才写下的，照常推送。列级
+  /// 遮蔽只去掉对应的列，整行遮蔽把这一行的变化整条去掉，剩下的列尽量推。
+  /// 剩余部分的 `before` 沿用原值：被保留下来的列远端没有动过，其他设备上这些
+  /// 列的旧值与本机一致，不需要改写（ADR-0040）。
+  List<RevisionChange> _rebaseChanges(
+    List<RevisionChange> changes,
+    int commitId,
+    List<RevisionShadow> shadows,
+  ) {
+    if (shadows.isEmpty) return changes;
+    final wholeRows = <(String, String)>{};
+    final columns = <(String, String), Set<String>>{};
+    for (final shadow in shadows) {
+      if (shadow.uptoCommit < commitId) continue;
+      final key = (shadow.table, shadow.rowKey);
+      if (shadow.isWholeRow) {
+        wholeRows.add(key);
+      } else {
+        columns.putIfAbsent(key, () => <String>{}).add(shadow.column);
+      }
+    }
+    if (wholeRows.isEmpty && columns.isEmpty) return changes;
+    final remaining = <RevisionChange>[];
     for (final change in changes) {
-      if (change.op == ChangeOp.update) {
-        for (final column in {
-          ...?change.after?.keys,
-          ...?change.before?.keys,
-        }) {
-          _pulledOverwrites.add((
-            table: change.table,
-            rowKey: change.rowKey,
-            column: column,
-          ));
-        }
+      final key = (change.table, change.rowKey);
+      if (wholeRows.contains(key)) continue;
+      final shadowed = columns[key];
+      if (shadowed == null || change.op != ChangeOp.update) {
+        remaining.add(change);
         continue;
       }
-      _pulledOverwrites.add((
-        table: change.table,
-        rowKey: change.rowKey,
-        column: null,
-      ));
-    }
-  }
-
-  /// 这条本机提交改动的地方是否都已经被拉取的远端值覆盖；是就不推。
-  bool _coveredByPull(List<RevisionChange> changes) {
-    if (_pulledOverwrites.isEmpty) return false;
-    for (final change in changes) {
-      if (_pulledOverwrites.contains((
-        table: change.table,
-        rowKey: change.rowKey,
-        column: null,
-      ))) {
-        return true;
-      }
-      if (change.op != ChangeOp.update) continue;
-      for (final column in {...?change.after?.keys, ...?change.before?.keys}) {
-        if (_pulledOverwrites.contains((
+      final after = {
+        for (final entry
+            in (change.after ?? const <String, RevisionValue>{}).entries)
+          if (!shadowed.contains(entry.key)) entry.key: entry.value,
+      };
+      // 这一行的列级变化全部被遮蔽时整条不推；还剩列时只推剩下的列。
+      if (after.isEmpty) continue;
+      final before = {
+        for (final entry
+            in (change.before ?? const <String, RevisionValue>{}).entries)
+          if (!shadowed.contains(entry.key)) entry.key: entry.value,
+      };
+      remaining.add(
+        RevisionChange(
+          commitId: change.commitId,
+          seq: change.seq,
           table: change.table,
           rowKey: change.rowKey,
-          column: column,
-        ))) {
-          return true;
-        }
-      }
+          op: change.op,
+          before: before.isEmpty ? null : before,
+          after: after,
+        ),
+      );
     }
-    return false;
+    return remaining;
   }
 
   Future<int> _uploadAssets(Set<String> hashes) async {

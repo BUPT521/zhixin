@@ -42,21 +42,19 @@ class RevisionHistory {
 
 /// 应用一条远端提交的结果：本机新生成的提交编号（没有净变化时为空）与因
 /// 本机状态对不上而跳过的条数；[duplicate] 表示这个提交身份已经应用过。
+///
+/// 被远端值覆盖的本机格子由版本引擎在同一个事务里登记进 `sync_shadow`，
+/// 不经过这一层（ADR-0040）。
 class RemoteApplyResult {
   const RemoteApplyResult({
     required this.commit,
     required this.skipped,
     required this.duplicate,
-    this.appliedChanges = const [],
   });
 
   final RevisionCommit? commit;
   final int skipped;
   final bool duplicate;
-
-  /// 真正写进本机的变化；同步据此记下哪些格子已被远端值覆盖，推送时跳过相应
-  /// 的本机提交（ADR-0039）。
-  final List<RevisionChange> appliedChanges;
 }
 
 /// 页面与设置入口使用的一层：历史、比较、命名、撤销、整版恢复、留存与清理。
@@ -192,7 +190,8 @@ class RevisionService {
   ///
   /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
   /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），
-  /// 提交的 `conflict_count` 也随之更新。
+  /// 提交的 `conflict_count` 也随之更新；被远端取代的本机格子同样在这个事务里
+  /// 登记进 `sync_shadow`（由 `applyChanges` 写入，ADR-0040）。
   Future<RemoteApplyResult> applyRemoteCommit({
     required String uid,
     required String action,
@@ -205,7 +204,6 @@ class RevisionService {
     }
     var skipped = 0;
     var duplicate = false;
-    var appliedChanges = const <RevisionChange>[];
     final changed = <String>{};
     await db.gate.exclusive(() async {
       await raw().transaction((txn) async {
@@ -218,7 +216,6 @@ class RevisionService {
         await engine.beginCommand(txn);
         final applied = await engine.applyChanges(txn, changes);
         skipped = applied.skipped;
-        appliedChanges = applied.applied;
         await engine.finishCommand(
           txn,
           action: action,
@@ -248,7 +245,6 @@ class RevisionService {
       commit: commit,
       skipped: skipped,
       duplicate: false,
-      appliedChanges: appliedChanges,
     );
   }
 

@@ -16,6 +16,7 @@ import '../db/sql.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
+import 'revision_shadow.dart';
 
 part 'revision_capture.dart';
 part 'revision_log.dart';

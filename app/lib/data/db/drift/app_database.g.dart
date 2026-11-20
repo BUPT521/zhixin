@@ -9619,7 +9619,8 @@ class RevisionCommitRow extends DataClass
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   final String action;
 
-  /// 同一次用户动作的重试编号：只用于两分钟内的重试去重，不再是提交身份。
+  /// 同一次用户动作的重试编号：只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
+  /// 的重试去重，不再是提交身份。
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
@@ -13194,6 +13195,333 @@ class RevisionConflictsCompanion extends UpdateCompanion<RevisionConflictRow> {
   }
 }
 
+class $SyncShadowsTable extends SyncShadows
+    with TableInfo<$SyncShadowsTable, SyncShadowRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncShadowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _targetTableMeta = const VerificationMeta(
+    'targetTable',
+  );
+  @override
+  late final GeneratedColumn<String> targetTable = GeneratedColumn<String>(
+    'table_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rowKeyMeta = const VerificationMeta('rowKey');
+  @override
+  late final GeneratedColumn<String> rowKey = GeneratedColumn<String>(
+    'row_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _columnNameMeta = const VerificationMeta(
+    'columnName',
+  );
+  @override
+  late final GeneratedColumn<String> columnName = GeneratedColumn<String>(
+    'column_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _uptoCommitMeta = const VerificationMeta(
+    'uptoCommit',
+  );
+  @override
+  late final GeneratedColumn<int> uptoCommit = GeneratedColumn<int>(
+    'upto_commit',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    targetTable,
+    rowKey,
+    columnName,
+    uptoCommit,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_shadow';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SyncShadowRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('table_name')) {
+      context.handle(
+        _targetTableMeta,
+        targetTable.isAcceptableOrUnknown(
+          data['table_name']!,
+          _targetTableMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetTableMeta);
+    }
+    if (data.containsKey('row_key')) {
+      context.handle(
+        _rowKeyMeta,
+        rowKey.isAcceptableOrUnknown(data['row_key']!, _rowKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rowKeyMeta);
+    }
+    if (data.containsKey('column_name')) {
+      context.handle(
+        _columnNameMeta,
+        columnName.isAcceptableOrUnknown(data['column_name']!, _columnNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_columnNameMeta);
+    }
+    if (data.containsKey('upto_commit')) {
+      context.handle(
+        _uptoCommitMeta,
+        uptoCommit.isAcceptableOrUnknown(data['upto_commit']!, _uptoCommitMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_uptoCommitMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {targetTable, rowKey, columnName};
+  @override
+  SyncShadowRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncShadowRow(
+      targetTable: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}table_name'],
+      )!,
+      rowKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}row_key'],
+      )!,
+      columnName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}column_name'],
+      )!,
+      uptoCommit: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}upto_commit'],
+      )!,
+    );
+  }
+
+  @override
+  $SyncShadowsTable createAlias(String alias) {
+    return $SyncShadowsTable(attachedDatabase, alias);
+  }
+}
+
+class SyncShadowRow extends DataClass implements Insertable<SyncShadowRow> {
+  final String targetTable;
+  final String rowKey;
+  final String columnName;
+  final int uptoCommit;
+  const SyncShadowRow({
+    required this.targetTable,
+    required this.rowKey,
+    required this.columnName,
+    required this.uptoCommit,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['table_name'] = Variable<String>(targetTable);
+    map['row_key'] = Variable<String>(rowKey);
+    map['column_name'] = Variable<String>(columnName);
+    map['upto_commit'] = Variable<int>(uptoCommit);
+    return map;
+  }
+
+  SyncShadowsCompanion toCompanion(bool nullToAbsent) {
+    return SyncShadowsCompanion(
+      targetTable: Value(targetTable),
+      rowKey: Value(rowKey),
+      columnName: Value(columnName),
+      uptoCommit: Value(uptoCommit),
+    );
+  }
+
+  factory SyncShadowRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncShadowRow(
+      targetTable: serializer.fromJson<String>(json['targetTable']),
+      rowKey: serializer.fromJson<String>(json['rowKey']),
+      columnName: serializer.fromJson<String>(json['columnName']),
+      uptoCommit: serializer.fromJson<int>(json['uptoCommit']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'targetTable': serializer.toJson<String>(targetTable),
+      'rowKey': serializer.toJson<String>(rowKey),
+      'columnName': serializer.toJson<String>(columnName),
+      'uptoCommit': serializer.toJson<int>(uptoCommit),
+    };
+  }
+
+  SyncShadowRow copyWith({
+    String? targetTable,
+    String? rowKey,
+    String? columnName,
+    int? uptoCommit,
+  }) => SyncShadowRow(
+    targetTable: targetTable ?? this.targetTable,
+    rowKey: rowKey ?? this.rowKey,
+    columnName: columnName ?? this.columnName,
+    uptoCommit: uptoCommit ?? this.uptoCommit,
+  );
+  SyncShadowRow copyWithCompanion(SyncShadowsCompanion data) {
+    return SyncShadowRow(
+      targetTable: data.targetTable.present
+          ? data.targetTable.value
+          : this.targetTable,
+      rowKey: data.rowKey.present ? data.rowKey.value : this.rowKey,
+      columnName: data.columnName.present
+          ? data.columnName.value
+          : this.columnName,
+      uptoCommit: data.uptoCommit.present
+          ? data.uptoCommit.value
+          : this.uptoCommit,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncShadowRow(')
+          ..write('targetTable: $targetTable, ')
+          ..write('rowKey: $rowKey, ')
+          ..write('columnName: $columnName, ')
+          ..write('uptoCommit: $uptoCommit')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(targetTable, rowKey, columnName, uptoCommit);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncShadowRow &&
+          other.targetTable == this.targetTable &&
+          other.rowKey == this.rowKey &&
+          other.columnName == this.columnName &&
+          other.uptoCommit == this.uptoCommit);
+}
+
+class SyncShadowsCompanion extends UpdateCompanion<SyncShadowRow> {
+  final Value<String> targetTable;
+  final Value<String> rowKey;
+  final Value<String> columnName;
+  final Value<int> uptoCommit;
+  final Value<int> rowid;
+  const SyncShadowsCompanion({
+    this.targetTable = const Value.absent(),
+    this.rowKey = const Value.absent(),
+    this.columnName = const Value.absent(),
+    this.uptoCommit = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SyncShadowsCompanion.insert({
+    required String targetTable,
+    required String rowKey,
+    required String columnName,
+    required int uptoCommit,
+    this.rowid = const Value.absent(),
+  }) : targetTable = Value(targetTable),
+       rowKey = Value(rowKey),
+       columnName = Value(columnName),
+       uptoCommit = Value(uptoCommit);
+  static Insertable<SyncShadowRow> custom({
+    Expression<String>? targetTable,
+    Expression<String>? rowKey,
+    Expression<String>? columnName,
+    Expression<int>? uptoCommit,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (targetTable != null) 'table_name': targetTable,
+      if (rowKey != null) 'row_key': rowKey,
+      if (columnName != null) 'column_name': columnName,
+      if (uptoCommit != null) 'upto_commit': uptoCommit,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SyncShadowsCompanion copyWith({
+    Value<String>? targetTable,
+    Value<String>? rowKey,
+    Value<String>? columnName,
+    Value<int>? uptoCommit,
+    Value<int>? rowid,
+  }) {
+    return SyncShadowsCompanion(
+      targetTable: targetTable ?? this.targetTable,
+      rowKey: rowKey ?? this.rowKey,
+      columnName: columnName ?? this.columnName,
+      uptoCommit: uptoCommit ?? this.uptoCommit,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (targetTable.present) {
+      map['table_name'] = Variable<String>(targetTable.value);
+    }
+    if (rowKey.present) {
+      map['row_key'] = Variable<String>(rowKey.value);
+    }
+    if (columnName.present) {
+      map['column_name'] = Variable<String>(columnName.value);
+    }
+    if (uptoCommit.present) {
+      map['upto_commit'] = Variable<int>(uptoCommit.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncShadowsCompanion(')
+          ..write('targetTable: $targetTable, ')
+          ..write('rowKey: $rowKey, ')
+          ..write('columnName: $columnName, ')
+          ..write('uptoCommit: $uptoCommit, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   late final $TimetableEntriesTable timetableEntries = $TimetableEntriesTable(
@@ -13236,6 +13564,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $RevisionAssetRefsTable(this);
   late final $RevisionConflictsTable revisionConflicts =
       $RevisionConflictsTable(this);
+  late final $SyncShadowsTable syncShadows = $SyncShadowsTable(this);
   late final Index idxAssetChunkHash = Index(
     'idx_asset_chunk_hash',
     'CREATE INDEX idx_asset_chunk_hash ON asset_chunk (hash, seq)',
@@ -16018,6 +16347,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     revisionCursors,
     revisionAssetRefs,
     revisionConflicts,
+    syncShadows,
     idxAssetChunkHash,
     idxMaterialGoal,
     idxMaterialPageMaterial,
