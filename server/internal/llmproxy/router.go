@@ -14,26 +14,10 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 )
 
-// EnvSource 是环境变量给出的来源：一个地址、一把 key 与两组模型名。它在
-// 管理后台之外保留一条不依赖数据库的配置路径，第一套实例升级之后不用先进
-// 后台就能继续工作；同名模型以管理后台的配置为准。
-type EnvSource struct {
-	BaseURL         string
-	APIKey          string
-	ChatModels      []string
-	EmbeddingModels []string
-}
-
-const (
-	sourceAdmin = "admin"
-	sourceEnv   = "env"
-)
-
 // liveProvider 是快照里的来源，key 已经解密。
 type liveProvider struct {
 	ProviderRecord
 	APIKey string
-	Source string
 	// KeyBroken 表示保存的 key 无法用当前 ZHIXIN_SECRET_KEY 解密，这个来源
 	// 不参与路由，管理后台显示为 key_error。
 	KeyBroken bool
@@ -50,8 +34,7 @@ func (r liveRoute) usable() bool {
 
 type liveModel struct {
 	ModelRecord
-	Source string
-	Live   []liveRoute
+	Live []liveRoute
 }
 
 // usable 报告这个模型现在能不能对客户端提供：启用并且至少有一条可用路由。
@@ -85,7 +68,6 @@ func (s *snapshot) model(name string) (*liveModel, bool) {
 type Router struct {
 	catalog Catalog
 	box     *secretbox.Box
-	env     EnvSource
 	log     *slog.Logger
 	health  *healthBook
 
@@ -97,13 +79,12 @@ type Router struct {
 	shuffle func([]liveRoute)
 }
 
-// NewRouter 建立路由器，初始快照只含环境变量来源；调用方随后执行一次 Reload
-// 读入管理后台的配置。box 为 nil 时无法解密任何保存的 key。
-func NewRouter(catalog Catalog, box *secretbox.Box, env EnvSource, log *slog.Logger) *Router {
+// NewRouter 建立路由器，初始快照是空的；调用方随后执行一次 Reload 读入管理
+// 后台配置的来源与模型。box 为 nil 时无法解密任何保存的 key。
+func NewRouter(catalog Catalog, box *secretbox.Box, log *slog.Logger) *Router {
 	r := &Router{
 		catalog: catalog,
 		box:     box,
-		env:     env,
 		log:     log,
 		health:  newHealthBook(time.Now),
 		shuffle: weightedShuffle,
@@ -114,6 +95,9 @@ func NewRouter(catalog Catalog, box *secretbox.Box, env EnvSource, log *slog.Log
 }
 
 func (r *Router) current() *snapshot { return r.snap.Load() }
+
+// ModelCount 是当前快照里的对外模型数，用于启动日志与运维核对。
+func (r *Router) ModelCount() int { return len(r.current().models) }
 
 // Reload 从 Catalog 重新读取配置并换上新快照。读取失败时保留旧快照并返回错误，
 // 数据库短暂不可用不会让正在工作的路由消失。
@@ -155,38 +139,8 @@ func (r *Router) RunReloadLoop(ctx context.Context, every time.Duration) {
 func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapshot {
 	s := &snapshot{byID: map[string]*liveProvider{}, byName: map[string]*liveModel{}}
 
-	if r.env.APIKey != "" && r.env.BaseURL != "" {
-		envP := &liveProvider{
-			ProviderRecord: ProviderRecord{
-				ID: EnvProviderID, Name: "环境变量", BaseURL: r.env.BaseURL,
-				KeyHint: keyHint(r.env.APIKey), Enabled: true,
-				Note: "改环境变量并重启生效",
-			},
-			APIKey: r.env.APIKey,
-			Source: sourceEnv,
-		}
-		s.providers = append(s.providers, envP)
-		s.byID[EnvProviderID] = envP
-		add := func(names []string, kind Kind) {
-			for _, name := range names {
-				if _, dup := s.byName[name]; dup {
-					continue
-				}
-				route := Route{ProviderID: EnvProviderID, UpstreamModel: name, Weight: 1, Enabled: true}
-				m := &liveModel{
-					ModelRecord: ModelRecord{Name: name, Kind: kind, Enabled: true, Routes: []Route{route}},
-					Source:      sourceEnv,
-					Live:        []liveRoute{{Route: route, Provider: envP}},
-				}
-				s.byName[name] = m
-			}
-		}
-		add(r.env.ChatModels, KindChat)
-		add(r.env.EmbeddingModels, KindEmbedding)
-	}
-
 	for _, rec := range providers {
-		p := &liveProvider{ProviderRecord: rec, Source: sourceAdmin}
+		p := &liveProvider{ProviderRecord: rec}
 		if rec.APIKeySealed != "" {
 			if r.box == nil {
 				p.KeyBroken = true
@@ -205,15 +159,15 @@ func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapsh
 	}
 
 	for _, rec := range models {
-		m := &liveModel{ModelRecord: rec, Source: sourceAdmin}
+		m := &liveModel{ModelRecord: rec}
 		for _, route := range rec.Routes {
 			p, ok := s.byID[route.ProviderID]
-			if !ok || p.Source != sourceAdmin {
+			if !ok {
 				continue // 外键保证存在；防御性跳过
 			}
 			m.Live = append(m.Live, liveRoute{Route: route, Provider: p})
 		}
-		s.byName[rec.Name] = m // 管理后台的同名模型覆盖环境变量
+		s.byName[rec.Name] = m
 	}
 	for _, m := range s.byName {
 		s.models = append(s.models, m)

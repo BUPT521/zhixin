@@ -269,27 +269,19 @@ func TestAdminTokenAndPage(t *testing.T) {
 
 func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	provider, lastRequest := fakeProvider(t)
-	h := newHarness(t, map[string]string{
-		"ZHIXIN_ADMIN_TOKEN":  testAdminToken,
-		"ZHIXIN_LLM_BASE_URL": "http://127.0.0.1:1",
-		"ZHIXIN_LLM_API_KEY":  "sk-env-key-9999",
-		"ZHIXIN_LLM_MODELS":   "deepseek-flash",
-	})
+	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
 	admin := func(method, path string, in, out any) int {
 		t.Helper()
 		return h.json(method, path, testAdminToken, in, out)
 	}
 
-	// 环境变量来源显示为只读，不能改也不能删。
+	// 新实例没有来源，托管接口也没有模型可用。
 	var providers struct {
 		Data []map[string]any `json:"data"`
 	}
 	admin("GET", "/admin/v1/providers", nil, &providers)
-	if len(providers.Data) != 1 || providers.Data[0]["id"] != "env" || providers.Data[0]["source"] != "env" || providers.Data[0]["key_hint"] != "9999" {
-		t.Fatalf("应列出环境变量来源：%+v", providers.Data)
-	}
-	if code := admin("PUT", "/admin/v1/providers/env", map[string]any{"base_url": "https://x.cn/v1"}, nil); code != http.StatusConflict {
-		t.Fatalf("env 是保留名：%d", code)
+	if len(providers.Data) != 0 {
+		t.Fatalf("新实例不应有来源：%+v", providers.Data)
 	}
 
 	// 新建来源：key 不出现在任何响应里。
@@ -346,7 +338,6 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 		{"kind": "chat", "dimensions": 3, "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}},
 		{"kind": "chat", "routes": []map[string]any{}},
 		{"kind": "chat", "routes": []map[string]any{{"provider_id": "nobody", "upstream_model": "x"}}},
-		{"kind": "chat", "routes": []map[string]any{{"provider_id": "env", "upstream_model": "x"}}},
 		{"kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x", "weight": 0}}},
 		{"kind": "rerank", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}},
 	} {
@@ -372,8 +363,8 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	for _, m := range list.Data {
 		kinds[m.ID] = m.Kind
 	}
-	if kinds["zhixin-chat"] != "chat" || kinds["zhixin-embed"] != "embedding" || kinds["deepseek-flash"] != "chat" {
-		t.Fatalf("模型列表应合并后台与环境变量：%+v", list.Data)
+	if kinds["zhixin-chat"] != "chat" || kinds["zhixin-embed"] != "embedding" || len(kinds) != 2 {
+		t.Fatalf("模型列表应只含后台配置的模型：%+v", list.Data)
 	}
 	var reply map[string]any
 	if code := h.json("POST", "/v1/llm/chat/completions", user, map[string]any{"model": "zhixin-chat", "messages": []any{}}, &reply); code != http.StatusOK {
@@ -419,7 +410,7 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 		t.Fatalf("省略 key 应保留：%d %+v", code, saved)
 	}
 	h.json("GET", "/v1/llm/models", user, nil, &list)
-	if len(list.Data) != 1 || list.Data[0].ID != "deepseek-flash" {
+	if len(list.Data) != 0 {
 		t.Fatalf("停用来源之后它的模型不可用：%+v", list.Data)
 	}
 
@@ -430,8 +421,8 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	if code := admin("DELETE", "/admin/v1/providers/bailian", nil, &p); code != http.StatusConflict || len(p.Extra["models"].([]any)) != 2 {
 		t.Fatalf("被引用的来源应 409 并列出模型：%d %+v", code, p)
 	}
-	if code := admin("DELETE", "/admin/v1/models/deepseek-flash", nil, nil); code != http.StatusConflict {
-		t.Fatalf("环境变量模型不能在后台删除：%d", code)
+	if code := admin("DELETE", "/admin/v1/models/nope", nil, nil); code != http.StatusNotFound {
+		t.Fatalf("不存在的模型应回 404：%d", code)
 	}
 	for _, name := range []string{"zhixin-chat", "zhixin-embed"} {
 		if code := admin("DELETE", "/admin/v1/models/"+name, nil, nil); code != http.StatusNoContent {

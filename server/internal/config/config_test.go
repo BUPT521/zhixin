@@ -20,11 +20,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Addr != ":8080" || cfg.AccessTTL != time.Hour || cfg.RefreshTTL != 720*time.Hour {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
-	if cfg.LLM.APIKey != "" {
-		t.Fatal("proxy must be disabled unless a key is configured")
-	}
-	if got := strings.Join(cfg.LLM.Models, ","); got != "deepseek-flash" {
-		t.Fatalf("models = %q", got)
+	if cfg.LLM.DailyTokens != 200000 || cfg.LLM.MaxAttempts != 3 {
+		t.Fatalf("unexpected llm defaults: %+v", cfg.LLM)
 	}
 }
 
@@ -82,19 +79,6 @@ func TestLoadS3RejectsPartialConfig(t *testing.T) {
 	}))
 	if err == nil || !strings.Contains(err.Error(), "ZHIXIN_S3_ENDPOINT") {
 		t.Fatalf("want a scheme error, got %v", err)
-	}
-}
-
-func TestLoadTrimsModelList(t *testing.T) {
-	cfg, err := Load(env(map[string]string{
-		"ZHIXIN_LLM_MODELS":   " a , ,b ",
-		"ZHIXIN_LLM_BASE_URL": "https://example.test/v1/",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(cfg.LLM.Models, "|") != "a|b" || cfg.LLM.BaseURL != "https://example.test/v1" {
-		t.Fatalf("got %+v", cfg.LLM)
 	}
 }
 
@@ -245,27 +229,6 @@ func TestLoadProductionSelfCheck(t *testing.T) {
 	}
 }
 
-func TestLoadLLMUpstreamRequiresHTTPS(t *testing.T) {
-	if _, err := Load(env(map[string]string{
-		"ZHIXIN_LLM_API_KEY":  "key",
-		"ZHIXIN_LLM_BASE_URL": "http://api.example.test/v1",
-	})); err == nil || !strings.Contains(err.Error(), "https") {
-		t.Fatalf("带 key 的公网 http 地址应拒绝，得到 %v", err)
-	}
-	if _, err := Load(env(map[string]string{
-		"ZHIXIN_LLM_API_KEY":  "key",
-		"ZHIXIN_LLM_BASE_URL": "http://127.0.0.1:11434/v1",
-	})); err != nil {
-		t.Fatalf("本机联调允许 http：%v", err)
-	}
-	if _, err := Load(env(map[string]string{
-		"ZHIXIN_LLM_API_KEY":  "key",
-		"ZHIXIN_LLM_BASE_URL": "https://user:pw@api.example.test/v1",
-	})); err == nil {
-		t.Fatal("地址里带凭据应拒绝")
-	}
-}
-
 func TestLoadReadsReleaseManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "releases.json")
 	body := `{"releases":[{"platform":"android","version":"0.2.0","build":2,"url":"https://example.test/a.apk","sha256":"0000000000000000000000000000000000000000000000000000000000000000","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}]}`
@@ -293,12 +256,9 @@ func TestLoadRejectsBadReleaseManifest(t *testing.T) {
 }
 
 func TestLoadModelRoutingDefaults(t *testing.T) {
-	cfg, err := Load(env(map[string]string{"ZHIXIN_LLM_EMBEDDING_MODELS": " bge-m3 , ,text-embedding-v4"}))
+	cfg, err := Load(env(nil))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if got := strings.Join(cfg.LLM.EmbeddingModels, ","); got != "bge-m3,text-embedding-v4" {
-		t.Fatalf("embedding models = %q", got)
 	}
 	if cfg.LLM.EmbeddingDailyTokens != 2000000 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
 		t.Fatalf("unexpected routing defaults: %+v", cfg.LLM)

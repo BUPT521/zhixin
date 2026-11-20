@@ -132,7 +132,7 @@ server/
 
 ## 模型代理
 
-客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端按请求里的 `model` 查路由表，核对这个账号当天这一类模型的用量是否低于额度，然后把 `model` 换成路由选中的来源侧模型名、换上这个来源的 key 转发，流式响应按事件边界逐块刷新，可转交的提供方错误由客户端读取。路由表由两部分合成：管理后台配置的来源与模型（`llm_provider`、`llm_model`、`llm_route` 三张表），以及环境变量 `ZHIXIN_LLM_BASE_URL`、`ZHIXIN_LLM_API_KEY`、`ZHIXIN_LLM_MODELS` 与 `ZHIXIN_LLM_EMBEDDING_MODELS` 生成的只读来源 `env`；同名模型以后台的配置为准。没有配置任何模型时聊天与嵌入接口返回 503。
+客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端按请求里的 `model` 查路由表，核对这个账号当天这一类模型的用量是否低于额度，然后把 `model` 换成路由选中的来源侧模型名、换上这个来源的 key 转发，流式响应按事件边界逐块刷新，可转交的提供方错误由客户端读取。路由表只来自管理后台配置的来源与模型（`llm_provider`、`llm_model`、`llm_route` 三张表），没有环境变量来源（[ADR-0035](../docs/adr/0035-模型来源只保留后台配置.md)）；没有配置任何模型时聊天与嵌入接口返回 503。
 
 一个对外模型可以有多条路由，请求按优先级从小到大尝试，同一优先级内按权重随机排列，最多尝试 `ZHIXIN_LLM_MAX_ATTEMPTS` 条。连接失败、响应头超时、408、429、5xx、401、403，以及转发前发现的无效响应，会尝试下一条路由，400、404、422 会结束尝试。一个来源连续失败三次后冷却 30 秒，此后每次失败将冷却时间翻倍，最长 5 分钟，冷却中的来源排在其他可用来源之后。客户端收到统一的 `upstream_failed` 错误正文，来源拒绝服务端 key 时返回 502。
 
@@ -175,7 +175,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 | `POST /admin/v1/models/{name}/test` | 发出最小请求并报告来源、耗时与嵌入维度，同时传入 `provider_id` 与 `upstream_model` 时只探测指定路由 |
 | `GET /admin/v1/usage?days=7` | 返回按日分用途的用量、各路由区间总量与有记录日期的用量，`days` 允许 1 至 30，默认 7 |
 
-来源的 key 用 `ZHIXIN_SECRET_KEY`（32 字节的 base64，`openssl rand -base64 32`）加密入库，附加数据是来源编号与完整地址，后台修改地址的任一部分时都必须重新填写 key。生产后台的来源必须使用公网 HTTPS，连接前解析域名并核对实际连接的地址。打开后台并使用数据库时这个密钥必须配置，否则启动失败；内存存储时缺省用一把随进程消失的随机密钥。更换密钥或从旧地址绑定规则升级后，已保存的 key 显示为 `key_error`，需要在后台重新填写。环境变量来源 `env` 在后台只读，不能修改、删除，也不能被后台的路由引用。
+来源的 key 用 `ZHIXIN_SECRET_KEY`（32 字节的 base64，`openssl rand -base64 32`）加密入库，附加数据是来源编号与完整地址，后台修改地址的任一部分时都必须重新填写 key。生产后台的来源必须使用公网 HTTPS，连接前解析域名并核对实际连接的地址。打开后台并使用数据库时这个密钥必须配置，否则启动失败；内存存储时缺省用一把随进程消失的随机密钥。更换密钥或从旧地址绑定规则升级后，已保存的 key 显示为 `key_error`，需要在后台重新填写。来源与模型只从这三张表读取，管理后台是唯一的配置入口：新建实例或重建库之后，要先在后台新建来源、再新建模型并配置路由，聊天与嵌入接口才有可用的路由，否则一律返回 503；换 key 也在后台修改，改 `<服务地址>/admin/` 里的来源即可，不需要重启。
 
 保存之后路由立即生效；服务另外每 `ZHIXIN_MODEL_RELOAD_INTERVAL` 从数据库重新读一次，直接修改数据库也会生效。令牌校验失败按来源地址限流（`ZHIXIN_ADMIN_RATE`、`ZHIXIN_ADMIN_BURST`），超限期间这个地址的管理请求全部返回 429。后台没有操作审计，令牌等同于管理员本人，生产上应在 nginx 里把 `/admin` 限制在管理员的地址，或者只经 SSH 隧道访问，做法见[运维手册](运维手册.md#3-配置)。
 
@@ -324,10 +324,6 @@ ORDER BY f.first_day;
 | `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES` | `2147483648` | 一个账号全部附件的总量上限，超限上传返回 413 `storage_full` |
 | `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的累计字节上限，最大 16 MiB；下一条超过上限时返回 413 |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |
-| `ZHIXIN_LLM_BASE_URL` | `https://api.deepseek.com/v1` | 环境变量来源 `env` 的 OpenAI 兼容基础地址，带 key 时公网必须使用 HTTPS |
-| `ZHIXIN_LLM_API_KEY` | 空 | 环境变量来源的 key；为空时没有 `env` 来源，只用后台配置的来源 |
-| `ZHIXIN_LLM_MODELS` | `deepseek-flash` | 环境变量来源提供的聊天模型名，逗号分隔 |
-| `ZHIXIN_LLM_EMBEDDING_MODELS` | 空 | 环境变量来源提供的嵌入模型名，逗号分隔 |
 | `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日聊天 token 额度，也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
 | `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS` | `2000000` | 每个账号每日嵌入 token 额度，也是 `llm_quota.embedding_daily_tokens` 为空时的默认值；占位数字，待内测用量出来再定 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
@@ -351,7 +347,7 @@ ORDER BY f.first_day;
 
 第一套实例跑在一台单机 Debian 13 上，不做容器化，原因与取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 第 7 条。`zhixin-api` 由 systemd 拉起，只监听回环地址，前面的 nginx 终止 TLS 并反向代理到它；数据库用发行版包安装的 PostgreSQL 17；备份与附件的字节放 S3 兼容的对象存储，第一套实例用阿里云 OSS，端点、地域、bucket 与密钥都写在服务器的环境变量里，不配置对象存储时回落到 `ZHIXIN_BLOB_DIR` 指向的本机目录，只用于本地开发。域名由管理员在 DNS 里指向这台机器，证书由 certbot 申请并自动续期。需要注入的环境变量就是上面配置表里的那些，仓库里不写口令与 key；资源清单、地址、接入方式与操作步骤见[运维手册](运维手册.md)。
 
-加固轮次之后，启动时会自检生产配置：配置了数据库时 `ZHIXIN_MAIL_LOG` 必须为 `0`，`ZHIXIN_CODE_SECRET` 与 `ZHIXIN_TELEMETRY_SECRET` 必须固定，带认证的 SMTP 连接不允许 `none`，带 key 的模型上游公网地址必须是 https，任何一项不满足都拒绝启动；第一套实例因此需要在 `api.env` 里补上两个固定密钥。按地址的限流要分清真实用户，`ZHIXIN_TRUSTED_PROXIES` 写 `127.0.0.1/32,::1/128`（nginx 只从回环地址连进来）；服务直接对外监听时保持为空。改了 `ZHIXIN_TRUSTED_PROXIES` 或其它配置之后重启服务生效，部署前按[运维手册](运维手册.md#4-加固后的运维动作)的核对清单逐项确认。
+加固轮次之后，启动时会自检生产配置：配置了数据库时 `ZHIXIN_MAIL_LOG` 必须为 `0`，`ZHIXIN_CODE_SECRET` 与 `ZHIXIN_TELEMETRY_SECRET` 必须固定，带认证的 SMTP 连接不允许 `none`，任何一项不满足都拒绝启动；第一套实例因此需要在 `api.env` 里补上两个固定密钥。带 key 的模型上游公网地址必须是 https，这条在后台保存来源时校验，不再随启动检查。按地址的限流要分清真实用户，`ZHIXIN_TRUSTED_PROXIES` 写 `127.0.0.1/32,::1/128`（nginx 只从回环地址连进来）；服务直接对外监听时保持为空。改了 `ZHIXIN_TRUSTED_PROXIES` 或其它配置之后重启服务生效，部署前按[运维手册](运维手册.md#4-加固后的运维动作)的核对清单逐项确认。
 
 部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#48-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
 
@@ -372,6 +368,20 @@ curl -X POST localhost:8080/v1/feedback \
 curl -X POST localhost:8080/v1/telemetry/active \
   -H 'Content-Type: application/json' \
   -d '{"install_id":"0f8fad5b-d9cb-469f-a165-70867728950e","app_version":"0.2.0-dev+3","platform":"android"}'
+```
+
+本地要试模型代理时，先给服务一个管理令牌，再经管理接口登记来源与模型（内存存储的加密密钥随进程生成，重启后要重新登记）：
+
+```bash
+ZHIXIN_ADMIN_TOKEN=$(openssl rand -base64 32) go run ./cmd/zhixin-api
+TOKEN=$ZHIXIN_ADMIN_TOKEN
+curl -H "Authorization: Bearer $TOKEN" -X PUT localhost:8080/admin/v1/providers/deepseek \
+  -H 'Content-Type: application/json' \
+  -d '{"base_url":"https://api.deepseek.com/v1","api_key":"sk-..."}'
+curl -H "Authorization: Bearer $TOKEN" -X PUT localhost:8080/admin/v1/models/deepseek-flash \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"chat","routes":[{"provider_id":"deepseek","upstream_model":"deepseek-chat"}]}'
+curl localhost:8080/v1/llm/models
 ```
 
 设置 `ZHIXIN_DATABASE_URL` 之后启动就用 PostgreSQL，备份与附件默认写到 `ZHIXIN_BLOB_DIR`。要连 MinIO 时设置 `ZHIXIN_S3_ENDPOINT`、`ZHIXIN_S3_BUCKET`、`ZHIXIN_S3_ACCESS_KEY` 与 `ZHIXIN_S3_SECRET_KEY`，bucket 要先建好，`/readyz` 会检查它是否存在。

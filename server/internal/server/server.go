@@ -240,9 +240,13 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	} else if cfg.DatabaseURL == "" {
 		box = secretbox.Random()
 	}
-	router := llmproxy.NewRouter(st.Catalog, box, llmproxy.EnvSourceFrom(cfg.LLM), log)
+	router := llmproxy.NewRouter(st.Catalog, box, log)
 	if err := router.Reload(ctx); err != nil {
-		log.Error("load model routes; serving env models only until the next reload", slog.String("error", err.Error()))
+		log.Error("load model routes; serving the last snapshot until the next reload", slog.String("error", err.Error()))
+	} else if router.ModelCount() == 0 {
+		// 来源与模型都只在管理后台配置（ADR-0035）：空库启动时聊天与嵌入接口会
+		// 一律返回 503，这里先把原因说清楚。
+		log.Warn("no model configured: add a source and a model in /admin/ before serving hosted models")
 	}
 	var adminLimits *ratelimit.Limiter
 	if cfg.AdminRatePerSecond > 0 {

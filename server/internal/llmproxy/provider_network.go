@@ -12,7 +12,7 @@ import (
 var errProviderAddress = errors.New("model source must use a public HTTPS address")
 
 func (p *Proxy) sendToProvider(req *http.Request, provider *liveProvider) (*http.Response, error) {
-	if p.publicClient == nil || provider.Source == sourceEnv {
+	if p.publicClient == nil {
 		return p.client.Do(req)
 	}
 	if req.URL.Scheme != "https" {

@@ -464,9 +464,9 @@ paths:
       tags: [llm]
       summary: 当前可用的模型，OpenAI 列表格式
       description: |
-        列出管理后台与环境变量里启用、并且至少有一条可用路由的对外模型。每一项带
-        `kind`，聊天模型是 `chat`，嵌入模型是 `embedding`；嵌入模型配置了维度时带
-        `dimensions`，客户端据此建立索引。
+        列出管理后台启用、并且至少有一条可用路由的对外模型。每一项带 `kind`，聊天
+        模型是 `chat`，嵌入模型是 `embedding`；嵌入模型配置了维度时带 `dimensions`，
+        客户端据此建立索引。
       responses:
         "200":
           description: OK
@@ -662,8 +662,8 @@ paths:
       security: [{ admin: [] }]
       summary: 列出模型来源与健康状态
       description: |
-        包括管理后台保存的来源与环境变量生成的只读来源 `env`。key 不返回，只给出
-        是否已设置与末四位。健康状态来自本进程的最近调用，重启后清空。
+        列出管理后台保存的来源。key 不返回，只给出是否已设置与末四位。健康状态来自
+        本进程的最近调用，重启后清空。
       responses:
         "200":
           description: OK
@@ -680,7 +680,7 @@ paths:
       summary: 新建或修改一个模型来源
       description: |
         `api_key` 省略时保留原来的 key，传空字符串时清除。key 用 `ZHIXIN_SECRET_KEY`
-        加密后入库，没有配置这个密钥时保存带 key 的来源返回 503。`env` 是保留名。
+        加密后入库，没有配置这个密钥时保存带 key 的来源返回 503。
       requestBody:
         required: true
         content:
@@ -760,8 +760,8 @@ paths:
       security: [{ admin: [] }]
       summary: 新建或修改一个对外模型及其全部路由
       description: |
-        路由整体替换。同名的环境变量模型被管理后台的配置覆盖。嵌入模型的各条路由
-        必须产出同一个向量空间（同一个模型的不同部署），服务端不核对这一点。
+        路由整体替换。嵌入模型的各条路由必须产出同一个向量空间（同一个模型的不同
+        部署），服务端不核对这一点。
       requestBody:
         required: true
         content:
@@ -929,7 +929,7 @@ components:
         cooling_until: { type: string, format: date-time }
     AdminProvider:
       type: object
-      required: [id, name, base_url, enabled, has_key, note, source, health]
+      required: [id, name, base_url, enabled, has_key, note, health]
       properties:
         id: { type: string }
         name: { type: string }
@@ -938,7 +938,6 @@ components:
         has_key: { type: boolean }
         key_hint: { type: string, description: key 的末四位 }
         note: { type: string }
-        source: { type: string, enum: [admin, env], description: env 来自环境变量，只读 }
         updated_at: { type: string, format: date-time }
         health: { $ref: "#/components/schemas/AdminProviderHealth" }
     AdminProviderList:
@@ -1021,7 +1020,7 @@ components:
         enabled: { type: boolean, default: true }
     AdminModel:
       type: object
-      required: [name, kind, enabled, available, note, source, routes]
+      required: [name, kind, enabled, available, note, routes]
       properties:
         name: { type: string }
         kind: { $ref: "#/components/schemas/ModelKind" }
@@ -1029,7 +1028,6 @@ components:
         available: { type: boolean, description: 模型启用且至少一条路由可参与转发，包含冷却中的备用路由 }
         dimensions: { type: integer }
         note: { type: string }
-        source: { type: string, enum: [admin, env] }
         updated_at: { type: string, format: date-time }
         routes:
           type: array

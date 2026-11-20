@@ -303,10 +303,8 @@ func TestHostedModelNeedsVerifiedEmail(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	h := newHarness(t, map[string]string{
-		"ZHIXIN_LLM_BASE_URL": "http://" + upstream.Listener.Addr().String() + "/v1",
-		"ZHIXIN_LLM_API_KEY":  "test-key",
-	})
+	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
+	h.configureModel("http://"+upstream.Listener.Addr().String()+"/v1", "deepseek-flash")
 	token, userID := h.register("model@b.cn")
 	chat := func() (int, problem) {
 		resp := h.do("POST", "/v1/llm/chat/completions", token,
@@ -351,10 +349,10 @@ func TestHostedModelConcurrencyLimit(t *testing.T) {
 	})
 
 	h := newHarness(t, map[string]string{
-		"ZHIXIN_LLM_BASE_URL":            "http://" + upstream.Listener.Addr().String() + "/v1",
-		"ZHIXIN_LLM_API_KEY":             "test-key",
+		"ZHIXIN_ADMIN_TOKEN":             testAdminToken,
 		"ZHIXIN_LLM_CONCURRENT_PER_USER": "2",
 	})
+	h.configureModel("http://"+upstream.Listener.Addr().String()+"/v1", "deepseek-flash")
 	token, userID := h.register("concurrent@b.cn")
 	h.markEmailVerified(userID)
 

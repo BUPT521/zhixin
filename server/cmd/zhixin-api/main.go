@@ -84,9 +84,6 @@ func run(log *slog.Logger) error {
 			},
 		}
 	}
-	if cfg.LLM.APIKey == "" {
-		log.Warn("ZHIXIN_LLM_API_KEY is empty: only model sources configured in the admin page are served")
-	}
 	if cfg.AdminToken == "" {
 		log.Info("ZHIXIN_ADMIN_TOKEN is empty: the admin page and /admin/v1 answer 404")
 	}

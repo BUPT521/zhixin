@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/mail"
 	"net/netip"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -157,21 +156,12 @@ type Config struct {
 
 // LLMConfig configures the model proxy.
 //
-// BaseURL, APIKey, Models and EmbeddingModels describe the read-only "env"
-// source. Sources configured in the admin page live in the database and are
-// merged with it by llmproxy.Router (ADR-0029); a model of the same name in
-// the admin page wins.
+// Sources and models come from the admin page (llm_provider, llm_model and
+// llm_route); there is no environment-variable source any more, see
+// ADR-0035.
 type LLMConfig struct {
 	// RestrictProviders requires public HTTPS endpoints for database sources.
 	RestrictProviders bool
-	// BaseURL is the upstream OpenAI-compatible base, e.g. https://api.deepseek.com/v1.
-	BaseURL string
-	// APIKey is the provider key held by the server. Empty disables the env source.
-	APIKey string
-	// Models are chat model names served by the env source.
-	Models []string
-	// EmbeddingModels are embedding model names served by the env source.
-	EmbeddingModels []string
 	// DailyTokens is the per-account daily chat token budget. The real number
 	// is still to be decided (ADR-0008); this is only a configurable default.
 	DailyTokens int64
@@ -247,16 +237,6 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("ZHIXIN_TIMEZONE: %w", err))
 	}
 
-	list := func(key, def string) []string {
-		var out []string
-		for _, m := range strings.Split(get(key, def), ",") {
-			if m = strings.TrimSpace(m); m != "" {
-				out = append(out, m)
-			}
-		}
-		return out
-	}
-
 	proxies, err := parseTrustedProxies(get("ZHIXIN_TRUSTED_PROXIES", ""))
 	if err != nil {
 		errs = append(errs, err)
@@ -328,9 +308,6 @@ func Load(getenv func(string) string) (Config, error) {
 
 		LLM: LLMConfig{
 			RestrictProviders:    get("ZHIXIN_DATABASE_URL", "") != "",
-			BaseURL:              strings.TrimRight(get("ZHIXIN_LLM_BASE_URL", "https://api.deepseek.com/v1"), "/"),
-			APIKey:               get("ZHIXIN_LLM_API_KEY", ""),
-			Models:               list("ZHIXIN_LLM_MODELS", "deepseek-flash"),
 			DailyTokens:          num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
 			InstanceDailyTokens:  num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "20000000"),
 			MaxRequestBytes:      num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
@@ -339,7 +316,6 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxResponseBytes:     num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
 			StreamIdleTimeout:    dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
 			StreamTotalTimeout:   dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
-			EmbeddingModels:      list("ZHIXIN_LLM_EMBEDDING_MODELS", ""),
 			EmbeddingDailyTokens: num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
 			EmbeddingMaxInputs:   int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
 			EmbeddingCacheBytes:  num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
@@ -409,13 +385,7 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("ZHIXIN_TELEMETRY_SECRET is required when ZHIXIN_DATABASE_URL is set: install hashes would change on restart"))
 		}
 	}
-	// 带 key 的上游地址会随每次请求发送凭据。公网地址只用 https；本机联调
-	// 允许 http，但不接受空主机名或非 http(s) 协议。
-	if cfg.LLM.APIKey != "" {
-		if err := checkLLMBaseURL(cfg.LLM.BaseURL); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	// 带 key 的上游地址由管理后台保存，地址在保存时校验（见 llmproxy.Admin）。
 	if cfg.AccessTTL >= cfg.RefreshTTL && len(errs) == 0 {
 		errs = append(errs, errors.New("ZHIXIN_ACCESS_TTL must be shorter than ZHIXIN_REFRESH_TTL"))
 	}
@@ -485,26 +455,4 @@ func isLoopbackHost(host string) bool {
 		return false
 	}
 	return addr.Unmap().IsLoopback()
-}
-
-// checkLLMBaseURL 校验带 key 的上游地址：协议只能是 http(s)，公网主机必须
-// 是 https，地址里不能带用户名口令。
-func checkLLMBaseURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("ZHIXIN_LLM_BASE_URL: %w", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("ZHIXIN_LLM_BASE_URL: 只能用 http 或 https，得到 %q", u.Scheme)
-	}
-	if u.Host == "" {
-		return errors.New("ZHIXIN_LLM_BASE_URL: 缺少主机名")
-	}
-	if u.User != nil {
-		return errors.New("ZHIXIN_LLM_BASE_URL: 不要在地址里写用户名或口令")
-	}
-	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
-		return fmt.Errorf("ZHIXIN_LLM_BASE_URL: 带 key 的公网地址必须使用 https（%s）", u.Hostname())
-	}
-	return nil
 }

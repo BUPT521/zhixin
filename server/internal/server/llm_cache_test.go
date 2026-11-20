@@ -52,11 +52,18 @@ func lookupVectors(t *testing.T, h *harness, token, model string, hashes []strin
 // 隔离，清除云端数据之后缓存为空。
 func TestEmbeddingCacheEndToEnd(t *testing.T) {
 	provider, _ := fakeProvider(t)
-	h := newHarness(t, map[string]string{
-		"ZHIXIN_LLM_BASE_URL":         provider.URL + "/v1",
-		"ZHIXIN_LLM_API_KEY":          "sk-env",
-		"ZHIXIN_LLM_EMBEDDING_MODELS": "text-embedding-v4",
-	})
+	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
+	if code := h.json("PUT", "/admin/v1/providers/up", testAdminToken, map[string]any{
+		"base_url": provider.URL + "/v1", "api_key": "sk",
+	}, nil); code != http.StatusOK {
+		t.Fatalf("put provider: %d", code)
+	}
+	if code := h.json("PUT", "/admin/v1/models/text-embedding-v4", testAdminToken, map[string]any{
+		"kind":   "embedding",
+		"routes": []map[string]any{{"provider_id": "up", "upstream_model": "text-embedding-v4"}},
+	}, nil); code != http.StatusOK {
+		t.Fatalf("put embedding model: %d", code)
+	}
 	user, userID := h.register("cache@b.cn")
 	h.markEmailVerified(userID)
 	other, otherID := h.register("other@b.cn")
@@ -110,11 +117,7 @@ func TestEmbeddingCacheEndToEnd(t *testing.T) {
 // 模型之后旧向量不再命中，同名模型再次出现时也不会读到上一个向量空间的行。
 func TestAdminModelChangeClearsEmbeddingCache(t *testing.T) {
 	provider, _ := fakeProvider(t)
-	h := newHarness(t, map[string]string{
-		"ZHIXIN_ADMIN_TOKEN":  testAdminToken,
-		"ZHIXIN_LLM_BASE_URL": "http://127.0.0.1:1",
-		"ZHIXIN_LLM_API_KEY":  "sk-env",
-	})
+	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
 	admin := func(method, path string, in, out any) int {
 		t.Helper()
 		return h.json(method, path, testAdminToken, in, out)

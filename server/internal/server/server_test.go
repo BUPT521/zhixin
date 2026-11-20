@@ -95,6 +95,25 @@ func (h *harness) json(method, path, token string, in any, out any) int {
 	return resp.StatusCode
 }
 
+// configureModel 通过管理接口登记一个来源与一个对外模型，让托管接口有路由
+// 可用。调用方要在 newHarness 的 env 里配置 testAdminToken。
+func (h *harness) configureModel(baseURL, name string) {
+	h.t.Helper()
+	if code := h.json("PUT", "/admin/v1/providers/up", testAdminToken, map[string]any{
+		"base_url": baseURL, "api_key": "test-key",
+	}, nil); code != http.StatusOK {
+		h.t.Fatalf("put provider: %d", code)
+	}
+	if code := h.json("PUT", "/admin/v1/models/"+name, testAdminToken, map[string]any{
+		"kind": "chat",
+		"routes": []map[string]any{
+			{"provider_id": "up", "upstream_model": name},
+		},
+	}, nil); code != http.StatusOK {
+		h.t.Fatalf("put model: %d", code)
+	}
+}
+
 func (h *harness) signUp(email string) string {
 	h.t.Helper()
 	var tok struct {

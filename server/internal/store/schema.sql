@@ -183,11 +183,11 @@ CREATE TABLE user_purge (
   started_at  TIMESTAMPTZ NOT NULL
 );
 
--- 模型来源：一个 OpenAI 兼容的基础地址与一把 key，由管理后台维护（ADR-0029）。
--- key 只存 AES-256-GCM 密文，密钥是环境变量 ZHIXIN_SECRET_KEY，不在库里；
--- key_hint 是末四位，列表不用解密。环境变量里的来源不进这张表。
+-- 模型来源：一个 OpenAI 兼容的基础地址与一把 key，由管理后台维护（ADR-0029、
+-- ADR-0035）。key 只存 AES-256-GCM 密文，密钥是环境变量 ZHIXIN_SECRET_KEY，
+-- 不在库里；key_hint 是末四位，列表不用解密。
 CREATE TABLE llm_provider (
-  id             TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9_-]{0,31}$' AND id <> 'env'),
+  id             TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9_-]{0,31}$'),
   name           TEXT NOT NULL DEFAULT '',
   base_url       TEXT NOT NULL,
   api_key_sealed TEXT NOT NULL DEFAULT '',

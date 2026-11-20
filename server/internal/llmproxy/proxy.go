@@ -63,22 +63,7 @@ type Proxy struct {
 	inflight   map[string]int
 }
 
-// EnvSourceFrom 取出配置里的环境变量来源。
-func EnvSourceFrom(cfg config.LLMConfig) EnvSource {
-	return EnvSource{
-		BaseURL:         cfg.BaseURL,
-		APIKey:          cfg.APIKey,
-		ChatModels:      cfg.Models,
-		EmbeddingModels: cfg.EmbeddingModels,
-	}
-}
-
-// NewHandler 使用环境变量里的模型来源，供单独装配代理时使用。
-func NewHandler(cfg config.LLMConfig, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
-	return NewRoutedHandler(cfg, NewRouter(nil, nil, EnvSourceFrom(cfg), log), quota, loc, log)
-}
-
-// NewRoutedHandler 使用服务端与管理后台共同维护的路由快照。
+// NewRoutedHandler 使用服务端从数据库读出的路由快照。
 func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
 	if setter, ok := quota.(quotaLimits); ok {
 		setter.SetQuotaLimits(cfg.DailyTokens, cfg.EmbeddingDailyTokens, cfg.InstanceDailyTokens)

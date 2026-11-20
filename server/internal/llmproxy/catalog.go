@@ -18,9 +18,6 @@ const (
 	KindEmbedding Kind = "embedding"
 )
 
-// EnvProviderID 是环境变量生成的只读来源的编号，管理后台不能用这个名字。
-const EnvProviderID = "env"
-
 var (
 	// ErrNotFound 表示来源或模型不存在。
 	ErrNotFound = errors.New("llmproxy: not found")
@@ -89,9 +86,9 @@ func KeyAAD(id, baseURL string) string {
 	return id + "\n" + baseURL
 }
 
-// ValidProviderID 报告来源编号是否合法；env 留给环境变量。
+// ValidProviderID 报告来源编号是否合法。
 func ValidProviderID(id string) bool {
-	return providerIDPattern.MatchString(id) && id != EnvProviderID
+	return providerIDPattern.MatchString(id)
 }
 
 // ValidModelName 报告对外模型名是否合法。不允许斜杠，因为它要出现在管理接口

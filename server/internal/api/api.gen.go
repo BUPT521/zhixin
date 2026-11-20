@@ -16,42 +16,6 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for AdminModelSource.
-const (
-	AdminModelSourceAdmin AdminModelSource = "admin"
-	AdminModelSourceEnv   AdminModelSource = "env"
-)
-
-// Valid indicates whether the value is a known member of the AdminModelSource enum.
-func (e AdminModelSource) Valid() bool {
-	switch e {
-	case AdminModelSourceAdmin:
-		return true
-	case AdminModelSourceEnv:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for AdminProviderSource.
-const (
-	AdminProviderSourceAdmin AdminProviderSource = "admin"
-	AdminProviderSourceEnv   AdminProviderSource = "env"
-)
-
-// Valid indicates whether the value is a known member of the AdminProviderSource enum.
-func (e AdminProviderSource) Valid() bool {
-	switch e {
-	case AdminProviderSourceAdmin:
-		return true
-	case AdminProviderSourceEnv:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for AdminProviderHealthState.
 const (
 	AdminProviderHealthStateCooling  AdminProviderHealthState = "cooling"
@@ -274,19 +238,15 @@ func (e TokensTokenType) Valid() bool {
 // AdminModel defines model for AdminModel.
 type AdminModel struct {
 	// Available 模型启用且至少一条路由可参与转发，包含冷却中的备用路由
-	Available  bool             `json:"available"`
-	Dimensions *int             `json:"dimensions,omitempty"`
-	Enabled    bool             `json:"enabled"`
-	Kind       ModelKind        `json:"kind"`
-	Name       string           `json:"name"`
-	Note       string           `json:"note"`
-	Routes     []AdminRoute     `json:"routes"`
-	Source     AdminModelSource `json:"source"`
-	UpdatedAt  *time.Time       `json:"updated_at,omitempty"`
+	Available  bool         `json:"available"`
+	Dimensions *int         `json:"dimensions,omitempty"`
+	Enabled    bool         `json:"enabled"`
+	Kind       ModelKind    `json:"kind"`
+	Name       string       `json:"name"`
+	Note       string       `json:"note"`
+	Routes     []AdminRoute `json:"routes"`
+	UpdatedAt  *time.Time   `json:"updated_at,omitempty"`
 }
-
-// AdminModelSource defines model for AdminModel.Source.
-type AdminModelSource string
 
 // AdminModelInput defines model for AdminModelInput.
 type AdminModelInput struct {
@@ -331,17 +291,11 @@ type AdminProvider struct {
 	Id      string              `json:"id"`
 
 	// KeyHint key 的末四位
-	KeyHint *string `json:"key_hint,omitempty"`
-	Name    string  `json:"name"`
-	Note    string  `json:"note"`
-
-	// Source env 来自环境变量，只读
-	Source    AdminProviderSource `json:"source"`
-	UpdatedAt *time.Time          `json:"updated_at,omitempty"`
+	KeyHint   *string    `json:"key_hint,omitempty"`
+	Name      string     `json:"name"`
+	Note      string     `json:"note"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
-
-// AdminProviderSource env 来自环境变量，只读
-type AdminProviderSource string
 
 // AdminProviderHealth defines model for AdminProviderHealth.
 type AdminProviderHealth struct {

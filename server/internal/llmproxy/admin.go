@@ -57,7 +57,6 @@ func (a *Admin) providerView(p *liveProvider) api.AdminProvider {
 	v := api.AdminProvider{
 		Id: p.ID, Name: p.Name, BaseUrl: p.BaseURL, Enabled: p.Enabled,
 		HasKey: p.APIKeySealed != "" || p.APIKey != "", Note: p.Note,
-		Source: api.AdminProviderSource(p.Source),
 		Health: api.AdminProviderHealth{State: state, ConsecutiveFailures: h.failures},
 	}
 	if p.KeyHint != "" {
@@ -86,7 +85,7 @@ func (a *Admin) providerView(p *liveProvider) api.AdminProvider {
 func (a *Admin) modelView(snap *snapshot, m *liveModel) api.AdminModel {
 	v := api.AdminModel{
 		Name: m.Name, Kind: api.ModelKind(m.Kind), Enabled: m.Enabled, Available: m.usable(), Note: m.Note,
-		Source: api.AdminModelSource(m.Source), Routes: make([]api.AdminRoute, 0, len(m.Routes)),
+		Routes: make([]api.AdminRoute, 0, len(m.Routes)),
 	}
 	if m.Dimensions > 0 {
 		d := m.Dimensions
@@ -143,10 +142,6 @@ func validBaseURL(raw string) (string, bool) {
 }
 
 func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
-	if id == EnvProviderID {
-		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "env is reserved for the provider from environment variables")
-		return
-	}
 	if !ValidProviderID(id) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "id: lowercase letters, digits, - and _, at most 32")
 		return
@@ -227,10 +222,6 @@ func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (a *Admin) DeleteProvider(w http.ResponseWriter, r *http.Request, id string) {
-	if id == EnvProviderID {
-		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "the env provider is configured by environment variables")
-		return
-	}
 	err := a.catalog.DeleteProvider(r.Context(), id)
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -393,9 +384,6 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 			Enabled:       deref(ri.Enabled, true),
 		}
 		switch {
-		case rt.ProviderID == EnvProviderID:
-			bad("routes: the env provider only serves ZHIXIN_LLM_MODELS; add the source in the admin page instead")
-			return
 		case rt.UpstreamModel == "" || utf8.RuneCountInString(rt.UpstreamModel) > 128:
 			bad("routes: upstream_model is required, at most 128 characters")
 			return
@@ -445,7 +433,6 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string) {
-	// 先确认这是管理后台的模型，环境变量来源的模型只读，不能连带删掉缓存。
 	models, err := a.catalog.Models(r.Context())
 	if err != nil {
 		httpx.WriteInternal(w, r, a.proxy.log, err)
@@ -459,10 +446,6 @@ func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string)
 		}
 	}
 	if !found {
-		if m, ok := a.router().current().model(name); ok && m.Source == sourceEnv {
-			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "this model comes from ZHIXIN_LLM_MODELS or ZHIXIN_LLM_EMBEDDING_MODELS")
-			return
-		}
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
 	}

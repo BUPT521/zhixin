@@ -74,7 +74,7 @@ func newTestServer(t *testing.T, cfg config.LLMConfig, setup func(*MemoryCatalog
 	if setup != nil {
 		setup(catalog, box)
 	}
-	router := NewRouter(catalog, box, EnvSourceFrom(cfg), log)
+	router := NewRouter(catalog, box, log)
 	// 测试里不随机：同一优先级保持配置顺序。
 	router.shuffle = func([]liveRoute) {}
 	if err := router.Reload(context.Background()); err != nil {
@@ -143,8 +143,10 @@ func TestHandlerLLMProxy(t *testing.T) {
 
 	cfg := baseConfig()
 	cfg.DailyTokens = 1200
-	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk-server", []string{"deepseek-flash"}
-	env := newTestServer(t, cfg, nil)
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "up", upstream.URL, "sk-server")
+		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
+	})
 	c := env.c
 	token := signIn(t, env.authSvc, "a@b.cn")
 
@@ -188,8 +190,10 @@ func TestHandlerQuotaOverride(t *testing.T) {
 
 	cfg := baseConfig()
 	cfg.DailyTokens = 1200
-	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk-server", []string{"deepseek-flash"}
-	env := newTestServer(t, cfg, nil)
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "up", upstream.URL, "sk-server")
+		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
+	})
 	c, quota := env.c, env.quota
 	tokens, err := env.authSvc.Register(context.Background(), "override@b.cn", "password1", "")
 	if err != nil {
@@ -233,9 +237,8 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	}
 }
 
-func TestHandlerLLMProxyDisabledWithoutKey(t *testing.T) {
+func TestHandlerLLMProxyWithoutSources(t *testing.T) {
 	cfg := baseConfig()
-	cfg.BaseURL, cfg.Models = "http://127.0.0.1:1", []string{"deepseek-flash"}
 	env := newTestServer(t, cfg, nil)
 	token := signIn(t, env.authSvc, "a@b.cn")
 
@@ -716,8 +719,10 @@ func TestStreamAlwaysAsksForUsageAndEstimatesWithoutIt(t *testing.T) {
 	}))
 	defer upstream.Close()
 	cfg := baseConfig()
-	cfg.BaseURL, cfg.APIKey, cfg.Models = upstream.URL, "sk", []string{"m"}
-	env := newTestServer(t, cfg, nil)
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "up", upstream.URL, "sk")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "m"}}})
+	})
 	token := signIn(t, env.authSvc, "su@b.cn")
 	req := map[string]any{"model": "m", "stream": true, "stream_options": map[string]any{"foo": 1}}
 	b, _ := json.Marshal(req)
@@ -786,12 +791,22 @@ func TestParseEmbedChunkIndexRules(t *testing.T) {
 	}
 }
 
-func newHardeningTestServer(t *testing.T, cfg config.LLMConfig) (*testutil.Client, *auth.Service, *MemoryQuota, *Proxy) {
+func newHardeningTestServer(t *testing.T, cfg config.LLMConfig, upstreamURL string) (*testutil.Client, *auth.Service, *MemoryQuota, *Proxy) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	quota := NewMemoryQuota()
-	proxy := NewHandler(cfg, quota, time.UTC, log)
+	catalog := NewMemoryCatalog()
+	ctx := context.Background()
+	if err := catalog.PutProvider(ctx, ProviderRecord{ID: "up", Name: "up", BaseURL: upstreamURL, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	putModel(t, catalog, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
+	router := NewRouter(catalog, nil, log)
+	if err := router.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	proxy := NewRoutedHandler(cfg, router, quota, time.UTC, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
 		httpx.RequestID,
@@ -825,12 +840,9 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, proxy := newHardeningTestServer(t, config.LLMConfig{
-		BaseURL:         upstream.URL,
-		APIKey:          "sk-server",
-		Models:          []string{"deepseek-flash"},
 		DailyTokens:     10000,
 		MaxRequestBytes: 1 << 20,
-	})
+	}, upstream.URL)
 	proxy.SetConcurrencyLimit(1)
 	token := signIn(t, authSvc, "concurrent@b.cn")
 	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
@@ -883,13 +895,10 @@ func TestHandlerRequiresVerifiedEmail(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, proxy := newHardeningTestServer(t, config.LLMConfig{
-		BaseURL:              upstream.URL,
-		APIKey:               "sk-server",
-		Models:               []string{"deepseek-flash"},
 		DailyTokens:          10000,
 		MaxRequestBytes:      1 << 20,
 		RequireVerifiedEmail: true,
-	})
+	}, upstream.URL)
 	token := signIn(t, authSvc, "unverified@b.cn")
 	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
@@ -947,12 +956,9 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		BaseURL:         upstream.URL,
-		APIKey:          "sk-server",
-		Models:          []string{"deepseek-flash"},
 		DailyTokens:     10000,
 		MaxRequestBytes: 1 << 20,
-	})
+	}, upstream.URL)
 	token := signIn(t, authSvc, "settle@b.cn")
 	chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
@@ -986,12 +992,9 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 		defer upstream.Close()
 
 		c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-			BaseURL:         upstream.URL,
-			APIKey:          "sk-server",
-			Models:          []string{"deepseek-flash"},
 			DailyTokens:     10,
 			MaxRequestBytes: 1 << 20,
-		})
+		}, upstream.URL)
 		token := signIn(t, authSvc, "budget@b.cn")
 		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
@@ -1015,13 +1018,10 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 		defer upstream.Close()
 
 		c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-			BaseURL:             upstream.URL,
-			APIKey:              "sk-server",
-			Models:              []string{"deepseek-flash"},
 			DailyTokens:         1000,
 			InstanceDailyTokens: 20,
 			MaxRequestBytes:     1 << 20,
-		})
+		}, upstream.URL)
 		token := signIn(t, authSvc, "instance@b.cn")
 		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
@@ -1049,13 +1049,10 @@ func TestHandlerRejectsOversizedResponse(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		BaseURL:          upstream.URL,
-		APIKey:           "sk-server",
-		Models:           []string{"deepseek-flash"},
 		DailyTokens:      10000,
 		MaxRequestBytes:  1 << 20,
 		MaxResponseBytes: 64,
-	})
+	}, upstream.URL)
 	token := signIn(t, authSvc, "oversize@b.cn")
 	chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
@@ -1086,13 +1083,10 @@ func TestHandlerStreamIdleTimeout(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		BaseURL:           upstream.URL,
-		APIKey:            "sk-server",
-		Models:            []string{"deepseek-flash"},
 		DailyTokens:       10000,
 		MaxRequestBytes:   1 << 20,
 		StreamIdleTimeout: 100 * time.Millisecond,
-	})
+	}, upstream.URL)
 	token := signIn(t, authSvc, "idle@b.cn")
 	chat := map[string]any{
 		"model": "deepseek-flash", "stream": true,
@@ -1140,14 +1134,11 @@ func TestHandlerStreamTotalTimeout(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		BaseURL:            upstream.URL,
-		APIKey:             "sk-server",
-		Models:             []string{"deepseek-flash"},
 		DailyTokens:        10000,
 		MaxRequestBytes:    1 << 20,
 		StreamIdleTimeout:  5 * time.Second,
 		StreamTotalTimeout: 150 * time.Millisecond,
-	})
+	}, upstream.URL)
 	token := signIn(t, authSvc, "total@b.cn")
 	chat := map[string]any{
 		"model": "deepseek-flash", "stream": true,

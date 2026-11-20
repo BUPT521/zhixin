@@ -118,7 +118,6 @@ async function loadAll() {
   state.models = m.data;
   renderProviders();
   renderModels();
-  renderEnvNote();
 }
 
 // ---- 来源 ----
@@ -139,17 +138,16 @@ function renderProviders() {
       h.last_error ? el('div', { class: 'sub', title: h.last_error_at || '' }, '最近错误：' + h.last_error) : null,
       h.cooling_until ? el('div', { class: 'sub' }, '冷却到 ' + new Date(h.cooling_until).toLocaleTimeString()) : null,
     );
-    const env = p.source === 'env';
     body.append(el('tr', {},
-      el('td', {}, el('span', { class: 'mono' }, p.id), env ? el('div', { class: 'sub' }, el('span', { class: 'badge env' }, '只读'), ' 不能作为后台模型的路由') : null),
+      el('td', {}, el('span', { class: 'mono' }, p.id)),
       el('td', { class: 'name' }, p.name, p.note ? el('div', { class: 'sub' }, p.note) : null),
       el('td', { class: 'mono url' }, p.base_url),
       el('td', { class: 'mono' }, p.has_key ? '••••' + (p.key_hint || '') : '未设置'),
       status,
       el('td', { class: 'ops' },
         el('button', { class: 'link', onclick: () => testProvider(p) }, '测试'),
-        env ? null : el('button', { class: 'link', onclick: () => editProvider(p) }, '编辑'),
-        env ? null : el('button', { class: 'danger', onclick: () => deleteProvider(p) }, '删除'),
+        el('button', { class: 'link', onclick: () => editProvider(p) }, '编辑'),
+        el('button', { class: 'danger', onclick: () => deleteProvider(p) }, '删除'),
       ),
     ));
   }
@@ -239,10 +237,8 @@ function renderModels() {
     return;
   }
   for (const m of state.models) {
-    const env = m.source === 'env';
     body.append(el('tr', {},
-      el('td', {}, el('span', { class: 'mono' }, m.name), m.note ? el('div', { class: 'sub' }, m.note) : null,
-        env ? el('div', { class: 'sub' }, el('span', { class: 'badge env' }, '环境变量 · 只读')) : null),
+      el('td', {}, el('span', { class: 'mono' }, m.name), m.note ? el('div', { class: 'sub' }, m.note) : null),
       el('td', { class: 'nowrap' }, kindName[m.kind], m.dimensions ? el('div', { class: 'sub' }, m.dimensions + ' 维') : null),
       el('td', {}, [...m.routes].sort((a, b) => (routeRank[a.state] ?? 2) - (routeRank[b.state] ?? 2) || a.priority - b.priority).map((r) =>
         el('div', { class: 'route' },
@@ -259,8 +255,8 @@ function renderModels() {
       el('td', {}, el('span', { class: 'badge ' + (m.available ? 'ok' : 'off') }, m.available ? '可调用' : (m.enabled ? '无可用路由' : '已停用'))),
       el('td', { class: 'ops' },
         el('button', { class: 'link', disabled: !m.available, onclick: () => testModel(m) }, '测试模型'),
-        env ? null : el('button', { class: 'link', onclick: () => editModel(m) }, '编辑'),
-        env ? null : el('button', { class: 'danger', onclick: () => deleteModel(m) }, '删除'),
+        el('button', { class: 'link', onclick: () => editModel(m) }, '编辑'),
+        el('button', { class: 'danger', onclick: () => deleteModel(m) }, '删除'),
       ),
     ));
   }
@@ -276,18 +272,10 @@ function syncKind() {
   document.querySelectorAll('#model-dialog .emb-only').forEach((n) => { n.hidden = !emb; });
 }
 
-function adminProviders() { return state.providers.filter((p) => p.source === 'admin'); }
-
-// 环境变量来源不能作为路由，只有它的时候后台建不了模型；在模型页直接说明，
-// 免得“新增模型”的提示和来源列表里那个来源看起来矛盾。
-function renderEnvNote() {
-  $('#models-env-note').hidden = !(adminProviders().length === 0 && state.providers.some((p) => p.source === 'env'));
-}
-
 let routeRowID = 0;
 function addRouteRow(r) {
   const select = el('select', { name: 'provider_id', required: true },
-    adminProviders().map((p) => el('option', { value: p.id, selected: p.id === r.provider_id }, p.id + (p.enabled ? '' : '（已停用）'))));
+    state.providers.map((p) => el('option', { value: p.id, selected: p.id === r.provider_id }, p.id + (p.enabled ? '' : '（已停用）'))));
   const suggestions = el('datalist', { id: 'upstream-names-' + ++routeRowID });
   const updateSuggestions = () => {
     suggestions.replaceChildren(...(state.upstreamNames.get(select.value) || []).map((name) => el('option', { value: name })));
@@ -327,13 +315,7 @@ function addRouteRow(r) {
 }
 
 function editModel(m) {
-  if (!adminProviders().length) {
-    // 环境变量来源只读，后台的模型路由引用不了它，所以有这个来源也新建不了模型。
-    toast(state.providers.some((p) => p.source === 'env')
-      ? '环境变量来源只读，不能作为路由；先在“模型来源”新增一个来源'
-      : '先新增至少一个来源');
-    return;
-  }
+  if (!state.providers.length) { toast('先新增至少一个来源'); return; }
   const f = $('#model-form');
   f.reset();
   $('#model-title').textContent = m ? '编辑模型 ' + m.name : '新增模型';
