@@ -15,7 +15,8 @@ import '../application/prefetch_service.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_models.dart';
-import '../data/revisions/revision_service.dart' show RevisionDetails;
+import '../data/revisions/revision_service.dart'
+    show RevisionDetails, RevisionService;
 import '../domain/models/result.dart';
 import '../platform/data_package_export.dart';
 import 'copy.dart';
@@ -36,7 +37,15 @@ import 'zhixin_toast.dart';
 
 /// 数据版本：提交历史、比较、命名、撤销、整版恢复、留存清理与两类数据包。
 class DataVersionPage extends StatefulWidget {
-  const DataVersionPage({super.key});
+  const DataVersionPage({super.key, @visibleForTesting this.revisions});
+
+  /// 界面测试注入的版本服务；生产不传，页面走应用根上的那一份。
+  ///
+  /// 只用于同步冲突、写回本机值与清理阻塞这几处读取：阶段 0 里 `conflicts`、
+  /// `keepLocal` 与 `historyBlockers` 还是空实现，界面测试要覆盖有冲突与
+  /// 被阻止两种状态，只能由测试传入一个给出结果的替身（ADR-0039 第 3.4 节）。
+  @visibleForTesting
+  final RevisionService? revisions;
 
   @override
   State<DataVersionPage> createState() => _DataVersionPageState();
@@ -47,6 +56,15 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 一屏订阅：历史、撤销判断、存储占用与恢复点随写入更新（ADR-0014）。
   Stream<DataVersionOverview>? _stream;
   DataVersionOverview? _view;
+
+  /// 被其他设备覆盖、还没有处理的本机修改；为空时“同步覆盖”一节不出现。
+  List<RevisionConflict> _conflicts = const [];
+
+  /// 冲突读取的序号：两次读取之间又发起了新的，前一次的结果不再回填。
+  int _conflictRequest = 0;
+
+  RevisionService get _revisions =>
+      widget.revisions ?? AppScope.of(context).data.revisions;
 
   /// 一级界面切进来时已经读好的首屏；有它就先显示内容，不再摆骨架。
   DataVersionOverview? _initial;
@@ -82,10 +100,28 @@ class _DataVersionPageState extends State<DataVersionPage>
       PrefetchKey.dataVersion,
     );
     _view ??= _initial;
+    _loadConflicts();
   }
 
   Stream<DataVersionOverview> _createStream() =>
       AppScope.of(context).data.versions.watchOverview();
+
+  /// 读取被其他设备覆盖、还没有处理的本机修改。
+  ///
+  /// 冲突表不在整屏订阅的几张版本表里，所以每次整屏结果到达之后单独读一次；
+  /// 读不到时保留上一次的结果，下一次读取再试，不因此打断已经显示的内容。
+  void _loadConflicts() {
+    final request = ++_conflictRequest;
+    unawaited(() async {
+      try {
+        final conflicts = await _revisions.conflicts();
+        if (!mounted || request != _conflictRequest) return;
+        setState(() => _conflicts = conflicts);
+      } catch (_) {
+        // 冲突列表是补充信息，读不到时这一节保持原样。
+      }
+    }());
+  }
 
   /// 恢复、撤销或清理之后换一条新流：预读的快照可能早于这次写入，不能继续用。
   @override
@@ -114,6 +150,8 @@ class _DataVersionPageState extends State<DataVersionPage>
   void _onView(DataVersionOverview view) {
     _view = view;
     if (_loadFailure != null) setState(() => _loadFailure = null);
+    // 同步覆盖与整屏读取一起刷新：远端提交应用之后冲突会多出来或消失。
+    _loadConflicts();
     if (!_revealHistory) return;
     _revealHistory = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -132,6 +170,38 @@ class _DataVersionPageState extends State<DataVersionPage>
   void _showAppendedCommit() {
     _revealHistory = true;
     _reload();
+  }
+
+  /// 把一处被覆盖的本机修改写回：数据层生成一条普通提交，冲突随之标为已处理。
+  Future<void> _keepLocal(RevisionConflict conflict) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final commit = await _revisions.keepLocal(conflict.id);
+      if (!mounted) return;
+      if (commit == null) {
+        _report('本机修改还没有写回，可以稍后再试');
+        return;
+      }
+      _report('已把本机原来的值写回为一条新提交');
+      _showAppendedCommit();
+      _loadConflicts();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '保留本机修改',
+          kind: 'data_version_keep_local',
+          kept: '本机数据没有改动',
+          next: '可以再试一次',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _onViewError(Object error, StackTrace stack) {
@@ -719,6 +789,76 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
   }
 
+  /// 清理前的确认：先读历史下游读者的阻塞原因，有原因时写在框里并禁用确认。
+  ///
+  /// [clearing] 为真时对应“清理历史”，否则对应“按留存清理”。读不到原因时
+  /// 不弹确认，按读取失败提示一次：不能在没有核对的情况下删提交。
+  Future<bool> _confirmCleanup({
+    required String title,
+    required Widget content,
+    required bool clearing,
+    required String confirmLabel,
+  }) async {
+    final List<String> blockers;
+    try {
+      blockers = await _revisions.historyBlockers(clearing: clearing);
+    } catch (error, stack) {
+      if (!mounted) return false;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '核对清理条件',
+          kind: 'data_version_blockers',
+          kept: '提交历史没有改动',
+          next: '可以稍后再试',
+        ),
+      );
+      return false;
+    }
+    if (!mounted) return false;
+    if (blockers.isEmpty) {
+      return confirmZhixin(
+        context: context,
+        title: title,
+        content: content,
+        confirmLabel: confirmLabel,
+        destructive: true,
+      );
+    }
+    final theme = context.zhixin;
+    final confirmed = await showZhixinAlert<bool>(
+      context: context,
+      title: title,
+      cancelLabel: '取消',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          content,
+          SizedBox(height: theme.space.md),
+          Text('现在还不能清理：', style: theme.text.labelLarge),
+          for (final blocker in blockers)
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.tight),
+              child: Text('· $blocker', style: theme.text.bodySmall),
+            ),
+        ],
+      ),
+      actions: [
+        // 有阻塞时数据层会拒绝执行，按钮直接禁用，用户不会点完才发现没清理。
+        forui.FButton(
+          variant: forui.FButtonVariant.destructive,
+          mainAxisSize: MainAxisSize.min,
+          onPress: null,
+          child: Text(confirmLabel),
+        ),
+      ],
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _prune() async {
     if (_busy) return;
     final usage = _view?.usage;
@@ -726,9 +866,10 @@ class _DataVersionPageState extends State<DataVersionPage>
     final named = usage?.namedCount ?? 0;
     final removing = total - _keep - named - 1;
     final removable = removing < 0 ? 0 : removing;
-    final confirmed = await confirmZhixin(
-      context: context,
+    final confirmed = await _confirmCleanup(
       title: '按留存清理',
+      clearing: false,
+      confirmLabel: '清理',
       content: Text(
         removable > 0
             ? '会删除约 $removable 条较早的提交，只保留最近 $_keep 条，'
@@ -739,8 +880,6 @@ class _DataVersionPageState extends State<DataVersionPage>
                   '会清掉不再被引用的检查点与附件。出现失效回执时还会追加一条不可撤销的清理提交。'
                   '确定继续？',
       ),
-      confirmLabel: '清理',
-      destructive: true,
     );
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
@@ -809,15 +948,14 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   Future<void> _clearHistory() async {
     if (_busy) return;
-    final confirmed = await confirmZhixin(
-      context: context,
+    final confirmed = await _confirmCleanup(
       title: '清理历史',
+      clearing: true,
+      confirmLabel: '清理',
       content: const Text(
         '将以当前数据为新基线，删除全部提交明细、检查点与命名版本；'
         '当前记录、附件与之后的提交保留。更早的回执会失去撤销入口。确定清理？',
       ),
-      confirmLabel: '清理',
-      destructive: true,
     );
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
@@ -969,6 +1107,14 @@ class _DataVersionPageState extends State<DataVersionPage>
                 ),
               ),
             ),
+          // 只有被其他设备覆盖过、还没处理时才占位置；平时这一节不出现。
+          if (_conflicts.isNotEmpty) ...[
+            const SectionHeading(
+              title: '同步覆盖',
+              subtitle: '其他设备的修改覆盖了本机内容；可以把本机原来的值写回为一条新提交。',
+            ),
+            for (final conflict in _conflicts) _conflictTile(theme, conflict),
+          ],
           SectionHeading(
             title: '留存',
             subtitle:
@@ -1028,7 +1174,7 @@ class _DataVersionPageState extends State<DataVersionPage>
           if (history.refs.isNotEmpty) ...[
             const SectionHeading(
               title: '命名版本',
-              subtitle: '命名版本在清理时保留；删除名称不会删除提交，仍可从提交历史恢复到这个版本。',
+              subtitle: '命名后在清理历史时保留；删除名称不会删除提交，仍可从提交历史恢复到这个版本。',
             ),
             for (final ref in history.refs)
               Padding(
@@ -1088,18 +1234,19 @@ class _DataVersionPageState extends State<DataVersionPage>
     return Padding(
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
+        // 图标与标题都按提交类型来；动作文案只作说明，放在副标题最前面。
         prefix: Icon(
-          current ? FLucideIcons.circleDot : FLucideIcons.gitCommit,
-          color: theme.colors.primary,
+          _kindIcon(commit.kind),
+          color: current ? theme.colors.primary : theme.colors.onSurfaceVariant,
         ),
         title: Text(
-          '${commit.action}${current ? '（HEAD）' : ''}',
+          '${commit.kind.label}${current ? '（HEAD）' : ''}',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          '${_timeText(commit.createdAt)} · ${_actorLabel(commit.actor)} · '
-          '${commit.changeCount} 处'
+          '${commit.action} · ${_timeText(commit.createdAt)} · '
+          '${_actorLabel(commit.actor)} · ${commit.changeCount} 处'
           '${names.isEmpty ? '' : ' · ${names.map((ref) => ref.name).join('、')}'}',
         ),
         suffix: moreMenu(
@@ -1129,6 +1276,101 @@ class _DataVersionPageState extends State<DataVersionPage>
         onPress: () => _details(commit),
       ),
     );
+  }
+
+  /// 提交类型对应的图标；类型由写入路径记录，不从动作文案推断（ADR-0039）。
+  IconData _kindIcon(RevisionKind kind) => switch (kind) {
+    RevisionKind.baseline => FLucideIcons.flag,
+    RevisionKind.write => FLucideIcons.pencil,
+    RevisionKind.undo => FLucideIcons.undo2,
+    RevisionKind.restore => FLucideIcons.rotateCcw,
+    RevisionKind.import => FLucideIcons.upload,
+    RevisionKind.maintenance => FLucideIcons.wrench,
+    RevisionKind.remote => FLucideIcons.cloudDownload,
+  };
+
+  /// 一处被远端覆盖的本机修改：写明哪项内容的哪个字段、本机原来的值与现在的值。
+  Widget _conflictTile(ZhixinTheme theme, RevisionConflict conflict) {
+    final lines = _conflictLines(conflict);
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.tight),
+      child: forui.FTile(
+        prefix: const LeadingIcon(FLucideIcons.cloudDownload),
+        title: Text(
+          '${_conflictTableLabel(conflict.table)} · '
+          '${_conflictFieldLabel(conflict)}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final line in lines) Text(line, style: theme.text.bodySmall),
+          ],
+        ),
+        suffix: forui.FButton(
+          variant: forui.FButtonVariant.outline,
+          size: forui.FButtonSizeVariant.sm,
+          mainAxisSize: MainAxisSize.min,
+          onPress: _busy ? null : () => _keepLocal(conflict),
+          child: const Text('保留本机修改'),
+        ),
+      ),
+    );
+  }
+
+  /// 冲突涉及的内容名：不认识的表不显示英文表名，退成“内容”。
+  String _conflictTableLabel(String table) {
+    final label = _tableLabel(table);
+    return label == table ? '内容' : label;
+  }
+
+  /// 冲突涉及的字段名：整行冲突（新增撞上同一主键）时列成“整行”。
+  String _conflictFieldLabel(RevisionConflict conflict) {
+    final column = conflict.column;
+    if (column == null) return '整行';
+    return _fieldLabels[column] ?? '内容';
+  }
+
+  /// 每行的“本机原来的值 → 现在的值”；字段名一律走 [_fieldLabels]，不显示列名。
+  List<String> _conflictLines(RevisionConflict conflict) {
+    final column = conflict.column;
+    if (column != null) {
+      final label = _fieldLabels[column] ?? '内容';
+      final before = _conflictValueText(conflict, column, local: true);
+      final after = _conflictValueText(conflict, column, local: false);
+      return ['$label：本机原来的值 $before，现在的值 $after'];
+    }
+    // 整行冲突：只列映射得到中文名的字段，映射不到的内部字段不显示。
+    final keys = <String>{
+      ...conflict.local.keys,
+      ...conflict.remoteAfter.keys,
+    }.where(_fieldLabels.containsKey).toList()..sort();
+    if (keys.isEmpty) return const ['整行内容与现在不同'];
+    return [
+      for (final key in keys)
+        '${_fieldLabels[key]}：本机原来的值 '
+            '${_conflictValueText(conflict, key, local: true)}，现在的值 '
+            '${_conflictValueText(conflict, key, local: false)}',
+    ];
+  }
+
+  /// 冲突记录里一侧的值；本机已删或远端已删时写明“已经删除”，其余缺失按“空”。
+  String _conflictValueText(
+    RevisionConflict conflict,
+    String column, {
+    required bool local,
+  }) {
+    final row = local ? conflict.local : conflict.remoteAfter;
+    final value = row[column];
+    if (value != null) return _fieldText(conflict.table, column, value);
+    if (local && conflict.reason == RevisionConflict.deletedLocally) {
+      return '已经删除';
+    }
+    if (!local && conflict.reason == RevisionConflict.deletedRemotelyModified) {
+      return '已经删除';
+    }
+    return _fieldText(conflict.table, column, null);
   }
 
   Widget _pointTile(ZhixinTheme theme, RestorePoint point) {
