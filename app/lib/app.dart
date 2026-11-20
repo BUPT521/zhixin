@@ -70,12 +70,8 @@ class _ZhixinAppState extends State<ZhixinApp> {
               ? zhixinForuiTheme
               : zhixinDarkForuiTheme,
           child: forui.FToaster(
-            // 提示固定在右下；底部额外留出三栏导航的高度，收起前不压住底栏。
-            style: forui.FToasterStyleDelta.delta(
-              padding: forui.EdgeInsetsGeometryDelta.value(
-                const EdgeInsets.fromLTRB(20, 15, 20, 96),
-              ),
-            ),
+            // 提示的位置与底部留白在主题里统一写好，各平台的短提示都落在下面。
+            style: zhixinToasterStyle,
             child: AppScope(
               crashLog: widget.crashLog,
               ai: widget.ai,

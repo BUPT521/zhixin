@@ -65,6 +65,18 @@ final forui.FThemeData zhixinDarkForuiTheme = _buildForui(_darkPalette);
 final ThemeData zhixinTheme = _buildMaterial(_lightPalette);
 final ThemeData zhixinDarkTheme = _buildMaterial(_darkPalette);
 
+/// 页面短提示的宿主样式：提示压在中下，底部为底栏导航留出高度。
+///
+/// Forui 默认把提示放在触屏设备的顶部，这里统一放到下面，屏幕上的提示位置
+/// 不随平台改变。页面里的提示仍然只通过 `showToast` 与 `showActionToast` 打开。
+final forui.FToasterStyleDelta zhixinToasterStyle =
+    forui.FToasterStyleDelta.delta(
+      toastAlignment: forui.FToastAlignment.bottomCenter,
+      padding: forui.EdgeInsetsGeometryDelta.value(
+        const EdgeInsets.fromLTRB(20, 15, 20, 96),
+      ),
+    );
+
 const _controlRadius = Radius.circular(14);
 const _cardRadius = Radius.circular(20);
 const _featureRadius = Radius.circular(24);
