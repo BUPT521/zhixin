@@ -64,6 +64,12 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 第一次读取失败时的说明；重新订阅之后清除。
   String? _loadFailure;
 
+  /// 提交历史的定位点：恢复、撤销或导入之后把新增的提交带回视野。
+  final _historyKey = GlobalKey();
+
+  /// 下一次整屏结果到达时把提交历史滚进视野；写入追加提交之后置位。
+  bool _revealHistory = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -102,9 +108,30 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   /// 结果到达：换掉页面上的历史与恢复点，并清掉失败说明。
+  ///
+  /// 恢复、撤销与导入追加的提交排在列表最前面；用户停在原来的位置时看不到
+  /// 它，会以为操作没有执行，所以这些操作之后把提交历史带回视野。
   void _onView(DataVersionOverview view) {
     _view = view;
     if (_loadFailure != null) setState(() => _loadFailure = null);
+    if (!_revealHistory) return;
+    _revealHistory = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final anchor = _historyKey.currentContext;
+      if (anchor == null) return;
+      Scrollable.ensureVisible(
+        anchor,
+        alignment: 0.05,
+        duration: const Duration(milliseconds: 240),
+      );
+    });
+  }
+
+  /// 追加提交之后换一条新流：等新结果到达再滚动，新增的提交已经在列表里。
+  void _showAppendedCommit() {
+    _revealHistory = true;
+    _reload();
   }
 
   void _onViewError(Object error, StackTrace stack) {
@@ -400,6 +427,8 @@ class _DataVersionPageState extends State<DataVersionPage>
         commit.id,
         expectedHead: preview.head,
       );
+      if (!mounted) return;
+      _showAppendedCommit();
       _report(
         restored.cacheWarning == null
             ? '已恢复并追加一条提交'
@@ -428,6 +457,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     setState(() => _busy = true);
     try {
       final result = await AppScope.of(context).data.undo.undoCommit(commit.id);
+      if (result.applied && mounted) _showAppendedCommit();
       _report(result.message);
     } catch (error, stack) {
       if (!mounted) return;
@@ -552,6 +582,7 @@ class _DataVersionPageState extends State<DataVersionPage>
       );
       switch (imported) {
         case Success(:final value):
+          _showAppendedCommit();
           _report(value ?? '已导入当前数据');
         case Failure(:final reason):
           if (!mounted) return;
@@ -1031,7 +1062,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             ),
             for (final point in view.restorePoints) _pointTile(theme, point),
           ],
-          const SectionHeading(title: '提交历史'),
+          SectionHeading(key: _historyKey, title: '提交历史'),
           for (final commit in shown) _commitTile(theme, view, commit),
           if (commits.length > shown.length)
             LoadMoreFooter(

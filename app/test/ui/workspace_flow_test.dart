@@ -2656,6 +2656,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('恢复版本后把新增的恢复提交带回提交历史', (tester) async {
+    await openApp(tester);
+    await tester.runAsync(() async {
+      await scope!.testing.tasks.createGoal(title: '恢复前的目标');
+      for (var index = 0; index < 20; index++) {
+        await scope!.testing.db.transaction((txn) async {
+          await insertRow(txn, 'conversation', {
+            'id': 'conv-restore-$index',
+            'title': '恢复前的讨论 $index',
+            'entry_kind': 'text',
+            'status': 'open',
+            'created_at': '2026-11-10 09:00:00',
+            'updated_at': '2026-11-10 09:00:00',
+          });
+        });
+      }
+    });
+    await openMineEntry(tester, '数据版本');
+
+    final page = find.byType(DataVersionPage);
+    final scrollable = find
+        .descendant(of: page, matching: find.byType(Scrollable))
+        .first;
+    // 停在整个列表的最下面，此时新增的提交在视野之外。
+    final oldest = find.byIcon(FLucideIcons.ellipsis).last;
+    await tester.scrollUntilVisible(oldest, 300, scrollable: scrollable);
+    await settle(tester);
+    await tester.tap(oldest);
+    await settle(tester);
+    await tester.tap(find.text('恢复到这个版本'));
+    await settle(tester);
+    await tester.tap(find.text('恢复'));
+    await settle(tester);
+
+    final newest = find.text('恢复版本（HEAD）');
+    expect(newest, findsOneWidget);
+    final view = tester.getRect(page);
+    final rect = tester.getRect(newest);
+    expect(rect.top, greaterThanOrEqualTo(view.top));
+    expect(rect.bottom, lessThanOrEqualTo(view.bottom));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('数据版本页直接禁用不能撤销的提交并说明原因', (tester) async {
     await openApp(tester);
     await tester.runAsync(
