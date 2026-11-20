@@ -165,11 +165,20 @@ class RevisionService {
     required Set<String> tables,
   }) => undo.receiptCommits(db.raw, actions: actions, tables: tables);
 
+  /// 恢复预览：与恢复读同一份反向净变化，不再重建两份整库投影。
+  ///
+  /// 目标提交在保留历史内、能按提交明细折叠出净变化时，恢复就是把这份变化反
+  /// 过来写，预览直接按同一份反向变化给出新增、修改与删除的数量；起点被裁掉、
+  /// 中间有基线跳变或明细不完整时退回整库替换，预览也跟着比较两份投影
+  /// （方案 3.9）。
   Future<RevisionRestorePreview> previewRestore(int target) =>
       engine.previewRestore(db.raw, target);
 
-  /// 恢复到本机版本：数据事务提交后就算成功；图片缓存重建单独处理，失败只
-  /// 返回一条说明，不能把已经完成的恢复报成失败。
+  /// 恢复到本机版本：先按净变化反向写入有差异的行，不可用时整库替换。
+  ///
+  /// 两段路径都在同一个命令事务里追加一条 `restore` 提交并推进代次；数据事务
+  /// 提交后就算成功，图片缓存重建单独处理，失败只返回一条说明，不能把已经完成
+  /// 的恢复报成失败。
   Future<({RevisionCommit commit, String? cacheWarning})> restore(
     int target, {
     required int expectedHead,

@@ -1,7 +1,10 @@
 part of 'revision_engine.dart';
 
-/// 投影与检查点：读取当前表、从检查点重建、比较、整版恢复与导入，以及检查点
-/// 的写入、编码与校验。
+/// 投影与检查点：读取当前表、从检查点重建、比较、恢复与导入，以及检查点的
+/// 写入、编码与校验。
+///
+/// 恢复优先按保留的净变化反向写入有差异的行，只在该路径不可用时整库替换
+/// （方案 3.9）；导入数据包与换库恢复仍然整库替换。
 ///
 /// 拥有者：泳道 C（ADR-0039 第 3.3 节）。
 
@@ -18,6 +21,19 @@ class _FoldUnavailable implements Exception {
 
   @override
   String toString() => '无法按变更明细合并：$reason';
+}
+
+/// 反向写入没有得出目标状态：中间状态被约束挡住、行核对不一致或摘要对不上。
+///
+/// 只在增量恢复内部使用，恢复捕获它之后在同一事务里退回整库替换，因此对外不
+/// 表现为失败（方案 3.9）。
+class _RestoreMismatch implements Exception {
+  const _RestoreMismatch(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => '反向写入没有恢复到目标版本：$reason';
 }
 
 /// 检查点投影的原文：`json` 直接解 UTF-8，`json+gzip` 先解压。
@@ -426,6 +442,12 @@ mixin RevisionProjectionMixin {
     return changes;
   }
 
+  /// 恢复预览：与恢复用同一份反向净变化，只读一次提交明细。
+  ///
+  /// 目标提交在保留历史内、`foldChanges(target, HEAD)` 可用时，恢复就是把这份
+  /// 净变化反过来写，预览因此直接按同一份反向变化给出新增、修改与删除的数量，
+  /// 不再重建两份整库投影；起点已被裁掉、中间有基线跳变或明细不完整时，恢复
+  /// 会退回整库替换，预览也退回两份投影比较（方案 3.9）。
   Future<RevisionRestorePreview> previewRestore(
     RawExecutor executor,
     int target,
@@ -433,6 +455,20 @@ mixin RevisionProjectionMixin {
     final targetCommit = await self.commitById(executor, target);
     if (targetCommit == null) throw RevisionCorruption('提交 $target 不存在');
     final head = await self.headId(executor);
+    try {
+      final forward = await self.foldChanges(executor, target, head);
+      return RevisionRestorePreview(
+        target: targetCommit,
+        head: head,
+        diff: _diffFromChanges(
+          self._reverseChanges(forward),
+          from: head,
+          to: target,
+        ),
+      );
+    } on _FoldUnavailable {
+      // 恢复会退回整库替换，预览跟着按当前投影与目标投影比较。
+    }
     final before = await self.readProjection(executor);
     final after = await self._rebuild(executor, target);
     return RevisionRestorePreview(
@@ -446,33 +482,345 @@ mixin RevisionProjectionMixin {
     );
   }
 
-  /// 整版恢复：清空并装入已校验的目标投影，追加一条恢复提交。
+  /// 整版恢复：先按保留的净变化反向写入差异行，不可用时整库替换。
   ///
-  /// 清除与装入在同一个事务里完成，触发器在此期间被上下文标记为暂停，避免
-  /// 把整库删除与重插记成逐行历史；净变化由事务内比较后一次性写入。
+  /// 判定条件（方案 3.9）：目标提交仍在保留历史内、[foldChanges] 能算出
+  /// `(target, HEAD]` 的净变化时走增量路径，只对真正有差异的行做反向写入，
+  /// 触发器照常采集，恢复提交的变更明细与一致性摘要由采集自然产生，写完只核对
+  /// 被改到的行与目标摘要；起点已被裁掉、中间有清理历史留下的基线跳变或某条
+  /// 提交的明细不完整时，[foldChanges] 抛出 `_FoldUnavailable`，直接整库替换。
+  /// 反向写入撞上唯一约束的中间状态（例如两行互换唯一键）或核对不一致时，也在
+  /// 同一个事务里退回整库替换。导入数据包不经过这里，始终整库替换。
   Future<RevisionCommit> restore(
     RawDatabase db,
     int target, {
     required int expectedHead,
     String action = '恢复版本',
     String actor = 'user',
+  }) {
+    return db.transaction((txn) async {
+      final head = await self.headId(txn);
+      if (head != expectedHead) {
+        throw RevisionStaleHead(expected: expectedHead, actual: head);
+      }
+      final targetCommit = await self.commitById(txn, target);
+      if (targetCommit == null) throw RevisionCorruption('提交 $target 不存在');
+      List<RevisionChange>? forward;
+      try {
+        forward = await self.foldChanges(txn, target, head);
+      } on _FoldUnavailable {
+        forward = null;
+      }
+      if (forward != null) {
+        final commit = await self._restoreByChanges(
+          txn,
+          targetCommit,
+          head,
+          forward,
+          action: action,
+          actor: actor,
+        );
+        if (commit != null) return commit;
+        // 反向写入没有成功：按同一份净变化整库替换，避免再读一次当前投影。
+        return self._restoreByProjection(
+          txn,
+          target,
+          head: head,
+          action: action,
+          actor: actor,
+          changes: self._reverseChanges(forward),
+        );
+      }
+      return self._restoreByProjection(
+        txn,
+        target,
+        head: head,
+        action: action,
+        actor: actor,
+      );
+    });
+  }
+
+  /// 整库替换的恢复路径：重建目标投影、核对附件，清空并装入，追加恢复提交。
+  ///
+  /// [changes] 给出时直接作为这条恢复提交的变更明细（反向写入失败之后的退路），
+  /// 不再读一次当前投影比较；不给时按当前投影与目标投影的差异生成。
+  Future<RevisionCommit> _restoreByProjection(
+    RawExecutor txn,
+    int target, {
+    required int head,
+    required String action,
+    required String actor,
+    List<RevisionChange>? changes,
   }) async {
-    final targetProjection = await self._rebuild(db, target);
+    final targetProjection = await self._rebuild(txn, target);
     final missing = <String>[];
     for (final hash in AssetStore.hashesInProjection(targetProjection)) {
-      if (!await self.assets.verify(db, hash)) missing.add(hash);
+      if (!await self.assets.verify(txn, hash)) missing.add(hash);
     }
     if (missing.isNotEmpty) {
       throw RevisionCorruption('目标版本的附件校验失败：${missing.take(3).join(', ')}');
     }
-    return self._replaceWithProjection(
-      db,
+    return self._writeProjectionCommit(
+      txn,
       targetProjection,
-      expectedHead: expectedHead,
+      head: head,
       action: action,
       actor: actor,
       restoredCommitId: target,
+      changes: changes,
     );
+  }
+
+  /// 增量恢复：把 `(target, HEAD]` 的净变化反过来写，只动有差异的行。
+  ///
+  /// 写入经过业务表的触发器，恢复提交的变更明细与一致性摘要由
+  /// [RevisionCaptureMixin._collect] 自然产生，不再整库删除重插；写完逐行核对
+  /// 被改到的行等于目标一侧的值，并用“父提交摘要加采集增量”与目标提交记录的
+  /// 摘要比对，两者都通过才追加恢复提交。返回空表示这次反向写入没有成功，
+  /// 暂存表已经清空，调用方在同一事务里退回整库替换。
+  Future<RevisionCommit?> _restoreByChanges(
+    RawExecutor txn,
+    RevisionCommit targetCommit,
+    int head,
+    List<RevisionChange> forward, {
+    required String action,
+    required String actor,
+  }) async {
+    final changes = self._reverseChanges(forward);
+    // 只核对目标一侧要写入的行引用的附件；没有改到的行维持原状，不重复核对
+    // （整库替换仍然核对整份目标投影）。
+    final targetSide = <RevisionChange>[
+      for (final change in changes)
+        if (change.after != null)
+          RevisionChange(
+            commitId: 0,
+            seq: change.seq,
+            table: change.table,
+            rowKey: change.rowKey,
+            op: ChangeOp.insert,
+            after: change.after,
+          ),
+    ];
+    final missing = <String>[];
+    for (final hash in AssetStore.hashesInChanges(targetSide)) {
+      if (!await self.assets.verify(txn, hash)) missing.add(hash);
+    }
+    if (missing.isNotEmpty) {
+      throw RevisionCorruption('目标版本的附件校验失败：${missing.take(3).join(', ')}');
+    }
+
+    await self.beginCommand(txn);
+    final commitId = await self.reserveCommitId(txn);
+    final headCommit = await self.commitById(txn, head);
+    final CapturedChanges captured;
+    try {
+      await self._applyReverseChanges(txn, changes);
+      await self._verifyRestoredRows(txn, changes);
+      captured = await self._collect(txn);
+      final parentDigest = BigInt.parse(
+        headCommit?.stateDigest ?? revisionEmptyStateDigest,
+        radix: 16,
+      );
+      final digest = revisionStateDigestHex(
+        (parentDigest + captured.digestDelta) % revisionDigestModulus,
+      );
+      if (digest != targetCommit.stateDigest) {
+        throw const _RestoreMismatch('恢复后的摘要与目标版本不一致');
+      }
+    } on Exception {
+      // 唯一约束挡住了中间状态、当前数据已经偏离历史或行核对不一致：这次
+      // 反向写入不能保证得到目标状态，清掉采集交给整库替换重做。
+      await self._clearStage(txn);
+      return null;
+    }
+    await self._clearStage(txn);
+    final commit = await self._appendCommit(
+      txn,
+      CommitDraft(
+        id: commitId,
+        parentId: head,
+        generation: (headCommit?.generation ?? 0) + 1,
+        actor: actor,
+        action: action,
+        kind: RevisionKind.restore,
+        restoredCommitId: targetCommit.id,
+        changes: _withCommitId(captured.changes, commitId),
+        digestDelta: captured.digestDelta,
+        parentHash: headCommit?.hash,
+      ),
+    );
+    await self._clearContext(txn);
+    return commit;
+  }
+
+  /// 把 `(target, HEAD]` 的前向净变化翻成“当前 → 目标”的反向变化。
+  ///
+  /// 新增与删除互换：前向新增的行在目标一侧没有，反向是删除；前向删除的行在
+  /// 目标一侧是整行，反向是新增。修改只把两侧的值换过来，列集合不变。
+  List<RevisionChange> _reverseChanges(List<RevisionChange> forward) => [
+    for (final change in forward)
+      RevisionChange(
+        commitId: 0,
+        seq: change.seq,
+        table: change.table,
+        rowKey: change.rowKey,
+        op: switch (change.op) {
+          ChangeOp.insert => ChangeOp.delete,
+          ChangeOp.delete => ChangeOp.insert,
+          ChangeOp.update => ChangeOp.update,
+        },
+        before: switch (change.op) {
+          ChangeOp.insert => change.after,
+          ChangeOp.delete => null,
+          ChangeOp.update => change.after,
+        },
+        after: switch (change.op) {
+          ChangeOp.insert => null,
+          ChangeOp.delete => change.before,
+          ChangeOp.update => change.before,
+        },
+      ),
+  ];
+
+  /// 按反向变化写当前数据：先改有差异的列，再删多出来的行，最后插回缺的行。
+  ///
+  /// 外键检查延迟到事务提交（`defer_foreign_keys`），删除按依赖逆序、插入按
+  /// 依赖正序，目标状态本身是历史里校验过的状态。中间状态被唯一约束挡住时由
+  /// 调用方退回整库替换。
+  Future<void> _applyReverseChanges(
+    RawExecutor txn,
+    List<RevisionChange> changes,
+  ) async {
+    if (changes.isEmpty) return;
+    final tables = await self.tables(txn);
+    final updates = <String, List<RevisionChange>>{};
+    final inserts = <String, List<RevisionChange>>{};
+    final deletes = <String, List<RevisionChange>>{};
+    for (final change in changes) {
+      final bucket = switch (change.op) {
+        ChangeOp.update => updates,
+        ChangeOp.insert => inserts,
+        ChangeOp.delete => deletes,
+      };
+      bucket.putIfAbsent(change.table, () => []).add(change);
+    }
+    await txn.execute('PRAGMA defer_foreign_keys = ON');
+    for (final table in versionedTableNames) {
+      final primaryKey = quoteSqlName(tables[table]!.primaryKey);
+      for (final change in updates[table] ?? const <RevisionChange>[]) {
+        await updateRow(
+          txn,
+          table,
+          {
+            for (final entry in change.after!.entries)
+              entry.key: entry.value.sqliteValue,
+          },
+          where: '$primaryKey = ?',
+          whereArgs: [change.rowKey],
+        );
+      }
+    }
+    for (final table in versionedTableNames.reversed) {
+      final primaryKey = quoteSqlName(tables[table]!.primaryKey);
+      for (final change in deletes[table] ?? const <RevisionChange>[]) {
+        await deleteRows(
+          txn,
+          table,
+          where: '$primaryKey = ?',
+          whereArgs: [change.rowKey],
+        );
+      }
+    }
+    for (final table in versionedTableNames) {
+      for (final change in inserts[table] ?? const <RevisionChange>[]) {
+        await insertRow(txn, table, sqliteRow(change.after!));
+      }
+    }
+    final violations = await txn.rawQuery('PRAGMA foreign_key_check');
+    if (violations.isNotEmpty) {
+      throw const _RestoreMismatch('反向写入之后仍有外键错误');
+    }
+  }
+
+  /// 核对被反向写入的行是否等于目标一侧的值。
+  ///
+  /// 修改只核对变化列（没改到的列在目标与当前版本里相同），新增核对整行，
+  /// 删除核对这一行已经不在了。分批按主键读回，不重建整库投影。
+  Future<void> _verifyRestoredRows(
+    RawExecutor txn,
+    List<RevisionChange> changes,
+  ) async {
+    if (changes.isEmpty) return;
+    final tables = await self.tables(txn);
+    final byTable = <String, List<RevisionChange>>{};
+    for (final change in changes) {
+      byTable.putIfAbsent(change.table, () => []).add(change);
+    }
+    for (final entry in byTable.entries) {
+      final table = tables[entry.key]!;
+      final primaryKey = quoteSqlName(table.primaryKey);
+      final rows = <String, TypedRow>{};
+      final keys = [for (final change in entry.value) change.rowKey];
+      for (var start = 0; start < keys.length; start += 200) {
+        final end = start + 200 < keys.length ? start + 200 : keys.length;
+        final batch = keys.sublist(start, end);
+        final placeholders = List.filled(batch.length, '?').join(', ');
+        for (final row in await selectRows(
+          txn,
+          entry.key,
+          where: '$primaryKey IN ($placeholders)',
+          whereArgs: batch,
+        )) {
+          rows['${row[table.primaryKey]}'] = typedRow(row);
+        }
+      }
+      for (final change in entry.value) {
+        final actual = rows[change.rowKey];
+        switch (change.op) {
+          case ChangeOp.insert:
+            if (actual == null) {
+              throw _RestoreMismatch(
+                '${change.table}/${change.rowKey} 没有写回目标版本的行',
+              );
+            }
+            self._expectRestoredRow(change, actual, wholeRow: true);
+          case ChangeOp.delete:
+            if (actual != null) {
+              throw _RestoreMismatch(
+                '${change.table}/${change.rowKey} 应当已经在目标版本里删除',
+              );
+            }
+          case ChangeOp.update:
+            if (actual == null) {
+              throw _RestoreMismatch(
+                '${change.table}/${change.rowKey} 在目标版本里应当存在',
+              );
+            }
+            self._expectRestoredRow(change, actual, wholeRow: false);
+        }
+      }
+    }
+  }
+
+  /// 核对一行与目标一侧的值；[wholeRow] 为真时还要求列集合一致。
+  void _expectRestoredRow(
+    RevisionChange change,
+    TypedRow actual, {
+    required bool wholeRow,
+  }) {
+    final expected = change.after!;
+    if (wholeRow && actual.length != expected.length) {
+      throw _RestoreMismatch('${change.table}/${change.rowKey} 的列数与目标版本不一致');
+    }
+    for (final entry in expected.entries) {
+      final value = actual[entry.key];
+      if (value == null || !value.equals(entry.value)) {
+        throw _RestoreMismatch(
+          '${change.table}/${change.rowKey}.${entry.key} 没有恢复成目标值',
+        );
+      }
+    }
   }
 
   /// 导入当前数据包：不依赖历史，把已校验的投影装进当前库并追加提交。
@@ -494,6 +842,7 @@ mixin RevisionProjectionMixin {
     );
   }
 
+  /// 导入与换库恢复共用的整版替换入口：开事务、核对 `HEAD`、装入目标投影。
   Future<RevisionCommit> _replaceWithProjection(
     RawDatabase db,
     Projection targetProjection, {
@@ -502,54 +851,79 @@ mixin RevisionProjectionMixin {
     required String actor,
     int? restoredCommitId,
     Map<String, Uint8List> attachments = const {},
-  }) async {
+  }) {
     return db.transaction((txn) async {
       final head = await self.headId(txn);
       if (head != expectedHead) {
         throw RevisionStaleHead(expected: expectedHead, actual: head);
       }
-      await self.beginCommand(txn);
-      final commitId = await self.reserveCommitId(txn);
-      await updateRow(txn, 'revision_context', {
-        'suppress': 1,
-      }, where: 'id = 1');
-      for (final entry in attachments.entries) {
-        await self.assets.putBytes(txn, entry.key, entry.value);
-      }
-      final current = await self.readProjection(txn);
-      await self._replaceProjection(txn, targetProjection);
-      await self._verifyProjection(txn, targetProjection);
-      final changes = self._changesFromDiff(
-        current,
-        targetProjection,
-        commitId,
-      );
-      final parent = await self.commitById(txn, head);
-      // 整版恢复与导入推进代次，整份数据被换掉：旧的遮蔽行对应的格子可能已经
-      // 不存在，清空它免得下一次推送按旧格子去掉本机改动（ADR-0040）。
-      await RevisionShadows(txn).clear();
-      final commit = await self._appendCommit(
+      return self._writeProjectionCommit(
         txn,
-        CommitDraft(
-          id: commitId,
-          parentId: head,
-          generation: (parent?.generation ?? 0) + 1,
-          actor: actor,
-          action: action,
-          kind: restoredCommitId != null
-              ? RevisionKind.restore
-              : RevisionKind.import,
-          restoredCommitId: restoredCommitId,
-          changes: changes,
-          // 整份数据被替换成目标投影：摘要直接按目标投影整库重算，不必经过
-          // 暂存表的增量（方案 3.5）。
-          stateDigest: revisionStateDigest(targetProjection),
-          parentHash: parent?.hash,
-        ),
+        targetProjection,
+        head: head,
+        action: action,
+        actor: actor,
+        restoredCommitId: restoredCommitId,
+        attachments: attachments,
       );
-      await self._clearContext(txn);
-      return commit;
     });
+  }
+
+  /// 整库装入并在同一个事务里追加提交。
+  ///
+  /// 清除与装入在同一个事务里完成，触发器在此期间被上下文标记为暂停，避免把
+  /// 整库删除与重插记成逐行历史；净变化由事务内比较后一次性写入（[changes]
+  /// 给出时直接使用调用方算好的净变化，不再读一次当前投影）。
+  Future<RevisionCommit> _writeProjectionCommit(
+    RawExecutor txn,
+    Projection targetProjection, {
+    required int head,
+    required String action,
+    required String actor,
+    int? restoredCommitId,
+    Map<String, Uint8List> attachments = const {},
+    List<RevisionChange>? changes,
+  }) async {
+    await self.beginCommand(txn);
+    final commitId = await self.reserveCommitId(txn);
+    await updateRow(txn, 'revision_context', {'suppress': 1}, where: 'id = 1');
+    for (final entry in attachments.entries) {
+      await self.assets.putBytes(txn, entry.key, entry.value);
+    }
+    final net =
+        changes ??
+        self._changesFromDiff(
+          await self.readProjection(txn),
+          targetProjection,
+          commitId,
+        );
+    await self._replaceProjection(txn, targetProjection);
+    await self._verifyProjection(txn, targetProjection);
+    final parent = await self.commitById(txn, head);
+    // 整份数据被替换：旧的遮蔽行对应的格子可能已经不存在，清空它免得下一次
+    // 推送按旧格子去掉本机改动（ADR-0040）。增量恢复只改一部分行，不清空。
+    await RevisionShadows(txn).clear();
+    final commit = await self._appendCommit(
+      txn,
+      CommitDraft(
+        id: commitId,
+        parentId: head,
+        generation: (parent?.generation ?? 0) + 1,
+        actor: actor,
+        action: action,
+        kind: restoredCommitId != null
+            ? RevisionKind.restore
+            : RevisionKind.import,
+        restoredCommitId: restoredCommitId,
+        changes: changes == null ? net : _withCommitId(net, commitId),
+        // 整份数据被替换成目标投影：摘要直接按目标投影整库重算，不必经过
+        // 暂存表的增量（方案 3.5）。
+        stateDigest: revisionStateDigest(targetProjection),
+        parentHash: parent?.hash,
+      ),
+    );
+    await self._clearContext(txn);
+    return commit;
   }
 
   /// 整库恢复之后补记一条“回到旧状态”的恢复提交。
