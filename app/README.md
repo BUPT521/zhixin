@@ -113,7 +113,7 @@ lib/
 
 界面组件与主题由 Forui 0.28.0 提供，底栏四栏与详情页共用 `ZhixinHeader`、内容区最大宽度及页面边距，详情页使用 `DetailScaffold`，滚动区域通过 `ZhixinSpace.pageInsets` 设定边距。底栏页面（现在、记录、安排、我的）使用 `TabScaffold`：它们外面已经有一层带底栏的 `FScaffold`（见 `home_shell.dart`），键盘弹出时由它让出一次键盘高度，页面自己的骨架不再按键盘缩放，否则内容会被扣掉两个键盘高度，输入区与发送按钮被裁掉，键盘上方只剩一条空白。组件的字号、颜色、留白和圆角从 `context.zhixin` 读取，Forui、Markdown 与 Material 控件的色值都由 `ui/theme.dart` 生成。页面文字不指定字族，中文与西文都跟随手机系统字体，Forui 的每一档文字也在主题里逐档去掉字族，因为指定自定义字族时中文会回落到思源黑体、绕过厂商的系统字体，而且回退字重只有常规与粗体两档，w500 与 w600 会被就近取成粗体；只有时间与计数保留 Forui 自带 Inter 的等宽数字。浅色使用暖白背景和苔绿主色，深色采用相同的颜色角色与布局，选中的导航和分段使用主色浅底，草稿与需要留意的状态使用陶土色。
 
-按钮、输入框、列表、卡片与表单优先使用 Forui，对话框和短提示分别通过 `showZhixinDialog` 和 `showToast` 打开。短提示固定在中下，底部为底栏导航让出高度，位置与留白在 [ui/theme.dart](lib/ui/theme.dart) 的 `zhixinToasterStyle` 里定一次，不随平台改变。底部面板和日期时间选择器使用 Material，分别通过 `showZhixinSheet`、`showZhixinDatePicker` 与 `showZhixinTimePicker` 打开，样式由同一主题提供。筛选使用 `ZhixinChip`，互斥的视图切换使用 `ZhixinSegmented`，它的每一项按下去时由 `PressScale` 放大几个百分点，松开或切换之后回位，当前项再按不放大；放大只改绘制、不改版面，系统要求减少动态效果时按下与松开直接到终态。业务图标统一从 [Lucide 图标库](https://lucide.dev/icons/) 选取，通过 `FLucideIcons` 引用。
+按钮、输入框、列表、卡片与表单优先使用 Forui，对话框和短提示分别通过 `showZhixinDialog` 和 `showToast` 打开。短提示固定在中下，底部为底栏导航让出高度，位置与留白在 [ui/theme.dart](lib/ui/theme.dart) 的 `zhixinToasterStyle` 里定一次，不随平台改变；停留时间按平台的输入方式分开，手机上 3 秒自动收起，桌面上保留 Forui 默认的 5 秒，带操作按钮的提示两边都停 5 秒。底部面板和日期时间选择器使用 Material，分别通过 `showZhixinSheet`、`showZhixinDatePicker` 与 `showZhixinTimePicker` 打开，样式由同一主题提供。筛选使用 `ZhixinChip`，互斥的视图切换使用 `ZhixinSegmented`，它的每一项按下去时由 `PressScale` 放大几个百分点，松开或切换之后回位，当前项再按不放大；放大只改绘制、不改版面，系统要求减少动态效果时按下与松开直接到终态。业务图标统一从 [Lucide 图标库](https://lucide.dev/icons/) 选取，通过 `FLucideIcons` 引用。
 
 测试里单独构建页面时，外层要补 `FTheme`；页面里会弹提示的，还要补 `FToaster`。少了这两层，页面读不到主题，提示也找不到宿主。
 
