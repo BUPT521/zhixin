@@ -337,6 +337,103 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
+  testWidgets('左右划动切到相邻一栏，途中两栏跟着手指走', (tester) async {
+    await tester.pumpWidget(_host(const _SwipeHost()));
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '第一栏'), 0);
+
+    final gesture = await tester.startGesture(const Offset(600, 300));
+    await gesture.moveBy(const Offset(-120, 0));
+    await tester.pump();
+    await gesture.moveBy(const Offset(-160, 0));
+    await tester.pump();
+    // 手指左移：第一栏跟着往左走，第二栏从右侧压过来，两栏始终首尾相接。
+    expect(_dxOf(tester, '第一栏'), lessThan(-100));
+    expect(_dxOf(tester, '第二栏') - _dxOf(tester, '第一栏'), closeTo(800, 0.5));
+    // 还没松手，当前栏仍是第一栏，第二栏只是跟着手指露出来。
+    expect(_shown(tester, '第一栏'), isTrue);
+    expect(_shown(tester, '第二栏'), isFalse);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '第二栏'), 0);
+    expect(_shown(tester, '第二栏'), isTrue);
+    expect(_shown(tester, '第一栏'), isFalse);
+  });
+
+  testWidgets('划动没到比例又没划出去，松手退回原栏', (tester) async {
+    await tester.pumpWidget(_host(const _SwipeHost()));
+    await tester.pumpAndSettle();
+
+    await tester.timedDrag(
+      find.byType(TabSlideStack),
+      const Offset(-80, 0),
+      const Duration(milliseconds: 600),
+    );
+    await tester.pumpAndSettle();
+    expect(_dxOf(tester, '第一栏'), 0);
+    expect(_shown(tester, '第一栏'), isTrue);
+    expect(_shown(tester, '第二栏'), isFalse);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('划过的比例不够，同方向划得够快也切过去', (tester) async {
+    await tester.pumpWidget(_host(const _SwipeHost()));
+    await tester.pumpAndSettle();
+
+    await tester.fling(find.byType(TabSlideStack), const Offset(-120, 0), 1200);
+    await tester.pumpAndSettle();
+    expect(_shown(tester, '第二栏'), isTrue);
+    expect(_shown(tester, '第一栏'), isFalse);
+  });
+
+  testWidgets('到头的栏再往外划不跟手，也不换栏', (tester) async {
+    await tester.pumpWidget(_host(const _SwipeHost()));
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(const Offset(100, 300));
+    await gesture.moveBy(const Offset(240, 0));
+    await tester.pump();
+    expect(_dxOf(tester, '第一栏'), 0);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(_shown(tester, '第一栏'), isTrue);
+    expect(_shown(tester, '第二栏'), isFalse);
+  });
+
+  testWidgets('减少动态效果时划过比例直接切过去，不留在中间', (tester) async {
+    await tester.pumpWidget(_host(const _SwipeHost(), reduce: true));
+    await tester.pumpAndSettle();
+
+    await tester.timedDrag(
+      find.byType(TabSlideStack),
+      const Offset(-400, 0),
+      const Duration(milliseconds: 400),
+    );
+    await tester.pump();
+    expect(_shown(tester, '第二栏'), isTrue);
+    expect(_dxOf(tester, '第二栏'), 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('不传 onSwipe 的页面栈不接划动', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        const TabSlideStack(index: 0, children: [Text('第一栏'), Text('第二栏')]),
+      ),
+    );
+
+    await tester.timedDrag(
+      find.byType(TabSlideStack),
+      const Offset(-400, 0),
+      const Duration(milliseconds: 400),
+    );
+    await tester.pumpAndSettle();
+    expect(_shown(tester, '第一栏'), isTrue);
+    expect(_shown(tester, '第二栏'), isFalse);
+  });
+
   testWidgets('换周这类换内容按次序左右滑动，旧内容播完撤下', (tester) async {
     Widget swap(int order, String text) =>
         _host(SlideSwap(identity: text, order: order, child: Text(text)));
@@ -561,6 +658,26 @@ void main() {
     await tester.pump();
     expect(_scaleOf(tester, find.text('甲')), 1);
   });
+}
+
+/// 划动切栏的宿主：页面栈自己不知道要切到哪一栏，由父层按 [TabSlideStack.onSwipe]
+/// 换掉 index，和底栏的写法一致。
+class _SwipeHost extends StatefulWidget {
+  const _SwipeHost();
+
+  @override
+  State<_SwipeHost> createState() => _SwipeHostState();
+}
+
+class _SwipeHostState extends State<_SwipeHost> {
+  int _index = 0;
+
+  @override
+  Widget build(BuildContext context) => TabSlideStack(
+    index: _index,
+    onSwipe: (index) => setState(() => _index = index),
+    children: const [Text('第一栏'), Text('第二栏'), Text('第三栏')],
+  );
 }
 
 /// 在当前栏动画走完之后才拿到结果的探针：切到这一栏时发起一次“读取”。

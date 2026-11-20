@@ -22,7 +22,8 @@ import 'update_notice.dart';
 /// 入口都收在“我的”里。
 ///
 /// 四栏常驻，不按数据版本换 key：返回详情之后由打开它的栏目自己重读数据，
-/// 其他栏目的筛选、输入与滚动位置不跟着重建。
+/// 其他栏目的筛选、输入与滚动位置不跟着重建。点底栏切栏，也可以在页面区域
+/// 左右划动切到相邻的一栏；划到两头的栏再往外划不换栏。
 ///
 /// 首页先读；首读完成之后（最迟 [preloadDelay]）放行其余三栏在后台订阅，第一次
 /// 切过去直接是内容，不再在切栏动画里看一段骨架。放行之前就切过去的栏当场读。
@@ -220,8 +221,12 @@ class _HomeShellState extends State<HomeShell> {
       builder: (context, index, _) => forui.FScaffold(
         footer: _BottomBar(index: index, onChange: _open),
         // 换栏时新栏从切换方向滑入、旧栏向相反方向滑出；各栏仍然常驻，
-        // 状态不随切换重建。
-        child: TabSlideStack(index: index, children: _pages ?? const []),
+        // 状态不随切换重建。左右划动切到相邻的一栏，指哪一栏就交给 [_open]。
+        child: TabSlideStack(
+          index: index,
+          onSwipe: _open,
+          children: _pages ?? const [],
+        ),
       ),
     );
   }

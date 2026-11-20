@@ -494,11 +494,25 @@ class _PressScaleState extends State<PressScale> {
 ///
 /// 位移取整幅页宽：切到更靠右的一页时新页从右侧进来、旧页向左出去，切回左边
 /// 时方向相反；两页在切换途中首尾相接，同一时刻只有一半屏幕在换内容。
+///
+/// 传入 [onSwipe] 之后，这一层还接左右划动：拖动途中两页跟着手指走，松手按
+/// 划过的比例与划过时的速度决定切过去还是退回原处；到头的页面没有相邻的一页，
+/// 手指往外划时不跟着动。调用方收到 [onSwipe] 之后要把 [index] 换成传过去的
+/// 那一页，位移才能在划到的位置落定。页面里能横向滚动的内容先接走横拖，两者
+/// 之间由手势竞技场裁决。
 class TabSlideStack extends StatefulWidget {
-  const TabSlideStack({super.key, required this.index, required this.children});
+  const TabSlideStack({
+    super.key,
+    required this.index,
+    required this.children,
+    this.onSwipe,
+  });
 
   final int index;
   final List<Widget> children;
+
+  /// 左右划到相邻一页时要去的那一页；为空时这一层不接划动，只按 [index] 切换。
+  final ValueChanged<int>? onSwipe;
 
   @override
   State<TabSlideStack> createState() => _TabSlideStackState();
@@ -506,16 +520,35 @@ class TabSlideStack extends StatefulWidget {
 
 class _TabSlideStackState extends State<TabSlideStack>
     with SingleTickerProviderStateMixin {
+  /// 划过整幅页宽的这个比例就切到相邻的一页。
+  static const double _commitProgress = 0.35;
+
+  /// 划过的比例不够时，同方向划得比这个速度（逻辑像素每秒）快也切过去。
+  static const double _commitVelocity = 300;
+
   late final AnimationController _controller = AnimationController(
     vsync: this,
     value: 1,
   );
 
-  /// 正在滑出的那一栏；不在切换途中时为空。
+  /// 这一趟切换里滑入与滑出的两页；不在切换途中时都为空。
+  int? _entering;
   int? _leaving;
 
-  /// 新栏进入的方向：正数从右侧进入（切到更靠右的一栏），负数从左侧进入。
+  /// 新页进入的方向：正数从右侧进入（切到更靠右的一页），负数从左侧进入。
   double _direction = 1;
+
+  /// 手指是否还按在屏上。
+  bool _dragging = false;
+
+  /// 手指累计横移，向右为正；松手之后归零。
+  double _dragDx = 0;
+
+  /// 划动松手之后要去的那一页，等调用方把 [TabSlideStack.index] 换过来确认。
+  int? _swipeTarget;
+
+  /// 划动没到比例就松了手，正在退回原处；落回原位时由 [_settle] 收掉两页。
+  bool _returning = false;
 
   @override
   void initState() {
@@ -523,26 +556,137 @@ class _TabSlideStackState extends State<TabSlideStack>
     _controller.addStatusListener(_settle);
   }
 
-  /// 播完把滑出去的旧栏撤下：它已经移到屏外，语义不该再留在树上。
+  /// 播完把滑出去的旧页撤下：它已经移到屏外，语义不该再留在树上。
   void _settle(AnimationStatus status) {
+    if (_returning && status == AnimationStatus.dismissed) {
+      // 划动没到比例就松了手：退回原位，重新按当前页排版。
+      setState(() {
+        _returning = false;
+        _entering = null;
+        _leaving = null;
+      });
+      // 原位对应进度 1，下一次切换仍然从 0 播到 1。
+      _controller.value = 1;
+      return;
+    }
     if (status != AnimationStatus.completed || _leaving == null) return;
-    setState(() => _leaving = null);
+    setState(() {
+      _entering = null;
+      _leaving = null;
+    });
   }
 
   @override
   void didUpdateWidget(covariant TabSlideStack oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.index == widget.index) return;
+    // 划动松手之后调用方把 [TabSlideStack.index] 换成了手指选中的那一页：这一趟
+    // 位移已经在播，或者已经停在目标位置，不重新播一次。
+    if (widget.index == _swipeTarget) {
+      _swipeTarget = null;
+      if (_controller.isAnimating) return;
+      setState(() {
+        _entering = null;
+        _leaving = null;
+      });
+      _controller.value = 1;
+      return;
+    }
+    _returning = false;
+    _dragging = false;
+    _dragDx = 0;
+    _entering = widget.index;
+    _leaving = oldWidget.index;
     _direction = widget.index > oldWidget.index ? 1 : -1;
     final duration = context.motionOf(const ZhixinMotion().emphasized);
     if (duration == Duration.zero) {
+      _entering = null;
       _leaving = null;
       _controller.value = 1;
       return;
     }
-    _leaving = oldWidget.index;
     _controller.duration = duration;
     _controller.forward(from: 0);
+  }
+
+  /// 页宽：划动按整幅页宽换算进度。
+  double get _pageWidth => context.size?.width ?? 0;
+
+  /// 横拖超过系统的最小距离之后从这里开始；已经有一趟位移在播时不接新的划动，
+  /// 免得两段位移叠在一起。
+  void _onDragStart(DragStartDetails details) {
+    if (_leaving != null || _controller.value < 1) return;
+    setState(() {
+      _dragging = true;
+      _dragDx = 0;
+      _entering = widget.index;
+      _leaving = widget.index;
+    });
+  }
+
+  /// 划向的那一页：手指左移看右边一页，右移看左边一页；到头的一侧留在当前页。
+  int _targetOf(double dx) {
+    if (dx == 0) return widget.index;
+    final target = widget.index + (dx < 0 ? 1 : -1);
+    if (target < 0 || target >= widget.children.length) return widget.index;
+    return target;
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (!_dragging) return;
+    _dragDx += details.delta.dx;
+    final target = _targetOf(_dragDx);
+    setState(() {
+      _entering = target;
+      if (target != widget.index) _direction = target > widget.index ? 1 : -1;
+    });
+  }
+
+  void _onDragCancel() => _onDragEnd(DragEndDetails());
+
+  void _onDragEnd(DragEndDetails details) {
+    if (!_dragging) return;
+    final target = _entering ?? widget.index;
+    final width = _pageWidth;
+    final progress = width <= 0 ? 0.0 : (_dragDx.abs() / width).clamp(0.0, 1.0);
+    final velocity = details.primaryVelocity ?? 0;
+    final moving = target != widget.index;
+    // 划过的比例到了就切过去；比例不够时，同方向划得够快也算。切到更靠右的
+    // 一页要手指往左划，所以划动方向与前进方向相反。
+    final ahead = target > widget.index ? 1 : -1;
+    final commit =
+        moving &&
+        (progress >= _commitProgress || -velocity * ahead >= _commitVelocity);
+    setState(() {
+      _dragging = false;
+      _dragDx = 0;
+      if (!moving) {
+        _entering = null;
+        _leaving = null;
+      }
+    });
+    if (!moving) return;
+    // 退回原处与切过去都从手指停下的进度接着走，不回到起点重来。
+    final full = context.motionOf(const ZhixinMotion().emphasized);
+    if (commit) {
+      _swipeTarget = target;
+      final remaining = full * (1 - progress);
+      if (remaining > Duration.zero) {
+        _controller.value = progress;
+        _controller.animateTo(1, duration: remaining);
+      }
+      widget.onSwipe?.call(target);
+      return;
+    }
+    _returning = true;
+    final duration = full * progress;
+    if (duration == Duration.zero) {
+      // 进度归零会触发 dismissed，由 [_settle] 收尾。
+      _controller.value = 0;
+      return;
+    }
+    _controller.value = progress;
+    _controller.animateBack(0, duration: duration);
   }
 
   @override
@@ -554,23 +698,28 @@ class _TabSlideStackState extends State<TabSlideStack>
   @override
   Widget build(BuildContext context) {
     final curve = const ZhixinMotion().move;
-    return LayoutBuilder(
+    final stack = LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
+        final entering = _entering ?? widget.index;
+        // 拖动途中按手指的位移算进度，不套过渡曲线：手指停在哪里，页面就停在
+        // 哪里；到头的页面没有相邻的一页，不跟手，按原位画。
+        final drag = _dragging && entering != widget.index && width > 0
+            ? (_dragDx.abs() / width).clamp(0.0, 1.0)
+            : null;
         return AnimatedBuilder(
           animation: _controller,
           builder: (context, _) {
-            final moving = _controller.value < 1;
-            final t = curve.transform(_controller.value);
-            final leaving = moving ? _leaving : null;
+            final t = drag ?? curve.transform(_controller.value);
+            final leaving = _leaving;
             return Stack(
               fit: StackFit.expand,
               children: [
                 for (var i = 0; i < widget.children.length; i++)
                   _TabLayer(
                     active: i == widget.index,
-                    visible: i == widget.index || i == leaving,
-                    dx: i == widget.index
+                    visible: i == entering || i == leaving,
+                    dx: i == entering
                         ? (1 - t) * width * _direction
                         : i == leaving
                         ? -t * width * _direction
@@ -583,6 +732,15 @@ class _TabSlideStackState extends State<TabSlideStack>
           },
         );
       },
+    );
+    if (widget.onSwipe == null) return stack;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragStart: _onDragStart,
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
+      onHorizontalDragCancel: _onDragCancel,
+      child: stack,
     );
   }
 }

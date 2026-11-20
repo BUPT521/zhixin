@@ -1157,6 +1157,44 @@ void main() {
     expect(find.text('已完成事项 31'), findsNothing);
   });
 
+  testWidgets('页面里左右划动切换底栏，两头的栏再往外划不换', (tester) async {
+    await openApp(tester);
+
+    forui.FBottomNavigationBar bar() =>
+        tester.widget<forui.FBottomNavigationBar>(
+          find.byType(forui.FBottomNavigationBar),
+        );
+
+    /// 从标题栏中间横向甩一下：这里没有能横向滚动的控件，手势只会落到页面栈上。
+    Future<void> swipe(double dx) async {
+      final header = tester.getRect(find.byType(ZhixinHeader).first);
+      await tester.flingFrom(
+        Offset(header.center.dx, header.center.dy),
+        Offset(dx, 0),
+        1200,
+      );
+      await settle(tester);
+    }
+
+    expect(bar().index, 0);
+    await swipe(-240);
+    expect(bar().index, 1);
+    expect(find.byType(RecordsPage), findsOneWidget);
+    expect(find.byType(NowPage), findsNothing);
+
+    await swipe(-240);
+    expect(bar().index, 2);
+    await swipe(240);
+    expect(bar().index, 1);
+
+    // 到头的栏再往外划不换栏，也不绕到最后一栏。
+    await swipe(240);
+    expect(bar().index, 0);
+    await swipe(240);
+    expect(bar().index, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('窄屏、放大文字与键盘下核心页面没有布局溢出', (tester) async {
     await openApp(tester, size: const Size(320, 700));
     tester.platformDispatcher.textScaleFactorTestValue = 1.4;
