@@ -61,6 +61,8 @@ Future<SyncDevice> openSyncDevice(
   required String deviceId,
   required TestClock clock,
   Directory? home,
+  void Function(Object error, StackTrace stack, {required String kind})?
+  recordFailure,
 }) async {
   final dir =
       home ?? await Directory.systemTemp.createTemp('zhixin_sync_device');
@@ -90,7 +92,7 @@ Future<SyncDevice> openSyncDevice(
     assets: rig.engine.assets,
     cache: AttachmentCache(filesDir: () => dir.path),
     clock: clock.call,
-    recordFailure: (error, stack, {required kind}) {},
+    recordFailure: recordFailure ?? (error, stack, {required kind}) {},
   );
   return SyncDevice(
     rig: rig,

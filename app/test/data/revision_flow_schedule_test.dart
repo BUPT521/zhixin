@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
+import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
@@ -390,7 +391,7 @@ void main() {
     );
   });
 
-  test('撤销提交本身不再进入撤销范围', () async {
+  test('撤销提交可以再撤销，含义是重做', () async {
     final ids = await twoBlocks();
     await plan.rescheduleGroup([
       ScheduleAdjustment(
@@ -402,9 +403,12 @@ void main() {
     final target = await rig.engine.headId(rig.raw);
     final undone = await rig.revisions.undoCommit(target);
     expect(undone.applied, isTrue, reason: undone.message);
+    // 撤销一条撤销提交就是重做它撤销掉的那次改期。
     final again = await rig.revisions.undoCommit(undone.commit!.id);
-    expect(again.applied, isFalse);
-    expect(again.message, contains('不能再撤销'));
+    expect(again.applied, isTrue, reason: again.message);
+    expect(again.commit?.kind, RevisionKind.undo);
+    expect(again.commit?.revertedCommitId, undone.commit!.id);
+    expect(again.message, '已重做这次撤销');
   });
 
   test('提交列表按同一套规则给出不可撤销的原因', () async {
@@ -422,13 +426,13 @@ void main() {
     );
     expect(timetableReasons[timetable], isNull);
 
-    // 撤销之后，目标提交与撤销提交本身都给出各自的原因。
+    // 撤销之后，目标提交不能再撤销；撤销提交本身可以再撤销（重做）。
     final undone = await rig.revisions.undoCommit(history.head);
     expect(undone.applied, isTrue, reason: undone.message);
     final afterUndo = await rig.revisions.history();
     final undoReasons = await rig.revisions.undoBlockReasons(afterUndo.commits);
     expect(undoReasons[history.head], '这次操作已经撤销');
-    expect(undoReasons[undone.commit!.id], contains('不能再撤销'));
+    expect(undoReasons[undone.commit!.id], isNull);
 
     // 整版恢复推进代次，恢复提交与更早的提交都不能按单项撤销。
     final restored = await rig.revisions.restore(

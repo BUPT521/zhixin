@@ -492,8 +492,8 @@ func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
 // 与日志：handler 里的 WriteInternal 是内部错误的唯一出口。
 type failingSyncStore struct{}
 
-func (failingSyncStore) Head(context.Context, string) (int64, error) {
-	return 0, errors.New("database is down")
+func (failingSyncStore) State(context.Context, string) (syncsvc.State, error) {
+	return syncsvc.State{}, errors.New("database is down")
 }
 
 func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit) (int64, error) {
@@ -502,6 +502,10 @@ func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit)
 
 func (failingSyncStore) After(context.Context, string, int64, int, int64) ([]syncsvc.Commit, error) {
 	return nil, errors.New("database is down")
+}
+
+func (failingSyncStore) RegisterSnapshot(context.Context, string, syncsvc.Snapshot, syncsvc.CompactPolicy) (syncsvc.State, error) {
+	return syncsvc.State{}, errors.New("database is down")
 }
 
 func (failingSyncStore) Reset(context.Context, string) error {

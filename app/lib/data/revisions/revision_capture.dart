@@ -105,9 +105,14 @@ mixin RevisionCaptureMixin {
   ///
   /// 合并发生在确定提交编号之前，明细里的 `commitId` 先写 0，由调用方在编号
   /// 定下来之后补上；没有净变化时就不必占一个编号（R1）。
-  Future<List<RevisionChange>> _collect(RawExecutor txn) async {
+  ///
+  /// 同一次合并按“减去旧行哈希、加上新行哈希”算出这次命令对一致性摘要的增量，
+  /// 不再额外读业务表：暂存表两侧本来就是整行，行哈希因此与整库重算完全一致
+  /// （方案 3.5）。
+  Future<CapturedChanges> _collect(RawExecutor txn) async {
     final schema = await self.tables(txn);
     final result = <RevisionChange>[];
+    var digestDelta = BigInt.zero;
     var seq = 1;
     for (final table in schema.values) {
       final rows = await selectRows(txn, table.stageTable, orderBy: 'seq');
@@ -135,6 +140,12 @@ mixin RevisionCaptureMixin {
         if (before != null && after != null) {
           final changed = changedColumns(before, after);
           if (changed.isEmpty) continue;
+          // 摘要按整行算，变更明细只留变化列；两侧都用暂存表里的整行。
+          digestDelta = _modDigest(
+            digestDelta -
+                revisionRowHashValue(table.name, entry.key, before) +
+                revisionRowHashValue(table.name, entry.key, after),
+          );
           result.add(
             RevisionChange(
               commitId: 0,
@@ -148,6 +159,13 @@ mixin RevisionCaptureMixin {
           );
           continue;
         }
+        digestDelta = _modDigest(
+          before == null
+              ? digestDelta +
+                    revisionRowHashValue(table.name, entry.key, after!)
+              : digestDelta -
+                    revisionRowHashValue(table.name, entry.key, before),
+        );
         result.add(
           RevisionChange(
             commitId: 0,
@@ -161,7 +179,7 @@ mixin RevisionCaptureMixin {
         );
       }
     }
-    return result;
+    return CapturedChanges(changes: result, digestDelta: digestDelta);
   }
 
   TypedRow _sideRow(
@@ -172,4 +190,18 @@ mixin RevisionCaptureMixin {
     for (final column in columns)
       column: RevisionValue.of(stage['$prefix$column']),
   };
+}
+
+/// 把摘要的增量收进 2^256 的范围：减出来的负数在这里回绕，与整库重算同余。
+BigInt _modDigest(BigInt value) => value % revisionDigestModulus;
+
+/// 一次命令合并出来的净变化与它对一致性摘要的增量。
+///
+/// [digestDelta] 是“提交之后的状态摘要减去提交之前的状态摘要”，按 2^256 取模；
+/// [_appendCommit] 把它加到父提交的摘要上，得到这条提交的 `state_digest`。
+class CapturedChanges {
+  const CapturedChanges({required this.changes, required this.digestDelta});
+
+  final List<RevisionChange> changes;
+  final BigInt digestDelta;
 }

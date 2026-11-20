@@ -8,9 +8,11 @@ import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import '../data/db/guarded_database.dart';
+import '../data/db/sql.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/asset_store.dart';
 import '../data/revisions/revision_cursor.dart';
+import '../data/revisions/revision_digest.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
@@ -87,6 +89,7 @@ class SyncStatus {
     required this.needsBootstrap,
     this.baselineNeedsConfirmation = false,
     this.restoreNeedsConfirmation = false,
+    this.digestMismatch = false,
     this.lastSyncedAt,
     this.lastError,
   });
@@ -108,6 +111,10 @@ class SyncStatus {
   /// 整库恢复之后还没重新对齐：界面据此说明“云端会改成恢复后的内容”，
   /// 并在同步前询问一次（同步方案 3.4）。
   final bool restoreNeedsConfirmation;
+
+  /// 上次同步比较摘要时发现本机与云端不一致（同步方案 3.5）：账号页据此
+  /// 显示“本机与云端不一致”与两个修复入口，不阻塞同步本身。
+  final bool digestMismatch;
   final DateTime? lastSyncedAt;
   final String? lastError;
 }
@@ -203,6 +210,19 @@ class SyncService {
   /// 这次同步的同步位置 scope；两个位置写入时都带上它（同步方案 3.3）。
   String? _activeScope;
 
+  /// 这次同步里应用远端提交时被跳过的变化条数。
+  ///
+  /// 有跳过说明本机状态与云端对不上（例如本机删掉了远端还要修改的行），这时
+  /// 推送即使成功也不代表云端会等于本机，最后一条提交不能带摘要（同步方案 3.5）。
+  int _pulledSkipped = 0;
+
+  /// 这次同步开始时已经知道本机与云端不一致。
+  ///
+  /// 已知不一致时推送只补本机内容，删不掉云端多出来的行，不能对外声明“推完之
+  /// 后云端就等于本机”；摘要因此等到比较确认一致、或者用户做了一次修复之后再
+  /// 带（同步方案 3.5）。
+  bool _knownDigestMismatch = false;
+
   bool get syncing => _running != null;
 
   /// 已被远端提交取代的本机格子：拉取时由版本引擎在应用远端提交的事务里登记，
@@ -297,6 +317,7 @@ class SyncService {
         serverHead: null,
         needsBootstrap: true,
         baselineNeedsConfirmation: localHead > 0,
+        digestMismatch: identityState?.digestMismatch ?? false,
         lastError: _lastError,
       );
     }
@@ -312,6 +333,7 @@ class SyncService {
       serverHead: await _serverHeadPosition(),
       needsBootstrap: false,
       restoreNeedsConfirmation: alignment != null,
+      digestMismatch: identityState?.digestMismatch ?? false,
       lastSyncedAt: identityState?.syncedAt,
       lastError: _lastError,
     );
@@ -397,6 +419,342 @@ class SyncService {
     }
   }
 
+  /// “以云端为准修复”：按云端的提交序列重放出一份投影，把本机被改动、与云端
+  /// 不同的行改成云端值，再把本机独有的行作为基线上传（同步方案 3.5）。
+  ///
+  /// 3.7 的客户端快照克隆还没有落地。这里不直接清掉位置重拉：本机已经应用过的
+  /// 远端提交按 uid 去重，重新拉取不会再写一遍，漏掉的内容不会自己回来。于是按
+  /// 方案里“按差异重放”的退路实现：从服务端第 1 条开始只读地重放全部提交，得到
+  /// 云端投影与云端碰过的行；这些行在本机与云端不同的改写成云端值并形成一条本机
+  /// 提交（它的内容云端已经有了，所以随后把推送位置一起推进，不再推上去），没有
+  /// 被云端碰过的本机行照旧作为基线补传。调用方必须先让用户确认。成功之后清掉
+  /// 不一致标记。
+  Future<SyncResult> repairFromCloud() async {
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn) throw const AccountSignedOut();
+    await _waitForRunningSync();
+    final deviceId = await account.deviceId();
+    final epoch = account.identityEpoch;
+    final origin = await account.serverOrigin();
+    _runEpoch = epoch;
+    _pulledSkipped = 0;
+    _knownDigestMismatch = false;
+    try {
+      final userId = snapshot.session!.userId;
+      _activeScope = syncScopeFor(userId, origin);
+      // 先清掉两个同步位置与遮蔽行：这次修复不从旧位置接着增量，而是按服务端
+      // 序列重新对齐一遍，收尾时再写回新的位置。
+      await _forgetSyncPosition();
+      final cloud = <String, Map<String, TypedRow>>{};
+      final touched = <(String, String)>{};
+      var serverHead = 0;
+      var pulled = 0;
+      while (true) {
+        _ensureIdentity();
+        final page = await account.call(
+          (client, token) => client.pull(token, after: serverHead),
+        );
+        if (page.commits.isEmpty) {
+          // 再读一页确认真实的位置：修复期间另一台设备也可能在推，按最后一页
+          // 的 head 推送基线才不会撞上 409。
+          serverHead = page.head;
+          break;
+        }
+        for (final commit in page.commits) {
+          for (final change in commit.changes) {
+            touched.add((change.table, change.rowKey));
+            final rows = cloud.putIfAbsent(change.table, () => {});
+            if (change.op == 'delete') {
+              rows.remove(change.rowKey);
+              continue;
+            }
+            final after = decodeTypedRow(jsonEncode(change.after));
+            if (change.op == 'insert') {
+              rows[change.rowKey] = after;
+            } else {
+              // 更新只带变化列，重放时要并进上一条提交留下的整行。
+              rows[change.rowKey] = {...?rows[change.rowKey], ...after};
+            }
+          }
+        }
+        pulled += page.commits.length;
+        serverHead = page.commits.last.seq ?? serverHead;
+      }
+      // 云端碰过的行按云端值改写，没有被云端碰过的本机行保留下来补传。
+      final local = await engine.readProjection(database.raw);
+      await database.command((txn) async {
+        for (final key in touched) {
+          final table = key.$1;
+          final rowKey = key.$2;
+          final primaryKey = versionedPrimaryKeys[table];
+          if (primaryKey == null) continue;
+          final target = cloud[table]?[rowKey];
+          final current = local[table]?[rowKey];
+          if (target == null) {
+            if (current == null) continue;
+            await deleteRows(
+              txn,
+              table,
+              where: '$primaryKey = ?',
+              whereArgs: [rowKey],
+            );
+            continue;
+          }
+          if (current == null) {
+            await insertRow(txn, table, {
+              primaryKey: rowKey,
+              ...sqliteRow(target),
+            });
+            continue;
+          }
+          if (canonicalRevisionRow(table, rowKey, target) ==
+              canonicalRevisionRow(table, rowKey, current)) {
+            continue;
+          }
+          final update = <String, Object?>{};
+          for (final entry in target.entries) {
+            if (entry.key == primaryKey) continue;
+            final before = current[entry.key];
+            if (before != null &&
+                jsonEncode(before.toJson()) ==
+                    jsonEncode(entry.value.toJson())) {
+              continue;
+            }
+            update[entry.key] = entry.value.sqliteValue;
+          }
+          if (update.isEmpty) continue;
+          await updateRow(
+            txn,
+            table,
+            update,
+            where: '$primaryKey = ?',
+            whereArgs: [rowKey],
+          );
+        }
+      }, label: '以云端为准重新对齐');
+      // 重新对齐之后本机没有待推送提交：对齐提交的内容云端已经有了，推送位置
+      // 直接推进到当前 HEAD；云端没有行的本机独有行照常作为基线补传。
+      final headAfterAlign = await engine.headId(database.raw);
+      final projection = await engine.readProjection(database.raw);
+      final changes = <RevisionChange>[];
+      var seq = 1;
+      for (final table in versionedTableNames) {
+        final rows = projection[table] ?? const <String, TypedRow>{};
+        for (final entry in rows.entries) {
+          if (touched.contains((table, entry.key))) continue;
+          changes.add(
+            RevisionChange(
+              commitId: 0,
+              seq: seq++,
+              table: table,
+              rowKey: entry.key,
+              op: ChangeOp.insert,
+              after: entry.value,
+            ),
+          );
+        }
+      }
+      var pushed = 0;
+      var baseSeq = serverHead;
+      String? baselineDigest;
+      if (changes.isNotEmpty) {
+        final headBefore = await engine.headId(database.raw);
+        final digest = await revisions.currentStateDigest();
+        if (await engine.headId(database.raw) == headBefore) {
+          baselineDigest = digest;
+        }
+      }
+      await _pushBatches(
+        Stream.fromIterable(
+          _baselineCommits(deviceId, changes, stateDigest: baselineDigest),
+        ),
+        baseSeq,
+        (head, count) async {
+          baseSeq = head;
+          pushed += count;
+        },
+      );
+      final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
+      _ensureIdentity();
+      await _saveServerHead(baseSeq);
+      await _savePushed(headAfterAlign);
+      await _shadows.clear();
+      await _saveDigestMismatch(false);
+      await _markSynced();
+      return SyncResult(
+        pulledCommits: pulled,
+        pushedCommits: pushed,
+        uploadedAssets: uploaded,
+      );
+    } catch (error, stack) {
+      if (error is! SyncIdentityChanged) {
+        recordFailure(error, stack, kind: 'cloud_sync');
+      }
+      rethrow;
+    } finally {
+      _runEpoch = null;
+      _activeScope = null;
+    }
+  }
+
+  /// “以本机为准修复”：把本机独有的行按首次基线的方式推上去（同步方案 3.5、
+  /// 3.6）。
+  ///
+  /// 先增量拉取云端的新提交，据此知道哪些“表名 + 主键”已经由远端提交表达过，
+  /// 这些行在本机的副本不再上传；其余行作为基线提交推送，所以它只补云端缺的
+  /// 内容，不删除云端已有的行。已经收到过的远端提交照常在本机应用，本机被直接
+  /// 改过、没有提交记录表达的行由基线补上去。成功后且有内容上传时清掉不一致
+  /// 标记；一行都没传说明两边只差在云端多出来的内容，标记留着等下一次同步重新
+  /// 判断。账号还没有同步位置时按首次基线重新对齐一次。
+  Future<SyncResult> repairFromLocal() async {
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn) throw const AccountSignedOut();
+    await _waitForRunningSync();
+    final deviceId = await account.deviceId();
+    final epoch = account.identityEpoch;
+    final origin = await account.serverOrigin();
+    _runEpoch = epoch;
+    _pulledSkipped = 0;
+    _knownDigestMismatch = false;
+    try {
+      final userId = snapshot.session!.userId;
+      final scope = syncScopeFor(userId, origin);
+      _activeScope = scope;
+      final pushedCursor = await _cursors.read(RevisionCursor.syncPushed);
+      final identityState = await preferences.syncState();
+      if (!_positionLinked(
+        pushedCursor,
+        scope,
+        identityState != null && _sameIdentity(identityState, userId, origin)
+            ? identityState
+            : null,
+      )) {
+        // 还没有同步位置（这个账号第一次同步）：按首次基线重新对齐，确认之后
+        // 上传本机独有的行，与“立即同步”的第一步相同。
+        final result = await syncNow(confirmBaseline: true);
+        await _saveDigestMismatch(false);
+        return result;
+      }
+      var serverHead = await _serverHeadPosition();
+      // 按首次同步的做法从第 1 条开始读一遍服务端序列，只记录被提交碰过的行；
+      // 已经应用过的远端提交按 uid 去重，不会重写本机内容。云端历史被压缩过时
+      // 读不到更早的提交，退回按本机已有的远端提交判断，再从当前位置增量拉取。
+      final pushedRows = <(String, String)>{};
+      var pulled = 0;
+      try {
+        final result = await _pull(
+          serverHead: 0,
+          deviceId: deviceId,
+          persist: false,
+          downloaded: (count) {},
+          touchedRows: pushedRows,
+        );
+        serverHead = result.serverHead;
+        pulled = result.pulled;
+      } on ServerProblem catch (error) {
+        if (error.code != 'history_compacted') rethrow;
+        pushedRows.addAll(await _remoteTouchedRows());
+        final result = await _pull(
+          serverHead: serverHead,
+          deviceId: deviceId,
+          downloaded: (count) {},
+        );
+        serverHead = result.serverHead;
+        pulled = result.pulled;
+      }
+      final localHead = await engine.headId(database.raw);
+      final projection = await engine.readProjection(database.raw);
+      final changes = <RevisionChange>[];
+      var seq = 1;
+      for (final table in versionedTableNames) {
+        final rows = projection[table] ?? const <String, TypedRow>{};
+        for (final entry in rows.entries) {
+          if (pushedRows.contains((table, entry.key))) continue;
+          changes.add(
+            RevisionChange(
+              commitId: 0,
+              seq: seq++,
+              table: table,
+              rowKey: entry.key,
+              op: ChangeOp.insert,
+              after: entry.value,
+            ),
+          );
+        }
+      }
+      var pushed = 0;
+      var baseSeq = serverHead;
+      String? baselineDigest;
+      if (changes.isNotEmpty && _pulledSkipped == 0) {
+        final headBefore = await engine.headId(database.raw);
+        final digest = await revisions.currentStateDigest();
+        if (await engine.headId(database.raw) == headBefore) {
+          baselineDigest = digest;
+        }
+      }
+      await _pushBatches(
+        Stream.fromIterable(
+          _baselineCommits(deviceId, changes, stateDigest: baselineDigest),
+        ),
+        baseSeq,
+        (head, count) async {
+          baseSeq = head;
+          pushed += count;
+        },
+      );
+      final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
+      _ensureIdentity();
+      await _saveServerHead(baseSeq);
+      await _savePushed(localHead);
+      await _shadows.deleteSettled(localHead);
+      if (changes.isNotEmpty) await _saveDigestMismatch(false);
+      await _markSynced();
+      return SyncResult(
+        pulledCommits: pulled,
+        pushedCommits: pushed,
+        uploadedAssets: uploaded,
+      );
+    } catch (error, stack) {
+      if (error is! SyncIdentityChanged) {
+        recordFailure(error, stack, kind: 'cloud_sync');
+      }
+      rethrow;
+    } finally {
+      _runEpoch = null;
+      _activeScope = null;
+    }
+  }
+
+  /// 正在同步时等它结束再修复：两轮同时改同步位置会把位置写乱。
+  ///
+  /// 前一轮失败不影响这次修复，失败说明只在那个调用方处理。
+  Future<void> _waitForRunningSync() async {
+    final running = _running;
+    if (running == null) return;
+    try {
+      await running;
+    } catch (_) {
+      // 前一轮的结果已经不相关，这次修复按当前库重新做。
+    }
+  }
+
+  /// 本机历史里被远端提交碰过的“表名 + 主键”。
+  ///
+  /// 服务端序列里的每一行都来自某条远端提交，所以这些行在本机的副本不该再进
+  /// 基线；“以本机为准修复”据此只推本机独有的行（同步方案 3.6）。
+  Future<Set<(String, String)>> _remoteTouchedRows() async {
+    final rows = await database.raw.rawQuery(
+      'SELECT DISTINCT c.table_name AS table_name, c.row_key AS row_key '
+      'FROM revision_change c '
+      'JOIN revision_commit m ON m.id = c.commit_id '
+      "WHERE m.kind = 'remote'",
+    );
+    return {
+      for (final row in rows)
+        (row['table_name']! as String, row['row_key']! as String),
+    };
+  }
+
   void dispose() {
     _disposed = true;
     _timer?.cancel();
@@ -413,6 +771,7 @@ class SyncService {
     final epoch = account.identityEpoch;
     final origin = await account.serverOrigin();
     _runEpoch = epoch;
+    _pulledSkipped = 0;
     try {
       final snapshot = await account.snapshot();
       if (!snapshot.signedIn) throw const AccountSignedOut();
@@ -435,6 +794,9 @@ class SyncService {
         await preferences.clearSyncState();
         state = null;
       }
+      // 已知不一致时这一轮推送不挂摘要：推送只补本机内容，删不掉云端多出来的
+      // 行，不能声明推完之后云端就等于本机。
+      _knownDigestMismatch = state?.digestMismatch ?? false;
       final pushedCursor = await _cursors.read(RevisionCursor.syncPushed);
       // 位置属于当前身份才继续增量同步：退出登录只把位置改成不阻塞，scope 还在，
       // 重新登录同一账号因此仍从原位置继续（同步方案 3.3）。
@@ -517,7 +879,13 @@ class SyncService {
         state = state ?? SyncState(userId: userId, serverOrigin: origin);
       }
       _ensureIdentity();
-      final finalState = state.copyWith(syncedAt: clock());
+      // 收尾只更新“上次同步时间”。摘要比较与修复可能在这之前改过不一致标记，
+      // 所以从偏好文件重读一次，不拿这次同步开头读到的那份覆盖它。
+      final stored = await preferences.syncState();
+      final base = stored != null && _sameIdentity(stored, userId, origin)
+          ? stored
+          : state;
+      final finalState = base.copyWith(syncedAt: clock());
       await preferences.saveSyncState(finalState);
       return SyncResult(
         pulledCommits: pulled,
@@ -635,8 +1003,22 @@ class SyncService {
     }
     var pushed = 0;
     var baseSeq = serverHead;
+    // 基线推送完成、两个同步位置收尾之后，本机没有待推送提交；这时最后一条
+    // 基线提交带上当前整库摘要，其他设备拉到它之后可以比较（同步方案 3.5）。
+    // 读 HEAD、整库重算之间又有本机写入，或者这次拉取有被跳过的变化（本机状态
+    // 与云端对不上），就不带，避免声明一个不成立的云端状态。
+    String? baselineDigest;
+    if (changes.isNotEmpty && _pulledSkipped == 0 && !_knownDigestMismatch) {
+      final headBefore = await engine.headId(database.raw);
+      final digest = await revisions.currentStateDigest();
+      if (await engine.headId(database.raw) == headBefore) {
+        baselineDigest = digest;
+      }
+    }
     await _pushBatches(
-      Stream.fromIterable(_baselineCommits(deviceId, changes)),
+      Stream.fromIterable(
+        _baselineCommits(deviceId, changes, stateDigest: baselineDigest),
+      ),
       baseSeq,
       (head, count) async {
         baseSeq = head;
@@ -661,10 +1043,15 @@ class SyncService {
     );
   }
 
+  /// 把本机独有的行按每片最多 [_baselineChunk] 处变化组装成基线提交。
+  ///
+  /// [stateDigest] 非空时附在最后一片上：整条基线推完之后本机没有待推送提交，
+  /// 这个摘要就是推完之后云端应有的状态（同步方案 3.5）。
   Iterable<ServerCommit> _baselineCommits(
     String deviceId,
-    List<RevisionChange> changes,
-  ) sync* {
+    List<RevisionChange> changes, {
+    String? stateDigest,
+  }) sync* {
     var index = 0;
     while (index < changes.length) {
       final start = index;
@@ -689,6 +1076,8 @@ class SyncService {
         action: '首次同步基线',
         createdAt: formatDateTime(clock()),
         changes: payload,
+        // 这是最后一片时整条基线已经组装完，摘要挂在它上面。
+        stateDigest: index >= changes.length ? stateDigest : null,
       );
     }
   }
@@ -776,6 +1165,10 @@ class SyncService {
   /// [touchedRows] 非空时记下每条远端提交触及过的“表名 + 主键”（变化明细里
   /// 出现的每一行，含被跳过与被删除的）：首次同步据此判断本机投影里哪些行已经
   /// 由服务端序列表达，只把剩下的行作为基线上传（同步方案 3.6）。
+  ///
+  /// 拉完之后如果最新一条提交带着整库摘要，比较一次本机摘要：顺序是“拉取 →
+  /// 比较 → 推送”，只有本机没有待推送提交时本机 `HEAD` 才对应这条提交，整库
+  /// 重算的摘要才能直接与它比较（见 `_comparePulledDigest`）。
   Future<({int serverHead, int pulled, int downloaded})> _pull({
     required int serverHead,
     required String deviceId,
@@ -786,6 +1179,8 @@ class SyncService {
     var current = serverHead;
     var pulled = 0;
     var downloadCount = 0;
+    // 这一次拉取最后读到的一条提交带的摘要；最新一条没有带时为空。
+    String? latestDigest;
     while (true) {
       _ensureIdentity();
       final page = await account.call(
@@ -802,6 +1197,7 @@ class SyncService {
         // 被这条远端提交取代的本机格子由 `applyChanges` 在同一个事务里登记进
         // `sync_shadow`，这一层不用再记（ADR-0040）。
         final applied = await _applyRemote(commit);
+        _pulledSkipped += applied.skipped;
         if (touchedRows != null) {
           // 服务端序列里的行全部来自远端提交：变化明细里出现过的行即被触及，
           // 本机这份只是副本。被跳过或被删除的变化也记下，对应的本机行要么已经
@@ -813,6 +1209,7 @@ class SyncService {
         hashes.addAll(applied.assetHashes);
         pulled++;
       }
+      latestDigest = page.commits.last.stateDigest;
       current = page.commits.last.seq ?? page.head;
       _ensureIdentity();
       if (persist) await _saveServerHead(current);
@@ -821,7 +1218,69 @@ class SyncService {
       downloaded(fetched);
       if (!page.hasMore) break;
     }
+    if (latestDigest != null) {
+      await _comparePulledDigest(latestDigest, serverHead: current);
+    }
     return (serverHead: current, pulled: pulled, downloaded: downloadCount);
+  }
+
+  /// 拉取到带摘要的最新一条提交之后比较摘要（同步方案 3.5）。
+  ///
+  /// 只有本机也没有待推送提交时才比：这时本机 `HEAD` 对应刚应用的那条远端
+  /// 提交，按当前业务表整库重算的摘要与它可以直接比较。比较期间又写了一条本机
+  /// 提交，`HEAD` 就往前走了，这一次跳过，等下一轮同步再比。结果写进同步状态
+  /// （账号页据此显示“本机与云端不一致”），不一致时另记一条诊断。
+  Future<void> _comparePulledDigest(
+    String cloudDigest, {
+    required int serverHead,
+  }) async {
+    final pushed = await _pushedPosition();
+    if ((await revisions.commitsAfter(pushed)).isNotEmpty) return;
+    final localDigest = await revisions.currentStateDigest();
+    if ((await revisions.commitsAfter(pushed)).isNotEmpty) return;
+    _ensureIdentity();
+    final matched = localDigest == cloudDigest;
+    await _saveDigestMismatch(!matched);
+    if (!matched) {
+      recordFailure(
+        StateError(
+          '同步摘要不一致：本机 $localDigest，云端 $cloudDigest，'
+          '服务端位置 $serverHead',
+        ),
+        StackTrace.current,
+        kind: 'cloud_sync_digest',
+      );
+    }
+  }
+
+  /// 把“本机与云端不一致”写进这个身份的同步状态；相同值不重复写文件。
+  ///
+  /// 首次同步时偏好文件里可能还没有同步状态，这里按当前账号与实例建一份，
+  /// 收尾保存“上次同步时间”时会从文件重读，不会把它盖掉。
+  Future<void> _saveDigestMismatch(bool mismatch) async {
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn) return;
+    final origin = await account.serverOrigin();
+    final userId = snapshot.session!.userId;
+    final stored = await preferences.syncState();
+    final base = stored != null && _sameIdentity(stored, userId, origin)
+        ? stored
+        : SyncState(userId: userId, serverOrigin: origin);
+    if (base.digestMismatch == mismatch) return;
+    await preferences.saveSyncState(base.copyWith(digestMismatch: mismatch));
+  }
+
+  /// 修复完成之后推进“上次同步时间”，与普通同步收尾一致。
+  Future<void> _markSynced() async {
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn) return;
+    final origin = await account.serverOrigin();
+    final stored = await preferences.syncState();
+    if (stored == null ||
+        !_sameIdentity(stored, snapshot.session!.userId, origin)) {
+      return;
+    }
+    await preferences.saveSyncState(stored.copyWith(syncedAt: clock()));
   }
 
   /// 推送本机推送位置之后的提交；服务端位置变化时先拉取再重试。
@@ -891,11 +1350,26 @@ class SyncService {
         currentPushed = pending.last.id;
         return (serverHead: currentHead, pushed: 0);
       }
+      // 推送完成且本机没有待推送提交时，把当前摘要附在最后一条推上去的提交上
+      // （同步方案 3.5）。`pending.last` 之后没有新的本机提交才说明推完之后没
+      // 有待推送提交（拉取形成的远端提交不算）；读提交与整库重算之间又写了本机
+      // 提交就不带，避免声明一个不含那次写入的云端状态。这次同步有被跳过的远端
+      // 变化时本机与云端对不上，也不带。
+      String? tailDigest;
+      if (!_knownDigestMismatch &&
+          _pulledSkipped == 0 &&
+          (await revisions.commitsAfter(pending.last.id)).isEmpty) {
+        final digest = await revisions.currentStateDigest();
+        if ((await revisions.commitsAfter(pending.last.id)).isEmpty) {
+          tailDigest = digest;
+        }
+      }
       final assetHashes = <String>{};
       var pushed = 0;
       try {
         Stream<ServerCommit> payloads() async* {
-          for (final commit in toPush) {
+          for (var index = 0; index < toPush.length; index++) {
+            final commit = toPush[index];
             final changes = remainingByCommit[commit.id]!;
             assetHashes.addAll(AssetStore.hashesInChanges(changes));
             yield ServerCommit(
@@ -906,6 +1380,7 @@ class SyncService {
               action: commit.action,
               createdAt: formatDateTime(commit.createdAt ?? clock()),
               changes: [for (final change in changes) _toServerChange(change)],
+              stateDigest: index == toPush.length - 1 ? tailDigest : null,
             );
           }
         }

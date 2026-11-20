@@ -82,9 +82,12 @@ CREATE INDEX session_refresh_used_rotated_at ON session_refresh_used(rotated_at)
 
 -- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
 -- 锁住 sync_head，核对 base_seq = head 之后再追加。
+-- trimmed_through 是已经删除到哪个序号：压缩删掉快照覆盖的旧提交之后推进，
+-- 保留下界（第一条仍可拉取的序号）等于它加一（ADR-0043）。
 CREATE TABLE sync_head (
-  user_id  TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-  head     BIGINT NOT NULL DEFAULT 0
+  user_id          TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  head             BIGINT NOT NULL DEFAULT 0,
+  trimmed_through  BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE sync_commit (
@@ -98,8 +101,27 @@ CREATE TABLE sync_commit (
   created_at      TEXT NOT NULL,               -- 客户端时间，格式同 docs/01 D7
   received_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   changes         JSONB NOT NULL,              -- [{table,row_key,op,before,after}]
+  state_digest    TEXT,                        -- 客户端整库摘要，可选，原样保存不解析（改进方案 3.5）
   PRIMARY KEY (user_id, seq),
   UNIQUE (user_id, request_id)
+);
+
+-- 账号当前快照的指针，每个账号最多一行；字节是 attachments/<账号>/<sha256>。
+-- 只保留最新一份，登记更新的位置时整行覆盖（ADR-0043）。
+CREATE TABLE sync_snapshot (
+  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  seq         BIGINT NOT NULL,
+  sha256      TEXT NOT NULL,
+  digest      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 已经接收过的提交身份。与 sync_commit 分开保存，压缩删掉旧提交之后仍然按它
+-- 去重（ADR-0040 的永久去重）；每行几十字节，不进入 256 MiB 的序列预算。
+CREATE TABLE sync_commit_seen (
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  request_id  TEXT NOT NULL,
+  PRIMARY KEY (user_id, request_id)
 );
 
 -- 整库备份：字节在对象存储的 backups/<user_id>/<id>.zip。

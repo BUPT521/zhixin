@@ -26,6 +26,7 @@ const (
 	CodeConflict           = api.ProblemCodeConflict
 	CodePayloadTooLarge    = api.ProblemCodePayloadTooLarge
 	CodeStorageFull        = api.ProblemCodeStorageFull
+	CodeHistoryCompacted   = api.ProblemCodeHistoryCompacted
 	CodeModelNotAllowed    = api.ProblemCodeModelNotAllowed
 	CodeQuotaExceeded      = api.ProblemCodeQuotaExceeded
 	CodeRateLimited        = api.ProblemCodeRateLimited

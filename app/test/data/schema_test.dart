@@ -12,7 +12,7 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
-  test('新库是 v29，15 张业务表与版本元数据就位', () async {
+  test('新库是 v30，15 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
     addTearDown(db.close);
 
@@ -112,6 +112,18 @@ void main() {
     );
     expect(await columns('assessment'), contains('kind'));
     expect(await columns('assessment'), isNot(contains('verified')));
+    // 数据版本的四列（方案 3.5、3.10、3.12）：摘要、哈希链、来源设备与作者时间。
+    expect(
+      await columns('revision_commit'),
+      containsAll([
+        'parent_hash',
+        'state_digest',
+        'hash',
+        'origin_device',
+        'authored_at',
+      ]),
+    );
+    expect(await columns('revision_checkpoint'), contains('state_digest'));
     final attemptColumns = await columns('attempt');
     expect(attemptColumns, contains('conversation_id'));
     expect(attemptColumns, isNot(contains('hint_used')));

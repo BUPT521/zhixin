@@ -167,6 +167,7 @@ func (e ModelKind) Valid() bool {
 const (
 	ProblemCodeConflict           ProblemCode = "conflict"
 	ProblemCodeContactUnverified  ProblemCode = "contact_unverified"
+	ProblemCodeHistoryCompacted   ProblemCode = "history_compacted"
 	ProblemCodeIdentifierTaken    ProblemCode = "identifier_taken"
 	ProblemCodeInternal           ProblemCode = "internal"
 	ProblemCodeInvalidCode        ProblemCode = "invalid_code"
@@ -190,6 +191,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeConflict:
 		return true
 	case ProblemCodeContactUnverified:
+		return true
+	case ProblemCodeHistoryCompacted:
 		return true
 	case ProblemCodeIdentifierTaken:
 		return true
@@ -465,6 +468,10 @@ type Commit struct {
 	RequestId     string     `json:"request_id"`
 	SchemaVersion int        `json:"schema_version"`
 	Seq           *int64     `json:"seq,omitempty"`
+
+	// StateDigest 客户端按改进方案 3.5 算出的整库摘要（SHA-256 多重集哈希的十六进制）；
+	// 只有推送完成、本机没有待推送提交时最后一条提交才带这个字段。
+	StateDigest *string `json:"state_digest,omitempty"`
 }
 
 // CommitActor defines model for Commit.Actor.
@@ -473,8 +480,14 @@ type CommitActor string
 // CommitPage defines model for CommitPage.
 type CommitPage struct {
 	Commits []Commit `json:"commits"`
-	HasMore bool     `json:"has_more"`
-	Head    int64    `json:"head"`
+
+	// EarliestSeq 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
+	EarliestSeq int64 `json:"earliest_seq"`
+	HasMore     bool  `json:"has_more"`
+	Head        int64 `json:"head"`
+
+	// Snapshot 当前快照指针，没有登记时省略
+	Snapshot *SyncSnapshot `json:"snapshot,omitempty"`
 }
 
 // Credentials defines model for Credentials.
@@ -719,10 +732,41 @@ type ReleaseList struct {
 	Releases []Release `json:"releases"`
 }
 
+// SnapshotRegistration 登记一份快照（ADR-0043）
+type SnapshotRegistration struct {
+	// Digest 客户端按改进方案 3.5 算出的整库摘要
+	Digest string `json:"digest"`
+
+	// Seq 快照覆盖到的服务端序列位置；不能超过当前 head
+	Seq int64 `json:"seq"`
+
+	// Sha256 已经上传到这个账号的快照附件哈希
+	Sha256 string `json:"sha256"`
+}
+
 // SyncHead defines model for SyncHead.
 type SyncHead struct {
+	// EarliestSeq 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
+	EarliestSeq   int64 `json:"earliest_seq"`
 	Head          int64 `json:"head"`
 	SchemaVersion int   `json:"schema_version"`
+
+	// Snapshot 当前快照指针，没有登记时省略
+	Snapshot *SyncSnapshot `json:"snapshot,omitempty"`
+}
+
+// SyncSnapshot 账号当前快照的指针（ADR-0043）
+type SyncSnapshot struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Digest 客户端按改进方案 3.5 算出的整库摘要，服务端原样保存
+	Digest string `json:"digest"`
+
+	// Seq 快照覆盖到的服务端序列位置；从它继续增量拉取
+	Seq int64 `json:"seq"`
+
+	// Sha256 快照附件的哈希，按它走 GET /v1/blobs/{sha256} 下载
+	Sha256 string `json:"sha256"`
 }
 
 // TelemetryPing defines model for TelemetryPing.
@@ -903,6 +947,9 @@ type DeleteV1SyncCommitsJSONRequestBody DeleteV1SyncCommitsJSONBody
 
 // PostV1SyncCommitsJSONRequestBody defines body for PostV1SyncCommits for application/json ContentType.
 type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
+
+// PutV1SyncSnapshotJSONRequestBody defines body for PutV1SyncSnapshot for application/json ContentType.
+type PutV1SyncSnapshotJSONRequestBody = SnapshotRegistration
 
 // PostV1TelemetryActiveJSONRequestBody defines body for PostV1TelemetryActive for application/json ContentType.
 type PostV1TelemetryActiveJSONRequestBody = TelemetryPing
@@ -1176,9 +1223,15 @@ type ServerInterface interface {
 	// PostV1SyncCommits 推送本机提交
 	// (POST /v1/sync/commits)
 	PostV1SyncCommits(w http.ResponseWriter, r *http.Request)
-	// GetV1SyncHead 服务端序列的最新位置
+	// GetV1SyncHead 服务端序列的最新位置、保留下界与当前快照
 	// (GET /v1/sync/head)
 	GetV1SyncHead(w http.ResponseWriter, r *http.Request)
+	// GetV1SyncSnapshot 当前快照指针
+	// (GET /v1/sync/snapshot)
+	GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request)
+	// PutV1SyncSnapshot 登记当前序列位置上的快照
+	// (PUT /v1/sync/snapshot)
+	PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request)
 	// PostV1TelemetryActive 匿名上报一次活跃
 	// (POST /v1/telemetry/active)
 	PostV1TelemetryActive(w http.ResponseWriter, r *http.Request)
@@ -2131,6 +2184,34 @@ func (siw *ServerInterfaceWrapper) GetV1SyncHead(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetV1SyncSnapshot operation middleware
+func (siw *ServerInterfaceWrapper) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1SyncSnapshot(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutV1SyncSnapshot operation middleware
+func (siw *ServerInterfaceWrapper) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutV1SyncSnapshot(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostV1TelemetryActive operation middleware
 func (siw *ServerInterfaceWrapper) PostV1TelemetryActive(w http.ResponseWriter, r *http.Request) {
 
@@ -2279,6 +2360,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification/confirm", wrapper.PostV1MeIdentitiesIdVerificationConfirm)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/cloud", wrapper.DeleteV1Cloud)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/head", wrapper.GetV1SyncHead)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/snapshot", wrapper.GetV1SyncSnapshot)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/sync/snapshot", wrapper.PutV1SyncSnapshot)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/sync/commits", wrapper.DeleteV1SyncCommits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/commits", wrapper.GetV1SyncCommits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/sync/commits", wrapper.PostV1SyncCommits)

@@ -23,7 +23,7 @@ WITH page AS MATERIALIZED (
   SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
 )
 SELECT c.seq, c.request_id, c.device_id, c.schema_version, c.actor, c.action,
-  c.created_at, c.received_at, c.changes
+  c.created_at, c.received_at, c.changes, c.state_digest
 FROM sync_commit c
 WHERE c.user_id = $1 AND c.seq IN (
   SELECT budget.page_seq FROM budget
@@ -49,6 +49,7 @@ type CommitsAfterRow struct {
 	CreatedAt     string
 	ReceivedAt    pgtype.Timestamptz
 	Changes       []byte
+	StateDigest   pgtype.Text
 }
 
 func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]CommitsAfterRow, error) {
@@ -75,6 +76,7 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 			&i.CreatedAt,
 			&i.ReceivedAt,
 			&i.Changes,
+			&i.StateDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -86,15 +88,51 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 	return items, nil
 }
 
+const deleteSyncCommitSeen = `-- name: DeleteSyncCommitSeen :exec
+DELETE FROM sync_commit_seen
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteSyncCommitSeen(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteSyncCommitSeen, userID)
+	return err
+}
+
 const deleteSyncCommits = `-- name: DeleteSyncCommits :exec
 DELETE FROM sync_commit
 WHERE user_id = $1
 `
 
 // 清空一个账号的提交序列；sync_head 由调用方在同一事务里 EnsureSyncHead、
-// LockSyncHead 之后用 SetSyncHead 重置为 0，与追加提交共用同一把锁。
+// LockSyncHead 之后用 ResetSyncHead 重置为 0，与追加提交共用同一把锁。
 func (q *Queries) DeleteSyncCommits(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, deleteSyncCommits, userID)
+	return err
+}
+
+const deleteSyncCommitsThrough = `-- name: DeleteSyncCommitsThrough :exec
+DELETE FROM sync_commit
+WHERE user_id = $1
+  AND seq <= $2
+`
+
+type DeleteSyncCommitsThroughParams struct {
+	UserID     string
+	ThroughSeq int64
+}
+
+func (q *Queries) DeleteSyncCommitsThrough(ctx context.Context, arg DeleteSyncCommitsThroughParams) error {
+	_, err := q.db.Exec(ctx, deleteSyncCommitsThrough, arg.UserID, arg.ThroughSeq)
+	return err
+}
+
+const deleteSyncSnapshot = `-- name: DeleteSyncSnapshot :exec
+DELETE FROM sync_snapshot
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteSyncSnapshot(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteSyncSnapshot, userID)
 	return err
 }
 
@@ -105,9 +143,12 @@ VALUES ($1, 0)
 ON CONFLICT (user_id) DO NOTHING
 `
 
-// 每个账号的线性提交序列（internal/store/schema.sql 的 sync_head 与 sync_commit）。
+// 每个账号的线性提交序列（internal/store/schema.sql 的 sync_head、sync_commit、
+// sync_snapshot 与 sync_commit_seen）。
 //
 // 推送时先锁住 sync_head 再核对 base_seq，整个过程在一个事务里完成（ADR-0015）。
+// 压缩删掉快照覆盖的旧提交时推进 trimmed_through，已经接收过的提交身份另外记在
+// sync_commit_seen 里，因此删除提交不会让重放被重新接收（ADR-0043）。
 // 参数一律用 sqlc.arg(名字)：同一个名字在一句里出现多次也只绑一次。
 func (q *Queries) EnsureSyncHead(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, ensureSyncHead, userID)
@@ -115,30 +156,38 @@ func (q *Queries) EnsureSyncHead(ctx context.Context, userID string) error {
 }
 
 const existingRequestIDs = `-- name: ExistingRequestIDs :many
-SELECT request_id
-FROM sync_commit
-WHERE user_id = $1
-  AND request_id = ANY($2::text[])
+SELECT ids.request_id::text
+FROM unnest($1::text[]) AS ids(request_id)
+WHERE EXISTS (
+    SELECT 1 FROM sync_commit c
+    WHERE c.user_id = $2 AND c.request_id = ids.request_id
+  )
+  OR EXISTS (
+    SELECT 1 FROM sync_commit_seen s
+    WHERE s.user_id = $2 AND s.request_id = ids.request_id
+  )
 `
 
 type ExistingRequestIDsParams struct {
-	UserID     string
 	RequestIds []string
+	UserID     string
 }
 
+// 去重同时查提交表与去重表：压缩删除旧提交之后只剩后者，升级前的旧提交只有
+// 前者，两边合起来覆盖全部接收过的身份。
 func (q *Queries) ExistingRequestIDs(ctx context.Context, arg ExistingRequestIDsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, existingRequestIDs, arg.UserID, arg.RequestIds)
+	rows, err := q.db.Query(ctx, existingRequestIDs, arg.RequestIds, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := []string{}
 	for rows.Next() {
-		var request_id string
-		if err := rows.Scan(&request_id); err != nil {
+		var ids_request_id string
+		if err := rows.Scan(&ids_request_id); err != nil {
 			return nil, err
 		}
-		items = append(items, request_id)
+		items = append(items, ids_request_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -149,12 +198,13 @@ func (q *Queries) ExistingRequestIDs(ctx context.Context, arg ExistingRequestIDs
 const insertSyncCommit = `-- name: InsertSyncCommit :exec
 INSERT INTO sync_commit (
   user_id, seq, request_id, device_id, schema_version,
-  actor, action, created_at, changes
+  actor, action, created_at, changes, state_digest
 )
 VALUES (
   $1, $2, $3,
   $4, $5, $6,
-  $7, $8, $9
+  $7, $8, $9,
+  $10
 )
 `
 
@@ -168,8 +218,11 @@ type InsertSyncCommitParams struct {
 	Action        string
 	CreatedAt     string
 	Changes       []byte
+	StateDigest   pgtype.Text
 }
 
+// state_digest 是可选的整库摘要：客户端只在推送完成且本机没有待推送提交时带上，
+// 服务端原样保存、不解析，拉取时原样带回（改进方案 3.5）。
 func (q *Queries) InsertSyncCommit(ctx context.Context, arg InsertSyncCommitParams) error {
 	_, err := q.db.Exec(ctx, insertSyncCommit,
 		arg.UserID,
@@ -181,22 +234,55 @@ func (q *Queries) InsertSyncCommit(ctx context.Context, arg InsertSyncCommitPara
 		arg.Action,
 		arg.CreatedAt,
 		arg.Changes,
+		arg.StateDigest,
 	)
 	return err
 }
 
+const insertSyncCommitSeen = `-- name: InsertSyncCommitSeen :exec
+INSERT INTO sync_commit_seen (user_id, request_id)
+VALUES ($1, $2)
+ON CONFLICT DO NOTHING
+`
+
+type InsertSyncCommitSeenParams struct {
+	UserID    string
+	RequestID string
+}
+
+func (q *Queries) InsertSyncCommitSeen(ctx context.Context, arg InsertSyncCommitSeenParams) error {
+	_, err := q.db.Exec(ctx, insertSyncCommitSeen, arg.UserID, arg.RequestID)
+	return err
+}
+
 const lockSyncHead = `-- name: LockSyncHead :one
-SELECT head
+SELECT head, trimmed_through
 FROM sync_head
 WHERE user_id = $1
 FOR UPDATE
 `
 
-func (q *Queries) LockSyncHead(ctx context.Context, userID string) (int64, error) {
+type LockSyncHeadRow struct {
+	Head           int64
+	TrimmedThrough int64
+}
+
+func (q *Queries) LockSyncHead(ctx context.Context, userID string) (LockSyncHeadRow, error) {
 	row := q.db.QueryRow(ctx, lockSyncHead, userID)
-	var head int64
-	err := row.Scan(&head)
-	return head, err
+	var i LockSyncHeadRow
+	err := row.Scan(&i.Head, &i.TrimmedThrough)
+	return i, err
+}
+
+const resetSyncHead = `-- name: ResetSyncHead :exec
+UPDATE sync_head
+SET head = 0, trimmed_through = 0
+WHERE user_id = $1
+`
+
+func (q *Queries) ResetSyncHead(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, resetSyncHead, userID)
+	return err
 }
 
 const setSyncHead = `-- name: SetSyncHead :exec
@@ -215,17 +301,81 @@ func (q *Queries) SetSyncHead(ctx context.Context, arg SetSyncHeadParams) error 
 	return err
 }
 
+const setSyncTrimmedThrough = `-- name: SetSyncTrimmedThrough :exec
+UPDATE sync_head
+SET trimmed_through = $1
+WHERE user_id = $2
+`
+
+type SetSyncTrimmedThroughParams struct {
+	TrimmedThrough int64
+	UserID         string
+}
+
+func (q *Queries) SetSyncTrimmedThrough(ctx context.Context, arg SetSyncTrimmedThroughParams) error {
+	_, err := q.db.Exec(ctx, setSyncTrimmedThrough, arg.TrimmedThrough, arg.UserID)
+	return err
+}
+
+const syncCompactionLimit = `-- name: SyncCompactionLimit :one
+SELECT coalesce(max(seq), 0)::bigint
+FROM sync_commit
+WHERE user_id = $1
+  AND seq <= $2
+`
+
+type SyncCompactionLimitParams struct {
+	UserID     string
+	ThroughSeq int64
+}
+
+// 预算压力下的压缩点：不按保留期过滤，快照位置及之前的提交全部可删。
+func (q *Queries) SyncCompactionLimit(ctx context.Context, arg SyncCompactionLimitParams) (int64, error) {
+	row := q.db.QueryRow(ctx, syncCompactionLimit, arg.UserID, arg.ThroughSeq)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const syncCompactionPoint = `-- name: SyncCompactionPoint :one
+SELECT coalesce(max(seq), 0)::bigint
+FROM sync_commit
+WHERE user_id = $1
+  AND seq <= $2
+  AND received_at < $3
+`
+
+type SyncCompactionPointParams struct {
+	UserID     string
+	ThroughSeq int64
+	Cutoff     pgtype.Timestamptz
+}
+
+// 常规压缩的删除点：快照位置及之前、服务端收到时间早于保留期的提交里最大的
+// 序号；没有可删的提交时返回 0，调用方据此不动保留下界。
+func (q *Queries) SyncCompactionPoint(ctx context.Context, arg SyncCompactionPointParams) (int64, error) {
+	row := q.db.QueryRow(ctx, syncCompactionPoint, arg.UserID, arg.ThroughSeq, arg.Cutoff)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const syncHead = `-- name: SyncHead :one
-SELECT head
+SELECT head, trimmed_through
 FROM sync_head
 WHERE user_id = $1
 `
 
-func (q *Queries) SyncHead(ctx context.Context, userID string) (int64, error) {
+type SyncHeadRow struct {
+	Head           int64
+	TrimmedThrough int64
+}
+
+func (q *Queries) SyncHead(ctx context.Context, userID string) (SyncHeadRow, error) {
 	row := q.db.QueryRow(ctx, syncHead, userID)
-	var head int64
-	err := row.Scan(&head)
-	return head, err
+	var i SyncHeadRow
+	err := row.Scan(&i.Head, &i.TrimmedThrough)
+	return i, err
 }
 
 const syncIncomingBytes = `-- name: SyncIncomingBytes :one
@@ -240,6 +390,31 @@ func (q *Queries) SyncIncomingBytes(ctx context.Context, changes [][]byte) (int6
 	return column_1, err
 }
 
+const syncSnapshot = `-- name: SyncSnapshot :one
+SELECT seq, sha256, digest, created_at
+FROM sync_snapshot
+WHERE user_id = $1
+`
+
+type SyncSnapshotRow struct {
+	Seq       int64
+	Sha256    string
+	Digest    string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) SyncSnapshot(ctx context.Context, userID string) (SyncSnapshotRow, error) {
+	row := q.db.QueryRow(ctx, syncSnapshot, userID)
+	var i SyncSnapshotRow
+	err := row.Scan(
+		&i.Seq,
+		&i.Sha256,
+		&i.Digest,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const syncStorageBytes = `-- name: SyncStorageBytes :one
 SELECT coalesce(sum(pg_column_size(changes)::bigint + octet_length(action)
   + octet_length(request_id) + octet_length(device_id) + 256), 0)::bigint
@@ -252,4 +427,33 @@ func (q *Queries) SyncStorageBytes(ctx context.Context, userID string) (int64, e
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const upsertSyncSnapshot = `-- name: UpsertSyncSnapshot :exec
+INSERT INTO sync_snapshot (user_id, seq, sha256, digest, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id) DO UPDATE
+SET seq = EXCLUDED.seq,
+    sha256 = EXCLUDED.sha256,
+    digest = EXCLUDED.digest,
+    created_at = EXCLUDED.created_at
+`
+
+type UpsertSyncSnapshotParams struct {
+	UserID    string
+	Seq       int64
+	Sha256    string
+	Digest    string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertSyncSnapshot(ctx context.Context, arg UpsertSyncSnapshotParams) error {
+	_, err := q.db.Exec(ctx, upsertSyncSnapshot,
+		arg.UserID,
+		arg.Seq,
+		arg.Sha256,
+		arg.Digest,
+		arg.CreatedAt,
+	)
+	return err
 }

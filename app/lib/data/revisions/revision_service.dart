@@ -3,6 +3,7 @@ import '../db/guarded_database.dart';
 import '../db/sql.dart';
 import 'asset_store.dart';
 import 'revision_actions.dart';
+import 'revision_digest.dart';
 import 'revision_engine.dart';
 import '../db/raw_executor.dart';
 import 'revision_models.dart';
@@ -138,8 +139,11 @@ class RevisionService {
       engine.compare(db.raw, from, to);
 
   /// 界面的回执是否仍然可以撤销；整版恢复之后的旧提交不在结果里。
+  ///
+  /// 判断走撤销服务：撤销提交可以再撤销（重做），所以“被回指过”不等于永久
+  /// 失效，重做之后原提交重新可撤销（方案 3.11）。
   Future<Set<int>> activeCommits(Iterable<int> commitIds) =>
-      engine.activeCommits(db.raw, commitIds);
+      undo.activeCommits(db.raw, commitIds);
 
   /// 提交列表用的撤销判断：同一套白名单与代次规则，值为不能撤销的原因。
   Future<Map<int, String?>> undoBlockReasons(
@@ -147,20 +151,34 @@ class RevisionService {
   ) => undo.undoBlockReasons(db.raw, commits);
 
   /// 当前代次里还没撤销的提交，安排页从中挑出要展示的 AI 改动。
+  ///
+  /// 与回执同一口径：重做之后原提交重新进入结果，撤销提交本身不在这里。
   Future<List<RevisionCommit>> undoableCommits() =>
-      engine.undoableCommits(db.raw);
+      undo.undoableCommits(db.raw);
 
   /// 安排页的回执：指定动作且改到指定表的提交，一次查询取回。
+  ///
+  /// 撤销链的判断在撤销服务里：撤销提交可以再撤销（重做），重做之后原提交
+  /// 重新可撤销，安排页据此重新给出回执。
   Future<List<RevisionCommit>> receiptCommits({
     required Set<String> actions,
     required Set<String> tables,
-  }) => engine.receiptCommits(db.raw, actions: actions, tables: tables);
+  }) => undo.receiptCommits(db.raw, actions: actions, tables: tables);
 
+  /// 恢复预览：与恢复读同一份反向净变化，不再重建两份整库投影。
+  ///
+  /// 目标提交在保留历史内、能按提交明细折叠出净变化时，恢复就是把这份变化反
+  /// 过来写，预览直接按同一份反向变化给出新增、修改与删除的数量；起点被裁掉、
+  /// 中间有基线跳变或明细不完整时退回整库替换，预览也跟着比较两份投影
+  /// （方案 3.9）。
   Future<RevisionRestorePreview> previewRestore(int target) =>
       engine.previewRestore(db.raw, target);
 
-  /// 恢复到本机版本：数据事务提交后就算成功；图片缓存重建单独处理，失败只
-  /// 返回一条说明，不能把已经完成的恢复报成失败。
+  /// 恢复到本机版本：先按净变化反向写入有差异的行，不可用时整库替换。
+  ///
+  /// 两段路径都在同一个命令事务里追加一条 `restore` 提交并推进代次；数据事务
+  /// 提交后就算成功，图片缓存重建单独处理，失败只返回一条说明，不能把已经完成
+  /// 的恢复报成失败。
   Future<({RevisionCommit commit, String? cacheWarning})> restore(
     int target, {
     required int expectedHead,
@@ -188,6 +206,11 @@ class RevisionService {
   /// 应用一条远端提交：本机因此生成一条同样的净变化提交，撤销与数据版本页
   /// 照常可用；提交身份沿用远端的 uid，服务端重复下发时不会在本机叠加第二次。
   ///
+  /// [originDevice] 与 [authoredAt] 是服务端带来的设备标识与作者创建时间，原样
+  /// 记进本机提交行；两者都是可选参数，调用方没有时按本机提交处理，`authored_at`
+  /// 取落库时间、`origin_device` 留空（方案 3.12）。取值的接线由后续同步任务做，
+  /// 这一层只留接口。
+  ///
   /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
   /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），
   /// 提交的 `conflict_count` 也随之更新；被远端取代的本机格子同样在这个事务里
@@ -197,6 +220,8 @@ class RevisionService {
     required String action,
     required String actor,
     required List<RevisionChange> changes,
+    String? originDevice,
+    DateTime? authoredAt,
   }) async {
     final existing = await engine.commitByUid(db.raw, uid);
     if (existing != null) {
@@ -224,6 +249,8 @@ class RevisionService {
           changedTables: changed,
           kind: RevisionKind.remote,
           conflicts: applied.conflicts,
+          originDevice: originDevice,
+          authoredAt: authoredAt,
         );
       });
       if (changed.isNotEmpty) {
@@ -389,7 +416,8 @@ class RevisionService {
         await cache.rebuild(raw(), assets);
         await cache.clearPendingRebuild();
       } catch (error, stack) {
-        cacheWarning = '已撤销，但图片缓存没有重建完成，下次打开应用会再试。';
+        // 撤销与重做共用这一条：动作名取自数据层的结果，缓存失败时不说反。
+        cacheWarning = '${result.message}，但图片缓存没有重建完成，下次打开应用会再试。';
         onCacheFailure?.call(error, stack);
       }
       await onDataChanged?.call();
@@ -479,6 +507,21 @@ class RevisionService {
   }
 
   Future<List<String>> verifyAssets() => engine.verifyAssets(db.raw);
+
+  /// 当前数据的摘要，按当前业务表整库重算（方案 3.5）。
+  ///
+  /// 同步摘要交换与完整性检查从这里取；它与 `HEAD` 记录的 `state_digest` 相等
+  /// 表示当前数据就是从提交历史来的。
+  Future<String> currentStateDigest() => engine.currentStateDigest(db.raw);
+
+  /// 哈希链的锚点：最早保留提交记录的父哈希；空库返回哈希链初值（方案 3.10）。
+  Future<String> chainAnchor() => engine.chainAnchor(db.raw);
+
+  /// 数据完整性检查：保留历史的哈希链与当前摘要（方案 3.10）。
+  ///
+  /// 只读，不改数据；“检查数据完整性”入口与导出前检查由后续任务接在这里。
+  Future<RevisionIntegrityReport> verifyIntegrity() =>
+      engine.verifyIntegrity(db.raw);
 
   Future<int> databaseBytes() => engine.databaseBytes(db.raw);
 }

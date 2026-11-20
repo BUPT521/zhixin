@@ -477,6 +477,86 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  /// 摘要不一致时“以云端为准修复”：按云端提交序列重新对齐这台设备。
+  ///
+  /// 确认之后才执行；失败说明哪一步没有完成，本机记录不清空，已同步的部分保留
+  /// （同步方案 3.5：3.7 客户端落地前先按差异重放云端状态，再补传本机独有的行）。
+  Future<void> _repairFromCloud() async {
+    if (_busy) return;
+    final confirmed = await confirmRepairFromCloud(context);
+    if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
+    final scope = AppScope.of(context);
+    try {
+      final result = await scope.accountServices.sync.repairFromCloud();
+      _report(
+        result.changed
+            ? '已按云端修复：拉取 ${result.pulledCommits} 条、补传 '
+                  '${result.pushedCommits} 条提交，本机与云端重新对齐'
+            : '已按云端修复：本机与云端已经一致',
+      );
+      await _load();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '以云端为准修复',
+          kind: 'account_sync_repair_cloud',
+          kept: '本机记录没有删除，已经同步的部分保留',
+          next: '可以检查网络后再试',
+        ),
+        failed: true,
+      );
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 摘要不一致时“以本机为准修复”：把云端缺少的本机记录作为基线补传。
+  ///
+  /// 先拉取云端的新提交，再按 3.6 的方式补传本机独有的行；确认之后才执行。
+  /// 一行都没补传时说明差异只来自云端多出来的内容，界面照实说明，标记不强行
+  /// 清掉（同步方案 3.5）。
+  Future<void> _repairFromLocal() async {
+    if (_busy) return;
+    final confirmed = await confirmRepairFromLocal(context);
+    if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
+    final scope = AppScope.of(context);
+    try {
+      final result = await scope.accountServices.sync.repairFromLocal();
+      _report(
+        result.pushedCommits > 0
+            ? '已按本机修复：补传 ${result.pushedCommits} 条提交、'
+                  '${result.uploadedAssets} 个附件，云端缺少的本机记录已经上传'
+            : '没有找到云端缺少的本机记录；云端多出来的内容没有改动，'
+                  '需要时可以改用“以云端为准修复”',
+      );
+      await _load();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '以本机为准修复',
+          kind: 'account_sync_repair_local',
+          kept: '本机记录没有改动，已经同步的部分保留',
+          next: '可以检查网络后再试',
+        ),
+        failed: true,
+      );
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _logout() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -985,8 +1065,12 @@ class _AccountPageState extends State<AccountPage> {
         action: StatusTag(
           sync?.syncing == true
               ? '同步中'
+              : sync?.digestMismatch == true
+              ? '待修复'
               : (sync?.lastError == null ? '空闲' : '上次失败'),
-          tone: sync?.lastError == null ? TagTone.muted : TagTone.attention,
+          tone: sync?.lastError == null && sync?.digestMismatch != true
+              ? TagTone.muted
+              : TagTone.attention,
         ),
       ),
       forui.FCard(
@@ -996,6 +1080,46 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_syncSummary(sync), style: theme.text.bodyMedium),
+              if (sync?.digestMismatch == true) ...[
+                SizedBox(height: theme.space.sm),
+                Text(
+                  '本机与云端不一致',
+                  style: theme.text.bodyMedium.copyWith(
+                    color: theme.colors.error,
+                  ),
+                ),
+                SizedBox(height: theme.space.xs),
+                Text(
+                  '上次同步比较整库摘要时发现两边内容不同。可以选一边为准修复：'
+                  '以云端为准会按云端重新对齐这台设备，以本机为准会把云端缺少的'
+                  '本机记录补传上去。修复只改记录，不影响登录状态与其他设备的账号。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+                SizedBox(height: theme.space.sm),
+                Wrap(
+                  spacing: theme.space.sm,
+                  runSpacing: theme.space.sm,
+                  children: [
+                    forui.FButton(
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy || sync?.syncing == true
+                          ? null
+                          : _repairFromCloud,
+                      child: const Text('以云端为准修复'),
+                    ),
+                    forui.FButton(
+                      variant: forui.FButtonVariant.outline,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy || sync?.syncing == true
+                          ? null
+                          : _repairFromLocal,
+                      child: const Text('以本机为准修复'),
+                    ),
+                  ],
+                ),
+              ],
               if (sync?.restoreNeedsConfirmation == true) ...[
                 SizedBox(height: theme.space.xs),
                 Text(

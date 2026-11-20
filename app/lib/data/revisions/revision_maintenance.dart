@@ -275,6 +275,17 @@ mixin RevisionMaintenanceMixin {
         'revision_commit',
         {
           'parent_id': null,
+          // 清理之后这条提交是本机的唯一基线：哈希链接回初值，摘要按当前投影
+          // 整库重算，哈希按 baseline 与空变更明细重算，来源设备清空、作者时间
+          // 取这条提交自己的创建时间（方案 3.5、3.10、3.12）。
+          'parent_hash': revisionChainGenesis,
+          'state_digest': revisionStateDigest(projection),
+          'hash': revisionCommitHash(
+            parentHash: revisionChainGenesis,
+            uid: commit.uid,
+            kind: RevisionKind.baseline,
+            changes: const [],
+          ),
           'generation': commit.generation + 1,
           'kind': RevisionKind.baseline.value,
           'action': '清理后保留',
@@ -283,6 +294,10 @@ mixin RevisionMaintenanceMixin {
           'change_count': 0,
           'byte_length': 0,
           'conflict_count': 0,
+          'origin_device': null,
+          'authored_at': commit.createdAt == null
+              ? now
+              : formatDateTime(commit.createdAt!),
         },
         where: 'id = ?',
         whereArgs: [head],
@@ -568,6 +583,10 @@ mixin RevisionMaintenanceMixin {
         );
       }
       // 被删掉的中间提交不再作为父提交；保留下来的提交父指针置空。
+      //
+      // `parent_hash` 保持不动：最早保留提交记录的父哈希就是哈希链的锚点，
+      // 它指向的父提交已经被这次裁剪删掉，更早的历史因此不再可校验
+      // （方案 3.10）。
       await updateRow(
         txn,
         'revision_commit',

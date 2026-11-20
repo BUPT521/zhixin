@@ -6,6 +6,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
@@ -319,6 +320,106 @@ void main() {
     expect(find.textContaining('超出预算时从最早的开始删'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await settle(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('撤销提交提供重做：确认写清会发生什么，重做后原提交重新可撤销', (tester) async {
+    final appScope = (await openPage(tester)).scope;
+    await tester.runAsync(
+      () => insertRow(appScope.testing.db, 'memory', {
+        'id': 'memory-1',
+        'kind': 'preference',
+        'content': '原来记下的内容',
+        'source_kind': 'user',
+        'status': 'active',
+        'created_at': '2026-11-10 09:00:00',
+        'updated_at': '2026-11-10 09:00:00',
+      }),
+    );
+    await tester.runAsync(
+      () => updateRow(
+        appScope.testing.db,
+        'memory',
+        {'content': '改过的内容'},
+        where: 'id = ?',
+        whereArgs: ['memory-1'],
+      ),
+    );
+    final history = await tester.runAsync(
+      () => appScope.data.revisions.history(),
+    );
+    final edit = history!.head;
+    final undone = await tester.runAsync(
+      () => appScope.data.undo.undoCommit(edit),
+    );
+    expect(undone!.applied, isTrue, reason: undone.message);
+    await settle(tester);
+
+    // 撤销提交是 HEAD：标签说“撤销”，菜单给的是“重做”，不再按普通撤销处理。
+    await tester.scrollUntilVisible(
+      find.text('撤销（HEAD）'),
+      300,
+      scrollable: pageScrollable(),
+    );
+    await settle(tester);
+    expect(find.text('撤销（HEAD）'), findsOneWidget);
+    final undoCommitTile = find.ancestor(
+      of: find.text('撤销（HEAD）'),
+      matching: find.byType(forui.FTile),
+    );
+    await tester.tap(
+      find.descendant(
+        of: undoCommitTile,
+        matching: find.byIcon(FLucideIcons.ellipsis),
+      ),
+    );
+    await settle(tester);
+    expect(find.text('重做这次撤销'), findsOneWidget);
+    expect(find.text('撤销这次操作'), findsNothing);
+
+    // 确认框说清会写回被撤销的内容，消息里的回执不恢复。
+    await tester.tap(find.text('重做这次撤销'));
+    await settle(tester);
+    expect(find.text('重做这次撤销'), findsOneWidget);
+    expect(find.textContaining('会把这条撤销去掉的内容按原来的样子重新写入'), findsOneWidget);
+    expect(find.textContaining('消息里的回执不会恢复'), findsOneWidget);
+    await tester.tap(find.text('重做'));
+    await settle(tester);
+
+    expect(find.text('已重做这次撤销'), findsOneWidget);
+    final content = await tester.runAsync(
+      () => appScope.testing.db.rawQuery(
+        'SELECT content FROM memory WHERE id = ?',
+        ['memory-1'],
+      ),
+    );
+    expect(content!.single['content'], '改过的内容');
+    // 重做提交按层数显示“重做”，原来那次写入重新可以撤销。
+    expect(find.text('重做（HEAD）'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('写入').first,
+      300,
+      scrollable: pageScrollable(),
+    );
+    await settle(tester);
+    final writeTile = find.ancestor(
+      of: find.text('写入').first,
+      matching: find.byType(forui.FTile),
+    );
+    await tester.tap(
+      find.descendant(
+        of: writeTile,
+        matching: find.byIcon(FLucideIcons.ellipsis),
+      ),
+    );
+    await settle(tester);
+    final undoItems = tester.widgetList<forui.FTile>(
+      find.ancestor(
+        of: find.text('撤销这次操作'),
+        matching: find.byType(forui.FTile),
+      ),
+    );
+    expect(undoItems.any((item) => item.enabled ?? true), isTrue);
     expect(tester.takeException(), isNull);
   });
 }

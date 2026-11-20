@@ -5,17 +5,21 @@ import 'package:zhixin/ui/cloud_sync_prompts.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/zhixin_dialog.dart';
 
-/// 首次基线上传、恢复自动同步与整库恢复之后的重新对齐三个确认框：确认返回
-/// true，取消返回 false。
+/// 首次基线上传、恢复自动同步、整库恢复之后的重新对齐与两个摘要修复入口的
+/// 确认框：确认返回 true，取消返回 false。
 void main() {
   bool? baselineResult;
   bool? autoSyncResult;
   bool? restoreResult;
+  bool? repairCloudResult;
+  bool? repairLocalResult;
 
   setUp(() {
     baselineResult = null;
     autoSyncResult = null;
     restoreResult = null;
+    repairCloudResult = null;
+    repairLocalResult = null;
   });
 
   Widget app() => forui.FTheme(
@@ -48,6 +52,18 @@ void main() {
                 restoreResult = await confirmRestoreAlignment(context);
               },
               child: const Text('恢复后同步'),
+            ),
+            TextButton(
+              onPressed: () async {
+                repairCloudResult = await confirmRepairFromCloud(context);
+              },
+              child: const Text('以云端为准修复'),
+            ),
+            TextButton(
+              onPressed: () async {
+                repairLocalResult = await confirmRepairFromLocal(context);
+              },
+              child: const Text('以本机为准修复'),
             ),
           ],
         ),
@@ -111,5 +127,27 @@ void main() {
     await tester.tap(find.widgetWithText(forui.FButton, '取消'));
     await tester.pumpAndSettle();
     expect(restoreResult, isFalse);
+  });
+
+  testWidgets('以云端为准修复确认说明会重新拉取云端内容', (tester) async {
+    await open(tester, '以云端为准修复');
+    expect(find.byType(ZhixinDialogLayout), findsOneWidget);
+    expect(find.text('以云端为准修复会重做这台设备的同步'), findsOneWidget);
+    expect(find.textContaining('重新从云端拉取全部提交'), findsOneWidget);
+    expect(find.textContaining('云端已有的记录不会删除'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '以云端为准修复'));
+    await tester.pumpAndSettle();
+    expect(repairCloudResult, isTrue);
+  });
+
+  testWidgets('以本机为准修复确认说明只补传云端缺少的记录', (tester) async {
+    await open(tester, '以本机为准修复');
+    expect(find.text('以本机为准修复会补传云端缺少的记录'), findsOneWidget);
+    expect(find.textContaining('云端已有的记录不会删除'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(repairLocalResult, isFalse);
   });
 }
