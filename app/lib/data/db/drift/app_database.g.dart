@@ -9291,6 +9291,15 @@ class $RevisionCommitsTable extends RevisionCommits
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _uidMeta = const VerificationMeta('uid');
+  @override
+  late final GeneratedColumn<String> uid = GeneratedColumn<String>(
+    'uid',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _actionMeta = const VerificationMeta('action');
   @override
   late final GeneratedColumn<String> action = GeneratedColumn<String>(
@@ -9389,6 +9398,7 @@ class $RevisionCommitsTable extends RevisionCommits
     generation,
     actor,
     kind,
+    uid,
     action,
     requestId,
     restoredCommitId,
@@ -9442,6 +9452,14 @@ class $RevisionCommitsTable extends RevisionCommits
       );
     } else if (isInserting) {
       context.missing(_kindMeta);
+    }
+    if (data.containsKey('uid')) {
+      context.handle(
+        _uidMeta,
+        uid.isAcceptableOrUnknown(data['uid']!, _uidMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_uidMeta);
     }
     if (data.containsKey('action')) {
       context.handle(
@@ -9536,6 +9554,10 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.string,
         data['${effectivePrefix}kind'],
       )!,
+      uid: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}uid'],
+      )!,
       action: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}action'],
@@ -9588,8 +9610,17 @@ class RevisionCommitRow extends DataClass
   /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
   final String kind;
 
+  /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
+  ///
+  /// 本机提交在 [_appendCommit] 里生成 UUIDv7，远端提交沿用远端的 uid；不按提交
+  /// 编号或请求编号派生，因为编号会在整库恢复旧备份后重复（ADR-0040）。
+  final String uid;
+
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   final String action;
+
+  /// 同一次用户动作的重试编号：只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
+  /// 的重试去重，不再是提交身份。
   final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
@@ -9607,6 +9638,7 @@ class RevisionCommitRow extends DataClass
     required this.generation,
     required this.actor,
     required this.kind,
+    required this.uid,
     required this.action,
     this.requestId,
     this.restoredCommitId,
@@ -9626,6 +9658,7 @@ class RevisionCommitRow extends DataClass
     map['generation'] = Variable<int>(generation);
     map['actor'] = Variable<String>(actor);
     map['kind'] = Variable<String>(kind);
+    map['uid'] = Variable<String>(uid);
     map['action'] = Variable<String>(action);
     if (!nullToAbsent || requestId != null) {
       map['request_id'] = Variable<String>(requestId);
@@ -9652,6 +9685,7 @@ class RevisionCommitRow extends DataClass
       generation: Value(generation),
       actor: Value(actor),
       kind: Value(kind),
+      uid: Value(uid),
       action: Value(action),
       requestId: requestId == null && nullToAbsent
           ? const Value.absent()
@@ -9680,6 +9714,7 @@ class RevisionCommitRow extends DataClass
       generation: serializer.fromJson<int>(json['generation']),
       actor: serializer.fromJson<String>(json['actor']),
       kind: serializer.fromJson<String>(json['kind']),
+      uid: serializer.fromJson<String>(json['uid']),
       action: serializer.fromJson<String>(json['action']),
       requestId: serializer.fromJson<String?>(json['requestId']),
       restoredCommitId: serializer.fromJson<int?>(json['restoredCommitId']),
@@ -9699,6 +9734,7 @@ class RevisionCommitRow extends DataClass
       'generation': serializer.toJson<int>(generation),
       'actor': serializer.toJson<String>(actor),
       'kind': serializer.toJson<String>(kind),
+      'uid': serializer.toJson<String>(uid),
       'action': serializer.toJson<String>(action),
       'requestId': serializer.toJson<String?>(requestId),
       'restoredCommitId': serializer.toJson<int?>(restoredCommitId),
@@ -9716,6 +9752,7 @@ class RevisionCommitRow extends DataClass
     int? generation,
     String? actor,
     String? kind,
+    String? uid,
     String? action,
     Value<String?> requestId = const Value.absent(),
     Value<int?> restoredCommitId = const Value.absent(),
@@ -9730,6 +9767,7 @@ class RevisionCommitRow extends DataClass
     generation: generation ?? this.generation,
     actor: actor ?? this.actor,
     kind: kind ?? this.kind,
+    uid: uid ?? this.uid,
     action: action ?? this.action,
     requestId: requestId.present ? requestId.value : this.requestId,
     restoredCommitId: restoredCommitId.present
@@ -9752,6 +9790,7 @@ class RevisionCommitRow extends DataClass
           : this.generation,
       actor: data.actor.present ? data.actor.value : this.actor,
       kind: data.kind.present ? data.kind.value : this.kind,
+      uid: data.uid.present ? data.uid.value : this.uid,
       action: data.action.present ? data.action.value : this.action,
       requestId: data.requestId.present ? data.requestId.value : this.requestId,
       restoredCommitId: data.restoredCommitId.present
@@ -9781,6 +9820,7 @@ class RevisionCommitRow extends DataClass
           ..write('generation: $generation, ')
           ..write('actor: $actor, ')
           ..write('kind: $kind, ')
+          ..write('uid: $uid, ')
           ..write('action: $action, ')
           ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
@@ -9800,6 +9840,7 @@ class RevisionCommitRow extends DataClass
     generation,
     actor,
     kind,
+    uid,
     action,
     requestId,
     restoredCommitId,
@@ -9818,6 +9859,7 @@ class RevisionCommitRow extends DataClass
           other.generation == this.generation &&
           other.actor == this.actor &&
           other.kind == this.kind &&
+          other.uid == this.uid &&
           other.action == this.action &&
           other.requestId == this.requestId &&
           other.restoredCommitId == this.restoredCommitId &&
@@ -9834,6 +9876,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   final Value<int> generation;
   final Value<String> actor;
   final Value<String> kind;
+  final Value<String> uid;
   final Value<String> action;
   final Value<String?> requestId;
   final Value<int?> restoredCommitId;
@@ -9848,6 +9891,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     this.generation = const Value.absent(),
     this.actor = const Value.absent(),
     this.kind = const Value.absent(),
+    this.uid = const Value.absent(),
     this.action = const Value.absent(),
     this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
@@ -9863,6 +9907,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     required int generation,
     required String actor,
     required String kind,
+    required String uid,
     required String action,
     this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
@@ -9874,6 +9919,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   }) : generation = Value(generation),
        actor = Value(actor),
        kind = Value(kind),
+       uid = Value(uid),
        action = Value(action),
        createdAt = Value(createdAt);
   static Insertable<RevisionCommitRow> custom({
@@ -9882,6 +9928,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     Expression<int>? generation,
     Expression<String>? actor,
     Expression<String>? kind,
+    Expression<String>? uid,
     Expression<String>? action,
     Expression<String>? requestId,
     Expression<int>? restoredCommitId,
@@ -9897,6 +9944,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
       if (generation != null) 'generation': generation,
       if (actor != null) 'actor': actor,
       if (kind != null) 'kind': kind,
+      if (uid != null) 'uid': uid,
       if (action != null) 'action': action,
       if (requestId != null) 'request_id': requestId,
       if (restoredCommitId != null) 'restored_commit_id': restoredCommitId,
@@ -9914,6 +9962,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     Value<int>? generation,
     Value<String>? actor,
     Value<String>? kind,
+    Value<String>? uid,
     Value<String>? action,
     Value<String?>? requestId,
     Value<int?>? restoredCommitId,
@@ -9929,6 +9978,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
       generation: generation ?? this.generation,
       actor: actor ?? this.actor,
       kind: kind ?? this.kind,
+      uid: uid ?? this.uid,
       action: action ?? this.action,
       requestId: requestId ?? this.requestId,
       restoredCommitId: restoredCommitId ?? this.restoredCommitId,
@@ -9957,6 +10007,9 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
+    }
+    if (uid.present) {
+      map['uid'] = Variable<String>(uid.value);
     }
     if (action.present) {
       map['action'] = Variable<String>(action.value);
@@ -9993,6 +10046,7 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
           ..write('generation: $generation, ')
           ..write('actor: $actor, ')
           ..write('kind: $kind, ')
+          ..write('uid: $uid, ')
           ..write('action: $action, ')
           ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
@@ -11963,6 +12017,15 @@ class $RevisionCursorsTable extends RevisionCursors
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _scopeMeta = const VerificationMeta('scope');
+  @override
+  late final GeneratedColumn<String> scope = GeneratedColumn<String>(
+    'scope',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -11975,7 +12038,13 @@ class $RevisionCursorsTable extends RevisionCursors
     requiredDuringInsert: true,
   );
   @override
-  List<GeneratedColumn> get $columns => [name, position, blocking, updatedAt];
+  List<GeneratedColumn> get $columns => [
+    name,
+    position,
+    blocking,
+    scope,
+    updatedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -12010,6 +12079,12 @@ class $RevisionCursorsTable extends RevisionCursors
         blocking.isAcceptableOrUnknown(data['blocking']!, _blockingMeta),
       );
     }
+    if (data.containsKey('scope')) {
+      context.handle(
+        _scopeMeta,
+        scope.isAcceptableOrUnknown(data['scope']!, _scopeMeta),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -12039,6 +12114,10 @@ class $RevisionCursorsTable extends RevisionCursors
         DriftSqlType.bool,
         data['${effectivePrefix}blocking'],
       )!,
+      scope: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}scope'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}updated_at'],
@@ -12057,11 +12136,17 @@ class RevisionCursorRow extends DataClass
   final String name;
   final int position;
   final bool blocking;
+
+  /// 这个读取位置属于哪个同步身份：只有同步的两个位置写“账号编号 + 实例来源”
+  /// 的哈希，检索索引等读者为空。退出登录之后位置保留但不阻塞，重新登录同一
+  /// scope 时据此从原位置继续增量同步，而不是按首次基线整份重传（同步方案 3.3）。
+  final String? scope;
   final String updatedAt;
   const RevisionCursorRow({
     required this.name,
     required this.position,
     required this.blocking,
+    this.scope,
     required this.updatedAt,
   });
   @override
@@ -12070,6 +12155,9 @@ class RevisionCursorRow extends DataClass
     map['name'] = Variable<String>(name);
     map['position'] = Variable<int>(position);
     map['blocking'] = Variable<bool>(blocking);
+    if (!nullToAbsent || scope != null) {
+      map['scope'] = Variable<String>(scope);
+    }
     map['updated_at'] = Variable<String>(updatedAt);
     return map;
   }
@@ -12079,6 +12167,9 @@ class RevisionCursorRow extends DataClass
       name: Value(name),
       position: Value(position),
       blocking: Value(blocking),
+      scope: scope == null && nullToAbsent
+          ? const Value.absent()
+          : Value(scope),
       updatedAt: Value(updatedAt),
     );
   }
@@ -12092,6 +12183,7 @@ class RevisionCursorRow extends DataClass
       name: serializer.fromJson<String>(json['name']),
       position: serializer.fromJson<int>(json['position']),
       blocking: serializer.fromJson<bool>(json['blocking']),
+      scope: serializer.fromJson<String?>(json['scope']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
   }
@@ -12102,6 +12194,7 @@ class RevisionCursorRow extends DataClass
       'name': serializer.toJson<String>(name),
       'position': serializer.toJson<int>(position),
       'blocking': serializer.toJson<bool>(blocking),
+      'scope': serializer.toJson<String?>(scope),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
   }
@@ -12110,11 +12203,13 @@ class RevisionCursorRow extends DataClass
     String? name,
     int? position,
     bool? blocking,
+    Value<String?> scope = const Value.absent(),
     String? updatedAt,
   }) => RevisionCursorRow(
     name: name ?? this.name,
     position: position ?? this.position,
     blocking: blocking ?? this.blocking,
+    scope: scope.present ? scope.value : this.scope,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   RevisionCursorRow copyWithCompanion(RevisionCursorsCompanion data) {
@@ -12122,6 +12217,7 @@ class RevisionCursorRow extends DataClass
       name: data.name.present ? data.name.value : this.name,
       position: data.position.present ? data.position.value : this.position,
       blocking: data.blocking.present ? data.blocking.value : this.blocking,
+      scope: data.scope.present ? data.scope.value : this.scope,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -12132,13 +12228,14 @@ class RevisionCursorRow extends DataClass
           ..write('name: $name, ')
           ..write('position: $position, ')
           ..write('blocking: $blocking, ')
+          ..write('scope: $scope, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(name, position, blocking, updatedAt);
+  int get hashCode => Object.hash(name, position, blocking, scope, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -12146,6 +12243,7 @@ class RevisionCursorRow extends DataClass
           other.name == this.name &&
           other.position == this.position &&
           other.blocking == this.blocking &&
+          other.scope == this.scope &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -12153,12 +12251,14 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
   final Value<String> name;
   final Value<int> position;
   final Value<bool> blocking;
+  final Value<String?> scope;
   final Value<String> updatedAt;
   final Value<int> rowid;
   const RevisionCursorsCompanion({
     this.name = const Value.absent(),
     this.position = const Value.absent(),
     this.blocking = const Value.absent(),
+    this.scope = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -12166,6 +12266,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     required String name,
     required int position,
     this.blocking = const Value.absent(),
+    this.scope = const Value.absent(),
     required String updatedAt,
     this.rowid = const Value.absent(),
   }) : name = Value(name),
@@ -12175,6 +12276,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     Expression<String>? name,
     Expression<int>? position,
     Expression<bool>? blocking,
+    Expression<String>? scope,
     Expression<String>? updatedAt,
     Expression<int>? rowid,
   }) {
@@ -12182,6 +12284,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
       if (name != null) 'name': name,
       if (position != null) 'position': position,
       if (blocking != null) 'blocking': blocking,
+      if (scope != null) 'scope': scope,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -12191,6 +12294,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     Value<String>? name,
     Value<int>? position,
     Value<bool>? blocking,
+    Value<String?>? scope,
     Value<String>? updatedAt,
     Value<int>? rowid,
   }) {
@@ -12198,6 +12302,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
       name: name ?? this.name,
       position: position ?? this.position,
       blocking: blocking ?? this.blocking,
+      scope: scope ?? this.scope,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -12215,6 +12320,9 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     if (blocking.present) {
       map['blocking'] = Variable<bool>(blocking.value);
     }
+    if (scope.present) {
+      map['scope'] = Variable<String>(scope.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
@@ -12230,6 +12338,7 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
           ..write('name: $name, ')
           ..write('position: $position, ')
           ..write('blocking: $blocking, ')
+          ..write('scope: $scope, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -13141,6 +13250,333 @@ class RevisionConflictsCompanion extends UpdateCompanion<RevisionConflictRow> {
   }
 }
 
+class $SyncShadowsTable extends SyncShadows
+    with TableInfo<$SyncShadowsTable, SyncShadowRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncShadowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _targetTableMeta = const VerificationMeta(
+    'targetTable',
+  );
+  @override
+  late final GeneratedColumn<String> targetTable = GeneratedColumn<String>(
+    'table_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rowKeyMeta = const VerificationMeta('rowKey');
+  @override
+  late final GeneratedColumn<String> rowKey = GeneratedColumn<String>(
+    'row_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _columnNameMeta = const VerificationMeta(
+    'columnName',
+  );
+  @override
+  late final GeneratedColumn<String> columnName = GeneratedColumn<String>(
+    'column_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _uptoCommitMeta = const VerificationMeta(
+    'uptoCommit',
+  );
+  @override
+  late final GeneratedColumn<int> uptoCommit = GeneratedColumn<int>(
+    'upto_commit',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    targetTable,
+    rowKey,
+    columnName,
+    uptoCommit,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_shadow';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SyncShadowRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('table_name')) {
+      context.handle(
+        _targetTableMeta,
+        targetTable.isAcceptableOrUnknown(
+          data['table_name']!,
+          _targetTableMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetTableMeta);
+    }
+    if (data.containsKey('row_key')) {
+      context.handle(
+        _rowKeyMeta,
+        rowKey.isAcceptableOrUnknown(data['row_key']!, _rowKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rowKeyMeta);
+    }
+    if (data.containsKey('column_name')) {
+      context.handle(
+        _columnNameMeta,
+        columnName.isAcceptableOrUnknown(data['column_name']!, _columnNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_columnNameMeta);
+    }
+    if (data.containsKey('upto_commit')) {
+      context.handle(
+        _uptoCommitMeta,
+        uptoCommit.isAcceptableOrUnknown(data['upto_commit']!, _uptoCommitMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_uptoCommitMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {targetTable, rowKey, columnName};
+  @override
+  SyncShadowRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncShadowRow(
+      targetTable: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}table_name'],
+      )!,
+      rowKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}row_key'],
+      )!,
+      columnName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}column_name'],
+      )!,
+      uptoCommit: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}upto_commit'],
+      )!,
+    );
+  }
+
+  @override
+  $SyncShadowsTable createAlias(String alias) {
+    return $SyncShadowsTable(attachedDatabase, alias);
+  }
+}
+
+class SyncShadowRow extends DataClass implements Insertable<SyncShadowRow> {
+  final String targetTable;
+  final String rowKey;
+  final String columnName;
+  final int uptoCommit;
+  const SyncShadowRow({
+    required this.targetTable,
+    required this.rowKey,
+    required this.columnName,
+    required this.uptoCommit,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['table_name'] = Variable<String>(targetTable);
+    map['row_key'] = Variable<String>(rowKey);
+    map['column_name'] = Variable<String>(columnName);
+    map['upto_commit'] = Variable<int>(uptoCommit);
+    return map;
+  }
+
+  SyncShadowsCompanion toCompanion(bool nullToAbsent) {
+    return SyncShadowsCompanion(
+      targetTable: Value(targetTable),
+      rowKey: Value(rowKey),
+      columnName: Value(columnName),
+      uptoCommit: Value(uptoCommit),
+    );
+  }
+
+  factory SyncShadowRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncShadowRow(
+      targetTable: serializer.fromJson<String>(json['targetTable']),
+      rowKey: serializer.fromJson<String>(json['rowKey']),
+      columnName: serializer.fromJson<String>(json['columnName']),
+      uptoCommit: serializer.fromJson<int>(json['uptoCommit']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'targetTable': serializer.toJson<String>(targetTable),
+      'rowKey': serializer.toJson<String>(rowKey),
+      'columnName': serializer.toJson<String>(columnName),
+      'uptoCommit': serializer.toJson<int>(uptoCommit),
+    };
+  }
+
+  SyncShadowRow copyWith({
+    String? targetTable,
+    String? rowKey,
+    String? columnName,
+    int? uptoCommit,
+  }) => SyncShadowRow(
+    targetTable: targetTable ?? this.targetTable,
+    rowKey: rowKey ?? this.rowKey,
+    columnName: columnName ?? this.columnName,
+    uptoCommit: uptoCommit ?? this.uptoCommit,
+  );
+  SyncShadowRow copyWithCompanion(SyncShadowsCompanion data) {
+    return SyncShadowRow(
+      targetTable: data.targetTable.present
+          ? data.targetTable.value
+          : this.targetTable,
+      rowKey: data.rowKey.present ? data.rowKey.value : this.rowKey,
+      columnName: data.columnName.present
+          ? data.columnName.value
+          : this.columnName,
+      uptoCommit: data.uptoCommit.present
+          ? data.uptoCommit.value
+          : this.uptoCommit,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncShadowRow(')
+          ..write('targetTable: $targetTable, ')
+          ..write('rowKey: $rowKey, ')
+          ..write('columnName: $columnName, ')
+          ..write('uptoCommit: $uptoCommit')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(targetTable, rowKey, columnName, uptoCommit);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncShadowRow &&
+          other.targetTable == this.targetTable &&
+          other.rowKey == this.rowKey &&
+          other.columnName == this.columnName &&
+          other.uptoCommit == this.uptoCommit);
+}
+
+class SyncShadowsCompanion extends UpdateCompanion<SyncShadowRow> {
+  final Value<String> targetTable;
+  final Value<String> rowKey;
+  final Value<String> columnName;
+  final Value<int> uptoCommit;
+  final Value<int> rowid;
+  const SyncShadowsCompanion({
+    this.targetTable = const Value.absent(),
+    this.rowKey = const Value.absent(),
+    this.columnName = const Value.absent(),
+    this.uptoCommit = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SyncShadowsCompanion.insert({
+    required String targetTable,
+    required String rowKey,
+    required String columnName,
+    required int uptoCommit,
+    this.rowid = const Value.absent(),
+  }) : targetTable = Value(targetTable),
+       rowKey = Value(rowKey),
+       columnName = Value(columnName),
+       uptoCommit = Value(uptoCommit);
+  static Insertable<SyncShadowRow> custom({
+    Expression<String>? targetTable,
+    Expression<String>? rowKey,
+    Expression<String>? columnName,
+    Expression<int>? uptoCommit,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (targetTable != null) 'table_name': targetTable,
+      if (rowKey != null) 'row_key': rowKey,
+      if (columnName != null) 'column_name': columnName,
+      if (uptoCommit != null) 'upto_commit': uptoCommit,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SyncShadowsCompanion copyWith({
+    Value<String>? targetTable,
+    Value<String>? rowKey,
+    Value<String>? columnName,
+    Value<int>? uptoCommit,
+    Value<int>? rowid,
+  }) {
+    return SyncShadowsCompanion(
+      targetTable: targetTable ?? this.targetTable,
+      rowKey: rowKey ?? this.rowKey,
+      columnName: columnName ?? this.columnName,
+      uptoCommit: uptoCommit ?? this.uptoCommit,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (targetTable.present) {
+      map['table_name'] = Variable<String>(targetTable.value);
+    }
+    if (rowKey.present) {
+      map['row_key'] = Variable<String>(rowKey.value);
+    }
+    if (columnName.present) {
+      map['column_name'] = Variable<String>(columnName.value);
+    }
+    if (uptoCommit.present) {
+      map['upto_commit'] = Variable<int>(uptoCommit.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncShadowsCompanion(')
+          ..write('targetTable: $targetTable, ')
+          ..write('rowKey: $rowKey, ')
+          ..write('columnName: $columnName, ')
+          ..write('uptoCommit: $uptoCommit, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   late final $TimetableEntriesTable timetableEntries = $TimetableEntriesTable(
@@ -13183,6 +13619,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $RevisionAssetRefsTable(this);
   late final $RevisionConflictsTable revisionConflicts =
       $RevisionConflictsTable(this);
+  late final $SyncShadowsTable syncShadows = $SyncShadowsTable(this);
   late final Index idxAssetChunkHash = Index(
     'idx_asset_chunk_hash',
     'CREATE INDEX idx_asset_chunk_hash ON asset_chunk (hash, seq)',
@@ -13274,6 +13711,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxRevisionRequest = Index(
     'idx_revision_request',
     'CREATE UNIQUE INDEX idx_revision_request ON revision_commit (request_id) WHERE request_id IS NOT NULL',
+  );
+  late final Index idxRevisionUid = Index(
+    'idx_revision_uid',
+    'CREATE UNIQUE INDEX idx_revision_uid ON revision_commit (uid)',
   );
   late final Index idxRevisionCommitParent = Index(
     'idx_revision_commit_parent',
@@ -15961,6 +16402,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     revisionCursors,
     revisionAssetRefs,
     revisionConflicts,
+    syncShadows,
     idxAssetChunkHash,
     idxMaterialGoal,
     idxMaterialPageMaterial,
@@ -15984,6 +16426,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxMemoryStatus,
     idxMemoryValid,
     idxRevisionRequest,
+    idxRevisionUid,
     idxRevisionCommitParent,
     idxRevisionChangeTarget,
     idxRevisionChangeCommit,

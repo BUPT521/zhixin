@@ -763,6 +763,10 @@ class AppScopeState extends State<AppScope> {
       preferences: _cloudPreferences,
       deviceName: '知新 ${appVersion.split('+').first}',
       clientFactory: widget.serverClientFactory,
+      // 退出登录、删除账号、清除云端与重设密码之后，让同步服务把库里的推送
+      // 位置改成不阻塞；位置与 scope 保留，重新登录同一账号时从原位置继续。
+      onSyncStateCleared: () =>
+          _cloudSync?.releaseSyncCursor() ?? Future<void>.value(),
     );
     // 先把服务实例来源读进内存：页面构建与预读会在假异步区里取会话，那里等不到
     // 文件 I/O，来源缓存让这些读取不再落盘。

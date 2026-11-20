@@ -22,11 +22,15 @@ void main() {
   late int dataChanges;
   late int itemSeq;
 
+  /// 当前时刻：数据版本的两分钟重试窗口按它判断，用例需要跨窗口时直接改。
+  late DateTime now;
+
   setUp(() async {
     dataChanges = 0;
     itemSeq = 0;
+    now = DateTime(2026, 11, 10, 10);
     rig = await openTestRigWithUndoRules(
-      clock: () => DateTime(2026, 11, 10, 10),
+      clock: () => now,
       onDataChanged: () async {
         dataChanges++;
       },
@@ -37,9 +41,7 @@ void main() {
       tasks: tasks,
       schedule: schedule,
       revisions: rig.revisions,
-      runtime: testRuntime(
-        policy: () => TimePolicy(clock: () => DateTime(2026, 11, 10, 10)),
-      ),
+      runtime: testRuntime(policy: () => TimePolicy(clock: () => now)),
       studyPlans: StudyPlanRepository(rig.db),
       transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
@@ -191,8 +193,11 @@ void main() {
       '数据结构',
     );
 
-    // 再次删除后，有一项待开始预约落在这一节课上，撤销删除应被拒绝。
+    // 撤销不释放删除动作的请求编号；用户过一会儿再删一次时已经超出两分钟
+    // 重试窗口，同编号按新动作执行（ADR-0040）。
+    now = DateTime(2026, 11, 10, 10, 3);
     final again = (await plan.deleteTimetable(timetableId)).commitId!;
+    // 再次删除后，有一项待开始预约落在这一节课上，撤销删除应被拒绝。
     final itemId = await item('与课冲突的复习');
     await schedule.addBlock(
       planItemId: itemId,

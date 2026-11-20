@@ -37,3 +37,20 @@ Future<bool> confirmEnableAutoSync(
     confirmLabel: '开启',
   );
 }
+
+/// 整库恢复之后的重新对齐：说明云端会改成恢复后的内容。
+///
+/// 返回 true 表示用户同意把恢复后的内容同步到云端；取消或关闭都返回 false，
+/// 调用方据此不同步，恢复后的内容仍留在本机，下一次点“立即同步”会再问。
+Future<bool> confirmRestoreAlignment(BuildContext context) {
+  return confirmZhixin(
+    context: context,
+    title: '同步会把云端改成恢复后的内容',
+    content: Text(
+      '本机刚刚恢复过一份旧备份。继续之后会把恢复后的内容同步到这个账号的云端，'
+      '恢复之前推送的多余记录会从云端删除，其他登录这个账号的设备也会看到恢复后的内容。'
+      '取消则不同步，恢复后的内容仍留在本机。',
+    ),
+    confirmLabel: '同步并覆盖云端',
+  );
+}

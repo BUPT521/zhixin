@@ -12,7 +12,7 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
-  test('新库是 v27，15 张业务表与版本元数据就位', () async {
+  test('新库是 v29，15 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
     addTearDown(db.close);
 

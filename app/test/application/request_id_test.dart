@@ -288,6 +288,74 @@ void main() {
     expect(later.commitId, isNot(scheduled.commitId));
   });
 
+  test('同参数的暂停、恢复、再暂停在两分钟内都生效', () async {
+    final now = DateTime(2026, 11, 12, 9);
+    final rig = await openTestRigWithUndoRules(clock: () => now);
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final service = _planService(rig, TimePolicy(clock: () => now));
+
+    await service.addGoal(title: '来回切换');
+    final goalId = (await tasks.goals()).single.id;
+
+    expect((await service.pauseGoal(goalId)).changed, isTrue);
+    expect((await tasks.goals()).single.status, LearningGoalStatus.paused);
+    expect((await service.resumeGoal(goalId)).changed, isTrue);
+    expect((await tasks.goals()).single.status, LearningGoalStatus.active);
+    final headBefore = await rig.engine.headId(rig.raw);
+    // 第三次暂停与第一次参数相同、命令编号也相同，但中间已经有过恢复提交，
+    // 旧暂停提交不再是 HEAD，所以这不是重试，必须照常写入（方案 3.1 验收）。
+    expect((await service.pauseGoal(goalId)).changed, isTrue);
+    expect((await tasks.goals()).single.status, LearningGoalStatus.paused);
+    expect(await rig.engine.headId(rig.raw), greaterThan(headBefore));
+  });
+
+  test('两分钟内的同参数紧邻调用只算一次重试', () async {
+    final now = DateTime(2026, 11, 12, 9);
+    final rig = await openTestRigWithUndoRules(clock: () => now);
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final service = _planService(rig, TimePolicy(clock: () => now));
+
+    await service.addGoal(title: '连续暂停');
+    final goalId = (await tasks.goals()).single.id;
+    final first = await service.pauseGoal(goalId);
+    expect(first.changed, isTrue);
+    final head = await rig.engine.headId(rig.raw);
+
+    // 双击或网络回调：旧提交仍是 HEAD，两分钟内同编号只算一次重试。
+    final retry = await service.pauseGoal(goalId);
+    expect(retry.commitId, first.commitId);
+    expect(await rig.engine.headId(rig.raw), head);
+    expect((await tasks.goals()).single.status, LearningGoalStatus.paused);
+  });
+
+  test('同一动作超过两分钟重试窗口后按新动作执行', () async {
+    var now = DateTime(2026, 11, 12, 9);
+    final rig = await openTestRigWithUndoRules(clock: () => now);
+    addTearDown(rig.close);
+    final tasks = TaskRepository(rig.db);
+    final service = _planService(rig, TimePolicy(clock: () => now));
+
+    final first = await service.addGoal(title: '过一会儿再做一次');
+    expect(first.changed, isTrue);
+    final head = await rig.engine.headId(rig.raw);
+
+    // 窗口内且旧提交仍是 HEAD：判为同一次动作的重试，不再执行写入。
+    final retry = await service.addGoal(title: '过一会儿再做一次');
+    expect(retry.commitId, first.commitId);
+    expect(await rig.engine.headId(rig.raw), head);
+    expect(await tasks.goals(), hasLength(1));
+
+    // 超过两分钟之后同参数是用户重新做的一次动作，照常形成新提交。
+    now = now.add(const Duration(minutes: 2, seconds: 1));
+    final again = await service.addGoal(title: '过一会儿再做一次');
+    expect(again.changed, isTrue);
+    expect(again.commitId, isNot(first.commitId));
+    expect(await rig.engine.headId(rig.raw), greaterThan(head));
+    expect(await tasks.goals(), hasLength(2));
+  });
+
   test('撤销之后同一个动作可以重新提交', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
@@ -302,6 +370,8 @@ void main() {
     expect(undone.applied, isTrue);
     expect(await tasks.goals(), isEmpty);
 
+    // 撤销不释放目标的请求编号；旧提交之后已经有撤销提交，同编号不是重试，
+    // 重做照常形成新提交，不需要推时钟（方案 3.1 验收）。
     final again = await service.addGoal(title: '暂停后重开');
     expect(again.changed, isTrue);
     expect(again.commitId, isNot(goal.commitId));

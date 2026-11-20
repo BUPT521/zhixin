@@ -213,7 +213,7 @@ class _AccountPageState extends State<AccountPage> {
       );
       _report(
         '${register ? '注册并登录' : '登录'}成功：${result.displayLabel.isEmpty ? identifier : result.displayLabel}；'
-        '云端备份与知新服务已经可用，首次同步会先确认是否把本机记录上传到这个账号',
+        '云端备份与知新服务已经可用，需要时点“立即同步”把本机记录同步到这个账号',
       );
       await _load();
     } on FormatException catch (error) {
@@ -402,7 +402,17 @@ class _AccountPageState extends State<AccountPage> {
     var confirmBaseline = false;
     try {
       final status = await scope.accountServices.sync.status();
-      if (status.baselineNeedsConfirmation) {
+      if (status.restoreNeedsConfirmation) {
+        if (!mounted) return;
+        final confirmed = await confirmRestoreAlignment(context);
+        if (!confirmed) {
+          if (!mounted) return;
+          _report('已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”');
+          await _load();
+          return;
+        }
+        confirmBaseline = true;
+      } else if (status.baselineNeedsConfirmation) {
         if (!mounted) return;
         final confirmed = await confirmBaselineUpload(
           context,
@@ -471,8 +481,12 @@ class _AccountPageState extends State<AccountPage> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).accountServices.account.logout();
-      _report('已退出登录；本机记录仍在，云端数据保留');
+      final scope = AppScope.of(context);
+      await scope.accountServices.account.logout();
+      // 退出之后同步位置不再继续推进，不能一直挡住“清理历史”；位置与账号
+      // 归属保留，重新登录同一账号时仍从原位置继续增量同步（同步方案 3.3）。
+      await scope.accountServices.sync.clearState();
+      _report('已退出登录；本机记录仍在，云端数据保留，重新登录同一账号可以接着同步');
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -508,7 +522,9 @@ class _AccountPageState extends State<AccountPage> {
     final scope = AppScope.of(context);
     try {
       await scope.accountServices.account.clearCloudData(password: password);
-      await scope.accountServices.sync.clearState();
+      // 云端序列已经清空，旧位置不再有意义：连位置一起删掉，下次同步按首次
+      // 基线重新建立；留着位置会让“待确认”的状态与库里对不上。
+      await scope.accountServices.sync.clearState(forgetPosition: true);
       // 清除之后先停掉自动同步，再问用户要不要恢复；首次同步仍会先确认。
       await scope.accountServices.account.setAutoSync(false);
       if (!mounted) return;
@@ -521,7 +537,7 @@ class _AccountPageState extends State<AccountPage> {
         await scope.accountServices.sync.schedule(
           delay: const Duration(seconds: 1),
         );
-        _report('云端数据已清除；自动同步已恢复，首次同步会先确认是否上传本机记录');
+        _report('云端数据已清除；自动同步已恢复，下次同步会先确认是否上传本机记录');
       } else {
         _report('云端数据已清除；自动同步保持暂停，需要时在“自动同步”开关里重新开启');
       }
@@ -980,6 +996,16 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_syncSummary(sync), style: theme.text.bodyMedium),
+              if (sync?.restoreNeedsConfirmation == true) ...[
+                SizedBox(height: theme.space.xs),
+                Text(
+                  '恢复之后需要重新对齐：下一步同步会把云端改成恢复后的内容，'
+                  '点“立即同步”之后确认。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (sync?.baselineNeedsConfirmation == true) ...[
                 SizedBox(height: theme.space.xs),
                 Text(
@@ -1095,8 +1121,11 @@ class _AccountPageState extends State<AccountPage> {
     final last = sync.lastSyncedAt;
     final lastText = last == null ? '还没有同步过' : '上次同步 ${shortTime(last)}';
     final serverHead = sync.serverHead;
+    final pending = sync.restoreNeedsConfirmation
+        ? '恢复后待对齐'
+        : (sync.needsBootstrap ? '首次同步' : '${sync.pendingCommits} 条提交');
     return '$lastText · 本机 HEAD ${sync.localHead}'
         '${serverHead == null ? '' : ' · 服务端位置 $serverHead'}'
-        ' · 待同步 ${sync.needsBootstrap ? '首次基线' : '${sync.pendingCommits} 条提交'}';
+        ' · 待同步 $pending';
   }
 }

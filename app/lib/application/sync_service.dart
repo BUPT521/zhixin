@@ -14,6 +14,7 @@ import '../data/revisions/revision_cursor.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
+import '../data/revisions/revision_shadow.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
 import 'account_service.dart';
@@ -37,20 +38,38 @@ class SyncIdentityChanged implements Exception {
   String toString() => '账号或服务实例已经变化，这次同步没有完成';
 }
 
-/// 这个账号第一次同步：需要先把本机现有记录作为基线上传，必须由用户确认。
+/// 这个账号还没有同步过：首次同步要先由用户确认；整库恢复之后的第一轮同步
+/// 同样要确认，但云端会改成恢复后的内容。
 class BaselineConfirmationRequired implements Exception {
-  const BaselineConfirmationRequired(this.localCommits);
+  const BaselineConfirmationRequired(
+    this.localCommits, {
+    this.afterRestore = false,
+  });
 
   /// 本机当前 HEAD 对应的提交数，用来告诉用户会上传多少。
   final int localCommits;
 
-  String get message =>
-      '这个账号还没有同步过。首次同步会把本机现有的 $localCommits 条提交作为基线'
-      '完整上传到这个账号的云端，其他登录这个账号的设备也会看到这些记录。';
+  /// 整库恢复之后的第一轮同步：确认之后不是整份上传本机记录，而是把恢复这一步
+  /// 的差异推上去，云端会改成恢复后的内容（同步方案 3.4）。
+  final bool afterRestore;
+
+  String get message => afterRestore
+      ? '本机刚刚恢复过一份旧备份。继续之后会把恢复后的内容同步到云端，'
+            '恢复之前推送的多余记录会从云端删除，其他登录这个账号的设备也会看到恢复后的内容。'
+      : '这个账号还没有同步过。首次同步会把本机现有的 $localCommits 条提交作为基线'
+            '完整上传到这个账号的云端，其他登录这个账号的设备也会看到这些记录。';
 
   @override
   String toString() => message;
 }
+
+/// 同步位置归属的 scope：账号编号与实例来源的 SHA-256 前 32 位。
+///
+/// 库里的两个同步位置（推送与服务端）都写这个值。退出登录、删除账号与清除
+/// 云端只把位置改成不阻塞、位置与 scope 保留；重新登录同一 scope 时从原位置
+/// 继续增量同步，scope 不同才按新账号处理（同步方案 3.3）。
+String syncScopeFor(String userId, String origin) =>
+    sha256.convert(utf8.encode('$userId|$origin')).toString().substring(0, 32);
 
 /// 增量同步一屏读到的状态，设置页与账号页据此显示登录、待推送与上次同步。
 class SyncStatus {
@@ -64,6 +83,7 @@ class SyncStatus {
     required this.serverHead,
     required this.needsBootstrap,
     this.baselineNeedsConfirmation = false,
+    this.restoreNeedsConfirmation = false,
     this.lastSyncedAt,
     this.lastError,
   });
@@ -81,6 +101,10 @@ class SyncStatus {
 
   /// 首次基线上传还没得到用户确认；界面据此在同步前询问一次。
   final bool baselineNeedsConfirmation;
+
+  /// 整库恢复之后还没重新对齐：界面据此说明“云端会改成恢复后的内容”，
+  /// 并在同步前询问一次（同步方案 3.4）。
+  final bool restoreNeedsConfirmation;
   final DateTime? lastSyncedAt;
   final String? lastError;
 }
@@ -109,28 +133,25 @@ class SyncResult {
 /// 按提交序列与服务端同步：首次上传当前数据为基线，之后拉取远端提交、在本机
 /// 应用为新的提交，再推送本机新提交，并把提交里引用的附件按哈希补齐。
 ///
+/// 库里的两个同步位置带一个 `scope`（账号编号与实例来源的哈希）：退出登录、
+/// 删除账号与清除云端只把推送位置改成不阻塞、位置与 `scope` 保留，重新登录
+/// 同一 scope 时从原位置继续增量同步（同步方案 3.3）。
+///
+/// 整库恢复之后的第一轮同步不拉取：恢复前的库作为恢复点已经存在，恢复后的库
+/// 里补记了一条 `restore` 提交（差异含删除），用户确认“云端会改成恢复后的
+/// 内容”之后只把这条差异推上去，两个位置收敛到当前服务端位置与本机 `HEAD`
+/// （同步方案 3.4）。
+///
 /// 服务端只保存线性序列，不解析内容；冲突按“后到达的覆盖先到达的”处理，被覆盖
 /// 的值留在提交历史里（[server/README](../../../server/README.md) 的同步协议）。
 /// 同步只读写本机数据库与网络，不换库、不清空，界面通过数据层已有的表通知重读。
-/// 推送给服务端的请求标识。
 ///
-/// 服务端要求它非空且不超过 64 个字节；本地有些命令用 JSON 编码的请求标识做重复
-/// 提交判断（例如加记忆、更正材料页），既可能变长，也可能带中文，按 UTF-8 字节
-/// 算会超过上限，整批推送因此被拒绝。超长或为空时改用按提交编号生成的稳定标识，
-/// 同一提交重试时标识不变，服务端的去重照常生效。
-String syncRequestIdFor({
-  required String? stored,
-  required String deviceId,
-  required int commitId,
-}) {
-  final existing = stored?.trim() ?? '';
-  if (existing.isNotEmpty && utf8.encode(existing).length <= 64) {
-    return existing;
-  }
-  final prefix = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
-  return 'l-$prefix-$commitId';
-}
-
+/// 拉取之后推送相当于 git 的 `pull --rebase`，粒度是格子：被远端提交取代的本机
+/// 格子登记在库里的 `sync_shadow`，推送时去掉这些格子再推，剩余为空的提交不推
+/// 但位置照常前进（ADR-0040）。
+///
+/// 推送给服务端的 `request_id` 填提交的 uid：服务端仍按这个字段跳过已经收到过的
+/// 提交，但它现在标识一条提交，不再按命令参数生成，也不再复用（ADR-0040）。
 class SyncService {
   SyncService({
     required this.account,
@@ -169,19 +190,19 @@ class SyncService {
   Timer? _timer;
   String? _lastError;
 
-  /// 这次同步里被远端提交真正改过的格子（表、主键、列；整行变化记空列）。
-  ///
-  /// 推送时跳过改动落在这些格子上的本机提交：它们的值已经被拉下来的远端值
-  /// 覆盖，再推回服务端等于把旧值顶回去，另一台设备与本机就此分叉。这与 git
-  /// 先拉取再推送、推送的不是被合并掉的旧提交是同一个道理（ADR-0039）。
-  final Set<({String table, String rowKey, String? column})> _pulledOverwrites =
-      {};
   bool _disposed = false;
 
   /// 这次同步开始时的身份代次；切换账号或实例之后进行中的同步据此丢弃结果。
   int? _runEpoch;
 
+  /// 这次同步的同步位置 scope；两个位置写入时都带上它（同步方案 3.3）。
+  String? _activeScope;
+
   bool get syncing => _running != null;
+
+  /// 已被远端提交取代的本机格子：拉取时由版本引擎在应用远端提交的事务里登记，
+  /// 推送时按格去掉，作用相当于 git 的 `pull --rebase`（ADR-0040）。
+  RevisionShadows get _shadows => RevisionShadows(database.raw);
 
   /// 同步位置：推送读到哪里与服务端拉到哪个位置，都存在库里的
   /// `revision_cursor` 表，随整库恢复一起回去（ADR-0039）。
@@ -193,16 +214,39 @@ class SyncService {
       _cursors.position(RevisionCursor.syncServerHead);
 
   /// 记下服务端拉到哪个位置；这个读者不阻塞裁剪。
-  Future<void> _saveServerHead(int position) =>
-      _cursors.set(RevisionCursor.syncServerHead, position, blocking: false);
+  Future<void> _saveServerHead(int position) => _cursors.set(
+    RevisionCursor.syncServerHead,
+    position,
+    blocking: false,
+    scope: _activeScope,
+  );
 
   /// 记下本机已经推送到哪里；推送会丢数据，落后的位置阻止裁剪与清理历史。
-  Future<void> _savePushed(int position) =>
-      _cursors.set(RevisionCursor.syncPushed, position, blocking: true);
+  Future<void> _savePushed(int position) => _cursors.set(
+    RevisionCursor.syncPushed,
+    position,
+    blocking: true,
+    scope: _activeScope,
+  );
 
   /// 账号与实例是否还是这份同步状态对应的那一个；换过之后旧状态不能用。
   bool _sameIdentity(SyncState? state, String userId, String origin) =>
       state != null && state.userId == userId && state.serverOrigin == origin;
+
+  /// 库里的同步位置是不是属于当前身份。
+  ///
+  /// 位置带着 scope 时按它判断，重新登录同一账号仍然算同一个身份，从原位置
+  /// 继续增量同步（同步方案 3.3）；scope 是这次改动新加的，旧库里同一账号的
+  /// 位置没有 scope，这时以偏好文件里的同步状态为准。
+  bool _positionLinked(
+    RevisionCursor? pushed,
+    String scope,
+    SyncState? identityState,
+  ) {
+    if (pushed == null) return false;
+    final cursorScope = pushed.scope;
+    return cursorScope == null ? identityState != null : cursorScope == scope;
+  }
 
   /// 身份在同步途中变化时抛出 [SyncIdentityChanged]，不再写回旧账号的游标。
   void _ensureIdentity() {
@@ -229,12 +273,14 @@ class SyncService {
         lastError: _lastError,
       );
     }
+    final userId = snapshot.session!.userId;
     final origin = await account.serverOrigin();
-    final ownState = _sameIdentity(state, snapshot.session!.userId, origin)
-        ? state
-        : null;
-    if (ownState == null) {
-      // 还没有为这个账号建立同步状态：本机现有记录会整份作为首次基线上传。
+    final scope = syncScopeFor(userId, origin);
+    final identityState = _sameIdentity(state, userId, origin) ? state : null;
+    final pushed = await _cursors.read(RevisionCursor.syncPushed);
+    if (!_positionLinked(pushed, scope, identityState)) {
+      // 这个身份还没有库里的同步位置（或者位置属于别的账号与实例）：本机现有
+      // 记录会整份作为首次基线上传。
       return SyncStatus(
         signedIn: true,
         accountLabel: snapshot.displayLabel,
@@ -248,17 +294,19 @@ class SyncService {
         lastError: _lastError,
       );
     }
-    final pushed = await _pushedPosition();
+    final alignment = await _cursors.read(RevisionCursor.syncRestoreAlign);
     return SyncStatus(
       signedIn: true,
       accountLabel: snapshot.displayLabel,
       autoSync: snapshot.autoSync,
       syncing: syncing,
-      pendingCommits: (await revisions.commitsAfter(pushed)).length,
+      pendingCommits: (await revisions.commitsAfter(pushed?.position ?? 0))
+          .length,
       localHead: localHead,
       serverHead: await _serverHeadPosition(),
       needsBootstrap: false,
-      lastSyncedAt: ownState.syncedAt,
+      restoreNeedsConfirmation: alignment != null,
+      lastSyncedAt: identityState?.syncedAt,
       lastError: _lastError,
     );
   }
@@ -278,18 +326,24 @@ class SyncService {
   /// 写入、登录与应用启动之后延迟同步一次：连续写入只排一次，失败只留说明。
   ///
   /// 首次基线上传需要用户确认，没有确认之前不自动上传，也不反复重试；账号页
-  /// 的“立即同步”会先问一次。
+  /// 的“立即同步”会先问一次。整库恢复之后同样先不自动同步：下一轮同步要
+  /// 用户确认“云端会改成恢复后的内容”（同步方案 3.4）。
   Future<void> schedule({Duration delay = const Duration(seconds: 5)}) async {
     if (_disposed) return;
     final snapshot = await account.snapshot();
     if (!snapshot.signedIn || !snapshot.autoSync) return;
-    final state = await preferences.syncState();
     final origin = await account.serverOrigin();
-    final localHead = await engine.headId(database.raw);
-    final ownState = _sameIdentity(state, snapshot.session!.userId, origin)
+    final state = await preferences.syncState();
+    final identityState = _sameIdentity(state, snapshot.session!.userId, origin)
         ? state
         : null;
-    if (ownState == null && localHead > 0) return;
+    final scope = syncScopeFor(snapshot.session!.userId, origin);
+    final pushed = await _cursors.read(RevisionCursor.syncPushed);
+    if (!_positionLinked(pushed, scope, identityState) &&
+        await engine.headId(database.raw) > 0) {
+      return;
+    }
+    if (await _cursors.read(RevisionCursor.syncRestoreAlign) != null) return;
     _timer?.cancel();
     _timer = Timer(delay, () {
       _timer = null;
@@ -305,9 +359,37 @@ class SyncService {
 
   /// 退出登录、删除账号或清除云端数据之后清掉账号的同步状态。
   ///
-  /// 库里的同步位置不在这里删：下次同步按首次基线重新对齐时会连同两个位置
-  /// 一起重写，旧位置不会把新账号的提交当成已经推送过。
-  Future<void> clearState() => preferences.clearSyncState();
+  /// 库里的同步位置默认不删，只把推送位置改成不阻塞：退出之后“清理历史”立即
+  /// 可用，位置与 scope 留着，重新登录同一账号时从原位置继续增量同步，而不是
+  /// 按首次基线整份重传（同步方案 3.3）。
+  ///
+  /// [forgetPosition] 为真时连两个位置与恢复标记一起删掉（清除云端数据之后
+  /// 云端序列已经空了，旧位置不再有意义），下一次同步按首次基线重新建立。
+  Future<void> clearState({bool forgetPosition = false}) async {
+    await preferences.clearSyncState();
+    if (!forgetPosition) {
+      await releaseSyncCursor();
+      return;
+    }
+    try {
+      await _forgetSyncPosition();
+    } catch (error, stack) {
+      recordFailure(error, stack, kind: 'sync_cursor_forget');
+    }
+  }
+
+  /// 把库里的推送位置改成不阻塞，位置与 scope 保留。
+  ///
+  /// 账号服务在退出登录、删除账号、清除云端与重设密码之后调用；会丢数据的
+  /// 读者不再挡住清理历史，位置仍然可以继续用。库还没打开等情况下失败只记
+  /// 诊断，不影响账号操作本身。
+  Future<void> releaseSyncCursor() async {
+    try {
+      await _cursors.release(RevisionCursor.syncPushed);
+    } catch (error, stack) {
+      recordFailure(error, stack, kind: 'sync_cursor_release');
+    }
+  }
 
   void dispose() {
     _disposed = true;
@@ -317,7 +399,6 @@ class SyncService {
 
   Future<SyncResult> _sync({bool confirmBaseline = false}) async {
     _lastError = null;
-    _pulledOverwrites.clear();
     var pulled = 0;
     var pushed = 0;
     var uploaded = 0;
@@ -339,31 +420,67 @@ class SyncService {
         );
       }
       final userId = snapshot.session!.userId;
+      final scope = syncScopeFor(userId, origin);
+      _activeScope = scope;
       final localHead = await engine.headId(database.raw);
       var state = await preferences.syncState();
       if (state != null && !_sameIdentity(state, userId, origin)) {
-        // 换了账号或实例：旧状态与库里的同步位置都不再对应这个身份。
+        // 换了账号或实例：旧状态不再对应这个身份。
         await preferences.clearSyncState();
         state = null;
       }
-      var serverHead = state == null ? 0 : await _serverHeadPosition();
-      var pushedThrough = state == null ? 0 : await _pushedPosition();
-      if (state != null && remoteHead.head < serverHead) {
-        // 服务端序列被清空过，服务端位置回到 0，需要重新上传基线；位置在
-        // 首次同步收尾时随基线一起重写。
-        await preferences.clearSyncState();
-        state = null;
+      final pushedCursor = await _cursors.read(RevisionCursor.syncPushed);
+      // 位置属于当前身份才继续增量同步：退出登录只把位置改成不阻塞，scope 还在，
+      // 重新登录同一账号因此仍从原位置继续（同步方案 3.3）。
+      var linked = _positionLinked(pushedCursor, scope, state);
+      var serverHead = linked ? await _serverHeadPosition() : 0;
+      var pushedThrough = linked ? await _pushedPosition() : 0;
+      var alignment = linked
+          ? await _cursors.read(RevisionCursor.syncRestoreAlign)
+          : null;
+      if (linked && remoteHead.head < serverHead) {
+        // 服务端序列被清空过，旧位置回到 0，需要重新上传基线；位置在首次
+        // 同步收尾时随基线一起重写。
+        await _forgetSyncPosition();
+        linked = false;
         serverHead = 0;
         pushedThrough = 0;
+        alignment = null;
+      }
+      var restoreFallback = false;
+      if (alignment != null && alignment.position < 0) {
+        // 恢复点读不出来或者补记失败：按首次基线重新对齐，同样先跳过旧位置。
+        await _forgetSyncPosition();
+        linked = false;
+        alignment = null;
+        restoreFallback = true;
       }
 
-      if (state == null) {
-        // 首次同步（或服务端被清空后重建）会把本机记录整份上传，必须先确认；
-        // 本机没有记录时不需要确认。
-        if (localHead > 0 && !confirmBaseline) {
-          throw BaselineConfirmationRequired(localHead);
+      if (linked && alignment != null) {
+        // 整库恢复之后的第一轮同步：不拉取旧位置之后的提交，确认之后只把恢复
+        // 这一步的差异推上去，两个位置收敛到当前服务端位置与本机 HEAD。
+        if (!confirmBaseline) {
+          throw BaselineConfirmationRequired(localHead, afterRestore: true);
         }
-        final boot = await _bootstrap(deviceId, origin, userId);
+        final realigned = await _realignAfterRestore(
+          remoteHead: remoteHead.head,
+          deviceId: deviceId,
+          uploaded: (count) => uploaded += count,
+        );
+        pushed += realigned.pushed;
+        serverHead = realigned.serverHead;
+        state = SyncState(userId: userId, serverOrigin: origin);
+      } else if (!linked) {
+        // 首次同步（或恢复之后按首次基线重新对齐）会把本机记录整份上传，必须
+        // 先确认；本机没有记录时不需要确认。
+        await _clearRestoreMarker();
+        if (localHead > 0 && !confirmBaseline) {
+          throw BaselineConfirmationRequired(
+            localHead,
+            afterRestore: restoreFallback,
+          );
+        }
+        final boot = await _bootstrap(deviceId);
         pulled += boot.pulled;
         pushed += boot.pushed;
         uploaded += boot.uploaded;
@@ -390,6 +507,7 @@ class SyncService {
         );
         pushed += push.pushed;
         serverHead = push.serverHead;
+        state = state ?? SyncState(userId: userId, serverOrigin: origin);
       }
       _ensureIdentity();
       final finalState = state.copyWith(syncedAt: clock());
@@ -409,7 +527,46 @@ class SyncService {
       rethrow;
     } finally {
       _runEpoch = null;
+      _activeScope = null;
     }
+  }
+
+  /// 整库恢复之后的重新对齐：跳过拉取，把恢复这一步的差异推到云端。
+  ///
+  /// 待推送的提交从恢复提交的父提交开始（恢复前后没有差异时从本机 `HEAD`
+  /// 开始），所以推送的正是“恢复点投影 → 恢复后投影”的净变化，删除也会带上；
+  /// 推送位置越过之后两个位置收敛到当前服务端位置与本机 `HEAD`，恢复之前的
+  /// 改动不会再从旧位置拉回来（同步方案 3.4）。
+  Future<({int serverHead, int pushed})> _realignAfterRestore({
+    required int remoteHead,
+    required String deviceId,
+    required void Function(int count) uploaded,
+  }) async {
+    final push = await _push(
+      serverHead: remoteHead,
+      pushedThrough: await _pushedPosition(),
+      deviceId: deviceId,
+      uploaded: uploaded,
+      onPulled: (_) {},
+      pullBefore: false,
+    );
+    await _clearRestoreMarker();
+    return (serverHead: push.serverHead, pushed: push.pushed);
+  }
+
+  /// 服务端序列被清空、或者恢复的备份对不上当前身份：两个同步位置与恢复标记
+  /// 一起删掉，遮蔽行清空，回到按首次基线重建。
+  Future<void> _forgetSyncPosition() async {
+    await _cursors.delete(RevisionCursor.syncPushed);
+    await _cursors.delete(RevisionCursor.syncServerHead);
+    await _cursors.delete(RevisionCursor.syncRestoreAlign);
+    await _shadows.clear();
+  }
+
+  /// 清掉恢复之后的待对齐标记与遮蔽行：重新对齐完成，或者按首次基线重生。
+  Future<void> _clearRestoreMarker() async {
+    await _cursors.delete(RevisionCursor.syncRestoreAlign);
+    await _shadows.clear();
   }
 
   /// 第一次同步：先把服务端已有的提交拉下来，再把本机当前数据作为一份基线
@@ -421,7 +578,7 @@ class SyncService {
   Future<
     ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
   >
-  _bootstrap(String deviceId, String origin, String userId) async {
+  _bootstrap(String deviceId) async {
     var pulled = 0;
     var downloaded = 0;
     var serverHead = 0;
@@ -473,9 +630,9 @@ class SyncService {
     _ensureIdentity();
     await _saveServerHead(baseSeq);
     await _savePushed(headAfterPull);
-    await preferences.saveSyncState(
-      SyncState(userId: userId, serverOrigin: origin, syncedAt: clock()),
-    );
+    // 首次基线把本机现有内容整份上传，编号不大于它的本机提交不再单独推送，
+    // 换账号或服务端清空后重建时留下的遮蔽行一并清掉。
+    await _shadows.deleteSettled(headAfterPull);
     return (
       serverHead: baseSeq,
       pulled: pulled,
@@ -506,11 +663,7 @@ class SyncService {
         index++;
       }
       yield ServerCommit(
-        requestId: _baselineRequestId(
-          deviceId,
-          start,
-          changes.sublist(start, index),
-        ),
+        requestId: _baselineUid(deviceId, changes.sublist(start, index)),
         deviceId: deviceId,
         schemaVersion: zhixinSchemaVersion,
         actor: 'system',
@@ -622,9 +775,10 @@ class SyncService {
       final hashes = <String>{};
       for (final commit in page.commits) {
         _ensureIdentity();
+        // 被这条远端提交取代的本机格子由 `applyChanges` 在同一个事务里登记进
+        // `sync_shadow`，这一层不用再记（ADR-0040）。
         final applied = await _applyRemote(commit);
         hashes.addAll(applied.assetHashes);
-        _recordPulledChanges(applied.appliedChanges);
         pulled++;
       }
       current = page.commits.last.seq ?? page.head;
@@ -641,15 +795,21 @@ class SyncService {
   /// 推送本机推送位置之后的提交；服务端位置变化时先拉取再重试。
   ///
   /// 待推送列表已经去掉远端提交（`kind = remote`）：它们对应服务端已有的提交，
-  /// 再推回去只会在序列里多一份。改动已经被这次拉取覆盖的本机提交同样不推：
-  /// 远端值已经写进本机，再把这些提交推上去等于把旧值顶回服务端。推送成功之后
-  /// 把推送位置推进到最后一条考虑过的提交，没推任何提交时推进到当前 `HEAD`。
+  /// 再推回去只会在序列里多一份。每条本机提交按格变基：被 `sync_shadow` 遮蔽的
+  /// 格子（编号不大于遮蔽行 `upto_commit` 的改动）不再推送，剩下多少推多少；剩余
+  /// 为空的提交不推，推送位置照常前进。推送成功之后把推送位置推进到最后一条
+  /// 考虑过的提交，没推任何提交时推进到当前 `HEAD`，并删掉已经越过推送位置的
+  /// 遮蔽行（ADR-0040）。
+  ///
+  /// [pullBefore] 为假时服务端位置往前走了也不拉取，只按新位置重新推送：整库
+  /// 恢复之后的重新对齐不能拉取，否则会把恢复前的改动带回来（同步方案 3.4）。
   Future<({int serverHead, int pushed})> _push({
     required int serverHead,
     required int pushedThrough,
     required String deviceId,
     required void Function(int count) uploaded,
     required void Function(({int pulled, int downloaded}) result) onPulled,
+    bool pullBefore = true,
   }) async {
     var currentHead = serverHead;
     var currentPushed = pushedThrough;
@@ -657,36 +817,45 @@ class SyncService {
       _ensureIdentity();
       final headNow = await account.call((client, token) => client.head(token));
       if (headNow.head != currentHead) {
-        final pulled = await _pull(
-          serverHead: currentHead,
-          deviceId: deviceId,
-          downloaded: (count) {},
-        );
-        currentHead = pulled.serverHead;
-        onPulled((pulled: pulled.pulled, downloaded: pulled.downloaded));
+        if (pullBefore) {
+          final pulled = await _pull(
+            serverHead: currentHead,
+            deviceId: deviceId,
+            downloaded: (count) {},
+          );
+          currentHead = pulled.serverHead;
+          onPulled((pulled: pulled.pulled, downloaded: pulled.downloaded));
+        } else {
+          currentHead = headNow.head;
+          _ensureIdentity();
+          await _saveServerHead(currentHead);
+        }
       }
       final localHead = await engine.headId(database.raw);
       final pending = await revisions.commitsAfter(currentPushed);
       if (pending.isEmpty) {
         _ensureIdentity();
         await _savePushed(localHead);
+        await _shadows.deleteSettled(localHead);
         currentPushed = localHead;
         return (serverHead: currentHead, pushed: 0);
       }
-      // 每条提交的变化只读一次：既判断它是否已经被这次拉取覆盖，也用来组装
-      // 推送内容。被覆盖的提交不再推送，位置照常前进，等同于把它们记为已被
-      // 远端值取代（ADR-0039）。
-      final changesByCommit = <int, List<RevisionChange>>{};
+      // 遮蔽行一次读出，再按提交编号逐条判断：每条提交的变化只读一次，既算出
+      // 剩余部分，也用来组装推送内容与附件哈希。
+      final shadows = await _shadows.list();
+      final remainingByCommit = <int, List<RevisionChange>>{};
       final toPush = <RevisionCommit>[];
       for (final commit in pending) {
         final changes = await engine.changesFor(database.raw, commit.id);
-        changesByCommit[commit.id] = changes;
-        if (_coveredByPull(changes)) continue;
+        final remaining = _rebaseChanges(changes, commit.id, shadows);
+        if (remaining.isEmpty) continue;
+        remainingByCommit[commit.id] = remaining;
         toPush.add(commit);
       }
       if (toPush.isEmpty) {
         _ensureIdentity();
         await _savePushed(pending.last.id);
+        await _shadows.deleteSettled(pending.last.id);
         currentPushed = pending.last.id;
         return (serverHead: currentHead, pushed: 0);
       }
@@ -695,10 +864,10 @@ class SyncService {
       try {
         Stream<ServerCommit> payloads() async* {
           for (final commit in toPush) {
-            final changes = changesByCommit[commit.id]!;
+            final changes = remainingByCommit[commit.id]!;
             assetHashes.addAll(AssetStore.hashesInChanges(changes));
             yield ServerCommit(
-              requestId: _requestIdFor(commit, deviceId),
+              requestId: commit.uid,
               deviceId: deviceId,
               schemaVersion: zhixinSchemaVersion,
               actor: _actorOf(commit.actor),
@@ -725,8 +894,9 @@ class SyncService {
       }
       uploaded(await _uploadAssets(assetHashes));
       _ensureIdentity();
-      // 推送位置只覆盖这次真正推上去的提交；同步途中新产生的提交留下一轮。
+      // 推送位置只覆盖这次真正考虑过的提交；同步途中新产生的提交留下一轮。
       await _savePushed(pending.last.id);
+      await _shadows.deleteSettled(pending.last.id);
       currentPushed = pending.last.id;
       return (serverHead: currentHead, pushed: pushed);
     }
@@ -737,14 +907,7 @@ class SyncService {
     );
   }
 
-  Future<
-    ({
-      RevisionCommit? commit,
-      Set<String> assetHashes,
-      int skipped,
-      List<RevisionChange> appliedChanges,
-    })
-  >
+  Future<({RevisionCommit? commit, Set<String> assetHashes, int skipped})>
   _applyRemote(ServerCommit commit) async {
     final changes = <RevisionChange>[];
     var seq = 1;
@@ -771,7 +934,7 @@ class SyncService {
         ? commit.actor
         : 'user';
     final result = await revisions.applyRemoteCommit(
-      requestId: commit.requestId,
+      uid: commit.requestId,
       action: commit.action.isEmpty ? '从其他设备同步' : commit.action,
       actor: actor,
       changes: changes,
@@ -787,57 +950,68 @@ class SyncService {
       commit: result.commit,
       assetHashes: AssetStore.hashesInChanges(changes),
       skipped: result.skipped,
-      appliedChanges: result.appliedChanges,
     );
   }
 
-  /// 记下拉取时真正写进本机的格子；整行变化（新增、删除）记成空列。
-  void _recordPulledChanges(Iterable<RevisionChange> changes) {
+  /// 一条待推送提交去掉被遮蔽的格子之后的剩余部分。
+  ///
+  /// 遮蔽行只在编号不大于它的提交上生效：这些格子已经被远端值取代，再推回去
+  /// 等于把旧值顶回服务端；编号更大的提交是拉取之后才写下的，照常推送。列级
+  /// 遮蔽只去掉对应的列，整行遮蔽把这一行的变化整条去掉，剩下的列尽量推。
+  /// 剩余部分的 `before` 沿用原值：被保留下来的列远端没有动过，其他设备上这些
+  /// 列的旧值与本机一致，不需要改写（ADR-0040）。
+  List<RevisionChange> _rebaseChanges(
+    List<RevisionChange> changes,
+    int commitId,
+    List<RevisionShadow> shadows,
+  ) {
+    if (shadows.isEmpty) return changes;
+    final wholeRows = <(String, String)>{};
+    final columns = <(String, String), Set<String>>{};
+    for (final shadow in shadows) {
+      if (shadow.uptoCommit < commitId) continue;
+      final key = (shadow.table, shadow.rowKey);
+      if (shadow.isWholeRow) {
+        wholeRows.add(key);
+      } else {
+        columns.putIfAbsent(key, () => <String>{}).add(shadow.column);
+      }
+    }
+    if (wholeRows.isEmpty && columns.isEmpty) return changes;
+    final remaining = <RevisionChange>[];
     for (final change in changes) {
-      if (change.op == ChangeOp.update) {
-        for (final column in {
-          ...?change.after?.keys,
-          ...?change.before?.keys,
-        }) {
-          _pulledOverwrites.add((
-            table: change.table,
-            rowKey: change.rowKey,
-            column: column,
-          ));
-        }
+      final key = (change.table, change.rowKey);
+      if (wholeRows.contains(key)) continue;
+      final shadowed = columns[key];
+      if (shadowed == null || change.op != ChangeOp.update) {
+        remaining.add(change);
         continue;
       }
-      _pulledOverwrites.add((
-        table: change.table,
-        rowKey: change.rowKey,
-        column: null,
-      ));
-    }
-  }
-
-  /// 这条本机提交改动的地方是否都已经被拉取的远端值覆盖；是就不推。
-  bool _coveredByPull(List<RevisionChange> changes) {
-    if (_pulledOverwrites.isEmpty) return false;
-    for (final change in changes) {
-      if (_pulledOverwrites.contains((
-        table: change.table,
-        rowKey: change.rowKey,
-        column: null,
-      ))) {
-        return true;
-      }
-      if (change.op != ChangeOp.update) continue;
-      for (final column in {...?change.after?.keys, ...?change.before?.keys}) {
-        if (_pulledOverwrites.contains((
+      final after = {
+        for (final entry
+            in (change.after ?? const <String, RevisionValue>{}).entries)
+          if (!shadowed.contains(entry.key)) entry.key: entry.value,
+      };
+      // 这一行的列级变化全部被遮蔽时整条不推；还剩列时只推剩下的列。
+      if (after.isEmpty) continue;
+      final before = {
+        for (final entry
+            in (change.before ?? const <String, RevisionValue>{}).entries)
+          if (!shadowed.contains(entry.key)) entry.key: entry.value,
+      };
+      remaining.add(
+        RevisionChange(
+          commitId: change.commitId,
+          seq: change.seq,
           table: change.table,
           rowKey: change.rowKey,
-          column: column,
-        ))) {
-          return true;
-        }
-      }
+          op: change.op,
+          before: before.isEmpty ? null : before,
+          after: after,
+        ),
+      );
     }
-    return false;
+    return remaining;
   }
 
   Future<int> _uploadAssets(Set<String> hashes) async {
@@ -911,25 +1085,18 @@ class SyncService {
     after: change.after == null ? null : typedRowToJson(change.after!),
   );
 
-  String _requestIdFor(RevisionCommit commit, String deviceId) =>
-      syncRequestIdFor(
-        stored: commit.requestId,
-        deviceId: deviceId,
-        commitId: commit.id,
-      );
-
-  String _baselineRequestId(
-    String deviceId,
-    int index,
-    List<RevisionChange> chunk,
-  ) {
+  /// 基线提交的 uid：按这一块变更明细的内容与设备算出，同一块数据重试时标识
+  /// 不变，服务端的永久去重才能把失败之后的重发当成重试。基线是本机投影的
+  /// 一次性上传，没有对应的 `revision_commit` 行，因此不占用本地提交的 uid。
+  String _baselineUid(String deviceId, List<RevisionChange> chunk) {
+    final prefix = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
     final digest = sha256
         .convert(
           utf8.encode(jsonEncode([for (final change in chunk) change.toRow()])),
         )
         .toString()
-        .substring(0, 12);
-    return 'b-${deviceId.substring(0, 8)}-$index-$digest';
+        .substring(0, 32);
+    return '$prefix-$digest';
   }
 
   String _actorOf(String actor) =>

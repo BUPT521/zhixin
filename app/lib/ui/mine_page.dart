@@ -182,7 +182,20 @@ class _MinePageState extends State<MinePage> {
     var confirmBaseline = false;
     try {
       final status = await services.sync.status();
-      if (status.baselineNeedsConfirmation) {
+      if (status.restoreNeedsConfirmation) {
+        if (!mounted) return;
+        final confirmed = await confirmRestoreAlignment(context);
+        if (!confirmed) {
+          if (!mounted) return;
+          setState(() {
+            _failed = false;
+            _notice = '已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”';
+          });
+          await _load();
+          return;
+        }
+        confirmBaseline = true;
+      } else if (status.baselineNeedsConfirmation) {
         if (!mounted) return;
         final confirmed = await confirmBaselineUpload(
           context,
@@ -514,6 +527,9 @@ class _AccountCard extends StatelessWidget {
     }
     if (sync.needsBootstrap) {
       return const StatusTag('待首次同步', tone: TagTone.neutral);
+    }
+    if (sync.restoreNeedsConfirmation) {
+      return const StatusTag('恢复后待对齐', tone: TagTone.attention);
     }
     if (sync.pendingCommits > 0) {
       return StatusTag('待同步 ${sync.pendingCommits} 条', tone: TagTone.neutral);

@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import '../../domain/models/chat_message_payload.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
+import '../../domain/rules/uuid_v7.dart';
 import '../db/drift/tables.dart'
     show nonVersionedPersistentTableNames, revisionMetadataTablePrefixes;
 import '../db/schema.dart' show schemaTableNames, schemaTables;
@@ -15,6 +16,7 @@ import '../db/sql.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_models.dart';
+import 'revision_shadow.dart';
 
 part 'revision_capture.dart';
 part 'revision_log.dart';
@@ -85,7 +87,8 @@ class RevisionDuplicateRequest implements Exception {
   final RevisionCommit commit;
 
   @override
-  String toString() => '请求 ${commit.requestId} 已提交为版本 ${commit.id}';
+  String toString() =>
+      '请求 ${commit.requestId ?? commit.uid} 已提交为版本 ${commit.id}';
 }
 
 /// 重建时断链或值与预期不一致。
@@ -213,6 +216,7 @@ class RevisionEngine
         final now = formatDateTime(clock());
         await insertRow(txn, 'revision_commit', {
           'id': 0,
+          'uid': newUuidV7(),
           'parent_id': null,
           'generation': 0,
           'actor': 'system',

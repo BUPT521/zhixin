@@ -2,16 +2,21 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 28 的 26 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 29 的 27 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 
-/// 不参与业务变更采集的版本元数据与附件对象表名前缀。
+/// 不参与业务变更采集的版本元数据、同步元数据与附件对象表名前缀。
 ///
 /// 新增这类表时沿用前缀即可，版本引擎按前缀把它归入元数据；其余新表默认
-/// 参与采集，写入才会进入数据版本历史。
-const List<String> revisionMetadataTablePrefixes = ['revision_', 'asset_'];
+/// 参与采集，写入才会进入数据版本历史。同步元数据是同步过程的簿记，不是用户
+/// 数据（ADR-0040），因此与版本元数据一样排除在采集、检查点投影与数据包之外。
+const List<String> revisionMetadataTablePrefixes = [
+  'revision_',
+  'asset_',
+  'sync_',
+];
 
 /// 保留在库里、但不参与版本采集的内部设置表。
 const Set<String> nonVersionedPersistentTableNames = {'app_meta'};
@@ -559,6 +564,7 @@ class Memories extends Table {
   'CREATE UNIQUE INDEX idx_revision_request '
   'ON revision_commit(request_id) WHERE request_id IS NOT NULL',
 )
+@TableIndex(name: 'idx_revision_uid', columns: {#uid}, unique: true)
 @TableIndex(name: 'idx_revision_commit_parent', columns: {#parentId})
 @DataClassName('RevisionCommitRow')
 class RevisionCommits extends Table {
@@ -577,8 +583,17 @@ class RevisionCommits extends Table {
   /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
   TextColumn get kind => text().check(kind.isIn(revisionKinds))();
 
+  /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
+  ///
+  /// 本机提交在 [_appendCommit] 里生成 UUIDv7，远端提交沿用远端的 uid；不按提交
+  /// 编号或请求编号派生，因为编号会在整库恢复旧备份后重复（ADR-0040）。
+  TextColumn get uid => text()();
+
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   TextColumn get action => text()();
+
+  /// 同一次用户动作的重试编号：只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
+  /// 的重试去重，不再是提交身份。
   TextColumn get requestId => text().nullable()();
   IntColumn get restoredCommitId => integer().nullable()();
   IntColumn get revertedCommitId => integer().nullable()();
@@ -665,6 +680,11 @@ class RevisionCursors extends Table {
   TextColumn get name => text()();
   IntColumn get position => integer()();
   BoolColumn get blocking => boolean().withDefault(const Constant(false))();
+
+  /// 这个读取位置属于哪个同步身份：只有同步的两个位置写“账号编号 + 实例来源”
+  /// 的哈希，检索索引等读者为空。退出登录之后位置保留但不阻塞，重新登录同一
+  /// scope 时据此从原位置继续增量同步，而不是按首次基线整份重传（同步方案 3.3）。
+  TextColumn get scope => text().nullable()();
   TextColumn get updatedAt => text()();
 
   @override
@@ -713,6 +733,26 @@ class RevisionConflicts extends Table {
 
   /// 本机值已经写回时，指回那条 `write` 提交。
   IntColumn get resolvedCommitId => integer().nullable()();
+}
+
+/// 已被远端提交取代的本机格子：推送时按格变基，去掉这些格子再推（ADR-0040）。
+///
+/// 同步的簿记表，不参与版本采集、检查点投影与数据包（表名前缀 `sync_`）。
+/// `upto_commit` 是应用这条远端提交之前的本机 `HEAD`，含义是编号不大于它的
+/// 本机提交在这个格子上的改动作废。[columnName] 用空字符串表示整行变化：
+/// SQLite 的唯一约束认为两个 NULL 互不相同，用空字符串才能让整行遮蔽与列级
+/// 遮蔽一样每个格子只留一行。
+@DataClassName('SyncShadowRow')
+class SyncShadows extends Table {
+  @override
+  String get tableName => 'sync_shadow';
+  TextColumn get targetTable => text().named('table_name')();
+  TextColumn get rowKey => text()();
+  TextColumn get columnName => text()();
+  IntColumn get uptoCommit => integer()();
+
+  @override
+  Set<Column> get primaryKey => {targetTable, rowKey, columnName};
 }
 
 @DataClassName('RevisionContextRow')

@@ -64,6 +64,21 @@ class FakeServer {
   /// 附件上传先等这个信号再处理，用来模拟上传途中切换实例或账号。
   Future<void>? delayBlobUpload;
 
+  /// 接下来几次推送（`POST /v1/sync/commits`）返回 503 `unavailable`。
+  ///
+  /// 用例用它模拟“拉取成功、推送失败”：断网、限流与三次 409 之后都可能停在
+  /// 这个状态，下一轮同步不能把被覆盖的旧提交再推一次。
+  int pushFailures = 0;
+
+  /// 收到 `GET /v1/sync/head` 之前调用的回调。
+  ///
+  /// 用例用它模拟“同步途中用户又写了一次”：拉取已经应用、推送还没开始算，
+  /// 这时写下的提交是同步过程中新产生的本机修改。
+  Future<void> Function()? onHead;
+
+  /// 收到 `GET /v1/sync/commits`（拉取）之前调用的回调。
+  Future<void> Function()? onPull;
+
   /// 登录请求先等这个信号再处理，用来模拟登录途中切换实例。
   Future<void>? delayLogin;
 
@@ -264,12 +279,14 @@ class FakeServer {
       return http.Response('', 204);
     }
     if (method == 'GET' && path == '/v1/sync/head') {
+      await onHead?.call();
       return _json(200, {
         'head': headOf(userId),
         'schema_version': schemaVersion,
       });
     }
     if (method == 'GET' && path == '/v1/sync/commits') {
+      await onPull?.call();
       final after =
           int.tryParse(request.url.queryParameters['after'] ?? '0') ?? 0;
       final limit =
@@ -283,6 +300,10 @@ class FakeServer {
       });
     }
     if (method == 'POST' && path == '/v1/sync/commits') {
+      if (pushFailures > 0) {
+        pushFailures--;
+        return _problem(503, 'unavailable');
+      }
       final base = (body['base_seq'] as num?)?.toInt() ?? 0;
       final incoming = [
         for (final item in (body['commits'] as List? ?? const []))

@@ -332,66 +332,54 @@ void main() {
     expect(await a.account.preferences.syncState(), isNull);
   });
 
-  test('推送的 request_id 不超过服务端 64 字符上限，超长时按提交编号生成', () {
-    // 更正材料页这类命令把 JSON 编码的请求标识写进提交，长度会超过 64。
+  test('推送填提交的 uid：命令编号再长也不影响推送，重复推送按 uid 去重', () async {
+    final a = await device('a@example.com', register: true);
+    await a.sync.syncNow();
+    final userId = (await a.account.snapshot()).session!.userId;
+    // 首次同步已经上传了本机投影（profile 一行）作为基线。
+    final baselineHead = server.headOf(userId);
+
+    // 更正材料页这类命令把 JSON 编码的请求编号写进提交，按 UTF-8 算是 70 个字节，
+    // 超过服务端对 request_id 的 64 字节上限；推送改填提交的 uid 之后不再受影响。
     final long = jsonEncode([
       'correct-material-page',
       '01a1f4d1-78ae-7000-befb-f35f122c1838',
       '',
       '方阵的迹为主对角元素之和。',
     ]);
-    expect(long.length, greaterThan(64));
+    expect(utf8.encode(long).length, greaterThan(64));
+    final outcome = await a.rig.db.commandOutcome(
+      (txn) => insertRow(txn, 'memory', {
+        'id': 'm1',
+        'kind': 'preference',
+        'content': '长编号的写入',
+        'scope': null,
+        'source_kind': 'user',
+        'source_id': null,
+        'valid_until': null,
+        'status': 'active',
+        'created_at': '2026-11-17 10:00:00',
+        'updated_at': '2026-11-17 10:00:00',
+      }),
+      label: '新增记忆',
+      requestId: long,
+    );
+    final commit = outcome.commit!;
+    expect(commit.uid, hasLength(36));
+    expect(utf8.encode(commit.uid).length, lessThanOrEqualTo(64));
 
-    final first = syncRequestIdFor(
-      stored: long,
-      deviceId: '3B164M00XU700000',
-      commitId: 41,
-    );
-    expect(first, 'l-3B164M00-41');
-    expect(first.length, lessThanOrEqualTo(64));
-    // 同一提交重试时标识不变，服务端仍能按请求标识去重。
+    await a.sync.syncNow();
+    expect(server.headOf(userId), baselineHead + 1);
+    final pushed = server.commits[userId]!.last;
+    expect(pushed['request_id'], commit.uid);
     expect(
-      syncRequestIdFor(
-        stored: long,
-        deviceId: '3B164M00XU700000',
-        commitId: 41,
-      ),
-      first,
-    );
-    expect(
-      syncRequestIdFor(
-        stored: 'l-3B164M00-7',
-        deviceId: '3B164M00XU700000',
-        commitId: 7,
-      ),
-      'l-3B164M00-7',
-    );
-    expect(
-      syncRequestIdFor(
-        stored: '   ',
-        deviceId: '3B164M00XU700000',
-        commitId: 7,
-      ),
-      'l-3B164M00-7',
+      utf8.encode(pushed['request_id']! as String).length,
+      lessThanOrEqualTo(64),
     );
 
-    // 服务端按 UTF-8 字节算长度：这条中文标识只有 46 个字符，却有 70 个字节。
-    final chinese = jsonEncode([
-      'add-memory',
-      'preference',
-      '只能在上午学习，晚上效率低',
-      '',
-    ]);
-    expect(chinese.length, lessThanOrEqualTo(64));
-    expect(utf8.encode(chinese).length, greaterThan(64));
-    expect(
-      syncRequestIdFor(
-        stored: chinese,
-        deviceId: '3B164M00XU700000',
-        commitId: 31,
-      ),
-      'l-3B164M00-31',
-    );
+    // 服务端已经见过这条 uid：同一条提交再推一次不增加序列长度。
+    await a.sync.syncNow();
+    expect(server.headOf(userId), baselineHead + 1);
   });
 
   test('同步位置写进库里的读取位置，偏好文件只留账号与实例', () async {
@@ -433,6 +421,43 @@ void main() {
     expect(state['user_id'], userId);
     expect(state['server_origin'], 'http://server.test');
     expect(state['synced_at'], isNotNull);
+  });
+
+  test('同步位置带账号与实例的 scope，退出登录只解除阻塞、位置与 scope 保留', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = (await a.account.snapshot()).session!.userId;
+    final scope = syncScopeFor(userId, 'http://server.test');
+
+    Future<Map<String, Map<String, Object?>>> cursors() async {
+      final rows = await selectRows(a.rig.raw, 'revision_cursor');
+      return {for (final row in rows) row['name']! as String: row};
+    }
+
+    final before = await cursors();
+    expect(
+      before[RevisionCursor.syncPushed]!['scope'],
+      scope,
+      reason: '推送位置应当写当前账号与实例的 scope',
+    );
+    expect(before[RevisionCursor.syncServerHead]!['scope'], scope);
+    final pushedPosition = before[RevisionCursor.syncPushed]!['position'];
+    expect(before[RevisionCursor.syncPushed]!['blocking'], 1);
+
+    // 退出登录只清偏好并把推送位置改成不阻塞：位置与 scope 都留着，重新登录
+    // 同一账号时从原位置继续增量同步（同步方案 3.3）。
+    await a.account.logout();
+    await a.sync.clearState();
+    final after = await cursors();
+    expect(after[RevisionCursor.syncPushed]!['blocking'], 0);
+    expect(after[RevisionCursor.syncPushed]!['position'], pushedPosition);
+    expect(after[RevisionCursor.syncPushed]!['scope'], scope);
+    expect(after[RevisionCursor.syncServerHead]!['scope'], scope);
   });
 
   test('拉下来的远端提交不会再推回服务端，同步两轮提交数不变', () async {
@@ -534,5 +559,138 @@ void main() {
     // 另一台设备看到的仍是自己的值，说明 A 的旧提交没有被推上去。
     await b.sync.syncNow();
     expect(await _memoryContent(b.rig, 'm1'), '先看例子再看定义');
+  });
+
+  test('拉取把被覆盖的格子写进 sync_shadow，推送失败不丢，推完清掉', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    final b = await device('a@example.com', deviceId: 'device-b');
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    await _updateMemory(b.rig, 'm1', '先看例子再看定义');
+    await b.sync.syncNow();
+
+    // A 在拉取之前也改过这一行：拉取会把本机值覆盖成 B 的值，这条本机提交的
+    // 格子要登记成遮蔽行。另加一条不受覆盖的写入，这一轮才会真的发推送请求。
+    await _updateMemory(a.rig, 'm1', '本机偏好：先自己做');
+    await _insertMemory(a.rig, 'm2', 'A 新增的一行');
+    final headBeforePull = await a.rig.engine.headId(a.rig.raw);
+    final headBeforeServer = server.headOf(userId);
+
+    server.pushFailures = 1;
+    await expectLater(
+      a.sync.syncNow(),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.code,
+          'code',
+          'unavailable',
+        ),
+      ),
+      reason: '准备阶段：这一轮应当拉取成功、推送失败',
+    );
+
+    // 遮蔽行在应用远端提交的事务里落库，推送失败之后仍然在，`upto_commit` 是
+    // 拉取之前的本机 HEAD：编号不大于它的本机提交在这些格子上作废。
+    final shadows = await selectRows(a.rig.raw, 'sync_shadow');
+    expect(
+      [
+        for (final row in shadows)
+          '${row['table_name']}/${row['row_key']}/${row['column_name']}',
+      ],
+      containsAll(['memory/m1/content', 'memory/m1/updated_at']),
+      reason: '拉取应用远端提交时应当把它写进本机的格子登记下来：$shadows',
+    );
+    for (final row in shadows) {
+      expect(
+        row['upto_commit'],
+        headBeforePull,
+        reason: '遮蔽行的 upto_commit 取应用远端提交之前的本机 HEAD',
+      );
+    }
+    expect(server.headOf(userId), headBeforeServer, reason: '准备阶段：推送失败时序列没有前进');
+
+    // 下一轮同步：被覆盖的格子不再推，只推剩下的那条新增；推送位置越过之后
+    // 遮蔽行删掉。
+    final next = await a.sync.syncNow();
+    expect(next.pushedCommits, 1, reason: '只有不受遮蔽的那条提交需要推送');
+    expect(
+      await selectRows(a.rig.raw, 'sync_shadow'),
+      isEmpty,
+      reason: '推送位置越过 upto_commit 之后遮蔽行应当删掉',
+    );
+    final pushed = server.commits[userId]!.last['changes']! as List;
+    expect(
+      [for (final change in pushed) (change as Map)['row_key']],
+      ['m2'],
+      reason: '被遮蔽的 m1 不能再推回服务端，剩下的 m2 照常推',
+    );
+
+    await b.sync.syncNow();
+    expect(
+      await _memoryContent(b.rig, 'm1'),
+      '先看例子再看定义',
+      reason: '被远端覆盖的旧值不应该在下一轮又被推上去',
+    );
+    expect(await _memoryContent(b.rig, 'm2'), 'A 新增的一行');
+  });
+
+  test('一条提交同时改两行时，被遮蔽的行去掉、剩下的行照常推送', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', '第一条');
+    await _insertMemory(a.rig, 'm2', '第二条');
+    await a.sync.syncNow(confirmBaseline: true);
+    final b = await device('a@example.com', deviceId: 'device-b');
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    final userId = (await a.account.snapshot()).session!.userId;
+
+    await _updateMemory(b.rig, 'm1', 'B 的新内容');
+    await b.sync.syncNow();
+
+    // A 一条提交同时改两行：m1 会被远端提交覆盖，m2 只有本机改过。
+    await a.rig.db.command((txn) async {
+      await updateRow(
+        txn,
+        'memory',
+        {'content': 'A 改的 m1', 'updated_at': '2026-11-17 10:06:00'},
+        where: 'id = ?',
+        whereArgs: ['m1'],
+      );
+      await updateRow(
+        txn,
+        'memory',
+        {'content': 'A 改的 m2', 'updated_at': '2026-11-17 10:06:00'},
+        where: 'id = ?',
+        whereArgs: ['m2'],
+      );
+    }, label: '一次改两条记忆');
+
+    await a.sync.syncNow();
+
+    // 推上去的是按格变基之后的剩余部分：只有 m2 那一行，m1 的格子已经被远端
+    // 覆盖，不再推。
+    final changes = server.commits[userId]!.last['changes']! as List;
+    expect(changes, hasLength(1), reason: '一条提交只推剩下的那一行');
+    final change = changes.single as Map;
+    expect(change['row_key'], 'm2');
+    final after = change['after']! as Map;
+    expect((after['content']! as Map)['v'], 'A 改的 m2');
+
+    await b.sync.syncNow();
+    expect(await _memoryContent(b.rig, 'm2'), 'A 改的 m2');
+    expect(await _memoryContent(b.rig, 'm1'), 'B 的新内容');
+    expect(await _memoryContent(a.rig, 'm1'), 'B 的新内容');
   });
 }
