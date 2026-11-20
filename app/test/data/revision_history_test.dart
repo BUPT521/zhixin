@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
-import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
@@ -12,7 +11,9 @@ void main() {
   late TestRig rig;
 
   setUp(() async {
-    rig = await openTestRig(engine: RevisionEngine(checkpointEvery: 3));
+    // 写事务里不再生成周期检查点，检查点改由空闲时按累计字节数生成；这里的
+    // 用例只依赖初始检查点与命名、裁剪时固化的检查点。
+    rig = await openTestRig();
   });
 
   tearDown(() => rig.close());
