@@ -64,7 +64,7 @@ void main() {
   testWidgets('基线上传确认说明会上传本机记录，取消返回 false', (tester) async {
     await open(tester, '首次同步');
     expect(find.byType(ZhixinDialogLayout), findsOneWidget);
-    expect(find.textContaining('本机现有的 3 条提交'), findsOneWidget);
+    expect(find.textContaining('本机现在有 3 条提交'), findsOneWidget);
     expect(find.textContaining('取消则不上传，并暂停自动同步'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(forui.FButton, '取消'));
