@@ -169,11 +169,11 @@ void main() {
     expect(await rig.engine.headId(rig.raw), commit!.id);
   });
 
-  test('命令里能读到本次分配的提交编号，没有净变化时不形成提交', () async {
-    final transactions = WriteTransactions(rig.db);
+  test('命令里预留的编号就是落库的提交编号，没有净变化时不占编号', () async {
+    final transactions = WriteTransactions(rig.db, revisions: rig.engine);
     int? insideId;
-    await transactions.run((txn) async {
-      insideId = await txn.commitId();
+    final written = await transactions.run((txn) async {
+      insideId = await txn.requireCommitId();
       await insertRow(txn.executor, 'memory', {
         'id': 'memory-1',
         'kind': 'preference',
@@ -183,18 +183,35 @@ void main() {
         'created_at': '2026-11-10T09:00:00',
         'updated_at': '2026-11-10T09:00:00',
       });
+      return txn.result();
     }, label: '写入记忆');
     final head = await rig.engine.headId(rig.raw);
+    expect(written.changed, isTrue);
     expect(insideId, head);
+    expect(written.commitId, head);
 
     final before = await rig.engine.headId(rig.raw);
-    int? emptyId;
-    await transactions.run((txn) async {
-      emptyId = await txn.commitId();
-      expect(emptyId, isNotNull);
+    final sequenceBefore = (await selectRows(
+      rig.raw,
+      'revision_sequence',
+      columns: ['next_commit'],
+    )).single['next_commit'];
+    final empty = await transactions.run((txn) async {
+      expect(await txn.commitId(), isNull);
+      return txn.result();
     }, label: '只有回执');
+    expect(empty.changed, isFalse);
+    expect(empty.commitId, isNull);
     expect(await rig.engine.headId(rig.raw), before);
-    expect(await rig.engine.commitById(rig.raw, emptyId!), isNull);
+    expect(
+      (await selectRows(
+        rig.raw,
+        'revision_sequence',
+        columns: ['next_commit'],
+      )).single['next_commit'],
+      sequenceBefore,
+      reason: '没有净变化、也没有预留编号时序号不动',
+    );
   });
 
   test('从检查点重建并与当前数据逐字段一致', () async {
