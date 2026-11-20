@@ -46,6 +46,15 @@ void main() {
     expect(find.text(appVersion), findsOneWidget);
   });
 
+  testWidgets('两个入口之间留出一档间距', (tester) async {
+    await tester.pumpWidget(aboutApp());
+
+    final license = tester.getRect(find.widgetWithText(forui.FTile, '开源许可'));
+    final homepage = tester.getRect(find.widgetWithText(forui.FTile, '项目主页'));
+
+    expect(homepage.top - license.bottom, const ZhixinSpace().sm);
+  });
+
   test('应用内 MIT 许可与仓库 LICENSE 同文', () {
     final file = File('../LICENSE').existsSync()
         ? File('../LICENSE')

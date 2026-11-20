@@ -345,31 +345,34 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
           )
         else
           for (final backup in backups)
-            forui.FTile(
-              prefix: const LeadingIcon(FLucideIcons.cloud),
-              title: Text(
-                backup.createdAt == null
-                    ? '时间未知'
-                    : shortTime(backup.createdAt!),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                '${_sizeLabel(backup.size)}'
-                '${backup.deviceName.isEmpty ? '' : ' · ${backup.deviceName}'}'
-                ' · schema ${backup.schemaVersion}',
-              ),
-              suffix: moreMenu(
-                items: [
-                  ZhixinMenuItem(
-                    label: '下载并恢复',
-                    onSelected: _busy ? null : () => _restore(backup),
-                  ),
-                  ZhixinMenuItem(
-                    label: '删除这份备份',
-                    onSelected: _busy ? null : () => _delete(backup),
-                  ),
-                ],
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.tight),
+              child: forui.FTile(
+                prefix: const LeadingIcon(FLucideIcons.cloud),
+                title: Text(
+                  backup.createdAt == null
+                      ? '时间未知'
+                      : shortTime(backup.createdAt!),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${_sizeLabel(backup.size)}'
+                  '${backup.deviceName.isEmpty ? '' : ' · ${backup.deviceName}'}'
+                  ' · schema ${backup.schemaVersion}',
+                ),
+                suffix: moreMenu(
+                  items: [
+                    ZhixinMenuItem(
+                      label: '下载并恢复',
+                      onSelected: _busy ? null : () => _restore(backup),
+                    ),
+                    ZhixinMenuItem(
+                      label: '删除这份备份',
+                      onSelected: _busy ? null : () => _delete(backup),
+                    ),
+                  ],
+                ),
               ),
             ),
         SizedBox(height: theme.space.md),

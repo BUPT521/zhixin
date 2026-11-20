@@ -79,22 +79,24 @@ Future<GoalChoice?> showGoalChoice(
             subtitle: const Text('独立问题与讨论可直接回答和继续'),
             onPress: () => Navigator.of(context).pop(GoalChoice.unassigned),
           ),
-          for (final goal in goals)
+          for (var index = 0; index < goals.length; index++) ...[
+            if (index > 0) SizedBox(height: theme.space.sm),
             forui.FTile(
               prefix: Icon(
-                initialGoalId == goal.id
+                initialGoalId == goals[index].id
                     ? FLucideIcons.circleDot
                     : FLucideIcons.circle,
               ),
-              title: Text(goal.title),
+              title: Text(goals[index].title),
               subtitle: Text(
-                '${goal.status.label}${goal.dueDate == null ? '' : ' · 截止 ${goal.dueDate}'}',
+                '${goals[index].status.label}${goals[index].dueDate == null ? '' : ' · 截止 ${goals[index].dueDate}'}',
               ),
-              enabled: goal.active,
-              onPress: goal.active
-                  ? () => Navigator.of(context).pop(GoalChoice(goal.id))
+              enabled: goals[index].active,
+              onPress: goals[index].active
+                  ? () => Navigator.of(context).pop(GoalChoice(goals[index].id))
                   : null,
             ),
+          ],
         ],
       );
     },

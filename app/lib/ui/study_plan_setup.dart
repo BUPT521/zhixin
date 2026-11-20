@@ -358,19 +358,22 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
                   child: Text(notice, style: theme.text.bodySmall),
                 ),
               for (var index = 0; index < steps.length; index++)
-                forui.FTile(
-                  prefix: Text('${index + 1}'),
-                  title: Text(steps[index].title),
-                  subtitle: Text(
-                    [
-                      if (steps[index].pageFrom != null)
-                        widget.material.position(
-                          steps[index].pageFrom,
-                          to: steps[index].pageTo,
-                        ),
-                      if (steps[index].isPrerequisite) '必要前置内容',
-                      if (steps[index].note != null) steps[index].note!,
-                    ].join(' · '),
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.tight),
+                  child: forui.FTile(
+                    prefix: Text('${index + 1}'),
+                    title: Text(steps[index].title),
+                    subtitle: Text(
+                      [
+                        if (steps[index].pageFrom != null)
+                          widget.material.position(
+                            steps[index].pageFrom,
+                            to: steps[index].pageTo,
+                          ),
+                        if (steps[index].isPrerequisite) '必要前置内容',
+                        if (steps[index].note != null) steps[index].note!,
+                      ].join(' · '),
+                    ),
                   ),
                 ),
             ],

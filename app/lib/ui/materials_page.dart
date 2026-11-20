@@ -403,26 +403,29 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
                   Text('这一页还没有更正记录。', style: theme.text.bodyMedium)
                 else
                   for (final commit in history)
-                    forui.FTile(
-                      title: Text(
-                        commit.createdAt == null
-                            ? '时间未知'
-                            : shortTime(commit.createdAt!),
+                    Padding(
+                      padding: EdgeInsets.only(top: theme.space.tight),
+                      child: forui.FTile(
+                        title: Text(
+                          commit.createdAt == null
+                              ? '时间未知'
+                              : shortTime(commit.createdAt!),
+                        ),
+                        subtitle: Text(
+                          active.contains(commit.id) ? '更正了这一页' : '已撤销',
+                        ),
+                        suffix: active.contains(commit.id)
+                            ? forui.FButton(
+                                variant: forui.FButtonVariant.ghost,
+                                mainAxisSize: MainAxisSize.min,
+                                onPress: () => _undoCorrection(
+                                  commit.id,
+                                  closeSheet: sheetContext,
+                                ),
+                                child: const Text('撤销'),
+                              )
+                            : null,
                       ),
-                      subtitle: Text(
-                        active.contains(commit.id) ? '更正了这一页' : '已撤销',
-                      ),
-                      suffix: active.contains(commit.id)
-                          ? forui.FButton(
-                              variant: forui.FButtonVariant.ghost,
-                              mainAxisSize: MainAxisSize.min,
-                              onPress: () => _undoCorrection(
-                                commit.id,
-                                closeSheet: sheetContext,
-                              ),
-                              child: const Text('撤销'),
-                            )
-                          : null,
                     ),
               ],
             ),

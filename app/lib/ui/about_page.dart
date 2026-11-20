@@ -60,6 +60,7 @@ class AboutPage extends StatelessWidget {
               applicationIcon: const ZhixinMark(size: 40),
             ),
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.externalLink),
             title: const Text('项目主页'),

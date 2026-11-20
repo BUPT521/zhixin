@@ -342,15 +342,21 @@ class _CapacitySheetState extends State<_CapacitySheet> {
           else
             Text('按优先级与截止排出的顺序', style: theme.text.titleSmall),
           for (var index = 0; index < plan.candidates.length; index++)
-            _candidateTile(theme, plan.candidates[index], index),
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.tight),
+              child: _candidateTile(theme, plan.candidates[index], index),
+            ),
           if (plan.skipped.isNotEmpty) ...[
             SizedBox(height: context.zhixin.space.gap),
             Text('本次不调整的安排', style: theme.text.titleSmall),
             for (final skip in plan.skipped)
-              forui.FTile(
-                prefix: const Icon(FLucideIcons.lock),
-                title: Text(skip.item.title),
-                subtitle: Text(skip.reason),
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.tight),
+                child: forui.FTile(
+                  prefix: const Icon(FLucideIcons.lock),
+                  title: Text(skip.item.title),
+                  subtitle: Text(skip.reason),
+                ),
               ),
           ],
           if (_notice != null) InlineNotice(message: _notice!),

@@ -900,12 +900,14 @@ class _DataVersionPageState extends State<DataVersionPage>
             subtitle: const Text('业务数据与仍在使用的图片。'),
             onPress: _busy ? null : _exportCurrent,
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.package),
             title: const Text('备份版本库'),
             subtitle: const Text('整库快照，含历史与附件。'),
             onPress: _busy ? null : _backupRepository,
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.cloud),
             title: const Text('云端备份'),
@@ -919,6 +921,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             subtitle: const Text('业务数据追加成一条提交。'),
             onPress: _busy ? null : _importCurrent,
           ),
+          SizedBox(height: theme.space.sm),
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.rotateCcw),
             title: const Text('从版本库恢复'),
@@ -997,21 +1000,24 @@ class _DataVersionPageState extends State<DataVersionPage>
               subtitle: '命名版本在清理时保留；删除名称不会删除提交，仍可从提交历史恢复到这个版本。',
             ),
             for (final ref in history.refs)
-              forui.FTile(
-                prefix: const LeadingIcon(FLucideIcons.bookmark),
-                title: Text(
-                  ref.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  '${ref.note?.trim().isNotEmpty == true ? '${ref.note} · ' : ''}'
-                  '提交 #${ref.commitId}',
-                ),
-                suffix: ZhixinIconButton(
-                  tooltip: '删除命名',
-                  onPressed: _busy ? null : () => _deleteName(ref),
-                  icon: FLucideIcons.x,
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.tight),
+                child: forui.FTile(
+                  prefix: const LeadingIcon(FLucideIcons.bookmark),
+                  title: Text(
+                    ref.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${ref.note?.trim().isNotEmpty == true ? '${ref.note} · ' : ''}'
+                    '提交 #${ref.commitId}',
+                  ),
+                  suffix: ZhixinIconButton(
+                    tooltip: '删除命名',
+                    onPressed: _busy ? null : () => _deleteName(ref),
+                    icon: FLucideIcons.x,
+                  ),
                 ),
               ),
           ],

@@ -89,24 +89,26 @@ Future<MaterialSelection?> showMaterialPicker(
       children: [
         Text('《${material.title}》的哪一页', style: context.zhixin.text.titleMedium),
         SizedBox(height: context.zhixin.space.gap),
-        for (final item in pages)
+        for (var index = 0; index < pages.length; index++) ...[
+          if (index > 0) SizedBox(height: context.zhixin.space.sm),
           forui.FTile(
             prefix: Icon(
-              item.pageNo == initialPageNo
+              pages[index].pageNo == initialPageNo
                   ? FLucideIcons.circleDot
                   : FLucideIcons.fileText,
             ),
             title: Text(
-              '第 ${item.pageNo} ${material.isDocx ? '个片段' : '页'}'
-              '${item.label == null ? '' : ' · ${item.label}'}',
+              '第 ${pages[index].pageNo} ${material.isDocx ? '个片段' : '页'}'
+              '${pages[index].label == null ? '' : ' · ${pages[index].label}'}',
             ),
             subtitle: Text(
-              item.preview,
+              pages[index].preview,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-            onPress: () => Navigator.of(context).pop(item),
+            onPress: () => Navigator.of(context).pop(pages[index]),
           ),
+        ],
       ],
     ),
   );
@@ -291,12 +293,20 @@ class _MaterialPickerState extends State<MaterialPicker> {
             children: searching
                 ? _searchRows(theme, results)
                 : [
-                    for (final material in widget.materials)
+                    for (
+                      var index = 0;
+                      index < widget.materials.length;
+                      index++
+                    ) ...[
+                      if (index > 0) SizedBox(height: theme.space.sm),
                       _materialTile(
                         theme,
-                        material,
-                        selected: material.id == widget.initialMaterialId,
+                        widget.materials[index],
+                        selected:
+                            widget.materials[index].id ==
+                            widget.initialMaterialId,
                       ),
+                    ],
                   ],
           ),
         ),
@@ -330,13 +340,16 @@ class _MaterialPickerState extends State<MaterialPicker> {
       ];
     }
     return [
-      for (final match in results.matches)
+      for (var index = 0; index < results.matches.length; index++) ...[
+        if (index > 0) SizedBox(height: theme.space.sm),
         _materialTile(
           theme,
-          match.material,
-          match: match,
-          selected: match.material.id == widget.initialMaterialId,
+          results.matches[index].material,
+          match: results.matches[index],
+          selected:
+              results.matches[index].material.id == widget.initialMaterialId,
         ),
+      ],
       if (results.hasMore)
         LoadMoreFooter(
           label: '加载更多结果',

@@ -206,6 +206,7 @@ Future<ImageSource?> chooseCaptureSource(BuildContext context) {
           title: const Text('拍摄照片'),
           onPress: () => Navigator.of(context).pop(ImageSource.camera),
         ),
+        SizedBox(height: context.zhixin.space.sm),
         forui.FTile(
           prefix: const Icon(FLucideIcons.images),
           title: const Text('从相册选择'),
