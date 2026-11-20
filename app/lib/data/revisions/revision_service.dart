@@ -121,6 +121,10 @@ class RevisionService {
     int limit = 20,
   }) => engine.rowHistory(db.raw, table: table, rowKey: rowKey, limit: limit);
 
+  /// 两个提交之间的净变化；`HEAD` 一侧直接读当前表，不再做两次重建。
+  ///
+  /// 起点在保留历史之外或中间有基线跳变时退回两次重建，见
+  /// [RevisionEngine.foldChanges] 与 [RevisionEngine.compare]。
   Future<RevisionDiff> compare(int from, int to) =>
       engine.compare(db.raw, from, to);
 
@@ -392,6 +396,8 @@ class RevisionService {
     );
   }
 
+  /// 检查点按提交编号倒序；`payload` 是压缩后的投影，由版本引擎按 `encoding`
+  /// 解码，调用方不需要自己解压。
   Future<List<RevisionCheckpoint>> checkpoints() => engine.checkpoints(db.raw);
 
   Future<RevisionStorageUsage> storageUsage() async {

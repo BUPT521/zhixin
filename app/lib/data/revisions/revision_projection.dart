@@ -5,6 +5,21 @@ part of 'revision_engine.dart';
 ///
 /// 拥有者：泳道 C（ADR-0039 第 3.3 节）。
 
+/// 不能只按保留的变更明细合并出 `(from, to]` 的净变化。
+///
+/// 起点之前的提交已经被裁掉、中间有清理历史留下的基线提交，或者某条提交的
+/// `change_count` 与实际的变更明细条数对不上时抛出。[RevisionProjectionMixin
+/// .compare] 捕获它之后退回两次重建，因此这种情况不按数据损坏处理
+/// （ADR-0039 第 2 条）。
+class _FoldUnavailable implements Exception {
+  const _FoldUnavailable(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => '无法按变更明细合并：$reason';
+}
+
 /// 检查点投影的原文：`json` 直接解 UTF-8，`json+gzip` 先解压。
 String decodeCheckpointPayload(RevisionCheckpoint checkpoint) {
   switch (checkpoint.encoding) {
@@ -40,9 +55,79 @@ Projection decodeProjection(String raw) {
   return projection;
 }
 
+/// 两份投影的差异：新增与删除给出整行，修改只给出真正发生净变化的列。
+///
+/// 比较按“表名＋主键”进行，表按 [versionedTableNames] 的依赖顺序、行按主键
+/// 字符串排序，结果是唯一的投影比较实现：比较结果、恢复后的逐行核对与整版
+/// 恢复的变更明细都从它派生（ADR-0039 第 4 节泳道 C）。[RevisionChange] 的
+/// `commitId` 与 `seq` 由调用方按用途补上。
+List<RevisionChange> diffProjections(Projection before, Projection after) {
+  final changes = <RevisionChange>[];
+  var seq = 1;
+  for (final table in versionedTableNames) {
+    final left = before[table] ?? const <String, TypedRow>{};
+    final right = after[table] ?? const <String, TypedRow>{};
+    final keys = <String>{...left.keys, ...right.keys}.toList()
+      ..sort((a, b) => a.compareTo(b));
+    for (final key in keys) {
+      final oldRow = left[key];
+      final newRow = right[key];
+      if (oldRow == null) {
+        changes.add(
+          RevisionChange(
+            commitId: 0,
+            seq: seq++,
+            table: table,
+            rowKey: key,
+            op: ChangeOp.insert,
+            after: newRow,
+          ),
+        );
+        continue;
+      }
+      if (newRow == null) {
+        changes.add(
+          RevisionChange(
+            commitId: 0,
+            seq: seq++,
+            table: table,
+            rowKey: key,
+            op: ChangeOp.delete,
+            before: oldRow,
+          ),
+        );
+        continue;
+      }
+      final changed = changedColumns(oldRow, newRow);
+      if (changed.isEmpty) continue;
+      changes.add(
+        RevisionChange(
+          commitId: 0,
+          seq: seq++,
+          table: table,
+          rowKey: key,
+          op: ChangeOp.update,
+          before: projectColumns(oldRow, changed),
+          after: projectColumns(newRow, changed),
+        ),
+      );
+    }
+  }
+  return changes;
+}
+
+/// 两份投影是否逐行逐列相同。
+///
+/// 裁剪前的基线校验与恢复后的核对都按“差异为空”判断，不再各自实现一遍比较。
+bool projectionsEqual(Projection left, Projection right) =>
+    diffProjections(left, right).isEmpty;
+
 mixin RevisionProjectionMixin {
   /// 引擎本身；字段与同库其他文件的方法都经它访问。
   RevisionEngine get self;
+
+  /// 空闲检查点是否正在进行；同一时刻只开一个维护事务，避免重复生成。
+  bool _idleCheckpointRunning = false;
 
   Future<List<RevisionCheckpoint>> checkpoints(
     RawExecutor executor, {
@@ -81,11 +166,21 @@ mixin RevisionProjectionMixin {
     final targetCommit = await self.commitById(executor, target);
     if (targetCommit == null) throw RevisionCorruption('提交 $target 不存在');
     final checkpoint = await self._latestCheckpoint(executor, target);
-    final projectionJson = decodeCheckpointPayload(checkpoint);
-    final projection = decodeProjection(projectionJson);
+    final String projectionJson;
+    try {
+      projectionJson = decodeCheckpointPayload(checkpoint);
+    } catch (error) {
+      throw RevisionCorruption('检查点 ${checkpoint.id} 解码失败：$error');
+    }
     final expected = self._checksum(projectionJson, checkpoint.assetHashes);
     if (expected != checkpoint.checksum) {
       throw RevisionCorruption('检查点 ${checkpoint.id} 校验值不一致');
+    }
+    final Projection projection;
+    try {
+      projection = decodeProjection(projectionJson);
+    } catch (error) {
+      throw RevisionCorruption('检查点 ${checkpoint.id} 投影格式不正确：$error');
     }
     final rows = await selectRows(
       executor,
@@ -170,52 +265,159 @@ mixin RevisionProjectionMixin {
     }
   }
 
+  /// 两个提交之间的净变化。
+  ///
+  /// 优先合并 `(from, to]` 里保留的变更明细，不再做两次重建；起点在保留历史
+  /// 之外或中间有基线跳变时退回两次重建，[to] 是当前 `HEAD` 时一侧直接用当前
+  /// 表（ADR-0039 第 2 条、方案 R8）。
   Future<RevisionDiff> compare(RawExecutor executor, int from, int to) async {
+    try {
+      final changes = await foldChanges(executor, from, to);
+      return _diffFromChanges(changes, from: from, to: to);
+    } on _FoldUnavailable {
+      // 保留的变更明细不足以得出可信结果，按两次重建比较。
+    }
+    final head = await self.headId(executor);
+    final after = to == head
+        ? await self.readProjection(executor)
+        : await self._rebuild(executor, to);
     final before = await self._rebuild(executor, from);
-    final after = await self._rebuild(executor, to);
-    return self.diffProjections(before, after, from: from, to: to);
+    return _diffFromChanges(diffProjections(before, after), from: from, to: to);
   }
 
-  RevisionDiff diffProjections(
-    Projection before,
-    Projection after, {
-    int from = 0,
-    int to = 0,
+  RevisionDiff _diffFromChanges(
+    List<RevisionChange> changes, {
+    required int from,
+    required int to,
   }) {
-    final entries = <RevisionDiffEntry>[];
-    for (final table in versionedTableNames) {
-      final left = before[table] ?? const <String, TypedRow>{};
-      final right = after[table] ?? const <String, TypedRow>{};
-      final keys = <String>{...left.keys, ...right.keys};
-      for (final key in keys) {
-        final oldRow = left[key];
-        final newRow = right[key];
-        if (oldRow == null && newRow == null) continue;
-        if (oldRow == null) {
-          entries.add(
-            RevisionDiffEntry(table: table, rowKey: key, op: ChangeOp.insert),
-          );
-          continue;
-        }
-        if (newRow == null) {
-          entries.add(
-            RevisionDiffEntry(table: table, rowKey: key, op: ChangeOp.delete),
-          );
-          continue;
-        }
-        final changed = changedColumns(oldRow, newRow);
-        if (changed.isEmpty) continue;
-        entries.add(
+    return RevisionDiff(
+      before: from,
+      after: to,
+      entries: [
+        for (final change in changes)
           RevisionDiffEntry(
-            table: table,
-            rowKey: key,
-            op: ChangeOp.update,
-            columns: changed,
+            table: change.table,
+            rowKey: change.rowKey,
+            op: change.op,
+            columns: change.op == ChangeOp.update
+                ? (change.before?.keys.toSet() ?? const <String>{})
+                : const <String>{},
           ),
-        );
-      }
+      ],
+    );
+  }
+
+  /// 只按保留的变更明细合并 `(from, to]` 的净变化，不重建任何一份投影。
+  ///
+  /// 结果与“分别重建 [from] 与 [to] 两份投影再比较”一致，按表名、主键、行级
+  /// 新增、修改或删除给出，修改只带真正发生净变化的列。起点之前的提交已经被
+  /// 裁掉、中间有清理历史留下的基线提交或缺少明细的提交时抛出私有的
+  /// [_FoldUnavailable]，由 [compare] 决定是否退回两次重建；提交本身不存在时
+  /// 仍按数据损坏抛出 [RevisionCorruption]。
+  Future<List<RevisionChange>> foldChanges(
+    RawExecutor executor,
+    int from,
+    int to,
+  ) async {
+    final toCommit = await self.commitById(executor, to);
+    if (toCommit == null) throw RevisionCorruption('提交 $to 不存在');
+    if (from == to) return const [];
+    if (to < from) {
+      // 反向区间没有可合并的明细，交给两次重建按原本的方向比较。
+      throw const _FoldUnavailable('起点晚于终点');
     }
-    return RevisionDiff(before: from, after: to, entries: entries);
+    final fromCommit = await self.commitById(executor, from);
+    if (fromCommit == null) {
+      throw _FoldUnavailable('起点提交 $from 已不在保留历史内');
+    }
+    // 起点本身是裁剪留下的断点（父提交已删掉、也不是清理历史写的基线）时，
+    // 无法确认起点是保留历史里连续的一环，交给两次重建按检查点核对。
+    if (fromCommit.parentId == null &&
+        from != 0 &&
+        fromCommit.kind != RevisionKind.baseline) {
+      throw const _FoldUnavailable('起点之前的提交已被裁掉');
+    }
+
+    final commits = await selectRows(
+      executor,
+      'revision_commit',
+      columns: ['id', 'parent_id', 'kind', 'change_count'],
+      where: 'id > ? AND id <= ?',
+      whereArgs: [from, to],
+      orderBy: 'id',
+    );
+    final detailRows = await executor.rawQuery(
+      'SELECT commit_id, COUNT(*) AS count FROM revision_change '
+      'WHERE commit_id > ? AND commit_id <= ? GROUP BY commit_id',
+      [from, to],
+    );
+    final detailCounts = {
+      for (final row in detailRows)
+        row['commit_id']! as int: row['count']! as int,
+    };
+    var expectedParent = from;
+    for (final row in commits) {
+      final id = row['id']! as int;
+      if (row['parent_id'] != expectedParent) {
+        throw _FoldUnavailable('提交 $id 之前有历史被裁掉');
+      }
+      if (RevisionKind.fromValue(row['kind']! as String) ==
+          RevisionKind.baseline) {
+        throw _FoldUnavailable('提交 $id 是一次历史清理留下的基线');
+      }
+      if ((detailCounts[id] ?? 0) != row['change_count']) {
+        throw _FoldUnavailable('提交 $id 的变更明细不完整');
+      }
+      expectedParent = id;
+    }
+
+    final rows = await selectRows(
+      executor,
+      'revision_change',
+      where: 'commit_id > ? AND commit_id <= ?',
+      whereArgs: [from, to],
+      orderBy: 'commit_id, seq',
+    );
+    final folders = <String, _ChangeFolder>{};
+    for (final row in rows) {
+      final change = RevisionChange.fromRow(row);
+      final key = '${change.table}\u0000${change.rowKey}';
+      final folder = folders.putIfAbsent(
+        key,
+        () => _ChangeFolder(change.table, change.rowKey),
+      );
+      folder.apply(change);
+    }
+
+    final tableOrder = {
+      for (var index = 0; index < versionedTableNames.length; index++)
+        versionedTableNames[index]: index,
+    };
+    final ordered = folders.values.toList()
+      ..sort((left, right) {
+        final byTable = (tableOrder[left.table] ?? 0).compareTo(
+          tableOrder[right.table] ?? 0,
+        );
+        return byTable != 0 ? byTable : left.rowKey.compareTo(right.rowKey);
+      });
+    final changes = <RevisionChange>[];
+    var seq = 1;
+    for (final folder in ordered) {
+      final change = folder.toChange();
+      if (change == null) continue;
+      changes.add(
+        RevisionChange(
+          commitId: 0,
+          seq: seq++,
+          table: change.table,
+          rowKey: change.rowKey,
+          op: change.op,
+          before: change.before,
+          after: change.after,
+        ),
+      );
+    }
+    return changes;
   }
 
   Future<RevisionRestorePreview> previewRestore(
@@ -230,7 +432,11 @@ mixin RevisionProjectionMixin {
     return RevisionRestorePreview(
       target: targetCommit,
       head: head,
-      diff: self.diffProjections(before, after, from: head, to: target),
+      diff: _diffFromChanges(
+        diffProjections(before, after),
+        from: head,
+        to: target,
+      ),
     );
   }
 
@@ -354,19 +560,10 @@ mixin RevisionProjectionMixin {
 
   Future<void> _verifyProjection(RawExecutor txn, Projection expected) async {
     final actual = await self.readProjection(txn);
-    for (final table in versionedTableNames) {
-      final want = expected[table] ?? const <String, TypedRow>{};
-      final got = actual[table] ?? const <String, TypedRow>{};
-      if (want.length != got.length) {
-        throw RevisionCorruption('恢复后的 $table 行数不一致');
-      }
-      for (final entry in want.entries) {
-        final row = got[entry.key];
-        if (row == null || !typedRowsEqual(row, entry.value)) {
-          throw RevisionCorruption('恢复后的 $table/${entry.key} 内容不一致');
-        }
-      }
-    }
+    final differences = diffProjections(expected, actual);
+    if (differences.isEmpty) return;
+    final first = differences.first;
+    throw RevisionCorruption('恢复后的 ${first.table}/${first.rowKey} 与目标版本不一致');
   }
 
   List<RevisionChange> _changesFromDiff(
@@ -374,58 +571,19 @@ mixin RevisionProjectionMixin {
     Projection after,
     int commitId,
   ) {
-    final changes = <RevisionChange>[];
     var seq = 1;
-    for (final table in versionedTableNames) {
-      final left = before[table] ?? const <String, TypedRow>{};
-      final right = after[table] ?? const <String, TypedRow>{};
-      final keys = <String>{...left.keys, ...right.keys};
-      for (final key in keys) {
-        final oldRow = left[key];
-        final newRow = right[key];
-        if (oldRow == null && newRow == null) continue;
-        if (oldRow == null) {
-          changes.add(
-            RevisionChange(
-              commitId: commitId,
-              seq: seq++,
-              table: table,
-              rowKey: key,
-              op: ChangeOp.insert,
-              after: newRow,
-            ),
-          );
-          continue;
-        }
-        if (newRow == null) {
-          changes.add(
-            RevisionChange(
-              commitId: commitId,
-              seq: seq++,
-              table: table,
-              rowKey: key,
-              op: ChangeOp.delete,
-              before: oldRow,
-            ),
-          );
-          continue;
-        }
-        final changed = changedColumns(oldRow, newRow);
-        if (changed.isEmpty) continue;
-        changes.add(
-          RevisionChange(
-            commitId: commitId,
-            seq: seq++,
-            table: table,
-            rowKey: key,
-            op: ChangeOp.update,
-            before: projectColumns(oldRow, changed),
-            after: projectColumns(newRow, changed),
-          ),
-        );
-      }
-    }
-    return changes;
+    return [
+      for (final change in diffProjections(before, after))
+        RevisionChange(
+          commitId: commitId,
+          seq: seq++,
+          table: change.table,
+          rowKey: change.rowKey,
+          op: change.op,
+          before: change.before,
+          after: change.after,
+        ),
+    ];
   }
 
   Future<int> _writeCheckpoint(
@@ -436,12 +594,13 @@ mixin RevisionProjectionMixin {
   }) async {
     final projectionJson = encodeProjection(projection);
     final raw = utf8.encode(projectionJson);
+    final compressed = Uint8List.fromList(gzip.encode(raw));
     final hashes = AssetStore.hashesInProjection(projection).toList()..sort();
     final id = await insertRow(txn, 'revision_checkpoint', {
       'kind': kind,
       'commit_id': commitId,
-      'payload': Uint8List.fromList(raw),
-      'encoding': 'json',
+      'payload': compressed,
+      'encoding': 'json+gzip',
       'raw_bytes': raw.length,
       'asset_hashes_json': jsonEncode(hashes),
       'checksum': self._checksum(projectionJson, hashes),
@@ -456,6 +615,7 @@ mixin RevisionProjectionMixin {
     return id;
   }
 
+  /// 检查点的校验值：按解压后的投影原文与附件清单计算，与编码方式无关。
   String _checksum(String projectionJson, List<String> hashes) {
     final input = '$projectionJson\n${hashes.join(',')}';
     return sha256.convert(utf8.encode(input)).toString();
@@ -476,24 +636,178 @@ mixin RevisionProjectionMixin {
     );
   }
 
-  /// 提交之后的检查点策略；阶段 0 保留原来的周期检查点，由泳道 C 改成空闲时
-  /// 按累计字节数生成。
+  /// 提交之后的检查点策略：写事务里不再生成检查点。
+  ///
+  /// 检查点改由 [afterCommitIdle] 在独占区释放之后按累计字节数生成，写入那次
+  /// 事务不再重建整库投影（ADR-0039 第 2 条、方案 R4）。
   Future<void> checkpointAfterCommit(
     RawExecutor txn,
     RevisionCommit commit,
-  ) async {
-    if (self.checkpointEvery > 0 && commit.id % self.checkpointEvery == 0) {
-      final projection = await self.projectionAt(txn, commit.id);
-      await self._writeCheckpoint(
-        txn,
-        commitId: commit.id,
-        kind: 'periodic',
-        projection: projection,
-      );
+  ) async {}
+
+  /// 一次写入落库、独占区释放之后的空闲检查点（ADR-0039 第 2 条）。
+  ///
+  /// 先用一条只读查询判断“距最近检查点累计的变更明细字节数”，没有达到
+  /// [RevisionEngine.idleCheckpointBytes] 就直接返回，不读取业务表；达到阈值
+  /// 时才单独开一个维护事务，用 [readProjection] 读当前表生成检查点，不再从
+  /// 上一个检查点回放。检查点不影响已经落库的写入，生成失败只丢掉这一次机会，
+  /// 下一次写入会重新判断；同一时刻只允许一个维护事务，避免重复生成。
+  Future<void> afterCommitIdle(RawDatabase db) async {
+    if (self.idleCheckpointBytes <= 0 || _idleCheckpointRunning) return;
+    try {
+      if (await _pendingCheckpointBytes(db) < self.idleCheckpointBytes) {
+        return;
+      }
+      _idleCheckpointRunning = true;
+      try {
+        await db.transaction((txn) async {
+          if (await _pendingCheckpointBytes(txn) < self.idleCheckpointBytes) {
+            return;
+          }
+          final head = await self.headId(txn);
+          final base = await _latestCheckpointCommit(txn);
+          if (head <= base) return;
+          final projection = await self.readProjection(txn);
+          await self._writeCheckpoint(
+            txn,
+            commitId: head,
+            kind: 'periodic',
+            projection: projection,
+          );
+        });
+      } finally {
+        _idleCheckpointRunning = false;
+      }
+    } catch (_) {
+      // 空闲工作失败不改变本次写入的结果；下一个写入之后再判断一次。
     }
   }
 
-  /// 一次提交落库、独占区释放之后的空闲工作；阶段 0 为空实现，由泳道 C 接上
-  /// 空闲检查点。
-  Future<void> afterCommitIdle(RawDatabase db) async {}
+  /// 距最近检查点累计的变更明细字节数；没有新提交时为 0。
+  Future<int> _pendingCheckpointBytes(RawExecutor executor) async {
+    final rows = await executor.rawQuery(
+      'SELECT COALESCE(SUM(byte_length), 0) AS pending FROM revision_commit '
+      'WHERE id > (SELECT COALESCE(MAX(commit_id), 0) FROM revision_checkpoint)',
+    );
+    if (rows.isEmpty) return 0;
+    return rows.first['pending'] as int? ?? 0;
+  }
+
+  /// 最近检查点对应的提交编号；没有检查点时为 0。
+  Future<int> _latestCheckpointCommit(RawExecutor executor) async {
+    final rows = await executor.rawQuery(
+      'SELECT COALESCE(MAX(commit_id), 0) AS base FROM revision_checkpoint',
+    );
+    if (rows.isEmpty) return 0;
+    return rows.first['base'] as int? ?? 0;
+  }
+}
+
+/// `(from, to]` 里同一个“表名＋主键”的合并状态。
+///
+/// 第一条变化决定这一行在起点是否存在：新增说明起点没有这一行，修改与删除
+/// 说明起点有。之后逐条把修改列的原值补进 [_startValues]、新值写进
+/// [_nowValues]，区间内改过又改回来的列因此不会出现在净变化里。
+class _ChangeFolder {
+  _ChangeFolder(this.table, this.rowKey);
+
+  final String table;
+  final String rowKey;
+
+  /// 起点是否存在；第一条变化之前为空。
+  bool? _existsAtStart;
+  bool _existsNow = false;
+
+  /// 起点一侧已知的值，只含区间内改动过的列。
+  final Map<String, RevisionValue> _startValues = {};
+
+  /// 当前一侧已知的值，列的集合与 [_startValues] 一致。
+  final Map<String, RevisionValue> _nowValues = {};
+
+  void apply(RevisionChange change) {
+    switch (change.op) {
+      case ChangeOp.insert:
+        if (_existsNow) {
+          throw _FoldUnavailable('$table/$rowKey 的变更明细顺序不连续');
+        }
+        _existsAtStart ??= false;
+        _existsNow = true;
+        _nowValues
+          ..clear()
+          ..addAll(change.after!);
+        return;
+      case ChangeOp.update:
+        if (_existsAtStart == null) {
+          _existsAtStart = true;
+          _existsNow = true;
+        } else if (!_existsNow) {
+          throw _FoldUnavailable('$table/$rowKey 删除之后又出现修改');
+        }
+        for (final entry in change.before!.entries) {
+          _startValues.putIfAbsent(entry.key, () => entry.value);
+        }
+        for (final entry in change.after!.entries) {
+          _nowValues[entry.key] = entry.value;
+        }
+        return;
+      case ChangeOp.delete:
+        if (_existsAtStart == null) {
+          _existsAtStart = true;
+          _existsNow = true;
+        } else if (!_existsNow) {
+          throw _FoldUnavailable('$table/$rowKey 重复删除');
+        }
+        for (final entry in change.before!.entries) {
+          _startValues.putIfAbsent(entry.key, () => entry.value);
+        }
+        _existsNow = false;
+        _nowValues.clear();
+        return;
+    }
+  }
+
+  /// 这一行在区间两端的净变化；净变化为空时返回空。
+  RevisionChange? toChange() {
+    final existsAtStart = _existsAtStart;
+    if (existsAtStart == null) return null;
+    if (!existsAtStart) {
+      if (!_existsNow) return null;
+      return RevisionChange(
+        commitId: 0,
+        seq: 0,
+        table: table,
+        rowKey: rowKey,
+        op: ChangeOp.insert,
+        after: Map<String, RevisionValue>.of(_nowValues),
+      );
+    }
+    if (!_existsNow) {
+      return RevisionChange(
+        commitId: 0,
+        seq: 0,
+        table: table,
+        rowKey: rowKey,
+        op: ChangeOp.delete,
+        before: Map<String, RevisionValue>.of(_startValues),
+      );
+    }
+    final columns = <String>{..._startValues.keys, ..._nowValues.keys};
+    final changed = <String>{
+      for (final column in columns)
+        if (_startValues[column] == null ||
+            _nowValues[column] == null ||
+            !_startValues[column]!.equals(_nowValues[column]!))
+          column,
+    };
+    if (changed.isEmpty) return null;
+    return RevisionChange(
+      commitId: 0,
+      seq: 0,
+      table: table,
+      rowKey: rowKey,
+      op: ChangeOp.update,
+      before: projectColumns(_startValues, changed),
+      after: projectColumns(_nowValues, changed),
+    );
+  }
 }
