@@ -14,10 +14,7 @@ Set<String> allowedDatabaseTableNames() => {
   for (final table in versionedTableNames) 'rev_stage_$table',
 };
 
-Set<String> allowedDatabaseIndexNames() => {
-  ...schemaIndexNames(),
-  for (final table in versionedTableNames) 'idx_rev_stage_${table}_commit',
-};
+Set<String> allowedDatabaseIndexNames() => {...schemaIndexNames()};
 
 Set<String> allowedDatabaseTriggerNames() => {
   for (final table in versionedTableNames)

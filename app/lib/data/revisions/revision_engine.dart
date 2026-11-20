@@ -123,7 +123,6 @@ class RevisionEngine
   RevisionEngine({
     this.clock = systemClock,
     AssetStore? assets,
-    this.checkpointEvery = 25,
     this.idleCheckpointBytes = 8 * 1024 * 1024,
   }) : assets = assets ?? AssetStore();
 
@@ -133,10 +132,6 @@ class RevisionEngine
   /// 同库其他文件里的方法通过它取本对象的字段与方法。
   @override
   RevisionEngine get self => this;
-
-  /// 周期检查点原来按提交编号的间隔触发；改成空闲检查点之后由
-  /// `revision_projection.dart` 决定是否还使用它。
-  final int checkpointEvery;
 
   /// 空闲检查点的累计阈值：距最近检查点的提交变更明细字节数超过它时，在
   /// 写事务之外的维护事务里生成一份检查点（ADR-0039 第 2 条）。

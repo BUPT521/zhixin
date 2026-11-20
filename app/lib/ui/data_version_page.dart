@@ -1308,13 +1308,20 @@ class _DataVersionPageState extends State<DataVersionPage>
             for (final line in lines) Text(line, style: theme.text.bodySmall),
           ],
         ),
-        suffix: forui.FButton(
-          variant: forui.FButtonVariant.outline,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: _busy ? null : () => _keepLocal(conflict),
-          child: const Text('保留本机修改'),
-        ),
+        suffix: switch (conflict.reason) {
+          // 本机已经删掉这一行，远端的修改没有写入，没有可以写回的本机值。
+          RevisionConflict.deletedLocally => Text(
+            '已经删除',
+            style: theme.text.bodySmall,
+          ),
+          _ => forui.FButton(
+            variant: forui.FButtonVariant.outline,
+            size: forui.FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: _busy ? null : () => _keepLocal(conflict),
+            child: const Text('保留本机修改'),
+          ),
+        },
       ),
     );
   }
@@ -1361,15 +1368,15 @@ class _DataVersionPageState extends State<DataVersionPage>
     String column, {
     required bool local,
   }) {
-    final row = local ? conflict.local : conflict.remoteAfter;
-    final value = row[column];
-    if (value != null) return _fieldText(conflict.table, column, value);
     if (local && conflict.reason == RevisionConflict.deletedLocally) {
       return '已经删除';
     }
     if (!local && conflict.reason == RevisionConflict.deletedRemotelyModified) {
       return '已经删除';
     }
+    final row = local ? conflict.local : conflict.remoteAfter;
+    final value = row[column];
+    if (value != null) return _fieldText(conflict.table, column, value);
     return _fieldText(conflict.table, column, null);
   }
 

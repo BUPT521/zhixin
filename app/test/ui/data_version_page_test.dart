@@ -135,6 +135,21 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('本机已删的同步覆盖写明已经删除，不提供写回按钮', (tester) async {
+    final page = await openPage(
+      tester,
+      revisionsFactory: (rig) =>
+          _StubRevisions(rig, pendingConflicts: [_deletedLocallyConflict()]),
+    );
+    addTearDown(() => tester.runAsync(page.rig!.close));
+
+    expect(find.text('同步覆盖'), findsOneWidget);
+    expect(find.textContaining('已经删除'), findsWidgets);
+    expect(find.text('保留本机修改'), findsNothing);
+    expect(find.textContaining('conversation'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('清理被阻止时把原因写进确认框并禁用确认', (tester) async {
     final page = await openPage(
       tester,
@@ -295,6 +310,19 @@ RevisionConflict _titleConflict() => RevisionConflict(
   column: 'title',
   reason: RevisionConflict.concurrentUpdate,
   local: typedRow({'title': '本机原来的标题'}),
+  remoteBefore: typedRow({'title': '两边开始时的标题'}),
+  remoteAfter: typedRow({'title': '其他设备改后的标题'}),
+);
+
+/// 本机删掉了这一行、远端还在改它：没有可以写回的本机值。
+RevisionConflict _deletedLocallyConflict() => RevisionConflict(
+  id: 8,
+  commitId: 10,
+  table: 'conversation',
+  rowKey: 'conv-2',
+  column: 'title',
+  reason: RevisionConflict.deletedLocally,
+  local: typedRow({'title': '其他设备改后的标题'}),
   remoteBefore: typedRow({'title': '两边开始时的标题'}),
   remoteAfter: typedRow({'title': '其他设备改后的标题'}),
 );
