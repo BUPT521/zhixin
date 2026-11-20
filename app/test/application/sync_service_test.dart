@@ -180,6 +180,107 @@ void main() {
     expect(history.commits.length, greaterThanOrEqualTo(2));
   });
 
+  test('新设备首次同步只拉取、不上传基线，服务端序列长度不变', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    final bytes = [4, 4, 4, 2];
+    final hash = AssetStore.hashBytes(bytes);
+    await a.rig.db.command((txn) async {
+      await a.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
+    }, label: '保存附件');
+    await _insertMemory(a.rig, 'm1', hash);
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = (await a.account.snapshot()).session!.userId;
+    final headAfterA = server.headOf(userId);
+    expect(headAfterA, greaterThan(0));
+    expect(server.blobs[userId]!.keys, contains(hash));
+    final uploadsBefore = server.blobUploadAttempts;
+
+    // B 是本机投影为空的新设备：拉完之后本机每一行都由远端提交表达，一条基线
+    // 也不产生，服务端序列长度、附件与推送次数都不变，和 `git clone` 一样。
+    final b = await device('a@example.com', deviceId: 'device-b');
+    final result = await b.sync.syncNow();
+    expect(result.pulledCommits, greaterThanOrEqualTo(1));
+    expect(result.pushedCommits, 0);
+    expect(result.uploadedAssets, 0);
+    expect(result.downloadedAssets, 1);
+    expect(
+      server.headOf(userId),
+      headAfterA,
+      reason:
+          '新设备首次同步不该上传基线：服务端现在有 ${server.headOf(userId)} 条，'
+          '期望 $headAfterA 条',
+    );
+    expect(server.blobUploadAttempts, uploadsBefore, reason: '拉到的附件不该再传一遍');
+    expect(await _memoryContent(b.rig, 'm1'), hash);
+    final bytesOnB = await b.rig.engine.assets.readBytes(b.rig.raw, hash);
+    expect(bytesOnB, bytes);
+
+    // 第二轮同步同样没有可推的东西：拉下来的远端提交不会再传回去。
+    final again = await b.sync.syncNow();
+    expect(again.pushedCommits, 0);
+    expect(server.headOf(userId), headAfterA);
+  });
+
+  test('已有本地数据的设备首次同步只上传本机独有的行', () async {
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await _insertMemory(a.rig, 'm1', 'A 先有的记录');
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = (await a.account.snapshot()).session!.userId;
+    final headAfterA = server.headOf(userId);
+
+    // B 在首次同步之前已经有一条自己的记录，还有一条带附件：两条都是本机独有
+    // 的数据；服务端已有的 m1 与 profile 行不进基线。
+    final b = await device('a@example.com', deviceId: 'device-b');
+    await _insertMemory(b.rig, 'm2', 'B 先有的记录');
+    final bytes = [7, 5, 3, 1];
+    final hash = AssetStore.hashBytes(bytes);
+    await b.rig.db.command((txn) async {
+      await b.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
+    }, label: '保存附件');
+    await _insertMemory(b.rig, 'm3', hash);
+    await expectLater(
+      b.sync.syncNow(),
+      throwsA(isA<BaselineConfirmationRequired>()),
+      reason: '本机有记录、账号还没同步过时仍然要先确认一次',
+    );
+    expect(server.headOf(userId), headAfterA, reason: '确认之前不向服务端写任何记录');
+
+    final result = await b.sync.syncNow(confirmBaseline: true);
+    expect(result.pulledCommits, greaterThanOrEqualTo(1));
+    expect(result.pushedCommits, 1);
+    expect(result.uploadedAssets, 1);
+    expect(server.headOf(userId), headAfterA + 1);
+    final baseline = server.commits[userId]!.last;
+    expect(baseline['action'], '首次同步基线');
+    final changes = baseline['changes']! as List;
+    expect(
+      [
+        for (final change in changes)
+          '${(change as Map)['table']}/${change['row_key']}',
+      ],
+      ['memory/m2', 'memory/m3'],
+      reason: '服务端已有的 m1 与 profile 行不该重复上传：$changes',
+    );
+    expect(server.blobs[userId]!.keys, contains(hash), reason: '本机独有行的附件要跟着上传');
+
+    // 两边互相拿到对方的记录；B 的第二轮同步没有可推的东西。
+    await a.sync.syncNow();
+    expect(await _memoryContent(a.rig, 'm2'), 'B 先有的记录');
+    expect(await _memoryContent(a.rig, 'm3'), hash);
+    expect(await _memoryContent(b.rig, 'm1'), 'A 先有的记录');
+    final again = await b.sync.syncNow();
+    expect(again.pushedCommits, 0);
+    expect(server.headOf(userId), headAfterA + 1);
+  });
+
   test('之后的本机写入按提交推送，另一台设备拉取后看到新记录与附件', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
@@ -534,7 +635,7 @@ void main() {
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
     await a.sync.syncNow(confirmBaseline: true);
 
-    // B 第一次同步会把自己拉到的数据再上传一份基线；A 先同步一次消化掉它，
+    // B 首次同步只拉取、不上传基线；A 再同步一次把两边的服务端位置归一，
     // 后面这一轮只比较两边各自改过的内容。
     final b = await device('a@example.com', deviceId: 'device-b');
     await b.sync.syncNow();

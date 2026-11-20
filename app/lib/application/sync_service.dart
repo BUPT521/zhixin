@@ -46,7 +46,10 @@ class BaselineConfirmationRequired implements Exception {
     this.afterRestore = false,
   });
 
-  /// 本机当前 HEAD 对应的提交数，用来告诉用户会上传多少。
+  /// 本机当前 HEAD 对应的提交数，用来告诉用户本机有多少记录。
+  ///
+  /// 首次同步不再把这些提交整份上传：确认之后只上传本机独有、云端还没有的行，
+  /// 这个数字只用于界面说明本机已有的历史（同步方案 3.6）。
   final int localCommits;
 
   /// 整库恢复之后的第一轮同步：确认之后不是整份上传本机记录，而是把恢复这一步
@@ -56,8 +59,8 @@ class BaselineConfirmationRequired implements Exception {
   String get message => afterRestore
       ? '本机刚刚恢复过一份旧备份。继续之后会把恢复后的内容同步到云端，'
             '恢复之前推送的多余记录会从云端删除，其他登录这个账号的设备也会看到恢复后的内容。'
-      : '这个账号还没有同步过。首次同步会把本机现有的 $localCommits 条提交作为基线'
-            '完整上传到这个账号的云端，其他登录这个账号的设备也会看到这些记录。';
+      : '这个账号还没有同步过。继续之后会先拉取云端已有的记录，只把本机独有、'
+            '云端没有的记录上传作为基线，其他登录这个账号的设备也会看到这些记录。';
 
   @override
   String toString() => message;
@@ -130,8 +133,10 @@ class SyncResult {
       downloadedAssets > 0;
 }
 
-/// 按提交序列与服务端同步：首次上传当前数据为基线，之后拉取远端提交、在本机
-/// 应用为新的提交，再推送本机新提交，并把提交里引用的附件按哈希补齐。
+/// 按提交序列与服务端同步：首次同步先把远端提交全部拉下来，只把本机独有、
+/// 云端还没有的行作为基线上传（同步方案 3.6，相当于 git 的 clone）；之后拉取
+/// 远端提交、在本机应用为新的提交，再推送本机新提交，并把提交里引用的附件按
+/// 哈希补齐。
 ///
 /// 库里的两个同步位置带一个 `scope`（账号编号与实例来源的哈希）：退出登录、
 /// 删除账号与清除云端只把推送位置改成不阻塞、位置与 `scope` 保留，重新登录
@@ -279,8 +284,9 @@ class SyncService {
     final identityState = _sameIdentity(state, userId, origin) ? state : null;
     final pushed = await _cursors.read(RevisionCursor.syncPushed);
     if (!_positionLinked(pushed, scope, identityState)) {
-      // 这个身份还没有库里的同步位置（或者位置属于别的账号与实例）：本机现有
-      // 记录会整份作为首次基线上传。
+      // 这个身份还没有库里的同步位置（或者位置属于别的账号与实例）：下一轮
+      // 同步会先拉取云端已有的记录，再把本机独有的行作为基线上传（同步方案
+      // 3.6）。
       return SyncStatus(
         signedIn: true,
         accountLabel: snapshot.displayLabel,
@@ -471,8 +477,9 @@ class SyncService {
         serverHead = realigned.serverHead;
         state = SyncState(userId: userId, serverOrigin: origin);
       } else if (!linked) {
-        // 首次同步（或恢复之后按首次基线重新对齐）会把本机记录整份上传，必须
-        // 先确认；本机没有记录时不需要确认。
+        // 首次同步（或恢复之后按首次基线重新对齐）会先拉取云端已有的记录，
+        // 再把本机独有、云端没有的行作为基线上传；本机没有记录时不会上传任何
+        // 东西，也就不需要确认（同步方案 3.6）。
         await _clearRestoreMarker();
         if (localHead > 0 && !confirmBaseline) {
           throw BaselineConfirmationRequired(
@@ -569,8 +576,15 @@ class SyncService {
     await _shadows.clear();
   }
 
-  /// 第一次同步：先把服务端已有的提交拉下来，再把本机当前数据作为一份基线
-  /// 上传，最后补齐附件。本机历史仍然完整，后续写入按提交增量推送。
+  /// 第一次同步：先把服务端已有的提交全部拉下来，再把本机独有、云端还没有的
+  /// 行作为基线提交上传，最后补齐这些行引用到的附件（同步方案 3.6）。
+  ///
+  /// 服务端的每一行都来自某条远端提交，所以拉取时记下被远端提交触及过的
+  /// “表名 + 主键”，组装基线时跳过这些行：它们已经由服务端序列表达，本机这份
+  /// 只是拉下来的副本，再传一遍只会让序列多出一整份数据。全新设备本机投影为空
+  /// 时一条基线也不产生，服务端序列长度不变，与 `git clone` 一致。被跳过行的
+  /// 附件哈希不单独上传：它的内容随那条远端提交可以在服务端取到；被保留下来的
+  /// 行如果也引用同一个哈希，按引用去重之后照常上传。
   ///
   /// 收尾时把两个同步位置写进库里的 `revision_cursor`：拉取之后的本机 `HEAD`
   /// 都已经在服务端序列里（推送位置从这里开始），服务端位置记下基线推完之后的
@@ -582,6 +596,8 @@ class SyncService {
     var pulled = 0;
     var downloaded = 0;
     var serverHead = 0;
+    // 这次拉取触及过的行，按“表名 + 主键”记；只在首次同步里用，收尾即丢弃。
+    final touchedRows = <(String, String)>{};
     final remoteHead = await account.call(
       (client, token) => client.head(token),
     );
@@ -591,6 +607,7 @@ class SyncService {
         deviceId: deviceId,
         persist: false,
         downloaded: (count) => downloaded += count,
+        touchedRows: touchedRows,
       );
       pulled = result.pulled;
       serverHead = result.serverHead;
@@ -602,6 +619,8 @@ class SyncService {
     for (final table in versionedTableNames) {
       final rows = projection[table] ?? const <String, TypedRow>{};
       for (final entry in rows.entries) {
+        // 被远端提交触及过的行已经由服务端序列表达，不进基线。
+        if (touchedRows.contains((table, entry.key))) continue;
         changes.add(
           RevisionChange(
             commitId: 0,
@@ -624,13 +643,13 @@ class SyncService {
         pushed += count;
       },
     );
-    final uploaded = await _uploadAssets(
-      AssetStore.hashesInProjection(projection),
-    );
+    // 附件只跟着基线里的行走：被跳过行的哈希按“服务端已有”处理，本机保留行
+    // 也引用到同一个哈希时仍然上传，集合去重。
+    final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
     _ensureIdentity();
     await _saveServerHead(baseSeq);
     await _savePushed(headAfterPull);
-    // 首次基线把本机现有内容整份上传，编号不大于它的本机提交不再单独推送，
+    // 首次基线把本机独有的内容上传，编号不大于它的本机提交不再单独推送，
     // 换账号或服务端清空后重建时留下的遮蔽行一并清掉。
     await _shadows.deleteSettled(headAfterPull);
     return (
@@ -753,11 +772,16 @@ class SyncService {
 
   /// 拉取服务端位置 [serverHead] 之后的提交并应用到本机，返回推进后的服务端
   /// 位置；[persist] 为真时每页推进之后都写进库里的读取位置。
+  ///
+  /// [touchedRows] 非空时记下每条远端提交触及过的“表名 + 主键”（变化明细里
+  /// 出现的每一行，含被跳过与被删除的）：首次同步据此判断本机投影里哪些行已经
+  /// 由服务端序列表达，只把剩下的行作为基线上传（同步方案 3.6）。
   Future<({int serverHead, int pulled, int downloaded})> _pull({
     required int serverHead,
     required String deviceId,
     required void Function(int count) downloaded,
     bool persist = true,
+    Set<(String, String)>? touchedRows,
   }) async {
     var current = serverHead;
     var pulled = 0;
@@ -778,6 +802,14 @@ class SyncService {
         // 被这条远端提交取代的本机格子由 `applyChanges` 在同一个事务里登记进
         // `sync_shadow`，这一层不用再记（ADR-0040）。
         final applied = await _applyRemote(commit);
+        if (touchedRows != null) {
+          // 服务端序列里的行全部来自远端提交：变化明细里出现过的行即被触及，
+          // 本机这份只是副本。被跳过或被删除的变化也记下，对应的本机行要么已经
+          // 是远端值，要么本来就不存在，都不该进基线。
+          for (final change in commit.changes) {
+            touchedRows.add((change.table, change.rowKey));
+          }
+        }
         hashes.addAll(applied.assetHashes);
         pulled++;
       }
