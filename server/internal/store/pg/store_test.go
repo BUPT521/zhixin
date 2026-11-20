@@ -47,7 +47,7 @@ func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_head, auth_code, user_identity, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_snapshot, sync_head, auth_code, user_identity, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -493,8 +493,8 @@ func TestPostgresClearAccountData(t *testing.T) {
 	if err := st.Reset(ctx, "u1"); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if head, err := st.Head(ctx, "u1"); err != nil || head != 0 {
-		t.Fatalf("head after reset = %d, %v", head, err)
+	if state, err := st.State(ctx, "u1"); err != nil || state.Head != 0 {
+		t.Fatalf("head after reset = %d, %v", state.Head, err)
 	}
 	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 0 {
 		t.Fatalf("commits after reset = %+v, %v", commits, err)
@@ -503,8 +503,8 @@ func TestPostgresClearAccountData(t *testing.T) {
 	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r3")}); err != nil || head != 1 {
 		t.Fatalf("append after reset: head %d, err %v", head, err)
 	}
-	if head, err := st.Head(ctx, "u2"); err != nil || head != 1 {
-		t.Fatalf("另一个账号的 head 应保留，得到 %d, %v", head, err)
+	if state, err := st.State(ctx, "u2"); err != nil || state.Head != 1 {
+		t.Fatalf("另一个账号的 head 应保留，得到 %d, %v", state.Head, err)
 	}
 
 	// 已经清空的账号重复清空也成功，失败重试不需要先判断有没有数据。
@@ -826,9 +826,9 @@ func TestPostgresSyncSequence(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 
-	head, err := st.Head(ctx, "u1")
-	if err != nil || head != 0 {
-		t.Fatalf("空日志 head 应为 0，得到 %d %v", head, err)
+	state, err := st.State(ctx, "u1")
+	if err != nil || state.Head != 0 || state.EarliestSeq != 1 || state.Snapshot != nil {
+		t.Fatalf("空日志状态应为 head 0、保留下界 1、无快照，得到 %+v %v", state, err)
 	}
 
 	mk := func(id string) syncsvc.Commit {
@@ -839,7 +839,7 @@ func TestPostgresSyncSequence(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	head, err = st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")})
+	head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")})
 	if err != nil || head != 2 {
 		t.Fatalf("追加两条后 head 应为 2，得到 %d %v", head, err)
 	}
@@ -865,6 +865,89 @@ func TestPostgresSyncSequence(t *testing.T) {
 	}
 }
 
+// TestPostgresSyncSnapshot 守住快照指针、保留期压缩与去重表：登记只保留最新
+// 位置，回退与未来位置都被拒绝；保留期之内的登记不删除提交，超过保留期的提交
+// 在登记时删除并推进保留下界；压缩删除旧提交之后，重放仍然被去重表跳过；清空
+// 云端数据把快照、保留下界与去重身份一起清掉（ADR-0043）。
+func TestPostgresSyncSnapshot(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+
+	mk := func(id string) syncsvc.Commit {
+		after := json.RawMessage(`{}`)
+		return syncsvc.Commit{
+			RequestId: id, DeviceId: "d1", SchemaVersion: 26,
+			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
+			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
+		}
+	}
+	snap := syncsvc.Snapshot{
+		Seq: 3, SHA256: strings.Repeat("a", 64), Digest: strings.Repeat("b", 64),
+	}
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}); err != nil || head != 3 {
+		t.Fatalf("追加三条: %d %v", head, err)
+	}
+	state, err := st.State(ctx, "u1")
+	if err != nil || state.Head != 3 || state.EarliestSeq != 1 || state.Snapshot != nil {
+		t.Fatalf("登记之前的状态: %+v %v", state, err)
+	}
+
+	// 保留期为零表示不按时间删除，登记之后提交都还在。
+	state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{})
+	if err != nil || state.Snapshot == nil || state.Snapshot.Seq != 3 || state.EarliestSeq != 1 {
+		t.Fatalf("登记快照: %+v %v", state, err)
+	}
+	// 回退覆盖更新的快照被拒绝，状态里带着当前指针。
+	older := snap
+	older.Seq = 2
+	if state, err = st.RegisterSnapshot(ctx, "u1", older, syncsvc.CompactPolicy{}); err != syncsvc.ErrSnapshotStale {
+		t.Fatalf("回退登记应返回 ErrSnapshotStale，得到 %+v %v", state, err)
+	}
+	// 登记 head 之后的位置没有对应提交。
+	ahead := snap
+	ahead.Seq = 4
+	if _, err = st.RegisterSnapshot(ctx, "u1", ahead, syncsvc.CompactPolicy{}); err != syncsvc.ErrInvalid {
+		t.Fatalf("未来位置应返回 ErrInvalid，得到 %v", err)
+	}
+	// 保留窗口之内的提交不删除。
+	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: 24 * time.Hour}); err != nil || state.EarliestSeq != 1 {
+		t.Fatalf("保留期之内: %+v %v", state, err)
+	}
+
+	// 保留窗口极短：三条提交都早于它，登记时删除，保留下界推进到 4。
+	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: time.Nanosecond}); err != nil || state.EarliestSeq != 4 || state.Head != 3 {
+		t.Fatalf("压缩之后: %+v %v", state, err)
+	}
+	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 0 {
+		t.Fatalf("压缩之后不应再拉到提交: %+v %v", commits, err)
+	}
+	// 去重表保留了接收过的身份：重放旧提交被跳过，head 不变。
+	if head, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r1")}); err != nil || head != 3 {
+		t.Fatalf("压缩之后的重放: %d %v", head, err)
+	}
+	// 新提交照常追加与拉取。
+	if head, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")}); err != nil || head != 4 {
+		t.Fatalf("压缩之后的追加: %d %v", head, err)
+	}
+	if commits, err := st.After(ctx, "u1", 3, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 1 || commits[0].RequestId != "r4" {
+		t.Fatalf("压缩之后的增量: %+v %v", commits, err)
+	}
+
+	// 清空云端数据把快照、保留下界与去重身份一起清掉。
+	if err := st.Reset(ctx, "u1"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if state, err = st.State(ctx, "u1"); err != nil || state.Head != 0 || state.EarliestSeq != 1 || state.Snapshot != nil {
+		t.Fatalf("清空之后的状态: %+v %v", state, err)
+	}
+	// 去重身份也清了：同一编号重新写入从 1 开始。
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}); err != nil || head != 1 {
+		t.Fatalf("清空之后重新写入: %d %v", head, err)
+	}
+}
 func TestPostgresBackupsAndQuota(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

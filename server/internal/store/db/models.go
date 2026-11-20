@@ -173,9 +173,23 @@ type SyncCommit struct {
 	Changes       []byte
 }
 
+type SyncCommitSeen struct {
+	UserID    string
+	RequestID string
+}
+
 type SyncHead struct {
-	UserID string
-	Head   int64
+	UserID         string
+	Head           int64
+	TrimmedThrough int64
+}
+
+type SyncSnapshot struct {
+	UserID    string
+	Seq       int64
+	Sha256    string
+	Digest    string
+	CreatedAt pgtype.Timestamptz
 }
 
 type UserActive struct {

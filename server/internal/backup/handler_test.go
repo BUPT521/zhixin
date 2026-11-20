@@ -24,7 +24,7 @@ import (
 
 const (
 	// testSchemaVersion 与服务端接受的客户端 schema 版本一致（server.ClientSchemaVersion）。
-	testSchemaVersion = 29
+	testSchemaVersion = 30
 	testMaxBytes      = 1 << 20
 	testKept          = 2
 )

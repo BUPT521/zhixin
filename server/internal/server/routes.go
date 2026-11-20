@@ -97,6 +97,12 @@ func (rt routes) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 		rt.sync.Reset(w, r)
 	}
 }
+func (rt routes) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
+	rt.sync.Snapshot(w, r)
+}
+func (rt routes) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
+	rt.sync.RegisterSnapshot(w, r)
+}
 
 func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
 	rt.blobs.Get(w, r, sha256)

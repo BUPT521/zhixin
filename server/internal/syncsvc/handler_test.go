@@ -20,7 +20,7 @@ import (
 
 const (
 	// testSchemaVersion 与服务端接受的客户端 schema 版本一致（server.ClientSchemaVersion）。
-	testSchemaVersion = 29
+	testSchemaVersion = 30
 	testMaxJSON       = 1 << 20
 )
 
@@ -223,5 +223,216 @@ func TestHandlerSyncPreservesLargeIntegers(t *testing.T) {
 	}
 	if !strings.Contains(string(pulled.Commits[0].Changes), big) {
 		t.Fatalf("large integer was rewritten: %s", pulled.Commits[0].Changes)
+	}
+}
+
+// ---- 快照登记与保留下界的处理器用例（ADR-0043） ----
+//
+// 以下内容追加在文件末尾：另一个同事同时在改文件头部的 schema 常量，这里只补
+// 新的桩与用例，不重写已有的 testAPI 与常量。
+
+// snapshotAPI 在 testAPI 之上补齐快照的两条路由；testutil.Base 里已经有回 404
+// 的桩，契约新增接口时那边会先编译失败。
+type snapshotAPI struct{ testAPI }
+
+func (a snapshotAPI) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
+	a.h.Snapshot(w, r)
+}
+
+func (a snapshotAPI) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
+	a.h.RegisterSnapshot(w, r)
+}
+
+// snapshotHarness 是一套带可控时钟与附件查询的同步服务：保留期要在用例里直接
+// 拨动，附件归属用一个只认测试哈希的查询模拟。
+type snapshotHarness struct {
+	client  *testutil.Client
+	authSvc *auth.Service
+	store   *MemoryStore
+	clock   time.Time
+}
+
+func newSnapshotHarness(t *testing.T) *snapshotHarness {
+	t.Helper()
+	h := &snapshotHarness{store: NewMemoryStore(), clock: time.Now()}
+	h.store.now = func() time.Time { return h.clock }
+	h.authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(h.store, testSchemaVersion).
+		SetAttachments(fakeAttachments{snapshotSHA: 4096}).
+		SetCompactKeep(time.Hour)
+	handler := NewHandler(svc, log, 16*testMaxJSON)
+	h.client = testutil.NewClient(t, testutil.NewServer(
+		snapshotAPI{testAPI{h: handler}},
+		httpx.RequestID,
+		auth.Middleware(h.authSvc, log),
+	))
+	return h
+}
+
+// snapshotBody 是一次快照登记的请求体。
+func snapshotBody(seq int64, sha string) map[string]any {
+	return map[string]any{"seq": seq, "sha256": sha, "digest": snapshotDigest}
+}
+
+// TestHandlerSnapshotRegistration 守住新接口的鉴权、参数校验与登记语义：不能
+// 登记未来的位置，附件必须属于这个账号，不能回退覆盖更新的快照，同一位置按幂等
+// 重试接受；head 与快照查询返回同一个指针。
+func TestHandlerSnapshotRegistration(t *testing.T) {
+	h := newSnapshotHarness(t)
+	token := signIn(t, h.authSvc, "snap@b.cn")
+
+	var push api.PushResult
+	if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 0, "commits": []any{commitBody("r1"), commitBody("r2")},
+	}, &push); code != http.StatusOK || push.Head != 2 {
+		t.Fatalf("push: %d %+v", code, push)
+	}
+
+	// 鉴权由中间件负责：没有令牌时处理器根本不会被调用。
+	anonPut := testutil.ReadProblem(t, h.client.Do(http.MethodPut, "/v1/sync/snapshot", "", strings.NewReader(`{"seq":1,"sha256":"`+snapshotSHA+`","digest":"`+snapshotDigest+`"}`), map[string]string{"Content-Type": "application/json"}))
+	if anonPut.Status != http.StatusUnauthorized || anonPut.Code != string(httpx.CodeUnauthorized) {
+		t.Fatalf("匿名登记: %+v", anonPut)
+	}
+	anonGet := testutil.ReadProblem(t, h.client.Do(http.MethodGet, "/v1/sync/snapshot", "", nil, nil))
+	if anonGet.Status != http.StatusUnauthorized {
+		t.Fatalf("匿名查询: %+v", anonGet)
+	}
+
+	// 参数校验：未来的位置、形状不对的哈希、不属于这个账号的附件、不是 JSON。
+	var p testutil.Problem
+	bad := []struct {
+		name string
+		body any
+	}{
+		{"未来的位置", snapshotBody(3, snapshotSHA)},
+		{"序号为零", snapshotBody(0, snapshotSHA)},
+		{"哈希形状不对", snapshotBody(1, "not-a-hash")},
+		{"摘要形状不对", map[string]any{"seq": 1, "sha256": snapshotSHA, "digest": strings.Repeat("c", 63)}},
+		{"附件不属于这个账号", snapshotBody(1, strings.Repeat("d", 64))},
+	}
+	for _, tc := range bad {
+		if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, tc.body, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeInvalidRequest) {
+			t.Fatalf("%s: %d %+v", tc.name, code, p)
+		}
+	}
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, map[string]any{"seq": 1}, &p); code != http.StatusBadRequest {
+		t.Fatalf("缺字段: %d %+v", code, p)
+	}
+
+	// 合法登记：head、保留下界与快照指针一起返回。
+	var head api.SyncHead
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(2, snapshotSHA), &head); code != http.StatusOK || head.Head != 2 || head.EarliestSeq != 1 || head.Snapshot == nil || head.Snapshot.Seq != 2 || head.Snapshot.Sha256 != snapshotSHA {
+		t.Fatalf("登记快照: %d %+v", code, head)
+	}
+	var snap api.SyncHead
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/snapshot", token, nil, &snap); code != http.StatusOK || snap.Snapshot == nil || *snap.Snapshot != *head.Snapshot {
+		t.Fatalf("查询快照: %d %+v", code, snap)
+	}
+
+	// 回退覆盖更新的快照被拒绝，extra 给出当前位置。
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(1, snapshotSHA), &p); code != http.StatusConflict || p.Code != string(httpx.CodeConflict) || p.Extra["snapshot_seq"] != float64(2) {
+		t.Fatalf("回退登记: %d %+v", code, p)
+	}
+	// 同一位置的登记按幂等重试接受。
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(2, snapshotSHA), &head); code != http.StatusOK || head.Snapshot == nil || head.Snapshot.Seq != 2 {
+		t.Fatalf("同位置重试: %d %+v", code, head)
+	}
+
+	// 序列本身不受登记影响：提交还在，head 与拉取都不变。
+	var page api.CommitPage
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/commits?after=0", token, nil, &page); code != http.StatusOK || len(page.Commits) != 2 || page.EarliestSeq != 1 || page.Snapshot == nil || page.Snapshot.Seq != 2 {
+		t.Fatalf("登记之后拉取: %d %+v", code, page)
+	}
+
+	// 另一个账号看不到这个账号的快照。响应里没有 snapshot 字段时解码不会覆盖旧
+	// 值，所以这里用一个新变量。
+	other := signIn(t, h.authSvc, "other@b.cn")
+	var otherHead api.SyncHead
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/snapshot", other, nil, &otherHead); code != http.StatusOK || otherHead.Snapshot != nil || otherHead.Head != 0 || otherHead.EarliestSeq != 1 {
+		t.Fatalf("跨账号泄漏: %d %+v", code, otherHead)
+	}
+}
+
+// TestHandlerPullAfterCompaction 守住压缩之后的拉取边界：要的下一条已删除时返回
+// 410 history_compacted 并带上保留下界与快照位置，恰好接得上的位置照常增量返回。
+func TestHandlerPullAfterCompaction(t *testing.T) {
+	h := newSnapshotHarness(t)
+	token := signIn(t, h.authSvc, "compact@b.cn")
+
+	for i := range 4 {
+		var push api.PushResult
+		if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+			"base_seq": i, "commits": []any{commitBody(fmt.Sprintf("r%d", i))},
+		}, &push); code != http.StatusOK || push.Head != int64(i+1) {
+			t.Fatalf("push %d: %d %+v", i, code, push)
+		}
+	}
+	var page api.CommitPage
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/commits?after=0", token, nil, &page); code != http.StatusOK || len(page.Commits) != 4 || page.EarliestSeq != 1 || page.Snapshot != nil {
+		t.Fatalf("压缩之前拉取: %d %+v", code, page)
+	}
+
+	// 拨过保留期再登记快照，四条提交都早于保留窗口，登记时删除。
+	h.clock = h.clock.Add(2 * time.Hour)
+	var head api.SyncHead
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(4, snapshotSHA), &head); code != http.StatusOK || head.Head != 4 || head.EarliestSeq != 5 || head.Snapshot == nil || head.Snapshot.Seq != 4 {
+		t.Fatalf("压缩之后登记: %d %+v", code, head)
+	}
+
+	// 越界的位置返回 410，extra 带齐重新克隆需要的信息。
+	compacted := testutil.ReadProblem(t, h.client.Do(http.MethodGet, "/v1/sync/commits?after=1", token, nil, nil))
+	if compacted.Status != http.StatusGone || compacted.Code != string(httpx.CodeHistoryCompacted) {
+		t.Fatalf("越界拉取: %+v", compacted)
+	}
+	if compacted.Extra["after"] != float64(1) || compacted.Extra["earliest_seq"] != float64(5) ||
+		compacted.Extra["head"] != float64(4) || compacted.Extra["snapshot_seq"] != float64(4) ||
+		compacted.Extra["snapshot_sha256"] != snapshotSHA || compacted.Extra["snapshot_digest"] != snapshotDigest {
+		t.Fatalf("越界拉取的 extra: %+v", compacted.Extra)
+	}
+	// 首次同步的位置同样越界，客户端应当先下载快照。
+	if p := testutil.ReadProblem(t, h.client.Do(http.MethodGet, "/v1/sync/commits?after=0", token, nil, nil)); p.Status != http.StatusGone || p.Code != string(httpx.CodeHistoryCompacted) {
+		t.Fatalf("首次同步的位置: %+v", p)
+	}
+
+	// 恰好等于保留下界减一时仍按增量返回。
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/commits?after=4", token, nil, &page); code != http.StatusOK || len(page.Commits) != 0 || page.Head != 4 || page.EarliestSeq != 5 {
+		t.Fatalf("边界位置拉取: %d %+v", code, page)
+	}
+
+	// 压缩之后的提交照常追加与拉取。
+	var push api.PushResult
+	if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 4, "commits": []any{commitBody("r5")},
+	}, &push); code != http.StatusOK || push.Head != 5 {
+		t.Fatalf("压缩之后推送: %d %+v", code, push)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/commits?after=4", token, nil, &page); code != http.StatusOK || len(page.Commits) != 1 || page.Commits[0].RequestId != "r5" || page.EarliestSeq != 5 {
+		t.Fatalf("压缩之后的增量: %d %+v", code, page)
+	}
+}
+
+// TestHandlerSnapshotBlockedDuringPurge 守住清除云端数据期间的写拦截：登记快照
+// 与推送、重置一样返回 409，查询不受影响。
+func TestHandlerSnapshotBlockedDuringPurge(t *testing.T) {
+	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(NewMemoryStore(), testSchemaVersion).SetAttachments(fakeAttachments{snapshotSHA: 4096})
+	handler := NewHandler(svc, log, 16*testMaxJSON)
+	handler.SetPurgeGate(func(context.Context, string) error { return cloudpurge.ErrPurging })
+	c := testutil.NewClient(t, testutil.NewServer(
+		snapshotAPI{testAPI{h: handler}},
+		httpx.RequestID,
+		auth.Middleware(authSvc, log),
+	))
+	token := signIn(t, authSvc, "purge-snap@b.cn")
+
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(1, snapshotSHA), &p); code != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
+		t.Fatalf("清除期间登记: %d %+v", code, p)
+	}
+	var head api.SyncHead
+	if code := c.JSON(http.MethodGet, "/v1/sync/snapshot", token, nil, &head); code != http.StatusOK || head.Head != 0 || head.EarliestSeq != 1 {
+		t.Fatalf("清除期间查询: %d %+v", code, head)
 	}
 }

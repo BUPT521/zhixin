@@ -301,13 +301,59 @@ paths:
   /v1/sync/head:
     get:
       tags: [sync]
-      summary: 服务端序列的最新位置
+      summary: 服务端序列的最新位置、保留下界与当前快照
+      description: |
+        `head` 是最新位置，`earliest_seq` 是保留下界（第一条仍然可以拉取的序号，
+        没有删除过提交时为 1），`snapshot` 是账号当前快照的指针，没有登记时为
+        `null`。客户端在首次同步与判断是否需要重新克隆时读这一份（ADR-0043）。
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncHead" }
+  /v1/sync/snapshot:
+    get:
+      tags: [sync]
+      summary: 当前快照指针
+      description: 与 `GET /v1/sync/head` 同形；没有登记过快照时 `snapshot` 为 `null`。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncHead" }
+    put:
+      tags: [sync]
+      summary: 登记当前序列位置上的快照
+      description: |
+        一台已经同步到 `seq`、没有待推送提交的设备，把当前投影按检查点格式压缩之后
+        走 `PUT /v1/blobs/{sha256}` 上传，再把附件的哈希与本机算出的整库摘要登记到
+        这里。服务端只保存最新一份快照，不解析附件内容；`seq` 必须是本账号已经到达
+        的位置，不能登记未来的位置，也不能用更小的位置覆盖已经登记的更新的快照。
+        登记之后服务端可以删除快照位置之前、超过保留期的提交，`earliest_seq` 跟着
+        推进（ADR-0043）。响应与 `GET /v1/sync/head` 相同。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SnapshotRegistration" }
+      responses:
+        "200":
+          description: 已登记
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncHead" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: "`conflict`：`seq` 小于已经登记的位置（`extra.snapshot_seq` 给出当前位置），或账号正在清除云端数据"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "501": { $ref: "#/components/responses/Problem" }
   /v1/sync/commits:
     delete:
       tags: [sync]
@@ -324,6 +370,13 @@ paths:
     get:
       tags: [sync]
       summary: 拉取 seq 大于 after 的提交
+      description: |
+        按序号顺序返回一页提交，`has_more` 为真时用本页最后一个序号继续拉取。
+        `earliest_seq` 是保留下界，`snapshot` 是当前快照指针。客户端要的下一条已经
+        被压缩删除时（`after + 1 < earliest_seq`，包括保留下界大于 1 而 `after` 为 0
+        的首次同步）返回 410 `history_compacted`，`extra` 给出保留下界、head 与快照
+        的序号、哈希和摘要，客户端据此下载快照、把位置改成快照位置之后继续增量拉取
+        （ADR-0043）。`after` 恰好等于 `earliest_seq - 1` 时照常返回。
       parameters:
         - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0, default: 0 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
@@ -333,6 +386,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CommitPage" }
+        "410":
+          description: "`history_compacted`：`after` 落在已经压缩的区间，客户端按快照重新克隆"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
     post:
       tags: [sync]
@@ -1153,6 +1211,7 @@ components:
             - conflict
             - payload_too_large
             - storage_full
+            - history_compacted
             - model_not_allowed
             - rate_limited
             - quota_exceeded
@@ -1233,13 +1292,20 @@ components:
           items: { $ref: "#/components/schemas/Backup" }
     CommitPage:
       type: object
-      required: [commits, head, has_more]
+      required: [commits, head, has_more, earliest_seq]
       properties:
         commits:
           type: array
           items: { $ref: "#/components/schemas/Commit" }
         head: { type: integer, format: int64 }
         has_more: { type: boolean }
+        earliest_seq:
+          type: integer
+          format: int64
+          description: 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
+        snapshot:
+          description: 当前快照指针，没有登记时省略
+          $ref: "#/components/schemas/SyncSnapshot"
     Feedback:
       type: object
       required: [content]
@@ -1367,10 +1433,54 @@ components:
           items: { $ref: "#/components/schemas/Release" }
     SyncHead:
       type: object
-      required: [head, schema_version]
+      required: [head, schema_version, earliest_seq]
       properties:
         head: { type: integer, format: int64 }
         schema_version: { type: integer }
+        earliest_seq:
+          type: integer
+          format: int64
+          description: 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
+        snapshot:
+          description: 当前快照指针，没有登记时省略
+          $ref: "#/components/schemas/SyncSnapshot"
+    SyncSnapshot:
+      type: object
+      description: 账号当前快照的指针（ADR-0043）
+      required: [seq, sha256, digest, created_at]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: 快照覆盖到的服务端序列位置；从它继续增量拉取
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: 快照附件的哈希，按它走 GET /v1/blobs/{sha256} 下载
+        digest:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: 客户端按改进方案 3.5 算出的整库摘要，服务端原样保存
+        created_at: { type: string, format: date-time }
+    SnapshotRegistration:
+      type: object
+      description: 登记一份快照（ADR-0043）
+      required: [seq, sha256, digest]
+      additionalProperties: false
+      properties:
+        seq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 快照覆盖到的服务端序列位置；不能超过当前 head
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: 已经上传到这个账号的快照附件哈希
+        digest:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: 客户端按改进方案 3.5 算出的整库摘要
     TelemetryPing:
       type: object
       required: [install_id]

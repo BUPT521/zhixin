@@ -34,7 +34,7 @@ import (
 // ClientSchemaVersion is the client data schema this server accepts for
 // sync commits and backups. It must equal the schema number at the top of
 // docs/01; both sides move together and old versions are rejected (ADR-0002).
-const ClientSchemaVersion = 29
+const ClientSchemaVersion = 30
 
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
@@ -225,7 +225,10 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 一律放行的实现（ADR-0037）。
 	authHandler.SetRegisterGlobalLimiter(registerGlobal)
 
-	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion).SetMaxPullBytes(cfg.SyncPullMaxBytes)
+	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion).
+		SetMaxPullBytes(cfg.SyncPullMaxBytes).
+		SetCompactKeep(cfg.SyncCompactKeep).
+		SetSnapshotBytes(cfg.MaxAttachmentBytes)
 	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
 
 	backupSvc := backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
@@ -238,6 +241,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 账号附件总量上限必须显式设置，否则只受单附件上限约束。
 	blobSvc := blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes).SetAccountBytes(cfg.MaxAccountAttachmentBytes)
 	blobHandler := blobs.NewHandler(blobSvc, log)
+	// 快照登记要核对“这个哈希是这个账号的附件”，查询由附件服务提供；没有装配时
+	// 登记接口返回 501，不静默接受一个查不到归属的哈希（ADR-0043）。
+	syncSvc.SetAttachments(syncAttachments{svc: blobSvc})
 
 	// 云端清除编排备份、提交序列、附件与遗留对象；清除期间三个写处理器由 gate
 	// 回 409，读接口不受影响。
@@ -382,4 +388,19 @@ func cachePublic(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// syncAttachments 把附件服务的查询适配成登记快照需要的“这个账号有没有这份
+// 内容”：附件不存在不是错误，存储故障才向上返回（ADR-0043）。
+type syncAttachments struct{ svc *blobs.Service }
+
+func (a syncAttachments) Stat(ctx context.Context, userID, sha string) (int64, bool, error) {
+	size, err := a.svc.Stat(ctx, userID, sha)
+	if errors.Is(err, blobs.ErrNotFound) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return size, true, nil
 }

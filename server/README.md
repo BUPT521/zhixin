@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、登录方式验证与找回密码、提交序列的推送与拉取、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。应用内的更新检查与反馈接口也已经在 2026-11-18 实现：`GET /v1/app/releases` 公开返回发布清单，`POST /v1/feedback` 公开接收反馈并写入 `feedback` 表，两者都不需要登录，取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。留存统计的服务端部分同日完成：登录账号按服务端收到的请求日期记活跃，未登录设备通过 `POST /v1/telemetry/active` 匿名上报，安装标识只保存 HMAC-SHA256，匿名数据按 180 天滚动删除；模型额度也支持按账号单独调整（`llm_quota` 表），调整不用重启服务（[留存统计](#留存统计)、[模型代理](#模型代理)）。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据、反馈、活跃数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`，一个账号的全部附件另有总量上限 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`，超限时上传返回 413 `storage_full`。
+路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、登录方式验证与找回密码、提交序列的推送、拉取、快照登记与压缩（`/v1/sync/snapshot`，[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)）、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。应用内的更新检查与反馈接口也已经在 2026-11-18 实现：`GET /v1/app/releases` 公开返回发布清单，`POST /v1/feedback` 公开接收反馈并写入 `feedback` 表，两者都不需要登录，取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。留存统计的服务端部分同日完成：登录账号按服务端收到的请求日期记活跃，未登录设备通过 `POST /v1/telemetry/active` 匿名上报，安装标识只保存 HMAC-SHA256，匿名数据按 180 天滚动删除；模型额度也支持按账号单独调整（`llm_quota` 表），调整不用重启服务（[留存统计](#留存统计)、[模型代理](#模型代理)）。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据、反馈、活跃数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`，一个账号的全部附件另有总量上限 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`，超限时上传返回 413 `storage_full`。
 
 2026-11-18 的加固轮次把服务端的默认行为收紧：启动时自检生产配置（配置了数据库时验证码不能写进日志、验证码与匿名统计的 HMAC 密钥必须固定、带凭据的上游地址必须走 https），公开写入接口在按地址的桶之外增加全局上限，反馈按保留期每日清理，登录失败按规范化的登录方式计预算，密码哈希受 Argon2 内存预算约束，每个账号的会话数有上限并在每天清理过期会话，刷新令牌轮换后只保留固定 60 秒的重试宽限，附件增加账号总量配额，清除云端数据统一为 `DELETE /v1/cloud`，模型代理增加未验证登录方式拒绝、账号并发上限、响应体上限、额度预留与实例总预算，发布清单要求 HTTPS、SHA-256 和 Ed25519 签名。配置项见下表，跨模块取舍与代价见 [ADR-0028](../docs/adr/0028-服务端加固的默认拒绝与预算.md) 和 [ADR-0031](../docs/adr/0031-云端写入与托管模型的资源预算.md)。
 
@@ -63,6 +63,13 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 
 `llm_route_usage` 按自然日、用途、对外模型、来源编号和来源侧模型名保存统计计数，其中估算 Token 是结算 Token 的一部分，字段中没有账号标识或请求内容。
 
+2026-11-21 为同步序列的快照与压缩增加了三处结构（[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)）：`sync_head` 增加 `trimmed_through`，记录已经删除到哪个序号，保留下界等于它加一；新增 `sync_snapshot` 保存账号当前的快照指针；新增 `sync_commit_seen` 保存已经接收过的提交身份，压缩删除旧提交之后仍然按它去重。已有实例按当前 `schema.sql` 重建库，不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)）。
+
+| 表 | 用途 | 关键列与约束 |
+|---|---|---|
+| `sync_snapshot` | 账号当前快照的指针，每账号最多一行；字节是对象存储里的 `attachments/<账号>/<sha256>` | `user_id` 主键并外键级联删除，`seq` 是快照覆盖到的服务端位置，`sha256`、`digest` 与 `created_at`；登记更新的位置时整行覆盖 |
+| `sync_commit_seen` | 已经接收过的提交身份，压缩删除旧提交之后仍然按它去重 | `user_id` 外键级联删除，主键 `(user_id, request_id)`；每行几十字节，不进入 256 MiB 的序列预算 |
+
 ## 目录
 
 ```
@@ -75,7 +82,7 @@ server/
 │   ├── config/                 ← ZHIXIN_* 环境变量与发布清单文件
 │   ├── httpx/                  ← problem+json、JSON 解码与大小上限、请求编号、访问日志、异常恢复、请求体落盘校验、429
 │   ├── auth/                   ← 账号、argon2id 密码与不透明令牌、鉴权中间件与登录失败预算
-│   ├── syncsvc/                ← 每个账号一条线性提交序列
+│   ├── syncsvc/                ← 每个账号一条线性提交序列，支持快照登记与压缩
 │   ├── backup/                 ← 整库备份快照
 │   ├── blobs/                  ← 附件对象：按内容寻址的上传、下载与存在检查
 │   ├── llmproxy/               ← 模型来源与路由、聊天与嵌入代理、嵌入向量缓存与查找、每日额度、管理接口
@@ -117,9 +124,15 @@ server/
 
 ## 同步协议
 
-服务端为每个账号保存一条线性的提交序列，不合并、不解析内容。客户端推送时带上自己所知的 `base_seq`，等于服务端 head 才追加，否则返回 409 和最新 head；客户端先拉取 `after=<本机已同步位置>` 的提交，在本机按现有的净变化应用为新的本地提交（撤销与数据版本页因此照常可用），再重新推送。每条提交带客户端的 `request_id`，这个字段携带的是提交的 uid：它标识一条提交，不按命令参数生成，也不复用，服务端仍按它永久去重，已经收到过的提交会被跳过，所以丢失响应之后原样重试是安全的，同参数的不同提交不会互相顶掉（[ADR-0040](../docs/adr/0040-数据版本的提交身份与同步变基.md)）。每条提交还带客户端的 schema 版本，服务端只接受当前版本 29（`server.ClientSchemaVersion`），不符时返回 400 `invalid_request`，`extra.schema_version` 给出服务端接受的版本；`GET /v1/sync/head` 同样返回这个版本，客户端对照本机版本决定是否继续同步。同一字段在两台设备上并发修改时，后到达服务端的覆盖先到达的，被覆盖的值留在提交历史里；这条规则在 2026-11-18 的协议走查中确认可用，真机走查待内测阶段补做。
+服务端为每个账号保存一条线性的提交序列，不合并、不解析内容。客户端推送时带上自己所知的 `base_seq`，等于服务端 head 才追加，否则返回 409 和最新 head；客户端先拉取 `after=<本机已同步位置>` 的提交，在本机按现有的净变化应用为新的本地提交（撤销与数据版本页因此照常可用），再重新推送。每条提交带客户端的 `request_id`，这个字段携带的是提交的 uid：它标识一条提交，不按命令参数生成，也不复用，服务端仍按它永久去重，已经收到过的提交会被跳过，所以丢失响应之后原样重试是安全的，同参数的不同提交不会互相顶掉（[ADR-0040](../docs/adr/0040-数据版本的提交身份与同步变基.md)）。每条提交还带客户端的 schema 版本，服务端只接受当前版本 30（`server.ClientSchemaVersion`），不符时返回 400 `invalid_request`，`extra.schema_version` 给出服务端接受的版本；`GET /v1/sync/head` 同样返回这个版本，客户端对照本机版本决定是否继续同步。同一字段在两台设备上并发修改时，后到达服务端的覆盖先到达的，被覆盖的值留在提交历史里；这条规则在 2026-11-18 的协议走查中确认可用，真机走查待内测阶段补做。
 
-客户端第一次同步时先拉取这个账号已有的全部提交并在本机应用，拉取时记下被远端提交触及过的表与主键，只把云端还没有的行作为一份或几份基线提交上传，全新设备不上传任何内容，之后只推送新提交，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md) 与[改进方案 3.6](../docs/数据版本系统对照git的改进方案.md)。基线提交的来源记为 `system`、动作写“首次同步基线”，服务端与其他提交一样只做校验和保存，不区分基线；本机提交编号不进入提交内容；同步位置存在客户端库里的 `revision_cursor`（`sync.pushed` 与 `sync.server_head`），写入“账号编号 + 实例来源”的哈希作为 `scope`，随整库备份一起恢复。退出登录与删除账号只把推送位置改成不阻塞、位置与 `scope` 保留，重新登录同一身份时从原位置继续增量同步；清除云端数据时两个位置与恢复标记一并删除，下一次同步按首次基线重建。整库恢复之后本机补记一条差异提交，下一轮同步跳过旧位置、只把恢复前后的差异推上去，两个位置收敛到当前服务端位置与本机 `HEAD`，恢复之前的改动不会再从旧位置拉回来。提交里引用的附件在推送之后按哈希上传、拉取之后按哈希下载，服务端按内容寻址核对，业务行只保存哈希。同步推送与备份、附件上传共用按账号的写入速率，单条提交至多 2 MiB，单次请求至多 16 MiB，每账号提交序列预算为 256 MiB。超出请求大小返回 413 `payload_too_large`，超出序列预算返回 413 `storage_full`。客户端按字节和条数分批推送。PostgreSQL 拉取按 `ZHIXIN_SYNC_PULL_MAX_BYTES` 选出连续页，再读取正文，客户端以下一页起点之前的最后一个序号继续读取。如果游标的下一条旧提交单独就超出页上限，接口返回 413，由已备份本机数据的用户清除云端序列后重新上传基线。
+客户端第一次同步时先拉取这个账号已有的全部提交并在本机应用，拉取时记下被远端提交触及过的表与主键，只把云端还没有的行作为一份或几份基线提交上传，全新设备不上传任何内容，之后只推送新提交，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md) 与[改进方案 3.6](../docs/数据版本系统对照git的改进方案.md)。基线提交的来源记为 `system`、动作写“首次同步基线”，服务端与其他提交一样只做校验和保存，不区分基线；本机提交编号不进入提交内容；同步位置存在客户端库里的 `revision_cursor`（`sync.pushed` 与 `sync.server_head`），写入“账号编号 + 实例来源”的哈希作为 `scope`，随整库备份一起恢复。退出登录与删除账号只把推送位置改成不阻塞、位置与 `scope` 保留，重新登录同一身份时从原位置继续增量同步；清除云端数据时两个位置与恢复标记一并删除，下一次同步按首次基线重建。整库恢复之后本机补记一条差异提交，下一轮同步跳过旧位置、只把恢复前后的差异推上去，两个位置收敛到当前服务端位置与本机 `HEAD`，恢复之前的改动不会再从旧位置拉回来。提交里引用的附件在推送之后按哈希上传、拉取之后按哈希下载，服务端按内容寻址核对，业务行只保存哈希。同步推送与备份、附件上传共用按账号的写入速率，单条提交至多 2 MiB，单次请求至多 16 MiB，每账号提交序列预算为 256 MiB。超出请求大小返回 413 `payload_too_large`；超出序列预算时先按下一段的规则压缩，压缩之后仍然超出才返回 413 `storage_full`。客户端按字节和条数分批推送。PostgreSQL 拉取按 `ZHIXIN_SYNC_PULL_MAX_BYTES` 选出连续页，再读取正文，客户端以下一页起点之前的最后一个序号继续读取。如果游标的下一条旧提交单独就超出页上限，接口返回 413，由已备份本机数据的用户清除云端序列后重新上传基线。
+
+服务端的提交序列可以压缩，压缩的基准是一份客户端上传的快照（[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)）。已经同步到某个位置、没有待推送提交的设备，把当前投影按检查点格式压缩之后走 `PUT /v1/blobs/{sha256}` 当作附件上传，再用 `PUT /v1/sync/snapshot` 登记“序列 N 的快照是附件哈希 X、整库摘要是 D”。登记时 `seq` 必须在 1 与当前 head 之间，两个哈希都是 64 位小写十六进制，`sha256` 必须是这个账号已经上传、大小不超过单个附件上限的附件；位置比已经登记的快照小时返回 409，`extra.snapshot_seq` 给出当前位置，相同位置按幂等重试接受并刷新指针。服务端只保存最新一份快照指针，被替换下来的旧指针不再引用，附件字节的处理见本节最后一段与[表结构](#表结构)。
+
+登记快照时服务端顺带压缩一次：快照位置及之前、服务端收到时间早于 `ZHIXIN_SYNC_COMPACT_KEEP`（默认 168 小时）的提交删除，保留下界 `earliest_seq` 跟着推进，它表示第一条仍然可以拉取的序号，没有删除过提交时为 1。`GET /v1/sync/head`、`GET /v1/sync/snapshot` 与 `GET /v1/sync/commits` 的响应都带 `earliest_seq` 与当前快照指针 `snapshot`（`seq`、`sha256`、`digest`、`created_at`），客户端据此判断要不要先下载快照。推送让账号超过 256 MiB 预算时，服务端先做一次压缩：有快照就删掉快照位置之前的全部提交，这一次不按保留期过滤，重新计算之后仍然超出才返回 413 `storage_full`；没有快照的账号维持原来的行为。
+
+客户端的拉取位置落在已经删除的区间时，接口返回明确的错误：`after + 1 < earliest_seq` 说明客户端要的下一条提交已经删除，`GET /v1/sync/commits` 返回 410，`code` 是 `history_compacted`，`extra` 给出 `after`、`earliest_seq`、`head` 与 `snapshot_seq`、`snapshot_sha256`、`snapshot_digest`。客户端按 `snapshot_sha256` 下载快照附件、导入本机、把同步位置改成 `snapshot_seq`，再把未推送的本机提交在快照之上重放，服务端的序列与快照本身不变。`after` 恰好等于 `earliest_seq - 1` 时照常增量返回；`after` 为 0 而保留下界大于 1 的首次同步同样返回 410，新设备应当先读 `head` 或拉取响应里的 `snapshot` 再下载。快照附件与业务附件共用账号附件总量配额，被替换下来的旧快照不删除，随清空云端数据一起消失；客户端侧的首次同步下载快照、重新克隆判定与空闲时登记快照由后续任务接，在它接入之前没有设备登记快照，服务端不会删除任何提交。
 
 清空一个账号的云端数据走 `DELETE /v1/cloud`：依次删除全部备份、提交序列、附件索引与对象存储里遗留的字节，可重复调用，失败之后重试从剩下的部分继续，返回 204。清除期间这个账号的写入请求返回 409 `conflict`，账号、会话与本机数据保留；下一次同步重新上传基线。旧的 `DELETE /v1/sync/commits` 与 `DELETE /v1/backups` 仍然分别可用，只清空提交序列或备份，客户端设置页的“清除云端数据”改用 `DELETE /v1/cloud`。删除账号本身走 `DELETE /v1/me`，需要重新提交密码，删除之后账号、会话与云端数据一并消失。
 
@@ -346,6 +359,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_MAX_ATTACHMENT_BYTES` | `33554432` | 单个附件的上限，客户端上传前按它预检 |
 | `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES` | `2147483648` | 一个账号全部附件的总量上限，超限上传返回 413 `storage_full` |
 | `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的累计字节上限，最大 16 MiB；下一条超过上限时返回 413 |
+| `ZHIXIN_SYNC_COMPACT_KEEP` | `168h` | 快照位置之下仍然保留提交的时间窗口：登记快照时删除更早的已覆盖提交。窗口越长，落后设备越少重新克隆，序列占地也越大（[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)） |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |
 | `ZHIXIN_BACKUP_RECONCILE_INTERVAL` | `24h` | 备份对象对账的周期：列出对象存储里的备份对象，删掉库里已经没有元数据、且写于一小时前的遗留字节 |
 | `ZHIXIN_REGISTER_GLOBAL_RATE` | `0.05` | 注册的实例级上限（个/秒），与按来源地址的桶同时生效，换地址也不能把未验证账号灌满库 |
@@ -377,7 +391,7 @@ ORDER BY f.first_day;
 
 加固轮次之后，启动时会自检生产配置：配置了数据库时 `ZHIXIN_MAIL_LOG` 必须为 `0`，`ZHIXIN_CODE_SECRET` 与 `ZHIXIN_TELEMETRY_SECRET` 必须固定，带认证的 SMTP 连接不允许 `none`，任何一项不满足都拒绝启动；第一套实例因此需要在 `api.env` 里补上两个固定密钥。带 key 的模型上游公网地址必须是 https，这条在后台保存来源时校验，不再随启动检查。按地址的限流要分清真实用户，`ZHIXIN_TRUSTED_PROXIES` 写 `127.0.0.1/32,::1/128`（nginx 只从回环地址连进来）；服务直接对外监听时保持为空。改了 `ZHIXIN_TRUSTED_PROXIES` 或其它配置之后重启服务生效，部署前按[运维手册](运维手册.md#4-加固后的运维动作)的核对清单逐项确认。
 
-部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#48-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
+部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#48-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。同步快照带来的三处结构（`sync_head.trimmed_through`、`sync_snapshot`、`sync_commit_seen`）同样要在现有实例上按当前 `schema.sql` 重建库；保留期 `ZHIXIN_SYNC_COMPACT_KEEP` 有默认值 168 小时，不配置也照常运行，内测期间希望落后设备少重新克隆时可以调到 720 小时并写进 `api.env`，重启后生效。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
 
 服务器只有一位管理员（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D7），不设第二位。数据库口令、对象存储密钥、TLS 证书与备份介质的存放位置，以及主机失联、数据库损坏、对象存储不可用三种情况下的恢复步骤，由管理员写在仓库之外的私有目录；仓库只保留需要哪些变量与恢复的先后顺序。公测准备阶段做一次恢复演练，用备份重建一台可用实例，演练日期与结果写进结题材料。
 
@@ -427,7 +441,7 @@ go test ./...
 
 改了 `schema.sql` 或 `internal/store/queries/` 下的查询要先重新运行 `sqlc`，改了 `openapi.yaml` 要先重新运行 `oapi-codegen`，生成结果随源文件一起提交；CI 会重新生成并用 `git diff --exit-code` 核对，本地少了这一步时编译与测试仍可能通过，推上去却会在生成核对上失败。
 
-端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的登录方式验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限与账号总量配额、删除账号时清理数据、`DELETE /v1/cloud` 的清除与清除期间的 409，以及模型代理的转发、key 替换、用量记录、未验证登录方式的 403、账号并发上限、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流、全局写入上限、保留期清理与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取、强制 https 与 sha256、签名格式与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重、全局写入上限与保留期清理；PostgreSQL 存储用例覆盖验证码、登录方式与已验证时间、`feedback` 表、两张活跃表、额度覆盖行与附件索引的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。P2 加固的用例跟着改动分布在各自包里：缓存代次在 [llmproxy](internal/llmproxy/embedding_cache_test.go) 与 [cloudpurge](internal/cloudpurge/cloudpurge_test.go)，遗留对象对账在 [backup](internal/backup/reconcile_test.go) 与 [objectstore](internal/objectstore/objectstore_test.go)，刷新事务与未验证账号保留期在 [auth](internal/auth/hardening_test.go) 与 [store/pg](internal/store/pg/refresh_atomic_test.go)；接入层的注册上限与启动清理在 [p2_hardening_test.go](internal/server/p2_hardening_test.go)。
+端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的登录方式验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限与账号总量配额、删除账号时清理数据、`DELETE /v1/cloud` 的清除与清除期间的 409，以及模型代理的转发、key 替换、用量记录、未验证登录方式的 403、账号并发上限、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。快照登记与压缩的用例在 [syncsvc](internal/syncsvc/snapshot_test.go) 的存储、服务与处理器三层，PostgreSQL 侧的指针、保留期压缩与去重表在 [store/pg](internal/store/pg/store_test.go)。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流、全局写入上限、保留期清理与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取、强制 https 与 sha256、签名格式与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重、全局写入上限与保留期清理；PostgreSQL 存储用例覆盖验证码、登录方式与已验证时间、`feedback` 表、两张活跃表、额度覆盖行与附件索引的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。P2 加固的用例跟着改动分布在各自包里：缓存代次在 [llmproxy](internal/llmproxy/embedding_cache_test.go) 与 [cloudpurge](internal/cloudpurge/cloudpurge_test.go)，遗留对象对账在 [backup](internal/backup/reconcile_test.go) 与 [objectstore](internal/objectstore/objectstore_test.go)，刷新事务与未验证账号保留期在 [auth](internal/auth/hardening_test.go) 与 [store/pg](internal/store/pg/refresh_atomic_test.go)；接入层的注册上限与启动清理在 [p2_hardening_test.go](internal/server/p2_hardening_test.go)。
 
 模型路由测试覆盖来源优先级、权重与冷却、失败后换来源、嵌入拆批及合并和按用途计量。PostgreSQL 存储用例另覆盖来源、模型与路由的配置读写。
 

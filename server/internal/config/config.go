@@ -50,6 +50,9 @@ type Config struct {
 	// SyncPullMaxBytes 是一次拉取响应的字节上限：分页按它提前收尾，has_more
 	// 为真，客户端继续拉下一页。
 	SyncPullMaxBytes int64
+	// SyncCompactKeep 是快照位置之下仍然保留提交的时间窗口：登记快照时，早于它
+	// 的已覆盖提交删除，落后不多的设备因此不必重新克隆（ADR-0043）。
+	SyncCompactKeep time.Duration
 	// BackupsKept is how many snapshots are retained per account.
 	BackupsKept int
 	// BackupReconcileInterval 是对象存储对账的周期：列出 backups/ 下的对象，
@@ -269,6 +272,7 @@ func Load(getenv func(string) string) (Config, error) {
 		MaxAttachmentBytes:        num("ZHIXIN_MAX_ATTACHMENT_BYTES", "33554432"),
 		MaxAccountAttachmentBytes: num("ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES", "2147483648"),
 		SyncPullMaxBytes:          num("ZHIXIN_SYNC_PULL_MAX_BYTES", "4194304"),
+		SyncCompactKeep:           dur("ZHIXIN_SYNC_COMPACT_KEEP", "168h"),
 		BackupsKept:               int(num("ZHIXIN_BACKUPS_KEPT", "5")),
 		BackupReconcileInterval:   dur("ZHIXIN_BACKUP_RECONCILE_INTERVAL", "24h"),
 		BlobDir:                   get("ZHIXIN_BLOB_DIR", "data/blobs"),

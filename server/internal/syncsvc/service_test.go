@@ -142,8 +142,8 @@ func TestServiceResetClearsLog(t *testing.T) {
 	if err := svc.Reset(ctx, "u1"); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if head, err := svc.Head(ctx, "u1"); err != nil || head != 0 {
-		t.Fatalf("head after reset = %d, %v", head, err)
+	if state, err := svc.State(ctx, "u1"); err != nil || state.Head != 0 {
+		t.Fatalf("head after reset = %d, %v", state.Head, err)
 	}
 	page, err := svc.Pull(ctx, "u1", nil, nil)
 	if err != nil || len(page.Commits) != 0 || page.Head != 0 || page.HasMore {
@@ -154,8 +154,8 @@ func TestServiceResetClearsLog(t *testing.T) {
 		t.Fatalf("push after reset: head %d, err %v", head, err)
 	}
 
-	if head, err := svc.Head(ctx, "u2"); err != nil || head != 1 {
-		t.Fatalf("other account head = %d, %v", head, err)
+	if state, err := svc.State(ctx, "u2"); err != nil || state.Head != 1 {
+		t.Fatalf("other account head = %d, %v", state.Head, err)
 	}
 
 	if err := svc.Reset(ctx, "u1"); err != nil {
