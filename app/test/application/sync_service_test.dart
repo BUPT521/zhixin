@@ -78,6 +78,29 @@ Future<_Device> _openDevice(
   return _Device(rig: rig, account: account, sync: sync, dir: dir);
 }
 
+Future<void> _updateMemory(TestRig rig, String id, String content) {
+  return rig.db.command((txn) async {
+    await updateRow(
+      txn,
+      'memory',
+      {'content': content, 'updated_at': '2026-11-17 10:05:00'},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }, label: '修改记忆');
+}
+
+Future<String?> _memoryContent(TestRig rig, String id) async {
+  final rows = await selectRows(
+    rig.raw,
+    'memory',
+    columns: ['content'],
+    where: 'id = ?',
+    whereArgs: [id],
+  );
+  return rows.isEmpty ? null : rows.single['content'] as String?;
+}
+
 Future<void> _insertMemory(TestRig rig, String id, String content) {
   return rig.db.command((txn) async {
     await insertRow(txn, 'memory', {
@@ -429,5 +452,42 @@ void main() {
     expect(server.headOf(userId), afterPush);
     final kinds = await b.rig.engine.commitsAfter(b.rig.raw, 0);
     expect(kinds.map((commit) => commit.kind), contains(RevisionKind.remote));
+  });
+  test('两台设备改同一行时列出被覆盖的本机修改，保留本机修改写回并推到另一台', () async {
+    final a = await device('a@example.com', register: true);
+    await _insertMemory(a.rig, 'm1', '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+
+    final b = await device('a@example.com');
+    await b.sync.syncNow();
+    await _updateMemory(b.rig, 'm1', '先看例子再看定义');
+    await b.sync.syncNow();
+
+    // A 在本机改过一次、还没有推送，拉取时后到的远端值覆盖了这一次修改。
+    await _updateMemory(a.rig, 'm1', '本机偏好：先自己做');
+    await a.sync.syncNow();
+
+    final conflicts = await a.rig.revisions.conflicts();
+    expect(conflicts, hasLength(1));
+    final conflict = conflicts.single;
+    expect(conflict.table, 'memory');
+    expect(conflict.rowKey, 'm1');
+    expect(conflict.column, 'content');
+    expect(conflict.reason, RevisionConflict.concurrentUpdate);
+    expect(conflict.local['content']!.value, '本机偏好：先自己做');
+    expect(conflict.remoteAfter['content']!.value, '先看例子再看定义');
+    expect(await _memoryContent(a.rig, 'm1'), '先看例子再看定义');
+
+    final commit = await a.rig.revisions.keepLocal(conflict.id);
+    expect(commit, isNotNull);
+    expect(commit!.kind, RevisionKind.write);
+    expect(commit.action, '保留本机修改');
+    expect(await _memoryContent(a.rig, 'm1'), '本机偏好：先自己做');
+    expect(await a.rig.revisions.conflicts(), isEmpty);
+
+    // 写回的是一条普通提交，推送之后另一台设备看到的是这个值。
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    expect(await _memoryContent(b.rig, 'm1'), '本机偏好：先自己做');
   });
 }
