@@ -4,7 +4,8 @@ import 'theme.dart';
 
 /// 一组互斥的视图切换，例如记录里的“学习记录 / 材料”与安排里的四个页签。
 ///
-/// 等宽时共用一个滑块，窄屏或放大文字时按内容宽度横向滚动。
+/// 等宽时共用一个滑块，窄屏或放大文字时按内容宽度横向滚动。每一项按下去时
+/// 放大几个百分点，松开或切换之后回位；当前项再按一次没有动作，不放大。
 class ZhixinSegmented<T> extends StatelessWidget {
   const ZhixinSegmented({
     super.key,
@@ -101,38 +102,42 @@ class ZhixinSegmented<T> extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: isSelected ? null : () => onChanged(segment.value),
-        child: AnimatedContainer(
-          duration: context.motionOf(theme.motion.fast),
-          curve: theme.motion.move,
-          constraints: const BoxConstraints(minHeight: 42),
-          padding: EdgeInsets.symmetric(
-            horizontal: theme.space.md,
-            vertical: theme.space.sm,
-          ),
-          // 等分整行时选中底色由滑块画，这里保持透明。
-          decoration: _selection(theme, selected: isSelected && !expand),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (segment.icon != null) ...[
-                Icon(segment.icon, size: 16, color: foreground),
-                const SizedBox(width: 6),
-              ],
-              Flexible(
-                // 选中与否都取同一个字重：选中态已经由滑块底色与文字颜色
-                // 说明，字重再变会改变字宽，等分整行时标签会轻微重新居中。
-                child: Text(
-                  segment.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.text.labelLarge.copyWith(
-                    color: foreground,
-                    fontWeight: FontWeight.w600,
+        // 按下时这一项放大几个百分点：当前项再按一次没有动作，不放大。
+        child: PressScale(
+          enabled: !isSelected,
+          child: AnimatedContainer(
+            duration: context.motionOf(theme.motion.fast),
+            curve: theme.motion.move,
+            constraints: const BoxConstraints(minHeight: 42),
+            padding: EdgeInsets.symmetric(
+              horizontal: theme.space.md,
+              vertical: theme.space.sm,
+            ),
+            // 等分整行时选中底色由滑块画，这里保持透明。
+            decoration: _selection(theme, selected: isSelected && !expand),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (segment.icon != null) ...[
+                  Icon(segment.icon, size: 16, color: foreground),
+                  const SizedBox(width: 6),
+                ],
+                Flexible(
+                  // 选中与否都取同一个字重：选中态已经由滑块底色与文字颜色
+                  // 说明，字重再变会改变字宽，等分整行时标签会轻微重新居中。
+                  child: Text(
+                    segment.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.text.labelLarge.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

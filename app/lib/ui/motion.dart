@@ -5,9 +5,10 @@ import 'package:material_ui/material_ui.dart';
 
 /// 动效的几档时长与曲线；页面与公共组件只从这里取，不再各写一套数字。
 ///
-/// 动效只用来说明“内容换了”“这一块展开了”“选中项移到了这里”，不做装饰：
-/// 除底栏、页签与换周按整幅页宽滑入滑出之外，其余位移不超过 24 像素，不缩放、
-/// 不弹跳、不循环。系统打开“减少动态效果”时，[ZhixinMotionContext.motionOf]
+/// 动效只用来说明“内容换了”“这一块展开了”“选中项移到了这里”“这一下按到了”，
+/// 不做装饰：除底栏、页签与换周按整幅页宽滑入滑出之外，其余位移不超过 24 像素，
+/// 不弹跳、不循环；缩放只有 [PressScale] 这一处，按下去时放大几个百分点，只改
+/// 绘制、不改版面。系统打开“减少动态效果”时，[ZhixinMotionContext.motionOf]
 /// 把时长归零，界面直接到终态。
 class ZhixinMotion {
   const ZhixinMotion();
@@ -131,8 +132,9 @@ class TabTransition extends InheritedWidget {
 
 /// 二级页面的统一路由过渡：新页淡入并从右侧推入一段距离，旧页不动。
 ///
-/// 缩放类过渡要给整页做快照，也不符合“不缩放”的口径，这里只用透明度与位移。
-/// 时长与曲线取自 [ZhixinMotion]；系统要求减少动态效果时直接显示终态。
+/// 缩放类过渡要给整页做快照，也不符合整页只做透明度与位移的口径，这里只用
+/// 透明度与位移（缩放只留给 [PressScale] 的按下反馈）。时长与曲线取自
+/// [ZhixinMotion]；系统要求减少动态效果时直接显示终态。
 /// 在 `ThemeData.pageTransitionsTheme` 里配置一次，页面不再各写一套。
 class ZhixinPageTransitionsBuilder extends PageTransitionsBuilder {
   const ZhixinPageTransitionsBuilder();
@@ -413,6 +415,71 @@ class _ExpandRevealState extends State<ExpandReveal>
           ),
         );
       },
+    );
+  }
+}
+
+/// 按下时放大、松开与取消时回位的反馈，用在页内页签这类按下就切换的入口。
+///
+/// 放大只改绘制，不改布局：按下期间相邻元素的位置与整块内容的排版都不变，因此
+/// 不会因为按下而抖动，被按的那一项周围也不会空出一块。不能切换的当前项传
+/// [enabled] 为假，按下去不放大，免得看起来像会切到别处。系统要求减少动态效果
+/// 时不做过渡，按下与松开立即到终态。
+class PressScale extends StatefulWidget {
+  const PressScale({
+    super.key,
+    required this.child,
+    this.enabled = true,
+    this.scale = 1.06,
+  });
+
+  final Widget child;
+
+  /// 为假时忽略按下，按下去保持原尺寸。
+  final bool enabled;
+
+  /// 按下时的倍率；默认 1.06，再大就会压到相邻的图标与文字。
+  final double scale;
+
+  @override
+  State<PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<PressScale> {
+  /// 正在按下的那一根手指；松开或取消之前不再接受第二根，避免多指把尺寸来回切换。
+  int? _pointer;
+
+  void _down(PointerDownEvent event) {
+    if (!widget.enabled || _pointer != null) return;
+    setState(() => _pointer = event.pointer);
+  }
+
+  void _up(PointerEvent event) {
+    if (event.pointer != _pointer) return;
+    setState(() => _pointer = null);
+  }
+
+  @override
+  void didUpdateWidget(covariant PressScale oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 按下期间这一项变成了当前项：不再有切换动作，立刻回位。
+    if (oldWidget.enabled && !widget.enabled) _pointer = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const motion = ZhixinMotion();
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _down,
+      onPointerUp: _up,
+      onPointerCancel: _up,
+      child: AnimatedScale(
+        scale: _pointer == null ? 1 : widget.scale,
+        duration: context.motionOf(motion.fast),
+        curve: motion.move,
+        child: widget.child,
+      ),
     );
   }
 }

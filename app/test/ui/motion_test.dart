@@ -91,6 +91,14 @@ double _dxOf(WidgetTester tester, String text) => tester
 bool _shown(WidgetTester tester, String text) =>
     find.text(text).evaluate().isNotEmpty;
 
+/// 按下反馈当前画到的放大倍数。
+double _scaleOf(WidgetTester tester, Finder finder) => tester
+    .widget<ScaleTransition>(
+      find.ancestor(of: finder, matching: find.byType(ScaleTransition)).first,
+    )
+    .scale
+    .value;
+
 void main() {
   testWidgets('内容换掉时淡入，播完停在完全不透明', (tester) async {
     await tester.pumpWidget(
@@ -495,6 +503,63 @@ void main() {
 
     await tester.pumpAndSettle();
     expect(settledAt, [AnimationStatus.completed]);
+  });
+
+  testWidgets('按下时放大，松开与取消都回到原尺寸', (tester) async {
+    await tester.pumpWidget(_host(const PressScale(child: Text('甲'))));
+    expect(_scaleOf(tester, find.text('甲')), 1);
+
+    final gesture = await tester.startGesture(tester.getCenter(find.text('甲')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(_scaleOf(tester, find.text('甲')), greaterThan(1));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(_scaleOf(tester, find.text('甲')), closeTo(1.06, 0.001));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(_scaleOf(tester, find.text('甲')), 1);
+
+    // 手指移出后由系统收回手势，同样回位，不留在放大状态。
+    final cancelled = await tester.startGesture(
+      tester.getCenter(find.text('甲')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(_scaleOf(tester, find.text('甲')), closeTo(1.06, 0.001));
+    await cancelled.cancel();
+    await tester.pumpAndSettle();
+    expect(_scaleOf(tester, find.text('甲')), 1);
+  });
+
+  testWidgets('当前项这类不能切换的位置按下不放大', (tester) async {
+    await tester.pumpWidget(
+      _host(const PressScale(enabled: false, child: Text('甲'))),
+    );
+
+    final gesture = await tester.startGesture(tester.getCenter(find.text('甲')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(_scaleOf(tester, find.text('甲')), 1);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(_scaleOf(tester, find.text('甲')), 1);
+  });
+
+  testWidgets('减少动态效果时按下与松开直接到终态', (tester) async {
+    await tester.pumpWidget(
+      _host(const PressScale(child: Text('甲')), reduce: true),
+    );
+
+    final gesture = await tester.startGesture(tester.getCenter(find.text('甲')));
+    await tester.pump();
+    expect(_scaleOf(tester, find.text('甲')), closeTo(1.06, 0.001));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+
+    await gesture.up();
+    await tester.pump();
+    expect(_scaleOf(tester, find.text('甲')), 1);
   });
 }
 
