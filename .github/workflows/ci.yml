@@ -27,8 +27,34 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
-  analyze-test:
-    name: 静态检查与单元测试
+  analyze:
+    name: 静态检查
+    # 与测试分开排队：格式或静态检查失败不必等测试跑完，测试也不必等生成代码比对。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # 生成结果随源文件提交，这里重新生成后比对，避免表结构或查询改了却没更新
+      # app_database.g.dart 与 .drift 的生成结果（CONTRIBUTING 第 7 节）。
+      - run: dart run build_runner build
+      - run: git diff --exit-code
+      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+
+  test:
+    name: 单元测试
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -74,10 +100,6 @@ jobs:
           tar -xzf "$ARCHIVE" -C "$SDK_DIR"
           echo "ZVEC_LIBRARY_PATH=$SDK_DIR/lib/libzvec_c_api.so" >> "$GITHUB_ENV"
 
-      - run: dart run build_runner build
-      - run: git diff --exit-code
-      - run: dart format --output=none --set-exit-if-changed lib test
-      - run: flutter analyze
       - run: flutter test
 
   server:
@@ -196,7 +218,7 @@ jobs:
     name: 构建 release APK（正式签名）
     # 只手动触发；先跑完检查与测试再出包，红着不出。
     if: github.event_name == 'workflow_dispatch'
-    needs: analyze-test
+    needs: [analyze, test]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
