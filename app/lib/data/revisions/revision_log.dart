@@ -37,6 +37,23 @@ class CommitDraft {
   final List<RevisionConflict> conflicts;
 }
 
+/// 把合并好的净变化补上提交编号；合并时编号还没定下来，先写 0。
+List<RevisionChange> _withCommitId(
+  List<RevisionChange> changes,
+  int commitId,
+) => [
+  for (final change in changes)
+    RevisionChange(
+      commitId: commitId,
+      seq: change.seq,
+      table: change.table,
+      rowKey: change.rowKey,
+      op: change.op,
+      before: change.before,
+      after: change.after,
+    ),
+];
+
 mixin RevisionLogMixin {
   /// 引擎本身；字段与同库其他文件的方法都经它访问。
   RevisionEngine get self;
@@ -282,8 +299,8 @@ mixin RevisionLogMixin {
 
   /// 开始一次命令：标记采集并清掉暂停标记。
   ///
-  /// 提交编号在真正需要时由 [reserveCommitId] 预留；阶段 0 仍在这里占一个，
-  /// 让“有没有形成提交”与“占没占编号”暂时保持原来的关系。
+  /// 这里不分配提交编号：命令里显式要回执时由 [reserveCommitId] 预留，有净
+  /// 变化时由 [finishCommand] 就地分配，没有净变化又不预留时序号不动（R1）。
   Future<void> beginCommand(RawExecutor txn, {String? requestId}) async {
     if (requestId != null) {
       final existing = await self.commitByRequest(txn, requestId);
@@ -293,10 +310,11 @@ mixin RevisionLogMixin {
       'capturing': 1,
       'suppress': 0,
     }, where: 'id = 1');
-    await self.reserveCommitId(txn);
   }
 
   /// 为本次命令预留一个提交编号并写进上下文；已经预留过时返回原编号。
+  ///
+  /// 编号只增不减：预留之后即使没有形成提交，序号也不回退（R1）。
   Future<int> reserveCommitId(RawExecutor txn) async {
     final current = await self.activeCommit(txn);
     if (current != null) return current;
@@ -322,6 +340,9 @@ mixin RevisionLogMixin {
 
   /// 结束一次命令：合并暂存变化，有净变化才追加提交并推进 `HEAD`。
   ///
+  /// 提交编号在确定有净变化之后才分配：命令里预留过就沿用预留的编号，没有
+  /// 预留就地分配；没有净变化且没有预留时序号不动，预留过也不回退。
+  ///
   /// [changedTables] 是输出参数：形成提交时填入这次改到的表与版本元数据表，
   /// 由调用方在事务提交之后发布给订阅中的页面（ADR-0014 第 2 条）；没有净
   /// 变化时不填，回滚时调用方也不会发布。
@@ -335,16 +356,19 @@ mixin RevisionLogMixin {
     int? revertedCommitId,
     List<RevisionConflict> conflicts = const [],
   }) async {
-    final commitId = await self.reserveCommitId(txn);
-    final net = await self._collect(txn, commitId);
-    await self._clearStage(txn, commitId);
+    final reserved = await self.activeCommit(txn);
+    final drafts = await self._collect(txn);
+    await self._clearStage(txn);
 
-    if (net.isEmpty) {
-      // 没有业务净变化的写入不形成提交，也不留下可撤销的回执。
+    if (drafts.isEmpty) {
+      // 没有业务净变化的写入不形成提交，也不留下可撤销的回执；已经预留的
+      // 编号留在序号里，后续提交不会复用（R1）。
       await self._clearContext(txn);
       return null;
     }
 
+    final commitId = reserved ?? await self.reserveCommitId(txn);
+    final net = _withCommitId(drafts, commitId);
     final head = await self.headId(txn);
     final parent = await self.commitById(txn, head);
     final commit = await self._appendCommit(

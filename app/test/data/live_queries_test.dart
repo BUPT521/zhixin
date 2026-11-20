@@ -63,7 +63,7 @@ void main() {
       rig.db.command(label: '回滚的写入', (txn) async {
         await tasks.createItem(
           title: '回滚的事项',
-          transaction: WriteTransaction(txn),
+          transaction: WriteTransaction(txn, revisions: rig.engine),
         );
         throw StateError('回滚这次写入');
       }),

@@ -113,7 +113,7 @@ class _Rig {
       tasks: tasks,
       materials: materials,
       runtime: testRuntime(policy: () => policy, filesDir: () => filesDir),
-      transactions: WriteTransactions(db),
+      transactions: WriteTransactions(db, revisions: engine),
       cleanupAttachmentPaths: (paths) =>
           AttachmentStore(filesDir: filesDir).cleanupCandidates(db.raw, paths),
       assets: engine.assets,

@@ -14,7 +14,7 @@ import 'package:zhixin/data/db/sql.dart';
 MaterialService _service(TestRig rig, {Clock? clock, bool live = false}) =>
     MaterialService(
       materials: MaterialRepository(rig.db, clock: clock ?? systemClock),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(live: live ? rig.db.live : null),
     );
 

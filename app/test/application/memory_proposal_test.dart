@@ -146,7 +146,7 @@ void main() {
       attempts: AttemptRepository(rig.db),
       conversations: ConversationRepository(rig.db),
       memories: MemoryRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
 
@@ -268,7 +268,7 @@ void main() {
       attempts: attempts,
       conversations: conversations,
       memories: MemoryRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
     final outcome = await service.propose(conversation);
@@ -324,7 +324,7 @@ void main() {
       attempts: AttemptRepository(rig.db),
       conversations: ConversationRepository(rig.db),
       memories: MemoryRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(live: rig.db.live),
     );
     final counts = <int>[];
@@ -358,7 +358,7 @@ class RepositorySet {
     attempts: AttemptRepository(rig.db),
     conversations: ConversationRepository(rig.db),
     memories: MemoryRepository(rig.db),
-    transactions: WriteTransactions(rig.db),
+    transactions: WriteTransactions(rig.db, revisions: rig.engine),
     runtime: testRuntime(),
   );
 
@@ -366,7 +366,7 @@ class RepositorySet {
     MemoryRepository(rig.db),
     tasks: TaskRepository(rig.db),
     materials: MaterialRepository(rig.db),
-    transactions: WriteTransactions(rig.db),
+    transactions: WriteTransactions(rig.db, revisions: rig.engine),
     runtime: testRuntime(),
   );
 }

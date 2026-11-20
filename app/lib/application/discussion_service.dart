@@ -831,21 +831,18 @@ class DiscussionService {
 
   /// 清空一条讨论：消息与讨论记录一起删掉，题目、尝试与记忆不受影响。
   Future<WriteResult> clear(String conversationId) async {
-    final done = await transactions.run(
+    var paths = const <String>[];
+    final result = await transactions.run(
       (txn) async {
-        final paths = await conversations.clear(
-          conversationId,
-          transaction: txn,
-        );
-        return (paths: paths, result: await txn.result());
+        paths = await conversations.clear(conversationId, transaction: txn);
+        return txn.result();
       },
       label: '清空学习记录',
       requestId: commandId('clear-conversation', [conversationId]),
-      onDuplicate: (commit) =>
-          (paths: const <String>[], result: WriteResult.committed(commit.id)),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
-    await cleanupAttachmentPaths(done.paths);
-    return done.result;
+    await cleanupAttachmentPaths(paths);
+    return result;
   }
 
   /// 接受一条下一步建议：创建学习事项，记下回执，并在原消息里标记已接受。

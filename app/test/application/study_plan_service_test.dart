@@ -9,6 +9,7 @@ import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/application/study_plan_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
+import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
@@ -121,7 +122,7 @@ class _Harness {
       conversations: conversations,
       schedule: schedule,
       study: study,
-      transactions: WriteTransactions(db),
+      transactions: WriteTransactions(db, revisions: RevisionEngine()),
       runtime: testRuntime(policy: () => policy),
     );
   }
@@ -151,7 +152,7 @@ void main() {
     );
     final materialId = await MaterialService(
       materials: h.materials,
-      transactions: WriteTransactions(h.db),
+      transactions: WriteTransactions(h.db, revisions: RevisionEngine()),
       runtime: testRuntime(),
     ).importDocx(document: document, title: '概率讲义', expectedEpoch: 0);
     final proposal = await h.service.propose(
@@ -644,7 +645,7 @@ void main() {
       conversations: conversations,
       schedule: schedule,
       study: StudyRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(policy: () => policy, live: rig.db.live),
     );
     final materialId = await materials.create(

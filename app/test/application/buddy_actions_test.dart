@@ -22,7 +22,7 @@ void main() {
       content: '本周晚上只有半小时',
     );
     final result = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: const [draft],
       sourceKind: MemorySourceKind.message,
@@ -99,7 +99,7 @@ void main() {
     final memories = MemoryRepository(rig.db);
 
     await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: const [
         MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
@@ -107,7 +107,7 @@ void main() {
       sourceKind: MemorySourceKind.message,
     );
     final second = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: [
         const MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
@@ -132,7 +132,7 @@ void main() {
     );
 
     final first = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: const [
         MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容'),
@@ -142,14 +142,14 @@ void main() {
       scope: 'goal:1',
     );
     final otherScope = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: const [MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容')],
       sourceKind: MemorySourceKind.message,
       scope: 'goal:2',
     );
     final otherKind = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: const [MemoryDraft(kind: MemoryKind.preference, content: '同一内容')],
       sourceKind: MemorySourceKind.message,
@@ -169,7 +169,7 @@ void main() {
     final memories = MemoryRepository(rig.db);
 
     await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
       drafts: const [
         MemoryDraft(kind: MemoryKind.difficulty, content: '放缩方向不确定'),

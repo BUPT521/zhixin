@@ -70,7 +70,7 @@ void main() {
       tasks: tasks,
       materials: MaterialRepository(rig.db),
       runtime: testRuntime(policy: () => policy),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       cleanupAttachmentPaths: (_) async {},
       assets: AssetStore(),
     );

@@ -155,7 +155,7 @@ class _Harness {
         dataEpoch: () => epoch,
         recordFailure: recordFailure,
       ),
-      transactions: WriteTransactions(db),
+      transactions: WriteTransactions(db, revisions: rig.engine),
       cleanupAttachmentPaths: (paths) =>
           AttachmentStore(filesDir: rig.filesDir).cleanupCandidates(db, paths),
     );
@@ -1530,7 +1530,7 @@ void main() {
       h.memories,
       tasks: h.tasks,
       materials: h.materials,
-      transactions: WriteTransactions(h.db),
+      transactions: WriteTransactions(h.db, revisions: h.rig.engine),
       runtime: testRuntime(),
     );
 

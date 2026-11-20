@@ -31,7 +31,7 @@ class _Harness {
       tasks: tasks,
       schedule: schedule,
       runtime: testRuntime(policy: () => policy),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
   }
 

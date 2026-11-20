@@ -505,7 +505,7 @@ class AppScopeState extends State<AppScope> {
 
   AccountServices get accountServices => _services.account;
 
-  late final _transactions = WriteTransactions(_db);
+  late final _transactions = WriteTransactions(_db, revisions: _engine);
   late final _settings = SettingsRepository(_db);
 
   late final ContextService _context = ContextService(
