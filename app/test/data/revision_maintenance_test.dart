@@ -158,8 +158,11 @@ void main() {
     for (var index = 0; index < 3; index++) {
       await addMemory(rig, '记忆 $index');
     }
-    // 一次没有净变化的命令也占编号，清理历史不能把这些编号退回去复用。
-    await rig.db.command((txn) async => null, label: '空写入');
+    // 只预留编号、没有净变化的命令也占一个编号，清理历史不能把它退回去复用。
+    await rig.db.command(
+      (txn) => rig.engine.reserveCommitId(txn),
+      label: '预留编号',
+    );
     final sequence = await selectRows(rig.raw, 'revision_sequence');
     final maxReserved = (sequence.single['next_commit']! as int) - 1;
     expect(maxReserved, greaterThan(await rig.engine.headId(rig.raw)));
