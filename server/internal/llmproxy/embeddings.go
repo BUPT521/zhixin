@@ -75,6 +75,9 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, p.cfg.StreamTotalTimeout)
 		defer cancel()
 	}
+	// 缓存代次必须在调用来源之前读：清除可能发生在嵌入进行中，那时请求已经
+	// 拿到旧代次，写回时对不上就丢弃这次写入（ADR-0037）。
+	generation, generationOK := p.embeddingCacheGeneration(ctx, r, userID)
 	res := p.embed(ctx, m, p.router.candidates(m, p.cfg.MaxAttempts), fields, inputs, p.budget(r, userID, day, m))
 	var budgetError quotaReservationError
 	switch {
@@ -96,7 +99,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(res.body)
 		// 响应已经写出，再把向量写进缓存；客户端带缓存请求头时才有这一步。
-		p.cacheEmbeddings(r, userID, m.Name, inputs, res.vectors)
+		p.cacheEmbeddings(r, userID, m.Name, inputs, res.vectors, generation, generationOK)
 	}
 }
 

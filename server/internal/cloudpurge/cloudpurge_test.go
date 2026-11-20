@@ -43,13 +43,14 @@ func (f *fakeBlobs) DeleteUser(context.Context, string) error {
 }
 
 // fakeEmbeddings 是嵌入向量缓存的清空步骤。缓存是派生数据，仍然要和其余几类
-// 数据一起清，清除顺序与失败保留标记的行为都要覆盖。
+// 数据一起清，清除顺序与失败保留标记的行为都要覆盖。实现里的 PurgeUser 在同一
+// 把账号锁中加代次并删行，编排只关心它被调用一次、失败时原样返回错误。
 type fakeEmbeddings struct {
 	calls int
 	errs  []error
 }
 
-func (f *fakeEmbeddings) DeleteUser(context.Context, string) error {
+func (f *fakeEmbeddings) PurgeUser(context.Context, string) error {
 	f.calls++
 	return popErr(&f.errs)
 }
@@ -159,6 +160,36 @@ func TestPurgeRejectsConcurrentRequestAndGatesWrites(t *testing.T) {
 	}
 	if _, ok, err := marker.PurgeStartedAt(ctx, "u1"); err != nil || ok {
 		t.Fatalf("marker should be removed, ok=%v err=%v", ok, err)
+	}
+}
+
+// TestPurgeEmbeddingFailureKeepsMarker 守住嵌入缓存这一步失败时的行为：错误原样
+// 返回，标记保留，立即重试回 409；过了有效期重试从头执行并成功。代次加一与删行
+// 在实现里是同一个事务，失败就没有清掉任何缓存行（ADR-0037）。
+func TestPurgeEmbeddingFailureKeepsMarker(t *testing.T) {
+	ctx := context.Background()
+	marker := NewMemoryStore()
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	boom := errors.New("嵌入缓存清理不可用")
+	embeddings := &fakeEmbeddings{errs: []error{boom}}
+	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, embeddings, objectstore.NewMemory())
+	svc.now = func() time.Time { return now }
+
+	if err := svc.Purge(ctx, "u1"); !errors.Is(err, boom) {
+		t.Fatalf("purge failure: want %v, got %v", boom, err)
+	}
+	if _, ok, err := marker.PurgeStartedAt(ctx, "u1"); err != nil || !ok {
+		t.Fatalf("marker must survive a failure, ok=%v err=%v", ok, err)
+	}
+	if err := svc.Purge(ctx, "u1"); !errors.Is(err, ErrInProgress) {
+		t.Fatalf("immediate retry: want ErrInProgress, got %v", err)
+	}
+	now = now.Add(StaleAfter + time.Minute)
+	if err := svc.Purge(ctx, "u1"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if embeddings.calls != 2 {
+		t.Fatalf("embeddings calls = %d, want 2", embeddings.calls)
 	}
 }
 

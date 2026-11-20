@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
 var (
@@ -25,6 +27,12 @@ type Service struct {
 	keep          int
 	schemaVersion int
 	now           func() time.Time
+	// objects 是写字节的同一份对象存储，后台对账用它列出 backups/ 下的对象；
+	// 由装配处经 SetObjects 注入，没有注入时对账不执行。
+	objects objectstore.Store
+	// reconcileInterval 是后台对账的周期，由配置项
+	// ZHIXIN_BACKUP_RECONCILE_INTERVAL 设置；0 或负数表示只在启动时跑一次。
+	reconcileInterval time.Duration
 }
 
 func NewService(store Store, maxBytes int64, keep, schemaVersion int) *Service {

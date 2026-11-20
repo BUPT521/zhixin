@@ -8,7 +8,9 @@
 
 2026-11-18 的加固轮次把服务端的默认行为收紧：启动时自检生产配置（配置了数据库时验证码不能写进日志、验证码与匿名统计的 HMAC 密钥必须固定、带凭据的上游地址必须走 https），公开写入接口在按地址的桶之外增加全局上限，反馈按保留期每日清理，登录失败按规范化邮箱计预算，密码哈希受 Argon2 内存预算约束，每个账号的会话数有上限并在每天清理过期会话，刷新令牌轮换后只保留固定 60 秒的重试宽限，附件增加账号总量配额，清除云端数据统一为 `DELETE /v1/cloud`，模型代理增加未验证邮箱拒绝、账号并发上限、响应体上限、额度预留与实例总预算，发布清单要求 HTTPS、SHA-256 和 Ed25519 签名。配置项见下表，跨模块取舍与代价见 [ADR-0028](../docs/adr/0028-服务端加固的默认拒绝与预算.md) 和 [ADR-0031](../docs/adr/0031-云端写入与托管模型的资源预算.md)。
 
-`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。2026-11-19 又增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 第一步）。2026-11-20 增加 `llm_instance_usage`，把实例当天的模型用量从账号用量里分出来，删号不再减少实例预算（[ADR-0036](../docs/adr/0036-实例模型预算与账号用量分开.md)）。
+2026-11-20 的加固轮次补上了四处写路径的窗口：嵌入缓存按账号记代次，清除云端数据之后，清除之前发出的嵌入请求写不回旧向量；刷新令牌的轮换与重放记录在同一个事务或同一把锁里完成；备份对象每小时窗口之外由后台对账清理没有元数据的遗留字节；注册增加实例级上限，超过保留期仍未确认邮箱的账号由每日清理删除。取舍与代价见 [ADR-0037](../docs/adr/0037-遗留写路径与公开入口的加固.md)。
+
+`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。2026-11-19 又增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 第一步）。2026-11-20 增加 `llm_instance_usage`，把实例当天的模型用量从账号用量里分出来，删号不再减少实例预算（[ADR-0036](../docs/adr/0036-实例模型预算与账号用量分开.md)）。同日还增加 `embedding_cache_generation`，记录每个账号的缓存代次，清空云端数据时加一，清除之前发出的嵌入请求因此写不回旧向量（[ADR-0037](../docs/adr/0037-遗留写路径与公开入口的加固.md)）。
 
 模型代理按优先级与权重从多个来源选择路由，嵌入接口按路由配置拆批，聊天与嵌入分别计入账号额度。模型来源与路由可在[管理后台](#管理后台)配置，取舍见 [ADR-0029](../docs/adr/0029-模型来源路由与嵌入代理.md)。
 
@@ -41,6 +43,8 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 | `session_refresh_used` | 已用刷新令牌的摘要与重试宽限，支撑轮换与 60 秒宽限 | `token_hash` 主键，`session_id` 与 `user_id` 外键级联删除，`request_id`，`rotated_at`、`grace_until` 与轮换前后的访问令牌、刷新令牌摘要；重放不带匹配 `request_id` 或超出宽限时撤销该账号全部会话并记录安全事件 |
 
 同轮新增的索引是 `session(refresh_expires)`、`session(user_id, created_at DESC)` 与 `auth_code(expires_at)`。字段与索引以 `schema.sql` 为准，本节只用于说明用途，不复制建表语句。
+
+2026-11-20 的加固轮次增加 `embedding_cache_generation`：每个账号一行缓存代次，清空云端数据时加一，嵌入请求在写入事务里比较代次，清除之前发出的请求因此写不回旧向量（[ADR-0037](../docs/adr/0037-遗留写路径与公开入口的加固.md)）。
 
 2026-11-19 增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md)）：
 
@@ -122,9 +126,11 @@ server/
 
 附件另有账号总量配额。每写入一个新对象之前，服务端按 `attachment` 表核对这个账号已用的字节数加上本次大小是否超过 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`（默认 2 GiB），超过时返回 413 `storage_full`，`extra` 里带 `used_bytes` 与 `limit_bytes`，客户端提示用户清理附件或换一个账号；同一账号重复上传相同内容命中同一个对象与同一行索引，不重复计入总量。配额与用量读的是 `attachment` 索引，历史上只按对象前缀写入过字节、没有索引行的实例需要先回填：在 `server/` 目录下设置 `ZHIXIN_DATABASE_URL` 与对象存储变量之后执行 `go run ./cmd/backfill-attachments`，命令按 `attachments/<账号>/` 前缀列出对象、核对大小并补写索引行，可重复执行，已有的行不会重复插入。回填完成之前配额只按索引里的字节计算，账面数字偏小，不影响上传与下载本身。
 
+备份的元数据与字节分两步写：上传先写对象再写行，删除与保留裁剪先删行再删对象，中断时只会留下没有元数据的对象，不会出现列表里有、下载失败的备份。删对象失败或请求被取消时，待删的 id 已经从库里消失，重试拿不到它们，所以服务按 `ZHIXIN_BACKUP_RECONCILE_INTERVAL`（默认 24 小时）对账一次：列出 `backups/` 下的对象，把库里查不到对应行、且写于一小时之前的对象删掉，一小时是给正在上传的备份留的窗口。
+
 ## 邮箱验证与找回密码
 
-注册之后的账号默认没有确认邮箱，`GET /v1/me` 的 `email_verified` 为 `false`。`POST /v1/auth/email/verify/request` 给当前账号的邮箱发一条六位数字验证码，`POST /v1/auth/email/verify/confirm` 用它把邮箱标为已确认；已确认的账号再次请求直接返回 204，不重复发信。
+注册之后的账号默认没有确认邮箱，`GET /v1/me` 的 `email_verified` 为 `false`。注册接口是公开的，除按来源地址限流外还有实例级上限（`ZHIXIN_REGISTER_GLOBAL_RATE` 与 `ZHIXIN_REGISTER_GLOBAL_BURST`），换地址也不能把未验证的账号刷满库；注册超过 `ZHIXIN_UNVERIFIED_KEEP_DAYS`（默认 7 天）仍未确认邮箱的账号由每日清理删除，会话与验证码一并清掉，这个邮箱之后可以重新注册。`POST /v1/auth/email/verify/request` 给当前账号的邮箱发一条六位数字验证码，`POST /v1/auth/email/verify/confirm` 用它把邮箱标为已确认；已确认的账号再次请求直接返回 204，不重复发信。
 
 `POST /v1/auth/password/forgot` 向账号登记的邮箱发送重设验证码，尚未验证的邮箱也可找回账号。`POST /v1/auth/password/reset` 在同一事务中消费验证码、确认邮箱、更新密码并撤销全部旧会话。两种验证码邮件共用按收件地址的令牌桶，每 24 小时补充 4 枚，最多积存 4 枚。
 
@@ -140,7 +146,7 @@ server/
 
 嵌入走 `POST /v1/llm/embeddings`，请求与响应是 OpenAI 的格式，`input` 只接受字符串或字符串数组，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，客户端在语义索引页选“知新服务”时，`RemoteEmbeddingClient` 每次请求前取 `<服务地址>/v1/llm` 与当前访问令牌，模型从列表里 `kind` 为 `embedding` 的项中选。路由的 `max_batch` 大于 0 时，服务端把一次请求拆成每批不超过这个数的几批，同时最多发出四批，再按原顺序合并、`index` 从 0 连续编号；一批失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。模型配置了维度时逐条核对向量长度，维度不符按来源故障处理；客户端请求的 `dimensions` 与配置不一致时返回 400。`GET /v1/llm/models` 的每一项带 `kind`（`chat` 或 `embedding`），嵌入模型配置了维度时带 `dimensions`。
 
-嵌入向量另有按账号隔离的缓存，目的是消除换机、索引重建与模型在 A、B 之间切换时的重复嵌入与费用（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 决定第 2、3 条）。客户端在自动同步开启、且这次是索引刷新时，给 `POST /v1/llm/embeddings` 带 `X-Zhixin-Embedding-Cache: 1`，服务端在嵌入成功之后按每条输入的 SHA-256 写进 `embedding_cache`，重复写入不覆盖已有的行；检索查询的嵌入不带这个头，未登录、同步关闭与自填 key 直连的用户因此不会留下派生数据。索引刷新先调 `POST /v1/llm/embeddings/lookup`，请求体是 `model` 与 `hashes`（UTF-8 字节的 SHA-256 小写十六进制，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条）；命中返回小端序 FP16 的 base64 向量与 `dimensions`，全部未命中时 `vectors` 为空数组、不是错误，查找不消耗额度、不写 `llm_usage`。缓存随 `DELETE /v1/cloud` 与删除账号一起删除，清除期间带缓存头的嵌入照常返回但不写缓存；每账号上限由 `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` 控制，写入之后按 `last_used_at` 删除最久未用的行。同名模型必须保持同一个向量空间：更换部署要换对外模型名，管理后台删除模型或改变维度时会先删掉这个模型的缓存行，再保存或删除，旧名字再次出现时不会命中上一个向量空间的向量。
+嵌入向量另有按账号隔离的缓存，目的是消除换机、索引重建与模型在 A、B 之间切换时的重复嵌入与费用（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 决定第 2、3 条）。客户端在自动同步开启、且这次是索引刷新时，给 `POST /v1/llm/embeddings` 带 `X-Zhixin-Embedding-Cache: 1`，服务端在嵌入成功之后按每条输入的 SHA-256 写进 `embedding_cache`，重复写入不覆盖已有的行；检索查询的嵌入不带这个头，未登录、同步关闭与自填 key 直连的用户因此不会留下派生数据。索引刷新先调 `POST /v1/llm/embeddings/lookup`，请求体是 `model` 与 `hashes`（UTF-8 字节的 SHA-256 小写十六进制，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条）；命中返回小端序 FP16 的 base64 向量与 `dimensions`，全部未命中时 `vectors` 为空数组、不是错误，查找不消耗额度、不写 `llm_usage`。缓存随 `DELETE /v1/cloud` 与删除账号一起删除，清除期间带缓存头的嵌入照常返回但不写缓存；清除时缓存代次加一，清除之前发出、清除之后才落库的嵌入请求会因为代次对不上而放弃写入，清除成功的承诺不会因为在途请求而失效。每账号上限由 `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` 控制，写入之后按 `last_used_at` 删除最久未用的行。同名模型必须保持同一个向量空间：更换部署要换对外模型名，管理后台删除模型或改变维度时会先删掉这个模型的缓存行，再保存或删除，旧名字再次出现时不会命中上一个向量空间的向量。
 
 账号尚未验证邮箱时，聊天与嵌入请求均返回 403 `email_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前返回 429。整个实例同时在途的请求还共用一份 `ZHIXIN_LLM_MAX_INSTANCE_BYTES` 的字节预算：请求体按声明长度的两倍（长度未知时按请求体上限）、非流式响应与嵌入请求按各自的上限在读进内存之前预留，占不到时同样回 429，实例内存因此不随账号数量上涨。非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按无效响应处理，流式响应的空闲时限与总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，响应开始转发后，超时会中断当前来源并结束响应。账号的用途额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算读的是 `llm_instance_usage` 里按自然日记的账本，删号与清空云端数据都不减少它，提供方已经计费的部分因此不会重新变成可用额度。
 
@@ -328,6 +334,10 @@ ORDER BY f.first_day;
 | `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES` | `2147483648` | 一个账号全部附件的总量上限，超限上传返回 413 `storage_full` |
 | `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的累计字节上限，最大 16 MiB；下一条超过上限时返回 413 |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |
+| `ZHIXIN_BACKUP_RECONCILE_INTERVAL` | `24h` | 备份对象对账的周期：列出对象存储里的备份对象，删掉库里已经没有元数据、且写于一小时前的遗留字节 |
+| `ZHIXIN_REGISTER_GLOBAL_RATE` | `0.05` | 注册的实例级上限（个/秒），与按来源地址的桶同时生效，换地址也不能把未验证账号灌满库 |
+| `ZHIXIN_REGISTER_GLOBAL_BURST` | `10` | 注册实例级上限的桶容量 |
+| `ZHIXIN_UNVERIFIED_KEEP_DAYS` | `7` | 未确认邮箱的账号保留天数，超过之后由每日清理删除，释放邮箱与账号行 |
 | `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日聊天 token 额度，也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
 | `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS` | `2000000` | 每个账号每日嵌入 token 额度，也是 `llm_quota.embedding_daily_tokens` 为空时的默认值；占位数字，待内测用量出来再定 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
@@ -404,6 +414,6 @@ go test ./...
 
 改了 `schema.sql` 或 `internal/store/queries/` 下的查询要先重新运行 `sqlc`，改了 `openapi.yaml` 要先重新运行 `oapi-codegen`，生成结果随源文件一起提交；CI 会重新生成并用 `git diff --exit-code` 核对，本地少了这一步时编译与测试仍可能通过，推上去却会在生成核对上失败。
 
-端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的邮箱验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限与账号总量配额、删除账号时清理数据、`DELETE /v1/cloud` 的清除与清除期间的 409，以及模型代理的转发、key 替换、用量记录、未验证邮箱的 403、账号并发上限、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流、全局写入上限、保留期清理与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取、强制 https 与 sha256、签名格式与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重、全局写入上限与保留期清理；PostgreSQL 存储用例覆盖验证码、已验证时间、`feedback` 表、两张活跃表、额度覆盖行与附件索引的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。
+端到端测试在 [server_test.go](internal/server/server_test.go)，用 `httptest` 起完整的处理链，覆盖注册登录、令牌作废、没有配置发信时的邮箱验证行为、同步的线性与幂等、备份的哈希校验与保留份数、附件的上传下载与哈希校验、账号之间的隔离、附件大小上限与账号总量配额、删除账号时清理数据、`DELETE /v1/cloud` 的清除与清除期间的 409，以及模型代理的转发、key 替换、用量记录、未验证邮箱的 403、账号并发上限、额度拒绝与按账号调整；更新检查与反馈也在这里核对公开访问、清单内容与限流，匿名活跃上报核对公开访问与幂等。两台设备的同步走查在 [sync_walkthrough_test.go](internal/server/sync_walkthrough_test.go)，按[同步协议](#同步协议)的顺序走完基线、交替推送、并发冲突、重试、附件与清空之后重新上传，`go test ./internal/server -run TestTwoDeviceSyncWalkthrough -v` 会打印每一步的结果。验证码与找回密码的流程在 [codes_test.go](internal/auth/codes_test.go) 用进程内发信实现覆盖，[feedback](internal/feedback/handler_test.go) 包覆盖反馈的字段边界、限流、全局写入上限、保留期清理与存储故障，[release](internal/release/release_test.go) 包覆盖清单的读取、强制 https 与 sha256、签名格式与不合法输入，[retention](internal/retention/service_test.go) 包覆盖安装标识校验、哈希与密钥、按天去重、全局写入上限与保留期清理；PostgreSQL 存储用例覆盖验证码、已验证时间、`feedback` 表、两张活跃表、额度覆盖行与附件索引的读写。[objectstore](internal/objectstore/objectstore_test.go) 与 [blobs](internal/blobs/blobs_test.go) 另有单元测试，覆盖本地目录与内存两种实现的对象读写、前缀清理与长度校验；S3 另按本节的本地联调记录验证。P2 加固的用例跟着改动分布在各自包里：缓存代次在 [llmproxy](internal/llmproxy/embedding_cache_test.go) 与 [cloudpurge](internal/cloudpurge/cloudpurge_test.go)，遗留对象对账在 [backup](internal/backup/reconcile_test.go) 与 [objectstore](internal/objectstore/objectstore_test.go)，刷新事务与未验证账号保留期在 [auth](internal/auth/hardening_test.go) 与 [store/pg](internal/store/pg/refresh_atomic_test.go)；接入层的注册上限与启动清理在 [p2_hardening_test.go](internal/server/p2_hardening_test.go)。
 
 模型路由测试覆盖来源优先级、权重与冷却、失败后换来源、嵌入拆批及合并和按用途计量。PostgreSQL 存储用例另覆盖来源、模型与路由的配置读写。

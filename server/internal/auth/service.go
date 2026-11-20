@@ -82,6 +82,11 @@ type Service struct {
 	// 与配置 ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致，装配处可以覆盖。
 	maxSessions int
 
+	// unverifiedKeep 是未确认邮箱账号的保留期：注册之后超过这段时间仍未确认的
+	// 账号由每日清理删除。默认值与配置 ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值
+	// 一致，装配处可以覆盖。
+	unverifiedKeep time.Duration
+
 	// securityLog 记录刷新令牌重放这类安全事件；为 nil 时不记，事件内容只有
 	// 账号、会话与请求标识，不含令牌。
 	securityLog *slog.Logger
@@ -105,10 +110,14 @@ const maxCodeAttempts = 5
 // ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致。
 const defaultMaxSessions = 20
 
+// defaultUnverifiedKeep 是未确认邮箱账号的默认保留期，与配置
+// ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值一致。
+const defaultUnverifiedKeep = 7 * 24 * time.Hour
+
 func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
 	return &Service{
 		store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL,
-		maxSessions: defaultMaxSessions,
+		maxSessions: defaultMaxSessions, unverifiedKeep: defaultUnverifiedKeep,
 	}
 }
 
@@ -155,13 +164,39 @@ func (s *Service) SetMaxSessions(n int) {
 	}
 }
 
-// PruneLoop 启动时清理一次过期会话与验证码，之后每天清理一次，直到 ctx 结束。
-// 节奏与 retention.PruneLoop 一致：过期行不影响正确性，清理只控制表的大小。
+// SetUnverifiedKeep 设定未确认邮箱账号的保留天数；小于等于零的值忽略，沿用
+// 默认 7 天。每日清理按注册时间早于 now-days 的未确认账号删除，忽略零值也
+// 避免把保留期配成 0 之后“注册即删”。
+func (s *Service) SetUnverifiedKeep(days int) {
+	if days > 0 {
+		s.unverifiedKeep = time.Duration(days) * 24 * time.Hour
+	}
+}
+
+// PruneLoop 启动时清理一次过期会话、过期验证码与超过保留期的未验证账号，之后
+// 每天清理一次，直到 ctx 结束。节奏与 retention.PruneLoop 一致：过期行不影响
+// 正确性，清理只控制表的大小；未验证账号超过保留期后删除，释放邮箱与账号行。
 func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) {
 	prune := func() {
 		now := s.now()
 		if err := store.PruneExpired(ctx, now, now.Add(-max(s.refreshTTL, refreshGrace))); err != nil {
 			log.Error("prune expired auth rows", slog.String("error", err.Error()))
+		}
+		// 未确认邮箱的账号按保留期删除：注册是公开入口，账号行与 argon2 哈希在
+		// 邮箱验证之前就已经写入，超过保留期仍未确认的行没有云端数据，删掉可以
+		// 释放邮箱与账号表空间（ADR-0037）。删除行数大于零时记一条，便于核对
+		// 清理量；失败留到下一次每日清理重试。装了安全日志出口时写那里，否则写
+		// 每日清理的日志，事件里只有删除的行数，不含账号与邮箱。
+		removed, err := store.PruneUnverified(ctx, now.Add(-s.unverifiedKeep))
+		switch {
+		case err != nil:
+			log.Error("prune unverified auth users", slog.String("error", err.Error()))
+		case removed > 0:
+			if s.securityLog != nil {
+				s.securityLog.Info("pruned unverified auth users", slog.Int64("users", removed))
+			} else {
+				log.Info("pruned unverified auth users", slog.Int64("users", removed))
+			}
 		}
 	}
 	prune()
@@ -317,26 +352,17 @@ func (s *Service) refresh(ctx context.Context, refreshToken, requestID string, a
 	if allowed != nil && !allowed(sess.UserID) {
 		return Tokens{}, errRefreshLimited
 	}
-	tokens, err := s.rotateSession(ctx, sess.ID, oldHash, sess.UserID, now)
-	if err != nil {
-		return Tokens{}, err
-	}
-	// 记下刚用掉的旧令牌摘要：它再出现时，只有宽限期内、request_id 相同的请求
-	// 按重试处理，其余按盗用撤销会话。写入失败时整次刷新失败，客户端会重新登录，
-	// 不会出现“令牌换了但重放检测缺失”的状态。
-	if err := s.store.RecordRefreshUsed(ctx, RefreshUsed{
-		TokenHash:           oldHash,
-		SessionID:           sess.ID,
-		UserID:              sess.UserID,
-		RequestID:           requestID,
-		RotatedAt:           now,
-		GraceUntil:          now.Add(refreshGrace),
-		ReplacedAccessHash:  hashToken(tokens.AccessToken),
-		ReplacedRefreshHash: hashToken(tokens.RefreshToken),
-	}); err != nil {
-		return Tokens{}, err
-	}
-	return tokens, nil
+	// 轮换与重放记录在存储的同一个事务或同一把锁里完成：客户端要么拿到新令牌
+	// 且旧摘要已经记下，要么两步都没有发生、旧令牌仍然可用。两步之间不再有请求
+	// 取消或写库失败留下的中间状态。
+	return s.rotateSessionAndRecord(ctx, sess.ID, oldHash, sess.UserID, now, RefreshUsed{
+		TokenHash:  oldHash,
+		SessionID:  sess.ID,
+		UserID:     sess.UserID,
+		RequestID:  requestID,
+		RotatedAt:  now,
+		GraceUntil: now.Add(refreshGrace),
+	})
 }
 
 // handleRefreshReuse 处理一个已经轮换掉的刷新令牌再次出现。
@@ -367,38 +393,31 @@ func (s *Service) handleRefreshReuse(ctx context.Context, oldHash, requestID str
 		}
 		return Tokens{}, ErrInvalidToken
 	}
-	tokens, err := s.rotateSession(ctx, used.SessionID, used.ReplacedRefreshHash, used.UserID, now)
-	if err != nil {
-		return Tokens{}, err
-	}
-	// 重试换掉了上一对令牌：原旧令牌与刚用掉的令牌都指向新的一对，宽限截止
-	// 时间沿用原记录。同一客户端在宽限期内连续重试因此都能拿到新令牌，而宽限期
-	// 不会因为重试变长。
-	for _, hash := range []string{oldHash, used.ReplacedRefreshHash} {
-		if err := s.store.RecordRefreshUsed(ctx, RefreshUsed{
-			TokenHash:           hash,
-			SessionID:           used.SessionID,
-			UserID:              used.UserID,
-			RequestID:           used.RequestID,
-			RotatedAt:           now,
-			GraceUntil:          used.GraceUntil,
-			ReplacedAccessHash:  hashToken(tokens.AccessToken),
-			ReplacedRefreshHash: hashToken(tokens.RefreshToken),
-		}); err != nil {
-			return Tokens{}, err
-		}
-	}
-	return tokens, nil
+	// 重试换掉上一对令牌：存储会在同一个事务里把原旧令牌与刚用掉的令牌都记成
+	// 指向新的一对，宽限截止时间沿用原记录。同一客户端在宽限期内连续重试因此都
+	// 能拿到新令牌，而宽限期不会因为重试变长；这次轮换与两条记录一起成功或一起
+	// 不发生，不存在只换令牌、旧摘要没记下的窗口。
+	return s.rotateSessionAndRecord(ctx, used.SessionID, used.ReplacedRefreshHash, used.UserID, now, RefreshUsed{
+		TokenHash:  oldHash,
+		SessionID:  used.SessionID,
+		UserID:     used.UserID,
+		RequestID:  used.RequestID,
+		RotatedAt:  now,
+		GraceUntil: used.GraceUntil,
+	})
 }
 
-// rotateSession 生成一对新令牌并用 CAS 写回会话。CAS 失败说明这次刷新已经输给
-// 并发的另一个请求，按无效令牌处理，不撤销会话。
-func (s *Service) rotateSession(ctx context.Context, sessionID, oldRefreshHash, userID string, now time.Time) (Tokens, error) {
+// rotateSessionAndRecord 生成一对新令牌，交给存储把轮换与重放记录放在同一个事务
+// 或同一把锁里完成。used 是要写入记录的旧摘要：正常刷新时它就是这次消费的
+// oldRefreshHash；宽限期内的重试里它是客户端提交的更早摘要，存储会同时记下它
+// 与这次消费的当前摘要。记录里“本次发出的令牌”由存储按新摘要填好。CAS 失败
+// 说明这次刷新已经输给并发的另一个请求，按无效令牌处理，不撤销会话。
+func (s *Service) rotateSessionAndRecord(ctx context.Context, sessionID, oldRefreshHash, userID string, now time.Time, used RefreshUsed) (Tokens, error) {
 	access, refresh := newToken(), newToken()
 	accessExpires := now.Add(s.accessTTL)
 	refreshExpires := now.Add(s.refreshTTL)
-	err := s.store.RotateSession(ctx, sessionID, oldRefreshHash,
-		hashToken(access), hashToken(refresh), accessExpires, refreshExpires)
+	err := s.store.RotateSessionAndRecord(ctx, sessionID, oldRefreshHash,
+		hashToken(access), hashToken(refresh), accessExpires, refreshExpires, used)
 	if errors.Is(err, ErrInvalidToken) {
 		return Tokens{}, ErrInvalidToken
 	}

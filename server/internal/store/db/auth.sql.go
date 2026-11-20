@@ -173,6 +173,22 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteUnverifiedUsersBefore = `-- name: DeleteUnverifiedUsersBefore :execrows
+DELETE FROM app_user
+WHERE email_verified_at IS NULL AND created_at < $1
+`
+
+// 删除长时间没有确认邮箱的账号：注册接口是公开的，未确认的账号不占云盘也不发
+// 信，但会一直占着邮箱与账号行（ADR-0037）。只删创建时间早于 cutoff 且从未
+// 确认邮箱的行，会话、验证码、额度与用量随外键级联。
+func (q *Queries) DeleteUnverifiedUsersBefore(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnverifiedUsersBefore, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteUser = `-- name: DeleteUser :execrows
 DELETE FROM app_user
 WHERE id = $1

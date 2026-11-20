@@ -170,7 +170,7 @@ func (d *Dir) List(_ context.Context, prefix string) ([]Object, error) {
 		if err != nil {
 			return err
 		}
-		out = append(out, Object{Key: key, Size: info.Size()})
+		out = append(out, Object{Key: key, Size: info.Size(), ModTime: info.ModTime()})
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {

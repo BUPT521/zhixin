@@ -52,6 +52,9 @@ type Config struct {
 	SyncPullMaxBytes int64
 	// BackupsKept is how many snapshots are retained per account.
 	BackupsKept int
+	// BackupReconcileInterval 是对象存储对账的周期：列出 backups/ 下的对象，
+	// 库里找不到对应元数据的遗留字节删掉（ADR-0037）。设 0 关闭。
+	BackupReconcileInterval time.Duration
 	// BlobDir is the local directory for backup and attachment bytes. Used
 	// when S3 is not configured.
 	BlobDir string
@@ -72,6 +75,14 @@ type Config struct {
 	// 预算：默认约每分钟补一个令牌、最多攒十个，超出的尝试短暂返回 429。
 	LoginFailRatePerSecond float64
 	LoginFailBurst         int
+	// RegisterGlobalRatePerSecond 与 RegisterGlobalBurst 是注册的全局上限：
+	// 每个来源地址的桶之外再限制整个实例的注册总量，换地址也不能把未验证的账号
+	// 灌满库（ADR-0037）。设 0 关闭。
+	RegisterGlobalRatePerSecond float64
+	RegisterGlobalBurst         int
+	// UnverifiedKeepDays 是未确认邮箱的账号保留天数：注册之后超过这么多天仍未
+	// 确认的账号由每日清理删除，释放邮箱与账号行（ADR-0037）。
+	UnverifiedKeepDays int
 	// Argon2MemoryBudgetMiB 是密码哈希同时占用的内存预算；并发上限由它除以
 	// 单次哈希的 19 MiB 算出，注册、登录、重设密码与删号共用这个上限。
 	Argon2MemoryBudgetMiB int
@@ -259,6 +270,7 @@ func Load(getenv func(string) string) (Config, error) {
 		MaxAccountAttachmentBytes: num("ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES", "2147483648"),
 		SyncPullMaxBytes:          num("ZHIXIN_SYNC_PULL_MAX_BYTES", "4194304"),
 		BackupsKept:               int(num("ZHIXIN_BACKUPS_KEPT", "5")),
+		BackupReconcileInterval:   dur("ZHIXIN_BACKUP_RECONCILE_INTERVAL", "24h"),
 		BlobDir:                   get("ZHIXIN_BLOB_DIR", "data/blobs"),
 		ApplySchema:               get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
 		S3: objectstore.S3Config{
@@ -270,17 +282,20 @@ func Load(getenv func(string) string) (Config, error) {
 			UseSSL:    get("ZHIXIN_S3_USE_SSL", "0") == "1",
 		},
 
-		AuthRatePerSecond:      fnum("ZHIXIN_AUTH_RATE", "0.2"),
-		AuthBurst:              int(num("ZHIXIN_AUTH_BURST", "10")),
-		RefreshRatePerSecond:   fnum("ZHIXIN_REFRESH_RATE", "1"),
-		RefreshBurst:           int(num("ZHIXIN_REFRESH_BURST", "30")),
-		LoginFailRatePerSecond: fnum("ZHIXIN_LOGIN_FAIL_RATE", "0.017"),
-		LoginFailBurst:         int(num("ZHIXIN_LOGIN_FAIL_BURST", "10")),
-		Argon2MemoryBudgetMiB:  int(num("ZHIXIN_ARGON2_MEMORY_BUDGET_MIB", "256")),
-		MaxSessionsPerUser:     int(num("ZHIXIN_MAX_SESSIONS_PER_USER", "20")),
-		RateLimitKeys:          int(num("ZHIXIN_RATE_LIMIT_KEYS", "100000")),
-		UploadRatePerSecond:    fnum("ZHIXIN_UPLOAD_RATE", "0.5"),
-		UploadBurst:            int(num("ZHIXIN_UPLOAD_BURST", "5")),
+		AuthRatePerSecond:           fnum("ZHIXIN_AUTH_RATE", "0.2"),
+		AuthBurst:                   int(num("ZHIXIN_AUTH_BURST", "10")),
+		RefreshRatePerSecond:        fnum("ZHIXIN_REFRESH_RATE", "1"),
+		RefreshBurst:                int(num("ZHIXIN_REFRESH_BURST", "30")),
+		LoginFailRatePerSecond:      fnum("ZHIXIN_LOGIN_FAIL_RATE", "0.017"),
+		LoginFailBurst:              int(num("ZHIXIN_LOGIN_FAIL_BURST", "10")),
+		RegisterGlobalRatePerSecond: fnum("ZHIXIN_REGISTER_GLOBAL_RATE", "0.05"),
+		RegisterGlobalBurst:         int(num("ZHIXIN_REGISTER_GLOBAL_BURST", "10")),
+		UnverifiedKeepDays:          int(num("ZHIXIN_UNVERIFIED_KEEP_DAYS", "7")),
+		Argon2MemoryBudgetMiB:       int(num("ZHIXIN_ARGON2_MEMORY_BUDGET_MIB", "256")),
+		MaxSessionsPerUser:          int(num("ZHIXIN_MAX_SESSIONS_PER_USER", "20")),
+		RateLimitKeys:               int(num("ZHIXIN_RATE_LIMIT_KEYS", "100000")),
+		UploadRatePerSecond:         fnum("ZHIXIN_UPLOAD_RATE", "0.5"),
+		UploadBurst:                 int(num("ZHIXIN_UPLOAD_BURST", "5")),
 
 		SMTPAddr:          get("ZHIXIN_SMTP_ADDR", ""),
 		SMTPFrom:          get("ZHIXIN_SMTP_FROM", ""),

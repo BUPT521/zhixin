@@ -83,6 +83,20 @@ func (s *Store) List(ctx context.Context, userID string) ([]backup.Meta, error) 
 	return out, nil
 }
 
+// ListAllKeys 返回全部备份元数据对应的对象键，供后台对账比对 backups/ 下的
+// 对象：库里查不到的键就是遗留字节，见 ADR-0037。
+func (s *Store) ListAllKeys(ctx context.Context) ([]string, error) {
+	rows, err := s.q.ListAllBackups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, objectstore.BackupKey(row.UserID, row.ID))
+	}
+	return out, nil
+}
+
 // Open 返回元数据与字节流。
 func (s *Store) Open(ctx context.Context, userID, id string) (backup.Meta, io.ReadCloser, error) {
 	row, err := s.q.BackupByID(ctx, db.BackupByIDParams{UserID: userID, ID: id})

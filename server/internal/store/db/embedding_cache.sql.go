@@ -9,6 +9,19 @@ import (
 	"context"
 )
 
+const bumpEmbeddingCacheGeneration = `-- name: BumpEmbeddingCacheGeneration :exec
+INSERT INTO embedding_cache_generation (user_id, generation)
+VALUES ($1, 1)
+ON CONFLICT (user_id)
+DO UPDATE SET generation = embedding_cache_generation.generation + 1
+`
+
+// 清除云端数据时把代次加一，之后旧请求写缓存会被写入方的事务拒掉。
+func (q *Queries) BumpEmbeddingCacheGeneration(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, bumpEmbeddingCacheGeneration, userID)
+	return err
+}
+
 const deleteEmbeddingCacheForModel = `-- name: DeleteEmbeddingCacheForModel :exec
 DELETE FROM embedding_cache WHERE model = $1
 `
@@ -64,6 +77,22 @@ func (q *Queries) EmbeddingCacheBytes(ctx context.Context, userID string) (int64
 	var bytes int64
 	err := row.Scan(&bytes)
 	return bytes, err
+}
+
+const embeddingCacheGeneration = `-- name: EmbeddingCacheGeneration :one
+SELECT COALESCE(
+  (SELECT generation FROM embedding_cache_generation WHERE user_id = $1),
+  0
+)::bigint
+`
+
+// 账号当前的缓存代次；还没有行时是 0。写入缓存前与清除时都用这一句，写入方在
+// 自己的事务里读，清除方加一，两边对不上就说明中间清过一次（ADR-0037）。
+func (q *Queries) EmbeddingCacheGeneration(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRow(ctx, embeddingCacheGeneration, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const insertEmbeddingCaches = `-- name: InsertEmbeddingCaches :exec

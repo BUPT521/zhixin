@@ -78,6 +78,13 @@ WHERE expires_at < sqlc.arg(now);
 -- name: PruneUsedRefreshTokens :exec
 DELETE FROM session_refresh_used WHERE rotated_at < sqlc.arg(used_before);
 
+-- 删除长时间没有确认邮箱的账号：注册接口是公开的，未确认的账号不占云盘也不发
+-- 信，但会一直占着邮箱与账号行（ADR-0037）。只删创建时间早于 cutoff 且从未
+-- 确认邮箱的行，会话、验证码、额度与用量随外键级联。
+-- name: DeleteUnverifiedUsersBefore :execrows
+DELETE FROM app_user
+WHERE email_verified_at IS NULL AND created_at < sqlc.arg(cutoff);
+
 -- name: SessionByAccessHash :one
 SELECT s.id, s.user_id, s.device_name, s.access_hash, s.refresh_hash,
   s.access_expires, s.refresh_expires, s.created_at,
