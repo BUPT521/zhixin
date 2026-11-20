@@ -78,6 +78,7 @@ function logout(msg) {
   usageFilters = {};
   usageDay = null;
   state.upstreamNames.clear();
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   selectTab(tabs[0]);
   showApp(false);
   if (msg) toast(msg);
@@ -120,84 +121,319 @@ async function loadAll() {
   renderModels();
 }
 
+function refresh() {
+  loadAll().catch((err) => toast(err.message));
+}
+
+// ---- 弹窗 ----
+function markClean(form) {
+  form.dataset.snapshot = snapshotForm(form);
+}
+
+function snapshotForm(form) {
+  const data = new FormData(form);
+  return JSON.stringify([...data.entries()]);
+}
+
+function isDirty(form) {
+  return Boolean(form.dataset.snapshot) && form.dataset.snapshot !== snapshotForm(form);
+}
+
+async function requestClose(id) {
+  const dialog = document.getElementById(id);
+  if (!dialog.open) return;
+  const form = dialog.querySelector('form');
+  if (form && isDirty(form)) {
+    const discard = await askConfirm({
+      title: '放弃未保存的修改？',
+      message: '这个弹窗里填写的内容还没有保存，关闭之后不会保留。',
+      ok: '放弃修改',
+      danger: true,
+    });
+    if (!discard) return;
+  }
+  dialog.close();
+}
+
+document.querySelectorAll('[data-close]').forEach((button) => {
+  button.addEventListener('click', () => requestClose(button.dataset.close));
+});
+document.querySelectorAll('dialog').forEach((dialog) => {
+  if (dialog.id === 'confirm-dialog') return;
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) requestClose(dialog.id);
+  });
+});
+
+// Escape 不交给浏览器的关闭请求：新版 Edge 里 cancel 事件不可取消，直接关掉会
+// 绕过未保存确认。表单弹窗用 closedby="none" 关掉原生退出，这里自己处理。
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  const top = [...document.querySelectorAll('dialog[open]')].at(-1);
+  if (!top || top.id === 'confirm-dialog') return;
+  if (event.target instanceof HTMLSelectElement) return;
+  if (event.target instanceof HTMLInputElement && event.target.list) return;
+  event.preventDefault();
+  event.stopPropagation();
+  requestClose(top.id);
+}, true);
+
+let confirmState = null;
+function askConfirm({ title, message, ok = '确定', danger = false }) {
+  if (confirmState) settleConfirm(false);
+  $('#confirm-title').textContent = title;
+  $('#confirm-message').textContent = message;
+  const accept = $('#confirm-ok');
+  accept.textContent = ok;
+  accept.classList.toggle('danger-solid', danger);
+  $('#confirm-dialog').showModal();
+  return new Promise((resolve) => { confirmState = { resolve }; });
+}
+
+function settleConfirm(value) {
+  const dialog = $('#confirm-dialog');
+  if (dialog.open) dialog.close();
+  const current = confirmState;
+  confirmState = null;
+  current?.resolve(value);
+}
+
+$('#confirm-cancel').addEventListener('click', () => settleConfirm(false));
+$('#confirm-ok').addEventListener('click', () => settleConfirm(true));
+$('#confirm-dialog').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  settleConfirm(false);
+});
+$('#confirm-dialog').addEventListener('click', (event) => {
+  if (event.target === $('#confirm-dialog')) settleConfirm(false);
+});
+
+function showError(id, message, focus) {
+  const box = document.getElementById(id);
+  box.textContent = message;
+  box.hidden = false;
+  box.scrollIntoView({ block: 'nearest' });
+  if (focus) focus.focus();
+}
+
+function clearError(id) {
+  const box = document.getElementById(id);
+  box.textContent = '';
+  box.hidden = true;
+}
+
+async function runSave(button, action, errorID) {
+  if (button.disabled) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '保存中…';
+  clearError(errorID);
+  try {
+    await action();
+  } catch (err) {
+    showError(errorID, err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 // ---- 来源 ----
-const stateText = { ok: '正常', cooling: '冷却中', key_error: 'key 无法解密' };
+function providerLabel(id) {
+  const provider = state.providers.find((item) => item.id === id);
+  return provider && provider.name && provider.name !== provider.id ? provider.name : id;
+}
+
+function providerOption(provider) {
+  const name = provider.name && provider.name !== provider.id ? `${provider.name}（${provider.id}）` : provider.id;
+  return provider.enabled ? name : name + '（已停用）';
+}
 
 function renderProviders() {
   const body = $('#providers');
   body.replaceChildren();
+  const enabled = state.providers.filter((p) => p.enabled).length;
+  const missingKey = state.providers.filter((p) => !p.has_key).length;
+  $('#provider-summary').textContent = state.providers.length
+    ? `${state.providers.length} 个来源 · ${enabled} 个启用` + (missingKey ? ` · ${missingKey} 个未设置密钥` : '')
+    : '';
   if (!state.providers.length) {
-    body.append(el('tr', {}, el('td', { colspan: 6, class: 'empty' }, '还没有来源。点右上角“新增来源”。')));
+    body.append(el('tr', {}, el('td', { colspan: 5, class: 'empty' }, '还没有来源。点“新增来源”，先填地址和密钥。')));
     return;
   }
   for (const p of state.providers) {
-    const h = p.health;
-    const status = el('td', {},
-      p.enabled ? el('span', { class: 'badge ' + h.state }, stateText[h.state] || h.state) : el('span', { class: 'badge off' }, '已停用'),
-      h.consecutive_failures ? el('div', { class: 'sub' }, `连续失败 ${h.consecutive_failures} 次`) : null,
-      h.last_error ? el('div', { class: 'sub', title: h.last_error_at || '' }, '最近错误：' + h.last_error) : null,
-      h.cooling_until ? el('div', { class: 'sub' }, '冷却到 ' + new Date(h.cooling_until).toLocaleTimeString()) : null,
-    );
+    const health = p.health || {};
+    const title = p.name && p.name !== p.id ? p.name : p.id;
+    const details = [];
+    let badge = '正常';
+    let tone = 'ok';
+    if (!p.enabled) {
+      badge = '已停用';
+      tone = 'off';
+    } else if (health.state === 'key_error') {
+      badge = '密钥异常';
+      tone = 'key_error';
+    } else if (health.state === 'cooling') {
+      badge = '冷却中';
+      tone = 'cooling';
+    }
+    if (p.enabled) {
+      if (health.consecutive_failures) details.push(`连续失败 ${health.consecutive_failures} 次`);
+      if (health.cooling_until) details.push('冷却到 ' + clock(health.cooling_until));
+      if (health.last_error) details.push('最近错误：' + health.last_error);
+    }
     body.append(el('tr', {},
-      el('td', {}, el('span', { class: 'mono' }, p.id)),
-      el('td', { class: 'name' }, p.name, p.note ? el('div', { class: 'sub' }, p.note) : null),
-      el('td', { class: 'mono url' }, p.base_url),
-      el('td', { class: 'mono' }, p.has_key ? '••••' + (p.key_hint || '') : '未设置'),
-      status,
+      el('td', { class: 'source-cell' },
+        el('div', { class: 'source-name' }, title),
+        p.name && p.name !== p.id ? el('div', { class: 'mono sub' }, p.id) : null,
+        p.note ? el('div', { class: 'sub' }, p.note) : null,
+      ),
+      el('td', { class: 'mono url', 'data-label': '基础地址' }, p.base_url),
+      el('td', { 'data-label': '密钥' },
+        p.has_key
+          ? el('div', {}, el('span', { class: 'mono' }, '••••' + (p.key_hint || '')), el('div', { class: 'sub' }, '已保存'))
+          : el('span', { class: 'badge warn' }, '未设置'),
+      ),
+      el('td', { 'data-label': '状态' },
+        el('span', { class: 'badge ' + tone }, badge),
+        details.map((text) => el('div', { class: 'sub status-detail', title: health.last_error_at || '' }, text)),
+      ),
       el('td', { class: 'ops' },
-        el('button', { class: 'link', onclick: () => testProvider(p) }, '测试'),
-        el('button', { class: 'link', onclick: () => editProvider(p) }, '编辑'),
-        el('button', { class: 'danger', onclick: () => deleteProvider(p) }, '删除'),
+        el('button', { type: 'button', class: 'link', 'aria-label': `测试来源 ${p.id}`, onclick: () => testProvider(p) }, '测试'),
+        el('button', { type: 'button', class: 'link', 'aria-label': `编辑来源 ${p.id}`, onclick: () => editProvider(p) }, '编辑'),
+        el('button', { type: 'button', class: 'danger', 'aria-label': `删除来源 ${p.id}`, onclick: () => deleteProvider(p) }, '删除'),
       ),
     ));
   }
 }
 
-$('#add-provider').addEventListener('click', () => editProvider(null));
-
-function editProvider(p) {
-  const f = $('#provider-form');
-  f.reset();
-  $('#provider-title').textContent = p ? '编辑来源 ' + p.id : '新增来源';
-  f.id.value = p ? p.id : '';
-  f.id.readOnly = !!p;
-  f.name.value = p ? p.name : '';
-  f.base_url.value = p ? p.base_url : '';
-  f.api_key.placeholder = p && p.has_key ? '留空表示不修改（当前末四位 ' + (p.key_hint || '') + '）' : '没有 key 时留空';
-  f.clear_key.parentElement.hidden = !(p && p.has_key);
-  f.enabled.checked = p ? p.enabled : true;
-  f.note.value = p ? p.note : '';
-  $('#provider-error').hidden = true;
-  $('#provider-dialog').showModal();
+function clock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
-$('#provider-form').addEventListener('submit', async (e) => {
-  if (e.submitter && e.submitter.value === 'cancel') return;
-  e.preventDefault();
-  const f = e.target;
-  const body = { base_url: f.base_url.value.trim(), name: f.name.value.trim(), enabled: f.enabled.checked, note: f.note.value.trim() };
-  if (f.api_key.value.trim()) body.api_key = f.api_key.value.trim();
-  else if (f.clear_key.checked) body.api_key = '';
+$('#add-provider').addEventListener('click', () => editProvider(null));
+
+let editingProvider = null;
+
+function editProvider(p) {
+  editingProvider = p;
+  const form = $('#provider-form');
+  const f = form.elements;
+  form.reset();
+  f.id.value = p ? p.id : '';
+  f.id.readOnly = Boolean(p);
+  f.name.value = p ? p.name : '';
+  f.base_url.value = p ? p.base_url : '';
+  f.api_key.value = '';
+  f.api_key.disabled = false;
+  f.clear_key.checked = false;
+  f.clear_key.closest('label').hidden = !(p && p.has_key);
+  f.enabled.checked = p ? p.enabled : true;
+  f.note.value = p ? p.note : '';
+  $('#provider-title').textContent = p ? '编辑来源 ' + p.id : '新增来源';
+  $('#provider-desc').textContent = p ? '修改保存之后立即生效，用到这个来源的路由会重新读取。' : '密钥加密保存在服务端，保存之后只显示末四位。';
+  $('#provider-id-hint').textContent = p ? '编号保存后不能修改；换地址要同时重新填写 key' : '用于路由引用；小写字母、数字、- 或 _，保存后不能修改';
+  updateProviderKeyHint();
+  clearError('provider-error');
+  $('#provider-dialog').showModal();
+  markClean(form);
+  (p ? f.name : f.id).focus();
+}
+
+function normalizeBaseURL(value) {
+  const raw = value.trim();
+  if (!raw) return null;
   try {
-    await api('PUT', '/providers/' + encodeURIComponent(f.id.value.trim()), body);
-    state.upstreamNames.delete(f.id.value.trim());
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.host || url.username || url.password || url.search || url.hash) return null;
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function updateProviderKeyHint() {
+  const form = $('#provider-form');
+  const f = form.elements;
+  const p = editingProvider;
+  const hint = $('#provider-key-hint');
+  hint.classList.remove('warn');
+  if (!p || !p.has_key) {
+    hint.textContent = '没有 key 时留空；保存后会加密，不再明文显示。';
+    return;
+  }
+  if (f.clear_key.checked) {
+    hint.textContent = '保存后会清除已保存的 key。';
+    return;
+  }
+  const base = normalizeBaseURL(f.base_url.value);
+  if (base && base !== p.base_url) {
+    hint.textContent = '基础地址改过了，保存时必须重新填写 key。';
+    hint.classList.add('warn');
+    return;
+  }
+  hint.textContent = `已保存末四位 ${p.key_hint || ''}；留空表示不修改。`;
+}
+
+$('#provider-form').elements.base_url.addEventListener('input', updateProviderKeyHint);
+$('#provider-form').elements.clear_key.addEventListener('change', (event) => {
+  const key = $('#provider-form').elements.api_key;
+  key.disabled = event.target.checked;
+  if (event.target.checked) key.value = '';
+  updateProviderKeyHint();
+});
+$('#provider-form').addEventListener('input', () => clearError('provider-error'));
+
+$('#provider-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const f = form.elements;
+  const base = normalizeBaseURL(f.base_url.value);
+  if (!base) {
+    showError('provider-error', '基础地址要写成完整的 http 或 https 地址，不带查询串与片段。', f.base_url);
+    return;
+  }
+  if (/\/(chat\/completions|embeddings)$/.test(base)) {
+    showError('provider-error', '基础地址不要带 /chat/completions 或 /embeddings，服务端会自己拼上。', f.base_url);
+    return;
+  }
+  const key = f.api_key.value.trim();
+  if (key && /\s/.test(key)) {
+    showError('provider-error', 'API key 不能包含空格或换行。', f.api_key);
+    return;
+  }
+  if (editingProvider && editingProvider.has_key && base !== editingProvider.base_url && !key && !f.clear_key.checked) {
+    showError('provider-error', '基础地址改过了，请重新填写 API key。', f.api_key);
+    return;
+  }
+  const body = { base_url: base, name: f.name.value.trim(), enabled: f.enabled.checked, note: f.note.value.trim() };
+  if (key) body.api_key = key;
+  else if (f.clear_key.checked) body.api_key = '';
+  const id = f.id.value.trim();
+  await runSave($('#provider-save'), async () => {
+    await api('PUT', '/providers/' + encodeURIComponent(id), body);
+    state.upstreamNames.delete(id);
     $('#provider-dialog').close();
     toast('已保存，路由立即生效');
-    await loadAll();
-  } catch (err) {
-    const box = $('#provider-error');
-    box.textContent = err.message;
-    box.hidden = false;
-  }
+    refresh();
+  }, 'provider-error');
 });
 
 async function deleteProvider(p) {
-  if (!confirm(`删除来源 ${p.id}？有模型路由指向它时会被拒绝。`)) return;
+  const ok = await askConfirm({
+    title: '删除这个来源？',
+    message: `删除 ${p.id} 之后无法恢复。还有模型路由指向它时，服务端会拒绝删除并列出相关模型。`,
+    ok: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api('DELETE', '/providers/' + encodeURIComponent(p.id));
     state.upstreamNames.delete(p.id);
-    toast('已删除');
-    await loadAll();
+    toast('已删除来源 ' + p.id);
+    refresh();
   } catch (err) { toast(err.message); }
 }
 
@@ -222,153 +458,268 @@ async function testProvider(p) {
 
 // ---- 模型 ----
 const routeState = {
-  ready: '可用', cooling: '冷却中', disabled: '已停用',
-  provider_disabled: '来源已停用', key_error: 'key 无法解密', provider_missing: '来源缺失',
+  ready: '可用', cooling: '冷却中', disabled: '路由停用',
+  provider_disabled: '来源停用', key_error: '密钥异常', provider_missing: '来源缺失',
 };
-const routeRank = { ready: 0, cooling: 1 };
+const routeBadge = {
+  ready: 'ok', cooling: 'cooling', disabled: 'off',
+  provider_disabled: 'off', key_error: 'key_error', provider_missing: 'key_error',
+};
 const kindName = { chat: '聊天', embedding: '嵌入' };
 const kindList = ['chat', 'embedding'];
+const routeRank = { ready: 0, cooling: 1 };
+const MAX_ROUTES = 16;
 
 function renderModels() {
   const body = $('#models');
   body.replaceChildren();
+  const routes = state.models.flatMap((m) => m.routes);
+  const available = state.models.filter((m) => m.available).length;
+  const cooling = routes.filter((r) => r.state === 'cooling').length;
+  $('#model-summary').textContent = state.models.length
+    ? `${state.models.length} 个模型 · ${available} 个可调用 · ${routes.length} 条路由` + (cooling ? ` · ${cooling} 条冷却中` : '')
+    : '';
   if (!state.models.length) {
-    body.append(el('tr', {}, el('td', { colspan: 5, class: 'empty' }, '还没有对外模型。先新增来源，再新增模型并配置路由。')));
+    body.append(el('tr', {}, el('td', { colspan: 4, class: 'empty' }, '还没有对外模型。先新增来源，再新增模型并配置路由。')));
     return;
   }
   for (const m of state.models) {
+    const sorted = [...m.routes].sort((a, b) => (routeRank[a.state] ?? 2) - (routeRank[b.state] ?? 2) || a.priority - b.priority || a.provider_id.localeCompare(b.provider_id));
+    const usable = m.routes.filter((r) => r.state === 'ready' || r.state === 'cooling').length;
+    const tone = !m.enabled ? 'off' : m.available ? 'ok' : 'warn';
+    const label = !m.enabled ? '已停用' : m.available ? '可调用' : '无可用路由';
     body.append(el('tr', {},
-      el('td', {}, el('span', { class: 'mono' }, m.name), m.note ? el('div', { class: 'sub' }, m.note) : null),
-      el('td', { class: 'nowrap' }, kindName[m.kind], m.dimensions ? el('div', { class: 'sub' }, m.dimensions + ' 维') : null),
-      el('td', {}, [...m.routes].sort((a, b) => (routeRank[a.state] ?? 2) - (routeRank[b.state] ?? 2) || a.priority - b.priority).map((r) =>
-        el('div', { class: 'route' },
-          el('span', { class: 'mono' }, `${r.provider_id} → ${r.upstream_model}`),
-          el('span', { class: 'sub' }, `优先级 ${r.priority} · 权重 ${r.weight}` + (m.kind === 'embedding' && r.max_batch ? ` · 每批 ${r.max_batch}` : '')),
-          el('span', { class: 'badge ' + ({ ready: 'ok', cooling: 'cooling' }[r.state] || 'off') }, routeState[r.state]),
-          el('span', { class: 'route-actions' },
-            el('button', { type: 'button', class: 'link', disabled: !(r.state in routeRank),
-              'aria-label': `探测 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
-              onclick: () => testModel(m, r) }, '探测'),
-            el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由用量`,
-              onclick: () => openRouteUsage(m, r) }, '用量')),
-        ))),
-      el('td', {}, el('span', { class: 'badge ' + (m.available ? 'ok' : 'off') }, m.available ? '可调用' : (m.enabled ? '无可用路由' : '已停用'))),
+      el('td', { class: 'model-cell' },
+        el('div', { class: 'model-title' },
+          el('span', { class: 'mono model-name' }, m.name),
+          el('span', { class: 'tag' }, kindName[m.kind]),
+          m.dimensions ? el('span', { class: 'tag muted' }, m.dimensions + ' 维') : null,
+        ),
+        m.note ? el('div', { class: 'sub' }, m.note) : null,
+      ),
+      el('td', { class: 'routes-cell' },
+        sorted.length
+          ? sorted.map((r) => el('div', { class: 'route' + (r.state === 'ready' || r.state === 'cooling' ? '' : ' is-off') },
+            el('div', { class: 'route-main' },
+              el('span', { class: 'mono route-name', title: r.provider_id }, providerLabel(r.provider_id) + ' → ' + r.upstream_model),
+              el('span', { class: 'badge ' + (routeBadge[r.state] || 'off') }, routeState[r.state] || r.state),
+              el('span', { class: 'route-meta' }, `优先级 ${r.priority} · 权重 ${r.weight}` + (m.kind === 'embedding' && r.max_batch ? ` · 每批 ${r.max_batch}` : '')),
+            ),
+            el('span', { class: 'route-ops' },
+              el('button', { type: 'button', class: 'link', disabled: !(r.state === 'ready' || r.state === 'cooling'),
+                'aria-label': `探测 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
+                onclick: () => testModel(m, r) }, '探测'),
+              el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由用量`,
+                onclick: () => openRouteUsage(m, r) }, '用量'),
+            ),
+          ))
+          : el('span', { class: 'sub' }, '没有路由'),
+      ),
+      el('td', { 'data-label': '状态' },
+        el('span', { class: 'badge ' + tone }, label),
+        el('div', { class: 'sub' }, usable === m.routes.length ? `${m.routes.length} 条路由` : `${usable}/${m.routes.length} 条路由可用`),
+      ),
       el('td', { class: 'ops' },
-        el('button', { class: 'link', disabled: !m.available, onclick: () => testModel(m) }, '测试模型'),
-        el('button', { class: 'link', onclick: () => editModel(m) }, '编辑'),
-        el('button', { class: 'danger', onclick: () => deleteModel(m) }, '删除'),
+        el('button', { type: 'button', class: 'link', disabled: !m.available, 'aria-label': `测试模型 ${m.name}`, onclick: () => testModel(m) }, '测试模型'),
+        el('button', { type: 'button', class: 'link', 'aria-label': `编辑模型 ${m.name}`, onclick: () => editModel(m) }, '编辑'),
+        el('button', { type: 'button', class: 'danger', 'aria-label': `删除模型 ${m.name}`, onclick: () => deleteModel(m) }, '删除'),
       ),
     ));
   }
 }
 
 $('#add-model').addEventListener('click', () => editModel(null));
-$('#refresh-models').addEventListener('click', () => loadAll().catch((err) => toast(err.message)));
-$('#add-route').addEventListener('click', () => addRouteRow({}));
-$('#model-form').kind.addEventListener('change', syncKind);
+$('#refresh-models').addEventListener('click', refresh);
+$('#add-route').addEventListener('click', () => {
+  addRouteRow({});
+  $('#route-rows').lastElementChild?.querySelector('[name="provider_id"]')?.focus();
+});
+$('#model-form').elements.kind.addEventListener('change', syncKind);
+$('#model-form').addEventListener('input', () => clearError('model-error'));
 
 function syncKind() {
-  const emb = $('#model-form').kind.value === 'embedding';
-  document.querySelectorAll('#model-dialog .emb-only').forEach((n) => { n.hidden = !emb; });
+  const form = $('#model-form');
+  const emb = form.elements.kind.value === 'embedding';
+  form.classList.toggle('is-embedding', emb);
+  document.querySelectorAll('#model-dialog .emb-only').forEach((node) => { node.hidden = !emb; });
 }
 
 let routeRowID = 0;
-function addRouteRow(r) {
+
+function addRouteRow(route = {}) {
+  const rows = $('#route-rows');
+  if (rows.children.length >= MAX_ROUTES) {
+    toast(`最多 ${MAX_ROUTES} 条路由`);
+    return;
+  }
+  const suffix = ++routeRowID;
+  const datalist = el('datalist', { id: 'upstream-names-' + suffix });
   const select = el('select', { name: 'provider_id', required: true },
-    state.providers.map((p) => el('option', { value: p.id, selected: p.id === r.provider_id }, p.id + (p.enabled ? '' : '（已停用）'))));
-  const suggestions = el('datalist', { id: 'upstream-names-' + ++routeRowID });
-  const updateSuggestions = () => {
-    suggestions.replaceChildren(...(state.upstreamNames.get(select.value) || []).map((name) => el('option', { value: name })));
+    state.providers.map((p) => el('option', { value: p.id, selected: p.id === route.provider_id }, providerOption(p))));
+  const input = el('input', {
+    name: 'upstream_model', required: true, maxlength: 128, list: datalist.id,
+    value: route.upstream_model || '', placeholder: '例如 deepseek-chat、BAAI/bge-m3',
+    autocomplete: 'off', spellcheck: 'false', 'aria-label': '来源侧模型名',
+  });
+  const refreshSuggestions = () => {
+    datalist.replaceChildren(...(state.upstreamNames.get(select.value) || []).map((name) => el('option', { value: name })));
   };
-  select.addEventListener('change', updateSuggestions);
-  updateSuggestions();
-  const discover = el('button', { type: 'button', class: 'link' }, '获取模型列表');
+  select.addEventListener('change', refreshSuggestions);
+  refreshSuggestions();
+  const discover = el('button', { type: 'button', class: 'ghost small', 'aria-label': '读取这个来源的模型列表' }, '读取列表');
   discover.addEventListener('click', async () => {
     const provider = select.value;
-    const token = state.token;
+    if (!provider) return;
+    const label = discover.textContent;
     discover.disabled = true;
+    discover.textContent = '读取中…';
     try {
       const result = await api('POST', '/providers/' + encodeURIComponent(provider) + '/test');
-      if (state.token !== token) return;
       if (!result.ok) throw new Error(result.error || '无法获取模型列表');
       const names = result.models || [];
       state.upstreamNames.set(provider, names);
-      updateSuggestions();
-      toast(names.length ? `已读取 ${names.length} 个模型，可在模型名输入框中选择` : '来源未列出模型，可以手工填写');
+      refreshSuggestions();
+      toast(names.length ? `已读取 ${names.length} 个模型，可在模型名输入框中选择` : '来源没有列出模型，可以手工填写');
     } catch (err) {
       toast(err.message);
     } finally {
       discover.disabled = false;
+      discover.textContent = label;
     }
   });
-  const row = el('tr', {},
-    el('td', {}, select),
-    el('td', {}, el('input', { name: 'upstream_model', required: true, list: suggestions.id, value: r.upstream_model || '', placeholder: '例如 deepseek-chat、BAAI/bge-m3' }), suggestions, discover),
-    el('td', {}, el('input', { name: 'priority', type: 'number', min: 0, max: 100, value: r.priority ?? 0 })),
-    el('td', {}, el('input', { name: 'weight', type: 'number', min: 1, max: 1000, value: r.weight ?? 1 })),
-    el('td', { class: 'emb-only' }, el('input', { name: 'max_batch', type: 'number', min: 0, max: 2048, value: r.max_batch ?? 0, title: '0 表示不拆分' })),
-    el('td', { class: 'tick' }, el('input', { name: 'route_enabled', type: 'checkbox', checked: r.enabled ?? true })),
-    el('td', {}, el('button', { type: 'button', class: 'danger', onclick: () => row.remove() }, '移除')),
+  const priority = el('input', { name: 'priority', type: 'number', min: 0, max: 100, step: 1, inputmode: 'numeric', value: route.priority ?? 0 });
+  const weight = el('input', { name: 'weight', type: 'number', min: 1, max: 1000, step: 1, inputmode: 'numeric', value: route.weight ?? 1 });
+  const batch = el('input', { name: 'max_batch', type: 'number', min: 0, max: 2048, step: 1, inputmode: 'numeric', value: route.max_batch ?? 0, title: '0 表示不拆分' });
+  const enabled = el('input', { name: 'route_enabled', type: 'checkbox', checked: route.enabled ?? true });
+  const row = el('div', { class: 'route-edit' },
+    el('label', { class: 'route-field field-provider' },
+      el('span', { class: 'field-label' }, '来源'),
+      select,
+    ),
+    el('div', { class: 'route-field field-upstream' },
+      el('span', { class: 'field-label' }, '来源侧模型名'),
+      el('div', { class: 'input-action' }, input, discover),
+      datalist,
+    ),
+    el('label', { class: 'route-field field-num' },
+      el('span', { class: 'field-label' }, '优先级'),
+      priority,
+    ),
+    el('label', { class: 'route-field field-num' },
+      el('span', { class: 'field-label' }, '权重'),
+      weight,
+    ),
+    el('label', { class: 'route-field field-num emb-only' },
+      el('span', { class: 'field-label' }, '每批条数'),
+      batch,
+    ),
+    el('label', { class: 'check route-enabled' }, enabled, '启用'),
+    el('button', { type: 'button', class: 'link danger route-remove', onclick: () => {
+      if ($('#route-rows').children.length <= 1) return;
+      row.remove();
+      updateRouteControls();
+    } }, '移除'),
   );
-  $('#route-rows').append(row);
+  rows.append(row);
   syncKind();
+  updateRouteControls();
+}
+
+function updateRouteControls() {
+  const rows = [...$('#route-rows').children];
+  const add = $('#add-route');
+  add.disabled = rows.length >= MAX_ROUTES;
+  add.textContent = rows.length >= MAX_ROUTES ? `已达 ${MAX_ROUTES} 条上限` : '添加路由';
+  for (const row of rows) {
+    const remove = row.querySelector('.route-remove');
+    remove.disabled = rows.length <= 1;
+    remove.title = rows.length <= 1 ? '至少保留一条路由' : '移除这条路由';
+  }
+  $('#route-empty').hidden = rows.length > 0;
+  $('#model-route-count').textContent = rows.length ? `${rows.length} 条路由` : '';
 }
 
 function editModel(m) {
   if (!state.providers.length) { toast('先新增至少一个来源'); return; }
-  const f = $('#model-form');
-  f.reset();
-  $('#model-title').textContent = m ? '编辑模型 ' + m.name : '新增模型';
+  const form = $('#model-form');
+  const f = form.elements;
+  form.reset();
   f.name.value = m ? m.name : '';
-  f.name.readOnly = !!m;
+  f.name.readOnly = Boolean(m);
   f.kind.value = m ? m.kind : 'chat';
-  f.dimensions.value = m && m.dimensions ? m.dimensions : '';
+  f.dimensions.value = m && m.dimensions ? String(m.dimensions) : '';
   f.enabled.checked = m ? m.enabled : true;
   f.note.value = m ? m.note : '';
+  $('#model-title').textContent = m ? '编辑模型 ' + m.name : '新增模型';
+  $('#model-desc').textContent = m ? '路由整体保存；改用途或向量维度会清理这个模型的嵌入缓存。' : '对外模型是客户端请求时使用的名字，路由决定请求发到哪个来源。';
   $('#route-rows').replaceChildren();
-  (m ? m.routes : [{}]).forEach(addRouteRow);
-  $('#model-error').hidden = true;
+  for (const route of m ? m.routes : [{}]) addRouteRow(route);
   syncKind();
+  updateRouteControls();
+  clearError('model-error');
   $('#model-dialog').showModal();
+  markClean(form);
+  (m ? f.kind : f.name).focus();
 }
 
-$('#model-form').addEventListener('submit', async (e) => {
-  if (e.submitter && e.submitter.value === 'cancel') return;
-  e.preventDefault();
-  const f = e.target;
+$('#model-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const f = form.elements;
   const kind = f.kind.value;
-  const routes = [...document.querySelectorAll('#route-rows tr')].map((tr) => {
-    const v = (n) => tr.querySelector(`[name=${n}]`);
+  const rows = [...document.querySelectorAll('#route-rows .route-edit')];
+  if (!rows.length) {
+    showError('model-error', '至少添加一条路由。', $('#add-route'));
+    return;
+  }
+  const routes = [];
+  for (const row of rows) {
+    const upstream = row.querySelector('[name="upstream_model"]').value.trim();
+    if (!upstream) {
+      showError('model-error', '请填写每一条路由的来源侧模型名。', row.querySelector('[name="upstream_model"]'));
+      return;
+    }
     const route = {
-      provider_id: v('provider_id').value,
-      upstream_model: v('upstream_model').value.trim(),
-      priority: Number(v('priority').value || 0),
-      weight: Number(v('weight').value || 1),
-      enabled: v('route_enabled').checked,
+      provider_id: row.querySelector('[name="provider_id"]').value,
+      upstream_model: upstream,
+      priority: Number(row.querySelector('[name="priority"]').value || 0),
+      weight: Number(row.querySelector('[name="weight"]').value || 1),
+      enabled: row.querySelector('[name="route_enabled"]').checked,
     };
-    if (kind === 'embedding') route.max_batch = Number(v('max_batch').value || 0);
-    return route;
-  });
+    if (kind === 'embedding') route.max_batch = Number(row.querySelector('[name="max_batch"]').value || 0);
+    routes.push(route);
+  }
+  const seen = new Set();
+  for (const route of routes) {
+    const key = route.provider_id + '\u0000' + route.upstream_model;
+    if (seen.has(key)) {
+      showError('model-error', `来源 ${providerLabel(route.provider_id)} 与模型 ${route.upstream_model} 出现了重复路由。`);
+      return;
+    }
+    seen.add(key);
+  }
   const body = { kind, enabled: f.enabled.checked, note: f.note.value.trim(), routes };
   if (kind === 'embedding' && f.dimensions.value) body.dimensions = Number(f.dimensions.value);
-  try {
+  await runSave($('#model-save'), async () => {
     await api('PUT', '/models/' + encodeURIComponent(f.name.value.trim()), body);
     $('#model-dialog').close();
     toast('已保存，路由立即生效');
-    await loadAll();
-  } catch (err) {
-    const box = $('#model-error');
-    box.textContent = err.message;
-    box.hidden = false;
-  }
+    refresh();
+  }, 'model-error');
 });
 
 async function deleteModel(m) {
-  if (!confirm(`删除模型 ${m.name}？客户端再请求这个名字会得到 model_not_allowed。`)) return;
+  const ok = await askConfirm({
+    title: '删除这个模型？',
+    message: `删除 ${m.name} 之后，客户端再请求这个名字会得到 model_not_allowed，相关的路由与嵌入缓存也会一并清理。`,
+    ok: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api('DELETE', '/models/' + encodeURIComponent(m.name));
-    toast('已删除');
-    await loadAll();
+    toast('已删除模型 ' + m.name);
+    refresh();
   } catch (err) { toast(err.message); }
 }
 
@@ -386,9 +737,7 @@ async function testModel(m, route) {
       r.dimensions ? el('p', {}, `返回向量 ${r.dimensions} 维` + (m.dimensions && m.dimensions !== r.dimensions ? `，与配置的 ${m.dimensions} 维不一致` : '')) : null,
       r.error ? el('p', {}, r.error) : null,
     );
-    loadAll().catch((err) => {
-      if (!signal.aborted) toast(err.message);
-    });
+    refresh();
   } catch (err) {
     if (!signal.aborted) showProbe(title, el('p', { class: 'bad' }, err.message));
   }

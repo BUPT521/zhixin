@@ -30,25 +30,33 @@
 
   <section id="tab-providers" class="panel" role="tabpanel" aria-labelledby="nav-providers">
     <div class="panel-head">
-      <p class="hint">一个来源是一个 OpenAI 兼容的基础地址加一把 key，例如 DeepSeek、硅基流动、阿里云百炼的兼容模式，或者自建的 vLLM、Ollama。key 加密保存，列表只显示末四位。</p>
+      <div class="panel-intro">
+        <h1 class="panel-title">模型来源</h1>
+        <p class="hint">一个来源是一个 OpenAI 兼容的基础地址和一把密钥，例如 DeepSeek、硅基流动、阿里云百炼的兼容模式，或者自建的 vLLM、Ollama。密钥加密保存，列表只显示末四位。</p>
+        <p id="provider-summary" class="summary" aria-live="polite"></p>
+      </div>
       <button id="add-provider" type="button">新增来源</button>
     </div>
-    <div class="scroll"><table class="grid">
-      <thead><tr><th>编号</th><th>名称</th><th>地址</th><th>key</th><th>状态</th><th></th></tr></thead>
+    <div class="scroll"><table class="grid providers">
+      <thead><tr><th scope="col">来源</th><th scope="col">基础地址</th><th scope="col">密钥</th><th scope="col">状态</th><th scope="col" class="ops-head">操作</th></tr></thead>
       <tbody id="providers"></tbody>
     </table></div>
   </section>
 
   <section id="tab-models" class="panel" role="tabpanel" aria-labelledby="nav-models" hidden>
     <div class="panel-head">
-      <p class="hint">优先尝试健康来源，数字小的优先级先试，同一优先级按权重分流。测试模型会按此规则尝试备用路由，单条探测只调用所选路由。嵌入模型的各条路由应使用同一个向量空间。</p>
+      <div class="panel-intro">
+        <h1 class="panel-title">对外模型与路由</h1>
+        <p class="hint">请求按优先级从小到大尝试，同一优先级按权重分流。测试模型会按这个次序尝试备用路由，单条探测只调用所选路由。嵌入模型的多条路由必须使用同一个向量空间。</p>
+        <p id="model-summary" class="summary" aria-live="polite"></p>
+      </div>
       <div class="panel-actions">
         <button id="refresh-models" type="button" class="ghost">刷新状态</button>
         <button id="add-model" type="button">新增模型</button>
       </div>
     </div>
-    <div class="scroll"><table class="grid">
-      <thead><tr><th>模型名</th><th>种类</th><th>路由</th><th>状态</th><th></th></tr></thead>
+    <div class="scroll"><table class="grid models">
+      <thead><tr><th scope="col">模型</th><th scope="col">路由</th><th scope="col">状态</th><th scope="col" class="ops-head">操作</th></tr></thead>
       <tbody id="models"></tbody>
     </table></div>
   </section>
@@ -116,48 +124,128 @@
     </div>
   </section>
 
-  <section id="probe" class="probe" hidden>
+  <section id="probe" class="probe" hidden aria-live="polite">
     <div class="probe-head"><strong id="probe-title"></strong><button id="probe-close" class="ghost" type="button">关闭</button></div>
-    <div id="probe-body" aria-live="polite"></div>
+    <div id="probe-body"></div>
   </section>
 </main>
 
 <p id="toast" class="toast" role="status" hidden></p>
 
-<dialog id="provider-dialog">
+<dialog id="provider-dialog" closedby="none" aria-labelledby="provider-title" aria-describedby="provider-desc">
   <form id="provider-form" method="dialog">
-    <h2 id="provider-title">新增来源</h2>
-    <label>编号<input name="id" required pattern="[a-z0-9][a-z0-9_\-]{0,31}" placeholder="例如 deepseek、siliconflow"></label>
-    <label>名称<input name="name" maxlength="64" placeholder="显示用，可以留空"></label>
-    <label>基础地址<input name="base_url" required placeholder="https://api.deepseek.com/v1"></label>
-    <label>API key<input name="api_key" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
-    <label class="check"><input name="clear_key" type="checkbox">清除已保存的 key（自建服务不需要 key 时）</label>
-    <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
-    <label>备注<input name="note" maxlength="200"></label>
-    <p class="error" id="provider-error" hidden></p>
-    <div class="actions"><button value="cancel" formnovalidate class="ghost">取消</button><button value="save" id="provider-save">保存</button></div>
+    <header class="dialog-head">
+      <div class="dialog-heading">
+        <h2 id="provider-title">新增来源</h2>
+        <p id="provider-desc" class="dialog-sub">密钥加密保存在服务端，保存之后只显示末四位。</p>
+      </div>
+      <button type="button" class="icon-button" data-close="provider-dialog" aria-label="关闭">×</button>
+    </header>
+    <div class="dialog-body">
+      <section class="form-section">
+        <h3>基本信息</h3>
+        <div class="field-row">
+          <label class="field-id">编号
+            <input name="id" required maxlength="32" pattern="[a-z0-9][a-z0-9_\-]{0,31}" placeholder="例如 deepseek" autocomplete="off">
+            <span class="field-hint" id="provider-id-hint">用于路由引用；小写字母、数字、- 或 _，保存后不能修改</span>
+          </label>
+          <label class="field-name">名称
+            <input name="name" maxlength="64" placeholder="例如 深度求索">
+            <span class="field-hint">显示用，可以留空，默认与编号相同</span>
+          </label>
+        </div>
+      </section>
+      <section class="form-section">
+        <h3>连接</h3>
+        <label>基础地址
+          <input name="base_url" required maxlength="512" placeholder="https://api.deepseek.com/v1" autocomplete="off" spellcheck="false">
+          <span class="field-hint">OpenAI 兼容地址，一般以 /v1 结尾；不要带 /chat/completions 或 /embeddings</span>
+        </label>
+        <label>API key
+          <input name="api_key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="sk-…">
+          <span class="field-hint" id="provider-key-hint">没有 key 时留空；保存后会加密，不再明文显示。</span>
+        </label>
+        <label class="check" id="provider-clear-key-row" hidden><input name="clear_key" type="checkbox">清除已保存的 key（自建服务不需要 key 时）</label>
+        <label class="check"><input name="enabled" type="checkbox" checked>启用这个来源</label>
+      </section>
+      <section class="form-section">
+        <label>备注
+          <input name="note" maxlength="200" placeholder="例如 主用聊天来源">
+          <span class="field-hint">可选，例如用途、负责人或额度说明</span>
+        </label>
+      </section>
+      <p class="form-error" id="provider-error" role="alert" hidden></p>
+    </div>
+    <footer class="dialog-actions">
+      <button type="button" class="ghost" data-close="provider-dialog">取消</button>
+      <button type="submit" id="provider-save">保存</button>
+    </footer>
   </form>
 </dialog>
 
-<dialog id="model-dialog" class="wide">
+<dialog id="model-dialog" class="wide" closedby="none" aria-labelledby="model-title" aria-describedby="model-desc">
   <form id="model-form" method="dialog">
-    <h2 id="model-title">新增模型</h2>
-    <div class="row">
-      <label>对外模型名<input name="name" required pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,63}" placeholder="例如 deepseek-flash、zhixin-embed"></label>
-      <label>种类<select name="kind"><option value="chat">聊天</option><option value="embedding">嵌入</option></select></label>
-      <label class="emb-only">维度<input name="dimensions" type="number" min="1" max="8192" placeholder="例如 1024"></label>
+    <header class="dialog-head">
+      <div class="dialog-heading">
+        <h2 id="model-title">新增模型</h2>
+        <p id="model-desc" class="dialog-sub">对外模型是客户端请求时使用的名字，路由决定请求发到哪个来源。</p>
+      </div>
+      <button type="button" class="icon-button" data-close="model-dialog" aria-label="关闭">×</button>
+    </header>
+    <div class="dialog-body">
+      <section class="form-section">
+        <h3>基本信息</h3>
+        <div class="field-row">
+          <label class="field-name">对外模型名
+            <input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,63}" placeholder="例如 deepseek-flash" autocomplete="off" spellcheck="false">
+            <span class="field-hint">客户端请求里的 model，例如 deepseek-flash；可用字母、数字与 . _ : -</span>
+          </label>
+          <label class="field-kind">种类
+            <select name="kind"><option value="chat">聊天</option><option value="embedding">嵌入</option></select>
+            <span class="field-hint">聊天与嵌入分开计量</span>
+          </label>
+          <label class="field-dim emb-only">向量维度
+            <input name="dimensions" type="number" min="1" max="8192" inputmode="numeric" placeholder="例如 1024">
+            <span class="field-hint">留空表示按来源返回值</span>
+          </label>
+        </div>
+        <label class="check"><input name="enabled" type="checkbox" checked>启用这个模型</label>
+        <label>备注
+          <input name="note" maxlength="200" placeholder="例如 日常对话默认模型">
+          <span class="field-hint">可选，例如使用场景</span>
+        </label>
+      </section>
+      <section class="form-section routes-section">
+        <div class="section-head">
+          <div>
+            <h3>路由</h3>
+            <p class="field-hint">按优先级从小到大尝试，同一优先级按权重分流；最多 16 条。探测只调用所选路由，测试模型按这个次序尝试备用路由。</p>
+            <p class="field-hint emb-only" id="embedding-note">嵌入模型的各条路由必须产出同一个向量空间，服务端只核对维度。</p>
+          </div>
+          <button type="button" id="add-route" class="ghost">添加路由</button>
+        </div>
+        <div id="route-rows" class="route-edits"></div>
+        <p id="route-empty" class="empty-inline" hidden>还没有路由，至少需要一条才能保存。</p>
+      </section>
+      <p class="form-error" id="model-error" role="alert" hidden></p>
     </div>
-    <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
-    <label>备注<input name="note" maxlength="200"></label>
-    <h3>路由</h3>
-    <div class="scroll"><table class="routes">
-      <thead><tr><th>来源</th><th>来源侧模型名</th><th>优先级</th><th>权重</th><th class="emb-only">每批条数</th><th>启用</th><th></th></tr></thead>
-      <tbody id="route-rows"></tbody>
-    </table></div>
-    <button type="button" id="add-route" class="ghost">添加一条路由</button>
-    <p class="error" id="model-error" hidden></p>
-    <div class="actions"><button value="cancel" formnovalidate class="ghost">取消</button><button value="save" id="model-save">保存</button></div>
+    <footer class="dialog-actions">
+      <span id="model-route-count" class="foot-note"></span>
+      <button type="button" class="ghost" data-close="model-dialog">取消</button>
+      <button type="submit" id="model-save">保存</button>
+    </footer>
   </form>
+</dialog>
+
+<dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+  <div class="confirm-body">
+    <h2 id="confirm-title">确认操作</h2>
+    <p id="confirm-message" class="confirm-message"></p>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="confirm-cancel">取消</button>
+      <button type="button" id="confirm-ok">确定</button>
+    </div>
+  </div>
 </dialog>
 
 <script src="/admin/app.js"></script>
