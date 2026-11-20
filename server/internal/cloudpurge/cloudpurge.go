@@ -54,10 +54,11 @@ type Attachments interface {
 }
 
 // Embeddings 是清空嵌入向量缓存需要的能力，由 llmproxy.EmbeddingCache 满足。
-// 缓存是派生数据，清除云端数据时一并删除；删号时这些行随外键级联，也要在
-// 删除账号行之前清一遍，重试才能从头再走。
+// 缓存是派生数据，清除云端数据时一并删除；PurgeUser 在同一把账号锁里把代次加一
+// 并删行，清除之前发出的嵌入请求因此写不回旧向量（ADR-0037）。删号时这些行随
+// 外键级联，所以删号清理仍然用缓存实现的 DeleteUser，不经过这里。
 type Embeddings interface {
-	DeleteUser(ctx context.Context, userID string) error
+	PurgeUser(ctx context.Context, userID string) error
 }
 
 // Service 编排一次清除。三个数据接口只声明用得到的方法，所以这个包不引用
@@ -112,10 +113,11 @@ func (s *Service) Purge(ctx context.Context, userID string) error {
 		return err
 	}
 	// 向量缓存是派生数据，清除之后客户端下次索引刷新重新查缓存、补算未命中的
-	// 片段。清除期间的写入由各处理器调 Gate 拦住，嵌入请求带缓存头时也不写。
-	// 装配没有缓存实现时跳过：没有缓存就没有可清的内容。
+	// 片段。清除期间的写入由各处理器调 Gate 拦住；已经发出、正在嵌入的请求由
+	// 代次拦在写入事务里，清除之后不会再冒出新行（ADR-0037）。装配没有缓存
+	// 实现时跳过：没有缓存就没有可清的内容。
 	if s.embeddings != nil {
-		if err := s.embeddings.DeleteUser(ctx, userID); err != nil {
+		if err := s.embeddings.PurgeUser(ctx, userID); err != nil {
 			return err
 		}
 	}

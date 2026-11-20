@@ -125,14 +125,43 @@ func lookupHashes(raw json.RawMessage, max int) ([]string, error) {
 	return out, nil
 }
 
+// embeddingCacheGeneration 在嵌入请求开始、调用来源之前读一次账号的缓存代次。
+// 写入时缓存实现会拿它与自己事务里的当前代次比较，不一致就丢弃这次写入，清除
+// 之前发出的请求因此写不回旧向量（ADR-0037）。
+//
+// 这次不写缓存的两种情况返回 false：没有注入缓存或客户端没有带缓存请求头，
+// 以及代次读取失败。第二种情况记一条日志后跳过写入，嵌入本身照常返回。
+func (p *Proxy) embeddingCacheGeneration(ctx context.Context, r *http.Request, userID string) (int64, bool) {
+	if p.cache == nil || r.Header.Get(embeddingCacheHeader) != "1" {
+		return 0, false
+	}
+	cacheCtx, cancel := context.WithTimeout(ctx, embeddingCacheTimeout)
+	defer cancel()
+	generation, err := p.cache.Generation(cacheCtx, userID)
+	if err != nil {
+		p.log.Warn("skip embedding cache write: cannot read the cache generation",
+			slog.String("request_id", httpx.RequestIDFrom(ctx)), slog.String("error", err.Error()))
+		return 0, false
+	}
+	return generation, true
+}
+
 // cacheEmbeddings 把这次嵌入的向量写进缓存，供换机、重建与切换模型时复用。
 // 只在客户端带 X-Zhixin-Embedding-Cache: 1 时写；写入失败不影响已经返回的嵌入
 // 结果，派生的那部分数据下一次索引刷新会重新算一遍。
 //
+// generation 是这次请求开始、调用来源之前读到的账号代次，generationOK 为 false
+// 表示没读（不该写）或读失败。写入时由缓存实现比较代次，对不上就丢弃。
+//
 // 服务端自己按原文计算哈希，客户端不能指定某个哈希对应哪个向量，因此缓存里
 // 的键与客户端查找时算出的键是同一个口径。
-func (p *Proxy) cacheEmbeddings(r *http.Request, userID, model string, inputs []string, vectors []json.RawMessage) {
+func (p *Proxy) cacheEmbeddings(r *http.Request, userID, model string, inputs []string, vectors []json.RawMessage, generation int64, generationOK bool) {
 	if p.cache == nil || r.Header.Get(embeddingCacheHeader) != "1" {
+		return
+	}
+	// 读不到代次时没有可比较的依据，宁可这次不写：没有代次就无从判断中间是否
+	// 清空过。读取处的日志已经记过原因。
+	if !generationOK {
 		return
 	}
 	if len(vectors) != len(inputs) {
@@ -165,7 +194,7 @@ func (p *Proxy) cacheEmbeddings(r *http.Request, userID, model string, inputs []
 			return
 		}
 	}
-	if err := p.cache.Put(ctx, userID, model, items); err != nil {
+	if err := p.cache.Put(ctx, userID, model, items, generation); err != nil {
 		p.log.Error("write embedding cache",
 			slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
 	}

@@ -129,6 +129,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 与 request_id，不含令牌。
 	authSvc.SetPasswordBudget(cfg.Argon2MemoryBudgetMiB)
 	authSvc.SetMaxSessions(cfg.MaxSessionsPerUser)
+	// 未确认邮箱的账号按保留期删除，由 PruneLoop 的每日清理执行（ADR-0037）；
+	// 必须在 PruneLoop 之前设置，因为它在启动时就会先清一次。
+	authSvc.SetUnverifiedKeep(cfg.UnverifiedKeepDays)
 	authSvc.SetSecurityLog(log)
 	go authSvc.PruneLoop(ctx, st.Auth, log)
 
@@ -162,6 +165,12 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	}
 	// 反馈与匿名上报除按地址限流外还有全局写入上限，换地址也刷不满表。
 	var feedbackGlobal, telemetryGlobal *ratelimit.Limiter
+	// 注册也是公开入口，除按来源地址的桶之外再有一层实例级上限：未确认邮箱的
+	// 账号同样会占着邮箱与账号行（ADR-0037）。
+	var registerGlobal *ratelimit.Limiter
+	if cfg.RegisterGlobalRatePerSecond > 0 {
+		registerGlobal = ratelimit.New(rate.Limit(cfg.RegisterGlobalRatePerSecond), cfg.RegisterGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
+	}
 	if cfg.FeedbackGlobalRatePerSecond > 0 {
 		feedbackGlobal = ratelimit.New(rate.Limit(cfg.FeedbackGlobalRatePerSecond), cfg.FeedbackGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
@@ -209,12 +218,19 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	authHandler := auth.NewHandler(authSvc, log, cfg.MaxJSONBytes, byAddr, refreshLimits, codeLimits, clientHost)
 	// 登录与删号的密码失败共用一个按账号的失败预算；不配置速率时关闭。
 	authHandler.SetLoginFailLimiter(loginFails)
+	// 注册的实例级上限与按地址的桶同时生效；没有配置时传 nil，处理器内部换成
+	// 一律放行的实现（ADR-0037）。
+	authHandler.SetRegisterGlobalLimiter(registerGlobal)
 
 	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion).SetMaxPullBytes(cfg.SyncPullMaxBytes)
 	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
 
-	backupHandler := backup.NewHandler(
-		backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion), log)
+	backupSvc := backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
+	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
+	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。
+	backupSvc.SetObjects(st.Objects)
+	backupSvc.SetReconcileInterval(cfg.BackupReconcileInterval)
+	backupHandler := backup.NewHandler(backupSvc, log)
 
 	// 账号附件总量上限必须显式设置，否则只受单附件上限约束。
 	blobSvc := blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes).SetAccountBytes(cfg.MaxAccountAttachmentBytes)
@@ -276,6 +292,10 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 
 	retentionHandler := retention.NewHandler(retentionSvc, log, cfg.MaxJSONBytes, telemetryLimits, clientHost)
 	retentionHandler.SetGlobalLimiter(telemetryGlobal)
+
+	// 备份对账只在 PostgreSQL 装配下有事可做：内存备份把字节留在自己的存储里，
+	// 对象存储里没有 backups/ 前缀可列，启动那一次是无害的空跑。
+	go backupSvc.ReconcileLoop(ctx, log)
 
 	handlers := routes{
 		auth:          authHandler,

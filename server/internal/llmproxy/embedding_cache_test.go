@@ -9,9 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
@@ -70,6 +73,20 @@ func decodeLookup(t *testing.T, p *lookupPayload) map[string][]float32 {
 		p.vectors[v.Hash] = vec
 	}
 	return p.vectors
+}
+
+// putCache 按账号当前的代次写入向量，等价于一次请求在读到代次之后才写回缓存。
+// 用例里没有清除时代次是 0，读取一次让调用点不必重复写这个值。
+func putCache(t *testing.T, cache *MemoryEmbeddingCache, userID, model string, items []CachedVector) {
+	t.Helper()
+	ctx := context.Background()
+	generation, err := cache.Generation(ctx, userID)
+	if err != nil {
+		t.Fatalf("读取缓存代次：%v", err)
+	}
+	if err := cache.Put(ctx, userID, model, items, generation); err != nil {
+		t.Fatalf("写入缓存：%v", err)
+	}
 }
 
 // postEmbeddings 发一次嵌入请求，可选带上缓存请求头。
@@ -147,11 +164,9 @@ func TestEmbeddingCacheDuplicateWriteKeepsFirstVector(t *testing.T) {
 		t.Fatalf("首次写入后应命中：%d %v", len(first), err)
 	}
 	// 直接写一条同哈希、不同维度与向量的行，应被忽略。
-	if err := cache.Put(context.Background(), tokens.UserID, "zhixin-embed", []CachedVector{
+	putCache(t, cache, tokens.UserID, "zhixin-embed", []CachedVector{
 		{Hash: h, Dim: 2, Vector: []byte{1, 2, 3, 4}},
-	}); err != nil {
-		t.Fatalf("重复写入：%v", err)
-	}
+	})
 	again, err := cache.Lookup(context.Background(), tokens.UserID, "zhixin-embed", []string{h})
 	if err != nil || len(again) != 1 {
 		t.Fatalf("重复写入后仍应命中：%d %v", len(again), err)
@@ -241,11 +256,9 @@ func TestEmbeddingLookupValidation(t *testing.T) {
 func TestEmbeddingLookupDoesNotSpendQuota(t *testing.T) {
 	env, cache, tokens := newCacheTestServer(t)
 	h := textHash("text-0")
-	if err := cache.Put(context.Background(), tokens.UserID, "zhixin-embed", []CachedVector{
+	putCache(t, cache, tokens.UserID, "zhixin-embed", []CachedVector{
 		{Hash: h, Dim: 4, Vector: encodeVector([]float32{1, 0, 0, 0})},
-	}); err != nil {
-		t.Fatalf("seed cache: %v", err)
-	}
+	})
 	// 把嵌入额度调到 0：额度用完是 429，但查找不走额度。
 	env.quota.SetKindLimit(tokens.UserID, KindEmbedding, 1)
 	var out lookupPayload
@@ -280,11 +293,9 @@ func TestEmbeddingLookupUsesRowDimensionsWhenModelHasNone(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	h := textHash("text-0")
-	if err := cache.Put(context.Background(), tokens.UserID, "no-dim", []CachedVector{
+	putCache(t, cache, tokens.UserID, "no-dim", []CachedVector{
 		{Hash: h, Dim: 3, Vector: encodeVector([]float32{0, 1, 2})},
-	}); err != nil {
-		t.Fatalf("seed cache: %v", err)
-	}
+	})
 	var out lookupPayload
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings/lookup", tokens.AccessToken,
 		map[string]any{"model": "no-dim", "hashes": []string{h}}, &out); code != http.StatusOK || out.Dimensions == nil || *out.Dimensions != 3 {
@@ -302,9 +313,7 @@ func TestMemoryEmbeddingCacheEvictsLeastRecentlyUsed(t *testing.T) {
 		return CachedVector{Hash: textHash(string(rune(tag))), Dim: 2, Vector: []byte{tag, tag, tag, tag}}
 	}
 	for _, tag := range []byte{'1', '2', '3'} {
-		if err := cache.Put(ctx, "u1", "m", []CachedVector{row(tag)}); err != nil {
-			t.Fatalf("put: %v", err)
-		}
+		putCache(t, cache, "u1", "m", []CachedVector{row(tag)})
 	}
 	if got := cache.Bytes(); got != 12 {
 		t.Fatalf("bytes = %d, want 12", got)
@@ -313,9 +322,7 @@ func TestMemoryEmbeddingCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	if rows, _ := cache.Lookup(ctx, "u1", "m", []string{h1}); len(rows) != 1 {
 		t.Fatal("第一行应在缓存里")
 	}
-	if err := cache.Put(ctx, "u1", "m", []CachedVector{row('4')}); err != nil {
-		t.Fatalf("put: %v", err)
-	}
+	putCache(t, cache, "u1", "m", []CachedVector{row('4')})
 	if got := cache.Bytes(); got > 12 {
 		t.Fatalf("淘汰之后 bytes = %d，超过上限", got)
 	}
@@ -331,6 +338,137 @@ func TestMemoryEmbeddingCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	// 删号与删模型都要清干净。
 	if err := cache.DeleteUser(ctx, "u1"); err != nil || cache.Bytes() != 0 {
 		t.Fatalf("delete user: bytes=%d err=%v", cache.Bytes(), err)
+	}
+}
+
+// TestMemoryEmbeddingCachePurgeDropsStaleWrite 守住代次的内存实现语义：清除把
+// 代次加一并删行，清除之前读到的代次写不进去，按新代次写入正常。
+func TestMemoryEmbeddingCachePurgeDropsStaleWrite(t *testing.T) {
+	cache := NewMemoryEmbeddingCache()
+	ctx := context.Background()
+	h := textHash("stale")
+	row := CachedVector{Hash: h, Dim: 2, Vector: []byte{1, 2, 3, 4}}
+
+	generation, err := cache.Generation(ctx, "u1")
+	if err != nil || generation != 0 {
+		t.Fatalf("新账号的代次应是 0：%d %v", generation, err)
+	}
+	if err := cache.Put(ctx, "u1", "m", []CachedVector{row}, generation); err != nil {
+		t.Fatalf("首次写入：%v", err)
+	}
+	if rows, _ := cache.Lookup(ctx, "u1", "m", []string{h}); len(rows) != 1 {
+		t.Fatal("首次写入后应命中")
+	}
+
+	if err := cache.PurgeUser(ctx, "u1"); err != nil {
+		t.Fatalf("清除：%v", err)
+	}
+	if after, err := cache.Generation(ctx, "u1"); err != nil || after != generation+1 {
+		t.Fatalf("清除之后代次应加一：%d %v", after, err)
+	}
+	if rows, _ := cache.Lookup(ctx, "u1", "m", []string{h}); len(rows) != 0 {
+		t.Fatalf("清除之后不应命中：%+v", rows)
+	}
+	// 用清除之前读到的代次写入：不报错，但也不写。
+	if err := cache.Put(ctx, "u1", "m", []CachedVector{row}, generation); err != nil {
+		t.Fatalf("过期代次的写入不应报错：%v", err)
+	}
+	if rows, _ := cache.Lookup(ctx, "u1", "m", []string{h}); len(rows) != 0 {
+		t.Fatalf("过期代次的写入不应落库：%+v", rows)
+	}
+	// 按新代次写入正常。
+	if err := cache.Put(ctx, "u1", "m", []CachedVector{row}, generation+1); err != nil {
+		t.Fatalf("新代次写入：%v", err)
+	}
+	if rows, _ := cache.Lookup(ctx, "u1", "m", []string{h}); len(rows) != 1 {
+		t.Fatalf("新代次写入后应命中：%d", len(rows))
+	}
+}
+
+// TestEmbeddingCachePurgeDuringEmbeddingDropsWrite 守住 ADR-0037 的竞争：请求在
+// 调用来源之前读到代次，来源返回之前清除云端数据完成，这次请求算出的向量在
+// 写回时对不上代次而被丢弃；清除之后的新请求按新代次正常写入。
+func TestEmbeddingCachePurgeDuringEmbeddingDropsWrite(t *testing.T) {
+	// 来源收到请求之后停住，等用例在中间完成一次清除再返回。
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(reached) })
+		<-release
+		var body struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		data := make([]string, 0, len(body.Input))
+		for i := range body.Input {
+			data = append(data, fmt.Sprintf(`{"object":"embedding","index":%d,"embedding":[1,%d,0,0]}`, i, i))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"object":"list","model":%q,"data":[%s],"usage":{"prompt_tokens":%d,"total_tokens":%d}}`,
+			body.Model, strings.Join(data, ","), 3*len(body.Input), 3*len(body.Input))
+	}))
+	defer upstream.Close()
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "sf", upstream.URL, "sk-sf")
+		putModel(t, c, ModelRecord{Name: "zhixin-embed", Kind: KindEmbedding, Dimensions: 4, Routes: []Route{
+			{ProviderID: "sf", UpstreamModel: "BAAI/bge-m3"},
+		}})
+	})
+	cache := NewMemoryEmbeddingCache()
+	env.proxy.SetEmbeddingCache(cache)
+	tokens, err := env.authSvc.Register(context.Background(), "race@b.cn", "password1", "")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	texts := inputs(2)
+
+	done := make(chan int, 1)
+	go func() { done <- postEmbeddings(t, env, tokens.AccessToken, texts, true) }()
+	<-reached
+	// 请求已经读到代次并在等来源，这时完成一次清除。
+	if err := cache.PurgeUser(context.Background(), tokens.UserID); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	close(release)
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("embeddings: %d", code)
+	}
+
+	hashes := []string{textHash(texts[0]), textHash(texts[1])}
+	if rows, err := cache.Lookup(context.Background(), tokens.UserID, "zhixin-embed", hashes); err != nil || len(rows) != 0 {
+		t.Fatalf("清除之前发出的请求不应写回缓存：rows=%d err=%v", len(rows), err)
+	}
+	// 清除之后的请求按新的代次写入，正常命中。
+	if code := postEmbeddings(t, env, tokens.AccessToken, texts, true); code != http.StatusOK {
+		t.Fatalf("embeddings after purge: %d", code)
+	}
+	if rows, err := cache.Lookup(context.Background(), tokens.UserID, "zhixin-embed", hashes); err != nil || len(rows) != 2 {
+		t.Fatalf("清除之后的请求应写入缓存：rows=%d err=%v", len(rows), err)
+	}
+}
+
+// failingGenerationCache 让代次读取失败，用来覆盖“读不到代次就不写缓存”的取舍。
+type failingGenerationCache struct{ *MemoryEmbeddingCache }
+
+func (failingGenerationCache) Generation(context.Context, string) (int64, error) {
+	return 0, errors.New("代次读取失败")
+}
+
+// TestEmbeddingCacheSkipsWriteWhenGenerationUnreadable 守住读不到代次时的行为：
+// 嵌入照常返回，这次不写缓存；没有可比较的代次时写入可能把清除之前的向量写回。
+func TestEmbeddingCacheSkipsWriteWhenGenerationUnreadable(t *testing.T) {
+	env, cache, tokens := newCacheTestServer(t)
+	env.proxy.SetEmbeddingCache(failingGenerationCache{cache})
+	texts := inputs(2)
+	if code := postEmbeddings(t, env, tokens.AccessToken, texts, true); code != http.StatusOK {
+		t.Fatalf("代次读不到时嵌入仍应可用：%d", code)
+	}
+	hashes := []string{textHash(texts[0]), textHash(texts[1])}
+	if rows, err := cache.Lookup(context.Background(), tokens.UserID, "zhixin-embed", hashes); err != nil || len(rows) != 0 {
+		t.Fatalf("读不到代次时不应写缓存：rows=%d err=%v", len(rows), err)
 	}
 }
 

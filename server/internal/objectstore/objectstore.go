@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 )
 
 // Info 描述一个对象的大小与内容类型。写入时 Size 必须等于 data 的字节数。
@@ -18,11 +19,13 @@ type Info struct {
 	ContentType string
 }
 
-// Object 是前缀下列出的一个对象：键与字节数。列目录只服务于回填附件索引与
-// 排查遗留对象，不返回内容类型这类只有写入方关心的字段。
+// Object 是前缀下列出的一个对象：键、字节数与写入时间。列目录只服务于回填
+// 附件索引、排查遗留对象与备份对账，不返回内容类型这类只有写入方关心的字段；
+// ModTime 由备份对账用来判断对象是否超过宽限期，见 ADR-0037。
 type Object struct {
-	Key  string
-	Size int64
+	Key     string
+	Size    int64
+	ModTime time.Time
 }
 
 // ErrNotFound 表示键下没有对象。

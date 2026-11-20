@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 // 三种实现共用一组行为断言：写入后能取回、大小声明不符时拒绝、删除后不存在、
@@ -46,13 +50,19 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 	if err := s.Put(ctx, "attachments/u2/bb", bytes.NewReader(body), Info{Size: int64(len(body))}); err != nil {
 		t.Fatalf("Put other attachment: %v", err)
 	}
-	// 列目录：前缀下的键与字节数都能读到，不存在的前缀返回空切片。
+	// 列目录：前缀下的键与字节数都能读到，写入时间也要填上，备份对账靠它判断
+	// 宽限期；不存在的前缀返回空切片。
 	objects, err := s.List(ctx, "attachments/")
 	if err != nil || len(objects) != 2 {
 		t.Fatalf("List(attachments/) = %+v, %v", objects, err)
 	}
+	for _, obj := range objects {
+		if obj.ModTime.IsZero() {
+			t.Fatalf("List 返回的对象应带写入时间: %+v", obj)
+		}
+	}
 	objects, err = s.List(ctx, "attachments/u1/")
-	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].Size != int64(len(body)) {
+	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].Size != int64(len(body)) || objects[0].ModTime.IsZero() {
 		t.Fatalf("List(attachments/u1/) = %+v, %v", objects, err)
 	}
 	if objects, err = s.List(ctx, "missing/"); err != nil || len(objects) != 0 {
@@ -87,6 +97,34 @@ func TestMemory(t *testing.T) {
 	testStore(t, func(*testing.T) Store { return NewMemory() })
 }
 
+// TestMemoryListReportsModTime 核对内存实现记录的写入时间：PutAt 原样保存调用方
+// 给的时间，供备份用例构造“早先写入”的遗留对象；Put 记的是当前时间。
+func TestMemoryListReportsModTime(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemory()
+	body := []byte("zip")
+	at := time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)
+	if err := m.PutAt(ctx, "backups/u1/b1.zip", bytes.NewReader(body), Info{Size: int64(len(body))}, at); err != nil {
+		t.Fatalf("PutAt: %v", err)
+	}
+	objects, err := m.List(ctx, "backups/")
+	if err != nil || len(objects) != 1 || !objects[0].ModTime.Equal(at) {
+		t.Fatalf("List 应原样返回 PutAt 的时间: %+v, %v", objects, err)
+	}
+
+	before := time.Now().Add(-time.Minute)
+	if err := m.Put(ctx, "backups/u1/b2.zip", bytes.NewReader(body), Info{Size: int64(len(body))}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	objects, err = m.List(ctx, "backups/")
+	if err != nil || len(objects) != 2 {
+		t.Fatalf("List = %+v, %v", objects, err)
+	}
+	if got := objects[1].ModTime; got.Before(before) || got.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("Put 应记下当前时间: %v", got)
+	}
+}
+
 func TestDir(t *testing.T) {
 	testStore(t, func(t *testing.T) Store {
 		d, err := NewDir(t.TempDir())
@@ -113,6 +151,45 @@ func TestDirRejectsTraversal(t *testing.T) {
 func TestNewDirRequiresRoot(t *testing.T) {
 	if _, err := NewDir("  "); err == nil {
 		t.Fatal("an empty root must be rejected")
+	}
+}
+
+// TestS3ListFillsModTime 需要真实的 S3 兼容存储：设置 ZHIXIN_TEST_S3_ENDPOINT
+// 等环境变量时执行，本机没有 bucket 时跳过。列目录返回的写入时间取自
+// ListObjectsV2 的 LastModified，应当落在这次写入前后的区间里。
+func TestS3ListFillsModTime(t *testing.T) {
+	endpoint := strings.TrimSpace(os.Getenv("ZHIXIN_TEST_S3_ENDPOINT"))
+	if endpoint == "" {
+		t.Skip("未设置 ZHIXIN_TEST_S3_ENDPOINT，跳过 S3 用例")
+	}
+	s, err := NewS3(S3Config{
+		Endpoint:  endpoint,
+		Bucket:    os.Getenv("ZHIXIN_TEST_S3_BUCKET"),
+		AccessKey: os.Getenv("ZHIXIN_TEST_S3_ACCESS_KEY"),
+		SecretKey: os.Getenv("ZHIXIN_TEST_S3_SECRET_KEY"),
+		Region:    os.Getenv("ZHIXIN_TEST_S3_REGION"),
+		UseSSL:    os.Getenv("ZHIXIN_TEST_S3_USE_SSL") == "1",
+	})
+	if err != nil {
+		t.Fatalf("NewS3: %v", err)
+	}
+	ctx := context.Background()
+	prefix := fmt.Sprintf("backups/test-%d/", time.Now().UnixNano())
+	key := prefix + "object.zip"
+	body := []byte("s3-mod-time")
+	before := time.Now().UTC().Add(-time.Minute)
+	if err := s.Put(ctx, key, bytes.NewReader(body), Info{Size: int64(len(body))}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Remove(context.Background(), key) })
+
+	objects, err := s.List(ctx, prefix)
+	if err != nil || len(objects) != 1 {
+		t.Fatalf("List(%q) = %+v, %v", prefix, objects, err)
+	}
+	after := time.Now().UTC().Add(time.Minute)
+	if got := objects[0].ModTime; got.IsZero() || got.Before(before) || got.After(after) {
+		t.Fatalf("List 返回的写入时间不对: %v，应在 %v 与 %v 之间", got, before, after)
 	}
 }
 

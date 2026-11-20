@@ -21,17 +21,27 @@ import (
 //
 // 键是账号、对外模型名与文本哈希；同名模型必须保持同一个向量空间，换部署要换
 // 对外模型名，改维度要删掉这个模型的缓存行，见 ADR-0029。
+//
+// 清除云端数据与写入之间用账号的代次排除竞争（ADR-0037）：嵌入请求在调用来源
+// 之前读一次代次，写入时由实现在自己的事务里再读一次比较，对不上说明期间清空过
+// 一次，这次写入丢弃；清除时把代次加一并删行，两步在同一把账号锁内完成。
 type EmbeddingCache interface {
 	// Lookup 返回这个账号与模型下已有的向量，并按命中更新 last_used_at。没有
 	// 命中的哈希不出现在结果里；顺序由实现决定，调用方按哈希自己对应。
 	Lookup(ctx context.Context, userID, model string, hashes []string) ([]CachedVector, error)
 	// Put 写入一批向量，已经存在的行保持原值。写入之后按账号的字节上限删除最久
-	// 未用的行。
-	Put(ctx context.Context, userID, model string, items []CachedVector) error
+	// 未用的行。expectedGeneration 是请求开始时读到的代次；事务内当前代次与它
+	// 不一致时放弃这次写入并返回 nil，因为这次算出的向量属于清除之前的数据。
+	Put(ctx context.Context, userID, model string, items []CachedVector, expectedGeneration int64) error
 	// DeleteModel 删除一个对外模型的全部缓存行；管理后台删除模型或改变维度时调用。
 	DeleteModel(ctx context.Context, model string) error
-	// DeleteUser 删除一个账号的全部缓存行；清除云端数据时调用。
+	// DeleteUser 删除一个账号的全部缓存行；删除账号时调用，行随外键级联。
 	DeleteUser(ctx context.Context, userID string) error
+	// Generation 返回账号当前的缓存代次；没有清空过时是 0。嵌入请求在调用来源
+	// 之前读一次，写入时传回 Put 比较。
+	Generation(ctx context.Context, userID string) (int64, error)
+	// PurgeUser 原子地删除账号的全部缓存行并把代次加一；清除云端数据时调用。
+	PurgeUser(ctx context.Context, userID string) error
 }
 
 // CachedVector 是一行缓存：文本哈希、维度与小端序 FP16 的向量。
@@ -195,13 +205,17 @@ func parseEmbedding(raw json.RawMessage) ([]float32, error) {
 }
 
 // MemoryEmbeddingCache 是进程内的 EmbeddingCache，用于本地联调与测试。行按
-// 账号、模型与哈希分开保存，上限按这些行的向量字节合计淘汰最久未用的行。
+// 账号、模型与哈希分开保存，上限按这些行的向量字节合计淘汰最久未用的行；代次
+// 与行共用同一把锁，清除与写入因此在本进程内是串行的。
 type MemoryEmbeddingCache struct {
 	mu    sync.Mutex
 	limit int64
 	seq   uint64
 	used  int64
 	rows  map[memoryCacheKey]*memoryCacheRow
+	// gens 是每个账号的缓存代次，清除云端数据时加一。账号 id 不复用，删号清理
+	// 不回收这里的键。
+	gens map[string]int64
 }
 
 type memoryCacheKey struct{ userID, model, hash string }
@@ -215,7 +229,10 @@ type memoryCacheRow struct {
 // NewMemoryEmbeddingCache 建一份空的进程内缓存；上限由装配时的
 // SetEmbeddingCacheLimit 注入，0 表示不限制。
 func NewMemoryEmbeddingCache() *MemoryEmbeddingCache {
-	return &MemoryEmbeddingCache{rows: map[memoryCacheKey]*memoryCacheRow{}}
+	return &MemoryEmbeddingCache{
+		rows: map[memoryCacheKey]*memoryCacheRow{},
+		gens: map[string]int64{},
+	}
 }
 
 // SetEmbeddingCacheLimit 注入每账号的字节上限；由 Proxy 装配时调用。改为更小的
@@ -247,9 +264,14 @@ func (m *MemoryEmbeddingCache) Lookup(_ context.Context, userID, model string, h
 	return out, nil
 }
 
-func (m *MemoryEmbeddingCache) Put(_ context.Context, userID, model string, items []CachedVector) error {
+func (m *MemoryEmbeddingCache) Put(_ context.Context, userID, model string, items []CachedVector, expectedGeneration int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// 代次对不上说明请求开始之后清空过一次，这次算出的向量属于清除之前的数据，
+	// 丢掉而不是写回缓存。
+	if m.gens[userID] != expectedGeneration {
+		return nil
+	}
 	for _, item := range items {
 		key := memoryCacheKey{userID, model, item.Hash}
 		if _, ok := m.rows[key]; ok {
@@ -315,13 +337,35 @@ func (m *MemoryEmbeddingCache) DeleteModel(_ context.Context, model string) erro
 func (m *MemoryEmbeddingCache) DeleteUser(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.removeUserRowsLocked(userID)
+	return nil
+}
+
+// Generation 返回账号当前的缓存代次；还没有清空过时是 0。
+func (m *MemoryEmbeddingCache) Generation(_ context.Context, userID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.gens[userID], nil
+}
+
+// PurgeUser 删除账号的全部缓存行并把代次加一；两步在同一把锁内完成，写入方在
+// 别处读到的代次与这里加一之间的顺序因此是确定的。
+func (m *MemoryEmbeddingCache) PurgeUser(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.gens[userID]++
+	m.removeUserRowsLocked(userID)
+	return nil
+}
+
+// removeUserRowsLocked 删除一个账号的全部行并更新字节合计。调用方必须持有 m.mu。
+func (m *MemoryEmbeddingCache) removeUserRowsLocked(userID string) {
 	for key, row := range m.rows {
 		if key.userID == userID {
 			delete(m.rows, key)
 			m.used -= int64(len(row.vector))
 		}
 	}
-	return nil
 }
 
 // Bytes 返回当前保存的向量字节合计，供测试核对上限淘汰。

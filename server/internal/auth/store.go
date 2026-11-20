@@ -87,6 +87,17 @@ type Store interface {
 	// 仍等于 oldRefreshHash 时才更新。并发刷新因此只有一个成功，其余返回
 	// ErrInvalidToken。
 	RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error
+	// RotateSessionAndRecord 在同一个事务或同一把锁里完成轮换与重放记录：CAS
+	// 换掉会话的两个令牌摘要，再写入旧摘要的重放记录。两步一起成功或一起不发
+	// 生，刷新因此没有“令牌换了但重放记录没写入”的中间状态：写记录失败时会话
+	// 保持原样，客户端拿旧令牌重试即可，不会既拿不到新令牌又失去旧令牌。
+	//
+	// oldRefreshHash 是这次要消费的会话当前摘要，used.TokenHash 是这次要记下的
+	// 旧摘要。正常刷新两者相同，只写一条记录；宽限期内的重试里 used.TokenHash
+	// 是客户端提交的更早摘要，与当前摘要不同，两条记录都指向本次发出的新令牌。
+	// 记录里“本次发出的令牌”由实现按 newAccessHash 与 newRefreshHash 填好，调用
+	// 方不用设置，轮换后的会话与记录因此不会写成两对不同的令牌。
+	RotateSessionAndRecord(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time, used RefreshUsed) error
 	// UsedRefresh 返回已经轮换掉的刷新令牌摘要；没有记录时返回 ErrNotFound。
 	UsedRefresh(ctx context.Context, tokenHash string) (RefreshUsed, error)
 	// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要；同一个摘要重复写入时
@@ -97,6 +108,10 @@ type Store interface {
 	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
 	// 行不受影响。过期数据留在库里不影响正确性，清理只控制表的大小。
 	PruneExpired(ctx context.Context, now, usedBefore time.Time) error
+	// PruneUnverified 删除 before 之前创建、且从未确认邮箱的账号，返回删除的
+	// 账号数。账号的会话、验证码与重放记录一并删除，与 schema 的 ON DELETE
+	// CASCADE 一致；保留期内注册的账号与已确认的账号不受影响。
+	PruneUnverified(ctx context.Context, before time.Time) (int64, error)
 
 	SetEmailVerified(ctx context.Context, userID string, at time.Time) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
@@ -171,9 +186,18 @@ func (m *MemoryStore) UserByID(_ context.Context, id string) (User, error) {
 func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.deleteUserLocked(id) {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// deleteUserLocked 删除账号及其会话、验证码与重放记录，与 schema.sql 的
+// ON DELETE CASCADE 一致。账号不存在时返回 false。调用方已持有锁。
+func (m *MemoryStore) deleteUserLocked(id string) bool {
 	u, ok := m.users[id]
 	if !ok {
-		return ErrNotFound
+		return false
 	}
 	delete(m.users, id)
 	delete(m.byEmail, u.Email)
@@ -188,7 +212,7 @@ func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 		}
 	}
 	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == id })
-	return nil
+	return true
 }
 
 func (m *MemoryStore) DeleteUserSessions(_ context.Context, userID string) error {
@@ -357,6 +381,23 @@ func (m *MemoryStore) PruneExpired(_ context.Context, now, usedBefore time.Time)
 	return nil
 }
 
+// PruneUnverified 删除 before 之前创建、且从未确认邮箱的账号及其会话、验证码与
+// 重放记录，返回删除的账号数。保留期内注册的账号与已确认的账号不受影响。
+func (m *MemoryStore) PruneUnverified(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var removed int64
+	for id, u := range m.users {
+		if !u.EmailVerifiedAt.IsZero() || !u.CreatedAt.Before(before) {
+			continue
+		}
+		if m.deleteUserLocked(id) {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
 func (m *MemoryStore) findSession(match func(Session) bool) (Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -393,6 +434,35 @@ func (m *MemoryStore) RotateSession(_ context.Context, id, oldRefreshHash, newAc
 	return nil
 }
 
+// RotateSessionAndRecord 在同一把锁里做 CAS 并写重放记录：轮换成功时会话与记录
+// 一起可见，CAS 失败或写记录前出错时一条都不落地，因此不存在“令牌换了但重放
+// 记录缺失”的窗口。
+func (m *MemoryStore) RotateSessionAndRecord(_ context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time, used RefreshUsed) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok || s.RefreshHash != oldRefreshHash {
+		return ErrInvalidToken
+	}
+	s.AccessHash = newAccessHash
+	s.RefreshHash = newRefreshHash
+	s.AccessExpires = accessExpires
+	s.RefreshExpires = refreshExpires
+	m.sessions[id] = s
+	// 记录里的“本次发出的令牌”由这里按刚写入会话的摘要填好，调用方不用设置。
+	used.ReplacedAccessHash = newAccessHash
+	used.ReplacedRefreshHash = newRefreshHash
+	m.recordRefreshUsedLocked(used)
+	if used.TokenHash != oldRefreshHash {
+		// 宽限期内的重试：客户端提交的更早摘要与这次消费的当前摘要不是同一个，
+		// 两条都要指向本次发出的新令牌，连续重试才都按重试处理。
+		other := used
+		other.TokenHash = oldRefreshHash
+		m.recordRefreshUsedLocked(other)
+	}
+	return nil
+}
+
 func (m *MemoryStore) UsedRefresh(_ context.Context, tokenHash string) (RefreshUsed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -409,15 +479,20 @@ func (m *MemoryStore) UsedRefresh(_ context.Context, tokenHash string) (RefreshU
 func (m *MemoryStore) RecordRefreshUsed(_ context.Context, u RefreshUsed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.recordRefreshUsedLocked(u)
+	return nil
+}
+
+// recordRefreshUsedLocked 是写入重放记录的共同实现。调用方已持有锁。
+func (m *MemoryStore) recordRefreshUsedLocked(u RefreshUsed) {
 	if old, ok := m.refreshUsed[u.TokenHash]; ok {
 		old.RotatedAt = u.RotatedAt
 		old.ReplacedAccessHash = u.ReplacedAccessHash
 		old.ReplacedRefreshHash = u.ReplacedRefreshHash
 		m.refreshUsed[u.TokenHash] = old
-		return nil
+		return
 	}
 	m.refreshUsed[u.TokenHash] = u
-	return nil
 }
 
 // purgeUsedLocked 删掉不再需要判断重放的旧令牌记录，与 PostgreSQL 实现里

@@ -290,6 +290,81 @@ func (s *Store) RotateSession(ctx context.Context, id, oldRefreshHash, newAccess
 	return nil
 }
 
+// RotateSessionAndRecord 在一个事务里先做 CAS 轮换、再写重放记录：0 行说明轮换
+// 输给了并发的另一个请求，整个事务回滚；记录写入失败同样回滚轮换。客户端因此
+// 要么拿到新令牌且旧摘要已经记下，要么旧令牌仍然可用，不存在只换令牌、旧摘要
+// 没记下的中间状态。
+func (s *Store) RotateSessionAndRecord(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time, used auth.RefreshUsed) error {
+	access, err := pgTime(accessExpires)
+	if err != nil {
+		return err
+	}
+	refresh, err := pgTime(refreshExpires)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	updated, err := q.RotateSession(ctx, db.RotateSessionParams{
+		NewAccessHash:  newAccessHash,
+		NewRefreshHash: newRefreshHash,
+		AccessExpires:  access,
+		RefreshExpires: refresh,
+		ID:             id,
+		OldRefreshHash: oldRefreshHash,
+	})
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return auth.ErrInvalidToken
+	}
+	// 记录里的“本次发出的令牌”按刚写入会话的摘要填好，调用方不用设置，两条
+	// 记录因此不会与轮换后的会话写成不同的令牌。
+	used.ReplacedAccessHash = newAccessHash
+	used.ReplacedRefreshHash = newRefreshHash
+	if err := insertRefreshUsed(ctx, q, used); err != nil {
+		return err
+	}
+	if used.TokenHash != oldRefreshHash {
+		// 宽限期内的重试：客户端提交的更早摘要与这次消费的当前摘要不是同一个，
+		// 两条记录都要指向本次发出的新令牌，连续重试才都按重试处理。
+		other := used
+		other.TokenHash = oldRefreshHash
+		if err := insertRefreshUsed(ctx, q, other); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// insertRefreshUsed 把一条重放记录写进给定的查询句柄，事务里与事务外共用。
+func insertRefreshUsed(ctx context.Context, q *db.Queries, u auth.RefreshUsed) error {
+	rotated, err := pgTime(u.RotatedAt)
+	if err != nil {
+		return err
+	}
+	grace, err := pgTime(u.GraceUntil)
+	if err != nil {
+		return err
+	}
+	return q.InsertRefreshUsed(ctx, db.InsertRefreshUsedParams{
+		TokenHash:           u.TokenHash,
+		SessionID:           u.SessionID,
+		UserID:              u.UserID,
+		RequestID:           u.RequestID,
+		RotatedAt:           rotated,
+		GraceUntil:          grace,
+		ReplacedAccessHash:  u.ReplacedAccessHash,
+		ReplacedRefreshHash: u.ReplacedRefreshHash,
+	})
+}
+
 func (s *Store) UsedRefresh(ctx context.Context, tokenHash string) (auth.RefreshUsed, error) {
 	row, err := s.q.RefreshUsed(ctx, tokenHash)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -311,24 +386,7 @@ func (s *Store) UsedRefresh(ctx context.Context, tokenHash string) (auth.Refresh
 }
 
 func (s *Store) RecordRefreshUsed(ctx context.Context, u auth.RefreshUsed) error {
-	rotated, err := pgTime(u.RotatedAt)
-	if err != nil {
-		return err
-	}
-	grace, err := pgTime(u.GraceUntil)
-	if err != nil {
-		return err
-	}
-	return s.q.InsertRefreshUsed(ctx, db.InsertRefreshUsedParams{
-		TokenHash:           u.TokenHash,
-		SessionID:           u.SessionID,
-		UserID:              u.UserID,
-		RequestID:           u.RequestID,
-		RotatedAt:           rotated,
-		GraceUntil:          grace,
-		ReplacedAccessHash:  u.ReplacedAccessHash,
-		ReplacedRefreshHash: u.ReplacedRefreshHash,
-	})
+	return insertRefreshUsed(ctx, s.q, u)
 }
 
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
@@ -354,6 +412,17 @@ func (s *Store) PruneExpired(ctx context.Context, now, usedBefore time.Time) err
 		return err
 	}
 	return s.q.PruneUsedRefreshTokens(ctx, cutoff)
+}
+
+// PruneUnverified 删除创建时间早于 before、且从未确认邮箱的账号，返回删除的
+// 账号数。会话、验证码、重放记录与其余账号数据按 schema 的外键级联删除；这是
+// 每日清理的一部分，注册是公开入口，超过保留期仍未确认的账号行会一直占着邮箱。
+func (s *Store) PruneUnverified(ctx context.Context, before time.Time) (int64, error) {
+	cutoff, err := pgTime(before)
+	if err != nil {
+		return 0, err
+	}
+	return s.q.DeleteUnverifiedUsersBefore(ctx, cutoff)
 }
 
 func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Time) error {

@@ -23,7 +23,8 @@ func cacheVector(dim int, seed byte) []byte {
 }
 
 // TestPostgresEmbeddingCache 覆盖 ADR-0030 第一步的存储行为：写入与查找、重复
-// 写入不覆盖、按账号与按模型隔离、模型删除、删号级联与字节上限淘汰。
+// 写入不覆盖、按账号与按模型隔离、模型删除、删号级联与字节上限淘汰；清除云端
+// 数据时按 ADR-0037 加代次，过期代次的写入被丢弃。
 func TestPostgresEmbeddingCache(t *testing.T) {
 	st := newTestStore(t)
 	cache := NewEmbeddingCache(st)
@@ -36,11 +37,20 @@ func TestPostgresEmbeddingCache(t *testing.T) {
 		}
 	}
 	h1, h2, h3 := cacheHash(1), cacheHash(2), cacheHash(3)
+	// 新账号的代次是 0；写入时传入请求开始时读到的代次。
+	genU1, err := cache.Generation(ctx, "u1")
+	if err != nil || genU1 != 0 {
+		t.Fatalf("u1 新账号的代次应是 0：%d %v", genU1, err)
+	}
+	genU2, err := cache.Generation(ctx, "u2")
+	if err != nil || genU2 != 0 {
+		t.Fatalf("u2 新账号的代次应是 0：%d %v", genU2, err)
+	}
 	items := []llmproxy.CachedVector{
 		{Hash: h1, Dim: 2, Vector: cacheVector(2, 1)},
 		{Hash: h2, Dim: 2, Vector: cacheVector(2, 2)},
 	}
-	if err := cache.Put(ctx, "u1", "m", items); err != nil {
+	if err := cache.Put(ctx, "u1", "m", items, genU1); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
@@ -58,7 +68,7 @@ func TestPostgresEmbeddingCache(t *testing.T) {
 	}
 
 	// 重复写入不覆盖：同一哈希换一个维度写入，读到的还是第一份。
-	if err := cache.Put(ctx, "u1", "m", []llmproxy.CachedVector{{Hash: h1, Dim: 1, Vector: []byte{9, 9}}}); err != nil {
+	if err := cache.Put(ctx, "u1", "m", []llmproxy.CachedVector{{Hash: h1, Dim: 1, Vector: []byte{9, 9}}}, genU1); err != nil {
 		t.Fatalf("duplicate put: %v", err)
 	}
 	rows, err = cache.Lookup(ctx, "u1", "m", []string{h1})
@@ -72,7 +82,7 @@ func TestPostgresEmbeddingCache(t *testing.T) {
 	}
 
 	// 按模型隔离，删模型只清这个模型的行。
-	if err := cache.Put(ctx, "u1", "m2", []llmproxy.CachedVector{{Hash: h1, Dim: 2, Vector: cacheVector(2, 3)}}); err != nil {
+	if err := cache.Put(ctx, "u1", "m2", []llmproxy.CachedVector{{Hash: h1, Dim: 2, Vector: cacheVector(2, 3)}}, genU1); err != nil {
 		t.Fatalf("put m2: %v", err)
 	}
 	if err := cache.DeleteModel(ctx, "m"); err != nil {
@@ -90,10 +100,10 @@ func TestPostgresEmbeddingCache(t *testing.T) {
 	if err := cache.Put(ctx, "u2", "m", []llmproxy.CachedVector{
 		{Hash: h1, Dim: 2, Vector: cacheVector(2, 4)},
 		{Hash: h2, Dim: 2, Vector: cacheVector(2, 5)},
-	}); err != nil {
+	}, genU2); err != nil {
 		t.Fatalf("put at limit: %v", err)
 	}
-	if err := cache.Put(ctx, "u2", "m", []llmproxy.CachedVector{{Hash: h3, Dim: 2, Vector: cacheVector(2, 6)}}); err != nil {
+	if err := cache.Put(ctx, "u2", "m", []llmproxy.CachedVector{{Hash: h3, Dim: 2, Vector: cacheVector(2, 6)}}, genU2); err != nil {
 		t.Fatalf("put over limit: %v", err)
 	}
 	used, err := st.q.EmbeddingCacheBytes(ctx, "u2")
@@ -118,5 +128,30 @@ func TestPostgresEmbeddingCache(t *testing.T) {
 	}
 	if rows, err := cache.Lookup(ctx, "u2", "m", []string{h1, h2, h3}); err != nil || len(rows) != 0 {
 		t.Fatalf("删号之后缓存应级联删除：%d %v", len(rows), err)
+	}
+
+	// 清除云端数据：代次加一、行清空；清除之前读到的代次写不进去，按新代次
+	// 写入正常（ADR-0037）。
+	if err := cache.PurgeUser(ctx, "u1"); err != nil {
+		t.Fatalf("purge user: %v", err)
+	}
+	if after, err := cache.Generation(ctx, "u1"); err != nil || after != genU1+1 {
+		t.Fatalf("清除之后代次应加一：%d %v", after, err)
+	}
+	if rows, err := cache.Lookup(ctx, "u1", "m2", []string{h1}); err != nil || len(rows) != 0 {
+		t.Fatalf("清除之后不应命中：%d %v", len(rows), err)
+	}
+	stale := []llmproxy.CachedVector{{Hash: h1, Dim: 2, Vector: cacheVector(2, 7)}}
+	if err := cache.Put(ctx, "u1", "m", stale, genU1); err != nil {
+		t.Fatalf("过期代次的写入不应报错：%v", err)
+	}
+	if rows, err := cache.Lookup(ctx, "u1", "m", []string{h1}); err != nil || len(rows) != 0 {
+		t.Fatalf("过期代次的写入不应落库：%d %v", len(rows), err)
+	}
+	if err := cache.Put(ctx, "u1", "m", stale, genU1+1); err != nil {
+		t.Fatalf("新代次写入：%v", err)
+	}
+	if rows, err := cache.Lookup(ctx, "u1", "m", []string{h1}); err != nil || len(rows) != 1 {
+		t.Fatalf("新代次写入后应命中：%d %v", len(rows), err)
 	}
 }

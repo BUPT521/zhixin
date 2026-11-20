@@ -107,6 +107,7 @@ func (s *S3) RemovePrefix(ctx context.Context, prefix string) error {
 }
 
 // List 按前缀列出对象；没有对象时返回空切片，回填附件索引靠它读出现有键。
+// 写入时间取自 ListObjectsV2 的 LastModified，备份对账据此判断宽限期。
 func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
 	if prefix == "" {
 		return nil, errors.New("objectstore: 拒绝列出空前缀")
@@ -117,7 +118,7 @@ func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
 		if obj.Err != nil {
 			return nil, fmt.Errorf("objectstore: 列出前缀 %q 失败: %w", prefix, obj.Err)
 		}
-		out = append(out, Object{Key: obj.Key, Size: obj.Size})
+		out = append(out, Object{Key: obj.Key, Size: obj.Size, ModTime: obj.LastModified})
 	}
 	return out, nil
 }

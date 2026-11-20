@@ -15,6 +15,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
 // Meta describes one stored snapshot.
@@ -44,6 +46,10 @@ type Store interface {
 	// then clears leftover objects under the account prefix. An empty account
 	// is not an error; a failure anywhere is returned.
 	DeleteAll(ctx context.Context, userID string) error
+	// ListAllKeys returns the object key of every stored snapshot metadata row,
+	// across all accounts. Backup reconciliation uses it to tell leftover bytes
+	// (no row) from live snapshots; order is unspecified.
+	ListAllKeys(ctx context.Context) ([]string, error)
 }
 
 func newID() string {
@@ -129,4 +135,18 @@ func (m *MemoryStore) DeleteAll(_ context.Context, userID string) error {
 	defer m.mu.Unlock()
 	delete(m.items, userID)
 	return nil
+}
+
+// ListAllKeys 返回全部元数据对应的对象键，与对象存储里的键规则一致，供对账
+// 求差集。
+func (m *MemoryStore) ListAllKeys(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, 0, len(m.items))
+	for userID, list := range m.items {
+		for _, it := range list {
+			out = append(out, objectstore.BackupKey(userID, it.meta.ID))
+		}
+	}
+	return out, nil
 }

@@ -50,6 +50,10 @@ type Handler struct {
 	// 一律放行。
 	byAddr        *ratelimit.Limiter
 	refreshLimits *ratelimit.Limiter
+	// registerGlobal 是整个实例的注册上限，只有一个键：注册在邮箱验证之前就做
+	// argon2 并写账号与会话，按来源地址的桶只挡同一个来源，换地址仍能把未验证
+	// 的账号灌满库，这个桶给实例一个总量（ADR-0037）。为零值时一律放行。
+	registerGlobal *ratelimit.Limiter
 	// codeLimits 限制发送验证码与重设密码的尝试：按账号、来源地址与邮箱各记
 	// 一个桶，防止同一账号被反复发信，也防止换账号刷同一个邮箱。
 	codeLimits *ratelimit.Limiter
@@ -84,6 +88,7 @@ func NewHandler(
 		svc: svc, log: log, maxBytes: maxBytes,
 		byAddr: byAddr, refreshLimits: refreshLimits, codeLimits: codeLimits,
 		clientHost: clientHost, loginFails: ratelimit.Disabled(),
+		registerGlobal: ratelimit.Disabled(),
 	}
 }
 
@@ -96,6 +101,21 @@ func (h *Handler) SetLoginFailLimiter(l *ratelimit.Limiter) {
 	}
 	h.loginFails = l
 }
+
+// SetRegisterGlobalLimiter 装上注册的实例级上限，由 server.New 按配置建好注入。
+// 传 nil 表示关闭。注册接口公开，在邮箱验证之前就要做一次 argon2 并写入账号与
+// 会话；按来源地址的桶只挡同一个来源，换地址仍能把未验证的账号灌满库，所以这
+// 里再给整个实例一个总量，超出时在解码请求体与哈希之前返回 429。
+func (h *Handler) SetRegisterGlobalLimiter(l *ratelimit.Limiter) {
+	if l == nil {
+		l = ratelimit.Disabled()
+	}
+	h.registerGlobal = l
+}
+
+// registerGlobalKey 是注册全局桶的键。全局桶只有一个键，与按地址的桶互不共用，
+// 因此要单独建一个限流器。
+const registerGlobalKey = "global"
 
 // loginKey 把邮箱规范成限流键，与服务层登录时的规范化保持一致：同一账号换大小
 // 写或带空白提交，扣的是同一个桶。长度截到邮箱上限，避免异常超长的邮箱让限流表
@@ -140,6 +160,12 @@ func optional(value *string) string {
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	if delay := h.byAddr.Take(h.clientHost(r)); delay > 0 {
+		httpx.TooMany(w, r, delay)
+		return
+	}
+	// 按地址的桶放行之后，再消耗实例级的一个名额；超过时在解码请求体与哈希之前
+	// 返回 429，换地址也不能把未验证的账号灌满库。
+	if delay := h.registerGlobal.Take(registerGlobalKey); delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return
 	}
