@@ -697,42 +697,86 @@ mixin RevisionProjectionMixin {
     RevisionCommit commit,
   ) async {}
 
-  /// 一次写入落库、独占区释放之后的空闲检查点（ADR-0039 第 2 条）。
+  /// 一次写入落库、独占区释放之后的空闲工作：空闲检查点与自动留存
+  /// （ADR-0039 第 2 条、方案 3.8）。
   ///
-  /// 先用一条只读查询判断“距最近检查点累计的变更明细字节数”，没有达到
-  /// [RevisionEngine.idleCheckpointBytes] 就直接返回，不读取业务表；达到阈值
-  /// 时才单独开一个维护事务，用 [readProjection] 读当前表生成检查点，不再从
-  /// 上一个检查点回放。检查点不影响已经落库的写入，生成失败只丢掉这一次机会，
-  /// 下一次写入会重新判断；同一时刻只允许一个维护事务，避免重复生成。
+  /// 两者共用同一次只读查询：先按距最近检查点累计的变更明细字节数判断要不要
+  /// 生成检查点，再用同一份统计判断提交条数与历史字节是否越过自动裁剪的阈值。
+  /// 没有越过阈值时不读业务表；越过之后各自单独开维护事务，检查点用
+  /// [readProjection] 读当前表，自动裁剪走 [RevisionMaintenanceMixin.autoRetention]。
+  /// 两件事互不影响，失败只丢掉这一次机会，下一次写入会重新判断；同一时刻只
+  /// 允许一个空闲维护，避免重复生成或重复裁剪。
   Future<void> afterCommitIdle(RawDatabase db) async {
-    if (self.idleCheckpointBytes <= 0 || _idleCheckpointRunning) return;
+    if (_idleCheckpointRunning) return;
+    _idleCheckpointRunning = true;
     try {
-      if (await _pendingCheckpointBytes(db) < self.idleCheckpointBytes) {
-        return;
-      }
-      _idleCheckpointRunning = true;
+      final stats = await _maintenanceStats(db);
       try {
-        await db.transaction((txn) async {
-          if (await _pendingCheckpointBytes(txn) < self.idleCheckpointBytes) {
-            return;
-          }
-          final head = await self.headId(txn);
-          final base = await _latestCheckpointCommit(txn);
-          if (head <= base) return;
-          final projection = await self.readProjection(txn);
-          await self._writeCheckpoint(
-            txn,
-            commitId: head,
-            kind: 'periodic',
-            projection: projection,
-          );
-        });
-      } finally {
-        _idleCheckpointRunning = false;
+        await _idleCheckpoint(db, stats.pendingBytes);
+      } catch (_) {
+        // 检查点失败只丢掉这一次机会，下一次写入会重新判断。
+      }
+      try {
+        await self.autoRetention(
+          db,
+          commitCount: stats.commitCount,
+          historyBytes: stats.historyBytes,
+        );
+      } catch (_) {
+        // 自动裁剪失败同样不改变本次写入的结果。
       }
     } catch (_) {
-      // 空闲工作失败不改变本次写入的结果；下一个写入之后再判断一次。
+      // 统计查询失败时不改已经落库的写入，下一次写入再判断。
+    } finally {
+      _idleCheckpointRunning = false;
     }
+  }
+
+  /// 空闲检查点：累计字节数达到 [RevisionEngine.idleCheckpointBytes] 时生成
+  /// 一份 `periodic` 检查点；生成之前事务里再读一次，避免并发写入重复生成。
+  Future<void> _idleCheckpoint(RawDatabase db, int pendingBytes) async {
+    if (self.idleCheckpointBytes <= 0 ||
+        pendingBytes < self.idleCheckpointBytes) {
+      return;
+    }
+    await db.transaction((txn) async {
+      if (await _pendingCheckpointBytes(txn) < self.idleCheckpointBytes) {
+        return;
+      }
+      final head = await self.headId(txn);
+      final base = await _latestCheckpointCommit(txn);
+      if (head <= base) return;
+      final projection = await self.readProjection(txn);
+      await self._writeCheckpoint(
+        txn,
+        commitId: head,
+        kind: 'periodic',
+        projection: projection,
+      );
+    });
+  }
+
+  /// 空闲维护的一次统计：距最近检查点的累计字节数、提交条数与历史字节数。
+  ///
+  /// 合成一条只读查询，每次提交之后都判断一次，不额外多读；历史字节是提交
+  /// 变更明细与检查点压缩后长度之和，自动留存的阈值按它判断。
+  Future<({int pendingBytes, int commitCount, int historyBytes})>
+  _maintenanceStats(RawExecutor executor) async {
+    final rows = await executor.rawQuery(
+      'SELECT (SELECT COUNT(*) FROM revision_commit) AS commit_count, '
+      '(SELECT COALESCE(SUM(byte_length), 0) FROM revision_commit) AS commit_bytes, '
+      '(SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM revision_checkpoint) '
+      'AS checkpoint_bytes, '
+      '(SELECT COALESCE(SUM(byte_length), 0) FROM revision_commit WHERE id > '
+      '(SELECT COALESCE(MAX(commit_id), 0) FROM revision_checkpoint)) AS pending',
+    );
+    final row = rows.isEmpty ? const <String, Object?>{} : rows.first;
+    int value(String key) => row[key] as int? ?? 0;
+    return (
+      pendingBytes: value('pending'),
+      commitCount: value('commit_count'),
+      historyBytes: value('commit_bytes') + value('checkpoint_bytes'),
+    );
   }
 
   /// 距最近检查点累计的变更明细字节数；没有新提交时为 0。

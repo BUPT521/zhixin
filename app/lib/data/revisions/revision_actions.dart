@@ -25,6 +25,10 @@ const String deleteMemoryAction = '删除记忆';
 /// 时间口径要重新读取，不能继续用启动时缓存的截止小时。
 const String changeCutoffHourAction = '修改每日截止小时';
 
+/// 数据版本页修改历史保留天数；提交只更新 `app_meta` 里的保留天数，自动裁剪
+/// 与手动裁剪都读这个值。
+const String changeRetentionDaysAction = '修改历史保留天数';
+
 /// 清理或裁剪历史之后，消息里指向已删除提交的回执由这条提交统一去掉；
 /// 它改的是派生数据，不能反过来撤销，否则会把失效编号装回消息。
 const String clearDeadReceiptsAction = '清理失效回执';

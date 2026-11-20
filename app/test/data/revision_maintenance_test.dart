@@ -79,10 +79,23 @@ void main() {
     return [for (final row in rows) row['id']! as int];
   }
 
+  /// 每条提交的变更明细字节数；手工算预算时用。
+  Future<Map<int, int>> commitBytes(TestRig rig) async {
+    final rows = await rig.raw.rawQuery(
+      'SELECT id, byte_length FROM revision_commit ORDER BY id',
+    );
+    return {
+      for (final row in rows)
+        row['id']! as int: (row['byte_length'] as int?) ?? 0,
+    };
+  }
+
   test('阻塞的同步位置限制裁剪下界，位置之后的提交全部保留', () async {
-    final rig = await openTestRig();
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
-    for (var index = 0; index < 100; index++) {
+    for (var index = 1; index <= 100; index++) {
+      clock.advance(const Duration(days: 1));
       await addMemory(rig, '记忆 $index');
     }
     final head = await rig.engine.headId(rig.raw);
@@ -90,8 +103,9 @@ void main() {
     await RevisionCursors(rig.raw)
         .set(RevisionCursor.syncPushed, 40, blocking: true);
 
-    // 按保留条数会留到第 91 条；同步只推送到第 40 条，下界因此取 41。
-    final result = await rig.engine.prune(rig.raw, keepCommits: 10);
+    // 最近 14 天会留到第 86 条；预算只留窗口里的提交，同步只推送到第 40 条，
+    // 下界因此取 41。
+    final result = await rig.engine.prune(rig.raw, maxBytes: 1);
     expect(result.keptFrom, 41);
     expect(result.removedCommits, greaterThan(0));
     expect(await commitIds(rig.raw), [for (var id = 41; id <= head; id++) id]);
@@ -108,17 +122,22 @@ void main() {
 
     // 位置停住时再次裁剪不再删提交，也不重复写基线检查点。
     final checkpoints = await countCheckpoints(rig.raw);
-    final again = await rig.engine.prune(rig.raw, keepCommits: 10);
+    final again = await rig.engine.prune(rig.raw, maxBytes: 1);
     expect(again.removedCommits, 0);
     expect(await countCheckpoints(rig.raw), checkpoints);
   });
 
   test('有阻塞位置时清理历史被拒绝并给出原因', () async {
-    final rig = await openTestRig();
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
-    for (var index = 0; index < 3; index++) {
+    for (var index = 0; index < 2; index++) {
+      clock.advance(const Duration(days: 1));
       await addMemory(rig, '记忆 $index');
     }
+    // 再往后推 20 天：前两条都落在最近 14 天之外。
+    clock.advance(const Duration(days: 20));
+    await addMemory(rig, '最近一条');
     await RevisionCursors(rig.raw)
         .set(RevisionCursor.syncPushed, 1, blocking: true);
 
@@ -146,8 +165,8 @@ void main() {
       throwsA(isA<RevisionBlocked>()),
     );
 
-    // 裁剪不受阻止，只把下界提前到读取位置之后。
-    final pruned = await rig.engine.prune(rig.raw, keepCommits: 1);
+    // 裁剪不受阻止：下界先按时间算到第 3 条，再退到阻塞位置之后。
+    final pruned = await rig.engine.prune(rig.raw, maxBytes: 1);
     expect(pruned.keptFrom, 2);
     expect(await commitIds(rig.raw), [2, 3]);
   });
@@ -173,7 +192,8 @@ void main() {
   });
 
   test('附件回收结果与旧算法一致', () async {
-    final rig = await openTestRig();
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
     final conversation = await addConversation(rig, 'conv-1');
     final bytesA = Uint8List.fromList(List<int>.generate(200, (i) => i));
@@ -204,13 +224,19 @@ void main() {
       bytes: bytesC,
     );
     await deleteRows(rig.db, 'message', where: 'id = ?', whereArgs: ['msg-c']);
+    // 之后的四条提交挪到 10 天之后：命名版本与三张图都落在保留窗口之外。
+    clock.advance(const Duration(days: 10));
     for (var index = 0; index < 4; index++) {
       await addMemory(rig, '后续 $index');
     }
     final all = {hashA, hashB, hashC};
     expect(await rig.engine.assets.objectHashes(rig.raw), all);
 
-    final result = await rig.engine.prune(rig.raw, keepCommits: 2);
+    final result = await rig.engine.prune(
+      rig.raw,
+      retentionDays: 5,
+      maxBytes: 1,
+    );
     expect(result.removedCommits, greaterThan(0));
     // 只有新基线之前的初始检查点被删，跨界的命名检查点与新基线不计入。
     expect(result.removedCheckpoints, 1);
@@ -227,33 +253,38 @@ void main() {
     expect(await _referenceKeep(rig), oldKeep);
   });
 
-  test('按容量裁剪只执行一次 VACUUM', () async {
-    final rig = await openTestRig();
+  test('按容量裁剪只执行一次 VACUUM，保留窗口内的提交不受预算影响', () async {
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
     for (var index = 0; index < 30; index++) {
+      clock.advance(const Duration(days: 1));
       await addMemory(rig, '记忆 $index');
     }
     final counted = VacuumCountingDatabase(rig.raw);
     final result = await rig.engine.prune(
       counted,
-      keepCommits: 1000,
+      retentionDays: 14,
       maxBytes: 1,
     );
     expect(counted.vacuumCount, 1);
     expect(result.removedCommits, greaterThan(0));
-    expect(await selectRows(rig.raw, 'revision_commit'), hasLength(1));
+    expect(result.keptFrom, 16);
+    // 最近 14 天的提交全部保留，预算再小也不动它们。
+    expect(await commitIds(rig.raw), [for (var id = 16; id <= 30; id++) id]);
 
-    // 预算宽裕时不再压缩。
+    // 预算宽裕时把窗口之外的提交补回来，不再压缩。
     await rig.engine.prune(
       counted,
-      keepCommits: 1000,
+      retentionDays: 14,
       maxBytes: 10 * 1024 * 1024,
     );
     expect(counted.vacuumCount, 1);
   });
 
   test('命名不写检查点，裁剪跨过命名提交后固化并可恢复', () async {
-    final rig = await openTestRig();
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
     await addMemory(rig, '第一');
     await addMemory(rig, '第二');
@@ -265,13 +296,18 @@ void main() {
     expect(await countCheckpoints(rig.raw), checkpointsBefore);
     expect(await countCheckpoints(rig.raw, kind: 'named'), 0);
 
+    clock.advance(const Duration(days: 10));
     for (var index = 0; index < 6; index++) {
       await addMemory(rig, '后续 $index');
     }
     final head = await rig.engine.headId(rig.raw);
-    final result = await rig.engine.prune(rig.raw, keepCommits: 2);
+    final result = await rig.engine.prune(
+      rig.raw,
+      retentionDays: 5,
+      maxBytes: 1,
+    );
     expect(result.removedCommits, greaterThan(0));
-    expect(result.keptFrom, 7);
+    expect(result.keptFrom, 3);
     // 跨过下界的命名提交多出一份 named 检查点。
     expect(await countCheckpoints(rig.raw, kind: 'named'), 1);
     expect(await countCheckpoints(rig.raw), checkpointsBefore + 1);
@@ -292,7 +328,8 @@ void main() {
   });
 
   test('删除命名版本只删固化后的检查点', () async {
-    final rig = await openTestRig();
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
     await addMemory(rig, '第一');
     await addMemory(rig, '第二');
@@ -313,13 +350,160 @@ void main() {
     );
 
     await rig.engine.nameCommit(rig.raw, namedCommit, name: '命名版本');
+    clock.advance(const Duration(days: 10));
     for (var index = 0; index < 6; index++) {
       await addMemory(rig, '后续 $index');
     }
-    await rig.engine.prune(rig.raw, keepCommits: 2);
+    await rig.engine.prune(rig.raw, retentionDays: 5, maxBytes: 1);
     expect(await countCheckpoints(rig.raw, kind: 'named'), 1);
     await rig.engine.deleteName(rig.raw, '命名版本');
     expect(await countCheckpoints(rig.raw, kind: 'named'), 0);
+  });
+
+  test('最近保留天数内的提交全部保留，更早的按字节预算保留', () async {
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
+    addTearDown(rig.close);
+    for (var index = 1; index <= 20; index++) {
+      clock.advance(const Duration(days: 1));
+      await addMemory(rig, '记忆 $index');
+    }
+    final head = await rig.engine.headId(rig.raw);
+    // 预算宽裕时最近 14 天之外的提交也留着：第 6～20 条在窗口内，更早的由
+    // 预算决定。
+    final roomy = await rig.engine.prune(rig.raw, maxBytes: 10 * 1024 * 1024);
+    expect(roomy.removedCommits, 0);
+    expect(await commitIds(rig.raw), [for (var id = 0; id <= head; id++) id]);
+
+    // 预算刚好只多放得下第 5 条：第 0～4 条删除，第 5～20 条保留。
+    final bytes = await commitBytes(rig);
+    final checkpointBytes = await rig.raw.rawQuery(
+      'SELECT COALESCE(SUM(LENGTH(payload)), 0) AS bytes '
+      'FROM revision_checkpoint WHERE commit_id >= ? OR kind = ?',
+      [6, 'named'],
+    );
+    var budget = (checkpointBytes.first['bytes'] as int? ?? 0) + bytes[5]!;
+    for (var id = 6; id <= head; id++) {
+      budget += bytes[id]!;
+    }
+    final pruned = await rig.engine.prune(rig.raw, maxBytes: budget);
+    expect(pruned.keptFrom, 5);
+    expect(await commitIds(rig.raw), [for (var id = 5; id <= head; id++) id]);
+    // 最近 14 天里一条不少。
+    for (var id = 6; id <= head; id++) {
+      expect(await commitIds(rig.raw), contains(id));
+    }
+  });
+
+  test('裁剪不越过命名版本与阻塞读取位置', () async {
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
+    addTearDown(rig.close);
+    await addMemory(rig, '第一');
+    await addMemory(rig, '第二');
+    await rig.engine.nameCommit(
+      rig.raw,
+      await rig.engine.headId(rig.raw),
+      name: '保留版本',
+    );
+    for (var index = 3; index <= 22; index++) {
+      clock.advance(const Duration(days: 1));
+      await addMemory(rig, '后续 $index');
+    }
+    await RevisionCursors(rig.raw)
+        .set(RevisionCursor.syncPushed, 5, blocking: true);
+
+    // 时间窗口从第 7 条开始；同步位置停在第 5 条，下界退到 6。
+    final result = await rig.engine.prune(rig.raw, maxBytes: 1);
+    expect(result.keptFrom, 6);
+    expect(await commitIds(rig.raw), [2, for (var id = 6; id <= 22; id++) id]);
+    // 命名版本的提交行与名称都还在，能按命名检查点重建。
+    expect(
+      await selectRows(
+        rig.raw,
+        'revision_ref',
+        where: 'name = ?',
+        whereArgs: ['保留版本'],
+      ),
+      hasLength(1),
+    );
+    final rebuilt = await rig.engine.projectionAt(rig.raw, 2);
+    expect(rebuilt['memory'], hasLength(2));
+    // 阻塞位置本身不动，之后的提交一条不少。
+    final cursor = await RevisionCursors(rig.raw)
+        .read(RevisionCursor.syncPushed);
+    expect(cursor!.position, 5);
+    for (var id = 6; id <= 22; id++) {
+      expect(await commitIds(rig.raw), contains(id));
+    }
+  });
+
+  test('自动裁剪在空闲检查点之后触发，与手动裁剪结果一致', () async {
+    Future<List<int>> build({required bool automatic}) async {
+      final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+      final engine = automatic
+          ? RevisionEngine(
+              clock: clock.call,
+              autoRetentionCommits: 3,
+              autoRetentionBytes: 1,
+            )
+          : RevisionEngine(clock: clock.call);
+      final rig = await openTestRig(engine: engine);
+      addTearDown(rig.close);
+      for (var index = 1; index <= 3; index++) {
+        clock.advance(const Duration(days: 1));
+        await addMemory(rig, '记忆 $index');
+      }
+      // 再往后推 20 天：前三条落在最近 14 天之外，最后一条在窗口里。
+      clock.advance(const Duration(days: 20));
+      await addMemory(rig, '最近一条');
+      final head = await rig.engine.headId(rig.raw);
+      if (automatic) {
+        // 写入落库之后的空闲工作已经自动裁剪，不再手动调用。
+        expect(await commitIds(rig.raw), [head]);
+      } else {
+        final result = await rig.engine.prune(rig.raw, maxBytes: 1);
+        expect(result.keptFrom, head);
+        expect(await commitIds(rig.raw), [head]);
+      }
+      return commitIds(rig.raw);
+    }
+
+    // 两台设备的库从同一条历史出发，自动与手动裁剪得到的边界相同。
+    expect(await build(automatic: true), await build(automatic: false));
+  });
+
+  test('自动裁剪读设置里的保留天数', () async {
+    final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
+    final engine = RevisionEngine(
+      clock: clock.call,
+      autoRetentionCommits: 2,
+      autoRetentionBytes: 1,
+    );
+    final rig = await openTestRig(engine: engine);
+    addTearDown(rig.close);
+    await addMemory(rig, '第一');
+    // 设置成 180 天：历史超过阈值，但窗口覆盖全部提交，不删任何提交。
+    await insertRow(rig.raw, 'app_meta', {
+      'key': revisionRetentionDaysKey,
+      'value': '180',
+      'updated_at': '2026-01-01 09:00:00',
+    }, replace: true);
+    clock.advance(const Duration(days: 30));
+    await addMemory(rig, '第二');
+    expect(await commitIds(rig.raw), [0, 1, 2]);
+
+    // 改成 7 天之后再写一条：更早的两条落在窗口之外，自动裁剪删掉它们。
+    await updateRow(
+      rig.raw,
+      'app_meta',
+      {'value': '7'},
+      where: 'key = ?',
+      whereArgs: [revisionRetentionDaysKey],
+    );
+    clock.advance(const Duration(days: 20));
+    await addMemory(rig, '第三');
+    expect(await commitIds(rig.raw), [3]);
   });
 }
 

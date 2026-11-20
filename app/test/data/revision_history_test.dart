@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
@@ -9,11 +10,14 @@ import 'package:zhixin/data/db/sql.dart';
 
 void main() {
   late TestRig rig;
+  late MutableTestClock clock;
 
   setUp(() async {
     // 写事务里不再生成周期检查点，检查点改由空闲时按累计字节数生成；这里的
-    // 用例只依赖初始检查点与命名、裁剪时固化的检查点。
-    rig = await openTestRig();
+    // 用例只依赖初始检查点与命名、裁剪时固化的检查点。裁剪按时间口径，提交
+    // 时间由用例自己的时钟决定。
+    clock = MutableTestClock(DateTime(2026, 11, 10, 9));
+    rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
   });
 
   tearDown(() => rig.close());
@@ -210,6 +214,8 @@ void main() {
       where: 'id = ?',
       whereArgs: [conversation],
     );
+    // 之后的六条提交挪到 20 天之后：命名版本与有图消息都落在保留窗口之外。
+    clock.advance(const Duration(days: 20));
     for (var index = 0; index < 6; index++) {
       await insertRow(rig.db, 'memory', {
         'id': 'memory-${index + 1}',
@@ -222,7 +228,7 @@ void main() {
       });
     }
     final head = await rig.engine.headId(rig.raw);
-    final result = await rig.engine.prune(rig.raw, keepCommits: 2);
+    final result = await rig.engine.prune(rig.raw, maxBytes: 1);
     expect(result.removedCommits, greaterThan(0));
     expect(await rig.engine.headId(rig.raw), head);
     expect(await rig.engine.refs(rig.raw), hasLength(1));

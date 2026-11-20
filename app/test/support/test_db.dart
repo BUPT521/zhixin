@@ -36,6 +36,19 @@ Future<RawDatabase> openTestDb() async {
   return raw;
 }
 
+/// 用例自己的时钟：提交时间、保留窗口这类按时间判断的行为由用例决定时刻。
+///
+/// 起点默认固定；需要“过几天再写”时显式推进，保留口径与自动裁剪因此可复现。
+class MutableTestClock {
+  MutableTestClock([DateTime? start]) : now = start ?? DateTime(2026, 1, 1, 9);
+
+  DateTime now;
+
+  DateTime call() => now;
+
+  void advance(Duration duration) => now = now.add(duration);
+}
+
 /// 带数据版本的测试库：每次写入形成提交，回执与撤销读提交历史。
 ///
 /// 与生产装配一致：仓库拿 [GuardedDatabase]，图片缓存指向临时目录。需要固定

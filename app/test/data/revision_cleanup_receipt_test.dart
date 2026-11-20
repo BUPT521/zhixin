@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/revisions/revision_actions.dart';
+import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';
 
@@ -60,10 +61,13 @@ void main() {
   }
 
   test('裁剪删掉旧提交后，消息里指向它的回执一并清理', () async {
-    final rig = await openTestRig();
+    final clock = MutableTestClock();
+    final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
     addTearDown(rig.close);
     final messageId = await openConversation(rig);
     final oldCommit = await addMemory(rig, '旧记忆');
+    // 再往后推 20 天：旧提交落在最近 14 天之外，后来的提交都在窗口里。
+    clock.advance(const Duration(days: 20));
     for (var index = 0; index < 4; index++) {
       await addMemory(rig, '后续 $index');
     }
@@ -101,7 +105,7 @@ void main() {
       whereArgs: [messageId],
     );
 
-    final result = await rig.revisions.prune(keepCommits: 3);
+    final result = await rig.revisions.prune(maxBytes: 1);
     expect(result.removedCommits, greaterThan(0));
 
     final structured = await readStructured(rig, messageId);

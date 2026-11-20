@@ -1,5 +1,24 @@
 part of 'revision_engine.dart';
 
+/// 默认保留天数：最近这么多天的提交全部保留，覆盖撤销与回执的使用窗口。
+///
+/// 保留口径是“时间优先”（方案 3.8，G9，对照 `git gc --auto`）：时间窗口里的
+/// 提交不受容量预算影响，更早的提交才按 [revisionHistoryBudgetBytes] 裁剪。
+const int revisionDefaultRetentionDays = 14;
+
+/// 数据版本页可以选择的保留天数；设置值与默认值都落在这个范围里。
+const List<int> revisionRetentionDayOptions = [7, 14, 30, 60, 90, 180];
+
+/// 历史字节预算：提交变更明细与检查点压缩后长度之和的默认上限。
+const int revisionHistoryBudgetBytes = 256 * 1024 * 1024;
+
+/// 自动裁剪的提交条数阈值：历史超过这么多条提交时自动裁剪一次。
+const int revisionAutoRetentionCommits = 500;
+
+/// 保留天数的设置键，写在 `app_meta` 里；开发阶段不向下兼容，改口径时直接换
+/// 键名（ADR-0001）。
+const String revisionRetentionDaysKey = 'revision_retention_days';
+
 /// 历史下游读者还没读完，清理历史被拒绝。
 ///
 /// [reasons] 是给人看的原因，界面直接显示；清理历史会删掉全部提交，落后于
@@ -14,13 +33,20 @@ class RevisionBlocked implements Exception {
       reasons.isEmpty ? '暂时不能清理历史' : '暂时不能清理历史：${reasons.join('；')}';
 }
 
-/// 留存与维护：命名版本、清理历史、按条数或容量裁剪、附件回收与核对、占用
-/// 统计，以及历史下游读取位置的阻塞判断。
+/// 留存与维护：命名版本、清理历史、按时间与容量裁剪、自动留存、附件回收
+/// 与核对、占用统计，以及历史下游读取位置的阻塞判断。
 ///
 /// 拥有者：泳道 B（ADR-0039 第 3.3 节）。
 mixin RevisionMaintenanceMixin {
   /// 引擎本身；字段与同库其他文件的方法都经它访问。
   RevisionEngine get self;
+
+  /// 上一次自动裁剪留下的下界；边界没有前进时不必再裁剪一遍。
+  ///
+  /// 时间窗口里的历史本身就超过预算时，下界会停在窗口起点不动，这时只需要
+  /// 重新算一次边界（只读、不读业务表），区间里没有新的提交可删就不用开
+  /// 维护事务。
+  int? _autoRetentionFrom;
 
   Future<List<RevisionRef>> refs(RawExecutor executor) async {
     final rows = await selectRows(
@@ -279,51 +305,151 @@ mixin RevisionMaintenanceMixin {
     });
   }
 
-  /// 有界留存：保留最近若干提交、`HEAD` 与命名版本的提交行，更早的历史先
-  /// 固化成基线检查点再删除。
+  /// 有界留存：按“时间优先”的口径保留最近若干天与 `HEAD`、命名版本的提交，
+  /// 更早的历史先固化成基线检查点再删除。
   ///
-  /// 下界取“按保留条数算出的最早保留提交”与“所有阻塞读取位置的最小值 + 1”
-  /// 中较小者。容量预算先用 `SUM(byte_length)` 与检查点 `length(payload)` 一次
-  /// 算出保留条数，只做一次裁剪，最多执行一次 `VACUUM`。
+  /// [retentionDays] 天以内创建的提交全部保留，覆盖撤销与回执的使用窗口；
+  /// 更早的提交在 [maxBytes] 预算之内继续保留，放不下时从最早的开始删。下界
+  /// 与 [retentionBoundary] 是同一套计算，手动裁剪与自动裁剪都从这里走。预算
+  /// 与下界都只算一次，裁剪一次完成，最多执行一次 `VACUUM`。
   Future<RevisionRetentionResult> prune(
     RawDatabase db, {
-    int keepCommits = 100,
-    int? maxBytes,
+    int retentionDays = revisionDefaultRetentionDays,
+    int? maxBytes = revisionHistoryBudgetBytes,
   }) async {
-    if (keepCommits < 1) throw RangeError.range(keepCommits, 1, null);
-    var keep = keepCommits;
-    if (maxBytes != null) {
-      keep = await _keepForBudget(
-        db,
-        keepCommits: keepCommits,
-        maxBytes: maxBytes,
-      );
-    }
-    final result = await _pruneOnce(db, keep);
+    if (retentionDays < 0) throw RangeError.range(retentionDays, 0, null);
+    final boundary = await retentionBoundary(
+      db,
+      retentionDays: retentionDays,
+      maxBytes: maxBytes,
+    );
+    final result = await _pruneOnce(db, boundary);
     if (maxBytes == null) return result;
     var bytes = await self.databaseBytes(db);
-    if (bytes <= maxBytes) {
-      return RevisionRetentionResult(
-        removedCommits: result.removedCommits,
-        removedCheckpoints: result.removedCheckpoints,
-        removedAssets: result.removedAssets,
-        keptFrom: result.keptFrom,
-        databaseBytes: bytes,
-      );
-    }
+    if (bytes <= maxBytes) return _withDatabaseBytes(result, bytes);
     // 删除后的页空间不会自动归还；整库只压缩这一次，不再逐次减半循环。
     await db.execute('VACUUM');
     bytes = await self.databaseBytes(db);
-    return RevisionRetentionResult(
-      removedCommits: result.removedCommits,
-      removedCheckpoints: result.removedCheckpoints,
-      removedAssets: result.removedAssets,
-      keptFrom: result.keptFrom,
-      databaseBytes: bytes,
-    );
+    return _withDatabaseBytes(result, bytes);
   }
 
-  Future<RevisionRetentionResult> _pruneOnce(RawDatabase db, int keep) async {
+  /// 自动留存：与 `git gc --auto` 相同，在空闲检查点之后判断一次是否越过阈值。
+  ///
+  /// [commitCount] 与 [historyBytes] 由空闲检查点那一次只读查询一并给出，没有
+  /// 越过阈值时不做任何写操作；越过之后按 [retentionBoundary] 留下的下界裁剪
+  /// 一次，并在数据库仍超出预算时压缩。自动裁剪不清失效回执：回执清理要作为
+  /// 一条普通提交写入，放进维护事务会让检查点与重建结果对不上；界面按提交
+  /// 是否还在判断撤销入口，失效编号留在消息里，下一次手动裁剪时一并清掉。
+  Future<RevisionRetentionResult?> autoRetention(
+    RawDatabase db, {
+    required int commitCount,
+    required int historyBytes,
+  }) async {
+    if (commitCount <= self.autoRetentionCommits &&
+        historyBytes <= self.autoRetentionBytes) {
+      return null;
+    }
+    final days = await self.retentionDays(db);
+    final boundary = await retentionBoundary(
+      db,
+      retentionDays: days,
+      maxBytes: self.autoRetentionBytes,
+    );
+    final oldest = await _oldestCommitId(db);
+    if (boundary <= oldest || boundary <= (_autoRetentionFrom ?? -1)) {
+      if (boundary > (_autoRetentionFrom ?? -1)) _autoRetentionFrom = boundary;
+      return null;
+    }
+    final result = await _pruneOnce(db, boundary);
+    // 记下这次实际保留的边界：下一次写入先比一次边界，没有前进就不再裁剪。
+    _autoRetentionFrom = result.keptFrom;
+    if (result.databaseBytes <= self.autoRetentionBytes) return result;
+    await db.execute('VACUUM');
+    return _withDatabaseBytes(result, await self.databaseBytes(db));
+  }
+
+  /// 裁剪下界：小于它的提交（`HEAD` 与命名版本指向的除外）会被删除。
+  ///
+  /// 时间优先：创建时间不早于 [retentionDays] 天前的提交全部保留；更早的提交
+  /// 在 [maxBytes] 之内按从新到旧的顺序继续保留，放不下就从最早的开始删。
+  /// 会丢数据的读取位置（`blocking = 1`）之后一律保留，因此下界最后取“时间与
+  /// 预算算出的起点”与“最小阻塞位置加一”中较小的一个。
+  Future<int> retentionBoundary(
+    RawExecutor executor, {
+    required int retentionDays,
+    int? maxBytes,
+  }) async {
+    if (retentionDays < 0) throw RangeError.range(retentionDays, 0, null);
+    final rows = await executor.rawQuery(
+      'SELECT id, created_at, byte_length FROM revision_commit ORDER BY id',
+    );
+    if (rows.isEmpty) throw RevisionCorruption('提交历史为空');
+    final ids = [for (final row in rows) row['id']! as int];
+    final cutoff = formatDateTime(
+      self.clock().subtract(Duration(days: retentionDays)),
+    );
+    // 时间窗口是提交编号的一段后缀：从最新一条往回走，第一条早于窗口起点的
+    // 提交就是要删的开始；全部早于窗口时只保留 `HEAD`。
+    var firstKept = rows.length;
+    for (var index = rows.length - 1; index >= 0; index--) {
+      final createdAt = rows[index]['created_at'];
+      if (createdAt is! String || createdAt.compareTo(cutoff) < 0) break;
+      firstKept = index;
+    }
+    if (maxBytes != null) {
+      // 预算先算上窗口内的提交与裁剪之后仍在的检查点，再从窗口外由新到旧补。
+      final windowStart = firstKept < rows.length
+          ? ids[firstKept]
+          : ids.last + 1;
+      var used = 0;
+      for (var index = firstKept; index < rows.length; index++) {
+        used += rows[index]['byte_length'] as int? ?? 0;
+      }
+      used += await _keptCheckpointBytes(executor, windowStart);
+      while (firstKept > 0) {
+        final cost = rows[firstKept - 1]['byte_length'] as int? ?? 0;
+        if (used + cost > maxBytes) break;
+        used += cost;
+        firstKept--;
+      }
+    }
+    var oldest = firstKept >= rows.length ? ids.last : ids[firstKept];
+    final blocking = await _minimumBlockingPosition(executor);
+    if (blocking != null && blocking + 1 < oldest) oldest = blocking + 1;
+    if (oldest < ids.first) oldest = ids.first;
+    return oldest;
+  }
+
+  /// 裁剪之后仍会保留的检查点字节数：下界之后的检查点与命名检查点。
+  Future<int> _keptCheckpointBytes(RawExecutor executor, int oldest) async {
+    final rows = await executor.rawQuery(
+      'SELECT COALESCE(SUM(LENGTH(payload)), 0) AS bytes '
+      'FROM revision_checkpoint WHERE commit_id >= ? OR kind = ?',
+      [oldest, 'named'],
+    );
+    return rows.isEmpty ? 0 : (rows.first['bytes'] as int? ?? 0);
+  }
+
+  Future<int> _oldestCommitId(RawExecutor executor) async {
+    final rows = await executor.rawQuery(
+      'SELECT MIN(id) AS id FROM revision_commit',
+    );
+    return rows.isEmpty ? 0 : (rows.first['id'] as int? ?? 0);
+  }
+
+  RevisionRetentionResult _withDatabaseBytes(
+    RevisionRetentionResult result,
+    int databaseBytes,
+  ) => RevisionRetentionResult(
+    removedCommits: result.removedCommits,
+    removedCheckpoints: result.removedCheckpoints,
+    removedAssets: result.removedAssets,
+    keptFrom: result.keptFrom,
+    databaseBytes: databaseBytes,
+  );
+
+  /// [oldest] 是 [retentionBoundary] 算好的下界；已经落库的提交从这里往下删。
+  Future<RevisionRetentionResult> _pruneOnce(RawDatabase db, int oldest) async {
     return db.transaction((txn) async {
       final head = await self.headId(txn);
       final idRows = await selectRows(
@@ -336,13 +462,17 @@ mixin RevisionMaintenanceMixin {
       if (ids.isEmpty) throw RevisionCorruption('提交历史为空');
       final named = await self.refs(txn);
       final namedCommits = {for (final ref in named) ref.commitId};
-      final blocking = await _minimumBlockingPosition(txn);
-      var oldest = ids.length <= keep ? ids.first : ids[ids.length - keep];
-      if (blocking != null && blocking + 1 < oldest) oldest = blocking + 1;
+      if (oldest > head) oldest = head;
       // 下界之前的本机提交要删掉了，指向它们的遮蔽行也一并删掉；下界之后的
       // 遮蔽行还对应待推送的本机提交，留着（ADR-0040）。
       await RevisionShadows(txn).deleteBefore(oldest);
-      if (ids.length <= keep || oldest <= ids.first) {
+      // 下界可能落在已经被删掉的编号上（例如读取位置停在不存在的提交），
+      // 检查点只能建在仍在库里的提交上。
+      final boundary = ids.firstWhere(
+        (id) => id >= oldest,
+        orElse: () => ids.last,
+      );
+      if (boundary <= ids.first) {
         final projection = await self.readProjection(txn);
         return RevisionRetentionResult(
           removedCommits: 0,
@@ -352,6 +482,7 @@ mixin RevisionMaintenanceMixin {
           databaseBytes: await self.databaseBytes(txn),
         );
       }
+      oldest = boundary;
 
       // 跨过下界的命名提交先固化检查点，再删除它下面的历史；已经固化过的
       // 不再重复写一份。
@@ -481,33 +612,24 @@ mixin RevisionMaintenanceMixin {
     return rows.isEmpty ? null : rows.first['position'] as int?;
   }
 
-  /// 按容量预算一次算出保留条数：提交按 `byte_length` 求和，检查点按
-  /// `length(payload)` 求和，剩余容量除以每条提交的平均字节数。
-  Future<int> _keepForBudget(
-    RawExecutor executor, {
-    required int keepCommits,
-    required int maxBytes,
-  }) async {
-    final commitRows = await executor.rawQuery(
-      'SELECT COUNT(*) AS count, COALESCE(SUM(byte_length), 0) AS bytes '
-      'FROM revision_commit',
+  /// 自动裁剪与数据版本页共用的保留天数，存在 `app_meta` 里。
+  ///
+  /// 没有设置或值损坏时用默认的 [revisionDefaultRetentionDays] 天；超出可选
+  /// 范围的值收进范围，界面与自动裁剪读到的是同一个数。
+  Future<int> retentionDays(RawExecutor executor) async {
+    final rows = await executor.rawQuery(
+      'SELECT value FROM app_meta WHERE key = ? LIMIT 1',
+      [revisionRetentionDaysKey],
     );
-    final checkpointRows = await executor.rawQuery(
-      'SELECT COALESCE(SUM(length(payload)), 0) AS bytes '
-      'FROM revision_checkpoint',
-    );
-    int value(List<Map<String, Object?>> rows, String key) =>
-        rows.isEmpty ? 0 : (rows.first[key] as int? ?? 0);
-    final count = value(commitRows, 'count');
-    final commitBytes = value(commitRows, 'bytes');
-    final checkpointBytes = value(checkpointRows, 'bytes');
-    final available = maxBytes - checkpointBytes;
-    if (available <= 0) return 1;
-    if (count <= 1 || commitBytes <= 0) return keepCommits;
-    final perCommit = commitBytes / count;
-    final allowed = (available / perCommit).floor();
-    if (allowed >= keepCommits) return keepCommits;
-    return allowed < 1 ? 1 : allowed;
+    final value = rows.isEmpty ? null : int.tryParse('${rows.first['value']}');
+    if (value == null) return revisionDefaultRetentionDays;
+    if (value < revisionRetentionDayOptions.first) {
+      return revisionRetentionDayOptions.first;
+    }
+    if (value > revisionRetentionDayOptions.last) {
+      return revisionRetentionDayOptions.last;
+    }
+    return value;
   }
 
   /// 引用表里仍有主人的附件哈希：提交行或检查点行还在，引用才算数。

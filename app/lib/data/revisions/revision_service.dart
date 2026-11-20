@@ -401,19 +401,23 @@ class RevisionService {
     });
   }
 
-  /// 默认历史预算；超过时继续减少保留提交数，命名版本与当前数据不裁剪。
-  static const int defaultHistoryBudgetBytes = 256 * 1024 * 1024;
+  /// 默认历史预算；更早的提交在这个预算之内保留，命名版本与当前数据不裁剪。
+  static const int defaultHistoryBudgetBytes = revisionHistoryBudgetBytes;
 
   /// 裁剪只删旧提交与变更明细，消息里的回执还要清；回执清理作为清理之后的
   /// 一条普通提交写入，保证检查点与重建结果跟当前数据一致。
+  ///
+  /// [retentionDays] 天以内的提交全部保留，更早的按 [maxBytes] 预算保留；
+  /// 自动裁剪与这里共用 [RevisionMaintenanceMixin.retentionBoundary] 算出的
+  /// 下界，所以手动与自动的结果一致。
   Future<RevisionRetentionResult> prune({
-    int keepCommits = 100,
+    int retentionDays = revisionDefaultRetentionDays,
     int? maxBytes = defaultHistoryBudgetBytes,
   }) {
     return db.gate.exclusive(() async {
       final result = await engine.prune(
         raw(),
-        keepCommits: keepCommits,
+        retentionDays: retentionDays,
         maxBytes: maxBytes,
       );
       await _stripDeadReceipts();

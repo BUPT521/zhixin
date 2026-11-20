@@ -14,6 +14,8 @@ import '../app_scope.dart';
 import '../application/prefetch_service.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/backup/restore_point_store.dart';
+import '../data/revisions/revision_engine.dart'
+    show revisionDefaultRetentionDays, revisionRetentionDayOptions;
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart'
     show RevisionDetails, RevisionService;
@@ -70,7 +72,11 @@ class _DataVersionPageState extends State<DataVersionPage>
   DataVersionOverview? _initial;
 
   bool _busy = false;
-  int _keep = 100;
+
+  /// 保留天数：最近这么多天的提交全部保留，更早的按字节预算裁剪；自动裁剪
+  /// 与手动裁剪共用这个设置。读到设置之前先按默认 14 天显示。
+  int _keepDays = revisionDefaultRetentionDays;
+  bool _retentionLoaded = false;
 
   /// 提交历史先渲染的条数；点“读取更早的提交”再加一页。
   static const int _historyPageSize = 30;
@@ -101,6 +107,46 @@ class _DataVersionPageState extends State<DataVersionPage>
     );
     _view ??= _initial;
     _loadConflicts();
+    if (!_retentionLoaded) {
+      _retentionLoaded = true;
+      unawaited(_loadRetentionDays());
+    }
+  }
+
+  /// 读保留天数：设置读取失败时沿用默认值，不打断页面上的其他内容。
+  Future<void> _loadRetentionDays() async {
+    try {
+      final days = await AppScope.of(context).settings.edit
+          .revisionRetentionDays();
+      if (!mounted || days == _keepDays) return;
+      setState(() => _keepDays = days);
+    } catch (_) {
+      // 读不到设置时按默认 14 天显示；下次打开页面再读一次。
+    }
+  }
+
+  /// 保存保留天数：自动裁剪与手动裁剪读同一个设置，保存失败时退回原值。
+  Future<void> _setRetentionDays(int? days) async {
+    if (days == null || days == _keepDays) return;
+    final previous = _keepDays;
+    setState(() => _keepDays = days);
+    try {
+      await AppScope.of(context).settings.edit.saveRevisionRetentionDays(days);
+    } catch (error, stack) {
+      if (!mounted) return;
+      setState(() => _keepDays = previous);
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '保存保留天数',
+          kind: 'data_version_retention_days',
+          kept: '保留天数仍是 $previous 天',
+          next: '可以稍后再试',
+        ),
+      );
+    }
   }
 
   Stream<DataVersionOverview> _createStream() =>
@@ -888,35 +934,28 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   Future<void> _prune() async {
     if (_busy) return;
-    final usage = _view?.usage;
-    final total = usage?.commitCount ?? 0;
-    final named = usage?.namedCount ?? 0;
-    final removing = total - _keep - named - 1;
-    final removable = removing < 0 ? 0 : removing;
+    final total = _view?.usage.commitCount ?? 0;
     final confirmed = await _confirmCleanup(
       title: '按留存清理',
       clearing: false,
       confirmLabel: '清理',
       content: Text(
-        removable > 0
-            ? '会删除约 $removable 条较早的提交，只保留最近 $_keep 条，'
-                  '以及当前 HEAD 与命名版本指向的提交；这些提交对应的“撤销”不再有效，'
-                  '删除后无法恢复。当前数据与命名版本保留；'
-                  '出现失效回执时还会追加一条不可撤销的清理提交。确定清理？'
-            : '当前 $total 条提交没有超过 $_keep 条，这次不会删除提交；'
-                  '会清掉不再被引用的检查点与附件。出现失效回执时还会追加一条不可撤销的清理提交。'
-                  '确定继续？',
+        '当前共 $total 条提交。最近 $_keepDays 天内的提交全部保留；'
+        '更早的提交在字节预算之内继续保留，超出预算时从最早的开始删，'
+        '当前 HEAD 与命名版本指向的提交不会被删除。'
+        '被删提交对应的“撤销”不再有效，删除后无法恢复；'
+        '当前数据与命名版本保留；出现失效回执时还会追加一条不可撤销的清理提交。确定清理？',
       ),
     );
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
       final result = await AppScope.of(context).data.revisions
-          .prune(keepCommits: _keep);
+          .prune(retentionDays: _keepDays);
       final notice = result.removedCommits > 0 ? '；更早的回执不再提供撤销入口' : '';
       _report(
         '已清理 ${result.removedCommits} 条提交、${result.removedCheckpoints} 个检查点、'
-        '${result.removedAssets} 个附件，保留最近的提交与命名版本$notice',
+        '${result.removedAssets} 个附件，保留最近 $_keepDays 天内的提交与命名版本$notice',
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -1167,25 +1206,17 @@ class _DataVersionPageState extends State<DataVersionPage>
             children: [
               Expanded(
                 child: ZhixinSelect<int>(
-                  value: _keep,
-                  label: '保留最近提交数',
+                  key: const ValueKey('data-version-retention-days'),
+                  value: _keepDays,
+                  label: '保留天数',
                   options: {
-                    for (final count in {
-                      20,
-                      50,
-                      100,
-                      200,
-                      500,
-                      _keep,
+                    for (final days in {
+                      ...revisionRetentionDayOptions,
+                      _keepDays,
                     }.toList()..sort())
-                      count: '$count 条',
+                      days: '$days 天',
                   },
-                  onChange: _busy
-                      ? null
-                      : (value) {
-                          if (value == null) return;
-                          setState(() => _keep = value);
-                        },
+                  onChange: _busy ? null : _setRetentionDays,
                 ),
               ),
               SizedBox(width: theme.space.sm),
