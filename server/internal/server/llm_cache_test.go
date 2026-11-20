@@ -53,16 +53,17 @@ func lookupVectors(t *testing.T, h *harness, token, model string, hashes []strin
 func TestEmbeddingCacheEndToEnd(t *testing.T) {
 	provider, _ := fakeProvider(t)
 	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
-	if code := h.json("PUT", "/admin/v1/providers/up", testAdminToken, map[string]any{
-		"base_url": provider.URL + "/v1", "api_key": "sk",
-	}, nil); code != http.StatusOK {
-		t.Fatalf("put provider: %d", code)
+	if code := h.json("POST", "/admin/v1/providers", testAdminToken, map[string]any{
+		"id": "up", "base_url": provider.URL + "/v1", "api_key": "sk",
+	}, nil); code != http.StatusCreated {
+		t.Fatalf("post provider: %d", code)
 	}
-	if code := h.json("PUT", "/admin/v1/models/text-embedding-v4", testAdminToken, map[string]any{
+	if code := h.json("POST", "/admin/v1/models", testAdminToken, map[string]any{
+		"name":   "text-embedding-v4",
 		"kind":   "embedding",
 		"routes": []map[string]any{{"provider_id": "up", "upstream_model": "text-embedding-v4"}},
-	}, nil); code != http.StatusOK {
-		t.Fatalf("put embedding model: %d", code)
+	}, nil); code != http.StatusCreated {
+		t.Fatalf("post embedding model: %d", code)
 	}
 	user, userID := h.register("cache@b.cn")
 	h.markEmailVerified(userID)
@@ -122,21 +123,31 @@ func TestAdminModelChangeClearsEmbeddingCache(t *testing.T) {
 		t.Helper()
 		return h.json(method, path, testAdminToken, in, out)
 	}
-	resp := h.do("PUT", "/admin/v1/providers/bailian", testAdminToken,
-		bytes.NewReader([]byte(`{"base_url":"`+provider.URL+`/v1","api_key":"sk-bailian-1234"}`)),
+	resp := h.do("POST", "/admin/v1/providers", testAdminToken,
+		bytes.NewReader([]byte(`{"id":"bailian","base_url":"`+provider.URL+`/v1","api_key":"sk-bailian-1234"}`)),
 		map[string]string{"Content-Type": "application/json"})
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("put provider: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("post provider: %d", resp.StatusCode)
 	}
+	created := false
 	putModel := func(dimensions int) {
 		t.Helper()
-		if code := admin("PUT", "/admin/v1/models/emb-cache", map[string]any{
+		method, path, want := "PUT", "/admin/v1/models/emb-cache", http.StatusOK
+		if !created {
+			method, path, want = "POST", "/admin/v1/models", http.StatusCreated
+		}
+		body := map[string]any{
 			"kind": "embedding", "dimensions": dimensions,
 			"routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "text-embedding-v4"}},
-		}, nil); code != http.StatusOK {
-			t.Fatalf("put model dimensions=%d: %d", dimensions, code)
 		}
+		if !created {
+			body["name"] = "emb-cache"
+		}
+		if code := admin(method, path, body, nil); code != want {
+			t.Fatalf("%s %s dimensions=%d: %d", method, path, dimensions, code)
+		}
+		created = true
 	}
 	user, userID := h.register("admin-cache@b.cn")
 	h.markEmailVerified(userID)
@@ -168,6 +179,7 @@ func TestAdminModelChangeClearsEmbeddingCache(t *testing.T) {
 	if code := admin("DELETE", "/admin/v1/models/emb-cache", nil, nil); code != http.StatusNoContent {
 		t.Fatalf("delete model: %d", code)
 	}
+	created = false
 	putModel(3)
 	if got := lookupVectors(t, h, user, "emb-cache", []string{hash}); len(got.Vectors) != 0 {
 		t.Fatalf("删除模型时应清掉缓存：%+v", got.Vectors)

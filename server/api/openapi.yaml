@@ -671,14 +671,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AdminProviderList" }
         "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 新建一个模型来源
+      description: |
+        编号放在请求体里，已经存在时返回 409，不覆盖原来源；修改已有来源用
+        `PUT /admin/v1/providers/{id}`。`api_key` 可以省略，保存之后只返回末四位。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminProviderInput" }
+      responses:
+        "201":
+          description: 新建的来源
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProvider" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/providers/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" } }
     put:
       tags: [admin]
       security: [{ admin: [] }]
-      summary: 新建或修改一个模型来源
+      summary: 修改一个已有的模型来源
       description: |
+        只修改已有来源，编号不存在时返回 404；新建来源用 `POST /admin/v1/providers`。
         `api_key` 省略时保留原来的 key，传空字符串时清除。key 用 `ZHIXIN_SECRET_KEY`
         加密后入库，没有配置这个密钥时保存带 key 的来源返回 503。
       requestBody:
@@ -694,7 +717,7 @@ paths:
               schema: { $ref: "#/components/schemas/AdminProvider" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
     delete:
       tags: [admin]
@@ -752,14 +775,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AdminModelList" }
         "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 新建一个对外模型及其全部路由
+      description: |
+        名称放在请求体里，已经存在时返回 409，不覆盖原模型；修改已有模型用
+        `PUT /admin/v1/models/{name}`，路由整体替换。嵌入模型的各条路由必须产出
+        同一个向量空间（同一个模型的不同部署），服务端不核对这一点。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminModelInput" }
+      responses:
+        "201":
+          description: 新建的模型
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminModel" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /admin/v1/models/{name}:
     parameters:
       - { name: name, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" } }
     put:
       tags: [admin]
       security: [{ admin: [] }]
-      summary: 新建或修改一个对外模型及其全部路由
+      summary: 修改一个已有的对外模型及其全部路由
       description: |
+        只修改已有模型，名称不存在时返回 404；新建模型用 `POST /admin/v1/models`。
         路由整体替换。嵌入模型的各条路由必须产出同一个向量空间（同一个模型的不同
         部署），服务端不核对这一点。
       requestBody:
@@ -775,6 +821,7 @@ paths:
               schema: { $ref: "#/components/schemas/AdminModel" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
     delete:
       tags: [admin]
       security: [{ admin: [] }]
@@ -952,6 +999,10 @@ components:
       required: [base_url]
       additionalProperties: false
       properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9_-]{0,31}$"
+          description: 新建时必填；修改时省略，或与路径里的编号一致
         name: { type: string, maxLength: 64 }
         base_url: { type: string, maxLength: 512, description: OpenAI 兼容的基础地址，例如 https://api.deepseek.com/v1 }
         api_key: { type: string, maxLength: 512, description: 省略时保留原值，空字符串表示清除 }
@@ -1044,6 +1095,10 @@ components:
       required: [kind, routes]
       additionalProperties: false
       properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+          description: 新建时必填；修改时省略，或与路径里的名称一致
         kind: { $ref: "#/components/schemas/ModelKind" }
         enabled: { type: boolean, default: true }
         dimensions: { type: integer, minimum: 1, maximum: 8192, description: 只用于嵌入模型 }

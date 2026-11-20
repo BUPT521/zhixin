@@ -122,7 +122,7 @@ async function loadAll() {
 }
 
 function refresh() {
-  loadAll().catch((err) => toast(err.message));
+  return loadAll().catch((err) => toast(err.message));
 }
 
 // ---- 弹窗 ----
@@ -334,7 +334,7 @@ function editProvider(p) {
   f.note.value = p ? p.note : '';
   $('#provider-title').textContent = p ? '编辑来源 ' + p.id : '新增来源';
   $('#provider-desc').textContent = p ? '修改保存之后立即生效，用到这个来源的路由会重新读取。' : '密钥加密保存在服务端，保存之后只显示末四位。';
-  $('#provider-id-hint').textContent = p ? '编号保存后不能修改；换地址要同时重新填写 key' : '用于路由引用；小写字母、数字、- 或 _，保存后不能修改';
+  $('#provider-id-hint').textContent = p ? '编号保存后不能修改；换地址要同时重新填写 key' : '用于路由引用；小写字母、数字、- 或 _，保存后不能修改，也不能与已有编号重复';
   updateProviderKeyHint();
   clearError('provider-error');
   $('#provider-dialog').showModal();
@@ -412,11 +412,21 @@ $('#provider-form').addEventListener('submit', async (event) => {
   if (key) body.api_key = key;
   else if (f.clear_key.checked) body.api_key = '';
   const id = f.id.value.trim();
+  const editing = Boolean(editingProvider);
   await runSave($('#provider-save'), async () => {
-    await api('PUT', '/providers/' + encodeURIComponent(id), body);
+    try {
+      if (editing) await api('PUT', '/providers/' + encodeURIComponent(id), body);
+      else await api('POST', '/providers', { ...body, id });
+    } catch (err) {
+      if (err.data?.code === 'conflict') {
+        await refresh();
+        throw new Error(`编号 ${id} 已经被占用；要修改它请关闭弹窗，在列表里点“编辑”，或换一个编号。`);
+      }
+      throw err;
+    }
     state.upstreamNames.delete(id);
     $('#provider-dialog').close();
-    toast('已保存，路由立即生效');
+    toast(editing ? '已保存，路由立即生效' : `已新增来源 ${id}`);
     refresh();
   }, 'provider-error');
 });
@@ -467,8 +477,58 @@ const routeBadge = {
 };
 const kindName = { chat: '聊天', embedding: '嵌入' };
 const kindList = ['chat', 'embedding'];
-const routeRank = { ready: 0, cooling: 1 };
 const MAX_ROUTES = 16;
+const modelFilter = { query: '', kind: 'all', attention: false };
+const quickBusy = new Set();
+
+$('#model-search').addEventListener('input', (event) => {
+  modelFilter.query = event.target.value.trim().toLowerCase();
+  renderModels();
+});
+$('#model-kind').addEventListener('change', (event) => {
+  modelFilter.kind = event.target.value;
+  renderModels();
+});
+$('#model-attention').addEventListener('change', (event) => {
+  modelFilter.attention = event.target.checked;
+  renderModels();
+});
+
+function providerHealth(id) {
+  return state.providers.find((p) => p.id === id)?.health || {};
+}
+
+function routeHealthText(route) {
+  const health = providerHealth(route.provider_id);
+  const parts = [];
+  if (route.state === 'cooling' && health.cooling_until) parts.push('冷却到 ' + clock(health.cooling_until));
+  if (health.consecutive_failures) parts.push(`连续失败 ${health.consecutive_failures} 次`);
+  if (!parts.length && health.last_error && route.state !== 'ready' && route.state !== 'disabled') {
+    parts.push('最近错误：' + health.last_error);
+  }
+  return parts.join(' · ');
+}
+
+function modelNeedsAttention(m) {
+  return !m.enabled || !m.available ||
+    m.routes.some((r) => ['cooling', 'key_error', 'provider_disabled', 'provider_missing'].includes(r.state)) ||
+    m.routes.every((r) => !r.enabled);
+}
+
+function matchesModel(m) {
+  if (modelFilter.kind !== 'all' && m.kind !== modelFilter.kind) return false;
+  if (modelFilter.attention && !modelNeedsAttention(m)) return false;
+  if (!modelFilter.query) return true;
+  const text = [m.name, m.note, kindName[m.kind],
+    ...m.routes.flatMap((r) => [r.provider_id, providerLabel(r.provider_id), r.upstream_model])].join(' ').toLowerCase();
+  return text.includes(modelFilter.query);
+}
+
+function moment(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
 
 function renderModels() {
   const body = $('#models');
@@ -476,18 +536,28 @@ function renderModels() {
   const routes = state.models.flatMap((m) => m.routes);
   const available = state.models.filter((m) => m.available).length;
   const cooling = routes.filter((r) => r.state === 'cooling').length;
+  const attention = state.models.filter(modelNeedsAttention).length;
   $('#model-summary').textContent = state.models.length
-    ? `${state.models.length} 个模型 · ${available} 个可调用 · ${routes.length} 条路由` + (cooling ? ` · ${cooling} 条冷却中` : '')
+    ? `${state.models.length} 个模型 · ${available} 个可调用 · ${routes.length} 条路由` +
+      (cooling ? ` · ${cooling} 条冷却中` : '') + (attention ? ` · ${attention} 个需要注意` : '')
+    : '';
+  const shown = state.models.filter(matchesModel);
+  $('#model-filter-count').textContent = state.models.length && shown.length !== state.models.length
+    ? `显示 ${shown.length} / ${state.models.length} 个模型`
     : '';
   if (!state.models.length) {
     body.append(el('tr', {}, el('td', { colspan: 4, class: 'empty' }, '还没有对外模型。先新增来源，再新增模型并配置路由。')));
     return;
   }
-  for (const m of state.models) {
-    const sorted = [...m.routes].sort((a, b) => (routeRank[a.state] ?? 2) - (routeRank[b.state] ?? 2) || a.priority - b.priority || a.provider_id.localeCompare(b.provider_id));
+  if (!shown.length) {
+    body.append(el('tr', {}, el('td', { colspan: 4, class: 'empty' }, '没有符合筛选条件的模型。')));
+    return;
+  }
+  for (const m of shown) {
     const usable = m.routes.filter((r) => r.state === 'ready' || r.state === 'cooling').length;
     const tone = !m.enabled ? 'off' : m.available ? 'ok' : 'warn';
     const label = !m.enabled ? '已停用' : m.available ? '可调用' : '无可用路由';
+    const updated = moment(m.updated_at);
     body.append(el('tr', {},
       el('td', { class: 'model-cell' },
         el('div', { class: 'model-title' },
@@ -496,25 +566,9 @@ function renderModels() {
           m.dimensions ? el('span', { class: 'tag muted' }, m.dimensions + ' 维') : null,
         ),
         m.note ? el('div', { class: 'sub' }, m.note) : null,
+        updated ? el('div', { class: 'sub' }, '更新于 ' + updated) : null,
       ),
-      el('td', { class: 'routes-cell' },
-        sorted.length
-          ? sorted.map((r) => el('div', { class: 'route' + (r.state === 'ready' || r.state === 'cooling' ? '' : ' is-off') },
-            el('div', { class: 'route-main' },
-              el('span', { class: 'mono route-name', title: r.provider_id }, providerLabel(r.provider_id) + ' → ' + r.upstream_model),
-              el('span', { class: 'badge ' + (routeBadge[r.state] || 'off') }, routeState[r.state] || r.state),
-              el('span', { class: 'route-meta' }, `优先级 ${r.priority} · 权重 ${r.weight}` + (m.kind === 'embedding' && r.max_batch ? ` · 每批 ${r.max_batch}` : '')),
-            ),
-            el('span', { class: 'route-ops' },
-              el('button', { type: 'button', class: 'link', disabled: !(r.state === 'ready' || r.state === 'cooling'),
-                'aria-label': `探测 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
-                onclick: () => testModel(m, r) }, '探测'),
-              el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由用量`,
-                onclick: () => openRouteUsage(m, r) }, '用量'),
-            ),
-          ))
-          : el('span', { class: 'sub' }, '没有路由'),
-      ),
+      el('td', { class: 'routes-cell' }, renderRouteList(m)),
       el('td', { 'data-label': '状态' },
         el('span', { class: 'badge ' + tone }, label),
         el('div', { class: 'sub' }, usable === m.routes.length ? `${m.routes.length} 条路由` : `${usable}/${m.routes.length} 条路由可用`),
@@ -522,10 +576,112 @@ function renderModels() {
       el('td', { class: 'ops' },
         el('button', { type: 'button', class: 'link', disabled: !m.available, 'aria-label': `测试模型 ${m.name}`, onclick: () => testModel(m) }, '测试模型'),
         el('button', { type: 'button', class: 'link', 'aria-label': `编辑模型 ${m.name}`, onclick: () => editModel(m) }, '编辑'),
+        el('button', { type: 'button', class: 'link', 'aria-label': `按 ${m.name} 的路由复制一个新模型`, onclick: () => editModel(m, { copy: true }) }, '复制'),
+        el('button', { type: 'button', class: 'link', 'aria-label': `${m.enabled ? '停用' : '启用'}模型 ${m.name}`, onclick: () => toggleModel(m) }, m.enabled ? '停用' : '启用'),
         el('button', { type: 'button', class: 'danger', 'aria-label': `删除模型 ${m.name}`, onclick: () => deleteModel(m) }, '删除'),
       ),
     ));
   }
+}
+
+// renderRouteList 按优先级分组显示路由：优先级数字小的先试，同组按权重分流。
+// 实际候选顺序在组内是随机的，冷却中的来源会整体排到最后，不在列表里排序。
+function renderRouteList(m) {
+  if (!m.routes.length) return el('span', { class: 'sub' }, '没有路由');
+  const groups = new Map();
+  for (const route of m.routes) {
+    if (!groups.has(route.priority)) groups.set(route.priority, []);
+    groups.get(route.priority).push(route);
+  }
+  const out = [];
+  for (const priority of [...groups.keys()].sort((a, b) => a - b)) {
+    const group = groups.get(priority).sort((a, b) =>
+      a.provider_id.localeCompare(b.provider_id) || a.upstream_model.localeCompare(b.upstream_model));
+    const total = group.filter((r) => r.enabled).reduce((sum, r) => sum + r.weight, 0);
+    out.push(el('div', { class: 'route-group' }, group.length > 1
+      ? `优先级 ${priority} · 同组按权重分流`
+      : `优先级 ${priority}`));
+    for (const r of group) out.push(routeRow(m, r, group.length > 1 ? total : 0));
+  }
+  return out;
+}
+
+function routeRow(m, r, groupWeight) {
+  const share = groupWeight && r.enabled && r.weight > 0 ? ` · 同组 ${percent.format(r.weight / groupWeight)}` : '';
+  const meta = [`权重 ${r.weight}${share}`];
+  if (m.kind === 'embedding' && r.max_batch) meta.push(`每批 ${r.max_batch} 条`);
+  const health = routeHealthText(r);
+  return el('div', { class: 'route' + (r.state === 'ready' || r.state === 'cooling' ? '' : ' is-off') },
+    el('div', { class: 'route-main' },
+      el('span', { class: 'mono route-name', title: r.provider_id }, providerLabel(r.provider_id) + ' → ' + r.upstream_model),
+      el('span', { class: 'badge ' + (routeBadge[r.state] || 'off') }, routeState[r.state] || r.state),
+      el('span', { class: 'route-meta' }, meta.join(' · ')),
+      health ? el('span', { class: 'route-health', title: providerHealth(r.provider_id).last_error || '' }, health) : null,
+    ),
+    el('span', { class: 'route-ops' },
+      el('button', { type: 'button', class: 'link', disabled: !(r.state === 'ready' || r.state === 'cooling'),
+        'aria-label': `探测 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
+        onclick: () => testModel(m, r) }, '探测'),
+      el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由用量`,
+        onclick: () => openRouteUsage(m, r) }, '用量'),
+      el('button', { type: 'button', class: 'link', 'aria-label': `${r.enabled ? '停用' : '启用'} ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
+        onclick: () => toggleRoute(m, r) }, r.enabled ? '停用' : '启用'),
+    ),
+  );
+}
+
+// routeInput 把列表里的路由还原成管理接口的输入；聊天路由不带 max_batch，
+// 避免把一个只对嵌入有意义的字段写进聊天模型。
+function routeInput(m, r) {
+  const out = {
+    provider_id: r.provider_id, upstream_model: r.upstream_model,
+    priority: r.priority, weight: r.weight, enabled: r.enabled,
+  };
+  if (m.kind === 'embedding') out.max_batch = r.max_batch;
+  return out;
+}
+
+function modelInput(m, changes = {}) {
+  const body = {
+    kind: m.kind, enabled: m.enabled, note: m.note || '',
+    routes: m.routes.map((r) => routeInput(m, r)),
+  };
+  if (m.kind === 'embedding' && m.dimensions) body.dimensions = m.dimensions;
+  return Object.assign(body, changes);
+}
+
+// quickUpdate 用模型名作锁：整体保存的请求互相覆盖，同一个模型的两处快捷操作
+// 不能并发，否则后到的请求会把前一次改动带回旧值。
+async function quickUpdate(m, body, message) {
+  if (quickBusy.has(m.name)) return;
+  quickBusy.add(m.name);
+  try {
+    const saved = await api('PUT', '/models/' + encodeURIComponent(m.name), body);
+    const index = state.models.findIndex((item) => item.name === m.name);
+    if (index >= 0) state.models[index] = saved;
+    renderModels();
+    toast(message);
+  } catch (err) {
+    toast(err.message);
+    refresh();
+  } finally {
+    quickBusy.delete(m.name);
+  }
+}
+
+function toggleModel(m) {
+  const enabled = !m.enabled;
+  quickUpdate(m, modelInput(m, { enabled }),
+    enabled ? `已启用模型 ${m.name}` : `已停用模型 ${m.name}`);
+}
+
+function toggleRoute(m, r) {
+  const routes = m.routes.map((route) => routeInput(m, route));
+  const target = routes.find((route) => route.provider_id === r.provider_id && route.upstream_model === r.upstream_model);
+  if (!target) return;
+  target.enabled = !r.enabled;
+  quickUpdate(m, modelInput(m, { routes }),
+    target.enabled ? `已启用 ${m.name} 的这条路由` : `已停用 ${m.name} 的这条路由`);
 }
 
 $('#add-model').addEventListener('click', () => editModel(null));
@@ -639,33 +795,60 @@ function updateRouteControls() {
   $('#model-route-count').textContent = rows.length ? `${rows.length} 条路由` : '';
 }
 
-function editModel(m) {
+let editingModel = null;
+
+function editModel(m, { copy = false } = {}) {
   if (!state.providers.length) { toast('先新增至少一个来源'); return; }
+  editingModel = m && !copy ? m : null;
   const form = $('#model-form');
   const f = form.elements;
   form.reset();
-  f.name.value = m ? m.name : '';
-  f.name.readOnly = Boolean(m);
+  f.name.value = m && !copy ? m.name : '';
+  f.name.readOnly = Boolean(editingModel);
   f.kind.value = m ? m.kind : 'chat';
   f.dimensions.value = m && m.dimensions ? String(m.dimensions) : '';
   f.enabled.checked = m ? m.enabled : true;
   f.note.value = m ? m.note : '';
-  $('#model-title').textContent = m ? '编辑模型 ' + m.name : '新增模型';
-  $('#model-desc').textContent = m ? '路由整体保存；改用途或向量维度会清理这个模型的嵌入缓存。' : '对外模型是客户端请求时使用的名字，路由决定请求发到哪个来源。';
+  $('#model-title').textContent = copy ? '复制模型' : m ? '编辑模型 ' + m.name : '新增模型';
+  $('#model-desc').textContent = copy
+    ? `复制自 ${m.name}，路由已按原模型填好；给新模型起一个名称再保存。`
+    : m ? '路由整体保存；改用途或向量维度会清理这个模型的嵌入缓存。'
+        : '对外模型是客户端请求时使用的名字，路由决定请求发到哪个来源。';
   $('#route-rows').replaceChildren();
   for (const route of m ? m.routes : [{}]) addRouteRow(route);
   syncKind();
   updateRouteControls();
+  checkModelName();
   clearError('model-error');
   $('#model-dialog').showModal();
   markClean(form);
-  (m ? f.kind : f.name).focus();
+  (editingModel ? f.kind : f.name).focus();
 }
+
+// checkModelName 在新增时提前说明同名会冲突，避免填完路由才发现保存被拒绝。
+function checkModelName() {
+  const hint = $('#model-name-hint');
+  hint.classList.remove('warn');
+  if (editingModel) {
+    hint.textContent = '保存后不能改名；客户端请求里的 model 就是这个名字';
+    return;
+  }
+  const name = $('#model-form').elements.name.value.trim();
+  if (name && state.models.some((m) => m.name === name)) {
+    hint.textContent = '已有同名模型，不能再用这个名称新增；要修改它请关闭弹窗，在列表里点“编辑”。';
+    hint.classList.add('warn');
+    return;
+  }
+  hint.textContent = '客户端请求里的 model，例如 deepseek-flash；可用字母、数字与 . _ : -';
+}
+
+$('#model-form').elements.name.addEventListener('input', checkModelName);
 
 $('#model-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.target;
   const f = form.elements;
+  const name = f.name.value.trim();
   const kind = f.kind.value;
   const rows = [...document.querySelectorAll('#route-rows .route-edit')];
   if (!rows.length) {
@@ -698,12 +881,32 @@ $('#model-form').addEventListener('submit', async (event) => {
     }
     seen.add(key);
   }
+  if (!editingModel && state.models.some((m) => m.name === name)) {
+    checkModelName();
+    showError('model-error', `已存在同名模型 ${name}，不能再用这个名称新增；要修改它请关闭弹窗，在列表里点“编辑”。`, f.name);
+    return;
+  }
   const body = { kind, enabled: f.enabled.checked, note: f.note.value.trim(), routes };
   if (kind === 'embedding' && f.dimensions.value) body.dimensions = Number(f.dimensions.value);
+  const editing = editingModel;
+  if (!editing) body.name = name;
   await runSave($('#model-save'), async () => {
-    await api('PUT', '/models/' + encodeURIComponent(f.name.value.trim()), body);
+    try {
+      await api(editing ? 'PUT' : 'POST', editing ? '/models/' + encodeURIComponent(name) : '/models', body);
+    } catch (err) {
+      if (err.data?.code === 'conflict') {
+        await refresh();
+        checkModelName();
+        throw new Error(`已存在同名模型 ${name}；要修改它请关闭弹窗，在列表里点“编辑”，或换一个名称。`);
+      }
+      if (err.data?.code === 'not_found') {
+        await refresh();
+        throw new Error('这个模型已经不存在，可能刚被删除；列表已刷新。');
+      }
+      throw err;
+    }
     $('#model-dialog').close();
-    toast('已保存，路由立即生效');
+    toast(editing ? '已保存，路由立即生效' : `已新增模型 ${name}`);
     refresh();
   }, 'model-error');
 });

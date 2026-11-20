@@ -99,18 +99,19 @@ func (h *harness) json(method, path, token string, in any, out any) int {
 // 可用。调用方要在 newHarness 的 env 里配置 testAdminToken。
 func (h *harness) configureModel(baseURL, name string) {
 	h.t.Helper()
-	if code := h.json("PUT", "/admin/v1/providers/up", testAdminToken, map[string]any{
-		"base_url": baseURL, "api_key": "test-key",
-	}, nil); code != http.StatusOK {
-		h.t.Fatalf("put provider: %d", code)
+	if code := h.json("POST", "/admin/v1/providers", testAdminToken, map[string]any{
+		"id": "up", "base_url": baseURL, "api_key": "test-key",
+	}, nil); code != http.StatusCreated {
+		h.t.Fatalf("post provider: %d", code)
 	}
-	if code := h.json("PUT", "/admin/v1/models/"+name, testAdminToken, map[string]any{
+	if code := h.json("POST", "/admin/v1/models", testAdminToken, map[string]any{
+		"name": name,
 		"kind": "chat",
 		"routes": []map[string]any{
 			{"provider_id": "up", "upstream_model": name},
 		},
-	}, nil); code != http.StatusOK {
-		h.t.Fatalf("put model: %d", code)
+	}, nil); code != http.StatusCreated {
+		h.t.Fatalf("post model: %d", code)
 	}
 }
 

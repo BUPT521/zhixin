@@ -141,6 +141,31 @@ func validBaseURL(raw string) (string, bool) {
 	return strings.TrimRight(u.String(), "/"), true
 }
 
+// CreateProvider 新建一个来源。编号已经存在时返回 409，不覆盖原来源：重复填写
+// 编号时地址与 key 一起被换掉，是一个不容易发现的事故，修改已有来源请用
+// PutProvider。
+func (a *Admin) CreateProvider(w http.ResponseWriter, r *http.Request) {
+	var in api.AdminProviderInput
+	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
+		return
+	}
+	id := strings.TrimSpace(deref(in.Id, ""))
+	if !ValidProviderID(id) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "id: lowercase letters, digits, - and _, at most 32")
+		return
+	}
+	if _, err := a.catalog.Provider(r.Context(), id); err == nil {
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "provider already exists; edit it instead")
+		return
+	} else if !errors.Is(err, ErrNotFound) {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	a.saveProvider(w, r, id, in, ProviderRecord{}, true)
+}
+
+// PutProvider 修改一个已有的来源，编号不存在时返回 404。新建来源请用
+// CreateProvider。
 func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
 	if !ValidProviderID(id) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "id: lowercase letters, digits, - and _, at most 32")
@@ -150,6 +175,23 @@ func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
 	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
 		return
 	}
+	if in.Id != nil && strings.TrimSpace(*in.Id) != id {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "id must match the path")
+		return
+	}
+	rec, err := a.catalog.Provider(r.Context(), id)
+	if errors.Is(err, ErrNotFound) {
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+		return
+	}
+	if err != nil {
+		httpx.WriteInternal(w, r, a.proxy.log, err)
+		return
+	}
+	a.saveProvider(w, r, id, in, rec, false)
+}
+
+func (a *Admin) saveProvider(w http.ResponseWriter, r *http.Request, id string, in api.AdminProviderInput, rec ProviderRecord, created bool) {
 	base, ok := validBaseURL(in.BaseUrl)
 	if !ok {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url: want an absolute http or https URL without query")
@@ -162,11 +204,6 @@ func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
 			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, errProviderAddress.Error())
 			return
 		}
-	}
-	rec, err := a.catalog.Provider(r.Context(), id)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		httpx.WriteInternal(w, r, a.proxy.log, err)
-		return
 	}
 	if rec.APIKeySealed != "" && in.ApiKey == nil && rec.BaseURL != base {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "base_url changed: enter api_key again")
@@ -218,7 +255,11 @@ func (a *Admin) PutProvider(w http.ResponseWriter, r *http.Request, id string) {
 		httpx.WriteInternal(w, r, a.proxy.log, errors.New("saved provider missing from the reloaded routes"))
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, a.providerView(saved))
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	httpx.WriteJSON(w, status, a.providerView(saved))
 }
 
 func (a *Admin) DeleteProvider(w http.ResponseWriter, r *http.Request, id string) {
@@ -331,6 +372,31 @@ func (a *Admin) ListModels(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// CreateModel 新建一个对外模型。名称已经存在时返回 409，不覆盖原模型的路由：
+// 在新增表单里误填一个已有名称会整体替换它的配置，修改已有模型请用 PutModel。
+func (a *Admin) CreateModel(w http.ResponseWriter, r *http.Request) {
+	var in api.AdminModelInput
+	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
+		return
+	}
+	name := strings.TrimSpace(deref(in.Name, ""))
+	if !ValidModelName(name) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name: letters, digits, . _ : -, at most 64, no slash")
+		return
+	}
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	if _, exists := snap.model(name); exists {
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "model already exists; edit it instead")
+		return
+	}
+	a.saveModel(w, r, name, nil, in, true)
+}
+
+// PutModel 修改一个已有的对外模型，名称不存在时返回 404。新建模型请用
+// CreateModel。
 func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 	if !ValidModelName(name) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name: letters, digits, . _ : -, at most 64, no slash")
@@ -340,73 +406,32 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
 		return
 	}
-	rec := ModelRecord{
-		Name: name, Kind: Kind(in.Kind), Enabled: deref(in.Enabled, true),
-		Note: strings.TrimSpace(deref(in.Note, "")), UpdatedAt: a.now().UTC(),
+	if in.Name != nil && strings.TrimSpace(*in.Name) != name {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name must match the path")
+		return
 	}
-	bad := func(detail string) {
+	snap, ok := a.fresh(w, r)
+	if !ok {
+		return
+	}
+	old, exists := snap.model(name)
+	if !exists {
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
+		return
+	}
+	a.saveModel(w, r, name, old, in, false)
+}
+
+func (a *Admin) saveModel(w http.ResponseWriter, r *http.Request, name string, old *liveModel, in api.AdminModelInput, created bool) {
+	rec, detail := modelRecord(name, in, a.now().UTC())
+	if detail != "" {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, detail)
-	}
-	switch rec.Kind {
-	case KindChat:
-		if in.Dimensions != nil {
-			bad("dimensions only applies to embedding models")
-			return
-		}
-	case KindEmbedding:
-		if in.Dimensions != nil {
-			if *in.Dimensions < 1 || *in.Dimensions > 8192 {
-				bad("dimensions: 1 to 8192")
-				return
-			}
-			rec.Dimensions = *in.Dimensions
-		}
-	default:
-		bad("kind: chat or embedding")
 		return
-	}
-	if utf8.RuneCountInString(rec.Note) > 200 {
-		bad("note is too long")
-		return
-	}
-	if len(in.Routes) == 0 || len(in.Routes) > 16 {
-		bad("routes: 1 to 16")
-		return
-	}
-	seen := map[[2]string]bool{}
-	for _, ri := range in.Routes {
-		rt := Route{
-			ProviderID:    strings.TrimSpace(ri.ProviderId),
-			UpstreamModel: strings.TrimSpace(ri.UpstreamModel),
-			Priority:      deref(ri.Priority, 0),
-			Weight:        deref(ri.Weight, 1),
-			MaxBatch:      deref(ri.MaxBatch, 0),
-			Enabled:       deref(ri.Enabled, true),
-		}
-		switch {
-		case rt.UpstreamModel == "" || utf8.RuneCountInString(rt.UpstreamModel) > 128:
-			bad("routes: upstream_model is required, at most 128 characters")
-			return
-		case rt.Priority < 0 || rt.Priority > 100:
-			bad("routes: priority 0 to 100")
-			return
-		case rt.Weight < 1 || rt.Weight > 1000:
-			bad("routes: weight 1 to 1000")
-			return
-		case rt.MaxBatch < 0 || rt.MaxBatch > 2048:
-			bad("routes: max_batch 0 to 2048")
-			return
-		case seen[[2]string{rt.ProviderID, rt.UpstreamModel}]:
-			bad("routes: duplicate provider_id and upstream_model")
-			return
-		}
-		seen[[2]string{rt.ProviderID, rt.UpstreamModel}] = true
-		rec.Routes = append(rec.Routes, rt)
 	}
 	// 改维度或改用途之后旧向量不再可用：先删这个模型的缓存，再保存。缓存删除
 	// 失败时模型还没改，重试仍然会走清理；同名模型必须是同一个向量空间，换部署
 	// 要换对外模型名，这条约束见 ADR-0029（ADR-0030 第 7 条）。
-	if old, ok := a.router().current().model(name); ok && (old.Kind != rec.Kind || old.Dimensions != rec.Dimensions) {
+	if old != nil && (old.Kind != rec.Kind || old.Dimensions != rec.Dimensions) {
 		if err := a.proxy.DeleteEmbeddingCache(r.Context(), name); err != nil {
 			httpx.WriteInternal(w, r, a.proxy.log, err)
 			return
@@ -414,7 +439,7 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 	}
 	if err := a.catalog.PutModel(r.Context(), rec); err != nil {
 		if errors.Is(err, ErrUnknownProvider) {
-			bad("routes: provider_id does not exist")
+			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "routes: provider_id does not exist")
 			return
 		}
 		httpx.WriteInternal(w, r, a.proxy.log, err)
@@ -429,7 +454,67 @@ func (a *Admin) PutModel(w http.ResponseWriter, r *http.Request, name string) {
 		httpx.WriteInternal(w, r, a.proxy.log, errors.New("saved model missing from the reloaded routes"))
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, a.modelView(snap, saved))
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	httpx.WriteJSON(w, status, a.modelView(snap, saved))
+}
+
+// modelRecord 校验请求体并组装保存用的模型记录；第二个返回值是错误说明，为空
+// 表示通过。
+func modelRecord(name string, in api.AdminModelInput, now time.Time) (ModelRecord, string) {
+	rec := ModelRecord{
+		Name: name, Kind: Kind(in.Kind), Enabled: deref(in.Enabled, true),
+		Note: strings.TrimSpace(deref(in.Note, "")), UpdatedAt: now,
+	}
+	switch rec.Kind {
+	case KindChat:
+		if in.Dimensions != nil {
+			return rec, "dimensions only applies to embedding models"
+		}
+	case KindEmbedding:
+		if in.Dimensions != nil {
+			if *in.Dimensions < 1 || *in.Dimensions > 8192 {
+				return rec, "dimensions: 1 to 8192"
+			}
+			rec.Dimensions = *in.Dimensions
+		}
+	default:
+		return rec, "kind: chat or embedding"
+	}
+	if utf8.RuneCountInString(rec.Note) > 200 {
+		return rec, "note is too long"
+	}
+	if len(in.Routes) == 0 || len(in.Routes) > 16 {
+		return rec, "routes: 1 to 16"
+	}
+	seen := map[[2]string]bool{}
+	for _, ri := range in.Routes {
+		rt := Route{
+			ProviderID:    strings.TrimSpace(ri.ProviderId),
+			UpstreamModel: strings.TrimSpace(ri.UpstreamModel),
+			Priority:      deref(ri.Priority, 0),
+			Weight:        deref(ri.Weight, 1),
+			MaxBatch:      deref(ri.MaxBatch, 0),
+			Enabled:       deref(ri.Enabled, true),
+		}
+		switch {
+		case rt.UpstreamModel == "" || utf8.RuneCountInString(rt.UpstreamModel) > 128:
+			return rec, "routes: upstream_model is required, at most 128 characters"
+		case rt.Priority < 0 || rt.Priority > 100:
+			return rec, "routes: priority 0 to 100"
+		case rt.Weight < 1 || rt.Weight > 1000:
+			return rec, "routes: weight 1 to 1000"
+		case rt.MaxBatch < 0 || rt.MaxBatch > 2048:
+			return rec, "routes: max_batch 0 to 2048"
+		case seen[[2]string{rt.ProviderID, rt.UpstreamModel}]:
+			return rec, "routes: duplicate provider_id and upstream_model"
+		}
+		seen[[2]string{rt.ProviderID, rt.UpstreamModel}] = true
+		rec.Routes = append(rec.Routes, rt)
+	}
+	return rec, ""
 }
 
 func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string) {

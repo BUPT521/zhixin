@@ -47,13 +47,21 @@
     <div class="panel-head">
       <div class="panel-intro">
         <h1 class="panel-title">对外模型与路由</h1>
-        <p class="hint">请求按优先级从小到大尝试，同一优先级按权重分流。测试模型会按这个次序尝试备用路由，单条探测只调用所选路由。嵌入模型的多条路由必须使用同一个向量空间。</p>
+        <p class="hint">请求按优先级从小到大尝试，同一优先级按权重分流，正在冷却的来源会留到最后再试。测试模型会按这个次序尝试备用路由，单条探测只调用所选路由。嵌入模型的多条路由必须使用同一个向量空间。</p>
         <p id="model-summary" class="summary" aria-live="polite"></p>
       </div>
       <div class="panel-actions">
         <button id="refresh-models" type="button" class="ghost">刷新状态</button>
         <button id="add-model" type="button">新增模型</button>
       </div>
+    </div>
+    <div class="model-tools">
+      <input id="model-search" type="search" placeholder="搜索模型、备注、来源或来源侧模型" aria-label="搜索模型" autocomplete="off" spellcheck="false">
+      <label class="inline-field">用途
+        <select id="model-kind"><option value="all">全部</option><option value="chat">聊天</option><option value="embedding">嵌入</option></select>
+      </label>
+      <label class="check"><input id="model-attention" type="checkbox">只看需要注意的</label>
+      <span id="model-filter-count" class="hint" aria-live="polite"></span>
     </div>
     <div class="scroll"><table class="grid models">
       <thead><tr><th scope="col">模型</th><th scope="col">路由</th><th scope="col">状态</th><th scope="col" class="ops-head">操作</th></tr></thead>
@@ -198,7 +206,7 @@
         <div class="field-row">
           <label class="field-name">对外模型名
             <input name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,63}" placeholder="例如 deepseek-flash" autocomplete="off" spellcheck="false">
-            <span class="field-hint">客户端请求里的 model，例如 deepseek-flash；可用字母、数字与 . _ : -</span>
+            <span class="field-hint" id="model-name-hint">客户端请求里的 model，例如 deepseek-flash；可用字母、数字与 . _ : -</span>
           </label>
           <label class="field-kind">种类
             <select name="kind"><option value="chat">聊天</option><option value="embedding">嵌入</option></select>

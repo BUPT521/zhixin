@@ -140,6 +140,9 @@ func (rt routes) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Reques
 func (rt routes) GetAdminV1Providers(w http.ResponseWriter, r *http.Request) {
 	rt.llmAdmin.ListProviders(w, r)
 }
+func (rt routes) PostAdminV1Providers(w http.ResponseWriter, r *http.Request) {
+	rt.llmAdmin.CreateProvider(w, r)
+}
 func (rt routes) PutAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string) {
 	rt.llmAdmin.PutProvider(w, r, id)
 }
@@ -151,6 +154,9 @@ func (rt routes) PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Reque
 }
 func (rt routes) GetAdminV1Models(w http.ResponseWriter, r *http.Request) {
 	rt.llmAdmin.ListModels(w, r)
+}
+func (rt routes) PostAdminV1Models(w http.ResponseWriter, r *http.Request) {
+	rt.llmAdmin.CreateModel(w, r)
 }
 func (rt routes) GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1UsageParams) {
 	rt.llmAdmin.Usage(w, r, params)

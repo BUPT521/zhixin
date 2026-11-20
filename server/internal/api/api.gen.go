@@ -251,11 +251,14 @@ type AdminModel struct {
 // AdminModelInput defines model for AdminModelInput.
 type AdminModelInput struct {
 	// Dimensions 只用于嵌入模型
-	Dimensions *int              `json:"dimensions,omitempty"`
-	Enabled    *bool             `json:"enabled,omitempty"`
-	Kind       ModelKind         `json:"kind"`
-	Note       *string           `json:"note,omitempty"`
-	Routes     []AdminRouteInput `json:"routes"`
+	Dimensions *int      `json:"dimensions,omitempty"`
+	Enabled    *bool     `json:"enabled,omitempty"`
+	Kind       ModelKind `json:"kind"`
+
+	// Name 新建时必填；修改时省略，或与路径里的名称一致
+	Name   *string           `json:"name,omitempty"`
+	Note   *string           `json:"note,omitempty"`
+	Routes []AdminRouteInput `json:"routes"`
 }
 
 // AdminModelList defines model for AdminModelList.
@@ -316,10 +319,13 @@ type AdminProviderInput struct {
 	ApiKey *string `json:"api_key,omitempty"`
 
 	// BaseUrl OpenAI 兼容的基础地址，例如 https://api.deepseek.com/v1
-	BaseUrl string  `json:"base_url"`
-	Enabled *bool   `json:"enabled,omitempty"`
-	Name    *string `json:"name,omitempty"`
-	Note    *string `json:"note,omitempty"`
+	BaseUrl string `json:"base_url"`
+	Enabled *bool  `json:"enabled,omitempty"`
+
+	// Id 新建时必填；修改时省略，或与路径里的编号一致
+	Id   *string `json:"id,omitempty"`
+	Name *string `json:"name,omitempty"`
+	Note *string `json:"note,omitempty"`
 }
 
 // AdminProviderList defines model for AdminProviderList.
@@ -802,8 +808,14 @@ type PostV1SyncCommitsJSONBody struct {
 	Commits []Commit `json:"commits"`
 }
 
+// PostAdminV1ModelsJSONRequestBody defines body for PostAdminV1Models for application/json ContentType.
+type PostAdminV1ModelsJSONRequestBody = AdminModelInput
+
 // PutAdminV1ModelsNameJSONRequestBody defines body for PutAdminV1ModelsName for application/json ContentType.
 type PutAdminV1ModelsNameJSONRequestBody = AdminModelInput
+
+// PostAdminV1ProvidersJSONRequestBody defines body for PostAdminV1Providers for application/json ContentType.
+type PostAdminV1ProvidersJSONRequestBody = AdminProviderInput
 
 // PutAdminV1ProvidersIdJSONRequestBody defines body for PutAdminV1ProvidersId for application/json ContentType.
 type PutAdminV1ProvidersIdJSONRequestBody = AdminProviderInput
@@ -1002,10 +1014,13 @@ type ServerInterface interface {
 	// GetAdminV1Models 列出对外模型与各自的路由
 	// (GET /admin/v1/models)
 	GetAdminV1Models(w http.ResponseWriter, r *http.Request)
+	// PostAdminV1Models 新建一个对外模型及其全部路由
+	// (POST /admin/v1/models)
+	PostAdminV1Models(w http.ResponseWriter, r *http.Request)
 	// DeleteAdminV1ModelsName 删除一个对外模型
 	// (DELETE /admin/v1/models/{name})
 	DeleteAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string)
-	// PutAdminV1ModelsName 新建或修改一个对外模型及其全部路由
+	// PutAdminV1ModelsName 修改一个已有的对外模型及其全部路由
 	// (PUT /admin/v1/models/{name})
 	PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string)
 	// PostAdminV1ModelsNameTest 按路由发一次最小请求，检查这个模型能否调用
@@ -1014,10 +1029,13 @@ type ServerInterface interface {
 	// GetAdminV1Providers 列出模型来源与健康状态
 	// (GET /admin/v1/providers)
 	GetAdminV1Providers(w http.ResponseWriter, r *http.Request)
+	// PostAdminV1Providers 新建一个模型来源
+	// (POST /admin/v1/providers)
+	PostAdminV1Providers(w http.ResponseWriter, r *http.Request)
 	// DeleteAdminV1ProvidersId 删除一个模型来源
 	// (DELETE /admin/v1/providers/{id})
 	DeleteAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string)
-	// PutAdminV1ProvidersId 新建或修改一个模型来源
+	// PutAdminV1ProvidersId 修改一个已有的模型来源
 	// (PUT /admin/v1/providers/{id})
 	PutAdminV1ProvidersId(w http.ResponseWriter, r *http.Request, id string)
 	// PostAdminV1ProvidersIdTest 用来源的 key 请求一次 /models，检查地址与 key
@@ -1150,6 +1168,20 @@ func (siw *ServerInterfaceWrapper) GetAdminV1Models(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// PostAdminV1Models operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminV1Models(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminV1Models(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteAdminV1ModelsName operation middleware
 func (siw *ServerInterfaceWrapper) DeleteAdminV1ModelsName(w http.ResponseWriter, r *http.Request) {
 
@@ -1262,6 +1294,20 @@ func (siw *ServerInterfaceWrapper) GetAdminV1Providers(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAdminV1Providers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminV1Providers operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminV1Providers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminV1Providers(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2190,11 +2236,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/telemetry/active", wrapper.PostV1TelemetryActive)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback", wrapper.PostV1Feedback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/providers", wrapper.GetAdminV1Providers)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers", wrapper.PostAdminV1Providers)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.DeleteAdminV1ProvidersId)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.PutAdminV1ProvidersId)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers/{id}/test", wrapper.PostAdminV1ProvidersIdTest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/usage", wrapper.GetAdminV1Usage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/models", wrapper.GetAdminV1Models)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/models", wrapper.PostAdminV1Models)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.DeleteAdminV1ModelsName)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.PutAdminV1ModelsName)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/models/{name}/test", wrapper.PostAdminV1ModelsNameTest)

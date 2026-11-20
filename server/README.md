@@ -166,16 +166,20 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 | 接口 | 用途 |
 |---|---|
 | `GET /admin/v1/providers` | 列出来源、key 末四位与健康状态（连续失败次数、最近错误、冷却到何时） |
-| `PUT /admin/v1/providers/{id}` | 新建或修改来源；`api_key` 省略时保留原值，空字符串表示清除 |
+| `POST /admin/v1/providers` | 新建来源，编号放在请求体里；编号已存在时返回 409，不覆盖原来源 |
+| `PUT /admin/v1/providers/{id}` | 修改已有来源；编号不存在时返回 404。`api_key` 省略时保留原值，空字符串表示清除 |
 | `DELETE /admin/v1/providers/{id}` | 删除来源；还有路由指向它时返回 409，`extra.models` 列出这些模型 |
 | `POST /admin/v1/providers/{id}/test` | 用来源自己的 key 请求一次 `/models`，返回可用的模型名，编辑路由时可以直接选 |
 | `GET /admin/v1/models` | 列出模型的可调用状态与每条路由的状态，包括来源停用、密钥解密失败和冷却 |
-| `PUT /admin/v1/models/{name}` | 新建或修改模型，路由整体替换 |
+| `POST /admin/v1/models` | 新建模型，名称放在请求体里；名称已存在时返回 409，不覆盖原模型的路由 |
+| `PUT /admin/v1/models/{name}` | 修改已有模型，路由整体替换；名称不存在时返回 404 |
 | `DELETE /admin/v1/models/{name}` | 删除模型，路由随之删除 |
 | `POST /admin/v1/models/{name}/test` | 发出最小请求并报告来源、耗时与嵌入维度，同时传入 `provider_id` 与 `upstream_model` 时只探测指定路由 |
 | `GET /admin/v1/usage?days=7` | 返回按日分用途的用量、各路由区间总量与有记录日期的用量，`days` 允许 1 至 30，默认 7 |
 
 来源的 key 用 `ZHIXIN_SECRET_KEY`（32 字节的 base64，`openssl rand -base64 32`）加密入库，附加数据是来源编号与完整地址，后台修改地址的任一部分时都必须重新填写 key。生产后台的来源必须使用公网 HTTPS，连接前解析域名并核对实际连接的地址。打开后台并使用数据库时这个密钥必须配置，否则启动失败；内存存储时缺省用一把随进程消失的随机密钥。更换密钥或从旧地址绑定规则升级后，已保存的 key 显示为 `key_error`，需要在后台重新填写。来源与模型只从这三张表读取，管理后台是唯一的配置入口：新建实例或重建库之后，要先在后台新建来源、再新建模型并配置路由，聊天与嵌入接口才有可用的路由，否则一律返回 503；换 key 也在后台修改，改 `<服务地址>/admin/` 里的来源即可，不需要重启。
+
+“对外模型与路由”页可以在模型名、备注、来源与来源侧模型名里搜索，按用途筛选，并只显示需要处理的模型：模型停用、没有可用路由，或者有冷却、密钥异常、来源停用、来源缺失的路由。每条路由可以直接停用或启用，模型也可以不打开弹窗就整体停用；这两种改动按模型整体保存，与弹窗里保存调用同一个接口。路由按优先级分组显示，同一组里的权重换算成占比，来源的连续失败次数与冷却时间显示在对应路由旁边。点“复制”把这个模型的路由填进新增表单，填一个新的名称即可得到一套相同的路由。新增来源或模型时，编号或名称已经存在会被拒绝并提示去编辑，原有配置不会被覆盖；修改接口只更新已有条目，目标不存在时返回 404。
 
 保存之后路由立即生效；服务另外每 `ZHIXIN_MODEL_RELOAD_INTERVAL` 从数据库重新读一次，直接修改数据库也会生效。令牌校验失败按来源地址限流（`ZHIXIN_ADMIN_RATE`、`ZHIXIN_ADMIN_BURST`），超限期间这个地址的管理请求全部返回 429。后台没有操作审计，令牌等同于管理员本人，生产上应在 nginx 里把 `/admin` 限制在管理员的地址，或者只经 SSH 隧道访问，做法见[运维手册](运维手册.md#3-配置)。
 
@@ -375,12 +379,12 @@ curl -X POST localhost:8080/v1/telemetry/active \
 ```bash
 ZHIXIN_ADMIN_TOKEN=$(openssl rand -base64 32) go run ./cmd/zhixin-api
 TOKEN=$ZHIXIN_ADMIN_TOKEN
-curl -H "Authorization: Bearer $TOKEN" -X PUT localhost:8080/admin/v1/providers/deepseek \
+curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/providers \
   -H 'Content-Type: application/json' \
-  -d '{"base_url":"https://api.deepseek.com/v1","api_key":"sk-..."}'
-curl -H "Authorization: Bearer $TOKEN" -X PUT localhost:8080/admin/v1/models/deepseek-flash \
+  -d '{"id":"deepseek","base_url":"https://api.deepseek.com/v1","api_key":"sk-..."}'
+curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/models \
   -H 'Content-Type: application/json' \
-  -d '{"kind":"chat","routes":[{"provider_id":"deepseek","upstream_model":"deepseek-chat"}]}'
+  -d '{"name":"deepseek-flash","kind":"chat","routes":[{"provider_id":"deepseek","upstream_model":"deepseek-chat"}]}'
 curl localhost:8080/v1/llm/models
 ```
 

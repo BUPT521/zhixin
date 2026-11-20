@@ -124,18 +124,18 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		t.Fatalf("invalid query with account token: %d", code)
 	}
 	for id, baseURL := range map[string]string{"primary": primary.URL, "backup": backup.URL} {
-		admin("PUT", "/admin/v1/providers/"+id, map[string]string{"base_url": baseURL}, nil, http.StatusOK)
+		admin("POST", "/admin/v1/providers", map[string]string{"id": id, "base_url": baseURL}, nil, http.StatusCreated)
 	}
 	const backupModel = "org/second+fast"
-	admin("PUT", "/admin/v1/models/chat-test", map[string]any{
-		"kind": "chat", "routes": []map[string]any{
+	admin("POST", "/admin/v1/models", map[string]any{
+		"name": "chat-test", "kind": "chat", "routes": []map[string]any{
 			{"provider_id": "primary", "upstream_model": "first"},
 			{"provider_id": "backup", "upstream_model": backupModel, "priority": 1},
 		},
-	}, nil, http.StatusOK)
-	admin("PUT", "/admin/v1/models/embed-test", map[string]any{
-		"kind": "embedding", "routes": []map[string]any{{"provider_id": "backup", "upstream_model": "embed", "max_batch": 1}},
-	}, nil, http.StatusOK)
+	}, nil, http.StatusCreated)
+	admin("POST", "/admin/v1/models", map[string]any{
+		"name": "embed-test", "kind": "embedding", "routes": []map[string]any{{"provider_id": "backup", "upstream_model": "embed", "max_batch": 1}},
+	}, nil, http.StatusCreated)
 	for _, call := range []struct {
 		path string
 		body map[string]any
@@ -285,12 +285,12 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	}
 
 	// 新建来源：key 不出现在任何响应里。
-	resp := h.do("PUT", "/admin/v1/providers/bailian", testAdminToken,
-		strings.NewReader(`{"name":"百炼","base_url":"`+provider.URL+`/v1/","api_key":"sk-bailian-secret-1234"}`),
+	resp := h.do("POST", "/admin/v1/providers", testAdminToken,
+		strings.NewReader(`{"id":"bailian","name":"百炼","base_url":"`+provider.URL+`/v1/","api_key":"sk-bailian-secret-1234"}`),
 		map[string]string{"Content-Type": "application/json"})
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || strings.Contains(string(body), "secret") {
+	if resp.StatusCode != http.StatusCreated || strings.Contains(string(body), "secret") {
 		t.Fatalf("保存来源：%d %s", resp.StatusCode, body)
 	}
 	var saved map[string]any
@@ -299,14 +299,28 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 		t.Fatalf("地址应去掉末尾斜杠、只给末四位：%+v", saved)
 	}
 	for _, bad := range []map[string]any{
-		{"base_url": "ftp://x"}, {"base_url": "https://x.cn/v1?k=1"}, {"base_url": "https://x.cn", "api_key": "a b"}, {"base_url": "https://x.cn", "extra": 1},
+		{"id": "bad", "base_url": "ftp://x"}, {"id": "bad", "base_url": "https://x.cn/v1?k=1"},
+		{"id": "bad", "base_url": "https://x.cn", "api_key": "a b"}, {"id": "bad", "base_url": "https://x.cn", "extra": 1},
 	} {
-		if code := admin("PUT", "/admin/v1/providers/bad", bad, nil); code != http.StatusBadRequest {
+		if code := admin("POST", "/admin/v1/providers", bad, nil); code != http.StatusBadRequest {
 			t.Fatalf("%v 应被拒：%d", bad, code)
 		}
 	}
-	if code := admin("PUT", "/admin/v1/providers/Bad_ID", map[string]any{"base_url": "https://x.cn"}, nil); code != http.StatusBadRequest {
+	if code := admin("POST", "/admin/v1/providers", map[string]any{"id": "Bad_ID", "base_url": "https://x.cn"}, nil); code != http.StatusBadRequest {
 		t.Fatalf("大写编号应被拒：%d", code)
+	}
+	// 重复编号不能覆盖已有来源。
+	if code := h.json("POST", "/admin/v1/providers", testAdminToken,
+		map[string]any{"id": "bailian", "base_url": provider.URL + "/v1"}, nil); code != http.StatusConflict {
+		t.Fatalf("重复编号应 409：%d", code)
+	}
+	if code := admin("PUT", "/admin/v1/providers/absent", map[string]any{"base_url": "https://x.cn"}, nil); code != http.StatusNotFound {
+		t.Fatalf("修改不存在的来源应 404：%d", code)
+	}
+	if code := admin("POST", "/admin/v1/models", map[string]any{
+		"kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}},
+	}, nil); code != http.StatusBadRequest {
+		t.Fatalf("新建模型缺少名称应 400：%d", code)
 	}
 
 	// 测试来源：用来源自己的 key 请求 /models。
@@ -322,26 +336,35 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	}
 
 	// 配置一个聊天模型与一个嵌入模型。
-	if code := admin("PUT", "/admin/v1/models/zhixin-chat", map[string]any{
-		"kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "qwen-plus"}},
-	}, nil); code != http.StatusOK {
+	if code := admin("POST", "/admin/v1/models", map[string]any{
+		"name": "zhixin-chat", "kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "qwen-plus"}},
+	}, nil); code != http.StatusCreated {
 		t.Fatalf("put chat model: %d", code)
 	}
 	var model map[string]any
-	if code := admin("PUT", "/admin/v1/models/zhixin-embed", map[string]any{
-		"kind": "embedding", "dimensions": 3,
+	if code := admin("POST", "/admin/v1/models", map[string]any{
+		"name": "zhixin-embed", "kind": "embedding", "dimensions": 3,
 		"routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "text-embedding-v4", "max_batch": 10, "weight": 2}},
-	}, &model); code != http.StatusOK || model["dimensions"] != float64(3) {
+	}, &model); code != http.StatusCreated || model["dimensions"] != float64(3) {
 		t.Fatalf("put embedding model: %d %+v", code, model)
 	}
+	// 新增表单误填已有名称时不能静默覆盖。
+	if code := h.json("POST", "/admin/v1/models", testAdminToken,
+		map[string]any{"name": "zhixin-chat", "kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "other"}}}, nil); code != http.StatusConflict {
+		t.Fatalf("重复模型名应 409：%d", code)
+	}
+	// 修改不存在的模型返回 404。
+	if code := admin("PUT", "/admin/v1/models/absent", map[string]any{"kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}}, nil); code != http.StatusNotFound {
+		t.Fatalf("修改不存在的模型应 404：%d", code)
+	}
 	for _, bad := range []map[string]any{
-		{"kind": "chat", "dimensions": 3, "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}},
-		{"kind": "chat", "routes": []map[string]any{}},
-		{"kind": "chat", "routes": []map[string]any{{"provider_id": "nobody", "upstream_model": "x"}}},
-		{"kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x", "weight": 0}}},
-		{"kind": "rerank", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}},
+		{"name": "bad-model", "kind": "chat", "dimensions": 3, "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}},
+		{"name": "bad-model", "kind": "chat", "routes": []map[string]any{}},
+		{"name": "bad-model", "kind": "chat", "routes": []map[string]any{{"provider_id": "nobody", "upstream_model": "x"}}},
+		{"name": "bad-model", "kind": "chat", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x", "weight": 0}}},
+		{"name": "bad-model", "kind": "rerank", "routes": []map[string]any{{"provider_id": "bailian", "upstream_model": "x"}}},
 	} {
-		if code := admin("PUT", "/admin/v1/models/bad-model", bad, nil); code != http.StatusBadRequest {
+		if code := admin("POST", "/admin/v1/models", bad, nil); code != http.StatusBadRequest {
 			t.Fatalf("%v 应被拒：%d", bad, code)
 		}
 	}
