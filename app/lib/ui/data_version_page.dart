@@ -562,8 +562,9 @@ class _DataVersionPageState extends State<DataVersionPage>
               '（${commit.action}）。',
         ],
         impactLines: [
-          '按这个版本重建当前数据：新增 ${preview.diff.insertCount} 处、'
+          '把这个版本的内容写回当前数据：新增 ${preview.diff.insertCount} 处、'
               '修改 ${preview.diff.updateCount} 处、删除 ${preview.diff.deleteCount} 处。',
+          '恢复只改有差异的行；目标版本太早、提交明细已经被清理时，整库替换。',
           '恢复会追加一条提交，提交历史保留。',
         ],
         rollbackLine: '恢复前的版本留在提交历史里，恢复后可以在这一页回到恢复前。',

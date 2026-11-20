@@ -75,6 +75,8 @@ Future<bool> confirmRepairFromCloud(BuildContext context) {
 /// 摘要不一致时“以本机为准修复”之前的确认（改进方案 3.5）。
 ///
 /// 返回 true 表示用户同意把本机独有的记录补传到云端；取消或关闭都返回 false。
+/// 这个入口只补传、不删除云端已有的内容，确认框里要说明云端多出来的记录不会
+/// 因此消失，避免用户把它理解成两边内容会被强行改成一致（ADR-0045）。
 Future<bool> confirmRepairFromLocal(BuildContext context) {
   return confirmZhixin(
     context: context,
@@ -82,7 +84,8 @@ Future<bool> confirmRepairFromLocal(BuildContext context) {
     content: Text(
       '修复会先拉取云端的新提交并应用到本机，同一处内容与云端不同时按云端为准，'
       '然后把云端没有的本机记录作为基线补传上去。云端已有的记录不会删除，所以'
-      '云端多出来的内容不会因此消失；取消则不做修复。',
+      '云端多出来的内容不会因此消失，需要的话在仍有这些记录的设备上删除；'
+      '取消则不做修复。',
     ),
     confirmLabel: '以本机为准修复',
   );

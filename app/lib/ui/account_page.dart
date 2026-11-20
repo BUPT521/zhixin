@@ -450,13 +450,18 @@ class _AccountPageState extends State<AccountPage> {
       final result = await scope.accountServices.sync.syncNow(
         confirmBaseline: confirmBaseline,
       );
+      await _load();
+      if (!mounted) return;
+      // 重读状态之后再给结论：摘要不一致时不能声称两边已经一致，否则状态卡显示
+      // “待修复”而提示说一致（ADR-0045）。
       _report(
         result.changed
             ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
                   '上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件'
+            : (sync?.digestMismatch ?? false)
+            ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
             : '同步完成，本机与云端已经一致',
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -520,7 +525,8 @@ class _AccountPageState extends State<AccountPage> {
   ///
   /// 先拉取云端的新提交，再按 3.6 的方式补传本机独有的行；确认之后才执行。
   /// 一行都没补传时说明差异只来自云端多出来的内容，界面照实说明，标记不强行
-  /// 清掉（同步方案 3.5）。
+  /// 清掉（同步方案 3.5）。这个入口只补传、不删除云端已有的记录，所以云端多
+  /// 出来的行不会因此消失，界面与确认框都按这条边界说明（ADR-0045）。
   Future<void> _repairFromLocal() async {
     if (_busy) return;
     final confirmed = await confirmRepairFromLocal(context);
@@ -1092,7 +1098,9 @@ class _AccountPageState extends State<AccountPage> {
                 Text(
                   '上次同步比较整库摘要时发现两边内容不同。可以选一边为准修复：'
                   '以云端为准会按云端重新对齐这台设备，以本机为准会把云端缺少的'
-                  '本机记录补传上去。修复只改记录，不影响登录状态与其他设备的账号。',
+                  '本机记录补传上去；云端多出来的记录不会被删掉，需要的话在仍有'
+                  '这些记录的设备上删除。修复只改记录，不影响登录状态与其他设备的'
+                  '账号。',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),

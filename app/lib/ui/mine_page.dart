@@ -243,7 +243,7 @@ class _MinePageState extends State<MinePage> {
         _failed = false;
         _notice = result.changed
             ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交'
-            : '同步完成，本机与云端已经一致';
+            : '同步完成，没有需要推送的改动';
       });
     } catch (error, stack) {
       if (!mounted) return;
@@ -524,6 +524,11 @@ class _AccountCard extends StatelessWidget {
     if (sync == null) return const StatusTag('状态未知', tone: TagTone.muted);
     if (sync.lastError != null) {
       return const StatusTag('同步失败', tone: TagTone.attention);
+    }
+    if (sync.digestMismatch) {
+      // 两台设备的摘要对不上：账号页给两个修复入口，这里只提示需要处理，
+      // 不在“我的”页放修复按钮，避免同一件事有两个入口（ADR-0045）。
+      return const StatusTag('待修复', tone: TagTone.attention);
     }
     if (sync.needsBootstrap) {
       return const StatusTag('待首次同步', tone: TagTone.neutral);
