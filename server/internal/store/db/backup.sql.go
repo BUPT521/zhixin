@@ -158,6 +158,37 @@ func (q *Queries) LLMQuotaOverride(ctx context.Context, userID string) (LLMQuota
 	return i, err
 }
 
+const listAllBackups = `-- name: ListAllBackups :many
+SELECT user_id, id FROM backup
+`
+
+type ListAllBackupsRow struct {
+	UserID string
+	ID     string
+}
+
+// 全部备份的 (账号, id)，供对象存储对账：备份对象在库里找不到对应的行时是遗留
+// 字节，见 ADR-0037。
+func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, error) {
+	rows, err := q.db.Query(ctx, listAllBackups)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllBackupsRow{}
+	for rows.Next() {
+		var i ListAllBackupsRow
+		if err := rows.Scan(&i.UserID, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBackups = `-- name: ListBackups :many
 SELECT id, sha256, size, schema_version, device_name, created_at
 FROM backup

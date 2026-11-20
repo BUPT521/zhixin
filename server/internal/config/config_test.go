@@ -144,6 +144,15 @@ func TestLoadDefaultsForHardening(t *testing.T) {
 	if cfg.FeedbackGlobalRatePerSecond <= 0 || cfg.TelemetryGlobalRatePerSecond <= 0 {
 		t.Fatal("反馈与匿名上报的全局写入上限默认应开启")
 	}
+	if cfg.RegisterGlobalRatePerSecond <= 0 || cfg.RegisterGlobalBurst != 10 {
+		t.Fatalf("注册的全局上限默认应开启：%v/%d", cfg.RegisterGlobalRatePerSecond, cfg.RegisterGlobalBurst)
+	}
+	if cfg.UnverifiedKeepDays != 7 {
+		t.Fatalf("未验证账号默认保留 7 天，得到 %d", cfg.UnverifiedKeepDays)
+	}
+	if cfg.BackupReconcileInterval != 24*time.Hour {
+		t.Fatalf("对象存储对账默认每天一次，得到 %v", cfg.BackupReconcileInterval)
+	}
 }
 
 func TestLoadTrustedProxies(t *testing.T) {

@@ -48,6 +48,11 @@ DELETE FROM backup
 WHERE backup.user_id = sqlc.arg(user_id) AND backup.id IN (SELECT id FROM stale)
 RETURNING id;
 
+-- 全部备份的 (账号, id)，供对象存储对账：备份对象在库里找不到对应的行时是遗留
+-- 字节，见 ADR-0037。
+-- name: ListAllBackups :many
+SELECT user_id, id FROM backup;
+
 -- name: UsedTokens :one
 SELECT tokens
 FROM llm_usage

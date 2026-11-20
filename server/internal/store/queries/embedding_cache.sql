@@ -54,3 +54,18 @@ DELETE FROM embedding_cache WHERE model = sqlc.arg(model);
 
 -- name: DeleteEmbeddingCacheForUser :exec
 DELETE FROM embedding_cache WHERE user_id = sqlc.arg(user_id);
+
+-- name: EmbeddingCacheGeneration :one
+-- 账号当前的缓存代次；还没有行时是 0。写入缓存前与清除时都用这一句，写入方在
+-- 自己的事务里读，清除方加一，两边对不上就说明中间清过一次（ADR-0037）。
+SELECT COALESCE(
+  (SELECT generation FROM embedding_cache_generation WHERE user_id = sqlc.arg(user_id)),
+  0
+)::bigint;
+
+-- name: BumpEmbeddingCacheGeneration :exec
+-- 清除云端数据时把代次加一，之后旧请求写缓存会被写入方的事务拒掉。
+INSERT INTO embedding_cache_generation (user_id, generation)
+VALUES (sqlc.arg(user_id), 1)
+ON CONFLICT (user_id)
+DO UPDATE SET generation = embedding_cache_generation.generation + 1;

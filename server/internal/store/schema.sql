@@ -244,3 +244,10 @@ CREATE INDEX embedding_cache_by_user_used ON embedding_cache(user_id, last_used_
 -- 管理后台删除模型或改变维度时按模型删除。
 CREATE INDEX embedding_cache_by_model ON embedding_cache(model);
 
+-- 嵌入向量缓存的清除代次：清空云端数据时加一，之前发出的嵌入请求即使之后才写
+-- 缓存，也因为代次对不上而被丢弃（ADR-0037）。账号删除时随外键级联。
+CREATE TABLE embedding_cache_generation (
+  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  generation  BIGINT NOT NULL DEFAULT 0
+);
+

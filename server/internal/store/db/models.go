@@ -52,6 +52,11 @@ type EmbeddingCache struct {
 	LastUsedAt pgtype.Timestamptz
 }
 
+type EmbeddingCacheGeneration struct {
+	UserID     string
+	Generation int64
+}
+
 type Feedback struct {
 	ID          string
 	Content     string
