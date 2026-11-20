@@ -386,7 +386,7 @@ mixin RevisionMaintenanceMixin {
         );
       }
       final verified = await self.projectionAt(txn, oldest);
-      if (!self._sameProjection(projection, verified)) {
+      if (!projectionsEqual(projection, verified)) {
         throw RevisionCorruption('裁剪前的新基线校验失败，已取消本次清理');
       }
 
@@ -525,19 +525,6 @@ mixin RevisionMaintenanceMixin {
       "(owner_kind = 'checkpoint' AND owner_id NOT IN "
       '(SELECT id FROM revision_checkpoint))',
     );
-  }
-
-  bool _sameProjection(Projection left, Projection right) {
-    for (final table in versionedTableNames) {
-      final a = left[table] ?? const <String, TypedRow>{};
-      final b = right[table] ?? const <String, TypedRow>{};
-      if (a.length != b.length) return false;
-      for (final entry in a.entries) {
-        final row = b[entry.key];
-        if (row == null || !typedRowsEqual(row, entry.value)) return false;
-      }
-    }
-    return true;
   }
 
   /// 附件回收：当前投影的附件哈希加上引用表里仍有主人的哈希，其余对象删除。
