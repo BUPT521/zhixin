@@ -171,6 +171,7 @@ type SyncCommit struct {
 	CreatedAt     string
 	ReceivedAt    pgtype.Timestamptz
 	Changes       []byte
+	StateDigest   pgtype.Text
 }
 
 type SyncCommitSeen struct {

@@ -59,15 +59,18 @@ WHERE user_id = sqlc.arg(user_id);
 DELETE FROM sync_snapshot
 WHERE user_id = sqlc.arg(user_id);
 
+-- state_digest 是可选的整库摘要：客户端只在推送完成且本机没有待推送提交时带上，
+-- 服务端原样保存、不解析，拉取时原样带回（改进方案 3.5）。
 -- name: InsertSyncCommit :exec
 INSERT INTO sync_commit (
   user_id, seq, request_id, device_id, schema_version,
-  actor, action, created_at, changes
+  actor, action, created_at, changes, state_digest
 )
 VALUES (
   sqlc.arg(user_id), sqlc.arg(seq), sqlc.arg(request_id),
   sqlc.arg(device_id), sqlc.arg(schema_version), sqlc.arg(actor),
-  sqlc.arg(action), sqlc.arg(created_at), sqlc.arg(changes)
+  sqlc.arg(action), sqlc.arg(created_at), sqlc.arg(changes),
+  sqlc.narg(state_digest)
 );
 
 -- name: SetSyncHead :exec
@@ -97,7 +100,7 @@ WITH page AS MATERIALIZED (
   SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
 )
 SELECT c.seq, c.request_id, c.device_id, c.schema_version, c.actor, c.action,
-  c.created_at, c.received_at, c.changes
+  c.created_at, c.received_at, c.changes, c.state_digest
 FROM sync_commit c
 WHERE c.user_id = sqlc.arg(user_id) AND c.seq IN (
   SELECT budget.page_seq FROM budget

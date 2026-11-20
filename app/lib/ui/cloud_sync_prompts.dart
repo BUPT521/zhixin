@@ -54,3 +54,36 @@ Future<bool> confirmRestoreAlignment(BuildContext context) {
     confirmLabel: '同步并覆盖云端',
   );
 }
+
+/// 摘要不一致时“以云端为准修复”之前的确认（改进方案 3.5）。
+///
+/// 返回 true 表示用户同意按云端重新对齐；取消或关闭都返回 false，调用方据此
+/// 不做修复，本机与云端的状态保持原样。
+Future<bool> confirmRepairFromCloud(BuildContext context) {
+  return confirmZhixin(
+    context: context,
+    title: '以云端为准修复会重做这台设备的同步',
+    content: Text(
+      '修复会清掉这台设备的同步位置，重新从云端拉取全部提交，再按首次同步的方式'
+      '把本机独有的记录补传上去。本机被直接改过、没有提交记录表达的部分会被云端'
+      '内容覆盖；云端已有的记录不会删除。取消则不做修复，两边内容保持原样。',
+    ),
+    confirmLabel: '以云端为准修复',
+  );
+}
+
+/// 摘要不一致时“以本机为准修复”之前的确认（改进方案 3.5）。
+///
+/// 返回 true 表示用户同意把本机独有的记录补传到云端；取消或关闭都返回 false。
+Future<bool> confirmRepairFromLocal(BuildContext context) {
+  return confirmZhixin(
+    context: context,
+    title: '以本机为准修复会补传云端缺少的记录',
+    content: Text(
+      '修复会先拉取云端的新提交并应用到本机，同一处内容与云端不同时按云端为准，'
+      '然后把云端没有的本机记录作为基线补传上去。云端已有的记录不会删除，所以'
+      '云端多出来的内容不会因此消失；取消则不做修复。',
+    ),
+    confirmLabel: '以本机为准修复',
+  );
+}

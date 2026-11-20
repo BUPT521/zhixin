@@ -123,6 +123,12 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 		}
 	}
 	for i, c := range fresh {
+		// 整库摘要可选：客户端只在推送完成、本机没有待推送提交时带上，服务端
+		// 原样保存、不解析（改进方案 3.5）。
+		stateDigest := pgtype.Text{}
+		if c.StateDigest != nil {
+			stateDigest = pgtype.Text{String: *c.StateDigest, Valid: true}
+		}
 		if err := q.InsertSyncCommit(ctx, db.InsertSyncCommitParams{
 			UserID:        userID,
 			Seq:           head + int64(i) + 1,
@@ -133,6 +139,7 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 			Action:        c.Action,
 			CreatedAt:     c.CreatedAt,
 			Changes:       incoming[i],
+			StateDigest:   stateDigest,
 		}); err != nil {
 			return 0, err
 		}
@@ -332,6 +339,12 @@ func (s *Store) After(ctx context.Context, userID string, after int64, limit int
 		}
 		seq := row.Seq
 		received := row.ReceivedAt.Time
+		// 可选摘要原样带回；没有的提交保持为空，客户端据此跳过比较。
+		var digest *string
+		if row.StateDigest.Valid {
+			value := row.StateDigest.String
+			digest = &value
+		}
 		out = append(out, syncsvc.Commit{
 			Seq:           &seq,
 			RequestId:     row.RequestID,
@@ -342,6 +355,7 @@ func (s *Store) After(ctx context.Context, userID string, after int64, limit int
 			CreatedAt:     row.CreatedAt,
 			ReceivedAt:    &received,
 			Changes:       changes,
+			StateDigest:   digest,
 		})
 	}
 	return out, nil

@@ -23,7 +23,7 @@ WITH page AS MATERIALIZED (
   SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
 )
 SELECT c.seq, c.request_id, c.device_id, c.schema_version, c.actor, c.action,
-  c.created_at, c.received_at, c.changes
+  c.created_at, c.received_at, c.changes, c.state_digest
 FROM sync_commit c
 WHERE c.user_id = $1 AND c.seq IN (
   SELECT budget.page_seq FROM budget
@@ -49,6 +49,7 @@ type CommitsAfterRow struct {
 	CreatedAt     string
 	ReceivedAt    pgtype.Timestamptz
 	Changes       []byte
+	StateDigest   pgtype.Text
 }
 
 func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]CommitsAfterRow, error) {
@@ -75,6 +76,7 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 			&i.CreatedAt,
 			&i.ReceivedAt,
 			&i.Changes,
+			&i.StateDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -196,12 +198,13 @@ func (q *Queries) ExistingRequestIDs(ctx context.Context, arg ExistingRequestIDs
 const insertSyncCommit = `-- name: InsertSyncCommit :exec
 INSERT INTO sync_commit (
   user_id, seq, request_id, device_id, schema_version,
-  actor, action, created_at, changes
+  actor, action, created_at, changes, state_digest
 )
 VALUES (
   $1, $2, $3,
   $4, $5, $6,
-  $7, $8, $9
+  $7, $8, $9,
+  $10
 )
 `
 
@@ -215,8 +218,11 @@ type InsertSyncCommitParams struct {
 	Action        string
 	CreatedAt     string
 	Changes       []byte
+	StateDigest   pgtype.Text
 }
 
+// state_digest 是可选的整库摘要：客户端只在推送完成且本机没有待推送提交时带上，
+// 服务端原样保存、不解析，拉取时原样带回（改进方案 3.5）。
 func (q *Queries) InsertSyncCommit(ctx context.Context, arg InsertSyncCommitParams) error {
 	_, err := q.db.Exec(ctx, insertSyncCommit,
 		arg.UserID,
@@ -228,6 +234,7 @@ func (q *Queries) InsertSyncCommit(ctx context.Context, arg InsertSyncCommitPara
 		arg.Action,
 		arg.CreatedAt,
 		arg.Changes,
+		arg.StateDigest,
 	)
 	return err
 }

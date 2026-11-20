@@ -18,12 +18,14 @@ class SyncState {
     required this.userId,
     required this.serverOrigin,
     this.syncedAt,
+    this.digestMismatch = false,
   });
 
   factory SyncState.fromJson(Map<String, Object?> json) => SyncState(
     userId: json['user_id'] as String? ?? '',
     serverOrigin: json['server_origin'] as String? ?? '',
     syncedAt: DateTime.tryParse(json['synced_at'] as String? ?? ''),
+    digestMismatch: json['digest_mismatch'] == true,
   );
 
   final String userId;
@@ -32,16 +34,25 @@ class SyncState {
   final String serverOrigin;
   final DateTime? syncedAt;
 
-  SyncState copyWith({DateTime? syncedAt}) => SyncState(
+  /// 上次同步比较摘要时发现本机与云端不一致（同步方案 3.5）。
+  ///
+  /// 只有两件事会改它：拉取到带摘要的最后一条提交、且本机没有待推送提交时
+  /// 重新比较；两个修复入口成功之后清掉。它只说明“两边内容不同”，不是一个
+  /// 错误状态，所以同步照常继续，账号页据此显示修复入口。
+  final bool digestMismatch;
+
+  SyncState copyWith({DateTime? syncedAt, bool? digestMismatch}) => SyncState(
     userId: userId,
     serverOrigin: serverOrigin,
     syncedAt: syncedAt ?? this.syncedAt,
+    digestMismatch: digestMismatch ?? this.digestMismatch,
   );
 
   Map<String, Object?> toJson() => {
     'user_id': userId,
     'server_origin': serverOrigin,
     'synced_at': syncedAt?.toUtc().toIso8601String(),
+    'digest_mismatch': digestMismatch,
   };
 }
 

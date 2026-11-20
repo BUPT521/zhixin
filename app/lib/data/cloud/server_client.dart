@@ -48,6 +48,7 @@ class ServerProblem implements Exception {
     'payload_too_large' =>
       extra['resource'] == 'sync' ? '单条同步提交超过服务端允许的大小' : '文件超过服务端允许的大小',
     'contact_unverified' => '请先在账号页验证一种登录方式',
+    'history_compacted' => '云端历史已经压缩，暂时不能按云端修复这台设备',
     'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
@@ -228,6 +229,10 @@ class ServerChange {
 }
 
 /// 服务端保存的一条提交；`seq` 由服务端分配，推送时忽略客户端给的值。
+///
+/// [stateDigest] 是可选的整库摘要：只有推送完成、本机没有待推送提交时，最后
+/// 一条提交才带它，服务端原样保存、不解析，拉取时原样带回。其他设备据此比较
+/// 本机摘要（同步方案 3.5）。
 class ServerCommit {
   const ServerCommit({
     required this.requestId,
@@ -239,6 +244,7 @@ class ServerCommit {
     this.seq,
     this.createdAt,
     this.receivedAt,
+    this.stateDigest,
   });
 
   factory ServerCommit.fromJson(Map<String, Object?> json) => ServerCommit(
@@ -250,6 +256,7 @@ class ServerCommit {
     action: json['action'] as String? ?? '',
     createdAt: json['created_at'] as String?,
     receivedAt: json['received_at'] as String?,
+    stateDigest: json['state_digest'] as String?,
     changes: [
       for (final item in (json['changes'] as List? ?? const []))
         if (item is Map) ServerChange.fromJson(item.cast<String, Object?>()),
@@ -264,6 +271,7 @@ class ServerCommit {
   final String action;
   final String? createdAt;
   final String? receivedAt;
+  final String? stateDigest;
   final List<ServerChange> changes;
 
   Map<String, Object?> toJson() => {
@@ -273,6 +281,7 @@ class ServerCommit {
     'actor': actor,
     'action': action,
     'created_at': createdAt,
+    if (stateDigest != null) 'state_digest': stateDigest,
     'changes': [for (final change in changes) change.toJson()],
   };
 }

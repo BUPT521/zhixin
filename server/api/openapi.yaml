@@ -1270,6 +1270,15 @@ components:
         action: { type: string }
         created_at: { type: string, description: "客户端时间，YYYY-MM-DD HH:MM:SS" }
         received_at: { type: string, format: date-time, readOnly: true }
+        # 可选：客户端在“推送完成且本机没有待推送提交”时把当前整库摘要附在最后
+        # 一条提交上（改进方案 3.5）。服务端只保存与转发，不解析也不校验，拉取时
+        # 原样带回，其他设备据此比较本机摘要。
+        state_digest:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            客户端按改进方案 3.5 算出的整库摘要（SHA-256 多重集哈希的十六进制）；
+            只有推送完成、本机没有待推送提交时最后一条提交才带这个字段。
         changes:
           type: array
           minItems: 1

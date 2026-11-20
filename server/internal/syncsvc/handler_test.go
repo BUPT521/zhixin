@@ -436,3 +436,56 @@ func TestHandlerSnapshotBlockedDuringPurge(t *testing.T) {
 		t.Fatalf("清除期间查询: %d %+v", code, head)
 	}
 }
+
+// TestHandlerRoundTripsOptionalStateDigest 守住推送与拉取之间的可选摘要：带
+// state_digest 的提交原样保存、拉取时原样返回，没有带的提交响应里不出现这个键
+// （改进方案 3.5）。服务端只转发，不解析摘要内容。
+func TestHandlerRoundTripsOptionalStateDigest(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "digest@b.cn")
+	digest := strings.Repeat("b", 64)
+
+	second := commitBody("r2")
+	second["state_digest"] = digest
+	var push api.PushResult
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 0, "commits": []any{commitBody("r1"), second},
+	}, &push); code != http.StatusOK || push.Head != 2 {
+		t.Fatalf("push: %d %+v", code, push)
+	}
+
+	var page api.CommitPage
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits", token, nil, &page); code != http.StatusOK || len(page.Commits) != 2 {
+		t.Fatalf("pull: %d %+v", code, page)
+	}
+	if page.Commits[0].StateDigest != nil {
+		t.Fatalf("没有摘要的提交不该返回这个字段: %v", *page.Commits[0].StateDigest)
+	}
+	if got := page.Commits[1].StateDigest; got == nil || *got != digest {
+		t.Fatalf("摘要没有原样返回: %v", got)
+	}
+
+	// 响应是契约生成的类型：没有摘要的提交里不出现 state_digest 键。
+	var raw map[string]any
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=1", token, nil, &raw); code != http.StatusOK {
+		t.Fatalf("pull raw: %d", code)
+	}
+	commits, ok := raw["commits"].([]any)
+	if !ok || len(commits) != 1 {
+		t.Fatalf("原始响应: %+v", raw)
+	}
+	last, ok := commits[0].(map[string]any)
+	if !ok || last["state_digest"] != digest {
+		t.Fatalf("原始响应的摘要: %+v", commits[0])
+	}
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits", token, nil, &raw); code != http.StatusOK {
+		t.Fatalf("pull raw all: %d", code)
+	}
+	first, ok := raw["commits"].([]any)[0].(map[string]any)
+	if !ok {
+		t.Fatalf("原始响应的第一条: %+v", raw["commits"])
+	}
+	if _, present := first["state_digest"]; present {
+		t.Fatalf("没有带摘要的提交不该出现 state_digest: %+v", first)
+	}
+}

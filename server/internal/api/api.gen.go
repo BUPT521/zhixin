@@ -468,6 +468,10 @@ type Commit struct {
 	RequestId     string     `json:"request_id"`
 	SchemaVersion int        `json:"schema_version"`
 	Seq           *int64     `json:"seq,omitempty"`
+
+	// StateDigest 客户端按改进方案 3.5 算出的整库摘要（SHA-256 多重集哈希的十六进制）；
+	// 只有推送完成、本机没有待推送提交时最后一条提交才带这个字段。
+	StateDigest *string `json:"state_digest,omitempty"`
 }
 
 // CommitActor defines model for Commit.Actor.

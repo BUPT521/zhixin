@@ -101,6 +101,7 @@ CREATE TABLE sync_commit (
   created_at      TEXT NOT NULL,               -- 客户端时间，格式同 docs/01 D7
   received_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   changes         JSONB NOT NULL,              -- [{table,row_key,op,before,after}]
+  state_digest    TEXT,                        -- 客户端整库摘要，可选，原样保存不解析（改进方案 3.5）
   PRIMARY KEY (user_id, seq),
   UNIQUE (user_id, request_id)
 );
