@@ -28,7 +28,8 @@ const String proposeStudyStepsTool = 'propose_study_steps';
 
 /// 每轮独立暂存提案。只有回答成功时，应用才取出这些提案。
 class BuddyTurnTools {
-  BuddyTurnTools(BuddyContext context) {
+  BuddyTurnTools(BuddyContext context)
+    : _unit = context.material?.isDocx == true ? '片段' : '页' {
     final mode = context.mode;
     final budget = AgentReadBudget();
     // 首轮材料页与本轮补搜到的页放在同一份可补读集合里，读取工具都能分段读。
@@ -60,6 +61,9 @@ class BuddyTurnTools {
   }
 
   late final AgentToolSet registry;
+
+  /// 本次范围的单位：文档材料按片段编号，其余按页码；工具出错时用它说明范围。
+  final String _unit;
   final _memories = _Proposals<MemoryDraft>(5, (draft) => draft.contentId);
   final _nextSteps = _Proposals<NextStepDraft>(3, (draft) => draft.contentId);
   final _citations = _Proposals<CitationDraft>(5, (draft) => draft.contentId);
@@ -123,7 +127,8 @@ class BuddyTurnTools {
         if (problem != null) {
           return AgentToolResult.error(
             'invalid_study_plan',
-            '$problem，请重新提交完整方案',
+            '$problem；本次范围共 ${pageNos.length} $_unit，最多 ${pageNos.length} 步，'
+                '每一$_unit只出现一次并连续覆盖，请重新提交完整方案',
           );
         }
       }
@@ -371,7 +376,7 @@ LlmTool get _studyStepsSchema {
         'steps': {
           'type': 'array',
           'minItems': 1,
-          'maxItems': 12,
+          'maxItems': 8,
           'items': {
             'type': 'object',
             'properties': {
@@ -380,19 +385,15 @@ LlmTool get _studyStepsSchema {
                 'minLength': 1,
                 'description': text['tool.propose_study_steps.title'],
               },
-              'page_from': {
-                'type': ['integer', 'null'],
-              },
-              'page_to': {
-                'type': ['integer', 'null'],
-              },
+              'page_from': {'type': 'integer', 'description': '这一步的起始页码或片段编号'},
+              'page_to': {'type': 'integer', 'description': '这一步的结束页码或片段编号'},
               'note': {
                 'type': ['string', 'null'],
                 'description': text['tool.propose_study_steps.note'],
               },
               'is_prerequisite': {'type': 'boolean'},
             },
-            'required': ['title'],
+            'required': ['title', 'page_from', 'page_to'],
           },
         },
       },

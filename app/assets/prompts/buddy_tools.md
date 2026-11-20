@@ -56,7 +56,7 @@ YYYY-MM-DD HH:MM:SS；长期有效填 null
 
 ## tool.propose_study_steps
 
-按本次给出的材料页提出学习步骤，覆盖本次范围。每步写清页码范围与补充说明；完成目标必需、但材料里没有展开的内容标 is_prerequisite=true 并写进 note。不要替用户安排时间。
+按本次给出的材料页提出学习步骤，覆盖本次范围。每步必须填写整数 page_from 与 page_to，从本次范围的第一页起连续覆盖到最后一页，不跳页、不重叠，一步可以覆盖多页；步数不超过范围内的页数。完成目标必需、但材料里没有展开的内容标 is_prerequisite=true 并写进 note。不要替用户安排时间。
 
 ## tool.propose_study_steps.title
 

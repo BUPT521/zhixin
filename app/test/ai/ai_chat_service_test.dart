@@ -619,7 +619,11 @@ void main() {
           expect(messages.last['tool_call_id'], 'plan_1');
           final error = jsonDecode(messages.last['content'] as String) as Map;
           expect(error['code'], 'invalid_study_plan');
-          expect(error['error'], '学习步骤没有覆盖第 8–9 页，请重新提交完整方案');
+          expect(
+            error['error'],
+            '学习步骤没有覆盖第 8–9 页；本次范围共 3 页，最多 3 步，'
+            '每一页只出现一次并连续覆盖，请重新提交完整方案',
+          );
         }
         return _chatReply(
           calls: [
