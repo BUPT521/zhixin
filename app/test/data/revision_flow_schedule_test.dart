@@ -41,7 +41,7 @@ void main() {
         policy: () => TimePolicy(clock: () => DateTime(2026, 11, 10, 10)),
       ),
       studyPlans: StudyPlanRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
   });
 

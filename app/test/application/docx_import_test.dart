@@ -139,7 +139,7 @@ void main() {
     final repository = MaterialRepository(rig.db);
     final service = MaterialService(
       materials: repository,
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(dataEpoch: () => epoch),
     );
     final bytes = docxFixture();

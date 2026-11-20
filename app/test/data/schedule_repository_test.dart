@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
+import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -228,6 +229,7 @@ void main() {
     await expectLater(
       WriteTransactions(
         db,
+        revisions: RevisionEngine(),
       ).run((txn) => schedule.cancelBlocks([first, second], transaction: txn)),
       throwsA(isA<StateError>()),
     );

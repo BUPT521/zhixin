@@ -128,9 +128,11 @@ class GuardedDatabase implements RawDatabase {
   bool _closed = false;
 
   /// 事务一律按独占执行：事务里通常要写，读到的也必须是同一时刻的状态。
+  ///
+  /// 只读的事务不预留提交编号；有净变化时由收尾就地分配（R1）。
   @override
-  Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action) =>
-      _run(action);
+  Future<T> transaction<T>(Future<T> Function(RawExecutor txn) action) async =>
+      (await _run(action)).value;
 
   /// 带业务动作标签的命令；一次动作修改多张表时仍只形成一个提交。
   ///
@@ -138,6 +140,26 @@ class GuardedDatabase implements RawDatabase {
   /// 普通写入。[requestId] 相同的第二次调用不再执行写入；提供 [onDuplicate]
   /// 时由调用方把原提交还原成同样的结果，否则抛出 [RevisionDuplicateRequest]。
   Future<T> command<T>(
+    Future<T> Function(RawExecutor txn) action, {
+    required String label,
+    String actor = 'user',
+    String? requestId,
+    RevisionKind kind = RevisionKind.write,
+    T Function(RevisionCommit commit)? onDuplicate,
+  }) async => (await commandOutcome(
+    action,
+    label: label,
+    actor: actor,
+    requestId: requestId,
+    kind: kind,
+    onDuplicate: onDuplicate,
+  )).value;
+
+  /// 与 [command] 相同，另外交出这次命令对应的提交。
+  ///
+  /// [commit] 是这次落库的提交；请求重试时是原提交；没有净变化时为空。
+  /// [WriteTransactions.run] 用它把提前预留但最终没有落库的回执改成跳过。
+  Future<({T value, RevisionCommit? commit})> commandOutcome<T>(
     Future<T> Function(RawExecutor txn) action, {
     required String label,
     String actor = 'user',
@@ -153,7 +175,7 @@ class GuardedDatabase implements RawDatabase {
     onDuplicate: onDuplicate,
   );
 
-  Future<T> _run<T>(
+  Future<({T value, RevisionCommit? commit})> _run<T>(
     Future<T> Function(RawExecutor txn) action, {
     String? label,
     String actor = 'user',
@@ -169,25 +191,33 @@ class GuardedDatabase implements RawDatabase {
     return gate
         .exclusive(() {
           if (engine == null) {
-            return _db.transaction(
-              (txn) =>
-                  runZoned(() => action(txn), zoneValues: {_txnScope: txn}),
+            return _db.transaction<({T value, RevisionCommit? commit})>(
+              (txn) async => (
+                value: await runZoned(
+                  () => action(txn),
+                  zoneValues: {_txnScope: txn},
+                ),
+                commit: null,
+              ),
             );
           }
           final changed = <String>{};
           return _db
-              .transaction((txn) async {
+              .transaction<({T value, RevisionCommit? commit})>((txn) async {
                 if (requestId != null) {
                   final existing = await engine.commitByRequest(txn, requestId);
                   if (existing != null) {
-                    if (onDuplicate != null) return onDuplicate(existing);
+                    if (onDuplicate != null) {
+                      return (value: onDuplicate(existing), commit: existing);
+                    }
                     throw RevisionDuplicateRequest(existing);
                   }
                 }
                 await engine.beginCommand(txn, requestId: requestId);
-                return runZoned(() async {
+                RevisionCommit? formed;
+                final value = await runZoned(() async {
                   final result = await action(txn);
-                  await engine.finishCommand(
+                  formed = await engine.finishCommand(
                     txn,
                     action: label ?? defaultAction,
                     actor: actor,
@@ -197,21 +227,22 @@ class GuardedDatabase implements RawDatabase {
                   );
                   return result;
                 }, zoneValues: {_txnScope: txn});
+                return (value: value, commit: formed);
               })
-              .then((result) {
+              .then((outcome) {
                 // 提交已经落库、独占区还没释放：这时发布表变更，订阅中的读取都排在
                 // 独占区之后，读到的就是这次提交之后的数据（ADR-0014 第 2 条）。
                 _changes.publish(changed);
                 final committed = onCommitted;
                 if (committed != null && changed.isNotEmpty) committed(changed);
-                return result;
+                return outcome;
               });
         })
-        .then((result) async {
+        .then((outcome) async {
           // 独占区已经释放；空闲检查点与检索索引补建在这里做，不占用写事务
           // （ADR-0039 第 2 条）。
           if (engine != null) await engine.afterCommitIdle(_db);
-          return result;
+          return outcome;
         });
   }
 

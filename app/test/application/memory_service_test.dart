@@ -18,7 +18,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
 
@@ -54,7 +54,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
     final id = await memories.create(
@@ -87,7 +87,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
     final id = await memories.create(
@@ -118,7 +118,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
     final id = await memories.create(
@@ -151,7 +151,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
     final id = await memories.create(
@@ -176,7 +176,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(),
     );
 
@@ -200,7 +200,7 @@ void main() {
       memories,
       tasks: TaskRepository(rig.db),
       materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(live: rig.db.live),
     );
     final views = <MemoryPageView>[];

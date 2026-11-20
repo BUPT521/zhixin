@@ -117,7 +117,7 @@ class _Harness {
         attempts: attempts,
       ),
       runtime: testRuntime(policy: () => policy, dataEpoch: () => epoch),
-      transactions: WriteTransactions(db),
+      transactions: WriteTransactions(db, revisions: rig.engine),
     );
   }
 }
@@ -777,7 +777,7 @@ void main() {
       role: MessageRole.user,
       content: '第一步的题目',
     );
-    await WriteTransactions(h.db).run((txn) async {
+    await WriteTransactions(h.db, revisions: h.rig.engine).run((txn) async {
       await plans.bindDiscussionToStep(
         planId: planId,
         stepId: step.id,

@@ -68,7 +68,7 @@ Future<_Device> _openDevice(
     revisions: rig.revisions,
     engine: rig.engine,
     database: rig.db,
-    transactions: WriteTransactions(rig.db),
+    transactions: WriteTransactions(rig.db, revisions: rig.engine),
     assets: rig.engine.assets,
     cache: AttachmentCache(filesDir: () => dir.path),
     clock: _fixedClock,

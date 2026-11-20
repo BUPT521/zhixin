@@ -28,7 +28,7 @@ PlanService _service(TestRig rig, {required TimePolicy policy, Clock? clock}) {
     revisions: rig.revisions,
     runtime: testRuntime(policy: () => policy),
     studyPlans: StudyPlanRepository(rig.db, clock: clock ?? systemClock),
-    transactions: WriteTransactions(rig.db),
+    transactions: WriteTransactions(rig.db, revisions: rig.engine),
   );
 }
 
@@ -99,7 +99,7 @@ void main() {
       tasks: tasks,
       schedule: schedule,
       runtime: testRuntime(policy: () => policy),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
     await capacity.setWindow(
       start: ClockTime.parse('10:00'),
@@ -351,7 +351,7 @@ void main() {
     final now = DateTime(2026, 11, 9, 12);
     final policy = TimePolicy(clock: () => now);
     final service = _service(rig, policy: policy);
-    final transactions = WriteTransactions(rig.db);
+    final transactions = WriteTransactions(rig.db, revisions: rig.engine);
 
     for (var index = 0; index < 35; index++) {
       await transactions.run((txn) async {

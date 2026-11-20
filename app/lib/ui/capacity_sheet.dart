@@ -201,7 +201,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
     if (action == null || !mounted) return;
     final append = action == _BookingAction.append;
     final item = candidate.item;
-    int commitId;
+    int? commitId;
     try {
       commitId = (await AppScope.of(context).study.capacity.book(
         item: item,
@@ -230,13 +230,19 @@ class _CapacitySheetState extends State<_CapacitySheet> {
       return;
     }
     if (!mounted) return;
+    final message = append ? '已为「${item.title}」追加一段预约' : '已预约「${item.title}」';
+    // 时间与现值相同不会形成提交，没有可撤销的提交编号，只提示结果。
+    if (commitId == null) {
+      showToast(context, message);
+      return;
+    }
     showActionToast(
       context,
-      append ? '已为「${item.title}」追加一段预约' : '已预约「${item.title}」',
+      message,
       label: '撤销',
       onPressed: () => undoCommitWithFeedback(
         context,
-        commitId,
+        commitId!,
 
         // 撤销会写预约与版本表，订阅据此重读，这里不再重复读取。
       ),

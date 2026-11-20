@@ -353,7 +353,10 @@ class CapacityService {
   /// [expectedBlockId] 是预览时看到的可调整预约，[expectedBlockStart] 与
   /// [expectedBlockEnd] 是它当时的时间；[expectedNone] 表示预览时这一项还没有
   /// 任何预约；三者用来辨认状态是否已经变化。
-  Future<({String blockId, int commitId})> book({
+  ///
+  /// 返回的提交编号为空表示这次没有形成提交（例如时间与现值相同），界面据此
+  /// 不显示撤销入口（R1）。
+  Future<({String blockId, int? commitId})> book({
     required PlanItem item,
     required DateTime start,
     required DateTime end,
@@ -365,7 +368,8 @@ class CapacityService {
   }) async {
     if (!end.isAfter(start)) throw ArgumentError('结束时间要晚于开始时间');
     final now = runtime.policy.now;
-    return transactions.run((txn) async {
+    String? blockId;
+    final result = await transactions.run((txn) async {
       final current = await tasks.byId(item.id, transaction: txn);
       if (current == null) throw StateError('这个事项已经被删除，请重新估算');
       if (!current.open) throw StateError('这个事项已经完成或暂缓，请重新估算');
@@ -400,13 +404,13 @@ class CapacityService {
         }
       }
       if (append || future.length > 1) {
-        final blockId = await schedule.addBlock(
+        blockId = await schedule.addBlock(
           planItemId: current.id,
           start: start,
           end: end,
           transaction: txn,
         );
-        return (blockId: blockId, commitId: await txn.requireCommitId());
+        return txn.result();
       }
       final movable = future.firstOrNull;
       if (movable != null) {
@@ -416,16 +420,18 @@ class CapacityService {
           end: end,
           transaction: txn,
         );
-        return (blockId: movable.id, commitId: await txn.requireCommitId());
+        blockId = movable.id;
+        return txn.result();
       }
-      final blockId = await schedule.addBlock(
+      blockId = await schedule.addBlock(
         planItemId: current.id,
         start: start,
         end: end,
         transaction: txn,
       );
-      return (blockId: blockId, commitId: await txn.requireCommitId());
+      return txn.result();
     }, label: append ? '追加一段预约' : '按空档预约');
+    return (blockId: blockId!, commitId: result.commitId);
   }
 
   static int _compareItems(PlanItem a, PlanItem b) {

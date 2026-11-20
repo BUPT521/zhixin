@@ -42,7 +42,7 @@ SettingsService _settingsService(TestRig rig) {
   final llmStore = LlmConfigStore(_MemorySecrets());
   return SettingsService(
     settings: settings,
-    transactions: WriteTransactions(rig.db),
+    transactions: WriteTransactions(rig.db, revisions: rig.engine),
     llmStore: llmStore,
     ai: AiChatService(store: llmStore),
     runtime: ServiceRuntime(

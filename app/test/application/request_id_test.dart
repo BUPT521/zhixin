@@ -89,7 +89,7 @@ void main() {
         attempts: attempts,
       ),
       runtime: testRuntime(policy: () => policy, filesDir: () => rig.filesDir),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
 
     final questionId = await service.capture(stem: '检查这道题');
@@ -147,7 +147,7 @@ void main() {
         attempts: attempts,
       ),
       runtime: testRuntime(policy: () => policy, filesDir: () => rig.filesDir),
-      transactions: WriteTransactions(rig.db),
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
 
     final questionId = await service.capture(stem: '请求编号去重');
@@ -315,5 +315,5 @@ PlanService _planService(TestRig rig, TimePolicy policy) => PlanService(
   revisions: rig.revisions,
   runtime: testRuntime(policy: () => policy),
   studyPlans: StudyPlanRepository(rig.db),
-  transactions: WriteTransactions(rig.db),
+  transactions: WriteTransactions(rig.db, revisions: rig.engine),
 );
