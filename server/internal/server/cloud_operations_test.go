@@ -22,7 +22,7 @@ func TestCloudOperationsRequireVerificationAndKeepDeletionExclusive(t *testing.T
 	serve := func(method, path, user string, verified bool) int {
 		req := httptest.NewRequest(method, path, nil)
 		req.Pattern = method + " " + path
-		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserID: user, EmailVerified: verified}))
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserID: user, ContactVerified: verified}))
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		return w.Code

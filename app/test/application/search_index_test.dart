@@ -1139,7 +1139,7 @@ void main() {
       credentials: () async =>
           (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
       httpClient: MockClient(
-        (_) async => http.Response('{"code":"email_unverified"}', 403),
+        (_) async => http.Response('{"code":"contact_unverified"}', 403),
       ),
     );
     await expectLater(
@@ -1148,7 +1148,7 @@ void main() {
         isA<EmbeddingSourceUnavailable>().having(
           (error) => error.message,
           'message',
-          contains('确认邮箱'),
+          contains('确认一种登录方式'),
         ),
       ),
     );

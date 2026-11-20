@@ -400,6 +400,8 @@ class _AccountCard extends StatelessWidget {
     final theme = context.zhixin;
     final account = this.account;
     final signedIn = account?.signedIn ?? false;
+    // 账号显示的一行就是第一种登录方式的值；资料还没读到时用一句说明占位。
+    final label = account?.displayLabel ?? '';
     return forui.FCard(
       child: Padding(
         padding: EdgeInsets.all(theme.space.lg),
@@ -408,14 +410,14 @@ class _AccountCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                _Avatar(email: signedIn ? account!.email : null),
+                _Avatar(label: signedIn ? label : null),
                 SizedBox(width: theme.space.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        signedIn ? account!.email : '未登录',
+                        signedIn ? (label.isEmpty ? '已登录的账号' : label) : '未登录',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.text.titleMedium,
@@ -463,10 +465,10 @@ class _AccountCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (!account!.emailVerified) ...[
+              if (!account!.contactVerified) ...[
                 SizedBox(height: theme.space.md),
                 Text(
-                  '邮箱还没有确认；在账号管理里确认之后，忘记密码时才能收到验证码。',
+                  '还没有确认任何登录方式；在账号管理里确认之后，忘记密码时才能收到验证码。',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.error,
                   ),
@@ -560,21 +562,22 @@ class _Figure extends StatelessWidget {
   }
 }
 
-/// 头像：登录后用邮箱首字母放在主色浅底圆里，未登录用一个人形图标。
+/// 头像：登录后用账号显示名的首字放在主色浅底圆里，未登录用一个人形图标。
+/// 以后加头像图片时，这里多一个图片来源，[label] 仍作为后缀与备用。
 class _Avatar extends StatelessWidget {
-  const _Avatar({this.email});
+  const _Avatar({this.label});
 
-  final String? email;
+  final String? label;
 
   static const _size = 48.0;
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final email = this.email;
-    final initial = email == null || email.isEmpty
+    final label = this.label;
+    final initial = label == null || label.isEmpty
         ? null
-        : email.characters.first.toUpperCase();
+        : label.characters.first.toUpperCase();
     return Container(
       width: _size,
       height: _size,

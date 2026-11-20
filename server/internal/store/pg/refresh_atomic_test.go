@@ -16,12 +16,11 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	u := auth.User{ID: "u1", Email: "atomic@b.cn", PasswordHash: "h"}
-	if err := st.CreateUser(ctx, u); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "atomic@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	sess := auth.Session{
-		ID: "s1", UserID: u.ID, AccessHash: "ah1", RefreshHash: "rh1",
+		ID: "s1", UserID: "u1", AccessHash: "ah1", RefreshHash: "rh1",
 		AccessExpires: now.Add(time.Hour), RefreshExpires: now.Add(24 * time.Hour),
 	}
 	if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
@@ -29,7 +28,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	}
 
 	used := auth.RefreshUsed{
-		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
+		TokenHash: "rh1", SessionID: "s1", UserID: "u1", RequestID: "req-1",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
 		ReplacedAccessHash: "ah2", ReplacedRefreshHash: "rh2",
 	}
@@ -48,7 +47,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	// 宽限期内的重试：客户端提交的 rh1 与当前会话 rh2 不同，存储把两条记录
 	// 一起写进同一个事务，都指向这次发出的 rh5。
 	retry := auth.RefreshUsed{
-		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
+		TokenHash: "rh1", SessionID: "s1", UserID: "u1", RequestID: "req-1",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
 		ReplacedAccessHash: "ah5", ReplacedRefreshHash: "rh5",
 	}
@@ -66,7 +65,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	// 记录写不进去（会话外键指向不存在的会话）时整个事务回滚：会话仍是 rh5，
 	// 新令牌 rh6 不存在，也不留下这条记录。
 	bad := auth.RefreshUsed{
-		TokenHash: "rh5", SessionID: "missing-session", UserID: u.ID, RequestID: "req-2",
+		TokenHash: "rh5", SessionID: "missing-session", UserID: "u1", RequestID: "req-2",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
 		ReplacedAccessHash: "ah6", ReplacedRefreshHash: "rh6",
 	}
@@ -86,7 +85,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 
 	// CAS 失败返回 ErrInvalidToken，且不写记录。
 	stale := auth.RefreshUsed{
-		TokenHash: "rh-old", SessionID: "s1", UserID: u.ID, RequestID: "req-3",
+		TokenHash: "rh-old", SessionID: "s1", UserID: "u1", RequestID: "req-3",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
 		ReplacedAccessHash: "ah7", ReplacedRefreshHash: "rh7",
 	}
@@ -100,20 +99,20 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 }
 
 // TestPostgresPruneUnverified 核对 PostgreSQL 的未验证账号保留期：只删创建时间
-// 早于截止时间且从未确认邮箱的账号，账号的会话与验证码随外键级联删除；保留期
-// 内的与已确认的账号不受影响。
+// 早于截止时间且没有任何一种已验证登录方式的账号，账号的登录方式、会话与验证码
+// 随外键级联删除；保留期内的与已确认的账号不受影响。
 func TestPostgresPruneUnverified(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	for _, u := range []auth.User{
-		{ID: "expired", Email: "expired@b.cn", PasswordHash: "h"},
-		{ID: "fresh", Email: "fresh@b.cn", PasswordHash: "h"},
-		{ID: "verified", Email: "verified@b.cn", PasswordHash: "h"},
+	for _, account := range []struct{ id, email string }{
+		{"expired", "expired@b.cn"},
+		{"fresh", "fresh@b.cn"},
+		{"verified", "verified@b.cn"},
 	} {
-		if err := st.CreateUser(ctx, u); err != nil {
-			t.Fatalf("user %s: %v", u.ID, err)
+		if err := createAccount(ctx, st, auth.User{ID: account.id, PasswordHash: "h"}, account.email); err != nil {
+			t.Fatalf("user %s: %v", account.id, err)
 		}
 	}
 	// created_at 由数据库默认值写入，用例直接改成需要的时间。
@@ -126,7 +125,7 @@ func TestPostgresPruneUnverified(t *testing.T) {
 			t.Fatalf("改 created_at %s: %v", id, err)
 		}
 	}
-	if _, err := st.pool.Exec(ctx, "UPDATE app_user SET email_verified_at = $1 WHERE id = 'verified'", now); err != nil {
+	if _, err := st.pool.Exec(ctx, "UPDATE user_identity SET verified_at = $1 WHERE user_id = 'verified'", now); err != nil {
 		t.Fatalf("标记已验证: %v", err)
 	}
 	if err := st.CreateSession(ctx, auth.Session{
@@ -136,7 +135,8 @@ func TestPostgresPruneUnverified(t *testing.T) {
 		t.Fatalf("session: %v", err)
 	}
 	if err := st.PutCode(ctx, auth.Code{
-		UserID: "expired", Purpose: auth.PurposeVerifyEmail, CodeHash: "c",
+		UserID: "expired", Purpose: auth.PurposeVerifyContact,
+		Kind: auth.KindEmail, Identifier: "expired@b.cn", CodeHash: "c",
 		ExpiresAt: now.Add(time.Minute), CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("code: %v", err)
@@ -155,8 +155,11 @@ func TestPostgresPruneUnverified(t *testing.T) {
 	if _, err := st.SessionByAccessHash(ctx, "ah-expired"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("账号的会话应随外键级联删除，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, "expired", auth.PurposeVerifyEmail); !errors.Is(err, auth.ErrNotFound) {
+	if _, err := st.Code(ctx, auth.PurposeVerifyContact, auth.KindEmail, "expired@b.cn"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("账号的验证码应随外键级联删除，得到 %v", err)
+	}
+	if _, err := st.IdentityByIdentifier(ctx, auth.KindEmail, "expired@b.cn"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("账号的登录方式应随外键级联删除，得到 %v", err)
 	}
 	for _, id := range []string{"fresh", "verified"} {
 		if _, err := st.UserByID(ctx, id); err != nil {

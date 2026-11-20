@@ -28,7 +28,7 @@ func (h *harness) register(email string) (token, userID string) {
 		Refresh     string `json:"refresh_token"`
 	}
 	if code := h.json("POST", "/v1/auth/register", "", map[string]string{
-		"email": email, "password": "password1",
+		"identifier": email, "password": "password1",
 	}, &tokens); code != http.StatusCreated {
 		h.t.Fatalf("register %s: %d", email, code)
 	}
@@ -41,13 +41,20 @@ func (h *harness) register(email string) (token, userID string) {
 	return tokens.AccessToken, me.UserID
 }
 
-func (h *harness) markEmailVerified(userID string) {
+// markContactVerified 把账号名下的第一条登录方式标为已确认，等价于用户收到验证码
+// 并确认过；用例用它越过验证步骤去核对托管额度与云端写入的门槛。
+func (h *harness) markContactVerified(userID string) {
 	h.t.Helper()
 	store, ok := h.stores.Auth.(*auth.MemoryStore)
 	if !ok {
 		h.t.Fatalf("memory harness expected, got %T", h.stores.Auth)
 	}
-	if err := store.SetEmailVerified(context.Background(), userID, time.Now()); err != nil {
+	ctx := context.Background()
+	identities, err := store.Identities(ctx, userID)
+	if err != nil || len(identities) == 0 {
+		h.t.Fatalf("identities of %s: %v", userID, err)
+	}
+	if err := store.SetIdentityVerified(ctx, userID, identities[0].ID, time.Now()); err != nil {
 		h.t.Fatalf("mark verified: %v", err)
 	}
 }
@@ -97,7 +104,7 @@ func TestLoginFailBudgetReturns429(t *testing.T) {
 	})
 	h.register("budget@b.cn")
 
-	bad := map[string]string{"email": " Budget@B.cn ", "password": "wrong-password"}
+	bad := map[string]string{"identifier": " Budget@B.cn ", "password": "wrong-password"}
 	if code := h.json("POST", "/v1/auth/login", "", bad, nil); code != http.StatusUnauthorized {
 		t.Fatalf("第一次错误密码应回 401，得到 %d", code)
 	}
@@ -123,7 +130,7 @@ func TestRefreshReplayWithinGraceKeepsSession(t *testing.T) {
 	}
 	var first tokenPair
 	if code := h.json("POST", "/v1/auth/register", "", map[string]string{
-		"email": "grace@b.cn", "password": "password1",
+		"identifier": "grace@b.cn", "password": "password1",
 	}, &first); code != http.StatusCreated {
 		t.Fatalf("register: %d", code)
 	}
@@ -165,7 +172,7 @@ func TestSessionLimitDropsOldestLogin(t *testing.T) {
 	var tokens []struct {
 		AccessToken string `json:"access_token"`
 	}
-	credentials := map[string]string{"email": "sessions@b.cn", "password": "password1"}
+	credentials := map[string]string{"identifier": "sessions@b.cn", "password": "password1"}
 	var registered struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -294,9 +301,9 @@ func TestCrossAccountBackupDeleteLeavesOtherAccount(t *testing.T) {
 	}
 }
 
-// TestHostedModelNeedsVerifiedEmail 核对未验证邮箱的账号被挡在托管模型之外，
-// 验证之后才转发到上游。
-func TestHostedModelNeedsVerifiedEmail(t *testing.T) {
+// TestHostedModelNeedsVerifiedContact 核对没有任何已验证登录方式的账号被挡在
+// 托管模型之外，确认一种登录方式之后才转发到上游。
+func TestHostedModelNeedsVerifiedContact(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[{"message":{"content":"ok"}}]}`)
@@ -318,10 +325,10 @@ func TestHostedModelNeedsVerifiedEmail(t *testing.T) {
 		}
 		return resp.StatusCode, p
 	}
-	if code, p := chat(); code != http.StatusForbidden || p.Code != "email_unverified" {
-		t.Fatalf("未验证邮箱应回 403 email_unverified，得到 %d %+v", code, p)
+	if code, p := chat(); code != http.StatusForbidden || p.Code != "contact_unverified" {
+		t.Fatalf("没有已验证登录方式应回 403 contact_unverified，得到 %d %+v", code, p)
 	}
-	h.markEmailVerified(userID)
+	h.markContactVerified(userID)
 	if code, p := chat(); code != http.StatusOK {
 		t.Fatalf("验证之后应转发，得到 %d %+v", code, p)
 	}
@@ -354,7 +361,7 @@ func TestHostedModelConcurrencyLimit(t *testing.T) {
 	})
 	h.configureModel("http://"+upstream.Listener.Addr().String()+"/v1", "deepseek-flash")
 	token, userID := h.register("concurrent@b.cn")
-	h.markEmailVerified(userID)
+	h.markContactVerified(userID)
 
 	body := mustJSON(t, map[string]any{"model": "deepseek-flash", "stream": false})
 	var wg sync.WaitGroup

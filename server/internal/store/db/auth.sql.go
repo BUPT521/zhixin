@@ -12,28 +12,57 @@ import (
 )
 
 const authCode = `-- name: AuthCode :one
-SELECT user_id, purpose, code_hash, expires_at, attempts, created_at
+SELECT purpose, kind, identifier, user_id, code_hash, expires_at, attempts, created_at
 FROM auth_code
-WHERE user_id = $1 AND purpose = $2
+WHERE purpose = $1
+  AND kind = $2
+  AND identifier = $3
 `
 
 type AuthCodeParams struct {
-	UserID  string
-	Purpose string
+	Purpose    string
+	Kind       string
+	Identifier string
 }
 
 func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, error) {
-	row := q.db.QueryRow(ctx, authCode, arg.UserID, arg.Purpose)
+	row := q.db.QueryRow(ctx, authCode, arg.Purpose, arg.Kind, arg.Identifier)
 	var i AuthCode
 	err := row.Scan(
-		&i.UserID,
 		&i.Purpose,
+		&i.Kind,
+		&i.Identifier,
+		&i.UserID,
 		&i.CodeHash,
 		&i.ExpiresAt,
 		&i.Attempts,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const createIdentity = `-- name: CreateIdentity :exec
+INSERT INTO user_identity (id, user_id, kind, identifier)
+VALUES (
+  $1, $2, $3, $4
+)
+`
+
+type CreateIdentityParams struct {
+	ID         string
+	UserID     string
+	Kind       string
+	Identifier string
+}
+
+func (q *Queries) CreateIdentity(ctx context.Context, arg CreateIdentityParams) error {
+	_, err := q.db.Exec(ctx, createIdentity,
+		arg.ID,
+		arg.UserID,
+		arg.Kind,
+		arg.Identifier,
+	)
+	return err
 }
 
 const createSession = `-- name: CreateSession :exec
@@ -73,61 +102,70 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 
 const createUser = `-- name: CreateUser :exec
 
-INSERT INTO app_user (id, email, password_hash)
-VALUES ($1, $2, $3)
+INSERT INTO app_user (id, password_hash)
+VALUES ($1, $2)
 `
 
 type CreateUserParams struct {
 	ID           string
-	Email        string
 	PasswordHash string
 }
 
-// 账号与会话（internal/store/schema.sql 的 app_user 与 session）。
+// 账号、登录方式与会话（internal/store/schema.sql 的 app_user、user_identity、
+// auth_code 与 session）。账号只放密码，邮箱这类登录方式各占 user_identity 一行
+// （ADR-0038）。
 //
 // 参数一律用 sqlc.arg(名字)：生成的方法按名字取参数，改一处绑定不会让另一个
 // 位置的 $n 顺序悄悄错位。
+// 两个写入都不带 created_at：由表上的默认值给当前时间，账号与登录方式在同一个
+// 事务里写入，时间保持一致。
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
-	_, err := q.db.Exec(ctx, createUser, arg.ID, arg.Email, arg.PasswordHash)
+	_, err := q.db.Exec(ctx, createUser, arg.ID, arg.PasswordHash)
 	return err
 }
 
 const deleteAuthCode = `-- name: DeleteAuthCode :exec
 DELETE FROM auth_code
-WHERE user_id = $1 AND purpose = $2
+WHERE purpose = $1
+  AND kind = $2
+  AND identifier = $3
 `
 
 type DeleteAuthCodeParams struct {
-	UserID  string
-	Purpose string
+	Purpose    string
+	Kind       string
+	Identifier string
 }
 
 func (q *Queries) DeleteAuthCode(ctx context.Context, arg DeleteAuthCodeParams) error {
-	_, err := q.db.Exec(ctx, deleteAuthCode, arg.UserID, arg.Purpose)
+	_, err := q.db.Exec(ctx, deleteAuthCode, arg.Purpose, arg.Kind, arg.Identifier)
 	return err
 }
 
 const deleteAuthCodeIfMatch = `-- name: DeleteAuthCodeIfMatch :execrows
 DELETE FROM auth_code
-WHERE user_id = $1
-  AND purpose = $2
-  AND code_hash = $3
-  AND expires_at > $4
+WHERE purpose = $1
+  AND kind = $2
+  AND identifier = $3
+  AND code_hash = $4
+  AND expires_at > $5
 `
 
 type DeleteAuthCodeIfMatchParams struct {
-	UserID   string
-	Purpose  string
-	CodeHash string
-	Now      pgtype.Timestamptz
+	Purpose    string
+	Kind       string
+	Identifier string
+	CodeHash   string
+	Now        pgtype.Timestamptz
 }
 
 // 重设密码时用掉验证码：只有摘要匹配且未过期才删，0 行说明验证码已经被别的
 // 请求用掉、已过期或对不上，调用方据此回 ErrInvalidCode。
 func (q *Queries) DeleteAuthCodeIfMatch(ctx context.Context, arg DeleteAuthCodeIfMatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteAuthCodeIfMatch,
-		arg.UserID,
 		arg.Purpose,
+		arg.Kind,
+		arg.Identifier,
 		arg.CodeHash,
 		arg.Now,
 	)
@@ -174,13 +212,18 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) (int64, error) {
 }
 
 const deleteUnverifiedUsersBefore = `-- name: DeleteUnverifiedUsersBefore :execrows
-DELETE FROM app_user
-WHERE email_verified_at IS NULL AND created_at < $1
+DELETE FROM app_user AS doomed
+WHERE doomed.created_at < $1
+  AND NOT EXISTS (
+    SELECT 1
+    FROM user_identity AS identity
+    WHERE identity.user_id = doomed.id AND identity.verified_at IS NOT NULL
+  )
 `
 
-// 删除长时间没有确认邮箱的账号：注册接口是公开的，未确认的账号不占云盘也不发
-// 信，但会一直占着邮箱与账号行（ADR-0037）。只删创建时间早于 cutoff 且从未
-// 确认邮箱的行，会话、验证码、额度与用量随外键级联。
+// 删除长时间没有任何一种已验证登录方式的账号：注册接口是公开的，没有验证过的
+// 账号不占云盘也不发信，但会一直占着邮箱与账号行（ADR-0037）。只删创建时间早于
+// cutoff 且名下的登录方式都没有确认过的行，会话、验证码、额度与用量随外键级联。
 func (q *Queries) DeleteUnverifiedUsersBefore(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteUnverifiedUsersBefore, cutoff)
 	if err != nil {
@@ -213,20 +256,111 @@ func (q *Queries) DeleteUserSessions(ctx context.Context, userID string) error {
 	return err
 }
 
+const identitiesByUser = `-- name: IdentitiesByUser :many
+SELECT id, user_id, kind, identifier, verified_at, created_at
+FROM user_identity
+WHERE user_id = $1
+ORDER BY created_at, id
+`
+
+func (q *Queries) IdentitiesByUser(ctx context.Context, userID string) ([]UserIdentity, error) {
+	rows, err := q.db.Query(ctx, identitiesByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserIdentity{}
+	for rows.Next() {
+		var i UserIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Kind,
+			&i.Identifier,
+			&i.VerifiedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const identityByID = `-- name: IdentityByID :one
+SELECT id, user_id, kind, identifier, verified_at, created_at
+FROM user_identity
+WHERE id = $1 AND user_id = $2
+`
+
+type IdentityByIDParams struct {
+	ID     string
+	UserID string
+}
+
+// 验证接口只认当前账号名下的登录方式：带着别人的编号来请求得到 0 行，调用方
+// 据此回 404，不区分“不存在”与“不属于这个账号”。
+func (q *Queries) IdentityByID(ctx context.Context, arg IdentityByIDParams) (UserIdentity, error) {
+	row := q.db.QueryRow(ctx, identityByID, arg.ID, arg.UserID)
+	var i UserIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Kind,
+		&i.Identifier,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const identityByIdentifier = `-- name: IdentityByIdentifier :one
+SELECT id, user_id, kind, identifier, verified_at, created_at
+FROM user_identity
+WHERE kind = $1 AND identifier = $2
+`
+
+type IdentityByIdentifierParams struct {
+	Kind       string
+	Identifier string
+}
+
+// 按登录方式定位账号：登录与找回密码都从这里出发，(kind, identifier) 上有唯一
+// 约束，所以最多命中一条。
+func (q *Queries) IdentityByIdentifier(ctx context.Context, arg IdentityByIdentifierParams) (UserIdentity, error) {
+	row := q.db.QueryRow(ctx, identityByIdentifier, arg.Kind, arg.Identifier)
+	var i UserIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Kind,
+		&i.Identifier,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const incrementAuthCodeAttempts = `-- name: IncrementAuthCodeAttempts :one
 UPDATE auth_code
 SET attempts = attempts + 1
-WHERE user_id = $1 AND purpose = $2
+WHERE purpose = $1
+  AND kind = $2
+  AND identifier = $3
 RETURNING attempts
 `
 
 type IncrementAuthCodeAttemptsParams struct {
-	UserID  string
-	Purpose string
+	Purpose    string
+	Kind       string
+	Identifier string
 }
 
 func (q *Queries) IncrementAuthCodeAttempts(ctx context.Context, arg IncrementAuthCodeAttemptsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, incrementAuthCodeAttempts, arg.UserID, arg.Purpose)
+	row := q.db.QueryRow(ctx, incrementAuthCodeAttempts, arg.Purpose, arg.Kind, arg.Identifier)
 	var attempts int32
 	err := row.Scan(&attempts)
 	return attempts, err
@@ -331,12 +465,15 @@ func (q *Queries) PruneUsedRefreshTokens(ctx context.Context, usedBefore pgtype.
 
 const putAuthCode = `-- name: PutAuthCode :exec
 
-INSERT INTO auth_code (user_id, purpose, code_hash, expires_at, attempts, created_at)
-VALUES (
-  $1, $2, $3,
-  $4, 0, $5
+INSERT INTO auth_code (
+  purpose, kind, identifier, user_id, code_hash, expires_at, attempts, created_at
 )
-ON CONFLICT (user_id, purpose) DO UPDATE SET
+VALUES (
+  $1, $2, $3, $4,
+  $5, $6, 0, $7
+)
+ON CONFLICT (purpose, kind, identifier) DO UPDATE SET
+  user_id = excluded.user_id,
   code_hash = excluded.code_hash,
   expires_at = excluded.expires_at,
   attempts = 0,
@@ -344,40 +481,29 @@ ON CONFLICT (user_id, purpose) DO UPDATE SET
 `
 
 type PutAuthCodeParams struct {
-	UserID    string
-	Purpose   string
-	CodeHash  string
-	ExpiresAt pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
+	Purpose    string
+	Kind       string
+	Identifier string
+	UserID     pgtype.Text
+	CodeHash   string
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
 }
 
 // 删账号不单独删会话：schema.sql 的 session.user_id 上是 ON DELETE CASCADE，
 // 删掉 app_user 那一行时一起消失。
+// 验证码按登录方式保存：user_id 允许为空，以后给还没有注册的邮箱或手机号发码
+// 时不用改表。重新发送覆盖同一 (purpose, kind, identifier) 的那一枚。
 func (q *Queries) PutAuthCode(ctx context.Context, arg PutAuthCodeParams) error {
 	_, err := q.db.Exec(ctx, putAuthCode,
-		arg.UserID,
 		arg.Purpose,
+		arg.Kind,
+		arg.Identifier,
+		arg.UserID,
 		arg.CodeHash,
 		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
-	return err
-}
-
-const recoverPassword = `-- name: RecoverPassword :exec
-UPDATE app_user SET password_hash = $1,
-  email_verified_at = coalesce(email_verified_at, $2::timestamptz)
-WHERE id = $3
-`
-
-type RecoverPasswordParams struct {
-	PasswordHash string
-	VerifiedAt   pgtype.Timestamptz
-	ID           string
-}
-
-func (q *Queries) RecoverPassword(ctx context.Context, arg RecoverPasswordParams) error {
-	_, err := q.db.Exec(ctx, recoverPassword, arg.PasswordHash, arg.VerifiedAt, arg.ID)
 	return err
 }
 
@@ -442,23 +568,29 @@ func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (i
 const sessionByAccessHash = `-- name: SessionByAccessHash :one
 SELECT s.id, s.user_id, s.device_name, s.access_hash, s.refresh_hash,
   s.access_expires, s.refresh_expires, s.created_at,
-  (u.email_verified_at IS NOT NULL)::boolean AS email_verified
-FROM session s JOIN app_user u ON u.id = s.user_id
+  EXISTS (
+    SELECT 1
+    FROM user_identity AS identity
+    WHERE identity.user_id = s.user_id AND identity.verified_at IS NOT NULL
+  )::boolean AS contact_verified
+FROM session s
 WHERE s.access_hash = $1
 `
 
 type SessionByAccessHashRow struct {
-	ID             string
-	UserID         string
-	DeviceName     string
-	AccessHash     string
-	RefreshHash    string
-	AccessExpires  pgtype.Timestamptz
-	RefreshExpires pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	EmailVerified  bool
+	ID              string
+	UserID          string
+	DeviceName      string
+	AccessHash      string
+	RefreshHash     string
+	AccessExpires   pgtype.Timestamptz
+	RefreshExpires  pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	ContactVerified bool
 }
 
+// “已验证”指至少有一种登录方式确认过：托管额度与云端写入按它判断，账号页的
+// 提示也读同一处（ADR-0038）。
 func (q *Queries) SessionByAccessHash(ctx context.Context, accessHash string) (SessionByAccessHashRow, error) {
 	row := q.db.QueryRow(ctx, sessionByAccessHash, accessHash)
 	var i SessionByAccessHashRow
@@ -471,7 +603,7 @@ func (q *Queries) SessionByAccessHash(ctx context.Context, accessHash string) (S
 		&i.AccessExpires,
 		&i.RefreshExpires,
 		&i.CreatedAt,
-		&i.EmailVerified,
+		&i.ContactVerified,
 	)
 	return i, err
 }
@@ -499,19 +631,20 @@ func (q *Queries) SessionByRefreshHash(ctx context.Context, refreshHash string) 
 	return i, err
 }
 
-const setEmailVerified = `-- name: SetEmailVerified :exec
-UPDATE app_user
-SET email_verified_at = $1
-WHERE id = $2
+const setIdentityVerified = `-- name: SetIdentityVerified :exec
+UPDATE user_identity
+SET verified_at = coalesce(verified_at, $1::timestamptz)
+WHERE id = $2 AND user_id = $3
 `
 
-type SetEmailVerifiedParams struct {
+type SetIdentityVerifiedParams struct {
 	VerifiedAt pgtype.Timestamptz
 	ID         string
+	UserID     string
 }
 
-func (q *Queries) SetEmailVerified(ctx context.Context, arg SetEmailVerifiedParams) error {
-	_, err := q.db.Exec(ctx, setEmailVerified, arg.VerifiedAt, arg.ID)
+func (q *Queries) SetIdentityVerified(ctx context.Context, arg SetIdentityVerifiedParams) error {
+	_, err := q.db.Exec(ctx, setIdentityVerified, arg.VerifiedAt, arg.ID, arg.UserID)
 	return err
 }
 
@@ -531,27 +664,8 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 	return err
 }
 
-const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, password_hash, email_verified_at, created_at
-FROM app_user
-WHERE email = $1
-`
-
-func (q *Queries) UserByEmail(ctx context.Context, email string) (AppUser, error) {
-	row := q.db.QueryRow(ctx, userByEmail, email)
-	var i AppUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.EmailVerifiedAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const userByID = `-- name: UserByID :one
-SELECT id, email, password_hash, email_verified_at, created_at
+SELECT id, password_hash, created_at
 FROM app_user
 WHERE id = $1
 `
@@ -559,12 +673,27 @@ WHERE id = $1
 func (q *Queries) UserByID(ctx context.Context, id string) (AppUser, error) {
 	row := q.db.QueryRow(ctx, userByID, id)
 	var i AppUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.EmailVerifiedAt,
-		&i.CreatedAt,
-	)
+	err := row.Scan(&i.ID, &i.PasswordHash, &i.CreatedAt)
+	return i, err
+}
+
+const userByIdentifier = `-- name: UserByIdentifier :one
+SELECT u.id, u.password_hash, u.created_at
+FROM app_user AS u
+JOIN user_identity AS i ON i.user_id = u.id
+WHERE i.kind = $1 AND i.identifier = $2
+`
+
+type UserByIdentifierParams struct {
+	Kind       string
+	Identifier string
+}
+
+// 登录与找回密码都按登录方式定位账号：一种联系方式只用一行，(kind, identifier)
+// 上有唯一约束，所以最多命中一个账号。
+func (q *Queries) UserByIdentifier(ctx context.Context, arg UserByIdentifierParams) (AppUser, error) {
+	row := q.db.QueryRow(ctx, userByIdentifier, arg.Kind, arg.Identifier)
+	var i AppUser
+	err := row.Scan(&i.ID, &i.PasswordHash, &i.CreatedAt)
 	return i, err
 }

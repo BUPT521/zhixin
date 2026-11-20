@@ -33,21 +33,29 @@ class AccountSnapshot {
     required this.serverBaseUrl,
     required this.session,
     required this.autoSync,
+    this.profile,
     this.usesDefaultServer = false,
   });
 
   final String serverBaseUrl;
   final AccountSession? session;
+
+  /// 账号的登录方式列表；资料还没读到时为空，界面按未读到的状态显示。
+  final AccountProfile? profile;
   final bool autoSync;
 
   /// 地址还没有被改过，用的是编译时的默认值。
   final bool usesDefaultServer;
 
   bool get signedIn => session != null;
-  String get email => session?.email ?? '';
 
-  /// 邮箱还没有验证时，找回密码收不到验证码；账号页据此提示。
-  bool get emailVerified => session?.emailVerified ?? false;
+  /// 账号页与“我的”显示的一行：第一条登录方式的值。以后加头像时，图片地址也
+  /// 从这里取，页面不用改结构。
+  String get displayLabel => profile?.displayLabel ?? '';
+
+  /// 至少有一种登录方式已经确认；没有确认时找回密码收不到验证码，托管额度与
+  /// 云端写入也不开放。
+  bool get contactVerified => profile?.contactVerified ?? false;
 
   String get serverLabel => serverBaseUrl.isEmpty
       ? '还没有填写服务地址'
@@ -123,6 +131,7 @@ class AccountService {
     final baseUrl = await preferences.serverBaseUrl();
     final autoSync = await preferences.autoSync();
     final usesDefault = await preferences.usesDefaultServerBaseUrl();
+    final profile = session == null ? null : await _readProfile(session);
     if (session != null && session.isExpired) {
       await store.clear();
       return AccountSnapshot(
@@ -135,6 +144,7 @@ class AccountService {
     return AccountSnapshot(
       serverBaseUrl: baseUrl,
       session: session,
+      profile: profile,
       autoSync: autoSync,
       usesDefaultServer: usesDefault,
     );
@@ -167,35 +177,37 @@ class AccountService {
 
   Future<void> setAutoSync(bool value) => preferences.setAutoSync(value);
 
-  /// 注册并登录当前设备；邮箱已经注册时抛出 `email_taken`。
+  /// 注册并登录当前设备；这种登录方式已经被占用时抛出 `identifier_taken`。
+  ///
+  /// [identifier] 是登录方式的值，服务端负责识别种类并规范化，现在只接受邮箱。
   Future<AccountSnapshot> register({
-    required String email,
+    required String identifier,
     required String password,
   }) async {
     final epoch = _epoch;
     final client = await _requireClient();
     final tokens = await client.register(
-      email: email.trim().toLowerCase(),
+      identifier: identifier.trim().toLowerCase(),
       password: password,
       deviceName: _deviceName,
     );
     _ensureIdentityUnchanged(epoch);
-    return _adopt(tokens, email: email.trim().toLowerCase());
+    return _adopt(tokens);
   }
 
   Future<AccountSnapshot> login({
-    required String email,
+    required String identifier,
     required String password,
   }) async {
     final epoch = _epoch;
     final client = await _requireClient();
     final tokens = await client.login(
-      email: email.trim().toLowerCase(),
+      identifier: identifier.trim().toLowerCase(),
       password: password,
       deviceName: _deviceName,
     );
     _ensureIdentityUnchanged(epoch);
-    return _adopt(tokens, email: email.trim().toLowerCase());
+    return _adopt(tokens);
   }
 
   /// 退出当前设备；服务端不可达时也要清掉本机会话。
@@ -258,7 +270,7 @@ class AccountService {
     return client.ready();
   }
 
-  /// 重新读一次服务端的账号信息，更新邮箱验证状态；网络失败时沿用本机记录。
+  /// 重新读一次服务端的账号资料，刷新登录方式列表；网络失败时沿用本机记录。
   Future<AccountSnapshot> refreshAccount() async {
     final epoch = _epoch;
     final session = await _readSession();
@@ -267,57 +279,61 @@ class AccountService {
       final remote = await call<ServerAccount>(
         (client, token) => client.me(token),
       );
-      // 核对途中换了账号或实例：旧账号的验证状态不能写到新会话上。
+      // 核对途中换了账号或实例：旧账号的资料不能写到新会话上。
       if (epoch != _epoch) return await snapshot();
-      final updated = session.copyWith(emailVerified: remote.emailVerified);
-      if (updated.emailVerified != session.emailVerified) {
-        await store.save(updated);
-      }
+      final profile = AccountProfile.fromServer(
+        remote,
+        serverOrigin: session.serverOrigin,
+      );
+      await store.saveProfile(profile);
       return AccountSnapshot(
         serverBaseUrl: await serverBaseUrl(),
-        session: updated,
+        session: session,
+        profile: profile,
         autoSync: await autoSync(),
         usesDefaultServer: await preferences.usesDefaultServerBaseUrl(),
       );
     } catch (_) {
-      // 验证状态是一次额外的核对，失败不影响本机已登录状态。
+      // 资料是一次额外的核对，失败不影响本机已登录状态。
       return snapshot();
     }
   }
 
-  /// 给当前账号的邮箱发验证码；已经验证过时服务端不重复发信。
-  Future<void> requestEmailVerification() =>
-      call<void>((client, token) => client.requestEmailVerification(token));
+  /// 给指定的登录方式发验证码；已经确认过的服务端不重复发送。
+  Future<void> requestIdentityVerification(String identityId) => call<void>(
+    (client, token) => client.requestIdentityVerification(token, identityId),
+  );
 
-  /// 用六位验证码确认邮箱。
-  Future<void> confirmEmailVerification(String code) async {
+  /// 用六位验证码确认某一种登录方式，成功之后重新读一次资料。
+  Future<void> confirmIdentityVerification(
+    String identityId,
+    String code,
+  ) async {
     final epoch = _epoch;
     await call<void>(
-      (client, token) => client.confirmEmailVerification(token, code),
+      (client, token) =>
+          client.confirmIdentityVerification(token, identityId, code),
     );
     _ensureIdentityUnchanged(epoch);
-    final session = await _readSession();
-    if (session != null) {
-      await store.save(session.copyWith(emailVerified: true));
-    }
+    await refreshAccount();
   }
 
-  /// 向已验证的邮箱发重设验证码；邮箱没有注册或没有验证时服务端也返回成功。
-  Future<void> requestPasswordReset(String email) async {
+  /// 向账号登记的登录方式发重设验证码；账号不存在或还没确认时服务端也返回成功。
+  Future<void> requestPasswordReset(String identifier) async {
     final client = await _requireClient();
-    await client.requestPasswordReset(email);
+    await client.requestPasswordReset(identifier);
   }
 
   /// 用验证码重设密码；成功后服务端作废全部会话，这里清掉本机登录状态。
   Future<void> resetPassword({
-    required String email,
+    required String identifier,
     required String code,
     required String newPassword,
   }) async {
     final epoch = _epoch;
     final client = await _requireClient();
     await client.resetPassword(
-      email: email,
+      identifier: identifier,
       code: code,
       newPassword: newPassword,
     );
@@ -421,35 +437,29 @@ class AccountService {
     _client = null;
   }
 
-  Future<AccountSnapshot> _adopt(
-    ServerTokens tokens, {
-    required String email,
-  }) async {
+  Future<AccountSnapshot> _adopt(ServerTokens tokens) async {
     final epoch = _epoch;
     // 会话绑定到签发它的实例：来源在请求之前读好，网络往返期间切换实例时
     // 下面的代次检查会丢弃这次登录结果。
     final origin = await serverOrigin();
-    // 登录响应不带邮箱验证状态，多读一次 /v1/me；读不到不影响这次登录，
-    // 账号页下一次打开会再核对。
-    var emailVerified = false;
-    try {
-      final client = await _requireClient();
-      emailVerified = (await client.me(tokens.accessToken)).emailVerified;
-    } catch (_) {
-      // 忽略：首屏仍可进入，验证状态稍后重试。
-    }
+    // 登录响应不带登录方式列表，多读一次 /v1/me；读不到不影响这次登录，账号页
+    // 下一次打开会再读。
+    final profile = await _fetchProfile(
+      tokens.accessToken,
+      tokens.userId,
+      origin,
+    );
     _ensureIdentityUnchanged(epoch);
     final session = AccountSession(
       userId: tokens.userId,
-      email: email,
       serverOrigin: origin,
-      emailVerified: emailVerified,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       accessExpiresAt: tokens.accessExpiresAt,
       refreshExpiresAt: tokens.refreshExpiresAt,
     );
     await store.save(session);
+    if (profile != null) await store.saveProfile(profile);
     _advanceEpoch();
     final state = await preferences.syncState();
     final identity = '${session.serverOrigin}|${session.userId}';
@@ -469,9 +479,32 @@ class AccountService {
     return AccountSnapshot(
       serverBaseUrl: await serverBaseUrl(),
       session: session,
+      profile: profile,
       autoSync: await autoSync(),
       usesDefaultServer: await preferences.usesDefaultServerBaseUrl(),
     );
+  }
+
+  /// 读一次账号资料；网络失败或服务端不可达时返回 null，登录本身照常完成。
+  Future<AccountProfile?> _fetchProfile(
+    String accessToken,
+    String userId,
+    String origin,
+  ) async {
+    try {
+      final client = await _requireClient();
+      final remote = await client.me(accessToken);
+      return AccountProfile.fromServer(remote, serverOrigin: origin);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 读本机的资料，只认与会话同一个账号、同一个实例的那一份。
+  Future<AccountProfile?> _readProfile(AccountSession session) async {
+    final profile = await store.readProfile(origin: session.serverOrigin);
+    if (profile == null || profile.userId != session.userId) return null;
+    return profile;
   }
 
   Future<AccountSession> _requireSession() async {

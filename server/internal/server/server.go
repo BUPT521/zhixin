@@ -129,8 +129,8 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 与 request_id，不含令牌。
 	authSvc.SetPasswordBudget(cfg.Argon2MemoryBudgetMiB)
 	authSvc.SetMaxSessions(cfg.MaxSessionsPerUser)
-	// 未确认邮箱的账号按保留期删除，由 PruneLoop 的每日清理执行（ADR-0037）；
-	// 必须在 PruneLoop 之前设置，因为它在启动时就会先清一次。
+	// 没有任何一种已验证登录方式的账号按保留期删除，由 PruneLoop 的每日清理执行
+	// （ADR-0037）；必须在 PruneLoop 之前设置，因为它在启动时就会先清一次。
 	authSvc.SetUnverifiedKeep(cfg.UnverifiedKeepDays)
 	authSvc.SetSecurityLog(log)
 	go authSvc.PruneLoop(ctx, st.Auth, log)
@@ -197,8 +197,11 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		}
 		log.Warn("ZHIXIN_CODE_SECRET is empty: verification codes stop working after a restart")
 	}
-	authSvc.ConfigureCodes(mailer, codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
-	authSvc.SetMailLimiter(ratelimit.New(rate.Limit(4/(24*time.Hour).Seconds()), 4, 48*time.Hour, cfg.RateLimitKeys))
+	// 发信按登录方式分发：现在只有邮箱走 SMTP，手机号与微信没有对应发送方时
+	// 请求返回 501（ADR-0038）。
+	authSvc.ConfigureCodes(auth.NewSenders(mailer), codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
+	// 收信预算的键是 kind:identifier：同一地址每 24 小时补充 4 枚，最多积存 4 枚。
+	authSvc.SetSendLimiter(ratelimit.New(rate.Limit(4/(24*time.Hour).Seconds()), 4, 48*time.Hour, cfg.RateLimitKeys))
 
 	// 匿名活跃的安装标识用 HMAC 保存；密钥为空时每次启动随机生成，重启后同一个
 	// 安装会被当成新的，留存数字偏高，因此生产必须固定。
@@ -278,9 +281,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	llmProxy.SetEmbeddingCache(st.Cache)
 	llmProxy.SetEmbeddingCacheGate(purgeSvc.Gate)
 	llmProxy.SetConcurrencyLimit(cfg.LLM.ConcurrentPerUser)
-	if cfg.LLM.RequireVerifiedEmail {
-		llmProxy.SetEmailVerifier(func(ctx context.Context, _ string) (bool, error) {
-			return auth.MustPrincipal(ctx).EmailVerified, nil
+	if cfg.LLM.RequireVerifiedContact {
+		llmProxy.SetContactVerifier(func(ctx context.Context, _ string) (bool, error) {
+			return auth.MustPrincipal(ctx).ContactVerified, nil
 		})
 	}
 

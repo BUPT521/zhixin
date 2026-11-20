@@ -16,7 +16,7 @@ func TestPostgresQuotaReserveAndSettle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	for _, id := range []string{"u1", "u2"} {
-		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+		if err := createAccount(ctx, st, auth.User{ID: id, PasswordHash: "h"}, id+"@b.cn"); err != nil {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
@@ -76,7 +76,7 @@ func TestPostgresQuotaInstanceBudget(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	for _, id := range []string{"u1", "u2"} {
-		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+		if err := createAccount(ctx, st, auth.User{ID: id, PasswordHash: "h"}, id+"@b.cn"); err != nil {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
@@ -115,7 +115,7 @@ func TestPostgresQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	for _, id := range []string{"u1", "u2"} {
-		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+		if err := createAccount(ctx, st, auth.User{ID: id, PasswordHash: "h"}, id+"@b.cn"); err != nil {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
@@ -144,7 +144,7 @@ func TestPostgresQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
 func TestPostgresQuotaReserveIsAtomic(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "atomic@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "atomic@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	st.SetQuotaLimits(100, 200, 0)

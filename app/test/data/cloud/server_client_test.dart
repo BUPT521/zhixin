@@ -152,7 +152,7 @@ void main() {
         httpClient: server.client,
       );
       final tokens = await client.register(
-        email: 'refresh-a@example.com',
+        identifier: 'refresh-a@example.com',
         password: 'password123',
       );
 
@@ -179,7 +179,7 @@ void main() {
         httpClient: server.client,
       );
       final tokens = await client.register(
-        email: 'refresh-b@example.com',
+        identifier: 'refresh-b@example.com',
         password: 'password123',
       );
       final refreshed = await client.refresh(
@@ -213,7 +213,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'a@example.com',
+      identifier: 'a@example.com',
       password: 'password123',
       deviceName: '测试设备',
     );
@@ -222,15 +222,15 @@ void main() {
     expect(tokens.userId, isNotEmpty);
 
     await expectLater(
-      client.register(email: 'a@example.com', password: 'password123'),
+      client.register(identifier: 'a@example.com', password: 'password123'),
       throwsA(
         isA<ServerProblem>()
-            .having((error) => error.code, 'code', 'email_taken')
+            .having((error) => error.code, 'code', 'identifier_taken')
             .having((error) => error.userMessage, 'message', contains('已经注册')),
       ),
     );
     final again = await client.login(
-      email: 'a@example.com',
+      identifier: 'a@example.com',
       password: 'password123',
     );
     expect(again.userId, tokens.userId);
@@ -287,7 +287,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'b@example.com',
+      identifier: 'b@example.com',
       password: 'password123',
     );
     final commit = ServerCommit(
@@ -345,7 +345,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'c@example.com',
+      identifier: 'c@example.com',
       password: 'password123',
     );
     final bytes = Uint8List.fromList(utf8.encode('zip-bytes'));
@@ -383,7 +383,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'd@example.com',
+      identifier: 'd@example.com',
       password: 'password123',
     );
     final bytes = Uint8List.fromList([1, 2, 3, 4]);
@@ -404,7 +404,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'blob-limit@example.com',
+      identifier: 'blob-limit@example.com',
       password: 'password123',
     );
 
@@ -442,7 +442,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'e@example.com',
+      identifier: 'e@example.com',
       password: 'password123',
     );
     await client.deleteAllBackups(tokens.accessToken, password: 'password1');
@@ -457,7 +457,7 @@ void main() {
       httpClient: server.client,
     );
     final tokens = await client.register(
-      email: 'cloud@example.com',
+      identifier: 'cloud@example.com',
       password: 'password123',
     );
     final userId = tokens.userId;

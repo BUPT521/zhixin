@@ -58,11 +58,11 @@ func (rt routes) PostV1AuthRegister(w http.ResponseWriter, r *http.Request) { rt
 func (rt routes) PostV1AuthLogin(w http.ResponseWriter, r *http.Request)    { rt.auth.Login(w, r) }
 func (rt routes) PostV1AuthRefresh(w http.ResponseWriter, r *http.Request)  { rt.auth.Refresh(w, r) }
 func (rt routes) PostV1AuthLogout(w http.ResponseWriter, r *http.Request)   { rt.auth.Logout(w, r) }
-func (rt routes) PostV1AuthEmailVerifyRequest(w http.ResponseWriter, r *http.Request) {
-	rt.auth.RequestEmailVerification(w, r)
+func (rt routes) PostV1MeIdentitiesIdVerification(w http.ResponseWriter, r *http.Request, id string) {
+	rt.auth.RequestIdentityVerification(w, r, id)
 }
-func (rt routes) PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request) {
-	rt.auth.ConfirmEmailVerification(w, r)
+func (rt routes) PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string) {
+	rt.auth.ConfirmIdentityVerification(w, r, id)
 }
 func (rt routes) PostV1AuthPasswordForgot(w http.ResponseWriter, r *http.Request) {
 	rt.auth.ForgotPassword(w, r)

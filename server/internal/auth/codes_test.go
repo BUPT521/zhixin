@@ -7,6 +7,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
+
+	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
 
 // fakeMailer 记下发出的邮件，用例从正文里取出六位验证码。
@@ -45,11 +49,41 @@ func newCodeService(t *testing.T) (*Service, *clock, *fakeMailer) {
 	t.Helper()
 	s, c := newTestService()
 	m := &fakeMailer{}
-	s.ConfigureCodes(m, []byte("test-secret"), 10*time.Minute, time.Minute)
+	s.ConfigureCodes(NewSenders(m), []byte("test-secret"), 10*time.Minute, time.Minute)
 	return s, c, m
 }
 
-func TestEmailVerificationFlow(t *testing.T) {
+// createEmailAccount 在内存存储里写入账号与一条邮箱登录方式，返回这条登录方式。
+// 用例都用邮箱，与“代码现在只写 email”一致。
+func createEmailAccount(t *testing.T, st *MemoryStore, u User, email string) Identity {
+	t.Helper()
+	ident := Identity{
+		ID:         u.ID + "-email",
+		UserID:     u.ID,
+		Kind:       KindEmail,
+		Identifier: email,
+		CreatedAt:  u.CreatedAt,
+	}
+	if err := st.CreateAccount(context.Background(), u, ident); err != nil {
+		t.Fatalf("create account %s: %v", u.ID, err)
+	}
+	return ident
+}
+
+// identityID 返回账号名下唯一的登录方式编号。
+func identityID(t *testing.T, s *Service, p Principal) string {
+	t.Helper()
+	_, identities, err := s.Account(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(identities) != 1 {
+		t.Fatalf("应只有一条登录方式，得到 %+v", identities)
+	}
+	return identities[0].ID
+}
+
+func TestIdentityVerificationFlow(t *testing.T) {
 	ctx := context.Background()
 	s, c, m := newCodeService(t)
 	tok, err := s.Register(ctx, "student@example.com", "password1", "")
@@ -57,8 +91,9 @@ func TestEmailVerificationFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
+	id := identityID(t, s, p)
 
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.sent) != 1 || m.sent[0].To != "student@example.com" {
@@ -67,61 +102,79 @@ func TestEmailVerificationFlow(t *testing.T) {
 	code := m.lastCode(t)
 
 	// 冷却期内重发被拒绝，但第一次的验证码仍然可用。
-	if err := s.RequestEmailVerification(ctx, p); !errors.Is(err, ErrCodeTooSoon) {
+	if err := s.RequestIdentityVerification(ctx, p, id); !errors.Is(err, ErrCodeTooSoon) {
 		t.Fatalf("second request: %v", err)
 	}
-	if err := s.ConfirmEmailVerification(ctx, p, "000000"); !errors.Is(err, ErrInvalidCode) {
+	if err := s.ConfirmIdentityVerification(ctx, p, id, "000000"); !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("wrong code: %v", err)
 	}
-	if err := s.ConfirmEmailVerification(ctx, p, code); err != nil {
+	if err := s.ConfirmIdentityVerification(ctx, p, id, code); err != nil {
 		t.Fatal(err)
 	}
-	u, err := s.User(ctx, p)
-	if err != nil || u.EmailVerifiedAt.IsZero() {
-		t.Fatalf("user not verified: %v %+v", err, u)
+	// 确认之后重新鉴权，Principal 上的“至少一种登录方式已确认”为真。
+	fresh, err := s.Authenticate(ctx, tok.AccessToken)
+	if err != nil || !fresh.ContactVerified {
+		t.Fatalf("contact not verified: %v %+v", err, fresh)
 	}
 
 	// 已确认的账号不再发信，也不报错。
 	c.t = c.t.Add(2 * time.Minute)
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.sent) != 1 {
-		t.Fatalf("verified account received another mail: %d", len(m.sent))
+		t.Fatalf("verified identity received another mail: %d", len(m.sent))
 	}
 }
 
-func TestEmailVerificationCodeExpires(t *testing.T) {
+// TestIdentityVerificationRejectsForeignIdentity 核对验证接口只认当前账号名下的
+// 登录方式：别人的编号按不存在处理，不把那条联系方式带出去。
+func TestIdentityVerificationRejectsForeignIdentity(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := newCodeService(t)
+	tok, err := s.Register(ctx, "owner@example.com", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Authenticate(ctx, tok.AccessToken)
+	if err := s.RequestIdentityVerification(ctx, p, "not-on-this-account"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestIdentityVerificationCodeExpires(t *testing.T) {
 	ctx := context.Background()
 	s, c, m := newCodeService(t)
 	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	id := identityID(t, s, p)
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
 	code := m.lastCode(t)
 	c.t = c.t.Add(11 * time.Minute)
-	if err := s.ConfirmEmailVerification(ctx, p, code); !errors.Is(err, ErrInvalidCode) {
+	if err := s.ConfirmIdentityVerification(ctx, p, id, code); !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("expired code accepted: %v", err)
 	}
 }
 
-func TestEmailVerificationAttemptsAreLimited(t *testing.T) {
+func TestIdentityVerificationAttemptsAreLimited(t *testing.T) {
 	ctx := context.Background()
 	s, _, m := newCodeService(t)
 	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	id := identityID(t, s, p)
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
 	code := m.lastCode(t)
 	for i := 0; i < maxCodeAttempts; i++ {
-		if err := s.ConfirmEmailVerification(ctx, p, "999999"); !errors.Is(err, ErrInvalidCode) {
+		if err := s.ConfirmIdentityVerification(ctx, p, id, "999999"); !errors.Is(err, ErrInvalidCode) {
 			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
 	// 次数用完之后正确的验证码也不再接受，必须重新发送。
-	if err := s.ConfirmEmailVerification(ctx, p, code); !errors.Is(err, ErrInvalidCode) {
+	if err := s.ConfirmIdentityVerification(ctx, p, id, code); !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("code accepted after too many attempts: %v", err)
 	}
 }
@@ -131,19 +184,20 @@ func TestPasswordResetRevokesSessions(t *testing.T) {
 	s, _, m := newCodeService(t)
 	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	id := identityID(t, s, p)
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ConfirmEmailVerification(ctx, p, m.lastCode(t)); err != nil {
+	if err := s.ConfirmIdentityVerification(ctx, p, id, m.lastCode(t)); err != nil {
 		t.Fatal(err)
 	}
 
-	// 未验证的邮箱不作答复；已验证的邮箱收到重设验证码。
+	// 未登记的登录方式不作答复；已登记的收到重设验证码。
 	if err := s.RequestPasswordReset(ctx, "nobody@example.com"); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.sent) != 1 {
-		t.Fatalf("unknown email received a reset mail: %d", len(m.sent))
+		t.Fatalf("unknown identifier received a reset mail: %d", len(m.sent))
 	}
 	if err := s.RequestPasswordReset(ctx, "student@example.com"); err != nil {
 		t.Fatal(err)
@@ -170,10 +224,11 @@ func TestPasswordResetCodeSingleUse(t *testing.T) {
 	s, _, m := newCodeService(t)
 	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	id := identityID(t, s, p)
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ConfirmEmailVerification(ctx, p, m.lastCode(t)); err != nil {
+	if err := s.ConfirmIdentityVerification(ctx, p, id, m.lastCode(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RequestPasswordReset(ctx, "student@example.com"); err != nil {
@@ -191,7 +246,9 @@ func TestPasswordResetCodeSingleUse(t *testing.T) {
 	}
 }
 
-func TestPasswordResetRecoversUnverifiedEmail(t *testing.T) {
+// TestPasswordResetConfirmsUnverifiedIdentity 核对重设密码顺带确认收到验证码的
+// 那种登录方式：收到验证码本身就是这条联系方式属于本人的证据。
+func TestPasswordResetConfirmsUnverifiedIdentity(t *testing.T) {
 	ctx := context.Background()
 	s, _, m := newCodeService(t)
 	old, err := s.Register(ctx, "student@example.com", "password1", "")
@@ -212,8 +269,25 @@ func TestPasswordResetRecoversUnverifiedEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, err := s.Authenticate(ctx, fresh.AccessToken)
-	if err != nil || !principal.EmailVerified {
-		t.Fatalf("recovered email is not verified: %+v, %v", principal, err)
+	if err != nil || !principal.ContactVerified {
+		t.Fatalf("recovered identity is not verified: %+v, %v", principal, err)
+	}
+}
+
+// TestUnsupportedIdentityKind 核对没有接上发送通道的登录方式返回“暂不支持”，
+// 并且不留下可用的验证码；库里验证码的 user_id 也允许为空。
+func TestUnsupportedIdentityKind(t *testing.T) {
+	ctx := context.Background()
+	s, _, m := newCodeService(t)
+	err := s.issueCode(ctx, "", PurposeVerifyContact, KindPhone, "+8613800138000")
+	if !errors.Is(err, ErrSenderUnsupported) {
+		t.Fatalf("got %v", err)
+	}
+	if len(m.sent) != 0 {
+		t.Fatalf("不支持的方式不应发出消息: %+v", m.sent)
+	}
+	if _, err := s.store.Code(ctx, PurposeVerifyContact, KindPhone, "+8613800138000"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unsupported kind left a code: %v", err)
 	}
 }
 
@@ -222,7 +296,8 @@ func TestCodesNeedMailer(t *testing.T) {
 	s, _ := newTestService()
 	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
-	if err := s.RequestEmailVerification(ctx, p); !errors.Is(err, ErrMailUnavailable) {
+	id := identityID(t, s, p)
+	if err := s.RequestIdentityVerification(ctx, p, id); !errors.Is(err, ErrMailUnavailable) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -233,15 +308,41 @@ func TestMailFailureDropsCode(t *testing.T) {
 	m.err = errors.New("smtp down")
 	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
 	p, _ := s.Authenticate(ctx, tok.AccessToken)
-	if err := s.RequestEmailVerification(ctx, p); !errors.Is(err, ErrMailUnavailable) {
+	id := identityID(t, s, p)
+	if err := s.RequestIdentityVerification(ctx, p, id); !errors.Is(err, ErrMailUnavailable) {
 		t.Fatalf("got %v", err)
 	}
 	// 发信失败之后没有留下可用的验证码，下一次重发不受冷却影响。
 	m.err = nil
-	if err := s.RequestEmailVerification(ctx, p); err != nil {
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.sent) != 1 || !strings.Contains(m.sent[0].Body, "验证码") {
 		t.Fatalf("sent %+v", m.sent)
+	}
+}
+
+// TestSendLimitKeyedByKindAndIdentifier 核对发信预算按 kind:identifier 计：换了
+// 用途但收信地址相同，仍然共用同一个桶。
+func TestSendLimitKeyedByKindAndIdentifier(t *testing.T) {
+	ctx := context.Background()
+	s, c, _ := newCodeService(t)
+	s.SetSendLimiter(ratelimit.New(rate.Limit(0), 1, 0))
+	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
+	p, _ := s.Authenticate(ctx, tok.AccessToken)
+	id := identityID(t, s, p)
+
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
+		t.Fatal(err)
+	}
+	// 过了冷却期再换一个用途：同一地址共用一份预算，重设密码这一步按“已受理”
+	// 返回，不发信也不报错。
+	c.t = c.t.Add(2 * time.Minute)
+	if err := s.RequestPasswordReset(ctx, "student@example.com"); err != nil {
+		t.Fatalf("第二个用途应共用同一份预算并静默受理，得到 %v", err)
+	}
+	// 换回确认登录方式：冷却期已过，剩下的是用尽的发信预算。
+	if err := s.RequestIdentityVerification(ctx, p, id); !errors.As(err, new(sendRateError)) {
+		t.Fatalf("预算用尽应返回发信预算错误，得到 %v", err)
 	}
 }

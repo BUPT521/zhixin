@@ -50,12 +50,12 @@ type Handler struct {
 	// 一律放行。
 	byAddr        *ratelimit.Limiter
 	refreshLimits *ratelimit.Limiter
-	// registerGlobal 是整个实例的注册上限，只有一个键：注册在邮箱验证之前就做
+	// registerGlobal 是整个实例的注册上限，只有一个键：注册在验证登录方式之前就做
 	// argon2 并写账号与会话，按来源地址的桶只挡同一个来源，换地址仍能把未验证
 	// 的账号灌满库，这个桶给实例一个总量（ADR-0037）。为零值时一律放行。
 	registerGlobal *ratelimit.Limiter
-	// codeLimits 限制发送验证码与重设密码的尝试：按账号、来源地址与邮箱各记
-	// 一个桶，防止同一账号被反复发信，也防止换账号刷同一个邮箱。
+	// codeLimits 限制发送验证码与重设密码的尝试：按登录方式、来源地址与联系方式
+	// 各记一个桶，防止同一账号被反复发信，也防止换账号刷同一个联系方式。
 	codeLimits *ratelimit.Limiter
 	// clientHost 取来源地址；直接对端是反向代理时由装配处换成读
 	// X-Forwarded-For 的实现，见 httpx.NewClientHost。
@@ -93,8 +93,8 @@ func NewHandler(
 }
 
 // SetLoginFailLimiter 装上按账号的登录失败预算，由 server.New 按配置建好注入。
-// 计数键是规范化之后的邮箱（小写、去两端空白）加 "login:" 前缀；删号前的密码
-// 确认用 "delete:" 加账号 id，共用同一个限流器，两种失败互相不占额度。
+// 计数键是规范化之后的登录方式值（邮箱小写、去两端空白）加 "login:" 前缀；删号
+// 前的密码确认用 "delete:" 加账号 id，共用同一个限流器，两种失败互相不占额度。
 func (h *Handler) SetLoginFailLimiter(l *ratelimit.Limiter) {
 	if l == nil {
 		l = ratelimit.Disabled()
@@ -103,8 +103,8 @@ func (h *Handler) SetLoginFailLimiter(l *ratelimit.Limiter) {
 }
 
 // SetRegisterGlobalLimiter 装上注册的实例级上限，由 server.New 按配置建好注入。
-// 传 nil 表示关闭。注册接口公开，在邮箱验证之前就要做一次 argon2 并写入账号与
-// 会话；按来源地址的桶只挡同一个来源，换地址仍能把未验证的账号灌满库，所以这
+// 传 nil 表示关闭。注册接口公开，在登录方式确认之前就要做一次 argon2 并写入账号
+// 与会话；按来源地址的桶只挡同一个来源，换地址仍能把未验证的账号灌满库，所以这
 // 里再给整个实例一个总量，超出时在解码请求体与哈希之前返回 429。
 func (h *Handler) SetRegisterGlobalLimiter(l *ratelimit.Limiter) {
 	if l == nil {
@@ -117,11 +117,11 @@ func (h *Handler) SetRegisterGlobalLimiter(l *ratelimit.Limiter) {
 // 因此要单独建一个限流器。
 const registerGlobalKey = "global"
 
-// loginKey 把邮箱规范成限流键，与服务层登录时的规范化保持一致：同一账号换大小
-// 写或带空白提交，扣的是同一个桶。长度截到邮箱上限，避免异常超长的邮箱让限流表
-// 的键无限变大。
-func loginKey(email string) string {
-	key := strings.ToLower(strings.TrimSpace(email))
+// identifierKey 把登录方式的值规范成限流键，与服务层登录时的规范化保持一致：
+// 同一账号换大小写或带空白提交，扣的是同一个桶。长度截到契约上限，避免异常
+// 超长的值让限流表的键无限变大。
+func identifierKey(identifier string) string {
+	key := strings.ToLower(strings.TrimSpace(identifier))
 	if len(key) > 254 {
 		key = key[:254]
 	}
@@ -173,12 +173,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	t, err := h.svc.Register(r.Context(), string(in.Email), in.Password, optional(in.DeviceName))
+	t, err := h.svc.Register(r.Context(), in.Identifier, in.Password, optional(in.DeviceName))
 	switch {
 	case errors.Is(err, ErrInvalidInput):
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address and password 8 to 128 characters")
-	case errors.Is(err, ErrEmailTaken):
-		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeEmailTaken, "")
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "identifier must be a plain email address and password 8 to 128 characters")
+	case errors.Is(err, ErrIdentifierTaken):
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeIdentifierTaken, "")
 	case err != nil:
 		httpx.WriteInternal(w, r, h.log, err)
 	default:
@@ -196,13 +196,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 先为本次校验扣除一枚令牌，密码校验结束后仅对失败的凭据保留扣减。
-	email := loginKey(string(in.Email))
-	refund, delay := h.loginFails.TakeRefundable("login:" + email)
+	identifier := identifierKey(in.Identifier)
+	refund, delay := h.loginFails.TakeRefundable("login:" + identifier)
 	if delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return
 	}
-	t, err := h.svc.Login(r.Context(), string(in.Email), in.Password, optional(in.DeviceName))
+	t, err := h.svc.Login(r.Context(), in.Identifier, in.Password, optional(in.DeviceName))
 	switch {
 	case errors.Is(err, ErrInvalidCredentials):
 		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeInvalidCredentials, "")
@@ -250,23 +250,28 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RequestEmailVerification 给当前账号的邮箱发验证码。已经确认过的账号直接
-// 返回 204，不重复发信；刚发过的返回 429 并给出建议等待秒数。
-func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Request) {
+// RequestIdentityVerification 给账号的某一种登录方式发验证码。已经确认过的直接
+// 返回 204，不重复发送；刚发过的返回 429 并给出建议等待秒数；这种登录方式还没有
+// 接上发送通道时返回 501。
+func (h *Handler) RequestIdentityVerification(w http.ResponseWriter, r *http.Request, identityID string) {
 	p := MustPrincipal(r.Context())
-	if delay := h.codeLimits.Take("account:" + p.UserID); delay > 0 {
+	if delay := h.codeLimits.Take("identity:" + identityID); delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return
 	}
-	err := h.svc.RequestEmailVerification(r.Context(), p)
-	var mailRate mailRateError
+	err := h.svc.RequestIdentityVerification(r.Context(), p, identityID)
+	var sendRate sendRateError
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "this identity is not on the account")
 	case errors.Is(err, ErrCodeTooSoon):
 		httpx.TooMany(w, r, h.cooldownSeconds())
-	case errors.As(err, &mailRate):
-		httpx.TooMany(w, r, mailRate.retryAfter)
+	case errors.As(err, &sendRate):
+		httpx.TooMany(w, r, sendRate.retryAfter)
+	case errors.Is(err, ErrSenderUnsupported):
+		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
 	default:
@@ -274,21 +279,23 @@ func (h *Handler) RequestEmailVerification(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// ConfirmEmailVerification 校验验证码并把邮箱标为已确认。
-func (h *Handler) ConfirmEmailVerification(w http.ResponseWriter, r *http.Request) {
+// ConfirmIdentityVerification 校验验证码并把那种登录方式标为已确认。
+func (h *Handler) ConfirmIdentityVerification(w http.ResponseWriter, r *http.Request, identityID string) {
 	p := MustPrincipal(r.Context())
-	if delay := h.codeLimits.Take("confirm:" + p.UserID); delay > 0 {
+	if delay := h.codeLimits.Take("confirm:" + identityID); delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return
 	}
-	var in api.PostV1AuthEmailVerifyConfirmJSONRequestBody
+	var in api.PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	err := h.svc.ConfirmEmailVerification(r.Context(), p, in.Code)
+	err := h.svc.ConfirmIdentityVerification(r.Context(), p, identityID, in.Code)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "this identity is not on the account")
 	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidCode, "")
 	default:
@@ -296,7 +303,7 @@ func (h *Handler) ConfirmEmailVerification(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// ForgotPassword 向账号登记的邮箱发送重设验证码。邮箱不存在时也返回 204。
+// ForgotPassword 向账号登记的登录方式发送重设验证码。账号不存在时也返回 204。
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if delay := h.codeLimits.Take("forgot-address:" + h.clientHost(r)); delay > 0 {
 		httpx.TooMany(w, r, delay)
@@ -306,19 +313,21 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(string(in.Email)))
-	if delay := h.codeLimits.Take("forgot-email:" + email); delay > 0 {
+	identifier := identifierKey(in.Identifier)
+	if delay := h.codeLimits.Take("forgot-identifier:" + identifier); delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return
 	}
-	err := h.svc.RequestPasswordReset(r.Context(), email)
+	err := h.svc.RequestPasswordReset(r.Context(), in.Identifier)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, ErrInvalidInput):
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address")
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "identifier must be a plain email address")
 	case errors.Is(err, ErrCodeTooSoon):
 		httpx.TooMany(w, r, h.cooldownSeconds())
+	case errors.Is(err, ErrSenderUnsupported):
+		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
 	default:
@@ -336,12 +345,12 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
-	err := h.svc.ResetPassword(r.Context(), string(in.Email), in.Code, in.NewPassword)
+	err := h.svc.ResetPassword(r.Context(), in.Identifier, in.Code, in.NewPassword)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, ErrInvalidInput):
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "email must be a plain address and password 8 to 128 characters")
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "identifier must be a plain email address and password 8 to 128 characters")
 	case errors.Is(err, ErrInvalidCode):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidCode, "")
 	default:
@@ -349,19 +358,29 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Me 返回账号与它的登录方式；顶层的 email 已经去掉，以后加昵称或头像只需在
+// 契约里多一个 profile 字段。
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p := MustPrincipal(r.Context())
-	u, err := h.svc.User(r.Context(), p)
+	u, identities, err := h.svc.Account(r.Context(), p)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, api.Me{
-		UserId:        u.ID,
-		Email:         u.Email,
-		EmailVerified: !u.EmailVerifiedAt.IsZero(),
-		CreatedAt:     u.CreatedAt,
-	})
+	out := api.Me{
+		UserId:     u.ID,
+		CreatedAt:  u.CreatedAt,
+		Identities: make([]api.Identity, 0, len(identities)),
+	}
+	for _, ident := range identities {
+		out.Identities = append(out.Identities, api.Identity{
+			Id:         ident.ID,
+			Kind:       api.IdentityKind(ident.Kind),
+			Identifier: ident.Identifier,
+			Verified:   !ident.VerifiedAt.IsZero(),
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // DeleteMe 删号前要求再输一次密码。密码错误回 401 invalid_credentials 并扣一次

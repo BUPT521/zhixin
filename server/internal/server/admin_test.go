@@ -103,7 +103,7 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	}))
 	defer backup.Close()
 	h := newHarness(t, map[string]string{
-		"ZHIXIN_ADMIN_TOKEN": testAdminToken, "ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL": "0",
+		"ZHIXIN_ADMIN_TOKEN": testAdminToken, "ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT": "0",
 		"ZHIXIN_TIMEZONE": "Asia/Shanghai",
 	})
 	admin := func(method, path string, in, out any, want int) {
@@ -374,7 +374,7 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	if code := h.json("POST", "/v1/llm/embeddings", user, nil, nil); code != http.StatusForbidden {
 		t.Fatalf("未验证邮箱时应拒绝嵌入请求：%d", code)
 	}
-	h.markEmailVerified(userID)
+	h.markContactVerified(userID)
 	var list struct {
 		Data []struct {
 			ID   string `json:"id"`

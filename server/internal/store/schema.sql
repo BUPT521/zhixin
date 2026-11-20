@@ -3,28 +3,49 @@
 -- 开发阶段不写迁移（ADR-0001）：结构变化时直接按本文件重建库。
 -- 服务端不解析学习内容：同步变更与备份按客户端提交原样保存。
 
+-- 一个账号对应一个人的学习数据，登录凭据与联系方式分开放：密码留在这里，
+-- 邮箱、手机号、微信这类“登录方式”各在 user_identity 占一行（ADR-0038）。
 CREATE TABLE app_user (
-  id                 TEXT PRIMARY KEY,
-  email              TEXT NOT NULL UNIQUE,      -- 已转小写
-  password_hash      TEXT NOT NULL,             -- argon2id，PHC 格式
-  email_verified_at  TIMESTAMPTZ,               -- 空表示还没有确认邮箱
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+  id             TEXT PRIMARY KEY,
+  password_hash  TEXT NOT NULL,                 -- argon2id，PHC 格式
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 邮箱验证与找回密码共用的验证码：每个账号每种用途只保留最新一枚，
--- 只存 HMAC-SHA256（验证码只有六位，直接存哈希可以被穷举）。过期或输错次数
--- 达到上限时删除，重新发送时覆盖。
+-- 登录方式：一个账号可以挂多种联系方式，一种联系方式只能属于一个账号。
+-- kind 的取值先留好 email、phone、wechat 三种，代码现在只写 email；以后接手机号
+-- 或微信，只需新增一种 kind 与对应的登录入口，不用再改这张表。identifier 是
+-- 规范化之后的值（邮箱转小写），判重与登录都按 (kind, identifier) 定位账号。
+-- verified_at 为空表示这种登录方式还没有用验证码确认。
+CREATE TABLE user_identity (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL CHECK (kind IN ('email', 'phone', 'wechat')),
+  identifier   TEXT NOT NULL,
+  verified_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (kind, identifier)
+);
+-- 账号页按账号列出登录方式，每日清理按“有没有已验证的登录方式”筛账号。
+CREATE INDEX user_identity_by_user ON user_identity(user_id, created_at);
+
+-- 验证码按登录方式保存，不挂在账号上：还没有账号的邮箱或手机号也能先发一枚。
+-- 每种用途、每种登录方式只保留最新一枚，只存 HMAC-SHA256（验证码只有六位，
+-- 直接存哈希可以被穷举）。过期或输错次数达到上限时删除，重新发送时覆盖。
 CREATE TABLE auth_code (
-  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  purpose     TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
+  purpose     TEXT NOT NULL CHECK (purpose IN ('verify_contact', 'reset_password')),
+  kind        TEXT NOT NULL CHECK (kind IN ('email', 'phone', 'wechat')),
+  identifier  TEXT NOT NULL,
+  user_id     TEXT REFERENCES app_user(id) ON DELETE CASCADE,
   code_hash   TEXT NOT NULL,
   expires_at  TIMESTAMPTZ NOT NULL,
   attempts    INTEGER NOT NULL DEFAULT 0,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, purpose)
+  PRIMARY KEY (purpose, kind, identifier)
 );
 -- 每日清理过期验证码按 expires_at 扫。
 CREATE INDEX auth_code_by_expires ON auth_code(expires_at);
+-- 删除账号时按 user_id 找到还没用掉的验证码。
+CREATE INDEX auth_code_by_user ON auth_code(user_id);
 
 -- 一台登录的设备一行；只存令牌的 SHA-256。
 CREATE TABLE session (

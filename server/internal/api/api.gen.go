@@ -124,6 +124,27 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for IdentityKind.
+const (
+	Email  IdentityKind = "email"
+	Phone  IdentityKind = "phone"
+	Wechat IdentityKind = "wechat"
+)
+
+// Valid indicates whether the value is a known member of the IdentityKind enum.
+func (e IdentityKind) Valid() bool {
+	switch e {
+	case Email:
+		return true
+	case Phone:
+		return true
+	case Wechat:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ModelKind.
 const (
 	Chat      ModelKind = "chat"
@@ -145,8 +166,8 @@ func (e ModelKind) Valid() bool {
 // Defines values for ProblemCode.
 const (
 	ProblemCodeConflict           ProblemCode = "conflict"
-	ProblemCodeEmailTaken         ProblemCode = "email_taken"
-	ProblemCodeEmailUnverified    ProblemCode = "email_unverified"
+	ProblemCodeContactUnverified  ProblemCode = "contact_unverified"
+	ProblemCodeIdentifierTaken    ProblemCode = "identifier_taken"
 	ProblemCodeInternal           ProblemCode = "internal"
 	ProblemCodeInvalidCode        ProblemCode = "invalid_code"
 	ProblemCodeInvalidCredentials ProblemCode = "invalid_credentials"
@@ -168,9 +189,9 @@ func (e ProblemCode) Valid() bool {
 	switch e {
 	case ProblemCodeConflict:
 		return true
-	case ProblemCodeEmailTaken:
+	case ProblemCodeContactUnverified:
 		return true
-	case ProblemCodeEmailUnverified:
+	case ProblemCodeIdentifierTaken:
 		return true
 	case ProblemCodeInternal:
 		return true
@@ -458,9 +479,11 @@ type CommitPage struct {
 
 // Credentials defines model for Credentials.
 type Credentials struct {
-	DeviceName *string             `json:"device_name,omitempty"`
-	Email      openapi_types.Email `json:"email"`
-	Password   string              `json:"password"`
+	DeviceName *string `json:"device_name,omitempty"`
+
+	// Identifier 登录方式的值，服务端识别种类并规范化；现在只接受邮箱
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
 }
 
 // EmbeddingList defines model for EmbeddingList.
@@ -561,6 +584,23 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Identity defines model for Identity.
+type Identity struct {
+	Id string `json:"id"`
+
+	// Identifier 规范化之后的联系方式
+	Identifier string `json:"identifier"`
+
+	// Kind 登录方式的种类；表结构的 check 约束与这里一致
+	Kind IdentityKind `json:"kind"`
+
+	// Verified 这种登录方式是否已经用验证码确认
+	Verified bool `json:"verified"`
+}
+
+// IdentityKind 登录方式的种类；表结构的 check 约束与这里一致
+type IdentityKind string
+
 // LLMQuota defines model for LLMQuota.
 type LLMQuota struct {
 	// DailyTokens 聊天每日额度
@@ -580,11 +620,10 @@ type LLMQuota struct {
 // Me defines model for Me.
 type Me struct {
 	CreatedAt time.Time `json:"created_at"`
-	Email     string    `json:"email"`
 
-	// EmailVerified 邮箱是否已经用验证码确认
-	EmailVerified bool   `json:"email_verified"`
-	UserId        string `json:"user_id"`
+	// Identities 这个账号的登录方式；现在只会有一条邮箱
+	Identities []Identity `json:"identities"`
+	UserId     string     `json:"user_id"`
 }
 
 // Model defines model for Model.
@@ -728,21 +767,16 @@ type GetAdminV1UsageParams struct {
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
 }
 
-// PostV1AuthEmailVerifyConfirmJSONBody defines parameters for PostV1AuthEmailVerifyConfirm.
-type PostV1AuthEmailVerifyConfirmJSONBody struct {
-	Code string `json:"code"`
-}
-
 // PostV1AuthPasswordForgotJSONBody defines parameters for PostV1AuthPasswordForgot.
 type PostV1AuthPasswordForgotJSONBody struct {
-	Email openapi_types.Email `json:"email"`
+	Identifier string `json:"identifier"`
 }
 
 // PostV1AuthPasswordResetJSONBody defines parameters for PostV1AuthPasswordReset.
 type PostV1AuthPasswordResetJSONBody struct {
-	Code        string              `json:"code"`
-	Email       openapi_types.Email `json:"email"`
-	NewPassword string              `json:"new_password"`
+	Code        string `json:"code"`
+	Identifier  string `json:"identifier"`
+	NewPassword string `json:"new_password"`
 }
 
 // PostV1AuthRefreshJSONBody defines parameters for PostV1AuthRefresh.
@@ -791,6 +825,11 @@ type DeleteV1MeJSONBody struct {
 	Password string `json:"password"`
 }
 
+// PostV1MeIdentitiesIdVerificationConfirmJSONBody defines parameters for PostV1MeIdentitiesIdVerificationConfirm.
+type PostV1MeIdentitiesIdVerificationConfirmJSONBody struct {
+	Code string `json:"code"`
+}
+
 // DeleteV1SyncCommitsJSONBody defines parameters for DeleteV1SyncCommits.
 type DeleteV1SyncCommitsJSONBody struct {
 	Password string `json:"password"`
@@ -819,9 +858,6 @@ type PostAdminV1ProvidersJSONRequestBody = AdminProviderInput
 
 // PutAdminV1ProvidersIdJSONRequestBody defines body for PutAdminV1ProvidersId for application/json ContentType.
 type PutAdminV1ProvidersIdJSONRequestBody = AdminProviderInput
-
-// PostV1AuthEmailVerifyConfirmJSONRequestBody defines body for PostV1AuthEmailVerifyConfirm for application/json ContentType.
-type PostV1AuthEmailVerifyConfirmJSONRequestBody PostV1AuthEmailVerifyConfirmJSONBody
 
 // PostV1AuthLoginJSONRequestBody defines body for PostV1AuthLogin for application/json ContentType.
 type PostV1AuthLoginJSONRequestBody = Credentials
@@ -858,6 +894,9 @@ type PostV1LlmEmbeddingsLookupJSONRequestBody = EmbeddingLookupRequest
 
 // DeleteV1MeJSONRequestBody defines body for DeleteV1Me for application/json ContentType.
 type DeleteV1MeJSONRequestBody DeleteV1MeJSONBody
+
+// PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody defines body for PostV1MeIdentitiesIdVerificationConfirm for application/json ContentType.
+type PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody PostV1MeIdentitiesIdVerificationConfirmJSONBody
 
 // DeleteV1SyncCommitsJSONRequestBody defines body for DeleteV1SyncCommits for application/json ContentType.
 type DeleteV1SyncCommitsJSONRequestBody DeleteV1SyncCommitsJSONBody
@@ -1053,19 +1092,13 @@ type ServerInterface interface {
 	// GetV1AppReleases 应用安装包的发布清单
 	// (GET /v1/app/releases)
 	GetV1AppReleases(w http.ResponseWriter, r *http.Request)
-	// PostV1AuthEmailVerifyConfirm 用验证码确认当前账号的邮箱
-	// (POST /v1/auth/email/verify/confirm)
-	PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request)
-	// PostV1AuthEmailVerifyRequest 给当前账号的邮箱发一封验证码邮件
-	// (POST /v1/auth/email/verify/request)
-	PostV1AuthEmailVerifyRequest(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthLogin 登录，每台设备一个会话（按来源地址限流，与注册共用一个令牌桶）
 	// (POST /v1/auth/login)
 	PostV1AuthLogin(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthLogout 退出当前设备
 	// (POST /v1/auth/logout)
 	PostV1AuthLogout(w http.ResponseWriter, r *http.Request)
-	// PostV1AuthPasswordForgot 向账号登记的邮箱发送重设密码验证码
+	// PostV1AuthPasswordForgot 向账号登记的登录方式发送重设密码验证码
 	// (POST /v1/auth/password/forgot)
 	PostV1AuthPasswordForgot(w http.ResponseWriter, r *http.Request)
 	// PostV1AuthPasswordReset 用验证码重设密码，并作废该账号的全部会话
@@ -1125,9 +1158,15 @@ type ServerInterface interface {
 	// DeleteV1Me 删除账号，连同同步序列、附件、备份与用量一并删除
 	// (DELETE /v1/me)
 	DeleteV1Me(w http.ResponseWriter, r *http.Request)
-	// GetV1Me 当前账号
+	// GetV1Me 当前账号与它的登录方式
 	// (GET /v1/me)
 	GetV1Me(w http.ResponseWriter, r *http.Request)
+	// PostV1MeIdentitiesIdVerification 给某一种登录方式发送验证码
+	// (POST /v1/me/identities/{id}/verification)
+	PostV1MeIdentitiesIdVerification(w http.ResponseWriter, r *http.Request, id string)
+	// PostV1MeIdentitiesIdVerificationConfirm 用验证码确认某一种登录方式
+	// (POST /v1/me/identities/{id}/verification/confirm)
+	PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string)
 	// DeleteV1SyncCommits 清空该账号的提交序列，服务端 head 重置为 0
 	// (DELETE /v1/sync/commits)
 	DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request)
@@ -1461,34 +1500,6 @@ func (siw *ServerInterfaceWrapper) GetV1AppReleases(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetV1AppReleases(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostV1AuthEmailVerifyConfirm operation middleware
-func (siw *ServerInterfaceWrapper) PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1AuthEmailVerifyConfirm(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostV1AuthEmailVerifyRequest operation middleware
-func (siw *ServerInterfaceWrapper) PostV1AuthEmailVerifyRequest(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1AuthEmailVerifyRequest(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1980,6 +1991,58 @@ func (siw *ServerInterfaceWrapper) GetV1Me(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// PostV1MeIdentitiesIdVerification operation middleware
+func (siw *ServerInterfaceWrapper) PostV1MeIdentitiesIdVerification(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1MeIdentitiesIdVerification(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1MeIdentitiesIdVerificationConfirm operation middleware
+func (siw *ServerInterfaceWrapper) PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1MeIdentitiesIdVerificationConfirm(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteV1SyncCommits operation middleware
 func (siw *ServerInterfaceWrapper) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 
@@ -2207,13 +2270,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/register", wrapper.PostV1AuthRegister)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.PostV1AuthLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.PostV1AuthRefresh)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/email/verify/request", wrapper.PostV1AuthEmailVerifyRequest)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/email/verify/confirm", wrapper.PostV1AuthEmailVerifyConfirm)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/password/forgot", wrapper.PostV1AuthPasswordForgot)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/password/reset", wrapper.PostV1AuthPasswordReset)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.PostV1AuthLogout)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me", wrapper.DeleteV1Me)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetV1Me)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification", wrapper.PostV1MeIdentitiesIdVerification)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification/confirm", wrapper.PostV1MeIdentitiesIdVerificationConfirm)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/cloud", wrapper.DeleteV1Cloud)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/head", wrapper.GetV1SyncHead)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/sync/commits", wrapper.DeleteV1SyncCommits)

@@ -9,11 +9,9 @@ import (
 )
 
 type AppUser struct {
-	ID              string
-	Email           string
-	PasswordHash    string
-	EmailVerifiedAt pgtype.Timestamptz
-	CreatedAt       pgtype.Timestamptz
+	ID           string
+	PasswordHash string
+	CreatedAt    pgtype.Timestamptz
 }
 
 type Attachment struct {
@@ -24,12 +22,14 @@ type Attachment struct {
 }
 
 type AuthCode struct {
-	UserID    string
-	Purpose   string
-	CodeHash  string
-	ExpiresAt pgtype.Timestamptz
-	Attempts  int32
-	CreatedAt pgtype.Timestamptz
+	Purpose    string
+	Kind       string
+	Identifier string
+	UserID     pgtype.Text
+	CodeHash   string
+	ExpiresAt  pgtype.Timestamptz
+	Attempts   int32
+	CreatedAt  pgtype.Timestamptz
 }
 
 type Backup struct {
@@ -181,6 +181,15 @@ type SyncHead struct {
 type UserActive struct {
 	UserID string
 	Day    pgtype.Date
+}
+
+type UserIdentity struct {
+	ID         string
+	UserID     string
+	Kind       string
+	Identifier string
+	VerifiedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
 }
 
 type UserPurge struct {

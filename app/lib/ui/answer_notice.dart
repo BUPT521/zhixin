@@ -96,7 +96,8 @@ String _failureSuffix(LlmFailure? failure) =>
 /// 模型失败之后重新回答的下一步；按失败类型给，不重复读异常原文。
 String _modelNextStep(LlmFailure? failure) => switch (failure) {
   LlmFailure.auth => '请检查设置里的 API Key 与模型名，改好后再点「重试这次回答」。',
-  LlmFailure.emailUnverified => '先在账号页验证邮箱，验证后才能使用知新服务的托管额度，改好后再点「重试这次回答」。',
+  LlmFailure.contactUnverified =>
+    '先在账号页确认一种登录方式，确认后才能使用知新服务的托管额度，改好后再点「重试这次回答」。',
   LlmFailure.offline || LlmFailure.timeout => '检查网络后可以点「重试这次回答」。',
   LlmFailure.rateLimited => '请检查 API Key 的额度，稍后可以点「重试这次回答」。',
   LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',

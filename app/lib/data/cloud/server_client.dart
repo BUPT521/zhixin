@@ -40,14 +40,14 @@ class ServerProblem implements Exception {
     'unauthorized' => '登录状态已失效，请重新登录',
     'invalid_credentials' => '邮箱或密码不正确',
     'invalid_code' => '验证码不正确或已经过期，可以重新获取',
-    'email_taken' => '这个邮箱已经注册过，可以直接登录',
+    'identifier_taken' => '这个邮箱已经注册过，可以直接登录',
     'rate_limited' =>
       retryAfterSeconds == null
           ? '尝试过于频繁，请稍后再试'
           : '尝试过于频繁，请 $retryAfterSeconds 秒后再试',
     'payload_too_large' =>
       extra['resource'] == 'sync' ? '单条同步提交超过服务端允许的大小' : '文件超过服务端允许的大小',
-    'email_unverified' => '请先在账号页验证邮箱',
+    'contact_unverified' => '请先在账号页验证一种登录方式',
     'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
@@ -93,28 +93,63 @@ class ServerProblem implements Exception {
   String toString() => 'ServerProblem($status $code): $detail';
 }
 
-/// 登录后的账号信息。
+/// 服务端返回的一种登录方式。
+class ServerIdentity {
+  const ServerIdentity({
+    required this.id,
+    required this.kind,
+    required this.identifier,
+    this.verified = false,
+  });
+
+  factory ServerIdentity.fromJson(Map<String, Object?> json) => ServerIdentity(
+    id: json['id'] as String? ?? '',
+    kind: json['kind'] as String? ?? '',
+    identifier: json['identifier'] as String? ?? '',
+    verified: json['verified'] == true,
+  );
+
+  final String id;
+
+  /// `email`、`phone` 或 `wechat`，与契约的 `IdentityKind` 一致。
+  final String kind;
+  final String identifier;
+
+  /// 这种登录方式是否已经用验证码确认。
+  final bool verified;
+}
+
+/// 登录后的账号信息与它的登录方式。
 class ServerAccount {
   const ServerAccount({
     required this.userId,
-    required this.email,
-    this.emailVerified = false,
+    this.identities = const [],
     this.createdAt,
   });
 
   factory ServerAccount.fromJson(Map<String, Object?> json) => ServerAccount(
     userId: json['user_id'] as String? ?? '',
-    email: json['email'] as String? ?? '',
-    emailVerified: json['email_verified'] == true,
+    identities: [
+      for (final item in (json['identities'] as List? ?? const []))
+        if (item is Map) ServerIdentity.fromJson(item.cast<String, Object?>()),
+    ],
     createdAt: _parseTime(json['created_at']),
   );
 
   final String userId;
-  final String email;
-
-  /// 邮箱是否已经用验证码确认；未确认时找回密码收不到重设验证码。
-  final bool emailVerified;
+  final List<ServerIdentity> identities;
   final DateTime? createdAt;
+
+  /// 至少有一种登录方式已经确认；托管额度与云端写入按它判断。
+  bool get contactVerified => identities.any((identity) => identity.verified);
+
+  /// 账号页与提示里显示的一行：优先取已确认的登录方式，没有时取第一条。
+  String get displayLabel {
+    for (final identity in identities) {
+      if (identity.verified) return identity.identifier;
+    }
+    return identities.isEmpty ? '' : identities.first.identifier;
+  }
 }
 
 /// 一组访问令牌与刷新令牌；刷新时服务端会同时换掉两枚。
@@ -509,9 +544,11 @@ class ServerClient {
     return ServerReady.fromJson(json);
   }
 
-  /// 注册并登录当前设备；邮箱已被占用时抛出 `email_taken`。
+  /// 注册并登录当前设备；这种登录方式已经被占用时抛出 `identifier_taken`。
+  ///
+  /// [identifier] 是登录方式的值，服务端负责识别种类并规范化，现在只接受邮箱。
   Future<ServerTokens> register({
-    required String email,
+    required String identifier,
     required String password,
     String deviceName = '',
   }) async {
@@ -519,7 +556,7 @@ class ServerClient {
       'POST',
       '/v1/auth/register',
       body: {
-        'email': email,
+        'identifier': identifier,
         'password': password,
         if (deviceName.isNotEmpty) 'device_name': deviceName,
       },
@@ -528,7 +565,7 @@ class ServerClient {
   }
 
   Future<ServerTokens> login({
-    required String email,
+    required String identifier,
     required String password,
     String deviceName = '',
   }) async {
@@ -536,7 +573,7 @@ class ServerClient {
       'POST',
       '/v1/auth/login',
       body: {
-        'email': email,
+        'identifier': identifier,
         'password': password,
         if (deviceName.isNotEmpty) 'device_name': deviceName,
       },
@@ -580,36 +617,45 @@ class ServerClient {
         body: {'password': password},
       );
 
-  /// 给当前账号的邮箱发验证码；已经确认时服务端返回 204，不重复发信。
-  Future<void> requestEmailVerification(String accessToken) =>
-      _send('POST', '/v1/auth/email/verify/request', accessToken: accessToken);
+  /// 给指定的登录方式发验证码；已经确认过的服务端返回 204，不重复发送。
+  Future<void> requestIdentityVerification(
+    String accessToken,
+    String identityId,
+  ) => _send(
+    'POST',
+    '/v1/me/identities/$identityId/verification',
+    accessToken: accessToken,
+  );
 
-  /// 用六位验证码确认当前账号的邮箱。
-  Future<void> confirmEmailVerification(String accessToken, String code) =>
-      _send(
-        'POST',
-        '/v1/auth/email/verify/confirm',
-        accessToken: accessToken,
-        body: {'code': code},
-      );
+  /// 用六位验证码确认指定的登录方式。
+  Future<void> confirmIdentityVerification(
+    String accessToken,
+    String identityId,
+    String code,
+  ) => _send(
+    'POST',
+    '/v1/me/identities/$identityId/verification/confirm',
+    accessToken: accessToken,
+    body: {'code': code},
+  );
 
-  /// 向账号登记的邮箱发送重设验证码；邮箱不存在时服务端同样返回 204。
-  Future<void> requestPasswordReset(String email) => _send(
+  /// 向账号登记的登录方式发送重设验证码；账号不存在时服务端同样返回 204。
+  Future<void> requestPasswordReset(String identifier) => _send(
     'POST',
     '/v1/auth/password/forgot',
-    body: {'email': email.trim().toLowerCase()},
+    body: {'identifier': identifier.trim().toLowerCase()},
   );
 
   /// 用验证码重设密码；成功后这个账号的全部会话都被作废。
   Future<void> resetPassword({
-    required String email,
+    required String identifier,
     required String code,
     required String newPassword,
   }) => _send(
     'POST',
     '/v1/auth/password/reset',
     body: {
-      'email': email.trim().toLowerCase(),
+      'identifier': identifier.trim().toLowerCase(),
       'code': code,
       'new_password': newPassword,
     },

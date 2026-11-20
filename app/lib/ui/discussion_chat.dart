@@ -1182,7 +1182,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final next = switch (error.failure) {
         LlmFailure.notConfigured => '先到设置里配置模型后再试',
         LlmFailure.auth => '请检查设置里的 API Key 与模型名后再试',
-        LlmFailure.emailUnverified => '先在账号页验证邮箱后再试',
+        LlmFailure.contactUnverified => '先在账号页确认一种登录方式后再试',
         _ => '可以点下方重试',
       };
       _failReply('重新回答失败（${error.shortText}）；原来的问题与回答没有改动，$next。');

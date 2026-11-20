@@ -181,9 +181,9 @@ type LLMConfig struct {
 	InstanceDailyTokens int64
 	// MaxRequestBytes caps a proxied request body (images are inlined as base64).
 	MaxRequestBytes int64
-	// RequireVerifiedEmail 要求账号先确认邮箱才开放托管额度；为真时聊天与嵌入入口对
-	// 未确认的账号返回 403 email_unverified。
-	RequireVerifiedEmail bool
+	// RequireVerifiedContact 要求账号至少有一种登录方式已经确认才开放托管额度；
+	// 为真时聊天与嵌入入口对没有确认过的账号返回 403 contact_unverified。
+	RequireVerifiedContact bool
 	// ConcurrentPerUser 是同一账号同时进行的托管请求上限；在读取请求体之前就
 	// 检查，超出的请求直接 429。
 	ConcurrentPerUser int
@@ -326,21 +326,21 @@ func Load(getenv func(string) string) (Config, error) {
 		ReleaseFile: get("ZHIXIN_RELEASE_FILE", ""),
 
 		LLM: LLMConfig{
-			RestrictProviders:    get("ZHIXIN_DATABASE_URL", "") != "",
-			DailyTokens:          num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
-			InstanceDailyTokens:  num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "20000000"),
-			MaxRequestBytes:      num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
-			RequireVerifiedEmail: get("ZHIXIN_LLM_REQUIRE_VERIFIED_EMAIL", "1") == "1",
-			ConcurrentPerUser:    int(num("ZHIXIN_LLM_CONCURRENT_PER_USER", "4")),
-			MaxInstanceBytes:     num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "268435456"),
-			MaxResponseBytes:     num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
-			StreamIdleTimeout:    dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
-			StreamTotalTimeout:   dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
-			EmbeddingDailyTokens: num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
-			EmbeddingMaxInputs:   int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
-			EmbeddingCacheBytes:  num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
-			MaxAttempts:          int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
-			HeaderTimeout:        dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
+			RestrictProviders:      get("ZHIXIN_DATABASE_URL", "") != "",
+			DailyTokens:            num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
+			InstanceDailyTokens:    num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "20000000"),
+			MaxRequestBytes:        num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
+			RequireVerifiedContact: get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",
+			ConcurrentPerUser:      int(num("ZHIXIN_LLM_CONCURRENT_PER_USER", "4")),
+			MaxInstanceBytes:       num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "268435456"),
+			MaxResponseBytes:       num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
+			StreamIdleTimeout:      dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
+			StreamTotalTimeout:     dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
+			EmbeddingDailyTokens:   num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
+			EmbeddingMaxInputs:     int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
+			EmbeddingCacheBytes:    num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
+			MaxAttempts:            int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
+			HeaderTimeout:          dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
 		},
 
 		AdminToken:          get("ZHIXIN_ADMIN_TOKEN", ""),

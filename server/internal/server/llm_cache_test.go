@@ -66,9 +66,9 @@ func TestEmbeddingCacheEndToEnd(t *testing.T) {
 		t.Fatalf("post embedding model: %d", code)
 	}
 	user, userID := h.register("cache@b.cn")
-	h.markEmailVerified(userID)
+	h.markContactVerified(userID)
 	other, otherID := h.register("other@b.cn")
-	h.markEmailVerified(otherID)
+	h.markContactVerified(otherID)
 
 	texts := []string{"第一段", "第二段"}
 	hashes := []string{memoryHash(texts[0]), memoryHash(texts[1])}
@@ -150,7 +150,7 @@ func TestAdminModelChangeClearsEmbeddingCache(t *testing.T) {
 		created = true
 	}
 	user, userID := h.register("admin-cache@b.cn")
-	h.markEmailVerified(userID)
+	h.markContactVerified(userID)
 	texts := []string{"改维度前"}
 	hash := memoryHash(texts[0])
 

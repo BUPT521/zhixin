@@ -46,8 +46,10 @@ func TestVerifyPasswordRejectsDangerousParams(t *testing.T) {
 func TestLoginRejectsDangerousStoredHash(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestService()
-	u := User{ID: "u1", Email: "a@b.cn", PasswordHash: dangerousHash(), CreatedAt: s.now()}
-	if err := s.store.CreateUser(ctx, u); err != nil {
+	u := User{ID: "u1", PasswordHash: dangerousHash(), CreatedAt: s.now()}
+	if err := s.store.CreateAccount(ctx, u, Identity{
+		ID: "u1-email", UserID: u.ID, Kind: KindEmail, Identifier: "a@b.cn", CreatedAt: s.now(),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Login(ctx, "a@b.cn", "password1", ""); !errors.Is(err, ErrInvalidCredentials) {

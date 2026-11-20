@@ -20,8 +20,8 @@ const (
 	CodeUnauthorized       = api.ProblemCodeUnauthorized
 	CodeInvalidCredentials = api.ProblemCodeInvalidCredentials
 	CodeInvalidCode        = api.ProblemCodeInvalidCode
-	CodeEmailTaken         = api.ProblemCodeEmailTaken
-	CodeEmailUnverified    = api.ProblemCodeEmailUnverified
+	CodeIdentifierTaken    = api.ProblemCodeIdentifierTaken
+	CodeContactUnverified  = api.ProblemCodeContactUnverified
 	CodeNotFound           = api.ProblemCodeNotFound
 	CodeConflict           = api.ProblemCodeConflict
 	CodePayloadTooLarge    = api.ProblemCodePayloadTooLarge

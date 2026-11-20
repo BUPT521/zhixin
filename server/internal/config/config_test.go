@@ -126,7 +126,7 @@ func TestLoadDefaultsForHardening(t *testing.T) {
 	if cfg.SyncPullMaxBytes != 4<<20 {
 		t.Fatalf("sync pull bytes = %d", cfg.SyncPullMaxBytes)
 	}
-	if !cfg.LLM.RequireVerifiedEmail || cfg.LLM.ConcurrentPerUser != 4 {
+	if !cfg.LLM.RequireVerifiedContact || cfg.LLM.ConcurrentPerUser != 4 {
 		t.Fatalf("llm gates = %+v", cfg.LLM)
 	}
 	if cfg.LLM.InstanceDailyTokens <= cfg.LLM.DailyTokens {

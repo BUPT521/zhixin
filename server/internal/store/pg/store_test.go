@@ -61,16 +61,23 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 
-	u := auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "hash", CreatedAt: time.Now().UTC()}
-	if err := st.CreateUser(ctx, u); err != nil {
-		t.Fatalf("create user: %v", err)
+	u := auth.User{ID: "u1", PasswordHash: "hash"}
+	if err := createAccount(ctx, st, u, "a@b.cn"); err != nil {
+		t.Fatalf("create account: %v", err)
 	}
-	if err := st.CreateUser(ctx, u); err != auth.ErrEmailTaken {
-		t.Fatalf("重复邮箱应返回 ErrEmailTaken，得到 %v", err)
+	if err := createAccount(ctx, st, auth.User{ID: "u2", PasswordHash: "hash"}, "a@b.cn"); err != auth.ErrIdentifierTaken {
+		t.Fatalf("重复登录方式应返回 ErrIdentifierTaken，得到 %v", err)
 	}
-	got, err := st.UserByEmail(ctx, u.Email)
+	got, err := st.UserByIdentifier(ctx, auth.KindEmail, "a@b.cn")
 	if err != nil || got.ID != u.ID {
-		t.Fatalf("by email: %v %+v", err, got)
+		t.Fatalf("by identifier: %v %+v", err, got)
+	}
+	identities, err := st.Identities(ctx, u.ID)
+	if err != nil || len(identities) != 1 || identities[0].Identifier != "a@b.cn" || !identities[0].VerifiedAt.IsZero() {
+		t.Fatalf("identities: %v %+v", err, identities)
+	}
+	if _, err := st.Identity(ctx, "u2", identities[0].ID); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("别的账号读不到这条登录方式，得到 %v", err)
 	}
 	if _, err := st.UserByID(ctx, "missing"); err != auth.ErrNotFound {
 		t.Fatalf("未知账号应返回 ErrNotFound，得到 %v", err)
@@ -92,33 +99,38 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	code := auth.Code{
-		UserID: u.ID, Purpose: auth.PurposeVerifyEmail, CodeHash: "hash-1",
+		Purpose: auth.PurposeVerifyContact, Kind: auth.KindEmail, Identifier: "a@b.cn",
+		UserID: u.ID, CodeHash: "hash-1",
 		ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
 	}
 	if err := st.PutCode(ctx, code); err != nil {
 		t.Fatalf("put code: %v", err)
 	}
-	gotCode, err := st.Code(ctx, u.ID, auth.PurposeVerifyEmail)
-	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.Attempts != 0 {
+	gotCode, err := st.Code(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn")
+	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.Attempts != 0 || gotCode.UserID != u.ID {
 		t.Fatalf("get code: %v %+v", err, gotCode)
 	}
-	if n, err := st.IncrementCodeAttempts(ctx, u.ID, auth.PurposeVerifyEmail); err != nil || n != 1 {
+	if n, err := st.IncrementCodeAttempts(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn"); err != nil || n != 1 {
 		t.Fatalf("increment attempts: %v %d", err, n)
 	}
-	if err := st.SetEmailVerified(ctx, u.ID, now); err != nil {
+	if err := st.SetIdentityVerified(ctx, u.ID, identities[0].ID, now); err != nil {
 		t.Fatalf("set verified: %v", err)
 	}
-	verified, err := st.UserByID(ctx, u.ID)
-	if err != nil || verified.EmailVerifiedAt.IsZero() {
-		t.Fatalf("verified user: %v %+v", err, verified)
+	verified, err := st.Identity(ctx, u.ID, identities[0].ID)
+	if err != nil || verified.VerifiedAt.IsZero() {
+		t.Fatalf("verified identity: %v %+v", err, verified)
+	}
+	// “已验证”按登录方式算：确认之后按访问令牌查会话得到的 ContactVerified 为真。
+	if byAccess, err := st.SessionByAccessHash(ctx, "ah"); err != nil || !byAccess.ContactVerified {
+		t.Fatalf("会话上的 ContactVerified 应为真：%+v %v", byAccess, err)
 	}
 	if err := st.UpdatePassword(ctx, u.ID, "hash-2"); err != nil {
 		t.Fatalf("update password: %v", err)
 	}
-	if err := st.DeleteCode(ctx, u.ID, auth.PurposeVerifyEmail); err != nil {
+	if err := st.DeleteCode(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn"); err != nil {
 		t.Fatalf("delete code: %v", err)
 	}
-	if _, err := st.Code(ctx, u.ID, auth.PurposeVerifyEmail); err != auth.ErrNotFound {
+	if _, err := st.Code(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn"); err != auth.ErrNotFound {
 		t.Fatalf("code survived delete: %v", err)
 	}
 	if err := st.DeleteUserSessions(ctx, u.ID); err != nil {
@@ -148,8 +160,8 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 func TestPostgresSessionLimit(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	u := auth.User{ID: "u1", Email: "sessions@b.cn", PasswordHash: "h"}
-	if err := st.CreateUser(ctx, u); err != nil {
+	u := auth.User{ID: "u1", PasswordHash: "h"}
+	if err := createAccount(ctx, st, u, "sessions@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	now := time.Now().UTC()
@@ -182,15 +194,24 @@ func TestPostgresSessionLimit(t *testing.T) {
 }
 
 // TestPostgresResetPassword 核对重设密码在一个事务里提交：摘要对不上时验证码
-// 不被用掉、密码与会话都不动；成功之后验证码消失、密码换掉、会话清空，再用
-// 同一个验证码返回 ErrInvalidCode。
+// 不被用掉、密码、登录方式与会话都不动；成功之后验证码消失、密码换掉、那种登录
+// 方式标为已确认、会话清空，再用同一个验证码返回 ErrInvalidCode。
 func TestPostgresResetPassword(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	u := auth.User{ID: "u1", Email: "reset@b.cn", PasswordHash: "old-hash"}
-	if err := st.CreateUser(ctx, u); err != nil {
+	u := auth.User{ID: "u1", PasswordHash: "old-hash"}
+	if err := createAccount(ctx, st, u, "reset@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
+	}
+	identities, err := st.Identities(ctx, u.ID)
+	if err != nil || len(identities) != 1 {
+		t.Fatalf("identities: %v %+v", err, identities)
+	}
+	reset := auth.PasswordReset{
+		UserID: u.ID, IdentityID: identities[0].ID,
+		Purpose: auth.PurposeResetPassword, Kind: auth.KindEmail, Identifier: "reset@b.cn",
+		ExpectedHash: "good", NewPasswordHash: "new-hash", Now: now,
 	}
 	sess := auth.Session{
 		ID: "s1", UserID: u.ID,
@@ -202,13 +223,16 @@ func TestPostgresResetPassword(t *testing.T) {
 		t.Fatalf("session: %v", err)
 	}
 	if err := st.PutCode(ctx, auth.Code{
-		UserID: u.ID, Purpose: auth.PurposeResetPassword, CodeHash: "good",
+		Purpose: auth.PurposeResetPassword, Kind: auth.KindEmail, Identifier: "reset@b.cn",
+		UserID: u.ID, CodeHash: "good",
 		ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("code: %v", err)
 	}
 
-	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "wrong", "new-hash", now); !errors.Is(err, auth.ErrInvalidCode) {
+	wrong := reset
+	wrong.ExpectedHash = "wrong"
+	if err := st.ResetPassword(ctx, wrong); !errors.Is(err, auth.ErrInvalidCode) {
 		t.Fatalf("摘要对不上时应返回 ErrInvalidCode，得到 %v", err)
 	}
 	if got, err := st.UserByID(ctx, u.ID); err != nil || got.PasswordHash != "old-hash" {
@@ -217,23 +241,26 @@ func TestPostgresResetPassword(t *testing.T) {
 	if _, err := st.SessionByAccessHash(ctx, "ah1"); err != nil {
 		t.Fatalf("失败的原子操作不应删会话: %v", err)
 	}
-	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); err != nil {
+	if _, err := st.Code(ctx, auth.PurposeResetPassword, auth.KindEmail, "reset@b.cn"); err != nil {
 		t.Fatalf("失败的原子操作不应吃掉验证码: %v", err)
 	}
 
-	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "good", "new-hash", now); err != nil {
+	if err := st.ResetPassword(ctx, reset); err != nil {
 		t.Fatalf("正确的摘要应当成功: %v", err)
 	}
 	if got, err := st.UserByID(ctx, u.ID); err != nil || got.PasswordHash != "new-hash" {
 		t.Fatalf("密码应换成新哈希：%+v %v", got, err)
 	}
+	if got, err := st.Identity(ctx, u.ID, identities[0].ID); err != nil || got.VerifiedAt.IsZero() {
+		t.Fatalf("收到验证码的登录方式应标为已确认：%+v %v", got, err)
+	}
 	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("会话应被清空，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); !errors.Is(err, auth.ErrNotFound) {
+	if _, err := st.Code(ctx, auth.PurposeResetPassword, auth.KindEmail, "reset@b.cn"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("验证码应被用掉，得到 %v", err)
 	}
-	if err := st.ResetPassword(ctx, u.ID, auth.PurposeResetPassword, "good", "another-hash", now); !errors.Is(err, auth.ErrInvalidCode) {
+	if err := st.ResetPassword(ctx, reset); !errors.Is(err, auth.ErrInvalidCode) {
 		t.Fatalf("验证码重复使用应返回 ErrInvalidCode，得到 %v", err)
 	}
 }
@@ -243,8 +270,8 @@ func TestPostgresResetPassword(t *testing.T) {
 func TestPostgresRefreshRotation(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	u := auth.User{ID: "u1", Email: "rotate@b.cn", PasswordHash: "h"}
-	if err := st.CreateUser(ctx, u); err != nil {
+	u := auth.User{ID: "u1", PasswordHash: "h"}
+	if err := createAccount(ctx, st, u, "rotate@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -323,8 +350,8 @@ func TestPostgresRefreshRotation(t *testing.T) {
 func TestPostgresPruneExpired(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	u := auth.User{ID: "u1", Email: "prune@b.cn", PasswordHash: "h"}
-	if err := st.CreateUser(ctx, u); err != nil {
+	u := auth.User{ID: "u1", PasswordHash: "h"}
+	if err := createAccount(ctx, st, u, "prune@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	now := time.Now().UTC()
@@ -343,7 +370,7 @@ func TestPostgresPruneExpired(t *testing.T) {
 	}
 	for _, userID := range []string{u.ID, "u2"} {
 		if userID == "u2" {
-			if err := st.CreateUser(ctx, auth.User{ID: "u2", Email: "keep@b.cn", PasswordHash: "h"}); err != nil {
+			if err := createAccount(ctx, st, auth.User{ID: "u2", PasswordHash: "h"}, "keep@b.cn"); err != nil {
 				t.Fatalf("second user: %v", err)
 			}
 		}
@@ -352,7 +379,8 @@ func TestPostgresPruneExpired(t *testing.T) {
 			expires = now.Add(10 * time.Minute)
 		}
 		if err := st.PutCode(ctx, auth.Code{
-			UserID: userID, Purpose: auth.PurposeResetPassword, CodeHash: "hash-" + userID,
+			UserID: userID, Purpose: auth.PurposeResetPassword,
+			Kind: auth.KindEmail, Identifier: userID + "@b.cn", CodeHash: "hash-" + userID,
 			ExpiresAt: expires, CreatedAt: now.Add(-time.Hour),
 		}); err != nil {
 			t.Fatalf("code %s: %v", userID, err)
@@ -365,10 +393,10 @@ func TestPostgresPruneExpired(t *testing.T) {
 	if _, err := st.SessionByAccessHash(ctx, "ah1"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("过期会话应被清理，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, u.ID, auth.PurposeResetPassword); !errors.Is(err, auth.ErrNotFound) {
+	if _, err := st.Code(ctx, auth.PurposeResetPassword, auth.KindEmail, u.ID+"@b.cn"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("过期验证码应被清理，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, "u2", auth.PurposeResetPassword); err != nil {
+	if _, err := st.Code(ctx, auth.PurposeResetPassword, auth.KindEmail, "u2@b.cn"); err != nil {
 		t.Fatalf("未过期验证码应保留，得到 %v", err)
 	}
 }
@@ -377,7 +405,7 @@ func TestPostgresPruneExpired(t *testing.T) {
 func TestPostgresDeleteUserAndObjects(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	body := []byte("zip-b1")
@@ -414,7 +442,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	for _, id := range []string{"u1", "u2"} {
-		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+		if err := createAccount(ctx, st, auth.User{ID: id, PasswordHash: "h"}, id+"@b.cn"); err != nil {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
@@ -492,7 +520,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 func seedBackup(t *testing.T, st *Store, userID, email, id string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: userID, Email: email, PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: userID, PasswordHash: "h"}, email); err != nil {
 		t.Fatalf("user %s: %v", userID, err)
 	}
 	body := []byte("zip-" + id)
@@ -600,7 +628,7 @@ func TestPostgresBlobQuota(t *testing.T) {
 	ctx := context.Background()
 	bs := NewBlobStore(st)
 	for _, id := range []string{"u1", "u2"} {
-		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+		if err := createAccount(ctx, st, auth.User{ID: id, PasswordHash: "h"}, id+"@b.cn"); err != nil {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
@@ -695,7 +723,7 @@ func TestPostgresBlobReserveIsSerialized(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	bs := NewBlobStore(st)
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 
@@ -738,7 +766,7 @@ func TestPostgresBlobReserveIsSerialized(t *testing.T) {
 func TestPostgresPurgeMarker(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 
@@ -794,7 +822,7 @@ func TestPostgresPurgeMarker(t *testing.T) {
 func TestPostgresSyncSequence(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 
@@ -840,7 +868,7 @@ func TestPostgresSyncSequence(t *testing.T) {
 func TestPostgresBackupsAndQuota(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "a@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 
@@ -932,7 +960,7 @@ func TestPostgresFeedback(t *testing.T) {
 func TestPostgresRetention(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "active@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "active@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 
@@ -988,7 +1016,7 @@ func TestPostgresRetention(t *testing.T) {
 func TestPostgresQuotaOverride(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	if err := st.CreateUser(ctx, auth.User{ID: "u1", Email: "quota@b.cn", PasswordHash: "h"}); err != nil {
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "quota@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
 	if _, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindChat); err != nil || ok {

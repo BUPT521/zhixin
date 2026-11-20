@@ -57,7 +57,7 @@ void main() {
     expect(ready.schemaVersion, 27);
 
     await defaultAccount.register(
-      email: 'default@example.com',
+      identifier: 'default@example.com',
       password: 'password123',
     );
     expect((await defaultAccount.quota()).dailyTokens, 200000);
@@ -68,7 +68,10 @@ void main() {
   });
 
   test('模型列表按用途区分，嵌入模型带维度，额度分开读', () async {
-    await account.register(email: 'kind@example.com', password: 'password123');
+    await account.register(
+      identifier: 'kind@example.com',
+      password: 'password123',
+    );
 
     final models = await account.models();
     final chat = models.singleWhere((model) => model.id == 'deepseek-flash');
@@ -96,7 +99,7 @@ void main() {
     );
 
     final snapshot = await account.register(
-      email: 'embed@example.com',
+      identifier: 'embed@example.com',
       password: 'password123',
     );
     final endpoint = await account.embeddingEndpoint();
@@ -132,11 +135,11 @@ void main() {
 
   test('注册后保存会话，知新服务配置换成访问令牌', () async {
     final snapshot = await account.register(
-      email: 'A@Example.com',
+      identifier: 'A@Example.com',
       password: 'password123',
     );
     expect(snapshot.signedIn, isTrue);
-    expect(snapshot.email, 'a@example.com');
+    expect(snapshot.displayLabel, 'a@example.com');
     expect(snapshot.serverBaseUrl, 'http://server.test');
 
     final authorized = await account.authorizeModelConfig(
@@ -153,7 +156,10 @@ void main() {
   });
 
   test('访问令牌被服务端作废时自动刷新并重试一次', () async {
-    await account.register(email: 'b@example.com', password: 'password123');
+    await account.register(
+      identifier: 'b@example.com',
+      password: 'password123',
+    );
     server.expireAccess = true;
     final quota = await account.quota();
     expect(quota.dailyTokens, 200000);
@@ -162,7 +168,10 @@ void main() {
   });
 
   test('刷新响应丢失时用同一个 request_id 重试旧刷新令牌', () async {
-    await account.register(email: 'l@example.com', password: 'password123');
+    await account.register(
+      identifier: 'l@example.com',
+      password: 'password123',
+    );
     // 下一次带令牌的请求被判过期，客户端先刷新；刷新在服务端已经轮换成功，
     // 但响应在返回之前断开，客户端应当用同一个标识与旧刷新令牌再试一次。
     server.expireAccess = true;
@@ -180,10 +189,13 @@ void main() {
   });
 
   test('登录时密码错误返回 invalid_credentials', () async {
-    await account.register(email: 'c@example.com', password: 'password123');
+    await account.register(
+      identifier: 'c@example.com',
+      password: 'password123',
+    );
     await account.logout();
     await expectLater(
-      account.login(email: 'c@example.com', password: 'wrong-password'),
+      account.login(identifier: 'c@example.com', password: 'wrong-password'),
       throwsA(
         isA<ServerProblem>().having(
           (error) => error.code,
@@ -196,7 +208,7 @@ void main() {
 
   test('退出登录清掉本机会话，云端数据保留', () async {
     final snapshot = await account.register(
-      email: 'd@example.com',
+      identifier: 'd@example.com',
       password: 'password123',
     );
     final userId = snapshot.session!.userId;
@@ -213,7 +225,7 @@ void main() {
 
   test('清除云端数据一次清空备份、提交序列与附件，账号还在', () async {
     final snapshot = await account.register(
-      email: 'e@example.com',
+      identifier: 'e@example.com',
       password: 'password123',
     );
     final userId = snapshot.session!.userId;
@@ -240,7 +252,7 @@ void main() {
 
   test('清除期间服务端返回 409 时不算失败，游标保留并可重试', () async {
     final snapshot = await account.register(
-      email: 'e2@example.com',
+      identifier: 'e2@example.com',
       password: 'password123',
     );
     final userId = snapshot.session!.userId;
@@ -271,27 +283,34 @@ void main() {
     expect(await preferences.syncState(), isNull);
   });
 
-  test('注册后邮箱未验证，确认验证码之后状态更新', () async {
+  test('注册后登录方式未确认，确认验证码之后状态更新', () async {
     final snapshot = await account.register(
-      email: 'g@example.com',
+      identifier: 'g@example.com',
       password: 'password123',
     );
-    expect(snapshot.emailVerified, isFalse);
+    expect(snapshot.contactVerified, isFalse);
+    // 登录之后立刻读到了资料，账号页因此能直接列出登录方式。
+    expect(snapshot.displayLabel, 'g@example.com');
+    final identityId = snapshot.profile!.identities.single.id;
 
-    await account.requestEmailVerification();
-    final code = server.codeFor('g@example.com', 'verify_email');
+    await account.requestIdentityVerification(identityId);
+    final code = server.codeFor('g@example.com', 'verify_contact');
     expect(code, isNotNull);
-    await account.confirmEmailVerification(code!);
+    await account.confirmIdentityVerification(identityId, code!);
 
     final refreshed = await account.refreshAccount();
-    expect(refreshed.emailVerified, isTrue);
+    expect(refreshed.contactVerified, isTrue);
   });
 
   test('验证码错误时服务端返回 invalid_code', () async {
-    await account.register(email: 'h@example.com', password: 'password123');
-    await account.requestEmailVerification();
+    final snapshot = await account.register(
+      identifier: 'h@example.com',
+      password: 'password123',
+    );
+    final identityId = snapshot.profile!.identities.single.id;
+    await account.requestIdentityVerification(identityId);
     await expectLater(
-      account.confirmEmailVerification('000000'),
+      account.confirmIdentityVerification(identityId, '000000'),
       throwsA(
         isA<ServerProblem>().having(
           (error) => error.code,
@@ -303,17 +322,21 @@ void main() {
   });
 
   test('忘记密码重设之后清掉本机会话，旧密码与旧令牌失效', () async {
-    await account.register(email: 'i@example.com', password: 'password123');
-    await account.requestEmailVerification();
-    final verifyCode = server.codeFor('i@example.com', 'verify_email')!;
-    await account.confirmEmailVerification(verifyCode);
+    final signedUp = await account.register(
+      identifier: 'i@example.com',
+      password: 'password123',
+    );
+    final identityId = signedUp.profile!.identities.single.id;
+    await account.requestIdentityVerification(identityId);
+    final verifyCode = server.codeFor('i@example.com', 'verify_contact')!;
+    await account.confirmIdentityVerification(identityId, verifyCode);
 
     final oldSession = await account.snapshot();
     await account.logout();
     await account.requestPasswordReset('i@example.com');
     final resetCode = server.codeFor('i@example.com', 'reset_password')!;
     await account.resetPassword(
-      email: 'i@example.com',
+      identifier: 'i@example.com',
       code: resetCode,
       newPassword: 'newpassword123',
     );
@@ -321,11 +344,11 @@ void main() {
     expect(oldSession.session, isNotNull);
 
     await expectLater(
-      account.login(email: 'i@example.com', password: 'password123'),
+      account.login(identifier: 'i@example.com', password: 'password123'),
       throwsA(isA<ServerProblem>()),
     );
     final again = await account.login(
-      email: 'i@example.com',
+      identifier: 'i@example.com',
       password: 'newpassword123',
     );
     expect(again.signedIn, isTrue);
@@ -333,7 +356,7 @@ void main() {
 
   test('删除账号清掉服务端数据与本机会话', () async {
     final snapshot = await account.register(
-      email: 'f@example.com',
+      identifier: 'f@example.com',
       password: 'password123',
     );
     final userId = snapshot.session!.userId;
@@ -347,7 +370,7 @@ void main() {
 
   test('删除账号时密码错误只提示密码错误，登录状态与账号保留', () async {
     final snapshot = await account.register(
-      email: 'j@example.com',
+      identifier: 'j@example.com',
       password: 'password123',
     );
     final userId = snapshot.session!.userId;
@@ -377,7 +400,6 @@ void main() {
     await store.save(
       AccountSession(
         userId: 'user-1',
-        email: 'bound@example.com',
         serverOrigin: 'https://a.test',
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
@@ -390,9 +412,40 @@ void main() {
     expect((await store.read())!.serverOrigin, 'https://a.test');
   });
 
+  test('资料单独保存，退出登录时与会话一起清掉', () async {
+    var snapshot = await account.register(
+      identifier: 'profile@example.com',
+      password: 'password123',
+    );
+    final session = snapshot.session!;
+    final origin = session.serverOrigin;
+    expect(
+      snapshot.profile!.identities.single.identifier,
+      'profile@example.com',
+    );
+    expect(await account.store.readProfile(origin: origin), isNotNull);
+
+    // 令牌刷新只改会话，不动资料。
+    await account.store.save(
+      session.copyWith(
+        accessToken: 'access-token-2',
+        refreshToken: 'refresh-token-2',
+        accessExpiresAt: DateTime.now().add(const Duration(hours: 1)),
+        refreshExpiresAt: DateTime.now().add(const Duration(days: 30)),
+      ),
+    );
+    expect(await account.store.readProfile(origin: origin), isNotNull);
+
+    await account.logout();
+    snapshot = await account.snapshot();
+    expect(snapshot.signedIn, isFalse);
+    expect(snapshot.profile, isNull);
+    expect(await account.store.readProfile(origin: origin), isNull);
+  });
+
   test('切换服务实例后不复用旧会话，同步游标清掉并暂停自动同步', () async {
     final snapshot = await account.register(
-      email: 'm@example.com',
+      identifier: 'm@example.com',
       password: 'password123',
     );
     final userId = snapshot.session!.userId;
@@ -418,7 +471,10 @@ void main() {
   });
 
   test('切换实例时进行中的刷新结果被丢弃', () async {
-    await account.register(email: 'n@example.com', password: 'password123');
+    await account.register(
+      identifier: 'n@example.com',
+      password: 'password123',
+    );
     server.expireAccess = true;
     final gate = Completer<void>();
     server.delayRefresh = gate.future;
@@ -436,13 +492,16 @@ void main() {
   });
 
   test('登录途中切换实例时丢弃这次登录结果', () async {
-    await account.register(email: 'q@example.com', password: 'password123');
+    await account.register(
+      identifier: 'q@example.com',
+      password: 'password123',
+    );
     await account.logout();
     final gate = Completer<void>();
     server.delayLogin = gate.future;
 
     final pending = account.login(
-      email: 'q@example.com',
+      identifier: 'q@example.com',
       password: 'password123',
     );
     while (server.loginRequests == 0) {
@@ -457,7 +516,7 @@ void main() {
 
   test('登录另一个账号时暂停自动同步并清掉旧游标', () async {
     final first = await account.register(
-      email: 'o@example.com',
+      identifier: 'o@example.com',
       password: 'password123',
     );
     await preferences.setAutoSync(true);
@@ -472,7 +531,7 @@ void main() {
 
     await account.logout();
     final second = await account.register(
-      email: 'p@example.com',
+      identifier: 'p@example.com',
       password: 'password123',
     );
     expect(second.session!.userId, isNot(first.session!.userId));

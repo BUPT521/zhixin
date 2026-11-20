@@ -26,7 +26,7 @@ func TestRegisterGlobalBudget(t *testing.T) {
 		"ZHIXIN_REGISTER_GLOBAL_BURST": "2",
 	})
 	credentials := func(i int) map[string]string {
-		return map[string]string{"email": "reg" + string(rune('a'+i)) + "@b.cn", "password": "password1"}
+		return map[string]string{"identifier": "reg" + string(rune('a'+i)) + "@b.cn", "password": "password1"}
 	}
 	for i := 0; i < 2; i++ {
 		if code := h.json("POST", "/v1/auth/register", "", credentials(i), nil); code != http.StatusCreated {
@@ -48,7 +48,8 @@ func TestRegisterGlobalBudget(t *testing.T) {
 }
 
 // TestStartupPrunesOldUnverifiedAccounts 核对装配把保留期交给了每日清理：启动时
-// 先清一次，超过保留期的未确认账号被删除，刚注册的与已确认的账号保留。
+// 先清一次，超过保留期、没有任何已验证登录方式的账号被删除，刚注册的与已确认的
+// 账号保留。
 func TestStartupPrunesOldUnverifiedAccounts(t *testing.T) {
 	cfg, err := config.Load(func(key string) string {
 		if key == "ZHIXIN_UNVERIFIED_KEEP_DAYS" {
@@ -65,15 +66,27 @@ func TestStartupPrunesOldUnverifiedAccounts(t *testing.T) {
 		t.Fatalf("内存装配应使用 MemoryStore，得到 %T", stores.Auth)
 	}
 	now := time.Now()
-	seed := []auth.User{
-		{ID: "stale", Email: "stale@b.cn", PasswordHash: "h", CreatedAt: now.Add(-8 * 24 * time.Hour)},
-		{ID: "fresh", Email: "fresh@b.cn", PasswordHash: "h", CreatedAt: now.Add(-time.Hour)},
-		{ID: "verified", Email: "verified@b.cn", PasswordHash: "h", CreatedAt: now.Add(-30 * 24 * time.Hour), EmailVerifiedAt: now.Add(-29 * 24 * time.Hour)},
-	}
 	ctx := context.Background()
-	for _, u := range seed {
-		if err := store.CreateUser(ctx, u); err != nil {
-			t.Fatalf("seed %s: %v", u.Email, err)
+	seed := []struct {
+		id, email string
+		created   time.Time
+		verified  bool
+	}{
+		{"stale", "stale@b.cn", now.Add(-8 * 24 * time.Hour), false},
+		{"fresh", "fresh@b.cn", now.Add(-time.Hour), false},
+		{"verified", "verified@b.cn", now.Add(-30 * 24 * time.Hour), true},
+	}
+	for _, account := range seed {
+		u := auth.User{ID: account.id, PasswordHash: "h", CreatedAt: account.created}
+		ident := auth.Identity{
+			ID: account.id + "-email", UserID: account.id, Kind: auth.KindEmail,
+			Identifier: account.email, CreatedAt: account.created,
+		}
+		if account.verified {
+			ident.VerifiedAt = now.Add(-29 * 24 * time.Hour)
+		}
+		if err := store.CreateAccount(ctx, u, ident); err != nil {
+			t.Fatalf("seed %s: %v", account.id, err)
 		}
 	}
 	runCtx, cancel := context.WithCancel(ctx)
@@ -87,7 +100,7 @@ func TestStartupPrunesOldUnverifiedAccounts(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("启动清理没有删除超过保留期的未确认账号")
+			t.Fatal("启动清理没有删除超过保留期的未验证账号")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

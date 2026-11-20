@@ -45,9 +45,10 @@ type Proxy struct {
 	now          func() time.Time
 	log          *slog.Logger
 
-	// verifyEmail 判断账号是否已经确认邮箱；由 server.New 注入账号库的 UserByID。
-	// 没有注入时按已认证处理，现有内存装配与测试因此不需要真实账号也能走通。
-	verifyEmail func(ctx context.Context, userID string) (bool, error)
+	// verifyContact 判断账号是否至少有一种登录方式已经确认；由 server.New 注入
+	// 鉴权得到的 Principal。没有注入时按已认证处理，现有内存装配与测试因此不需要
+	// 真实账号也能走通。
+	verifyContact func(ctx context.Context, userID string) (bool, error)
 
 	// cache 保存按账号隔离的嵌入向量缓存（ADR-0030），由 server 装配时经
 	// SetEmbeddingCache 注入；为空时查找返回空结果、嵌入不写缓存。cacheGate 是
@@ -114,11 +115,11 @@ func (p *Proxy) dayTime() time.Time { return p.now().In(p.loc) }
 
 func (p *Proxy) day() string { return p.dayTime().Format("2006-01-02") }
 
-// SetEmailVerifier 注入邮箱确认检查，由 server.New 用账号库的 UserByID 实现：
-// EmailVerifiedAt 非零即已确认。没有注入时按已认证处理，保持现有测试与内存装配
-// 不需要账号库也能使用托管额度。
-func (p *Proxy) SetEmailVerifier(fn func(ctx context.Context, userID string) (bool, error)) {
-	p.verifyEmail = fn
+// SetContactVerifier 注入“至少一种登录方式已确认”的检查，由 server.New 从鉴权
+// 结果里取值：ContactVerified 为真即已确认。没有注入时按已认证处理，保持现有测试
+// 与内存装配不需要账号库也能使用托管额度。
+func (p *Proxy) SetContactVerifier(fn func(ctx context.Context, userID string) (bool, error)) {
+	p.verifyContact = fn
 }
 
 // SetConcurrencyLimit 设置同一账号同时进行的托管请求上限，由 server.New 按
@@ -244,17 +245,17 @@ func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID stri
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
 		return nil, false
 	}
-	// 邮箱确认在读取请求体之前检查：未确认的账号拿 403，不消耗请求体读取、额度
-	// 预留与上游调用。检查失败按服务端错误处理，不能当成“未确认”放过去。
-	if p.cfg.RequireVerifiedEmail && p.verifyEmail != nil {
-		verified, err := p.verifyEmail(r.Context(), userID)
+	// 登录方式确认在读取请求体之前检查：没有一种确认过的账号拿 403，不消耗请求体
+	// 读取、额度预留与上游调用。检查失败按服务端错误处理，不能当成“未确认”放过去。
+	if p.cfg.RequireVerifiedContact && p.verifyContact != nil {
+		verified, err := p.verifyContact(r.Context(), userID)
 		if err != nil {
 			httpx.WriteInternal(w, r, p.log, err)
 			return nil, false
 		}
 		if !verified {
-			httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeEmailUnverified,
-				"verify your email address on the account page to use the hosted model quota")
+			httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeContactUnverified,
+				"verify one of your sign-in identities on the account page to use the hosted model quota")
 			return nil, false
 		}
 	}

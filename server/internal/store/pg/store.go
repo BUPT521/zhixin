@@ -100,34 +100,35 @@ func (s *Store) ApplySchema(ctx context.Context) error {
 
 // ---- auth.Store ----
 
-func (s *Store) CreateUser(ctx context.Context, u auth.User) error {
-	err := s.q.CreateUser(ctx, db.CreateUserParams{
-		ID:           u.ID,
-		Email:        u.Email,
-		PasswordHash: u.PasswordHash,
-	})
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return auth.ErrEmailTaken
-	}
-	return err
-}
-
-func (s *Store) UserByEmail(ctx context.Context, email string) (auth.User, error) {
-	row, err := s.q.UserByEmail(ctx, email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return auth.User{}, auth.ErrNotFound
-	}
+// CreateAccount 在一个事务里写入账号与它的第一种登录方式：登录方式撞上
+// (kind, identifier) 的唯一约束时整个账号都不落地，返回 ErrIdentifierTaken。
+// 两个创建时间都由表上的默认值给出。
+func (s *Store) CreateAccount(ctx context.Context, u auth.User, ident auth.Identity) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return auth.User{}, err
+		return err
 	}
-	return auth.User{
-		ID:              row.ID,
-		Email:           row.Email,
-		PasswordHash:    row.PasswordHash,
-		EmailVerifiedAt: row.EmailVerifiedAt.Time,
-		CreatedAt:       row.CreatedAt.Time,
-	}, nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	if err := q.CreateUser(ctx, db.CreateUserParams{
+		ID:           u.ID,
+		PasswordHash: u.PasswordHash,
+	}); err != nil {
+		return err
+	}
+	if err := q.CreateIdentity(ctx, db.CreateIdentityParams{
+		ID:         ident.ID,
+		UserID:     ident.UserID,
+		Kind:       ident.Kind,
+		Identifier: ident.Identifier,
+	}); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return auth.ErrIdentifierTaken
+		}
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) UserByID(ctx context.Context, id string) (auth.User, error) {
@@ -139,12 +140,84 @@ func (s *Store) UserByID(ctx context.Context, id string) (auth.User, error) {
 		return auth.User{}, err
 	}
 	return auth.User{
-		ID:              row.ID,
-		Email:           row.Email,
-		PasswordHash:    row.PasswordHash,
-		EmailVerifiedAt: row.EmailVerifiedAt.Time,
-		CreatedAt:       row.CreatedAt.Time,
+		ID:           row.ID,
+		PasswordHash: row.PasswordHash,
+		CreatedAt:    row.CreatedAt.Time,
 	}, nil
+}
+
+func (s *Store) UserByIdentifier(ctx context.Context, kind, identifier string) (auth.User, error) {
+	row, err := s.q.UserByIdentifier(ctx, db.UserByIdentifierParams{Kind: kind, Identifier: identifier})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.User{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.User{}, err
+	}
+	return auth.User{
+		ID:           row.ID,
+		PasswordHash: row.PasswordHash,
+		CreatedAt:    row.CreatedAt.Time,
+	}, nil
+}
+
+func (s *Store) Identities(ctx context.Context, userID string) ([]auth.Identity, error) {
+	rows, err := s.q.IdentitiesByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	identities := make([]auth.Identity, 0, len(rows))
+	for _, row := range rows {
+		identities = append(identities, identityFromRow(row))
+	}
+	return identities, nil
+}
+
+func (s *Store) Identity(ctx context.Context, userID, identityID string) (auth.Identity, error) {
+	row, err := s.q.IdentityByID(ctx, db.IdentityByIDParams{ID: identityID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.Identity{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.Identity{}, err
+	}
+	return identityFromRow(row), nil
+}
+
+func (s *Store) IdentityByIdentifier(ctx context.Context, kind, identifier string) (auth.Identity, error) {
+	row, err := s.q.IdentityByIdentifier(ctx, db.IdentityByIdentifierParams{Kind: kind, Identifier: identifier})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.Identity{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.Identity{}, err
+	}
+	return identityFromRow(row), nil
+}
+
+func (s *Store) SetIdentityVerified(ctx context.Context, userID, identityID string, at time.Time) error {
+	verified, err := pgTime(at)
+	if err != nil {
+		return err
+	}
+	return s.q.SetIdentityVerified(ctx, db.SetIdentityVerifiedParams{
+		VerifiedAt: verified,
+		ID:         identityID,
+		UserID:     userID,
+	})
+}
+
+// identityFromRow 把库里的一行登录方式转成 auth 的类型；verified_at 为空时
+// VerifiedAt 保持零值，含义是“还没有确认”。
+func identityFromRow(row db.UserIdentity) auth.Identity {
+	return auth.Identity{
+		ID:         row.ID,
+		UserID:     row.UserID,
+		Kind:       row.Kind,
+		Identifier: row.Identifier,
+		VerifiedAt: row.VerifiedAt.Time,
+		CreatedAt:  row.CreatedAt.Time,
+	}
 }
 
 // DeleteUser 删除账号行；会话、提交序列、备份元数据与用量按外键级联删除。
@@ -222,15 +295,15 @@ func (s *Store) SessionByAccessHash(ctx context.Context, hash string) (auth.Sess
 		return auth.Session{}, err
 	}
 	return auth.Session{
-		ID:             row.ID,
-		UserID:         row.UserID,
-		DeviceName:     row.DeviceName,
-		AccessHash:     row.AccessHash,
-		RefreshHash:    row.RefreshHash,
-		AccessExpires:  row.AccessExpires.Time,
-		RefreshExpires: row.RefreshExpires.Time,
-		CreatedAt:      row.CreatedAt.Time,
-		EmailVerified:  row.EmailVerified,
+		ID:              row.ID,
+		UserID:          row.UserID,
+		DeviceName:      row.DeviceName,
+		AccessHash:      row.AccessHash,
+		RefreshHash:     row.RefreshHash,
+		AccessExpires:   row.AccessExpires.Time,
+		RefreshExpires:  row.RefreshExpires.Time,
+		CreatedAt:       row.CreatedAt.Time,
+		ContactVerified: row.ContactVerified,
 	}, nil
 }
 
@@ -414,9 +487,10 @@ func (s *Store) PruneExpired(ctx context.Context, now, usedBefore time.Time) err
 	return s.q.PruneUsedRefreshTokens(ctx, cutoff)
 }
 
-// PruneUnverified 删除创建时间早于 before、且从未确认邮箱的账号，返回删除的
-// 账号数。会话、验证码、重放记录与其余账号数据按 schema 的外键级联删除；这是
-// 每日清理的一部分，注册是公开入口，超过保留期仍未确认的账号行会一直占着邮箱。
+// PruneUnverified 删除创建时间早于 before、且没有任何一种已验证登录方式的账号，
+// 返回删除的账号数。登录方式、会话、验证码、重放记录与其余账号数据按 schema 的
+// 外键级联删除；这是每日清理的一部分，注册是公开入口，超过保留期仍未确认的账号
+// 行会一直占着联系方式。
 func (s *Store) PruneUnverified(ctx context.Context, before time.Time) (int64, error) {
 	cutoff, err := pgTime(before)
 	if err != nil {
@@ -425,23 +499,15 @@ func (s *Store) PruneUnverified(ctx context.Context, before time.Time) (int64, e
 	return s.q.DeleteUnverifiedUsersBefore(ctx, cutoff)
 }
 
-func (s *Store) SetEmailVerified(ctx context.Context, userID string, at time.Time) error {
-	verified, err := pgTime(at)
-	if err != nil {
-		return err
-	}
-	return s.q.SetEmailVerified(ctx, db.SetEmailVerifiedParams{ID: userID, VerifiedAt: verified})
-}
-
 func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	return s.q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: passwordHash})
 }
 
-// ResetPassword 在一个事务里用掉验证码、换密码、删会话。验证码的删除带摘要与
-// 有效期条件，0 行说明它已经被别的请求用掉或过期，此时整个事务回滚，密码与
-// 会话都不动。
-func (s *Store) ResetPassword(ctx context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error {
-	at, err := pgTime(now)
+// ResetPassword 在一个事务里用掉验证码、换密码、确认那种登录方式、删会话。验证码
+// 的删除带用途、登录方式、摘要与有效期条件，0 行说明它已经被别的请求用掉或过期，
+// 此时整个事务回滚，密码、登录方式与会话都不动。
+func (s *Store) ResetPassword(ctx context.Context, reset auth.PasswordReset) error {
+	at, err := pgTime(reset.Now)
 	if err != nil {
 		return err
 	}
@@ -453,10 +519,11 @@ func (s *Store) ResetPassword(ctx context.Context, userID, purpose, expectedCode
 	q := s.q.WithTx(tx)
 
 	used, err := q.DeleteAuthCodeIfMatch(ctx, db.DeleteAuthCodeIfMatchParams{
-		UserID:   userID,
-		Purpose:  purpose,
-		CodeHash: expectedCodeHash,
-		Now:      at,
+		Purpose:    reset.Purpose,
+		Kind:       reset.Kind,
+		Identifier: reset.Identifier,
+		CodeHash:   reset.ExpectedHash,
+		Now:        at,
 	})
 	if err != nil {
 		return err
@@ -464,10 +531,20 @@ func (s *Store) ResetPassword(ctx context.Context, userID, purpose, expectedCode
 	if used == 0 {
 		return auth.ErrInvalidCode
 	}
-	if err := q.RecoverPassword(ctx, db.RecoverPasswordParams{ID: userID, PasswordHash: newPasswordHash, VerifiedAt: at}); err != nil {
+	if err := q.UpdatePassword(ctx, db.UpdatePasswordParams{
+		ID:           reset.UserID,
+		PasswordHash: reset.NewPasswordHash,
+	}); err != nil {
 		return err
 	}
-	if err := q.DeleteUserSessions(ctx, userID); err != nil {
+	if err := q.SetIdentityVerified(ctx, db.SetIdentityVerifiedParams{
+		VerifiedAt: at,
+		ID:         reset.IdentityID,
+		UserID:     reset.UserID,
+	}); err != nil {
+		return err
+	}
+	if err := q.DeleteUserSessions(ctx, reset.UserID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -483,16 +560,22 @@ func (s *Store) PutCode(ctx context.Context, c auth.Code) error {
 		return err
 	}
 	return s.q.PutAuthCode(ctx, db.PutAuthCodeParams{
-		UserID:    c.UserID,
-		Purpose:   c.Purpose,
-		CodeHash:  c.CodeHash,
-		ExpiresAt: expires,
-		CreatedAt: created,
+		Purpose:    c.Purpose,
+		Kind:       c.Kind,
+		Identifier: c.Identifier,
+		UserID:     nullableText(c.UserID),
+		CodeHash:   c.CodeHash,
+		ExpiresAt:  expires,
+		CreatedAt:  created,
 	})
 }
 
-func (s *Store) Code(ctx context.Context, userID, purpose string) (auth.Code, error) {
-	row, err := s.q.AuthCode(ctx, db.AuthCodeParams{UserID: userID, Purpose: purpose})
+func (s *Store) Code(ctx context.Context, purpose, kind, identifier string) (auth.Code, error) {
+	row, err := s.q.AuthCode(ctx, db.AuthCodeParams{
+		Purpose:    purpose,
+		Kind:       kind,
+		Identifier: identifier,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.Code{}, auth.ErrNotFound
 	}
@@ -500,19 +583,22 @@ func (s *Store) Code(ctx context.Context, userID, purpose string) (auth.Code, er
 		return auth.Code{}, err
 	}
 	return auth.Code{
-		UserID:    row.UserID,
-		Purpose:   row.Purpose,
-		CodeHash:  row.CodeHash,
-		ExpiresAt: row.ExpiresAt.Time,
-		Attempts:  int(row.Attempts),
-		CreatedAt: row.CreatedAt.Time,
+		Purpose:    row.Purpose,
+		Kind:       row.Kind,
+		Identifier: row.Identifier,
+		UserID:     row.UserID.String,
+		CodeHash:   row.CodeHash,
+		ExpiresAt:  row.ExpiresAt.Time,
+		Attempts:   int(row.Attempts),
+		CreatedAt:  row.CreatedAt.Time,
 	}, nil
 }
 
-func (s *Store) IncrementCodeAttempts(ctx context.Context, userID, purpose string) (int, error) {
+func (s *Store) IncrementCodeAttempts(ctx context.Context, purpose, kind, identifier string) (int, error) {
 	attempts, err := s.q.IncrementAuthCodeAttempts(ctx, db.IncrementAuthCodeAttemptsParams{
-		UserID:  userID,
-		Purpose: purpose,
+		Purpose:    purpose,
+		Kind:       kind,
+		Identifier: identifier,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, auth.ErrNotFound
@@ -523,8 +609,21 @@ func (s *Store) IncrementCodeAttempts(ctx context.Context, userID, purpose strin
 	return int(attempts), nil
 }
 
-func (s *Store) DeleteCode(ctx context.Context, userID, purpose string) error {
-	return s.q.DeleteAuthCode(ctx, db.DeleteAuthCodeParams{UserID: userID, Purpose: purpose})
+func (s *Store) DeleteCode(ctx context.Context, purpose, kind, identifier string) error {
+	return s.q.DeleteAuthCode(ctx, db.DeleteAuthCodeParams{
+		Purpose:    purpose,
+		Kind:       kind,
+		Identifier: identifier,
+	})
+}
+
+// nullableText 把空串写成 NULL：验证码的 user_id 允许为空，含义是这条联系方式
+// 还没有账号，与“空字符串账号编号”区分开。
+func nullableText(value string) pgtype.Text {
+	if value == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: value, Valid: true}
 }
 
 // CreateFeedback 保存一条应用内反馈。反馈不关联账号，删号时也没有需要级联的

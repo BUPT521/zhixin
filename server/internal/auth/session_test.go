@@ -109,10 +109,16 @@ func TestPruneExpiredRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := st.PutCode(ctx, Code{UserID: "u1", Purpose: PurposeResetPassword, CodeHash: "old", ExpiresAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour)}); err != nil {
+	if err := st.PutCode(ctx, Code{
+		UserID: "u1", Purpose: PurposeResetPassword, Kind: KindEmail, Identifier: "a@b.cn",
+		CodeHash: "old", ExpiresAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutCode(ctx, Code{UserID: "u1", Purpose: PurposeVerifyEmail, CodeHash: "live", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now}); err != nil {
+	if err := st.PutCode(ctx, Code{
+		UserID: "u1", Purpose: PurposeVerifyContact, Kind: KindEmail, Identifier: "a@b.cn",
+		CodeHash: "live", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,10 +131,10 @@ func TestPruneExpiredRows(t *testing.T) {
 	if _, err := st.SessionByRefreshHash(ctx, "new-refresh"); err != nil {
 		t.Fatalf("未过期会话应保留，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, "u1", PurposeResetPassword); !errors.Is(err, ErrNotFound) {
+	if _, err := st.Code(ctx, PurposeResetPassword, KindEmail, "a@b.cn"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("过期验证码应被清理，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, "u1", PurposeVerifyEmail); err != nil {
+	if _, err := st.Code(ctx, PurposeVerifyContact, KindEmail, "a@b.cn"); err != nil {
 		t.Fatalf("未过期验证码应保留，得到 %v", err)
 	}
 }

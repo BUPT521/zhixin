@@ -49,7 +49,7 @@ func TestTwoDeviceSyncWalkthrough(t *testing.T) {
 		AccessToken string `json:"access_token"`
 	}
 	if code := h.json("POST", "/v1/auth/login", "", map[string]string{
-		"email": email, "password": password, "device_name": "device-b",
+		"identifier": email, "password": password, "device_name": "device-b",
 	}, &loginB); code != http.StatusOK {
 		t.Fatalf("设备 B 登录失败：%d", code)
 	}

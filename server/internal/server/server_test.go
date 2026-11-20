@@ -120,7 +120,7 @@ func (h *harness) signUp(email string) string {
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
-	if code := h.json("POST", "/v1/auth/register", "", map[string]string{"email": email, "password": "password1"}, &tok); code != http.StatusCreated {
+	if code := h.json("POST", "/v1/auth/register", "", map[string]string{"identifier": email, "password": "password1"}, &tok); code != http.StatusCreated {
 		h.t.Fatalf("register: %d", code)
 	}
 	return tok.AccessToken
@@ -155,24 +155,29 @@ func TestHealthAndUnknownRoute(t *testing.T) {
 	}
 }
 
-// TestEmailVerificationWithoutMailer 守住没配发信时的行为：登录与备份照常，
+// TestIdentityVerificationWithoutMailer 守住没配发信时的行为：登录与备份照常，
 // 验证码接口回 503，找回密码统一回 503。
-func TestEmailVerificationWithoutMailer(t *testing.T) {
+func TestIdentityVerificationWithoutMailer(t *testing.T) {
 	h := newHarness(t, nil)
 	token := h.signUp("mail@example.com")
 
 	var me struct {
-		EmailVerified bool `json:"email_verified"`
+		Identities []struct {
+			Id       string `json:"id"`
+			Kind     string `json:"kind"`
+			Verified bool   `json:"verified"`
+		} `json:"identities"`
 	}
-	if code := h.json("GET", "/v1/me", token, nil, &me); code != http.StatusOK || me.EmailVerified {
+	if code := h.json("GET", "/v1/me", token, nil, &me); code != http.StatusOK ||
+		len(me.Identities) != 1 || me.Identities[0].Kind != "email" || me.Identities[0].Verified {
 		t.Fatalf("me: %d %+v", code, me)
 	}
 	var p problem
-	if code := h.json("POST", "/v1/auth/email/verify/request", token, nil, &p); code != http.StatusServiceUnavailable || p.Code != "unavailable" {
+	if code := h.json("POST", "/v1/me/identities/"+me.Identities[0].Id+"/verification", token, nil, &p); code != http.StatusServiceUnavailable || p.Code != "unavailable" {
 		t.Fatalf("request code without mail: %d %+v", code, p)
 	}
-	if code := h.json("POST", "/v1/auth/password/forgot", "", map[string]string{"email": "mail@example.com"}, nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("forgot for unverified email: %d", code)
+	if code := h.json("POST", "/v1/auth/password/forgot", "", map[string]string{"identifier": "mail@example.com"}, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("forgot without mail: %d", code)
 	}
 }
 
@@ -327,7 +332,7 @@ func TestAuthRateLimitReturns429(t *testing.T) {
 		"ZHIXIN_AUTH_RATE":  "0.0001",
 		"ZHIXIN_AUTH_BURST": "1",
 	})
-	body := map[string]string{"email": "rate@b.cn", "password": "password1"}
+	body := map[string]string{"identifier": "rate@b.cn", "password": "password1"}
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -360,7 +365,7 @@ func TestRefreshRateLimitReturns429(t *testing.T) {
 	var tok struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	body := map[string]string{"email": "refresh@b.cn", "password": "password1"}
+	body := map[string]string{"identifier": "refresh@b.cn", "password": "password1"}
 	if code := h.json("POST", "/v1/auth/register", "", body, &tok); code != http.StatusCreated {
 		t.Fatalf("register: %d", code)
 	}
@@ -403,7 +408,7 @@ func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
 		handler.ServeHTTP(result, req)
 		return result
 	}
-	credentials := map[string]string{"email": "devices@example.com", "password": "password1"}
+	credentials := map[string]string{"identifier": "devices@example.com", "password": "password1"}
 	first := post("/v1/auth/register", "192.0.2.1:1234", credentials)
 	second := post("/v1/auth/login", "192.0.2.2:1234", credentials)
 	if first.Code != http.StatusCreated || second.Code != http.StatusOK {
@@ -516,7 +521,7 @@ func TestInternalErrorsAreProblems(t *testing.T) {
 	handler := New(context.Background(), cfg, stores, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	register := httptest.NewRequest(http.MethodPost, "/v1/auth/register",
-		bytes.NewReader(mustJSON(t, map[string]string{"email": "fail@b.cn", "password": "password1"})))
+		bytes.NewReader(mustJSON(t, map[string]string{"identifier": "fail@b.cn", "password": "password1"})))
 	register.Header.Set("Content-Type", "application/json")
 	registered := httptest.NewRecorder()
 	handler.ServeHTTP(registered, register)

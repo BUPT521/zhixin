@@ -33,14 +33,16 @@ class FakeServer {
 
   final Map<String, String> _passwords = {};
   final Map<String, String> _userIds = {};
+  // 假服务端每个账号只有一条邮箱登录方式，key 是账号 id。
+  final Map<String, String> _identityIds = {};
   final Set<String> _verified = {};
   final Map<String, _FakeCode> _codes = {};
   int _nextUser = 1;
   int _nextCode = 100000;
 
   /// 测试取出最近一次发出的验证码；客户端拿不到邮件正文。
-  String? codeFor(String email, String purpose) =>
-      _codes['$email|$purpose']?.code;
+  String? codeFor(String identifier, String purpose) =>
+      _codes['$identifier|$purpose']?.code;
 
   final Map<String, _Session> _access = {};
   final Map<String, _Session> _refresh = {};
@@ -110,7 +112,8 @@ class FakeServer {
 
   int headOf(String userId) => commits[userId]?.length ?? 0;
 
-  String userIdOf(String email) => _userIds[email]!;
+  /// 按登录方式的值取账号 id；假服务端一个账号只有一条邮箱登录方式。
+  String userIdOf(String identifier) => _userIds[identifier]!;
 
   http.Client get client => MockClient(_handle);
 
@@ -177,44 +180,63 @@ class FakeServer {
       return http.Response('', 204);
     }
     if (method == 'GET' && path == '/v1/me') {
-      final email = _userIds.entries.firstWhere((e) => e.value == userId).key;
+      final identifier = _identifierOf(userId);
+      final identityId = _identityIds[userId] ?? '';
       return _json(200, {
         'user_id': userId,
-        'email': email,
-        'email_verified': _verified.contains(email),
         'created_at': '2026-11-17T10:00:00Z',
+        'identities': [
+          {
+            'id': identityId,
+            'kind': 'email',
+            'identifier': identifier,
+            'verified': _verified.contains(identityId),
+          },
+        ],
       });
     }
-    if (method == 'POST' && path == '/v1/auth/email/verify/request') {
-      final email = _userIds.entries.firstWhere((e) => e.value == userId).key;
-      if (!_verified.contains(email)) {
-        _codes['$email|verify_email'] = _newCode();
+    if (path.startsWith('/v1/me/identities/')) {
+      final rest = path.substring('/v1/me/identities/'.length);
+      final confirm = rest.endsWith('/verification/confirm');
+      final identityId = confirm
+          ? rest.substring(0, rest.length - '/verification/confirm'.length)
+          : rest.substring(0, rest.length - '/verification'.length);
+      // 只认当前账号名下的登录方式，与服务端一致。
+      if (identityId != _identityIds[userId]) {
+        return _problem(404, 'not_found');
       }
-      return http.Response('', 204);
-    }
-    if (method == 'POST' && path == '/v1/auth/email/verify/confirm') {
-      final email = _userIds.entries.firstWhere((e) => e.value == userId).key;
-      if (!_takeCode(email, 'verify_email', body['code'] as String? ?? '')) {
-        return _problem(400, 'invalid_code');
+      final identifier = _identifierOf(userId);
+      if (confirm) {
+        if (!_takeCode(
+          identifier,
+          'verify_contact',
+          body['code'] as String? ?? '',
+        )) {
+          return _problem(400, 'invalid_code');
+        }
+        _verified.add(identityId);
+        return http.Response('', 204);
       }
-      _verified.add(email);
+      if (!_verified.contains(identityId)) {
+        _codes['$identifier|verify_contact'] = _newCode();
+      }
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/me') {
       final matches = _userIds.entries
           .where((entry) => entry.value == userId)
           .map((entry) => entry.key);
-      final email = matches.isEmpty ? null : matches.first;
+      final identifier = matches.isEmpty ? null : matches.first;
       final password = body['password'] as String? ?? '';
       if (password.isEmpty) return _problem(400, 'invalid_request');
-      if (email == null || _passwords[email] != password) {
+      if (identifier == null || _passwords[identifier] != password) {
         deleteAttempts++;
         return _problem(401, 'invalid_credentials');
       }
       _userIds.removeWhere((_, id) => id == userId);
-      _passwords.remove(email);
-      _verified.remove(email);
-      _codes.removeWhere((key, _) => key.startsWith('$email|'));
+      _passwords.remove(identifier);
+      _verified.remove(_identityIds.remove(userId));
+      _codes.removeWhere((key, _) => key.startsWith('$identifier|'));
       commits.remove(userId);
       backups.remove(userId);
       blobs.remove(userId);
@@ -438,11 +460,16 @@ class FakeServer {
   int _backupSeq = 1;
 
   http.Response _register(Map<String, Object?> body) {
-    final email = (body['email'] as String? ?? '').trim().toLowerCase();
-    if (_passwords.containsKey(email)) return _problem(409, 'email_taken');
-    _passwords[email] = body['password'] as String? ?? '';
+    final identifier = (body['identifier'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    if (_passwords.containsKey(identifier)) {
+      return _problem(409, 'identifier_taken');
+    }
+    _passwords[identifier] = body['password'] as String? ?? '';
     final userId = 'user-${_nextUser++}';
-    _userIds[email] = userId;
+    _userIds[identifier] = userId;
+    _identityIds[userId] = 'identity-$userId';
     return _tokens(userId, body['device_name'] as String? ?? '');
   }
 
@@ -450,13 +477,19 @@ class FakeServer {
     loginRequests++;
     final gate = delayLogin;
     if (gate != null) await gate;
-    final email = (body['email'] as String? ?? '').trim().toLowerCase();
-    if (_passwords[email] == null ||
-        _passwords[email] != (body['password'] as String? ?? '')) {
+    final identifier = (body['identifier'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    if (_passwords[identifier] == null ||
+        _passwords[identifier] != (body['password'] as String? ?? '')) {
       return _problem(401, 'invalid_credentials');
     }
-    return _tokens(_userIds[email]!, body['device_name'] as String? ?? '');
+    return _tokens(_userIds[identifier]!, body['device_name'] as String? ?? '');
   }
+
+  /// 账号的登录方式取值；假服务端一个账号只有一条。
+  String _identifierOf(String userId) =>
+      _userIds.entries.firstWhere((entry) => entry.value == userId).key;
 
   Future<http.Response> _refreshToken(Map<String, Object?> body) async {
     final refresh = body['refresh_token'] as String? ?? '';
@@ -510,31 +543,40 @@ class FakeServer {
     );
   }
 
-  bool _takeCode(String email, String purpose, String given) {
-    final entry = _codes.remove('$email|$purpose');
+  bool _takeCode(String identifier, String purpose, String given) {
+    final entry = _codes.remove('$identifier|$purpose');
     if (entry == null || entry.code != given.trim()) return false;
     return DateTime.now().isBefore(entry.expiresAt);
   }
 
   http.Response _forgotPassword(Map<String, Object?> body) {
-    final email = (body['email'] as String? ?? '').trim().toLowerCase();
-    if (_passwords.containsKey(email) && _verified.contains(email)) {
-      _codes['$email|reset_password'] = _newCode();
+    final identifier = (body['identifier'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    final userId = _userIds[identifier];
+    if (userId != null && _verified.contains(_identityIds[userId])) {
+      _codes['$identifier|reset_password'] = _newCode();
     }
     return http.Response('', 204);
   }
 
   http.Response _resetPassword(Map<String, Object?> body) {
-    final email = (body['email'] as String? ?? '').trim().toLowerCase();
+    final identifier = (body['identifier'] as String? ?? '')
+        .trim()
+        .toLowerCase();
     final password = body['new_password'] as String? ?? '';
-    if (!_passwords.containsKey(email) ||
-        !_verified.contains(email) ||
+    final userId = _userIds[identifier];
+    if (userId == null ||
+        !_verified.contains(_identityIds[userId]) ||
         password.length < 8 ||
-        !_takeCode(email, 'reset_password', body['code'] as String? ?? '')) {
+        !_takeCode(
+          identifier,
+          'reset_password',
+          body['code'] as String? ?? '',
+        )) {
       return _problem(400, 'invalid_code');
     }
-    _passwords[email] = password;
-    final userId = _userIds[email]!;
+    _passwords[identifier] = password;
     _access.removeWhere((_, session) => session.userId == userId);
     _refresh.removeWhere((_, session) => session.userId == userId);
     return http.Response('', 204);

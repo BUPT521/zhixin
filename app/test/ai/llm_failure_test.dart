@@ -6,17 +6,26 @@ import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
 
-/// 403 email_unverified 的归类：给出专门文案，不归成 API Key 无效，也不自动重试。
+/// 403 contact_unverified 的归类：给出专门文案，不归成 API Key 无效，也不自动重试。
 void main() {
-  test('email_unverified 有专门的说法，可以和认证失败区分', () {
-    expect(shortTextOf(LlmFailure.emailUnverified), '邮箱尚未验证，托管额度未开放');
-    expect(shortTextOf(LlmFailure.emailUnverified), isNot(contains('API Key')));
-    expect(llmFailureFromName('emailUnverified'), LlmFailure.emailUnverified);
+  test('contact_unverified 有专门的说法，可以和认证失败区分', () {
+    expect(shortTextOf(LlmFailure.contactUnverified), '还没有确认任何登录方式，托管额度未开放');
+    expect(
+      shortTextOf(LlmFailure.contactUnverified),
+      isNot(contains('API Key')),
+    );
+    expect(
+      llmFailureFromName('contactUnverified'),
+      LlmFailure.contactUnverified,
+    );
   });
 
-  test('4xx 的邮箱未验证不在自动重试范围内', () {
+  test('4xx 的登录方式未确认不在自动重试范围内', () {
     const policy = RetryPolicy();
-    expect(policy.shouldRetry(LlmFailure.emailUnverified, attempt: 0), isFalse);
+    expect(
+      policy.shouldRetry(LlmFailure.contactUnverified, attempt: 0),
+      isFalse,
+    );
     expect(policy.shouldRetry(LlmFailure.auth, attempt: 0), isFalse);
   });
 
@@ -24,13 +33,13 @@ void main() {
     expect(
       problemCodeOf(
         jsonEncode({
-          'type': 'urn:zhixin:problem:email_unverified',
-          'title': 'email_unverified',
+          'type': 'urn:zhixin:problem:contact_unverified',
+          'title': 'contact_unverified',
           'status': 403,
-          'code': 'email_unverified',
+          'code': 'contact_unverified',
         }),
       ),
-      'email_unverified',
+      'contact_unverified',
     );
     expect(
       problemCodeOf(
@@ -44,7 +53,7 @@ void main() {
     expect(problemCodeOf(''), isNull);
   });
 
-  test('403 email_unverified 的响应映射成专门失败类型且不重试', () async {
+  test('403 contact_unverified 的响应映射成专门失败类型且不重试', () async {
     var requests = 0;
     final client = HttpLlmClient(
       config: const LlmConfig(apiKey: 'test-key'),
@@ -55,11 +64,11 @@ void main() {
           Stream.value(
             utf8.encode(
               jsonEncode({
-                'type': 'urn:zhixin:problem:email_unverified',
-                'title': 'email_unverified',
+                'type': 'urn:zhixin:problem:contact_unverified',
+                'title': 'contact_unverified',
                 'status': 403,
-                'code': 'email_unverified',
-                'detail': '账号还没验证邮箱',
+                'code': 'contact_unverified',
+                'detail': '账号还没确认任何登录方式',
               }),
             ),
           ),
@@ -81,9 +90,13 @@ void main() {
             .having(
               (error) => error.failure,
               'failure',
-              LlmFailure.emailUnverified,
+              LlmFailure.contactUnverified,
             )
-            .having((error) => error.shortText, 'shortText', '邮箱尚未验证，托管额度未开放'),
+            .having(
+              (error) => error.shortText,
+              'shortText',
+              '还没有确认任何登录方式，托管额度未开放',
+            ),
       ),
     );
     // 4xx 不自动重试：只发出一次请求。

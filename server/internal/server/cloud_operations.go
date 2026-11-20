@@ -30,8 +30,8 @@ func cloudOperations(requireVerified bool) api.MiddlewareFunc {
 				}
 			}
 			principal := auth.MustPrincipal(r.Context())
-			if upload && requireVerified && !principal.EmailVerified {
-				httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeEmailUnverified, "verify your email address before writing cloud data")
+			if upload && requireVerified && !principal.ContactVerified {
+				httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeContactUnverified, "verify one of your sign-in identities before writing cloud data")
 				return
 			}
 			userID := principal.UserID

@@ -22,9 +22,7 @@ func TestRotateSessionAndRecordIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
 	st := NewMemoryStore()
-	if err := st.CreateUser(ctx, User{ID: "u1", Email: "atomic@b.cn", PasswordHash: "h", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	createEmailAccount(t, st, User{ID: "u1", PasswordHash: "h", CreatedAt: now}, "atomic@b.cn")
 	if err := st.CreateSession(ctx, Session{
 		ID: "s1", UserID: "u1", AccessHash: "ah1", RefreshHash: "rh1",
 		AccessExpires: now.Add(time.Hour), RefreshExpires: now.Add(24 * time.Hour), CreatedAt: now,
@@ -74,9 +72,7 @@ func TestRotateSessionAndRecordRetryWritesBothHashes(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
 	st := NewMemoryStore()
-	if err := st.CreateUser(ctx, User{ID: "u1", Email: "retry@b.cn", PasswordHash: "h", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	createEmailAccount(t, st, User{ID: "u1", PasswordHash: "h", CreatedAt: now}, "retry@b.cn")
 	if err := st.CreateSession(ctx, Session{
 		ID: "s1", UserID: "u1", AccessHash: "ah2", RefreshHash: "rh2",
 		AccessExpires: now.Add(time.Hour), RefreshExpires: now.Add(24 * time.Hour), CreatedAt: now,
@@ -118,36 +114,33 @@ func TestHandlerRegisterGlobalBudget(t *testing.T) {
 	))
 
 	if code := c.JSON(http.MethodPost, "/v1/auth/register", "", map[string]string{
-		"email": "first@b.cn", "password": "password1",
+		"identifier": "first@b.cn", "password": "password1",
 	}, nil); code != http.StatusCreated {
 		t.Fatalf("第一次注册应成功，得到 %d", code)
 	}
 	var p testutil.Problem
 	if code := c.JSON(http.MethodPost, "/v1/auth/register", "", map[string]string{
-		"email": "second@b.cn", "password": "password1",
+		"identifier": "second@b.cn", "password": "password1",
 	}, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
 		t.Fatalf("全局桶用尽后应回 429：%d %+v", code, p)
 	}
-	if _, err := svc.store.UserByEmail(context.Background(), "second@b.cn"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.store.UserByIdentifier(context.Background(), KindEmail, "second@b.cn"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("被挡下的注册不应写账号，得到 %v", err)
 	}
 }
 
-// TestMemoryPruneUnverified 核对内存实现只删“创建早于截止时间且从未确认邮箱”的
-// 账号，账号的会话、验证码与重放记录一起消失；已确认的账号与保留期内的账号
-// 不受影响。
+// TestMemoryPruneUnverified 核对内存实现只删“创建早于截止时间且没有任何一种
+// 已验证登录方式”的账号，账号的会话、验证码与重放记录一起消失；已确认的账号与
+// 保留期内的账号不受影响。
 func TestMemoryPruneUnverified(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
 	st := NewMemoryStore()
-	for _, u := range []User{
-		{ID: "old-unverified", Email: "old@b.cn", PasswordHash: "h", CreatedAt: now.Add(-8 * 24 * time.Hour)},
-		{ID: "recent-unverified", Email: "recent@b.cn", PasswordHash: "h", CreatedAt: now.Add(-6 * 24 * time.Hour)},
-		{ID: "old-verified", Email: "verified@b.cn", PasswordHash: "h", EmailVerifiedAt: now.Add(-7 * 24 * time.Hour), CreatedAt: now.Add(-30 * 24 * time.Hour)},
-	} {
-		if err := st.CreateUser(ctx, u); err != nil {
-			t.Fatal(err)
-		}
+	createEmailAccount(t, st, User{ID: "old-unverified", PasswordHash: "h", CreatedAt: now.Add(-8 * 24 * time.Hour)}, "old@b.cn")
+	createEmailAccount(t, st, User{ID: "recent-unverified", PasswordHash: "h", CreatedAt: now.Add(-6 * 24 * time.Hour)}, "recent@b.cn")
+	verifiedIdentity := createEmailAccount(t, st, User{ID: "old-verified", PasswordHash: "h", CreatedAt: now.Add(-30 * 24 * time.Hour)}, "verified@b.cn")
+	if err := st.SetIdentityVerified(ctx, "old-verified", verifiedIdentity.ID, now.Add(-7*24*time.Hour)); err != nil {
+		t.Fatal(err)
 	}
 	if err := st.CreateSession(ctx, Session{
 		ID: "s-old", UserID: "old-unverified", AccessHash: "ah", RefreshHash: "rh",
@@ -156,7 +149,8 @@ func TestMemoryPruneUnverified(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.PutCode(ctx, Code{
-		UserID: "old-unverified", Purpose: PurposeVerifyEmail, CodeHash: "c",
+		UserID: "old-unverified", Purpose: PurposeVerifyContact,
+		Kind: KindEmail, Identifier: "old@b.cn", CodeHash: "c",
 		ExpiresAt: now.Add(time.Minute), CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -181,7 +175,7 @@ func TestMemoryPruneUnverified(t *testing.T) {
 	if _, err := st.SessionByAccessHash(ctx, "ah"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("账号的会话应一并删除，得到 %v", err)
 	}
-	if _, err := st.Code(ctx, "old-unverified", PurposeVerifyEmail); !errors.Is(err, ErrNotFound) {
+	if _, err := st.Code(ctx, PurposeVerifyContact, KindEmail, "old@b.cn"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("账号的验证码应一并删除，得到 %v", err)
 	}
 	if _, err := st.UsedRefresh(ctx, "rh0"); !errors.Is(err, ErrNotFound) {
@@ -203,14 +197,11 @@ func TestPruneLoopDeletesUnverifiedUsers(t *testing.T) {
 	s, c := newTestService()
 	s.SetUnverifiedKeep(1)
 	st := s.store.(*MemoryStore)
-	for _, u := range []User{
-		{ID: "expired", Email: "expired@b.cn", PasswordHash: "h", CreatedAt: c.t.Add(-48 * time.Hour)},
-		{ID: "fresh", Email: "fresh@b.cn", PasswordHash: "h", CreatedAt: c.t.Add(-12 * time.Hour)},
-		{ID: "verified", Email: "verified@b.cn", PasswordHash: "h", EmailVerifiedAt: c.t.Add(-49 * time.Hour), CreatedAt: c.t.Add(-48 * time.Hour)},
-	} {
-		if err := st.CreateUser(ctx, u); err != nil {
-			t.Fatal(err)
-		}
+	createEmailAccount(t, st, User{ID: "expired", PasswordHash: "h", CreatedAt: c.t.Add(-48 * time.Hour)}, "expired@b.cn")
+	createEmailAccount(t, st, User{ID: "fresh", PasswordHash: "h", CreatedAt: c.t.Add(-12 * time.Hour)}, "fresh@b.cn")
+	verifiedIdentity := createEmailAccount(t, st, User{ID: "verified", PasswordHash: "h", CreatedAt: c.t.Add(-48 * time.Hour)}, "verified@b.cn")
+	if err := st.SetIdentityVerified(ctx, "verified", verifiedIdentity.ID, c.t.Add(-49*time.Hour)); err != nil {
+		t.Fatal(err)
 	}
 
 	done := make(chan struct{})

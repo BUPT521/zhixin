@@ -3,6 +3,9 @@
 // Access tokens live one hour, refresh tokens thirty days and rotate on every
 // refresh; the store keeps only SHA-256 hashes so a database leak does not
 // leak usable tokens (ADR-0009).
+//
+// 账号与登录方式是分开的两张表：密码在 app_user，邮箱这类联系方式在
+// user_identity，验证码按登录方式保存（ADR-0038）。
 package auth
 
 import (
@@ -17,6 +20,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/mail"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,12 +30,12 @@ import (
 
 var (
 	ErrInvalidInput       = errors.New("auth: invalid input")
-	ErrInvalidCredentials = errors.New("auth: invalid email or password")
+	ErrInvalidCredentials = errors.New("auth: invalid identifier or password")
 	ErrInvalidToken       = errors.New("auth: invalid or expired token")
 	// ErrInvalidCode 同时覆盖验证码不存在、已过期、已被换掉与输错次数过多，
-	// 客户端不需要区分，也不让请求方据此判断邮箱是否存在。
+	// 客户端不需要区分，也不让请求方据此判断账号是否存在。
 	ErrInvalidCode = errors.New("auth: invalid or expired code")
-	// ErrCodeTooSoon 表示同一个账号刚发过验证码，要等冷却结束再发。
+	// ErrCodeTooSoon 表示这种登录方式刚发过验证码，要等冷却结束再发。
 	ErrCodeTooSoon = errors.New("auth: a code was sent recently")
 	// ErrMailUnavailable 表示服务端没有配置发信，验证码无法送达。
 	ErrMailUnavailable = errors.New("auth: mail is not configured")
@@ -49,9 +53,11 @@ type Tokens struct {
 
 // Principal is the authenticated caller of a request.
 type Principal struct {
-	UserID        string
-	SessionID     string
-	EmailVerified bool
+	UserID    string
+	SessionID string
+	// ContactVerified 表示这个账号至少有一种登录方式已经确认；托管额度与云端
+	// 写入按它判断，不再只看邮箱（ADR-0038）。
+	ContactVerified bool
 }
 
 // AccountDeleter removes data owned by the other services before the account
@@ -82,27 +88,27 @@ type Service struct {
 	// 与配置 ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致，装配处可以覆盖。
 	maxSessions int
 
-	// unverifiedKeep 是未确认邮箱账号的保留期：注册之后超过这段时间仍未确认的
-	// 账号由每日清理删除。默认值与配置 ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值
-	// 一致，装配处可以覆盖。
+	// unverifiedKeep 是没有任何已验证登录方式的账号的保留期：注册之后超过这段
+	// 时间仍未确认的账号由每日清理删除。默认值与配置
+	// ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值一致，装配处可以覆盖。
 	unverifiedKeep time.Duration
 
 	// securityLog 记录刷新令牌重放这类安全事件；为 nil 时不记，事件内容只有
 	// 账号、会话与请求标识，不含令牌。
 	securityLog *slog.Logger
 
-	// 邮箱验证与找回密码。mailer 为 nil 时请求返回 ErrMailUnavailable；
+	// 验证码按登录方式分发：senders 为 nil 时请求返回 ErrMailUnavailable；
 	// codeSecret 用来给六位验证码做 HMAC，避免库里的哈希被穷举。
-	mailer       Mailer
+	senders      CodeSender
 	codeSecret   []byte
 	codeTTL      time.Duration
 	codeCooldown time.Duration
-	mailLimits   *ratelimit.Limiter
+	sendLimits   *ratelimit.Limiter
 }
 
-type mailRateError struct{ retryAfter int64 }
+type sendRateError struct{ retryAfter int64 }
 
-func (mailRateError) Error() string { return "auth: recipient mail budget exhausted" }
+func (sendRateError) Error() string { return "auth: recipient code budget exhausted" }
 
 const maxCodeAttempts = 5
 
@@ -110,9 +116,13 @@ const maxCodeAttempts = 5
 // ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致。
 const defaultMaxSessions = 20
 
-// defaultUnverifiedKeep 是未确认邮箱账号的默认保留期，与配置
+// defaultUnverifiedKeep 是未验证账号的默认保留期，与配置
 // ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值一致。
 const defaultUnverifiedKeep = 7 * 24 * time.Hour
+
+// 手机号的形状：可选的加号加 6 至 20 位数字。识别出来之后注册与登录仍然拒绝，
+// 因为手机号的登录入口还没有接（ADR-0038）。
+var phoneIdentifier = regexp.MustCompile(`^\+?[0-9]{6,20}$`)
 
 func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
 	return &Service{
@@ -121,18 +131,19 @@ func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
 	}
 }
 
-// ConfigureCodes 装上发信与验证码参数；不调用时邮箱验证与找回密码一律返回
-// ErrMailUnavailable，登录与其他接口不受影响。secret 必须是稳定的随机字节，
-// 服务重启后仍然有效；为空时由调用方生成。
-func (s *Service) ConfigureCodes(mailer Mailer, secret []byte, ttl, cooldown time.Duration) {
-	s.mailer = mailer
+// ConfigureCodes 装上验证码的发送分发与参数；不调用时确认登录方式与找回密码
+// 一律返回 ErrMailUnavailable，登录与其他接口不受影响。secret 必须是稳定的随机
+// 字节，服务重启后仍然有效；为空时由调用方生成。
+func (s *Service) ConfigureCodes(senders CodeSender, secret []byte, ttl, cooldown time.Duration) {
+	s.senders = senders
 	s.codeSecret = append([]byte(nil), secret...)
 	s.codeTTL = ttl
 	s.codeCooldown = cooldown
 }
 
-// SetMailLimiter shares the same recipient budget across both code purposes.
-func (s *Service) SetMailLimiter(limiter *ratelimit.Limiter) { s.mailLimits = limiter }
+// SetSendLimiter 装上按登录方式的收信预算，键是 kind:identifier，两种用途共用
+// 同一个桶，确认登录方式与找回密码不会各自多拿一份额度。
+func (s *Service) SetSendLimiter(limiter *ratelimit.Limiter) { s.sendLimits = limiter }
 
 // SetAccountDataDeleter registers the one cleanup that runs before the account
 // row is removed.
@@ -164,9 +175,9 @@ func (s *Service) SetMaxSessions(n int) {
 	}
 }
 
-// SetUnverifiedKeep 设定未确认邮箱账号的保留天数；小于等于零的值忽略，沿用
-// 默认 7 天。每日清理按注册时间早于 now-days 的未确认账号删除，忽略零值也
-// 避免把保留期配成 0 之后“注册即删”。
+// SetUnverifiedKeep 设定未验证账号的保留天数；小于等于零的值忽略，沿用默认
+// 7 天。每日清理按注册时间早于 now-days、且没有任何一种已验证登录方式的账号
+// 删除，忽略零值也避免把保留期配成 0 之后“注册即删”。
 func (s *Service) SetUnverifiedKeep(days int) {
 	if days > 0 {
 		s.unverifiedKeep = time.Duration(days) * 24 * time.Hour
@@ -175,18 +186,18 @@ func (s *Service) SetUnverifiedKeep(days int) {
 
 // PruneLoop 启动时清理一次过期会话、过期验证码与超过保留期的未验证账号，之后
 // 每天清理一次，直到 ctx 结束。节奏与 retention.PruneLoop 一致：过期行不影响
-// 正确性，清理只控制表的大小；未验证账号超过保留期后删除，释放邮箱与账号行。
+// 正确性，清理只控制表的大小；未验证账号超过保留期后删除，释放联系方式与账号行。
 func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) {
 	prune := func() {
 		now := s.now()
 		if err := store.PruneExpired(ctx, now, now.Add(-max(s.refreshTTL, refreshGrace))); err != nil {
 			log.Error("prune expired auth rows", slog.String("error", err.Error()))
 		}
-		// 未确认邮箱的账号按保留期删除：注册是公开入口，账号行与 argon2 哈希在
-		// 邮箱验证之前就已经写入，超过保留期仍未确认的行没有云端数据，删掉可以
-		// 释放邮箱与账号表空间（ADR-0037）。删除行数大于零时记一条，便于核对
-		// 清理量；失败留到下一次每日清理重试。装了安全日志出口时写那里，否则写
-		// 每日清理的日志，事件里只有删除的行数，不含账号与邮箱。
+		// 没有任何一种已验证登录方式的账号按保留期删除：注册是公开入口，账号行
+		// 与 argon2 哈希在确认之前就已经写入，超过保留期仍未确认的行没有云端
+		// 数据，删掉可以释放联系方式与账号表空间（ADR-0037）。删除行数大于零时
+		// 记一条，便于核对清理量；失败留到下一次每日清理重试。装了安全日志出口时
+		// 写那里，否则写每日清理的日志，事件里只有删除的行数，不含账号与联系方式。
 		removed, err := store.PruneUnverified(ctx, now.Add(-s.unverifiedKeep))
 		switch {
 		case err != nil:
@@ -255,6 +266,40 @@ func normalizeEmail(email string) (string, error) {
 	return email, nil
 }
 
+// parseIdentifier 按值的形状识别登录方式并做规范化：含 @ 的按邮箱，符合
+// 手机号形状的按手机号，其余是无效输入。微信的 identifier 来自开放平台回调，
+// 不会出现在用户提交的登录请求里，所以这里识别不出 wechat。
+func parseIdentifier(raw string) (kind, identifier string, err error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch {
+	case value == "":
+		return "", "", ErrInvalidInput
+	case strings.Contains(value, "@"):
+		email, err := normalizeEmail(value)
+		if err != nil {
+			return "", "", err
+		}
+		return KindEmail, email, nil
+	case phoneIdentifier.MatchString(value):
+		return KindPhone, value, nil
+	default:
+		return "", "", ErrInvalidInput
+	}
+}
+
+// signInIdentifier 是注册与登录接受的登录方式。现在只有邮箱有入口：手机号与
+// 微信各自要先接一个登录入口，识别出来之后在这里拒绝；入口就位时只改这一处。
+func signInIdentifier(raw string) (kind, identifier string, err error) {
+	kind, identifier, err = parseIdentifier(raw)
+	if err != nil {
+		return "", "", err
+	}
+	if kind != KindEmail {
+		return "", "", ErrInvalidInput
+	}
+	return kind, identifier, nil
+}
+
 func checkPassword(p string) error {
 	if n := utf8.RuneCountInString(p); n < 8 || n > 128 {
 		return ErrInvalidInput
@@ -270,9 +315,9 @@ func cleanDevice(name string) string {
 	return name
 }
 
-// Register creates an account and signs the device in.
-func (s *Service) Register(ctx context.Context, email, password, device string) (Tokens, error) {
-	email, err := normalizeEmail(email)
+// Register creates an account with one login identity and signs the device in.
+func (s *Service) Register(ctx context.Context, rawIdentifier, password, device string) (Tokens, error) {
+	kind, identifier, err := signInIdentifier(rawIdentifier)
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -283,23 +328,29 @@ func (s *Service) Register(ctx context.Context, email, password, device string) 
 	if err != nil {
 		return Tokens{}, err
 	}
-	u := User{ID: newID(), Email: email, PasswordHash: hash, CreatedAt: s.now()}
-	if err := s.store.CreateUser(ctx, u); err != nil {
+	now := s.now()
+	u := User{ID: newID(), PasswordHash: hash, CreatedAt: now}
+	ident := Identity{
+		ID: newID(), UserID: u.ID, Kind: kind, Identifier: identifier, CreatedAt: now,
+	}
+	if err := s.store.CreateAccount(ctx, u, ident); err != nil {
 		return Tokens{}, err
 	}
 	return s.issue(ctx, u.ID, device, hash)
 }
 
-// Login checks the password and opens a new session for the device.
-func (s *Service) Login(ctx context.Context, email, password, device string) (Tokens, error) {
-	email, err := normalizeEmail(email)
+// Login checks the password of the account that owns the identifier and opens a
+// new session for the device.
+func (s *Service) Login(ctx context.Context, rawIdentifier, password, device string) (Tokens, error) {
+	kind, identifier, err := signInIdentifier(rawIdentifier)
 	if err != nil {
+		// Spend the same work as a real check so timing does not reveal which
+		// identifiers are registered.
+		_, _ = s.verifyPassword(ctx, dummyHash, password)
 		return Tokens{}, ErrInvalidCredentials
 	}
-	u, err := s.store.UserByEmail(ctx, email)
+	u, err := s.store.UserByIdentifier(ctx, kind, identifier)
 	if errors.Is(err, ErrNotFound) {
-		// Spend the same work as a real check so timing does not reveal
-		// which emails are registered.
 		_, _ = s.verifyPassword(ctx, dummyHash, password)
 		return Tokens{}, ErrInvalidCredentials
 	}
@@ -446,7 +497,11 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (Princip
 	if !s.now().Before(sess.AccessExpires) {
 		return Principal{}, ErrInvalidToken
 	}
-	return Principal{UserID: sess.UserID, SessionID: sess.ID, EmailVerified: sess.EmailVerified}, nil
+	return Principal{
+		UserID:          sess.UserID,
+		SessionID:       sess.ID,
+		ContactVerified: sess.ContactVerified,
+	}, nil
 }
 
 // Logout ends one session.
@@ -458,110 +513,141 @@ func (s *Service) Logout(ctx context.Context, p Principal) error {
 	return err
 }
 
-// User returns the account of p.
-func (s *Service) User(ctx context.Context, p Principal) (User, error) {
-	return s.store.UserByID(ctx, p.UserID)
+// Account 返回账号与它的登录方式，供 GET /v1/me 使用。
+func (s *Service) Account(ctx context.Context, p Principal) (User, []Identity, error) {
+	u, err := s.store.UserByID(ctx, p.UserID)
+	if err != nil {
+		return User{}, nil, err
+	}
+	identities, err := s.store.Identities(ctx, p.UserID)
+	if err != nil {
+		return User{}, nil, err
+	}
+	return u, identities, nil
 }
 
-// RequestEmailVerification sends a six-digit code to the account's own address.
-// 已确认的账号直接返回 nil，不重复发信。
-func (s *Service) RequestEmailVerification(ctx context.Context, p Principal) error {
-	u, err := s.store.UserByID(ctx, p.UserID)
+// RequestIdentityVerification sends a six-digit code to one of the account's own
+// login identities. 已经确认过的直接返回 nil，不重复发送。
+func (s *Service) RequestIdentityVerification(ctx context.Context, p Principal, identityID string) error {
+	ident, err := s.store.Identity(ctx, p.UserID, identityID)
 	if err != nil {
 		return err
 	}
-	if !u.EmailVerifiedAt.IsZero() {
+	if !ident.VerifiedAt.IsZero() {
 		return nil
 	}
-	return s.issueCode(ctx, u, PurposeVerifyEmail)
+	return s.issueCode(ctx, p.UserID, PurposeVerifyContact, ident.Kind, ident.Identifier)
 }
 
-// ConfirmEmailVerification checks the code and marks the address verified.
-func (s *Service) ConfirmEmailVerification(ctx context.Context, p Principal, code string) error {
-	if err := s.checkCode(ctx, p.UserID, PurposeVerifyEmail, code); err != nil {
+// ConfirmIdentityVerification checks the code and marks that identity verified.
+func (s *Service) ConfirmIdentityVerification(ctx context.Context, p Principal, identityID, code string) error {
+	ident, err := s.store.Identity(ctx, p.UserID, identityID)
+	if err != nil {
 		return err
 	}
-	if err := s.store.SetEmailVerified(ctx, p.UserID, s.now()); err != nil {
+	if err := s.checkCode(ctx, PurposeVerifyContact, ident.Kind, ident.Identifier, code); err != nil {
 		return err
 	}
-	return s.store.DeleteCode(ctx, p.UserID, PurposeVerifyEmail)
+	if err := s.store.SetIdentityVerified(ctx, p.UserID, ident.ID, s.now()); err != nil {
+		return err
+	}
+	return s.store.DeleteCode(ctx, PurposeVerifyContact, ident.Kind, ident.Identifier)
 }
 
-// RequestPasswordReset sends a code to the registered address. The recipient
-// can recover an account even if its address was never confirmed.
-func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
-	email, err := normalizeEmail(email)
+// RequestPasswordReset sends a code to the account that owns the identifier. The
+// recipient can recover an account even if that identity was never confirmed.
+func (s *Service) RequestPasswordReset(ctx context.Context, rawIdentifier string) error {
+	kind, identifier, err := parseIdentifier(rawIdentifier)
 	if err != nil {
 		return ErrInvalidInput
 	}
-	if s.mailer == nil || len(s.codeSecret) == 0 {
+	if s.senders == nil || len(s.codeSecret) == 0 {
 		return ErrMailUnavailable
 	}
-	u, err := s.store.UserByEmail(ctx, email)
+	u, err := s.store.UserByIdentifier(ctx, kind, identifier)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	err = s.issueCode(ctx, u, PurposeResetPassword)
-	if errors.Is(err, ErrCodeTooSoon) || errors.As(err, new(mailRateError)) {
+	err = s.issueCode(ctx, u.ID, PurposeResetPassword, kind, identifier)
+	if errors.Is(err, ErrCodeTooSoon) || errors.As(err, new(sendRateError)) {
 		return nil
 	}
 	return err
 }
 
-// ResetPassword replaces the password and ends every session of the account,
-// including the device that asked for the reset.
-func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword string) error {
-	email, err := normalizeEmail(email)
+// ResetPassword replaces the password, confirms the identity that received the
+// code and ends every session of the account, including the device that asked
+// for the reset.
+func (s *Service) ResetPassword(ctx context.Context, rawIdentifier, code, newPassword string) error {
+	kind, identifier, err := parseIdentifier(rawIdentifier)
 	if err != nil {
 		return ErrInvalidInput
 	}
 	if err := checkPassword(newPassword); err != nil {
 		return err
 	}
-	u, err := s.store.UserByEmail(ctx, email)
+	ident, err := s.store.IdentityByIdentifier(ctx, kind, identifier)
 	if errors.Is(err, ErrNotFound) {
 		return ErrInvalidCode
 	}
 	if err != nil {
 		return err
 	}
-	if err := s.checkCode(ctx, u.ID, PurposeResetPassword, code); err != nil {
+	if err := s.checkCode(ctx, PurposeResetPassword, kind, identifier, code); err != nil {
 		return err
 	}
 	hash, err := s.hashPassword(ctx, newPassword)
 	if err != nil {
 		return err
 	}
-	// 校验过再交给存储在事务里重新比对一次摘要：验证码用掉、密码换掉、会话
-	// 清掉三件事一起提交，两个重试请求不会都成功，也不会出现“密码换了但旧
-	// 会话还在”的中间状态。
-	err = s.store.ResetPassword(ctx, u.ID, PurposeResetPassword,
-		s.hashCode(u.ID, PurposeResetPassword, strings.TrimSpace(code)), hash, s.now())
+	// 校验过再交给存储在事务里重新比对一次摘要：验证码用掉、密码换掉、那种登录
+	// 方式确认、会话清掉四件事一起提交，两个重试请求不会都成功，也不会出现
+	// “密码换了但旧会话还在”的中间状态。
+	err = s.store.ResetPassword(ctx, PasswordReset{
+		UserID:          ident.UserID,
+		IdentityID:      ident.ID,
+		Purpose:         PurposeResetPassword,
+		Kind:            kind,
+		Identifier:      identifier,
+		ExpectedHash:    s.hashCode(PurposeResetPassword, kind, identifier, strings.TrimSpace(code)),
+		NewPasswordHash: hash,
+		Now:             s.now(),
+	})
 	if errors.Is(err, ErrInvalidCode) {
 		return ErrInvalidCode
 	}
 	return err
 }
 
-// issueCode 生成一枚六位验证码并交给发信。发信失败时删除刚写入的记录，
-// 避免用户收到“已发送”却永远等不到邮件。
-func (s *Service) issueCode(ctx context.Context, u User, purpose string) error {
-	if s.mailer == nil || len(s.codeSecret) == 0 {
+// issueCode 生成一枚六位验证码并交给按登录方式分发的发送接口。发信失败时删除
+// 刚写入的记录，避免用户收到“已发送”却永远等不到消息；这种登录方式还没有接上
+// 发送通道时返回 ErrSenderUnsupported。收信预算的键是 kind:identifier。
+func (s *Service) issueCode(ctx context.Context, userID, purpose, kind, identifier string) error {
+	if s.senders == nil || len(s.codeSecret) == 0 {
 		return ErrMailUnavailable
 	}
-	existing, err := s.store.Code(ctx, u.ID, purpose)
+	capable := s.senders.CanSend(kind)
+	if !capable {
+		// 邮箱是对外承诺过的通道，没配置按“暂时不可用”返回，运维看日志能认出是
+		// 配置问题；手机号与微信是还没有接上发送方，答案只能是“暂不支持”。
+		if kind == KindEmail {
+			return ErrMailUnavailable
+		}
+		return ErrSenderUnsupported
+	}
+	existing, err := s.store.Code(ctx, purpose, kind, identifier)
 	switch {
 	case err == nil && s.now().Sub(existing.CreatedAt) < s.codeCooldown:
 		return ErrCodeTooSoon
 	case err != nil && !errors.Is(err, ErrNotFound):
 		return err
 	}
-	if s.mailLimits != nil {
-		if delay := s.mailLimits.Take(u.Email); delay > 0 {
-			return mailRateError{retryAfter: delay}
+	if s.sendLimits != nil {
+		if delay := s.sendLimits.Take(kind + ":" + identifier); delay > 0 {
+			return sendRateError{retryAfter: delay}
 		}
 	}
 	code, err := newCode()
@@ -570,31 +656,38 @@ func (s *Service) issueCode(ctx context.Context, u User, purpose string) error {
 	}
 	now := s.now()
 	c := Code{
-		UserID:    u.ID,
-		Purpose:   purpose,
-		CodeHash:  s.hashCode(u.ID, purpose, code),
-		ExpiresAt: now.Add(s.codeTTL),
-		CreatedAt: now,
+		Purpose:    purpose,
+		Kind:       kind,
+		Identifier: identifier,
+		UserID:     userID,
+		CodeHash:   s.hashCode(purpose, kind, identifier, code),
+		ExpiresAt:  now.Add(s.codeTTL),
+		CreatedAt:  now,
 	}
 	if err := s.store.PutCode(ctx, c); err != nil {
 		return err
 	}
-	if err := s.mailer.Send(ctx, u.Email, codeSubject(purpose), codeBody(purpose, code, s.codeTTL)); err != nil {
-		_ = s.store.DeleteCode(ctx, u.ID, purpose)
+	err = s.senders.SendCode(ctx, kind, identifier,
+		codeSubject(purpose, kind), codeBody(purpose, kind, code, s.codeTTL))
+	if err != nil {
+		_ = s.store.DeleteCode(ctx, purpose, kind, identifier)
+		if errors.Is(err, ErrSenderUnsupported) {
+			return ErrSenderUnsupported
+		}
 		return fmt.Errorf("%w: %v", ErrMailUnavailable, err)
 	}
 	return nil
 }
 
 // checkCode 校验验证码；过期、输错达到上限与不存在都归为 ErrInvalidCode。
-func (s *Service) checkCode(ctx context.Context, userID, purpose, code string) error {
+func (s *Service) checkCode(ctx context.Context, purpose, kind, identifier, code string) error {
 	code = strings.TrimSpace(code)
 	if len(code) != 6 {
 		// 仍然计一次尝试，避免用长度试探绕过次数上限。
-		_, _ = s.store.IncrementCodeAttempts(ctx, userID, purpose)
+		_, _ = s.store.IncrementCodeAttempts(ctx, purpose, kind, identifier)
 		return ErrInvalidCode
 	}
-	c, err := s.store.Code(ctx, userID, purpose)
+	c, err := s.store.Code(ctx, purpose, kind, identifier)
 	if errors.Is(err, ErrNotFound) {
 		return ErrInvalidCode
 	}
@@ -602,32 +695,33 @@ func (s *Service) checkCode(ctx context.Context, userID, purpose, code string) e
 		return err
 	}
 	if !s.now().Before(c.ExpiresAt) {
-		_ = s.store.DeleteCode(ctx, userID, purpose)
+		_ = s.store.DeleteCode(ctx, purpose, kind, identifier)
 		return ErrInvalidCode
 	}
-	attempts, err := s.store.IncrementCodeAttempts(ctx, userID, purpose)
+	attempts, err := s.store.IncrementCodeAttempts(ctx, purpose, kind, identifier)
 	if err != nil {
 		return err
 	}
 	if attempts > maxCodeAttempts {
-		_ = s.store.DeleteCode(ctx, userID, purpose)
+		_ = s.store.DeleteCode(ctx, purpose, kind, identifier)
 		return ErrInvalidCode
 	}
 	want := []byte(c.CodeHash)
-	got := []byte(s.hashCode(userID, purpose, code))
+	got := []byte(s.hashCode(purpose, kind, identifier, code))
 	if subtle.ConstantTimeCompare(want, got) != 1 {
 		return ErrInvalidCode
 	}
 	return nil
 }
 
-func (s *Service) hashCode(userID, purpose, code string) string {
+// hashCode 把用途、登录方式与验证码一起做 HMAC：换了登录方式或用途之后同一枚
+// 验证码对不上，库里也没有能直接穷举的明文。
+func (s *Service) hashCode(purpose, kind, identifier, code string) string {
 	mac := hmac.New(sha256.New, s.codeSecret)
-	mac.Write([]byte(userID))
-	mac.Write([]byte{0})
-	mac.Write([]byte(purpose))
-	mac.Write([]byte{0})
-	mac.Write([]byte(code))
+	for _, part := range []string{purpose, kind, identifier, code} {
+		mac.Write([]byte(part))
+		mac.Write([]byte{0})
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -639,17 +733,29 @@ func newCode() (string, error) {
 	return fmt.Sprintf("%06d", n.Int64()), nil
 }
 
-func codeSubject(purpose string) string {
+func codeSubject(purpose, kind string) string {
 	if purpose == PurposeResetPassword {
 		return "知新 · 重设密码验证码"
 	}
-	return "知新 · 验证邮箱验证码"
+	switch kind {
+	case KindPhone:
+		return "知新 · 验证手机号验证码"
+	case KindWechat:
+		return "知新 · 验证微信验证码"
+	default:
+		return "知新 · 验证邮箱验证码"
+	}
 }
 
-func codeBody(purpose, code string, ttl time.Duration) string {
+func codeBody(purpose, kind, code string, ttl time.Duration) string {
 	action := "确认邮箱"
-	if purpose == PurposeResetPassword {
+	switch {
+	case purpose == PurposeResetPassword:
 		action = "重设密码"
+	case kind == KindPhone:
+		action = "确认手机号"
+	case kind == KindWechat:
+		action = "确认微信"
 	}
 	minutes := int(ttl / time.Minute)
 	if minutes < 1 {
@@ -657,18 +763,14 @@ func codeBody(purpose, code string, ttl time.Duration) string {
 	}
 	return fmt.Sprintf(
 		"你正在%s。验证码是 %s，%d 分钟内有效。\n\n"+
-			"如果不是你本人操作，忽略这封邮件即可，账号不会被改动。\n",
+			"如果不是你本人操作，忽略这条消息即可，账号不会被改动。\n",
 		action, code, minutes,
 	)
 }
 
-// DeleteAccount removes every piece of server-side data for the account: the
-// caller-supplied data first, then the user row. Sessions, sync log, backups and
-// usage go with it through the schema's ON DELETE CASCADE. Any cleanup failure
-// stops before the user row is removed, so the request can be retried.
-//
-// 删号不可撤销，所以先核对一次密码：拿着别人设备上的访问令牌不能直接把账号
-// 删掉。密码校验与登录共用同一个内存预算与哈希校验规则。
+// VerifyCurrentPassword 在不可撤销的操作之前重新核对一次密码：拿着别人设备上
+// 的访问令牌不能直接把账号删掉，也不能清空云端数据。密码校验与登录共用同一个
+// 内存预算与哈希校验规则。
 func (s *Service) VerifyCurrentPassword(ctx context.Context, p Principal, password string) error {
 	u, err := s.store.UserByID(ctx, p.UserID)
 	if errors.Is(err, ErrNotFound) {
@@ -684,6 +786,11 @@ func (s *Service) VerifyCurrentPassword(ctx context.Context, p Principal, passwo
 	return nil
 }
 
+// DeleteAccount removes every piece of server-side data for the account: the
+// caller-supplied data first, then the user row. Identities, sessions, sync log,
+// backups and usage go with it through the schema's ON DELETE CASCADE. Any
+// cleanup failure stops before the user row is removed, so the request can be
+// retried.
 func (s *Service) DeleteAccount(ctx context.Context, p Principal, password string) error {
 	if err := s.VerifyCurrentPassword(ctx, p, password); err != nil {
 		return err

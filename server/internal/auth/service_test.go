@@ -46,8 +46,8 @@ func TestRegisterLoginAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Register(ctx, "student@example.com", "password2", ""); !errors.Is(err, ErrEmailTaken) {
-		t.Fatalf("duplicate email: %v", err)
+	if _, err := s.Register(ctx, "student@example.com", "password2", ""); !errors.Is(err, ErrIdentifierTaken) {
+		t.Fatalf("duplicate identifier: %v", err)
 	}
 	p, err := s.Authenticate(ctx, reg.AccessToken)
 	if err != nil || p.UserID != reg.UserID {
@@ -57,7 +57,7 @@ func TestRegisterLoginAuthenticate(t *testing.T) {
 		t.Fatalf("wrong password: %v", err)
 	}
 	if _, err := s.Login(ctx, "nobody@example.com", "password1", ""); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("unknown email: %v", err)
+		t.Fatalf("unknown identifier: %v", err)
 	}
 	if _, err := s.Login(ctx, "STUDENT@example.com", "password1", ""); err != nil {
 		t.Fatalf("login: %v", err)
@@ -66,13 +66,15 @@ func TestRegisterLoginAuthenticate(t *testing.T) {
 
 func TestRegisterValidates(t *testing.T) {
 	s, _ := newTestService()
-	for _, tc := range []struct{ email, pw string }{
+	for _, tc := range []struct{ identifier, pw string }{
 		{"not-an-email", "password1"},
 		{"Name <a@b.c>", "password1"},
 		{"a@b.c", "short"},
+		// 手机号与微信的识别已经留好，但登录入口还没有接，注册一律拒绝。
+		{"+8613800138000", "password1"},
 	} {
-		if _, err := s.Register(context.Background(), tc.email, tc.pw, ""); !errors.Is(err, ErrInvalidInput) {
-			t.Errorf("%q/%q: got %v", tc.email, tc.pw, err)
+		if _, err := s.Register(context.Background(), tc.identifier, tc.pw, ""); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%q/%q: got %v", tc.identifier, tc.pw, err)
 		}
 	}
 }

@@ -136,7 +136,7 @@ void main() {
       await scope!.ready;
       if (signIn) {
         await scope!.accountServices.account.register(
-          email: 'embed@example.com',
+          identifier: 'embed@example.com',
           password: 'password123',
         );
       }

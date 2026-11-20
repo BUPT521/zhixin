@@ -55,6 +55,10 @@ paths:
       tags: [auth]
       security: []
       summary: 注册并登录当前设备（按来源地址限流，与登录共用一个令牌桶）
+      description: |
+        `identifier` 是登录方式的值，服务端负责识别种类并规范化；现在只有邮箱能注册
+        与登录，手机号与微信的入口还没有接，识别出来之后按 `invalid_request` 拒绝。
+        同一个邮箱已经被别的账号登记时返回 409 `identifier_taken`。
       requestBody:
         required: true
         content:
@@ -69,7 +73,7 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "409":
-          description: "`email_taken`"
+          description: "`identifier_taken`：这种登录方式已经被别的账号使用"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -90,7 +94,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tokens" }
         "401":
-          description: "`invalid_credentials`，不区分邮箱不存在与密码错误"
+          description: "`invalid_credentials`，不区分账号不存在与密码错误"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -125,64 +129,30 @@ paths:
               schema: { $ref: "#/components/schemas/Tokens" }
         "401": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
-  /v1/auth/email/verify/request:
-    post:
-      tags: [auth]
-      summary: 给当前账号的邮箱发一封验证码邮件
-      description: |
-        已确认的邮箱直接返回 204，不重复发信；刚发过的账号返回 429，`Retry-After`
-        给出建议等待的秒数。服务端没有配置 SMTP 时返回 503，客户端提示稍后再试。
-        验证码为六位数字，默认十分钟有效，只存 HMAC-SHA256。
-      responses:
-        "204": { description: 已发送，或邮箱已经确认 }
-        "401": { $ref: "#/components/responses/Problem" }
-        "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Problem" }
-  /v1/auth/email/verify/confirm:
-    post:
-      tags: [auth]
-      summary: 用验证码确认当前账号的邮箱
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [code]
-              additionalProperties: false
-              properties:
-                code: { type: string, minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }
-      responses:
-        "204": { description: 已确认 }
-        "400":
-          description: "`invalid_code`：不存在、已过期、已被换掉或输错次数过多"
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/password/forgot:
     post:
       tags: [auth]
       security: []
-      summary: 向账号登记的邮箱发送重设密码验证码
+      summary: 向账号登记的登录方式发送重设密码验证码
       description: |
-        邮箱尚未验证时，持有该邮箱的用户可以凭验证码恢复账号并确认邮箱归属。
-        邮箱不存在时返回 204。发信失败返回 503，客户端提示稍后再试。
+        `identifier` 的识别与规范化同注册。这种登录方式尚未确认时，持有它的用户
+        可以凭验证码恢复账号并确认归属；账号不存在时返回 204。发信失败返回 503，
+        这种登录方式还没有接上发送通道时返回 501。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email]
+              required: [identifier]
               additionalProperties: false
               properties:
-                email: { type: string, format: email, maxLength: 254 }
+                identifier: { type: string, maxLength: 254 }
       responses:
         "204": { description: 已受理 }
         "400": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "501": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
   /v1/auth/password/reset:
     post:
@@ -195,10 +165,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, code, new_password]
+              required: [identifier, code, new_password]
               additionalProperties: false
               properties:
-                email: { type: string, format: email, maxLength: 254 }
+                identifier: { type: string, maxLength: 254 }
                 code: { type: string, minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }
                 new_password: { type: string, minLength: 8, maxLength: 128 }
       responses:
@@ -219,7 +189,7 @@ paths:
   /v1/me:
     get:
       tags: [auth]
-      summary: 当前账号
+      summary: 当前账号与它的登录方式
       responses:
         "200":
           description: OK
@@ -251,6 +221,61 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/me/identities/{id}/verification:
+    post:
+      tags: [auth]
+      summary: 给某一种登录方式发送验证码
+      description: |
+        `id` 是 `GET /v1/me` 返回的登录方式编号。已经确认过的直接返回 204，不重复
+        发送；刚发过的返回 429，`Retry-After` 给出建议等待的秒数。这种登录方式还没
+        有接上发送通道时返回 501，发送通道没有配置好时返回 503。验证码为六位数字，
+        默认十分钟有效，库里只存 HMAC-SHA256。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 登录方式编号
+          schema: { type: string }
+      responses:
+        "204": { description: 已发送，或这种登录方式已经确认 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/me/identities/{id}/verification/confirm:
+    post:
+      tags: [auth]
+      summary: 用验证码确认某一种登录方式
+      description: |
+        确认之后账号的“至少一种登录方式已验证”成立，托管额度与云端写入随之开放。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 登录方式编号
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              additionalProperties: false
+              properties:
+                code: { type: string, minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }
+      responses:
+        "204": { description: 已确认 }
+        "400":
+          description: "`invalid_code`：不存在、已过期、已被换掉或输错次数过多"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /v1/cloud:
@@ -316,7 +341,7 @@ paths:
         `base_seq` 必须等于服务端当前 head，否则返回 409，`extra.head` 给出最新位置；
         客户端先拉取、在本机应用为新的提交，再重新推送。已经收到过的 `request_id`
         会被跳过，因此丢失响应后原样重试是安全的。每次 1 到 200 条，单条最多 2 MiB，
-        请求最多 16 MiB。生产实例要求已验证邮箱，账号同步日志预算为 256 MiB。
+        请求最多 16 MiB。生产实例要求至少一种登录方式已经验证，账号同步日志预算为 256 MiB。
       requestBody:
         required: true
         content:
@@ -496,7 +521,7 @@ paths:
         代理自身的拒绝包括 `model_not_allowed`（400，模型不存在、
         停用或不是聊天模型）、`quota_exceeded`（429）、`unavailable`（503，没有配置任何
         模型）、`upstream_failed`（502，所有来源都无法连接或拒绝了 key）。
-        未验证邮箱时服务端返回 403 email_unverified，并发达到账号上限时返回 429。
+        账号还没有任何一种已验证的登录方式时服务端返回 403 contact_unverified，并发达到账号上限时返回 429。
         账号用途额度与实例总预算都在转发前预留。非流式响应有大小上限，流式响应有空闲与总时限。
       requestBody:
         required: true
@@ -513,7 +538,7 @@ paths:
           description: 提供方的响应，流式时为 text/event-stream
         "400": { $ref: "#/components/responses/Problem" }
         "403":
-          description: "`email_unverified`：账号还没确认邮箱，托管额度未开放"
+          description: "`contact_unverified`：账号还没有任何一种已验证的登录方式，托管额度未开放"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -585,7 +610,7 @@ paths:
               schema: { $ref: "#/components/schemas/EmbeddingLookupResult" }
         "400": { $ref: "#/components/responses/Problem" }
         "403":
-          description: "`email_unverified`：账号还没确认邮箱，托管额度未开放"
+          description: "`contact_unverified`：账号还没有任何一种已验证的登录方式，托管额度未开放"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -1122,8 +1147,8 @@ components:
             - unauthorized
             - invalid_credentials
             - invalid_code
-            - email_taken
-            - email_unverified
+            - identifier_taken
+            - contact_unverified
             - not_found
             - conflict
             - payload_too_large
@@ -1140,10 +1165,13 @@ components:
         extra: { type: object, additionalProperties: true }
     Credentials:
       type: object
-      required: [email, password]
+      required: [identifier, password]
       additionalProperties: false
       properties:
-        email: { type: string, format: email, maxLength: 254 }
+        identifier:
+          type: string
+          maxLength: 254
+          description: 登录方式的值，服务端识别种类并规范化；现在只接受邮箱
         password: { type: string, minLength: 8, maxLength: 128 }
         device_name: { type: string, maxLength: 64 }
     Tokens:
@@ -1261,12 +1289,26 @@ components:
         embedding_daily_tokens: { type: integer, format: int64, description: 嵌入每日额度 }
     Me:
       type: object
-      required: [user_id, email, email_verified, created_at]
+      required: [user_id, created_at, identities]
       properties:
         user_id: { type: string }
-        email: { type: string }
-        email_verified: { type: boolean, description: 邮箱是否已经用验证码确认 }
         created_at: { type: string, format: date-time }
+        identities:
+          type: array
+          description: 这个账号的登录方式；现在只会有一条邮箱
+          items: { $ref: "#/components/schemas/Identity" }
+    IdentityKind:
+      type: string
+      description: 登录方式的种类；表结构的 check 约束与这里一致
+      enum: [email, phone, wechat]
+    Identity:
+      type: object
+      required: [id, kind, identifier, verified]
+      properties:
+        id: { type: string }
+        kind: { $ref: "#/components/schemas/IdentityKind" }
+        identifier: { type: string, description: 规范化之后的联系方式 }
+        verified: { type: boolean, description: 这种登录方式是否已经用验证码确认 }
     Model:
       type: object
       required: [id, object, owned_by, kind]

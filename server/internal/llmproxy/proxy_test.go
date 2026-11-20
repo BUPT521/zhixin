@@ -927,10 +927,11 @@ func TestHandlerInstanceMemoryBudget(t *testing.T) {
 	}
 }
 
-// TestHandlerRequiresVerifiedEmail 核对未确认邮箱的账号在读取请求体之前被挡下：
-// 契约里的 403 email_unverified 不转发上游，确认之后同一个账号可以继续使用。
-// 没有注入检查时按已认证处理，内存装配与现有测试因此不依赖真实账号库。
-func TestHandlerRequiresVerifiedEmail(t *testing.T) {
+// TestHandlerRequiresVerifiedContact 核对没有任何一种已验证登录方式的账号在读取
+// 请求体之前被挡下：契约里的 403 contact_unverified 不转发上游，确认之后同一个
+// 账号可以继续使用。没有注入检查时按已认证处理，内存装配与现有测试因此不依赖
+// 真实账号库。
+func TestHandlerRequiresVerifiedContact(t *testing.T) {
 	var forwarded atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
@@ -940,41 +941,41 @@ func TestHandlerRequiresVerifiedEmail(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, proxy := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:          10000,
-		MaxRequestBytes:      1 << 20,
-		RequireVerifiedEmail: true,
+		DailyTokens:            10000,
+		MaxRequestBytes:        1 << 20,
+		RequireVerifiedContact: true,
 	}, upstream.URL)
 	token := signIn(t, authSvc, "unverified@b.cn")
 	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
 
 	verified := false
 	calls := 0
-	proxy.SetEmailVerifier(func(_ context.Context, userID string) (bool, error) {
+	proxy.SetContactVerifier(func(_ context.Context, userID string) (bool, error) {
 		calls++
 		return verified, nil
 	})
 
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, &p); code != http.StatusForbidden || p.Code != string(httpx.CodeEmailUnverified) {
-		t.Fatalf("未确认邮箱应回 403 email_unverified，得到 %d %+v", code, p)
+	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, &p); code != http.StatusForbidden || p.Code != string(httpx.CodeContactUnverified) {
+		t.Fatalf("没有已验证登录方式应回 403 contact_unverified，得到 %d %+v", code, p)
 	}
 	if forwarded.Load() != 0 {
-		t.Fatalf("未确认邮箱的请求不应转发上游，上游收到 %d 次", forwarded.Load())
+		t.Fatalf("没有已验证登录方式的请求不应转发上游，上游收到 %d 次", forwarded.Load())
 	}
 	if calls != 1 {
-		t.Fatalf("每次聊天请求应检查一次邮箱确认状态，得到 %d 次", calls)
+		t.Fatalf("每次聊天请求应检查一次登录方式确认状态，得到 %d 次", calls)
 	}
 
 	verified = true
 	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
-		t.Fatalf("确认邮箱之后应转发，得到 %d", code)
+		t.Fatalf("确认登录方式之后应转发，得到 %d", code)
 	}
 	if forwarded.Load() != 1 {
-		t.Fatalf("确认邮箱之后应转发一次，上游收到 %d 次", forwarded.Load())
+		t.Fatalf("确认登录方式之后应转发一次，上游收到 %d 次", forwarded.Load())
 	}
 
 	// 没有注入检查时按已认证处理：内存装配与本地开发不接账号库也能用托管额度。
-	proxy.SetEmailVerifier(nil)
+	proxy.SetContactVerifier(nil)
 	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
 		t.Fatalf("未注入检查时应按已认证处理，得到 %d", code)
 	}

@@ -127,10 +127,10 @@ func (Base) PostV1AuthRefresh(w http.ResponseWriter, _ *http.Request) {
 func (Base) PostV1AuthRegister(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
-func (Base) PostV1AuthEmailVerifyRequest(w http.ResponseWriter, _ *http.Request) {
+func (Base) PostV1MeIdentitiesIdVerification(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }
-func (Base) PostV1AuthEmailVerifyConfirm(w http.ResponseWriter, _ *http.Request) {
+func (Base) PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }
 func (Base) PostV1AuthPasswordForgot(w http.ResponseWriter, _ *http.Request) {

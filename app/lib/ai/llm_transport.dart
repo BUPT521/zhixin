@@ -346,7 +346,7 @@ class HttpLlmClient implements LlmClient {
 
   /// 非 2xx 时尽量读出服务端自己的说明：key、额度、模型名的问题全靠这一句。
   ///
-  /// 服务端代理的 `403 email_unverified` 单独归类，界面据此提示去账号页验证，
+  /// 服务端代理的 `403 contact_unverified` 单独归类，界面据此提示去账号页验证，
   /// 而不是让人以为 API Key 有问题；这类 4xx 不自动重试。
   Future<LlmException> _readFailure(
     http.StreamedResponse response,
@@ -360,9 +360,9 @@ class HttpLlmClient implements LlmClient {
           ? await lifecycle.run(response.stream.toBytes)
           : await attempt.run(response.stream.toBytes);
       final body = utf8.decode(bytes, allowMalformed: true);
-      if (problemCodeOf(body) == 'email_unverified') {
+      if (problemCodeOf(body) == 'contact_unverified') {
         return const LlmException(
-          LlmFailure.emailUnverified,
+          LlmFailure.contactUnverified,
           '账号邮箱还没验证，托管额度未开放',
         );
       }
@@ -444,8 +444,8 @@ LlmFailure _failureFor(int statusCode) {
 
 /// 读服务端 `application/problem+json` 里的 `code`；普通模型响应返回 null。
 ///
-/// 代理自己的拒绝（例如未验证邮箱）用这个字段区分，提供方原样返回的错误体
-/// 没有这个字段，仍按状态码归类。
+/// 代理自己的拒绝（例如账号还没有确认任何登录方式）用这个字段区分，提供方
+/// 原样返回的错误体没有这个字段，仍按状态码归类。
 String? problemCodeOf(String body) {
   final text = body.trim();
   if (text.isEmpty || !text.startsWith('{')) return null;

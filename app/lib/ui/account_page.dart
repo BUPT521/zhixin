@@ -8,6 +8,7 @@ import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
+import '../data/cloud/account_store.dart' show AccountIdentity;
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import 'account_dialogs.dart';
@@ -38,7 +39,7 @@ class AccountPage extends StatefulWidget {
 
 class _AccountPageState extends State<AccountPage> {
   final _server = TextEditingController();
-  final _email = TextEditingController();
+  final _identifier = TextEditingController();
   final _password = TextEditingController();
   final _verifyCode = TextEditingController();
   final _resetCode = TextEditingController();
@@ -85,7 +86,7 @@ class _AccountPageState extends State<AccountPage> {
   @override
   void dispose() {
     _server.dispose();
-    _email.dispose();
+    _identifier.dispose();
     _password.dispose();
     _verifyCode.dispose();
     _resetCode.dispose();
@@ -183,9 +184,9 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _submit({required bool register}) async {
     if (_busy) return;
-    final email = _email.text.trim();
+    final identifier = _identifier.text.trim();
     final password = _password.text;
-    if (email.isEmpty || password.isEmpty) {
+    if (identifier.isEmpty || password.isEmpty) {
       _report('填写邮箱与密码后再继续', failed: true);
       return;
     }
@@ -201,14 +202,17 @@ class _AccountPageState extends State<AccountPage> {
       }
       final account = scope.accountServices.account;
       final result = register
-          ? await account.register(email: email, password: password)
-          : await account.login(email: email, password: password);
+          ? await account.register(identifier: identifier, password: password)
+          : await account.login(identifier: identifier, password: password);
       _password.clear();
+      // 登录之后是“确认登录方式”的流程，找回密码那一套的验证码状态要清掉。
+      _codeSent = false;
+      _showReset = false;
       await scope.accountServices.sync.schedule(
         delay: const Duration(seconds: 1),
       );
       _report(
-        '${register ? '注册并登录' : '登录'}成功：${result.email}；'
+        '${register ? '注册并登录' : '登录'}成功：${result.displayLabel.isEmpty ? identifier : result.displayLabel}；'
         '云端备份与知新服务已经可用，首次同步会先确认是否把本机记录上传到这个账号',
       );
       await _load();
@@ -234,14 +238,28 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  /// 需要确认的第一条登录方式；都确认过时为 null。
+  AccountIdentity? get _unverifiedIdentity {
+    for (final identity
+        in _snapshot?.profile?.identities ?? const <AccountIdentity>[]) {
+      if (!identity.verified) return identity;
+    }
+    return null;
+  }
+
   Future<void> _sendVerification() async {
     if (_busy) return;
+    final identity = _unverifiedIdentity;
+    if (identity == null) {
+      _report('这个账号的登录方式都已经确认过');
+      return;
+    }
     setState(() => _busy = true);
     try {
       await AppScope.of(context).accountServices.account
-          .requestEmailVerification();
+          .requestIdentityVerification(identity.id);
       _codeSent = true;
-      _report('验证码已经发到这个邮箱，十分钟内有效');
+      _report('验证码已经发到${identity.kindLabel}，十分钟内有效');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -250,7 +268,7 @@ class _AccountPageState extends State<AccountPage> {
           error,
           stack,
           action: '发送验证码',
-          kind: 'account_email_code',
+          kind: 'account_identifier_code',
           kept: '登录状态没有改动',
           next: '可以检查邮箱与服务地址后重试',
         ),
@@ -263,7 +281,9 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _confirmVerification() async {
     if (_busy) return;
+    final identity = _unverifiedIdentity;
     final code = _verifyCode.text.trim();
+    if (identity == null) return;
     if (code.length != 6) {
       _report('填写邮件里的六位验证码', failed: true);
       return;
@@ -271,10 +291,10 @@ class _AccountPageState extends State<AccountPage> {
     setState(() => _busy = true);
     try {
       await AppScope.of(context).accountServices.account
-          .confirmEmailVerification(code);
+          .confirmIdentityVerification(identity.id, code);
       _verifyCode.clear();
       _codeSent = false;
-      _report('邮箱已经确认；忘记密码时可以收到重设验证码');
+      _report('${identity.kindLabel}已经确认；忘记密码时可以收到重设验证码');
       await _load();
     } catch (error, stack) {
       if (!mounted) return;
@@ -283,8 +303,8 @@ class _AccountPageState extends State<AccountPage> {
           context,
           error,
           stack,
-          action: '确认邮箱',
-          kind: 'account_email_confirm',
+          action: '确认登录方式',
+          kind: 'account_identifier_confirm',
           kept: '登录状态没有改动',
           next: '可以重新获取验证码再试',
         ),
@@ -297,15 +317,15 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _sendResetCode() async {
     if (_busy) return;
-    final email = _email.text.trim();
-    if (email.isEmpty) {
+    final identifier = _identifier.text.trim();
+    if (identifier.isEmpty) {
       _report('先填写注册用的邮箱', failed: true);
       return;
     }
     setState(() => _busy = true);
     try {
       await AppScope.of(context).accountServices.account
-          .requestPasswordReset(email);
+          .requestPasswordReset(identifier);
       _report('如果这个邮箱注册并验证过，验证码已经发出；十分钟内有效');
     } catch (error, stack) {
       if (!mounted) return;
@@ -328,10 +348,10 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _resetPassword() async {
     if (_busy) return;
-    final email = _email.text.trim();
+    final identifier = _identifier.text.trim();
     final code = _resetCode.text.trim();
     final password = _newPassword.text;
-    if (email.isEmpty) {
+    if (identifier.isEmpty) {
       _report('先填写注册用的邮箱', failed: true);
       return;
     }
@@ -345,8 +365,11 @@ class _AccountPageState extends State<AccountPage> {
     }
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).accountServices.account
-          .resetPassword(email: email, code: code, newPassword: password);
+      await AppScope.of(context).accountServices.account.resetPassword(
+        identifier: identifier,
+        code: code,
+        newPassword: password,
+      );
       _password.clear();
       _newPassword.clear();
       _resetCode.clear();
@@ -491,7 +514,7 @@ class _AccountPageState extends State<AccountPage> {
       if (!mounted) return;
       final resume = await confirmEnableAutoSync(
         context,
-        accountLabel: _snapshot?.email ?? '',
+        accountLabel: _snapshot?.displayLabel ?? '',
       );
       if (resume) {
         await scope.accountServices.account.setAutoSync(true);
@@ -596,7 +619,7 @@ class _AccountPageState extends State<AccountPage> {
     if (value) {
       final confirmed = await confirmEnableAutoSync(
         context,
-        accountLabel: _snapshot?.email ?? '',
+        accountLabel: _snapshot?.displayLabel ?? '',
       );
       if (!confirmed || !mounted) return;
     }
@@ -727,7 +750,7 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               forui.FTextField(
-                control: .managed(controller: _email),
+                control: .managed(controller: _identifier),
                 keyboardType: TextInputType.emailAddress,
                 label: const Text('邮箱'),
               ),
@@ -840,7 +863,31 @@ class _AccountPageState extends State<AccountPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(snapshot.email, style: theme.text.titleMedium),
+              // 登录方式列表：现在只有一条邮箱，以后加手机号或微信时这里自然多
+              // 出一行，页面结构不用改。
+              for (final identity
+                  in snapshot.profile?.identities ?? const <AccountIdentity>[])
+                Padding(
+                  padding: EdgeInsets.only(bottom: theme.space.xs),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${identity.kindLabel}：${identity.identifier}',
+                          style: theme.text.bodyMedium,
+                        ),
+                      ),
+                      StatusTag(
+                        identity.verified ? '已确认' : '未确认',
+                        tone: identity.verified
+                            ? TagTone.accent
+                            : TagTone.attention,
+                      ),
+                    ],
+                  ),
+                ),
+              if ((snapshot.profile?.identities ?? const []).isEmpty)
+                Text('登录方式暂时无法读取', style: theme.text.bodyMedium),
               SizedBox(height: theme.space.xs),
               Text(
                 snapshot.serverLabel,
@@ -850,11 +897,11 @@ class _AccountPageState extends State<AccountPage> {
               ),
               SizedBox(height: theme.space.xs),
               Text(
-                snapshot.emailVerified
-                    ? '邮箱已确认，忘记密码时可以收到验证码。'
-                    : '邮箱还没有确认；先确认一次，忘记密码时才能收到重设验证码。',
+                snapshot.contactVerified
+                    ? '至少一种登录方式已确认，忘记密码时可以收到验证码。'
+                    : '还没有确认任何登录方式；先确认一种，忘记密码时才能收到重设验证码。',
                 style: theme.text.bodySmall.copyWith(
-                  color: snapshot.emailVerified
+                  color: snapshot.contactVerified
                       ? theme.colors.onSurfaceVariant
                       : theme.colors.error,
                 ),
@@ -870,10 +917,10 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ),
       ),
-      if (!snapshot.emailVerified) ...[
+      if (_unverifiedIdentity != null) ...[
         SectionHeading(
-          title: '验证邮箱',
-          subtitle: '验证码发到这个邮箱，十分钟内有效；确认之后找回密码才能用。',
+          title: '确认登录方式',
+          subtitle: '验证码发到这条登录方式，十分钟内有效；确认之后找回密码才能用。',
         ),
         forui.FCard(
           child: Padding(
@@ -881,6 +928,11 @@ class _AccountPageState extends State<AccountPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Text(
+                  '${_unverifiedIdentity!.kindLabel} ${_unverifiedIdentity!.identifier}',
+                  style: theme.text.bodyMedium,
+                ),
+                if (_codeSent) SizedBox(height: theme.space.md),
                 if (_codeSent)
                   forui.FTextField(
                     control: .managed(controller: _verifyCode),
@@ -902,7 +954,7 @@ class _AccountPageState extends State<AccountPage> {
                         variant: forui.FButtonVariant.outline,
                         mainAxisSize: MainAxisSize.min,
                         onPress: _busy ? null : _confirmVerification,
-                        child: const Text('确认邮箱'),
+                        child: const Text('确认'),
                       ),
                   ],
                 ),

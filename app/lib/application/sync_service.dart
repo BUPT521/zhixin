@@ -55,7 +55,7 @@ class BaselineConfirmationRequired implements Exception {
 class SyncStatus {
   const SyncStatus({
     required this.signedIn,
-    required this.email,
+    required this.accountLabel,
     required this.autoSync,
     required this.syncing,
     required this.pendingCommits,
@@ -68,7 +68,9 @@ class SyncStatus {
   });
 
   final bool signedIn;
-  final String email;
+
+  /// 账号页显示的一行：第一条登录方式的值；资料还没读到时为空。
+  final String accountLabel;
   final bool autoSync;
   final bool syncing;
   final int pendingCommits;
@@ -187,7 +189,7 @@ class SyncService {
     if (!snapshot.signedIn) {
       return SyncStatus(
         signedIn: false,
-        email: '',
+        accountLabel: '',
         autoSync: snapshot.autoSync,
         syncing: syncing,
         pendingCommits: 0,
@@ -211,7 +213,7 @@ class SyncService {
               .length;
     return SyncStatus(
       signedIn: true,
-      email: snapshot.email,
+      accountLabel: snapshot.displayLabel,
       autoSync: snapshot.autoSync,
       syncing: syncing,
       pendingCommits: pending,

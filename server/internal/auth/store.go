@@ -9,31 +9,53 @@ import (
 )
 
 // User is an account. One account holds one person's learning data (ADR-0008).
+// 账号本身只保存密码；邮箱这类联系方式各在 user_identity 占一行（ADR-0038）。
 type User struct {
 	ID           string
-	Email        string
 	PasswordHash string
-	// EmailVerifiedAt 为零值表示还没有确认邮箱；确认之后找回密码才有收信地址。
-	EmailVerifiedAt time.Time
-	CreatedAt       time.Time
+	CreatedAt    time.Time
 }
+
+// Identity 是账号的一种登录方式。一种联系方式只能属于一个账号，
+// (Kind, Identifier) 上有唯一约束；VerifiedAt 为零值表示还没有用验证码确认。
+type Identity struct {
+	ID         string
+	UserID     string
+	Kind       string
+	Identifier string
+	VerifiedAt time.Time
+	CreatedAt  time.Time
+}
+
+// 登录方式的种类。取值也是 user_identity.kind 的 check 约束；代码现在只写
+// email，phone 与 wechat 的位置已经留好。
+const (
+	KindEmail  = "email"
+	KindPhone  = "phone"
+	KindWechat = "wechat"
+)
 
 // Code purposes. The values are also the auth_code.purpose check constraint.
 const (
-	PurposeVerifyEmail   = "verify_email"
+	// PurposeVerifyContact 确认某一种登录方式；PurposeResetPassword 用于找回密码，
+	// 顺带确认收到验证码的那种登录方式。
+	PurposeVerifyContact = "verify_contact"
 	PurposeResetPassword = "reset_password"
 )
 
-// Code is one active email verification or password reset code. Only the
-// HMAC-SHA256 of the six-digit code is stored; the plain code exists only in
-// the message sent to the user.
+// Code is one active verification or password reset code. 验证码按登录方式保存，
+// 不挂在账号上：还没有注册的邮箱或手机号也能先发一枚，所以 UserID 允许为空。
+// Only the HMAC-SHA256 of the six-digit code is stored; the plain code exists
+// only in the message sent to the user.
 type Code struct {
-	UserID    string
-	Purpose   string
-	CodeHash  string
-	ExpiresAt time.Time
-	Attempts  int
-	CreatedAt time.Time
+	Purpose    string
+	Kind       string
+	Identifier string
+	UserID     string
+	CodeHash   string
+	ExpiresAt  time.Time
+	Attempts   int
+	CreatedAt  time.Time
 }
 
 // Session is one signed-in device. Only token hashes are stored.
@@ -46,7 +68,9 @@ type Session struct {
 	AccessExpires  time.Time
 	RefreshExpires time.Time
 	CreatedAt      time.Time
-	EmailVerified  bool // Set on access-token lookup from the current account row.
+	// ContactVerified 表示这个账号至少有一种登录方式已经确认；按访问令牌查询
+	// 会话时从 user_identity 算出。
+	ContactVerified bool
 }
 
 // RefreshUsed 是一次已经轮换掉的刷新令牌摘要。旧令牌再次出现时，服务层用它
@@ -63,19 +87,46 @@ type RefreshUsed struct {
 	ReplacedRefreshHash string
 }
 
+// PasswordReset 是一次重设密码要在一个事务（或同一把锁）里做完的四件事：
+// 用掉验证码、换密码、把收到验证码的那种登录方式标为已确认、作废该账号的
+// 全部会话。收到验证码本身就是这条联系方式属于本人的证据，所以顺带确认它。
+type PasswordReset struct {
+	UserID          string
+	IdentityID      string
+	Purpose         string
+	Kind            string
+	Identifier      string
+	ExpectedHash    string
+	NewPasswordHash string
+	Now             time.Time
+}
+
 var (
-	ErrNotFound   = errors.New("auth: not found")
-	ErrEmailTaken = errors.New("auth: email already registered")
+	ErrNotFound = errors.New("auth: not found")
+	// ErrIdentifierTaken 表示这种登录方式已经被别的账号登记。
+	ErrIdentifierTaken = errors.New("auth: identifier already registered")
 )
 
-// Store persists users and sessions. The PostgreSQL implementation follows
-// internal/store/schema.sql; MemoryStore is for development and tests.
+// Store persists users, identities and sessions. The PostgreSQL implementation
+// follows internal/store/schema.sql; MemoryStore is for development and tests.
 type Store interface {
-	CreateUser(ctx context.Context, u User) error
-	UserByEmail(ctx context.Context, email string) (User, error)
+	// CreateAccount 在一个事务（或同一把锁）里写入账号与它的第一种登录方式：
+	// 登录方式撞上唯一约束时整个账号都不落地，返回 ErrIdentifierTaken。
+	CreateAccount(ctx context.Context, u User, ident Identity) error
 	UserByID(ctx context.Context, id string) (User, error)
+	// UserByIdentifier 按 (kind, identifier) 找账号；没有登记时返回 ErrNotFound。
+	UserByIdentifier(ctx context.Context, kind, identifier string) (User, error)
+	// Identities 按创建顺序列出账号的登录方式。
+	Identities(ctx context.Context, userID string) ([]Identity, error)
+	// Identity 只认这个账号名下的登录方式；编号不存在或属于别的账号时返回
+	// ErrNotFound。
+	Identity(ctx context.Context, userID, identityID string) (Identity, error)
+	// IdentityByIdentifier 按 (kind, identifier) 找登录方式，用于找回密码时定位
+	// 收到验证码的那条联系方式；没有登记时返回 ErrNotFound。
+	IdentityByIdentifier(ctx context.Context, kind, identifier string) (Identity, error)
+	SetIdentityVerified(ctx context.Context, userID, identityID string, at time.Time) error
 	// DeleteUser removes the account and, like the schema's ON DELETE CASCADE,
-	// its sessions.
+	// its identities and sessions.
 	DeleteUser(ctx context.Context, id string) error
 
 	// CreateSession 保存一条会话。maxPerUser 是这个账号保留的会话数上限，
@@ -108,32 +159,32 @@ type Store interface {
 	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
 	// 行不受影响。过期数据留在库里不影响正确性，清理只控制表的大小。
 	PruneExpired(ctx context.Context, now, usedBefore time.Time) error
-	// PruneUnverified 删除 before 之前创建、且从未确认邮箱的账号，返回删除的
-	// 账号数。账号的会话、验证码与重放记录一并删除，与 schema 的 ON DELETE
-	// CASCADE 一致；保留期内注册的账号与已确认的账号不受影响。
+	// PruneUnverified 删除 before 之前创建、且没有任何一种已验证登录方式的账号，
+	// 返回删除的账号数。账号的登录方式、会话、验证码与重放记录一并删除，与
+	// schema 的 ON DELETE CASCADE 一致；保留期内注册的账号与已确认的账号不受影响。
 	PruneUnverified(ctx context.Context, before time.Time) (int64, error)
 
-	SetEmailVerified(ctx context.Context, userID string, at time.Time) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
-	// ResetPassword 在一个事务里用掉验证码、换密码并删除该账号的全部会话，
-	// 三步要么一起成功，要么都不发生。验证码要同时匹配 purpose、code_hash
-	// 且未过期才算用掉，否则返回 ErrInvalidCode。
-	ResetPassword(ctx context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error
+	// ResetPassword 在一个事务里用掉验证码、换密码、确认那种登录方式并删除该
+	// 账号的全部会话，四步要么一起成功，要么都不发生。验证码要同时匹配用途、
+	// 登录方式、摘要且未过期才算用掉，否则返回 ErrInvalidCode。
+	ResetPassword(ctx context.Context, reset PasswordReset) error
 
-	// PutCode replaces the active code for one account and purpose.
+	// PutCode replaces the active code for one login identity and purpose.
 	PutCode(ctx context.Context, c Code) error
 	// Code returns ErrNotFound when no code is active.
-	Code(ctx context.Context, userID, purpose string) (Code, error)
+	Code(ctx context.Context, purpose, kind, identifier string) (Code, error)
 	// IncrementCodeAttempts adds one failed attempt and returns the new count.
-	IncrementCodeAttempts(ctx context.Context, userID, purpose string) (int, error)
-	DeleteCode(ctx context.Context, userID, purpose string) error
+	IncrementCodeAttempts(ctx context.Context, purpose, kind, identifier string) (int, error)
+	DeleteCode(ctx context.Context, purpose, kind, identifier string) error
 }
 
 // MemoryStore is a Store kept in process memory.
 type MemoryStore struct {
 	mu          sync.Mutex
 	users       map[string]User
-	byEmail     map[string]string
+	identities  map[string]Identity
+	byKey       map[string]string // kind + "\x00" + identifier → identity id
 	sessions    map[string]Session
 	codes       map[string]Code
 	refreshUsed map[string]RefreshUsed
@@ -142,34 +193,35 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users:       map[string]User{},
-		byEmail:     map[string]string{},
+		identities:  map[string]Identity{},
+		byKey:       map[string]string{},
 		sessions:    map[string]Session{},
 		codes:       map[string]Code{},
 		refreshUsed: map[string]RefreshUsed{},
 	}
 }
 
-func codeKey(userID, purpose string) string { return userID + "\x00" + purpose }
-
-func (m *MemoryStore) CreateUser(_ context.Context, u User) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.byEmail[u.Email]; ok {
-		return ErrEmailTaken
-	}
-	m.users[u.ID] = u
-	m.byEmail[u.Email] = u.ID
-	return nil
+func codeKey(purpose, kind, identifier string) string {
+	return purpose + "\x00" + kind + "\x00" + identifier
 }
 
-func (m *MemoryStore) UserByEmail(_ context.Context, email string) (User, error) {
+func identityKey(kind, identifier string) string { return kind + "\x00" + identifier }
+
+// CreateAccount 写入账号与它的第一种登录方式；登录方式已经存在时账号也不落地，
+// 与 PostgreSQL 实现里一个事务回滚的语义一致。
+func (m *MemoryStore) CreateAccount(_ context.Context, u User, ident Identity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id, ok := m.byEmail[email]
-	if !ok {
-		return User{}, ErrNotFound
+	if _, ok := m.users[u.ID]; ok {
+		return errors.New("auth: account id already used")
 	}
-	return m.users[id], nil
+	if _, ok := m.byKey[identityKey(ident.Kind, ident.Identifier)]; ok {
+		return ErrIdentifierTaken
+	}
+	m.users[u.ID] = u
+	m.identities[ident.ID] = ident
+	m.byKey[identityKey(ident.Kind, ident.Identifier)] = ident.ID
+	return nil
 }
 
 func (m *MemoryStore) UserByID(_ context.Context, id string) (User, error) {
@@ -182,7 +234,76 @@ func (m *MemoryStore) UserByID(_ context.Context, id string) (User, error) {
 	return u, nil
 }
 
-// DeleteUser 删除账号及其会话，与 schema.sql 的 ON DELETE CASCADE 一致。
+func (m *MemoryStore) UserByIdentifier(_ context.Context, kind, identifier string) (User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ident, ok := m.identities[m.byKey[identityKey(kind, identifier)]]
+	if !ok {
+		return User{}, ErrNotFound
+	}
+	u, ok := m.users[ident.UserID]
+	if !ok {
+		return User{}, ErrNotFound
+	}
+	return u, nil
+}
+
+func (m *MemoryStore) Identities(_ context.Context, userID string) ([]Identity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[userID]; !ok {
+		return nil, ErrNotFound
+	}
+	list := make([]Identity, 0, len(m.identities))
+	for _, ident := range m.identities {
+		if ident.UserID == userID {
+			list = append(list, ident)
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].CreatedAt.Equal(list[j].CreatedAt) {
+			return list[i].ID < list[j].ID
+		}
+		return list[i].CreatedAt.Before(list[j].CreatedAt)
+	})
+	return list, nil
+}
+
+func (m *MemoryStore) Identity(_ context.Context, userID, identityID string) (Identity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ident, ok := m.identities[identityID]
+	if !ok || ident.UserID != userID {
+		return Identity{}, ErrNotFound
+	}
+	return ident, nil
+}
+
+func (m *MemoryStore) IdentityByIdentifier(_ context.Context, kind, identifier string) (Identity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ident, ok := m.identities[m.byKey[identityKey(kind, identifier)]]
+	if !ok {
+		return Identity{}, ErrNotFound
+	}
+	return ident, nil
+}
+
+func (m *MemoryStore) SetIdentityVerified(_ context.Context, userID, identityID string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ident, ok := m.identities[identityID]
+	if !ok || ident.UserID != userID {
+		return ErrNotFound
+	}
+	if ident.VerifiedAt.IsZero() {
+		ident.VerifiedAt = at
+	}
+	m.identities[identityID] = ident
+	return nil
+}
+
+// DeleteUser 删除账号及其登录方式、会话，与 schema.sql 的 ON DELETE CASCADE 一致。
 func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -192,15 +313,20 @@ func (m *MemoryStore) DeleteUser(_ context.Context, id string) error {
 	return nil
 }
 
-// deleteUserLocked 删除账号及其会话、验证码与重放记录，与 schema.sql 的
-// ON DELETE CASCADE 一致。账号不存在时返回 false。调用方已持有锁。
+// deleteUserLocked 删除账号及其登录方式、会话、验证码与重放记录，与 schema.sql
+// 的 ON DELETE CASCADE 一致。账号不存在时返回 false。调用方已持有锁。
 func (m *MemoryStore) deleteUserLocked(id string) bool {
-	u, ok := m.users[id]
-	if !ok {
+	if _, ok := m.users[id]; !ok {
 		return false
 	}
 	delete(m.users, id)
-	delete(m.byEmail, u.Email)
+	for identityID, ident := range m.identities {
+		if ident.UserID != id {
+			continue
+		}
+		delete(m.identities, identityID)
+		delete(m.byKey, identityKey(ident.Kind, ident.Identifier))
+	}
 	for sid, s := range m.sessions {
 		if s.UserID == id {
 			delete(m.sessions, sid)
@@ -227,18 +353,6 @@ func (m *MemoryStore) DeleteUserSessions(_ context.Context, userID string) error
 	return nil
 }
 
-func (m *MemoryStore) SetEmailVerified(_ context.Context, userID string, at time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	u, ok := m.users[userID]
-	if !ok {
-		return ErrNotFound
-	}
-	u.EmailVerifiedAt = at
-	m.users[userID] = u
-	return nil
-}
-
 func (m *MemoryStore) UpdatePassword(_ context.Context, userID, passwordHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -251,55 +365,59 @@ func (m *MemoryStore) UpdatePassword(_ context.Context, userID, passwordHash str
 	return nil
 }
 
-// ResetPassword 在同一把锁里用完验证码、换密码、删会话，三步要么都成要么都不成。
-func (m *MemoryStore) ResetPassword(_ context.Context, userID, purpose, expectedCodeHash, newPasswordHash string, now time.Time) error {
+// ResetPassword 在同一把锁里用完验证码、换密码、确认那种登录方式、删会话，
+// 四步要么都成要么都不成。
+func (m *MemoryStore) ResetPassword(_ context.Context, reset PasswordReset) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := codeKey(userID, purpose)
+	key := codeKey(reset.Purpose, reset.Kind, reset.Identifier)
 	c, ok := m.codes[key]
-	if !ok || c.CodeHash != expectedCodeHash || !now.Before(c.ExpiresAt) {
+	if !ok || c.CodeHash != reset.ExpectedHash || !reset.Now.Before(c.ExpiresAt) {
 		return ErrInvalidCode
 	}
-	u, ok := m.users[userID]
+	u, ok := m.users[reset.UserID]
 	if !ok {
 		return ErrNotFound
 	}
 	delete(m.codes, key)
-	u.PasswordHash = newPasswordHash
-	if u.EmailVerifiedAt.IsZero() {
-		u.EmailVerifiedAt = now
+	u.PasswordHash = reset.NewPasswordHash
+	m.users[reset.UserID] = u
+	if ident, ok := m.identities[reset.IdentityID]; ok && ident.UserID == reset.UserID {
+		if ident.VerifiedAt.IsZero() {
+			ident.VerifiedAt = reset.Now
+		}
+		m.identities[reset.IdentityID] = ident
 	}
-	m.users[userID] = u
 	for sid, s := range m.sessions {
-		if s.UserID == userID {
+		if s.UserID == reset.UserID {
 			delete(m.sessions, sid)
 		}
 	}
-	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == userID })
+	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == reset.UserID })
 	return nil
 }
 
 func (m *MemoryStore) PutCode(_ context.Context, c Code) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.codes[codeKey(c.UserID, c.Purpose)] = c
+	m.codes[codeKey(c.Purpose, c.Kind, c.Identifier)] = c
 	return nil
 }
 
-func (m *MemoryStore) Code(_ context.Context, userID, purpose string) (Code, error) {
+func (m *MemoryStore) Code(_ context.Context, purpose, kind, identifier string) (Code, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c, ok := m.codes[codeKey(userID, purpose)]
+	c, ok := m.codes[codeKey(purpose, kind, identifier)]
 	if !ok {
 		return Code{}, ErrNotFound
 	}
 	return c, nil
 }
 
-func (m *MemoryStore) IncrementCodeAttempts(_ context.Context, userID, purpose string) (int, error) {
+func (m *MemoryStore) IncrementCodeAttempts(_ context.Context, purpose, kind, identifier string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := codeKey(userID, purpose)
+	key := codeKey(purpose, kind, identifier)
 	c, ok := m.codes[key]
 	if !ok {
 		return 0, ErrNotFound
@@ -309,10 +427,10 @@ func (m *MemoryStore) IncrementCodeAttempts(_ context.Context, userID, purpose s
 	return c.Attempts, nil
 }
 
-func (m *MemoryStore) DeleteCode(_ context.Context, userID, purpose string) error {
+func (m *MemoryStore) DeleteCode(_ context.Context, purpose, kind, identifier string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.codes, codeKey(userID, purpose))
+	delete(m.codes, codeKey(purpose, kind, identifier))
 	return nil
 }
 
@@ -381,14 +499,14 @@ func (m *MemoryStore) PruneExpired(_ context.Context, now, usedBefore time.Time)
 	return nil
 }
 
-// PruneUnverified 删除 before 之前创建、且从未确认邮箱的账号及其会话、验证码与
-// 重放记录，返回删除的账号数。保留期内注册的账号与已确认的账号不受影响。
+// PruneUnverified 删除 before 之前创建、且没有任何一种已验证登录方式的账号及其
+// 登录方式、会话、验证码与重放记录，返回删除的账号数。
 func (m *MemoryStore) PruneUnverified(_ context.Context, before time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var removed int64
 	for id, u := range m.users {
-		if !u.EmailVerifiedAt.IsZero() || !u.CreatedAt.Before(before) {
+		if !u.CreatedAt.Before(before) || m.hasVerifiedIdentityLocked(id) {
 			continue
 		}
 		if m.deleteUserLocked(id) {
@@ -398,12 +516,23 @@ func (m *MemoryStore) PruneUnverified(_ context.Context, before time.Time) (int6
 	return removed, nil
 }
 
+// hasVerifiedIdentityLocked 判断账号是否至少有一种登录方式已经确认。调用方已
+// 持有锁。
+func (m *MemoryStore) hasVerifiedIdentityLocked(userID string) bool {
+	for _, ident := range m.identities {
+		if ident.UserID == userID && !ident.VerifiedAt.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MemoryStore) findSession(match func(Session) bool) (Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, s := range m.sessions {
 		if match(s) {
-			s.EmailVerified = !m.users[s.UserID].EmailVerifiedAt.IsZero()
+			s.ContactVerified = m.hasVerifiedIdentityLocked(s.UserID)
 			return s, nil
 		}
 	}

@@ -32,7 +32,7 @@ func TestPostgresEmbeddingCache(t *testing.T) {
 	ctx := context.Background()
 
 	for _, id := range []string{"u1", "u2"} {
-		if err := st.CreateUser(ctx, auth.User{ID: id, Email: id + "@b.cn", PasswordHash: "h"}); err != nil {
+		if err := createAccount(ctx, st, auth.User{ID: id, PasswordHash: "h"}, id+"@b.cn"); err != nil {
 			t.Fatalf("create user %s: %v", id, err)
 		}
 	}

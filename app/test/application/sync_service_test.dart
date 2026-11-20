@@ -58,9 +58,9 @@ Future<_Device> _openDevice(
   );
   await account.setServerBaseUrl('http://server.test');
   if (register) {
-    await account.register(email: email, password: password);
+    await account.register(identifier: email, password: password);
   } else {
-    await account.login(email: email, password: password);
+    await account.login(identifier: email, password: password);
   }
   final sync = SyncService(
     account: account,
@@ -198,7 +198,7 @@ void main() {
 
     await a.account.setServerBaseUrl('http://other.test');
     final snapshot = await a.account.login(
-      email: 'a@example.com',
+      identifier: 'a@example.com',
       password: 'password123',
     );
     expect(snapshot.signedIn, isTrue);
