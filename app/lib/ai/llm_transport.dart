@@ -363,7 +363,7 @@ class HttpLlmClient implements LlmClient {
       if (problemCodeOf(body) == 'contact_unverified') {
         return const LlmException(
           LlmFailure.contactUnverified,
-          '账号邮箱还没验证，托管额度未开放',
+          '账号还没有确认任何登录方式，托管额度未开放',
         );
       }
       final message = errorMessageOf(body);
