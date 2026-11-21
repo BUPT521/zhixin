@@ -105,8 +105,8 @@ func (rt routes) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
 func (rt routes) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request, params api.PutV1SyncSnapshotParams) {
 	rt.sync.RegisterSnapshot(w, r, params)
 }
-func (rt routes) GetV1SyncDevices(w http.ResponseWriter, r *http.Request) {
-	rt.sync.Devices(w, r)
+func (rt routes) GetV1SyncDevices(w http.ResponseWriter, r *http.Request, params api.GetV1SyncDevicesParams) {
+	rt.sync.Devices(w, r, params)
 }
 func (rt routes) PutV1SyncDevices(w http.ResponseWriter, r *http.Request) {
 	rt.sync.RenameDevice(w, r)

@@ -45,7 +45,9 @@ func (a testAPI) PostV1SyncCommits(w http.ResponseWriter, r *http.Request, param
 
 func (a testAPI) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) { a.h.Reset(w, r) }
 
-func (a testAPI) GetV1SyncDevices(w http.ResponseWriter, r *http.Request) { a.h.Devices(w, r) }
+func (a testAPI) GetV1SyncDevices(w http.ResponseWriter, r *http.Request, params api.GetV1SyncDevicesParams) {
+	a.h.Devices(w, r, params)
+}
 
 func (a testAPI) PutV1SyncDevices(w http.ResponseWriter, r *http.Request) { a.h.RenameDevice(w, r) }
 
@@ -660,5 +662,36 @@ func TestHandlerDeviceRoster(t *testing.T) {
 	}
 	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK || len(page.Devices) != 0 {
 		t.Fatalf("清空之后的名册: %d %+v", code, page)
+	}
+}
+
+// TestHandlerDevicesRecordsRequestingDevice 守住设备列表自身的名册写入：刚登录、
+// 还没同步过的设备带 X-Device-Id 查一次名册，就先出现在返回列表里，能力声明也
+// 按请求头记录（ADR-0048）。
+func TestHandlerDevicesRecordsRequestingDevice(t *testing.T) {
+	h := newSnapshotHarness(t)
+	token := signIn(t, h.authSvc, "fresh@b.cn")
+
+	var page api.SyncDeviceList
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK || len(page.Devices) != 0 {
+		t.Fatalf("初始名册应为空: %d %+v", code, page)
+	}
+
+	if code := h.jsonWithHeaders(http.MethodGet, "/v1/sync/devices", token, nil, &page, map[string]string{
+		"X-Device-Id":         "device-new",
+		"X-Sync-Capabilities": "snapshot",
+	}); code != http.StatusOK || len(page.Devices) != 1 {
+		t.Fatalf("带设备标识查询名册: %d %+v", code, page)
+	}
+	device := findDevice(t, page, "device-new")
+	if len(device.Capabilities) != 1 || device.Capabilities[0] != "snapshot" || !device.LastSeen.Equal(h.clock) {
+		t.Fatalf("请求里的设备应写入名册: %+v", device)
+	}
+
+	// 名册按账号隔离。
+	other := signIn(t, h.authSvc, "other-fresh@b.cn")
+	var otherPage api.SyncDeviceList
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", other, nil, &otherPage); code != http.StatusOK || len(otherPage.Devices) != 0 {
+		t.Fatalf("另一个账号的名册: %d %+v", code, otherPage)
 	}
 }

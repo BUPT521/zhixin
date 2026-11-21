@@ -240,7 +240,7 @@ func (Base) PutV1SyncSnapshot(w http.ResponseWriter, _ *http.Request, _ api.PutV
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (Base) GetV1SyncDevices(w http.ResponseWriter, _ *http.Request) {
+func (Base) GetV1SyncDevices(w http.ResponseWriter, _ *http.Request, _ api.GetV1SyncDevicesParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
