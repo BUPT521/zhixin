@@ -203,13 +203,19 @@ void main() {
     );
     await tester.tap(find.text('安排').last.hitTestable());
     await settle(tester);
+    final scheduleScroll = find
+        .descendant(
+          of: find.byKey(const PageStorageKey<String>('plan-tab-0')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
     await tester.scrollUntilVisible(
       find.byIcon(FLucideIcons.trash2),
       300,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: scheduleScroll,
     );
     // 底部导航栏盖住列表末端，再往上拖一段，删除按钮才落在可点击的区域内。
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -200));
+    await tester.drag(scheduleScroll, const Offset(0, -200));
     await settle(tester);
     await tester.tap(find.byIcon(FLucideIcons.trash2));
     await settle(tester);
