@@ -48,11 +48,12 @@ void main() {
     scope = null;
   });
 
-  /// 轮询到目标控件出现或消失：读写都在后台排队，不能依赖 pumpAndSettle。
-  Future<void> pumpUntil(
+  /// 轮询到条件成立：跳转、选中这类状态没有能等的控件，按同一段早晚轮询判断，
+  /// 不按固定时长猜。
+  Future<void> pumpUntilTrue(
     WidgetTester tester,
-    Finder finder, {
-    bool gone = false,
+    bool Function() condition, {
+    String description = '等待条件成立',
     int rounds = 480,
   }) async {
     for (var round = 0; round < rounds; round++) {
@@ -62,11 +63,23 @@ void main() {
         scope?.testing.gate,
         const Duration(milliseconds: 20),
       );
-      final found = finder.evaluate().isNotEmpty;
-      if (gone ? !found : found) return;
+      if (condition()) return;
     }
-    fail(gone ? '等待控件消失超时：$finder' : '等待界面出现超时：$finder');
+    fail('$description超时');
   }
+
+  /// 轮询到目标控件出现或消失：读写都在后台排队，不能依赖 pumpAndSettle。
+  Future<void> pumpUntil(
+    WidgetTester tester,
+    Finder finder, {
+    bool gone = false,
+    int rounds = 480,
+  }) => pumpUntilTrue(
+    tester,
+    () => finder.evaluate().isNotEmpty != gone,
+    description: gone ? '等待控件消失：$finder' : '等待界面出现：$finder',
+    rounds: rounds,
+  );
 
   /// 等后台读取收尾：等应用自己的访问队列清空，再画几帧让回填完成。
   Future<void> settle(WidgetTester tester) async {
@@ -376,8 +389,14 @@ void main() {
     await openSearch(tester);
     await typeQuery(tester, '最早这条');
     await pumpUntil(tester, find.text('1/1'));
+    // 命中在最早一条：跳转会离开原来的位置。跳转要看消息载入之后的布局，等它真
+    // 的滚开，不按固定时长猜；滚开之后再走一小段，让跳转停稳。
+    await pumpUntilTrue(
+      tester,
+      () => (listOffset(tester) - before).abs() > 0.5,
+      description: '等待列表从原来的位置滚开',
+    );
     await tester.pump(const Duration(milliseconds: 300));
-    // 命中在最早一条：跳转会离开原来的位置。
     expect(listOffset(tester), isNot(closeTo(before, 0.5)));
     expect(highlighted(tester).single.message.content, contains('最早这条'));
 
