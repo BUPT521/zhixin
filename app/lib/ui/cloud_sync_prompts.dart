@@ -1,5 +1,7 @@
+import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
+import 'theme.dart';
 import 'zhixin_dialog.dart';
 
 /// 云端历史已经压缩、本机要用快照重建之前的确认（改进方案 3.7）。
@@ -110,4 +112,70 @@ Future<bool> confirmRepairFromLocal(BuildContext context) {
     ),
     confirmLabel: '以本机为准修复',
   );
+}
+
+/// 改设备别名的输入框：去掉首尾空白后 0–64 个字符，留空表示清除（ADR-0048）。
+///
+/// 返回输入的原样文本，由调用方去掉首尾空白后提交；取消或关闭返回 null。
+Future<String?> promptDeviceAlias(
+  BuildContext context, {
+  String currentAlias = '',
+}) => showZhixinDialog<String>(
+  context: context,
+  builder: (context) => _DeviceAliasDialog(currentAlias: currentAlias),
+);
+
+class _DeviceAliasDialog extends StatefulWidget {
+  const _DeviceAliasDialog({required this.currentAlias});
+
+  final String currentAlias;
+
+  @override
+  State<_DeviceAliasDialog> createState() => _DeviceAliasDialogState();
+}
+
+class _DeviceAliasDialogState extends State<_DeviceAliasDialog> {
+  late final TextEditingController _alias = TextEditingController(
+    text: widget.currentAlias,
+  );
+
+  @override
+  void dispose() {
+    _alias.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_alias.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return ZhixinDialogLayout(
+      title: const Text('设备改名'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('别名用来在提交来源与设备列表里区分这台设备，不影响同步，也不改写已经推送的记录。'),
+          SizedBox(height: theme.space.gap),
+          forui.FTextField(
+            control: .managed(controller: _alias),
+            autofocus: true,
+            maxLength: 64,
+            label: const Text('设备名'),
+            description: const Text('0–64 个字符，留空表示清除别名。'),
+            onSubmit: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        cancelZhixinButton(context),
+        forui.FButton(
+          mainAxisSize: MainAxisSize.min,
+          onPress: _submit,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
 }

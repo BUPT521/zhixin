@@ -447,6 +447,40 @@ class ServerHead {
   bool get historyCompacted => earliestSeq > 1;
 }
 
+/// 账号设备名册里的一台设备：设备标识、用户设置的别名、能力声明与最近出现时间。
+///
+/// 名册按最近出现时间倒序返回，最多 50 条；别名由用户设置，空串表示还没有别名，
+/// 界面此时退回显示设备标识的前 8 位（ADR-0048）。
+class ServerDevice {
+  const ServerDevice({
+    required this.deviceId,
+    this.alias = '',
+    this.capabilities = const [],
+    this.lastSeen,
+  });
+
+  factory ServerDevice.fromJson(Map<String, Object?> json) => ServerDevice(
+    deviceId: json['device_id'] as String? ?? '',
+    alias: json['alias'] as String? ?? '',
+    capabilities: [
+      for (final item in (json['capabilities'] as List? ?? const []))
+        if (item is String) item,
+    ],
+    lastSeen: _parseTime(json['last_seen']),
+  );
+
+  final String deviceId;
+
+  /// 用户设置的别名；去掉首尾空白之后为空表示没有别名。
+  final String alias;
+
+  /// 能力声明，当前只有 `snapshot`。
+  final List<String> capabilities;
+
+  /// 服务端最后一次收到这台设备请求的时间。
+  final DateTime? lastSeen;
+}
+
 /// 云端一份整库备份的元数据。
 class ServerBackup {
   const ServerBackup({
@@ -812,9 +846,56 @@ class ServerClient {
         body: {'password': password},
       );
 
-  Future<ServerHead> head(String accessToken) async {
-    final json = await _json('GET', '/v1/sync/head', accessToken: accessToken);
+  /// 服务端序列的最新位置、保留下界与当前快照。
+  ///
+  /// [deviceId] 是本机设备标识，随同步请求发在 `X-Device-Id` 里；服务端据此更新
+  /// 账号级设备名册，并按能力声明决定压缩门槛是否要等这台设备（ADR-0048）。
+  Future<ServerHead> head(String accessToken, {String deviceId = ''}) async {
+    final json = await _json(
+      'GET',
+      '/v1/sync/head',
+      accessToken: accessToken,
+      headers: _syncHeaders(deviceId),
+    );
     return ServerHead.fromJson(json);
+  }
+
+  /// 账号最近出现过的设备，按最近出现时间倒序。
+  ///
+  /// 设备接口同样接受设备标识与能力声明，带上本机的两个头可以把这台设备记进
+  /// 名册，因此还没有同步过的新设备也能在账号页看到（ADR-0048）。
+  Future<List<ServerDevice>> devices(
+    String accessToken, {
+    String deviceId = '',
+  }) async {
+    final json = await _json(
+      'GET',
+      '/v1/sync/devices',
+      accessToken: accessToken,
+      headers: _syncHeaders(deviceId),
+    );
+    return [
+      for (final item in (json['devices'] as List? ?? const []))
+        if (item is Map) ServerDevice.fromJson(item.cast<String, Object?>()),
+    ];
+  }
+
+  /// 改一台设备的别名，返回服务端保存之后的设备对象。
+  ///
+  /// 别名去掉首尾空白之后 0–64 字符，空串表示清除；只能改本账号名册里已有的
+  /// 设备，未知设备返回 404 `not_found`。改名不改写已经推送的提交（ADR-0048）。
+  Future<ServerDevice> renameDevice(
+    String accessToken, {
+    required String deviceId,
+    required String alias,
+  }) async {
+    final json = await _json(
+      'PUT',
+      '/v1/sync/devices',
+      accessToken: accessToken,
+      body: {'device_id': deviceId, 'alias': alias.trim()},
+    );
+    return ServerDevice.fromJson(json);
   }
 
   /// 读当前快照指针；与 [head] 同形，没有登记过快照时 [ServerHead.snapshot] 为空。
@@ -835,12 +916,14 @@ class ServerClient {
     required int seq,
     required String sha256,
     required String digest,
+    String deviceId = '',
   }) async {
     final json = await _json(
       'PUT',
       '/v1/sync/snapshot',
       accessToken: accessToken,
       body: {'seq': seq, 'sha256': sha256, 'digest': digest},
+      headers: _syncHeaders(deviceId),
     );
     return ServerHead.fromJson(json);
   }
@@ -851,6 +934,7 @@ class ServerClient {
     String accessToken, {
     int after = 0,
     int limit = 200,
+    String deviceId = '',
   }) async {
     try {
       final json = await _json(
@@ -858,6 +942,7 @@ class ServerClient {
         '/v1/sync/commits',
         accessToken: accessToken,
         query: {'after': '$after', 'limit': '$limit'},
+        headers: _syncHeaders(deviceId),
       );
       return ServerCommitPage.fromJson(json);
     } on ServerProblem catch (error) {
@@ -872,6 +957,7 @@ class ServerClient {
     String accessToken, {
     required int baseSeq,
     required List<ServerCommit> commits,
+    String deviceId = '',
   }) async {
     final json = await _json(
       'POST',
@@ -881,6 +967,7 @@ class ServerClient {
         'base_seq': baseSeq,
         'commits': [for (final commit in commits) commit.toJson()],
       },
+      headers: _syncHeaders(deviceId),
     );
     return (json['head'] as num?)?.toInt() ?? baseSeq;
   }
@@ -1037,6 +1124,21 @@ class ServerClient {
 
   void dispose() {
     if (_ownsHttpClient) _http.close();
+  }
+
+  /// 当前客户端声明的同步能力，与契约里的能力名一致。
+  static const String syncCapabilitySnapshot = 'snapshot';
+
+  /// 同步与名册请求共用的两个头：本机设备标识与能力声明。
+  ///
+  /// 头值只能是 ASCII：设备标识是 UUID 文本，能力名是小写英文，因此不用像备份的
+  /// 设备名那样做百分号编码。服务端按它们把设备记进账号级名册（ADR-0048）。
+  Map<String, String> _syncHeaders(String deviceId) {
+    final id = deviceId.trim();
+    return {
+      if (id.isNotEmpty) 'X-Device-Id': id,
+      'X-Sync-Capabilities': syncCapabilitySnapshot,
+    };
   }
 
   Uri _uri(String path, [Map<String, String>? query]) =>

@@ -62,6 +62,9 @@ class _AccountPageState extends State<AccountPage> {
   /// 失败说明旁边可用的重试动作；成功说明与不需要重试的说明为空。
   VoidCallback? _noticeRetry;
 
+  /// 本机设备标识：设备一节按它给这一行标“本机”（ADR-0048）。
+  String? _localDeviceId;
+
   bool _started = false;
 
   @override
@@ -101,18 +104,27 @@ class _AccountPageState extends State<AccountPage> {
       final snapshot = await scope.accountServices.account.refreshAccount();
       final sync = await scope.accountServices.sync.status();
       ServerQuota? quota;
+      String? localDeviceId;
       if (snapshot.signedIn) {
         try {
           quota = await scope.accountServices.account.quota();
         } catch (_) {
           // 额度只用于显示；读不到时这一块给一句说明，不影响同步与备份。
         }
+        try {
+          localDeviceId = await scope.accountServices.account.deviceId();
+        } catch (_) {
+          // 读不到设备标识时设备一节不标“本机”，其他内容照常显示。
+        }
+        // 设备一节直接读同步服务缓存的名册；读取失败只记诊断，不阻塞本页。
+        await scope.accountServices.sync.refreshDevices();
       }
       if (!mounted) return;
       setState(() {
         _snapshot = snapshot;
         _sync = sync;
         _quota = quota;
+        _localDeviceId = localDeviceId;
         _server.text = snapshot.serverBaseUrl;
         _loading = false;
       });
@@ -1200,6 +1212,7 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ),
       ),
+      ..._devicesSection(context),
       SectionHeading(
         title: '模型额度',
         subtitle:
@@ -1268,6 +1281,143 @@ class _AccountPageState extends State<AccountPage> {
       ),
     ];
   }
+
+  /// 设备一节：名册里的每台设备一行，本机标“本机”，行尾提供改名（ADR-0048）。
+  ///
+  /// 名册只记录发过同步请求的设备；缓存为空时说明原因，不显示一张只有空白的卡片。
+  List<Widget> _devicesSection(BuildContext context) {
+    final theme = context.zhixin;
+    final sync = AppScope.of(context).accountServices.sync;
+    return [
+      const SectionHeading(
+        title: '设备',
+        subtitle: '这个账号发过同步请求的设备；别名只影响显示，不影响同步与已经推送的记录。',
+      ),
+      forui.FCard(
+        child: Padding(
+          padding: EdgeInsets.all(theme.space.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (sync.devices.isEmpty)
+                Text(
+                  '还没有设备同步过这个账号；这台设备同步一次之后会出现在这里。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                )
+              else
+                for (final device in sync.devices)
+                  _deviceRow(theme, sync, device),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// 一台设备一行：别名或“未命名设备”、标识前 8 位、最近出现时间与本机标记。
+  Widget _deviceRow(
+    ZhixinTheme theme,
+    SyncService sync,
+    SyncRosterDevice device,
+  ) {
+    final name = device.trimmedAlias.isEmpty ? '未命名设备' : device.trimmedAlias;
+    final local = _localDeviceId != null && device.deviceId == _localDeviceId;
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.tight),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.text.bodyMedium,
+                      ),
+                    ),
+                    if (local) ...[
+                      SizedBox(width: theme.space.xs),
+                      const StatusTag('本机', tone: TagTone.accent),
+                    ],
+                  ],
+                ),
+                Text(
+                  '${_maskedDeviceId(device.deviceId)} · ${_deviceSeen(device.lastSeen)}',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: theme.space.sm),
+          forui.FButton(
+            variant: forui.FButtonVariant.outline,
+            size: forui.FButtonSizeVariant.sm,
+            mainAxisSize: MainAxisSize.min,
+            onPress: _busy ? null : () => _renameDevice(device),
+            child: const Text('改名'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 改一台设备的别名：输入 0–64 个字符，确定之后保存并刷新列表。
+  ///
+  /// 取消不改动；失败按统一的失败说明提示，同步缓存保持原样（ADR-0048）。
+  Future<void> _renameDevice(SyncRosterDevice device) async {
+    if (_busy) return;
+    final alias = await promptDeviceAlias(
+      context,
+      currentAlias: device.trimmedAlias,
+    );
+    if (alias == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await AppScope.of(context).accountServices.sync
+          .renameDevice(device.deviceId, alias);
+      if (!mounted) return;
+      final trimmed = alias.trim();
+      _report(trimmed.isEmpty ? '已清除这台设备的别名' : '已把设备名改为“$trimmed”');
+      // 改名接口返回的设备对象已经替换缓存里这一行，重绘列表现出来新的别名。
+      setState(() {});
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '改设备名',
+          kind: 'account_device_rename',
+          kept: '设备名没有改动',
+          next: '可以稍后再试',
+        ),
+        failed: true,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 设备标识只露前 8 位，短的标识原样显示。
+  static String _maskedDeviceId(String deviceId) {
+    final value = deviceId.trim();
+    return value.length <= 8 ? value : value.substring(0, 8);
+  }
+
+  /// 最近出现时间：读不出时写“时间未知”，与提交列表同一套短时间格式。
+  static String _deviceSeen(DateTime? lastSeen) =>
+      lastSeen == null ? '最近出现时间未知' : '最近出现 ${shortTime(lastSeen)}';
 
   String _syncSummary(SyncStatus? sync) {
     if (sync == null) return '同步状态暂时无法读取。';

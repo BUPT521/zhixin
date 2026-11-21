@@ -195,6 +195,38 @@ class SyncResult {
       downloadedAssets > 0;
 }
 
+/// 名册里的一台设备：设备标识、用户设置的别名、能力声明与最近出现时间。
+///
+/// 服务端按最近出现时间倒序给出，最多 50 条；界面据此显示“来自另一台设备 别名”
+/// 或账号页的设备列表，别名只影响显示（ADR-0048）。
+class SyncRosterDevice {
+  const SyncRosterDevice({
+    required this.deviceId,
+    this.alias = '',
+    this.capabilities = const [],
+    this.lastSeen,
+  });
+
+  factory SyncRosterDevice.fromServer(ServerDevice device) => SyncRosterDevice(
+    deviceId: device.deviceId,
+    alias: device.alias,
+    capabilities: device.capabilities,
+    lastSeen: device.lastSeen,
+  );
+
+  final String deviceId;
+  final String alias;
+
+  /// 能力声明，当前只有 `snapshot`。
+  final List<String> capabilities;
+
+  /// 服务端最后一次收到这台设备请求的时间。
+  final DateTime? lastSeen;
+
+  /// 去掉首尾空白之后的别名；没有设置时为空串。
+  String get trimmedAlias => alias.trim();
+}
+
 /// 按提交序列与服务端同步：首次同步先把远端提交全部拉下来，只把本机独有、
 /// 云端还没有的行作为基线上传（同步方案 3.6，相当于 git 的 clone）；云端历史
 /// 已经压缩时改按云端快照浅克隆，用快照替换本机投影、重放本机还没有推送的提交
@@ -285,7 +317,105 @@ class SyncService {
   /// 重新上传一整份快照（同步方案 3.7 第 3 条）。
   String? _lastSnapshotHash;
 
+  /// 设备名册的缓存，按服务端给出的最近出现时间倒序；只在进程内有效。
+  final List<SyncRosterDevice> _devices = [];
+
+  /// 设备标识到别名的索引，供提交来源直接查；没有别名的设备不在表里。
+  final Map<String, String> _deviceAliases = {};
+
   bool get syncing => _running != null;
+
+  /// 名册的副本，按最近出现时间倒序；还没读过或没登录时为空。
+  List<SyncRosterDevice> get devices => List.unmodifiable(_devices);
+
+  /// 一台设备的别名；名册里没有这台设备或它没有别名时为空。
+  ///
+  /// 界面据此决定显示别名还是设备标识前 8 位，不改写提交里的设备标识。
+  String? deviceAlias(String deviceId) {
+    final value = _deviceAliases[deviceId.trim()];
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  /// 拉一次设备名册并替换缓存。
+  ///
+  /// 未登录时清空缓存；读取失败只记一条诊断，不影响同步结果与页面其他内容
+  /// （ADR-0048）。每次同步成功之后由 [syncNow] 调用，账号页与数据版本页打开
+  /// 时也各调用一次。
+  Future<void> refreshDevices() async {
+    try {
+      final snapshot = await account.snapshot();
+      if (!snapshot.signedIn) {
+        _devices.clear();
+        _deviceAliases.clear();
+        return;
+      }
+      final deviceId = await account.deviceId();
+      final roster = await account.call(
+        (client, token) => client.devices(token, deviceId: deviceId),
+      );
+      _devices
+        ..clear()
+        ..addAll([
+          for (final device in roster) SyncRosterDevice.fromServer(device),
+        ])
+        ..sort(_byRecentDevice);
+      _rememberDeviceAliases();
+    } catch (error, stack) {
+      recordFailure(error, stack, kind: 'cloud_sync_devices');
+    }
+  }
+
+  /// 改一台设备的别名，成功之后用服务端返回的设备对象更新缓存。
+  ///
+  /// 失败向上抛出，由界面按统一的失败说明提示；缓存保持原样（ADR-0048）。
+  Future<void> renameDevice(String deviceId, String alias) async {
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn) throw const AccountSignedOut();
+    final updated = await account.call(
+      (client, token) =>
+          client.renameDevice(token, deviceId: deviceId, alias: alias),
+    );
+    _putDevice(SyncRosterDevice.fromServer(updated));
+  }
+
+  /// 把整份名册的别名重建进索引。
+  void _rememberDeviceAliases() {
+    _deviceAliases
+      ..clear()
+      ..addEntries([
+        for (final device in _devices)
+          if (device.trimmedAlias.isNotEmpty)
+            MapEntry(device.deviceId, device.trimmedAlias),
+      ]);
+  }
+
+  /// 用一台设备的最新状态替换或插入缓存，并按最近出现时间重排。
+  void _putDevice(SyncRosterDevice device) {
+    final index = _devices.indexWhere(
+      (item) => item.deviceId == device.deviceId,
+    );
+    if (index >= 0) {
+      _devices[index] = device;
+    } else {
+      _devices.add(device);
+    }
+    _devices.sort(_byRecentDevice);
+    if (device.trimmedAlias.isEmpty) {
+      _deviceAliases.remove(device.deviceId);
+    } else {
+      _deviceAliases[device.deviceId] = device.trimmedAlias;
+    }
+  }
+
+  /// 名册排序：最近出现的在前，读不出时间的排在最后。
+  static int _byRecentDevice(SyncRosterDevice a, SyncRosterDevice b) {
+    final left = a.lastSeen;
+    final right = b.lastSeen;
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    return right.compareTo(left);
+  }
 
   /// 已被远端提交取代的本机格子：拉取时由版本引擎在应用远端提交的事务里登记，
   /// 推送时按格去掉，作用相当于 git 的 `pull --rebase`（ADR-0040）。
@@ -415,10 +545,16 @@ class SyncService {
   }) {
     final running = _running;
     if (running != null) return running;
-    final future = _sync(
-      confirmBaseline: confirmBaseline,
-      confirmReclone: confirmReclone,
-    );
+    final future =
+        _sync(
+          confirmBaseline: confirmBaseline,
+          confirmReclone: confirmReclone,
+        ).then((result) async {
+          // 同步成功之后拉一次名册：这一轮的请求已经把这台设备写进名册，界面上的
+          // 别名与“最近出现”随之更新（ADR-0048）。读取失败只记诊断，不影响结果。
+          await refreshDevices();
+          return result;
+        });
     _running = future.whenComplete(() => _running = null);
     return _running!;
   }
@@ -466,6 +602,10 @@ class SyncService {
   /// [forgetPosition] 为真时连两个位置与恢复标记一起删掉（清除云端数据之后
   /// 云端序列已经空了，旧位置不再有意义），下一次同步按首次基线重新建立。
   Future<void> clearState({bool forgetPosition = false}) async {
+    // 名册属于上一个账号：退出登录、删除账号与清除云端之后不能继续显示它的
+    // 别名（ADR-0048）。
+    _devices.clear();
+    _deviceAliases.clear();
     await preferences.clearSyncState();
     if (!forgetPosition) {
       await releaseSyncCursor();
@@ -484,6 +624,10 @@ class SyncService {
   /// 读者不再挡住清理历史，位置仍然可以继续用。库还没打开等情况下失败只记
   /// 诊断，不影响账号操作本身。
   Future<void> releaseSyncCursor() async {
+    // 名册属于这个账号：退出登录、删除账号、清除云端与重设密码之后不能继续
+    // 显示它的设备与别名（ADR-0048）。
+    _devices.clear();
+    _deviceAliases.clear();
     try {
       await _cursors.release(RevisionCursor.syncPushed);
     } catch (error, stack) {
@@ -520,7 +664,7 @@ class SyncService {
       // 云端历史被压缩过时按第 1 条重放不可行：有快照就走快照重新克隆，没有
       // 快照时给明确说明，不静默清空本机数据。
       final remoteHead = await account.call(
-        (client, token) => client.head(token),
+        (client, token) => client.head(token, deviceId: deviceId),
       );
       if (remoteHead.schemaVersion != zhixinSchemaVersion) {
         throw SyncSchemaMismatch(
@@ -541,7 +685,8 @@ class SyncService {
         while (true) {
           _ensureIdentity();
           final page = await account.call(
-            (client, token) => client.pull(token, after: serverHead),
+            (client, token) =>
+                client.pull(token, after: serverHead, deviceId: deviceId),
           );
           if (page.commits.isEmpty) {
             // 再读一页确认真实的位置：修复期间另一台设备也可能在推，按最后一页
@@ -572,7 +717,7 @@ class SyncService {
       } on SyncHistoryCompacted {
         // 读 head 时还没压缩、拉取时已经被压缩：按快照重新克隆。
         final covered = (await account.call(
-          (client, token) => client.head(token),
+          (client, token) => client.head(token, deviceId: deviceId),
         )).snapshot;
         if (covered == null) throw const SyncSnapshotUnavailable();
         return await _repairFromCloudBySnapshot(covered, deviceId: deviceId);
@@ -670,6 +815,7 @@ class SyncService {
           baseSeq = head;
           pushed += count;
         },
+        deviceId: deviceId,
       );
       final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
       _ensureIdentity();
@@ -678,6 +824,7 @@ class SyncService {
       await _shadows.clear();
       await _saveDigestMismatch(false);
       await _markSynced();
+      await refreshDevices();
       return SyncResult(
         pulledCommits: pulled,
         pushedCommits: pushed,
@@ -773,6 +920,7 @@ class SyncService {
         baseSeq = head;
         pushed += count;
       },
+      deviceId: deviceId,
     );
     final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
     _ensureIdentity();
@@ -898,6 +1046,7 @@ class SyncService {
           baseSeq = head;
           pushed += count;
         },
+        deviceId: deviceId,
       );
       final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
       _ensureIdentity();
@@ -906,6 +1055,7 @@ class SyncService {
       await _shadows.deleteSettled(localHead);
       if (changes.isNotEmpty) await _saveDigestMismatch(false);
       await _markSynced();
+      await refreshDevices();
       return SyncResult(
         pulledCommits: pulled,
         pushedCommits: pushed,
@@ -976,7 +1126,7 @@ class SyncService {
       final snapshot = await account.snapshot();
       if (!snapshot.signedIn) throw const AccountSignedOut();
       final remoteHead = await account.call(
-        (client, token) => client.head(token),
+        (client, token) => client.head(token, deviceId: deviceId),
       );
       if (remoteHead.schemaVersion != zhixinSchemaVersion) {
         throw SyncSchemaMismatch(
@@ -1127,6 +1277,7 @@ class SyncService {
       await _registerSnapshotQuietly(
         serverHead: serverHead,
         knownSnapshot: remoteHead.snapshot,
+        deviceId: deviceId,
       );
       return SyncResult(
         pulledCommits: pulled,
@@ -1244,7 +1395,7 @@ class SyncService {
     // 这次拉取触及过的行，按“表名 + 主键”记；只在首次同步里用，收尾即丢弃。
     final touchedRows = <(String, String)>{};
     final remoteHead = await account.call(
-      (client, token) => client.head(token),
+      (client, token) => client.head(token, deviceId: deviceId),
     );
     if (remoteHead.head > 0) {
       final result = await _pull(
@@ -1301,6 +1452,7 @@ class SyncService {
         baseSeq = head;
         pushed += count;
       },
+      deviceId: deviceId,
     );
     // 附件只跟着基线里的行走：被跳过行的哈希按“服务端已有”处理，本机保留行
     // 也引用到同一个哈希时仍然上传，集合去重。
@@ -1337,7 +1489,7 @@ class SyncService {
     var snapshot = compaction.snapshot;
     if (snapshot == null) {
       final remoteHead = await account.call(
-        (client, token) => client.head(token),
+        (client, token) => client.head(token, deviceId: deviceId),
       );
       snapshot = remoteHead.snapshot;
     }
@@ -1523,6 +1675,7 @@ class SyncService {
   Future<void> _registerSnapshotQuietly({
     required int serverHead,
     required ServerSnapshot? knownSnapshot,
+    required String deviceId,
   }) async {
     try {
       if (serverHead <= 0) return;
@@ -1531,7 +1684,7 @@ class SyncService {
       if ((await revisions.commitsAfter(pushed)).isNotEmpty) return;
       if (knownSnapshot != null && knownSnapshot.seq >= serverHead) return;
       final remoteHead = await account.call(
-        (client, token) => client.head(token),
+        (client, token) => client.head(token, deviceId: deviceId),
       );
       if (remoteHead.snapshot != null &&
           remoteHead.snapshot!.seq >= serverHead) {
@@ -1562,6 +1715,7 @@ class SyncService {
           seq: serverHead,
           sha256: hash,
           digest: digest,
+          deviceId: deviceId,
         ),
       );
       _lastSnapshotHash = hash;
@@ -1619,8 +1773,9 @@ class SyncService {
   Future<void> _pushBatches(
     Stream<ServerCommit> commits,
     int baseSeq,
-    Future<void> Function(int head, int count) saved,
-  ) async {
+    Future<void> Function(int head, int count) saved, {
+    required String deviceId,
+  }) async {
     final batch = <ServerCommit>[];
     var bytes = 0;
     Future<void> flush() async {
@@ -1629,8 +1784,12 @@ class SyncService {
         _ensureIdentity();
         try {
           baseSeq = await account.call(
-            (client, token) =>
-                client.push(token, baseSeq: baseSeq, commits: batch),
+            (client, token) => client.push(
+              token,
+              baseSeq: baseSeq,
+              commits: batch,
+              deviceId: deviceId,
+            ),
           );
           break;
         } on ServerProblem catch (error) {
@@ -1718,7 +1877,8 @@ class SyncService {
     while (true) {
       _ensureIdentity();
       final page = await account.call(
-        (client, token) => client.pull(token, after: current),
+        (client, token) =>
+            client.pull(token, after: current, deviceId: deviceId),
       );
       if (page.commits.isEmpty) {
         current = page.head;
@@ -1840,7 +2000,10 @@ class SyncService {
     var currentPushed = pushedThrough;
     for (var attempt = 0; attempt < 3; attempt++) {
       _ensureIdentity();
-      final headNow = await account.call((client, token) => client.head(token));
+      final headNow = await account.call(
+        (client, token) => client.head(token, deviceId: deviceId),
+      );
+
       if (headNow.head != currentHead) {
         if (pullBefore) {
           final pulled = await _pull(
@@ -1924,7 +2087,7 @@ class SyncService {
           currentHead = head;
           _ensureIdentity();
           await _saveServerHead(currentHead);
-        });
+        }, deviceId: deviceId);
       } on ServerProblem catch (error) {
         if (!error.isConflict) rethrow;
         final head = error.extra['head'];
