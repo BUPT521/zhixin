@@ -12,6 +12,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/prefetch_service.dart';
+import '../application/sync_service.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/backup/restore_point_store.dart';
 import '../data/revisions/revision_engine.dart'
@@ -72,6 +73,13 @@ class _DataVersionPageState extends State<DataVersionPage>
   RevisionService get _revisions =>
       widget.revisions ?? AppScope.of(context).data.revisions;
 
+  /// 同步服务持有的设备名册缓存：远端提交的来源按它显示别名（ADR-0048）。
+  SyncService get _sync => AppScope.of(context).accountServices.sync;
+
+  /// 名册是否已经按打开的页面拉过一次；拉取途中不重复发起。
+  bool _devicesLoaded = false;
+  bool _devicesRefreshing = false;
+
   /// 一级界面切进来时已经读好的首屏；有它就先显示内容，不再摆骨架。
   DataVersionOverview? _initial;
 
@@ -115,6 +123,28 @@ class _DataVersionPageState extends State<DataVersionPage>
       _retentionLoaded = true;
       unawaited(_loadRetentionDays());
     }
+    if (!_devicesLoaded) {
+      _devicesLoaded = true;
+      // 打开页面时拉一次名册：提交来源优先显示别名（ADR-0048）。读不到时保持
+      // 现有缓存，来源退回设备标识前 8 位，不影响页面上其他内容。
+      unawaited(_refreshDevices());
+    }
+  }
+
+  /// 拉一次设备名册并在结果到达后重绘提交列表。
+  ///
+  /// 同步服务自己会吞掉读取失败并记一条诊断，这里只负责在成功与失败之后都重绘
+  /// 一次，让缓存里已有的别名立即生效。
+  Future<void> _refreshDevices() async {
+    if (_devicesRefreshing) return;
+    _devicesRefreshing = true;
+    try {
+      await _sync.refreshDevices();
+    } finally {
+      _devicesRefreshing = false;
+    }
+    if (!mounted) return;
+    setState(() {});
   }
 
   /// 读保留天数：设置读取失败时沿用默认值，不打断页面上的其他内容。
@@ -202,6 +232,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (_loadFailure != null) setState(() => _loadFailure = null);
     // 同步覆盖与整屏读取一起刷新：远端提交应用之后冲突会多出来或消失。
     _loadConflicts();
+    _refreshDevicesIfUnknown(view);
     if (!_revealHistory) return;
     _revealHistory = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -214,6 +245,23 @@ class _DataVersionPageState extends State<DataVersionPage>
         duration: const Duration(milliseconds: 240),
       );
     });
+  }
+
+  /// 提交列表里出现了名册里还没有的设备时补拉一次名册。
+  ///
+  /// 从数据版本页同步之后新增的远端提交带着别的设备的标识，缓存里没有它时来源
+  /// 只能显示前 8 位；补拉一次就能显示别名。已经缓存过的设备不重复拉取，页面
+  /// 打开时的那一次由 [didChangeDependencies] 负责（ADR-0048）。
+  void _refreshDevicesIfUnknown(DataVersionOverview view) {
+    if (_devicesRefreshing) return;
+    final known = {for (final device in _sync.devices) device.deviceId};
+    final unknown = view.history.commits.any((commit) {
+      if (!commit.isRemote) return false;
+      final device = commit.originDevice?.trim() ?? '';
+      return device.isNotEmpty && !known.contains(device);
+    });
+    if (!unknown) return;
+    unawaited(_refreshDevices());
   }
 
   /// 追加提交之后换一条新流：等新结果到达再滚动，新增的提交已经在列表里。
@@ -1643,19 +1691,21 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   String _timeText(DateTime? time) => time == null ? '时间未知' : shortTime(time);
 
-  /// 提交列表里的时间与来源：远端提交写“来自另一台设备 · 某时某分”，本机提交
-  /// 只写时间。
+  /// 提交列表里的时间与来源：远端提交写“来自另一台设备 别名 · 某时某分”，
+  /// 本机提交只写时间。
   ///
-  /// 时间取作者时间（服务端没有带来时退回落库时间）；设备标识只显示前 8 位，
-  /// 不把整串设备标识放到界面上（方案 3.12）。
+  /// 时间取作者时间（服务端没有带来时退回落库时间）；来源优先显示名册里的别名，
+  /// 没有别名时显示设备标识前 8 位，不把整串设备标识放到界面上（ADR-0048）。
   String _commitTimeAndSource(RevisionCommit commit) {
     final time = _timeText(commit.authoredAt ?? commit.createdAt);
     if (!commit.isRemote) return time;
+    final alias = _sync.deviceAlias(commit.originDevice ?? '');
+    if (alias != null) return '来自另一台设备 $alias · $time';
     final device = _maskedDevice(commit.originDevice);
     return device == null ? '来自另一台设备 · $time' : '来自另一台设备 $device · $time';
   }
 
-  /// 设备标识脱敏：只保留前 8 位，短的标识原样显示。
+  /// 设备标识脱敏：只保留前 8 位，短的标识原样显示；有别名时由别名代替。
   static String? _maskedDevice(String? device) {
     final value = device?.trim() ?? '';
     if (value.isEmpty) return null;

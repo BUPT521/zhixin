@@ -103,11 +103,52 @@ class FakeServer {
   /// 每个账号当前登记的快照指针；没有登记时为空。
   final Map<String, FakeSnapshot> snapshots = {};
 
+  /// 每个账号的设备名册，key 是设备标识；按请求头记录最近出现时间与能力。
+  final Map<String, Map<String, FakeDevice>> devices = {};
+
+  /// 收到的同步请求头，按到达顺序记录：方法、路径、设备标识与能力声明。
+  ///
+  /// 只记录带 `X-Device-Id` 的请求，用例据此核对四个同步请求都带了两个头。
+  final List<
+    ({String method, String path, String deviceId, List<String> capabilities})
+  >
+  syncDeviceHeaders = [];
+
+  /// 名册里设备的最近出现时间按这个计数递增，用例里的先后顺序因此确定。
+  int _deviceTicks = 0;
+
+  /// 直接往名册里放一台设备，不经过同步请求：用例用它构造“账号里已有设备”。
+  void putDevice(
+    String userId, {
+    required String deviceId,
+    String alias = '',
+    List<String> capabilities = const ['snapshot'],
+    String lastSeen = '2026-11-20T10:00:00Z',
+  }) {
+    devices.putIfAbsent(userId, () => {})[deviceId] = FakeDevice(
+      deviceId: deviceId,
+      alias: alias,
+      capabilities: capabilities,
+      lastSeen: lastSeen,
+    );
+  }
+
+  /// 账号当前名册，按最近出现时间倒序，最多 50 条。
+  List<FakeDevice> rosterOf(String userId) {
+    final values = (devices[userId] ?? const <String, FakeDevice>{}).values
+        .toList();
+    values.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+    return values.take(50).toList();
+  }
+
   /// 收到的快照登记请求次数，用例据此确认有没有重复登记。
   int snapshotRegistrations = 0;
 
   /// 接下来几次快照登记返回 503 `unavailable`，用来验证登记失败只记诊断。
   int snapshotFailures = 0;
+
+  /// 接下来几次读取设备名册返回 503 `unavailable`，用来验证读取失败只记诊断。
+  int deviceListFailures = 0;
 
   /// 打开之后快照登记一律返回 409：模拟服务端已有更新的快照。
   bool snapshotAlwaysConflicts = false;
@@ -302,6 +343,7 @@ class FakeServer {
       blobs.remove(userId);
       trimmedThrough.remove(userId);
       snapshots.remove(userId);
+      devices.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/backups') {
@@ -320,6 +362,7 @@ class FakeServer {
       blobs.remove(userId);
       trimmedThrough.remove(userId);
       snapshots.remove(userId);
+      devices.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/sync/commits') {
@@ -328,19 +371,37 @@ class FakeServer {
       snapshots.remove(userId);
       return http.Response('', 204);
     }
+    if (path == '/v1/sync/devices') {
+      _touchDevice(userId, request);
+      if (method == 'GET') {
+        if (deviceListFailures > 0) {
+          deviceListFailures--;
+          return _problem(503, 'unavailable');
+        }
+        return _json(200, {
+          'devices': [for (final device in rosterOf(userId)) device.toJson()],
+        });
+      }
+      if (method == 'PUT') {
+        return _renameDevice(userId, body);
+      }
+    }
     if (path == '/v1/sync/snapshot') {
       if (method == 'GET') {
         return _json(200, _syncHeadBody(userId));
       }
       if (method == 'PUT') {
+        _touchDevice(userId, request);
         return _registerSnapshot(userId, body);
       }
     }
     if (method == 'GET' && path == '/v1/sync/head') {
+      _touchDevice(userId, request);
       await onHead?.call();
       return _json(200, _syncHeadBody(userId));
     }
     if (method == 'GET' && path == '/v1/sync/commits') {
+      _touchDevice(userId, request);
       await onPull?.call();
       final after =
           int.tryParse(request.url.queryParameters['after'] ?? '0') ?? 0;
@@ -381,6 +442,7 @@ class FakeServer {
       });
     }
     if (method == 'POST' && path == '/v1/sync/commits') {
+      _touchDevice(userId, request);
       if (pushFailures > 0) {
         pushFailures--;
         return _problem(503, 'unavailable');
@@ -561,6 +623,59 @@ class FakeServer {
   }
 
   int _backupSeq = 1;
+
+  /// 记录一次带设备标识的请求并更新名册：最近出现时间写成服务端当前时间，
+  /// 能力声明整组替换，别名保持不变；没有设备标识的请求不算同步请求。
+  void _touchDevice(String userId, http.Request request) {
+    final deviceId = (request.headers['x-device-id'] ?? '').trim();
+    if (deviceId.isEmpty) return;
+    final capabilities = [
+      for (final value in (request.headers['x-sync-capabilities'] ?? '').split(
+        ',',
+      ))
+        if (value.trim().isNotEmpty) value.trim(),
+    ];
+    syncDeviceHeaders.add((
+      method: request.method,
+      path: request.url.path,
+      deviceId: deviceId,
+      capabilities: capabilities,
+    ));
+    final lastSeen = DateTime.utc(
+      2026,
+      11,
+      21,
+      10,
+      0,
+      0,
+    ).add(Duration(seconds: ++_deviceTicks)).toIso8601String();
+    final roster = devices.putIfAbsent(userId, () => {});
+    final existing = roster[deviceId];
+    if (existing == null) {
+      roster[deviceId] = FakeDevice(
+        deviceId: deviceId,
+        alias: '',
+        capabilities: capabilities,
+        lastSeen: lastSeen,
+      );
+      return;
+    }
+    existing.capabilities = capabilities;
+    existing.lastSeen = lastSeen;
+  }
+
+  /// 改别名：只认名册里已有的设备，别名去掉首尾空白后 0–64 字符，空串表示清除。
+  http.Response _renameDevice(String userId, Map<String, Object?> body) {
+    final deviceId = (body['device_id'] as String? ?? '').trim();
+    final alias = (body['alias'] as String? ?? '').trim();
+    if (deviceId.isEmpty || alias.length > 64) {
+      return _problem(400, 'invalid_request');
+    }
+    final device = devices[userId]?[deviceId];
+    if (device == null) return _problem(404, 'not_found');
+    device.alias = alias;
+    return _json(200, device.toJson());
+  }
 
   /// 同步 head、快照查询与拉取响应的公共字段：最新位置、保留下界与快照指针。
   Map<String, Object?> _syncHeadBody(String userId) {
@@ -832,6 +947,30 @@ class FakeBackup {
 
   final Map<String, Object?> meta;
   final Uint8List bytes;
+}
+
+/// 假服务端设备名册里的一台设备：标识、别名、能力声明与最近出现时间。
+class FakeDevice {
+  FakeDevice({
+    required this.deviceId,
+    required this.alias,
+    required this.capabilities,
+    required this.lastSeen,
+  });
+
+  final String deviceId;
+  String alias;
+  List<String> capabilities;
+
+  /// RFC3339 的 UTC 时间；排序按字符串比较即可。
+  String lastSeen;
+
+  Map<String, Object?> toJson() => {
+    'device_id': deviceId,
+    'alias': alias,
+    'capabilities': capabilities,
+    'last_seen': lastSeen,
+  };
 }
 
 /// 假服务端保存的快照指针：覆盖到的序号、附件哈希、整库摘要与登记时间。
