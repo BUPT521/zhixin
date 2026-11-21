@@ -12,6 +12,7 @@ import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 记录页的查找范围选择器：切换全部、目标与材料之后，结果随范围收窄并在
@@ -56,12 +57,14 @@ void main() {
   Future<void> pumpUntil(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 80,
+    int rounds = 320,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isNotEmpty) return;
     }
@@ -72,12 +75,14 @@ void main() {
   Future<void> pumpUntilGone(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 80,
+    int rounds = 320,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isEmpty) return;
     }
@@ -87,21 +92,7 @@ void main() {
   /// 等首页读取收尾：数据库访问在应用根里排队，读还没结束时直接写库会一直
   /// 等独占权限；写种子又必须在界面之外运行，所以先把界面上的读取放完。
   Future<void> settle(WidgetTester tester) async {
-    for (var round = 0; round < 20; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      if (round < 6) continue;
-      if (find.byType(forui.FCircularProgress).evaluate().isEmpty) break;
-    }
-    // 指示器消失之后仍可能有收尾的读取，多跑几帧让它们把共享权限还回来。
-    for (var round = 0; round < 6; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
+    await settleFrames(tester, scope);
   }
 
   testWidgets('范围选择器把查找结果限制在选定的目标或材料里', (tester) async {

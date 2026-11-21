@@ -11,6 +11,7 @@ import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 查找页的“按意思找”：本地结果先出，语义完成后按融合顺序刷新；失败、空索引
@@ -68,12 +69,14 @@ void main() {
   Future<void> pumpUntil(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 80,
+    int rounds = 320,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isNotEmpty) return;
     }
@@ -82,31 +85,18 @@ void main() {
 
   /// 等首页读取收尾：数据库访问在应用根里排队，种子写入要在界面之外运行。
   Future<void> settle(WidgetTester tester) async {
-    for (var round = 0; round < 20; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      if (round < 6) continue;
-      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
-    }
-    for (var round = 0; round < 6; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
+    await settleFrames(tester, scope);
   }
 
   /// 等页面在后台发起的读取结束，再进入 teardown 关库；关库要等所有共享读
   /// 释放，测试结束时仍在排队的读取会让它一直等下去。
   Future<void> drain(WidgetTester tester) async {
-    for (var round = 0; round < 10; round++) {
-      await tester.pump(const Duration(milliseconds: 50));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
-    }
+    await settleFrames(
+      tester,
+      scope,
+      rounds: 4,
+      frame: const Duration(milliseconds: 50),
+    );
   }
 
   Future<void> openApp(WidgetTester tester) async {

@@ -8,6 +8,7 @@ import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/copy.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 记录页改成订阅之后，页面之外的写入与“回到旧数据”都由数据层重读（ADR-0014）。
@@ -47,16 +48,11 @@ void main() {
   });
 
   /// 推进到所有读取、回填与过渡动画结束。
+  ///
+  /// 等的是应用自己的访问队列：页面读取都排在应用根上，队列清空之后再画几帧，
+  /// 不再按固定时长反复等。
   Future<void> settle(WidgetTester tester) async {
-    for (var i = 0; i < 12; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 200)),
-    );
+    await settleFrames(tester, scope);
     await tester.pumpAndSettle(
       const Duration(milliseconds: 100),
       EnginePhase.sendSemanticsUpdate,
@@ -68,12 +64,14 @@ void main() {
   Future<void> pumpUntil(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 120,
+    int rounds = 480,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isNotEmpty) return;
     }

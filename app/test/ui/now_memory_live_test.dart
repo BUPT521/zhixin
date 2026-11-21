@@ -15,6 +15,7 @@ import 'package:zhixin/ui/memory_proposal_page.dart';
 import 'package:zhixin/ui/study_plan_page.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 订阅跟随写入更新（ADR-0014）：首页摘要、记忆、记忆建议与系统学习四页。
@@ -47,16 +48,11 @@ void main() {
   });
 
   /// 推进到所有读取、回填与过渡动画结束。
+  ///
+  /// 等的是应用自己的访问队列：页面读取都排在应用根上，队列清空之后再画几帧，
+  /// 不再按固定时长反复等。
   Future<void> settle(WidgetTester tester) async {
-    for (var i = 0; i < 12; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 200)),
-    );
+    await settleFrames(tester, scope);
     await tester.pumpAndSettle(
       const Duration(milliseconds: 100),
       EnginePhase.sendSemanticsUpdate,

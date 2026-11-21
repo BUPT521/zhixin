@@ -15,6 +15,7 @@ import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 
 /// 安排页的换周订阅：换周只保留最新一条订阅，迟到的旧周数据不再写回；
 /// 写入之后的新数据由订阅带回，读取失败之后就地点重试并重新订阅当前目标周。
@@ -67,12 +68,7 @@ void main() {
   }
 
   Future<void> settle(WidgetTester tester) async {
-    for (var round = 0; round < 10; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
-    }
+    await settleFrames(tester, scope, rounds: 10);
     await tester.pumpAndSettle();
   }
 

@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
@@ -11,6 +10,7 @@ import 'package:zhixin/ui/home_shell.dart';
 import 'package:zhixin/ui/material_picker.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 材料选择器：按标题、来源与页标签过滤候选，没有命中时给空态与清除，
@@ -45,12 +45,14 @@ void main() {
   Future<void> pumpUntil(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 120,
+    int rounds = 480,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isNotEmpty) return;
     }
@@ -60,12 +62,14 @@ void main() {
   Future<void> pumpUntilGone(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 80,
+    int rounds = 320,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isEmpty) return;
     }
@@ -73,20 +77,7 @@ void main() {
   }
 
   Future<void> settle(WidgetTester tester) async {
-    for (var round = 0; round < 20; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      if (round < 6) continue;
-      if (find.byType(forui.FCircularProgress).evaluate().isEmpty) break;
-    }
-    for (var round = 0; round < 6; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
+    await settleFrames(tester, scope);
   }
 
   testWidgets('材料选择器按标题与页标签过滤，没有命中时给空态与清除', (tester) async {

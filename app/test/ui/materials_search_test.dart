@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
@@ -12,6 +11,7 @@ import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 材料列表与材料详情的查找入口（02 第 3.14 节）。
@@ -50,12 +50,14 @@ void main() {
   Future<void> pumpUntil(
     WidgetTester tester,
     Finder finder, {
-    int rounds = 120,
+    int rounds = 480,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       if (finder.evaluate().isNotEmpty) return;
     }
@@ -73,21 +75,7 @@ void main() {
   /// 等首页读取收尾：数据库访问在应用根里排队，读还没结束时直接写库会一直
   /// 等独占权限；写种子又必须在界面之外运行，所以先把界面上的读取放完。
   Future<void> settle(WidgetTester tester) async {
-    for (var round = 0; round < 20; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      if (round < 6) continue;
-      if (find.byType(forui.FCircularProgress).evaluate().isEmpty) break;
-    }
-    // 指示器消失之后仍可能有收尾的读取，多跑几帧让它们把共享权限还回来。
-    for (var round = 0; round < 6; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
+    await settleFrames(tester, scope);
   }
 
   Future<void> openApp(WidgetTester tester) async {

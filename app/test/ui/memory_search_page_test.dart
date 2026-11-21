@@ -12,6 +12,7 @@ import 'package:zhixin/ui/memory_page.dart';
 import 'package:zhixin/ui/memory_search_page.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 记忆查找：按正文、类别、适用范围与状态筛选，结果带着来源与有效期，
@@ -42,16 +43,11 @@ void main() {
   });
 
   /// 推进到所有读取、回填与过渡动画结束。
+  ///
+  /// 等的是应用自己的访问队列：页面读取都排在应用根上，队列清空之后再画几帧，
+  /// 不再按固定时长反复等。
   Future<void> settle(WidgetTester tester) async {
-    for (var attempt = 0; attempt < 12; attempt++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 200)),
-    );
+    await settleFrames(tester, scope);
     await tester.pumpAndSettle(
       const Duration(milliseconds: 100),
       EnginePhase.sendSemanticsUpdate,

@@ -17,6 +17,7 @@ import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 import '../support/test_db.dart';
 
@@ -51,12 +52,7 @@ void main() {
   });
 
   Future<void> settle(WidgetTester tester, {int rounds = 14}) async {
-    for (var round = 0; round < rounds; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
-    }
+    await settleFrames(tester, scope, rounds: rounds);
   }
 
   /// 打开数据版本页：应用根照生产装配，页面作为根页，省掉从“我的”点进来的几步。

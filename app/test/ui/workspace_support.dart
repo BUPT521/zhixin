@@ -24,6 +24,7 @@ import 'package:zhixin/ui/zhixin_icon_button.dart';
 import 'package:zhixin/domain/models/result.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 Finder editableFields() => find.byWidgetPredicate(
@@ -128,27 +129,24 @@ Future<void> clearToasts(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
+/// 推进到应用把读取、生成与提示都放完，界面停在稳定状态。
+///
+/// 先按应用自己的访问队列推进若干帧，再等生成中的回答结束；真实等待只在读取
+/// 还没放完时出现，不再按固定时长反复等。
 Future<void> settle(WidgetTester tester) async {
-  for (var i = 0; i < 12; i++) {
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-  }
-  for (var i = 0; i < 40; i++) {
+  final gate = scope!.testing.gate;
+  // 每轮推进一帧的时间：界面据此发起读取、收起过渡动画，防抖与提示的定时器也在
+  // 假时间里到期。真实等待只用来让读取走完，队列空着时很短。
+  await settleFrames(tester, scope);
+  for (var i = 0; i < 200; i++) {
     // 发送按钮生成中只显示停止图标，不再有转圈，按停止按钮判断仍在请求。
     final busy =
         find.byType(forui.FCircularProgress).evaluate().isNotEmpty ||
         find.byIcon(FLucideIcons.square).evaluate().isNotEmpty;
     if (!busy) break;
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
+    await tester.pump(const Duration(milliseconds: 20));
+    await advanceAsync(tester, gate, const Duration(milliseconds: 20));
   }
-  await tester.runAsync(
-    () => Future<void>.delayed(const Duration(milliseconds: 200)),
-  );
   await clearToasts(tester);
   expect(find.byType(forui.FCircularProgress), findsNothing);
   await tester.pumpAndSettle(

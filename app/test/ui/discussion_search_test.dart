@@ -14,6 +14,7 @@ import 'package:zhixin/ui/discussion_search.dart';
 import 'package:zhixin/ui/theme.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
 /// 讨论内查找：计数、上一处与下一处、高亮切换、空查询与关闭后恢复。
@@ -52,12 +53,14 @@ void main() {
     WidgetTester tester,
     Finder finder, {
     bool gone = false,
-    int rounds = 120,
+    int rounds = 480,
   }) async {
     for (var round = 0; round < rounds; round++) {
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      await advanceAsync(
+        tester,
+        scope?.testing.gate,
+        const Duration(milliseconds: 20),
       );
       final found = finder.evaluate().isNotEmpty;
       if (gone ? !found : found) return;
@@ -65,14 +68,9 @@ void main() {
     fail(gone ? '等待控件消失超时：$finder' : '等待界面出现超时：$finder');
   }
 
-  /// 等后台读取收尾：数据库访问在应用根里排队，读没有结束就写库会等独占。
+  /// 等后台读取收尾：等应用自己的访问队列清空，再画几帧让回填完成。
   Future<void> settle(WidgetTester tester) async {
-    for (var round = 0; round < 20; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-    }
+    await settleFrames(tester, scope);
   }
 
   Future<void> openApp(
