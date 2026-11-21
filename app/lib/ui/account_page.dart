@@ -528,13 +528,16 @@ class _AccountPageState extends State<AccountPage> {
     final scope = AppScope.of(context);
     try {
       final result = await scope.accountServices.sync.repairFromCloud();
+      // 先重读状态再给结论：提示与状态卡不能互相矛盾，重读之后“待修复”已经
+      // 消失，提示才说已经重新对齐（与“立即同步”同一顺序，ADR-0045）。
+      await _load();
+      if (!mounted) return;
       _report(
         result.changed
             ? '已按云端修复：拉取 ${result.pulledCommits} 条、补传 '
                   '${result.pushedCommits} 条提交，本机与云端重新对齐'
             : '已按云端修复：本机与云端已经一致',
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -569,6 +572,10 @@ class _AccountPageState extends State<AccountPage> {
     final scope = AppScope.of(context);
     try {
       final result = await scope.accountServices.sync.repairFromLocal();
+      // 与“以云端为准修复”同一顺序：重读状态之后再说结论，避免提示写着已经
+      // 补齐、状态卡仍停在“待修复”。
+      await _load();
+      if (!mounted) return;
       _report(
         result.pushedCommits > 0
             ? '已按本机修复：补传 ${result.pushedCommits} 条提交、'
@@ -576,7 +583,6 @@ class _AccountPageState extends State<AccountPage> {
             : '没有找到云端缺少的本机记录；云端多出来的内容没有改动，'
                   '需要时可以改用“以云端为准修复”',
       );
-      await _load();
     } catch (error, stack) {
       if (!mounted) return;
       _report(
