@@ -381,7 +381,17 @@ paths:
       description: |
         按最近出现时间倒序返回名册，最多 50 条。每条带设备标识、用户设置的别名、
         能力声明与最近出现时间；名册只记录发过同步请求的设备，压缩门槛按它判断
-        有没有设备还没声明 `snapshot`（ADR-0048）。
+        有没有设备还没声明 `snapshot`（ADR-0048）。带 `X-Device-Id` 时先更新这
+        台设备的名册记录再返回列表，刚登录、还没同步过的设备因此也能先出现在名册里。
+      parameters:
+        - name: X-Device-Id
+          in: header
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+          schema: { type: string, maxLength: 64 }
+        - name: X-Sync-Capabilities
+          in: header
+          description: 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+          schema: { type: string, maxLength: 256 }
       responses:
         "200":
           description: OK

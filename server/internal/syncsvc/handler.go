@@ -253,9 +253,14 @@ func (h *Handler) Reset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Devices 返回账号的设备名册，按最近出现时间倒序，最多 50 条（ADR-0048）。
-func (h *Handler) Devices(w http.ResponseWriter, r *http.Request) {
+// Devices 返回账号的设备名册，按最近出现时间倒序，最多 50 条。带设备标识时先
+// 更新这台设备的名册记录，刚登录、还没同步过的设备因此也能先出现在名册里
+// （ADR-0048）。
+func (h *Handler) Devices(w http.ResponseWriter, r *http.Request, params api.GetV1SyncDevicesParams) {
 	p := auth.MustPrincipal(r.Context())
+	if id, caps, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
+		h.recordDevice(r.Context(), p.UserID, id, caps)
+	}
 	devices, err := h.svc.Devices(r.Context(), p.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
