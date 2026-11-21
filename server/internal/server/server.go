@@ -228,6 +228,10 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion).
 		SetMaxPullBytes(cfg.SyncPullMaxBytes).
 		SetCompactKeep(cfg.SyncCompactKeep).
+		SetCompact(cfg.SyncCompact).
+		SetSnapshotGrace(cfg.SyncSnapshotGrace).
+		SetDeviceActive(cfg.SyncDeviceActive).
+		SetLogger(log).
 		SetSnapshotBytes(cfg.MaxAttachmentBytes)
 	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
 

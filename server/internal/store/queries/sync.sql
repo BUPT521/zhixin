@@ -148,3 +148,90 @@ SET seq = EXCLUDED.seq,
     sha256 = EXCLUDED.sha256,
     digest = EXCLUDED.digest,
     created_at = EXCLUDED.created_at;
+
+-- ---- 旧快照附件待回收（ADR-0047） ----
+
+-- 登记新指针时记下让位的旧哈希。同一哈希重复出现时保留最早的 orphaned_at，
+-- 宽限期因此从第一次让位算起。
+-- name: InsertSyncSnapshotOrphan :exec
+INSERT INTO sync_snapshot_orphan (user_id, sha256)
+VALUES (sqlc.arg(user_id), sqlc.arg(sha256))
+ON CONFLICT (user_id, sha256) DO NOTHING;
+
+-- 新指针重新使用一个待回收的哈希时删掉那一行，避免回收一份重新投入使用的附件。
+-- name: DeleteSyncSnapshotOrphan :exec
+DELETE FROM sync_snapshot_orphan
+WHERE user_id = sqlc.arg(user_id) AND sha256 = sqlc.arg(sha256);
+
+-- 清空云端数据时整表清掉。
+-- name: DeleteSyncSnapshotOrphans :exec
+DELETE FROM sync_snapshot_orphan
+WHERE user_id = sqlc.arg(user_id);
+
+-- 可回收的哈希：让位时间早于宽限期，且不是当前快照指针；SQL 这一层也排除，
+-- 代码再排除一次，两道都保证当前指针的字节不会被删（ADR-0047）。
+-- name: SyncSnapshotOrphansBefore :many
+SELECT o.sha256
+FROM sync_snapshot_orphan o
+WHERE o.user_id = sqlc.arg(user_id)
+  AND o.orphaned_at < sqlc.arg(before)
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_snapshot s
+    WHERE s.user_id = o.user_id AND s.sha256 = o.sha256
+  )
+ORDER BY o.orphaned_at, o.sha256;
+
+-- ---- 设备名册（ADR-0048） ----
+
+-- 带设备标识的同步请求：最近出现时间写服务端当前时间，能力声明整组替换，别名
+-- 保持用户设置的值；首次出现时间只在插入时写。
+-- name: TouchSyncDevice :exec
+INSERT INTO sync_device (user_id, device_id, capabilities)
+VALUES (sqlc.arg(user_id), sqlc.arg(device_id), sqlc.arg(capabilities))
+ON CONFLICT (user_id, device_id) DO UPDATE
+SET capabilities = EXCLUDED.capabilities,
+    last_seen = now();
+
+-- 没有设备标识的推送按提交里的设备标识补一行：已有行只更新最近出现时间，能力
+-- 与别名都不动，旧版本客户端因此也会出现在名册里。
+-- name: EnsureSyncDevice :exec
+INSERT INTO sync_device (user_id, device_id)
+VALUES (sqlc.arg(user_id), sqlc.arg(device_id))
+ON CONFLICT (user_id, device_id) DO UPDATE
+SET last_seen = now();
+
+-- name: SyncDevices :many
+SELECT device_id, alias, capabilities, first_seen, last_seen
+FROM sync_device
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY last_seen DESC, device_id
+LIMIT sqlc.arg(row_limit);
+
+-- 设备改名：只改本账号已有的行，没有这一行时调用方按 404 处理。
+-- name: RenameSyncDevice :one
+UPDATE sync_device
+SET alias = sqlc.arg(alias)
+WHERE user_id = sqlc.arg(user_id) AND device_id = sqlc.arg(device_id)
+RETURNING device_id, alias, capabilities, first_seen, last_seen;
+
+-- 压缩门槛：最近 active_since 之后出现过的设备里，有没有任何一台的能力声明不含
+-- 给定的能力名。名册为空时返回 false，即可以压缩（ADR-0047）。
+-- capabilities 为空串或 NULL 时不依赖 string_to_array 的取值语义，直接按“没有
+-- 声明任何能力”处理：空能力列表里一定没有 snapshot，旧设备必须挡住压缩。
+-- name: SyncActiveDeviceWithoutCapability :one
+SELECT EXISTS (
+    SELECT 1
+    FROM sync_device
+    WHERE user_id = sqlc.arg(user_id)
+      AND last_seen >= sqlc.arg(active_since)
+      AND (
+        capabilities IS NULL
+        OR capabilities = ''
+        OR NOT (sqlc.arg(capability) = ANY (string_to_array(capabilities, ',')))
+      )
+) AS found;
+
+-- 清空云端数据时整表清掉。
+-- name: DeleteSyncDevices :exec
+DELETE FROM sync_device
+WHERE user_id = sqlc.arg(user_id);

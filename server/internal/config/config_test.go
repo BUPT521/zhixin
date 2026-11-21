@@ -126,6 +126,15 @@ func TestLoadDefaultsForHardening(t *testing.T) {
 	if cfg.SyncPullMaxBytes != 4<<20 {
 		t.Fatalf("sync pull bytes = %d", cfg.SyncPullMaxBytes)
 	}
+	if cfg.SyncCompact {
+		t.Fatal("压缩默认应关闭")
+	}
+	if cfg.SyncSnapshotGrace != 24*time.Hour {
+		t.Fatalf("快照回收宽限期默认 24 小时，得到 %v", cfg.SyncSnapshotGrace)
+	}
+	if cfg.SyncDeviceActive != 720*time.Hour {
+		t.Fatalf("设备活跃窗口默认 720 小时，得到 %v", cfg.SyncDeviceActive)
+	}
 	if !cfg.LLM.RequireVerifiedContact || cfg.LLM.ConcurrentPerUser != 4 {
 		t.Fatalf("llm gates = %+v", cfg.LLM)
 	}
@@ -155,6 +164,28 @@ func TestLoadDefaultsForHardening(t *testing.T) {
 	}
 	if cfg.BackupReconcileInterval != 24*time.Hour {
 		t.Fatalf("对象存储对账默认每天一次，得到 %v", cfg.BackupReconcileInterval)
+	}
+}
+
+func TestLoadSyncSnapshotOptions(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"ZHIXIN_SYNC_COMPACT":        "1",
+		"ZHIXIN_SYNC_SNAPSHOT_GRACE": "48h",
+		"ZHIXIN_SYNC_DEVICE_ACTIVE":  "24h",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SyncCompact || cfg.SyncSnapshotGrace != 48*time.Hour || cfg.SyncDeviceActive != 24*time.Hour {
+		t.Fatalf("快照回收与压缩门槛: compact=%v grace=%v active=%v", cfg.SyncCompact, cfg.SyncSnapshotGrace, cfg.SyncDeviceActive)
+	}
+	// 只写 0 或 1；其它值按关闭处理，避免把拼写错误当成打开。
+	cfg, err = Load(env(map[string]string{"ZHIXIN_SYNC_COMPACT": "true"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SyncCompact {
+		t.Fatal("ZHIXIN_SYNC_COMPACT 只认 1")
 	}
 }
 

@@ -744,6 +744,31 @@ type SnapshotRegistration struct {
 	Sha256 string `json:"sha256"`
 }
 
+// SyncDevice 账号设备名册里的一台设备（ADR-0048）
+type SyncDevice struct {
+	// Alias 用户设置的别名，空串表示未命名
+	Alias string `json:"alias"`
+
+	// Capabilities 这一台设备声明的小写能力名，当前只有 snapshot
+	Capabilities []string `json:"capabilities"`
+	DeviceId     string   `json:"device_id"`
+
+	// LastSeen 最近一次同步请求的服务端时间
+	LastSeen time.Time `json:"last_seen"`
+}
+
+// SyncDeviceList defines model for SyncDeviceList.
+type SyncDeviceList struct {
+	Devices []SyncDevice `json:"devices"`
+}
+
+// SyncDeviceRename defines model for SyncDeviceRename.
+type SyncDeviceRename struct {
+	// Alias 去掉首尾空白之后 0–64 个字符，空串表示清除
+	Alias    string `json:"alias"`
+	DeviceId string `json:"device_id"`
+}
+
 // SyncHead defines model for SyncHead.
 type SyncHead struct {
 	// EarliestSeq 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
@@ -883,12 +908,45 @@ type DeleteV1SyncCommitsJSONBody struct {
 type GetV1SyncCommitsParams struct {
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	XDeviceId *string `json:"X-Device-Id,omitempty"`
+
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
 // PostV1SyncCommitsJSONBody defines parameters for PostV1SyncCommits.
 type PostV1SyncCommitsJSONBody struct {
 	BaseSeq int64    `json:"base_seq"`
 	Commits []Commit `json:"commits"`
+}
+
+// PostV1SyncCommitsParams defines parameters for PostV1SyncCommits.
+type PostV1SyncCommitsParams struct {
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	XDeviceId *string `json:"X-Device-Id,omitempty"`
+
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
+}
+
+// GetV1SyncHeadParams defines parameters for GetV1SyncHead.
+type GetV1SyncHeadParams struct {
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	XDeviceId *string `json:"X-Device-Id,omitempty"`
+
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
+}
+
+// PutV1SyncSnapshotParams defines parameters for PutV1SyncSnapshot.
+type PutV1SyncSnapshotParams struct {
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	XDeviceId *string `json:"X-Device-Id,omitempty"`
+
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
 // PostAdminV1ModelsJSONRequestBody defines body for PostAdminV1Models for application/json ContentType.
@@ -947,6 +1005,9 @@ type DeleteV1SyncCommitsJSONRequestBody DeleteV1SyncCommitsJSONBody
 
 // PostV1SyncCommitsJSONRequestBody defines body for PostV1SyncCommits for application/json ContentType.
 type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
+
+// PutV1SyncDevicesJSONRequestBody defines body for PutV1SyncDevices for application/json ContentType.
+type PutV1SyncDevicesJSONRequestBody = SyncDeviceRename
 
 // PutV1SyncSnapshotJSONRequestBody defines body for PutV1SyncSnapshot for application/json ContentType.
 type PutV1SyncSnapshotJSONRequestBody = SnapshotRegistration
@@ -1222,16 +1283,22 @@ type ServerInterface interface {
 	GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params GetV1SyncCommitsParams)
 	// PostV1SyncCommits 推送本机提交
 	// (POST /v1/sync/commits)
-	PostV1SyncCommits(w http.ResponseWriter, r *http.Request)
+	PostV1SyncCommits(w http.ResponseWriter, r *http.Request, params PostV1SyncCommitsParams)
+	// GetV1SyncDevices 账号的设备名册
+	// (GET /v1/sync/devices)
+	GetV1SyncDevices(w http.ResponseWriter, r *http.Request)
+	// PutV1SyncDevices 修改一台已知设备的别名
+	// (PUT /v1/sync/devices)
+	PutV1SyncDevices(w http.ResponseWriter, r *http.Request)
 	// GetV1SyncHead 服务端序列的最新位置、保留下界与当前快照
 	// (GET /v1/sync/head)
-	GetV1SyncHead(w http.ResponseWriter, r *http.Request)
+	GetV1SyncHead(w http.ResponseWriter, r *http.Request, params GetV1SyncHeadParams)
 	// GetV1SyncSnapshot 当前快照指针
 	// (GET /v1/sync/snapshot)
 	GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request)
 	// PutV1SyncSnapshot 登记当前序列位置上的快照
 	// (PUT /v1/sync/snapshot)
-	PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request)
+	PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request, params PutV1SyncSnapshotParams)
 	// PostV1TelemetryActive 匿名上报一次活跃
 	// (POST /v1/telemetry/active)
 	PostV1TelemetryActive(w http.ResponseWriter, r *http.Request)
@@ -2145,6 +2212,46 @@ func (siw *ServerInterfaceWrapper) GetV1SyncCommits(w http.ResponseWriter, r *ht
 		return
 	}
 
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Sync-Capabilities" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Sync-Capabilities")]; found {
+		var XSyncCapabilities string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Sync-Capabilities", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Sync-Capabilities", valueList[0], &XSyncCapabilities, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Sync-Capabilities", Err: err})
+			return
+		}
+
+		params.XSyncCapabilities = &XSyncCapabilities
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetV1SyncCommits(w, r, params)
 	}))
@@ -2159,8 +2266,82 @@ func (siw *ServerInterfaceWrapper) GetV1SyncCommits(w http.ResponseWriter, r *ht
 // PostV1SyncCommits operation middleware
 func (siw *ServerInterfaceWrapper) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV1SyncCommitsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Sync-Capabilities" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Sync-Capabilities")]; found {
+		var XSyncCapabilities string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Sync-Capabilities", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Sync-Capabilities", valueList[0], &XSyncCapabilities, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Sync-Capabilities", Err: err})
+			return
+		}
+
+		params.XSyncCapabilities = &XSyncCapabilities
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1SyncCommits(w, r)
+		siw.Handler.PostV1SyncCommits(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetV1SyncDevices operation middleware
+func (siw *ServerInterfaceWrapper) GetV1SyncDevices(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1SyncDevices(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutV1SyncDevices operation middleware
+func (siw *ServerInterfaceWrapper) PutV1SyncDevices(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutV1SyncDevices(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2173,8 +2354,54 @@ func (siw *ServerInterfaceWrapper) PostV1SyncCommits(w http.ResponseWriter, r *h
 // GetV1SyncHead operation middleware
 func (siw *ServerInterfaceWrapper) GetV1SyncHead(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetV1SyncHeadParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Sync-Capabilities" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Sync-Capabilities")]; found {
+		var XSyncCapabilities string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Sync-Capabilities", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Sync-Capabilities", valueList[0], &XSyncCapabilities, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Sync-Capabilities", Err: err})
+			return
+		}
+
+		params.XSyncCapabilities = &XSyncCapabilities
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetV1SyncHead(w, r)
+		siw.Handler.GetV1SyncHead(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2201,8 +2428,54 @@ func (siw *ServerInterfaceWrapper) GetV1SyncSnapshot(w http.ResponseWriter, r *h
 // PutV1SyncSnapshot operation middleware
 func (siw *ServerInterfaceWrapper) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutV1SyncSnapshotParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Sync-Capabilities" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Sync-Capabilities")]; found {
+		var XSyncCapabilities string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Sync-Capabilities", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Sync-Capabilities", valueList[0], &XSyncCapabilities, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Sync-Capabilities", Err: err})
+			return
+		}
+
+		params.XSyncCapabilities = &XSyncCapabilities
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutV1SyncSnapshot(w, r)
+		siw.Handler.PutV1SyncSnapshot(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2362,6 +2635,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/head", wrapper.GetV1SyncHead)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/snapshot", wrapper.GetV1SyncSnapshot)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/sync/snapshot", wrapper.PutV1SyncSnapshot)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/devices", wrapper.GetV1SyncDevices)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/sync/devices", wrapper.PutV1SyncDevices)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/sync/commits", wrapper.DeleteV1SyncCommits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/commits", wrapper.GetV1SyncCommits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/sync/commits", wrapper.PostV1SyncCommits)

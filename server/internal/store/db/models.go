@@ -179,6 +179,15 @@ type SyncCommitSeen struct {
 	RequestID string
 }
 
+type SyncDevice struct {
+	UserID       string
+	DeviceID     string
+	Alias        string
+	Capabilities string
+	FirstSeen    pgtype.Timestamptz
+	LastSeen     pgtype.Timestamptz
+}
+
 type SyncHead struct {
 	UserID         string
 	Head           int64
@@ -191,6 +200,12 @@ type SyncSnapshot struct {
 	Sha256    string
 	Digest    string
 	CreatedAt pgtype.Timestamptz
+}
+
+type SyncSnapshotOrphan struct {
+	UserID     string
+	Sha256     string
+	OrphanedAt pgtype.Timestamptz
 }
 
 type UserActive struct {
