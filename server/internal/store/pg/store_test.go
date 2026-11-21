@@ -1105,9 +1105,16 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 		t.Fatalf("未知设备应返回 ErrDeviceNotFound，得到 %v", err)
 	}
 
-	// 清空云端数据把待回收行与名册一起清掉。
-	if _, err := st.pool.Exec(ctx, `INSERT INTO sync_snapshot_orphan (user_id, sha256) VALUES ($1, $2)`, "u1", shaB); err != nil {
-		t.Fatalf("重建待回收行: %v", err)
+	// 清空云端数据把待回收行与名册一起清掉。这里另写一个既不是当前指针、也没被
+	// 回收过的哈希，清空之前先确认它确实在可回收列表里，否则清空之后的空列表
+	// 说明不了表被清掉。
+	shaC := strings.Repeat("d", 64)
+	if _, err := st.pool.Exec(ctx, `INSERT INTO sync_snapshot_orphan (user_id, sha256) VALUES ($1, $2)`, "u1", shaC); err != nil {
+		t.Fatalf("写待回收行: %v", err)
+	}
+	if orphans, err = st.SnapshotOrphansBefore(ctx, "u1", time.Now().UTC().Add(time.Hour)); err != nil ||
+		len(orphans) != 1 || orphans[0] != shaC {
+		t.Fatalf("清空之前应有一行可回收: %v %v", orphans, err)
 	}
 	if err := st.Reset(ctx, "u1"); err != nil {
 		t.Fatalf("reset: %v", err)
