@@ -47,7 +47,7 @@ func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_snapshot, sync_head, auth_code, user_identity, session, app_user CASCADE`
+	drop := `DROP TABLE IF EXISTS embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_snapshot, sync_snapshot_orphan, sync_device, sync_head, auth_code, user_identity, session, app_user CASCADE`
 	if _, err := st.pool.Exec(ctx, drop); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -483,10 +483,10 @@ func TestPostgresClearAccountData(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}); err != nil || head != 2 {
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}, syncsvc.CompactPolicy{}); err != nil || head != 2 {
 		t.Fatalf("append u1: head %d, err %v", head, err)
 	}
-	if head, err := st.Append(ctx, "u2", 0, []syncsvc.Commit{mk("other")}); err != nil || head != 1 {
+	if head, err := st.Append(ctx, "u2", 0, []syncsvc.Commit{mk("other")}, syncsvc.CompactPolicy{}); err != nil || head != 1 {
 		t.Fatalf("append u2: head %d, err %v", head, err)
 	}
 
@@ -500,7 +500,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 		t.Fatalf("commits after reset = %+v, %v", commits, err)
 	}
 	// 重置之后从 0 重新推送，序号重新从 1 开始。
-	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r3")}); err != nil || head != 1 {
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r3")}, syncsvc.CompactPolicy{}); err != nil || head != 1 {
 		t.Fatalf("append after reset: head %d, err %v", head, err)
 	}
 	if state, err := st.State(ctx, "u2"); err != nil || state.Head != 1 {
@@ -839,16 +839,16 @@ func TestPostgresSyncSequence(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")})
+	head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}, syncsvc.CompactPolicy{})
 	if err != nil || head != 2 {
 		t.Fatalf("追加两条后 head 应为 2，得到 %d %v", head, err)
 	}
 
 	// 完全重放：base 不对也算成功，因为客户端没收到上一次响应。
-	if head, err = st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}); err != nil || head != 2 {
+	if head, err = st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}); err != nil || head != 2 {
 		t.Fatalf("重放应成功并保持 head=2，得到 %d %v", head, err)
 	}
-	if head, err = st.Append(ctx, "u1", 1, []syncsvc.Commit{mk("r3")}); err != syncsvc.ErrHeadMoved || head != 2 {
+	if head, err = st.Append(ctx, "u1", 1, []syncsvc.Commit{mk("r3")}, syncsvc.CompactPolicy{}); err != syncsvc.ErrHeadMoved || head != 2 {
 		t.Fatalf("base 落后应返回 ErrHeadMoved，得到 %d %v", head, err)
 	}
 
@@ -887,7 +887,7 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 	snap := syncsvc.Snapshot{
 		Seq: 3, SHA256: strings.Repeat("a", 64), Digest: strings.Repeat("b", 64),
 	}
-	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}); err != nil || head != 3 {
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}, syncsvc.CompactPolicy{}); err != nil || head != 3 {
 		t.Fatalf("追加三条: %d %v", head, err)
 	}
 	state, err := st.State(ctx, "u1")
@@ -913,23 +913,23 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 		t.Fatalf("未来位置应返回 ErrInvalid，得到 %v", err)
 	}
 	// 保留窗口之内的提交不删除。
-	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: 24 * time.Hour}); err != nil || state.EarliestSeq != 1 {
+	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: 24 * time.Hour, AllowDelete: true}); err != nil || state.EarliestSeq != 1 {
 		t.Fatalf("保留期之内: %+v %v", state, err)
 	}
 
 	// 保留窗口极短：三条提交都早于它，登记时删除，保留下界推进到 4。
-	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: time.Nanosecond}); err != nil || state.EarliestSeq != 4 || state.Head != 3 {
+	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: time.Nanosecond, AllowDelete: true}); err != nil || state.EarliestSeq != 4 || state.Head != 3 {
 		t.Fatalf("压缩之后: %+v %v", state, err)
 	}
 	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 0 {
 		t.Fatalf("压缩之后不应再拉到提交: %+v %v", commits, err)
 	}
 	// 去重表保留了接收过的身份：重放旧提交被跳过，head 不变。
-	if head, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r1")}); err != nil || head != 3 {
+	if head, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}); err != nil || head != 3 {
 		t.Fatalf("压缩之后的重放: %d %v", head, err)
 	}
 	// 新提交照常追加与拉取。
-	if head, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")}); err != nil || head != 4 {
+	if head, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")}, syncsvc.CompactPolicy{}); err != nil || head != 4 {
 		t.Fatalf("压缩之后的追加: %d %v", head, err)
 	}
 	if commits, err := st.After(ctx, "u1", 3, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 1 || commits[0].RequestId != "r4" {
@@ -944,10 +944,182 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 		t.Fatalf("清空之后的状态: %+v %v", state, err)
 	}
 	// 去重身份也清了：同一编号重新写入从 1 开始。
-	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}); err != nil || head != 1 {
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}); err != nil || head != 1 {
 		t.Fatalf("清空之后重新写入: %d %v", head, err)
 	}
 }
+
+// TestPostgresSnapshotOrphansAndDevices 守住待回收表与设备名册的落库：旧指针让位
+// 时写入待回收行、宽限期与当前指针两道条件都影响回收；回收先删字节、再删索引
+// 行与待回收行；名册按设备标识更新最近出现时间与能力、改名只改已有设备；清空
+// 云端数据把两张表一起清掉（ADR-0047、ADR-0048）。
+func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	bs := NewBlobStore(st)
+
+	mk := func(id string) syncsvc.Commit {
+		after := json.RawMessage(`{}`)
+		return syncsvc.Commit{
+			RequestId: id, DeviceId: "d1", SchemaVersion: 26,
+			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
+			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
+		}
+	}
+	if head, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}, syncsvc.CompactPolicy{}); err != nil || head != 3 {
+		t.Fatalf("追加三条: %d %v", head, err)
+	}
+
+	shaA := strings.Repeat("a", 64)
+	shaB := strings.Repeat("b", 64)
+	seed := func(sha string) {
+		t.Helper()
+		body := []byte("snapshot bytes")
+		if err := bs.Save(ctx, "u1", sha, int64(len(body)), bytes.NewReader(body)); err != nil {
+			t.Fatalf("写入附件字节: %v", err)
+		}
+		if _, err := bs.BackfillAttachment(ctx, "u1", sha, int64(len(body))); err != nil {
+			t.Fatalf("写入附件索引: %v", err)
+		}
+	}
+	seed(shaA)
+	seed(shaB)
+
+	// 策略不允许删除时只写指针，提交原样保留。
+	state, err := st.RegisterSnapshot(ctx, "u1", syncsvc.Snapshot{
+		Seq: 1, SHA256: shaA, Digest: strings.Repeat("c", 64),
+	}, syncsvc.CompactPolicy{Keep: time.Nanosecond})
+	if err != nil || state.EarliestSeq != 1 || state.Snapshot == nil || state.Snapshot.SHA256 != shaA {
+		t.Fatalf("不允许删除时登记: %+v %v", state, err)
+	}
+	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 3 {
+		t.Fatalf("不允许删除时提交应全部保留: %d %v", len(commits), err)
+	}
+
+	// 旧指针让位：A 进入待回收表。
+	if _, err := st.RegisterSnapshot(ctx, "u1", syncsvc.Snapshot{
+		Seq: 2, SHA256: shaB, Digest: strings.Repeat("c", 64),
+	}, syncsvc.CompactPolicy{}); err != nil {
+		t.Fatalf("登记 B: %v", err)
+	}
+	orphans, err := st.SnapshotOrphansBefore(ctx, "u1", time.Now().UTC().Add(time.Hour))
+	if err != nil || len(orphans) != 1 || orphans[0] != shaA {
+		t.Fatalf("A 应在待回收表: %v %v", orphans, err)
+	}
+	// 宽限期之内不回收。
+	if orphans, err = st.SnapshotOrphansBefore(ctx, "u1", time.Now().UTC().Add(-time.Hour)); err != nil || len(orphans) != 0 {
+		t.Fatalf("宽限期之内不该有可回收行: %v %v", orphans, err)
+	}
+	// 当前指针的哈希即使出现在待回收表里也排除。
+	if _, err := st.pool.Exec(ctx, `INSERT INTO sync_snapshot_orphan (user_id, sha256, orphaned_at)
+		VALUES ($1, $2, now() - interval '2 days')`, "u1", shaB); err != nil {
+		t.Fatalf("手动插入当前指针的待回收行: %v", err)
+	}
+	if orphans, err = st.SnapshotOrphansBefore(ctx, "u1", time.Now().UTC().Add(time.Hour)); err != nil ||
+		len(orphans) != 1 || orphans[0] != shaA {
+		t.Fatalf("当前指针不应出现在回收列表: %v %v", orphans, err)
+	}
+
+	// 回收 A：字节、索引行与待回收行都删掉。
+	if err := st.ReclaimSnapshotOrphan(ctx, "u1", shaA); err != nil {
+		t.Fatalf("回收 A: %v", err)
+	}
+	if _, err := st.objects.Stat(ctx, objectstore.AttachmentKey("u1", shaA)); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("回收之后字节应删除: %v", err)
+	}
+	rows, err := bs.ListAttachments(ctx, "u1")
+	if err != nil {
+		t.Fatalf("列出索引: %v", err)
+	}
+	for _, row := range rows {
+		if row.Sha256 == shaA {
+			t.Fatalf("回收之后索引行应删除: %+v", rows)
+		}
+	}
+	if orphans, err = st.SnapshotOrphansBefore(ctx, "u1", time.Now().UTC().Add(time.Hour)); err != nil ||
+		len(orphans) != 0 {
+		t.Fatalf("回收之后待回收行应删除: %v %v", orphans, err)
+	}
+
+	// 设备名册：带标识的请求更新最近出现时间与能力，补行不动已有能力。
+	if err := st.TouchDevice(ctx, "u1", "d1", []string{"snapshot"}); err != nil {
+		t.Fatalf("记录 d1: %v", err)
+	}
+	if err := st.EnsureDevice(ctx, "u1", "d2"); err != nil {
+		t.Fatalf("补行 d2: %v", err)
+	}
+	devices, err := st.Devices(ctx, "u1", 50)
+	if err != nil || len(devices) != 2 {
+		t.Fatalf("名册: %+v %v", devices, err)
+	}
+	byID := map[string]syncsvc.Device{}
+	for _, device := range devices {
+		byID[device.DeviceID] = device
+	}
+	if got := byID["d1"]; len(got.Capabilities) != 1 || got.Capabilities[0] != "snapshot" {
+		t.Fatalf("d1 的能力: %+v", got)
+	}
+	if got := byID["d2"]; len(got.Capabilities) != 0 || got.Alias != "" {
+		t.Fatalf("补行设备的别名与能力应为空: %+v", got)
+	}
+	// 有活跃设备没有声明 snapshot 时门槛应拦下压缩。
+	blocked, err := st.ActiveDeviceWithoutCapability(ctx, "u1", time.Now().UTC().Add(-time.Hour), "snapshot")
+	if err != nil || !blocked {
+		t.Fatalf("d2 缺能力时应拦下压缩: %v %v", blocked, err)
+	}
+	if err := st.TouchDevice(ctx, "u1", "d2", []string{"snapshot"}); err != nil {
+		t.Fatalf("更新 d2 能力: %v", err)
+	}
+	blocked, err = st.ActiveDeviceWithoutCapability(ctx, "u1", time.Now().UTC().Add(-time.Hour), "snapshot")
+	if err != nil || blocked {
+		t.Fatalf("设备都声明能力之后不应拦下压缩: %v %v", blocked, err)
+	}
+	// 能力声明确实为空串的设备（旧版本客户端补行）也必须挡住压缩：这里不依赖
+	// string_to_array('', ',') 在 PostgreSQL 上的取值语义。
+	if err := st.TouchDevice(ctx, "u1", "d3", nil); err != nil {
+		t.Fatalf("记录空能力设备: %v", err)
+	}
+	var storedCaps string
+	if err := st.pool.QueryRow(ctx, `SELECT capabilities FROM sync_device WHERE user_id = $1 AND device_id = $2`, "u1", "d3").Scan(&storedCaps); err != nil || storedCaps != "" {
+		t.Fatalf("空能力设备在库里应为空串: %q %v", storedCaps, err)
+	}
+	blocked, err = st.ActiveDeviceWithoutCapability(ctx, "u1", time.Now().UTC().Add(-time.Hour), "snapshot")
+	if err != nil || !blocked {
+		t.Fatalf("能力为空串的设备应拦下压缩: %v %v", blocked, err)
+	}
+	// 活跃窗口之外没有设备，也不拦。
+	blocked, err = st.ActiveDeviceWithoutCapability(ctx, "u1", time.Now().UTC().Add(time.Hour), "snapshot")
+	if err != nil || blocked {
+		t.Fatalf("没有活跃设备时视为可以压缩: %v %v", blocked, err)
+	}
+
+	// 改名只改已有设备，未知设备返回 ErrDeviceNotFound。
+	renamed, err := st.RenameDevice(ctx, "u1", "d1", "我的手机")
+	if err != nil || renamed.Alias != "我的手机" || renamed.DeviceID != "d1" {
+		t.Fatalf("改名: %+v %v", renamed, err)
+	}
+	if _, err := st.RenameDevice(ctx, "u1", "missing", "x"); !errors.Is(err, syncsvc.ErrDeviceNotFound) {
+		t.Fatalf("未知设备应返回 ErrDeviceNotFound，得到 %v", err)
+	}
+
+	// 清空云端数据把待回收行与名册一起清掉。
+	if _, err := st.pool.Exec(ctx, `INSERT INTO sync_snapshot_orphan (user_id, sha256) VALUES ($1, $2)`, "u1", shaB); err != nil {
+		t.Fatalf("重建待回收行: %v", err)
+	}
+	if err := st.Reset(ctx, "u1"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if orphans, err = st.SnapshotOrphansBefore(ctx, "u1", time.Now().UTC().Add(24*time.Hour)); err != nil || len(orphans) != 0 {
+		t.Fatalf("清空之后待回收表应为空: %v %v", orphans, err)
+	}
+	if devices, err = st.Devices(ctx, "u1", 50); err != nil || len(devices) != 0 {
+		t.Fatalf("清空之后名册应为空: %+v %v", devices, err)
+	}
+}
+
 func TestPostgresBackupsAndQuota(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

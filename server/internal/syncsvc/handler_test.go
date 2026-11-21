@@ -1,6 +1,7 @@
 package syncsvc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,15 +31,23 @@ type testAPI struct {
 	h *Handler
 }
 
-func (a testAPI) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { a.h.Head(w, r) }
+func (a testAPI) GetV1SyncHead(w http.ResponseWriter, r *http.Request, params api.GetV1SyncHeadParams) {
+	a.h.Head(w, r, params)
+}
 
 func (a testAPI) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
 	a.h.Pull(w, r, params)
 }
 
-func (a testAPI) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) { a.h.Push(w, r) }
+func (a testAPI) PostV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.PostV1SyncCommitsParams) {
+	a.h.Push(w, r, params)
+}
 
 func (a testAPI) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) { a.h.Reset(w, r) }
+
+func (a testAPI) GetV1SyncDevices(w http.ResponseWriter, r *http.Request) { a.h.Devices(w, r) }
+
+func (a testAPI) PutV1SyncDevices(w http.ResponseWriter, r *http.Request) { a.h.RenameDevice(w, r) }
 
 // newTestServer 装配本包处理器与鉴权中间件，返回客户端与用于签发测试令牌的
 // 账号服务；限流由 server 包统一测。
@@ -239,13 +248,14 @@ func (a snapshotAPI) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
 	a.h.Snapshot(w, r)
 }
 
-func (a snapshotAPI) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
-	a.h.RegisterSnapshot(w, r)
+func (a snapshotAPI) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request, params api.PutV1SyncSnapshotParams) {
+	a.h.RegisterSnapshot(w, r, params)
 }
 
 // snapshotHarness 是一套带可控时钟与附件查询的同步服务：保留期要在用例里直接
 // 拨动，附件归属用一个只认测试哈希的查询模拟。
 type snapshotHarness struct {
+	t       *testing.T
 	client  *testutil.Client
 	authSvc *auth.Service
 	store   *MemoryStore
@@ -254,12 +264,13 @@ type snapshotHarness struct {
 
 func newSnapshotHarness(t *testing.T) *snapshotHarness {
 	t.Helper()
-	h := &snapshotHarness{store: NewMemoryStore(), clock: time.Now()}
+	h := &snapshotHarness{t: t, store: NewMemoryStore(), clock: time.Now()}
 	h.store.now = func() time.Time { return h.clock }
 	h.authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := NewService(h.store, testSchemaVersion).
 		SetAttachments(fakeAttachments{snapshotSHA: 4096}).
+		SetCompact(true).
 		SetCompactKeep(time.Hour)
 	handler := NewHandler(svc, log, 16*testMaxJSON)
 	h.client = testutil.NewClient(t, testutil.NewServer(
@@ -273,6 +284,41 @@ func newSnapshotHarness(t *testing.T) *snapshotHarness {
 // snapshotBody 是一次快照登记的请求体。
 func snapshotBody(seq int64, sha string) map[string]any {
 	return map[string]any{"seq": seq, "sha256": sha, "digest": snapshotDigest}
+}
+
+// syncJSON 发一次带设备标识与能力声明的请求：压缩门槛要看名册，用例里的设备
+// 必须在请求头里声明 snapshot 才会允许删除提交（ADR-0047、ADR-0048）。
+func (h *snapshotHarness) syncJSON(method, path, token string, in, out any) int {
+	h.t.Helper()
+	return h.jsonWithHeaders(method, path, token, in, out, map[string]string{
+		"X-Device-Id":         "device-a",
+		"X-Sync-Capabilities": "snapshot",
+	})
+}
+
+// jsonWithHeaders 与 syncJSON 相同，只是请求头由调用方给出。
+func (h *snapshotHarness) jsonWithHeaders(method, path, token string, in, out any, headers map[string]string) int {
+	h.t.Helper()
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			h.t.Fatalf("%s %s: marshal: %v", method, path, err)
+		}
+		body = bytes.NewReader(b)
+	}
+	all := map[string]string{"Content-Type": "application/json"}
+	for key, value := range headers {
+		all[key] = value
+	}
+	resp := h.client.Do(method, path, token, body, all)
+	defer resp.Body.Close()
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil && err != io.EOF {
+			h.t.Fatalf("%s %s: decode: %v", method, path, err)
+		}
+	}
+	return resp.StatusCode
 }
 
 // TestHandlerSnapshotRegistration 守住新接口的鉴权、参数校验与登记语义：不能
@@ -362,7 +408,7 @@ func TestHandlerPullAfterCompaction(t *testing.T) {
 
 	for i := range 4 {
 		var push api.PushResult
-		if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		if code := h.syncJSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
 			"base_seq": i, "commits": []any{commitBody(fmt.Sprintf("r%d", i))},
 		}, &push); code != http.StatusOK || push.Head != int64(i+1) {
 			t.Fatalf("push %d: %d %+v", i, code, push)
@@ -376,7 +422,7 @@ func TestHandlerPullAfterCompaction(t *testing.T) {
 	// 拨过保留期再登记快照，四条提交都早于保留窗口，登记时删除。
 	h.clock = h.clock.Add(2 * time.Hour)
 	var head api.SyncHead
-	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(4, snapshotSHA), &head); code != http.StatusOK || head.Head != 4 || head.EarliestSeq != 5 || head.Snapshot == nil || head.Snapshot.Seq != 4 {
+	if code := h.syncJSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(4, snapshotSHA), &head); code != http.StatusOK || head.Head != 4 || head.EarliestSeq != 5 || head.Snapshot == nil || head.Snapshot.Seq != 4 {
 		t.Fatalf("压缩之后登记: %d %+v", code, head)
 	}
 
@@ -487,5 +533,132 @@ func TestHandlerRoundTripsOptionalStateDigest(t *testing.T) {
 	}
 	if _, present := first["state_digest"]; present {
 		t.Fatalf("没有带摘要的提交不该出现 state_digest: %+v", first)
+	}
+}
+
+// findDevice 按设备标识在名册响应里找一台设备。
+func findDevice(t *testing.T, list api.SyncDeviceList, deviceID string) api.SyncDevice {
+	t.Helper()
+	for _, device := range list.Devices {
+		if device.DeviceId == deviceID {
+			return device
+		}
+	}
+	t.Fatalf("名册里没有设备 %s: %+v", deviceID, list.Devices)
+	return api.SyncDevice{}
+}
+
+// TestHandlerDeviceRoster 守住设备名册的请求路径：带 X-Device-Id 的同步请求更
+// 新最近出现时间与能力声明（整组替换，别名不动）；没有请求头的推送按提交里的
+// 设备标识补行；GET 与 PUT /v1/sync/devices 返回名册、改别名、未知设备 404，
+// 别名按去掉首尾空白之后的字符数校验（ADR-0048）。
+func TestHandlerDeviceRoster(t *testing.T) {
+	h := newSnapshotHarness(t)
+	token := signIn(t, h.authSvc, "devices@b.cn")
+
+	var push api.PushResult
+	if code := h.syncJSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 0, "commits": []any{commitBody("r1")},
+	}, &push); code != http.StatusOK || push.Head != 1 {
+		t.Fatalf("带设备头的推送: %d %+v", code, push)
+	}
+
+	var page api.SyncDeviceList
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK || len(page.Devices) != 1 {
+		t.Fatalf("名册: %d %+v", code, page)
+	}
+	first := findDevice(t, page, "device-a")
+	if first.Alias != "" || len(first.Capabilities) != 1 || first.Capabilities[0] != "snapshot" || !first.LastSeen.Equal(h.clock) {
+		t.Fatalf("第一次记录的设备: %+v", first)
+	}
+
+	// 拨快时钟再同步一次，能力整组替换（大小写与空白按逗号拆分规范化）。
+	h.clock = h.clock.Add(time.Minute)
+	if code := h.jsonWithHeaders(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 1, "commits": []any{commitBody("r2")},
+	}, &push, map[string]string{
+		"X-Device-Id":         "device-a",
+		"X-Sync-Capabilities": "Snapshot, OTHER, snapshot",
+	}); code != http.StatusOK {
+		t.Fatalf("第二次推送: %d", code)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("名册: %d", code)
+	}
+	second := findDevice(t, page, "device-a")
+	if len(second.Capabilities) != 2 || second.Capabilities[0] != "snapshot" || second.Capabilities[1] != "other" {
+		t.Fatalf("能力声明应整组替换并规范化: %+v", second.Capabilities)
+	}
+	if !second.LastSeen.Equal(h.clock) || !second.LastSeen.After(first.LastSeen) {
+		t.Fatalf("最近出现时间应更新: first=%v second=%v", first.LastSeen, second.LastSeen)
+	}
+
+	// 改名：首尾空白去掉，别名落库并原样返回。
+	var renamed api.SyncDevice
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/devices", token, map[string]any{
+		"device_id": "device-a", "alias": "  我的手机  ",
+	}, &renamed); code != http.StatusOK || renamed.Alias != "我的手机" || renamed.DeviceId != "device-a" {
+		t.Fatalf("改名: %d %+v", code, renamed)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("改名之后的名册: %d", code)
+	}
+	if got := findDevice(t, page, "device-a"); got.Alias != "我的手机" {
+		t.Fatalf("别名没有保存: %+v", got)
+	}
+	// 空串表示清除。
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/devices", token, map[string]any{
+		"device_id": "device-a", "alias": "   ",
+	}, &renamed); code != http.StatusOK || renamed.Alias != "" {
+		t.Fatalf("清除别名: %d %+v", code, renamed)
+	}
+
+	// 未知设备返回 404 not_found。
+	var p testutil.Problem
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/devices", token, map[string]any{
+		"device_id": "device-unknown", "alias": "别的手机",
+	}, &p); code != http.StatusNotFound || p.Code != string(httpx.CodeNotFound) {
+		t.Fatalf("未知设备: %d %+v", code, p)
+	}
+	// 别名超过 64 个字符、设备标识为空都按无效请求返回 400。
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/devices", token, map[string]any{
+		"device_id": "device-a", "alias": strings.Repeat("名", 65),
+	}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeInvalidRequest) {
+		t.Fatalf("超长别名: %d %+v", code, p)
+	}
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/devices", token, map[string]any{
+		"device_id": "", "alias": "手机",
+	}, &p); code != http.StatusBadRequest {
+		t.Fatalf("空设备标识: %d %+v", code, p)
+	}
+	// 恰好 64 个字符的别名可以保存。
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/devices", token, map[string]any{
+		"device_id": "device-a", "alias": strings.Repeat("名", 64),
+	}, &renamed); code != http.StatusOK || len([]rune(renamed.Alias)) != 64 {
+		t.Fatalf("64 字符别名: %d %+v", code, renamed)
+	}
+
+	// 没有设备标识的推送按提交里的设备标识补一行，能力与别名留空。
+	other := commitBody("r3")
+	other["device_id"] = "device-b"
+	if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 2, "commits": []any{other},
+	}, &push); code != http.StatusOK || push.Head != 3 {
+		t.Fatalf("没有设备头的推送: %d %+v", code, push)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK || len(page.Devices) != 2 {
+		t.Fatalf("补行之后的名册: %d %+v", code, page)
+	}
+	added := findDevice(t, page, "device-b")
+	if added.Alias != "" || len(added.Capabilities) != 0 {
+		t.Fatalf("补行设备的别名与能力应为空: %+v", added)
+	}
+
+	// 清空云端数据把名册一起清掉。
+	if code := h.client.JSON(http.MethodDelete, "/v1/sync/commits", token, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("清空: %d", code)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK || len(page.Devices) != 0 {
+		t.Fatalf("清空之后的名册: %d %+v", code, page)
 	}
 }

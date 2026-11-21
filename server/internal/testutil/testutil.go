@@ -216,7 +216,9 @@ func (Base) GetV1LlmModels(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 func (Base) GetV1LlmQuota(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
-func (Base) GetV1SyncHead(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
+func (Base) GetV1SyncHead(w http.ResponseWriter, _ *http.Request, _ api.GetV1SyncHeadParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
 
 func (Base) DeleteV1SyncCommits(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
@@ -226,7 +228,7 @@ func (Base) GetV1SyncCommits(w http.ResponseWriter, _ *http.Request, _ api.GetV1
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (Base) PostV1SyncCommits(w http.ResponseWriter, _ *http.Request) {
+func (Base) PostV1SyncCommits(w http.ResponseWriter, _ *http.Request, _ api.PostV1SyncCommitsParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
@@ -234,7 +236,15 @@ func (Base) GetV1SyncSnapshot(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (Base) PutV1SyncSnapshot(w http.ResponseWriter, _ *http.Request) {
+func (Base) PutV1SyncSnapshot(w http.ResponseWriter, _ *http.Request, _ api.PutV1SyncSnapshotParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (Base) GetV1SyncDevices(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (Base) PutV1SyncDevices(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 

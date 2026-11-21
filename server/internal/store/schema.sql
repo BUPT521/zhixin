@@ -124,6 +124,33 @@ CREATE TABLE sync_commit_seen (
   PRIMARY KEY (user_id, request_id)
 );
 
+-- 被新快照替换下来的旧附件，按宽限期回收（ADR-0047）。每行是账号、附件哈希与
+-- 让位时间；同一哈希重复让位时保留最早的 orphaned_at，新指针哈希重新投入使用时
+-- 删掉这一行，回收时还要排除当前指针。清空云端数据时整表清掉，删号按外键级联。
+CREATE TABLE sync_snapshot_orphan (
+  user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  sha256       TEXT NOT NULL,
+  orphaned_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, sha256)
+);
+-- 回收按账号找早于宽限期的行。
+CREATE INDEX sync_snapshot_orphan_by_user_time ON sync_snapshot_orphan(user_id, orphaned_at);
+
+-- 账号级设备名册（ADR-0048）：设备标识、用户设置的别名、能力声明与首次、最近
+-- 出现时间。capabilities 是逗号分隔的小写能力名，当前只有 snapshot；压缩门槛
+-- 按最近出现时间判断设备是否活跃。清空云端数据时整表清掉，删号按外键级联。
+CREATE TABLE sync_device (
+  user_id       TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  device_id     TEXT NOT NULL,
+  alias         TEXT NOT NULL DEFAULT '',
+  capabilities  TEXT NOT NULL DEFAULT '',
+  first_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, device_id)
+);
+-- 设备列表按最近出现时间倒序；压缩门槛按同一顺序找活跃设备。
+CREATE INDEX sync_device_by_user_seen ON sync_device(user_id, last_seen DESC);
+
 -- 整库备份：字节在对象存储的 backups/<user_id>/<id>.zip。
 CREATE TABLE backup (
   id              TEXT PRIMARY KEY,

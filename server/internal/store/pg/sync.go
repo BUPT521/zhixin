@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -47,9 +48,9 @@ func (s *Store) State(ctx context.Context, userID string) (syncsvc.State, error)
 //
 // 已经出现过的 request_id 不再写入；整批都是重放时直接返回当前 head，因为
 // 客户端没有收到上一次的响应（与内存实现一致）。追加会让账号超过序列预算时，
-// 有快照就先删掉快照位置之前的全部提交再判断，仍然超出才返回 ErrStorageFull
-// （ADR-0043）。
-func (s *Store) Append(ctx context.Context, userID string, base int64, commits []syncsvc.Commit) (int64, error) {
+// 策略允许删除就先删掉快照位置之前的全部提交再判断，仍然超出才返回
+// ErrStorageFull（ADR-0043、ADR-0047）。
+func (s *Store) Append(ctx context.Context, userID string, base int64, commits []syncsvc.Commit, policy syncsvc.CompactPolicy) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -108,6 +109,9 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 		return 0, err
 	}
 	if used+added+metadataBytes > syncsvc.MaxAccountBytes {
+		if !policy.AllowDelete {
+			return head, syncsvc.ErrStorageFull
+		}
 		through, err := compactThroughSnapshot(ctx, q, userID, trimmed)
 		if err != nil {
 			return head, err
@@ -196,9 +200,10 @@ func compactThroughSnapshot(ctx context.Context, q *db.Queries, userID string, t
 	return through, nil
 }
 
-// RegisterSnapshot 在一个事务里锁住 sync_head，核对位置之后保存快照指针，并按
-// 保留期删掉快照覆盖的旧提交。位置比已经保存的旧时返回 ErrSnapshotStale，位置
-// 超出 head 时返回 ErrInvalid（ADR-0043）。
+// RegisterSnapshot 在一个事务里锁住 sync_head，核对位置之后保存快照指针，记下
+// 让位的旧哈希，并在策略允许时按保留期删掉快照覆盖的旧提交。位置比已经保存的
+// 旧时返回 ErrSnapshotStale，位置超出 head 时返回 ErrInvalid（ADR-0043、
+// ADR-0047）。
 func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsvc.Snapshot, policy syncsvc.CompactPolicy) (syncsvc.State, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -217,6 +222,7 @@ func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsv
 	state := syncsvc.State{Head: locked.Head, EarliestSeq: locked.TrimmedThrough + 1}
 
 	current, err := q.SyncSnapshot(ctx, userID)
+	oldSHA := ""
 	switch {
 	case err == nil:
 		cur := syncsvc.Snapshot{
@@ -226,6 +232,7 @@ func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsv
 			CreatedAt: current.CreatedAt.Time,
 		}
 		state.Snapshot = &cur
+		oldSHA = current.Sha256
 		if snap.Seq < cur.Seq {
 			return state, syncsvc.ErrSnapshotStale
 		}
@@ -238,6 +245,23 @@ func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsv
 	if snap.CreatedAt.IsZero() {
 		snap.CreatedAt = time.Now().UTC()
 	}
+	// 旧指针让位时记入待回收表，同一哈希重复让位保留最早的时间；新指针的哈希
+	// 原本在待回收表里时删掉那一行，避免回收一份重新投入使用的附件（ADR-0047
+	// 第 1 条）。
+	if oldSHA != "" && oldSHA != snap.SHA256 {
+		if err := q.InsertSyncSnapshotOrphan(ctx, db.InsertSyncSnapshotOrphanParams{
+			UserID: userID,
+			Sha256: oldSHA,
+		}); err != nil {
+			return syncsvc.State{}, err
+		}
+	}
+	if err := q.DeleteSyncSnapshotOrphan(ctx, db.DeleteSyncSnapshotOrphanParams{
+		UserID: userID,
+		Sha256: snap.SHA256,
+	}); err != nil {
+		return syncsvc.State{}, err
+	}
 	if err := q.UpsertSyncSnapshot(ctx, db.UpsertSyncSnapshotParams{
 		UserID:    userID,
 		Seq:       snap.Seq,
@@ -248,9 +272,9 @@ func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsv
 		return syncsvc.State{}, err
 	}
 	// 常规压缩按保留期：快照位置及之前、早于保留窗口的提交删除，让落后不多的
-	// 设备继续增量拉取。
+	// 设备继续增量拉取。策略不允许删除时只写指针（ADR-0047 第 3 条）。
 	trimmed := state.EarliestSeq - 1
-	if policy.Keep > 0 {
+	if policy.AllowDelete && policy.Keep > 0 {
 		cutoff := time.Now().UTC().Add(-policy.Keep)
 		through, err := q.SyncCompactionPoint(ctx, db.SyncCompactionPointParams{
 			UserID:     userID,
@@ -283,8 +307,8 @@ func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsv
 	return syncsvc.State{Head: state.Head, EarliestSeq: trimmed + 1, Snapshot: &stored}, nil
 }
 
-// Reset 在一个事务里清空账号的提交序列、快照指针、保留下界与去重记录，并把 head
-// 重置为 0。
+// Reset 在一个事务里清空账号的提交序列、快照指针、保留下界、去重记录、待回收
+// 行与设备名册，并把 head 重置为 0。
 //
 // 与 Append 走同一套顺序：先 EnsureSyncHead 保证 head 行存在，再 LockSyncHead 锁住
 // 它，删完之后用 ResetSyncHead 写回 0。这样并发的推送要么在锁前完成、要么在重置
@@ -312,10 +336,110 @@ func (s *Store) Reset(ctx context.Context, userID string) error {
 	if err := q.DeleteSyncSnapshot(ctx, userID); err != nil {
 		return err
 	}
+	if err := q.DeleteSyncSnapshotOrphans(ctx, userID); err != nil {
+		return err
+	}
+	if err := q.DeleteSyncDevices(ctx, userID); err != nil {
+		return err
+	}
 	if err := q.ResetSyncHead(ctx, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// ---- 旧快照附件回收与设备名册（ADR-0047、ADR-0048） ----
+
+// SnapshotOrphansBefore 列出让位时间早于 before 的哈希，排除当前快照指针。
+func (s *Store) SnapshotOrphansBefore(ctx context.Context, userID string, before time.Time) ([]string, error) {
+	at, err := pgTime(before)
+	if err != nil {
+		return nil, err
+	}
+	return s.q.SyncSnapshotOrphansBefore(ctx, db.SyncSnapshotOrphansBeforeParams{
+		UserID: userID,
+		Before: at,
+	})
+}
+
+// ReclaimSnapshotOrphan 回收一份旧快照附件：先删对象存储里的字节（不存在按已
+// 删除处理），再删附件索引行，最后删待回收行。任一步失败都保留后面的行，下一轮
+// 登记再试（ADR-0047）。
+func (s *Store) ReclaimSnapshotOrphan(ctx context.Context, userID, sha string) error {
+	if err := s.objects.Remove(ctx, objectstore.AttachmentKey(userID, sha)); err != nil {
+		return err
+	}
+	if _, err := s.q.DeleteAttachment(ctx, db.DeleteAttachmentParams{UserID: userID, Sha256: sha}); err != nil {
+		return err
+	}
+	return s.q.DeleteSyncSnapshotOrphan(ctx, db.DeleteSyncSnapshotOrphanParams{UserID: userID, Sha256: sha})
+}
+
+// TouchDevice 更新名册：最近出现时间写服务端当前时间，能力整组替换，别名不动。
+func (s *Store) TouchDevice(ctx context.Context, userID, deviceID string, capabilities []string) error {
+	return s.q.TouchSyncDevice(ctx, db.TouchSyncDeviceParams{
+		UserID:       userID,
+		DeviceID:     deviceID,
+		Capabilities: syncsvc.JoinCapabilities(capabilities),
+	})
+}
+
+// EnsureDevice 补一行设备；已有行只更新最近出现时间，能力与别名保持原样。
+func (s *Store) EnsureDevice(ctx context.Context, userID, deviceID string) error {
+	return s.q.EnsureSyncDevice(ctx, db.EnsureSyncDeviceParams{UserID: userID, DeviceID: deviceID})
+}
+
+// Devices 按最近出现时间倒序列出名册，最多 limit 条。
+func (s *Store) Devices(ctx context.Context, userID string, limit int) ([]syncsvc.Device, error) {
+	rows, err := s.q.SyncDevices(ctx, db.SyncDevicesParams{UserID: userID, RowLimit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]syncsvc.Device, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, deviceFromRow(row.DeviceID, row.Alias, row.Capabilities, row.LastSeen.Time))
+	}
+	return out, nil
+}
+
+// RenameDevice 改本账号已有设备的别名，未知设备返回 ErrDeviceNotFound。
+func (s *Store) RenameDevice(ctx context.Context, userID, deviceID, alias string) (syncsvc.Device, error) {
+	row, err := s.q.RenameSyncDevice(ctx, db.RenameSyncDeviceParams{
+		UserID:   userID,
+		DeviceID: deviceID,
+		Alias:    alias,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return syncsvc.Device{}, syncsvc.ErrDeviceNotFound
+	}
+	if err != nil {
+		return syncsvc.Device{}, err
+	}
+	return deviceFromRow(row.DeviceID, row.Alias, row.Capabilities, row.LastSeen.Time), nil
+}
+
+// ActiveDeviceWithoutCapability 报告最近 since 之后出现过的设备里有没有任何一台
+// 没有声明 capability；名册为空时返回 false。
+func (s *Store) ActiveDeviceWithoutCapability(ctx context.Context, userID string, since time.Time, capability string) (bool, error) {
+	at, err := pgTime(since)
+	if err != nil {
+		return false, err
+	}
+	return s.q.SyncActiveDeviceWithoutCapability(ctx, db.SyncActiveDeviceWithoutCapabilityParams{
+		UserID:      userID,
+		ActiveSince: at,
+		Capability:  capability,
+	})
+}
+
+// deviceFromRow 把库里的一行设备转成 syncsvc 的类型，能力声明按逗号拆开。
+func deviceFromRow(deviceID, alias, capabilities string, lastSeen time.Time) syncsvc.Device {
+	return syncsvc.Device{
+		DeviceID:     deviceID,
+		Alias:        alias,
+		Capabilities: syncsvc.SplitCapabilities(capabilities),
+		LastSeen:     lastSeen,
+	}
 }
 
 // After 返回 seq 大于 after 的提交，按顺序最多 limit 条。

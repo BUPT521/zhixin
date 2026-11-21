@@ -53,6 +53,15 @@ type Config struct {
 	// SyncCompactKeep 是快照位置之下仍然保留提交的时间窗口：登记快照时，早于它
 	// 的已覆盖提交删除，落后不多的设备因此不必重新克隆（ADR-0043）。
 	SyncCompactKeep time.Duration
+	// SyncCompact 打开快照压缩：关闭时登记只写指针、推送遇到预算压力也不按快照
+	// 删提交，仍超限就返回 storage_full（ADR-0047）。默认关闭。
+	SyncCompact bool
+	// SyncSnapshotGrace 是旧快照附件的回收宽限期：登记新快照之后，让位时间早于
+	// 它减去当前时间的旧字节才会删除（ADR-0047）。
+	SyncSnapshotGrace time.Duration
+	// SyncDeviceActive 是压缩门槛看设备是否活跃的时间窗口：最近这段时间内出现过
+	// 的设备只要有一台没有声明 snapshot，就不删提交（ADR-0047）。
+	SyncDeviceActive time.Duration
 	// BackupsKept is how many snapshots are retained per account.
 	BackupsKept int
 	// BackupReconcileInterval 是对象存储对账的周期：列出 backups/ 下的对象，
@@ -273,6 +282,9 @@ func Load(getenv func(string) string) (Config, error) {
 		MaxAccountAttachmentBytes: num("ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES", "2147483648"),
 		SyncPullMaxBytes:          num("ZHIXIN_SYNC_PULL_MAX_BYTES", "4194304"),
 		SyncCompactKeep:           dur("ZHIXIN_SYNC_COMPACT_KEEP", "168h"),
+		SyncCompact:               get("ZHIXIN_SYNC_COMPACT", "0") == "1",
+		SyncSnapshotGrace:         dur("ZHIXIN_SYNC_SNAPSHOT_GRACE", "24h"),
+		SyncDeviceActive:          dur("ZHIXIN_SYNC_DEVICE_ACTIVE", "720h"),
 		BackupsKept:               int(num("ZHIXIN_BACKUPS_KEPT", "5")),
 		BackupReconcileInterval:   dur("ZHIXIN_BACKUP_RECONCILE_INTERVAL", "24h"),
 		BlobDir:                   get("ZHIXIN_BLOB_DIR", "data/blobs"),

@@ -496,7 +496,7 @@ func (failingSyncStore) State(context.Context, string) (syncsvc.State, error) {
 	return syncsvc.State{}, errors.New("database is down")
 }
 
-func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit) (int64, error) {
+func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit, syncsvc.CompactPolicy) (int64, error) {
 	return 0, errors.New("database is down")
 }
 
@@ -510,6 +510,34 @@ func (failingSyncStore) RegisterSnapshot(context.Context, string, syncsvc.Snapsh
 
 func (failingSyncStore) Reset(context.Context, string) error {
 	return errors.New("database is down")
+}
+
+func (failingSyncStore) SnapshotOrphansBefore(context.Context, string, time.Time) ([]string, error) {
+	return nil, errors.New("database is down")
+}
+
+func (failingSyncStore) ReclaimSnapshotOrphan(context.Context, string, string) error {
+	return errors.New("database is down")
+}
+
+func (failingSyncStore) TouchDevice(context.Context, string, string, []string) error {
+	return errors.New("database is down")
+}
+
+func (failingSyncStore) EnsureDevice(context.Context, string, string) error {
+	return errors.New("database is down")
+}
+
+func (failingSyncStore) Devices(context.Context, string, int) ([]syncsvc.Device, error) {
+	return nil, errors.New("database is down")
+}
+
+func (failingSyncStore) RenameDevice(context.Context, string, string, string) (syncsvc.Device, error) {
+	return syncsvc.Device{}, errors.New("database is down")
+}
+
+func (failingSyncStore) ActiveDeviceWithoutCapability(context.Context, string, time.Time, string) (bool, error) {
+	return false, errors.New("database is down")
 }
 
 func TestInternalErrorsAreProblems(t *testing.T) {

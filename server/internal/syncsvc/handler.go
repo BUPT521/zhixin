@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
@@ -72,8 +73,11 @@ func (h *Handler) syncHead(state State) api.SyncHead {
 	return out
 }
 
-func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Head(w http.ResponseWriter, r *http.Request, params api.GetV1SyncHeadParams) {
 	p := auth.MustPrincipal(r.Context())
+	if id, caps, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
+		h.recordDevice(r.Context(), p.UserID, id, caps)
+	}
 	state, err := h.svc.State(r.Context(), p.UserID)
 	if err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
@@ -95,6 +99,9 @@ func (h *Handler) Snapshot(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
 	p := auth.MustPrincipal(r.Context())
+	if id, caps, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
+		h.recordDevice(r.Context(), p.UserID, id, caps)
+	}
 	result, err := h.svc.Pull(r.Context(), p.UserID, params.After, params.Limit)
 	var compacted *CompactedError
 	if errors.As(err, &compacted) {
@@ -148,7 +155,7 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
-func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Push(w http.ResponseWriter, r *http.Request, params api.PostV1SyncCommitsParams) {
 	p := auth.MustPrincipal(r.Context())
 	if !h.allowWrite(w, r, p.UserID) {
 		return
@@ -157,6 +164,7 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
 	}
+	deviceID, capabilities, hasDevice := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities)
 	head, err := h.svc.Push(r.Context(), p.UserID, in.BaseSeq, in.Commits)
 	if errors.Is(err, ErrStorageFull) {
 		httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodeStorageFull, err.Error(), map[string]any{"resource": "sync"})
@@ -180,6 +188,13 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
+	// 名册在推送成功之后更新：带设备标识的请求按头里的能力整组替换，没有头时
+	// 按提交里出现的设备标识补行，能力与别名留空（ADR-0048）。
+	if hasDevice {
+		h.recordDevice(r.Context(), p.UserID, deviceID, capabilities)
+	} else {
+		h.recordCommitDevices(r.Context(), p.UserID, in.Commits)
+	}
 	httpx.WriteJSON(w, http.StatusOK, api.PushResult{Head: head})
 }
 
@@ -187,10 +202,13 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 // extra.snapshot_seq 给出当前位置；位置超出 head、两个哈希不是 64 位小写十六
 // 进制、附件不属于这个账号或大小不合理时返回 400；没有装配附件查询时返回 501
 // （ADR-0043）。
-func (h *Handler) RegisterSnapshot(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) RegisterSnapshot(w http.ResponseWriter, r *http.Request, params api.PutV1SyncSnapshotParams) {
 	p := auth.MustPrincipal(r.Context())
 	if !h.allowWrite(w, r, p.UserID) {
 		return
+	}
+	if id, caps, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
+		h.recordDevice(r.Context(), p.UserID, id, caps)
 	}
 	var in api.SnapshotRegistration
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
@@ -233,4 +251,107 @@ func (h *Handler) Reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Devices 返回账号的设备名册，按最近出现时间倒序，最多 50 条（ADR-0048）。
+func (h *Handler) Devices(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r.Context())
+	devices, err := h.svc.Devices(r.Context(), p.UserID)
+	if err != nil {
+		httpx.WriteInternal(w, r, h.log, err)
+		return
+	}
+	out := api.SyncDeviceList{Devices: make([]api.SyncDevice, 0, len(devices))}
+	for _, device := range devices {
+		out.Devices = append(out.Devices, apiDevice(device))
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// RenameDevice 修改一台已知设备的别名。未知设备返回 404；设备标识或别名不合
+// 形状时返回 400；清除云端数据期间的改名与其它写请求一样返回 409（ADR-0048）。
+func (h *Handler) RenameDevice(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r.Context())
+	if !h.allowWrite(w, r, p.UserID) {
+		return
+	}
+	var in api.SyncDeviceRename
+	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	device, err := h.svc.RenameDevice(r.Context(), p.UserID, in.DeviceId, in.Alias)
+	switch {
+	case errors.Is(err, ErrDeviceNotFound):
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "device is not in the roster")
+	case errors.Is(err, ErrInvalid):
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
+			"device_id must be 1 to 64 bytes and alias at most 64 characters after trimming")
+	case err != nil:
+		httpx.WriteInternal(w, r, h.log, err)
+	default:
+		httpx.WriteJSON(w, http.StatusOK, apiDevice(device))
+	}
+}
+
+// deviceFromRequest 取这次请求的设备标识与能力声明。没有设备标识或标识超过 64
+// 字节时按没有带处理，名册因此不会被一个不合形状的值写乱。
+func deviceFromRequest(deviceID, capabilities *string) (string, []string, bool) {
+	if deviceID == nil {
+		return "", nil, false
+	}
+	id := strings.TrimSpace(*deviceID)
+	if id == "" || len(id) > maxDeviceIDBytes {
+		return "", nil, false
+	}
+	names := []string{}
+	if capabilities != nil {
+		names = SplitCapabilities(*capabilities)
+	}
+	return id, names, true
+}
+
+// recordDevice 更新设备名册：最近出现时间写服务端当前时间，能力整组替换，别名
+// 不动。写入失败只记日志，不影响这一轮同步的结果（ADR-0048）。
+func (h *Handler) recordDevice(ctx context.Context, userID, deviceID string, capabilities []string) {
+	if err := h.svc.TouchDevice(ctx, userID, deviceID, capabilities); err != nil {
+		h.log.Warn("cannot record a sync device",
+			slog.String("user_id", userID),
+			slog.String("device_id", deviceID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// recordCommitDevices 在没有设备标识的推送里按提交出现的设备标识补行，能力与
+// 别名留空，旧版本客户端因此也会出现在名册里（ADR-0048）。
+func (h *Handler) recordCommitDevices(ctx context.Context, userID string, commits []api.Commit) {
+	seen := make(map[string]bool, len(commits))
+	for _, commit := range commits {
+		id := strings.TrimSpace(commit.DeviceId)
+		if id == "" || len(id) > maxDeviceIDBytes || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if err := h.svc.EnsureDevice(ctx, userID, id); err != nil {
+			h.log.Warn("cannot record a sync device from a commit",
+				slog.String("user_id", userID),
+				slog.String("device_id", id),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+}
+
+// apiDevice 把存储层的设备转成契约类型；能力为空时写空数组而不是 null。
+func apiDevice(device Device) api.SyncDevice {
+	capabilities := device.Capabilities
+	if capabilities == nil {
+		capabilities = []string{}
+	}
+	return api.SyncDevice{
+		DeviceId:     device.DeviceID,
+		Alias:        device.Alias,
+		Capabilities: capabilities,
+		LastSeen:     device.LastSeen,
+	}
 }

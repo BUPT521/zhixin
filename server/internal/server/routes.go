@@ -85,12 +85,14 @@ func (rt routes) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request) { rt.sync.Head(w, r) }
+func (rt routes) GetV1SyncHead(w http.ResponseWriter, r *http.Request, params api.GetV1SyncHeadParams) {
+	rt.sync.Head(w, r, params)
+}
 func (rt routes) GetV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.GetV1SyncCommitsParams) {
 	rt.sync.Pull(w, r, params)
 }
-func (rt routes) PostV1SyncCommits(w http.ResponseWriter, r *http.Request) {
-	rt.sync.Push(w, r)
+func (rt routes) PostV1SyncCommits(w http.ResponseWriter, r *http.Request, params api.PostV1SyncCommitsParams) {
+	rt.sync.Push(w, r, params)
 }
 func (rt routes) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 	if rt.auth.ConfirmPassword(w, r) {
@@ -100,8 +102,14 @@ func (rt routes) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 func (rt routes) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
 	rt.sync.Snapshot(w, r)
 }
-func (rt routes) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
-	rt.sync.RegisterSnapshot(w, r)
+func (rt routes) PutV1SyncSnapshot(w http.ResponseWriter, r *http.Request, params api.PutV1SyncSnapshotParams) {
+	rt.sync.RegisterSnapshot(w, r, params)
+}
+func (rt routes) GetV1SyncDevices(w http.ResponseWriter, r *http.Request) {
+	rt.sync.Devices(w, r)
+}
+func (rt routes) PutV1SyncDevices(w http.ResponseWriter, r *http.Request) {
+	rt.sync.RenameDevice(w, r)
 }
 
 func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
