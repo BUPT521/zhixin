@@ -14,6 +14,7 @@ import 'package:zhixin/data/revisions/revision_service.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 import '../support/app_scope_teardown.dart';
@@ -517,7 +518,11 @@ Widget _host(ThemeModeController themeMode, RevisionService? revisions) {
       data: zhixinForuiTheme,
       child: forui.FToaster(
         style: zhixinToasterStyle,
-        child: AppScope(themeMode: themeMode, child: child!),
+        child: AppScope(
+          themeAccent: ThemeAccentController(),
+          themeMode: themeMode,
+          child: child!,
+        ),
       ),
     ),
     home: DataVersionPage(revisions: revisions),

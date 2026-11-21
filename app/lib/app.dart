@@ -7,6 +7,7 @@ import 'domain/rules/time_policy.dart';
 import 'data/diagnostics/crash_log.dart';
 import 'ui/home_shell.dart';
 import 'ui/theme.dart';
+import 'ui/theme_accent_controller.dart';
 import 'ui/theme_mode_controller.dart';
 
 class ZhixinApp extends StatefulWidget {
@@ -15,6 +16,7 @@ class ZhixinApp extends StatefulWidget {
     this.crashLog,
     this.ai,
     this.themeMode,
+    this.themeAccent,
     this.clock,
   });
 
@@ -27,6 +29,9 @@ class ZhixinApp extends StatefulWidget {
   /// 启动前读到的外观；为空时跟随系统，测试与路径解析失败走这里。
   final ThemeModeController? themeMode;
 
+  /// 启动前读到的主题色；为空时用默认的蓝色。
+  final ThemeAccentController? themeAccent;
+
   /// 时间来源；为空时取系统时钟，测试传固定时钟。
   final Clock? clock;
 
@@ -37,52 +42,60 @@ class ZhixinApp extends StatefulWidget {
 class _ZhixinAppState extends State<ZhixinApp> {
   late final ThemeModeController _themeMode =
       widget.themeMode ?? ThemeModeController();
+  late final ThemeAccentController _themeAccent =
+      widget.themeAccent ?? ThemeAccentController();
 
   @override
   void dispose() {
     // 传进来的实例归 main 或调用方管；应用自己兜底建的那个才在这里释放。
     if (widget.themeMode == null) _themeMode.dispose();
+    if (widget.themeAccent == null) _themeAccent.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: _themeMode,
-      builder: (context, mode, _) => MaterialApp(
-        title: '知新',
-        debugShowCheckedModeBanner: false,
-        theme: zhixinTheme,
-        // 深浅色跟随系统，设置页可以把外观固定成浅色或深色。
-        darkTheme: zhixinDarkTheme,
-        themeMode: mode,
-        // 界面是中文的，Material 自带的日期选择、长按菜单等也跟着走中文。
-        locale: const Locale('zh', 'CN'),
-        supportedLocales: const [Locale('zh', 'CN')],
-        localizationsDelegates: const [
-          ...GlobalMaterialLocalizations.delegates,
-          forui.FLocalizations.delegate,
-        ],
-        // FTheme 放到 AppScope 外面：应用根自己的加载与出错页也要用同一套
-        // Forui 主题，FToaster 则要包住整个导航树，页面里的提示才找得到它。
-        builder: (context, child) => forui.FTheme(
-          data: Theme.brightnessOf(context) == Brightness.light
-              ? zhixinForuiTheme
-              : zhixinDarkForuiTheme,
-          child: forui.FToaster(
-            // 提示的位置与底部留白在主题里统一写好，各平台的短提示都落在下面。
-            style: zhixinToasterStyle,
-            child: AppScope(
-              crashLog: widget.crashLog,
-              ai: widget.ai,
-              clock: widget.clock,
-              themeMode: _themeMode,
-              child: child!,
+    return ListenableBuilder(
+      listenable: Listenable.merge([_themeMode, _themeAccent]),
+      builder: (context, _) {
+        final accent = _themeAccent.value;
+        final material = materialThemesFor(accent);
+        final foruiThemes = foruiThemesFor(accent);
+        return MaterialApp(
+          title: '知新',
+          debugShowCheckedModeBanner: false,
+          theme: material[Brightness.light],
+          // 深浅色跟随系统，设置页可以把外观固定成浅色或深色；主题色另有
+          // 六个选项，深浅两套各有一份主色，其余色值不随主题色改变。
+          darkTheme: material[Brightness.dark],
+          themeMode: _themeMode.value,
+          // 界面是中文的，Material 自带的日期选择、长按菜单等也跟着走中文。
+          locale: const Locale('zh', 'CN'),
+          supportedLocales: const [Locale('zh', 'CN')],
+          localizationsDelegates: const [
+            ...GlobalMaterialLocalizations.delegates,
+            forui.FLocalizations.delegate,
+          ],
+          // FTheme 放到 AppScope 外面：应用根自己的加载与出错页也要用同一套
+          // Forui 主题，FToaster 则要包住整个导航树，页面里的提示才找得到它。
+          builder: (context, child) => forui.FTheme(
+            data: foruiThemes[Theme.of(context).brightness]!,
+            child: forui.FToaster(
+              // 提示的位置与底部留白在主题里统一写好，各平台的短提示都落在下面。
+              style: zhixinToasterStyle,
+              child: AppScope(
+                crashLog: widget.crashLog,
+                ai: widget.ai,
+                clock: widget.clock,
+                themeMode: _themeMode,
+                themeAccent: _themeAccent,
+                child: child!,
+              ),
             ),
           ),
-        ),
-        home: const HomeShell(),
-      ),
+          home: const HomeShell(),
+        );
+      },
     );
   }
 }

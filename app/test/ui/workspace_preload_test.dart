@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +19,14 @@ import 'package:zhixin/ui/workspace_widgets.dart';
 import 'package:zhixin/ui/zhixin_dialog.dart';
 
 import 'workspace_support.dart';
+
+/// 设置页里某个主题色色块是否被选中；语义里的选中状态是三态。
+bool _swatchSelected(WidgetTester tester, String label) =>
+    tester
+        .getSemantics(find.bySemanticsLabel(label))
+        .flagsCollection
+        .isSelected ==
+    ui.Tristate.isTrue;
 
 void main() {
   registerWorkspaceTests();
@@ -247,6 +257,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('设置页的主题色一行六个色块，点一下立即换色', (tester) async {
+    await openApp(tester);
+    await openMineEntry(tester, '设置');
+    await tester.scrollUntilVisible(
+      find.bySemanticsLabel('蓝主题色'),
+      260,
+      scrollable: settingsScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    // 六个色块都在，当前选中蓝色。
+    for (final accent in ZhixinAccent.values) {
+      expect(find.bySemanticsLabel('${accent.label}主题色'), findsOneWidget);
+    }
+    expect(_swatchSelected(tester, '蓝主题色'), isTrue);
+
+    await tester.tap(find.bySemanticsLabel('玫红主题色'));
+    await settle(tester);
+
+    final context = tester.element(find.byType(SettingsPage));
+    expect(context.zhixin.colors.primary, const Color(0xFFBE185D));
+    expect(_swatchSelected(tester, '玫红主题色'), isTrue);
+
+    expect(_swatchSelected(tester, '蓝主题色'), isFalse);
+
+    // 页面底色不随主题色改变。
+    expect(context.zhixin.colors.surface, const Color(0xFFFFFFFF));
+    expect(tester.takeException(), isNull);
+  });
+
   // 外观复核用的一页：首页、对话、对话框与底部面板各出浅色与深色两张，
   // 只在设了 ZHIXIN_UI_PREVIEW_DIR 时写图，平时这里只是走一遍这几页的通用断言。
   for (final (name, brightness) in [
@@ -338,5 +378,100 @@ void main() {
       await preview(tester, '$name-materials');
       expect(tester.takeException(), isNull);
     });
+  }
+
+  // 主题色复核：六个主题色各出浅色与深色两张，拍首页、对话页与设置页的外观
+  // 一节；只在设了 ZHIXIN_UI_PREVIEW_DIR 时写图，平时检查换色后页面底色不变、
+  // 主色换成选中的主题色。
+  for (final accent in ZhixinAccent.values) {
+    for (final (name, brightness) in [
+      ('light', null),
+      ('dark', Brightness.dark),
+    ]) {
+      testWidgets('主题色复核：${accent.name}-$name', (tester) async {
+        if (brightness != null) {
+          tester.platformDispatcher.platformBrightnessTestValue = brightness;
+          addTearDown(
+            tester.platformDispatcher.clearPlatformBrightnessTestValue,
+          );
+        }
+        await openApp(tester);
+        await tester.runAsync(() async {
+          final id = await scope!.chat.learning.capture(stem: '主题色的题目');
+          final attempt = await scope!.chat.learning.openAttempt(id);
+          await scope!.chat.learning.submit(
+            attemptId: attempt.id,
+            answer: '先化简再代入',
+            isCorrect: true,
+            independent: true,
+          );
+        });
+        await settle(tester);
+        await tester.tap(
+          find.descendant(
+            of: find.byType(forui.FBottomNavigationBar),
+            matching: find.text(tabMine),
+          ),
+        );
+        await settle(tester);
+        await openMineEntry(tester, '设置');
+        await tester.scrollUntilVisible(
+          find.bySemanticsLabel('${accent.label}主题色'),
+          260,
+          scrollable: settingsScrollable(),
+        );
+        await tester.ensureVisible(find.bySemanticsLabel('${accent.label}主题色'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.bySemanticsLabel('${accent.label}主题色'));
+        await settle(tester);
+
+        // 换色之后页面底色仍是纯白或纯黑，主色换成了选中的主题色。
+        final colors = tester.element(find.byType(SettingsPage)).zhixin.colors;
+        expect(
+          colors.primary,
+          accent.primaryFor(brightness ?? Brightness.light),
+        );
+        expect(
+          colors.surface,
+          brightness == null
+              ? const Color(0xFFFFFFFF)
+              : const Color(0xFF000000),
+        );
+        expect(_swatchSelected(tester, '${accent.label}主题色'), isTrue);
+        await preview(tester, 'accent-${accent.name}-$name-settings');
+
+        await tester.tap(find.byKey(const ValueKey('zhixin-header-back')));
+        await settle(tester);
+        await tester.tap(find.text(tabNow).last);
+        await settle(tester);
+        await preview(tester, 'accent-${accent.name}-$name-home');
+
+        final conversation = await tester.runAsync(
+          () => scope!.testing.conversations.create(title: '主题色复核的对话'),
+        );
+        await tester.runAsync(() async {
+          await scope!.testing.conversations.append(
+            conversation!,
+            role: MessageRole.user,
+            content: '第 8 题又做错了，怎么办',
+          );
+          await scope!.testing.conversations.append(
+            conversation,
+            role: MessageRole.assistant,
+            content: '先收下这条安排，再自己独立做一遍。',
+          );
+        });
+        tester
+            .state<NavigatorState>(find.byType(Navigator).first)
+            .push(
+              MaterialPageRoute<void>(
+                builder: (_) => DiscussionPage(conversationId: conversation),
+              ),
+            );
+        await settle(tester);
+        await preview(tester, 'accent-${accent.name}-$name-discussion');
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoPageTransitionsBuilder;
 import 'package:forui/forui.dart' as forui;
@@ -11,14 +13,20 @@ export 'motion.dart';
 /// 应用的两套外观：色值与字号只在这里定义一次，Forui 主题、页面读到的
 /// 字号与颜色、回答正文的 Markdown 主题都从同一份生成。
 ///
-/// 背景与表面不带色相：浅色是纯白与中性灰，深色是纯黑与中性灰，深浅两套的
-/// 背景、卡片与描边都按灰阶给出。主题色只出现在主色、主色容器与提醒色上，
-/// 用在按钮、链接、选中态、开关与强调卡片，不参与页面与卡片的底色。
+/// 色板分成两部分：背景、表面、描边、文字与错误色是固定的中性色，深浅两套
+/// 各一份，不随主题色改变；主色家族（主色、压在主色上的文字、主色浅底、
+/// 主色容器与容器上的文字）与提醒色由 [ZhixinAccent] 生成，见 [_palette]。
+/// 所以换主题色时只有按钮、链接、选中态与强调卡片的颜色变，页面与卡片的
+/// 底色始终是纯白或纯黑，不带主题色的色相。
 ///
 /// 页面不再读 Material 的 `Theme.of`，统一读 Forui 主题里的 [ZhixinTheme]；
 /// Material 的 `ThemeData` 只留给 `gpt_markdown`（它要 `GptMarkdownThemeData`
 /// 与 `TextTheme`）和本地化，不再是一份需要单独维护的色板。
-const _Palette _lightPalette = _Palette(
+///
+/// 六个主题色的浅色与深色两套主题由 [foruiThemesFor] 与 [materialThemesFor]
+/// 生成；[zhixinForuiTheme] 与 [zhixinTheme] 是默认蓝色主题，[zhixinDarkForuiTheme]
+/// 与 [zhixinDarkTheme] 是它的深色一套。
+const _NeutralPalette _lightNeutral = _NeutralPalette(
   brightness: Brightness.light,
   ink: Color(0xFF111111),
   muted: Color(0xFF6B6B72),
@@ -27,20 +35,12 @@ const _Palette _lightPalette = _Palette(
   code: Color(0xFFF4F4F5),
   border: Color(0xFFE6E6E8),
   inputBorder: Color(0xFFC9C9CE),
-  brand: Color(0xFF2563EB),
-  brandLight: Color(0xFFEAF1FE),
-  brandContainer: Color(0xFFD9E6FD),
-  onBrandContainer: Color(0xFF12378A),
   raised: Color(0xFFF4F4F5),
-  attention: Color(0xFFB45309),
-  attentionLight: Color(0xFFFEF1DF),
-  onAttentionLight: Color(0xFF7A3A06),
-  onAccent: Color(0xFFFFFFFF),
   error: Color(0xFFBA1A1A),
   onError: Color(0xFFFFFFFF),
 );
 
-const _Palette _darkPalette = _Palette(
+const _NeutralPalette _darkNeutral = _NeutralPalette(
   brightness: Brightness.dark,
   ink: Color(0xFFECECEE),
   muted: Color(0xFF9D9DA5),
@@ -49,25 +49,105 @@ const _Palette _darkPalette = _Palette(
   code: Color(0xFF0B0B0D),
   border: Color(0xFF2A2A2E),
   inputBorder: Color(0xFF45454B),
-  brand: Color(0xFF5B9BFF),
-  brandLight: Color(0xFF14243F),
-  brandContainer: Color(0xFF1D3C6E),
-  onBrandContainer: Color(0xFFD4E4FF),
   raised: Color(0xFF1E1E21),
-  attention: Color(0xFFF0B070),
-  attentionLight: Color(0xFF3A2A14),
-  onAttentionLight: Color(0xFFFFDDB8),
-  onAccent: Color(0xFF001A40),
   error: Color(0xFFFFB4AB),
   onError: Color(0xFF690005),
 );
 
-final forui.FThemeData zhixinForuiTheme = _buildForui(_lightPalette);
-final forui.FThemeData zhixinDarkForuiTheme = _buildForui(_darkPalette);
+/// 可选的六个主题色。每个值只有主色的浅色与深色两个取值，主色家族与提醒色
+/// 都由 [_palette] 按这两个取值派生，页面不各自判断。
+enum ZhixinAccent {
+  blue('蓝', Color(0xFF2563EB), Color(0xFF5B9BFF)),
+  moss('苔绿', Color(0xFF245C48), Color(0xFF6FCF97)),
+  violet('紫', Color(0xFF7C3AED), Color(0xFFA78BFA)),
+  rose('玫红', Color(0xFFBE185D), Color(0xFFF472B6)),
+  orange('橙', Color(0xFFC2410C), Color(0xFFFB923C)),
+  graphite('石墨', Color(0xFF18181B), Color(0xFFE4E4E7));
+
+  const ZhixinAccent(this.label, this.light, this.dark);
+
+  /// 设置页色块的无障碍标签与说明里用的名称。
+  final String label;
+
+  /// 浅色外观的主色。
+  final Color light;
+
+  /// 深色外观的主色。
+  final Color dark;
+
+  /// 读取保存的主题色名称；空值与不认识的名称都回到默认的蓝色。
+  static ZhixinAccent parse(String? stored) {
+    for (final accent in values) {
+      if (accent.name == stored) return accent;
+    }
+    return blue;
+  }
+
+  /// 深浅两套外观都要用的色值，对外只按亮度给出。
+  Color primaryFor(Brightness brightness) =>
+      brightness == Brightness.light ? light : dark;
+
+  /// 这个主题色是石墨这类无彩色时，主色家族直接取中性灰。
+  bool get _achromatic => this == graphite;
+}
+
+const ZhixinAccent kDefaultAccent = ZhixinAccent.blue;
+
+forui.FThemeData _buildForui(ZhixinAccent accent, Brightness brightness) =>
+    _foruiTheme(_palette(_neutral(brightness), accent));
+
+ThemeData _buildMaterial(ZhixinAccent accent, Brightness brightness) =>
+    _materialTheme(_palette(_neutral(brightness), accent));
+
+/// 某个主题色在某个亮度下所有主题色主题的缓存：换过一次之后再回来直接取，
+/// 切换与启动都不必重算。
+final Map<String, forui.FThemeData> _foruiThemes = {};
+final Map<String, ThemeData> _materialThemes = {};
+
+String _themeKey(ZhixinAccent accent, Brightness brightness) =>
+    '${accent.name}-${brightness.name}';
+
+forui.FThemeData _cachedForui(ZhixinAccent accent, Brightness brightness) =>
+    _foruiThemes.putIfAbsent(
+      _themeKey(accent, brightness),
+      () => _buildForui(accent, brightness),
+    );
+
+ThemeData _cachedMaterial(ZhixinAccent accent, Brightness brightness) =>
+    _materialThemes.putIfAbsent(
+      _themeKey(accent, brightness),
+      () => _buildMaterial(accent, brightness),
+    );
+
+/// 某个主题色的两套 Forui 主题：应用根部把浅色与深色分别交给 Material 与
+/// Forui，主题色一换就换成这一份。
+Map<Brightness, forui.FThemeData> foruiThemesFor(ZhixinAccent accent) => {
+  Brightness.light: _cachedForui(accent, Brightness.light),
+  Brightness.dark: _cachedForui(accent, Brightness.dark),
+};
+
+/// 某个主题色的两套 Material 主题。
+Map<Brightness, ThemeData> materialThemesFor(ZhixinAccent accent) => {
+  Brightness.light: _cachedMaterial(accent, Brightness.light),
+  Brightness.dark: _cachedMaterial(accent, Brightness.dark),
+};
+
+/// 默认蓝色主题的两套 Forui 主题。
+final forui.FThemeData zhixinForuiTheme = _cachedForui(
+  kDefaultAccent,
+  Brightness.light,
+);
+final forui.FThemeData zhixinDarkForuiTheme = _cachedForui(
+  kDefaultAccent,
+  Brightness.dark,
+);
 
 /// 回答正文与 Material 本地化用的主题；页面不再从它取字号与颜色。
-final ThemeData zhixinTheme = _buildMaterial(_lightPalette);
-final ThemeData zhixinDarkTheme = _buildMaterial(_darkPalette);
+final ThemeData zhixinTheme = _cachedMaterial(kDefaultAccent, Brightness.light);
+final ThemeData zhixinDarkTheme = _cachedMaterial(
+  kDefaultAccent,
+  Brightness.dark,
+);
 
 /// 页面短提示的宿主样式：提示压在中下，底部为底栏导航留出高度。
 ///
@@ -283,7 +363,7 @@ class ZhixinTheme extends ThemeExtension<ZhixinTheme> {
   ) => other is ZhixinTheme && t >= 0.5 ? other : this;
 }
 
-forui.FThemeData _buildForui(_Palette palette) {
+forui.FThemeData _foruiTheme(_Palette palette) {
   final base = palette.brightness == Brightness.light
       ? forui.FTheme.neutral.light.touch
       : forui.FTheme.neutral.dark.touch;
@@ -538,7 +618,7 @@ ZhixinColors _colors(_Palette palette) => ZhixinColors(
 /// 没写出来的表面、容器与色调角色都会按主色的色相染色，背景与卡片就不再是
 /// 中性灰。这里把所有会画到底色上的角色一次写全，`surfaceTint` 取透明，
 /// 叠加色调不会再把底色染蓝。
-ThemeData _buildMaterial(_Palette palette) {
+ThemeData _materialTheme(_Palette palette) {
   final colors = ColorScheme(
     brightness: palette.brightness,
     primary: palette.brand,
@@ -709,13 +789,12 @@ ThemeData _buildMaterial(_Palette palette) {
   );
 }
 
-/// 同一套界面要用的颜色角色；深浅两套只改这里的色值。
+/// 不随主题色改变的底色、表面、描边、文字与错误色，深浅两套各一份。
 ///
-/// 底色与表面的几档（[paper]、[card]、[raised]、[code]、[border]、
-/// [inputBorder]、[ink]、[muted]）不带色相；带色相的只有主色 [brand] 一族、
-/// 提醒色 [attention] 一族与错误色，它们只用在按钮、链接、选中态与状态标签上。
-class _Palette {
-  const _Palette({
+/// 这几档都按灰阶给出，三通道相差不超过两档，肉眼分不出色相；换主题色时
+/// 它们不变，页面与卡片因此始终是纯白或纯黑。
+class _NeutralPalette {
+  const _NeutralPalette({
     required this.brightness,
     required this.ink,
     required this.muted,
@@ -724,15 +803,7 @@ class _Palette {
     required this.code,
     required this.border,
     required this.inputBorder,
-    required this.brand,
-    required this.brandLight,
-    required this.brandContainer,
-    required this.onBrandContainer,
     required this.raised,
-    required this.attention,
-    required this.attentionLight,
-    required this.onAttentionLight,
-    required this.onAccent,
     required this.error,
     required this.onError,
   });
@@ -760,10 +831,39 @@ class _Palette {
   /// 输入框未聚焦时的描边。
   final Color inputBorder;
 
+  /// 比页面底色高一档的表面，例如搜索栏与分段条。
+  final Color raised;
+
+  /// 错误与危险操作的颜色。
+  final Color error;
+
+  /// 压在错误色上的文字颜色。
+  final Color onError;
+}
+
+/// 一套完整的外观：中性色板，加上由主题色生成的主色家族与提醒色。
+///
+/// 带色相的只有主色 [brand] 一族与提醒色 [attention] 一族，它们只用在按钮、
+/// 链接、选中态与状态标签上，不参与页面与卡片的底色。
+class _Palette {
+  const _Palette({
+    required this.neutral,
+    required this.brand,
+    required this.brandLight,
+    required this.brandContainer,
+    required this.onBrandContainer,
+    required this.onAccent,
+    required this.attention,
+    required this.attentionLight,
+    required this.onAttentionLight,
+  });
+
+  final _NeutralPalette neutral;
+
   /// 主色，用在链接、选中状态与可操作的元素上。
   final Color brand;
 
-  /// 主色的浅底，用在用户气泡、标签与导航指示块上。
+  /// 主色的浅底，用在用户气泡、标签、导航指示块与 Markdown 表头上。
   final Color brandLight;
 
   /// 主色的容器底色，用在选中芯片与次要按钮上。
@@ -772,8 +872,8 @@ class _Palette {
   /// 压在 [brandContainer] 上的文字颜色。
   final Color onBrandContainer;
 
-  /// 比页面底色高一档的表面，例如搜索栏与分段条。
-  final Color raised;
+  /// 压在主色上的文字或图标颜色。
+  final Color onAccent;
 
   /// 提醒色，用在需要留意的状态与链接的悬停上。
   final Color attention;
@@ -784,12 +884,235 @@ class _Palette {
   /// 压在 [attentionLight] 上的文字颜色。
   final Color onAttentionLight;
 
-  /// 压在主色上的文字或图标颜色。
-  final Color onAccent;
-
-  /// 错误与危险操作的颜色。
-  final Color error;
-
-  /// 压在错误色上的文字颜色。
-  final Color onError;
+  Brightness get brightness => neutral.brightness;
+  Color get ink => neutral.ink;
+  Color get muted => neutral.muted;
+  Color get paper => neutral.paper;
+  Color get card => neutral.card;
+  Color get code => neutral.code;
+  Color get border => neutral.border;
+  Color get inputBorder => neutral.inputBorder;
+  Color get raised => neutral.raised;
+  Color get error => neutral.error;
+  Color get onError => neutral.onError;
 }
+
+_NeutralPalette _neutral(Brightness brightness) =>
+    brightness == Brightness.light ? _lightNeutral : _darkNeutral;
+
+/// 主色家族的派生规则。色值全部在 OKLCH 里算：混色只改明度与彩度、保留
+/// 主色的色相，调明度时也保留色相，换成别的主题色不会串到邻近的色相上。
+///
+/// 浅色：主色浅底取主色在白色上的 8%，主色容器取 15%；容器上的文字把主色
+/// 压暗 0.10 的明度，压在主色上的文字是白色。
+///
+/// 深色：主色浅底取主色在黑色上的 15%，主色容器取 30%，明度都不低于抬高的
+/// 表面，浅底在纯黑页面与深灰卡片上都看得出来；容器上的文字把主色提亮 0.10，
+/// 压在主色上的文字把主色压暗 0.10，压暗之后不足 4.5:1 时继续压暗到够为止，
+/// 深色主色的明度低于 0.40 时会压到接近黑色，颜色向黑靠拢。所以明度低于 0.40
+/// 的深色主色改用深灰的容器承载浅底，容器上的文字提亮到主色与黑之间。
+///
+/// 石墨是无彩色，主色家族直接取中性灰：浅色用抬高的表面与容器上的正文色，
+/// 深色用抬高的表面与卡片。
+///
+/// 提醒色默认用琥珀，主题色为橙时改用紫色，避免草稿标签与主按钮同色；这条
+/// 规则写在这里，页面不判断。
+_Palette _palette(_NeutralPalette neutral, ZhixinAccent accent) {
+  final light = neutral.brightness == Brightness.light;
+  final primary = accent.primaryFor(neutral.brightness);
+  final brand = _Oklch.of(primary);
+  final Color brandLight;
+  final Color brandContainer;
+  final Color onBrandContainer;
+  final Color onAccent;
+  if (accent._achromatic) {
+    // 中性灰的主色家族不按色相生成，直接用表面与卡片两档。
+    brandLight = neutral.raised;
+    brandContainer = neutral.card;
+    onBrandContainer = primary;
+    onAccent = light ? const Color(0xFFFFFFFF) : neutral.card;
+  } else if (light) {
+    brandLight = _place(brand, 0.08, const Color(0xFFFFFFFF));
+    brandContainer = _place(brand, 0.15, const Color(0xFFFFFFFF));
+    onBrandContainer = _withLightness(brand, brand.lightness - 0.10);
+    onAccent = const Color(0xFFFFFFFF);
+  } else if (brand.lightness >= 0.40) {
+    // 主色在纯黑页面上的 15% 与在深灰卡片上的 15% 取亮的一侧，浅底在这两种
+    // 底上都分得出来。
+    const darkFloor = 0.33;
+    final floor = math.max(darkFloor, _Oklch.of(neutral.raised).lightness);
+    brandLight = _place(brand, 0.15, const Color(0xFF000000), floor: floor);
+    brandContainer = _place(brand, 0.30, const Color(0xFF000000), floor: floor);
+    onBrandContainer = _withLightness(brand, brand.lightness + 0.10);
+    onAccent = _onDarkPrimary(brand);
+  } else {
+    // 深色主色偏暗：浅底与容器同为深灰，文字取亮的一侧。
+    brandLight = _place(
+      _Oklch(math.max(brand.lightness + 0.08, 0.45), brand.chroma, brand.hue),
+      0.35,
+      neutral.card,
+    );
+    brandContainer = brandLight;
+    onBrandContainer = _withLightness(brand, brand.lightness + 0.45);
+    onAccent = _withLightness(brand, brand.lightness - 0.10);
+  }
+  final attention = accent == ZhixinAccent.orange
+      ? (light ? _violetAttentionLight : _violetAttentionDark)
+      : (light ? _amberAttentionLight : _amberAttentionDark);
+  return _Palette(
+    neutral: neutral,
+    brand: primary,
+    brandLight: brandLight,
+    brandContainer: brandContainer,
+    onBrandContainer: onBrandContainer,
+    onAccent: onAccent,
+    attention: attention.$1,
+    attentionLight: attention.$2,
+    onAttentionLight: attention.$3,
+  );
+}
+
+/// 提醒色的三档，依次是提醒色本身、浅底与压在浅底上的文字。
+const (Color, Color, Color) _amberAttentionLight = (
+  Color(0xFFB45309),
+  Color(0xFFFEF1DF),
+  Color(0xFF7A3A06),
+);
+const (Color, Color, Color) _amberAttentionDark = (
+  Color(0xFFF0B070),
+  Color(0xFF3A2A14),
+  Color(0xFFFFDDB8),
+);
+const (Color, Color, Color) _violetAttentionLight = (
+  Color(0xFF7C3AED),
+  Color(0xFFF1EAFE),
+  Color(0xFF4C1D95),
+);
+const (Color, Color, Color) _violetAttentionDark = (
+  Color(0xFFA78BFA),
+  Color(0xFF2A1F4D),
+  Color(0xFFE4DAFF),
+);
+
+/// [color] 的 [amount] 份与其余 [base] 混色：只混明度与彩度，色相仍取
+/// [color]，因为 [base] 是纯白或纯黑，不带色相。[floor] 给出明度下限，
+/// 深色下的混色不会暗到与页面分不出。
+Color _place(_Oklch color, double amount, Color base, {double floor = 0}) {
+  final target = _Oklch.of(base);
+  final lightness =
+      target.lightness + (color.lightness - target.lightness) * amount;
+  return _Oklch(
+    math.max(lightness, floor),
+    color.chroma * amount,
+    color.hue,
+  ).toColor();
+}
+
+/// 只换明度，色相与彩度照旧；明度超出 0–1 时取到端点上。
+Color _withLightness(_Oklch color, double lightness) =>
+    _Oklch(lightness.clamp(0, 1), color.chroma, color.hue).toColor();
+
+/// 深色主色上的文字：主色明度减去 0.10 仍能压出 4.5:1 时取这一档，否则一路
+/// 压暗到满足 4.5:1 为止。主色越暗，字与主色的间距就越大，最暗到黑色。
+Color _onDarkPrimary(_Oklch brand) {
+  final primary = brand.toColor();
+  Color at(double lightness) => _withLightness(brand, lightness);
+  if (_contrastOf(at(brand.lightness - 0.10), primary) >= 4.5) {
+    return at(brand.lightness - 0.10);
+  }
+  var low = 0.0;
+  var high = brand.lightness - 0.10;
+  for (var i = 0; i < 20; i++) {
+    final middle = (low + high) / 2;
+    if (_contrastOf(at(middle), primary) >= 4.5) {
+      high = middle;
+    } else {
+      low = middle;
+    }
+  }
+  return at(high);
+}
+
+/// 两个颜色的 WCAG 对比度，亮的一方作分子。
+double _contrastOf(Color foreground, Color background) {
+  final first = foreground.computeLuminance();
+  final second = background.computeLuminance();
+  final lighter = math.max(first, second);
+  final darker = math.min(first, second);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/// OKLCH 颜色：明度 0–1、彩度与非负、色相按度。用 sRGB 与线性 RGB 之间的
+/// 标准换算，超出色域时按端点截断。
+class _Oklch {
+  const _Oklch(this.lightness, this.chroma, this.hue);
+
+  factory _Oklch.of(Color color) {
+    final rgb = color.toARGB32();
+    double channel(int shift) {
+      final value = ((rgb >> shift) & 0xFF) / 255;
+      return value <= 0.04045
+          ? value / 12.92
+          : math.pow((value + 0.055) / 1.055, 2.4).toDouble();
+    }
+
+    final r = channel(16);
+    final g = channel(8);
+    final b = channel(0);
+    final l = _cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    final m = _cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    final s = _cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    final lightness = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+    final a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+    final bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+    final chroma = math.sqrt(a * a + bb * bb);
+    return _Oklch(
+      lightness,
+      chroma,
+      chroma < 1e-6 ? 0 : (math.atan2(bb, a) * 180 / math.pi + 360) % 360,
+    );
+  }
+
+  final double lightness;
+  final double chroma;
+  final double hue;
+
+  Color toColor() {
+    final radians = hue * math.pi / 180;
+    final a = chroma * math.cos(radians);
+    final b = chroma * math.sin(radians);
+    final l = lightness + 0.3963377774 * a + 0.2158037573 * b;
+    final m = lightness - 0.1055613458 * a - 0.0638541728 * b;
+    final s = lightness - 0.0894841775 * a - 1.2914855480 * b;
+    final red =
+        4.0767416621 * l * l * l -
+        3.3077115913 * m * m * m +
+        0.2309699292 * s * s * s;
+    final green =
+        -1.2684380046 * l * l * l +
+        2.6097574011 * m * m * m -
+        0.3413193965 * s * s * s;
+    final blue =
+        -0.0041960863 * l * l * l -
+        0.7034186147 * m * m * m +
+        1.7076147010 * s * s * s;
+    double encode(double value) {
+      final clamped = value.clamp(0.0, 1.0);
+      final encoded = clamped <= 0.0031308
+          ? 12.92 * clamped
+          : 1.055 * math.pow(clamped, 1 / 2.4) - 0.055;
+      return encoded.clamp(0.0, 1.0);
+    }
+
+    return Color.from(
+      alpha: 1,
+      red: encode(red),
+      green: encode(green),
+      blue: encode(blue),
+    );
+  }
+}
+
+double _cbrt(double value) => value < 0
+    ? -math.pow(-value, 1 / 3).toDouble()
+    : math.pow(value, 1 / 3).toDouble();

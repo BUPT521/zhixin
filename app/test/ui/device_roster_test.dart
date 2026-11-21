@@ -18,6 +18,7 @@ import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/ui/account_page.dart';
 import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
 
@@ -151,6 +152,7 @@ void main() {
             child: forui.FToaster(
               style: zhixinToasterStyle,
               child: AppScope(
+                themeAccent: ThemeAccentController(),
                 themeMode: themeMode,
                 serverClientFactory: (baseUrl) =>
                     ServerClient(baseUrl: baseUrl, httpClient: server.client),

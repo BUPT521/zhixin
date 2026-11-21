@@ -11,8 +11,10 @@ import 'platform/app_paths.dart';
 import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
 import 'platform/prompt_assets.dart';
+import 'platform/theme_accent_store.dart';
 import 'platform/theme_mode_store.dart';
 import 'platform/zvec_license.dart';
+import 'ui/theme_accent_controller.dart';
 import 'ui/theme_mode_controller.dart';
 
 /// 压住第一帧的上限：超过这个时间就露出加载页，不让用户停在一张不会动的
@@ -34,13 +36,19 @@ Future<void> main() async {
   if (crashLog != null) _installErrorHandlers(crashLog);
   // 提示词在启动时读一次；读取失败只影响模型回答，本机功能照常可用。
   await _loadPromptText(crashLog);
-  final themeMode = paths == null ? null : await _loadThemeMode(paths);
+  final appearance = paths == null ? null : await _loadAppearance(paths);
   final reporting =
       paths != null &&
       await DiagnosticsStore(paths.filesDir).read(fallback: !kReleaseMode);
   CrashLog.reportEnabled = reporting;
 
-  void run() => runApp(ZhixinApp(crashLog: crashLog, themeMode: themeMode));
+  void run() => runApp(
+    ZhixinApp(
+      crashLog: crashLog,
+      themeMode: appearance?.themeMode,
+      themeAccent: appearance?.themeAccent,
+    ),
+  );
 
   // 没有 DSN 或用户关闭上报时，不初始化 Sentry，也不产生任何请求。
   if (_sentryDsn.isEmpty || !reporting) {
@@ -64,7 +72,8 @@ Future<void> main() async {
 }
 
 /// 崩溃记录与外观都要赶在界面起来之前就位，所以路径在 main 里先解析一次；
-/// 失败就不记录、外观退回跟随系统，不能因为这两件事让应用起不来。
+/// 失败就不记录，外观退回跟随系统与默认的蓝色主题，不能因为这几件事让应用
+/// 起不来。
 Future<AppPaths?> _resolvePaths() async {
   try {
     return await AppPaths.resolve();
@@ -73,9 +82,22 @@ Future<AppPaths?> _resolvePaths() async {
   }
 }
 
-Future<ThemeModeController?> _loadThemeMode(AppPaths paths) async {
+/// 启动前读到的外观：深浅色与主题色各读一次，任一项读不出来时该项为空，
+/// 由应用根部回到默认值。
+Future<({ThemeModeController? themeMode, ThemeAccentController? themeAccent})>
+_loadAppearance(AppPaths paths) async {
+  final mode = await _readOrNull(
+    () => ThemeModeController.load(ThemeModeStore(paths.filesDir)),
+  );
+  final accent = await _readOrNull(
+    () => ThemeAccentController.load(ThemeAccentStore(paths.filesDir)),
+  );
+  return (themeMode: mode, themeAccent: accent);
+}
+
+Future<T?> _readOrNull<T>(Future<T> Function() read) async {
   try {
-    return await ThemeModeController.load(ThemeModeStore(paths.filesDir));
+    return await read();
   } catch (_) {
     return null;
   }

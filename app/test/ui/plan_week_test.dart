@@ -12,6 +12,7 @@ import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/ui/plan_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 import '../support/app_scope_teardown.dart';
@@ -98,7 +99,11 @@ void main() {
                 ? zhixinForuiTheme
                 : zhixinDarkForuiTheme,
             child: forui.FToaster(
-              child: AppScope(themeMode: themeMode, child: child!),
+              child: AppScope(
+          themeAccent: ThemeAccentController(),
+          themeMode: themeMode,
+          child: child!,
+        ),
             ),
           ),
           home: PlanPage(watchWeek: watchWeek),

@@ -828,6 +828,30 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
+        SizedBox(height: theme.space.md),
+        _AccentPicker(
+          selected: AppScope.of(context).themeAccent.value,
+          onSelected: (accent) async {
+            try {
+              await AppScope.of(context).themeAccent.select(accent);
+            } catch (error, stack) {
+              if (!mounted || !context.mounted) return;
+              _report(
+                _Area.appearance,
+                describeFailure(
+                  context,
+                  error,
+                  stack,
+                  action: '保存主题色',
+                  kind: 'settings_accent',
+                  kept: '当前主题色没有改动',
+                  next: '可以再选一次',
+                ),
+                failed: true,
+              );
+            }
+          },
+        ),
         ?_resultFor(_Area.appearance),
         const SectionHeading(title: '诊断'),
         forui.FCard(
@@ -935,6 +959,104 @@ class _SettingsPageState extends State<SettingsPage> {
           style: theme.text.bodySmall,
         ),
       ],
+    );
+  }
+}
+
+/// 主题色：一行六个圆形色块，选中的那个带对勾与外圈描边；点一下立即换色。
+///
+/// 色块画的是各主题色在浅色外观下的主色，点过之后整个应用的按钮、链接与
+/// 选中态一起换。无障碍标签写主题色名称，不写色值。
+class _AccentPicker extends StatelessWidget {
+  const _AccentPicker({required this.selected, required this.onSelected});
+
+  final ZhixinAccent selected;
+  final ValueChanged<ZhixinAccent> onSelected;
+
+  static const _swatchSize = 32.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('主题色', style: theme.text.bodyMedium),
+        SizedBox(height: theme.space.xs),
+        Text(
+          '默认蓝色；只换按钮、链接、选中态与强调卡片的颜色，页面与卡片始终是纯白或纯黑。',
+          style: theme.text.bodySmall.copyWith(
+            color: theme.colors.onSurfaceVariant,
+          ),
+        ),
+        SizedBox(height: theme.space.md),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            for (final accent in ZhixinAccent.values)
+              _AccentSwatch(
+                accent: accent,
+                selected: accent == selected,
+                onPressed: () => onSelected(accent),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AccentSwatch extends StatelessWidget {
+  const _AccentSwatch({
+    required this.accent,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final ZhixinAccent accent;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.zhixin.colors;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${accent.label}主题色',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onPressed,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: Center(
+            child: Container(
+              width: _AccentPicker._swatchSize,
+              height: _AccentPicker._swatchSize,
+              decoration: BoxDecoration(
+                color: accent.light,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? colors.onSurface : colors.outlineVariant,
+                  width: selected ? 2 : 1,
+                ),
+              ),
+              // 对勾压在主色上：主色偏暗时用白，偏亮（深色的石墨）时用正文色。
+              child: selected
+                  ? Icon(
+                      Icons.check,
+                      size: 18,
+                      color: accent.light.computeLuminance() > 0.4
+                          ? colors.onSurface
+                          : const Color(0xFFFFFFFF),
+                    )
+                  : null,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -22,6 +22,7 @@ import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/ui/account_page.dart';
 import 'package:zhixin/ui/mine_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 import 'package:zhixin/ui/zhixin_dialog.dart';
 
@@ -116,6 +117,7 @@ void main() {
             data: zhixinForuiTheme,
             child: forui.FToaster(
               child: AppScope(
+                themeAccent: ThemeAccentController(),
                 themeMode: ThemeModeController(),
                 serverClientFactory: (baseUrl) =>
                     ServerClient(baseUrl: baseUrl, httpClient: server.client),

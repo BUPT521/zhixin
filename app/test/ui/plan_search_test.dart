@@ -15,6 +15,7 @@ import 'package:zhixin/domain/models/study_plan.dart';
 import 'package:zhixin/ui/materials_page.dart';
 import 'package:zhixin/ui/plan_search_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 import '../support/app_scope_teardown.dart';
@@ -336,7 +337,11 @@ void main() {
                 ? zhixinForuiTheme
                 : zhixinDarkForuiTheme,
             child: forui.FToaster(
-              child: AppScope(themeMode: themeMode, child: child!),
+              child: AppScope(
+          themeAccent: ThemeAccentController(),
+          themeMode: themeMode,
+          child: child!,
+        ),
             ),
           ),
           home: PlanSearchPage(search: fakeSearch),

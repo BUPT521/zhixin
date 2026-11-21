@@ -85,6 +85,7 @@ import 'platform/secure_secret_store.dart';
 import 'plugins/persona/persona_catalog.dart';
 import 'plugins/persona/persona_plugin.dart';
 import 'plugins/runtime/plugin_runtime.dart';
+import 'ui/theme_accent_controller.dart';
 import 'ui/theme_mode_controller.dart';
 import 'ui/workspace_widgets.dart';
 
@@ -98,6 +99,7 @@ class AppScope extends StatefulWidget {
     this.clock,
     this.serverClientFactory,
     required this.themeMode,
+    required this.themeAccent,
   });
 
   final Widget child;
@@ -111,6 +113,9 @@ class AppScope extends StatefulWidget {
 
   /// 外观由应用根部持有，页面改它之后 MaterialApp 会立即重建。
   final ThemeModeController themeMode;
+
+  /// 主题色与深浅色放在一起，同样由应用根部持有，改完立即生效。
+  final ThemeAccentController themeAccent;
 
   /// 时间来源；为空时取系统时钟，测试传固定时钟让当天窗口不随运行时刻变化。
   final Clock? clock;
@@ -138,6 +143,9 @@ class AppScopeState extends State<AppScope> {
 
   /// 外观在应用根部，页面读它当前的值，也通过它保存。
   ThemeModeController get themeMode => widget.themeMode;
+
+  /// 当前主题色，设置页读它显示选中的色块，也通过它保存。
+  ThemeAccentController get themeAccent => widget.themeAccent;
 
   // 仓库按表分组，页面直接用；服务收进 [AppServices] 的六组门面，见下面。
   late ConversationRepository _conversations;

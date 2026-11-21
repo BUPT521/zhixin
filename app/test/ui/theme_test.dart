@@ -7,12 +7,79 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/ui/theme.dart';
 
 /// 色板在 `ui/theme.dart` 里是私有的，测试按同一份色值核对：浅色底是纯白、
-/// 深色底是纯黑，底色与表面不带色相，主色是蓝色。
+/// 深色底是纯黑，底色与表面不带色相，默认主题色是蓝色。
 const _lightPaper = Color(0xFFFFFFFF);
 const _darkPaper = Color(0xFF000000);
 const _lightBrand = Color(0xFF2563EB);
 const _darkBrand = Color(0xFF5B9BFF);
 const _darkAttention = Color(0xFFF0B070);
+
+/// 蓝色主题其余主色家族的色值。这几档由主色派生，蓝色主题的取值就是换
+/// 主题色之前的基线，其他主题色按同一套规则生成。
+const _lightOnPrimary = Color(0xFFFFFFFF);
+const _darkOnPrimary = Color(0xFF050021);
+const _blueLightContainer = Color(0xFFEDF3FF);
+const _blueLightContainerDeep = Color(0xFFDDE9FF);
+const _blueLightOnContainer = Color(0xFF0442C8);
+const _blueDarkLight = Color(0xFF2E3642);
+const _blueDarkContainer = Color(0xFF26364E);
+const _blueDarkOnContainer = Color(0xFF7ABBFF);
+
+/// 深色外观的正文、卡片、抬高表面、描边与提醒色；这几个角色不随主题色改变，
+/// 换成别的主题色之后仍是同一组色值。
+const _darkInk = Color(0xFFECECEE);
+const _darkMuted = Color(0xFF9D9DA5);
+const _darkCard = Color(0xFF131315);
+const _darkRaised = Color(0xFF1E1E21);
+const _darkCode = Color(0xFF0B0B0D);
+const _darkBorder = Color(0xFF2A2A2E);
+const _darkInputBorder = Color(0xFF45454B);
+const _darkError = Color(0xFFFFB4AB);
+const _darkOnError = Color(0xFF690005);
+const _lightError = Color(0xFFBA1A1A);
+
+/// 提醒色：默认琥珀，主题色为橙时改用紫色。
+const _lightAttention = Color(0xFFB45309);
+const _lightAttentionContainer = Color(0xFFFEF1DF);
+const _lightOnAttentionContainer = Color(0xFF7A3A06);
+const _darkAttentionContainer = Color(0xFF3A2A14);
+const _darkOnAttentionContainer = Color(0xFFFFDDB8);
+const _violetAttention = Color(0xFF7C3AED);
+const _violetAttentionContainer = Color(0xFFF1EAFE);
+const _violetOnAttentionContainer = Color(0xFF4C1D95);
+const _darkVioletAttention = Color(0xFFA78BFA);
+const _darkVioletAttentionContainer = Color(0xFF2A1F4D);
+const _darkVioletOnAttentionContainer = Color(0xFFE4DAFF);
+
+/// 六种主题色在浅色与深色外观下的主色。
+const _accents = {
+  ZhixinAccent.blue: (Color(0xFF2563EB), Color(0xFF5B9BFF)),
+  ZhixinAccent.moss: (Color(0xFF245C48), Color(0xFF6FCF97)),
+  ZhixinAccent.violet: (Color(0xFF7C3AED), Color(0xFFA78BFA)),
+  ZhixinAccent.rose: (Color(0xFFBE185D), Color(0xFFF472B6)),
+  ZhixinAccent.orange: (Color(0xFFC2410C), Color(0xFFFB923C)),
+  ZhixinAccent.graphite: (Color(0xFF18181B), Color(0xFFE4E4E7)),
+};
+
+/// 换主题色时不该动的颜色角色，深浅各一组。
+const _neutralRoles = [
+  Color(0xFFFFFFFF), // 浅色页面
+  Color(0xFFFFFFFF), // 浅色卡片
+  Color(0xFFF4F4F5), // 浅色抬高表面与代码块
+  Color(0xFF111111), // 浅色正文
+  Color(0xFF6B6B72), // 浅色次要文字
+  Color(0xFFC9C9CE), // 浅色输入框描边
+  Color(0xFFE6E6E8), // 浅色卡片描边
+  _lightError,
+  Color(0xFFFFFFFF), // 压住错误色
+];
+
+ZhixinColors _colorsOf({
+  ZhixinAccent accent = ZhixinAccent.blue,
+  bool dark = false,
+}) => foruiThemesFor(
+  accent,
+)[dark ? Brightness.dark : Brightness.light]!.extension<ZhixinTheme>().colors;
 
 void main() {
   test('路由过渡按平台分工，安卓交给预测性返回', () {
@@ -306,6 +373,313 @@ void main() {
     }
   });
 
+  test('蓝色主题的色值与换主题色前的基线逐项一致', () {
+    final light = _colorsOf();
+    final dark = _colorsOf(dark: true);
+    expect(light.primary, _lightBrand);
+    expect(dark.primary, _darkBrand);
+    expect(light.onPrimary, _lightOnPrimary);
+    // 由 OKLCH 换算出来的色值与同一份十六进制字面量在浮点上差最后一位，按
+    // 取整之后的 8 位取值核对。
+    expect(_hex(dark.onPrimary), _hex(_darkOnPrimary));
+    expect(
+      _hex(zhixinTheme.colorScheme.primaryFixed),
+      _hex(_blueLightContainer),
+    );
+    expect(
+      _hex(zhixinDarkTheme.colorScheme.primaryFixed),
+      _hex(_blueDarkLight),
+    );
+    expect(_hex(light.primaryContainer), _hex(_blueLightContainerDeep));
+    expect(_hex(dark.primaryContainer), _hex(_blueDarkContainer));
+    expect(_hex(light.onPrimaryContainer), _hex(_blueLightOnContainer));
+    expect(_hex(dark.onPrimaryContainer), _hex(_blueDarkOnContainer));
+
+    final neutral = [
+      'surface',
+      'card',
+      'surfaceContainerHigh',
+      'onSurface',
+      'onSurfaceVariant',
+      'outline',
+      'outlineVariant',
+      'error',
+      'onError',
+    ];
+    final lightRoles = [
+      light.surface,
+      light.card,
+      light.surfaceContainerHigh,
+      light.onSurface,
+      light.onSurfaceVariant,
+      light.outline,
+      light.outlineVariant,
+      light.error,
+      light.onError,
+    ];
+    final darkRoles = [
+      dark.surface,
+      dark.card,
+      dark.surfaceContainerHigh,
+      dark.onSurface,
+      dark.onSurfaceVariant,
+      dark.outline,
+      dark.outlineVariant,
+      dark.error,
+      dark.onError,
+    ];
+    expect(lightRoles, _neutralRoles.take(9));
+    expect(darkRoles, [
+      _darkPaper,
+      _darkCard,
+      _darkRaised,
+      _darkInk,
+      _darkMuted,
+      _darkInputBorder,
+      _darkBorder,
+      _darkError,
+      _darkOnError,
+    ], reason: '${neutral.join('、')} 与换主题色前的基线一致');
+    expect(zhixinDarkTheme.colorScheme.surfaceContainerLowest, _darkCode);
+    expect(light.attention, _lightAttention);
+    expect(light.attentionContainer, _lightAttentionContainer);
+    expect(light.onAttentionContainer, _lightOnAttentionContainer);
+    expect(dark.attention, _darkAttention);
+    expect(dark.attentionContainer, _darkAttentionContainer);
+    expect(dark.onAttentionContainer, _darkOnAttentionContainer);
+  });
+
+  test('六个主题色只用各自的主色，底色与表面都不变', () {
+    for (final MapEntry(key: accent, value: (lightPrimary, darkPrimary))
+        in _accents.entries) {
+      final light = _colorsOf(accent: accent);
+      final dark = _colorsOf(accent: accent, dark: true);
+      expect(light.primary, lightPrimary, reason: '${accent.label} 浅色主色');
+      expect(dark.primary, darkPrimary, reason: '${accent.label} 深色主色');
+      expect(ZhixinAccent.values, contains(accent));
+      // 底色、卡片、描边、文字与错误色与蓝色主题同值，换主题色不回退中性底。
+      expect(
+        [
+          light.surface,
+          light.card,
+          light.surfaceContainerHigh,
+          light.onSurface,
+          light.onSurfaceVariant,
+          light.outline,
+          light.outlineVariant,
+          light.error,
+          light.onError,
+        ],
+        _neutralRoles,
+        reason: '${accent.label} 浅色的中性色与错误色',
+      );
+      expect(
+        [
+          dark.surface,
+          dark.card,
+          dark.surfaceContainerHigh,
+          dark.onSurface,
+          dark.onSurfaceVariant,
+          dark.outline,
+          dark.outlineVariant,
+          dark.error,
+          dark.onError,
+        ],
+        [
+          _darkPaper,
+          _darkCard,
+          _darkRaised,
+          _darkInk,
+          _darkMuted,
+          _darkInputBorder,
+          _darkBorder,
+          _darkError,
+          _darkOnError,
+        ],
+        reason: '${accent.label} 深色的中性色与错误色',
+      );
+      // 页面与卡片在深浅两套里都是纯白或纯黑。
+      expect(light.surface, _lightPaper);
+      expect(dark.surface, _darkPaper);
+      // 石墨是无彩色，主色家族也不带色相。
+      if (accent == ZhixinAccent.graphite) {
+        for (final color in [
+          light.primaryContainer,
+          light.onPrimaryContainer,
+          dark.primaryContainer,
+          dark.onPrimaryContainer,
+          light.primary,
+          dark.primary,
+        ]) {
+          expect(_neutral(color), isTrue, reason: '$color 不该带色相');
+        }
+      }
+    }
+  });
+
+  test('六个主题色 × 浅深两套的对比度都够读清', () {
+    for (final accent in ZhixinAccent.values) {
+      for (final dark in [false, true]) {
+        final theme = foruiThemesFor(
+          accent,
+        )[dark ? Brightness.dark : Brightness.light]!;
+        final colors = theme.extension<ZhixinTheme>().colors;
+        final where = '${accent.label}${dark ? '深色' : '浅色'}';
+        expect(
+          _contrast(colors.onPrimary, colors.primary),
+          greaterThanOrEqualTo(4.5),
+          reason: '$where 的主按钮文字',
+        );
+        expect(
+          _contrast(colors.onPrimaryContainer, colors.primaryContainer),
+          greaterThanOrEqualTo(4.5),
+          reason: '$where 的选中项与容器文字',
+        );
+        // 链接与图标放宽到 3:1；主色也按 4.5:1 核对，正文里出现主色时同样能读。
+        expect(
+          _contrast(colors.primary, colors.surface),
+          greaterThanOrEqualTo(4.5),
+          reason: '$where 的主色作为文字压在页面上',
+        );
+        expect(
+          _contrast(colors.primary, colors.card),
+          greaterThanOrEqualTo(4.5),
+          reason: '$where 的主色作为文字压在卡片上',
+        );
+        // 链接悬停时只降透明度，混到底色上仍要能看出颜色还在。半透明不与底色
+        // 混合的浅色主色本身就在 2:1 上下，这一条按 2:1 核对。
+        final hovered = Color.alphaBlend(
+          colors.primary.withValues(alpha: 0.5),
+          colors.surface,
+        );
+        expect(
+          _contrast(hovered, colors.surface),
+          greaterThanOrEqualTo(2),
+          reason: '$where 的链接悬停态',
+        );
+        // 容器文字被 Forui 悬停时会提亮或压暗，仍要留出可读的下限。
+        expect(
+          _contrast(
+            theme.colors.hover(colors.onPrimaryContainer),
+            colors.primaryContainer,
+          ),
+          greaterThanOrEqualTo(3),
+          reason: '$where 的容器文字悬停态',
+        );
+        expect(
+          _contrast(colors.attention, colors.surface),
+          greaterThanOrEqualTo(4.5),
+          reason: '$where 的提醒色作为文字',
+        );
+        expect(
+          _contrast(colors.onAttentionContainer, colors.attentionContainer),
+          greaterThanOrEqualTo(4.5),
+          reason: '$where 的草稿标签文字',
+        );
+      }
+    }
+  });
+
+  test('主色浅底与容器在深色下也看得出边界', () {
+    for (final accent in ZhixinAccent.values) {
+      if (accent == ZhixinAccent.graphite) continue;
+      final theme = foruiThemesFor(accent)[Brightness.dark]!;
+      final colors = theme.extension<ZhixinTheme>().colors;
+      final material = materialThemesFor(accent)[Brightness.dark]!;
+      for (final background in [colors.surface, colors.card]) {
+        expect(
+          _contrast(material.colorScheme.primaryFixed, background),
+          greaterThan(1.4),
+          reason: '${accent.label} 的主色浅底压在页面上要分得出来',
+        );
+      }
+      expect(
+        _contrast(colors.primaryContainer, colors.card),
+        greaterThan(1.15),
+        reason: '${accent.label} 的主色容器要分得出来',
+      );
+    }
+  });
+
+  test('提醒色默认琥珀，主题色为橙时改用紫色', () {
+    for (final accent in ZhixinAccent.values) {
+      final light = _colorsOf(accent: accent);
+      final dark = _colorsOf(accent: accent, dark: true);
+      final orange = accent == ZhixinAccent.orange;
+      expect(light.attention, orange ? _violetAttention : _lightAttention);
+      expect(
+        light.attentionContainer,
+        orange ? _violetAttentionContainer : _lightAttentionContainer,
+      );
+      expect(
+        light.onAttentionContainer,
+        orange ? _violetOnAttentionContainer : _lightOnAttentionContainer,
+      );
+      expect(dark.attention, orange ? _darkVioletAttention : _darkAttention);
+      expect(
+        dark.attentionContainer,
+        orange ? _darkVioletAttentionContainer : _darkAttentionContainer,
+      );
+      expect(
+        dark.onAttentionContainer,
+        orange ? _darkVioletOnAttentionContainer : _darkOnAttentionContainer,
+      );
+      if (orange) {
+        // 草稿标签的主色不能再与主按钮同色相。
+        expect(_warmDominant(light.attentionContainer), isFalse);
+        expect(_warmDominant(dark.attentionContainer), isFalse);
+      }
+    }
+  });
+
+  test('换主题色时 Forui、Material 与 Markdown 一起换，缓存按主题色分开', () {
+    for (final accent in ZhixinAccent.values) {
+      final (lightPrimary, _) = _accents[accent]!;
+      final foruiLight = foruiThemesFor(accent)[Brightness.light]!;
+      final materialLight = materialThemesFor(accent)[Brightness.light]!;
+      expect(foruiLight.colors.primary, lightPrimary);
+      expect(materialLight.colorScheme.primary, lightPrimary);
+      final markdown = materialLight.extension<GptMarkdownThemeData>()!;
+      // 链接、表头底与引用条都随主题色走，与页面读到的颜色同值。
+      expect(markdown.linkColor, lightPrimary);
+      expect(
+        markdown.styleSheet.table?.headerBackground,
+        materialLight.colorScheme.primaryFixed,
+      );
+      expect(markdown.styleSheet.blockQuote?.barColor, lightPrimary);
+      // 同一主题色再取一次拿到同一个实例，换回来时不必重新生成。
+      expect(foruiThemesFor(accent)[Brightness.light], same(foruiLight));
+      expect(materialThemesFor(accent)[Brightness.light], same(materialLight));
+    }
+    // 默认的蓝色主题就是 [ZhixinAccent.blue] 生成的那一份。
+    expect(
+      zhixinForuiTheme,
+      same(foruiThemesFor(ZhixinAccent.blue)[Brightness.light]),
+    );
+    expect(
+      zhixinTheme,
+      same(materialThemesFor(ZhixinAccent.blue)[Brightness.light]),
+    );
+    expect(
+      zhixinDarkForuiTheme,
+      same(foruiThemesFor(ZhixinAccent.blue)[Brightness.dark]),
+    );
+    expect(
+      zhixinDarkTheme,
+      same(materialThemesFor(ZhixinAccent.blue)[Brightness.dark]),
+    );
+  });
+
+  test('主题色按名称解析，不认识的名称回到蓝色', () {
+    for (final accent in ZhixinAccent.values) {
+      expect(ZhixinAccent.parse(accent.name), accent);
+    }
+    expect(ZhixinAccent.parse(null), ZhixinAccent.blue);
+    expect(ZhixinAccent.parse(''), ZhixinAccent.blue);
+    expect(ZhixinAccent.parse('teal'), ZhixinAccent.blue);
+    expect(ZhixinAccent.parse('Blue'), ZhixinAccent.blue);
+  });
+
   testWidgets('系统切到深色时 MaterialApp 选用深色主题', (tester) async {
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
 
@@ -334,6 +708,10 @@ void main() {
     expect((await themeUnder(Brightness.light)).brightness, Brightness.light);
   });
 }
+
+/// 颜色的 8 位十六进制取值，带透明度。
+String _hex(Color color) =>
+    '0x${color.toARGB32().toRadixString(16).toUpperCase().padLeft(8, '0')}';
 
 double _contrast(Color foreground, Color background) {
   final first = foreground.computeLuminance();

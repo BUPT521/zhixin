@@ -11,6 +11,7 @@ import 'package:zhixin/data/cloud/release_verification.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
+import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
 
 import '../support/app_scope_teardown.dart';
@@ -113,7 +114,11 @@ void main() {
           builder: (context, child) => forui.FTheme(
             data: zhixinForuiTheme,
             child: forui.FToaster(
-              child: AppScope(themeMode: ThemeModeController(), child: child!),
+              child: AppScope(
+                themeAccent: ThemeAccentController(),
+                themeMode: ThemeModeController(),
+                child: child!,
+              ),
             ),
           ),
           home: SettingsPage(updates: updates),
