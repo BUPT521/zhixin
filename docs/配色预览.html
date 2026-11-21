@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>知新 配色预览：现状 vs 中性底 + 蓝色主题</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 28px 20px 60px; background: #e9e9ec; color: #222; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 22px; color: #666; font-size: 13px; }
+  .row { display: flex; gap: 28px; flex-wrap: wrap; justify-content: center; margin-bottom: 36px; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .cap { font-size: 13px; font-weight: 600; color: #444; }
+  .cap small { font-weight: 400; color: #888; display: block; text-align: center; }
+  .phone { width: 300px; height: 620px; border-radius: 34px; border: 6px solid #1c1c1c; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,.18); background: var(--paper); color: var(--ink); }
+  .status { height: 26px; padding: 6px 18px 0; font-size: 11px; display: flex; justify-content: space-between; color: var(--muted); }
+  .body { flex: 1; padding: 6px 16px 0; overflow: hidden; }
+  .title { font-size: 26px; font-weight: 500; letter-spacing: -.5px; margin: 6px 0 12px; }
+  .search { background: var(--raised); border-radius: 14px; padding: 10px 14px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .feature { background: var(--primary); color: var(--onAccent); border-radius: 22px; padding: 16px; margin-bottom: 12px; }
+  .feature .k { font-size: 11px; opacity: .8; }
+  .feature .t { font-size: 17px; font-weight: 600; margin: 4px 0 10px; }
+  .feature .b { display: inline-block; font-size: 12px; padding: 6px 12px; border-radius: 12px; background: var(--onAccent); color: var(--primary); font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 12px 14px; margin-bottom: 9px; }
+  .card .t { font-size: 14px; font-weight: 600; }
+  .card .d { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .tags { margin-top: 8px; display: flex; gap: 6px; }
+  .tag { font-size: 10.5px; padding: 3px 8px; border-radius: 8px; font-weight: 500; }
+  .tag.p { background: var(--pl); color: var(--onPc); }
+  .tag.a { background: var(--al); color: var(--onAl); }
+  .seg { display: flex; background: var(--raised); border-radius: 14px; padding: 3px; margin: 4px 0 10px; font-size: 12px; }
+  .seg span { flex: 1; text-align: center; padding: 6px 0; border-radius: 11px; color: var(--muted); }
+  .seg span.on { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }
+  .input { border: 1px solid var(--inputBorder); border-radius: 14px; padding: 9px 12px; font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .btns { display: flex; gap: 8px; }
+  .btn { font-size: 12.5px; padding: 8px 14px; border-radius: 14px; font-weight: 600; }
+  .btn.p { background: var(--primary); color: var(--onAccent); }
+  .btn.s { background: var(--pc); color: var(--onPc); }
+  .link { font-size: 12.5px; color: var(--primary); padding: 8px 4px; font-weight: 500; }
+  .nav { display: flex; background: var(--card); border-top: 1px solid var(--border); padding: 8px 6px 14px; }
+  .nav div { flex: 1; text-align: center; font-size: 10.5px; color: var(--muted); }
+  .nav div i { display: block; margin: 0 auto 3px; width: 44px; height: 22px; border-radius: 11px; }
+  .nav div.on { color: var(--ink); font-weight: 600; }
+  .nav div.on i { background: var(--pl); }
+  .sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-width: 980px; margin: 0 auto 10px; }
+  .sw div { border-radius: 10px; padding: 8px 10px; font-size: 11.5px; border: 1px solid rgba(0,0,0,.12); }
+  h2 { text-align: center; font-size: 15px; margin: 26px 0 10px; color: #333; }
+</style>
+</head>
+<body>
+<h1>知新 配色预览</h1>
+<p class="sub">左两列为现在的色值（偏暖的米色底、绿黑深色底、苔绿主色）；右两列为方案（纯中性底、蓝色主题）。示意图，字体与圆角与实际略有差别。</p>
+
+<div class="row" id="phones"></div>
+<h2>方案色值</h2>
+<div class="sw" id="sw-light"></div>
+<div class="sw" id="sw-dark"></div>
+
+<script>
+const cur = {
+  light: { name:'现状 · 浅色', paper:'#F6F5EF', card:'#FFFEFA', raised:'#ECEDE5', border:'#DEE2D7', inputBorder:'#C3CDC1', ink:'#1B2E26', muted:'#56665D', primary:'#245C48', onAccent:'#FFFFFF', pl:'#E3EFE5', pc:'#D5E8D8', onPc:'#214A39', al:'#F7E8DC', onAl:'#743923' },
+  dark:  { name:'现状 · 深色', paper:'#141B17', card:'#1E2822', raised:'#28352D', border:'#34443A', inputBorder:'#546B5D', ink:'#E8EFE7', muted:'#A8B8AD', primary:'#A2D7B7', onAccent:'#12231C', pl:'#284637', pc:'#345743', onPc:'#C9ECD6', al:'#412A21', onAl:'#F3CDBD' }
+};
+const nxt = {
+  light: { name:'方案 · 浅色', paper:'#FFFFFF', card:'#FFFFFF', raised:'#F4F4F5', border:'#E6E6E8', inputBorder:'#C9C9CE', ink:'#111111', muted:'#6B6B72', primary:'#2563EB', onAccent:'#FFFFFF', pl:'#EAF1FE', pc:'#D9E6FD', onPc:'#12378A', al:'#FEF1DF', onAl:'#7A3A06' },
+  dark:  { name:'方案 · 深色', paper:'#000000', card:'#131315', raised:'#1E1E21', border:'#2A2A2E', inputBorder:'#45454B', ink:'#ECECEE', muted:'#9D9DA5', primary:'#5B9BFF', onAccent:'#001A40', pl:'#14243F', pc:'#1D3C6E', onPc:'#D4E4FF', al:'#3A2A14', onAl:'#FFDDB8' }
+};
+const css = p => `--paper:${p.paper};--card:${p.card};--raised:${p.raised};--border:${p.border};--inputBorder:${p.inputBorder};--ink:${p.ink};--muted:${p.muted};--primary:${p.primary};--onAccent:${p.onAccent};--pl:${p.pl};--pc:${p.pc};--onPc:${p.onPc};--al:${p.al};--onAl:${p.onAl}`;
+const phone = (p, note) => `
+<div class="col"><div class="phone" style="${css(p)}">
+  <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+  <div class="body">
+    <div class="title">知新</div>
+    <div class="search">搜索笔记、问题与日程</div>
+    <div class="feature"><div class="k">当前活动</div><div class="t">信息通信概论 · 论文选题</div><span class="b">继续提问</span></div>
+    <div class="seg"><span class="on">今天</span><span>本周</span><span>全部</span></div>
+    <div class="card"><div class="t">校园网稳定性的成因</div><div class="d">昨天 21:30 · 3 条讨论</div><div class="tags"><span class="tag p">已整理</span><span class="tag a">草稿</span></div></div>
+    <div class="card"><div class="t">DNS 递归查询流程</div><div class="d">11 月 19 日 · 5 条讨论</div></div>
+    <div class="input">写下你的问题…</div>
+    <div class="btns"><span class="btn p">提交</span><span class="btn s">稍后再说</span><span class="link">查看详情</span></div>
+  </div>
+  <div class="nav"><div class="on"><i></i>知新</div><div><i></i>学习</div><div><i></i>日程</div><div><i></i>我的</div></div>
+</div><div class="cap">${p.name}<small>${note}</small></div></div>`;
+document.getElementById('phones').innerHTML =
+  phone(cur.light, '页面底偏黄，卡片与底几乎同色') + phone(nxt.light, '纯白底，靠细描边分层') +
+  phone(cur.dark, '偏绿的深灰，不够黑') + phone(nxt.dark, '纯黑底，卡片逐级抬亮');
+const names = {paper:'页面底色 paper',card:'卡片 card',raised:'抬高表面 raised',border:'描边 border',inputBorder:'输入框描边',ink:'正文 ink',muted:'次要文字 muted',primary:'主色 primary',onAccent:'主色上的字',pl:'主色浅底',pc:'主色容器',onPc:'容器上的字',al:'提醒浅底',onAl:'提醒上的字'};
+const dk = new Set(['ink','muted','onAccent','onPc','onAl']);
+const lum = h => { const n=parseInt(h.slice(1),16); return (0.299*(n>>16)+0.587*((n>>8)&255)+0.114*(n&255)); };
+for (const [id,p] of [['sw-light',nxt.light],['sw-dark',nxt.dark]]) {
+  document.getElementById(id).innerHTML = Object.keys(names).map(k =>
+    `<div style="background:${p[k]};color:${lum(p[k])>140?'#111':'#fff'}">${names[k]}<br><b>${p[k]}</b></div>`).join('');
+}
+</script>
+</body>
+</html>
