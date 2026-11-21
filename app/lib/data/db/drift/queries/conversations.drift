@@ -237,6 +237,11 @@ WHERE id = :conversationId;
 -- 题干取开始作答时确定的用户消息；出处缺省时按材料标题与页码补一条，与题目的
 -- 展示口径一致。这里保留原查询的 SQL 兜底，不换成 `materialPosition`，docx 材料
 -- 的旧命中仍按“第 N 页”核对。
+--
+-- 出处可能为空：会话没有材料、也没有页码时，写法上 `CASE` 省略 `ELSE` 与写
+-- `ELSE NULL` 等价。这里写全，是因为 drift 对省略 `ELSE` 的 `CASE` 推断类型时
+-- 有两条路径，生成结果的空类型可能随解析时机变，生成文件随后也一起变；写上
+-- `ELSE NULL` 之后空类型固定为可空，客户端按可空读取，生成结果不再漂移。
 evidenceQuestionCurrent:
 SELECT
   COALESCE(c.question_message_id, (
@@ -248,7 +253,8 @@ SELECT
     CASE WHEN (SELECT title FROM material WHERE id = c.material_id) IS NOT NULL
       AND c.page_no IS NOT NULL
     THEN '《' || (SELECT title FROM material WHERE id = c.material_id)
-      || '》第 ' || c.page_no || ' 页' END
+      || '》第 ' || c.page_no || ' 页'
+    ELSE NULL END
   )) AS source_ref,
   c.title, c.context_text, c.page_no, c.created_at, c.updated_at,
   (SELECT m.content FROM message m
