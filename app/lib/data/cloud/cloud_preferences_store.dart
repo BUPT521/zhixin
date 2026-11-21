@@ -1,6 +1,6 @@
 import 'package:path/path.dart' as p;
 
-import '../atomic_json_file.dart';
+import '../atomic_file.dart';
 
 /// 增量同步的账号标识：这个账号在这个服务实例上已经初始化过同步，下次同步
 /// 按增量走，不再上传首次基线。

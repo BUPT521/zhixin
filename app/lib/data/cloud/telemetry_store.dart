@@ -2,7 +2,7 @@ import 'dart:math';
 
 import 'package:path/path.dart' as p;
 
-import '../atomic_json_file.dart';
+import '../atomic_file.dart';
 
 /// 匿名活跃上报的本机状态（ADR-0019）：安装标识、上次上报的日期、首次说明是否
 /// 看过，以及开关。

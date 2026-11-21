@@ -89,6 +89,17 @@ void main() {
     expect(await store.read(), isFalse);
   });
 
+  test('开关连续两次写入同时进行时留下完整的一次', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_diagnostics_');
+    addTearDown(() => dir.delete(recursive: true));
+    final store = DiagnosticsStore(dir.path);
+
+    await Future.wait([store.write(false), store.write(true)]);
+
+    expect(await store.read(fallback: false), isTrue);
+    expect(await File('${store.path}.partial').exists(), isFalse);
+  });
+
   test('诊断记录清除 SQL 文本与绑定参数', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_crash_');
     addTearDown(() async {

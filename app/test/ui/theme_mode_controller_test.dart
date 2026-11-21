@@ -46,4 +46,13 @@ void main() {
 
     expect(controller.value, ThemeMode.dark);
   });
+
+  test('连续两次写入同时进行时留下完整的一次', () async {
+    final store = ThemeModeStore(directory.path);
+
+    await Future.wait([store.write('dark'), store.write('light')]);
+
+    expect(await store.read(), 'light');
+    expect(await File('${store.path}.partial').exists(), isFalse);
+  });
 }
