@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -49,5 +50,42 @@ void main() {
     expect(await store.enabled(), isTrue);
     expect(await store.lastReportDay(), isNull);
     expect(await store.installId(), hasLength(32));
+  });
+
+  test('同时改不同的键，各自改的键都写进文件', () async {
+    await Future.wait([
+      store.setEnabled(false),
+      store.setLastReportDay('2026-11-21'),
+      store.markNoticeSeen(),
+    ]);
+
+    final raw = (jsonDecode(await File(store.path).readAsString()) as Map)
+        .cast<String, Object?>();
+    expect(raw['enabled'], isFalse);
+    expect(raw['last_report_day'], '2026-11-21');
+    expect(raw['notice_seen'], isTrue);
+    expect(await File('${store.path}.partial').exists(), isFalse);
+  });
+
+  test('同时取安装标识只生成一个', () async {
+    final ids = await Future.wait([
+      for (var i = 0; i < 6; i++) store.installId(),
+    ]);
+
+    expect(ids.toSet(), hasLength(1));
+    expect(await store.installId(), ids.first);
+    final raw = (jsonDecode(await File(store.path).readAsString()) as Map)
+        .cast<String, Object?>();
+    expect(raw['install_id'], ids.first);
+  });
+
+  test('写入失败时不留临时文件', () async {
+    // 把目标路径占成目录，临时文件改名成它时一定失败。
+    await Directory(store.path).create(recursive: true);
+    await expectLater(
+      store.setEnabled(false),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(await File('${store.path}.partial').exists(), isFalse);
   });
 }

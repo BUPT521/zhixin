@@ -1,8 +1,6 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:path/path.dart' as p;
+
+import '../atomic_json_file.dart';
 
 /// 增量同步的账号标识：这个账号在这个服务实例上已经初始化过同步，下次同步
 /// 按增量走，不再上传首次基线。
@@ -74,79 +72,24 @@ const String defaultServerBaseUrl = String.fromEnvironment(
 /// 而不是沿用别的设备的位置（ADR-0039）。文件写在应用私有目录，卸载应用时
 /// 一起删除。
 ///
-/// 写按文件排队：[path] 上同一时刻只跑一个读改写，前一个写完之后后一个才读文件。
-/// 不做这一层时，界面切换自动同步与同步收尾写状态会各自读到同一份旧内容，后写的
-/// 一方把先写的键覆盖掉；两次写入还共用同一个 `cloud.json.partial`，Windows 上
-/// 先完成的 rename 移走临时文件之后，后到的 rename 会报“另一个程序正在使用此
-/// 文件”。
+/// 写按文件排队、先写临时文件再改名，口径见 [AtomicJsonFile]：界面切换自动同步与
+/// 同步收尾写状态可能同时发生，两个动作各自在这份文件上读改写。
 class CloudPreferencesStore {
   CloudPreferencesStore({required this.filesDir});
 
   static const String fileName = 'cloud.json';
 
-  /// 每个文件上还没跑完的读改写；按路径共享，两个实例写同一个目录也排进同一条
-  /// 队列。队列空下来时把这一项删掉，避免长期占用。
-  static final Map<String, Future<void>> _tails = {};
-
   final String filesDir;
 
   String get path => p.join(filesDir, fileName);
 
-  String get _queueKey => p.normalize(p.absolute(path));
+  AtomicJsonFile get _file => AtomicJsonFile(path);
 
-  Future<Map<String, Object?>> _read() async {
-    final file = File(path);
-    if (!await file.exists()) return {};
-    try {
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) return {};
-      return decoded.cast<String, Object?>();
-    } catch (_) {
-      return {};
-    }
-  }
+  Future<Map<String, Object?>> _read() => _file.read();
 
-  /// 读最新的内容、改一个键再整体写回，这一段在 [path] 的队列里独占执行。
-  Future<void> _mutate(
-    Map<String, Object?> Function(Map<String, Object?> raw) change,
-  ) => _enqueue(() async {
-    final raw = await _read();
-    await _write(change(raw));
-  });
-
-  /// 排到 [path] 的队列尾部，前一次结束之后才执行。
-  ///
-  /// 队列尾只用来放行下一个动作，不携带结果；动作自己的错误照常交给调用方，
-  /// 无论成功失败都放行后一个动作。
-  Future<T> _enqueue<T>(Future<T> Function() action) {
-    final key = _queueKey;
-    final previous = _tails[key] ?? Future<void>.value();
-    final done = Completer<void>();
-    final tail = done.future;
-    _tails[key] = tail;
-
-    final result = previous.then((_) => action());
-    return result.whenComplete(() {
-      done.complete();
-      if (identical(_tails[key], tail)) _tails.remove(key);
-    });
-  }
-
-  Future<void> _write(Map<String, Object?> value) async {
-    final file = File(path);
-    await file.parent.create(recursive: true);
-    final temporary = File('${file.path}.partial');
-    try {
-      await temporary.writeAsString(jsonEncode(value), flush: true);
-      await temporary.rename(file.path);
-    } catch (_) {
-      // 失败时不留半份临时文件，下一次写入会重新生成。
-      if (await temporary.exists()) {
-        await temporary.delete();
-      }
-      rethrow;
-    }
-  }
+  /// 读最新的内容、改一个键再整体写回，这一段在这份文件的队列里独占执行。
+  Future<void> _mutate(void Function(Map<String, Object?> raw) change) =>
+      _file.update(change);
 
   /// 本机保存的地址；没有保存过时为空，调用方据此区分默认地址与用户改过的地址。
   Future<String> storedServerBaseUrl() async {
@@ -163,16 +106,18 @@ class CloudPreferencesStore {
     return stored.isEmpty ? defaultServerBaseUrl : stored;
   }
 
-  Future<void> setServerBaseUrl(String value) =>
-      _mutate((raw) => {...raw, 'server_base_url': value.trim()});
+  Future<void> setServerBaseUrl(String value) => _mutate((raw) {
+    raw['server_base_url'] = value.trim();
+  });
 
   Future<bool> autoSync() async {
     final raw = await _read();
     return raw['auto_sync'] != false;
   }
 
-  Future<void> setAutoSync(bool value) =>
-      _mutate((raw) => {...raw, 'auto_sync': value});
+  Future<void> setAutoSync(bool value) => _mutate((raw) {
+    raw['auto_sync'] = value;
+  });
 
   /// 上一次登录的身份（实例来源与账号）；用它判断这次登录是不是换了账号，
   /// 换了账号就把自动同步先停下来，等用户确认之后再恢复。
@@ -182,8 +127,9 @@ class CloudPreferencesStore {
     return value is String ? value.trim() : '';
   }
 
-  Future<void> setLastIdentity(String value) =>
-      _mutate((raw) => {...raw, 'last_identity': value.trim()});
+  Future<void> setLastIdentity(String value) => _mutate((raw) {
+    raw['last_identity'] = value.trim();
+  });
 
   Future<SyncState?> syncState() async {
     final raw = await _read();
@@ -195,9 +141,11 @@ class CloudPreferencesStore {
         : decoded;
   }
 
-  Future<void> saveSyncState(SyncState state) =>
-      _mutate((raw) => {...raw, 'sync_state': state.toJson()});
+  Future<void> saveSyncState(SyncState state) => _mutate((raw) {
+    raw['sync_state'] = state.toJson();
+  });
 
-  Future<void> clearSyncState() =>
-      _mutate((raw) => Map<String, Object?>.of(raw)..remove('sync_state'));
+  Future<void> clearSyncState() => _mutate((raw) {
+    raw.remove('sync_state');
+  });
 }
