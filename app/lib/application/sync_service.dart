@@ -172,6 +172,26 @@ class SyncStatus {
   final bool digestMismatch;
   final DateTime? lastSyncedAt;
   final String? lastError;
+
+  /// 换掉“与云端不一致”的标记，其余字段保持原样。
+  ///
+  /// 同步与两个修复入口结束之后先用它就地更新状态卡，再给结论，其余字段随后由
+  /// 重读状态补齐，提示与状态卡因此不会在几帧里互相矛盾（ADR-0045）。
+  SyncStatus withDigestMismatch(bool mismatch) => SyncStatus(
+    signedIn: signedIn,
+    accountLabel: accountLabel,
+    autoSync: autoSync,
+    syncing: syncing,
+    pendingCommits: pendingCommits,
+    localHead: localHead,
+    serverHead: serverHead,
+    needsBootstrap: needsBootstrap,
+    baselineNeedsConfirmation: baselineNeedsConfirmation,
+    restoreNeedsConfirmation: restoreNeedsConfirmation,
+    digestMismatch: mismatch,
+    lastSyncedAt: lastSyncedAt,
+    lastError: lastError,
+  );
 }
 
 /// 一次同步的结果：拉取与推送的提交数、上传与下载的附件数。
@@ -472,6 +492,13 @@ class SyncService {
       throw const SyncIdentityChanged();
     }
   }
+
+  /// 当前是否记着“本机与云端不一致”，只读偏好文件、不碰数据库。
+  ///
+  /// 账号页在同步与两个修复入口结束之后用它就地更新状态卡，再给结论；完整状态由
+  /// [status] 随后补齐，页面因此不会在几帧里出现提示与状态卡互相矛盾（ADR-0045）。
+  Future<bool> digestMismatch() async =>
+      (await preferences.syncState())?.digestMismatch ?? false;
 
   Future<SyncStatus> status() async {
     final snapshot = await account.snapshot();
