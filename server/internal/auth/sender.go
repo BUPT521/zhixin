@@ -3,12 +3,34 @@ package auth
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrSenderUnsupported 表示这种登录方式还没有接上发送通道：手机号要接短信服务商，
 // 微信要接开放平台，两者都还没有做（ADR-0038）。接口据此回 501 暂不支持，与
 // “通道配置缺失”的 503 分开。
 var ErrSenderUnsupported = errors.New("auth: no sender for this identity kind")
+
+// ErrMailPaused 表示发信通道因为连续被服务商拒绝而整体暂停，暂停时长由发信器
+// 决定。它与“没有配置发信”不同：暂停期间请求返回 429 并给出迟一些再试的秒数，
+// 而不是 503。
+var ErrMailPaused = errors.New("auth: mail sender is paused after repeated temporary failures")
+
+// mailPauser 是发信器可选实现的接口，返回还要暂停多久；0 表示可以继续发。
+type mailPauser interface {
+	PausedFor() time.Duration
+}
+
+// PausedFor 报告发信是否处于暂停，供服务层在生成验证码之前就拒绝。
+func (s *Senders) PausedFor() time.Duration {
+	if s == nil || s.mail == nil {
+		return 0
+	}
+	if p, ok := s.mail.(mailPauser); ok {
+		return p.PausedFor()
+	}
+	return 0
+}
 
 // CodeSender 按登录方式分发验证码：验证码文本由服务层生成，送达方式按 kind
 // 不同。以后接手机号或微信，只要实现一个同样签名的发送函数并在 Senders 里登记，

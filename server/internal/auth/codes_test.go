@@ -346,3 +346,25 @@ func TestSendLimitKeyedByKindAndIdentifier(t *testing.T) {
 		t.Fatalf("预算用尽应返回发信预算错误，得到 %v", err)
 	}
 }
+
+// TestGlobalSendLimitStopsAcrossRecipients 核对实例总量与按收件地址的预算同时
+// 生效：换一个还没发过码的邮箱，仍然会被实例总量拦下，且不留下验证码。
+func TestGlobalSendLimitStopsAcrossRecipients(t *testing.T) {
+	ctx := context.Background()
+	s, _, m := newCodeService(t)
+	s.SetGlobalSendLimiter(ratelimit.New(rate.Limit(0), 1, 0))
+	tok, _ := s.Register(ctx, "first@example.com", "password1", "")
+	p, _ := s.Authenticate(ctx, tok.AccessToken)
+	if err := s.RequestIdentityVerification(ctx, p, identityID(t, s, p)); err != nil {
+		t.Fatal(err)
+	}
+	tok2, _ := s.Register(ctx, "second@example.com", "password1", "")
+	p2, _ := s.Authenticate(ctx, tok2.AccessToken)
+	err := s.RequestIdentityVerification(ctx, p2, identityID(t, s, p2))
+	if !errors.As(err, new(instanceSendRateError)) {
+		t.Fatalf("第二个收件地址应被实例总量拦下，得到 %v", err)
+	}
+	if len(m.sent) != 1 {
+		t.Fatalf("只应发出第一封，实际 %d", len(m.sent))
+	}
+}

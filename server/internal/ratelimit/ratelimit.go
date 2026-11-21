@@ -54,8 +54,26 @@ func New(limit rate.Limit, burst int, idle time.Duration, maxKeys ...int) *Limit
 	return l
 }
 
+// Limit 是补充速率与桶容量，供按实例总量控制的桶从配置读取。
+type Limit struct {
+	PerSecond float64
+	Burst     int
+}
+
+// NewGlobal 建一个整个实例共用的限流器：所有请求扣同一个键，用来给换地址也
+// 绕不过去的总量兜底，比如发信。速率为零或负数时返回 Disabled，关闭限流。
+func NewGlobal(l Limit) *Limiter {
+	if l.PerSecond <= 0 {
+		return Disabled()
+	}
+	return New(rate.Limit(l.PerSecond), l.Burst, 15*time.Minute, 1)
+}
+
 // Disabled 返回一个永远放行的限流器，用于关闭限流或测试。
 func Disabled() *Limiter { return New(rate.Inf, 1, 0) }
+
+// TakeOne 扣掉全局桶里的一个令牌，返回建议等待的秒数；0 表示放行。
+func (l *Limiter) TakeOne() int64 { return l.Take("global") }
 
 // Take consumes a token per key, or returns the seconds until a retry.
 func (l *Limiter) Take(keys ...string) int64 { return l.check(true, keys) }

@@ -170,6 +170,8 @@ server/
 
 验证码默认十分钟过期，同一种登录方式同一用途一分钟内只能发一次，输错超过五次就作废；库里只保存 HMAC-SHA256，密钥来自 `ZHIXIN_CODE_SECRET`，不保存六位数字本身。发信走 `ZHIXIN_SMTP_*` 配置，没有配置时这两个接口返回 503，登录、备份、同步与模型代理不受影响；`ZHIXIN_MAIL_LOG=1` 只用于本机联调，会把邮件正文写进日志，生产不能打开。验证码接口按登录方式、来源地址与联系方式分别限流，参数见下表的 `ZHIXIN_CODE_*`。
 
+发信总量按实例控制：除了按地址与按收件地址的桶，所有发信再共用一个桶（`ZHIXIN_MAIL_GLOBAL_RATE` 与 `ZHIXIN_MAIL_GLOBAL_BURST`），换大量没有注册过的邮箱地址也绕不过去，超限返回 429 并带 `Retry-After`。桶的默认值按 SMTP 服务商免费额的保守值定，部署时按实际通道调整。每次发信同时占用的 SMTP 连接数不超过 `ZHIXIN_SMTP_MAX_CONCURRENT`，超出的请求排队而不是拒绝。连接失败、超时、4xx 这类临时失败按 `ZHIXIN_SMTP_MAX_ATTEMPTS` 重试，间隔为 1 秒与 3 秒，服务商在响应文本里给出 `Retry-After` 时取较大者，超过 30 秒就直接放弃这次发送并把验证码作废，不把请求挂住。连续三次临时失败之后整体暂停发信，暂停从 30 秒起翻倍、最长 5 分钟，暂停期间请求返回 429 而不是 503，发信恢复之后计数归零。
+
 ## 模型代理
 
 客户端在设置里选择“知新服务”时，接口风格固定为 Chat Completions，地址填 `<服务地址>/v1/llm`，用访问令牌代替 key，其余请求构造与 SSE 解析沿用现有代码。服务端按请求里的 `model` 查路由表，核对这个账号当天这一类模型的用量是否低于额度，然后把 `model` 换成路由选中的来源侧模型名、换上这个来源的 key 转发，流式响应按事件边界逐块刷新，可转交的提供方错误由客户端读取。路由表只来自管理后台配置的来源与模型（`llm_provider`、`llm_model`、`llm_route` 三张表），没有环境变量来源（[ADR-0035](../docs/adr/0035-模型来源只保留后台配置.md)）；没有配置任何模型时聊天与嵌入接口返回 503。
@@ -343,6 +345,10 @@ ORDER BY f.first_day;
 | `ZHIXIN_SMTP_USERNAME` | 空 | SMTP 用户名，留空表示不鉴权 |
 | `ZHIXIN_SMTP_PASSWORD` | 空 | SMTP 口令；有用户名时必填 |
 | `ZHIXIN_SMTP_TLS` | `starttls` | `starttls`、`implicit`（465 端口）或 `none`（仅本机联调） |
+| `ZHIXIN_SMTP_MAX_CONCURRENT` | `4` | 同时占用的 SMTP 连接数，超出的请求排队 |
+| `ZHIXIN_SMTP_MAX_ATTEMPTS` | `3` | 一次发信对临时失败（连接错误、4xx）的总尝试次数 |
+| `ZHIXIN_MAIL_GLOBAL_RATE` | `0.05` | 整个实例的发信补充速率（封/秒），设 `0` 关闭，见下文“发信总量” |
+| `ZHIXIN_MAIL_GLOBAL_BURST` | `20` | 实例级发信桶的容量 |
 | `ZHIXIN_MAIL_LOG` | `0` | 设为 `1` 时把邮件写进日志；只用于本机联调，配置了数据库时启动会拒绝 |
 | `ZHIXIN_CODE_SECRET` | 空 | 验证码 HMAC 的密钥；为空时每次启动随机生成，重启后旧验证码失效，配置了数据库时必填 |
 | `ZHIXIN_CODE_TTL` | `10m` | 验证码有效期 |

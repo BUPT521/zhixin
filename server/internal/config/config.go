@@ -127,6 +127,14 @@ type Config struct {
 	// 或来源地址计；设 0 关闭。
 	CodeRatePerSecond float64
 	CodeBurst         int
+	// MailGlobalRatePerSecond 与 MailGlobalBurst 是整个实例的发信上限，与按地址、
+	// 按收件地址的桶同时生效：换大量新邮箱请求验证码也绕不过去。设 0 关闭。
+	MailGlobalRatePerSecond float64
+	MailGlobalBurst         int
+	// SMTPMaxConcurrent 是同时占用的 SMTP 连接数，SMTPMaxAttempts 是一次发送
+	// 对临时失败的总尝试次数。
+	SMTPMaxConcurrent int
+	SMTPMaxAttempts   int
 
 	// FeedbackRatePerSecond 与 FeedbackBurst 限制应用内反馈的提交，按来源地址
 	// 计；设 0 关闭。
@@ -324,6 +332,13 @@ func Load(getenv func(string) string) (Config, error) {
 		CodeCooldown:      dur("ZHIXIN_CODE_COOLDOWN", "60s"),
 		CodeRatePerSecond: fnum("ZHIXIN_CODE_RATE", "0.02"),
 		CodeBurst:         int(num("ZHIXIN_CODE_BURST", "1")),
+		// 发信总量按服务商免费额的保守值定：日发 200 封折成每秒约 0.002 封，
+		// 高峰一小时发 60 封折成每秒约 0.017 封，取 0.05 留三倍余量，桶容量 20。
+		// 具体通道的日上限与每小时上限不同，部署时按实际通道调，见运维手册。
+		MailGlobalRatePerSecond: fnum("ZHIXIN_MAIL_GLOBAL_RATE", "0.05"),
+		MailGlobalBurst:         int(num("ZHIXIN_MAIL_GLOBAL_BURST", "20")),
+		SMTPMaxConcurrent:       int(num("ZHIXIN_SMTP_MAX_CONCURRENT", "4")),
+		SMTPMaxAttempts:         int(num("ZHIXIN_SMTP_MAX_ATTEMPTS", "3")),
 
 		FeedbackRatePerSecond:       fnum("ZHIXIN_FEEDBACK_RATE", "0.02"),
 		FeedbackBurst:               int(num("ZHIXIN_FEEDBACK_BURST", "3")),

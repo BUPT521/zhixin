@@ -261,6 +261,8 @@ func (h *Handler) RequestIdentityVerification(w http.ResponseWriter, r *http.Req
 	}
 	err := h.svc.RequestIdentityVerification(r.Context(), p, identityID)
 	var sendRate sendRateError
+	var instanceRate instanceSendRateError
+	var pause mailPauseError
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
@@ -270,6 +272,10 @@ func (h *Handler) RequestIdentityVerification(w http.ResponseWriter, r *http.Req
 		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.As(err, &sendRate):
 		httpx.TooMany(w, r, sendRate.retryAfter)
+	case errors.As(err, &instanceRate):
+		httpx.TooMany(w, r, instanceRate.retryAfter)
+	case errors.As(err, &pause):
+		httpx.TooMany(w, r, pause.retryAfter)
 	case errors.Is(err, ErrSenderUnsupported):
 		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):
@@ -319,6 +325,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.svc.RequestPasswordReset(r.Context(), in.Identifier)
+	var pause mailPauseError
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
@@ -326,6 +333,8 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "identifier must be a plain email address")
 	case errors.Is(err, ErrCodeTooSoon):
 		httpx.TooMany(w, r, h.cooldownSeconds())
+	case errors.As(err, &pause):
+		httpx.TooMany(w, r, pause.retryAfter)
 	case errors.Is(err, ErrSenderUnsupported):
 		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):

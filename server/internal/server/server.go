@@ -178,12 +178,15 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		telemetryGlobal = ratelimit.New(rate.Limit(cfg.TelemetryGlobalRatePerSecond), cfg.TelemetryGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
 	mailer, err := auth.NewMailer(auth.MailerConfig{
-		Addr:     cfg.SMTPAddr,
-		From:     cfg.SMTPFrom,
-		Username: cfg.SMTPUsername,
-		Password: cfg.SMTPPassword,
-		TLS:      cfg.SMTPTLS,
-		LogOnly:  cfg.MailLog,
+		Addr:            cfg.SMTPAddr,
+		From:            cfg.SMTPFrom,
+		Username:        cfg.SMTPUsername,
+		Password:        cfg.SMTPPassword,
+		TLS:             cfg.SMTPTLS,
+		LogOnly:         cfg.MailLog,
+		MaxConcurrent:   cfg.SMTPMaxConcurrent,
+		MaxAttempts:     cfg.SMTPMaxAttempts,
+		RetryAfterError: auth.ParseRetryAfterHint,
 	}, log)
 	if err != nil {
 		log.Error("mail is disabled because its configuration is invalid", slog.String("error", err.Error()))
@@ -202,6 +205,11 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	authSvc.ConfigureCodes(auth.NewSenders(mailer), codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
 	// 收信预算的键是 kind:identifier：同一地址每 24 小时补充 4 枚，最多积存 4 枚。
 	authSvc.SetSendLimiter(ratelimit.New(rate.Limit(4/(24*time.Hour).Seconds()), 4, 48*time.Hour, cfg.RateLimitKeys))
+	// 实例级的发信总量：换地址与换收件地址都绕不过去，给 SMTP 服务商的配额兜底。
+	authSvc.SetGlobalSendLimiter(ratelimit.NewGlobal(ratelimit.Limit{
+		PerSecond: cfg.MailGlobalRatePerSecond,
+		Burst:     cfg.MailGlobalBurst,
+	}))
 
 	// 匿名活跃的安装标识用 HMAC 保存；密钥为空时每次启动随机生成，重启后同一个
 	// 安装会被当成新的，留存数字偏高，因此生产必须固定。

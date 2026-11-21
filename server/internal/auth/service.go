@@ -104,11 +104,40 @@ type Service struct {
 	codeTTL      time.Duration
 	codeCooldown time.Duration
 	sendLimits   *ratelimit.Limiter
+	// globalSendLimits 是实例级的发信上限，防止换地址与换收件地址刷 SMTP 配额。
+	globalSendLimits *ratelimit.Limiter
 }
 
 type sendRateError struct{ retryAfter int64 }
 
 func (sendRateError) Error() string { return "auth: recipient code budget exhausted" }
+
+// instanceSendRateError 表示实例的发信总量用完了，与某一个收件地址无关。
+type instanceSendRateError struct{ retryAfter int64 }
+
+func (instanceSendRateError) Error() string { return "auth: instance mail budget exhausted" }
+
+// mailPauseError 表示发信通道正在暂停，值里带还要等多久。
+type mailPauseError struct{ retryAfter int64 }
+
+func (mailPauseError) Error() string { return "auth: mail sender is paused" }
+
+// mailPause 取发信器当前的暂停时长，写成 Retry-After 的整秒数。
+func (s *Service) mailPause() int64 {
+	p, ok := s.senders.(*Senders)
+	if !ok {
+		return 0
+	}
+	delay := p.PausedFor()
+	if delay <= 0 {
+		return 0
+	}
+	seconds := int64((delay + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return seconds
+}
 
 const maxCodeAttempts = 5
 
@@ -144,6 +173,16 @@ func (s *Service) ConfigureCodes(senders CodeSender, secret []byte, ttl, cooldow
 // SetSendLimiter 装上按登录方式的收信预算，键是 kind:identifier，两种用途共用
 // 同一个桶，确认登录方式与找回密码不会各自多拿一份额度。
 func (s *Service) SetSendLimiter(limiter *ratelimit.Limiter) { s.sendLimits = limiter }
+
+// SetGlobalSendLimiter 装上整个实例的发信上限，只有一个键：换大量没有注册过的
+// 邮箱地址就能绕开按地址与按收件地址的桶，这个桶给 SMTP 服务商的配额兜底。
+// 按预算扣在生成与写入验证码之前，超限时不留下记录。传 nil 表示关闭。
+func (s *Service) SetGlobalSendLimiter(limiter *ratelimit.Limiter) {
+	if limiter == nil {
+		limiter = ratelimit.Disabled()
+	}
+	s.globalSendLimits = limiter
+}
 
 // SetAccountDataDeleter registers the one cleanup that runs before the account
 // row is removed.
@@ -572,7 +611,11 @@ func (s *Service) RequestPasswordReset(ctx context.Context, rawIdentifier string
 		return err
 	}
 	err = s.issueCode(ctx, u.ID, PurposeResetPassword, kind, identifier)
-	if errors.Is(err, ErrCodeTooSoon) || errors.As(err, new(sendRateError)) {
+	// 冷却、收件地址预算、实例总量与发信暂停都按“已受理”返回：重设密码的入口是
+	// 公开的，回得不一样就能试出邮箱是否注册过，也试出限流的状态。
+	var paused mailPauseError
+	if errors.Is(err, ErrCodeTooSoon) || errors.As(err, new(sendRateError)) ||
+		errors.As(err, new(instanceSendRateError)) || errors.As(err, &paused) {
 		return nil
 	}
 	return err
@@ -645,9 +688,17 @@ func (s *Service) issueCode(ctx context.Context, userID, purpose, kind, identifi
 	case err != nil && !errors.Is(err, ErrNotFound):
 		return err
 	}
+	if delay := s.mailPause(); delay > 0 {
+		return mailPauseError{retryAfter: delay}
+	}
 	if s.sendLimits != nil {
 		if delay := s.sendLimits.Take(kind + ":" + identifier); delay > 0 {
 			return sendRateError{retryAfter: delay}
+		}
+	}
+	if s.globalSendLimits != nil {
+		if delay := s.globalSendLimits.TakeOne(); delay > 0 {
+			return instanceSendRateError{retryAfter: delay}
 		}
 	}
 	code, err := newCode()
