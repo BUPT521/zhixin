@@ -38,6 +38,7 @@ void main() {
     await tester.tap(find.text('现在').last);
     await settle(tester);
     expect(find.text('保留这个问题'), findsOneWidget);
+    await preview(tester, 'now-typed');
     await tester.tap(find.text('系统学习').first);
     await settle(tester);
     final planList = find

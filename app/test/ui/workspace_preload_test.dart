@@ -1,8 +1,10 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/account_page.dart';
 import 'package:zhixin/ui/copy.dart';
+import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/materials_list.dart';
 import 'package:zhixin/ui/mine_page.dart';
 import 'package:zhixin/ui/plan_goals_tab.dart';
@@ -12,6 +14,7 @@ import 'package:zhixin/ui/plan_schedule_tab.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
+import 'package:zhixin/ui/zhixin_dialog.dart';
 
 import 'workspace_support.dart';
 
@@ -90,6 +93,7 @@ void main() {
     );
     // 预读在切栏动画之后开始，这里等到它读完。
     await settle(tester);
+    await preview(tester, 'mine');
 
     final entry = find.descendant(
       of: find.byType(MinePage),
@@ -227,6 +231,7 @@ void main() {
       Theme.of(tester.element(find.byType(SettingsPage))).brightness,
       Brightness.dark,
     );
+    await preview(tester, 'settings-dark');
 
     await tester.ensureVisible(selectField<ThemeMode>('深浅色'));
     await tester.pumpAndSettle();
@@ -238,6 +243,100 @@ void main() {
       Theme.of(tester.element(find.byType(SettingsPage))).brightness,
       Brightness.light,
     );
+    await preview(tester, 'settings-light');
     expect(tester.takeException(), isNull);
   });
+
+  // 外观复核用的一页：首页、对话、对话框与底部面板各出浅色与深色两张，
+  // 只在设了 ZHIXIN_UI_PREVIEW_DIR 时写图，平时这里只是走一遍这几页的通用断言。
+  for (final (name, brightness) in [
+    ('light', null),
+    ('dark', Brightness.dark),
+  ]) {
+    testWidgets('外观复核：$name', (tester) async {
+      if (brightness != null) {
+        tester.platformDispatcher.platformBrightnessTestValue = brightness;
+        addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      }
+      await openApp(tester);
+      await tester.runAsync(() async {
+        final id = await scope!.chat.learning.capture(stem: '外观复核的题目');
+        final attempt = await scope!.chat.learning.openAttempt(id);
+        await scope!.chat.learning.submit(
+          attemptId: attempt.id,
+          answer: '先化简再代入',
+          isCorrect: true,
+          independent: true,
+        );
+      });
+      await settle(tester);
+      await preview(tester, '$name-home');
+
+      await tester.tap(find.text('记录').last);
+      await settle(tester);
+      await tester.tap(find.widgetWithText(forui.FTile, '外观复核的题目'));
+      await settle(tester);
+      await preview(tester, '$name-learning');
+
+      await tester.tap(find.byKey(const ValueKey('zhixin-header-back')));
+      await settle(tester);
+      final conversation = await tester.runAsync(
+        () => scope!.testing.conversations.create(title: '外观复核的对话'),
+      );
+      await tester.runAsync(() async {
+        await scope!.testing.conversations.append(
+          conversation!,
+          role: MessageRole.user,
+          content: '第 8 题又做错了，怎么办',
+        );
+        await scope!.testing.conversations.append(
+          conversation,
+          role: MessageRole.assistant,
+          content: '先收下这条安排，再自己独立做一遍。',
+        );
+      });
+      tester
+          .state<NavigatorState>(find.byType(Navigator).first)
+          .push(
+            MaterialPageRoute<void>(
+              builder: (_) => DiscussionPage(conversationId: conversation),
+            ),
+          );
+      await settle(tester);
+      await preview(tester, '$name-discussion');
+
+      final dialog = showZhixinAlert<void>(
+        context: tester.element(find.byType(DiscussionPage)),
+        title: '结束这次讨论',
+        content: const Text('记录保留，之后还可以再打开。'),
+        cancelLabel: '取消',
+        actions: [
+          forui.FButton(
+            mainAxisSize: MainAxisSize.min,
+            onPress: () {},
+            child: const Text('结束讨论'),
+          ),
+        ],
+      );
+      await settle(tester);
+      expect(find.text('结束这次讨论'), findsOneWidget);
+      await preview(tester, '$name-dialog');
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await dialog;
+      await settle(tester);
+
+      await tester
+          .state<NavigatorState>(find.byType(Navigator).first)
+          .maybePop();
+      await settle(tester);
+
+      await tester.tap(find.text('现在').last);
+      await settle(tester);
+      await tester.tap(find.text('从材料开始学习'));
+      await settle(tester);
+      expect(find.text('导入材料'), findsOneWidget);
+      await preview(tester, '$name-materials');
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

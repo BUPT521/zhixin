@@ -247,7 +247,7 @@ class BuddyTimeline extends StatelessWidget {
 
   /// 学习页的帮助卡：生成中显示流式正文，生成完显示这一次保存的正文。
   ///
-  /// 与回答、记忆、建议共用 [DiscussionCard]，帮助不再单独用陶土色底——这个
+  /// 与回答、记忆、建议共用 [DiscussionCard]，帮助不再单独用提醒色底——这个
   /// 颜色只表示草稿与优先这类需要留意的状态。
   Widget _helpCard(BuildContext context, BuddyHelpEntry entry) {
     final theme = context.zhixin;

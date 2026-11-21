@@ -11,26 +11,30 @@ export 'motion.dart';
 /// 应用的两套外观：色值与字号只在这里定义一次，Forui 主题、页面读到的
 /// 字号与颜色、回答正文的 Markdown 主题都从同一份生成。
 ///
+/// 背景与表面不带色相：浅色是纯白与中性灰，深色是纯黑与中性灰，深浅两套的
+/// 背景、卡片与描边都按灰阶给出。主题色只出现在主色、主色容器与提醒色上，
+/// 用在按钮、链接、选中态、开关与强调卡片，不参与页面与卡片的底色。
+///
 /// 页面不再读 Material 的 `Theme.of`，统一读 Forui 主题里的 [ZhixinTheme]；
 /// Material 的 `ThemeData` 只留给 `gpt_markdown`（它要 `GptMarkdownThemeData`
 /// 与 `TextTheme`）和本地化，不再是一份需要单独维护的色板。
 const _Palette _lightPalette = _Palette(
   brightness: Brightness.light,
-  ink: Color(0xFF1B2E26),
-  muted: Color(0xFF56665D),
-  paper: Color(0xFFF6F5EF),
-  card: Color(0xFFFFFEFA),
-  code: Color(0xFFEFEEE7),
-  border: Color(0xFFDEE2D7),
-  inputBorder: Color(0xFFC3CDC1),
-  moss: Color(0xFF245C48),
-  mossLight: Color(0xFFE3EFE5),
-  mossContainer: Color(0xFFD5E8D8),
-  onMossContainer: Color(0xFF214A39),
-  raised: Color(0xFFECEDE5),
-  clay: Color(0xFF9B4B32),
-  clayLight: Color(0xFFF7E8DC),
-  onClayLight: Color(0xFF743923),
+  ink: Color(0xFF111111),
+  muted: Color(0xFF6B6B72),
+  paper: Color(0xFFFFFFFF),
+  card: Color(0xFFFFFFFF),
+  code: Color(0xFFF4F4F5),
+  border: Color(0xFFE6E6E8),
+  inputBorder: Color(0xFFC9C9CE),
+  brand: Color(0xFF2563EB),
+  brandLight: Color(0xFFEAF1FE),
+  brandContainer: Color(0xFFD9E6FD),
+  onBrandContainer: Color(0xFF12378A),
+  raised: Color(0xFFF4F4F5),
+  attention: Color(0xFFB45309),
+  attentionLight: Color(0xFFFEF1DF),
+  onAttentionLight: Color(0xFF7A3A06),
   onAccent: Color(0xFFFFFFFF),
   error: Color(0xFFBA1A1A),
   onError: Color(0xFFFFFFFF),
@@ -38,22 +42,22 @@ const _Palette _lightPalette = _Palette(
 
 const _Palette _darkPalette = _Palette(
   brightness: Brightness.dark,
-  ink: Color(0xFFE8EFE7),
-  muted: Color(0xFFA8B8AD),
-  paper: Color(0xFF141B17),
-  card: Color(0xFF1E2822),
-  code: Color(0xFF151E19),
-  border: Color(0xFF34443A),
-  inputBorder: Color(0xFF546B5D),
-  moss: Color(0xFFA2D7B7),
-  mossLight: Color(0xFF284637),
-  mossContainer: Color(0xFF345743),
-  onMossContainer: Color(0xFFC9ECD6),
-  raised: Color(0xFF28352D),
-  clay: Color(0xFFE2A58C),
-  clayLight: Color(0xFF412A21),
-  onClayLight: Color(0xFFF3CDBD),
-  onAccent: Color(0xFF12231C),
+  ink: Color(0xFFECECEE),
+  muted: Color(0xFF9D9DA5),
+  paper: Color(0xFF000000),
+  card: Color(0xFF131315),
+  code: Color(0xFF0B0B0D),
+  border: Color(0xFF2A2A2E),
+  inputBorder: Color(0xFF45454B),
+  brand: Color(0xFF5B9BFF),
+  brandLight: Color(0xFF14243F),
+  brandContainer: Color(0xFF1D3C6E),
+  onBrandContainer: Color(0xFFD4E4FF),
+  raised: Color(0xFF1E1E21),
+  attention: Color(0xFFF0B070),
+  attentionLight: Color(0xFF3A2A14),
+  onAttentionLight: Color(0xFFFFDDB8),
+  onAccent: Color(0xFF001A40),
   error: Color(0xFFFFB4AB),
   onError: Color(0xFF690005),
 );
@@ -157,6 +161,7 @@ class ZhixinColors {
   /// 压在 [attentionContainer] 上的文字颜色。
   final Color onAttentionContainer;
 
+  /// 主色，用在按钮、链接、开关与选中状态上。
   final Color primary;
 
   /// 压在主色上的文字与图标，例如首页当前活动卡。
@@ -164,15 +169,27 @@ class ZhixinColors {
   final Color onSurface;
   final Color error;
   final Color onError;
+
+  /// 提醒色，与 [attention] 同值。
   final Color secondary;
   final Color onSurfaceVariant;
   final Color outline;
   final Color outlineVariant;
+
+  /// 主色容器：选中芯片、用户气泡与导航指示块用它作底。
   final Color primaryContainer;
+
+  /// 压在 [primaryContainer] 上的文字颜色。
   final Color onPrimaryContainer;
+
+  /// 与 [primaryContainer] 同值；次要按钮的底色。
   final Color secondaryContainer;
+
+  /// 与 [onPrimaryContainer] 同值。
   final Color onSecondaryContainer;
   final Color surface;
+
+  /// 比页面底色高一档的中性表面，例如标签底、分段条与骨架块。
   final Color surfaceContainerHigh;
   final Color card;
 }
@@ -270,22 +287,7 @@ forui.FThemeData _buildForui(_Palette palette) {
   final base = palette.brightness == Brightness.light
       ? forui.FTheme.neutral.light.touch
       : forui.FTheme.neutral.dark.touch;
-  final colors = base.colors.copyWith(
-    background: palette.paper,
-    foreground: palette.ink,
-    primary: palette.moss,
-    primaryForeground: palette.onAccent,
-    secondary: palette.mossLight,
-    secondaryForeground: palette.onMossContainer,
-    muted: palette.raised,
-    mutedForeground: palette.muted,
-    card: palette.card,
-    border: palette.border,
-    error: palette.error,
-    errorForeground: palette.onError,
-    destructive: palette.error,
-    destructiveForeground: palette.onError,
-  );
+  final colors = _foruiColors(base.colors, palette);
   final text = _textStyles(palette);
   final typography = base.typography.copyWith(
     display: _systemFace(base.typography.display).copyWith(
@@ -319,6 +321,12 @@ forui.FThemeData _buildForui(_Palette palette) {
     colors: colors,
     typography: typography,
     style: style,
+    cardStyle: forui.FCardStyle.inherit(
+      colors: colors,
+      style: style,
+      typography: typography,
+      touch: true,
+    ),
     dialogStyle: dialog.copyWith(
       decoration: forui.DecorationDelta.shapeDelta(
         shape: RoundedSuperellipseBorder(
@@ -339,6 +347,33 @@ forui.FThemeData _buildForui(_Palette palette) {
     ),
     touch: true,
     extensions: [ZhixinTheme(text: text, colors: _colors(palette))],
+  );
+}
+
+/// 以 Forui 的中性基底起步，把每一档颜色换成 [_Palette] 的取值。
+///
+/// 隐式的悬停、按下与禁用态由 Forui 从这几个基色派生：`hover` 在 HSL 里只改
+/// 明度，`disable` 只降透明度，色相都不变，所以基色是中性灰或蓝时，派生出来
+/// 的态也不会带上别的颜色。浅色下卡片与页面同为白色，描边统一取
+/// [_Palette.inputBorder]，比卡片描边深一档，按钮、输入框、卡片与列表都有
+/// 1px 的边，相邻两块不会并成一片。
+forui.FColors _foruiColors(forui.FColors base, _Palette palette) {
+  final inputBorder = palette.inputBorder;
+  return base.copyWith(
+    background: palette.paper,
+    foreground: palette.ink,
+    primary: palette.brand,
+    primaryForeground: palette.onAccent,
+    secondary: palette.brandLight,
+    secondaryForeground: palette.onBrandContainer,
+    muted: palette.raised,
+    mutedForeground: palette.muted,
+    card: palette.card,
+    border: inputBorder,
+    error: palette.error,
+    errorForeground: palette.onError,
+    destructive: palette.error,
+    destructiveForeground: palette.onError,
   );
 }
 
@@ -475,51 +510,70 @@ TextStyle _systemText(TextStyle style) => TextStyle(
 );
 
 ZhixinColors _colors(_Palette palette) => ZhixinColors(
-  primary: palette.moss,
+  primary: palette.brand,
   onPrimary: palette.onAccent,
   onSurface: palette.ink,
   error: palette.error,
   onError: palette.onError,
-  secondary: palette.clay,
+  secondary: palette.attention,
   onSurfaceVariant: palette.muted,
   outline: palette.inputBorder,
   outlineVariant: palette.border,
-  primaryContainer: palette.mossLight,
-  onPrimaryContainer: palette.onMossContainer,
-  secondaryContainer: palette.mossContainer,
-  onSecondaryContainer: palette.onMossContainer,
+  primaryContainer: palette.brandContainer,
+  onPrimaryContainer: palette.onBrandContainer,
+  secondaryContainer: palette.brandContainer,
+  onSecondaryContainer: palette.onBrandContainer,
   surface: palette.paper,
   surfaceContainerHigh: palette.raised,
   card: palette.card,
-  attention: palette.clay,
-  attentionContainer: palette.clayLight,
-  onAttentionContainer: palette.onClayLight,
+  attention: palette.attention,
+  attentionContainer: palette.attentionLight,
+  onAttentionContainer: palette.onAttentionLight,
 );
 
 /// gpt_markdown 仍按 Material 的 `ThemeData` 取样式与 `GptMarkdownThemeData`，
 /// 这里用它需要的那部分，色值与字号同样来自 [_Palette] 与 [_textStyles]。
+///
+/// 色板直接由 [_Palette] 构造，不用 `ColorScheme.fromSeed`：从主色取种子时，
+/// 没写出来的表面、容器与色调角色都会按主色的色相染色，背景与卡片就不再是
+/// 中性灰。这里把所有会画到底色上的角色一次写全，`surfaceTint` 取透明，
+/// 叠加色调不会再把底色染蓝。
 ThemeData _buildMaterial(_Palette palette) {
-  final colors =
-      ColorScheme.fromSeed(
-        seedColor: palette.moss,
-        brightness: palette.brightness,
-        primary: palette.moss,
-        onPrimary: palette.onAccent,
-        secondary: palette.clay,
-        surface: palette.paper,
-      ).copyWith(
-        primaryContainer: palette.mossLight,
-        onPrimaryContainer: palette.onMossContainer,
-        onSurface: palette.ink,
-        onSurfaceVariant: palette.muted,
-        outline: palette.inputBorder,
-        outlineVariant: palette.border,
-        secondaryContainer: palette.mossContainer,
-        onSecondaryContainer: palette.onMossContainer,
-        surfaceContainerHigh: palette.raised,
-        error: palette.error,
-        onError: palette.onError,
-      );
+  final colors = ColorScheme(
+    brightness: palette.brightness,
+    primary: palette.brand,
+    onPrimary: palette.onAccent,
+    primaryContainer: palette.brandContainer,
+    onPrimaryContainer: palette.onBrandContainer,
+    primaryFixed: palette.brandLight,
+    primaryFixedDim: palette.brandContainer,
+    onPrimaryFixed: palette.onBrandContainer,
+    onPrimaryFixedVariant: palette.onBrandContainer,
+    secondary: palette.attention,
+    onSecondary: palette.onAttentionLight,
+    secondaryContainer: palette.brandContainer,
+    onSecondaryContainer: palette.onBrandContainer,
+    tertiary: palette.attention,
+    onTertiary: palette.onAttentionLight,
+    surface: palette.paper,
+    onSurface: palette.ink,
+    onSurfaceVariant: palette.muted,
+    surfaceDim: palette.raised,
+    surfaceBright: palette.card,
+    surfaceContainerLowest: palette.code,
+    surfaceContainerLow: palette.raised,
+    surfaceContainer: palette.card,
+    surfaceContainerHigh: palette.raised,
+    surfaceContainerHighest: palette.raised,
+    inverseSurface: palette.ink,
+    onInverseSurface: palette.paper,
+    inversePrimary: palette.brandLight,
+    outline: palette.inputBorder,
+    outlineVariant: palette.border,
+    error: palette.error,
+    onError: palette.onError,
+    surfaceTint: Colors.transparent,
+  );
   final base = ThemeData(
     colorScheme: colors,
     scaffoldBackgroundColor: palette.paper,
@@ -547,7 +601,7 @@ ThemeData _buildMaterial(_Palette palette) {
       titleTextStyle: text.titleLarge,
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
-      color: palette.moss,
+      color: palette.brand,
       refreshBackgroundColor: palette.card,
     ),
     datePickerTheme: DatePickerThemeData(
@@ -590,12 +644,12 @@ ThemeData _buildMaterial(_Palette palette) {
       labelSmall: text.labelSmall,
     ),
     // 回答正文的 Markdown 与界面共用一套颜色和字号：标题压到聊天气泡能用的
-    // 级别，链接用苔绿、悬停用陶土色，不再落到组件默认的蓝色。
+    // 级别，链接用主色、悬停用提醒色，不再落到组件默认的颜色。
     extensions: <ThemeExtension<dynamic>>[
       GptMarkdownThemeData(
         brightness: palette.brightness,
-        linkColor: palette.moss,
-        linkHoverColor: palette.clay,
+        linkColor: palette.brand,
+        linkHoverColor: palette.attention,
         // 聊天里的 h1 不画文档式分隔线。
         autoAddDividerLineAfterH1: false,
         h1: text.titleLarge.copyWith(
@@ -629,7 +683,7 @@ ThemeData _buildMaterial(_Palette palette) {
               horizontal: 10,
               vertical: 6,
             ),
-            headerBackground: palette.mossLight,
+            headerBackground: palette.brandLight,
             headerTextStyle: text.bodyMedium.copyWith(
               fontWeight: FontWeight.w600,
             ),
@@ -644,7 +698,7 @@ ThemeData _buildMaterial(_Palette palette) {
             highlightWhileStreaming: false,
           ),
           blockQuote: BlockQuoteStyle(
-            barColor: palette.moss,
+            barColor: palette.brand,
             backgroundColor: palette.paper,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             margin: const EdgeInsets.symmetric(vertical: 4),
@@ -656,6 +710,10 @@ ThemeData _buildMaterial(_Palette palette) {
 }
 
 /// 同一套界面要用的颜色角色；深浅两套只改这里的色值。
+///
+/// 底色与表面的几档（[paper]、[card]、[raised]、[code]、[border]、
+/// [inputBorder]、[ink]、[muted]）不带色相；带色相的只有主色 [brand] 一族、
+/// 提醒色 [attention] 一族与错误色，它们只用在按钮、链接、选中态与状态标签上。
 class _Palette {
   const _Palette({
     required this.brightness,
@@ -666,14 +724,14 @@ class _Palette {
     required this.code,
     required this.border,
     required this.inputBorder,
-    required this.moss,
-    required this.mossLight,
-    required this.mossContainer,
-    required this.onMossContainer,
+    required this.brand,
+    required this.brandLight,
+    required this.brandContainer,
+    required this.onBrandContainer,
     required this.raised,
-    required this.clay,
-    required this.clayLight,
-    required this.onClayLight,
+    required this.attention,
+    required this.attentionLight,
+    required this.onAttentionLight,
     required this.onAccent,
     required this.error,
     required this.onError,
@@ -703,28 +761,28 @@ class _Palette {
   final Color inputBorder;
 
   /// 主色，用在链接、选中状态与可操作的元素上。
-  final Color moss;
+  final Color brand;
 
   /// 主色的浅底，用在用户气泡、标签与导航指示块上。
-  final Color mossLight;
+  final Color brandLight;
 
   /// 主色的容器底色，用在选中芯片与次要按钮上。
-  final Color mossContainer;
+  final Color brandContainer;
 
-  /// 压在 [mossContainer] 上的文字颜色。
-  final Color onMossContainer;
+  /// 压在 [brandContainer] 上的文字颜色。
+  final Color onBrandContainer;
 
   /// 比页面底色高一档的表面，例如搜索栏与分段条。
   final Color raised;
 
-  /// 次色，用在提醒与悬停状态上。
-  final Color clay;
+  /// 提醒色，用在需要留意的状态与链接的悬停上。
+  final Color attention;
 
-  /// 次色的浅底，用在草稿与优先这类需要留意的标签上。
-  final Color clayLight;
+  /// 提醒色的浅底，用在草稿与优先这类需要留意的标签上。
+  final Color attentionLight;
 
-  /// 压在 [clayLight] 上的文字颜色。
-  final Color onClayLight;
+  /// 压在 [attentionLight] 上的文字颜色。
+  final Color onAttentionLight;
 
   /// 压在主色上的文字或图标颜色。
   final Color onAccent;
