@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="splash_background">#141B17</color>
-    <color name="splash_foreground">#A2D7B7</color>
+    <color name="splash_background">#000000</color>
+    <color name="splash_foreground">#5B9BFF</color>
+    <color name="splash_soil">#1D3C6E</color>
 </resources>
