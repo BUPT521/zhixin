@@ -141,14 +141,19 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
+	// 一次请求按请求字节加默认输出上限预留，额度 8400 够第一次。
 	cfg := baseConfig()
-	cfg.DailyTokens = 1200
+	cfg.DailyTokens = 8400
 	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "up", upstream.URL, "sk-server")
 		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
 	})
 	c := env.c
-	token := signIn(t, env.authSvc, "a@b.cn")
+	tokens, err := env.authSvc.Register(context.Background(), "a@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := tokens.AccessToken
 
 	var p testutil.Problem
 	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "gpt-x"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
@@ -175,6 +180,12 @@ func TestHandlerLLMProxy(t *testing.T) {
 	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 120 || q.EmbeddingCap != 10000 {
 		t.Fatalf("usage: %d %+v", code, q)
 	}
+	// 额度内再发一次应当通过。
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, nil); code != http.StatusOK {
+		t.Fatalf("额度内应通过，得到 %d", code)
+	}
+	// 额度调到不足一次预留之后，下一次请求按额度用完拒绝。
+	env.quota.SetDailyLimit(tokens.UserID, 100)
 	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 		t.Fatalf("quota: %d %+v", code, p)
 	}
@@ -189,7 +200,7 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := baseConfig()
-	cfg.DailyTokens = 1200
+	cfg.DailyTokens = 8400
 	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "up", upstream.URL, "sk-server")
 		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
@@ -205,22 +216,24 @@ func TestHandlerQuotaOverride(t *testing.T) {
 		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}},
 	}
 
-	// 默认额度 1200：第一次花掉 120，剩余额度不足以覆盖第二次预留。
+	// 默认额度 8400 用得完：先按默认额度发一次，再降到不足一次预留，触发拒绝并
+	// 记下拒绝时返回的额度。
 	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusOK {
 		t.Fatalf("第一次请求应通过，得到 %d", code)
 	}
 	var p testutil.Problem
+	quota.SetDailyLimit(tokens.UserID, 100)
 	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
-		t.Fatalf("默认额度应用完：%d %+v", code, p)
+		t.Fatalf("额度不足一次预留时应被拒：%d %+v", code, p)
 	}
 
 	// 调高这个账号之后，同样的用量不再被拒。
-	quota.SetDailyLimit(tokens.UserID, 5000)
+	quota.SetDailyLimit(tokens.UserID, 20000)
 	var q struct {
 		Used        int64 `json:"used_tokens"`
 		DailyTokens int64 `json:"daily_tokens"`
 	}
-	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.DailyTokens != 5000 || q.Used != 120 {
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.DailyTokens != 20000 || q.Used != 120 {
 		t.Fatalf("额度接口应返回调整后的值：%d %+v", code, q)
 	}
 	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusOK {
@@ -304,7 +317,13 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 			{ProviderID: "backup", UpstreamModel: "qwen-plus", Priority: 1},
 		}})
 	})
-	token := signIn(t, env.authSvc, "f@b.cn")
+	tokens, err := env.authSvc.Register(context.Background(), "f@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := tokens.AccessToken
+	// 四次请求都按默认输出上限预留，额度要够整轮失败重试。
+	env.quota.SetDailyLimit(tokens.UserID, 25000)
 	chat := map[string]any{"model": "zhixin-chat", "input": []any{}}
 
 	for i := range 3 {

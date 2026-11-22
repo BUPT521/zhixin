@@ -178,7 +178,7 @@ server/
 
 一个对外模型可以有多条路由，请求按优先级从小到大尝试，同一优先级内按权重随机排列，最多尝试 `ZHIXIN_LLM_MAX_ATTEMPTS` 条。连接失败、响应头超时、408、429、5xx、401、403，以及转发前发现的无效响应，会尝试下一条路由，400、404、422 会结束尝试。来源回 `text/html` 或 `application/problem+json` 的响应（网关故障页、来源自己的错误体）同样换下一条，流式的例外是 `application/json` 也一并换掉，避免客户端按格式错误结束。一个来源连续失败三次后冷却 30 秒，此后每次失败将冷却时间翻倍，最长 5 分钟，冷却中的来源排在其他可用来源之后。客户端收到统一的 `upstream_failed` 错误正文，来源拒绝服务端 key 时返回 502。
 
-对话只接受 Responses 的字段：`model`、`instructions`、`input`、`max_output_tokens`、`temperature`、`top_p`、`stream`、`tools`、`tool_choice`、`parallel_tool_calls`、`reasoning` 与 `text`，其余字段直接回 400，`input` 必须是数组。请求不带 `store`，服务端也不保存会话，客户端每一轮都发完整上下文。输出上限为 8192，省略时补 1024，每次尝试按请求字节与输出上限预留，然后按 `usage.total_tokens` 结算，缺少 `total_tokens` 时按 `input_tokens` 与 `output_tokens` 相加；流式响应从 `response.completed` 事件里的 `usage` 取用量，拿不到时保留预留值。嵌入按输入字节预留与估算，发生错误或换路由时也会结算已发出的批次。额度默认值只是占位，实际数字待内测用量出来之后再定。
+对话只接受 Responses 的字段：`model`、`instructions`、`input`、`max_output_tokens`、`temperature`、`top_p`、`stream`、`tools`、`tool_choice`、`parallel_tool_calls`、`reasoning` 与 `text`，其余字段直接回 400，`input` 必须是数组。请求不带 `store`，服务端也不保存会话，客户端每一轮都发完整上下文。客户端不再发送 `temperature` 与 `top_p`，管理端的探测与排查仍可带这两个字段。输出上限取 16 到 32768，与客户端 `buddyMaxOutputTokens` 相同，省略时补 4096；超出范围回 400 `invalid_request`。每次尝试按请求字节与输出上限预留，然后按 `usage.total_tokens` 结算，缺少 `total_tokens` 时按 `input_tokens` 与 `output_tokens` 相加；流式响应从 `response.completed` 事件里的 `usage` 取用量，拿不到时保留预留值。嵌入按输入字节预留与估算，发生错误或换路由时也会结算已发出的批次。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
 嵌入走 `POST /v1/llm/embeddings`，请求与响应是 OpenAI 的格式，`input` 只接受字符串或字符串数组，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，客户端在语义索引页选“知新服务”时，`RemoteEmbeddingClient` 每次请求前取 `<服务地址>/v1/llm` 与当前访问令牌，模型从列表里 `kind` 为 `embedding` 的项中选。路由的 `max_batch` 大于 0 时，服务端把一次请求拆成每批不超过这个数的几批，同时最多发出四批，再按原顺序合并、`index` 从 0 连续编号；一批失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。模型配置了维度时逐条核对向量长度，维度不符按来源故障处理；客户端请求的 `dimensions` 与配置不一致时返回 400。`GET /v1/llm/models` 的每一项带 `kind`（`chat` 或 `embedding`），嵌入模型配置了维度时带 `dimensions`。
 
@@ -387,6 +387,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日聊天 token 额度，也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
 | `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS` | `2000000` | 每个账号每日嵌入 token 额度，也是 `llm_quota.embedding_daily_tokens` 为空时的默认值；占位数字，待内测用量出来再定 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
+| `ZHIXIN_LLM_MAX_INSTANCE_BYTES` | `536870912` | 整个实例同时在途的托管请求可占用的内存，按字节计；输出上限放大到 32768 token 之后从 256 MiB 提到 512 MiB（[ADR-0055](../docs/adr/0055-模型调用协议与上限统一.md)） |
 | `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` | `256` | 一次嵌入请求最多的输入条数，查找接口的 `hashes` 上限相同 |
 | `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` | `1073741824` | 每个账号的嵌入向量缓存上限（字节，默认 1 GiB）；写入之后按 `last_used_at` 删除最久未用的行，磁盘与出口流量要按实际用量监控 |
 | `ZHIXIN_LLM_MAX_ATTEMPTS` | `3` | 一次请求最多尝试的路由条数 |
@@ -399,7 +400,6 @@ ORDER BY f.first_day;
 | `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `20000000` | 整个实例一天的总 token 预算，用尽之后所有托管请求都返回 429 |
 | `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT` | `1` | 设为 `1` 时没有任何已验证登录方式的账号不能使用托管额度，聊天与嵌入入口均返回 403 `contact_unverified` |
 | `ZHIXIN_LLM_CONCURRENT_PER_USER` | `4` | 同一账号同时进行的托管请求上限 |
-| `ZHIXIN_LLM_MAX_INSTANCE_BYTES` | `268435456` | 整个实例同时在途的托管请求可占用的内存上限（字节，默认 256 MiB）；请求体按两倍大小、非流式响应与嵌入批次按响应上限从这里预留，占不到时返回 429 |
 | `ZHIXIN_LLM_MAX_RESPONSE_BYTES` | `33554432` | 非流式响应上限，超过时按 `upstream_failed` 处理 |
 | `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` | `90s` | 流式响应两次收到数据之间的最长等待 |
 | `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` | `30m` | 一次流式聊天或嵌入请求的总时限 |

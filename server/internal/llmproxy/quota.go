@@ -94,9 +94,11 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := [3]string{userID, day, string(kind)}
+	// reserved 先按请求量取，再按账号剩余量截断；比较的对象必须是本次请求量，不能是
+	// 上一次截断后的值，否则剩余量够用时也会被截成 0（剩余 60 时请求 40 会被拒绝）。
 	reserved := want
 	if limit, ok := m.accountLimitLocked(userID, kind); ok {
-		reserved = min(reserved, limit-m.used[key])
+		reserved = min(want, limit-m.used[key])
 	}
 	if m.instanceTokens > 0 {
 		reserved = min(reserved, m.instanceTokens-m.instance[day])

@@ -1,14 +1,16 @@
 import 'dart:math' as math;
 
-/// 单步输出的最高上限，实际请求还受模型上下文配置约束。
-const int buddyMaxOutputTokens = 8192;
+/// 单步输出的最高上限，实际请求还受模型上下文配置约束。这个数字与服务端
+/// `llmproxy` 的 `maxOutputTokens` 相同，一端改动要同时改另一端，否则服务端
+/// 会按 `max_output_tokens` 超出范围回 400（ADR-0055）。
+const int buddyMaxOutputTokens = 32768;
 
 /// 模型配置：只记用户可选的模型名、上下文上限与图片开关。
 ///
 /// 客户端只用“知新服务”：地址按 `<服务地址>/v1/llm` 在运行时由账号服务拼出，
-/// 访问令牌代替 key 临时填进请求，两者都不写进本机配置；接口固定走 Chat
-/// Completions。令牌过期、退出登录或没有登录时回答退回本地兜底
-/// （ADR-0008、ADR-0009）。
+/// 访问令牌代替 key 临时填进请求，两者都不写进本机配置；接口固定走 Responses
+/// 的 `/v1/llm/responses`（ADR-0052）。令牌过期、退出登录或没有登录时回答退回
+/// 本地兜底（ADR-0008、ADR-0009）。
 class LlmConfig {
   const LlmConfig({
     this.model = defaultModel,
@@ -18,8 +20,12 @@ class LlmConfig {
     this.endpoint = '',
   });
 
-  static const String defaultModel = 'deepseek-flash';
+  /// 默认模型名与服务端管理后台的对外模型名一致；后台改名时两边一起改。
+  static const String defaultModel = 'zhixin-chat';
   static const int defaultContextWindowTokens = 65536;
+
+  /// 上下文上限可以填的最大值，与单步输出上限的实际取值保持一致。
+  static const int maxContextWindowTokens = buddyMaxOutputTokens;
 
   /// 模型名；留空即视为没有配置。
   final String model;
@@ -38,11 +44,6 @@ class LlmConfig {
 
   /// 填了模型名才算配置好；能不能真正发出请求还要看当前账号是否登录。
   bool get isConfigured => model.trim().isNotEmpty;
-
-  /// 按模型名推测背后的提供方是 DeepSeek：只有这类服务认 `thinking`，其他
-  /// 提供方收到不认识的字段可能直接返回 400，所以请求里按模型名决定是否发送。
-  bool get reasoningDisabled =>
-      model.trim().toLowerCase().startsWith('deepseek');
 
   LlmConfig copyWith({
     String? model,

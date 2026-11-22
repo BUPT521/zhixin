@@ -188,11 +188,11 @@ void main() {
   });
 
   testWidgets('登录之后从服务端的嵌入模型里选，维度由服务端给出', (tester) async {
-    storeServerConfig(model: 'bge-m3');
+    storeServerConfig(model: 'zhixin-embedding');
     await openPage(tester, signIn: true);
 
-    await waitFor(tester, find.text('bge-m3（4 维）'));
-    expect(find.text('deepseek-flash'), findsNothing, reason: '聊天模型不进嵌入选项');
+    await waitFor(tester, find.text('zhixin-embedding（4 维）'));
+    expect(find.text('zhixin-chat'), findsNothing, reason: '聊天模型不进嵌入选项');
     expect(find.text('向量维度 4，由服务端给出。'), findsOneWidget);
     await preview(tester, 'embedding-server-signed-in');
 
@@ -218,7 +218,7 @@ void main() {
       secrets[EmbeddingConfigStore.storageKey]!,
     ) as Map<String, Object?>;
     expect(stored['provider'], 'server');
-    expect(stored['model'], 'bge-m3');
+    expect(stored['model'], 'zhixin-embedding');
     expect(stored['dim'], 4);
     expect(stored.containsKey('base_url'), isFalse, reason: '不再保存接口地址');
     expect(stored.containsKey('api_key'), isFalse, reason: '访问令牌不写进配置');

@@ -209,7 +209,9 @@ type LLMConfig struct {
 	ConcurrentPerUser int
 	// MaxInstanceBytes 是整个实例同时在途的托管请求可占用的内存上限，按字节计。
 	// 请求体、非流式响应与嵌入批次在读写之前从这一份预算里预留，占不到时返回
-	// 429；它把实例内存与账号数量解耦（ADR-0036）。
+	// 429；它把实例内存与账号数量解耦（ADR-0036）。输出上限放大到 32768 token
+	// 之后，默认值跟着放大到 512 MiB，同时在途的请求数因此不会被压到个位数
+	// （ADR-0053）。
 	MaxInstanceBytes int64
 	// MaxResponseBytes 是非流式响应的字节上限，超过时按 upstream_failed 处理，
 	// 避免一次请求把内存与带宽占满。
@@ -363,7 +365,7 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxRequestBytes:        num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
 			RequireVerifiedContact: get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",
 			ConcurrentPerUser:      int(num("ZHIXIN_LLM_CONCURRENT_PER_USER", "4")),
-			MaxInstanceBytes:       num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "268435456"),
+			MaxInstanceBytes:       num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "536870912"),
 			MaxResponseBytes:       num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
 			StreamIdleTimeout:      dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
 			StreamTotalTimeout:     dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),

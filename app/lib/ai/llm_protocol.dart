@@ -146,6 +146,9 @@ List<Object?> _list(Object? value) => value is List ? value : const [];
 
 /// Responses 的请求体。客户端只用知新服务，接口固定为
 /// `POST <服务地址>/v1/llm/responses`。
+///
+/// 请求里不写 `temperature` 与 `top_p`：采样参数由上游模型自己的默认值决定，
+/// 部分推理模型不接受这两个字段（ADR-0055）。
 Map<String, Object?> responsesBody({
   required LlmConfig config,
   required String system,
@@ -160,7 +163,6 @@ Map<String, Object?> responsesBody({
     'instructions': system,
     'input': [for (final message in messages) ..._items(message)],
     'max_output_tokens': config.outputTokenLimit,
-    'temperature': 0.5,
     // 客户端不依赖服务端保存会话，每一轮都把完整上下文重新发一次。
     'store': false,
     if (stream) 'stream': true,

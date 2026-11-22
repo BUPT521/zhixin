@@ -111,7 +111,7 @@ void main() {
     expect((await defaultAccount.quota()).dailyTokens, 200000);
     expect(
       (await defaultAccount.models()).map((model) => model.id),
-      contains('deepseek-flash'),
+      contains('zhixin-chat'),
     );
   });
 
@@ -122,10 +122,12 @@ void main() {
     );
 
     final models = await account.models();
-    final chat = models.singleWhere((model) => model.id == 'deepseek-flash');
+    final chat = models.singleWhere((model) => model.id == 'zhixin-chat');
     expect(chat.isChat, isTrue);
     expect(chat.dimensions, isNull);
-    final embedding = models.singleWhere((model) => model.id == 'bge-m3');
+    final embedding = models.singleWhere(
+      (model) => model.id == 'zhixin-embedding',
+    );
     expect(embedding.isEmbedding, isTrue);
     expect(embedding.dimensions, 4);
 
@@ -155,7 +157,11 @@ void main() {
     expect(endpoint.apiKey, snapshot.session!.accessToken);
 
     final client = RemoteEmbeddingClient(
-      spec: const EmbeddingModelSpec(id: 'bge-m3', dim: 4, provider: 'server'),
+      spec: const EmbeddingModelSpec(
+        id: 'zhixin-embedding',
+        dim: 4,
+        provider: 'server',
+      ),
       credentials: account.embeddingEndpoint,
       httpClient: server.client,
     );
@@ -191,23 +197,21 @@ void main() {
     expect(snapshot.serverBaseUrl, 'http://server.test');
 
     final authorized = await account.authorizeModelConfig(
-      const LlmConfig(model: 'deepseek-flash'),
+      const LlmConfig(model: 'zhixin-chat'),
     );
     expect(authorized, isNotNull);
     expect(authorized!.apiKey, startsWith('access-'));
     expect(authorized.endpoint, 'http://server.test/v1/llm');
-    expect(authorized.model, 'deepseek-flash');
+    expect(authorized.model, 'zhixin-chat');
   });
 
   test('未登录时模型配置补不上地址与令牌，设置页据此要求先登录', () async {
     expect(
-      await account.authorizeModelConfig(
-        const LlmConfig(model: 'deepseek-flash'),
-      ),
+      await account.authorizeModelConfig(const LlmConfig(model: 'zhixin-chat')),
       isNull,
     );
     await expectLater(
-      account.prepareModelConfig(const LlmConfig(model: 'deepseek-flash')),
+      account.prepareModelConfig(const LlmConfig(model: 'zhixin-chat')),
       throwsA(isA<AccountSignedOut>()),
     );
   });
@@ -245,10 +249,10 @@ void main() {
       authorizeConfig: account.prepareModelConfig,
     );
 
-    const form = LlmConfig(model: 'deepseek-flash', contextWindowTokens: 8192);
+    const form = LlmConfig(model: 'zhixin-chat', contextWindowTokens: 8192);
     await service.saveConfig(form);
     final saved = (await store.read()).valueOrNull!;
-    expect(saved.model, 'deepseek-flash');
+    expect(saved.model, 'zhixin-chat');
     expect(saved.contextWindowTokens, 8192);
     expect(saved.apiKey, isEmpty);
     expect(saved.endpoint, isEmpty);
@@ -318,9 +322,7 @@ void main() {
     await account.logout();
     expect((await account.snapshot()).signedIn, isFalse);
     expect(
-      await account.authorizeModelConfig(
-        const LlmConfig(model: 'deepseek-flash'),
-      ),
+      await account.authorizeModelConfig(const LlmConfig(model: 'zhixin-chat')),
       isNull,
     );
     expect(server.userIdOf('d@example.com'), userId);

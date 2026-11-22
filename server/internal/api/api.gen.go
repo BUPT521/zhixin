@@ -877,12 +877,6 @@ type DeleteV1CloudJSONBody struct {
 	Password string `json:"password"`
 }
 
-// PostV1LlmChatCompletionsJSONBody defines parameters for PostV1LlmChatCompletions.
-type PostV1LlmChatCompletionsJSONBody struct {
-	Model  string `json:"model"`
-	Stream *bool  `json:"stream,omitempty"`
-}
-
 // PostV1LlmEmbeddingsParams defines parameters for PostV1LlmEmbeddings.
 type PostV1LlmEmbeddingsParams struct {
 	// XZhixinEmbeddingCache 值为 `1` 时把这次嵌入的结果写入按账号隔离的向量缓存
@@ -891,8 +885,10 @@ type PostV1LlmEmbeddingsParams struct {
 
 // PostV1LlmResponsesJSONBody defines parameters for PostV1LlmResponses.
 type PostV1LlmResponsesJSONBody struct {
-	Input           []map[string]interface{}  `json:"input"`
-	Instructions    *string                   `json:"instructions,omitempty"`
+	Input        []map[string]interface{} `json:"input"`
+	Instructions *string                  `json:"instructions,omitempty"`
+
+	// MaxOutputTokens 省略时服务端补 4096，每次尝试按它与请求字节预留额度
 	MaxOutputTokens *int                      `json:"max_output_tokens,omitempty"`
 	Model           string                    `json:"model"`
 	Store           *bool                     `json:"store,omitempty"`
@@ -1005,9 +1001,6 @@ type DeleteV1CloudJSONRequestBody DeleteV1CloudJSONBody
 
 // PostV1FeedbackJSONRequestBody defines body for PostV1Feedback for application/json ContentType.
 type PostV1FeedbackJSONRequestBody = Feedback
-
-// PostV1LlmChatCompletionsJSONRequestBody defines body for PostV1LlmChatCompletions for application/json ContentType.
-type PostV1LlmChatCompletionsJSONRequestBody PostV1LlmChatCompletionsJSONBody
 
 // PostV1LlmEmbeddingsJSONRequestBody defines body for PostV1LlmEmbeddings for application/json ContentType.
 type PostV1LlmEmbeddingsJSONRequestBody = EmbeddingRequest
@@ -1272,9 +1265,6 @@ type ServerInterface interface {
 	// PostV1Feedback 提交一条应用内反馈
 	// (POST /v1/feedback)
 	PostV1Feedback(w http.ResponseWriter, r *http.Request)
-	// PostV1LlmChatCompletions OpenAI Chat Completions 代理
-	// (POST /v1/llm/chat/completions)
-	PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request)
 	// PostV1LlmEmbeddings OpenAI Embeddings 代理，支持批量
 	// (POST /v1/llm/embeddings)
 	PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, params PostV1LlmEmbeddingsParams)
@@ -2013,20 +2003,6 @@ func (siw *ServerInterfaceWrapper) PostV1Feedback(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
-// PostV1LlmChatCompletions operation middleware
-func (siw *ServerInterfaceWrapper) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1LlmChatCompletions(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // PostV1LlmEmbeddings operation middleware
 func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request) {
 
@@ -2737,7 +2713,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/backups/{id}", wrapper.GetV1BackupsId)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/models", wrapper.GetV1LlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/chat/completions", wrapper.PostV1LlmChatCompletions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/responses", wrapper.PostV1LlmResponses)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings", wrapper.PostV1LlmEmbeddings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings/lookup", wrapper.PostV1LlmEmbeddingsLookup)

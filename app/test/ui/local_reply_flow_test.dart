@@ -113,7 +113,7 @@ void main() {
         of: find.byType(SettingsPage),
         matching: find.widgetWithText(forui.FTextField, '模型名'),
       ),
-      'deepseek-flash',
+      'zhixin-chat',
     );
     // 设置页变长之后，直接 ensureVisible 会把按钮顶到页面头部下面；
     // 按居中位置滚动再点，避免点击落在头部区域。

@@ -52,14 +52,14 @@ void main() {
     const config = EmbeddingConfig(
       enabled: true,
       provider: 'server',
-      model: 'bge-m3',
+      model: 'zhixin-embedding',
       dim: 4,
       shareScope: EmbeddingShareScope.all,
     );
     expect(config.usesServer, isTrue);
     expect(config.sendsText, isTrue);
     expect(config.usable, isTrue);
-    expect(config.spec.indexKey, startsWith('server:bge-m3|4|'));
+    expect(config.spec.indexKey, startsWith('server:zhixin-embedding|4|'));
     // 模型名缺省时维度与来源照旧可读，但这一来源不可用。
     expect(
       const EmbeddingConfig(enabled: true, provider: 'server').usable,
@@ -68,7 +68,7 @@ void main() {
 
     final restored = EmbeddingConfig.fromJson(config.toJson())!;
     expect(restored.provider, 'server');
-    expect(restored.model, 'bge-m3');
+    expect(restored.model, 'zhixin-embedding');
     expect(restored.shareScope, EmbeddingShareScope.all);
     // 不认识的来源按知新服务处理，旧版本写下的自填接口配置也落到这一来源；
     // 地址与 key 不再保存，读出来自然丢掉。
@@ -81,7 +81,7 @@ void main() {
       'provider': 'remote',
       'base_url': 'https://embed.example.com/v1',
       'api_key': 'sk-legacy',
-      'model': 'bge-m3',
+      'model': 'zhixin-embedding',
       'dim': 4,
     })!;
     expect(legacy.provider, 'server');

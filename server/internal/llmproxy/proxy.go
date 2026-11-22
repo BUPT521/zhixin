@@ -1,14 +1,12 @@
-// Package llmproxy forwards OpenAI-compatible requests to the model sources
-// configured by the administrator, with server-held keys (ADR-0008, ADR-0029).
-//
-// The client keeps its existing Chat Completions and Embeddings request
-// builders: it points the base URL at <server>/v1/llm and sends its access
-// token as the key. The proxy looks the model name up in the routing table,
-// checks the account's daily budget for that kind of model, swaps in the
-// source's model name and key, and copies the response through. Chat streams
-// are flushed chunk by chunk; embedding batches are split per route and merged
-// back in order. Usage records contain counters; request and response bodies
-// are never logged or stored by the proxy.
+// Package llmproxy forwards model requests to the sources configured by the
+// administrator, with server-held keys (ADR-0008, ADR-0029). The only wire
+// format is the Responses API (ADR-0052): the client sends its access token as
+// the key to <server>/v1/llm/responses. The proxy looks the model name up in
+// the routing table, checks the account's daily budget for that kind of model,
+// swaps in the source's model name and key, and copies the response through.
+// Streams are flushed chunk by chunk; embedding batches are split per route
+// and merged back in order. Usage records contain counters; request and
+// response bodies are never logged or stored by the proxy.
 package llmproxy
 
 import (
@@ -386,8 +384,9 @@ func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved,
 	}
 }
 
-// Responses 转发客户端唯一的对话请求（ADR-0052）。服务端只做字段白名单、模型名
-// 替换与额度结算，事件原样转发；请求体、响应体与流里的用量都不记录。
+// Responses 转发客户端唯一的对话请求（ADR-0052）。服务端做字段白名单校验、
+// 按上限校验或补齐 max_output_tokens、替换模型名并结算额度，事件原样转发；
+// 请求体、响应体与流里的用量都不记录。
 func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 	userID := auth.MustPrincipal(r.Context()).UserID
 	done, ok := p.beginRequest(w, r, userID)
@@ -498,15 +497,14 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 	reply.finish(result)
 }
 
-// responsesOutputLimit 检查输出上限；没给时按 Responses 的默认值补上，用量估算
-// 要把它算进预留。
+// responsesOutputLimit 检查输出上限；没给时补上 defaultOutputTokens，用量估算
+// 要把它算进预留。上限与客户端的 buddyMaxOutputTokens 相同，一端改动要同时改
+// 另一端，否则客户端请求会被 400 拒绝（ADR-0053）。
 func responsesOutputLimit(fields map[string]json.RawMessage) (int64, error) {
-	const minOutput = 16
-	const maxOutput = 8192
 	var output int64
 	if raw, ok := fields["max_output_tokens"]; ok {
-		if json.Unmarshal(raw, &output) != nil || output < minOutput || output > maxOutput {
-			return 0, fmt.Errorf("max_output_tokens must be between %d and %d", minOutput, maxOutput)
+		if json.Unmarshal(raw, &output) != nil || output < minOutputTokens || output > maxOutputTokens {
+			return 0, fmt.Errorf("max_output_tokens must be between %d and %d", minOutputTokens, maxOutputTokens)
 		}
 	} else {
 		output = defaultOutputTokens
@@ -515,8 +513,14 @@ func responsesOutputLimit(fields map[string]json.RawMessage) (int64, error) {
 	return output, nil
 }
 
-// defaultOutputTokens 与上游没给输出上限时的用量估算一致。
-const defaultOutputTokens = 1024
+// 对话输出上限的三个数字，单位是 token。客户端按上下文上限的四分之一计算，
+// 最高取到 maxOutputTokens；服务端按同一组数字校验，并在客户端省略时补上
+// defaultOutputTokens（ADR-0053）。
+const (
+	minOutputTokens     = 16
+	maxOutputTokens     = 32768
+	defaultOutputTokens = 4096
+)
 
 func isJSONArray(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
@@ -551,7 +555,8 @@ func keyRejected(status int) bool {
 }
 
 // chatFields 是转发前允许经过的 Responses 请求字段；`store` 固定为 false，
-// 客户端不发 `previous_response_id`，服务端也不保存会话。
+// 客户端不发 `previous_response_id`，服务端也不保存会话。`temperature` 与
+// `top_p` 仍然放行，供管理端自测与排查使用，客户端不再发送这两个字段。
 var chatFields = map[string]bool{
 	"model": true, "instructions": true, "input": true,
 	"max_output_tokens": true, "temperature": true, "top_p": true,

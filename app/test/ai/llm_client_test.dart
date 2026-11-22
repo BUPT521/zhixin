@@ -422,7 +422,7 @@ void main() {
     final client = HttpLlmClient(
       config: const LlmConfig(
         endpoint: _testEndpoint,
-        model: 'deepseek-flash',
+        model: 'zhixin-chat',
         apiKey: 'test-key',
       ),
       retryDelay: Duration.zero,
@@ -454,7 +454,7 @@ void main() {
       if (delta.text.isNotEmpty) parts.add(delta.text);
     }
     expect(parts, ['你', '好']);
-    expect(sent!['model'], 'deepseek-flash');
+    expect(sent!['model'], 'zhixin-chat');
     expect(sent!['instructions'], 's');
     expect(sent!['stream'], isTrue);
     expect(sent!['store'], isFalse);

@@ -53,12 +53,6 @@ void main() {
     expect(LlmConfig.fromJson(const {'model': ''}).isConfigured, isFalse);
   });
 
-  test('按模型名决定是否发送关掉思考模式的字段', () {
-    expect(const LlmConfig(model: 'deepseek-flash').reasoningDisabled, isTrue);
-    expect(const LlmConfig(model: 'DeepSeek-V4').reasoningDisabled, isTrue);
-    expect(const LlmConfig(model: 'qwen-max').reasoningDisabled, isFalse);
-  });
-
   test('Keystore 读不出来时返回读取失败，而不是当成没配置', () async {
     final secrets = _MemorySecrets()..failRead = true;
     final store = LlmConfigStore(secrets);
@@ -81,17 +75,17 @@ void main() {
   test('一次读取失败沿用上一次读到的配置，删掉后仍返回空', () async {
     final secrets = _MemorySecrets();
     final service = AiChatService(store: LlmConfigStore(secrets));
-    const config = LlmConfig(model: 'deepseek-flash');
+    const config = LlmConfig(model: 'zhixin-chat');
     await service.store.save(config);
     expect((await service.config()).valueOrNull, isNotNull);
-    expect((await service.config()).valueOrNull!.model, 'deepseek-flash');
+    expect((await service.config()).valueOrNull!.model, 'zhixin-chat');
 
     secrets.failRead = true;
     final failed = await service.config();
     expect(failed, isA<Failure<LlmConfig?>>());
     // 失败的那一次不再交出配置，回答路径用失败前的快照兜底。
     expect(failed.valueOrNull, isNull);
-    expect(service.configSnapshot!.model, 'deepseek-flash');
+    expect(service.configSnapshot!.model, 'zhixin-chat');
 
     secrets.failRead = false;
     await service.store.clear();

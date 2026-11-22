@@ -28,6 +28,15 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 100 {
 		t.Fatalf("预留之后用量应为 100，得到 %d", used)
 	}
+	// 剩余量与请求量分开比较：剩余 60 时请求 40 应当拿满 40，而不是被截成 0。
+	q2 := NewMemoryQuota()
+	q2.SetQuotaLimits(100, 200, 0)
+	if got, err := q2.Reserve(ctx, "u2", day, KindChat, 70); err != nil || got != 70 {
+		t.Fatalf("第一次预留应为 70，得到 %d %v", got, err)
+	}
+	if got, err := q2.Reserve(ctx, "u2", day, KindChat, 40); err != nil || got != 30 {
+		t.Fatalf("剩余 30 时应截断为 30，得到 %d %v", got, err)
+	}
 
 	// 实际用量超过预留时补记差额，少于预留时退回。
 	if err := q.Settle(ctx, "u1", day, KindChat, 60, 90); err != nil {

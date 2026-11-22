@@ -22,8 +22,6 @@ pwsh tool/dev.ps1           # 没有设备时先启动第一台 AVD，再执行 
 
 模拟器上的相机是虚拟场景，语音识别走系统服务，数据库、Keystore 与界面行为与手机一致。要验证更接近真实使用的效果，用 USB 连接手机并打开 USB 调试，Android 11 以上也可以用无线调试配对，`adb devices` 能列出之后直接执行 `flutter run`。
 
-语义索引的真机复测用 `pwsh tool/run_adr_0022_probe.ps1 -Apk <探针包>`，探针包由 `flutter build apk -t tool/adr_0022_probe.dart` 构建：`-t` 指定的入口以 `adr_0022_probe.dart` 结尾时，构建脚本给应用 ID 加 `.adr0022probe` 后缀并关闭压缩混淆，探针包因此与正式包并存。脚本在 PLK110 上依次生成 2000 与 20000 条 1024 维向量，记录冷打开、写入、查询、常驻内存与磁盘占用。这一项只做人工复测，不在 CI 与验收流程里执行。
-
 Windows 本机跑 `flutter test` 时，zvec 的实现需要一个本机的 C 库：从 zvec 的 GitHub Releases 下载 0.8.0 版本的 `zvec-sdk-windows-amd64.zip`，核对 SHA-256 为 `7fc16b1bf575d3300f4ae4728f09a6a096b67025d508c350c16302c665ccbbe8`，解压后把 `ZVEC_LIBRARY_PATH` 指向 `<解压目录>\lib\zvec_c_api.dll`，再把同一个 `lib` 目录加进 `PATH`，因为 `zvec.dll`、`zvec_core.dll` 与 `zvec_ailego.dll` 都在这个目录里。没有设置这个变量时，索引契约测试与后台 isolate 的用例会跳过并打印原因；CI 的 Linux 任务会下载并设置好，不受影响。
 
 最低 Android 11（API 30），只出 arm64。构建需要 JDK 21 与 Android SDK 36；CI 的版本固定在 [ci.yml](../.github/workflows/ci.yml)。
@@ -84,7 +82,7 @@ lib/
 
 首批改动的验收由界面用例与请求编号两层保证。周视图组件只接收当前周的数据和交互回调，并负责创建、更新与释放日历控制器；安排页统一管理用户选中的目标周和已经加载的周，上一周、下一周、横滑与回到本周走同一套选周逻辑，刷新从当前目标周发起。`test/ui/plan_week_test.dart` 让两次读取反序完成，先交付新周、再返回旧周，验证标题、日历、预约列表和课表仍对应最新一周；固定安排冲突与按提交撤销的要求沿用 [界面验收](../docs/02-产品与交互.md#81-v1v11)。
 
-在现有 [`architecture_test.dart`](test/architecture_test.dart) 中为拆出的周视图添加了针对性检查：组件不能访问 `AppScope`、具体仓库、应用服务或其他页面，只通过传入的数据与回调访问业务操作。独立 Dart package 会增加公开 API、代码生成与测试的维护成本，等某部分有第二个使用方或独立发布需求时再评估。首批的任务指令见 [安排模块化执行提示词](../docs/安排模块化执行提示词.md)。
+在现有 [`architecture_test.dart`](test/architecture_test.dart) 中为拆出的周视图添加了针对性检查：组件不能访问 `AppScope`、具体仓库、应用服务或其他页面，只通过传入的数据与回调访问业务操作。独立 Dart package 会增加公开 API、代码生成与测试的维护成本，等某部分有第二个使用方或独立发布需求时再评估。首批的任务指令随首批完成已经删除，要求与结论以本节为准。
 
 ## 数据
 
@@ -146,9 +144,9 @@ lib/
 
 ## 模型
 
-客户端只有“知新服务”一种模型来源，即服务端的模型代理，设置页只让用户填模型名与上下文上限，不提供接口风格、接口地址与 API Key。对话固定走 OpenAI 的 Responses，地址由账号页保存的服务地址拼出 `/v1/llm` 再加 `/responses`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时只能等次日或联系管理员调整。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)、[ADR-0050](../docs/adr/0050-客户端统一为知新服务.md) 与 [ADR-0051](../docs/adr/0051-客户端改用OpenAI现行请求格式.md)。
+客户端只有“知新服务”一种模型来源，即服务端的模型代理，设置页只让用户填模型名与上下文上限，不提供接口风格、接口地址与 API Key；模型名默认 `zhixin-chat`，与后台配置的对外模型名一致，嵌入模型从服务端列表里选。对话固定走 OpenAI 的 Responses，地址由账号页保存的服务地址拼出 `/v1/llm` 再加 `/responses`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时只能等次日或联系管理员调整。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)、[ADR-0050](../docs/adr/0050-客户端统一为知新服务.md) 与 [ADR-0052](../docs/adr/0052-客户端改用OpenAI现行请求格式.md)。
 
-请求走一个传输层，线格式只有 Responses 一种，请求体的组装与流式解析直接写在 `ai/llm_protocol.dart` 里。系统提示发 `instructions`，消息发 `input` 条目：用户与助手消息是 `message`，条目的内容块用 `input_text` 与 `input_image`，模型发起的工具调用是 `function_call`，客户端执行后的结果是 `function_call_output`，两者按 `call_id` 配对；工具声明用扁平的 `{type:function,name,description,parameters}`，参数放在 `input` 的 `input_text` 里，`tool_choice` 取 `auto`、`none` 或 `{type:function,name}`。输出上限用 `max_output_tokens`，请求带 `store: false`，客户端不按模型名追加提供方的私有字段。
+请求走一个传输层，线格式只有 Responses 一种，请求体的组装与流式解析直接写在 `ai/llm_protocol.dart` 里。系统提示发 `instructions`，消息发 `input` 条目：用户与助手消息是 `message`，条目的内容块用 `input_text` 与 `input_image`，模型发起的工具调用是 `function_call`，客户端执行后的结果是 `function_call_output`，两者按 `call_id` 配对；工具声明用扁平的 `{type:function,name,description,parameters}`，参数放在 `input` 的 `input_text` 里，`tool_choice` 取 `auto`、`none` 或 `{type:function,name}`。输出上限用 `max_output_tokens`，取上下文上限的四分之一、最高 32768，与服务端允许的范围一致；请求带 `store: false`，也不发送 `temperature` 与 `top_p`，采样参数由上游模型的默认值决定（[ADR-0055](../docs/adr/0055-模型调用协议与上限统一.md)）。客户端不按模型名追加提供方的私有字段。
 
 流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。评估过 `sse`、`flutter_client_sse`、`simple_sse` 等现成包，都不能同时满足“POST 流、逐行超时与取消、无空行收尾时 flush”，因此保留自研解析器。增量按事件名分支：正文取 `response.output_text.delta` 的 `delta`，工具参数取 `response.function_call_arguments.delta` 并按 `output_index` 累积，`response.output_item.done` 给出的完整参数覆盖先前的分片，结束由 `response.completed` 判定，`response.incomplete` 按截断保留已经生成的正文并提示，`response.failed` 与流内 `error` 事件按服务端错误处理，其余事件忽略。服务端省略 `event:` 时按负载里的 `type` 判断。非 2xx 的响应体会读出服务端自己的说明，便于定位额度、模型名与登录状态的问题；上游提供方拒绝服务端 key 时服务端只回统一的 `upstream_failed`，不转发提供方的错误正文。
 

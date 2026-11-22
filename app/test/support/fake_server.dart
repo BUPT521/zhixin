@@ -584,13 +584,13 @@ class FakeServer {
         'object': 'list',
         'data': [
           {
-            'id': 'deepseek-flash',
+            'id': 'zhixin-chat',
             'object': 'model',
             'owned_by': 'zhixin',
             'kind': 'chat',
           },
           {
-            'id': 'bge-m3',
+            'id': 'zhixin-embedding',
             'object': 'model',
             'owned_by': 'zhixin',
             'kind': 'embedding',
