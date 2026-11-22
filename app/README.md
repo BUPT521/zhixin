@@ -65,7 +65,7 @@ lib/
 └── ui/                                     ← 现在、记录、记录检索、讨论与讨论内查找、材料与材料查找、系统学习、学习中、安排与安排查找、我的、设置、记忆与记忆查找、账号、云端备份、反馈、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
-`ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，三种接口的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
+`ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，Chat Completions 的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
 
 提示词的规则、上下文说明、请求文本与工具说明在 `assets/prompts/`，按 `## 键名` 分段，`pubspec.yaml` 注册为 asset；`platform/prompt_assets.dart` 在启动时读取一次，`ai/prompt_text.dart` 负责解析与取段，`ai/buddy_prompt_builder.dart` 只按请求类型选取段落并替换占位符，`ai/buddy_tools.dart`、`ai/material_page_tool.dart` 与 `ai/search_sources_tool.dart` 的工具说明和参数说明也从同一份资源读取，改文案不需要改 Dart 代码。测试在 `test/flutter_test_config.dart` 里先读取同一份文本，提示词输出与写在代码里时一致；回答质量的第一版评测样例在 `test/evaluation/answer_quality_cases.dart`，覆盖 V1、V3、V6、V11 的提示词条件，真实模型对照按 [02 第 8.4 节](../docs/02-产品与交互.md#84-回答质量对照评测) 记录。
 
@@ -78,7 +78,7 @@ lib/
 建议先在现有 Flutter 工程内按业务职责收窄接口。`AppServices` 提供八组服务入口，`AppScope` 负责依赖装配、连接替换、时间口径刷新、数据代次与附件维护，仓库字段对页面不可见，整库恢复、导入、导出与恢复点操作已经下沉到 `data/backup/data_version_service.dart`，截止小时由 `application/time_policy_controller.dart` 统一缓存与刷新，撤销经应用层 `application/undo_service.dart` 收口，语义索引配置经 `application/embedding_settings.dart` 保存与应用。下一步的收益主要来自把读路径的失败表达继续往统一的结果类型收，以及把 `plan_page.dart` 的页签继续拆开（[ADR-0014](../docs/adr/0014-流式查询与版本通知.md) 的页面重读已经换成订阅）。
 
 1. **第一批从安排开始，周视图与读取状态已经拆开。** `plan_page.dart` 原先同时控制周视图、预约与改期、事项列表和页面刷新；现在周视图移到 `plan_week_view.dart`，只接收当前周的数据与选周、点击回调，并自己创建、更新与释放日历的事件控制器，页面只保存当前目标周并订阅 `PlanService.watchWeek` 一条流，换周时换一条新流（原 `application/plan_week_reader.dart` 的请求编号与过期结果判断已随订阅下线）。预约冲突检查、整组顺延与撤销沿用现有事务入口，首批以周切换状态、固定安排冲突和一次操作对应一条可撤销提交验收。
-2. **随后收拢讨论与作答的回答入口。** `BuddyTimeline` 已经共用消息与回执展示，讨论和作答仍分别维护模型请求、失败兜底与写回流程，可以先共用回答请求的取消、失败分类和数据代次检查，同时让两个用例继续各自保存讨论消息、作答帮助与判断。`LlmClient` 的三种请求格式与流式解码适合按协议整理，`AgentLoop` 继续统一控制整轮预算、重试和工具调用顺序；这一批以无模型可用、停止生成、工具续接及恢复后拒绝旧回答为验收场景。
+2. **随后收拢讨论与作答的回答入口。** `BuddyTimeline` 已经共用消息与回执展示，讨论和作答仍分别维护模型请求、失败兜底与写回流程，可以先共用回答请求的取消、失败分类和数据代次检查，同时让两个用例继续各自保存讨论消息、作答帮助与判断。`LlmClient` 的请求格式与流式解码适合按协议整理，`AgentLoop` 继续统一控制整轮预算、重试和工具调用顺序；这一批以无模型可用、停止生成、工具续接及恢复后拒绝旧回答为验收场景。
 3. **给查找和引用建立明确入口。** 记录页继续使用 `SearchService` 的筛选与分页，模型上下文通过 `ContextService` 取得限定范围的材料、历史与记忆；两处共享来源标识、原文校验和索引失效规则。材料更正、改归属、撤销与恢复之后，测试应验证旧命中退出检索，同时验证独立复查期间的旧答案仍受访问限制。
 4. **在业务接口可独立测试后收窄存储接口。** 应用根只承担装配，版本服务集中持有连接切换、提交回执与恢复后的数据刷新，业务用例通过所属仓库和命令事务写入。建库以 `lib/data/db/drift/tables.dart` 的表类为唯一结构来源，索引也声明在表类上，恢复预检与文档测试都对照实际建库结果；变更时同时核对外键、版本触发器、附件哈希与恢复回滚。
 
@@ -96,7 +96,7 @@ lib/
 - 关键词检索并入 zvec 索引，业务库不再有 FTS5 表、关键词触发器与 `MATCH` 查询。索引拆成两个 collection：文本 collection 的 schema 固定，片段的正文写进 `content` 字段并建全文索引，只发全文查询；向量 collection 只存向量、来源键、来源版本、片段号、文本哈希与预过滤字段，不存正文。检索时两路各取候选，由应用层按名次倒数融合（RRF，平滑常数 60），向量 collection 不存正文，命中之后按当前记录重新计算摘要。没有配置嵌入模型时只有文本 collection，关键词检索照常可用；配置之后加上向量 collection，换模型只重建这一份（[ADR-0024](../docs/adr/0024-关键词检索并入zvec.md)、[ADR-0030](../docs/adr/0030-服务端不建检索索引.md)）。字面命中仍由业务库的 `instr` 按原字符匹配。
 - 索引保存在应用私有目录的 `vector_index/` 下：文本 collection 在 `text/`，向量 collection 在 `vector/`，各自一个 collection 目录与一个同名状态文件，状态文件记录模型键、维度、文本处理版本、数据代次、刷新统计与可发送范围签名；向量这一份按嵌入模型键分目录，模型、维度或文本处理版本改变时换目录并删除旧目录，正文不重写。来源表有净变化的提交之后等 3 秒补建，启动、整版恢复与导入之后也补建；检索索引“已处理到的提交编号”记在库里的 `revision_cursor` 非阻塞位置（`search.index`），不再写进两份状态文件，刷新只读该位置之后 `revision_change` 涉及的材料页、消息与作答，删除行按旧行还原来源键、改动行按主键读回当前来源，只重写与重算这些来源，正文与向量两份 collection 都写成功才推进位置，刷新结束时再比一次 `HEAD`，期间又有提交时自动补跑一次。数据代次（`HEAD` 所在提交的 `generation`）变化、历史裁剪或可发送范围变化时把位置归零并退回全量扫描，普通写入不推进代次，只补变化的来源；同一版本内产生的旧状态文件仍然能读，里面多出来的提交编号在解析时忽略。索引里的向量与片段都能从业务库重建，结构损坏时删除并重建，界面不弹窗，只在本机诊断记录里留一条 `semantic_index` 类的说明；文本 collection 打不开或被占用时关键词与语义检索一起按不可用处理，向量 collection 打不开时关键词一路照常可用，字面命中不受影响；清空全部记录时先释放两份句柄再删除 `vector_index/`，索引不进入数据包（[ADR-0022](../docs/adr/0022-语义索引改用zvec.md)、[ADR-0030](../docs/adr/0030-服务端不建检索索引.md)）。旧的单 collection 目录不再读取，随清空本机数据一起删除，开发阶段不写迁移。
 - 记忆召回另用一个纯文本的 collection，目录是应用私有目录下的 `memory_index/`，与语义索引目录同级：每次召回先按 `memory` 表同步有效且未过期的条目，正文或更新时间变了才重写，删除与过期的一并清理，再以来源键列表把排序限制在本次候选之内；只取全文一路，不调用嵌入来源。记忆索引读到哪里也登记在 `revision_cursor` 的非阻塞位置（`memory.index`），只用于记录进度，落后不会漏掉内容；索引打不开时退回原来的二元组排序，索引不进数据包与版本库备份，清空全部记录时随 `vector_index/` 一起删除（[ADR-0026](../docs/adr/0026-记忆召回改用zvec全文索引.md)）。
-- 向量缓存按账号保存在服务端，索引仍只在本机。索引刷新先把同一段正文按 SHA-256 归并，再向知新服务批量查找已经算过的向量（`POST /v1/llm/embeddings/lookup`，返回小端序 FP16 的 base64，解码后按现有方式归一化），只对未命中的片段发嵌入请求，因此换机、索引重建与在模型之间来回切换不必重算已经算过的部分。查找只对知新服务的来源发出：自填 key 直连与本地哈希没有这个接口，旧服务端返回 404 之后本次会话不再尝试，网络失败与 5xx 退回整批嵌入，401、403 与 429 按来源不可用停下本次更新。写缓存只在登录且自动同步开启时声明，嵌入请求带 `X-Zhixin-Embedding-Cache: 1` 之后服务端才保存，检索查询的嵌入不带这个头（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md)）。
+- 向量缓存按账号保存在服务端，索引仍只在本机。索引刷新先把同一段正文按 SHA-256 归并，再向知新服务批量查找已经算过的向量（`POST /v1/llm/embeddings/lookup`，返回小端序 FP16 的 base64，解码后按现有方式归一化），只对未命中的片段发嵌入请求，因此换机、索引重建与在模型之间来回切换不必重算已经算过的部分。查找只对知新服务的来源发出，本机哈希没有这个接口，旧服务端返回 404 之后本次会话不再尝试，网络失败与 5xx 退回整批嵌入，401、403 与 429 按来源不可用停下本次更新。写缓存只在登录且自动同步开启时声明，嵌入请求带 `X-Zhixin-Embedding-Cache: 1` 之后服务端才保存，检索查询的嵌入不带这个头（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md)）。
 - 讨论按记录标识打开，可以没有目标归属，也可以只有图片消息；图片按内容哈希分块存入同一个库的 `asset_object` 与 `asset_chunk`，消息只保存哈希引用，界面读取时把临时文件补回 `question_images/`，同一个哈希只保存一份。
 - 材料按页保存，讨论可以带入材料与页码；回答里的引用先按页码取回原文、逐字核对，对不上的标为未核实，用户纠正后旧摘录不再作为依据。也可以直接导入 .docx：原文件按内容哈希与正文片段在同一条提交里写入，片段按 1 起编号，引用显示“第 N 个片段”，这类材料不能手工添加一页。添加一页遇到已有页码时拒绝写入，不覆盖已经校对过的原文；用户明确更正一页时改写内容，修改前后的整行随这次提交留在历史里，保存后提示条可以撤销，材料详情按页列出更正记录。
 - 系统学习按材料范围保存步骤、当前页码与完成状态；每一步是学习事项，可以在安排页直接预约，完成状态在系统学习页与事项详情共用。容量规划按每天的可用时段减去课表与已排时间，容量不足时说明先排与缩小范围，只调整用户确认的弹性块。
@@ -146,19 +146,17 @@ lib/
 
 ## 模型
 
-设置页填接口风格、接口地址、模型名与 API Key，默认 `Chat Completions`、`https://api.deepseek.com/v1` 与 `deepseek-flash`。key 存在 Android Keystore，不进仓库、不写日志；应用不内置密钥。登录用户可以在设置页把模型来源改为“知新服务”：接口风格固定为 Chat Completions，地址由服务地址拼出 `/v1/llm`，访问令牌代替 key，令牌过期时先刷新再用，额度用完时改用自己的 key；客户端入口在 `lib/application/account_service.dart` 与 `lib/ai/ai_chat_service.dart` 的配置来源里，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)。接口风格由用户显式选择，不按域名猜：同一家服务商的不同地址可能只支持其中一种，猜错时只能看到 404 或 400。
+客户端只有“知新服务”一种模型来源，即服务端的模型代理，设置页只让用户填模型名与上下文上限，不提供接口风格、接口地址与 API Key。接口风格固定为 Chat Completions，地址由账号页保存的服务地址拼出 `/v1/llm`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时只能等次日或联系管理员调整。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 与 [ADR-0050](../docs/adr/0050-客户端统一为知新服务.md)。
 
-三种风格共用一个传输层。地址只填域名时补 `/v1`，Anthropic 按 `base/v1/messages` 拼接（`https://api.deepseek.com/anthropic` 因此得到 `/anthropic/v1/messages`）。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限在 OpenAI 官方用 `max_completion_tokens`、其余实现用 `max_tokens`，指向 DeepSeek 时带 `{"thinking":{"type":"disabled"}}`；Responses 发顶层 `instructions`、`input`（`input_text`、`output_text`、`input_image` 的 data URL，工具用 `{type:function,name,parameters,strict:false}`）与 `max_output_tokens`，指向 DeepSeek 时带 `{"reasoning":{"effort":"none"}}`；Anthropic Messages 用 `x-api-key` 与 `anthropic-version: 2023-06-01` 鉴权，system 放顶层，工具用 `input_schema`，图片是 `{type:image,source:{type:base64,…}}` 块，指定工具时 `tool_choice` 取 `{"type":"tool","name":…}`。
+请求走一个传输层，接口只有 Chat Completions 一种。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限用 `max_tokens`，模型名以 `deepseek` 开头时另带 `{"thinking":{"type":"disabled"}}`，其他模型不认这个字段，带上可能直接返回 400，所以按模型名判断。
 
-流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。评估过 `sse`、`flutter_client_sse`、`simple_sse` 等现成包，都不能同时满足“POST 流、逐行超时与取消、无空行收尾时 flush”，因此保留自研解析器。三家的结束标记不同：Chat Completions 认 `[DONE]` 或非空 `finish_reason`，Responses 认 `response.completed`／`response.incomplete`（正文只补还没发过的后缀，工具调用按 `item_id` 归并，`output_item.done` 的完整参数覆盖分片），Anthropic 认 `message_stop`（工具参数由 `input_json_delta` 分片拼接，`stop_reason` 为 `max_tokens` 算截断）。没有结束标记时按截断保留已经生成的正文并提示；`content_filter`、`response.failed`、Anthropic 的 `error` 事件按服务端错误处理。非 2xx 的响应体会读出服务端自己的说明，便于定位 key、额度与模型名的问题。
+流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。评估过 `sse`、`flutter_client_sse`、`simple_sse` 等现成包，都不能同时满足“POST 流、逐行超时与取消、无空行收尾时 flush”，因此保留自研解析器。结束标记认 `[DONE]` 或非空 `finish_reason`，没有结束标记时按截断保留已经生成的正文并提示；`content_filter` 与服务端的错误事件按服务端错误处理。非 2xx 的响应体会读出服务端自己的说明，便于定位额度、模型名与登录状态的问题；上游提供方拒绝服务端 key 时服务端只回统一的 `upstream_failed`，不转发提供方的错误正文。
 
-回答正文使用 Markdown，模型可以用 `read_material_page` 读取本轮检索命中的原文，并在收到工具结果后继续回答。`propose_memories`、`propose_next_steps`、`propose_citations`、`propose_study_steps` 与 `propose_assessment` 提交的内容暂存在本轮，参数有误时丢弃对应提案，普通回答有完整正文即可结束。Chat Completions 通过 `tool_call_id` 配对调用与结果，Responses 通过 `function_call_output` 的 `call_id` 配对并带回本轮的推理条目，Anthropic Messages 把同一步的 `tool_result` 集中在下一条用户消息中。每轮的停止条件、材料范围与保存边界见 [00 第 9 节](../docs/00-产品定义.md#9-回答与工具调用)。
+回答正文使用 Markdown，模型可以用 `read_material_page` 读取本轮检索命中的原文，并在收到工具结果后继续回答。`propose_memories`、`propose_next_steps`、`propose_citations`、`propose_study_steps` 与 `propose_assessment` 提交的内容暂存在本轮，参数有误时丢弃对应提案，普通回答有完整正文即可结束。Chat Completions 通过 `tool_call_id` 配对调用与结果。每轮的停止条件、材料范围与保存边界见 [00 第 9 节](../docs/00-产品定义.md#9-回答与工具调用)。
 
 回答与记忆分开保存：用户明确说出的记忆在回答落库后单独写入，回答下方给一张可以撤销的卡片，写入失败只提示并保留待确认卡片，不回滚正文；模型推断的记忆先出确认卡片，点「记下」才写入，点「不记」收起。记忆写入形成一条提交，回执保存提交编号，讨论页可以按提交撤销；撤销后卡片回到待确认，同一批写入的多条记忆一起撤销。接受建议后创建的学习事项在同一条提交里记下已接受标题，回执同样指向这次提交。回答里的 Markdown 外链图片不自动加载，只显示可点击的提示，用户点击后才交给系统浏览器打开。
 
-官方 OpenAI Responses 请求保持 `store: false`，并用 `include: ["reasoning.encrypted_content"]` 请求加密推理条目，客户端在工具续接时将条目和配对结果一并传回。[OpenAI Responses 请求文档](https://developers.openai.com/api/reference/resources/responses/methods/create)
-
-设置页可以填写模型的上下文上限，应用据此估算输入容量并预留输出空间。连接测试用一次最小工具请求检查模型或地址能否返回可解析的工具参数。
+设置页可以填写模型的上下文上限，应用据此估算输入容量并预留输出空间。连接测试用一次最小工具请求检查登录与模型名能否返回可解析的工具参数。
 
 没有配置、断网或调用失败时，讨论、题目、尝试、日程与记忆仍可查看与记录，下一步由本地规则给出，并标明来源。
 
