@@ -369,24 +369,20 @@ class AccountService {
     }
   }
 
-  /// 把“知新服务”配置补上当前访问令牌；自填 Key 的配置原样返回。
+  /// 给模型配置补上知新服务的地址与当前访问令牌；没有登录时返回 null。
   ///
-  /// 选择知新服务但还没有登录时返回 null，让回答按未配置退回本地兜底；界面在
-  /// 设置页说明要先登录。
+  /// 保存的配置里只有模型名、上下文上限与图片开关，地址按 `<服务地址>/v1/llm`
+  /// 现拼，令牌不进 Keystore。没有登录或令牌取不到时返回 null，让回答按未配置
+  /// 退回本地兜底；界面在设置页说明要先登录。
   Future<LlmConfig?> authorizeModelConfig(LlmConfig? stored) async {
-    if (stored == null || !stored.isServer) return stored;
+    if (stored == null) return null;
     final target = await _hostedModelEndpoint();
     if (target == null) return null;
-    return stored.copyWith(
-      api: LlmApi.chat,
-      baseUrl: target.endpoint,
-      apiKey: target.apiKey,
-    );
+    return stored.copyWith(endpoint: target.endpoint, apiKey: target.apiKey);
   }
 
-  /// 设置页的连接测试与保存前使用：把表单里的知新服务配置补上令牌。
+  /// 设置页的连接测试与保存前使用：把表单里的配置补上地址与令牌。
   Future<LlmConfig> prepareModelConfig(LlmConfig config) async {
-    if (!config.isServer) return config;
     final authorized = await authorizeModelConfig(config);
     if (authorized == null) throw const AccountSignedOut();
     return authorized;

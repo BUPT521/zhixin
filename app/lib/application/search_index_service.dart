@@ -175,7 +175,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
   /// 当前嵌入来源；为空表示没有配置，关键词仍按文本集合检索。
   EmbeddingClient? get client => _client;
 
-  /// 是否允许把这条来源的原文发送给远程嵌入服务；本地来源不需要判断。
+  /// 是否允许把这条来源的原文发送给知新服务；本地来源不需要判断。
   bool Function(SemanticSource source)? get canSend => _canSend;
 
   /// 当前数据代次：`HEAD` 所在提交的 `generation`，整版恢复、导入与清理历史
@@ -191,7 +191,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
   /// 这一次刷新该不该把嵌入写进服务端缓存：登录且自动同步开启时返回真。
   ///
   /// 由应用根提供，每次刷新读一次；没有提供时按不写处理。缓存属于派生数据，
-  /// 未登录、同步关闭与自填 key 直连的用户不留下它（ADR-0030 决定第 3 条）。
+  /// 未登录与同步关闭的用户不留下它（ADR-0030 决定第 3 条）。
   final Future<bool> Function()? cacheWrites;
 
   /// 当前 `HEAD` 的提交编号；没有提供时每次刷新都做全量扫描，也不推进已处理

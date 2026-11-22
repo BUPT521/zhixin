@@ -41,10 +41,10 @@ void main() {
       const LlmException(LlmFailure.auth, '401 invalid key sk-secret'),
       action: '获取帮助',
       kept: '题目与本地回答已经保存',
-      next: '检查设置里的 API Key 与模型名后重试',
+      next: '检查登录状态与模型名后重试',
     );
 
-    expect(text, contains('模型调用失败（API Key 无效或没有权限）'));
+    expect(text, contains('模型调用失败（登录已失效或没有访问权限）'));
     expect(text, contains('题目与本地回答已经保存'));
     expect(text, isNot(contains('sk-secret')));
     expect(text, isNot(contains('401')));

@@ -41,7 +41,7 @@ class LlmMessage {
        toolCalls = const [],
        reasoningItems = const [];
 
-  /// 本轮内的消息标识，用于合并历史。线协议按各接口的格式组装。
+  /// 本轮内的消息标识，用于合并历史；线协议组装请求体时带上。
   final String? id;
 
   /// `user`、`assistant` 或 `tool`；system 单独传。
@@ -141,27 +141,20 @@ String _dataUrl(LlmImage image) =>
 // 整段响应的收尾判定
 // ---------------------------------------------------------------------------
 
-/// 三种协议整段响应共用的收尾：空回答按格式错误，因输出上限截断且没有留下
-/// 有效内容时按截断失败，其余情况返回同一份回复。
-///
-/// [toolCallsCountAsOutput] 表达协议差异：Chat Completions 的截断只要正文为空
-/// 就算失败，工具调用不能替代被截断的正文；Responses 与 Anthropic 把工具调用
-/// 也算作内容，正文与工具都为空才按截断失败。
+/// 整段响应共用的收尾：空回答按格式错误，因输出上限截断且没有留下有效内容
+/// 时按截断失败，其余情况返回同一份回复。
 LlmReply _replyFromParts({
   required String text,
   required List<LlmToolCall> toolCalls,
   required bool truncated,
-  required bool toolCallsCountAsOutput,
   required String emptyDetail,
   required int tokensIn,
   required int tokensOut,
-  List<Map<String, Object?>> reasoningItems = const [],
 }) {
-  final empty = text.isEmpty && toolCalls.isEmpty;
-  final blank = truncated && (toolCallsCountAsOutput ? empty : text.isEmpty);
-  if (blank) {
+  if (truncated && text.isEmpty) {
     throw const LlmException(LlmFailure.truncated, '达到输出上限');
   }
+  final empty = text.isEmpty && toolCalls.isEmpty;
   if (empty) {
     throw FormatException(emptyDetail);
   }
@@ -171,19 +164,13 @@ LlmReply _replyFromParts({
     tokensIn: tokensIn,
     tokensOut: tokensOut,
     truncated: truncated,
-    reasoningItems: truncated ? const [] : reasoningItems,
+    reasoningItems: const [],
   );
 }
 
 // ---------------------------------------------------------------------------
-// 三种线格式
+// Chat Completions 线格式
 // ---------------------------------------------------------------------------
-
-LlmWire llmWireFor(LlmApi api) => switch (api) {
-  LlmApi.chat => const _ChatWire(),
-  LlmApi.responses => const _ResponsesWire(),
-  LlmApi.anthropic => const _AnthropicWire(),
-};
 
 abstract class LlmWire {
   const LlmWire();
@@ -203,9 +190,9 @@ abstract class LlmWire {
   LlmDecoder decoder();
 }
 
-/// OpenAI 兼容的 `/chat/completions`，DeepSeek 与多数中转站都属于这一类。
-final class _ChatWire extends LlmWire {
-  const _ChatWire();
+/// 客户端只用知新服务，接口固定为 OpenAI 兼容的 `/chat/completions`。
+final class ChatWire extends LlmWire {
+  const ChatWire();
 
   @override
   Map<String, String> headers(LlmConfig config, {required bool stream}) => {
@@ -214,10 +201,9 @@ final class _ChatWire extends LlmWire {
     'Accept': stream ? 'text/event-stream' : 'application/json',
   };
 
-  /// DeepSeek 的思考模式默认打开，推理内容同样计入输出上限，还会让指定工具的
-  /// `tool_choice` 直接返回 400；知新的回答只要三到五句，所以按服务商关掉。
-  /// 输出上限在 OpenAI 官方换成了 `max_completion_tokens`，其余兼容实现仍用
-  /// `max_tokens`。
+  /// 知新服务背后的提供方按模型名配置，DeepSeek 的思考模式默认打开，推理内容
+  /// 同样计入输出上限，还会让指定工具的 `tool_choice` 直接返回 400；知新的回答
+  /// 只要三到五句，所以按模型名关掉。`max_tokens` 是各提供方都认的字段。
   @override
   Map<String, Object?> body({
     required LlmConfig config,
@@ -235,13 +221,10 @@ final class _ChatWire extends LlmWire {
         for (final message in messages) _message(message),
       ],
       'temperature': 0.5,
-      if (config.isDeepSeek) 'thinking': const {'type': 'disabled'},
+      if (config.reasoningDisabled) 'thinking': const {'type': 'disabled'},
       if (stream) 'stream': true,
       if (stream) 'stream_options': const {'include_usage': true},
-      if (config.isOpenAi)
-        'max_completion_tokens': config.outputTokenLimit
-      else
-        'max_tokens': config.outputTokenLimit,
+      'max_tokens': config.outputTokenLimit,
       if (tools.isNotEmpty) 'tools': [for (final tool in tools) tool.toJson()],
       if (tools.isNotEmpty)
         'tool_choice': !allowToolCalls
@@ -290,209 +273,15 @@ final class _ChatWire extends LlmWire {
   }
 
   @override
-  LlmDecoder decoder() => _ChatDecoder();
-}
-
-/// OpenAI 与 DeepSeek 的 `/responses`：system 放 `instructions`，输入是条目数组。
-final class _ResponsesWire extends LlmWire {
-  const _ResponsesWire();
-
-  @override
-  Map<String, String> headers(LlmConfig config, {required bool stream}) => {
-    'Authorization': 'Bearer ${config.apiKey.trim()}',
-    'Content-Type': 'application/json',
-    'Accept': stream ? 'text/event-stream' : 'application/json',
-  };
-
-  @override
-  Map<String, Object?> body({
-    required LlmConfig config,
-    required String system,
-    required List<LlmMessage> messages,
-    required List<LlmTool> tools,
-    required String? forceTool,
-    required bool allowToolCalls,
-    required bool stream,
-  }) {
-    return {
-      'model': config.model,
-      'instructions': system,
-      'input': [for (final message in messages) ..._input(message)],
-      if (config.isDeepSeek) 'reasoning': const {'effort': 'none'},
-      if (config.isOpenAi) ...{
-        'store': false,
-        'include': const ['reasoning.encrypted_content'],
-      },
-      'stream': stream,
-      'max_output_tokens': config.outputTokenLimit,
-      if (tools.isNotEmpty)
-        'tools': [
-          for (final tool in tools)
-            {
-              'type': 'function',
-              'name': tool.name,
-              'description': tool.description,
-              'parameters': tool.parameters,
-              'strict': false,
-            },
-        ],
-      if (tools.isNotEmpty)
-        'tool_choice': !allowToolCalls
-            ? 'none'
-            : forceTool == null
-            ? 'auto'
-            : {'type': 'function', 'name': forceTool},
-    };
-  }
-
-  /// 用户消息用 `input_text`／`input_image`，助手历史用 `output_text`。
-  List<Object?> _input(LlmMessage message) {
-    if (message.toolCallId case final id?) {
-      return [
-        {
-          'type': 'function_call_output',
-          'call_id': id,
-          'output': message.content,
-        },
-      ];
-    }
-    final assistant = message.role == 'assistant';
-    final parts = <Object?>[
-      {
-        'type': assistant ? 'output_text' : 'input_text',
-        'text': message.content,
-      },
-      if (!assistant)
-        for (final image in message.images)
-          {'type': 'input_image', 'image_url': _dataUrl(image)},
-    ];
-    return [
-      ...message.reasoningItems,
-      if (message.content.isNotEmpty || message.toolCalls.isEmpty)
-        {'role': message.role, 'content': parts},
-      for (final call in message.toolCalls)
-        {
-          'type': 'function_call',
-          'call_id': call.id,
-          'name': call.name,
-          'arguments': call.arguments,
-        },
-    ];
-  }
-
-  @override
-  LlmDecoder decoder() => _ResponsesDecoder();
-}
-
-/// Anthropic Messages：system 是顶层字段，鉴权用 `x-api-key`。
-final class _AnthropicWire extends LlmWire {
-  const _AnthropicWire();
-
-  static const String _version = '2023-06-01';
-
-  @override
-  Map<String, String> headers(LlmConfig config, {required bool stream}) => {
-    'x-api-key': config.apiKey.trim(),
-    'anthropic-version': _version,
-    'Content-Type': 'application/json',
-    'Accept': stream ? 'text/event-stream' : 'application/json',
-  };
-
-  @override
-  Map<String, Object?> body({
-    required LlmConfig config,
-    required String system,
-    required List<LlmMessage> messages,
-    required List<LlmTool> tools,
-    required String? forceTool,
-    required bool allowToolCalls,
-    required bool stream,
-  }) {
-    return {
-      'model': config.model,
-      'max_tokens': config.outputTokenLimit,
-      'system': system,
-      'messages': _messages(messages),
-      'stream': stream,
-      if (tools.isNotEmpty)
-        'tools': [
-          for (final tool in tools)
-            {
-              'name': tool.name,
-              'description': tool.description,
-              'input_schema': tool.parameters,
-            },
-        ],
-      if (tools.isNotEmpty)
-        'tool_choice': !allowToolCalls
-            ? const {'type': 'none'}
-            : forceTool == null
-            ? const {'type': 'auto'}
-            : {'type': 'tool', 'name': forceTool},
-    };
-  }
-
-  List<Object?> _messages(List<LlmMessage> messages) {
-    final result = <Object?>[];
-    List<Object?>? toolResults;
-    for (final message in messages) {
-      if (message.toolCallId case final id?) {
-        if (toolResults == null) {
-          toolResults = [];
-          result.add({'role': 'user', 'content': toolResults});
-        }
-        toolResults.add({
-          'type': 'tool_result',
-          'tool_use_id': id,
-          'content': message.content,
-          if (message.toolIsError) 'is_error': true,
-        });
-      } else {
-        toolResults = null;
-        result.add(_message(message));
-      }
-    }
-    return result;
-  }
-
-  Map<String, Object?> _message(LlmMessage message) {
-    final parts = <Object?>[
-      if (message.content.trim().isNotEmpty)
-        {'type': 'text', 'text': message.content},
-      if (message.role != 'assistant')
-        for (final image in message.images)
-          {
-            'type': 'image',
-            'source': {
-              'type': 'base64',
-              'media_type': image.mimeType,
-              'data': image._base64,
-            },
-          },
-      for (final call in message.toolCalls)
-        {
-          'type': 'tool_use',
-          'id': call.id,
-          'name': call.name,
-          'input': call.argumentsObject ?? const <String, Object?>{},
-        },
-    ];
-    // Anthropic 不接受空 content；图片被关掉时仍要保留这一轮的占位文字。
-    if (parts.isEmpty) {
-      parts.add({'type': 'text', 'text': '[发了一张图片]'});
-    }
-    return {'role': message.role, 'content': parts};
-  }
-
-  @override
-  LlmDecoder decoder() => _AnthropicDecoder();
+  LlmDecoder decoder() => ChatDecoder();
 }
 
 // ---------------------------------------------------------------------------
 // 流式解码
 // ---------------------------------------------------------------------------
 
-/// 一次流式回答的解码状态；不同协议的结束标记与事件形状在这里各自处理。
+/// 一次流式回答的解码状态：结束标记、截断与是否已经给出内容都在这里记下，
+/// 读流的代码据此决定保留正文还是按失败处理。
 abstract class LlmDecoder {
   bool done = false;
   bool truncated = false;
@@ -513,7 +302,7 @@ abstract class LlmDecoder {
 }
 
 /// Chat Completions：一条 `data:` 放一个 chunk，`[DONE]` 收尾。
-final class _ChatDecoder extends LlmDecoder {
+final class ChatDecoder extends LlmDecoder {
   @override
   List<LlmDelta> accept(String? event, String data) {
     final payload = data.trim();
@@ -620,7 +409,6 @@ final class _ChatDecoder extends LlmDecoder {
         text: text,
         toolCalls: calls,
         truncated: truncated,
-        toolCallsCountAsOutput: false,
         emptyDetail: 'message.content 为空',
         tokensIn:
             _intOf(usage, 'prompt_tokens') ??
@@ -630,437 +418,6 @@ final class _ChatDecoder extends LlmDecoder {
             _intOf(usage, 'completion_tokens') ??
             _intOf(usage, 'output_tokens') ??
             0,
-      );
-    } on FormatException catch (error) {
-      throw LlmException(LlmFailure.badResponse, error.message);
-    }
-  }
-}
-
-/// Responses：语义事件，正文在 `response.output_text.delta`，结束时带完整 output。
-final class _ResponsesDecoder extends LlmDecoder {
-  /// 某个工具调用是否已经收到过参数增量；没有收到时用收尾事件里的完整参数。
-  final Map<int, String> _finalArguments = {};
-  final Map<String, int> _indexByItem = {};
-  var _nextToolIndex = 0;
-  var _lastToolIndex = 0;
-  final StringBuffer _textSent = StringBuffer();
-
-  @override
-  List<LlmDelta> accept(String? event, String data) {
-    final payload = data.trim();
-    if (payload.isEmpty || payload == '[DONE]') return const [];
-    final decoded = _decodeObject(payload);
-    final type = decoded['type'] is String
-        ? decoded['type'] as String
-        : (event ?? '');
-    final deltas = <LlmDelta>[];
-    switch (type) {
-      case 'response.output_text.delta':
-        final text = decoded['delta'];
-        if (text is String && text.isNotEmpty) {
-          _textSent.write(text);
-          sawText = true;
-          sawOutput = true;
-          deltas.add(LlmDelta(text: text));
-        }
-      case 'response.reasoning_text.delta' ||
-          'response.reasoning_summary_text.delta':
-        final fragment = decoded['delta'];
-        if (fragment is String && fragment.isNotEmpty) {
-          deltas.add(const LlmDelta(reasoningProgress: true));
-        }
-      case 'response.function_call_arguments.delta':
-        final args = decoded['delta'];
-        if (args is String && args.isNotEmpty) {
-          final index = _indexFor(_itemId(decoded));
-          _lastToolIndex = index;
-          if (!_finalArguments.containsKey(index)) {
-            deltas.add(
-              LlmDelta(
-                toolCalls: [LlmToolCallDelta(index: index, arguments: args)],
-              ),
-            );
-          }
-        }
-      case 'response.function_call_arguments.done':
-        _finishArguments(
-          deltas,
-          _indexFor(_itemId(decoded)),
-          decoded['arguments'],
-        );
-      case 'response.output_item.added':
-      case 'response.output_item.done':
-        final item = decoded['item'];
-        if (item is Map<String, Object?> && item['type'] == 'reasoning') {
-          final encrypted = item['encrypted_content'];
-          deltas.add(
-            type == 'response.output_item.done' &&
-                    encrypted is String &&
-                    encrypted.isNotEmpty
-                ? LlmDelta(reasoningItems: [item])
-                : const LlmDelta(reasoningProgress: true),
-          );
-        }
-        if (item is Map<String, Object?> && item['type'] == 'function_call') {
-          final index = _indexFor(_itemId(item));
-          _lastToolIndex = index;
-          final id = item['call_id'] is String
-              ? item['call_id'] as String
-              : null;
-          final name = item['name'] is String ? item['name'] as String : null;
-          if (name != null || id != null) {
-            sawOutput = true;
-            deltas.add(
-              LlmDelta(
-                toolCalls: [LlmToolCallDelta(index: index, id: id, name: name)],
-              ),
-            );
-          }
-          if (type == 'response.output_item.done') {
-            _finishArguments(deltas, index, item['arguments']);
-          }
-        }
-      case 'response.completed' || 'response.incomplete':
-        final response = decoded['response'];
-        if (response is Map<String, Object?>) {
-          final status = response['status'];
-          final incomplete =
-              type == 'response.incomplete' || status == 'incomplete';
-          if (incomplete) truncated = true;
-          deltas.addAll(_reconcile(response));
-        }
-        done = true;
-      case 'response.failed':
-        final response = decoded['response'];
-        final error = response is Map<String, Object?>
-            ? response['error']
-            : null;
-        throw LlmException(LlmFailure.server, errorTextOf(error ?? '回答生成失败'));
-      case 'error':
-        throw LlmException(
-          LlmFailure.server,
-          errorTextOf(decoded['error'] ?? decoded),
-        );
-      default:
-        // reasoning、web search 等事件不影响正文。
-        break;
-    }
-    return deltas;
-  }
-
-  /// 有的网关在工具调用前后不发正文增量，只在收尾事件里给出完整 output：
-  /// 正文只补还没发过的后缀，完整工具参数覆盖已有分片。
-  List<LlmDelta> _reconcile(Map<String, Object?> response) {
-    final output = response['output'];
-    if (output is! List) return const [];
-    final deltas = <LlmDelta>[];
-    final reasoningItems = _reasoningItems(output);
-    if (reasoningItems.isNotEmpty) {
-      deltas.add(LlmDelta(reasoningItems: reasoningItems));
-    }
-    final fullText = StringBuffer();
-    for (final item in output) {
-      if (item is Map<String, Object?> && item['type'] == 'message') {
-        fullText.write(_textOf(item['content']));
-      }
-    }
-    final complete = fullText.toString();
-    final sent = _textSent.toString();
-    if (complete.length > sent.length && complete.startsWith(sent)) {
-      final suffix = complete.substring(sent.length);
-      _textSent.write(suffix);
-      sawText = true;
-      sawOutput = true;
-      deltas.add(LlmDelta(text: suffix));
-    }
-    for (final item in output) {
-      if (item is! Map<String, Object?>) continue;
-      final type = item['type'];
-      if (type == 'function_call') {
-        final itemId = _itemId(item);
-        final index = _indexFor(itemId);
-        final id = item['call_id'] is String ? item['call_id'] as String : null;
-        final name = item['name'] is String ? item['name'] as String : null;
-        if (name != null || id != null) {
-          sawOutput = true;
-          deltas.add(
-            LlmDelta(
-              toolCalls: [LlmToolCallDelta(index: index, id: id, name: name)],
-            ),
-          );
-        }
-        _finishArguments(deltas, index, item['arguments']);
-      }
-    }
-    return deltas;
-  }
-
-  void _finishArguments(List<LlmDelta> deltas, int index, Object? value) {
-    if (value is! String || value.isEmpty || _finalArguments[index] == value) {
-      return;
-    }
-    _finalArguments[index] = value;
-    sawOutput = true;
-    deltas.add(
-      LlmDelta(
-        toolCalls: [
-          LlmToolCallDelta(
-            index: index,
-            arguments: value,
-            replaceArguments: true,
-          ),
-        ],
-      ),
-    );
-  }
-
-  String? _itemId(Map<String, Object?> value) {
-    final itemId = value['item_id'];
-    if (itemId is String && itemId.isNotEmpty) return itemId;
-    final id = value['id'];
-    if (id is String && id.isNotEmpty) return id;
-    final outputIndex = value['output_index'];
-    if (outputIndex is int) return 'output:$outputIndex';
-    return null;
-  }
-
-  int _indexFor(String? itemId) {
-    if (itemId == null) return _lastToolIndex;
-    final existing = _indexByItem[itemId];
-    if (existing != null) return existing;
-    final index = _nextToolIndex++;
-    _indexByItem[itemId] = index;
-    return index;
-  }
-
-  List<Map<String, Object?>> _reasoningItems(List<Object?> output) => [
-    for (final item in output)
-      if (item is Map<String, Object?> && item['type'] == 'reasoning') item,
-  ];
-
-  @override
-  LlmReply decodeBody(String body) {
-    try {
-      final decoded = _decodeObject(body);
-      final error = decoded['error'];
-      if (error != null) {
-        throw LlmException(LlmFailure.server, errorTextOf(error));
-      }
-      final output = decoded['output'];
-      if (output is! List) throw const FormatException('没有 output');
-      final text = StringBuffer();
-      final calls = <LlmToolCall>[];
-      for (final item in output) {
-        if (item is! Map<String, Object?>) continue;
-        if (item['type'] == 'message') {
-          text.write(_textOf(item['content']));
-        } else if (item['type'] == 'function_call') {
-          final name = item['name'];
-          final args = item['arguments'];
-          if (name is! String || name.trim().isEmpty) continue;
-          calls.add(
-            LlmToolCall(
-              id: item['call_id'] is String ? item['call_id'] as String : '',
-              name: name.trim(),
-              arguments: args is String
-                  ? args
-                  : args == null
-                  ? ''
-                  : jsonEncode(args),
-            ),
-          );
-        }
-      }
-      final status = decoded['status'];
-      final reason = decoded['incomplete_details'] is Map<String, Object?>
-          ? (decoded['incomplete_details'] as Map<String, Object?>)['reason']
-          : null;
-      final truncated = status == 'incomplete' || reason != null;
-      final bodyText = text.toString().trim();
-      final usage = decoded['usage'];
-      return _replyFromParts(
-        text: bodyText,
-        toolCalls: calls,
-        truncated: truncated,
-        toolCallsCountAsOutput: true,
-        emptyDetail: 'output 为空',
-        reasoningItems: _reasoningItems(output),
-        tokensIn: _intOf(usage, 'input_tokens') ?? 0,
-        tokensOut: _intOf(usage, 'output_tokens') ?? 0,
-      );
-    } on FormatException catch (error) {
-      throw LlmException(LlmFailure.badResponse, error.message);
-    }
-  }
-}
-
-/// Anthropic Messages：`content_block_*` 增量与 `message_delta.stop_reason`。
-final class _AnthropicDecoder extends LlmDecoder {
-  final Map<int, int> _toolIndexByBlock = {};
-  final Map<int, bool> _argsSeenByBlock = {};
-  var _nextToolIndex = 0;
-  String? _stopReason;
-
-  @override
-  List<LlmDelta> accept(String? event, String data) {
-    final payload = data.trim();
-    if (payload.isEmpty || payload == '[DONE]') return const [];
-    final decoded = _decodeObject(payload);
-    final type = decoded['type'] is String
-        ? decoded['type'] as String
-        : (event ?? '');
-    switch (type) {
-      case 'content_block_start':
-        final block = decoded['content_block'];
-        final blockIndex = _intOf(decoded, 'index') ?? 0;
-        if (block is! Map<String, Object?>) return const [];
-        if (block['type'] == 'text') {
-          final text = block['text'];
-          if (text is String && text.isNotEmpty) {
-            sawText = true;
-            sawOutput = true;
-            return [LlmDelta(text: text)];
-          }
-          return const [];
-        }
-        if (block['type'] == 'tool_use') {
-          final index = _nextToolIndex++;
-          _toolIndexByBlock[blockIndex] = index;
-          final id = block['id'] is String ? block['id'] as String : null;
-          final name = block['name'] is String ? block['name'] as String : null;
-          final input = block['input'];
-          final hasInput = input is Map && input.isNotEmpty;
-          if (hasInput) _argsSeenByBlock[blockIndex] = true;
-          sawOutput = true;
-          return [
-            LlmDelta(
-              toolCalls: [
-                LlmToolCallDelta(
-                  index: index,
-                  id: id,
-                  name: name,
-                  arguments: hasInput ? jsonEncode(input) : '',
-                ),
-              ],
-            ),
-          ];
-        }
-        return const [];
-      case 'content_block_delta':
-        final blockIndex = _intOf(decoded, 'index') ?? 0;
-        final delta = decoded['delta'];
-        if (delta is! Map<String, Object?>) return const [];
-        switch (delta['type']) {
-          case 'thinking_delta' || 'signature_delta':
-            return const [LlmDelta(reasoningProgress: true)];
-          case 'text_delta':
-            final text = delta['text'];
-            if (text is String && text.isNotEmpty) {
-              sawText = true;
-              sawOutput = true;
-              return [LlmDelta(text: text)];
-            }
-          case 'input_json_delta':
-            final args = delta['partial_json'];
-            final index = _toolIndexByBlock[blockIndex];
-            if (args is String && args.isNotEmpty && index != null) {
-              _argsSeenByBlock[blockIndex] = true;
-              sawOutput = true;
-              return [
-                LlmDelta(
-                  toolCalls: [LlmToolCallDelta(index: index, arguments: args)],
-                ),
-              ];
-            }
-        }
-        return const [];
-      case 'message_delta':
-        final delta = decoded['delta'];
-        if (delta is Map<String, Object?>) {
-          final reason = delta['stop_reason'];
-          if (reason is String) _stopReason = reason;
-        }
-        if (_stopReason == 'max_tokens' || _stopReason == 'pause_turn') {
-          truncated = true;
-        }
-        if (_stopReason == 'refusal') {
-          throw const LlmException(LlmFailure.server, '模型拒绝回答这个问题');
-        }
-        return const [];
-      case 'message_stop':
-        done = true;
-        return const [];
-      case 'error':
-        throw _streamError(decoded['error']);
-      default:
-        // ping、thinking 与工具调用收尾等事件不影响正文。
-        return const [];
-    }
-  }
-
-  LlmException _streamError(Object? error) {
-    if (error is! Map) {
-      return LlmException(LlmFailure.server, errorTextOf(error));
-    }
-    final type = error['type'];
-    final message = error['message'];
-    final detail = message is String && message.trim().isNotEmpty
-        ? _clip(message.trim())
-        : '模型服务出错';
-    final failure = switch (type) {
-      'authentication_error' || 'permission_error' => LlmFailure.auth,
-      'rate_limit_error' => LlmFailure.rateLimited,
-      'overloaded_error' || 'api_error' => LlmFailure.server,
-      'invalid_request_error' || 'not_found_error' => LlmFailure.badResponse,
-      _ => LlmFailure.server,
-    };
-    return LlmException(failure, detail);
-  }
-
-  @override
-  LlmReply decodeBody(String body) {
-    try {
-      final decoded = _decodeObject(body);
-      final error = decoded['error'];
-      if (error != null) {
-        throw _streamError(error);
-      }
-      final content = decoded['content'];
-      if (content is! List) throw const FormatException('没有 content');
-      final text = StringBuffer();
-      final calls = <LlmToolCall>[];
-      for (final block in content) {
-        if (block is! Map<String, Object?>) continue;
-        switch (block['type']) {
-          case 'text':
-            final value = block['text'];
-            if (value is String) text.write(value);
-          case 'tool_use':
-            final name = block['name'];
-            if (name is! String || name.trim().isEmpty) continue;
-            final input = block['input'];
-            calls.add(
-              LlmToolCall(
-                id: block['id'] is String ? block['id'] as String : '',
-                name: name.trim(),
-                arguments: input == null ? '' : jsonEncode(input),
-              ),
-            );
-        }
-      }
-      final reason = decoded['stop_reason'];
-      final truncated = reason == 'max_tokens' || reason == 'pause_turn';
-      final bodyText = text.toString().trim();
-      final usage = decoded['usage'];
-      return _replyFromParts(
-        text: bodyText,
-        toolCalls: calls,
-        truncated: truncated,
-        toolCallsCountAsOutput: true,
-        emptyDetail: 'content 为空',
-        tokensIn: _intOf(usage, 'input_tokens') ?? 0,
-        tokensOut: _intOf(usage, 'output_tokens') ?? 0,
       );
     } on FormatException catch (error) {
       throw LlmException(LlmFailure.badResponse, error.message);

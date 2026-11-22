@@ -150,7 +150,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 时间线只向页面取当前消息、卡片与操作，排列与失败说明由共用组件负责。
   late final BuddyTimelineAdapter _timelineAdapter = _DiscussionTimeline(this);
 
-  /// 是否已经配置模型：决定本地规则回答下方给配置入口还是重新回答入口。
+  /// 模型是否可用（已经登录）：决定本地规则回答下方给登录入口还是重新回答入口。
   bool _configured = false;
 
   /// 正在用模型重答上一条问题；与首次发送共用输入框的停止按钮。
@@ -409,15 +409,15 @@ class DiscussionChatState extends State<DiscussionChat> {
     });
   }
 
-  /// 模型配置决定回答下方的恢复入口；它不随这些表写入变化，只读一次。
-  /// 是否可用连同登录状态一起判断，知新服务登录之后也算已配置。
+  /// 回答下方的恢复入口由登录状态决定；它不随这些表写入变化，只读一次。
+  /// 模型只有知新服务一种来源，登录之后才算可用（ADR-0050）。
   Future<void> _readConfigured() async {
     try {
       final ready = await AppScope.of(context).modelReady();
       if (!mounted) return;
       setState(() => _configured = ready);
     } catch (_) {
-      // 配置读不到时按未配置显示，不打断讨论本身的读取与输入。
+      // 登录状态读不到时按未登录显示，不打断讨论本身的读取与输入。
     }
   }
 
@@ -1126,18 +1126,18 @@ class DiscussionChatState extends State<DiscussionChat> {
     }
   }
 
-  /// 未配置时的提示条：给出配置入口，配置完成后卡片上会多出重新回答的按钮。
+  /// 模型还不能用时的提示条：给出登录入口，登录之后卡片上会有重新回答的按钮。
   void _showModelGuide() {
     if (!mounted) return;
     showModelSetupGuide(
       context,
-      title: '配置模型以重新回答',
-      content: '当前使用本地规则回答；配置模型后可以重新回答这个问题。',
+      title: '登录后重新回答',
+      content: '模型调用需要登录知新服务；现在使用的是本地规则回答，登录之后可以重新回答这个问题。',
       onConfigure: _openModelSettings,
     );
   }
 
-  /// 打开设置页并重新读取配置；返回后卡片上的入口随之切换。
+  /// 打开设置页并重新读取登录状态；返回后卡片上的入口随之切换。
   Future<void> _openModelSettings() async {
     final result = await openModelSettingsPage(
       context,
@@ -1154,7 +1154,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     setState(() => _configured = configured);
     showToast(
       context,
-      configured ? '模型已就绪，可以重新回答上面这个问题。' : '模型还没有配置完整，仍使用本地规则回答。',
+      configured ? '模型已就绪，可以重新回答上面这个问题。' : '登录之后才能使用模型，现在仍使用本地规则回答。',
     );
   }
 
@@ -1162,6 +1162,11 @@ class DiscussionChatState extends State<DiscussionChat> {
   Future<void> _retry() async {
     final id = _conversationId;
     if (id == null || _sending || _retrying) return;
+    // 未登录时不必发请求：先给登录入口，回来之后再由按钮重新执行这一步。
+    if (!_configured) {
+      await _openModelSettings();
+      return;
+    }
     final cancel = _beginReply(retrying: true);
     DiscussionActivity.begin(id);
     try {
@@ -1180,8 +1185,8 @@ class DiscussionChatState extends State<DiscussionChat> {
       ], answerNoticeText(result.outcome));
     } on LlmException catch (error) {
       final next = switch (error.failure) {
-        LlmFailure.notConfigured => '先到设置里配置模型后再试',
-        LlmFailure.auth => '请检查设置里的 API Key 与模型名后再试',
+        LlmFailure.notConfigured => '登录知新服务之后再试',
+        LlmFailure.auth => '请先登录，或者换一个服务端允许的模型名后再试',
         LlmFailure.contactUnverified => '先在账号页确认一种登录方式后再试',
         _ => '可以点下方重试',
       };
@@ -1206,7 +1211,7 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 回答下方唯一的恢复入口：只挂在最后一条回答上。
   ///
-  /// 没配模型时给配置入口；配好之后，本地规则回答给「用模型重新回答」，
+  /// 没登录时给登录入口；登录之后，本地规则回答给「用模型重新回答」，
   /// 模型失败或生成中断的回答给「重试这次回答」。失败说明随回答保存在消息里，
   /// 重新打开讨论后仍在这一条回答下方，不只是一次性提示。
   Widget? _localFooter(int index) {
@@ -1245,10 +1250,10 @@ class DiscussionChatState extends State<DiscussionChat> {
               child: Text(failureNotice, style: theme.text.bodySmall),
             ),
           ModelRecoveryButtons(
-            configured: _configured,
+            signedIn: _configured,
             primaryLabel: label,
             onPrimary: _retry,
-            onConfigure: _openModelSettings,
+            onSignIn: _openModelSettings,
             onOpenSettings: needsConfig ? _openModelSettings : null,
             enabled: !(_sending || _retrying),
           ),

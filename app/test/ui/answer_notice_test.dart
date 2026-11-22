@@ -35,9 +35,9 @@ void main() {
     );
     expect(
       text,
-      '模型调用失败（API Key 无效或没有权限），已切换为本地规则回答；'
+      '模型调用失败（登录已失效或没有访问权限），已切换为本地规则回答；'
       '问题与本地回答会保存在本机。'
-      '请检查设置里的 API Key 与模型名，改好后再点「重试这次回答」。',
+      '请先登录并确认模型名在服务端允许的列表里，改好后再点「重试这次回答」。',
     );
 
     final offline = answerNoticeText(
@@ -63,11 +63,11 @@ void main() {
     );
   });
 
-  test('模型未配置时给配置入口的说法，没有可发送内容时只讲一遍', () {
+  test('模型不可用时写明要先登录，没有可发送内容时只讲一遍', () {
     expect(
       answerNoticeText(outcome(notices: const [Notice.modelNotConfigured])),
-      '模型尚未配置，这次先用本地规则回答；问题与本地回答会保存在本机。'
-      '先到设置里配置模型，再回来重新回答。',
+      '还没有登录知新服务，这次先用本地规则回答；问题与本地回答会保存在本机。'
+      '登录之后回到这里重新回答。',
     );
     expect(
       answerNoticeText(
@@ -75,7 +75,7 @@ void main() {
           notices: const [Notice.modelNotConfigured, Notice.noSendableContent],
         ),
       ),
-      '模型尚未配置，图片没有发送；题目与已写内容仍在本机。配置模型后可以重新回答。',
+      '还没有登录知新服务，图片没有发送；题目与已写内容仍在本机。登录后可以重新回答。',
     );
     expect(
       answerNoticeText(outcome(notices: const [Notice.noSendableContent])),
@@ -147,10 +147,10 @@ void main() {
     expect(saved.notices, [Notice.modelCallFailed]);
     expect(saved.failure, LlmFailure.auth);
     expect(saved.needsConfig, isFalse);
-    expect(savedAnswerNoticeText(saved), contains('API Key 无效或没有权限'));
+    expect(savedAnswerNoticeText(saved), contains('登录已失效或没有访问权限'));
   });
 
-  test('本地兜底中没有配置模型的消息需要配置入口', () {
+  test('本地兜底中模型不可用的消息需要登录入口', () {
     final message = ChatMessage(
       id: 'msg-1',
       conversationId: 'conv-1',

@@ -46,7 +46,7 @@ class SettingsService {
   final AiChatService ai;
   final ServiceRuntime runtime;
 
-  /// 把“知新服务”的配置补上访问令牌；未登录时抛出 [AccountSignedOut]。
+  /// 把模型配置补上知新服务的地址与访问令牌，未登录时抛出 [AccountSignedOut]。
   final Future<LlmConfig> Function(LlmConfig config)? authorizeConfig;
 
   /// 截止小时与时间口径的持有者；保存之后由它重读，界面立刻用新值。
@@ -60,11 +60,10 @@ class SettingsService {
 
   Future<Result<LlmConfig?>> config() => llmStore.read();
 
-  /// 保存配置；选择知新服务时先确认已经登录，令牌本身不写进本机配置。
+  /// 保存配置；只存模型名、上下文上限与图片开关，先确认已经登录，地址与令牌
+  /// 本身不写进本机。
   Future<void> saveConfig(LlmConfig config) async {
-    if (config.isServer) {
-      await (authorizeConfig?.call(config) ?? Future.value(config));
-    }
+    await (authorizeConfig?.call(config) ?? Future.value(config));
     await llmStore.save(config);
     ai.setConfigSnapshot(config);
   }
@@ -74,11 +73,10 @@ class SettingsService {
     ai.setConfigSnapshot(null);
   }
 
-  /// 连接测试：知新服务先用当前账号的访问令牌替换配置里的 key。
+  /// 连接测试：先把地址与令牌补成一次真实请求要用的样子。
   Future<Duration> testConfig(LlmConfig config) async {
-    final prepared = config.isServer
-        ? await (authorizeConfig?.call(config) ?? Future.value(config))
-        : config;
+    final prepared =
+        await (authorizeConfig?.call(config) ?? Future.value(config));
     return ai.test(prepared);
   }
 

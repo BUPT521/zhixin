@@ -29,10 +29,10 @@ LlmFailure? llmFailureFromName(String? name) {
 
 /// 一种失败类型给人看的说法；界面按类型写下一步，不解析异常原文。
 String shortTextOf(LlmFailure failure) => switch (failure) {
-  LlmFailure.notConfigured => '模型尚未配置',
+  LlmFailure.notConfigured => '还没有登录知新服务',
   LlmFailure.offline => '网络不可用',
   LlmFailure.timeout => '请求超时',
-  LlmFailure.auth => 'API Key 无效或没有权限',
+  LlmFailure.auth => '登录已失效或没有访问权限',
   LlmFailure.contactUnverified => '还没有确认任何登录方式，托管额度未开放',
   LlmFailure.rateLimited => '调用额度或频率受限',
   LlmFailure.badResponse => '模型回复格式无法识别',
@@ -41,7 +41,7 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
   LlmFailure.contextLimit => '本轮内容超过模型上下文预算',
   LlmFailure.cancelled => '已停止生成',
   LlmFailure.server => '模型服务出错',
-  LlmFailure.toolUnsupported => '这个模型或地址不支持工具调用',
+  LlmFailure.toolUnsupported => '服务端没有接受这次工具调用',
   LlmFailure.unknown => '调用失败',
 };
 

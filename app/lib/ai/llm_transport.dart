@@ -37,15 +37,14 @@ abstract class LlmClient {
   void dispose() {}
 }
 
-/// 三种线格式的 HTTP 客户端：Chat Completions、Responses 与 Anthropic Messages。
+/// 知新服务的 HTTP 客户端：接口固定为 Chat Completions。
 ///
 /// 共用的部分：请求预算给出的整段、首字与空闲期限，网络错误与服务端 5xx
 /// 重试一次，SSE 按规范读事件（多行 `data:`、空行分发、注释与 `event:` 字段、
 /// 首行 BOM），非 2xx 时读出服务端自己的错误说明；超时不在这一层另设。
 ///
-/// 结束的确认方式各家不同：Chat Completions 用 `[DONE]` 或 `finish_reason`，
-/// Responses 用 `response.completed` 一类事件，Anthropic 用 `message_stop`；
-/// 都没有时按截断保留已经生成的正文，半截回答不会被当成完整回答。
+/// 结束用 `[DONE]` 或 `finish_reason` 确认；都没有时按截断保留已经生成的正文，
+/// 半截回答不会被当成完整回答。地址与令牌只由账号服务在发请求前补进 [config]。
 class HttpLlmClient implements LlmClient {
   HttpLlmClient({
     required this.config,
@@ -63,7 +62,7 @@ class HttpLlmClient implements LlmClient {
   final http.Client _http;
   final bool _ownsClient;
 
-  LlmWire get _wire => llmWireFor(config.api);
+  static const LlmWire _wire = ChatWire();
 
   /// 普通请求与流式请求各用一份判据：流式请求把首字与空闲超时算作可重试。
   static const _plainRetry = RetryPolicy();
@@ -252,6 +251,7 @@ class HttpLlmClient implements LlmClient {
     required List<LlmTool> tools,
     required String? forceTool,
     required bool allowToolCalls,
+
     required Future<void> abortTrigger,
   }) {
     final request = http.AbortableRequest(
@@ -344,10 +344,10 @@ class HttpLlmClient implements LlmClient {
     }
   }
 
-  /// 非 2xx 时尽量读出服务端自己的说明：key、额度、模型名的问题全靠这一句。
+  /// 非 2xx 时尽量读出服务端自己的说明：登录、额度、模型名的问题全靠这一句。
   ///
   /// 服务端代理的 `403 contact_unverified` 单独归类，界面据此提示去账号页验证，
-  /// 而不是让人以为 API Key 有问题；这类 4xx 不自动重试。
+  /// 而不是让人以为登录失效；这类 4xx 不自动重试。
   Future<LlmException> _readFailure(
     http.StreamedResponse response,
     LlmRequestBudget lifecycle, {

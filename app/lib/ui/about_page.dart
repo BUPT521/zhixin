@@ -70,8 +70,8 @@ class AboutPage extends StatelessWidget {
           ),
           Divider(height: theme.space.page, color: theme.colors.outlineVariant),
           Text(
-            '学习记录保存在本机；模型调用使用你配置的 API Key，'
-            '费用由模型服务商按用量结算。',
+            '学习记录保存在本机；模型调用经登录后的知新服务发出，'
+            '应用不保存密钥，费用由项目组承担。',
             style: theme.text.bodySmall,
           ),
         ],

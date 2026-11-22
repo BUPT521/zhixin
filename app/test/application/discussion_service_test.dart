@@ -951,7 +951,7 @@ void main() {
   test('文字追问仍带上一条消息的原图，而不是只发占位符', () async {
     final h = _Harness(
       config: const LlmConfig(
-        baseUrl: 'https://example.com/v1',
+        endpoint: 'https://example.com/v1/chat/completions',
         model: 'test-model',
         apiKey: 'test-key',
       ),

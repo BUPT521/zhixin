@@ -16,6 +16,9 @@ import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/domain/models/score.dart';
 
+/// 测试用的假地址：请求打到这个地址，客户端只用配置里的完整接口地址。
+const String _testEndpoint = 'https://zhixin.test/v1/llm';
+
 class _MemorySecrets implements SecretStore {
   String? value;
   int reads = 0;
@@ -102,7 +105,9 @@ const _hit = MaterialHit(
 void main() {
   Future<AiChatService> serviceWith(http.Client client) async {
     final store = LlmConfigStore(_MemorySecrets());
-    await store.save(const LlmConfig(apiKey: 'sk-test'));
+    await store.save(
+      const LlmConfig(endpoint: _testEndpoint, apiKey: 'sk-test'),
+    );
     return AiChatService(store: store, httpClient: client);
   }
 
@@ -111,199 +116,83 @@ void main() {
   BuddyContext withMaterial() =>
       BuddyContext(now: DateTime(2026, 11, 7, 20), materialHits: const [_hit]);
 
-  for (final api in LlmApi.values) {
-    test('${api.label}：材料原文、拒绝结果和提案按调用编号回传', () async {
-      const calls = [
-        (
-          id: 'call_page',
-          name: readMaterialPageTool,
-          args: {'material_id': 'mat-2', 'page_no': 7},
-        ),
-        (
-          id: 'call_denied',
-          name: readMaterialPageTool,
-          args: {'material_id': 'mat-2', 'page_no': 8},
-        ),
-        (
-          id: 'call_proposal',
-          name: proposeNextStepsTool,
-          args: {
-            'steps': [
-              {'title': '阅读定义'},
+  test('材料原文、拒绝结果和提案按调用编号回传', () async {
+    const calls = [
+      (
+        id: 'call_page',
+        name: readMaterialPageTool,
+        args: {'material_id': 'mat-2', 'page_no': 7},
+      ),
+      (
+        id: 'call_denied',
+        name: readMaterialPageTool,
+        args: {'material_id': 'mat-2', 'page_no': 8},
+      ),
+      (
+        id: 'call_proposal',
+        name: proposeNextStepsTool,
+        args: {
+          'steps': [
+            {'title': '阅读定义'},
+          ],
+        },
+      ),
+    ];
+    final captured = <Map<String, Object?>>[];
+    final service = await serviceWith(
+      MockClient((request) async {
+        captured.add(
+          jsonDecode(utf8.decode(request.bodyBytes)) as Map<String, Object?>,
+        );
+        if (captured.length == 1) {
+          return _chatReply(
+            calls: [
+              for (final call in calls)
+                _chatCall(call.id, call.name, call.args),
             ],
-          },
-        ),
-      ];
-      const reasoning = {
-        'type': 'reasoning',
-        'id': 'rs_123',
-        'summary': [],
-        'encrypted_content': 'test-reasoning',
-      };
-      final captured = <Map<String, Object?>>[];
-      final service = await serviceWith(
-        MockClient((request) async {
-          captured.add(
-            jsonDecode(utf8.decode(request.bodyBytes)) as Map<String, Object?>,
           );
-          if (captured.length == 1) {
-            if (api == LlmApi.responses) {
-              expect(captured.single['store'], isFalse);
-              expect(captured.single['include'], [
-                'reasoning.encrypted_content',
-              ]);
-            }
-            return switch (api) {
-              LlmApi.chat => _chatReply(
-                calls: [
-                  for (final call in calls)
-                    _chatCall(call.id, call.name, call.args),
-                ],
-              ),
-              LlmApi.responses => http.Response(
-                [
-                  {'type': 'response.output_item.done', 'item': reasoning},
-                  {
-                    'type': 'response.function_call_arguments.delta',
-                    'item_id': 'fc_call_page',
-                    'delta': '{"material_id":',
-                  },
-                  {
-                    'type': 'response.completed',
-                    'response': {
-                      'status': 'completed',
-                      'output': [
-                        for (final call in calls)
-                          {
-                            'type': 'function_call',
-                            'id': 'fc_${call.id}',
-                            'call_id': call.id,
-                            'name': call.name,
-                            'arguments': jsonEncode(call.args),
-                          },
-                      ],
-                    },
-                  },
-                ].map((event) => 'data: ${jsonEncode(event)}\n\n').join(),
-                200,
-                headers: {'content-type': 'text/event-stream; charset=utf-8'},
-              ),
-              LlmApi.anthropic => _jsonReply({
-                'stop_reason': 'tool_use',
-                'content': [
-                  for (final call in calls)
-                    {
-                      'type': 'tool_use',
-                      'id': call.id,
-                      'name': call.name,
-                      'input': call.args,
-                    },
-                ],
-              }),
-            };
-          }
-          return switch (api) {
-            LlmApi.chat => _chatReply(text: '按公式计算。'),
-            LlmApi.responses => _jsonReply({
-              'output': [
-                {
-                  'type': 'message',
-                  'content': [
-                    {'type': 'output_text', 'text': '按公式计算。'},
-                  ],
-                },
-              ],
-            }),
-            LlmApi.anthropic => _jsonReply({
-              'content': [
-                {'type': 'text', 'text': '按公式计算。'},
-              ],
-            }),
-          };
-        }),
-      );
+        }
+        return _chatReply(text: '按公式计算。');
+      }),
+    );
 
-      final preview = <String>[];
-      final reply = await service.ask(
-        context: withMaterial(),
-        history: const [],
-        text: '请看原文',
-        configSnapshot: LlmConfigSnapshot(
-          LlmConfig(
-            api: api,
-            baseUrl: 'https://api.openai.com',
-            model: 'test-model',
-            apiKey: 'sk-test',
-          ),
+    final reply = await service.ask(
+      context: withMaterial(),
+      history: const [],
+      text: '请看原文',
+      configSnapshot: const LlmConfigSnapshot(
+        LlmConfig(
+          endpoint: _testEndpoint,
+          model: 'test-model',
+          apiKey: 'sk-test',
         ),
-        onText: api == LlmApi.responses ? preview.add : null,
-      );
-      expect(reply.text, '按公式计算。');
-      expect(reply.nextSteps.single.title, '阅读定义');
-      expect(captured, hasLength(2));
-      expect(jsonEncode(captured.first), isNot(contains(_hit.content)));
+      ),
+    );
+    expect(reply.text, '按公式计算。');
+    expect(reply.nextSteps.single.title, '阅读定义');
+    expect(captured, hasLength(2));
+    expect(jsonEncode(captured.first), isNot(contains(_hit.content)));
 
-      final second = captured.last;
-      final messages =
-          (second[api == LlmApi.responses ? 'input' : 'messages'] as List)
-              .cast<Map>();
-      late Iterable<Map> invocations;
-      late Iterable<Map> results;
-      late String resultId;
-      late String resultText;
-      switch (api) {
-        case LlmApi.chat:
-          invocations =
-              (messages.singleWhere(
-                        (message) => message['role'] == 'assistant',
-                      )['tool_calls']
-                      as List)
-                  .cast<Map>();
-          results = messages.where((message) => message['role'] == 'tool');
-          resultId = 'tool_call_id';
-          resultText = 'content';
-        case LlmApi.responses:
-          expect(second['store'], isFalse);
-          expect(second['include'], ['reasoning.encrypted_content']);
-          expect(
-            messages.singleWhere((item) => item['type'] == 'reasoning'),
-            reasoning,
-          );
-          expect(preview, ['按公式计算。']);
-          invocations = messages.where(
-            (message) => message['type'] == 'function_call',
-          );
-          results = messages.where(
-            (message) => message['type'] == 'function_call_output',
-          );
-          resultId = 'call_id';
-          resultText = 'output';
-        case LlmApi.anthropic:
-          invocations = (messages[messages.length - 2]['content'] as List)
-              .cast<Map>();
-          expect(messages.last['role'], 'user');
-          results = (messages.last['content'] as List).cast<Map>();
-          expect(results.elementAt(1)['is_error'], isTrue);
-          resultId = 'tool_use_id';
-          resultText = 'content';
-      }
-      final ids = calls.map((call) => call.id);
-      expect(
-        invocations.map(
-          (call) => call[api == LlmApi.responses ? 'call_id' : 'id'],
-        ),
-        ids,
-      );
-      expect(results.map((result) => result[resultId]), ids);
-      final page = jsonDecode(results.first[resultText] as String)['result'];
-      expect(page['content'], _hit.content);
-      expect(
-        jsonDecode(results.elementAt(1)[resultText] as String),
-        contains('error'),
-      );
-      expect(jsonDecode(results.last[resultText] as String)['result'], '已暂存提案');
-    });
-  }
+    final second = captured.last;
+    final messages = (second['messages'] as List).cast<Map>();
+    final invocations =
+        (messages.singleWhere(
+                  (message) => message['role'] == 'assistant',
+                )['tool_calls']
+                as List)
+            .cast<Map>();
+    final results = messages.where((message) => message['role'] == 'tool');
+    final ids = calls.map((call) => call.id);
+    expect(invocations.map((call) => call['id']), ids);
+    expect(results.map((result) => result['tool_call_id']), ids);
+    final page = jsonDecode(results.first['content'] as String)['result'];
+    expect(page['content'], _hit.content);
+    expect(
+      jsonDecode(results.elementAt(1)['content'] as String),
+      contains('error'),
+    );
+    expect(jsonDecode(results.last['content'] as String)['result'], '已暂存提案');
+  });
 
   test('重复读取已返回的范围只回传位置，连续无进展后收束正文', () async {
     var requests = 0;
@@ -721,7 +610,7 @@ void main() {
       history: const [],
       text: '结合讲义回答',
       configSnapshot: const LlmConfigSnapshot(
-        LlmConfig(apiKey: 'sk-test', contextWindowTokens: 8192),
+        LlmConfig(endpoint: _testEndpoint, contextWindowTokens: 8192),
       ),
     );
     expect(requests, 2);
@@ -738,7 +627,7 @@ void main() {
         history: const [],
         text: '甲' * 6000,
         configSnapshot: const LlmConfigSnapshot(
-          LlmConfig(apiKey: 'sk-test', contextWindowTokens: 4096),
+          LlmConfig(endpoint: _testEndpoint, contextWindowTokens: 4096),
         ),
       ),
       throwsA(
@@ -784,7 +673,7 @@ void main() {
       history: const [],
       text: '请结合讲义回答',
       configSnapshot: const LlmConfigSnapshot(
-        LlmConfig(apiKey: 'sk-test', contextWindowTokens: 8192),
+        LlmConfig(endpoint: _testEndpoint, contextWindowTokens: 8192),
       ),
     );
     expect(requests, 2);
@@ -1115,7 +1004,9 @@ void main() {
       context: context(),
       history: const [],
       text: '你好',
-      configSnapshot: const LlmConfigSnapshot(LlmConfig(apiKey: 'sk-test')),
+      configSnapshot: const LlmConfigSnapshot(
+        LlmConfig(endpoint: _testEndpoint, apiKey: 'sk-test'),
+      ),
     );
 
     expect(reply.text, '使用同一份配置');
@@ -1357,7 +1248,9 @@ void main() {
       }),
     );
 
-    final duration = await service.test(const LlmConfig(apiKey: 'sk-test'));
+    final duration = await service.test(
+      const LlmConfig(endpoint: _testEndpoint, apiKey: 'sk-test'),
+    );
     expect(duration, isA<Duration>());
   });
 
@@ -1389,7 +1282,7 @@ void main() {
     );
 
     await expectLater(
-      service.test(const LlmConfig(apiKey: 'sk-test')),
+      service.test(const LlmConfig(endpoint: _testEndpoint, apiKey: 'sk-test')),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -1419,7 +1312,7 @@ void main() {
     );
 
     await expectLater(
-      service.test(const LlmConfig(apiKey: 'sk-test')),
+      service.test(const LlmConfig(endpoint: _testEndpoint, apiKey: 'sk-test')),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,

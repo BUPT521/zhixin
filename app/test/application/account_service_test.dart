@@ -3,16 +3,63 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:path/path.dart' as p;
+import 'package:zhixin/data/db/app_database.dart'
+    show zhixinDbFileName, zhixinSchemaVersion;
+import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/ai/llm_config_store.dart';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/embedding_client.dart';
+import 'package:zhixin/application/service_runtime.dart';
+import 'package:zhixin/application/settings_service.dart';
+import 'package:zhixin/application/time_policy_controller.dart';
+import 'package:zhixin/data/backup/data_package_service.dart';
+import 'package:zhixin/data/backup/data_version_service.dart';
+import 'package:zhixin/data/backup/restore_point_store.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
 import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/data/db/write_transactions.dart';
+import 'package:zhixin/data/repository/settings_repository.dart';
+import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/revisions/revision_package.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
+import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/fake_server.dart';
+import '../support/test_db.dart';
+
+/// 保存模型配置的用例用固定时刻：提交时间与截止小时口径都落在这里。
+DateTime _fixedClock() => DateTime(2026, 11, 7, 20);
+
+/// 只挂库的数据版本服务：保存模型配置不碰恢复与清空，这两个入口不会被调用。
+DataVersionService _settingsDataVersions(TestRig rig) => DataVersionService(
+  gate: rig.db.gate,
+  revisions: rig.revisions,
+  revisionPackages: RevisionPackageService(
+    engine: rig.engine,
+    assets: rig.engine.assets,
+    schemaVersion: zhixinSchemaVersion,
+    appVersion: 'test',
+  ),
+  dataPackages: DataPackageService(
+    filesDir: rig.filesDir,
+    dbPath: p.join(rig.filesDir, zhixinDbFileName),
+    appVersion: 'test',
+    schemaVersion: zhixinSchemaVersion,
+  ),
+  restorePointStore: RestorePointStore(filesDir: rig.filesDir),
+  engine: rig.engine,
+  cache: AttachmentCache(filesDir: () => rig.filesDir),
+  connection: () => rig.raw,
+  database: () => rig.db,
+  reopen: () async => rig.raw,
+  resetStudyData: () async {},
+  markPendingWorkInvalidated: () {},
+  notifyDataChanged: () {},
+  recordFailure: (error, stack, {required kind}) {},
+);
 
 void main() {
   late FakeServer server;
@@ -144,16 +191,71 @@ void main() {
     expect(snapshot.serverBaseUrl, 'http://server.test');
 
     final authorized = await account.authorizeModelConfig(
-      const LlmConfig(
-        source: LlmSource.server,
-        baseUrl: '',
-        model: 'deepseek-flash',
-      ),
+      const LlmConfig(model: 'deepseek-flash'),
     );
     expect(authorized, isNotNull);
     expect(authorized!.apiKey, startsWith('access-'));
-    expect(authorized.baseUrl, 'http://server.test/v1/llm');
-    expect(authorized.api, LlmApi.chat);
+    expect(authorized.endpoint, 'http://server.test/v1/llm');
+    expect(authorized.model, 'deepseek-flash');
+  });
+
+  test('未登录时模型配置补不上地址与令牌，设置页据此要求先登录', () async {
+    expect(
+      await account.authorizeModelConfig(
+        const LlmConfig(model: 'deepseek-flash'),
+      ),
+      isNull,
+    );
+    await expectLater(
+      account.prepareModelConfig(const LlmConfig(model: 'deepseek-flash')),
+      throwsA(isA<AccountSignedOut>()),
+    );
+  });
+
+  test('保存只存模型名、上下文上限与图片开关，令牌与地址不进本机配置', () async {
+    await account.register(
+      identifier: 'save@example.com',
+      password: 'password123',
+    );
+    final rig = await openTestRig(clock: _fixedClock);
+    addTearDown(rig.close);
+    final settings = SettingsRepository(rig.db);
+    final store = LlmConfigStore(MemorySecretStore());
+    final ai = AiChatService(
+      store: store,
+      configSource: () async =>
+          account.authorizeModelConfig((await store.read()).valueOrNull),
+    );
+    addTearDown(ai.dispose);
+    final service = SettingsService(
+      settings: settings,
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
+      llmStore: store,
+      ai: ai,
+      runtime: ServiceRuntime(
+        policySource: () => TimePolicy(clock: _fixedClock),
+        filesDirSource: () => rig.filesDir,
+      ),
+      timePolicy: TimePolicyController(
+        settings: settings,
+        clock: _fixedClock,
+        onChanged: () {},
+      ),
+      dataVersions: _settingsDataVersions(rig),
+      authorizeConfig: account.prepareModelConfig,
+    );
+
+    const form = LlmConfig(model: 'deepseek-flash', contextWindowTokens: 8192);
+    await service.saveConfig(form);
+    final saved = (await store.read()).valueOrNull!;
+    expect(saved.model, 'deepseek-flash');
+    expect(saved.contextWindowTokens, 8192);
+    expect(saved.apiKey, isEmpty);
+    expect(saved.endpoint, isEmpty);
+    // 回答路径每次现取：地址按服务地址拼，令牌是当前访问令牌。
+    final current = await ai.config();
+    expect(current.valueOrNull!.endpoint, 'http://server.test/v1/llm');
+    expect(current.valueOrNull!.apiKey, startsWith('access-'));
   });
 
   test('访问令牌被服务端作废时自动刷新并重试一次', () async {
@@ -217,7 +319,7 @@ void main() {
     expect((await account.snapshot()).signedIn, isFalse);
     expect(
       await account.authorizeModelConfig(
-        const LlmConfig(source: LlmSource.server),
+        const LlmConfig(model: 'deepseek-flash'),
       ),
       isNull,
     );

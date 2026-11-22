@@ -20,7 +20,8 @@ import '../support/fake_server.dart';
 import '../support/telemetry.dart';
 
 /// 语义索引页选择知新服务：未登录时说明要先登录，登录之后从服务端的嵌入模型
-/// 里选，维度由服务端给出，保存的配置不带地址与令牌。
+/// 里选，维度由服务端给出，保存的配置不带地址与令牌；来源选择只有知新服务与
+/// 本机哈希。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
@@ -169,6 +170,8 @@ void main() {
     await waitFor(tester, find.textContaining('还没有登录。知新服务用登录账号'));
     expect(find.text('知新服务（登录账号）'), findsOneWidget);
     expect(find.text('接口地址'), findsNothing, reason: '知新服务不需要填地址');
+    expect(find.textContaining('自填'), findsNothing, reason: '不再提供自填接口');
+    expect(find.text('API Key'), findsNothing);
     await preview(tester, 'embedding-server-signed-out');
 
     await tester.tap(
@@ -217,8 +220,8 @@ void main() {
     expect(stored['provider'], 'server');
     expect(stored['model'], 'bge-m3');
     expect(stored['dim'], 4);
-    expect(stored['base_url'], '');
-    expect(stored['api_key'], '', reason: '访问令牌不写进配置');
+    expect(stored.containsKey('base_url'), isFalse, reason: '不再保存接口地址');
+    expect(stored.containsKey('api_key'), isFalse, reason: '访问令牌不写进配置');
     await preview(tester, 'embedding-server-saved');
   });
 }

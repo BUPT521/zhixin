@@ -6,14 +6,11 @@ import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
 
-/// 403 contact_unverified 的归类：给出专门文案，不归成 API Key 无效，也不自动重试。
+/// 403 contact_unverified 的归类：给出专门文案，不归成登录失效，也不自动重试。
 void main() {
   test('contact_unverified 有专门的说法，可以和认证失败区分', () {
     expect(shortTextOf(LlmFailure.contactUnverified), '还没有确认任何登录方式，托管额度未开放');
-    expect(
-      shortTextOf(LlmFailure.contactUnverified),
-      isNot(contains('API Key')),
-    );
+    expect(shortTextOf(LlmFailure.contactUnverified), isNot(contains('登录已失效')));
     expect(
       llmFailureFromName('contactUnverified'),
       LlmFailure.contactUnverified,

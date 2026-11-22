@@ -70,22 +70,22 @@ void main() {
     expect(planning, contains('结束条件'));
   });
 
-  test('回答里说明配置前能做什么、配置后从哪里继续', () {
+  test('回答里说明登录之前能做什么、登录之后从哪里继续', () {
     final reply = localBuddyReply(_context(), text: '这道题怎么想？');
 
-    expect(reply, contains('配置前可以记录题目与作答'));
+    expect(reply, contains('登录之前可以记录题目与作答'));
     expect(reply, contains('用模型重新回答'));
     expect(reply, contains('不用重发'));
   });
 
-  test('调用失败时不写成没有配置模型', () {
+  test('调用失败时不写成没有登录', () {
     final failed = localBuddyReply(
       _context(),
       text: '这道题怎么想？',
       modelMissing: false,
     );
     expect(failed, contains('这次模型没有返回内容'));
-    expect(failed, isNot(contains('现在没有配置模型')));
+    expect(failed, isNot(contains('这次没有登录账号')));
     expect(failed, contains('可以稍后再点一次'));
   });
 
@@ -114,12 +114,12 @@ void main() {
     expect(reply, contains('《概率论课件》第 12 页'));
   });
 
-  test('学习中的提示、讲解与检查各有本地说法，并给出配置后的入口', () {
+  test('学习中的提示、讲解与检查各有本地说法，并给出登录后的入口', () {
     final hint = localBuddyReply(
       _context(question: '求条件概率', mode: BuddyMode.hint),
     );
     expect(hint, contains('本地提示'));
-    expect(hint, contains('配置模型后回到这道题'));
+    expect(hint, contains('登录之后回到这道题'));
 
     final explain = localBuddyReply(
       _context(question: '求条件概率', mode: BuddyMode.explain),

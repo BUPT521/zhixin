@@ -5,13 +5,13 @@ import 'search_index_service.dart';
 
 /// 按配置构造嵌入来源与发送范围。
 ///
-/// 远程来源（自填接口与知新服务）只允许发送用户选定的范围：`all` 发送本机
-/// 记录，`selectedMaterials` 只发送属于选定材料的来源，`off` 不发送。本机哈希
-/// 不联网，不做范围限制。没有配置或配置不完整时返回空来源，语义检索按不可用
-/// 处理，原文与关键词检索照常完成。
+/// 知新服务只允许发送用户选定的范围：`all` 发送本机记录，`selectedMaterials`
+/// 只发送属于选定材料的来源，`off` 不发送。本机哈希不联网，不做范围限制。没有
+/// 配置或配置不完整时返回空来源，语义检索按不可用处理，原文与关键词检索照常
+/// 完成。
 ///
-/// 知新服务的地址与令牌由 [serverEndpoint] 在每次请求前给出；没有传入时
-/// （测试装配）这一来源按不可用处理。
+/// 知新服务的地址与令牌由 [serverEndpoint] 在每次请求前给出，这就是唯一的远
+/// 端来源；没有传入时（测试装配）按不可用处理。
 ({EmbeddingClient? client, bool Function(SemanticSource source)? canSend})
 embeddingRuntime(
   EmbeddingConfig? config, {
@@ -26,16 +26,13 @@ embeddingRuntime(
       canSend: null,
     );
   }
-  if (config.usesServer && serverEndpoint == null) {
+  if (serverEndpoint == null) {
     return (client: null, canSend: null);
   }
-  final client = config.usesServer
-      ? RemoteEmbeddingClient(spec: config.spec, credentials: serverEndpoint)
-      : RemoteEmbeddingClient(
-          spec: config.spec,
-          endpoint: config.baseUrl.trim().replaceAll(RegExp(r'/+$'), ''),
-          apiKey: config.apiKey,
-        );
+  final client = RemoteEmbeddingClient(
+    spec: config.spec,
+    credentials: serverEndpoint,
+  );
   final scope = config.shareScope;
   final allowed = config.materialIds.toSet();
   bool canSend(SemanticSource source) {

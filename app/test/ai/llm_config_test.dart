@@ -28,45 +28,35 @@ class _MemorySecrets implements SecretStore {
 void main() {
   test('模型上下文上限随配置保存，并约束请求的输出上限', () async {
     final store = LlmConfigStore(_MemorySecrets());
-    await store.save(
-      const LlmConfig(apiKey: 'test-key', contextWindowTokens: 8192),
-    );
+    await store.save(const LlmConfig(contextWindowTokens: 8192));
     final saved = (await store.read()).valueOrNull!;
     expect(saved.contextWindowTokens, 8192);
     expect(saved.outputTokenLimit, 2048);
     expect(LlmConfig.fromJson(const {}).contextWindowTokens, 65536);
   });
 
-  test('换了接口地址还沿用旧 Key 时可以被识别', () {
-    const previous = LlmConfig(
-      baseUrl: 'https://old.example.com/v1',
-      model: 'm',
-      apiKey: 'old-key',
+  test('填了模型名才算配置好，令牌与地址不随配置保存', () {
+    const opened = LlmConfig(
+      apiKey: 'access-test',
+      endpoint: 'https://x/v1/llm',
     );
+    expect(opened.isConfigured, isTrue);
     expect(
-      const LlmConfig(
-        baseUrl: 'https://new.example.com/v1',
-        model: 'm',
-        apiKey: 'old-key',
-      ).reusesKeyFrom(previous),
-      isTrue,
+      opened.toJson().keys,
+      unorderedEquals(['model', 'allow_images', 'context_window_tokens']),
     );
-    expect(
-      const LlmConfig(
-        baseUrl: 'https://new.example.com/v1',
-        model: 'm',
-        apiKey: 'new-key',
-      ).reusesKeyFrom(previous),
-      isFalse,
-    );
-    expect(
-      const LlmConfig(
-        baseUrl: 'https://old.example.com/v1',
-        model: 'm',
-        apiKey: 'old-key',
-      ).reusesKeyFrom(previous),
-      isFalse,
-    );
+    expect(LlmConfig.fromJson(opened.toJson()).apiKey, isEmpty);
+    expect(LlmConfig.fromJson(opened.toJson()).endpoint, isEmpty);
+
+    const blank = LlmConfig(model: '  ');
+    expect(blank.isConfigured, isFalse);
+    expect(LlmConfig.fromJson(const {'model': ''}).isConfigured, isFalse);
+  });
+
+  test('按模型名决定是否发送关掉思考模式的字段', () {
+    expect(const LlmConfig(model: 'deepseek-flash').reasoningDisabled, isTrue);
+    expect(const LlmConfig(model: 'DeepSeek-V4').reasoningDisabled, isTrue);
+    expect(const LlmConfig(model: 'qwen-max').reasoningDisabled, isFalse);
   });
 
   test('Keystore 读不出来时返回读取失败，而不是当成没配置', () async {
@@ -91,21 +81,17 @@ void main() {
   test('一次读取失败沿用上一次读到的配置，删掉后仍返回空', () async {
     final secrets = _MemorySecrets();
     final service = AiChatService(store: LlmConfigStore(secrets));
-    const config = LlmConfig(
-      baseUrl: 'https://api.deepseek.com/v1',
-      model: 'deepseek-flash',
-      apiKey: 'sk-test',
-    );
+    const config = LlmConfig(model: 'deepseek-flash');
     await service.store.save(config);
     expect((await service.config()).valueOrNull, isNotNull);
-    expect((await service.config()).valueOrNull!.apiKey, 'sk-test');
+    expect((await service.config()).valueOrNull!.model, 'deepseek-flash');
 
     secrets.failRead = true;
     final failed = await service.config();
     expect(failed, isA<Failure<LlmConfig?>>());
     // 失败的那一次不再交出配置，回答路径用失败前的快照兜底。
     expect(failed.valueOrNull, isNull);
-    expect(service.configSnapshot!.apiKey, 'sk-test');
+    expect(service.configSnapshot!.model, 'deepseek-flash');
 
     secrets.failRead = false;
     await service.store.clear();

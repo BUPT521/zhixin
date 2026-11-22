@@ -865,7 +865,7 @@ void main() {
     expect(identities.toSet().length, identities.length);
   });
 
-  test('远程嵌入只发送用户选定范围内的原文', () async {
+  test('知新服务只发送用户选定范围内的原文', () async {
     final db = await openTestDb();
     addTearDown(db.close);
     final corpus = await _seed(db);
@@ -874,16 +874,19 @@ void main() {
     final textIndex = MemoryVectorIndex(textOnlyModelSpec);
     addTearDown(textIndex.close);
     final sent = <String>[];
-    final config = EmbeddingConfig(
+    final selected = EmbeddingConfig(
       enabled: true,
-      provider: 'remote',
-      baseUrl: 'https://embed.example.com/v1',
-      model: _spec.id,
-      dim: _spec.dim,
+      provider: 'server',
+      model: 'test-embed',
+      dim: 4,
       shareScope: EmbeddingShareScope.selectedMaterials,
       materialIds: [corpus.materialProbability],
     );
-    final runtime = embeddingRuntime(config);
+    final runtime = embeddingRuntime(
+      selected,
+      serverEndpoint: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
+    );
     expect(runtime.client, isNotNull);
     final service = SearchIndexService(
       repository: EvidenceRepository(db),
@@ -909,7 +912,7 @@ void main() {
     expect(refresh.embedded, index.sourceCount);
   });
 
-  test('远程嵌入按 OpenAI 兼容格式发送，并拒绝维度不符的响应', () async {
+  test('知新服务按 OpenAI 兼容格式发送，并拒绝维度不符的响应', () async {
     late http.Request captured;
     final client = MockClient((request) async {
       captured = request;
@@ -926,22 +929,22 @@ void main() {
     });
     final embedding = RemoteEmbeddingClient(
       spec: _spec,
-      endpoint: 'https://embed.example.com/v1',
-      apiKey: 'test-key',
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 'test-token'),
       httpClient: client,
     );
     final vector = await embedding.embed('熵');
     expect(vector, hasLength(4));
-    expect(captured.url.toString(), 'https://embed.example.com/v1/embeddings');
-    expect(captured.headers['Authorization'], 'Bearer test-key');
+    expect(captured.url.toString(), 'https://server.test/v1/llm/embeddings');
+    expect(captured.headers['Authorization'], 'Bearer test-token');
     final body = jsonDecode(captured.body) as Map<String, Object?>;
     expect(body['model'], _spec.id);
     expect(body['input'], ['熵']);
 
     final wrongDim = RemoteEmbeddingClient(
       spec: const EmbeddingModelSpec(id: 'test-embed', dim: 8),
-      endpoint: 'https://embed.example.com/v1',
-      apiKey: '',
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 'test-token'),
       httpClient: MockClient(
         (_) async => http.Response(
           jsonEncode({
@@ -961,7 +964,7 @@ void main() {
     );
   });
 
-  test('远程批量嵌入按返回序号还原顺序，输入保持原顺序', () async {
+  test('知新服务批量嵌入按返回序号还原顺序，输入保持原顺序', () async {
     late http.Request captured;
     final client = MockClient((request) async {
       captured = request;
@@ -983,8 +986,8 @@ void main() {
     });
     final embedding = RemoteEmbeddingClient(
       spec: _spec,
-      endpoint: 'https://embed.example.com/v1',
-      apiKey: '',
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
       httpClient: client,
     );
 
@@ -995,11 +998,11 @@ void main() {
     expect(body['input'], orderedEquals(['甲', '乙']));
   });
 
-  test('远程批量嵌入返回的条数不足时报不可用', () async {
+  test('知新服务批量嵌入返回的条数不足时报不可用', () async {
     final embedding = RemoteEmbeddingClient(
       spec: _spec,
-      endpoint: 'https://embed.example.com/v1',
-      apiKey: '',
+      credentials: () async =>
+          (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
       httpClient: MockClient(
         (_) async => http.Response(
           jsonEncode({
@@ -1020,7 +1023,7 @@ void main() {
     );
   });
 
-  test('远程嵌入每次请求前取地址与凭据，额度用完与 key 被拒按来源不可用报出', () async {
+  test('知新服务每次请求前取地址与凭据，额度用完与令牌被拒按来源不可用报出', () async {
     final seen = <String>[];
     var status = 200;
     var body = <String, Object?>{
@@ -1193,21 +1196,6 @@ void main() {
     );
   });
 
-  test('自填 key 直连不查缓存', () async {
-    var calls = 0;
-    final embedding = RemoteEmbeddingClient(
-      spec: _spec,
-      endpoint: 'https://embed.example.com/v1',
-      apiKey: 'test-key',
-      httpClient: MockClient((_) async {
-        calls++;
-        return http.Response('{}', 200);
-      }),
-    );
-    expect(await embedding.lookupVectors(['aa']), isEmpty);
-    expect(calls, 0);
-  });
-
   test('查找超过单次上限时分批请求，维度不符的条目按未命中处理', () async {
     final requests = <http.Request>[];
     final server = RemoteEmbeddingClient(
@@ -1251,48 +1239,30 @@ void main() {
     expect(hits.keys, ['h0']);
   });
 
-  test('写缓存标记只加在知新服务的请求上，且只在要求写入时', () async {
+  test('写缓存标记只在要求写入时加上', () async {
     final seen = <http.Request>[];
-    Future<http.Response> reply(http.Request request) async => http.Response(
-      jsonEncode({
-        'data': [
-          {
-            'embedding': [1, 0, 0, 0],
-          },
-        ],
-      }),
-      200,
-    );
-
     final server = RemoteEmbeddingClient(
       spec: _spec,
       credentials: () async =>
           (endpoint: 'https://server.test/v1/llm', apiKey: 't'),
-      httpClient: MockClient((request) {
+      httpClient: MockClient((request) async {
         seen.add(request);
-        return reply(request);
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'embedding': [1, 0, 0, 0],
+              },
+            ],
+          }),
+          200,
+        );
       }),
     );
     await server.embed('甲', writeCache: true);
     await server.embed('乙');
     expect(seen[0].headers['X-Zhixin-Embedding-Cache'], '1');
     expect(seen[1].headers.containsKey('X-Zhixin-Embedding-Cache'), isFalse);
-
-    seen.clear();
-    final direct = RemoteEmbeddingClient(
-      spec: _spec,
-      endpoint: 'https://embed.example.com/v1',
-      apiKey: 'test-key',
-      httpClient: MockClient((request) {
-        seen.add(request);
-        return reply(request);
-      }),
-    );
-    await direct.embed('甲', writeCache: true);
-    expect(
-      seen.single.headers.containsKey('X-Zhixin-Embedding-Cache'),
-      isFalse,
-    );
   });
 
   test('嵌入来源整个用不了时停下本次更新，不再逐条重试', () async {

@@ -71,7 +71,7 @@ class _LearningPageState extends State<LearningPage> {
   /// 已经展开全部帮助的尝试；默认只显示最近两条，更早的仍然可以查看。
   final Set<String> _expandedHelps = <String>{};
 
-  /// 是否已经配置模型，以及上一次求助的模式与来源；用来决定配置后能否重取。
+  /// 模型是否可用（已经登录），以及上一次求助的模式与来源；用来决定能否重取。
   bool _configured = false;
   BuddyMode? _lastMode;
   bool _lastFromModel = true;
@@ -138,7 +138,7 @@ class _LearningPageState extends State<LearningPage> {
   }
 
   /// 模型配置决定帮助下方的恢复入口；它不随这些表写入变化，只读一次。
-  /// 是否可用连同登录状态一起判断，知新服务登录之后也算已配置。
+  /// 模型只有知新服务一种来源，登录之后才算可用（ADR-0050）。
   Future<void> _readConfigured() async {
     try {
       final ready = await AppScope.of(context).modelReady();
@@ -474,21 +474,21 @@ class _LearningPageState extends State<LearningPage> {
     );
   }
 
-  /// 记忆卡片与撤销之后由订阅更新页面，公共流程里的这次重读不再发起。
+  /// 模型不可用时的引导：说明现在能做什么，并把登录入口接回调用方。
   Future<void> _showModelGuide() async {
     await showModelSetupGuide(
       context,
       dialog: true,
-      title: '配置模型以使用学习帮助',
+      title: '登录后使用学习帮助',
       content:
-          '提示、讲解和检查由你配置的模型提供。配置后，回答会结合当前题目与上次尝试；'
+          '提示、讲解和检查经登录后的知新服务发出。登录之后，回答会结合当前题目与上次尝试；'
           '现在可以先写已知条件、记录卡住的地方，题目、作答与帮助都会保存在本机。'
-          '配置完成后回到这道题，点「用模型重新获取」，会接着回答同一个问题，不用重写题目。',
+          '登录完成回到这道题，点「用模型重新获取」，会接着回答同一个问题，不用重写题目。',
       onConfigure: _openSettings,
     );
   }
 
-  /// 打开设置页并重新读取配置；返回后可以就地重新获取这一次帮助。
+  /// 打开设置页并重新读取登录状态；返回后可以就地重新获取这一次帮助。
   Future<void> _openSettings() async {
     final result = await openModelSettingsPage(
       context,
@@ -505,7 +505,7 @@ class _LearningPageState extends State<LearningPage> {
     setState(() => _configured = configured);
     showToast(
       context,
-      configured ? '模型已就绪，可以点「用模型重新获取」回答这道题。' : '模型还没有配置完整，仍使用本地规则回答。',
+      configured ? '模型已就绪，可以点「用模型重新获取」回答这道题。' : '登录之后才能使用模型，现在仍使用本地规则回答。',
     );
   }
 
@@ -1276,10 +1276,10 @@ class _LearningTimeline extends BuddyTimelineAdapter {
             if (state._help != null &&
                 (!state._lastFromModel || state._lastInterrupted))
               ModelRecoveryButtons(
-                configured: state._configured,
+                signedIn: state._configured,
                 primaryLabel: state._lastInterrupted ? '重试这次回答' : '用模型重新获取',
                 onPrimary: state._retryHelp,
-                onConfigure: state._openSettings,
+                onSignIn: state._openSettings,
                 enabled: !state._busy,
               ),
           ],

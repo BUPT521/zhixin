@@ -23,7 +23,7 @@ class EmbeddingSourceUnavailable extends EmbeddingUnavailable {
   const EmbeddingSourceUnavailable(super.message);
 }
 
-/// 一次嵌入请求要用的接口地址与凭据。
+/// 一次嵌入请求要用的接口地址与凭据；由账号服务在每次请求前给出。
 typedef EmbeddingEndpoint = ({String endpoint, String apiKey});
 
 /// 一次批量查找命中的向量：键是片段文本的 SHA-256，值已经归一化。
@@ -56,9 +56,9 @@ abstract class EmbeddingClient {
 
   /// 按文本哈希查询服务端已经算过的向量；默认返回空。
   ///
-  /// 默认实现表示这个来源没有查找接口，本地哈希、自填 key 直连与测试来源都按
-  /// 全部未命中处理，调用方照常嵌入。只有知新服务的来源会真正发出请求；命中之
-  /// 外的文本由调用方补算，服务端不提供“某段文本有没有算过”的另一个入口。
+  /// 默认实现表示这个来源没有查找接口，本地哈希与测试来源都按全部未命中处理，
+  /// 调用方照常嵌入。只有知新服务的来源会真正发出请求；命中之外的文本由调用方
+  /// 补算，服务端不提供“某段文本有没有算过”的另一个入口。
   Future<EmbeddingLookup> lookupVectors(List<String> hashes) async => const {};
 
   void dispose() {}
@@ -95,7 +95,7 @@ class FixedEmbeddingClient extends EmbeddingClient {
 
 /// 本地兜底：按字与二元组做特征哈希，不联网，也不需要模型文件。
 ///
-/// 它只能把用词接近的文本放到一起，不能替代中文嵌入模型；没有配置远程嵌入
+/// 它只能把用词接近的文本放到一起，不能替代中文嵌入模型；没有配置知新服务
 /// 时用它保持索引可用，界面与文档都按这个限制说明效果。
 class HashingEmbeddingClient extends EmbeddingClient {
   HashingEmbeddingClient({this.dim = 256, String id = 'local-hash-v1'})
@@ -140,17 +140,14 @@ class HashingEmbeddingClient extends EmbeddingClient {
   }
 }
 
-/// 远程嵌入：OpenAI 兼容的 `/embeddings` 接口，只有在用户明确配置并选定了
-/// 可发送范围时才会被调用。
+/// 知新服务的嵌入：`/embeddings` 与 `/embeddings/lookup`，只有在用户明确配置
+/// 并选定了可发送范围时才会被调用。
 ///
-/// 自填 Key 时地址与 key 固定；选择知新服务时传 [credentials]，每次请求前
-/// 取一次服务地址与当前访问令牌，令牌轮换之后不需要重建客户端。
+/// 地址与令牌由 [credentials] 在每次请求前给出，令牌轮换之后不需要重建客户端。
 class RemoteEmbeddingClient extends EmbeddingClient {
   RemoteEmbeddingClient({
     required this.spec,
-    this.endpoint = '',
-    this.apiKey = '',
-    this.credentials,
+    required this.credentials,
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 8),
     this.batchTimeout = const Duration(seconds: 30),
@@ -158,13 +155,10 @@ class RemoteEmbeddingClient extends EmbeddingClient {
 
   @override
   final EmbeddingModelSpec spec;
-  final String endpoint;
-  final String apiKey;
 
-  /// 每次请求前取地址与凭据；为空时用 [endpoint] 与 [apiKey]。
-  ///
-  /// 取不到时（例如还没有登录）应抛 [EmbeddingSourceUnavailable]。
-  final Future<EmbeddingEndpoint> Function()? credentials;
+  /// 每次请求前取地址与凭据；取不到时（例如还没有登录）应抛
+  /// [EmbeddingSourceUnavailable]。
+  final Future<EmbeddingEndpoint> Function() credentials;
   final Duration timeout;
 
   /// 一次多段请求的等待上限；批量请求的计算时间比单条长。
@@ -191,16 +185,14 @@ class RemoteEmbeddingClient extends EmbeddingClient {
 
   /// 按哈希批量查询服务端缓存，只返回命中的条目。
   ///
-  /// 只有通过 [credentials] 取地址与令牌的知新服务才查：自填 key 直连的提供方
-  /// 没有这个接口。旧版服务端返回 404 之后本次会话不再尝试；网络失败、5xx 与
-  /// 响应格式不对都按全部未命中处理，由调用方整批补算，索引更新照常完成。401、
-  /// 403、429 说明整个来源暂时用不了，按 [EmbeddingSourceUnavailable] 抛出，
-  /// 调用方据此停下本次剩余的请求。
+  /// 只有知新服务有这个接口。旧版服务端返回 404 之后本次会话不再尝试；网络失
+  /// 败、5xx 与响应格式不对都按全部未命中处理，由调用方整批补算，索引更新照常
+  /// 完成。401、403、429 说明整个来源暂时用不了，按 [EmbeddingSourceUnavailable]
+  /// 抛出，调用方据此停下本次剩余的请求。
   @override
   Future<EmbeddingLookup> lookupVectors(List<String> hashes) async {
-    final source = credentials;
-    if (source == null || hashes.isEmpty || _lookupUnsupported) return const {};
-    final target = await source();
+    if (hashes.isEmpty || _lookupUnsupported) return const {};
+    final target = await credentials();
     final hits = <String, List<double>>{};
     for (
       var start = 0;
@@ -283,19 +275,17 @@ class RemoteEmbeddingClient extends EmbeddingClient {
     bool writeCache,
   ) async {
     final source = credentials;
-    final target = source == null
-        ? (endpoint: endpoint, apiKey: apiKey)
-        : await source();
+    final target = await source();
     final uri = Uri.parse('${target.endpoint}/embeddings');
     final request = http.Request('POST', uri)
-      ..followRedirects = source == null
+      ..followRedirects = false
       ..headers['Content-Type'] = 'application/json'
       ..body = jsonEncode({'model': spec.id, 'input': texts});
     if (target.apiKey.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer ${target.apiKey}';
     }
     // 只有知新服务有缓存表；这个头只在自动同步开启时的索引刷新里加上。
-    if (writeCache && source != null) {
+    if (writeCache) {
       request.headers['X-Zhixin-Embedding-Cache'] = '1';
     }
     final response = await _http
@@ -349,8 +339,8 @@ class RemoteEmbeddingClient extends EmbeddingClient {
 
   /// 非 200 的响应：401、403、429 说明整个来源暂时用不了，其余只算这一次失败。
   ///
-  /// 知新服务的拒绝是 problem+json，只读 `code` 区分额度用完；提供方的错误体
-  /// 可能带着打码的 key，不放进异常信息。
+  /// 知新服务与提供方的错误体都按 problem+json 的 `code` 区分额度用完；错误体
+  /// 里可能带着打码的 key，不放进异常信息。
   static EmbeddingUnavailable _failure(http.Response response) {
     final status = response.statusCode;
     String? code;

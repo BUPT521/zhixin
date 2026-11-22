@@ -211,15 +211,15 @@ void main() {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 100)),
       );
-      if (find.text('配置模型以使用学习帮助').evaluate().isNotEmpty) {
+      if (find.text('登录后使用学习帮助').evaluate().isNotEmpty) {
         break;
       }
       final result = find.textContaining('本地检查', findRichText: true);
       final busy = find.byType(forui.FProgress).evaluate().isNotEmpty;
       if (result.evaluate().isNotEmpty && !busy) break;
     }
-    // 未配置模型时本地回答会提示配置，先留在本地继续。
-    if (find.text('配置模型以使用学习帮助').evaluate().isNotEmpty) {
+    // 没有登录时本地回答会提示登录，先留在本地继续。
+    if (find.text('登录后使用学习帮助').evaluate().isNotEmpty) {
       await tester.tap(find.text('继续本地使用'));
     }
     await settle(tester);

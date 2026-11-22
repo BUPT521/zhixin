@@ -10,7 +10,7 @@ class EmbeddingModelSpec {
     required this.id,
     required this.dim,
     this.textVersion = semanticTextVersion,
-    this.provider = 'remote',
+    this.provider = 'server',
   });
 
   final String id;
@@ -18,8 +18,8 @@ class EmbeddingModelSpec {
   final String textVersion;
   final String provider;
 
-  /// 索引复用的依据。知新服务的模型名由后台决定，可能与自填接口的模型同名
-  /// 却是另一套向量，所以单独加前缀；其余来源保持原来的写法，已有索引不失效。
+  /// 索引复用的依据。知新服务的模型名由后台决定，已保存的索引按这个带前缀的
+  /// 写法区分来源。
   String get indexKey => provider == 'server'
       ? 'server:$id|$dim|$textVersion'
       : '$id|$dim|$textVersion';
@@ -40,7 +40,7 @@ class EmbeddingModelSpec {
       id: id,
       dim: dim,
       textVersion: (value['text_version'] as String?) ?? semanticTextVersion,
-      provider: (value['provider'] as String?) ?? 'remote',
+      provider: (value['provider'] as String?) ?? 'server',
     );
   }
 }

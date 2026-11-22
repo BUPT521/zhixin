@@ -887,7 +887,7 @@ class AppScopeState extends State<AppScope> {
     });
   }
 
-  /// 读取模型配置；选择知新服务时换成当前账号的访问令牌。
+  /// 读取模型配置；每次现拼知新服务的地址并换上当前账号的访问令牌。
   ///
   /// 令牌不进 Keystore，每次回答前从这里取；没有登录时返回 null，回答按未
   /// 配置退回本地兜底，设置页另有说明。
@@ -1024,18 +1024,13 @@ class AppScopeState extends State<AppScope> {
     super.dispose();
   }
 
-  /// 模型是否可用：自填 Key 看配置本身是否完整；“知新服务”还要有登录会话，
-  /// 因为访问令牌代替 key 发请求。页面用它决定回答下方给“用模型重新回答”还是
-  /// “配置模型”，与实际发起请求时的判断保持一致。
+  /// 模型是否可用：填了模型名并且有登录会话，访问令牌代替 key 发请求。页面用
+  /// 它决定回答下方给“用模型重新回答”还是“配置模型”，与实际发起请求时的判断
+  /// 保持一致。
   Future<bool> modelReady() async {
     final read = await settings.edit.config();
     final config = read.valueOrNull;
-    if (config == null) return false;
-    if (config.isConfigured) return true;
-    if (!config.isServer) return false;
-    if (config.baseUrl.trim().isEmpty || config.model.trim().isEmpty) {
-      return false;
-    }
+    if (config == null || !config.isConfigured) return false;
     return (await _account.snapshot()).session != null;
   }
 

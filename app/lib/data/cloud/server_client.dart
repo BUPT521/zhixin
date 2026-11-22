@@ -55,7 +55,7 @@ class ServerProblem implements Exception {
     'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
-    'quota_exceeded' => '今日模型额度已经用完，可以改用自己的 API Key',
+    'quota_exceeded' => '今日模型额度已经用完，明天恢复，或者联系管理员调整',
     'not_found' => '云端没有这条记录',
     'invalid_request' => '服务端没有接受这次请求',
     'redirect_blocked' => '服务地址发生了跨域跳转，已停止这次请求',

@@ -95,8 +95,8 @@ class AiChatService implements BuddyAi {
 
   /// 当前的模型配置；为空时直接读 [store]。
   ///
-  /// 应用根在装配时传入它，让“知新服务”每次请求都换成当前访问令牌：令牌会
-  /// 过期并轮换，不能随配置一起存进 Keystore。测试不传，仍读存储。
+  /// 应用根在装配时传入它，让每一次请求都换成知新服务当前的地址与访问令牌：
+  /// 令牌会过期并轮换，不能随配置一起存进 Keystore。测试不传，仍读存储。
   final Future<LlmConfig?> Function()? configSource;
 
   /// 建一次连接反复用，省去每次求助重新握手；测试可以换成 MockClient。
@@ -125,8 +125,8 @@ class AiChatService implements BuddyAi {
 
   /// 读一次配置来源；来源读不出来时给出失败原因，由调用方决定沿用还是说明。
   ///
-  /// 「知新服务」的来源会把配置补上当前令牌，失败一次不能当成未配置而退回
-  /// 本地，所以按 [Failure] 记下来。
+  /// 来源每次现取知新服务的访问令牌，失败一次不能当成未配置而退回本地，所以
+  /// 按 [Failure] 记下来。
   Future<Result<LlmConfig?>> _readConfigSource(
     Future<LlmConfig?> Function() source,
   ) async {

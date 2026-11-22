@@ -29,11 +29,11 @@ typedef _EmbeddingPrewarm = ({
 
 /// 语义索引设置：索引状态、嵌入来源与可发送范围三段。
 ///
-/// 没有配置或关闭时，语义检索不可用，原文与关键词检索照常工作；远程嵌入只有
+/// 没有配置或关闭时，语义检索不可用，原文与关键词检索照常工作；知新服务只有
 /// 在用户选定范围之后才会发送原文。业务库与向量库都保存在本机。
 ///
-/// 嵌入来源可以是自填接口、知新服务或本机哈希。选择知新服务时模型从服务端
-/// 的嵌入模型里选，后台配置了维度就直接带上，不再让用户填地址与 key。
+/// 嵌入来源只有知新服务（登录账号）与本机哈希：选择知新服务时模型从服务端的
+/// 嵌入模型里选，后台配置了维度就直接带上，地址与令牌都不让用户填。
 class EmbeddingSettingsPage extends StatefulWidget {
   const EmbeddingSettingsPage({super.key});
 
@@ -42,13 +42,10 @@ class EmbeddingSettingsPage extends StatefulWidget {
 }
 
 class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
-  final _baseUrl = TextEditingController();
-  final _model = TextEditingController();
   final _dim = TextEditingController(text: '1024');
-  final _apiKey = TextEditingController();
 
   bool _enabled = false;
-  String _provider = EmbeddingProvider.remote.value;
+  String _provider = EmbeddingProvider.server.value;
 
   /// 是否已经登录；知新服务要登录之后才能用。
   bool _signedIn = false;
@@ -56,7 +53,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   /// 服务端的嵌入模型；没有登录或读取失败时为空。
   List<ServerModel> _serverModels = const [];
 
-  /// 知新服务选中的嵌入模型；与自填接口的模型名分开保存，切换来源不互相覆盖。
+  /// 知新服务选中的嵌入模型。
   String _serverModel = '';
 
   /// 服务端模型还在读取。
@@ -99,10 +96,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
 
   @override
   void dispose() {
-    _baseUrl.dispose();
-    _model.dispose();
     _dim.dispose();
-    _apiKey.dispose();
     super.dispose();
   }
 
@@ -181,14 +175,8 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
   void _applyConfig(EmbeddingConfig config) {
     _enabled = config.enabled;
     _provider = config.provider;
-    _baseUrl.text = config.baseUrl;
     _dim.text = '${config.dim}';
-    if (config.usesServer) {
-      _serverModel = config.model;
-    } else {
-      _model.text = config.model;
-    }
-    _apiKey.text = config.apiKey;
+    _serverModel = config.model;
     _shareScope = config.shareScope;
     _selectedMaterials
       ..clear()
@@ -265,12 +253,6 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
       setState(() => _notice = '向量维度需要是 1 到 4096 之间的整数。');
       return;
     }
-    if (_enabled && source == EmbeddingProvider.remote) {
-      if (_baseUrl.text.trim().isEmpty || _model.text.trim().isEmpty) {
-        setState(() => _notice = '远程嵌入需要填写接口地址和模型名。');
-        return;
-      }
-    }
     if (_enabled && source == EmbeddingProvider.server) {
       if (!_signedIn) {
         setState(() => _notice = '知新服务要先登录；可以在“我的”里登录之后再回来保存。');
@@ -284,19 +266,16 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     if (_enabled &&
         source != EmbeddingProvider.local &&
         _shareScope == EmbeddingShareScope.off) {
-      setState(() => _notice = '远程嵌入需要明确选择可发送的原文范围，否则不会发送任何内容。');
+      setState(() => _notice = '知新服务需要明确选择可发送的原文范围，否则不会发送任何内容。');
       return;
     }
     final server = source == EmbeddingProvider.server;
     final config = EmbeddingConfig(
       enabled: _enabled,
       provider: _provider,
-      // 知新服务的地址与令牌运行时取，不写进配置；自填接口的地址与 key 也
-      // 不随来源切换带过去。
-      baseUrl: server ? '' : _baseUrl.text.trim(),
-      model: server ? _serverModel : _model.text.trim(),
+      // 知新服务只保存模型名；地址与令牌运行时由账号服务取，不写进配置。
+      model: server ? _serverModel : '',
       dim: dim,
-      apiKey: server ? '' : _apiKey.text.trim(),
       shareScope: _shareScope,
       materialIds: _selectedMaterials.toList(growable: false),
     );
@@ -437,7 +416,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
           action: '测试一次语义查询',
           kind: 'semantic_index',
           kept: '已经保存的原文与记录没有改动',
-          next: '可以检查接口地址、模型与网络后再试',
+          next: '可以检查网络与登录状态后再试',
         );
       });
     }
@@ -510,7 +489,6 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     final stats = _stats;
     final configured = stats?.configured ?? false;
     final source = EmbeddingProvider.fromValue(_provider);
-    final remote = source == EmbeddingProvider.remote;
     final server = source == EmbeddingProvider.server;
     final sendsText = source != EmbeddingProvider.local;
     final serverDimensions = _selectedServerModel?.dimensions;
@@ -623,7 +601,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
         ),
         const SectionHeading(
           title: '嵌入来源',
-          subtitle: '远程嵌入按服务商的接口地址与模型名调用；知新服务用登录账号走服务端；本机哈希不联网，效果有限。',
+          subtitle: '知新服务用登录账号走服务端，按账号计额度；本机哈希不联网，效果有限。',
         ),
         forui.FCard(
           child: Padding(
@@ -635,12 +613,11 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                   value: _provider,
                   label: '嵌入来源',
                   options: {
-                    EmbeddingProvider.remote.value: '远程嵌入（OpenAI 兼容接口）',
                     EmbeddingProvider.server.value: '知新服务（登录账号）',
                     EmbeddingProvider.local.value: '本机哈希（不联网，效果有限）',
                   },
                   onChange: (value) => setState(() {
-                    _provider = value ?? EmbeddingProvider.remote.value;
+                    _provider = value ?? EmbeddingProvider.server.value;
                     if (_provider == EmbeddingProvider.server.value) {
                       _applyServerModel(
                         _serverModel.isEmpty && _serverModels.isNotEmpty
@@ -655,7 +632,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                   if (!_signedIn)
                     Text(
                       '还没有登录。知新服务用登录账号的访问令牌，按账号计每天的嵌入额度；'
-                      '登录之后回到这一页选择模型。',
+                      '先登录，登录之后回到这一页选择模型。',
                       style: theme.text.bodyMedium,
                     )
                   else if (_serverModelsLoading)
@@ -663,7 +640,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                   else if (_serverModels.isEmpty)
                     Text(
                       '服务端暂时没有可用的嵌入模型，或者模型列表没有读到；'
-                      '可以稍后重新打开这一页，或者改用自填接口。',
+                      '可以稍后重新打开这一页再试。',
                       style: theme.text.bodyMedium,
                     )
                   else ...[
@@ -696,40 +673,13 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
                       ),
                   ],
                 ],
-                if (remote) ...[
-                  SizedBox(height: theme.space.gap),
-                  forui.FTextField(
-                    control: .managed(controller: _baseUrl),
-                    label: const Text('接口地址'),
-                    hint: 'https://api.example.com/v1',
-                  ),
-                  SizedBox(height: theme.space.gap),
-                  forui.FTextField(
-                    control: .managed(controller: _model),
-                    label: const Text('模型名'),
-                    hint: '中文嵌入模型',
-                  ),
-                  SizedBox(height: theme.space.gap),
-                  forui.FTextField(
-                    control: .managed(controller: _apiKey),
-                    obscureText: true,
-                    label: const Text('API Key'),
-                    description: const Text('只保存在本机，不进入数据包'),
-                  ),
-                  SizedBox(height: theme.space.gap),
-                  forui.FTextField(
-                    control: .managed(controller: _dim),
-                    keyboardType: TextInputType.number,
-                    label: const Text('向量维度'),
-                  ),
-                ],
               ],
             ),
           ),
         ),
         const SectionHeading(
           title: '可发送范围',
-          subtitle: '远程嵌入与知新服务只发送下面选中的范围；讨论消息与作答按所属材料判断。',
+          subtitle: '知新服务只发送下面选中的范围；讨论消息与作答按所属材料判断。',
         ),
         forui.FCard(
           child: Padding(

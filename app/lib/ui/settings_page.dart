@@ -62,17 +62,13 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final _baseUrl = TextEditingController();
-  LlmApi _api = LlmApi.chat;
-  LlmSource _source = LlmSource.custom;
   final _model = TextEditingController();
   final _contextWindow = TextEditingController();
-  final _key = TextEditingController();
 
   LlmConfig? _config;
   AccountSnapshot? _account;
 
-  /// 服务端代理允许的模型；登录且读得到时显示，作为模型名的参照。
+  /// 服务端允许的模型；登录且读得到时显示，作为模型名的参照。
   List<String> _serverModels = const [];
   bool _allowImages = true;
   ThemeMode _themeMode = ThemeMode.system;
@@ -128,10 +124,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
-    _baseUrl.dispose();
     _model.dispose();
     _contextWindow.dispose();
-    _key.dispose();
     super.dispose();
   }
 
@@ -297,16 +291,12 @@ class _SettingsPageState extends State<SettingsPage> {
   void _applyConfig(LlmConfig? config) {
     _config = config;
     _allowImages = config?.allowImages ?? true;
-    _source = config?.source ?? LlmSource.custom;
-    _api = config?.api ?? LlmApi.chat;
-    _baseUrl.text = config?.baseUrl ?? LlmConfig.defaultBaseUrl;
     _model.text = config?.model ?? LlmConfig.defaultModel;
     final window = config?.contextWindowTokens;
     _contextWindow.text =
         window == null || window == LlmConfig.defaultContextWindowTokens
         ? ''
         : window.toString();
-    _key.text = config?.apiKey ?? '';
   }
 
   LlmConfig _formConfig() {
@@ -317,37 +307,13 @@ class _SettingsPageState extends State<SettingsPage> {
     if (window == null || window <= 0) {
       throw const FormatException('模型上下文上限须为正整数');
     }
-    if (_source == LlmSource.server) {
-      final base = _account?.serverBaseUrl ?? '';
-      return LlmConfig(
-        source: LlmSource.server,
-        api: LlmApi.chat,
-        baseUrl: base.isEmpty ? '' : '$base/v1/llm',
-        model: _model.text.trim().isEmpty
-            ? LlmConfig.defaultModel
-            : _model.text.trim(),
-        allowImages: _allowImages,
-        contextWindowTokens: window,
-      );
-    }
     return LlmConfig(
-      api: _api,
-      baseUrl: _baseUrl.text.trim(),
-      model: _model.text.trim(),
-      apiKey: _key.text.trim(),
+      model: _model.text.trim().isEmpty
+          ? LlmConfig.defaultModel
+          : _model.text.trim(),
       allowImages: _allowImages,
       contextWindowTokens: window,
-      source: LlmSource.custom,
     );
-  }
-
-  /// 改了接口地址还沿用旧 Key 时先停下；旧 Key 只对原地址有效。
-  void _rejectStaleKey() {
-    if (_source != LlmSource.custom) return;
-    final config = _formConfig();
-    if (config.reusesKeyFrom(_config)) {
-      throw const LlmException(LlmFailure.auth, '接口地址已修改，请重新填写这个地址的 API Key');
-    }
   }
 
   /// 结果留在触发操作的那一段卡片下方；失败另用错误描边的就地说明。
@@ -367,16 +333,21 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// 保存模型配置：只存模型名、上下文上限与图片开关，先确认已经登录。
   Future<void> _saveConfig() async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      _rejectStaleKey();
       final config = _formConfig();
       await AppScope.of(context).settings.edit.saveConfig(config);
       if (!mounted) return;
       setState(() => _applyConfig(config));
       _report(_Area.model, '模型配置已保存到本机；回到原来的讨论或题目即可接着回答');
+    } on AccountSignedOut catch (error) {
+      // 没有登录时先说明原因，再带着这次填的模型名去账号页；回来之后表单还在。
+      if (!mounted) return;
+      _report(_Area.model, error.userMessage, failed: true);
+      await _openAccount();
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -397,12 +368,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 测试连接：用当前登录账号的地址与令牌向知新服务发一次最小请求。
   Future<void> _testConfig() async {
     if (_busy) return;
     setState(() => _busy = true);
     _report(_Area.model, '正在测试连接…');
     try {
-      _rejectStaleKey();
       final duration = await AppScope.of(context).settings.edit
           .testConfig(_formConfig());
       if (!mounted) return;
@@ -418,7 +389,7 @@ class _SettingsPageState extends State<SettingsPage> {
           action: '测试模型连接',
           kind: 'settings_connection',
           kept: '已保存的配置没有改动',
-          next: '可以检查接口地址、模型名与 API Key 后重试',
+          next: '可以检查模型名、登录状态与网络后重试',
         ),
         failed: true,
       );
@@ -433,7 +404,7 @@ class _SettingsPageState extends State<SettingsPage> {
           action: '测试模型连接',
           kind: 'settings_connection',
           kept: '已保存的配置没有改动',
-          next: '可以检查网络与接口地址后重试',
+          next: '可以检查网络与登录状态后重试',
         ),
         failed: true,
       );
@@ -442,13 +413,13 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// 删除整份模型配置：清掉接口地址、模型名与 API Key，先做危险确认。
+  /// 删除整份模型配置：清掉模型名、上下文上限与图片开关，先做危险确认。
   Future<void> _clearConfig() async {
     final confirmed = await confirmZhixin(
       context: context,
       title: '删除模型配置',
       content: const Text(
-        '将删除本机保存的接口地址、模型名与 API Key，且无法撤销。'
+        '将删除本机保存的模型名、上下文上限与图片开关，且无法撤销。'
         '删除之后仍然可以直接提问、记录作答与安排时间，回答区给本地步骤；'
         '之后重新填写即可恢复。',
       ),
@@ -479,7 +450,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// 打开账号页；返回之后重新读登录状态，模型来源跟着变。
+  /// 打开账号页；返回之后重新读登录状态，模型是否可用跟着变。
   Future<void> _openAccount() async {
     final scope = AppScope.of(context);
     await openAccount(context);
@@ -551,9 +522,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
     final signedIn = _account?.signedIn ?? false;
-    final configured =
-        _config != null &&
-        (_config!.isConfigured || (_config!.isServer && signedIn));
+    // 模型只有知新服务一种来源，填了模型名并且已经登录才算能用（ADR-0050）。
+    final configured = (_config?.isConfigured ?? false) && signedIn;
     // 首读失败时按默认值显示，原因写在页面顶部的就地说明里。
     final cutoff = settings?.cutoffHour ?? defaultDayCutoffHour;
     final systemCamera = settings?.useSystemCamera ?? false;
@@ -578,98 +548,60 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 Text(
                   configured
-                      ? '已配置模型：${_config!.model}。回到原来的讨论或题目，'
-                            '点「用模型重新回答」接着回答同一个问题。'
+                      ? '已配置模型：${_config!.model}。回答经知新服务（登录账号）发出，'
+                            '回到原来的讨论或题目，点「用模型重新回答」接着回答同一个问题。'
                       : '还没有配置模型。现在可以直接提问、记录作答与安排时间，回答区给本地步骤；'
-                            '配置后回到原来的讨论或题目，可以接着回答同一个问题。',
+                            '填写下面的模型名并登录之后，回到原来的讨论或题目可以接着回答同一个问题。',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
-                ZhixinSelect<LlmSource>(
-                  value: _source,
-                  label: '模型来源',
-                  description: '自填 Key 直连提供方；知新服务用登录账号的访问令牌走服务端代理，不保存 key。',
-                  options: {
-                    for (final source in LlmSource.values) source: source.label,
-                  },
-                  onChange: (value) =>
-                      setState(() => _source = value ?? LlmSource.custom),
+                Text(
+                  signedIn
+                      ? '模型调用只用知新服务（登录账号）：请求发到 ${_account!.serverBaseUrl}/v1/llm，'
+                            '接口走 Chat Completions，密钥由服务端保管，不保存在本机。'
+                      : '模型调用只用知新服务，需要先登录账号；登录之前回答按本地步骤给出。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: signedIn
+                        ? theme.colors.onSurfaceVariant
+                        : theme.colors.error,
+                  ),
                 ),
-                SizedBox(height: context.zhixin.space.gap),
-                if (_source == LlmSource.custom) ...[
-                  ZhixinSelect<LlmApi>(
-                    value: _api,
-                    label: '接口风格',
-                    description: '按服务商选择；DeepSeek 与多数兼容地址用 Chat Completions。',
-                    options: {for (final api in LlmApi.values) api: api.label},
-                    onChange: (value) =>
-                        setState(() => _api = value ?? LlmApi.chat),
-                  ),
-                  SizedBox(height: context.zhixin.space.gap),
-                  forui.FTextField(
-                    control: .managed(controller: _baseUrl),
-                    label: const Text('接口地址'),
-                    hint: 'https://api.deepseek.com/v1',
-                  ),
-                  SizedBox(height: context.zhixin.space.gap),
-                ] else ...[
-                  Text(
-                    signedIn
-                        ? '请求发到 ${_account!.serverBaseUrl}/v1/llm，'
-                              '密钥由服务端保管；每日额度用完后可以改用自己的 API Key。'
-                        : '还没有登录。登录之后才能使用知新服务；现在仍可以使用自填 Key。',
-                    style: theme.text.bodySmall.copyWith(
-                      color: signedIn
-                          ? theme.colors.onSurfaceVariant
-                          : theme.colors.error,
+                if (!signedIn) ...[
+                  SizedBox(height: context.zhixin.space.sm),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: forui.FButton(
+                      variant: forui.FButtonVariant.outline,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: _busy ? null : _openAccount,
+                      prefix: const Icon(FLucideIcons.logIn),
+                      child: const Text('登录或注册'),
                     ),
                   ),
-                  if (!signedIn) ...[
-                    SizedBox(height: context.zhixin.space.sm),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: forui.FButton(
-                        variant: forui.FButtonVariant.outline,
-                        mainAxisSize: MainAxisSize.min,
-                        onPress: _busy ? null : _openAccount,
-                        prefix: const Icon(FLucideIcons.logIn),
-                        child: const Text('登录或注册'),
-                      ),
-                    ),
-                  ],
-                  if (signedIn && _serverModels.isNotEmpty) ...[
-                    SizedBox(height: context.zhixin.space.xs),
-                    Text(
-                      '服务端允许的模型：${_serverModels.join('、')}',
-                      style: theme.text.bodySmall.copyWith(
-                        color: theme.colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                  SizedBox(height: context.zhixin.space.gap),
                 ],
+                if (signedIn && _serverModels.isNotEmpty) ...[
+                  SizedBox(height: context.zhixin.space.xs),
+                  Text(
+                    '服务端允许的模型：${_serverModels.join('、')}',
+                    style: theme.text.bodySmall.copyWith(
+                      color: theme.colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                SizedBox(height: context.zhixin.space.gap),
                 forui.FTextField(
                   control: .managed(controller: _model),
                   label: const Text('模型名'),
                   description: const Text('需要模型支持工具调用（function calling）'),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
-                if (_source == LlmSource.custom) ...[
-                  forui.FTextField(
-                    control: .managed(controller: _key),
-                    obscureText: true,
-                    label: const Text('API Key'),
-                  ),
-                  SizedBox(height: context.zhixin.space.gap),
-                ],
-                SizedBox(height: context.zhixin.space.gap),
                 forui.FTextField(
                   control: .managed(controller: _contextWindow),
                   keyboardType: TextInputType.number,
                   label: const Text('模型上下文上限（token）'),
-                  description: const Text('按服务商公布的上限填写，留空使用 65536。'),
+                  description: const Text('按模型公布的上限填写，留空使用 65536。'),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
                 forui.FSwitch(
@@ -935,7 +867,7 @@ class _SettingsPageState extends State<SettingsPage> {
           variant: forui.FItemVariant.destructive,
           prefix: const LeadingIcon(FLucideIcons.keyRound, tone: TagTone.muted),
           title: const Text('删除模型配置'),
-          subtitle: const Text('删除本机保存的接口地址、模型名与 API Key；之后的回答按本地步骤给出。'),
+          subtitle: const Text('删除本机保存的模型名、上下文上限与图片开关；之后的回答按本地步骤给出。'),
           suffix: const Icon(FLucideIcons.trash2),
           onPress: _busy || !configured ? null : _clearConfig,
         ),
@@ -954,8 +886,8 @@ class _SettingsPageState extends State<SettingsPage> {
         ?_resultFor(_Area.danger),
         SizedBox(height: theme.space.md),
         Text(
-          '知新是开源学习搭子，学习数据默认保存在本机；登录之后才会使用项目组自建服务端的'
-          '云端备份、增量同步与模型代理，模型调用也可以自填 API Key 直连提供方。',
+          '知新是开源学习搭子，学习数据默认保存在本机；模型调用只用知新服务，登录账号之后'
+          '由项目组自建服务端提供云端备份、增量同步与模型代理。',
           style: theme.text.bodySmall,
         ),
       ],

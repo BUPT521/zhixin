@@ -12,27 +12,28 @@ import 'zhixin_toast.dart';
 
 /// 模型未配置或调用失败时，回答下方的恢复入口。
 ///
-/// 讨论与作答原先各写一遍“配置模型”“用模型重新回答”“模型设置”三个按钮，
-/// 文案与图标已经对不上；现在两处共用这一组，只由调用方给主按钮的文字。
+/// 讨论与作答原先各写一遍这一组按钮，文案与图标已经对不上；现在两处共用，
+/// 只由调用方给主按钮的文字。模型只有知新服务一种来源（ADR-0050），恢复入口
+/// 因此不再是“配置模型”：没有登录时给登录入口，登录之后给重新回答。
 class ModelRecoveryButtons extends StatelessWidget {
   const ModelRecoveryButtons({
     super.key,
-    required this.configured,
+    required this.signedIn,
     required this.primaryLabel,
     required this.onPrimary,
-    required this.onConfigure,
+    required this.onSignIn,
     this.onOpenSettings,
     this.enabled = true,
   });
 
-  /// 是否已经配置模型；未配置时只显示“配置模型”。
-  final bool configured;
+  /// 是否已经登录；未登录时主按钮换成“登录后使用模型”。
+  final bool signedIn;
 
-  /// 已配置时主按钮的文字，例如“重试这次回答”。
+  /// 已登录时主按钮的文字，例如“重试这次回答”。
   final String primaryLabel;
 
   final VoidCallback onPrimary;
-  final VoidCallback onConfigure;
+  final VoidCallback onSignIn;
 
   /// 已经配置但凭据或地址有问题时，额外给出模型设置的入口。
   final VoidCallback? onOpenSettings;
@@ -47,7 +48,7 @@ class ModelRecoveryButtons extends StatelessWidget {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        if (configured)
+        if (signedIn)
           forui.FButton(
             variant: forui.FButtonVariant.secondary,
             mainAxisSize: MainAxisSize.min,
@@ -59,11 +60,11 @@ class ModelRecoveryButtons extends StatelessWidget {
           forui.FButton(
             variant: forui.FButtonVariant.outline,
             mainAxisSize: MainAxisSize.min,
-            onPress: enabled ? onConfigure : null,
-            prefix: const Icon(FLucideIcons.keyRound),
-            child: const Text('配置模型'),
+            onPress: enabled ? onSignIn : null,
+            prefix: const Icon(FLucideIcons.logIn),
+            child: const Text('登录后使用模型'),
           ),
-        if (configured && onOpenSettings != null)
+        if (signedIn && onOpenSettings != null)
           forui.FButton(
             variant: forui.FButtonVariant.ghost,
             mainAxisSize: MainAxisSize.min,
@@ -139,7 +140,7 @@ class FailureNotice extends StatelessWidget {
   }
 }
 
-/// 打开设置页并读回模型配置。
+/// 打开设置页并重新判断模型能否使用。
 ///
 /// 两页原先各写一段“推设置页 → 读配置 → 失败时给说明”；现在只在这里读，
 /// 读取失败用 [describeFailure] 生成说明交给调用方显示。返回的
@@ -184,10 +185,10 @@ Future<({bool? configured, String? notice})> openModelSettingsPage(
   }
 }
 
-/// 未配置模型时的引导：说明现在能做什么，并把配置入口接回调用方。
+/// 模型还不能用时的引导：说明现在能做什么，并把登录入口接回调用方。
 ///
 /// 讨论页用一条带操作的提示，学习页用说明对话框；文案由页面给，打开设置页
-/// 与读完配置之后的提示都走 [openModelSettingsPage]，两处不再各写一套。
+/// 与读完状态之后的提示都走 [openModelSettingsPage]，两处不再各写一套。
 Future<void> showModelSetupGuide(
   BuildContext context, {
   required String title,
@@ -196,7 +197,7 @@ Future<void> showModelSetupGuide(
   bool dialog = false,
 }) async {
   if (!dialog) {
-    showActionToast(context, content, label: '配置模型', onPressed: onConfigure);
+    showActionToast(context, content, label: '登录后使用模型', onPressed: onConfigure);
     return;
   }
   final go = await showZhixinAlert<bool>(

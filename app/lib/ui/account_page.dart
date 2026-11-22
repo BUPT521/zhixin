@@ -1225,8 +1225,7 @@ class _AccountPageState extends State<AccountPage> {
       ..._devicesSection(context),
       SectionHeading(
         title: '模型额度',
-        subtitle:
-            '知新服务按账号计每天可用的 token，聊天与语义索引的嵌入分开计；额度用完时可以改用自己的 API Key，或等次日重置。',
+        subtitle: '知新服务按账号计每天可用的 token，聊天与语义索引的嵌入分开计；额度用完之后等次日重置，或者联系管理员调整。',
       ),
       forui.FCard(
         child: Padding(

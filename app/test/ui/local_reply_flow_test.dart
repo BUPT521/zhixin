@@ -78,7 +78,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  testWidgets('未配置时本地回答给出步骤与配置入口，配置后可重新回答', (tester) async {
+  testWidgets('未登录时本地回答给出步骤与登录入口，登录之前不给重新回答', (tester) async {
     tester.view.physicalSize = const Size(390, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -97,26 +97,23 @@ void main() {
     await waitFor(tester, find.text('本地规则'));
     await clearToasts(tester);
 
-    // 本地回答针对刚输入的问题给步骤，卡片标明来源并给出配置入口。
+    // 本地回答针对刚输入的问题给步骤，卡片标明来源并给出登录入口。
     expect(find.textContaining('已知量和要求的量', findRichText: true), findsWidgets);
-    expect(find.widgetWithText(forui.FButton, '配置模型'), findsOneWidget);
+    expect(find.widgetWithText(forui.FButton, '登录后使用模型'), findsOneWidget);
 
-    // 从回答卡片直接进入设置页，配置页同时说明配置前后各能做什么。
-    await tester.tap(find.widgetWithText(forui.FButton, '配置模型'));
+    // 从回答卡片直接进入设置页，设置页说明模型要登录之后才能调用。
+    await tester.tap(find.widgetWithText(forui.FButton, '登录后使用模型'));
     await waitFor(tester, find.text('设置'));
     // 设置页首读先放骨架，等模型段读完再核对说明。
-    await waitFor(tester, find.textContaining('还没有配置模型'));
+    await waitFor(tester, find.textContaining('模型调用只用知新服务'));
 
+    // 模型卡片只填模型名：地址与令牌由登录账号在运行时补上。
     await tester.enterText(
-      find
-          .descendant(
-            of: find.byType(SettingsPage),
-            matching: find.byWidgetPredicate(
-              (widget) => widget is EditableText && !widget.readOnly,
-            ),
-          )
-          .at(2),
-      'sk-test',
+      find.descendant(
+        of: find.byType(SettingsPage),
+        matching: find.widgetWithText(forui.FTextField, '模型名'),
+      ),
+      'deepseek-flash',
     );
     // 设置页变长之后，直接 ensureVisible 会把按钮顶到页面头部下面；
     // 按居中位置滚动再点，避免点击落在头部区域。
@@ -127,28 +124,27 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('保存'));
     await tester.pump();
-    await waitFor(tester, find.textContaining('模型配置已保存'));
-    expect(storedSecret, contains('sk-test'));
+    // 没有登录时保存不下来：模型只有知新服务一条路径，先让用户登录。
+    await waitFor(tester, find.textContaining('登录'));
+    expect(storedSecret, isNull, reason: '访问令牌与地址不写进本机配置');
 
-    // 回到原来的讨论，同一个问题的本地回答下方换成用模型重新回答。
+    // 回到原来的讨论：仍然没有登录，恢复入口保持登录引导，不出现重新回答。
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
-    await waitFor(tester, find.text('用模型重新回答'));
+    await waitFor(tester, find.text('登录后使用模型'));
     expect(find.textContaining('解方程 3x+2=8', findRichText: true), findsWidgets);
-    expect(find.widgetWithText(forui.FButton, '配置模型'), findsNothing);
+    expect(find.widgetWithText(forui.FButton, '用模型重新回答'), findsNothing);
   });
 
-  testWidgets('模型调用失败时保留问题并给这次回答的重试入口', (tester) async {
+  testWidgets('模型未登录时保留问题并给登录入口', (tester) async {
     tester.view.physicalSize = const Size(390, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    // 配置指向本机未监听端口：请求很快失败，不必等真实网络超时。
+    // 模型配置只记模型名；测试环境里没有登录，模型调用因此失败，走失败分支。
     storedSecret = jsonEncode({
-      'api': 'chat',
-      'base_url': 'http://127.0.0.1:1/v1',
       'model': 'test-model',
-      'api_key': 'sk-test',
-      'allow_images': '0',
+      'allow_images': '1',
+      'context_window_tokens': '65536',
     });
 
     await tester.runAsync(() async {
@@ -162,24 +158,20 @@ void main() {
     await tester.pump();
     await tester.tap(find.bySemanticsLabel('发送问题'));
     await waitFor(tester, find.text('本地规则'));
-    await waitFor(tester, find.text('重试这次回答'));
 
-    // 用户消息已经落库，失败的一轮有自己的重试入口，不再只给配置入口。
-    // 提示条与最后一条回答下方各有一个重试入口，两者都是 Forui 的按钮。
-    expect(find.textContaining('模型调用失败', findRichText: true), findsWidgets);
+    // 用户消息已经落库；没有登录时模型调用发不出去，恢复入口只有登录。
+    // 提示条与最后一条回答下方各有入口，两者都是 Forui 的按钮。
+    await waitFor(tester, find.widgetWithText(forui.FButton, '登录后使用模型'));
     expect(find.widgetWithText(forui.FButton, '用模型重新回答'), findsNothing);
-    expect(find.widgetWithText(forui.FButton, '重试这次回答'), findsWidgets);
+    expect(find.widgetWithText(forui.FButton, '重试这次回答'), findsNothing);
 
-    // 再失败一次也只补一条回答，不重复写用户消息。
-    await tester.tap(find.text('重试这次回答'));
-    for (var i = 0; i < 80; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      if (find.text('本地规则').evaluate().length >= 2) break;
-    }
-    expect(find.text('本地规则'), findsNWidgets(2));
+    // 未登录时点入口先进设置页；关掉之后回到讨论，回答与问题都没有变化。
+    await tester.tap(find.widgetWithText(forui.FButton, '登录后使用模型').first);
+    await waitFor(tester, find.text('设置'));
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await waitFor(tester, find.text('登录后使用模型'));
+    expect(find.text('本地规则'), findsOneWidget);
+
     // 首页的记录卡也会显示这个问题；这里只看讨论页里的用户消息只有一条。
     expect(
       find.descendant(

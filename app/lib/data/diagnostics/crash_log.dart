@@ -173,7 +173,7 @@ class CrashLog {
   String _clip(String value, int max) => truncateCodePoints(value, max);
 
   /// 诊断只用于排障：去掉 SQL 文本、参数、绑定值、本机绝对路径与密钥，避免
-  /// 学习正文、用户文件位置与 API Key 进入日志。服务地址保留，`https://` 这类
+  /// 学习正文、用户文件位置与访问令牌进入日志。服务地址保留，`https://` 这类
   /// 写法不当作路径。
   static String _sanitize(String value) {
     var text = value;
