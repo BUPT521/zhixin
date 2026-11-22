@@ -362,7 +362,11 @@ void main() {
       if (padding != null) {
         expect(style.contentStyle.padding, padding);
       }
-      expect(style.contentStyle.constraints.minHeight, 48, reason: '按钮统一 48 高');
+      expect(
+        style.contentStyle.constraints.minHeight,
+        ZhixinSpace.controlHeight,
+        reason: '按钮与输入框同高',
+      );
     }
     // ghost 是文字按钮，用主色。
     expect(
@@ -396,8 +400,15 @@ void main() {
       field.contentTextStyle.base.fontSize,
       zhixin.text.bodyMedium.fontSize,
     );
-    // 输入框与按钮同高。
-    expect(field.constraints.minHeight, 48);
+    // 输入框与按钮同高，三种尺寸都取这一档。
+    for (final field in [
+      zhixinForuiTheme.textFieldStyles.md,
+      zhixinForuiTheme.textFieldStyles.sm,
+      zhixinForuiTheme.textFieldStyles.lg,
+    ]) {
+      expect(field.constraints.minHeight, ZhixinSpace.controlHeight);
+    }
+    expect(ZhixinSpace.controlHeight, 44);
     // 列表项标题取 titleSmall，右侧箭头 16 用次要文字色。
     final tile = zhixinForuiTheme.tileStyles.primary;
     expect(

@@ -287,6 +287,9 @@ class ZhixinColors {
 class ZhixinSpace {
   const ZhixinSpace();
 
+  /// 按钮、输入框与选择框的内容区高度：三者同高，排在同一行时上下对齐。
+  static const double controlHeight = 44;
+
   /// 同一行里图标与文字、标签与标签之间。
   double get xs => 4;
 
@@ -508,8 +511,12 @@ forui.FButtonStyles _buttonStyles(
             : forui.FVariants.all(
                 content.iconStyle.base.copyWith(color: color),
               ),
-        // 按钮统一 48 高：内容区最小高度按同一档给，内边距与标签再在它里面居中。
-        constraints: const BoxConstraints(minWidth: 44, minHeight: 48),
+        // 按钮与输入框统一 [ZhixinSpace.controlHeight]：内容区最小高度按同一档
+        // 给，内边距与标签再在它里面居中。
+        constraints: const BoxConstraints(
+          minWidth: 44,
+          minHeight: ZhixinSpace.controlHeight,
+        ),
         padding: small
             ? const .value(EdgeInsets.symmetric(horizontal: 14, vertical: 8))
             : null,
@@ -583,8 +590,8 @@ forui.FTextFieldSizeStyles _textFieldStyles(
   );
 
   forui.FTextFieldStyle fixed(forui.FTextFieldStyle field) => field.copyWith(
-    // 输入框统一 48 高，与按钮同高；三种尺寸的内边距与文字仍在里面居中。
-    constraints: const BoxConstraints(minHeight: 48),
+    // 输入框与按钮同高，三种尺寸都取这一档；内边距与文字仍在它里面居中。
+    constraints: const BoxConstraints(minHeight: ZhixinSpace.controlHeight),
     border: forui.FVariants(
       border(zhixin.outline),
       variants: {

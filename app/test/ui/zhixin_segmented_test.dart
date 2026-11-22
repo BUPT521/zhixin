@@ -155,4 +155,75 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('整条与按钮、输入框同高，按下时轨道与选中底色都不动', (tester) async {
+    Future<void> pumpSelected(String value) => tester.pumpWidget(
+      MaterialApp(
+        theme: zhixinTheme,
+        home: forui.FTheme(
+          data: zhixinForuiTheme,
+          child: Scaffold(
+            body: Padding(
+              padding: const EdgeInsets.all(20),
+              child: ZhixinSegmented<String>(
+                segments: const [
+                  ZhixinSegment(value: '日程', label: '日程'),
+                  ZhixinSegment(value: '事项', label: '事项'),
+                  ZhixinSegment(value: '目标', label: '目标'),
+                  ZhixinSegment(value: 'AI 的改动', label: 'AI 的改动'),
+                ],
+                selected: value,
+                onChanged: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await pumpSelected('日程');
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byType(ZhixinSegmented<String>)).height,
+      ZhixinSpace.controlHeight,
+    );
+    final track = find.ancestor(
+      of: find.text('日程'),
+      matching: find.byType(ConstrainedBox),
+    );
+    // 选中底色画在等宽的滑块上：它的宽度与位置只在切换时按新的一项重排。
+    final thumb = find.byWidgetPredicate(
+      (widget) =>
+          widget is DecoratedBox &&
+          widget.decoration is ShapeDecoration &&
+          (widget.decoration as ShapeDecoration).color != null,
+    );
+    final before = tester.getRect(track.first);
+    final thumbBefore = tester.getRect(thumb.first);
+
+    // 按在未选中的一项上：只有这一项的内容放大，轨道高度、选中底色的位置
+    // 都不变，不会出现旁边一栏闪一下再退回去。
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('目标')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(_scaleOf(tester, find.text('目标')), closeTo(1.06, 0.001));
+    expect(tester.getRect(track.first), before);
+    expect(tester.getRect(thumb.first), thumbBefore);
+    expect(
+      tester
+          .widget<AnimatedSwitcher>(
+            find.descendant(
+              of: find.byType(ZhixinSegmented<String>),
+              matching: find.byType(AnimatedSwitcher),
+            ),
+          )
+          .layoutBuilder,
+      isNotNull,
+    );
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(tester.getRect(track.first), before);
+  });
 }
