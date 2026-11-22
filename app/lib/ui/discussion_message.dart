@@ -156,7 +156,7 @@ class _CitationTile extends StatelessWidget {
       margin: EdgeInsets.only(top: theme.space.sm),
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: theme.radius.bubble,
+        borderRadius: theme.radius.control,
       ),
       child: forui.FAccordion(
         style: .delta(

@@ -142,6 +142,7 @@ class ZhixinColors {
     required this.outlineVariant,
     required this.primaryContainer,
     required this.onPrimaryContainer,
+    required this.primarySoft,
     required this.secondaryContainer,
     required this.onSecondaryContainer,
     required this.surface,
@@ -173,14 +174,21 @@ class ZhixinColors {
   /// 提醒色，与 [attention] 同值。
   final Color secondary;
   final Color onSurfaceVariant;
-  final Color outline;
-  final Color outlineVariant;
 
-  /// 主色容器：选中芯片、用户气泡与导航指示块用它作底。
+  /// 主色容器：选中芯片、用户气泡与输入区用它作底。
   final Color primaryContainer;
 
   /// 压在 [primaryContainer] 上的文字颜色。
   final Color onPrimaryContainer;
+
+  /// 主色浅底：底栏指示块、标签底。
+  final Color primarySoft;
+
+  /// 容器描边：卡片、列表项、分隔线、底栏、对话框与面板；比 [outline] 浅。
+  final Color outlineVariant;
+
+  /// 控件描边：输入框、选择框、复选框与 outline 按钮；比 [outlineVariant] 深。
+  final Color outline;
 
   /// 与 [primaryContainer] 同值；次要按钮的底色。
   final Color secondaryContainer;
@@ -243,10 +251,7 @@ class ZhixinRadius {
   /// 标签与小按钮。
   BorderRadius get tag => const BorderRadius.all(Radius.circular(8));
 
-  /// 对话气泡与说明条：比标签圆一档，比控件小。
-  BorderRadius get bubble => const BorderRadius.all(Radius.circular(12));
-
-  /// 按钮、输入框与分段控件。
+  /// 按钮、输入框、分段控件与对话气泡。
   BorderRadius get control => const BorderRadius.all(_controlRadius);
 
   /// 列表与内容卡片。
@@ -352,13 +357,12 @@ forui.FThemeData _buildForui(_Palette palette) {
 
 /// 以 Forui 的中性基底起步，把每一档颜色换成 [_Palette] 的取值。
 ///
-/// 隐式的悬停、按下与禁用态由 Forui 从这几个基色派生：`hover` 在 HSL 里只改
-/// 明度，`disable` 只降透明度，色相都不变，所以基色是中性灰或蓝时，派生出来
-/// 的态也不会带上别的颜色。浅色下卡片与页面同为白色，描边统一取
-/// [_Palette.inputBorder]，比卡片描边深一档，按钮、输入框、卡片与列表都有
-/// 1px 的边，相邻两块不会并成一片。
+/// 浅色下页面、卡片与列表都是同一片白，容器靠 [_Palette.border] 这一档浅
+/// 描边分出层次；[_Palette.inputBorder] 更深，只给输入框、选择框、复选框与
+/// outline 按钮这类交互控件用，见 [ZhixinColors.outline] 与
+/// [ZhixinColors.outlineVariant]。深色下卡片比页面亮一档，[border] 同样
+/// 能画出边界。
 forui.FColors _foruiColors(forui.FColors base, _Palette palette) {
-  final inputBorder = palette.inputBorder;
   return base.copyWith(
     background: palette.paper,
     foreground: palette.ink,
@@ -369,7 +373,7 @@ forui.FColors _foruiColors(forui.FColors base, _Palette palette) {
     muted: palette.raised,
     mutedForeground: palette.muted,
     card: palette.card,
-    border: inputBorder,
+    border: palette.border,
     error: palette.error,
     errorForeground: palette.onError,
     destructive: palette.error,
@@ -412,8 +416,8 @@ ZhixinTextStyles _textStyles(_Palette palette) {
     headlineMedium: style(
       fontSize: 30,
       height: 1.26,
-      letterSpacing: -0.5,
-      weight: FontWeight.w700,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
     headlineSmall: style(
       fontSize: 24,
@@ -422,44 +426,49 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       weight: FontWeight.w600,
     ),
     pageTitle: style(
-      fontSize: 30,
-      height: 1.26,
-      letterSpacing: -0.5,
-      weight: FontWeight.w500,
+      fontSize: 26,
+      height: 1.3,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
-    titleLarge: style(fontSize: 22, height: 1.27, letterSpacing: 0),
+    titleLarge: style(
+      fontSize: 22,
+      height: 1.27,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
+    ),
     titleMedium: style(
       fontSize: 16,
       height: 1.5,
-      letterSpacing: 0.15,
+      letterSpacing: 0,
       weight: FontWeight.w600,
     ),
     titleSmall: style(
       fontSize: 14,
       height: 1.43,
-      letterSpacing: 0.1,
+      letterSpacing: 0,
       weight: FontWeight.w600,
     ),
     bodyLarge: style(fontSize: 16, height: 1.55, letterSpacing: 0),
-    bodyMedium: style(fontSize: 14, height: 1.5, letterSpacing: 0.25),
-    bodySmall: style(fontSize: 12, height: 1.5, letterSpacing: 0.1),
+    bodyMedium: style(fontSize: 14, height: 1.5, letterSpacing: 0),
+    bodySmall: style(fontSize: 12, height: 1.5, letterSpacing: 0),
     labelLarge: style(
       fontSize: 14,
       height: 1.43,
-      letterSpacing: 0.1,
-      weight: FontWeight.w500,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
     labelMedium: style(
       fontSize: 12,
       height: 1.33,
-      letterSpacing: 0.5,
-      weight: FontWeight.w500,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
     labelSmall: style(
       fontSize: 11,
       height: 1.45,
-      letterSpacing: 0.5,
-      weight: FontWeight.w500,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
   );
 }
@@ -521,6 +530,7 @@ ZhixinColors _colors(_Palette palette) => ZhixinColors(
   outlineVariant: palette.border,
   primaryContainer: palette.brandContainer,
   onPrimaryContainer: palette.onBrandContainer,
+  primarySoft: palette.brandLight,
   secondaryContainer: palette.brandContainer,
   onSecondaryContainer: palette.onBrandContainer,
   surface: palette.paper,
@@ -654,7 +664,7 @@ ThemeData _buildMaterial(_Palette palette) {
         autoAddDividerLineAfterH1: false,
         h1: text.titleLarge.copyWith(
           fontSize: 20,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           height: 1.35,
         ),
         h2: text.titleMedium.copyWith(fontSize: 17, height: 1.35),
