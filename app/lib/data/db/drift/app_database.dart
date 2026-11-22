@@ -63,10 +63,20 @@ part 'app_database.g.dart';
   ],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase(super.executor);
+  AppDatabase(super.executor) {
+    openSites[this] = _callSite();
+  }
 
   /// 测试与探针使用；真机由 `NativeDatabase(File)` 打开库文件。
-  AppDatabase.memory() : super(NativeDatabase.memory());
+  AppDatabase.memory() : super(NativeDatabase.memory()) {
+    openSites[this] = _callSite();
+  }
+
+  @override
+  Future<void> close() async {
+    openSites.remove(this);
+    await super.close();
+  }
 
   @override
   int get schemaVersion => zhixinSchemaVersion;
@@ -102,9 +112,45 @@ class AppDatabase extends _$AppDatabase {
 ///
 /// drift 的结构元数据（`allTables` 与 `allSchemaEntities`）是实例成员，没有静态
 /// 入口，恢复预检与版本引擎需要一个实例来读；这个子类的执行器在构造时不打开
-/// 数据库，任何查询都会抛出。单独的运行时类型还避免 drift 把结构探针当成第二个
-/// 打开的库而告警。
+/// 数据库，任何查询都会抛出。取用一律经 [schemaMetadata]，不再直接构造。
 class SchemaMetadata extends AppDatabase {
   SchemaMetadata()
     : super(LazyDatabase(() => throw StateError('结构元数据不需要打开数据库')));
+}
+
+/// 结构元数据实例只建一次。
+///
+/// [AppDatabase] 每次构造都会让 drift 记一次“又开了一个库”；结构元数据按需多取
+/// 几次并不等于开了第二个库，但会按 [AppDatabase] 这一类计数。只建一个并复用，
+/// 计数才对应真实的连接。
+final SchemaMetadata schemaMetadata = SchemaMetadata();
+
+/// 还开着的库与它建出来的位置；库关掉时撤掉。
+///
+/// 同一个执行器上开两个库会抢同一组事务、写同一个库文件，drift 对此只在构造
+/// 第二个同类库时打印告警，而它按运行时类型计数，把正常的多设备用例也算进去，
+/// 告警因此对不上真实问题。这里按执行器记录，测试里由
+/// `test/support/drift_warning_guard.dart` 检查并失败。
+final Map<AppDatabase, String> openSites = {};
+
+/// 库背后的执行器；[GeneratedDatabase.connection] 是 drift 给每个库各自包的
+/// 一层，判断“同一个执行器上开了两个库”看的是 [GeneratedDatabase.executor]。
+QueryExecutor driftExecutorOf(AppDatabase database) => database.executor;
+
+/// 同时开着的库，结构元数据不计在内；先取快照，遍历时不受登记增减影响。
+List<AppDatabase> get openDriftDatabases {
+  final snapshot = [...openSites.keys];
+  return [
+    for (final database in snapshot)
+      if (!identical(database, schemaMetadata)) database,
+  ];
+}
+
+String _callSite() {
+  for (final frame in StackTrace.current.toString().split('\n')) {
+    if (!frame.contains('app/lib/') && !frame.contains('app/test/')) continue;
+    final match = RegExp(r'\(([^()]+\.dart:\d+:\d+)\)$').firstMatch(frame);
+    if (match != null) return match.group(1)!;
+  }
+  return '未知位置';
 }
