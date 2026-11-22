@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
@@ -68,5 +69,90 @@ void main() {
     await back.up();
     await tester.pumpAndSettle();
     expect(selected, '学习记录');
+  });
+
+  testWidgets('放大文字时键盘能滚动到并切换分段，读屏能识别选中项', (tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    const firstLabel = '独立完成';
+    const lastLabel = '用了应用外帮助';
+    var selected = firstLabel;
+    final changes = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: zhixinTheme,
+        home: forui.FTheme(
+          data: zhixinForuiTheme,
+          child: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 320,
+                child: StatefulBuilder(
+                  builder: (context, setState) => ZhixinSegmented<String>(
+                    segments: const [
+                      ZhixinSegment(value: firstLabel, label: firstLabel),
+                      ZhixinSegment(value: '未说明', label: '未说明'),
+                      ZhixinSegment(value: lastLabel, label: lastLabel),
+                    ],
+                    selected: selected,
+                    onChanged: (value) {
+                      changes.add(value);
+                      setState(() => selected = value);
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final first = find.bySemanticsLabel(firstLabel);
+    final last = find.bySemanticsLabel(lastLabel);
+    expect(
+      tester.getSemantics(first),
+      isSemantics(
+        label: firstLabel,
+        isButton: true,
+        isInMutuallyExclusiveGroup: true,
+        isSelected: true,
+        hasTapAction: true,
+      ),
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(changes, isEmpty);
+
+    final scroll = find.byType(SingleChildScrollView);
+    final lastButton = find.ancestor(
+      of: find.text(lastLabel),
+      matching: find.byType(forui.FFocusedOutline),
+    );
+    expect(
+      tester.getRect(lastButton).right,
+      greaterThan(tester.getRect(scroll).right),
+    );
+    for (var i = 0; i < 2; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pumpAndSettle();
+    }
+    expect(
+      tester.getRect(lastButton).right,
+      lessThanOrEqualTo(tester.getRect(scroll).right),
+    );
+    expect(tester.widget<forui.FFocusedOutline>(lastButton).focused, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pumpAndSettle();
+    expect(changes, [lastLabel]);
+    expect(
+      tester.getSemantics(last),
+      isSemantics(label: lastLabel, isSelected: true, isFocused: true),
+    );
+    expect(tester.takeException(), isNull);
   });
 }

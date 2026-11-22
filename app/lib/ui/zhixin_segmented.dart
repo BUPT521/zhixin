@@ -1,3 +1,4 @@
+import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
@@ -18,25 +19,36 @@ class ZhixinSegmented<T> extends StatelessWidget {
   final T selected;
   final ValueChanged<T> onChanged;
 
+  static const _trackPadding = 3.0;
+  static const _minTargetSize = 48.0;
+  static const _iconSize = 16.0;
+  static const _iconSpacing = 6.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
+    final labelStyle = theme.text.labelLarge.copyWith(
+      fontWeight: FontWeight.w600,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final fits = constraints.maxWidth / segments.length >= 76 * textScale;
+        final count = segments.length;
+        final slotWidth = (constraints.maxWidth - 2 * _trackPadding) / count;
+        final fits =
+            constraints.hasBoundedWidth &&
+            slotWidth >= _minTargetSize &&
+            _labelsFit(context, labelStyle, slotWidth - 2 * theme.space.md);
         final children = [
           for (final segment in segments)
-            _segment(context, theme, segment, expand: fits),
+            _segment(context, theme, segment, labelStyle, expand: fits),
         ];
         final index = segments.indexWhere((s) => s.value == selected);
-        final count = segments.length;
         final row = Row(
           mainAxisSize: fits ? MainAxisSize.max : MainAxisSize.min,
           children: children,
         );
         final track = Container(
-          padding: const EdgeInsets.all(3),
+          padding: const EdgeInsets.all(_trackPadding),
           decoration: BoxDecoration(
             color: theme.colors.surfaceContainerHigh,
             borderRadius: theme.radius.card,
@@ -77,6 +89,27 @@ class ZhixinSegmented<T> extends StatelessWidget {
     );
   }
 
+  bool _labelsFit(BuildContext context, TextStyle style, double width) {
+    final painter = TextPainter(
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+      maxLines: 1,
+    );
+    final resolved = DefaultTextStyle.of(context).style.merge(style);
+    final labelStyle = MediaQuery.boldTextOf(context)
+        ? resolved.copyWith(fontWeight: FontWeight.bold)
+        : resolved;
+    final fits = segments.every((segment) {
+      painter.text = TextSpan(text: segment.label, style: labelStyle);
+      painter.layout();
+      final iconWidth = segment.icon == null ? 0.0 : _iconSize + _iconSpacing;
+      return painter.width + iconWidth <= width;
+    });
+    painter.dispose();
+    return fits;
+  }
+
   Widget _thumb(ZhixinTheme theme) =>
       DecoratedBox(decoration: _selection(theme, selected: true));
 
@@ -89,55 +122,62 @@ class ZhixinSegmented<T> extends StatelessWidget {
   Widget _segment(
     BuildContext context,
     ZhixinTheme theme,
-    ZhixinSegment<T> segment, {
+    ZhixinSegment<T> segment,
+    TextStyle labelStyle, {
     required bool expand,
   }) {
     final isSelected = segment.value == selected;
     final foreground = isSelected
         ? theme.colors.onPrimaryContainer
         : theme.colors.onSurfaceVariant;
-    final child = Semantics(
-      button: true,
+    final child = forui.FTappable.static(
       selected: isSelected,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: isSelected ? null : () => onChanged(segment.value),
-        // 按下时这一项放大几个百分点：当前项再按一次没有动作，不放大。
-        child: PressScale(
-          enabled: !isSelected,
-          child: AnimatedContainer(
-            duration: context.motionOf(theme.motion.fast),
-            curve: theme.motion.move,
-            constraints: const BoxConstraints(minHeight: 42),
-            padding: EdgeInsets.symmetric(
-              horizontal: theme.space.md,
-              vertical: theme.space.sm,
-            ),
-            // 等分整行时选中底色由滑块画，这里保持透明。
-            decoration: _selection(theme, selected: isSelected && !expand),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (segment.icon != null) ...[
-                  Icon(segment.icon, size: 16, color: foreground),
-                  const SizedBox(width: 6),
-                ],
-                Flexible(
-                  // 选中与否都取同一个字重：选中态已经由滑块底色与文字颜色
-                  // 说明，字重再变会改变字宽，等分整行时标签会轻微重新居中。
-                  child: Text(
-                    segment.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.text.labelLarge.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+      semanticsInMutuallyExclusiveGroup: true,
+      behavior: HitTestBehavior.opaque,
+      focusedOutlineStyle: forui.FFocusedOutlineStyle(
+        color: theme.colors.onSurface,
+        borderRadius: theme.radius.card,
+        width: 2,
+        spacing: -2,
+      ),
+      onPress: () {
+        if (!isSelected) onChanged(segment.value);
+      },
+      // 按下时这一项放大几个百分点：当前项再按一次没有动作，不放大。
+      child: PressScale(
+        enabled: !isSelected,
+        child: AnimatedContainer(
+          duration: context.motionOf(theme.motion.fast),
+          curve: theme.motion.move,
+          constraints: const BoxConstraints(
+            minWidth: _minTargetSize,
+            minHeight: _minTargetSize,
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: theme.space.md,
+            vertical: theme.space.sm,
+          ),
+          // 等分整行时选中底色由滑块画，这里保持透明。
+          decoration: _selection(theme, selected: isSelected && !expand),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (segment.icon != null) ...[
+                Icon(segment.icon, size: _iconSize, color: foreground),
+                const SizedBox(width: _iconSpacing),
               ],
-            ),
+              Flexible(
+                // 选中与否都取同一个字重：选中态已经由滑块底色与文字颜色
+                // 说明，字重再变会改变字宽，等分整行时标签会轻微重新居中。
+                child: Text(
+                  segment.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: labelStyle.copyWith(color: foreground),
+                ),
+              ),
+            ],
           ),
         ),
       ),
