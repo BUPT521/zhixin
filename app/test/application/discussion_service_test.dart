@@ -497,7 +497,7 @@ void main() {
 
   test('V1：模型不可用时本地兜底，记录照常保存', () async {
     final h = _Harness(
-      error: const LlmException(LlmFailure.notConfigured, '尚未配置模型'),
+      error: const LlmException(LlmFailure.notConfigured, '还没有登录知新服务'),
     );
     await h.open();
     addTearDown(h.db.close);
@@ -517,7 +517,7 @@ void main() {
 
   test('V1：配置模型之后可以重新回答同一个问题', () async {
     final h = _Harness(
-      error: const LlmException(LlmFailure.notConfigured, '尚未配置模型'),
+      error: const LlmException(LlmFailure.notConfigured, '还没有登录知新服务'),
     );
     await h.open();
     addTearDown(h.db.close);
@@ -552,7 +552,7 @@ void main() {
 
   test('没有配置模型时不重新回答，也不写空消息', () async {
     final h = _Harness(
-      error: const LlmException(LlmFailure.notConfigured, '尚未配置模型'),
+      error: const LlmException(LlmFailure.notConfigured, '还没有登录知新服务'),
     );
     await h.open();
     addTearDown(h.db.close);
@@ -569,7 +569,7 @@ void main() {
 
   test('重答只读取一次模型配置', () async {
     final h = _Harness(
-      error: const LlmException(LlmFailure.notConfigured, '尚未配置模型'),
+      error: const LlmException(LlmFailure.notConfigured, '还没有登录知新服务'),
     );
     await h.open();
     addTearDown(h.db.close);

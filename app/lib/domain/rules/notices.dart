@@ -6,7 +6,7 @@ import 'coded_enum.dart';
 /// 结构化字段，重新打开讨论时据此恢复提示与恢复入口，[label] 是界面可显示的
 /// 说法，不参与状态判断。
 enum Notice implements CodedEnum {
-  modelNotConfigured('model_not_configured', '模型尚未配置'),
+  modelNotConfigured('model_not_configured', '还没有登录知新服务'),
   modelConfigReadFailed('model_config_read_failed', '模型配置读取失败'),
   modelCallFailed('model_call_failed', '模型调用失败'),
   noSendableContent('no_sendable_content', '没有可发送的内容'),

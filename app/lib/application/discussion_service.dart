@@ -494,7 +494,7 @@ class DiscussionService {
     );
     final config = read.config;
     if (config == null || !config.isConfigured) {
-      throw const LlmException(LlmFailure.notConfigured, '模型尚未配置');
+      throw const LlmException(LlmFailure.notConfigured, '还没有登录知新服务');
     }
     final userMessage = await conversations.lastUserMessage(conversationId);
     if (userMessage == null) {

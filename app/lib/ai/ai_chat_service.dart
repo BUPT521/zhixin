@@ -152,7 +152,7 @@ class AiChatService implements BuddyAi {
         ? (await config()).fallback(_lastConfig)
         : configSnapshot.value;
     if (current == null || !current.isConfigured) {
-      throw const LlmException(LlmFailure.notConfigured, '模型尚未配置');
+      throw const LlmException(LlmFailure.notConfigured, '还没有登录知新服务');
     }
     final client = _client(current);
     final tools = BuddyTurnTools(context);
