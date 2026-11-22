@@ -272,7 +272,12 @@ class _BlockDialogState extends State<BlockDialog> {
                           );
                         });
                       },
-                      child: Text(shortTime(_start)),
+                      // 日期不是今天时这一串会比按钮的可用宽度长：按可用宽度
+                      // 缩小显示，不让按钮内部的 Row 溢出。
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(shortTime(_start)),
+                      ),
                     ),
                   ],
                 ),
