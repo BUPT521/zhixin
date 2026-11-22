@@ -294,6 +294,7 @@ forui.FThemeData _buildForui(_Palette palette) {
       ? forui.FTheme.neutral.light.touch
       : forui.FTheme.neutral.dark.touch;
   final colors = _foruiColors(base.colors, palette);
+  final zhixin = _colors(palette);
   final icons = base.icons;
   final text = _textStyles(palette);
   final typography = base.typography.copyWith(
@@ -353,8 +354,8 @@ forui.FThemeData _buildForui(_Palette palette) {
           subtitleTextStyle: forui.TextStyleDelta.value(text.bodySmall),
         ),
     buttonStyles: _buttonStyles(colors, typography, style, text),
-    textFieldStyles: _textFieldStyles(colors, style, text),
-    selectStyle: _selectStyle(colors, icons, typography, style, text),
+    textFieldStyles: _textFieldStyles(colors, zhixin, style, text),
+    selectStyle: _selectStyle(colors, zhixin, icons, typography, style, text),
     tileStyles: _tileStyles(colors, style, text),
     tileGroupStyle: base.tileGroupStyle.copyWith(
       dividerColor: forui.FVariants.all(colors.border),
@@ -473,6 +474,7 @@ forui.FButtonStyles _buttonStyles(
 /// `bodySmall`。选择框复用这一份尺寸样式。
 forui.FTextFieldSizeStyles _textFieldStyles(
   forui.FColors colors,
+  ZhixinColors zhixin,
   forui.FStyle style,
   ZhixinTextStyles text,
 ) {
@@ -494,12 +496,12 @@ forui.FTextFieldSizeStyles _textFieldStyles(
 
   forui.FTextFieldStyle fixed(forui.FTextFieldStyle field) => field.copyWith(
     border: forui.FVariants(
-      border(colors.border),
+      border(zhixin.outline),
       variants: {
         [forui.FTextFieldVariant.focused]: border(colors.primary),
         [forui.FTextFieldVariant.error]: border(colors.error),
         [forui.FTextFieldVariant.disabled]: border(
-          colors.disable(colors.border),
+          colors.disable(zhixin.outline),
         ),
       },
     ),
@@ -528,6 +530,7 @@ forui.FTextFieldSizeStyles _textFieldStyles(
 /// Forui 选择框：字段部分与输入框同一样式。
 forui.FSelectStyle _selectStyle(
   forui.FColors colors,
+  ZhixinColors zhixin,
   forui.FIcons icons,
   forui.FTypography typography,
   forui.FStyle style,
@@ -541,7 +544,7 @@ forui.FSelectStyle _selectStyle(
     touch: true,
   );
   return forui.FSelectStyle(
-    fieldStyles: _textFieldStyles(colors, style, text),
+    fieldStyles: _textFieldStyles(colors, zhixin, style, text),
     searchStyle: base.searchStyle,
     contentStyle: base.contentStyle,
     emptyTextStyle: base.emptyTextStyle,
