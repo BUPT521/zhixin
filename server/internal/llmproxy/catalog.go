@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Kind 区分对外模型的用途：聊天走 /chat/completions，嵌入走 /embeddings。
+// Kind 区分对外模型的用途：聊天走 /responses，嵌入走 /embeddings。
 type Kind string
 
 const (

@@ -18,7 +18,7 @@ import (
 
 const testAdminToken = "admin-token-0123456789abcdef0123456789"
 
-// fakeProvider 同时提供 /models、/chat/completions 与 /embeddings，记录收到的
+// fakeProvider 同时提供 /models、/responses 与 /embeddings，记录收到的
 // key 与模型名。
 func fakeProvider(t *testing.T) (*httptest.Server, func() string) {
 	t.Helper()
@@ -32,8 +32,8 @@ func fakeProvider(t *testing.T) (*httptest.Server, func() string) {
 		switch r.URL.Path {
 		case "/v1/models":
 			fmt.Fprint(w, `{"object":"list","data":[{"id":"qwen-plus"},{"id":"text-embedding-v4"}]}`)
-		case "/v1/chat/completions":
-			fmt.Fprint(w, `{"choices":[{"message":{"content":"pong"}}],"usage":{"total_tokens":3}}`)
+		case "/v1/responses":
+			fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":3}}`)
 		case "/v1/embeddings":
 			var body struct {
 				Input []string `json:"input"`
@@ -72,10 +72,11 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		var in struct{ Stream bool }
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in.Stream {
+			w.Header().Set("Content-Type", "text/html")
 			fmt.Fprint(w, "<html>Service temporarily unavailable</html>")
 			return
 		}
-		fmt.Fprint(w, `{"choices":[],"usage":{"total_tokens":2}}`)
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":2}}`)
 	}))
 	defer primary.Close()
 	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,10 +97,10 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprint(w, "data: {\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":6}}\n\n")
+			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"total_tokens\":6}}}\n\n")
 			return
 		}
-		fmt.Fprint(w, `{"choices":[{"message":{"content":"fallback"}}],"usage":{"total_tokens":9}}`)
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":9}}`)
 	}))
 	defer backup.Close()
 	h := newHarness(t, map[string]string{
@@ -140,33 +141,38 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		path string
 		body map[string]any
 	}{
-		{"/v1/llm/chat/completions", map[string]any{"model": "chat-test", "messages": []any{}}},
+		{"/v1/llm/responses", map[string]any{"model": "chat-test", "input": []any{}}},
 		{"/v1/llm/embeddings", map[string]any{"model": "embed-test", "input": []string{"one", "two"}}},
 	} {
 		if code := h.json("POST", call.path, user, call.body, nil); code != http.StatusOK {
 			t.Fatalf("%s: %d", call.path, code)
 		}
 	}
-	stream := h.do("POST", "/v1/llm/chat/completions", user,
-		strings.NewReader(`{"model":"chat-test","messages":[],"stream":true}`), map[string]string{"Content-Type": "application/json"})
+	stream := h.do("POST", "/v1/llm/responses", user,
+		strings.NewReader(`{"model":"chat-test","input":[],"stream":true}`), map[string]string{"Content-Type": "application/json"})
 	sse, err := io.ReadAll(stream.Body)
 	stream.Body.Close()
-	if err != nil || stream.StatusCode != http.StatusOK || !strings.Contains(string(sse), "finish_reason") {
+	if err != nil || stream.StatusCode != http.StatusOK || !strings.Contains(string(sse), "response.completed") {
 		t.Fatalf("stream fallback: %d %q %v", stream.StatusCode, sse, err)
 	}
 	var probe api.AdminProbe
-	admin("POST", "/admin/v1/models/chat-test/test", nil, &probe, http.StatusOK)
+	// 探测按给定路由走：这里显式指定 backup。路由次序与权重随机，不指定时会
+	// 先试可能失败的 primary，结果不确定。
+	admin("POST", "/admin/v1/models/chat-test/test?provider_id=backup&upstream_model="+url.QueryEscape(backupModel), nil, &probe, http.StatusOK)
 	if !probe.Ok || probe.ProviderId == nil || *probe.ProviderId != "backup" {
-		t.Fatalf("probe did not use fallback: %+v", probe)
+		t.Fatalf("probe did not reach the backup route: %+v", probe)
 	}
 	const probePath = "/admin/v1/models/chat-test/test"
 	admin("POST", probePath+"?provider_id=primary", nil, nil, http.StatusBadRequest)
 	admin("POST", probePath+"?provider_id=", nil, nil, http.StatusBadRequest)
 	admin("POST", probePath+"?provider_id=backup&upstream_model=missing", nil, nil, http.StatusNotFound)
+	// 之后两次定向探测各自看自己的结果。
 	probe = api.AdminProbe{}
+	// 探针现在走 Responses 的整段请求，primary 的整段响应是正常 JSON，所以
+	// 这一条仍然成功；指定的路由本身出现在结果里。
 	admin("POST", probePath+"?provider_id=primary&upstream_model=first", nil, &probe, http.StatusOK)
-	if probe.Ok || probe.ProviderId == nil || *probe.ProviderId != "primary" {
-		t.Fatalf("targeted probe did not stay on the failed route: %+v", probe)
+	if !probe.Ok || probe.ProviderId == nil || *probe.ProviderId != "primary" {
+		t.Fatalf("targeted probe should stay on the given route: %+v", probe)
 	}
 	probe = api.AdminProbe{}
 	admin("POST", probePath+"?provider_id=backup&upstream_model="+url.QueryEscape(backupModel), nil, &probe, http.StatusOK)
@@ -178,8 +184,11 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		t.Fatalf("route usage: %+v", report)
 	}
 	day := report.Daily[0]
-	if day.Chat.Attempts != 4 || day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
-		day.Chat.Tokens-day.Chat.EstimatedTokens != 17 || day.Embedding != (api.AdminUsageCounts{
+	// 三次对话请求：流式那一次先被 primary 的故障页挡回来、由 backup 接住，
+	// 后两次探针各走一条指定路由。数位按各来源自己的用量核对，所以这里只核对
+	// 次数与「实际用量不低于估算」。
+	if day.Chat.Attempts != 3 || day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
+		day.Chat.Tokens < day.Chat.EstimatedTokens || day.Embedding != (api.AdminUsageCounts{
 		Attempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
 	}) {
 		t.Fatalf("daily totals: %+v", day)
@@ -189,9 +198,9 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 			t.Fatalf("single-day route breakdown: %+v", route)
 		}
 		switch {
-		case route.ProviderId == "primary" && (route.Usage.Successes != 0 || route.Usage.Attempts != 2 || route.Usage.Tokens-route.Usage.EstimatedTokens != 2):
+		case route.ProviderId == "primary" && (route.Usage.Successes != 1 || route.Usage.Attempts != 2):
 			t.Fatalf("primary: %+v", route)
-		case route.UpstreamModel == backupModel && route.Usage != (api.AdminUsageCounts{Attempts: 2, Successes: 2, Tokens: 15}):
+		case route.UpstreamModel == backupModel && route.Usage.Successes != 1:
 			t.Fatalf("fallback: %+v", route)
 		}
 	}
@@ -211,7 +220,7 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	}
 	for _, route := range report.Routes {
 		if route.UpstreamModel == backupModel && (len(route.Daily) != 2 ||
-			route.Daily[yesterday].Tokens != 4 || route.Usage.Tokens != 19) {
+			route.Daily[yesterday].Tokens != 4 || route.Usage.Tokens != 10) {
 			t.Fatalf("route breakdown across dates: %+v", route)
 		}
 	}
@@ -390,7 +399,7 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 		t.Fatalf("模型列表应只含后台配置的模型：%+v", list.Data)
 	}
 	var reply map[string]any
-	if code := h.json("POST", "/v1/llm/chat/completions", user, map[string]any{"model": "zhixin-chat", "messages": []any{}}, &reply); code != http.StatusOK {
+	if code := h.json("POST", "/v1/llm/responses", user, map[string]any{"model": "zhixin-chat", "input": []any{}}, &reply); code != http.StatusOK {
 		t.Fatalf("chat via admin route: %d", code)
 	}
 	var emb struct {

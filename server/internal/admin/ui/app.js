@@ -396,7 +396,7 @@ $('#provider-form').addEventListener('submit', async (event) => {
     return;
   }
   if (/\/(chat\/completions|embeddings)$/.test(base)) {
-    showError('provider-error', '基础地址不要带 /chat/completions 或 /embeddings，服务端会自己拼上。', f.base_url);
+    showError('provider-error', '基础地址不要带 /responses 或 /embeddings，服务端会自己拼上。', f.base_url);
     return;
   }
   const key = f.api_key.value.trim();

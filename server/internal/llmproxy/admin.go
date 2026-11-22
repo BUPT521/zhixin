@@ -131,7 +131,7 @@ func (a *Admin) ListProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 // validBaseURL 要求绝对的 http 或 https 地址，不带用户名、查询串与片段；
-// 返回去掉末尾斜杠的形式，请求时直接拼接 /chat/completions。
+// 返回去掉末尾斜杠的形式，请求时直接拼接 /responses 或 /embeddings。
 func validBaseURL(raw string) (string, bool) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
@@ -584,7 +584,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 			httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "route not found")
 			return
 		}
-		out.ProviderId, out.UpstreamModel = &provider, &upstream
+		out.ProviderId, out.UpstreamModel = stringPointer(provider), stringPointer(upstream)
 		if route := m.Live[idx]; m.Enabled && route.usable() {
 			cands = []liveRoute{route}
 		}
@@ -629,24 +629,25 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 		return
 	}
 	fields := map[string]json.RawMessage{
-		"messages":   json.RawMessage(`[{"role":"user","content":"ping"}]`),
-		"max_tokens": json.RawMessage(`1`),
-		"stream":     json.RawMessage(`false`),
+		"input":  json.RawMessage(`[{"type":"message","role":"user","content":"ping"}]`),
+		"stream": json.RawMessage(`false`),
 	}
-	reply, err := a.proxy.dispatch(ctx, cands, fields, false, 0, nil)
+	reply, err := a.proxy.dispatch(ctx, cands, fields, false, defaultOutputTokens, nil)
 	out.LatencyMs = time.Since(start).Milliseconds()
-	if reply.route.Provider != nil {
-		out.ProviderId, out.UpstreamModel = &reply.route.ProviderID, &reply.route.UpstreamModel
-	}
-	if err != nil {
+	if err != nil || reply.status < 200 || reply.status >= 300 {
+		if reply.route.Provider != nil {
+			out.ProviderId, out.UpstreamModel = stringPointer(reply.route.ProviderID), stringPointer(reply.route.UpstreamModel)
+		}
+		if reply.status >= 300 {
+			out.Status = &reply.status
+			fail(fmt.Sprintf("HTTP %d", reply.status))
+			return
+		}
 		fail("没有来源返回可用的聊天响应")
 		return
 	}
+	out.ProviderId, out.UpstreamModel = stringPointer(reply.route.ProviderID), stringPointer(reply.route.UpstreamModel)
 	out.Status = &reply.status
-	if reply.status < 200 || reply.status >= 300 {
-		fail(fmt.Sprintf("HTTP %d", reply.status))
-		return
-	}
 	out.Ok = true
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -657,3 +658,6 @@ func deref[T any](p *T, def T) T {
 	}
 	return *p
 }
+
+// stringPointer 取一个字符串的副本，返回的指针与调用处的变量无关。
+func stringPointer(s string) *string { return &s }

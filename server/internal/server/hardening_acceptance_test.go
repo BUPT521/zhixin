@@ -306,7 +306,7 @@ func TestCrossAccountBackupDeleteLeavesOtherAccount(t *testing.T) {
 func TestHostedModelNeedsVerifiedContact(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[{"message":{"content":"ok"}}]}`)
+		_, _ = io.WriteString(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":3}}`)
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -314,8 +314,8 @@ func TestHostedModelNeedsVerifiedContact(t *testing.T) {
 	h.configureModel("http://"+upstream.Listener.Addr().String()+"/v1", "deepseek-flash")
 	token, userID := h.register("model@b.cn")
 	chat := func() (int, problem) {
-		resp := h.do("POST", "/v1/llm/chat/completions", token,
-			bytes.NewReader(mustJSON(t, map[string]any{"model": "deepseek-flash", "stream": false})),
+		resp := h.do("POST", "/v1/llm/responses", token,
+			bytes.NewReader(mustJSON(t, map[string]any{"model": "deepseek-flash", "stream": false, "input": []any{}})),
 			map[string]string{"Content-Type": "application/json"})
 		var p problem
 		if resp.StatusCode != http.StatusOK {
@@ -344,7 +344,7 @@ func TestHostedModelConcurrencyLimit(t *testing.T) {
 		started.Done()
 		<-release
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"usage":{"total_tokens":3},"choices":[{"message":{"content":"ok"}}]}`)
+		_, _ = io.WriteString(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":3}}`)
 	}))
 	t.Cleanup(upstream.Close)
 	t.Cleanup(func() {
@@ -363,14 +363,14 @@ func TestHostedModelConcurrencyLimit(t *testing.T) {
 	token, userID := h.register("concurrent@b.cn")
 	h.markContactVerified(userID)
 
-	body := mustJSON(t, map[string]any{"model": "deepseek-flash", "stream": false})
+	body := mustJSON(t, map[string]any{"model": "deepseek-flash", "stream": false, "input": []any{}})
 	var wg sync.WaitGroup
 	results := make(chan int, 4)
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp := h.do("POST", "/v1/llm/chat/completions", token, bytes.NewReader(body),
+			resp := h.do("POST", "/v1/llm/responses", token, bytes.NewReader(body),
 				map[string]string{"Content-Type": "application/json"})
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()

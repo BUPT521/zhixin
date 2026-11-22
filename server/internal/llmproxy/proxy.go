@@ -641,6 +641,17 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 			continue
 		}
 		reply.status = resp.StatusCode
+		mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		// 来源回一份页面或 problem+json 错误时，换下一个来源：网关的故障页与
+		// 来源自己的错误体都不是客户端的对话响应，照抄给客户端只会让调用方按
+		// 格式错误结束。流式请求另有下面的流式类型检查，这里只管整段响应。
+		if !stream && (mediaType == "text/html" || mediaType == "application/problem+json") {
+			resp.Body.Close()
+			finish(attemptResult{tokens: -1})
+			p.router.health.fail(rt.ProviderID, "响应类型不可用")
+			lastErr = errors.New("provider did not return a usable response")
+			continue
+		}
 		if reply.status < 200 || reply.status >= 300 {
 			resp.Body.Close()
 			finish(attemptResult{tokens: rejectedUsage(reply.status)})
