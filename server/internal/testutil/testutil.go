@@ -169,6 +169,12 @@ func (Base) PutV1BlobsSha256(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
+func (Base) PostV1LlmResponses(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+// PostV1LlmChatCompletions 只让旧的路径继续 404：客户端已经改用 Responses，
+// 契约里的这一条等转发切换完成后再删。
 func (Base) PostV1LlmChatCompletions(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

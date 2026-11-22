@@ -32,8 +32,8 @@ type testAPI struct {
 
 func (a testAPI) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { a.p.Models(w, r) }
 func (a testAPI) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { a.p.QuotaStatus(w, r) }
-func (a testAPI) PostV1LlmChatCompletions(w http.ResponseWriter, r *http.Request) {
-	a.p.Chat(w, r)
+func (a testAPI) PostV1LlmResponses(w http.ResponseWriter, r *http.Request) {
+	a.p.Responses(w, r)
 }
 func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmEmbeddingsParams) {
 	a.p.Embeddings(w, r)
@@ -134,10 +134,10 @@ func TestHandlerLLMProxy(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你\"}\n\n")
 		w.(http.Flusher).Flush()
-		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"total_tokens\":120}}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"total_tokens\":120}}}\n\n")
+
 	}))
 	defer upstream.Close()
 
@@ -151,14 +151,14 @@ func TestHandlerLLMProxy(t *testing.T) {
 	token := signIn(t, env.authSvc, "a@b.cn")
 
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "gpt-x"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "gpt-x"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
 		t.Fatalf("model check: %d %+v", code, p)
 	}
 
-	req := map[string]any{"model": "deepseek-flash", "stream": true, "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	req := map[string]any{"model": "deepseek-flash", "stream": true, "input": []any{map[string]string{"role": "user", "content": "hi"}}}
 	b, _ := json.Marshal(req)
-	stream := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(b), nil))
-	if !strings.Contains(string(stream), "你") || !strings.HasSuffix(string(stream), "data: [DONE]\n\n") {
+	stream := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(b), nil))
+	if !strings.Contains(string(stream), "你") || !strings.Contains(string(stream), "response.completed") {
 		t.Fatalf("stream: %q", stream)
 	}
 	if gotAuth != "Bearer sk-server" {
@@ -175,7 +175,7 @@ func TestHandlerLLMProxy(t *testing.T) {
 	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 120 || q.EmbeddingCap != 10000 {
 		t.Fatalf("usage: %d %+v", code, q)
 	}
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 		t.Fatalf("quota: %d %+v", code, p)
 	}
 }
@@ -183,8 +183,8 @@ func TestHandlerLLMProxy(t *testing.T) {
 func TestHandlerQuotaOverride(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"total_tokens\":120}}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"total_tokens\":120}}}\n\n")
+
 	}))
 	defer upstream.Close()
 
@@ -202,15 +202,15 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	token := tokens.AccessToken
 	chat := map[string]any{
 		"model": "deepseek-flash", "stream": true,
-		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
+		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}},
 	}
 
 	// 默认额度 1200：第一次花掉 120，剩余额度不足以覆盖第二次预留。
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusOK {
 		t.Fatalf("第一次请求应通过，得到 %d", code)
 	}
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 		t.Fatalf("默认额度应用完：%d %+v", code, p)
 	}
 
@@ -223,13 +223,13 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.DailyTokens != 5000 || q.Used != 120 {
 		t.Fatalf("额度接口应返回调整后的值：%d %+v", code, q)
 	}
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusOK {
 		t.Fatalf("调整之后应通过，得到 %d", code)
 	}
 
 	// 调低之后立即生效，被拒时 extra 里带的是调整后的额度。
 	quota.SetDailyLimit(tokens.UserID, 100)
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &p); code != http.StatusTooManyRequests {
 		t.Fatalf("调低之后应被拒，得到 %d", code)
 	}
 	if got, _ := p.Extra["daily_tokens"].(float64); got != 100 {
@@ -243,7 +243,7 @@ func TestHandlerLLMProxyWithoutSources(t *testing.T) {
 	token := signIn(t, env.authSvc, "a@b.cn")
 
 	var p testutil.Problem
-	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "deepseek-flash"}, &p); code != http.StatusServiceUnavailable || p.Code != string(httpx.CodeUnavailable) {
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "deepseek-flash"}, &p); code != http.StatusServiceUnavailable || p.Code != string(httpx.CodeUnavailable) {
 		t.Fatalf("got %d %+v", code, p)
 	}
 	var list struct {
@@ -285,7 +285,7 @@ func newFakeSource(t *testing.T, tag string) *fakeSource {
 			fmt.Fprintf(w, `{"error":{"message":"%s says %d"}}`, tag, status)
 			return
 		}
-		fmt.Fprintf(w, `{"choices":[{"message":{"content":"%s"}}],"usage":{"total_tokens":7}}`, tag)
+		fmt.Fprintf(w, `{"id":"resp_1","object":"response","output":[],"usage":{"total_tokens":7},"tag":"%s"}`, tag)
 	}))
 	t.Cleanup(f.Close)
 	return f
@@ -305,17 +305,13 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 		}})
 	})
 	token := signIn(t, env.authSvc, "f@b.cn")
-	chat := map[string]any{"model": "zhixin-chat", "messages": []any{}}
+	chat := map[string]any{"model": "zhixin-chat", "input": []any{}}
 
 	for i := range 3 {
 		var out struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
+			Tag string `json:"tag"`
 		}
-		if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &out); code != http.StatusOK || out.Choices[0].Message.Content != "backup" {
+		if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &out); code != http.StatusOK || out.Tag != "backup" {
 			t.Fatalf("第 %d 次应由备用来源回答：%d %+v", i+1, code, out)
 		}
 	}
@@ -330,7 +326,7 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 		t.Fatal("主来源连续失败三次后应进入冷却")
 	}
 	before := primary.calls.Load()
-	env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil)
+	env.c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil)
 	if primary.calls.Load() != before {
 		t.Fatal("冷却中的来源不应先被尝试")
 	}
@@ -356,7 +352,7 @@ func TestChatPassesThroughClientErrorsWithoutFailover(t *testing.T) {
 		}})
 	})
 	token := signIn(t, env.authSvc, "g@b.cn")
-	resp := env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"zhixin-chat"}`), nil)
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token, strings.NewReader(`{"model":"zhixin-chat","input":[]}`), nil)
 	body := testutil.ReadBody(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || strings.Contains(string(body), "primary says 400") {
 		t.Fatalf("400 应保留状态并替换响应体：%d %s", resp.StatusCode, body)
@@ -368,7 +364,7 @@ func TestChatPassesThroughClientErrorsWithoutFailover(t *testing.T) {
 	// 最后一个来源也失败时，把它的状态与响应体交给客户端。
 	primary.status.Store(http.StatusTooManyRequests)
 	backup.status.Store(http.StatusInternalServerError)
-	resp = env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"zhixin-chat"}`), nil)
+	resp = env.c.Do(http.MethodPost, "/v1/llm/responses", token, strings.NewReader(`{"model":"zhixin-chat","input":[]}`), nil)
 	body = testutil.ReadBody(t, resp)
 	if resp.StatusCode != http.StatusInternalServerError || strings.Contains(string(body), "backup says 500") {
 		t.Fatalf("全部失败时应保留最后一个来源的状态：%d %s", resp.StatusCode, body)
@@ -382,7 +378,7 @@ func TestChatUnreachableSourcesGive502(t *testing.T) {
 	})
 	token := signIn(t, env.authSvc, "h@b.cn")
 	var p testutil.Problem
-	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "m"}, &p); code != http.StatusBadGateway || p.Code != string(httpx.CodeUpstreamFailed) {
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "m", "input": []any{}}, &p); code != http.StatusBadGateway || p.Code != string(httpx.CodeUpstreamFailed) {
 		t.Fatalf("got %d %+v", code, p)
 	}
 }
@@ -451,7 +447,7 @@ func TestBrokenKeyMakesModelUnavailable(t *testing.T) {
 	})
 	token := signIn(t, env.authSvc, "k@b.cn")
 	var p testutil.Problem
-	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "m"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "m", "input": []any{}}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
 		t.Fatalf("key 无法解密时模型不可用：%d %+v", code, p)
 	}
 	if src.calls.Load() != 0 {
@@ -590,7 +586,7 @@ func TestEmbeddingsSplitAndMerge(t *testing.T) {
 	}
 	// 聊天接口不接受嵌入模型。
 	var p testutil.Problem
-	if code := env.c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, map[string]any{"model": "zhixin-embed"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "zhixin-embed"}, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeModelNotAllowed) {
 		t.Fatalf("嵌入模型不能用于聊天：%d %+v", code, p)
 	}
 }
@@ -706,16 +702,22 @@ func TestArrayLen(t *testing.T) {
 	}
 }
 
-func TestStreamAlwaysAsksForUsageAndEstimatesWithoutIt(t *testing.T) {
-	var gotOpts map[string]any
+func TestStreamEstimatesWithoutUsage(t *testing.T) {
+	var gotPath string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		gotOpts, _ = body["stream_options"].(map[string]any)
+		if _, ok := body["stream_options"]; ok {
+			t.Errorf("Responses 没有 stream_options，不应转发：%+v", body)
+		}
+		if body["max_output_tokens"] == nil {
+			t.Errorf("没给输出上限时应由服务端补上：%+v", body)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		// 不带 usage：服务端应按字节估算。
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"一二三四五六七八九十\"}}]}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"一二三四五六七八九十\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{}}\n\n")
 	}))
 	defer upstream.Close()
 	cfg := baseConfig()
@@ -724,18 +726,14 @@ func TestStreamAlwaysAsksForUsageAndEstimatesWithoutIt(t *testing.T) {
 		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "m"}}})
 	})
 	token := signIn(t, env.authSvc, "su@b.cn")
-	req := map[string]any{"model": "m", "stream": true, "stream_options": map[string]any{"foo": 1}}
+	req := map[string]any{"model": "m", "stream": true, "input": []any{}}
 	b, _ := json.Marshal(req)
-	testutil.ReadBody(t, env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(b), nil))
-	if gotOpts["include_usage"] != true || len(gotOpts) != 1 {
-		t.Fatalf("应仅转发服务端设定的 include_usage：%+v", gotOpts)
+	body := testutil.ReadBody(t, env.c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(b), nil))
+	if !strings.Contains(string(body), "response.completed") {
+		t.Fatalf("结束事件应原样转发：%s", body)
 	}
-	var q struct {
-		Used int64 `json:"used_tokens"`
-	}
-	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q)
-	if q.Used <= 0 {
-		t.Fatalf("没有 usage 时也要估算用量：%+v", q)
+	if gotPath != "/responses" {
+		t.Fatalf("应转发到来源的 /responses：%s", gotPath)
 	}
 }
 
@@ -747,7 +745,7 @@ func TestRejectedServerKeyIsNotPassedThrough(t *testing.T) {
 		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{{ProviderID: "p", UpstreamModel: "x"}}})
 	})
 	token := signIn(t, env.authSvc, "kr@b.cn")
-	resp := env.c.Do(http.MethodPost, "/v1/llm/chat/completions", token, strings.NewReader(`{"model":"m"}`), nil)
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token, strings.NewReader(`{"model":"m","input":[]}`), nil)
 	body := testutil.ReadBody(t, resp)
 	if resp.StatusCode != http.StatusBadGateway || strings.Contains(string(body), "org-secret") {
 		t.Fatalf("key 被拒应返回 502 且不转发提供方的错误体：%d %s", resp.StatusCode, body)
@@ -835,7 +833,7 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 		once.Do(func() { close(entered) })
 		<-release
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":5}}`)
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":5}}`)
 	}))
 	defer upstream.Close()
 
@@ -845,7 +843,7 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 	}, upstream.URL)
 	proxy.SetConcurrencyLimit(1)
 	token := signIn(t, authSvc, "concurrent@b.cn")
-	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	req := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 	body, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -853,11 +851,11 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 
 	first := make(chan *http.Response, 1)
 	go func() {
-		first <- c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(body), map[string]string{"Content-Type": "application/json"})
+		first <- c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(body), map[string]string{"Content-Type": "application/json"})
 	}()
 	<-entered
 
-	resp := c.Do(http.MethodPost, "/v1/llm/chat/completions", token, failingReader{}, nil)
+	resp := c.Do(http.MethodPost, "/v1/llm/responses", token, failingReader{}, nil)
 	problem := testutil.ReadProblem(t, resp)
 	if resp.StatusCode != http.StatusTooManyRequests || problem.Code != string(httpx.CodeRateLimited) {
 		t.Fatalf("第 2 个在途请求应回 429，得到 %d %+v", resp.StatusCode, problem)
@@ -877,7 +875,7 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 	}
 
 	// 名额归还之后同一个账号可以继续请求，计数没有残留。
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, nil); code != http.StatusOK {
 		t.Fatalf("名额归还后应恢复可用，得到 %d", code)
 	}
 }
@@ -890,7 +888,7 @@ func TestHandlerInstanceMemoryBudget(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":5}}`)
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":5}}`)
 	}))
 	defer upstream.Close()
 
@@ -903,11 +901,11 @@ func TestHandlerInstanceMemoryBudget(t *testing.T) {
 	token := signIn(t, authSvc, "budget@b.cn")
 
 	// 正文约 3 KiB，两倍已经超过 4096 字节的预算。
-	big, err := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": strings.Repeat("x", 3000)}}})
+	big, err := json.Marshal(map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": strings.Repeat("x", 3000)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(big), map[string]string{"Content-Type": "application/json"})
+	resp := c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(big), map[string]string{"Content-Type": "application/json"})
 	problem := testutil.ReadProblem(t, resp)
 	if resp.StatusCode != http.StatusTooManyRequests || problem.Code != string(httpx.CodeRateLimited) {
 		t.Fatalf("超过实例预算应回 429，得到 %d %+v", resp.StatusCode, problem)
@@ -917,9 +915,9 @@ func TestHandlerInstanceMemoryBudget(t *testing.T) {
 	}
 
 	// 小请求能进门，但非流式响应上限大于剩余预算，占不到时不写出任何内容。
-	small := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	small := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, small, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, small, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
 		t.Fatalf("响应预算不足应回 429，得到 %d %+v", code, p)
 	}
 	if forwarded.Load() != 1 {
@@ -936,7 +934,7 @@ func TestHandlerRequiresVerifiedContact(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":10}}`)
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":10}}`)
 	}))
 	defer upstream.Close()
 
@@ -946,7 +944,7 @@ func TestHandlerRequiresVerifiedContact(t *testing.T) {
 		RequireVerifiedContact: true,
 	}, upstream.URL)
 	token := signIn(t, authSvc, "unverified@b.cn")
-	req := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	req := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 
 	verified := false
 	calls := 0
@@ -956,7 +954,7 @@ func TestHandlerRequiresVerifiedContact(t *testing.T) {
 	})
 
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, &p); code != http.StatusForbidden || p.Code != string(httpx.CodeContactUnverified) {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, &p); code != http.StatusForbidden || p.Code != string(httpx.CodeContactUnverified) {
 		t.Fatalf("没有已验证登录方式应回 403 contact_unverified，得到 %d %+v", code, p)
 	}
 	if forwarded.Load() != 0 {
@@ -967,7 +965,7 @@ func TestHandlerRequiresVerifiedContact(t *testing.T) {
 	}
 
 	verified = true
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, nil); code != http.StatusOK {
 		t.Fatalf("确认登录方式之后应转发，得到 %d", code)
 	}
 	if forwarded.Load() != 1 {
@@ -976,7 +974,7 @@ func TestHandlerRequiresVerifiedContact(t *testing.T) {
 
 	// 没有注入检查时按已认证处理：内存装配与本地开发不接账号库也能用托管额度。
 	proxy.SetContactVerifier(nil)
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, req, nil); code != http.StatusOK {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, req, nil); code != http.StatusOK {
 		t.Fatalf("未注入检查时应按已认证处理，得到 %d", code)
 	}
 	if forwarded.Load() != 2 {
@@ -992,7 +990,7 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if calls.Add(1) == 1 {
-			fmt.Fprint(w, `{"choices":[{"message":{"content":"hi"}}],"usage":{"total_tokens":300}}`)
+			fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":300}}`)
 			return
 		}
 		// 第二次请求模拟提供方故障：既没有回答，也没有 usage。
@@ -1006,9 +1004,9 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 		MaxRequestBytes: 1 << 20,
 	}, upstream.URL)
 	token := signIn(t, authSvc, "settle@b.cn")
-	chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	chat := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusOK {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusOK {
 		t.Fatalf("第一次请求应通过，得到 %d", code)
 	}
 	var q struct {
@@ -1018,7 +1016,7 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 		t.Fatalf("应按实际用量 300 结算，得到 %d %+v", code, q)
 	}
 
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, nil); code != http.StatusInternalServerError {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusInternalServerError {
 		t.Fatalf("上游错误应原样返回，得到 %d", code)
 	}
 	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used <= 300 {
@@ -1033,7 +1031,7 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 	t.Run("账号额度", func(t *testing.T) {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":300}}`)
+			fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":300}}`)
 		}))
 		defer upstream.Close()
 
@@ -1042,10 +1040,10 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 			MaxRequestBytes: 1 << 20,
 		}, upstream.URL)
 		token := signIn(t, authSvc, "budget@b.cn")
-		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+		chat := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 
 		var p testutil.Problem
-		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+		if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 			t.Fatalf("额度用完应回 429 quota_exceeded，得到 %d %+v", code, p)
 		}
 		if got, _ := p.Extra["used_tokens"].(float64); got != 0 {
@@ -1059,7 +1057,7 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 	t.Run("实例预算", func(t *testing.T) {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":20}}`)
+			fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":20}}`)
 		}))
 		defer upstream.Close()
 
@@ -1069,10 +1067,10 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 			MaxRequestBytes:     1 << 20,
 		}, upstream.URL)
 		token := signIn(t, authSvc, "instance@b.cn")
-		chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+		chat := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 
 		var p testutil.Problem
-		if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
+		if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeQuotaExceeded) {
 			t.Fatalf("实例预算用完应回 429 quota_exceeded，得到 %d %+v", code, p)
 		}
 		if got, _ := p.Extra["instance_used_tokens"].(float64); got != 0 {
@@ -1090,7 +1088,7 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 func TestHandlerRejectsOversizedResponse(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}],"usage":{"total_tokens":10}}`, strings.Repeat("x", 128))
+		fmt.Fprintf(w, `{"id":"r","object":"response","output":[],"usage":{"total_tokens":10},"padding":%q}`, strings.Repeat("x", 128))
 	}))
 	defer upstream.Close()
 
@@ -1100,10 +1098,10 @@ func TestHandlerRejectsOversizedResponse(t *testing.T) {
 		MaxResponseBytes: 64,
 	}, upstream.URL)
 	token := signIn(t, authSvc, "oversize@b.cn")
-	chat := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]string{"role": "user", "content": "hi"}}}
+	chat := map[string]any{"model": "deepseek-flash", "input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}}}
 
 	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/llm/chat/completions", token, chat, &p); code != http.StatusBadGateway || p.Code != string(httpx.CodeUpstreamFailed) {
+	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, &p); code != http.StatusBadGateway || p.Code != string(httpx.CodeUpstreamFailed) {
 		t.Fatalf("超限响应应回 502 upstream_failed，得到 %d %+v", code, p)
 	}
 	if !strings.Contains(p.Detail, "exceeds") {
@@ -1117,7 +1115,7 @@ func TestHandlerStreamIdleTimeout(t *testing.T) {
 	canceled := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你\"}\n\n")
 		w.(http.Flusher).Flush()
 		select {
 		case <-r.Context().Done():
@@ -1136,11 +1134,11 @@ func TestHandlerStreamIdleTimeout(t *testing.T) {
 	token := signIn(t, authSvc, "idle@b.cn")
 	chat := map[string]any{
 		"model": "deepseek-flash", "stream": true,
-		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
+		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}},
 	}
 
 	start := time.Now()
-	body := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(mustJSON(t, chat)), nil))
+	body := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(mustJSON(t, chat)), nil))
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("空闲超时应在时限附近结束响应，实际用了 %v", elapsed)
 	}
@@ -1172,7 +1170,7 @@ func TestHandlerStreamTotalTimeout(t *testing.T) {
 				close(canceled)
 				return
 			case <-ticker.C:
-				fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n")
+				fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n")
 				flusher.Flush()
 			}
 		}
@@ -1188,11 +1186,11 @@ func TestHandlerStreamTotalTimeout(t *testing.T) {
 	token := signIn(t, authSvc, "total@b.cn")
 	chat := map[string]any{
 		"model": "deepseek-flash", "stream": true,
-		"messages": []any{map[string]string{"role": "user", "content": "hi"}},
+		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}},
 	}
 
 	start := time.Now()
-	body := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/chat/completions", token, bytes.NewReader(mustJSON(t, chat)), nil))
+	body := testutil.ReadBody(t, c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(mustJSON(t, chat)), nil))
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("总时限应在时限附近结束响应，实际用了 %v", elapsed)
 	}

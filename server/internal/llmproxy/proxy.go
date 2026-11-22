@@ -23,6 +23,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -385,7 +386,9 @@ func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved,
 	}
 }
 
-func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
+// Responses 转发客户端唯一的对话请求（ADR-0052）。服务端只做字段白名单、模型名
+// 替换与额度结算，事件原样转发；请求体、响应体与流里的用量都不记录。
+func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 	userID := auth.MustPrincipal(r.Context()).UserID
 	done, ok := p.beginRequest(w, r, userID)
 	if !ok {
@@ -403,6 +406,14 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	if !allowFields(w, r, fields, chatFields) {
 		return
 	}
+	if raw, ok := fields["input"]; !ok || !isJSONArray(raw) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "input must be a list of input items")
+		return
+	}
+	if raw, ok := fields["instructions"]; ok && !isJSONString(raw) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "instructions must be a string")
+		return
+	}
 	if raw, ok := fields["tools"]; ok && !functionToolsOnly(raw) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "tools must be a list of functions")
 		return
@@ -414,12 +425,7 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if stream {
-		fields["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-	} else {
-		delete(fields, "stream_options")
-	}
-	output, err := chatOutputLimit(fields)
+	output, err := responsesOutputLimit(fields)
 	if err != nil {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
@@ -492,30 +498,34 @@ func (p *Proxy) Chat(w http.ResponseWriter, r *http.Request) {
 	reply.finish(result)
 }
 
-// chatOutputLimit accepts the two OpenAI-compatible names for the same limit.
-func chatOutputLimit(fields map[string]json.RawMessage) (int64, error) {
-	if raw, ok := fields["n"]; ok && string(raw) != "1" {
-		return 0, errors.New("n must be 1")
-	}
-	key := "max_tokens"
-	if _, ok := fields["max_completion_tokens"]; ok {
-		if _, duplicate := fields[key]; duplicate {
-			return 0, errors.New("only one completion token limit may be set")
-		}
-		key = "max_completion_tokens"
-	}
-	const defaultOutput = 1024
+// responsesOutputLimit 检查输出上限；没给时按 Responses 的默认值补上，用量估算
+// 要把它算进预留。
+func responsesOutputLimit(fields map[string]json.RawMessage) (int64, error) {
+	const minOutput = 16
 	const maxOutput = 8192
 	var output int64
-	if raw, ok := fields[key]; ok {
-		if json.Unmarshal(raw, &output) != nil || output < 1 || output > maxOutput {
-			return 0, fmt.Errorf("%s must be between 1 and %d", key, maxOutput)
+	if raw, ok := fields["max_output_tokens"]; ok {
+		if json.Unmarshal(raw, &output) != nil || output < minOutput || output > maxOutput {
+			return 0, fmt.Errorf("max_output_tokens must be between %d and %d", minOutput, maxOutput)
 		}
 	} else {
-		output = defaultOutput
-		fields[key] = json.RawMessage("1024")
+		output = defaultOutputTokens
+		fields["max_output_tokens"] = json.RawMessage(strconv.FormatInt(defaultOutputTokens, 10))
 	}
 	return output, nil
+}
+
+// defaultOutputTokens 与上游没给输出上限时的用量估算一致。
+const defaultOutputTokens = 1024
+
+func isJSONArray(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '['
+}
+
+func isJSONString(raw json.RawMessage) bool {
+	var s string
+	return json.Unmarshal(raw, &s) == nil
 }
 
 func rejectedUsage(status int) int64 {
@@ -540,12 +550,13 @@ func keyRejected(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }
 
+// chatFields 是转发前允许经过的 Responses 请求字段；`store` 固定为 false，
+// 客户端不发 `previous_response_id`，服务端也不保存会话。
 var chatFields = map[string]bool{
-	"model": true, "messages": true, "max_tokens": true, "max_completion_tokens": true,
-	"n": true, "stream": true, "stream_options": true, "temperature": true,
-	"top_p": true, "stop": true, "presence_penalty": true, "frequency_penalty": true,
-	"tools": true, "tool_choice": true, "parallel_tool_calls": true,
-	"thinking": true, "reasoning_effort": true, "response_format": true,
+	"model": true, "instructions": true, "input": true,
+	"max_output_tokens": true, "temperature": true, "top_p": true,
+	"stream": true, "tools": true, "tool_choice": true, "parallel_tool_calls": true,
+	"reasoning": true, "text": true,
 }
 
 func functionToolsOnly(raw json.RawMessage) bool {
@@ -619,7 +630,7 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 		if err != nil {
 			return reply, err
 		}
-		resp, err := p.attempt(ctx, rt.Provider, "/chat/completions", body, stream)
+		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream)
 		if err != nil {
 			finish(attemptResult{tokens: -1})
 			if ctx.Err() != nil {
@@ -664,17 +675,10 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
 		resp.Body.Close()
 		release()
-		var completion struct {
-			usageEnvelope
-			Choices []struct {
-				Message map[string]json.RawMessage `json:"message"`
-			} `json:"choices"`
+		if err == nil && !isResponsesBody(b) {
+			err = errors.New("invalid response object")
 		}
-		if err == nil && (json.Unmarshal(b, &completion) != nil || len(completion.Choices) == 0 ||
-			len(completion.Choices[0].Message) == 0) {
-			err = errors.New("invalid chat completion")
-		}
-		used := completion.tokens(KindChat)
+		used := usageTokens(b, KindChat)
 		if used <= 0 {
 			used = -1
 		}
@@ -695,6 +699,10 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 	return reply, lastErr
 }
 
+// upstreamResponsesPath 是来源侧接收对话请求的路径。来源都是 OpenAI 兼容地址，
+// 以 /v1 结尾；管理员在后台配置来源时写的就是这个结尾。
+const upstreamResponsesPath = "/responses"
+
 // attempt 向一个来源发一次请求。headerDeadline 为真时，响应头必须在
 // HeaderTimeout 内到达，否则按连接失败处理，便于换下一个来源；非流式聊天
 // 要等整段回答生成完才有响应头，不设这个期限。
@@ -709,7 +717,7 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 	if prov.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+prov.APIKey)
 	}
-	if path == "/chat/completions" && headerDeadline {
+	if headerDeadline {
 		req.Header.Set("Accept", "text/event-stream")
 	}
 	var timer *time.Timer
@@ -774,11 +782,16 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 		})
 }
 
+// usageEnvelope 读 Responses 与 Embeddings 两种响应里的用量：对话是
+// input_tokens、output_tokens 与 total_tokens，嵌入是 prompt_tokens 与
+// total_tokens，两种都认，取值以实际出现的字段为准。
 type usageEnvelope struct {
 	Usage *struct {
-		PromptTokens     int64  `json:"prompt_tokens"`
-		TotalTokens      int64  `json:"total_tokens"`
-		CompletionTokens *int64 `json:"completion_tokens"`
+		InputTokens      int64 `json:"input_tokens"`
+		OutputTokens     int64 `json:"output_tokens"`
+		PromptTokens     int64 `json:"prompt_tokens"`
+		TotalTokens      int64 `json:"total_tokens"`
+		CompletionTokens int64 `json:"completion_tokens"`
 	} `json:"usage"`
 }
 
@@ -792,10 +805,26 @@ func (u usageEnvelope) tokens(kind Kind) int64 {
 	if kind == KindEmbedding {
 		return u.Usage.PromptTokens
 	}
-	if u.Usage.CompletionTokens != nil && *u.Usage.CompletionTokens >= 0 {
-		return u.Usage.PromptTokens + *u.Usage.CompletionTokens
+	// 客户端每个请求都发 store: false，Responses 的用量只随响应出现一次；
+	// 没有 total_tokens 时按输入与输出相加。
+	if u.Usage.InputTokens > 0 || u.Usage.OutputTokens > 0 {
+		return u.Usage.InputTokens + u.Usage.OutputTokens
 	}
 	return 0
+}
+
+// isResponsesBody 检查整段响应是不是一个 Response 对象：非流式请求必须给出
+// 对象形状，否则换下一个来源。
+func isResponsesBody(b []byte) bool {
+	var env struct {
+		ID     string                       `json:"id"`
+		Object string                       `json:"object"`
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if json.Unmarshal(b, &env) != nil {
+		return false
+	}
+	return env.Output != nil || env.Object == "response" || env.ID != ""
 }
 
 // errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
@@ -884,32 +913,34 @@ func (g *streamGuard) stop() {
 }
 
 // copyStream forwards SSE line by line, flushing at each blank line (event
-// boundary), and picks the last usage object it sees. An explicit completion
-// marker distinguishes an upstream completion from a dropped connection.
+// boundary), and picks the last usage object it sees. A terminal response event
+// distinguishes an upstream completion from a dropped connection.
 func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, clientWriteFailed bool) {
 	flusher, _ := w.(http.Flusher)
 	rd := bufio.NewReaderSize(body, 64*1024)
 	result.tokens = -1
-	var done, finishReason, completeChoice bool
+	var done bool
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 0 {
 			trimmed := bytes.TrimRight(line, "\r\n")
 			if data, ok := bytes.CutPrefix(trimmed, []byte("data:")); ok {
 				data = bytes.TrimSpace(data)
-				done = done || bytes.Equal(data, []byte("[DONE]"))
-				var chunk struct {
+				done = done || terminalEvent(data)
+				var envelope struct {
 					usageEnvelope
-					Choices []struct {
-						FinishReason string `json:"finish_reason"`
-					} `json:"choices"`
+					Response *usageEnvelope `json:"response"`
 				}
-				if (bytes.Contains(data, []byte(`"usage"`)) || bytes.Contains(data, []byte(`"finish_reason"`))) &&
-					json.Unmarshal(data, &chunk) == nil {
-					if used := chunk.tokens(KindChat); used > 0 {
+				if bytes.Contains(data, []byte(`"usage"`)) && json.Unmarshal(data, &envelope) == nil {
+					used := envelope.tokens(KindChat)
+					if envelope.Response != nil {
+						if inner := envelope.Response.tokens(KindChat); inner > 0 {
+							used = inner
+						}
+					}
+					if used > 0 {
 						result.tokens = used
 					}
-					finishReason = finishReason || (len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != "")
 				}
 			}
 			if _, werr := w.Write(line); werr != nil {
@@ -918,17 +949,35 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 			if len(trimmed) == 0 && flusher != nil {
 				flusher.Flush()
 			}
-			if len(trimmed) == 0 {
-				result.success = done
-				completeChoice = finishReason
-			}
 		}
 		if err != nil {
 			if flusher != nil {
 				flusher.Flush()
 			}
-			result.success = result.success || (errors.Is(err, io.EOF) && completeChoice)
+			result.success = done && errors.Is(err, io.EOF)
 			return result, false
 		}
 	}
+}
+
+// terminalEvent 报告一个流式负载是不是结束事件：Responses 的成功、失败与未完成
+// 都算，数据里没写 type 时按 OpenAI 的 [DONE] 收尾。
+func terminalEvent(data []byte) bool {
+	if bytes.Equal(data, []byte("[DONE]")) {
+		return true
+	}
+	if !bytes.Contains(data, []byte(`"type"`)) {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return false
+	}
+	switch event.Type {
+	case "response.completed", "response.incomplete", "response.failed":
+		return true
+	}
+	return false
 }

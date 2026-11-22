@@ -889,6 +889,18 @@ type PostV1LlmEmbeddingsParams struct {
 	XZhixinEmbeddingCache *string `json:"X-Zhixin-Embedding-Cache,omitempty"`
 }
 
+// PostV1LlmResponsesJSONBody defines parameters for PostV1LlmResponses.
+type PostV1LlmResponsesJSONBody struct {
+	Input           []map[string]interface{}  `json:"input"`
+	Instructions    *string                   `json:"instructions,omitempty"`
+	MaxOutputTokens *int                      `json:"max_output_tokens,omitempty"`
+	Model           string                    `json:"model"`
+	Store           *bool                     `json:"store,omitempty"`
+	Stream          *bool                     `json:"stream,omitempty"`
+	ToolChoice      interface{}               `json:"tool_choice,omitempty"`
+	Tools           *[]map[string]interface{} `json:"tools,omitempty"`
+}
+
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
 type DeleteV1MeJSONBody struct {
 	Password string `json:"password"`
@@ -1002,6 +1014,9 @@ type PostV1LlmEmbeddingsJSONRequestBody = EmbeddingRequest
 
 // PostV1LlmEmbeddingsLookupJSONRequestBody defines body for PostV1LlmEmbeddingsLookup for application/json ContentType.
 type PostV1LlmEmbeddingsLookupJSONRequestBody = EmbeddingLookupRequest
+
+// PostV1LlmResponsesJSONRequestBody defines body for PostV1LlmResponses for application/json ContentType.
+type PostV1LlmResponsesJSONRequestBody PostV1LlmResponsesJSONBody
 
 // DeleteV1MeJSONRequestBody defines body for DeleteV1Me for application/json ContentType.
 type DeleteV1MeJSONRequestBody DeleteV1MeJSONBody
@@ -1272,6 +1287,9 @@ type ServerInterface interface {
 	// GetV1LlmQuota 今日用量与额度
 	// (GET /v1/llm/quota)
 	GetV1LlmQuota(w http.ResponseWriter, r *http.Request)
+	// PostV1LlmResponses OpenAI Responses 代理
+	// (POST /v1/llm/responses)
+	PostV1LlmResponses(w http.ResponseWriter, r *http.Request)
 	// DeleteV1Me 删除账号，连同同步序列、附件、备份与用量一并删除
 	// (DELETE /v1/me)
 	DeleteV1Me(w http.ResponseWriter, r *http.Request)
@@ -2092,6 +2110,20 @@ func (siw *ServerInterfaceWrapper) GetV1LlmQuota(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// PostV1LlmResponses operation middleware
+func (siw *ServerInterfaceWrapper) PostV1LlmResponses(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1LlmResponses(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteV1Me operation middleware
 func (siw *ServerInterfaceWrapper) DeleteV1Me(w http.ResponseWriter, r *http.Request) {
 
@@ -2706,6 +2738,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/models", wrapper.GetV1LlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/chat/completions", wrapper.PostV1LlmChatCompletions)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/responses", wrapper.PostV1LlmResponses)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings", wrapper.PostV1LlmEmbeddings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/embeddings/lookup", wrapper.PostV1LlmEmbeddingsLookup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/app/releases", wrapper.GetV1AppReleases)
