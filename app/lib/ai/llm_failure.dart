@@ -208,26 +208,14 @@ class LlmToolCallDelta {
   final bool replaceArguments;
 }
 
-/// 流式响应的一段：正文增量与工具调用增量分开到达，互不影响。
+/// 流式响应的一段：正文、工具参数与截断标记分开到达，互不影响。
 class LlmDelta {
-  const LlmDelta({
-    this.text = '',
-    this.toolCalls = const [],
-    this.truncated = false,
-    this.reasoningItems = const [],
-    this.reasoningProgress = false,
-  });
+  const LlmDelta({this.text = '', this.toolCalls = const [], this.truncated = false});
 
   final String text;
   final List<LlmToolCallDelta> toolCalls;
-  final List<Map<String, Object?>> reasoningItems;
-  final bool reasoningProgress;
 
-  bool get hasOutput =>
-      text.isNotEmpty ||
-      toolCalls.isNotEmpty ||
-      reasoningItems.isNotEmpty ||
-      reasoningProgress;
+  bool get hasOutput => text.isNotEmpty || toolCalls.isNotEmpty;
 
   /// 模型因输出上限结束，正文已经给完，工具参数不完整；调用方应丢弃工具调用。
   final bool truncated;
@@ -240,16 +228,12 @@ class LlmReply {
     this.tokensIn = 0,
     this.tokensOut = 0,
     this.truncated = false,
-    this.reasoningItems = const [],
   });
 
   final String text;
   final List<LlmToolCall> toolCalls;
   final int tokensIn;
   final int tokensOut;
-
-  /// Responses 用于续接工具调用的协议数据，只在当前回答内传回模型。
-  final List<Map<String, Object?>> reasoningItems;
 
   /// 模型因输出上限结束；[text] 是已经生成的部分，[toolCalls] 为空。
   final bool truncated;

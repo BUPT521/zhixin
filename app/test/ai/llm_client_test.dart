@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:async';
 import 'dart:convert';
 
@@ -6,11 +7,70 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/ai/llm_protocol.dart';
 
 /// 测试用的假地址：客户端只用配置里的完整接口地址发请求。
-const String _testEndpoint = 'https://zhixin.test/v1/llm';
+const String _testEndpoint = 'https://zhixin.test/v1/llm/responses';
+
+const _hi = [LlmMessage(role: 'user', content: 'hi')];
 
 void main() {
+  Map<String, Object?> response({
+    String? text,
+    String status = 'completed',
+    List<Map<String, Object?>> calls = const [],
+    Map<String, Object?>? usage,
+  }) => {
+    'object': 'response',
+    'status': status,
+    'output': [
+      if (text != null)
+        {
+          'type': 'message',
+          'role': 'assistant',
+          'content': [
+            {'type': 'output_text', 'text': text, 'annotations': []},
+          ],
+        },
+      ...calls,
+    ],
+    'usage': ?usage,
+  };
+
+  Map<String, Object?> call(String id, String name, Object arguments) => {
+    'type': 'function_call',
+    'call_id': id,
+    'name': name,
+    'arguments': jsonEncode(arguments),
+  };
+
+  String event(String name, Map<String, Object?> payload) =>
+      'event: $name\ndata: ${jsonEncode(payload)}\n\n';
+
+  String textDelta(String text, {int index = 0}) =>
+      event('response.output_text.delta', {
+        'type': 'response.output_text.delta',
+        'output_index': index,
+        'delta': text,
+      });
+
+  String argumentsDelta(int index, String delta) =>
+      event('response.function_call_arguments.delta', {
+        'type': 'response.function_call_arguments.delta',
+        'output_index': index,
+        'delta': delta,
+      });
+
+  String itemDone(Map<String, Object?> item, {int index = 1}) => event(
+    'response.output_item.done',
+    {'type': 'response.output_item.done', 'output_index': index, 'item': item},
+  );
+
+  String completed() => event('response.completed', {
+    'type': 'response.completed',
+    'response': {'id': 'resp_1', 'status': 'completed'},
+  });
+
   HttpLlmClient clientReturning(String body) {
     return HttpLlmClient(
       config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
@@ -24,38 +84,6 @@ void main() {
     );
   }
 
-  String sseChunk(String content, {String? finishReason}) => jsonEncode({
-    'choices': [
-      {
-        'delta': {'content': content},
-        'finish_reason': finishReason,
-      },
-    ],
-  });
-
-  String sseToolChunk(
-    int index, {
-    String? id,
-    String? name,
-    String arguments = '',
-    String? finishReason,
-  }) => jsonEncode({
-    'choices': [
-      {
-        'delta': {
-          'tool_calls': [
-            {
-              'index': index,
-              'id': ?id,
-              'function': {'name': ?name, 'arguments': arguments},
-            },
-          ],
-        },
-        'finish_reason': finishReason,
-      },
-    ],
-  });
-
   HttpLlmClient rawStreamingClient(
     String body, {
     int status = 200,
@@ -64,10 +92,11 @@ void main() {
       endpoint: _testEndpoint,
       apiKey: 'test-key',
     ),
+    Duration retryDelay = const Duration(milliseconds: 600),
   }) {
     return HttpLlmClient(
       config: config,
-      retryDelay: Duration.zero,
+      retryDelay: retryDelay,
       httpClient: MockClient.streaming((request, bodyStream) async {
         return http.StreamedResponse(
           Stream.value(utf8.encode(body)),
@@ -78,17 +107,8 @@ void main() {
     );
   }
 
-  HttpLlmClient streamingClient(
-    List<String> payloads, {
-    int status = 200,
-    String contentType = 'text/event-stream',
-  }) => rawStreamingClient(
-    payloads.map((payload) => 'data: $payload\n\n').join(),
-    status: status,
-    contentType: contentType,
-  );
-
-  String event(String json) => 'data: $json\n\n';
+  HttpLlmClient streamingClient(List<String> events) =>
+      rawStreamingClient(events.join());
 
   for (final sendsHeartbeat in [true, false]) {
     test(sendsHeartbeat ? '心跳不延长首个有效事件期限' : '响应头之后断线可重试同一步', () async {
@@ -129,7 +149,7 @@ void main() {
           expect(aborted.isCompleted, isTrue);
           return http.StreamedResponse(
             Stream.value(
-              utf8.encode(event(sseChunk('重试成功', finishReason: 'stop'))),
+              utf8.encode('${textDelta('重试成功')}${completed()}'),
             ),
             200,
             headers: {'content-type': 'text/event-stream'},
@@ -137,10 +157,7 @@ void main() {
         }),
       );
       final result = await client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
+          .stream(system: 's', messages: _hi)
           .toList();
       expect(requests, hasLength(2));
       expect(requests[0], requests[1]);
@@ -161,10 +178,13 @@ void main() {
         httpClient: MockClient.streaming((request, body) async {
           requests++;
           final stream = StreamController<List<int>>();
-          final chunk = toolOnly
-              ? sseToolChunk(0, id: 'call_1', name: 'read', arguments: '{')
-              : sseChunk('已经显示的正文');
-          stream.add(utf8.encode(event(chunk)));
+          stream.add(
+            utf8.encode(
+              toolOnly
+                  ? argumentsDelta(1, '{"steps":')
+                  : textDelta('已经显示的正文'),
+            ),
+          );
           final heartbeats = toolOnly
               ? null
               : Timer.periodic(const Duration(milliseconds: 20), (_) {
@@ -190,10 +210,7 @@ void main() {
       final deltas = <LlmDelta>[];
       await expectLater(
         client
-            .stream(
-              system: 's',
-              messages: const [LlmMessage(role: 'user', content: 'hi')],
-            )
+            .stream(system: 's', messages: _hi)
             .map((delta) {
               deltas.add(delta);
               return delta;
@@ -211,7 +228,7 @@ void main() {
       expect(requests, 1);
       expect(deltas, hasLength(1));
       if (toolOnly) {
-        expect(deltas.single.toolCalls.single.arguments, '{');
+        expect(deltas.single.toolCalls.single.arguments, '{"steps":');
       } else {
         expect(deltas.single.text, '已经显示的正文');
       }
@@ -242,12 +259,7 @@ void main() {
       }),
     );
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).drain<void>(),
       throwsA(
         isA<LlmException>()
             .having((error) => error.failure, 'failure', LlmFailure.timeout)
@@ -268,7 +280,7 @@ void main() {
       httpClient: MockClient.streaming((request, body) async {
         requests++;
         final stream = StreamController<List<int>>();
-        stream.add(utf8.encode(event(sseChunk('已经显示的正文'))));
+        stream.add(utf8.encode(textDelta('已经显示的正文')));
         unawaited(
           (request as http.AbortableRequest).abortTrigger!.then((_) {
             aborted.complete();
@@ -285,10 +297,7 @@ void main() {
     final deltas = <LlmDelta>[];
     await expectLater(
       client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
+          .stream(system: 's', messages: _hi)
           .map((delta) {
             deltas.add(delta);
             return delta;
@@ -316,7 +325,7 @@ void main() {
       httpClient: MockClient.streaming((request, body) async {
         requests++;
         final stream = StreamController<List<int>>();
-        stream.add(utf8.encode(event(sseChunk('已经显示的正文'))));
+        stream.add(utf8.encode(textDelta('已经显示的正文')));
         unawaited(
           (request as http.AbortableRequest).abortTrigger!.then(
             (_) => unawaited(stream.close()),
@@ -332,10 +341,7 @@ void main() {
     final deltas = <LlmDelta>[];
     await expectLater(
       client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
+          .stream(system: 's', messages: _hi)
           .map((delta) {
             deltas.add(delta);
             if (delta.text.isNotEmpty) cancelled.cancel();
@@ -356,20 +362,14 @@ void main() {
 
   test('正常回答返回文本与用量', () async {
     final client = clientReturning(
-      jsonEncode({
-        'choices': [
-          {
-            'message': {'content': ' 你好 '},
-            'finish_reason': 'stop',
-          },
-        ],
-        'usage': {'prompt_tokens': 3, 'completion_tokens': 2},
-      }),
+      jsonEncode(
+        response(
+          text: ' 你好 ',
+          usage: {'input_tokens': 3, 'output_tokens': 2},
+        ),
+      ),
     );
-    final reply = await client.complete(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    );
+    final reply = await client.complete(system: 's', messages: _hi);
     expect(reply.text, '你好');
     expect(reply.toolCalls, isEmpty);
     expect(reply.tokensIn, 3);
@@ -378,72 +378,39 @@ void main() {
 
   test('整段回答可以没有正文，只返回工具调用', () async {
     final client = clientReturning(
-      jsonEncode({
-        'choices': [
-          {
-            'message': {
-              'content': null,
-              'tool_calls': [
-                {
-                  'id': 'call_1',
-                  'type': 'function',
-                  'function': {
-                    'name': 'propose_next_steps',
-                    'arguments': '{"steps":[{"title":"读定义"}]}',
-                  },
-                },
+      jsonEncode(
+        response(
+          calls: [
+            call('call_1', 'propose_next_steps', {
+              'steps': [
+                {'title': '读定义'},
               ],
-            },
-            'finish_reason': 'tool_calls',
-          },
-        ],
-      }),
+            }),
+          ],
+        ),
+      ),
     );
-    final reply = await client.complete(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    );
+    final reply = await client.complete(system: 's', messages: _hi);
     expect(reply.text, isEmpty);
+    expect(reply.toolCalls.single.id, 'call_1');
     expect(reply.toolCalls.single.name, 'propose_next_steps');
     expect(reply.toolCalls.single.arguments, contains('读定义'));
   });
 
   test('整段回答达到长度上限时保留正文并标记截断', () async {
     final client = clientReturning(
-      jsonEncode({
-        'choices': [
-          {
-            'message': {'content': '{"reply":"半截'},
-            'finish_reason': 'length',
-          },
-        ],
-      }),
+      jsonEncode(response(text: '{"reply":"半截', status: 'incomplete')),
     );
-    final reply = await client.complete(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    );
+    final reply = await client.complete(system: 's', messages: _hi);
     expect(reply.text, '{"reply":"半截');
     expect(reply.truncated, isTrue);
     expect(reply.toolCalls, isEmpty);
   });
 
   test('整段回答没有正文又达到长度上限时按截断失败', () async {
-    final client = clientReturning(
-      jsonEncode({
-        'choices': [
-          {
-            'message': {'content': null},
-            'finish_reason': 'length',
-          },
-        ],
-      }),
-    );
+    final client = clientReturning(jsonEncode(response(status: 'incomplete')));
     await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
+      client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -455,21 +422,9 @@ void main() {
   });
 
   test('空内容按格式错误报告', () async {
-    final client = clientReturning(
-      jsonEncode({
-        'choices': [
-          {
-            'message': {'content': ''},
-            'finish_reason': 'stop',
-          },
-        ],
-      }),
-    );
+    final client = clientReturning(jsonEncode(response(text: '')));
     await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
+      client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -480,7 +435,7 @@ void main() {
     );
   });
 
-  test('请求按现行接口带上工具、用量与关掉的思考模式', () async {
+  test('请求按现行接口带上工具、输出上限与关掉的存储', () async {
     Map<String, Object?>? sent;
     final client = HttpLlmClient(
       config: const LlmConfig(
@@ -493,11 +448,8 @@ void main() {
         sent = jsonDecode(
           utf8.decode(await bodyStream.toBytes()),
         ) as Map<String, Object?>;
-        final text = [
-          sseChunk('你'),
-          sseChunk('好', finishReason: 'stop'),
-          '[DONE]',
-        ].map((payload) => 'data: $payload\n\n').join();
+        final text =
+            '${textDelta('你')}${textDelta('好')}${completed()}';
         return http.StreamedResponse(
           Stream.value(utf8.encode(text)),
           200,
@@ -508,7 +460,7 @@ void main() {
     final parts = <String>[];
     await for (final delta in client.stream(
       system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
+      messages: _hi,
       tools: const [
         LlmTool(
           name: 'propose_next_steps',
@@ -521,37 +473,74 @@ void main() {
       if (delta.text.isNotEmpty) parts.add(delta.text);
     }
     expect(parts, ['你', '好']);
+    expect(sent!['model'], 'deepseek-flash');
+    expect(sent!['instructions'], 's');
     expect(sent!['stream'], isTrue);
-    expect(sent!['stream_options'], {'include_usage': true});
-    expect(sent!['thinking'], {'type': 'disabled'});
-    expect(sent!['max_tokens'], isNotNull);
-    expect(sent!.containsKey('max_completion_tokens'), isFalse);
+    expect(sent!['store'], isFalse);
+    expect(sent!['max_output_tokens'], isNotNull);
+    expect(sent!.containsKey('max_tokens'), isFalse);
+    expect(sent!.containsKey('stream_options'), isFalse);
+    expect(sent!.containsKey('thinking'), isFalse);
     expect(sent!.containsKey('response_format'), isFalse);
     final tools = sent!['tools'] as List;
-    expect((tools.single as Map)['type'], 'function');
+    // 工具声明是扁平形状：名字、简介与参数都在顶层。
     expect(
-      ((sent!['tool_choice'] as Map)['function'] as Map)['name'],
-      'propose_next_steps',
+      (tools.single as Map).keys,
+      containsAll(['type', 'name', 'description', 'parameters']),
     );
+    expect(tools.single['name'], 'propose_next_steps');
+    expect(sent!['tool_choice'], {'type': 'function', 'name': 'propose_next_steps'});
+    expect((sent!['input'] as List).single, {
+      'type': 'message',
+      'role': 'user',
+      'content': 'hi',
+    });
   });
 
-  test('模型名不是 DeepSeek 时不发思考模式字段', () async {
+  test('工具不可用时把 tool_choice 发成 none', () async {
     Map<String, Object?>? sent;
-    final client = HttpLlmClient(
-      config: const LlmConfig(
-        endpoint: _testEndpoint,
-        model: 'gpt-4o-mini',
-        apiKey: 'test-key',
-      ),
+    final client = rawStreamingClient(
+      '${textDelta('好')}${completed()}',
       retryDelay: Duration.zero,
+    );
+    final capturing = HttpLlmClient(
+      config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
       httpClient: MockClient.streaming((request, bodyStream) async {
         sent = jsonDecode(
           utf8.decode(await bodyStream.toBytes()),
         ) as Map<String, Object?>;
         return http.StreamedResponse(
-          Stream.value(
-            utf8.encode('data: ${sseChunk('好', finishReason: 'stop')}\n\n'),
-          ),
+          Stream.value(utf8.encode('${textDelta('好')}${completed()}')),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    await capturing
+        .stream(
+          system: 's',
+          messages: _hi,
+          tools: const [
+            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+          ],
+          allowToolCalls: false,
+        )
+        .toList();
+    expect(sent!['tool_choice'], 'none');
+    expect(sent!.containsKey('stream'), isTrue);
+    client.dispose();
+  });
+
+  test('自动选择工具时不带具体名字', () async {
+    Map<String, Object?>? sent;
+    final client = HttpLlmClient(
+      config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        sent = jsonDecode(
+          utf8.decode(await bodyStream.toBytes()),
+        ) as Map<String, Object?>;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('${textDelta('好')}${completed()}')),
           200,
           headers: {'content-type': 'text/event-stream'},
         );
@@ -560,32 +549,36 @@ void main() {
     await client
         .stream(
           system: 's',
-          messages: const [LlmMessage(role: 'user', content: 'hi')],
+          messages: _hi,
+          tools: const [
+            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+          ],
         )
         .toList();
-    expect(sent!.containsKey('thinking'), isFalse);
-    expect(sent!['max_tokens'], isNotNull);
+    expect(sent!['tool_choice'], 'auto');
   });
 
   test('事件按 SSE 规范拼行：BOM、注释、event 字段与多行 data 都不丢', () async {
     final client = rawStreamingClient(
-      '\uFEFFdata: ${sseChunk('你')}\r\n'
+      '\uFEFFevent: response.output_text.delta\r\n'
+      'data: ${jsonEncode({
+        'type': 'response.output_text.delta',
+        'delta': '你',
+      })}\r\n'
       '\r\n'
       ': keepalive\r\n'
       '\r\n'
-      'event: message\r\n'
-      'data: {"choices":\r\n'
-      'data: [{"delta":{"content":"好"},"finish_reason":"stop"}]}\r\n'
+      'event: response.output_text.delta\r\n'
+      'data: {"type":\r\n'
+      'data: "response.output_text.delta","delta":"好"}\r\n'
       '\r\n'
-      'data: [DONE]\r\n'
+      'event: response.completed\r\n'
+      'data: {"type":"response.completed","response":{"status":"completed"}}\r\n'
       '\r\n',
     );
     final parts = <String>[];
     var truncated = false;
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
       if (delta.text.isNotEmpty) parts.add(delta.text);
       if (delta.truncated) truncated = true;
     }
@@ -593,175 +586,113 @@ void main() {
     expect(truncated, isFalse);
   });
 
-  test('正文是内容块数组时按顺序拼起来', () async {
-    final client = streamingClient([
-      jsonEncode({
-        'choices': [
-          {
-            'delta': {
-              'content': [
-                {'type': 'text', 'text': '你'},
-                {'type': 'text', 'text': '好'},
-              ],
-            },
-            'finish_reason': 'stop',
-          },
-        ],
-      }),
-      '[DONE]',
-    ]);
+  test('服务端省略 event 时按负载里的 type 读取', () async {
+    final client = rawStreamingClient(
+      [
+        {
+          'type': 'response.output_text.delta',
+          'delta': '你',
+        },
+        {
+          'type': 'response.output_text.delta',
+          'delta': '好',
+        },
+        {
+          'type': 'response.completed',
+          'response': {'status': 'completed'},
+        },
+      ].map((payload) => 'data: ${jsonEncode(payload)}\n\n').join(),
+    );
     final parts = <String>[];
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
       if (delta.text.isNotEmpty) parts.add(delta.text);
     }
     expect(parts.join(), '你好');
   });
 
-  test('思考模式下的推理内容不进入正文', () async {
+  test('推理条目一类的其他事件不进入正文', () async {
     final client = streamingClient([
-      jsonEncode({
-        'choices': [
-          {
-            'delta': {'reasoning_content': '先算一步', 'content': '你好'},
-            'finish_reason': 'stop',
-          },
-        ],
+      event('response.reasoning_summary_text.delta', {
+        'type': 'response.reasoning_summary_text.delta',
+        'delta': '先算一步',
       }),
-      '[DONE]',
+      event('response.output_text.delta', {
+        'type': 'response.output_text.delta',
+        'delta': '你好',
+      }),
+      completed(),
     ]);
     final parts = <String>[];
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
       if (delta.text.isNotEmpty) parts.add(delta.text);
     }
     expect(parts, ['你好']);
   });
 
-  test('流式工具参数按 index 分片到达，可以并行调用', () async {
+  test('流式工具参数按 output_index 分片到达，可以并行调用', () async {
     final client = streamingClient([
-      sseToolChunk(
-        0,
-        id: 'call_a',
-        name: 'propose_next_steps',
-        arguments: '{"steps":[',
+      argumentsDelta(1, '{"steps":['),
+      argumentsDelta(2, '{"citations":['),
+      itemDone(
+        call('call_a', 'propose_next_steps', {
+          'steps': [
+            {'title': '读定义'},
+          ],
+        }),
+        index: 1,
       ),
-      sseToolChunk(
-        1,
-        id: 'call_b',
-        name: 'propose_citations',
-        arguments: '{"citations":[',
+      itemDone(
+        call('call_b', 'propose_citations', {
+          'citations': [
+            {'material_id': 1, 'page_no': 2, 'quote': '原文'},
+          ],
+        }),
+        index: 2,
       ),
-      sseToolChunk(0, arguments: '{"title":"读定义"}]}'),
-      sseToolChunk(
-        1,
-        arguments: '{"material_id":1,"page_no":2,"quote":"原文"}]}',
-      ),
-      '[DONE]',
+      completed(),
     ]);
     final deltas = await client
         .stream(
           system: 's',
-          messages: const [LlmMessage(role: 'user', content: 'hi')],
+          messages: _hi,
           tools: const [
-            LlmTool(
-              name: 'propose_next_steps',
-              description: '提交建议',
-              parameters: {'type': 'object'},
-            ),
-            LlmTool(
-              name: 'propose_citations',
-              description: '提交引用',
-              parameters: {'type': 'object'},
-            ),
+            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+            LlmTool(name: 'propose_citations', description: '提交引用', parameters: {}),
           ],
         )
         .toList();
     final args = <int, StringBuffer>{};
+    final ids = <int, String>{};
     for (final delta in deltas) {
       for (final call in delta.toolCalls) {
-        args.putIfAbsent(call.index, StringBuffer.new).write(call.arguments);
+        final buffer = args.putIfAbsent(call.index, StringBuffer.new);
+        if (call.replaceArguments) buffer.clear();
+        buffer.write(call.arguments);
+        if (call.id case final id?) ids[call.index] = id;
       }
     }
-    expect(args[0].toString(), '{"steps":[{"title":"读定义"}]}');
     expect(
       args[1].toString(),
+      '{"steps":[{"title":"读定义"}]}',
+    );
+    expect(
+      args[2].toString(),
       '{"citations":[{"material_id":1,"page_no":2,"quote":"原文"}]}',
     );
-  });
-
-  test('工具调用没有 index 时按数组位置区分', () async {
-    final client = streamingClient([
-      jsonEncode({
-        'choices': [
-          {
-            'delta': {
-              'tool_calls': [
-                {
-                  'id': 'call_a',
-                  'function': {'name': 'propose_next_steps', 'arguments': '{}'},
-                },
-                {
-                  'id': 'call_b',
-                  'function': {'name': 'propose_citations', 'arguments': '{}'},
-                },
-              ],
-            },
-            'finish_reason': 'tool_calls',
-          },
-        ],
-      }),
-      '[DONE]',
-    ]);
-    final calls = await client
-        .stream(
-          system: 's',
-          messages: const [LlmMessage(role: 'user', content: 'hi')],
-          tools: const [
-            LlmTool(
-              name: 'propose_next_steps',
-              description: '提交建议',
-              parameters: {'type': 'object'},
-            ),
-            LlmTool(
-              name: 'propose_citations',
-              description: '提交引用',
-              parameters: {'type': 'object'},
-            ),
-          ],
-        )
-        .expand((delta) => delta.toolCalls)
-        .toList();
-    expect(calls.map((call) => call.index), [0, 1]);
-    expect(calls.first.name, 'propose_next_steps');
-    expect(calls.last.name, 'propose_citations');
+    expect(ids, {1: 'call_a', 2: 'call_b'});
   });
 
   test('流式回答只有工具调用时不报错', () async {
     final client = streamingClient([
-      sseToolChunk(
-        0,
-        id: 'call_1',
-        name: 'propose_next_steps',
-        arguments: '{"steps":[]}',
-        finishReason: 'tool_calls',
-      ),
-      '[DONE]',
+      itemDone(call('call_1', 'propose_next_steps', {'steps': []})),
+      completed(),
     ]);
     final deltas = await client
         .stream(
           system: 's',
-          messages: const [LlmMessage(role: 'user', content: 'hi')],
+          messages: _hi,
           tools: const [
-            LlmTool(
-              name: 'propose_next_steps',
-              description: '提交建议',
-              parameters: {'type': 'object'},
-            ),
+            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
           ],
         )
         .toList();
@@ -770,33 +701,18 @@ void main() {
 
   test('流式回答达到长度上限时保留正文并标记截断', () async {
     final client = streamingClient([
-      sseChunk('半截', finishReason: 'length'),
-      '[DONE]',
+      textDelta('半截'),
+      event('response.incomplete', {
+        'type': 'response.incomplete',
+        'response': {
+          'status': 'incomplete',
+          'incomplete_details': {'reason': 'max_output_tokens'},
+        },
+      }),
     ]);
     final parts = <String>[];
     var truncated = false;
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
-      if (delta.text.isNotEmpty) parts.add(delta.text);
-      if (delta.truncated) truncated = true;
-    }
-    expect(parts, ['半截']);
-    expect(truncated, isTrue);
-  });
-
-  test('推理资源不足时保留正文并标记截断', () async {
-    final client = streamingClient([
-      sseChunk('半截', finishReason: 'insufficient_system_resource'),
-      '[DONE]',
-    ]);
-    final parts = <String>[];
-    var truncated = false;
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
       if (delta.text.isNotEmpty) parts.add(delta.text);
       if (delta.truncated) truncated = true;
     }
@@ -806,16 +722,13 @@ void main() {
 
   test('流式回答没有正文又达到长度上限时按截断失败', () async {
     final client = streamingClient([
-      sseChunk('', finishReason: 'length'),
-      '[DONE]',
+      event('response.incomplete', {
+        'type': 'response.incomplete',
+        'response': {'status': 'incomplete'},
+      }),
     ]);
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .toList(),
+      client.stream(system: 's', messages: _hi).toList(),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -826,44 +739,47 @@ void main() {
     );
   });
 
-  test('内容被过滤时按服务端错误报告', () async {
+  test('响应失败时按服务端错误报告', () async {
     final client = streamingClient([
-      sseChunk('半截', finishReason: 'content_filter'),
-      '[DONE]',
+      event('response.failed', {
+        'type': 'response.failed',
+        'response': {
+          'status': 'failed',
+          'error': {'code': 'server_error', 'message': '服务中断'},
+        },
+      }),
     ]);
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .toList(),
+      client.stream(system: 's', messages: _hi).toList(),
       throwsA(
-        isA<LlmException>().having(
-          (error) => error.failure,
-          'failure',
-          LlmFailure.server,
-        ),
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.server)
+            .having((error) => error.detail, 'detail', '服务中断'),
       ),
     );
   });
 
-  test('流既没有 [DONE] 也没有结束原因时按截断报告', () async {
-    final client = streamingClient([
+  test('内容被过滤时按服务端错误报告', () async {
+    final client = clientReturning(
       jsonEncode({
-        'choices': [
-          {
-            'delta': {'content': '半截'},
-          },
-        ],
+        'error': {'message': '回答被内容过滤', 'code': 'content_filter'},
       }),
-    ]);
+    );
+    await expectLater(
+      client.complete(system: 's', messages: _hi),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.server)
+            .having((error) => error.detail, 'detail', '回答被内容过滤'),
+      ),
+    );
+  });
+
+  test('流既没有结束事件也没有 [DONE] 时按截断报告', () async {
+    final client = streamingClient([textDelta('半截')]);
     final parts = <String>[];
     var truncated = false;
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
       if (delta.text.isNotEmpty) parts.add(delta.text);
       if (delta.truncated) truncated = true;
     }
@@ -871,15 +787,10 @@ void main() {
     expect(truncated, isTrue);
   });
 
-  test('只有 [DONE] 没有正文与工具调用时按格式错误报告', () async {
-    final client = streamingClient(['[DONE]']);
+  test('只有结束事件没有正文与工具调用时按格式错误报告', () async {
+    final client = streamingClient([completed()]);
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .toList(),
+      client.stream(system: 's', messages: _hi).toList(),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -899,12 +810,7 @@ void main() {
       contentType: 'application/json',
     );
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .toList(),
+      client.stream(system: 's', messages: _hi).toList(),
       throwsA(
         isA<LlmException>()
             .having((error) => error.failure, 'failure', LlmFailure.auth)
@@ -918,26 +824,12 @@ void main() {
       config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
       retryDelay: Duration.zero,
       httpClient: MockClient.streaming((request, bodyStream) async {
-        final body = jsonEncode({
-          'choices': [
-            {
-              'message': {
-                'content': '整段回答',
-                'tool_calls': [
-                  {
-                    'id': 'call_1',
-                    'type': 'function',
-                    'function': {
-                      'name': 'propose_next_steps',
-                      'arguments': '{"steps":[]}',
-                    },
-                  },
-                ],
-              },
-              'finish_reason': 'tool_calls',
-            },
-          ],
-        });
+        final body = jsonEncode(
+          response(
+            text: '整段回答',
+            calls: [call('call_1', 'propose_next_steps', {'steps': []})],
+          ),
+        );
         return http.StreamedResponse(
           Stream.value(utf8.encode(body)),
           200,
@@ -948,18 +840,89 @@ void main() {
     final deltas = await client
         .stream(
           system: 's',
-          messages: const [LlmMessage(role: 'user', content: 'hi')],
+          messages: _hi,
           tools: const [
-            LlmTool(
-              name: 'propose_next_steps',
-              description: '提交建议',
-              parameters: {'type': 'object'},
-            ),
+            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
           ],
         )
         .toList();
     expect(deltas.first.text, '整段回答');
     expect(deltas.last.toolCalls.single.name, 'propose_next_steps');
+  });
+
+  test('消息按条目展开：图片是 input_image，工具交换是 function_call 与 function_call_output', () {
+    final body = responsesBody(
+      config: const LlmConfig(endpoint: _testEndpoint, model: 'm'),
+      system: 'sys',
+      messages: [
+        LlmMessage(role: 'user', content: '请看图', images: [
+          LlmImage(bytes: Uint8List.fromList([1, 2])),
+        ]),
+        const LlmMessage(
+          role: 'assistant',
+          content: '先读原文',
+          toolCalls: [
+            LlmToolCall(
+              id: 'call_1',
+              name: 'read_material_page',
+              arguments: '{"page_no":7}',
+            ),
+          ],
+        ),
+        const LlmMessage.toolResult(callId: 'call_1', content: '{"result":"正文"}'),
+      ],
+      tools: const [],
+      forceTool: null,
+      allowToolCalls: false,
+      stream: false,
+    );
+    final input = (body['input'] as List).cast<Map<String, Object?>>();
+    final content = input.first['content'] as List;
+    expect(content.first, {'type': 'input_text', 'text': '请看图'});
+    expect(
+      (content.last as Map)['image_url'],
+      'data:image/jpeg;base64,AQI=',
+    );
+    expect(input[1], {
+      'type': 'message',
+      'role': 'assistant',
+      'content': '先读原文',
+    });
+    expect(input[2], {
+      'type': 'function_call',
+      'call_id': 'call_1',
+      'name': 'read_material_page',
+      'arguments': '{"page_no":7}',
+    });
+    final output = jsonDecode(input[3]['output'] as String) as Map;
+    expect(input[3]['type'], 'function_call_output');
+    expect(input[3]['call_id'], 'call_1');
+    expect(output['result'], '正文');
+    expect(body.containsKey('tools'), isFalse);
+    expect(body.containsKey('tool_choice'), isFalse);
+  });
+
+  test('讨论历史里的工具结果原样发送', () {
+    final body = responsesBody(
+      config: const LlmConfig(endpoint: _testEndpoint),
+      system: 's',
+      messages: const [
+        LlmMessage.toolResult(
+          callId: 'c',
+          content: 'Binary(12) \\x01',
+          compileArgs: false,
+        ),
+      ],
+      tools: const [],
+      forceTool: null,
+      allowToolCalls: false,
+      stream: false,
+    );
+    expect((body['input'] as List).single, {
+      'type': 'function_call_output',
+      'call_id': 'c',
+      'output': 'Binary(12) \\x01',
+    });
   });
 
   test('流式请求遇到服务端错误重试一次', () async {
@@ -976,20 +939,17 @@ void main() {
             headers: {'content-type': 'text/plain'},
           );
         }
-        final text =
-            'data: ${sseChunk('好', finishReason: 'stop')}\n\ndata: [DONE]\n\n';
         return http.StreamedResponse(
-          Stream.value(utf8.encode(text)),
+          Stream.value(
+            utf8.encode('${textDelta('好')}${completed()}'),
+          ),
           200,
           headers: {'content-type': 'text/event-stream'},
         );
       }),
     );
     final parts = <String>[];
-    await for (final delta in client.stream(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    )) {
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
       if (delta.text.isNotEmpty) parts.add(delta.text);
     }
     expect(parts, ['好']);
@@ -1005,23 +965,13 @@ void main() {
         calls++;
         if (calls == 1) return http.Response('busy', 500);
         return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {'content': '重试成功'},
-                'finish_reason': 'stop',
-              },
-            ],
-          }),
+          jsonEncode(response(text: '重试成功')),
           200,
           headers: {'content-type': 'application/json'},
         );
       }),
     );
-    final reply = await client.complete(
-      system: 's',
-      messages: const [LlmMessage(role: 'user', content: 'hi')],
-    );
+    final reply = await client.complete(system: 's', messages: _hi);
     expect(reply.text, '重试成功');
     expect(calls, 2);
   });
@@ -1037,10 +987,7 @@ void main() {
       }),
     );
     await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
+      client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -1067,10 +1014,7 @@ void main() {
       }),
     );
     await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
+      client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>()
             .having((error) => error.failure, 'failure', LlmFailure.rateLimited)
@@ -1091,10 +1035,7 @@ void main() {
       }),
     );
     await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
+      client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>()
             .having((error) => error.failure, 'failure', LlmFailure.offline)
@@ -1117,52 +1058,12 @@ void main() {
       }),
     );
     await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
+      client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
           'failure',
           LlmFailure.timeout,
-        ),
-      ),
-    );
-    expect(calls, 1);
-  });
-
-  test('整段请求的内容错误不重试', () async {
-    var calls = 0;
-    final client = HttpLlmClient(
-      config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
-      retryDelay: Duration.zero,
-      httpClient: MockClient((request) async {
-        calls++;
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {'content': '半截'},
-                'finish_reason': 'content_filter',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }),
-    );
-    await expectLater(
-      client.complete(
-        system: 's',
-        messages: const [LlmMessage(role: 'user', content: 'hi')],
-      ),
-      throwsA(
-        isA<LlmException>().having(
-          (error) => error.failure,
-          'failure',
-          LlmFailure.server,
         ),
       ),
     );
@@ -1184,12 +1085,7 @@ void main() {
       }),
     );
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).drain<void>(),
       throwsA(
         isA<LlmException>()
             .having((error) => error.failure, 'failure', LlmFailure.rateLimited)
@@ -1214,12 +1110,7 @@ void main() {
       }),
     );
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).drain<void>(),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -1246,12 +1137,7 @@ void main() {
       }),
     );
     await expectLater(
-      client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).drain<void>(),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -1271,12 +1157,11 @@ void main() {
       httpClient: MockClient.streaming((request, bodyStream) async {
         calls++;
         final body =
-            event(sseChunk('半截')) +
-            event(
-              jsonEncode({
-                'error': {'message': '服务出错'},
-              }),
-            );
+            textDelta('半截') +
+            event('error', {
+              'type': 'error',
+              'error': {'message': '服务出错'},
+            });
         return http.StreamedResponse(
           Stream.value(utf8.encode(body)),
           200,
@@ -1287,10 +1172,7 @@ void main() {
     final deltas = <LlmDelta>[];
     await expectLater(
       client
-          .stream(
-            system: 's',
-            messages: const [LlmMessage(role: 'user', content: 'hi')],
-          )
+          .stream(system: 's', messages: _hi)
           .map((delta) {
             deltas.add(delta);
             return delta;

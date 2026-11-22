@@ -41,7 +41,7 @@ class LlmReplyReader {
         return draft.finish();
       } on LlmException catch (error) {
         if (error.failure != LlmFailure.badResponse || draft.hasOutput) rethrow;
-        // 同一个模型步骤沿用原请求，后续步骤也使用兼容的普通请求。
+        // 同一个模型步骤沿用原请求，后续步骤也使用普通请求。
         _streaming = false;
       }
     }
@@ -59,7 +59,6 @@ class LlmReplyReader {
 class _ReplyDraft {
   final _text = StringBuffer();
   final _calls = <int, _CallDraft>{};
-  final _reasoningItems = <Map<String, Object?>>[];
   var _truncated = false;
   var hasOutput = false;
 
@@ -67,7 +66,6 @@ class _ReplyDraft {
     _text.write(delta.text);
     _truncated |= delta.truncated;
     hasOutput |= delta.hasOutput || delta.truncated;
-    _reasoningItems.addAll(delta.reasoningItems);
     for (final call in delta.toolCalls) {
       _calls.putIfAbsent(call.index, _CallDraft.new).add(call);
     }
@@ -83,7 +81,6 @@ class _ReplyDraft {
             if (_calls[index]!.name.isNotEmpty) _calls[index]!.finish(),
       ],
       truncated: _truncated,
-      reasoningItems: _reasoningItems,
     );
   }
 }

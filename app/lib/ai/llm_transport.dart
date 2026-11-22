@@ -37,14 +37,15 @@ abstract class LlmClient {
   void dispose() {}
 }
 
-/// 知新服务的 HTTP 客户端：接口固定为 Chat Completions。
+/// 知新服务的 HTTP 客户端：接口固定为 Responses。
 ///
 /// 共用的部分：请求预算给出的整段、首字与空闲期限，网络错误与服务端 5xx
 /// 重试一次，SSE 按规范读事件（多行 `data:`、空行分发、注释与 `event:` 字段、
 /// 首行 BOM），非 2xx 时读出服务端自己的错误说明；超时不在这一层另设。
 ///
-/// 结束用 `[DONE]` 或 `finish_reason` 确认；都没有时按截断保留已经生成的正文，
-/// 半截回答不会被当成完整回答。地址与令牌只由账号服务在发请求前补进 [config]。
+/// 结束由 `response.completed` 一类的结束事件确认；没有时按截断保留已经生成
+/// 的正文，半截回答不会被当成完整回答。地址与令牌只由账号服务在发请求前补进
+/// [config]。
 class HttpLlmClient implements LlmClient {
   HttpLlmClient({
     required this.config,
@@ -61,8 +62,6 @@ class HttpLlmClient implements LlmClient {
   final Duration retryDelay;
   final http.Client _http;
   final bool _ownsClient;
-
-  static const LlmWire _wire = ChatWire();
 
   /// 普通请求与流式请求各用一份判据：流式请求把首字与空闲超时算作可重试。
   static const _plainRetry = RetryPolicy();
@@ -89,14 +88,12 @@ class HttpLlmClient implements LlmClient {
     if (!config.isConfigured) {
       throw const LlmException(LlmFailure.notConfigured, '配置为空');
     }
-    final wire = _wire;
     final lifecycle = budget ?? _budgetFor();
     for (var attempt = 0; ; attempt++) {
       try {
         final response = await lifecycle.run(
           () => _http.send(
             _request(
-              wire: wire,
               system: system,
               messages: messages,
               stream: false,
@@ -111,9 +108,7 @@ class HttpLlmClient implements LlmClient {
           // 服务端多半只回 `application/json`、不带 charset，按 UTF-8 自己解，
           // 免得中文被 latin1 解成乱码。
           final bytes = await lifecycle.run(response.stream.toBytes);
-          return wire.decoder().decodeBody(
-            utf8.decode(bytes, allowMalformed: true),
-          );
+          return decodeResponse(utf8.decode(bytes, allowMalformed: true));
         }
         final failure = await _readFailure(response, lifecycle);
         if (_plainRetry.shouldRetry(
@@ -152,7 +147,6 @@ class HttpLlmClient implements LlmClient {
     if (!config.isConfigured) {
       throw const LlmException(LlmFailure.notConfigured, '配置为空');
     }
-    final wire = _wire;
     final lifecycle = budget ?? _budgetFor(cancelToken: cancelToken);
     for (var index = 0; ; index++) {
       lifecycle.check();
@@ -162,7 +156,6 @@ class HttpLlmClient implements LlmClient {
         final response = await attempt.run(
           () => _http.send(
             _request(
-              wire: wire,
               system: system,
               messages: messages,
               stream: true,
@@ -178,8 +171,8 @@ class HttpLlmClient implements LlmClient {
           throw await _readFailure(response, lifecycle, attempt: attempt);
         }
         final deltas = _isEventStream(response)
-            ? _events(response.stream, attempt, wire.decoder())
-            : _readJsonAsStream(response, attempt, wire.decoder());
+            ? _events(response.stream, attempt)
+            : _readJsonAsStream(response, attempt);
         await for (final delta in deltas) {
           yield delta;
           // 界面接收增量的时间不占用下一段响应的空闲期限。
@@ -209,21 +202,17 @@ class HttpLlmClient implements LlmClient {
     }
   }
 
-  /// 有的兼容接口忽略 stream，直接返回完整 JSON。
+  /// 有的服务端忽略 stream，直接返回整段 JSON。
   Stream<LlmDelta> _readJsonAsStream(
     http.StreamedResponse response,
     _StreamAttempt attempt,
-    LlmDecoder decoder,
   ) async* {
     final bytes = await attempt.run(response.stream.toBytes);
-    final reply = decoder.decodeBody(utf8.decode(bytes, allowMalformed: true));
+    final reply = decodeResponse(utf8.decode(bytes, allowMalformed: true));
     if (reply.text.isNotEmpty) yield LlmDelta(text: reply.text);
     if (reply.truncated) {
       yield const LlmDelta(truncated: true);
       return;
-    }
-    if (reply.reasoningItems.isNotEmpty) {
-      yield LlmDelta(reasoningItems: reply.reasoningItems);
     }
     for (var index = 0; index < reply.toolCalls.length; index++) {
       final call = reply.toolCalls[index];
@@ -244,14 +233,12 @@ class HttpLlmClient implements LlmClient {
   }
 
   http.AbortableRequest _request({
-    required LlmWire wire,
     required String system,
     required List<LlmMessage> messages,
     required bool stream,
     required List<LlmTool> tools,
     required String? forceTool,
     required bool allowToolCalls,
-
     required Future<void> abortTrigger,
   }) {
     final request = http.AbortableRequest(
@@ -259,10 +246,14 @@ class HttpLlmClient implements LlmClient {
       Uri.parse(config.endpoint),
       abortTrigger: abortTrigger,
     );
-    request.headers.addAll(wire.headers(config, stream: stream));
+    request.headers.addAll({
+      'Authorization': 'Bearer ${config.apiKey.trim()}',
+      'Content-Type': 'application/json',
+      'Accept': stream ? 'text/event-stream' : 'application/json',
+    });
     request.bodyBytes = utf8.encode(
       jsonEncode(
-        wire.body(
+        responsesBody(
           config: config,
           system: system,
           messages: messages,
@@ -287,13 +278,13 @@ class HttpLlmClient implements LlmClient {
     return false;
   }
 
-  /// 逐事件读 SSE，交给对应协议的解码器；空行分发，`data:` 可以多行。
+  /// 逐事件读 SSE，交给 [LlmStream]；空行分发，`data:` 可以多行。
   Stream<LlmDelta> _events(
     Stream<List<int>> bytes,
     _StreamAttempt attempt,
-    LlmDecoder decoder,
   ) async* {
     final reader = _SseReader();
+    final decoder = LlmStream();
     final iterator = StreamIterator(
       bytes.transform(utf8.decoder).transform(const LineSplitter()),
     );

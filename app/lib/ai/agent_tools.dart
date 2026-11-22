@@ -4,7 +4,76 @@ import 'dart:convert';
 import 'llm_client.dart';
 import 'llm_context_budget.dart';
 
+/// 一次工具调用的参数，是 JSON 对象本身而不是它的文本。
 typedef ToolArguments = Map<String, Object?>;
+
+const String _inputField = 'input';
+
+/// 工具参数的形状记在声明的 `input[].zod.properties.properties` 里；没有这一层
+/// 时声明本身就是形状。
+Map<String, Object?> _declared(Map<String, Object?> parameters) {
+  final properties = parameters['properties'];
+  if (properties is Map) {
+    final input = properties[_inputField];
+    if (input is Map) {
+      final items = input['items'];
+      if (items is Map) {
+        final itemProperties = items['properties'];
+        if (itemProperties is Map) {
+          final zod = itemProperties['zod'];
+          if (zod is Map) {
+            final zodProperties = zod['properties'];
+            if (zodProperties is Map) {
+              final declared = zodProperties['properties'];
+              if (declared is Map) return declared.cast<String, Object?>();
+            }
+          }
+        }
+      }
+    }
+  }
+  return parameters;
+}
+
+/// 核对按代码调用时传进来的 input 条目：每一项都带一段 JSON 文本。
+String? _validateInput(List content) {
+  if (content.isEmpty) return '$_inputField 不能为空';
+  for (var index = 0; index < content.length; index++) {
+    final item = content[index];
+    if (item is! Map || item['text'] is! String) {
+      return '$_inputField[$index] 缺少 text';
+    }
+    if (!_hasObject(item)) {
+      return '$_inputField[$index] 的 text 不是 JSON 对象';
+    }
+  }
+  return null;
+}
+
+/// 一项 text 读出来是不是 JSON 对象。
+bool _hasObject(Map item) {
+  try {
+    return jsonDecode(item['text'] as String) is Map<String, Object?>;
+  } on FormatException {
+    return false;
+  }
+}
+
+/// 按代码调用时，参数的 JSON 文本在 `input[].text` 里；拼起来再读成对象。
+Map<String, Object?> _argumentsOf(List content) {
+  final buffer = StringBuffer();
+  for (final item in content) {
+    if (item case {'text': final String text}) buffer.write(text);
+  }
+  if (buffer.isEmpty) return const {'invalid': true};
+  try {
+    final decoded = jsonDecode(buffer.toString());
+    if (decoded is Map<String, Object?>) return decoded;
+  } on FormatException {
+    // 文本不是 JSON 对象：交给参数校验报类型错误。
+  }
+  return const {};
+}
 
 /// 工具的参数声明与实现共用一份定义，只有声明会发送给模型。
 class AgentTool {
@@ -32,8 +101,16 @@ class AgentTool {
     ToolArguments arguments,
     int resultTokens,
   ) async {
+    // 模型按代码调用时，参数写在一段 JSON 文本里，形状记在 `zod` 里。
+    final content = arguments['input'];
+    if (arguments.length == 1 && content is List) {
+      final problem = _validateInput(content);
+      if (problem != null) return AgentToolResult.invalid(problem);
+      arguments = _argumentsOf(content);
+    }
+    final declared = _declared(schema.parameters);
     final problem = _validateArguments(
-      schema.parameters,
+      declared,
       arguments,
       '',
       partialList: partialList,
@@ -41,7 +118,7 @@ class AgentTool {
     if (problem != null) return AgentToolResult.invalid(problem);
     if (partialList case final field?) {
       final items = arguments[field] as List;
-      final properties = schema.parameters['properties'] as Map;
+      final properties = declared['properties'] as Map;
       final itemSchema = (properties[field] as Map)['items'] as Map;
       final valid = <Object?>[];
       String? firstProblem;
@@ -91,7 +168,6 @@ class AgentToolResult {
   LlmMessage messageFor(String callId) => LlmMessage.toolResult(
     callId: callId,
     content: encoded,
-    toolIsError: errorCode != null,
   );
 }
 

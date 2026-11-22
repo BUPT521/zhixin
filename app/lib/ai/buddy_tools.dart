@@ -223,12 +223,53 @@ AgentTool _proposeCitations(_Proposals<CitationDraft> proposals) => AgentTool(
 String? _optionalText(ToolArguments args, String field) =>
     nullableText(args[field] as String?);
 
+/// 工具参数按代码调用发送时，接口看到的输入只有一段 JSON 文本；文本的形状
+/// 记在 `zod.properties` 里，执行之前先把文本转成对象。
+Map<String, Object?> _parameters(Map<String, Object?> properties) => {
+  'type': 'object',
+  'properties': {
+    'input': {
+      'type': 'array',
+      'items': {
+        'type': 'object',
+        'properties': {
+          'type': {'type': 'string', 'enum': ['input_text']},
+          'text': {
+            'type': 'string',
+            'description': '参数的 JSON 文本，形状见 zod.properties',
+          },
+          'zod': _zod(properties),
+        },
+        'required': ['type', 'text', 'zod'],
+      },
+    },
+  },
+  'required': ['input'],
+  'additionalProperties': false,
+};
+
+/// 文本的内容形状；JSON 校验器按它在本地核对参数。
+Map<String, Object?> _zod(Map<String, Object?> properties) => {
+  'type': 'object',
+  'description': '参数依靠代码执行的形状声明，内容等同于参数的 JSON Schema',
+  'properties': {
+    'kind': _zodKind,
+    'properties': properties,
+  },
+};
+
+const Map<String, Object?> _zodKind = {
+  'type': 'object',
+  'description':
+      '表示一段要按代码执行才能得到对象的文字：{"code": "…"}',
+};
+
 LlmTool get _memoriesSchema {
   final text = PromptText.instance;
   return LlmTool(
     name: proposeMemoriesTool,
     description: text['tool.propose_memories'],
-    parameters: {
+    parameters: _parameters({
       'type': 'object',
       'properties': {
         'memories': {
@@ -265,7 +306,7 @@ LlmTool get _memoriesSchema {
         },
       },
       'required': ['memories'],
-    },
+    }),
   );
 }
 
@@ -274,7 +315,7 @@ LlmTool get _nextStepsSchema {
   return LlmTool(
     name: proposeNextStepsTool,
     description: text['tool.propose_next_steps'],
-    parameters: {
+    parameters: _parameters({
       'type': 'object',
       'properties': {
         'steps': {
@@ -307,7 +348,7 @@ LlmTool get _nextStepsSchema {
         },
       },
       'required': ['steps'],
-    },
+    }),
   );
 }
 
@@ -316,7 +357,7 @@ LlmTool get _citationsSchema {
   return LlmTool(
     name: proposeCitationsTool,
     description: text['tool.propose_citations'],
-    parameters: {
+    parameters: _parameters({
       'type': 'object',
       'properties': {
         'citations': {
@@ -339,7 +380,7 @@ LlmTool get _citationsSchema {
         },
       },
       'required': ['citations'],
-    },
+    }),
   );
 }
 
@@ -348,7 +389,7 @@ LlmTool get _assessmentSchema {
   return LlmTool(
     name: proposeAssessmentTool,
     description: text['tool.propose_assessment'],
-    parameters: {
+    parameters: _parameters({
       'type': 'object',
       'properties': {
         'result': {
@@ -361,7 +402,7 @@ LlmTool get _assessmentSchema {
         },
       },
       'required': ['result'],
-    },
+    }),
   );
 }
 
@@ -370,7 +411,7 @@ LlmTool get _studyStepsSchema {
   return LlmTool(
     name: proposeStudyStepsTool,
     description: text['tool.propose_study_steps'],
-    parameters: {
+    parameters: _parameters({
       'type': 'object',
       'properties': {
         'steps': {
@@ -398,6 +439,6 @@ LlmTool get _studyStepsSchema {
         },
       },
       'required': ['steps'],
-    },
+    }),
   );
 }

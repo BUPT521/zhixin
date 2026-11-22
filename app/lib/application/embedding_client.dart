@@ -280,7 +280,12 @@ class RemoteEmbeddingClient extends EmbeddingClient {
     final request = http.Request('POST', uri)
       ..followRedirects = false
       ..headers['Content-Type'] = 'application/json'
-      ..body = jsonEncode({'model': spec.id, 'input': texts});
+      // 向量按 JSON 数字读回；接口的默认编码格式是 Base64，这里显式要浮点数。
+      ..body = jsonEncode({
+        'model': spec.id,
+        'input': texts,
+        'encoding_format': 'float',
+      });
     if (target.apiKey.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer ${target.apiKey}';
     }

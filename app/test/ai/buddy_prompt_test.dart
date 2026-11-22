@@ -11,7 +11,12 @@ import 'package:zhixin/domain/models/study.dart';
 LlmToolCall call(String name, Object? arguments) => LlmToolCall(
   id: '',
   name: name,
-  arguments: arguments is String ? arguments : jsonEncode(arguments),
+  // 模型按代码调用：参数写成接口里的 input 条目，JSON 文本在 text 里。
+  arguments: jsonEncode({
+    'input': [
+      {'type': 'input_text', 'text': arguments is String ? arguments : jsonEncode(arguments)},
+    ],
+  }),
 );
 
 BuddyTurnTools _tools(BuddyMode mode) =>

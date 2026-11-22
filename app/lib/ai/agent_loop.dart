@@ -143,39 +143,24 @@ class _AgentTranscript {
     : messages = uniqueById(
         history,
         (message) => message.id ?? message,
-      ).toList() {
-    for (final message in messages) {
-      _reasoningIds.addAll(message.reasoningItems.map(_reasoningId));
-    }
-  }
+      ).toList();
 
   final List<LlmMessage> messages;
-  final _reasoningIds = <String>{};
 
   LlmMessage assistantFor(LlmReply reply, List<PreparedToolCall> calls) {
-    final seen = {..._reasoningIds};
     return LlmMessage(
       role: 'assistant',
       content: reply.text,
       toolCalls: [for (final entry in calls) entry.call],
-      reasoningItems: [
-        for (final item in reply.reasoningItems)
-          if (seen.add(_reasoningId(item))) item,
-      ],
     );
   }
 
   void commitStep(LlmMessage assistant, List<LlmMessage> results) {
     messages.addAll([assistant, ...results]);
-    _reasoningIds.addAll(assistant.reasoningItems.map(_reasoningId));
-  }
-
-  static String _reasoningId(Map<String, Object?> item) {
-    final id = item['id'];
-    if (id is String && id.isNotEmpty) return 'response:$id';
-    return contentId('reasoning', [item]);
   }
 }
+
+/// 参数不做处理；没有给出编译函数时原样发送。
 
 /// 面向界面的正文预览，独立于发给模型的上下文。
 class _TurnText {

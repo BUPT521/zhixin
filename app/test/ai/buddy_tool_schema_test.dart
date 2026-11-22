@@ -8,6 +8,19 @@ import 'package:zhixin/ai/prompt_text.dart';
 import 'package:zhixin/ai/search_sources_tool.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 
+/// 把一份参数包成接口里看到的形状：只有一段 `input_text`，参数的 JSON 文本
+/// 在 `text` 里。
+Map<String, Object?> _wire(Map<String, Object?> arguments) => {
+  'input': [
+    {'type': 'input_text', 'text': jsonEncode(arguments), 'zod': _zodOf(arguments)},
+  ],
+};
+
+/// 参数里列出的各项类型，去掉零散字段之后剩下的形状。
+Map<String, Object?> _zodOf(Map<String, Object?> arguments) => {
+  'properties': arguments,
+};
+
 /// 一个工具的契约样例：一份合法规格，以及从解析结果里取出可比较的签名。
 class _Contract {
   const _Contract({
@@ -19,6 +32,8 @@ class _Contract {
 
   final BuddyMode mode;
   final String toolName;
+
+  /// 解析器读到的参数；发请求时由 [_wire] 包成接口里的形状。
   final Map<String, Object?> arguments;
   final String Function(BuddyReply reply) signature;
 }
@@ -34,7 +49,7 @@ Future<String> _signature(
     LlmToolCall(
       id: 'contract',
       name: contract.toolName,
-      arguments: jsonEncode(arguments),
+      arguments: jsonEncode(_wire(arguments)),
     ),
   ], budget);
   final result = await tools.registry.execute(
@@ -185,9 +200,12 @@ void main() {
     for (final contract in contracts) {
       final tool = _tools(contract.mode).registry.schemas
           .singleWhere((tool) => tool.name == contract.toolName);
-      final properties = (tool.parameters['properties']! as Map)
-          .cast<String, Object?>();
-      final required = (tool.parameters['required']! as List).cast<String>();
+      // 参数的形状记在 zod.properties 里，必填字段从这一份读出。
+      final zod = ((tool.parameters['properties']! as Map)['input'] as Map);
+      final item = ((zod['items'] as Map)['properties']! as Map)['zod'] as Map;
+      final declared = (item['properties']! as Map)['properties'] as Map;
+      final properties = (declared['properties']! as Map).cast<String, Object?>();
+      final required = (declared['required']! as List).cast<String>();
       final baseline = await _signature(contract, contract.arguments);
       expect(baseline, isNotEmpty, reason: '${contract.toolName} 的样例应当能解析出内容');
 

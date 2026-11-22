@@ -65,7 +65,7 @@ lib/
 └── ui/                                     ← 现在、记录、记录检索、讨论与讨论内查找、材料与材料查找、系统学习、学习中、安排与安排查找、我的、设置、记忆与记忆查找、账号、云端备份、反馈、关于；页面导航在 navigation.dart，文案在 copy.dart
 ```
 
-`ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，Chat Completions 的请求组装与增量解析在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
+`ai/llm_client.dart` 是模型客户端的入口，只做导出：失败、取消与请求预算在 `ai/llm_failure.dart`，HTTP 收发与 SSE 读取在 `ai/llm_transport.dart`，Responses 的请求组装、流式事件解析与整段响应读取在 `ai/llm_protocol.dart`。`ai/ai_chat_service.dart` 按回答模式装配提示、工具和模型配置，`ai/llm_reply_reader.dart` 将增量或普通响应组装成单步结果，`ai/agent_loop.dart` 按调用顺序执行工具，并将助手消息和配对结果一起追加到续接上下文。工具规格与提案解析位于 `ai/buddy_tools.dart`，工具执行与批量调度位于 `ai/agent_tools.dart`，单步输出上限位于 `ai/llm_config.dart`，作答提问与学习步骤提示在 `ai/buddy_prompts.dart`。
 
 提示词的规则、上下文说明、请求文本与工具说明在 `assets/prompts/`，按 `## 键名` 分段，`pubspec.yaml` 注册为 asset；`platform/prompt_assets.dart` 在启动时读取一次，`ai/prompt_text.dart` 负责解析与取段，`ai/buddy_prompt_builder.dart` 只按请求类型选取段落并替换占位符，`ai/buddy_tools.dart`、`ai/material_page_tool.dart` 与 `ai/search_sources_tool.dart` 的工具说明和参数说明也从同一份资源读取，改文案不需要改 Dart 代码。测试在 `test/flutter_test_config.dart` 里先读取同一份文本，提示词输出与写在代码里时一致；回答质量的第一版评测样例在 `test/evaluation/answer_quality_cases.dart`，覆盖 V1、V3、V6、V11 的提示词条件，真实模型对照按 [02 第 8.4 节](../docs/02-产品与交互.md#84-回答质量对照评测) 记录。
 
@@ -146,13 +146,13 @@ lib/
 
 ## 模型
 
-客户端只有“知新服务”一种模型来源，即服务端的模型代理，设置页只让用户填模型名与上下文上限，不提供接口风格、接口地址与 API Key。接口风格固定为 Chat Completions，地址由账号页保存的服务地址拼出 `/v1/llm`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时只能等次日或联系管理员调整。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md) 与 [ADR-0050](../docs/adr/0050-客户端统一为知新服务.md)。
+客户端只有“知新服务”一种模型来源，即服务端的模型代理，设置页只让用户填模型名与上下文上限，不提供接口风格、接口地址与 API Key。对话固定走 OpenAI 的 Responses，地址由账号页保存的服务地址拼出 `/v1/llm` 再加 `/responses`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时只能等次日或联系管理员调整。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)、[ADR-0050](../docs/adr/0050-客户端统一为知新服务.md) 与 [ADR-0051](../docs/adr/0051-客户端改用OpenAI现行请求格式.md)。
 
-请求走一个传输层，接口只有 Chat Completions 一种。Chat Completions 发 `messages`、`tools`（`{type:function,function:{…}}`）与 `stream_options.include_usage`，输出上限用 `max_tokens`，模型名以 `deepseek` 开头时另带 `{"thinking":{"type":"disabled"}}`，其他模型不认这个字段，带上可能直接返回 400，所以按模型名判断。
+请求走一个传输层，线格式只有 Responses 一种，请求体的组装与流式解析直接写在 `ai/llm_protocol.dart` 里。系统提示发 `instructions`，消息发 `input` 条目：用户与助手消息是 `message`，条目的内容块用 `input_text` 与 `input_image`，模型发起的工具调用是 `function_call`，客户端执行后的结果是 `function_call_output`，两者按 `call_id` 配对；工具声明用扁平的 `{type:function,name,description,parameters}`，参数放在 `input` 的 `input_text` 里，`tool_choice` 取 `auto`、`none` 或 `{type:function,name}`。输出上限用 `max_output_tokens`，请求带 `store: false`，客户端不按模型名追加提供方的私有字段。
 
-流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。评估过 `sse`、`flutter_client_sse`、`simple_sse` 等现成包，都不能同时满足“POST 流、逐行超时与取消、无空行收尾时 flush”，因此保留自研解析器。结束标记认 `[DONE]` 或非空 `finish_reason`，没有结束标记时按截断保留已经生成的正文并提示；`content_filter` 与服务端的错误事件按服务端错误处理。非 2xx 的响应体会读出服务端自己的说明，便于定位额度、模型名与登录状态的问题；上游提供方拒绝服务端 key 时服务端只回统一的 `upstream_failed`，不转发提供方的错误正文。
+流式响应按 SSE 规范读取：一个事件可以由多行 `data:` 组成，空行才分发，注释行与 `event:`、`id:`、`retry:` 字段不影响负载，首行带 BOM 也能读。评估过 `sse`、`flutter_client_sse`、`simple_sse` 等现成包，都不能同时满足“POST 流、逐行超时与取消、无空行收尾时 flush”，因此保留自研解析器。增量按事件名分支：正文取 `response.output_text.delta` 的 `delta`，工具参数取 `response.function_call_arguments.delta` 并按 `output_index` 累积，`response.output_item.done` 给出的完整参数覆盖先前的分片，结束由 `response.completed` 判定，`response.incomplete` 按截断保留已经生成的正文并提示，`response.failed` 与流内 `error` 事件按服务端错误处理，其余事件忽略。服务端省略 `event:` 时按负载里的 `type` 判断。非 2xx 的响应体会读出服务端自己的说明，便于定位额度、模型名与登录状态的问题；上游提供方拒绝服务端 key 时服务端只回统一的 `upstream_failed`，不转发提供方的错误正文。
 
-回答正文使用 Markdown，模型可以用 `read_material_page` 读取本轮检索命中的原文，并在收到工具结果后继续回答。`propose_memories`、`propose_next_steps`、`propose_citations`、`propose_study_steps` 与 `propose_assessment` 提交的内容暂存在本轮，参数有误时丢弃对应提案，普通回答有完整正文即可结束。Chat Completions 通过 `tool_call_id` 配对调用与结果。每轮的停止条件、材料范围与保存边界见 [00 第 9 节](../docs/00-产品定义.md#9-回答与工具调用)。
+回答正文使用 Markdown，模型可以用 `read_material_page` 读取本轮检索命中的原文，并在收到工具结果后继续回答。`propose_memories`、`propose_next_steps`、`propose_citations`、`propose_study_steps` 与 `propose_assessment` 提交的内容暂存在本轮，参数有误时丢弃对应提案，普通回答有完整正文即可结束。Responses 通过 `call_id` 配对 `function_call` 与 `function_call_output`。每轮的停止条件、材料范围与保存边界见 [00 第 9 节](../docs/00-产品定义.md#9-回答与工具调用)。
 
 回答与记忆分开保存：用户明确说出的记忆在回答落库后单独写入，回答下方给一张可以撤销的卡片，写入失败只提示并保留待确认卡片，不回滚正文；模型推断的记忆先出确认卡片，点「记下」才写入，点「不记」收起。记忆写入形成一条提交，回执保存提交编号，讨论页可以按提交撤销；撤销后卡片回到待确认，同一批写入的多条记忆一起撤销。接受建议后创建的学习事项在同一条提交里记下已接受标题，回执同样指向这次提交。回答里的 Markdown 外链图片不自动加载，只显示可点击的提示，用户点击后才交给系统浏览器打开。
 

@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:http/http.dart' as http;
 
 import '../domain/models/chat_message.dart';
@@ -11,6 +9,7 @@ import 'llm_client.dart';
 import 'llm_config.dart';
 import 'llm_config_store.dart';
 import 'llm_context_budget.dart';
+import 'llm_protocol.dart' show ToolResultMessage;
 
 /// 回答来源的接口；应用只依赖它，测试可以换成固定回答。
 abstract class BuddyAi {
@@ -180,8 +179,8 @@ class AiChatService implements BuddyAi {
       if (turn.truncated) return BuddyReply(text: turn.text, truncated: true);
       return tools.finish(turn.text);
     } on LlmException catch (error) {
-      // 模型或地址不接受工具声明时，仍用首轮证据回答一次：系统提示里已经有
-      // 本轮范围内的摘录，普通请求不需要工具也能给出正文。
+      // 服务端不接受工具声明或代码调用时，仍用首轮证据回答一次：系统提示里
+      // 已经有本轮范围内的摘录，普通请求不需要工具也能给出正文。
       if (error.failure != LlmFailure.toolUnsupported &&
           error.failure != LlmFailure.badResponse) {
         rethrow;
@@ -208,11 +207,7 @@ class AiChatService implements BuddyAi {
       for (final message in history)
         if (message.identity != inputMessageId) message,
     ]))
-      LlmMessage(
-        id: message.identity,
-        role: message.role.value,
-        content: message.content.trim().isEmpty ? '[发了一张图片]' : message.content,
-      ),
+      _historyMessage(message),
     LlmMessage(
       id: inputMessageId ?? 'turn:user',
       role: 'user',
@@ -220,6 +215,27 @@ class AiChatService implements BuddyAi {
       images: uniqueById(images, (image) => image.id).toList(growable: false),
     ),
   ];
+
+  /// 讨论历史里的工具交换来自更早一轮，那一轮的工具结果带着代码写的文字；
+  /// 按代码重新执行不了时改发保存时的原文。
+  LlmMessage _historyMessage(ChatMessage message) {
+    final content = message.content.trim().isEmpty
+        ? '[发了一张图片]'
+        : message.content;
+    final callId = ToolResultMessage.callIdOfResult(message.identity);
+    if (callId != null) {
+      return LlmMessage.toolResult(
+        callId: callId,
+        content: content,
+        compileArgs: false,
+      );
+    }
+    return LlmMessage(
+      id: message.identity,
+      role: message.role.value,
+      content: content,
+    );
+  }
 
   http.Client get _http => _httpClient ??= http.Client();
 
@@ -245,9 +261,20 @@ class AiChatService implements BuddyAi {
             parameters: {
               'type': 'object',
               'properties': {
-                'ok': {'type': 'boolean'},
+                'input': {
+                  'type': 'array',
+                  'items': {
+                    'type': 'object',
+                    'properties': {
+                      'type': {'type': 'string', 'enum': ['input_text']},
+                      'text': {'type': 'string'},
+                    },
+                    'required': ['type', 'text'],
+                  },
+                },
               },
-              'required': ['ok'],
+              'required': ['input'],
+              'additionalProperties': false,
             },
           ),
         ],
@@ -261,12 +288,7 @@ class AiChatService implements BuddyAi {
       final probe = reply.toolCalls.firstWhere(
         (call) => call.name == 'submit_probe',
       );
-      try {
-        final arguments = jsonDecode(probe.arguments);
-        if (arguments is! Map) {
-          throw const FormatException('工具参数不是 JSON 对象');
-        }
-      } on FormatException {
+      if (probe.argumentsObject == null) {
         throw const LlmException(LlmFailure.toolUnsupported, '工具调用参数无法解析');
       }
       return DateTime.now().difference(started);

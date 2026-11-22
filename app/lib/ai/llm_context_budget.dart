@@ -37,10 +37,7 @@ class LlmContextBudget {
             estimateLlmTextTokens(call.id) +
             estimateLlmTextTokens(call.name) +
             estimateLlmTextTokens(call.arguments),
-      ) +
-      (message.reasoningItems.isEmpty
-          ? 0
-          : estimateLlmTextTokens(jsonEncode(message.reasoningItems)));
+      );
 }
 
 int estimateLlmTextTokens(String text) {

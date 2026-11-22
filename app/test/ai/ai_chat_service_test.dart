@@ -17,7 +17,7 @@ import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/domain/models/score.dart';
 
 /// 测试用的假地址：请求打到这个地址，客户端只用配置里的完整接口地址。
-const String _testEndpoint = 'https://zhixin.test/v1/llm';
+const String _testEndpoint = 'https://zhixin.test/v1/llm/responses';
 
 class _MemorySecrets implements SecretStore {
   String? value;
@@ -40,37 +40,44 @@ class _MemorySecrets implements SecretStore {
   }
 }
 
-String _delta(String text) => jsonEncode({
-  'choices': [
-    {
-      'delta': {'content': text},
-      'finish_reason': null,
-    },
-  ],
-});
+String _textDelta(String text) =>
+    'event: response.output_text.delta\n'
+    'data: ${jsonEncode({
+      'type': 'response.output_text.delta',
+      'output_index': 0,
+      'delta': text,
+    })}\n\n';
 
-String _toolDelta(
-  int index, {
-  String? id,
-  String? name,
-  String arguments = '',
-  String? finishReason,
-}) => jsonEncode({
-  'choices': [
-    {
-      'delta': {
-        'tool_calls': [
-          {
-            'index': index,
-            'id': ?id,
-            'function': {'name': ?name, 'arguments': arguments},
-          },
-        ],
-      },
-      'finish_reason': finishReason,
-    },
-  ],
-});
+String _argumentsDelta(int index, String delta) =>
+    'event: response.function_call_arguments.delta\n'
+    'data: ${jsonEncode({
+      'type': 'response.function_call_arguments.delta',
+      'output_index': index,
+      'delta': delta,
+    })}\n\n';
+
+String _itemDone(Map<String, Object?> item, {int index = 1}) =>
+    'event: response.output_item.done\n'
+    'data: ${jsonEncode({
+      'type': 'response.output_item.done',
+      'output_index': index,
+      'item': item,
+    })}\n\n';
+
+const String _done =
+    'event: response.completed\n'
+    'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+
+const String _incomplete =
+    'event: response.incomplete\n'
+    'data: {"type":"response.incomplete","response":{"status":"incomplete"}}\n\n';
+
+Map<String, Object?> _callItem(String id, String name, Object arguments) => {
+  'type': 'function_call',
+  'call_id': id,
+  'name': name,
+  'arguments': jsonEncode(arguments),
+};
 
 http.Response _jsonReply(Object? body) => http.Response(
   jsonEncode(body),
@@ -80,19 +87,61 @@ http.Response _jsonReply(Object? body) => http.Response(
 
 http.Response _chatReply({String? text, List<Object?> calls = const []}) =>
     _jsonReply({
-      'choices': [
-        {
-          'message': {'content': text, 'tool_calls': calls},
-          'finish_reason': calls.isEmpty ? 'stop' : 'tool_calls',
-        },
+      'object': 'response',
+      'status': 'completed',
+      'output': [
+        if (text != null)
+          {
+            'type': 'message',
+            'role': 'assistant',
+            'content': [
+              {'type': 'output_text', 'text': text, 'annotations': []},
+            ],
+          },
+        ...calls,
       ],
     });
 
-Map<String, Object?> _chatCall(String id, String name, Object arguments) => {
-  'id': id,
-  'type': 'function',
-  'function': {'name': name, 'arguments': jsonEncode(arguments)},
-};
+/// 一段整段响应，内容按 JSON 返回；嵌套使用时不会重复编码。
+Map<String, Object?> chatReply({String? text, List<Object?> calls = const []}) =>
+    {
+      'object': 'response',
+      'status': 'completed',
+      'output': [
+        if (text != null)
+          {
+            'type': 'message',
+            'role': 'assistant',
+            'content': [
+              {'type': 'output_text', 'text': text, 'annotations': []},
+            ],
+          },
+        ...calls,
+      ],
+    };
+
+http.StreamedResponse _stream(String body) => http.StreamedResponse(
+  Stream.value(utf8.encode(body)),
+  200,
+  headers: {'content-type': 'text/event-stream'},
+);
+
+/// 一次整段响应，内容按 JSON 返回。
+http.StreamedResponse _streamedJson(Object? body) => http.StreamedResponse(
+  Stream.value(utf8.encode(jsonEncode(body))),
+  200,
+  headers: {'content-type': 'application/json'},
+);
+
+/// 一段流式回答：正文增量之后收尾。
+String _streamReply({String? text, List<Object?> calls = const []}) => [
+  if (text != null) _textDelta(text),
+  for (var index = 0; index < calls.length; index++)
+    [calls[index] as Map<String, Object?>]
+        .map((item) => _itemDone(item, index: index + 1))
+        .join(),
+  _done,
+].join();
 
 const _hit = MaterialHit(
   materialId: 'mat-2',
@@ -115,6 +164,22 @@ void main() {
 
   BuddyContext withMaterial() =>
       BuddyContext(now: DateTime(2026, 11, 7, 20), materialHits: const [_hit]);
+
+  List<Map<String, Object?>> inputOf(Map<String, Object?> body) =>
+      (body['input'] as List).cast<Map<String, Object?>>();
+
+  List<Map<String, Object?>> callsIn(Map<String, Object?> body) => [
+    for (final item in inputOf(body))
+      if (item['type'] == 'function_call') item,
+  ];
+
+  List<Map<String, Object?>> outputsIn(Map<String, Object?> body) => [
+    for (final item in inputOf(body))
+      if (item['type'] == 'function_call_output') item,
+  ];
+
+  Map<String, Object?> resultOf(Map<String, Object?> output) =>
+      jsonDecode(output['output'] as String) as Map<String, Object?>;
 
   test('材料原文、拒绝结果和提案按调用编号回传', () async {
     const calls = [
@@ -148,7 +213,7 @@ void main() {
           return _chatReply(
             calls: [
               for (final call in calls)
-                _chatCall(call.id, call.name, call.args),
+                _callItem(call.id, call.name, call.args),
             ],
           );
         }
@@ -174,24 +239,14 @@ void main() {
     expect(jsonEncode(captured.first), isNot(contains(_hit.content)));
 
     final second = captured.last;
-    final messages = (second['messages'] as List).cast<Map>();
-    final invocations =
-        (messages.singleWhere(
-                  (message) => message['role'] == 'assistant',
-                )['tool_calls']
-                as List)
-            .cast<Map>();
-    final results = messages.where((message) => message['role'] == 'tool');
+    final invocations = callsIn(second);
+    final outputs = outputsIn(second);
     final ids = calls.map((call) => call.id);
-    expect(invocations.map((call) => call['id']), ids);
-    expect(results.map((result) => result['tool_call_id']), ids);
-    final page = jsonDecode(results.first['content'] as String)['result'];
-    expect(page['content'], _hit.content);
-    expect(
-      jsonDecode(results.elementAt(1)['content'] as String),
-      contains('error'),
-    );
-    expect(jsonDecode(results.last['content'] as String)['result'], '已暂存提案');
+    expect(invocations.map((call) => call['call_id']), ids);
+    expect(outputs.map((output) => output['call_id']), ids);
+    expect((resultOf(outputs.first)['result'] as Map)['content'], _hit.content);
+    expect(resultOf(outputs.elementAt(1)), contains('error'));
+    expect(resultOf(outputs.last)['result'], '已暂存提案');
   });
 
   test('重复读取已返回的范围只回传位置，连续无进展后收束正文', () async {
@@ -202,32 +257,19 @@ void main() {
         requests++;
         final body =
             jsonDecode(utf8.decode(request.bodyBytes)) as Map<String, Object?>;
-        final messages = (body['messages'] as List).cast<Map>();
+        final outputs = outputsIn(body);
         if (requests == 2) {
-          final result =
-              jsonDecode(messages.last['content'] as String)['result'] as Map;
+          final result = resultOf(outputs.last)['result'] as Map;
           contentId = result['content_id'] as String;
           expect(contentId, startsWith('material:'));
         }
         if (requests > 2) {
-          final result =
-              jsonDecode(messages.last['content'] as String)['result'] as Map;
+          final result = resultOf(outputs.last)['result'] as Map;
           expect(result['offset'], 0);
           expect(result['content_id'], contentId);
           expect(result['note'], contains('已在本轮返回'));
           expect(result.containsKey('content'), isFalse);
-          final calls = messages.where(
-            (message) => message['role'] == 'assistant',
-          );
-          expect(
-            calls
-                .expand(
-                  (message) =>
-                      (message['tool_calls'] as List).map((call) => call['id']),
-                )
-                .toSet(),
-            hasLength(requests - 1),
-          );
+          expect(callsIn(body), hasLength(requests - 1));
         }
         if (requests == 4) {
           expect(body['tool_choice'], 'none');
@@ -237,16 +279,10 @@ void main() {
         expect(body['tool_choice'], 'auto');
         return _chatReply(
           calls: [
-            if (requests == 1)
-              _chatCall('call_reused', readMaterialPageTool, {
-                'material_id': 'mat-2',
-                'page_no': 7,
-                'offset': 0,
-              }),
-            _chatCall('call_reused', readMaterialPageTool, {
+            _callItem('call_reused', readMaterialPageTool, {
               'material_id': 'mat-2',
               'page_no': 7,
-              'offset': requests - 1,
+              'offset': requests == 1 ? 0 : requests - 1,
             }),
           ],
         );
@@ -269,18 +305,18 @@ void main() {
         if (requests == 1) {
           return _chatReply(
             calls: [
-              _chatCall('shared', readMaterialPageTool, {
+              _callItem('shared', readMaterialPageTool, {
                 'material_id': 'mat-2',
                 'page_no': 7,
                 'offset': -1,
               }),
-              _chatCall('shared', proposeNextStepsTool, {
+              _callItem('shared', proposeNextStepsTool, {
                 'steps': [
                   {'title': '编号冲突的建议'},
                 ],
               }),
-              _chatCall('denied', proposeStudyStepsTool, {'steps': []}),
-              _chatCall('', readMaterialPageTool, {
+              _callItem('denied', proposeStudyStepsTool, {'steps': []}),
+              _callItem('', readMaterialPageTool, {
                 'material_id': 'mat-2',
                 'page_no': 7,
               }),
@@ -288,21 +324,13 @@ void main() {
           );
         }
         final body = jsonDecode(utf8.decode(request.bodyBytes)) as Map;
-        final messages = (body['messages'] as List).cast<Map>();
-        final assistant = messages.singleWhere(
-          (item) => item['role'] == 'assistant',
-        );
-        final ids = (assistant['tool_calls'] as List)
-            .map((item) => (item as Map)['id'])
+        final ids = callsIn(body.cast<String, Object?>())
+            .map((item) => item['call_id'])
             .toList();
-        final results = messages
-            .where((item) => item['role'] == 'tool')
-            .toList();
+        final outputs = outputsIn(body.cast<String, Object?>());
         expect(ids.toSet(), hasLength(4));
-        expect(results.map((item) => item['tool_call_id']), ids);
-        final content = results
-            .map((item) => jsonDecode(item['content'] as String) as Map)
-            .toList();
+        expect(outputs.map((item) => item['call_id']), ids);
+        final content = outputs.map(resultOf).toList();
         expect(content.take(3).map((item) => item['code']), [
           'invalid_args',
           'duplicate_call_id',
@@ -327,21 +355,21 @@ void main() {
     final service = await serviceWith(
       MockClient((request) async {
         final body = jsonDecode(utf8.decode(request.bodyBytes)) as Map;
-        final messages = (body['messages'] as List).cast<Map>();
-        final user = messages.where((message) => message['role'] == 'user');
+        final items = inputOf(body.cast<String, Object?>());
+        final user = items.where((item) => item['role'] == 'user');
         expect(user, hasLength(3));
-        expect(user.take(2).map((message) => message['content']), [
+        expect(user.take(2).map((item) => item['content']), [
           '同样的问题',
           '同样的问题',
         ]);
         final content = (user.last['content'] as List).cast<Map>();
         expect(content.first['text'], '当前问题');
         expect(
-          content.where((part) => part['type'] == 'image_url'),
+          content.where((part) => part['type'] == 'input_image'),
           hasLength(2),
         );
         expect(
-          user.any((message) => message['content'] == '历史里的当前问题'),
+          user.any((item) => item['content'] == '历史里的当前问题'),
           isFalse,
         );
         return _chatReply(text: '继续回答。');
@@ -386,11 +414,10 @@ void main() {
       MockClient((request) async {
         final body =
             jsonDecode(utf8.decode(request.bodyBytes)) as Map<String, Object?>;
-        final messages = (body['messages'] as List).cast<Map>();
         expect(body['tool_choice'], 'auto');
+        final outputs = outputsIn(body);
         if (requests > 0) {
-          final read =
-              jsonDecode(messages.last['content'] as String)['result'] as Map;
+          final read = resultOf(outputs.last)['result'] as Map;
           final content = read['content'] as String;
           expect(read['offset'], offsets[requests - 1]);
           expect(content.runes.length, 8000);
@@ -402,10 +429,7 @@ void main() {
             expect(read['next_offset'], offsets[requests == 1 ? 2 : requests]);
           }
           if (requests == 1) {
-            final toolResults = messages.where(
-              (message) => message['role'] == 'tool',
-            );
-            expect(toolResults, hasLength(10));
+            expect(outputs, hasLength(10));
           }
         }
         if (requests == offsets.length) {
@@ -417,18 +441,18 @@ void main() {
           calls: [
             if (step == 0)
               for (var index = 0; index < 9; index++)
-                _chatCall('proposal_$index', proposeNextStepsTool, {
+                _callItem('proposal_$index', proposeNextStepsTool, {
                   'steps': [
                     {'title': '核对定义', 'action': '读原文'},
                   ],
                 }),
             if (step == 1)
-              _chatCall('another_proposal', proposeNextStepsTool, {
+              _callItem('another_proposal', proposeNextStepsTool, {
                 'steps': [
                   {'title': '核对定义', 'action': '检验公式'},
                 ],
               }),
-            _chatCall('read_$step', readMaterialPageTool, {
+            _callItem('read_$step', readMaterialPageTool, {
               'material_id': 'mat-2',
               'page_no': 7,
               'offset': offsets[step],
@@ -468,17 +492,16 @@ void main() {
             jsonDecode(utf8.decode(request.bodyBytes)) as Map<String, Object?>;
         expect(body['tool_choice'], {
           'type': 'function',
-          'function': {'name': proposeStudyStepsTool},
+          'name': proposeStudyStepsTool,
         });
         if (requests == 2) {
-          final messages = body['messages'] as List;
-          final error = jsonDecode(messages.last['content'] as String) as Map;
+          final error = resultOf(outputsIn(body).last);
           expect(error['code'], 'invalid_args');
           expect(error['error'], contains('steps'));
         }
         return _chatReply(
           calls: [
-            _chatCall('plan_$requests', proposeStudyStepsTool, {
+            _callItem('plan_$requests', proposeStudyStepsTool, {
               'steps': [
                 if (requests == 2)
                   {'title': '读定义', 'page_from': 7, 'page_to': 7},
@@ -504,9 +527,9 @@ void main() {
       MockClient((request) async {
         final body = jsonDecode(utf8.decode(request.bodyBytes)) as Map;
         if (++requests == 2) {
-          final messages = body['messages'] as List;
-          expect(messages.last['tool_call_id'], 'plan_1');
-          final error = jsonDecode(messages.last['content'] as String) as Map;
+          final output = outputsIn(body.cast<String, Object?>()).last;
+          expect(output['call_id'], 'plan_1');
+          final error = resultOf(output);
           expect(error['code'], 'invalid_study_plan');
           expect(
             error['error'],
@@ -516,7 +539,7 @@ void main() {
         }
         return _chatReply(
           calls: [
-            _chatCall('plan_$requests', proposeStudyStepsTool, {
+            _callItem('plan_$requests', proposeStudyStepsTool, {
               'steps': [
                 {
                   'title': requests == 1 ? '漏页的方案' : '完整方案',
@@ -556,16 +579,16 @@ void main() {
     final service = await serviceWith(
       MockClient((request) async {
         final body = jsonDecode(utf8.decode(request.bodyBytes)) as Map;
-        expect(body['max_tokens'], 2048);
+        expect(body['max_output_tokens'], 2048);
         if (++requests == 1) {
           expect(body['tool_choice'], 'auto');
           return _chatReply(
             calls: [
-              _chatCall('first', readMaterialPageTool, {
+              _callItem('first', readMaterialPageTool, {
                 'material_id': 'mat-2',
                 'page_no': 7,
               }),
-              _chatCall('second', readMaterialPageTool, {
+              _callItem('second', readMaterialPageTool, {
                 'material_id': 'mat-2',
                 'page_no': 7,
                 'offset': 8000,
@@ -574,19 +597,16 @@ void main() {
           );
         }
         expect(body['tool_choice'], 'none');
-        final messages = (body['messages'] as List).cast<Map>();
-        final results = messages.where((message) => message['role'] == 'tool');
-        expect(results.map((message) => message['tool_call_id']), [
+        final outputs = outputsIn(body.cast<String, Object?>());
+        expect(outputs.map((output) => output['call_id']), [
           'first',
           'second',
         ]);
-        final first =
-            jsonDecode(results.first['content'] as String)['result'] as Map;
+        final first = resultOf(outputs.first)['result'] as Map;
         final length = (first['content'] as String).runes.length;
         expect(length, inInclusiveRange(1, 7999));
         expect(first['next_offset'], length);
-        final second =
-            jsonDecode(results.last['content'] as String)['result'] as Map;
+        final second = resultOf(outputs.last)['result'] as Map;
         final secondLength = (second['content'] as String).runes.length;
         expect(second['offset'], 8000);
         expect(secondLength, inInclusiveRange(1, 96));
@@ -649,13 +669,13 @@ void main() {
           expect(body['tool_choice'], 'auto');
           return _chatReply(
             calls: [
-              _chatCall('suggestion', proposeNextStepsTool, {
+              _callItem('suggestion', proposeNextStepsTool, {
                 'steps': [
                   {'title': '这批结果无法续接'},
                 ],
               }),
               for (var index = 0; index < 60; index++)
-                _chatCall('page_$index', readMaterialPageTool, {
+                _callItem('page_$index', readMaterialPageTool, {
                   'material_id': 'mat-2',
                   'page_no': 7,
                 }),
@@ -663,8 +683,8 @@ void main() {
           );
         }
         expect(body['tool_choice'], 'none');
-        final messages = (body['messages'] as List).cast<Map>();
-        expect(messages.map((item) => item['role']), ['system', 'user']);
+        final items = inputOf(body.cast<String, Object?>());
+        expect(items.map((item) => item['role']), ['user']);
         return _chatReply(text: '根据已有资料回答。');
       }),
     );
@@ -693,12 +713,12 @@ void main() {
               _chatReply(
                 text: '我先核对原文。',
                 calls: [
-                  _chatCall('draft', proposeNextStepsTool, {
+                  _callItem('draft', proposeNextStepsTool, {
                     'steps': [
                       {'title': '读定义'},
                     ],
                   }),
-                  _chatCall('page', readMaterialPageTool, {
+                  _callItem('page', readMaterialPageTool, {
                     'material_id': 'mat-2',
                     'page_no': 7,
                   }),
@@ -738,35 +758,42 @@ void main() {
   test('工具之后回退到普通请求时沿用同一步上下文', () async {
     final requests = <Map<String, Object?>>[];
     final service = await serviceWith(
-      MockClient((request) async {
+      MockClient.streaming((request, body) async {
         requests.add(
-          jsonDecode(utf8.decode(request.bodyBytes)) as Map<String, Object?>,
+          jsonDecode(utf8.decode(await body.toBytes())) as Map<String, Object?>,
         );
         return switch (requests.length) {
-          1 => _chatReply(
-            text: '先读讲义。',
-            calls: [
-              _chatCall('', readMaterialPageTool, {
-                'material_id': 'mat-2',
-                'page_no': 7,
-              }),
-              _chatCall('call_zhixin_1', readMaterialPageTool, {
-                'material_id': 'mat-2',
-                'page_no': 8,
-              }),
-            ],
-          ),
-          2 => http.Response('stream unsupported', 400),
-          3 => _chatReply(
-            calls: [
-              _chatCall('draft', proposeNextStepsTool, {
-                'steps': [
-                  {'title': '读定义'},
+          1 || 3 || 4 => _streamedJson(
+            switch (requests.length) {
+              1 => chatReply(
+                text: '先读讲义。',
+                calls: [
+                  _callItem('', readMaterialPageTool, {
+                    'material_id': 'mat-2',
+                    'page_no': 7,
+                  }),
+                  _callItem('call_zhixin_1', readMaterialPageTool, {
+                    'material_id': 'mat-2',
+                    'page_no': 8,
+                  }),
                 ],
-              }),
-            ],
+              ),
+              3 => chatReply(
+                calls: [
+                  _callItem('draft', proposeNextStepsTool, {
+                    'steps': [
+                      {'title': '读定义'},
+                    ],
+                  }),
+                ],
+              ),
+              _ => chatReply(text: '按条件概率公式计算。'),
+            },
           ),
-          4 => _chatReply(text: '按条件概率公式计算。'),
+          2 => http.StreamedResponse(
+            Stream.value(utf8.encode('stream unsupported')),
+            400,
+          ),
           _ => throw StateError('多余的模型请求'),
         };
       }),
@@ -781,20 +808,23 @@ void main() {
 
     expect(requests, hasLength(4));
     expect(requests.map((body) => body['stream']), [true, true, null, null]);
-    final continuation = (requests[1]['messages'] as List).cast<Map>();
-    expect(requests[2]['messages'], continuation);
-    final calls = (continuation[2]['tool_calls'] as List).cast<Map>();
-    expect(calls[1]['id'], 'call_zhixin_1');
-    expect(calls[0]['id'], isNot(calls[1]['id']));
+    final continuation = inputOf(requests[1]);
+    expect(requests[2]['input'], continuation);
+    final calls = callsIn(requests[1]);
+    expect(calls[1]['call_id'], 'call_zhixin_1');
+    expect(calls[0]['call_id'], isNot(calls[1]['call_id']));
     expect(
-      continuation.skip(3).map((message) => message['tool_call_id']),
-      calls.map((call) => call['id']),
+      outputsIn(requests[1]).map((item) => item['call_id']),
+      calls.map((call) => call['call_id']),
     );
-    expect(continuation[3]['content'], contains(_hit.content));
-    final last = requests.last['messages'] as List;
+    expect(
+      (resultOf(outputsIn(requests[1]).first)['result'] as Map)['content'],
+      contains(_hit.content),
+    );
+    final last = inputOf(requests.last);
     expect(last.take(continuation.length), continuation);
-    expect(last, hasLength(continuation.length + 2));
-    expect(last.last['tool_call_id'], 'draft');
+    expect(callsIn(requests.last), hasLength(3));
+    expect(outputsIn(requests.last).last['call_id'], 'draft');
     expect(reply.text, '先读讲义。\n\n按条件概率公式计算。');
     expect(preview, ['先读讲义。', reply.text]);
     expect(reply.nextSteps.single.title, '读定义');
@@ -803,50 +833,54 @@ void main() {
   for (final streaming in [true, false]) {
     test('${streaming ? '流式' : '普通'}续接在工具参数中截断时保留前一步正文', () async {
       var requests = 0;
-      final service = await serviceWith(
-        MockClient((request) async {
-          switch (++requests) {
-            case 1:
-              return _chatReply(
-                text: '先读讲义。',
-                calls: [
-                  _chatCall('draft', proposeNextStepsTool, {
-                    'steps': [
-                      {'title': '读定义'},
+      Future<http.StreamedResponse> Function(http.BaseRequest) handler() =>
+          (request) async {
+            switch (++requests) {
+              case 1:
+                return _streamedJson(
+                  chatReply(
+                    text: '先读讲义。',
+                    calls: [
+                      _callItem('draft', proposeNextStepsTool, {
+                        'steps': [
+                          {'title': '读定义'},
+                        ],
+                      }),
+                      _callItem('page', readMaterialPageTool, {
+                        'material_id': 'mat-2',
+                        'page_no': 7,
+                      }),
                     ],
-                  }),
-                  _chatCall('page', readMaterialPageTool, {
-                    'material_id': 'mat-2',
-                    'page_no': 7,
-                  }),
-                ],
-              );
-            case 2 when streaming:
-              final chunk = _toolDelta(
-                0,
-                id: 'cut',
-                name: proposeNextStepsTool,
-                arguments: '{"steps": [',
-                finishReason: 'length',
-              );
-              return http.Response(
-                'data: $chunk\n\n',
-                200,
-                headers: {'content-type': 'text/event-stream'},
-              );
-            case 2:
-              return _jsonReply({
-                'choices': [
+                  ),
+                );
+              case 2 when streaming:
+                return _stream(
+                  '${_textDelta('先看定义。')}'
+                  '${_argumentsDelta(1, '{"steps": [')}'
+                  '$_incomplete',
+                );
+              case 2:
+                return _streamedJson(
                   {
-                    'message': {'content': null},
-                    'finish_reason': 'length',
+                    'object': 'response',
+                    'status': 'incomplete',
+                    'output': [
+                      {
+                        'type': 'message',
+                        'role': 'assistant',
+                        'content': [
+                          {'type': 'output_text', 'text': '先看定义。'},
+                        ],
+                      },
+                    ],
                   },
-                ],
-              });
-            default:
-              throw StateError('截断后仍然请求模型');
-          }
-        }),
+                );
+              default:
+                throw StateError('截断后仍然请求模型');
+            }
+          };
+      final service = await serviceWith(
+        MockClient.streaming((request, body) => handler()(request)),
       );
       final preview = <String>[];
       final reply = await service.ask(
@@ -855,7 +889,7 @@ void main() {
         text: '请看原文',
         onText: streaming ? preview.add : null,
       );
-      expect(reply.text, '先读讲义。');
+      expect(reply.text, '先读讲义。\n\n先看定义。');
       expect(reply.truncated, isTrue);
       expect(reply.interrupted, isFalse);
       expect(reply.nextSteps, isEmpty);
@@ -867,7 +901,7 @@ void main() {
     final service = await serviceWith(
       MockClient.streaming((request, body) async {
         final stream = Stream<List<int>>.multi((controller) {
-          controller.add(utf8.encode('data: ${_delta('已收到的部分')}\n\n'));
+          controller.add(utf8.encode(_textDelta('已收到的部分')));
           controller.addError(http.RequestAbortedException(request.url));
           controller.close();
         });
@@ -894,16 +928,17 @@ void main() {
   test('流式回答边回调正文，结束后解析工具调用', () async {
     final service = await serviceWith(
       MockClient.streaming((request, bodyStream) async {
-        final text = [
-          'data: ${_delta('边生成')}\n\n',
-          'data: ${_delta('边显示')}\n\n',
-          'data: ${_toolDelta(0, id: 'call_1', name: proposeNextStepsTool, arguments: '{"steps":[{"title":"读定义"}]}')}\n\n',
-          'data: [DONE]\n\n',
-        ].join();
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(text)),
-          200,
-          headers: {'content-type': 'text/event-stream'},
+        return _stream(
+          _streamReply(
+            text: '边生成边显示',
+            calls: [
+              _callItem('call_1', proposeNextStepsTool, {
+                'steps': [
+                  {'title': '读定义'},
+                ],
+              }),
+            ],
+          ),
         );
       }),
     );
@@ -916,7 +951,7 @@ void main() {
       onText: partials.add,
     );
 
-    expect(partials, ['边生成', '边生成边显示']);
+    expect(partials.last, '边生成边显示');
     expect(reply.text, '边生成边显示');
     expect(reply.nextSteps.single.title, '读定义');
   });
@@ -924,15 +959,10 @@ void main() {
   test('工具参数损坏时保留已经流出的正文', () async {
     final service = await serviceWith(
       MockClient.streaming((request, bodyStream) async {
-        final text = [
-          'data: ${_delta('先看定义。')}\n\n',
-          'data: ${_toolDelta(0, id: 'call_1', name: proposeNextStepsTool, arguments: '{"steps": [')}\n\n',
-          'data: [DONE]\n\n',
-        ].join();
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(text)),
-          200,
-          headers: {'content-type': 'text/event-stream'},
+        return _stream(
+          '${_textDelta('先看定义。')}'
+          '${_argumentsDelta(1, '{"steps": [')}'
+          '$_done',
         );
       }),
     );
@@ -953,15 +983,13 @@ void main() {
   test('达到长度上限时保留正文并丢掉工具调用', () async {
     final service = await serviceWith(
       MockClient.streaming((request, bodyStream) async {
-        final text = [
-          'data: ${_delta('先看定义。')}\n\n',
-          'data: ${_toolDelta(0, id: 'call_1', name: proposeNextStepsTool, arguments: '{"steps":[{"title":"读定义"}]}', finishReason: 'length')}\n\n',
-          'data: [DONE]\n\n',
-        ].join();
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(text)),
-          200,
-          headers: {'content-type': 'text/event-stream'},
+        return _stream(
+          '${_textDelta('先看定义。')}'
+          '${_argumentsDelta(
+            1,
+            '{"steps":[{"title":"读定义"}]}',
+          )}'
+          '$_incomplete',
         );
       }),
     );
@@ -985,18 +1013,7 @@ void main() {
     final service = AiChatService(
       store: LlmConfigStore(secrets),
       httpClient: MockClient((request) async {
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {'content': '使用同一份配置'},
-                'finish_reason': 'stop',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json; charset=utf-8'},
-        );
+        return _chatReply(text: '使用同一份配置');
       }),
     );
 
@@ -1031,18 +1048,7 @@ void main() {
         }
         complete++;
         return http.StreamedResponse(
-          Stream.value(
-            utf8.encode(
-              jsonEncode({
-                'choices': [
-                  {
-                    'message': {'content': '普通回答'},
-                    'finish_reason': 'stop',
-                  },
-                ],
-              }),
-            ),
-          ),
+          Stream.value(utf8.encode(jsonEncode(chatReply(text: '普通回答')))),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -1068,16 +1074,10 @@ void main() {
     final service = await serviceWith(
       MockClient.streaming((request, bodyStream) async {
         calls++;
-        final text = [
-          'data: ${_delta('半截')}\n\n',
-          'data: ${jsonEncode({
-            'error': {'message': '服务中断'},
-          })}\n\n',
-        ].join();
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(text)),
-          200,
-          headers: {'content-type': 'text/event-stream'},
+        return _stream(
+          '${_textDelta('半截')}'
+          'event: error\n'
+          'data: {"type":"error","error":{"message":"服务中断"}}\n\n',
         );
       }),
     );
@@ -1103,7 +1103,7 @@ void main() {
     final service = await serviceWith(
       MockClient.streaming((request, bodyStream) async {
         final abortable = request as http.AbortableRequest;
-        controller.add(utf8.encode('data: ${_delta('半截')}\n\n'));
+        controller.add(utf8.encode(_textDelta('半截')));
         abortable.abortTrigger!.then((_) {
           // 停止由取消令牌通知客户端；这里只把响应的流收尾，不再塞进错误，
           // 否则客户端停止订阅之后这条错误会变成没人处理的异步异常。
@@ -1141,18 +1141,7 @@ void main() {
     final service = await serviceWith(
       MockClient((request) async {
         captured = jsonDecode(request.body) as Map<String, Object?>;
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {'content': '收到'},
-                'finish_reason': 'stop',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
+        return _chatReply(text: '收到');
       }),
     );
     final history = [
@@ -1167,13 +1156,13 @@ void main() {
 
     await service.ask(context: context(), history: history, text: '继续');
 
-    final messages = (captured!['messages'] as List)
-        .cast<Map<String, Object?>>();
-    // 第一条是系统提示，之后是 30 条历史与本次提问。
-    expect(messages, hasLength(32));
-    expect(messages[1]['content'], '第 0 条消息');
-    expect(messages[30]['content'], '第 29 条消息');
-    expect(messages.last['content'], '继续');
+    final items = inputOf(captured!);
+    // 系统提示放在 instructions，input 里是 30 条历史与本次提问。
+    expect(items, hasLength(31));
+    expect(captured!['instructions'], isNotEmpty);
+    expect(items[0]['content'], '第 0 条消息');
+    expect(items[29]['content'], '第 29 条消息');
+    expect(items.last['content'], '继续');
   });
 
   test('讨论历史超出字数预算时保留最近消息和第一条用户消息', () async {
@@ -1181,18 +1170,7 @@ void main() {
     final service = await serviceWith(
       MockClient((request) async {
         captured = jsonDecode(request.body) as Map<String, Object?>;
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {'content': '收到'},
-                'finish_reason': 'stop',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
+        return _chatReply(text: '收到');
       }),
     );
     final long = '内容' * 500;
@@ -1208,12 +1186,52 @@ void main() {
 
     await service.ask(context: context(), history: history, text: '继续');
 
-    final messages = (captured!['messages'] as List)
-        .cast<Map<String, Object?>>();
-    expect(messages.length, lessThan(31));
-    // 系统提示之后，原问题仍然排在最前面，最近一条讨论紧挨着本次提问。
-    expect(messages[1]['content'], startsWith('0 '));
-    expect(messages[messages.length - 2]['content'], startsWith('29 '));
+    final items = inputOf(captured!);
+    expect(items.length, lessThan(31));
+    // 原问题仍然排在最前面，最近一条讨论紧挨着本次提问。
+    expect(items[0]['content'], startsWith('0 '));
+    expect(items[items.length - 2]['content'], startsWith('29 '));
+  });
+
+  test('讨论历史里的工具交换按条目带回', () async {
+    Map<String, Object?>? captured;
+    final service = await serviceWith(
+      MockClient((request) async {
+        captured = jsonDecode(request.body) as Map<String, Object?>;
+        return _chatReply(text: '收到');
+      }),
+    );
+    await service.ask(
+      context: context(),
+      history: const [
+        ChatMessage(
+          id: 'msg-8',
+          conversationId: 'conv-1',
+          role: MessageRole.assistant,
+          content: '',
+        ),
+        ChatMessage(
+          id: 'tool-result:plan',
+          conversationId: 'conv-1',
+          role: MessageRole.system,
+          content: '{"result":"旧一轮的工具结果"}',
+        ),
+        ChatMessage(
+          id: 'msg-9',
+          conversationId: 'conv-1',
+          role: MessageRole.user,
+          content: '继续',
+        ),
+      ],
+      text: '再看一遍',
+    );
+    final items = inputOf(captured!);
+    // 旧一轮的讨论历史只有正文，工具交换来自当轮进程内的上下文。
+    expect(items.map((item) => item['role']), ['user', 'user']);
+    expect(
+      items.where((item) => item['type'] == 'function_call_output'),
+      isEmpty,
+    );
   });
 
   test('连接测试要求模型真的返回工具调用', () async {
@@ -1221,29 +1239,16 @@ void main() {
       MockClient((request) async {
         final body = jsonDecode(request.body) as Map<String, Object?>;
         expect(body['tools'], isA<List>());
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {
-                  'content': null,
-                  'tool_calls': [
-                    {
-                      'id': 'call_probe',
-                      'type': 'function',
-                      'function': {
-                        'name': 'submit_probe',
-                        'arguments': '{"ok":true}',
-                      },
-                    },
-                  ],
-                },
-                'finish_reason': 'tool_calls',
-              },
+        return _jsonReply(
+          chatReply(
+            calls: [
+              _callItem('call_probe', 'submit_probe', {
+                'input': [
+                  {'type': 'input_text', 'text': '{"ok":true}'},
+                ],
+              }),
             ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
+          ),
         );
       }),
     );
@@ -1257,26 +1262,10 @@ void main() {
   test('连接测试拒绝无法解析的工具参数', () async {
     final service = await serviceWith(
       MockClient((request) async {
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {
-                  'content': null,
-                  'tool_calls': [
-                    {
-                      'id': 'call_probe',
-                      'type': 'function',
-                      'function': {'name': 'submit_probe', 'arguments': '{'},
-                    },
-                  ],
-                },
-                'finish_reason': 'tool_calls',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
+        return _jsonReply(
+          chatReply(
+            calls: [(_callItem('call_probe', 'submit_probe', {})..['arguments'] = '{')],
+          ),
         );
       }),
     );
@@ -1296,18 +1285,7 @@ void main() {
   test('连接测试没有工具调用时报告不支持', () async {
     final service = await serviceWith(
       MockClient((request) async {
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {'content': 'ok'},
-                'finish_reason': 'stop',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
+        return _chatReply(text: 'ok');
       }),
     );
 
@@ -1395,6 +1373,7 @@ void main() {
     );
 
     expect(reply.text, '依据本轮摘录回答条件概率。');
+    // 400 不在重试范围里，整轮工具请求失败一次之后才走普通请求。
     expect(plainRequests, 1);
   });
 }
