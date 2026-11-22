@@ -34,7 +34,7 @@ class AboutPage extends StatelessWidget {
           ),
           SizedBox(height: theme.space.xs),
           Text(
-            '版本 $appVersion',
+            '版本 $appVersionLabel',
             textAlign: TextAlign.center,
             style: theme.text.bodySmall.copyWith(
               color: theme.colors.onSurfaceVariant,
@@ -55,7 +55,7 @@ class AboutPage extends StatelessWidget {
             onPress: () => showLicensePage(
               context: context,
               applicationName: appName,
-              applicationVersion: appVersion,
+              applicationVersion: appVersionLabel,
               applicationLegalese: 'MIT License · Copyright (c) 2026 知新项目组',
               applicationIcon: const ZhixinMark(size: 40),
             ),

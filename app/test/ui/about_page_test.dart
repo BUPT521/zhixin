@@ -30,7 +30,7 @@ void main() {
     await tester.pumpWidget(aboutApp());
 
     expect(find.text(appName), findsOneWidget);
-    expect(find.text('版本 $appVersion'), findsOneWidget);
+    expect(find.text('版本 $appVersionLabel'), findsOneWidget);
     expect(find.text('开源许可'), findsOneWidget);
     expect(find.text('项目主页'), findsOneWidget);
   });
@@ -43,7 +43,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.byType(LicensePage), findsOneWidget);
-    expect(find.text(appVersion), findsOneWidget);
+    expect(find.text(appVersionLabel), findsOneWidget);
   });
 
   testWidgets('两个入口之间留出一档间距', (tester) async {

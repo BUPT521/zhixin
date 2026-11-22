@@ -375,7 +375,7 @@ class _MinePageState extends State<MinePage> {
             _Entry(
               icon: FLucideIcons.info,
               title: '关于',
-              subtitle: '版本 $appVersion · 开源许可',
+              subtitle: '版本 $appVersionLabel · 开源许可',
               onPress: () => openAbout(context),
             ),
           ],

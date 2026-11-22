@@ -251,7 +251,7 @@ class _FeedbackPageState extends State<FeedbackPage> {
                   ],
                   SizedBox(height: theme.space.md),
                   Text(
-                    '提交时会自动附带版本 $appVersion 与平台 android。',
+                    '提交时会自动附带版本 $appVersionLabel 与平台 android。',
                     style: theme.text.bodySmall.copyWith(
                       color: theme.colors.onSurfaceVariant,
                     ),

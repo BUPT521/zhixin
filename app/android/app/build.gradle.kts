@@ -18,7 +18,40 @@ val keystoreProperties =
 val hasReleaseSigning = keystorePropertiesFile.exists()
 val adr0022Probe = providers.gradleProperty("target").orNull?.endsWith("adr_0022_probe.dart") == true
 
+// 调试包的提交编号：优先认 tool/build_debug.ps1 传进来的 -Pzhixin.commit，没有这个
+// 参数时读它写下的 last_build.json（脚本异常退出、之后用 gradlew 或 Android Studio
+// 直接构建时用）。提交编号随 dart-define 进 Dart 侧，版本串由 platform/app_info.dart
+// 拼出来；构建产物由脚本整理到仓库根目录的 build/debug/，只留最新一份。
+val commitFromScript = providers.gradleProperty("zhixin.commit").orNull?.trim().orEmpty()
+val lastBuildFile = rootProject.file("last_build.json")
+val commitFromFile =
+    if (commitFromScript.isEmpty() && lastBuildFile.exists()) {
+        Regex("\"commit\"\\s*:\\s*\"([0-9a-fA-F]{7,40})\"")
+            .find(lastBuildFile.readText())
+            ?.groupValues
+            ?.get(1)
+            ?.lowercase()
+            .orEmpty()
+    } else {
+        ""
+    }
+val buildCommit = commitFromScript.ifEmpty { commitFromFile }
+
+logger.lifecycle(
+    if (buildCommit.isEmpty()) {
+        "调试包不带提交编号：用 tool/build_debug.ps1 构建，或者传 -Pzhixin.commit=<commit>"
+    } else {
+        "调试包提交编号：$buildCommit"
+    },
+)
+
 android {
+    // Flutter 任务从同名 Gradle 属性读 dart-define；项目属性是只读的，这里写同名的
+    // 系统属性，Gradle 9 读项目属性时会回落到它。命令行传进来的同名数组优先，两边
+    // 不会打架，同一个 key 也不会出现两个值。
+    if (buildCommit.isNotEmpty()) {
+        System.setProperty("dart-defines", "ZHIXIN_COMMIT=$buildCommit")
+    }
     namespace = "com.zhixin.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -89,6 +122,8 @@ kotlin {
     }
 }
 
+// 调试包与正式包都按 Flutter 默认的 build/app/outputs/ 落盘，文件名固定，脚本
+// 构建完从那里取走；每次构建前脚本会清掉自己那一份。
 flutter {
     source = "../.."
 }

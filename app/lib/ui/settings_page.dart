@@ -851,7 +851,7 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: Text(
             _checkingUpdates
                 ? '正在读取发布清单…'
-                : '当前版本 $appVersion；会自动下载安装包核对哈希与签名，不在应用内安装。',
+                : '当前版本 $appVersionLabel；会自动下载安装包核对哈希与签名，不在应用内安装。',
           ),
           suffix: _checkingUpdates
               ? const forui.FCircularProgress(size: .sm)
