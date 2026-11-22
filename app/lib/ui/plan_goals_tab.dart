@@ -90,7 +90,7 @@ class PlanGoalsTab extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             TagRow(
               children: [
                 StatusTag(
@@ -107,7 +107,7 @@ class PlanGoalsTab extends StatelessWidget {
             ),
             if (scope != null && scope.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: EdgeInsets.only(top: theme.space.xs),
                 child: Text(
                   scope,
                   maxLines: 2,

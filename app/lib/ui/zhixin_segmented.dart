@@ -47,11 +47,12 @@ class ZhixinSegmented<T> extends StatelessWidget {
           mainAxisSize: fits ? MainAxisSize.max : MainAxisSize.min,
           children: children,
         );
+        // 容器内边距 3 是滑块与轨道之间的光学间隙，属于微调，不占令牌档位。
         final track = Container(
           padding: const EdgeInsets.all(_trackPadding),
           decoration: BoxDecoration(
             color: theme.colors.surfaceContainerHigh,
-            borderRadius: theme.radius.card,
+            borderRadius: theme.radius.control,
           ),
           child: fits && index >= 0
               ? Stack(
@@ -113,10 +114,17 @@ class ZhixinSegmented<T> extends StatelessWidget {
   Widget _thumb(ZhixinTheme theme) =>
       DecoratedBox(decoration: _selection(theme, selected: true));
 
+  // 分段条与预览一致：容器取抬高一档的表面，选中项取卡片底色并加一圈容器
+  // 描边，选中字用正文色，未选中用次要文字色。
   ShapeDecoration _selection(ZhixinTheme theme, {required bool selected}) =>
       ShapeDecoration(
-        color: selected ? theme.colors.primaryContainer : Colors.transparent,
-        shape: const StadiumBorder(),
+        color: selected ? theme.colors.card : Colors.transparent,
+        shape: RoundedSuperellipseBorder(
+          borderRadius: theme.radius.control,
+          side: BorderSide(
+            color: selected ? theme.colors.outlineVariant : Colors.transparent,
+          ),
+        ),
       );
 
   Widget _segment(
@@ -174,7 +182,7 @@ class ZhixinSegmented<T> extends StatelessWidget {
                   segment.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: labelStyle.copyWith(color: foreground),
+                  style: theme.text.labelLarge.copyWith(color: foreground),
                 ),
               ),
             ],

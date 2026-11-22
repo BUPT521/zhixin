@@ -15,6 +15,9 @@ import 'plan_actions.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_menu.dart';
 
+/// 骨架卡的四周留白取 space.md。
+const _skeletonPadding = 12.0;
+
 /// 安排页的事项页签：未完成的事项与按页展开的已完成事项。
 ///
 /// 已完成事项跟一条订阅，只在这个页签可见且展开时续读下一页；换周时收起并
@@ -343,7 +346,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
             }
             if (_loadingDone) {
               return const Padding(
-                padding: EdgeInsets.all(12),
+                padding: EdgeInsets.all(_skeletonPadding),
                 child: ListSkeleton(rows: 1, rowHeight: 64),
               );
             }
@@ -384,7 +387,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             TagRow(
               children: [
                 StatusTag(
@@ -405,7 +408,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
                   StatusTag('约 ${item.estMinutes} 分钟', tone: TagTone.muted),
               ],
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             Text(
               [
                 item.isStudyStep
@@ -421,7 +424,9 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
                 note,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(height: 1.4),
+                style: theme.text.bodySmall.copyWith(
+                  color: theme.colors.onSurfaceVariant,
+                ),
               ),
           ],
         ),

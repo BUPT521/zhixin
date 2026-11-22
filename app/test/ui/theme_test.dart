@@ -302,22 +302,113 @@ void main() {
     expect(zhixin.text.bodySmall.fontSize, 12);
     expect(zhixin.text.bodyMedium.fontSize, 14);
     expect(zhixin.text.bodyMedium.height, 1.5);
+    // 字重只有常规与强调两档：标题、标签与主标题都是强调，正文与二级页面
+    // 标题是常规；中文不写字距，每一档都取 0。
+    expect(zhixin.text.bodyMedium.fontWeight, FontWeight.w400);
     expect(zhixin.text.titleMedium.fontWeight, FontWeight.w600);
-    // 字重分三档：一屏一个的主标题最重，页面标题与节标题次之，正文与二级
-    // 页面标题回到常规。
-    expect(zhixin.text.headlineMedium.fontWeight, FontWeight.w700);
-    expect(zhixin.text.pageTitle.fontWeight, FontWeight.w500);
+    expect(zhixin.text.headlineMedium.fontWeight, FontWeight.w600);
+    expect(zhixin.text.pageTitle.fontWeight, FontWeight.w600);
     expect(zhixin.text.headlineSmall.fontWeight, FontWeight.w600);
     expect(zhixin.text.titleLarge.fontSize, 22);
-    expect(zhixin.text.titleLarge.fontWeight, FontWeight.w400);
+    expect(zhixin.text.titleLarge.fontWeight, FontWeight.w600);
+    expect(zhixin.text.pageTitle.fontSize, 26);
+    for (final style in [
+      zhixin.text.headlineMedium,
+      zhixin.text.headlineSmall,
+      zhixin.text.pageTitle,
+      zhixin.text.titleLarge,
+      zhixin.text.titleMedium,
+      zhixin.text.titleSmall,
+      zhixin.text.bodyLarge,
+      zhixin.text.bodyMedium,
+      zhixin.text.bodySmall,
+      zhixin.text.labelLarge,
+      zhixin.text.labelMedium,
+      zhixin.text.labelSmall,
+    ]) {
+      expect(style.letterSpacing, 0);
+    }
     // 页面颜色与 Material 的 ColorScheme 同名同值，只从 Forui 主题取。
     expect(zhixin.colors.primary, zhixinTheme.colorScheme.primary);
     expect(zhixin.colors.error, zhixinTheme.colorScheme.error);
     expect(zhixin.colors.card, zhixinForuiTheme.colors.card);
     expect(zhixin.radius.card, const BorderRadius.all(Radius.circular(20)));
+    // 容器描边取浅的一档，控件描边取深的一档；Forui 的全局描边跟着容器走。
+    expect(zhixin.colors.outlineVariant, isNot(zhixin.colors.outline));
+    expect(zhixinForuiTheme.colors.border, zhixin.colors.outlineVariant);
+    expect(
+      zhixin.colors.primarySoft,
+      zhixinTheme.colorScheme.primaryFixed,
+      reason: '主色浅底与 Material 的主色浅底同值',
+    );
     // Forui 的表单与列表按 body.sm 排正文，取的是同一份 bodyMedium 字号。
     expect(zhixinForuiTheme.typography.body.sm.fontSize, 14);
-    // 页面文字与 Forui 控件都不指定字族，中文与西文都跟随手机系统字体。
+    // 按钮标签只有强调字重，sm 的标签 12.5、其余尺寸 14；sm 的横向内边距 14、
+    // 纵向 8，内容区最小高度仍是触摸布局的 40。
+    for (final (size, fontSize, padding) in [
+      (
+        forui.FButtonSizeVariant.sm,
+        12.5,
+        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      ),
+      (forui.FButtonSizeVariant.md, 14.0, null),
+      (forui.FButtonSizeVariant.lg, 14.0, null),
+    ]) {
+      final style = zhixinForuiTheme.buttonStyles
+          .resolve({forui.FButtonVariant.primary})
+          .resolve({size});
+      expect(style.contentStyle.textStyle.base.fontWeight, FontWeight.w600);
+      expect(style.contentStyle.textStyle.base.fontSize, fontSize);
+      if (padding != null) {
+        expect(style.contentStyle.padding, padding);
+      }
+      expect(style.contentStyle.constraints.minHeight, 48, reason: '按钮统一 48 高');
+    }
+    // ghost 是文字按钮，用主色。
+    expect(
+      zhixinForuiTheme.buttonStyles
+          .resolve({forui.FButtonVariant.ghost})
+          .resolve({forui.FButtonSizeVariant.md})
+          .contentStyle
+          .textStyle
+          .base
+          .color,
+      zhixin.colors.primary,
+    );
+    // 输入框未聚焦的边用控件描边，聚焦的边用主色；主题的 border 是容器描边，
+    // 两者要分开。
+    final field = zhixinForuiTheme.textFieldStyles.md;
+    expect(
+      (field.border.base as OutlineInputBorder).borderSide.color,
+      zhixin.colors.outline,
+    );
+    expect(
+      (field.border.base as OutlineInputBorder).borderSide.color,
+      isNot(zhixinForuiTheme.colors.border),
+    );
+    expect(
+      (field.border.resolve({
+        forui.FTextFieldVariant.focused,
+      }) as OutlineInputBorder).borderSide.color,
+      zhixin.colors.primary,
+    );
+    expect(
+      field.contentTextStyle.base.fontSize,
+      zhixin.text.bodyMedium.fontSize,
+    );
+    // 输入框与按钮同高。
+    expect(field.constraints.minHeight, 48);
+    // 列表项标题取 titleSmall，右侧箭头 16 用次要文字色。
+    final tile = zhixinForuiTheme.tileStyles.primary;
+    expect(
+      tile.contentStyle.titleTextStyle.base.fontWeight,
+      zhixin.text.titleSmall.fontWeight,
+    );
+    expect(tile.contentStyle.suffixIconStyle.base.size, 16);
+    expect(
+      tile.contentStyle.suffixIconStyle.base.color,
+      zhixin.colors.onSurfaceVariant,
+    ); // 页面文字与 Forui 控件都不指定字族，中文与西文都跟随手机系统字体。
     expect(zhixin.text.bodyMedium.fontFamily, isNull);
     expect(zhixinForuiTheme.typography.body.sm.fontFamily, isNull);
     expect(zhixinForuiTheme.typography.body.md.fontFamily, isNull);

@@ -129,26 +129,22 @@ void main() {
     });
   }
 
-  testWidgets('底栏按下时图标位置固定，选中胶囊连续滑动', (tester) async {
+  testWidgets('底栏按下时图标位置固定，选中只改颜色', (tester) async {
     await openApp(tester);
     final bar = find.byType(forui.FBottomNavigationBar);
     Finder icon(IconData data) =>
         find.descendant(of: bar, matching: find.byIcon(data));
-    final pill = find.ancestor(of: bar, matching: find.byType(Stack)).first;
-    final indicator = find.descendant(
-      of: pill,
-      matching: find.byWidgetPredicate(
-        (widget) =>
-            widget is Container &&
-            widget.decoration is ShapeDecoration &&
-            (widget.decoration as ShapeDecoration).shape is StadiumBorder,
-      ),
-    );
+    Color? iconColor(IconData data) => tester.widget<Icon>(icon(data)).color;
+
     final start = tester.getCenter(icon(FLucideIcons.house));
     final targetIcon = icon(FLucideIcons.history);
     final iconRect = tester.getRect(targetIcon);
     final next = iconRect.center;
-    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(start));
+    // 没有胶囊指示块：当前栏的图标是正文色，其余是次要文字色。
+    expect(
+      iconColor(FLucideIcons.house),
+      isNot(iconColor(FLucideIcons.history)),
+    );
 
     final gesture = await tester.startGesture(next);
     await tester.pump();
@@ -156,17 +152,22 @@ void main() {
     final pressedRect = tester.getRect(targetIcon);
     expect(pressedRect.size, iconRect.size);
     expect(pressedRect.center, offsetMoreOrLessEquals(next));
-    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(start));
 
     await gesture.up();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 60));
-    expect(tester.getCenter(indicator).dx, inExclusiveRange(start.dx, next.dx));
-    expect(tester.getCenter(indicator).dy, moreOrLessEquals(start.dy));
     await settle(tester);
-    expect(tester.getCenter(indicator), offsetMoreOrLessEquals(next));
+    // 切过去之后颜色互换，图标位置不动。直接点这一栏也能切，不靠滑动手势。
+    await tester.tap(targetIcon);
+    await settle(tester);
+    expect(
+      iconColor(FLucideIcons.history),
+      isNot(iconColor(FLucideIcons.house)),
+      reason: '切换之后这一栏换成选中色，原来那一栏回到次要文字色',
+    );
+    expect(
+      tester.getCenter(icon(FLucideIcons.house)),
+      offsetMoreOrLessEquals(start),
+    );
   });
-
   testWidgets('页面里左右划动切换底栏，两头的栏再往外划不换', (tester) async {
     await openApp(tester);
 

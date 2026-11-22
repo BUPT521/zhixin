@@ -250,9 +250,10 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
+    // 没有胶囊指示块之后上下各留一档 sm，底栏的高度与原来相当。
     final barPadding = EdgeInsets.symmetric(
       horizontal: theme.space.page,
-      vertical: theme.space.xs,
+      vertical: theme.space.sm,
     );
     return RepaintBoundary(
       child: DecoratedBox(
@@ -263,79 +264,38 @@ class _BottomBar extends StatelessWidget {
         child: SafeArea(
           top: false,
           bottom: false,
-          child: Stack(
+          child: forui.FBottomNavigationBar(
+            index: index,
+            onChange: onChange,
+            style: .delta(
+              decoration: const .value(BoxDecoration()),
+              padding: .value(barPadding),
+              itemStyle: .delta(
+                padding: const .value(EdgeInsets.all(_itemPadding)),
+                // 文字色与字重都在主题里配好，这里只定间距与按下动效。
+                spacing: theme.space.xs,
+                tappableStyle: const .delta(
+                  motion: .delta(
+                    bounceTween: forui.FTappableMotion.noBounceTween,
+                  ),
+                ),
+              ),
+            ),
             children: [
-              Positioned(
-                top: barPadding.top + _itemPadding,
-                left: barPadding.left,
-                right: barPadding.right,
-                height: _iconHeight,
-                child: IgnorePointer(
-                  child: AnimatedAlign(
-                    duration: context.motionOf(theme.motion.standard),
-                    curve: theme.motion.move,
-                    alignment: AlignmentDirectional(
-                      -1 + 2 * index / (_items.length - 1),
-                      0,
-                    ),
-                    child: FractionallySizedBox(
-                      widthFactor: 1 / _items.length,
-                      child: Center(
-                        child: Container(
-                          width: 58,
-                          height: _iconHeight,
-                          decoration: ShapeDecoration(
-                            color: theme.colors.primaryContainer,
-                            shape: const StadiumBorder(),
-                          ),
-                        ),
-                      ),
+              for (final (i, (icon, label)) in _items.indexed)
+                forui.FBottomNavigationBarItem(
+                  icon: SizedBox(
+                    height: _iconHeight,
+                    child: Icon(
+                      icon,
+                      size: 20,
+                      color: i == index
+                          ? theme.colors.onSurface
+                          : theme.colors.onSurfaceVariant,
                     ),
                   ),
+                  label: Text(label),
                 ),
-              ),
-              forui.FBottomNavigationBar(
-                index: index,
-                onChange: onChange,
-                style: .delta(
-                  decoration: const .value(BoxDecoration()),
-                  padding: .value(barPadding),
-                  itemStyle: .delta(
-                    padding: const .value(EdgeInsets.all(_itemPadding)),
-                    spacing: theme.space.xs,
-                    tappableStyle: const .delta(
-                      motion: .delta(
-                        bounceTween: forui.FTappableMotion.noBounceTween,
-                      ),
-                    ),
-                    textStyle: .delta([
-                      .all(
-                        .delta(
-                          color: theme.colors.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      .exact({.selected}, .delta(color: theme.colors.primary)),
-                    ]),
-                  ),
-                ),
-                children: [
-                  for (final (i, (icon, label)) in _items.indexed)
-                    forui.FBottomNavigationBarItem(
-                      icon: SizedBox(
-                        height: _iconHeight,
-                        child: Icon(
-                          icon,
-                          size: 21,
-                          color: i == index
-                              ? theme.colors.onPrimaryContainer
-                              : theme.colors.onSurfaceVariant,
-                        ),
-                      ),
-                      label: Text(label),
-                    ),
-                ],
-              ),
             ],
           ),
         ),

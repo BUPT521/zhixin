@@ -161,6 +161,7 @@ final forui.FToasterStyleDelta zhixinToasterStyle =
       ),
     );
 
+const _tagRadius = Radius.circular(8);
 const _controlRadius = Radius.circular(14);
 const _cardRadius = Radius.circular(20);
 const _featureRadius = Radius.circular(24);
@@ -222,6 +223,7 @@ class ZhixinColors {
     required this.outlineVariant,
     required this.primaryContainer,
     required this.onPrimaryContainer,
+    required this.primarySoft,
     required this.secondaryContainer,
     required this.onSecondaryContainer,
     required this.surface,
@@ -253,14 +255,21 @@ class ZhixinColors {
   /// 提醒色，与 [attention] 同值。
   final Color secondary;
   final Color onSurfaceVariant;
-  final Color outline;
-  final Color outlineVariant;
 
-  /// 主色容器：选中芯片、用户气泡与导航指示块用它作底。
+  /// 主色容器：选中芯片、用户气泡与输入区用它作底。
   final Color primaryContainer;
 
   /// 压在 [primaryContainer] 上的文字颜色。
   final Color onPrimaryContainer;
+
+  /// 主色浅底：底栏指示块、标签底。
+  final Color primarySoft;
+
+  /// 容器描边：卡片、列表项、分隔线、底栏、对话框与面板；比 [outline] 浅。
+  final Color outlineVariant;
+
+  /// 控件描边：输入框、选择框、复选框与 outline 按钮；比 [outlineVariant] 深。
+  final Color outline;
 
   /// 与 [primaryContainer] 同值；次要按钮的底色。
   final Color secondaryContainer;
@@ -323,10 +332,7 @@ class ZhixinRadius {
   /// 标签与小按钮。
   BorderRadius get tag => const BorderRadius.all(Radius.circular(8));
 
-  /// 对话气泡与说明条：比标签圆一档，比控件小。
-  BorderRadius get bubble => const BorderRadius.all(Radius.circular(12));
-
-  /// 按钮、输入框与分段控件。
+  /// 按钮、输入框、分段控件与对话气泡。
   BorderRadius get control => const BorderRadius.all(_controlRadius);
 
   /// 列表与内容卡片。
@@ -368,6 +374,8 @@ forui.FThemeData _foruiTheme(_Palette palette) {
       ? forui.FTheme.neutral.light.touch
       : forui.FTheme.neutral.dark.touch;
   final colors = _foruiColors(base.colors, palette);
+  final zhixin = _colors(palette);
+  final icons = base.icons;
   final text = _textStyles(palette);
   final typography = base.typography.copyWith(
     display: _systemFace(base.typography.display).copyWith(
@@ -385,8 +393,22 @@ forui.FThemeData _foruiTheme(_Palette palette) {
   );
   final style = base.style.copyWith(
     borderRadius: base.style.borderRadius.copyWith(
+      xs2: const BorderRadius.all(_tagRadius),
+      sm: const BorderRadius.all(_tagRadius),
       md: const BorderRadius.all(_controlRadius),
       lg: const BorderRadius.all(_cardRadius),
+    ),
+    // 表单标签取 labelLarge，说明与错误文字取 bodySmall，色值跟着色板走。
+    formFieldStyle: forui.FFormFieldStyle(
+      labelTextStyle: forui.FVariants.all(
+        text.labelLarge.copyWith(color: colors.foreground),
+      ),
+      descriptionTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.mutedForeground),
+      ),
+      errorTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.error),
+      ),
     ),
   );
   final scaffold = forui.FScaffoldStyle.inherit(colors: colors, style: style);
@@ -401,11 +423,30 @@ forui.FThemeData _foruiTheme(_Palette palette) {
     colors: colors,
     typography: typography,
     style: style,
-    cardStyle: forui.FCardStyle.inherit(
-      colors: colors,
-      style: style,
-      typography: typography,
-      touch: true,
+    cardStyle:
+        forui.FCardStyle.inherit(
+          colors: colors,
+          style: style,
+          typography: typography,
+          touch: true,
+        ).copyWith(
+          titleTextStyle: forui.TextStyleDelta.value(text.titleMedium),
+          subtitleTextStyle: forui.TextStyleDelta.value(text.bodySmall),
+        ),
+    buttonStyles: _buttonStyles(colors, typography, style, text),
+    textFieldStyles: _textFieldStyles(colors, zhixin, style, text),
+    selectStyle: _selectStyle(colors, zhixin, icons, typography, style, text),
+    tileStyles: _tileStyles(colors, style, text),
+    tileGroupStyle: base.tileGroupStyle.copyWith(
+      dividerColor: forui.FVariants.all(colors.border),
+    ),
+    switchStyle: _switchStyle(colors, style),
+    accordionStyle: _accordionStyle(colors, style, text),
+    bottomNavigationBarStyle: _navigationBarStyle(
+      colors,
+      typography,
+      style,
+      text,
     ),
     dialogStyle: dialog.copyWith(
       decoration: forui.DecorationDelta.shapeDelta(
@@ -430,15 +471,316 @@ forui.FThemeData _foruiTheme(_Palette palette) {
   );
 }
 
+/// Forui 按钮的默认样式：圆角与其它控件同为 [ZhixinRadius.control]；标签只用
+/// 强调字重，`sm` 标签 12.5、其余尺寸取 `labelLarge` 的 14，`sm` 的横向内边距
+/// 14、纵向 8。ghost 是文字按钮，图标与文字都用主色。内容区的最小尺寸沿用
+/// Forui 触摸布局的取值，可点区域不缩小。
+forui.FButtonStyles _buttonStyles(
+  forui.FColors colors,
+  forui.FTypography typography,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FButtonStyles.inherit(
+    colors: colors,
+    typography: typography,
+    style: style,
+    touch: true,
+  );
+
+  forui.FButtonStyle resized(
+    forui.FButtonStyle button, {
+    required bool small,
+    Color? color,
+  }) {
+    final content = button.contentStyle;
+    return button.copyWith(
+      contentStyle: content.copyWith(
+        textStyle: forui.FVariants.all(
+          content.textStyle.base.copyWith(
+            fontSize: small ? 12.5 : 14,
+            fontWeight: text.labelLarge.fontWeight,
+            color: color ?? content.textStyle.base.color,
+          ),
+        ),
+        iconStyle: color == null
+            ? null
+            : forui.FVariants.all(
+                content.iconStyle.base.copyWith(color: color),
+              ),
+        // 按钮统一 48 高：内容区最小高度按同一档给，内边距与标签再在它里面居中。
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 48),
+        padding: small
+            ? const .value(EdgeInsets.symmetric(horizontal: 14, vertical: 8))
+            : null,
+      ),
+    );
+  }
+
+  forui.FButtonSizeStyles sizes(
+    forui.FButtonSizeStyles sizes, {
+    Color? color,
+  }) => forui.FButtonSizeStyles(
+    forui.FVariants(
+      resized(sizes.md, small: false, color: color),
+      variants: {
+        [forui.FButtonSizeVariant.xs]: resized(
+          sizes.xs,
+          small: false,
+          color: color,
+        ),
+        [forui.FButtonSizeVariant.sm]: resized(
+          sizes.sm,
+          small: true,
+          color: color,
+        ),
+        [forui.FButtonSizeVariant.lg]: resized(
+          sizes.lg,
+          small: false,
+          color: color,
+        ),
+      },
+    ),
+  );
+
+  return forui.FButtonStyles(
+    forui.FVariants(
+      sizes(base.primary),
+      variants: {
+        [forui.FButtonVariant.primary]: sizes(base.primary),
+        [forui.FButtonVariant.secondary]: sizes(base.secondary),
+        [forui.FButtonVariant.destructive]: sizes(base.destructive),
+        [forui.FButtonVariant.outline]: sizes(base.outline),
+        [forui.FButtonVariant.ghost]: sizes(base.ghost, color: colors.primary),
+      },
+    ),
+  );
+}
+
+/// Forui 输入框的默认样式：圆角 [ZhixinRadius.control]，未聚焦的边用控件描边
+/// [ZhixinColors.outline]、聚焦的边用主色；输入与占位用 `bodyMedium`，计数用
+/// `bodySmall`。选择框复用这一份尺寸样式。
+forui.FTextFieldSizeStyles _textFieldStyles(
+  forui.FColors colors,
+  ZhixinColors zhixin,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FTextFieldSizeStyles.inherit(
+    colors: colors,
+    typography: forui.FTypography(
+      display: forui.FTypeface(),
+      body: forui.FTypeface(),
+    ),
+    style: style,
+    touch: true,
+  );
+  final radius = style.borderRadius.md;
+
+  InputBorder border(Color color) => OutlineInputBorder(
+    borderSide: BorderSide(color: color, width: style.borderWidth),
+    borderRadius: radius,
+  );
+
+  forui.FTextFieldStyle fixed(forui.FTextFieldStyle field) => field.copyWith(
+    // 输入框统一 48 高，与按钮同高；三种尺寸的内边距与文字仍在里面居中。
+    constraints: const BoxConstraints(minHeight: 48),
+    border: forui.FVariants(
+      border(zhixin.outline),
+      variants: {
+        [forui.FTextFieldVariant.focused]: border(colors.primary),
+        [forui.FTextFieldVariant.error]: border(colors.error),
+        [forui.FTextFieldVariant.disabled]: border(
+          colors.disable(zhixin.outline),
+        ),
+      },
+    ),
+    contentTextStyle: forui.FVariants.all(
+      text.bodyMedium.copyWith(color: colors.foreground),
+    ),
+    hintTextStyle: forui.FVariants.all(
+      text.bodyMedium.copyWith(color: colors.mutedForeground),
+    ),
+    counterTextStyle: forui.FVariants.all(
+      text.bodySmall.copyWith(color: colors.mutedForeground),
+    ),
+  );
+
+  return forui.FTextFieldSizeStyles(
+    forui.FVariants(
+      fixed(base.md),
+      variants: {
+        [forui.FTextFieldSizeVariant.sm]: fixed(base.sm),
+        [forui.FTextFieldSizeVariant.lg]: fixed(base.lg),
+      },
+    ),
+  );
+}
+
+/// Forui 选择框：字段部分与输入框同一样式。
+forui.FSelectStyle _selectStyle(
+  forui.FColors colors,
+  ZhixinColors zhixin,
+  forui.FIcons icons,
+  forui.FTypography typography,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FSelectStyle.inherit(
+    colors: colors,
+    typography: typography,
+    icons: icons,
+    style: style,
+    touch: true,
+  );
+  return forui.FSelectStyle(
+    fieldStyles: _textFieldStyles(colors, zhixin, style, text),
+    searchStyle: base.searchStyle,
+    contentStyle: base.contentStyle,
+    emptyTextStyle: base.emptyTextStyle,
+  );
+}
+
+/// Forui 列表项的默认样式：圆角 [ZhixinRadius.card]，容器描边
+/// [ZhixinColors.outlineVariant]，标题 `titleSmall`，副标题 `bodySmall` 加次要
+/// 文字色，右侧箭头 16 用次要文字色；内边距横向 `space.lg`、纵向 `space.md`。
+forui.FTileStyles _tileStyles(
+  forui.FColors colors,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  const space = ZhixinSpace();
+  final base = forui.FTileStyles.inherit(
+    colors: colors,
+    typography: forui.FTypography(
+      display: forui.FTypeface(),
+      body: forui.FTypeface(),
+    ),
+    style: style,
+  );
+  final padding = EdgeInsets.symmetric(
+    horizontal: space.lg,
+    vertical: space.md,
+  );
+
+  forui.FTileStyle fixed(forui.FTileStyle tile) => tile.copyWith(
+    contentStyle: tile.contentStyle.copyWith(
+      titleTextStyle: forui.FVariants.all(
+        text.titleSmall.copyWith(color: colors.foreground),
+      ),
+      subtitleTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.mutedForeground),
+      ),
+      detailsTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.mutedForeground),
+      ),
+      suffixIconStyle: forui.FVariants.all(
+        IconThemeData(color: colors.mutedForeground, size: 16),
+      ),
+      suffixedPadding: forui.EdgeInsetsGeometryDelta.value(
+        EdgeInsets.fromLTRB(space.lg, space.md, space.md, space.md),
+      ),
+      unsuffixedPadding: forui.EdgeInsetsGeometryDelta.value(padding),
+    ),
+    rawContentStyle: tile.rawContentStyle.copyWith(
+      childTextStyle: forui.FVariants.all(text.titleSmall),
+      padding: forui.EdgeInsetsGeometryDelta.value(padding),
+    ),
+  );
+
+  return forui.FTileStyles(
+    forui.FVariants(
+      fixed(base.primary),
+      variants: {
+        [forui.FItemVariant.destructive]: fixed(base.destructive),
+      },
+    ),
+  );
+}
+
+/// Forui 开关：开启时轨道取主色，关闭时取次要按钮那一档底色，圆钮取页面
+/// 底色；两边的文字沿用 Forui 的标签样式。
+forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
+  final base = forui.FSwitchStyle.inherit(colors: colors, style: style);
+  return base.copyWith(
+    trackColor: forui.FVariants(
+      colors.background,
+      variants: {
+        [forui.FSwitchVariant.selected]: colors.primary,
+        [forui.FSwitchVariant.disabled]: colors.disable(colors.background),
+        [forui.FSwitchVariant.selected.and(forui.FSwitchVariant.disabled)]:
+            colors.disable(colors.primary),
+      },
+    ),
+  );
+}
+
+/// 底栏：文字用常规字重，选中只改颜色（正文色与次要文字色），不靠字重与胶囊区分。
+/// 文字色；容器描边由 Forui 的 border 给出，与卡片、列表项同一档。
+forui.FBottomNavigationBarStyle _navigationBarStyle(
+  forui.FColors colors,
+  forui.FTypography typography,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FBottomNavigationBarStyle.inherit(
+    colors: colors,
+    typography: typography,
+    style: style,
+  );
+  return forui.FBottomNavigationBarStyle(
+    decoration: base.decoration,
+    itemStyle: forui.FBottomNavigationBarItemStyle(
+      // 图标颜色由页面按当前栏给（选中的是正文色、其余是次要文字色），这里只定文字。
+      iconStyle: forui.FVariants.all(
+        IconThemeData(color: colors.mutedForeground),
+      ),
+      textStyle: forui.FVariants(
+        text.labelSmall.copyWith(color: colors.mutedForeground),
+        variants: {
+          [forui.FTappableVariant.selected]: text.labelSmall.copyWith(
+            color: colors.foreground,
+          ),
+        },
+      ),
+      tappableStyle: style.tappableStyle,
+      focusedOutlineStyle: style.focusedOutlineStyle,
+      padding: const EdgeInsets.all(5),
+      spacing: 4,
+    ),
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+  );
+}
+
+/// Forui 折叠面板：标题 `labelLarge` 加强调字重，正文 `bodyMedium`。
+forui.FAccordionStyle _accordionStyle(
+  forui.FColors colors,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FAccordionStyle.inherit(
+    colors: colors,
+    typography: forui.FTypography(
+      display: forui.FTypeface(),
+      body: forui.FTypeface(),
+    ),
+    style: style,
+    touch: true,
+  );
+  return base.copyWith(
+    titleTextStyle: forui.FVariants.all(text.labelLarge),
+    childTextStyle: forui.TextStyleDelta.value(text.bodyMedium),
+  );
+}
+
 /// 以 Forui 的中性基底起步，把每一档颜色换成 [_Palette] 的取值。
 ///
-/// 隐式的悬停、按下与禁用态由 Forui 从这几个基色派生：`hover` 在 HSL 里只改
-/// 明度，`disable` 只降透明度，色相都不变，所以基色是中性灰或蓝时，派生出来
-/// 的态也不会带上别的颜色。浅色下卡片与页面同为白色，描边统一取
-/// [_Palette.inputBorder]，比卡片描边深一档，按钮、输入框、卡片与列表都有
-/// 1px 的边，相邻两块不会并成一片。
+/// 浅色下页面、卡片与列表都是同一片白，容器靠 [_Palette.border] 这一档浅
+/// 描边分出层次；[_Palette.inputBorder] 更深，只给输入框、选择框、复选框与
+/// outline 按钮这类交互控件用，见 [ZhixinColors.outline] 与
+/// [ZhixinColors.outlineVariant]。深色下卡片比页面亮一档，[border] 同样
+/// 能画出边界。
 forui.FColors _foruiColors(forui.FColors base, _Palette palette) {
-  final inputBorder = palette.inputBorder;
   return base.copyWith(
     background: palette.paper,
     foreground: palette.ink,
@@ -449,7 +791,7 @@ forui.FColors _foruiColors(forui.FColors base, _Palette palette) {
     muted: palette.raised,
     mutedForeground: palette.muted,
     card: palette.card,
-    border: inputBorder,
+    border: palette.border,
     error: palette.error,
     errorForeground: palette.onError,
     destructive: palette.error,
@@ -492,8 +834,8 @@ ZhixinTextStyles _textStyles(_Palette palette) {
     headlineMedium: style(
       fontSize: 30,
       height: 1.26,
-      letterSpacing: -0.5,
-      weight: FontWeight.w700,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
     headlineSmall: style(
       fontSize: 24,
@@ -502,44 +844,49 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       weight: FontWeight.w600,
     ),
     pageTitle: style(
-      fontSize: 30,
-      height: 1.26,
-      letterSpacing: -0.5,
-      weight: FontWeight.w500,
+      fontSize: 26,
+      height: 1.3,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
-    titleLarge: style(fontSize: 22, height: 1.27, letterSpacing: 0),
+    titleLarge: style(
+      fontSize: 22,
+      height: 1.27,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
+    ),
     titleMedium: style(
       fontSize: 16,
       height: 1.5,
-      letterSpacing: 0.15,
+      letterSpacing: 0,
       weight: FontWeight.w600,
     ),
     titleSmall: style(
       fontSize: 14,
       height: 1.43,
-      letterSpacing: 0.1,
+      letterSpacing: 0,
       weight: FontWeight.w600,
     ),
     bodyLarge: style(fontSize: 16, height: 1.55, letterSpacing: 0),
-    bodyMedium: style(fontSize: 14, height: 1.5, letterSpacing: 0.25),
-    bodySmall: style(fontSize: 12, height: 1.5, letterSpacing: 0.1),
+    bodyMedium: style(fontSize: 14, height: 1.5, letterSpacing: 0),
+    bodySmall: style(fontSize: 12, height: 1.5, letterSpacing: 0),
     labelLarge: style(
       fontSize: 14,
       height: 1.43,
-      letterSpacing: 0.1,
-      weight: FontWeight.w500,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
     labelMedium: style(
       fontSize: 12,
       height: 1.33,
-      letterSpacing: 0.5,
-      weight: FontWeight.w500,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
     labelSmall: style(
       fontSize: 11,
       height: 1.45,
-      letterSpacing: 0.5,
-      weight: FontWeight.w500,
+      letterSpacing: 0,
+      weight: FontWeight.w600,
     ),
   );
 }
@@ -601,6 +948,7 @@ ZhixinColors _colors(_Palette palette) => ZhixinColors(
   outlineVariant: palette.border,
   primaryContainer: palette.brandContainer,
   onPrimaryContainer: palette.onBrandContainer,
+  primarySoft: palette.brandLight,
   secondaryContainer: palette.brandContainer,
   onSecondaryContainer: palette.onBrandContainer,
   surface: palette.paper,
@@ -734,7 +1082,7 @@ ThemeData _materialTheme(_Palette palette) {
         autoAddDividerLineAfterH1: false,
         h1: text.titleLarge.copyWith(
           fontSize: 20,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           height: 1.35,
         ),
         h2: text.titleMedium.copyWith(fontSize: 17, height: 1.35),

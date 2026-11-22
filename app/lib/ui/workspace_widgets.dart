@@ -169,23 +169,21 @@ class StatusTag extends StatelessWidget {
             : null,
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        // 竖向 2 是标签与文字之间的光学微调，横向取 space.sm。
+        padding: EdgeInsets.symmetric(horizontal: theme.space.sm, vertical: 2),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 13, color: foreground),
-              const SizedBox(width: 3),
+              Icon(icon, size: 14, color: foreground),
+              SizedBox(width: theme.space.xs),
             ],
             Flexible(
               child: Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.text.labelMedium.copyWith(
-                  color: foreground,
-                  letterSpacing: 0.2,
-                ),
+                style: theme.text.labelMedium.copyWith(color: foreground),
               ),
             ),
           ],
@@ -370,7 +368,12 @@ class InlineNotice extends StatelessWidget {
           border: Border.all(color: theme.colors.error.withValues(alpha: 0.4)),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 6, 8),
+          padding: EdgeInsets.fromLTRB(
+            theme.space.md,
+            theme.space.md,
+            theme.space.sm,
+            theme.space.sm,
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

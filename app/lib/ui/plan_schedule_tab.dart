@@ -433,7 +433,7 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
           ),
           if (entries.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: EdgeInsets.only(top: theme.space.xs),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -442,7 +442,7 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
                     size: 14,
                     color: theme.colors.onSurfaceVariant,
                   ),
-                  const SizedBox(width: 4),
+                  SizedBox(width: theme.space.xs),
                   Expanded(
                     child: Text(
                       '课：${entries.map((entry) => '${entry.startTime} ${entry.title}').join('、')}',
@@ -480,7 +480,7 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
                 borderRadius: const BorderRadius.all(Radius.circular(2)),
               ),
             ),
-            const SizedBox(width: 10),
+            SizedBox(width: theme.space.sm),
             Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -495,9 +495,7 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
                 ),
                 Text(
                   clockOf(block.endAt),
-                  style: figures.copyWith(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
+                  style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),
                 ),
@@ -524,7 +522,7 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             TagRow(
               children: [
                 if (block.status == ScheduleBlockStatus.cancelled)
@@ -605,7 +603,7 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             TagRow(
               children: [
                 StatusTag(

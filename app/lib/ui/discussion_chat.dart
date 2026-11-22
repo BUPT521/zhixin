@@ -1553,14 +1553,7 @@ class DiscussionChatState extends State<DiscussionChat> {
                     suffixBuilder: (_, style, _) => VoiceInputButton(
                       controller: _input,
                       iconSize: 20,
-                      style: style.clearButtonStyle.copyWith(
-                        iconContentStyle: const .delta(
-                          constraints: BoxConstraints(
-                            minWidth: 44,
-                            minHeight: 44,
-                          ),
-                        ),
-                      ),
+                      style: style.clearButtonStyle,
                     ),
                   ),
                 ),

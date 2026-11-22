@@ -26,13 +26,13 @@ class AboutPage extends StatelessWidget {
         padding: theme.space.pageInsets(top: theme.space.xl),
         children: [
           const Center(child: ZhixinMark(size: 64)),
-          const SizedBox(height: 12),
+          SizedBox(height: theme.space.md),
           Text(
             appName,
             textAlign: TextAlign.center,
             style: theme.text.pageTitle,
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: theme.space.xs),
           Text(
             '版本 $appVersion',
             textAlign: TextAlign.center,
@@ -46,7 +46,7 @@ class AboutPage extends StatelessWidget {
             textAlign: TextAlign.center,
             style: theme.text.bodyMedium,
           ),
-          const Divider(height: 32),
+          Divider(height: theme.space.page, color: theme.colors.outlineVariant),
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.fileText),
             title: const Text('开源许可'),
@@ -68,7 +68,7 @@ class AboutPage extends StatelessWidget {
             suffix: const Icon(FLucideIcons.chevronRight),
             onPress: () => _openHomepage(context),
           ),
-          const Divider(height: 32),
+          Divider(height: theme.space.page, color: theme.colors.outlineVariant),
           Text(
             '学习记录保存在本机；模型调用使用你配置的 API Key，'
             '费用由模型服务商按用量结算。',

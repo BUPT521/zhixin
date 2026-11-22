@@ -100,10 +100,10 @@ void main() {
                 : zhixinDarkForuiTheme,
             child: forui.FToaster(
               child: AppScope(
-          themeAccent: ThemeAccentController(),
-          themeMode: themeMode,
-          child: child!,
-        ),
+                themeAccent: ThemeAccentController(),
+                themeMode: themeMode,
+                child: child!,
+              ),
             ),
           ),
           home: PlanPage(watchWeek: watchWeek),

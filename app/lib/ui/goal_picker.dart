@@ -63,10 +63,15 @@ Future<GoalChoice?> showGoalChoice(
       final theme = context.zhixin;
       return ListView(
         shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        padding: EdgeInsets.fromLTRB(
+          theme.space.lg,
+          0,
+          theme.space.lg,
+          theme.space.lg,
+        ),
         children: [
           Text(title, style: theme.text.titleMedium),
-          const SizedBox(height: 4),
+          SizedBox(height: theme.space.xs),
           Text(note, style: theme.text.bodySmall),
           SizedBox(height: theme.space.gap),
           forui.FTile(
