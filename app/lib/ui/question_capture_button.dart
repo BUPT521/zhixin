@@ -14,6 +14,9 @@ import 'zhixin_dialog.dart';
 import 'zhixin_toast.dart';
 
 /// 从记录页录入题目原文与出处。
+///
+/// 入口放在记录页标题栏的右侧，与安排页的“这周能做什么”同一种写法：次要
+/// 按钮、`sm` 尺寸、图标在前。
 class QuestionCaptureButton extends StatelessWidget {
   const QuestionCaptureButton({
     super.key,
@@ -27,6 +30,7 @@ class QuestionCaptureButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => forui.FButton(
     variant: forui.FButtonVariant.secondary,
+    size: forui.FButtonSizeVariant.sm,
     mainAxisSize: MainAxisSize.min,
     onPress: () => _capture(context),
     prefix: const Icon(FLucideIcons.imagePlus),

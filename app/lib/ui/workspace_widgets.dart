@@ -4,19 +4,25 @@ import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
 
-/// 三栏与详情页共用的内容宽度：手机上铺满，平板与横屏上居中。
+/// 三栏与详情页共用的内容宽度：手机上铺满，平板与横屏上按页面宽度居中。
+///
+/// 最大宽度包含两侧的页面边距，屏上的内容字行因此不比手机上更宽，标题栏、
+/// 卡片与底栏的左右边界也与内容一致，不随着屏幕变宽各自贴着两边。
 class PageWidth extends StatelessWidget {
   const PageWidth({super.key, required this.child});
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => Align(
-    alignment: Alignment.topCenter,
-    child: ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: context.zhixin.space.maxWidth),
-      child: child,
-    ),
-  );
+  Widget build(BuildContext context) {
+    final space = context.zhixin.space;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: space.maxWidth + space.page * 2),
+        child: child,
+      ),
+    );
+  }
 }
 
 /// 详情页内容与三栏采用相同的最大宽度。
@@ -109,8 +115,8 @@ class SectionHeading extends StatelessWidget {
 
 /// 区块标题右侧的文字动作：只有主色文字（可带小图标），不画按钮。
 ///
-/// 可点区域高 [height]，比 44 的按钮矮一截，一行标题不再被动作撑高；
-/// 右侧外扩半个内边距，文字与页面右边距对齐。
+/// 可点区域高 [height]，比 44 的按钮矮一截，一行标题不再被动作撑高；两侧各外扩
+/// 半个内边距，可点在 44 见方以内，而文字与标题栏动作的图标、版心右边界对齐。
 class SectionLink extends StatelessWidget {
   const SectionLink({
     super.key,
@@ -124,7 +130,7 @@ class SectionLink extends StatelessWidget {
   final IconData? icon;
 
   static const double height = 40;
-  static const double _hitPadding = 12;
+  static const double _hitPadding = 10;
 
   @override
   Widget build(BuildContext context) {
@@ -323,7 +329,10 @@ class EntryTile extends StatelessWidget {
       style: .delta(
         rawContentStyle: .delta(
           padding: .value(
-            EdgeInsets.symmetric(horizontal: 14, vertical: theme.space.md),
+            EdgeInsets.symmetric(
+              horizontal: kCardInset,
+              vertical: theme.space.md,
+            ),
           ),
         ),
       ),
@@ -358,7 +367,8 @@ class EntryTile extends StatelessWidget {
   }
 }
 
-/// 没有内容时的说明：说清这里会放什么，并给出下一步。
+/// 没有内容时的说明：说清这里会放什么，并给出下一步。内容区的左右留白与
+/// 列表项同取 [kCardInset]，说明文字与列表里的文字从同一处起排。
 class EmptyState extends StatelessWidget {
   const EmptyState({
     super.key,
@@ -377,7 +387,7 @@ class EmptyState extends StatelessWidget {
     final theme = context.zhixin;
     return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: theme.space.xl,
+        horizontal: kCardInset,
         vertical: theme.space.xl,
       ),
       child: Column(

@@ -248,11 +248,10 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
         key: const PageStorageKey<String>('plan-tab-1'),
         slivers: [
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-              theme.space.page,
-              theme.space.xs,
-              theme.space.page,
-              theme.space.section,
+            // 左右由页签外层统一给页面边距，这里只留上下的间隔。
+            padding: EdgeInsets.only(
+              top: theme.space.xs,
+              bottom: theme.space.section,
             ),
             sliver: SliverMainAxisGroup(slivers: _slivers(theme)),
           ),

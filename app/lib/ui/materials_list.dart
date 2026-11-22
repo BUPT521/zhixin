@@ -21,6 +21,7 @@ import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
+import 'zhixin_rhs.dart';
 import 'zhixin_select.dart';
 import 'zhixin_toast.dart';
 
@@ -403,14 +404,22 @@ class MaterialListState extends State<MaterialList> {
                   theme.space.page,
                   theme.space.xs,
                 ),
-                child: Row(
-                  children: [
-                    Expanded(child: _searchBar(theme)),
-                    SizedBox(width: theme.space.sm),
+                child: RhsRow(
+                  leading: _searchBar(theme),
+                  // 导入按钮在两句话之间换长，与查找框同高；宽度按最长的那一句
+                  // 定住，换标签时查找框不跟着缩。
+                  trailing: [
                     _ImportMaterialButton(
                       enabled: canImport,
                       onPaste: _import,
                       onWord: _importWord,
+                    ),
+                    _ImportMaterialButton(
+                      enabled: canImport,
+                      onPaste: _import,
+                      onWord: _importWord,
+                      label: '从 Word 导入',
+                      visible: false,
                     ),
                   ],
                 ),
@@ -634,26 +643,41 @@ class _ImportMaterialButton extends StatelessWidget {
     required this.enabled,
     required this.onPaste,
     required this.onWord,
+    this.label = '导入材料',
+    this.visible = true,
   });
 
   final bool enabled;
   final VoidCallback onPaste;
   final VoidCallback onWord;
 
+  /// 按钮上的文字。
+  final String label;
+
+  /// 是否画出来；用来把按钮换成更短的一句时先按较长的一句量宽度。
+  final bool visible;
+
   @override
   Widget build(BuildContext context) {
-    return ZhixinMenu(
-      semanticsLabel: '导入材料',
-      items: [
-        ZhixinMenuItem(label: '粘贴原文', onSelected: onPaste),
-        ZhixinMenuItem(label: '从 Word 导入', onSelected: onWord),
-      ],
-      triggerBuilder: (context, controller) => forui.FButton(
-        variant: forui.FButtonVariant.secondary,
-        mainAxisSize: MainAxisSize.min,
-        onPress: enabled ? controller.toggle : null,
-        prefix: const Icon(FLucideIcons.upload),
-        child: const Text('导入材料'),
+    return Visibility(
+      visible: visible,
+      maintainState: true,
+      maintainAnimation: true,
+      maintainSize: false,
+      child: ZhixinMenu(
+        semanticsLabel: '导入材料',
+        items: [
+          ZhixinMenuItem(label: '粘贴原文', onSelected: onPaste),
+          ZhixinMenuItem(label: '从 Word 导入', onSelected: onWord),
+        ],
+        triggerBuilder: (context, controller) => forui.FButton(
+          variant: forui.FButtonVariant.secondary,
+          mainAxisSize: MainAxisSize.min,
+          style: fittedButtonStyle(),
+          onPress: enabled && visible ? controller.toggle : null,
+          prefix: const Icon(FLucideIcons.upload),
+          child: Text(label),
+        ),
       ),
     );
   }

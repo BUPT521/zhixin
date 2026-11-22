@@ -166,8 +166,16 @@ const _controlRadius = Radius.circular(12);
 const _cardRadius = Radius.circular(16);
 const _featureRadius = Radius.circular(20);
 
-/// 列表项的横向内边距；比卡片内边距 [ZhixinSpace.lg] 少 2，图标与文字离边更近。
-const double _tilePadH = 14;
+/// 列表项、入口卡片与空态内容区共用的横向内边距，与卡片内边距 [ZhixinSpace.lg]
+/// 同值；几种卡片里文字的起始位置因此一致，同等宽度的卡片换一种也读不到跳变。
+const double kCardInset = 16;
+
+/// 控件内容与描边之间的横向留白；按钮、输入框与选择框同取这一档，并排时文字
+/// 到框边的距离一样。
+const double _controlPadH = 12;
+
+/// 带图标的按钮里图标与标签之间的间隔。
+const double _controlGap = 6;
 
 /// 页面里的字号与颜色；从 Forui 主题的应用扩展读取。
 extension ZhixinThemeContext on BuildContext {
@@ -293,6 +301,10 @@ class ZhixinSpace {
   /// 按钮、输入框与选择框的内容区高度：三者同高，排在同一行时上下对齐。
   static const double controlHeight = 44;
 
+  /// 页面左右边距的常量形式；主题之外的地方（底栏与标题栏的样式）也取这一档。
+  /// 改 [page] 时两处要一起改。
+  static const double pageInset = 24;
+
   /// 同一行里图标与文字、标签与标签之间。
   double get xs => 4;
 
@@ -312,8 +324,9 @@ class ZhixinSpace {
   /// 卡片内边距。
   double get lg => 16;
 
-  /// 页面左右边距。
-  double get page => 20;
+  /// 页面左右边距；标题栏、分段条、卡片与底栏都取这一档，内容区的两侧
+  /// 因此在整屏上下对齐。标题栏里的图标按可点区域居中，图标离屏边 [page] + 6。
+  double get page => 24;
 
   /// 空态与对话框这类需要松一些的内边距。
   double get xl => 24;
@@ -478,9 +491,10 @@ forui.FThemeData _foruiTheme(_Palette palette) {
 }
 
 /// Forui 按钮的默认样式：圆角与其它控件同为 [ZhixinRadius.control]；标签只用
-/// 强调字重，`sm` 标签 12.5、其余尺寸取 `labelLarge` 的 14，`sm` 的横向内边距
-/// 14、纵向 8。ghost 是文字按钮，图标与文字都用主色。内容区的最小尺寸沿用
-/// Forui 触摸布局的取值，可点区域不缩小。
+/// 强调字重，`sm` 标签 12.5、其余尺寸取 `labelLarge` 的 14。带图标的按钮里图标
+/// 与标签之间的间隔按正文档收窄，内容高度不变；`sm` 的横向内边距 14、纵向 8。
+/// ghost 是文字按钮，图标与文字都用主色。内容区的最小尺寸沿用 Forui 触摸布局
+/// 的取值，可点区域不缩小。
 forui.FButtonStyles _buttonStyles(
   forui.FColors colors,
   forui.FTypography typography,
@@ -515,14 +529,18 @@ forui.FButtonStyles _buttonStyles(
                 content.iconStyle.base.copyWith(color: color),
               ),
         // 按钮与输入框统一 [ZhixinSpace.controlHeight]：内容区最小高度按同一档
-        // 给，内边距与标签再在它里面居中。
+        // 给，内边距与标签再在它里面居中。横向留白与输入框同取 [_controlPadH]，
+        // 并排时文字离框边一样远。
         constraints: const BoxConstraints(
-          minWidth: 44,
+          minWidth: ZhixinSpace.controlHeight,
           minHeight: ZhixinSpace.controlHeight,
         ),
+        spacing: _controlGap,
         padding: small
             ? const .value(EdgeInsets.symmetric(horizontal: 14, vertical: 8))
-            : null,
+            : const .value(
+                EdgeInsets.symmetric(horizontal: _controlPadH, vertical: 12),
+              ),
       ),
     );
   }
@@ -653,7 +671,7 @@ forui.FSelectStyle _selectStyle(
 
 /// Forui 列表项的默认样式：圆角 [ZhixinRadius.card]，容器描边
 /// [ZhixinColors.outlineVariant]，标题 `titleSmall`，副标题 `bodySmall` 加次要
-/// 文字色，右侧箭头 16 用次要文字色；内边距横向 `space.lg`、纵向 `space.md`。
+/// 文字色，右侧箭头 16 用次要文字色；内边距横向 [kCardInset]、纵向 `space.md`。
 forui.FTileStyles _tileStyles(
   forui.FColors colors,
   forui.FStyle style,
@@ -669,7 +687,7 @@ forui.FTileStyles _tileStyles(
     style: style,
   );
   final padding = EdgeInsets.symmetric(
-    horizontal: _tilePadH,
+    horizontal: kCardInset,
     vertical: space.md,
   );
 
@@ -688,7 +706,7 @@ forui.FTileStyles _tileStyles(
         IconThemeData(color: colors.mutedForeground, size: 16),
       ),
       suffixedPadding: forui.EdgeInsetsGeometryDelta.value(
-        EdgeInsets.fromLTRB(_tilePadH, space.md, space.md, space.md),
+        EdgeInsets.fromLTRB(kCardInset, space.md, space.md, space.md),
       ),
       unsuffixedPadding: forui.EdgeInsetsGeometryDelta.value(padding),
     ),
@@ -758,7 +776,10 @@ forui.FBottomNavigationBarStyle _navigationBarStyle(
       padding: const EdgeInsets.all(5),
       spacing: 4,
     ),
-    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+    padding: const EdgeInsets.symmetric(
+      horizontal: ZhixinSpace.pageInset,
+      vertical: 4,
+    ),
   );
 }
 

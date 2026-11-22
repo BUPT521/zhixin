@@ -251,8 +251,9 @@ class _BottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     // 没有胶囊指示块：图标区 20 高，上下各留一档 tight，选中只换主色。
+    // 左右与页面同一档边距，四个标签与上面的内容区两端对齐。
     final barPadding = EdgeInsets.symmetric(
-      horizontal: theme.space.page,
+      horizontal: ZhixinSpace.pageInset,
       vertical: theme.space.tight,
     );
     return RepaintBoundary(

@@ -373,6 +373,17 @@ class _RecordsPageState extends State<RecordsPage> {
               }
             },
           ),
+          // 录入题目的入口与安排页的“这周能做什么”同一种写法：标题栏里的次要
+          // 文字按钮，动作就在这一行，不再在下面另占一行。
+          if (learning) ...[
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: QuestionCaptureButton(
+                onOpenLearning: _openLearning,
+                onOpenDiscussion: _openDiscussion,
+              ),
+            ),
+          ],
         ],
       ),
       child: PageWidth(
@@ -385,33 +396,19 @@ class _RecordsPageState extends State<RecordsPage> {
                 theme.space.page,
                 theme.space.md,
               ),
-              // 录入题目只属于学习记录，与搜索并排；筛选因此能独占一整行。
-              child: Row(
-                children: [
-                  Expanded(
-                    child: forui.FTextField(
-                      key: const ValueKey('records-search-entry'),
-                      control: .managed(controller: _searchHint),
-                      readOnly: true,
-                      onTap: _openSearch,
-                      prefixBuilder: (context, style, variants) =>
-                          forui.FTextField.prefixIconBuilder(
-                            context,
-                            style,
-                            variants,
-                            const Icon(FLucideIcons.search, size: 16),
-                          ),
-                      hint: '搜索讨论、题目或材料原文',
+              child: forui.FTextField(
+                key: const ValueKey('records-search-entry'),
+                control: .managed(controller: _searchHint),
+                readOnly: true,
+                onTap: _openSearch,
+                prefixBuilder: (context, style, variants) =>
+                    forui.FTextField.prefixIconBuilder(
+                      context,
+                      style,
+                      variants,
+                      const Icon(FLucideIcons.search, size: 16),
                     ),
-                  ),
-                  if (learning) ...[
-                    SizedBox(width: theme.space.sm),
-                    QuestionCaptureButton(
-                      onOpenLearning: _openLearning,
-                      onOpenDiscussion: _openDiscussion,
-                    ),
-                  ],
-                ],
+                hint: '搜索讨论、题目或材料原文',
               ),
             ),
             Padding(

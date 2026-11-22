@@ -442,15 +442,24 @@ class _PlanPageState extends State<PlanPage> {
     );
   }
 
-  /// 首读中的页面：页签先就位，读完只在下面换内容，页面不往下跳。
+  /// 首读中的页面：页签先就位，读完只在下面换内容，页面不往下跳。骨架的左右
+  /// 边距与读完之后一样，由下面的列表给出。
   Widget _loadingWeek(ZhixinTheme theme) => PageWidth(
     child: Column(
       children: [
-        _tabBar(theme),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+          child: _tabBar(theme),
+        ),
         Expanded(
           child: ListSkeleton(
             rows: 3,
-            padding: EdgeInsets.fromLTRB(0, theme.space.sm, 0, 0),
+            padding: EdgeInsets.fromLTRB(
+              theme.space.page,
+              theme.space.sm,
+              theme.space.page,
+              0,
+            ),
           ),
         ),
       ],
@@ -472,7 +481,8 @@ class _PlanPageState extends State<PlanPage> {
   );
 
   /// 读到内容之后整页淡入；之后换周按前后次序左右滑过去，换页签同样滑列表。
-  /// 页签与列表放在同一块带页面边距的容器里，内容直接铺满这一块即可。
+  /// 页签与列表放在同一块带页面边距的容器里，内容直接铺满这一块即可；页签条
+  /// 会画底色，因此左右边距由它下面这层统一给出，各页签的列表不再各加一次。
   Widget _loadedWeek(ZhixinTheme theme, PlanWeek week, PlanActions actions) =>
       FadeIn(
         child: PageWidth(
@@ -484,7 +494,11 @@ class _PlanPageState extends State<PlanPage> {
                 // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
                 if (_error != null)
                   Padding(
-                    padding: EdgeInsets.only(bottom: theme.space.sm),
+                    padding: EdgeInsets.only(
+                      left: theme.space.page,
+                      right: theme.space.page,
+                      bottom: theme.space.sm,
+                    ),
                     child: InlineNotice(message: _error!, onRetry: _reload),
                   ),
                 Expanded(

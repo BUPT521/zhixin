@@ -3,6 +3,10 @@ import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
 
+/// 标题栏左右边距从 [ZhixinSpace.page] 里收掉的宽度，等于图标按钮可点区域
+/// 与 20 的图标之间那一半留白；见 [ZhixinHeader] 的说明。
+const double _iconInset = 6;
+
 /// 页面顶部的一条标题栏。
 ///
 /// 原来的页面用 AppBar，进入下一页时由它自动带返回箭头；换成 FHeader 之后
@@ -28,9 +32,14 @@ class ZhixinHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
+    // 标题栏里图标按钮的可点区域是 44 见方，图标居中；左右边距各收 6，图标
+    // 与标题文字离屏边是 [ZhixinSpace.page]，与下面内容的行首对齐。
     final style = forui.FHeaderStyleDelta.delta(
       padding: .value(
-        EdgeInsets.symmetric(horizontal: theme.space.page, vertical: 6),
+        EdgeInsets.symmetric(
+          horizontal: theme.space.page - _iconInset,
+          vertical: 6,
+        ),
       ),
       // 标签页的根标题与二级页同一档 titleLarge，只是根页面靠左。
       titleTextStyle: .value(theme.text.titleLarge),

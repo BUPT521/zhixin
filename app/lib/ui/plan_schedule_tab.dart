@@ -78,12 +78,11 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
     return CustomScrollView(
       key: const PageStorageKey<String>('plan-tab-0'),
       slivers: [
+        // 左右由页签外层统一给页面边距，这里只留上下的间隔。
         SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            theme.space.page,
-            theme.space.xs,
-            theme.space.page,
-            theme.space.section,
+          padding: EdgeInsets.only(
+            top: theme.space.xs,
+            bottom: theme.space.section,
           ),
           sliver: SliverMainAxisGroup(slivers: _slivers(theme)),
         ),
