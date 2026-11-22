@@ -81,6 +81,7 @@ final forui.FToasterStyleDelta zhixinToasterStyle =
       ),
     );
 
+const _tagRadius = Radius.circular(8);
 const _controlRadius = Radius.circular(14);
 const _cardRadius = Radius.circular(20);
 const _featureRadius = Radius.circular(24);
@@ -293,6 +294,7 @@ forui.FThemeData _buildForui(_Palette palette) {
       ? forui.FTheme.neutral.light.touch
       : forui.FTheme.neutral.dark.touch;
   final colors = _foruiColors(base.colors, palette);
+  final icons = base.icons;
   final text = _textStyles(palette);
   final typography = base.typography.copyWith(
     display: _systemFace(base.typography.display).copyWith(
@@ -310,8 +312,22 @@ forui.FThemeData _buildForui(_Palette palette) {
   );
   final style = base.style.copyWith(
     borderRadius: base.style.borderRadius.copyWith(
+      xs2: const BorderRadius.all(_tagRadius),
+      sm: const BorderRadius.all(_tagRadius),
       md: const BorderRadius.all(_controlRadius),
       lg: const BorderRadius.all(_cardRadius),
+    ),
+    // 表单标签取 labelLarge，说明与错误文字取 bodySmall，色值跟着色板走。
+    formFieldStyle: forui.FFormFieldStyle(
+      labelTextStyle: forui.FVariants.all(
+        text.labelLarge.copyWith(color: colors.foreground),
+      ),
+      descriptionTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.mutedForeground),
+      ),
+      errorTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.error),
+      ),
     ),
   );
   final scaffold = forui.FScaffoldStyle.inherit(colors: colors, style: style);
@@ -326,12 +342,25 @@ forui.FThemeData _buildForui(_Palette palette) {
     colors: colors,
     typography: typography,
     style: style,
-    cardStyle: forui.FCardStyle.inherit(
-      colors: colors,
-      style: style,
-      typography: typography,
-      touch: true,
+    cardStyle:
+        forui.FCardStyle.inherit(
+          colors: colors,
+          style: style,
+          typography: typography,
+          touch: true,
+        ).copyWith(
+          titleTextStyle: forui.TextStyleDelta.value(text.titleMedium),
+          subtitleTextStyle: forui.TextStyleDelta.value(text.bodySmall),
+        ),
+    buttonStyles: _buttonStyles(colors, typography, style, text),
+    textFieldStyles: _textFieldStyles(colors, style, text),
+    selectStyle: _selectStyle(colors, icons, typography, style, text),
+    tileStyles: _tileStyles(colors, style, text),
+    tileGroupStyle: base.tileGroupStyle.copyWith(
+      dividerColor: forui.FVariants.all(colors.border),
     ),
+    switchStyle: _switchStyle(colors, style),
+    accordionStyle: _accordionStyle(colors, style, text),
     dialogStyle: dialog.copyWith(
       decoration: forui.DecorationDelta.shapeDelta(
         shape: RoundedSuperellipseBorder(
@@ -352,6 +381,265 @@ forui.FThemeData _buildForui(_Palette palette) {
     ),
     touch: true,
     extensions: [ZhixinTheme(text: text, colors: _colors(palette))],
+  );
+}
+
+/// Forui 按钮的默认样式：圆角与其它控件同为 [ZhixinRadius.control]；标签只用
+/// 强调字重，`sm` 标签 12.5、其余尺寸取 `labelLarge` 的 14，`sm` 的横向内边距
+/// 14、纵向 8。ghost 是文字按钮，图标与文字都用主色。内容区的最小尺寸沿用
+/// Forui 触摸布局的取值，可点区域不缩小。
+forui.FButtonStyles _buttonStyles(
+  forui.FColors colors,
+  forui.FTypography typography,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FButtonStyles.inherit(
+    colors: colors,
+    typography: typography,
+    style: style,
+    touch: true,
+  );
+
+  forui.FButtonStyle resized(
+    forui.FButtonStyle button, {
+    required bool small,
+    Color? color,
+  }) {
+    final content = button.contentStyle;
+    return button.copyWith(
+      contentStyle: content.copyWith(
+        textStyle: forui.FVariants.all(
+          content.textStyle.base.copyWith(
+            fontSize: small ? 12.5 : 14,
+            fontWeight: text.labelLarge.fontWeight,
+            color: color ?? content.textStyle.base.color,
+          ),
+        ),
+        iconStyle: color == null
+            ? null
+            : forui.FVariants.all(
+                content.iconStyle.base.copyWith(color: color),
+              ),
+        padding: small
+            ? const .value(EdgeInsets.symmetric(horizontal: 14, vertical: 8))
+            : null,
+      ),
+    );
+  }
+
+  forui.FButtonSizeStyles sizes(
+    forui.FButtonSizeStyles sizes, {
+    Color? color,
+  }) => forui.FButtonSizeStyles(
+    forui.FVariants(
+      resized(sizes.md, small: false, color: color),
+      variants: {
+        [forui.FButtonSizeVariant.xs]: resized(
+          sizes.xs,
+          small: false,
+          color: color,
+        ),
+        [forui.FButtonSizeVariant.sm]: resized(
+          sizes.sm,
+          small: true,
+          color: color,
+        ),
+        [forui.FButtonSizeVariant.lg]: resized(
+          sizes.lg,
+          small: false,
+          color: color,
+        ),
+      },
+    ),
+  );
+
+  return forui.FButtonStyles(
+    forui.FVariants(
+      sizes(base.primary),
+      variants: {
+        [forui.FButtonVariant.primary]: sizes(base.primary),
+        [forui.FButtonVariant.secondary]: sizes(base.secondary),
+        [forui.FButtonVariant.destructive]: sizes(base.destructive),
+        [forui.FButtonVariant.outline]: sizes(base.outline),
+        [forui.FButtonVariant.ghost]: sizes(base.ghost, color: colors.primary),
+      },
+    ),
+  );
+}
+
+/// Forui 输入框的默认样式：圆角 [ZhixinRadius.control]，未聚焦的边用控件描边
+/// [ZhixinColors.outline]、聚焦的边用主色；输入与占位用 `bodyMedium`，计数用
+/// `bodySmall`。选择框复用这一份尺寸样式。
+forui.FTextFieldSizeStyles _textFieldStyles(
+  forui.FColors colors,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FTextFieldSizeStyles.inherit(
+    colors: colors,
+    typography: forui.FTypography(
+      display: forui.FTypeface(),
+      body: forui.FTypeface(),
+    ),
+    style: style,
+    touch: true,
+  );
+  final radius = style.borderRadius.md;
+
+  InputBorder border(Color color) => OutlineInputBorder(
+    borderSide: BorderSide(color: color, width: style.borderWidth),
+    borderRadius: radius,
+  );
+
+  forui.FTextFieldStyle fixed(forui.FTextFieldStyle field) => field.copyWith(
+    border: forui.FVariants(
+      border(colors.border),
+      variants: {
+        [forui.FTextFieldVariant.focused]: border(colors.primary),
+        [forui.FTextFieldVariant.error]: border(colors.error),
+        [forui.FTextFieldVariant.disabled]: border(
+          colors.disable(colors.border),
+        ),
+      },
+    ),
+    contentTextStyle: forui.FVariants.all(
+      text.bodyMedium.copyWith(color: colors.foreground),
+    ),
+    hintTextStyle: forui.FVariants.all(
+      text.bodyMedium.copyWith(color: colors.mutedForeground),
+    ),
+    counterTextStyle: forui.FVariants.all(
+      text.bodySmall.copyWith(color: colors.mutedForeground),
+    ),
+  );
+
+  return forui.FTextFieldSizeStyles(
+    forui.FVariants(
+      fixed(base.md),
+      variants: {
+        [forui.FTextFieldSizeVariant.sm]: fixed(base.sm),
+        [forui.FTextFieldSizeVariant.lg]: fixed(base.lg),
+      },
+    ),
+  );
+}
+
+/// Forui 选择框：字段部分与输入框同一样式。
+forui.FSelectStyle _selectStyle(
+  forui.FColors colors,
+  forui.FIcons icons,
+  forui.FTypography typography,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FSelectStyle.inherit(
+    colors: colors,
+    typography: typography,
+    icons: icons,
+    style: style,
+    touch: true,
+  );
+  return forui.FSelectStyle(
+    fieldStyles: _textFieldStyles(colors, style, text),
+    searchStyle: base.searchStyle,
+    contentStyle: base.contentStyle,
+    emptyTextStyle: base.emptyTextStyle,
+  );
+}
+
+/// Forui 列表项的默认样式：圆角 [ZhixinRadius.card]，容器描边
+/// [ZhixinColors.outlineVariant]，标题 `titleSmall`，副标题 `bodySmall` 加次要
+/// 文字色，右侧箭头 16 用次要文字色；内边距横向 `space.lg`、纵向 `space.md`。
+forui.FTileStyles _tileStyles(
+  forui.FColors colors,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  const space = ZhixinSpace();
+  final base = forui.FTileStyles.inherit(
+    colors: colors,
+    typography: forui.FTypography(
+      display: forui.FTypeface(),
+      body: forui.FTypeface(),
+    ),
+    style: style,
+  );
+  final padding = EdgeInsets.symmetric(
+    horizontal: space.lg,
+    vertical: space.md,
+  );
+
+  forui.FTileStyle fixed(forui.FTileStyle tile) => tile.copyWith(
+    contentStyle: tile.contentStyle.copyWith(
+      titleTextStyle: forui.FVariants.all(
+        text.titleSmall.copyWith(color: colors.foreground),
+      ),
+      subtitleTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.mutedForeground),
+      ),
+      detailsTextStyle: forui.FVariants.all(
+        text.bodySmall.copyWith(color: colors.mutedForeground),
+      ),
+      suffixIconStyle: forui.FVariants.all(
+        IconThemeData(color: colors.mutedForeground, size: 16),
+      ),
+      suffixedPadding: forui.EdgeInsetsGeometryDelta.value(
+        EdgeInsets.fromLTRB(space.lg, space.md, space.md, space.md),
+      ),
+      unsuffixedPadding: forui.EdgeInsetsGeometryDelta.value(padding),
+    ),
+    rawContentStyle: tile.rawContentStyle.copyWith(
+      childTextStyle: forui.FVariants.all(text.titleSmall),
+      padding: forui.EdgeInsetsGeometryDelta.value(padding),
+    ),
+  );
+
+  return forui.FTileStyles(
+    forui.FVariants(
+      fixed(base.primary),
+      variants: {
+        [forui.FItemVariant.destructive]: fixed(base.destructive),
+      },
+    ),
+  );
+}
+
+/// Forui 开关：开启时轨道取主色，关闭时取次要按钮那一档底色，圆钮取页面
+/// 底色；两边的文字由 【FLabelStyle】 决定，与表单标签同一套。
+forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
+  final base = forui.FSwitchStyle.inherit(colors: colors, style: style);
+  return base.copyWith(
+    trackColor: forui.FVariants(
+      colors.background,
+      variants: {
+        [forui.FSwitchVariant.selected]: colors.primary,
+        [forui.FSwitchVariant.disabled]: colors.disable(colors.background),
+        [forui.FSwitchVariant.selected.and(forui.FSwitchVariant.disabled)]:
+            colors.disable(colors.primary),
+      },
+    ),
+  );
+}
+
+/// Forui 折叠面板：标题 `labelLarge` 加强调字重，正文 `bodyMedium`。
+forui.FAccordionStyle _accordionStyle(
+  forui.FColors colors,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FAccordionStyle.inherit(
+    colors: colors,
+    typography: forui.FTypography(
+      display: forui.FTypeface(),
+      body: forui.FTypeface(),
+    ),
+    style: style,
+    touch: true,
+  );
+  return base.copyWith(
+    titleTextStyle: forui.FVariants.all(text.labelLarge),
+    childTextStyle: forui.TextStyleDelta.value(text.bodyMedium),
   );
 }
 
