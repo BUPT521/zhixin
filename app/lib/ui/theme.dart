@@ -428,8 +428,8 @@ forui.FButtonStyles _buttonStyles(
             : forui.FVariants.all(
                 content.iconStyle.base.copyWith(color: color),
               ),
-        // 按钮统一 44 高：内容区最小高度按同一档给，内边距与标签再在它里面居中。
-        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        // 按钮统一 48 高：内容区最小高度按同一档给，内边距与标签再在它里面居中。
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 48),
         padding: small
             ? const .value(EdgeInsets.symmetric(horizontal: 14, vertical: 8))
             : null,
@@ -503,6 +503,8 @@ forui.FTextFieldSizeStyles _textFieldStyles(
   );
 
   forui.FTextFieldStyle fixed(forui.FTextFieldStyle field) => field.copyWith(
+    // 输入框统一 48 高，与按钮同高；三种尺寸的内边距与文字仍在里面居中。
+    constraints: const BoxConstraints(minHeight: 48),
     border: forui.FVariants(
       border(zhixin.outline),
       variants: {
@@ -633,7 +635,7 @@ forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
   );
 }
 
-/// 底栏：选中与未选中同一档强调字重，选中时文字与图标用正文色，未选中用次要
+/// 底栏：文字用常规字重，选中只改颜色（正文色与次要文字色），不靠字重与胶囊区分。
 /// 文字色；容器描边由 Forui 的 border 给出，与卡片、列表项同一档。
 forui.FBottomNavigationBarStyle _navigationBarStyle(
   forui.FColors colors,

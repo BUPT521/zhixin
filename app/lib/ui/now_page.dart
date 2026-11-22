@@ -204,14 +204,7 @@ class _NowPageState extends State<NowPage> {
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ZhixinMark(),
-            SizedBox(width: theme.space.sm),
-            const Text('知新'),
-          ],
-        ),
+        title: const Text('知新'),
         actions: [
           ZhixinHeaderAction(
             icon: FLucideIcons.brain,
@@ -770,7 +763,7 @@ class _ComposerFrameState extends State<_ComposerFrame> {
       canRequestFocus: false,
       skipTraversal: true,
       onFocusChange: (value) => setState(() => _focused = value),
-      // 描边宽度固定 1.5：边框宽度会进内边距，一改就整块重新布局、文字跳半个
+      // 描边宽度固定 1：边框宽度会进内边距，一改就整块重新布局、文字跳半个
       // 像素；聚焦只插值颜色，输入区的位置与大小全程不变。
       child: AnimatedContainer(
         duration: context.motionOf(theme.motion.fast),
@@ -784,10 +777,9 @@ class _ComposerFrameState extends State<_ComposerFrame> {
         decoration: BoxDecoration(
           color: theme.colors.card,
           borderRadius: theme.radius.feature,
+          // 与其它输入框同一条边：未聚焦用控件描边，聚焦时换主色。
           border: Border.all(
-            color: _focused
-                ? theme.colors.primary
-                : theme.colors.outlineVariant,
+            color: _focused ? theme.colors.primary : theme.colors.outline,
           ),
         ),
         child: widget.child,
