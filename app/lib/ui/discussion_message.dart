@@ -185,7 +185,7 @@ class _CitationTile extends StatelessWidget {
                   citation.verified
                       ? FLucideIcons.badgeCheck
                       : FLucideIcons.circleHelp,
-                  size: 18,
+                  size: 16,
                   color: citation.verified ? colors.primary : colors.error,
                 ),
                 SizedBox(width: theme.space.sm),

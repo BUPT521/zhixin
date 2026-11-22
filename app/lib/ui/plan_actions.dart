@@ -551,12 +551,12 @@ class PlanActions {
       builder: (sheetContext) {
         final theme = sheetContext.zhixin;
         Widget fact(IconData icon, String text) => Padding(
-          padding: const EdgeInsets.only(top: 8),
+          padding: EdgeInsets.only(top: theme.space.sm),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, size: 18, color: theme.colors.onSurfaceVariant),
-              const SizedBox(width: 10),
+              Icon(icon, size: 16, color: theme.colors.onSurfaceVariant),
+              SizedBox(width: theme.space.sm),
               Expanded(child: Text(text, style: theme.text.bodyMedium)),
             ],
           ),
@@ -614,7 +614,12 @@ class PlanActions {
             ),
         ];
         return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          padding: EdgeInsets.fromLTRB(
+            theme.space.xl,
+            0,
+            theme.space.xl,
+            theme.space.xl,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -631,7 +636,7 @@ class PlanActions {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: theme.space.sm),
               Text(item.title, style: theme.text.headlineSmall),
               if (item.isStudyStep)
                 fact(
@@ -654,10 +659,10 @@ class PlanActions {
                   '${item.completedAt == null ? '' : '，完成于 ${shortTime(item.completedAt!)}'}',
                 ),
               if (item.note != null) ...[
-                const SizedBox(height: 14),
+                SizedBox(height: theme.space.md),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(14),
+                  padding: EdgeInsets.all(theme.space.md),
                   decoration: BoxDecoration(
                     color: theme.colors.surfaceContainerHigh,
                     borderRadius: theme.radius.card,
@@ -665,14 +670,14 @@ class PlanActions {
                   child: Text(item.note!, style: theme.text.bodyMedium),
                 ),
               ],
-              const SizedBox(height: 20),
+              SizedBox(height: theme.space.page),
               if (canOpen && !item.done) ...[
                 forui.FButton(
                   onPress: () => Navigator.pop(sheetContext, 'study'),
                   prefix: const Icon(FLucideIcons.play),
                   child: Text(item.isStudyStep ? '学这一步' : '回到原题'),
                 ),
-                const SizedBox(height: 10),
+                SizedBox(height: theme.space.sm),
               ],
               if (navigation.isNotEmpty)
                 Wrap(spacing: 8, runSpacing: 8, children: navigation),

@@ -110,7 +110,7 @@ class FailureNotice extends StatelessWidget {
               padding: const EdgeInsets.only(top: 1),
               child: Icon(
                 FLucideIcons.circleAlert,
-                size: 18,
+                size: 16,
                 color: theme.colors.error,
               ),
             ),

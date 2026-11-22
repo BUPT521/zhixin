@@ -806,7 +806,7 @@ class _RecordsPageState extends State<RecordsPage> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             TagRow(
               children: [
                 if (question != null) ...[
@@ -836,17 +836,19 @@ class _RecordsPageState extends State<RecordsPage> {
             ),
             if (preview.isNotEmpty && preview != title)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: EdgeInsets.only(top: theme.space.xs),
                 child: Text(
                   preview,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(height: 1.4),
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
                 ),
               ),
             if (answer != null && answer.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: EdgeInsets.only(top: theme.space.xs),
                 child: Text(
                   '作答：${_clip(answer)}',
                   maxLines: 2,
@@ -864,11 +866,11 @@ class _RecordsPageState extends State<RecordsPage> {
                   '${modelAssessment == null ? '' : '，判断：${_clip(modelAssessment.result)}'}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: muted.copyWith(height: 1.4),
+                  style: muted,
                 ),
               ),
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: EdgeInsets.only(top: theme.space.xs),
               child: Text(
                 footer,
                 maxLines: 1,
@@ -878,7 +880,7 @@ class _RecordsPageState extends State<RecordsPage> {
             ),
             if (hasDraft)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
+                padding: EdgeInsets.only(top: theme.space.sm),
                 child: forui.FButton(
                   variant: forui.FButtonVariant.secondary,
                   size: forui.FButtonSizeVariant.sm,

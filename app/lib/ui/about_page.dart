@@ -26,13 +26,13 @@ class AboutPage extends StatelessWidget {
         padding: theme.space.pageInsets(top: theme.space.xl),
         children: [
           const Center(child: ZhixinMark(size: 64)),
-          const SizedBox(height: 12),
+          SizedBox(height: theme.space.md),
           Text(
             appName,
             textAlign: TextAlign.center,
             style: theme.text.pageTitle,
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: theme.space.xs),
           Text(
             '版本 $appVersion',
             textAlign: TextAlign.center,

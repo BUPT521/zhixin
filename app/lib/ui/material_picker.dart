@@ -85,7 +85,12 @@ Future<MaterialSelection?> showMaterialPicker(
     context: context,
     builder: (context) => ListView(
       shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: EdgeInsets.fromLTRB(
+        context.zhixin.space.lg,
+        0,
+        context.zhixin.space.lg,
+        context.zhixin.space.lg,
+      ),
       children: [
         Text('《${material.title}》的哪一页', style: context.zhixin.text.titleMedium),
         SizedBox(height: context.zhixin.space.gap),

@@ -291,7 +291,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
             '待排事项${plan.demandBudget}。',
             style: theme.text.bodyMedium,
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: theme.space.xs),
           Text(
             '估时来自事项填写，未填写时按 20 分钟占位；'
             '空档按截止时间算好后直接列出，点一段并确认新建或改约后，'
@@ -317,7 +317,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
           ),
           for (final note in plan.notes)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
+              padding: EdgeInsets.only(top: theme.space.tight),
               child: Text(
                 note,
                 style: theme.text.bodySmall.copyWith(
@@ -330,7 +330,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
             Text('这次估算会把以下弹性预约算作可调整', style: theme.text.titleSmall),
             for (final candidate in movable)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: EdgeInsets.only(top: theme.space.xs),
                 child: Text(
                   '「${candidate.item.title}」'
                   '${_rangeText(candidate.movableStart!, candidate.movableEnd!)}'
@@ -339,7 +339,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                 ),
               ),
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: EdgeInsets.only(top: theme.space.xs),
               child: Text('没有点选的预约保持原时间。', style: theme.text.bodySmall),
             ),
           ],
@@ -366,7 +366,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
               ),
           ],
           if (_notice != null) InlineNotice(message: _notice!),
-          const SizedBox(height: 12),
+          SizedBox(height: theme.space.md),
           Row(
             children: [
               forui.FButton(
@@ -375,7 +375,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
                 onPress: _refreshing ? null : _reload,
                 child: const Text('重新估算'),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: theme.space.sm),
               forui.FButton(
                 mainAxisSize: MainAxisSize.min,
                 onPress: () => Navigator.of(context).pop(),
@@ -394,7 +394,7 @@ class _CapacitySheetState extends State<_CapacitySheet> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         InlineNotice(message: _notice ?? '暂时无法计算可用时间。'),
-        const SizedBox(height: 12),
+        SizedBox(height: theme.space.md),
         Wrap(
           spacing: 8,
           children: [

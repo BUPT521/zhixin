@@ -204,9 +204,13 @@ class _NowPageState extends State<NowPage> {
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
-        title: const Row(
+        title: Row(
           mainAxisSize: MainAxisSize.min,
-          children: [ZhixinMark(), SizedBox(width: 10), Text('知新')],
+          children: [
+            const ZhixinMark(),
+            SizedBox(width: theme.space.sm),
+            const Text('知新'),
+          ],
         ),
         actions: [
           ZhixinHeaderAction(
@@ -644,7 +648,7 @@ class _NowPageState extends State<NowPage> {
                     textStyle: theme.text.labelLarge,
                   ),
                   onPressed: () => _openPlanItem(item),
-                  icon: const Icon(FLucideIcons.calendarClock, size: 18),
+                  icon: const Icon(FLucideIcons.calendarClock, size: 16),
                   label: const Text('查看事项'),
                 )
               : forui.FButton(
@@ -672,7 +676,7 @@ class _NowPageState extends State<NowPage> {
             ),
           ),
           padding: forui.EdgeInsetsGeometryDelta.value(
-            EdgeInsets.all(feature ? 20 : theme.space.lg),
+            EdgeInsets.all(theme.space.lg),
           ),
         ),
         builder: (context, style, child) =>
@@ -708,11 +712,7 @@ class _NowPageState extends State<NowPage> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: (feature ? theme.text.titleLarge : theme.text.titleMedium)
-                  .copyWith(
-                    color: ink,
-                    fontWeight: FontWeight.w600,
-                    height: 1.3,
-                  ),
+                  .copyWith(color: ink),
             ),
             if (text != null && text.isNotEmpty) ...[
               SizedBox(height: theme.space.tight),
@@ -832,17 +832,17 @@ class _ContinueTile extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             Row(
               children: [
                 Expanded(child: TagRow(children: tags)),
                 if (time != null) ...[
-                  const SizedBox(width: 8),
+                  SizedBox(width: theme.space.sm),
                   Text(time!, style: muted),
                 ],
               ],
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: theme.space.xs),
             Text(clue, maxLines: 1, overflow: TextOverflow.ellipsis),
           ],
         ),
