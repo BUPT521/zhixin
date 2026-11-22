@@ -295,11 +295,7 @@ void main() {
       if (padding != null) {
         expect(style.contentStyle.padding, padding);
       }
-      expect(
-        style.contentStyle.constraints.minHeight,
-        greaterThanOrEqualTo(40),
-        reason: '可点区域不小于 Forui 默认的 sm',
-      );
+      expect(style.contentStyle.constraints.minHeight, 44, reason: '按钮统一 44 高');
     }
     // ghost 是文字按钮，用主色。
     expect(

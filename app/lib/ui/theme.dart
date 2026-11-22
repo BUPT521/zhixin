@@ -362,6 +362,12 @@ forui.FThemeData _buildForui(_Palette palette) {
     ),
     switchStyle: _switchStyle(colors, style),
     accordionStyle: _accordionStyle(colors, style, text),
+    bottomNavigationBarStyle: _navigationBarStyle(
+      colors,
+      typography,
+      style,
+      text,
+    ),
     dialogStyle: dialog.copyWith(
       decoration: forui.DecorationDelta.shapeDelta(
         shape: RoundedSuperellipseBorder(
@@ -422,6 +428,8 @@ forui.FButtonStyles _buttonStyles(
             : forui.FVariants.all(
                 content.iconStyle.base.copyWith(color: color),
               ),
+        // 按钮统一 44 高：内容区最小高度按同一档给，内边距与标签再在它里面居中。
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
         padding: small
             ? const .value(EdgeInsets.symmetric(horizontal: 14, vertical: 8))
             : null,
@@ -609,7 +617,7 @@ forui.FTileStyles _tileStyles(
 }
 
 /// Forui 开关：开启时轨道取主色，关闭时取次要按钮那一档底色，圆钮取页面
-/// 底色；两边的文字由 【FLabelStyle】 决定，与表单标签同一套。
+/// 底色；两边的文字沿用 Forui 的标签样式。
 forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
   final base = forui.FSwitchStyle.inherit(colors: colors, style: style);
   return base.copyWith(
@@ -622,6 +630,43 @@ forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
             colors.disable(colors.primary),
       },
     ),
+  );
+}
+
+/// 底栏：选中与未选中同一档强调字重，选中时文字与图标用正文色，未选中用次要
+/// 文字色；容器描边由 Forui 的 border 给出，与卡片、列表项同一档。
+forui.FBottomNavigationBarStyle _navigationBarStyle(
+  forui.FColors colors,
+  forui.FTypography typography,
+  forui.FStyle style,
+  ZhixinTextStyles text,
+) {
+  final base = forui.FBottomNavigationBarStyle.inherit(
+    colors: colors,
+    typography: typography,
+    style: style,
+  );
+  return forui.FBottomNavigationBarStyle(
+    decoration: base.decoration,
+    itemStyle: forui.FBottomNavigationBarItemStyle(
+      // 图标颜色由页面按当前栏给（选中的是正文色、其余是次要文字色），这里只定文字。
+      iconStyle: forui.FVariants.all(
+        IconThemeData(color: colors.mutedForeground),
+      ),
+      textStyle: forui.FVariants(
+        text.labelSmall.copyWith(color: colors.mutedForeground),
+        variants: {
+          [forui.FTappableVariant.selected]: text.labelSmall.copyWith(
+            color: colors.foreground,
+          ),
+        },
+      ),
+      tappableStyle: style.tappableStyle,
+      focusedOutlineStyle: style.focusedOutlineStyle,
+      padding: const EdgeInsets.all(5),
+      spacing: 4,
+    ),
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
   );
 }
 

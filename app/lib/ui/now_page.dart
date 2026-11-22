@@ -785,8 +785,9 @@ class _ComposerFrameState extends State<_ComposerFrame> {
           color: theme.colors.card,
           borderRadius: theme.radius.feature,
           border: Border.all(
-            color: _focused ? theme.colors.primary : theme.colors.outline,
-            width: 1.5,
+            color: _focused
+                ? theme.colors.primary
+                : theme.colors.outlineVariant,
           ),
         ),
         child: widget.child,

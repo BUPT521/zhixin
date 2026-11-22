@@ -108,7 +108,11 @@ class DiscussionMessage extends StatelessWidget {
           content,
           if (citations.isNotEmpty) ...[
             SizedBox(height: theme.space.md),
-            const Divider(height: 16),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: theme.colors.outlineVariant,
+            ),
             SizedBox(height: theme.space.sm),
             Text('参考依据', style: theme.text.labelLarge),
             for (final (index, citation) in citations.indexed)
@@ -275,7 +279,7 @@ Widget _replyCard(
     status: status,
     statusTone: statusTone,
     children: [
-      const Divider(height: 16),
+      Divider(height: 1, thickness: 1, color: theme.colors.outlineVariant),
       SizedBox(height: theme.space.sm),
       ...children,
     ],

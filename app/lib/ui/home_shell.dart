@@ -302,24 +302,13 @@ class _BottomBar extends StatelessWidget {
                   padding: .value(barPadding),
                   itemStyle: .delta(
                     padding: const .value(EdgeInsets.all(_itemPadding)),
+                    // 字重与未选中/选中的文字色都在主题里配好，这里只保留间距与按下动效。
                     spacing: theme.space.xs,
                     tappableStyle: const .delta(
                       motion: .delta(
                         bounceTween: forui.FTappableMotion.noBounceTween,
                       ),
                     ),
-                    // 选中与未选中同一档强调字重，选中态靠颜色与指示块区分。
-                    textStyle: .delta([
-                      .all(
-                        .delta(
-                          color: theme.colors.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      .exact({
-                        .selected,
-                      }, .delta(color: theme.colors.onSurface)),
-                    ]),
                   ),
                 ),
                 children: [
