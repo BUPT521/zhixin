@@ -4,6 +4,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
+import 'package:zhixin/ui/zhixin_select.dart';
 
 /// 这一项当前画到的放大倍数。
 double _scaleOf(WidgetTester tester, Finder finder) => tester
@@ -225,5 +226,78 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(tester.getRect(track.first), before);
+  });
+
+  testWidgets('下拉框与输入框、按钮同高，标签与说明另占高度', (tester) async {
+    Future<void> pumpField(Widget child) => tester.pumpWidget(
+      MaterialApp(
+        theme: zhixinTheme,
+        home: forui.FTheme(
+          data: zhixinForuiTheme,
+          child: Scaffold(
+            body: Center(child: SizedBox(width: 320, child: child)),
+          ),
+        ),
+      ),
+    );
+    final select = find.byWidgetPredicate(
+      (widget) => widget is forui.FSelect<int>,
+    );
+
+    // 不带标签与说明的选择框，框本身与输入框、按钮同一档。
+    await pumpField(
+      forui.FSelect<int>.rich(
+        control: .lifted(value: 1, onChange: (_) {}),
+        format: (value) => '选项 $value',
+        children: const [forui.FSelectItem<int>(value: 1, title: Text('一'))],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getSize(select).height, ZhixinSpace.controlHeight);
+
+    await pumpField(
+      forui.FTextField(
+        control: .managed(controller: TextEditingController()),
+        hint: '搜索',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byType(forui.FTextField)).height,
+      ZhixinSpace.controlHeight,
+    );
+    await pumpField(forui.FButton(onPress: () {}, child: const Text('保存')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byType(forui.FButton)).height,
+      ZhixinSpace.controlHeight,
+    );
+
+    // 带标签与说明的选择框，两行说明文字落在框外，框本身仍是同一档。
+    await pumpField(
+      ZhixinSelect<int>(
+        value: 1,
+        label: '归属目标',
+        description: '这一项放在哪个目标下面',
+        options: const {1: '概率论期末'},
+        onChange: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(select).height,
+      greaterThan(ZhixinSpace.controlHeight),
+    );
+    final box = find
+        .descendant(of: select, matching: find.byType(EditableText))
+        .first;
+    expect(
+      tester
+          .getSize(
+            find.ancestor(of: box, matching: find.byType(InputDecorator)).first,
+          )
+          .height,
+      ZhixinSpace.controlHeight,
+    );
   });
 }

@@ -472,45 +472,44 @@ class _PlanPageState extends State<PlanPage> {
   );
 
   /// 读到内容之后整页淡入；之后换周按前后次序左右滑过去，换页签同样滑列表。
+  /// 页签与列表放在同一块带页面边距的容器里，内容直接铺满这一块即可。
   Widget _loadedWeek(ZhixinTheme theme, PlanWeek week, PlanActions actions) =>
       FadeIn(
         child: PageWidth(
-          child: Column(
-            children: [
-              _tabBar(theme),
-              // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
-              if (_error != null)
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    theme.space.page,
-                    0,
-                    theme.space.page,
-                    theme.space.sm,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+            child: Column(
+              children: [
+                _tabBar(theme),
+                // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
+                if (_error != null)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: theme.space.sm),
+                    child: InlineNotice(message: _error!, onRetry: _reload),
                   ),
-                  child: InlineNotice(message: _error!, onRetry: _reload),
-                ),
-              Expanded(
-                // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
-                child: SlideSwap(
-                  identity: _shownAnchor!,
-                  order: _weekOrder(_shownAnchor!),
-                  child: TabSlideStack(
-                    index: _tab,
-                    // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
-                    // 已读到的内容都留住；首次进入某个页签时才建。
-                    children: [
-                      for (var tab = 0; tab < 4; tab++)
-                        KeyedSubtree(
-                          key: ValueKey('plan-tab-layer-$tab'),
-                          child: _visited.contains(tab)
-                              ? _tabContent(week, actions, tab)
-                              : const SizedBox.shrink(),
-                        ),
-                    ],
+                Expanded(
+                  // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
+                  child: SlideSwap(
+                    identity: _shownAnchor!,
+                    order: _weekOrder(_shownAnchor!),
+                    child: TabSlideStack(
+                      index: _tab,
+                      // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
+                      // 已读到的内容都留住；首次进入某个页签时才建。
+                      children: [
+                        for (var tab = 0; tab < 4; tab++)
+                          KeyedSubtree(
+                            key: ValueKey('plan-tab-layer-$tab'),
+                            child: _visited.contains(tab)
+                                ? _tabContent(week, actions, tab)
+                                : const SizedBox.shrink(),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -520,13 +519,9 @@ class _PlanPageState extends State<PlanPage> {
       weekStart.millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
 
   /// 页签固定在列表上方：原来它随列表滚走，看到日程中段时想切到事项要先滚回顶部。
+  /// 外层的页面边距由 [_loadedWeek] 给出，这里只管上下的间隔，整条与输入框等宽。
   Widget _tabBar(ZhixinTheme theme) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      theme.space.page,
-      theme.space.xs,
-      theme.space.page,
-      theme.space.sm,
-    ),
+    padding: EdgeInsets.only(top: theme.space.xs, bottom: theme.space.sm),
     child: ZhixinSegmented<int>(
       segments: const [
         ZhixinSegment(value: 0, label: planTabSchedule),
