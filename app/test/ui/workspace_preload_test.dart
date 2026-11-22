@@ -374,7 +374,8 @@ void main() {
       await settle(tester);
       await tester.tap(find.text('从材料开始学习'));
       await settle(tester);
-      expect(find.text('导入材料'), findsOneWidget);
+      // 空库时标题栏与空态各有一个导入入口。
+      expect(find.text('导入材料'), findsWidgets);
       await preview(tester, '$name-materials');
       expect(tester.takeException(), isNull);
     });

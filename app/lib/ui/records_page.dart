@@ -113,6 +113,7 @@ class _RecordsPageState extends State<RecordsPage> {
   Map<String, List<Assessment>> _olderAssessments = const {};
   bool _hasMore = false;
   bool _loadingMore = false;
+  bool _importingMaterials = false;
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
@@ -298,11 +299,36 @@ class _RecordsPageState extends State<RecordsPage> {
   }
 
   Future<void> _openSearch() async {
+    // 材料页签上的同一个搜索框就地查找；学习记录进记录查找页。
+    if (_tab == RecordsTab.materials && _materialsKey.currentState != null) {
+      _materialsKey.currentState!.searchFocus.requestFocus();
+      return;
+    }
     await openRecordsSearch(
       context,
       onOpenLearning: _openLearning,
       onOpenDiscussion: _openDiscussion,
     );
+  }
+
+  /// 材料页签上是否正在查找；查找时收起页签，把整块让给结果，结束查找再放回。
+  bool get _materialsSearching =>
+      _materialsKey.currentState?.isSearching ?? false;
+
+  /// 材料查找的词变了：记录页跟着重建，页签随查找状态出现或收起。
+  void _onMaterialQueryChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// 标题栏上的导入入口：交给材料页自己的流程，导入成功之后打开新的一份。
+  Future<void> _importMaterials({required bool word}) async {
+    setState(() => _importingMaterials = true);
+    try {
+      await _materialsKey.currentState?.importFromHeader(word: word);
+    } finally {
+      if (mounted) setState(() => _importingMaterials = false);
+    }
   }
 
   /// 继续读下一页；筛选条件与排序键不变，不会重复或漏掉记录。
@@ -355,7 +381,9 @@ class _RecordsPageState extends State<RecordsPage> {
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
-        title: const Text(tabRecords),
+        // 材料页签上标题换成材料：这一栏的动作（导入材料、查找）都属于材料，
+        // 与学习记录的动作分开，一个标题下只放一件事。
+        title: Text(learning ? tabRecords : recordsTabMaterials),
         actions: [
           ZhixinHeaderAction(
             icon: FLucideIcons.network,
@@ -373,17 +401,31 @@ class _RecordsPageState extends State<RecordsPage> {
               }
             },
           ),
-          // 录入题目的入口与安排页的“这周能做什么”同一种写法：标题栏里的次要
-          // 文字按钮，动作就在这一行，不再在下面另占一行。
-          if (learning) ...[
+          // 查找入口两种页签都有，搜索框同一条：学习记录进记录查找页，材料在
+          // 下面就地查找，提示文字跟着当前页签。
+          ZhixinHeaderAction(
+            icon: FLucideIcons.search,
+            tooltip: '查找',
+            onPressed: _openSearch,
+          ),
+          // 录入题目与导入材料是同一种写法：标题栏里的次要文字按钮，图标在前。
+          if (learning)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: QuestionCaptureButton(
                 onOpenLearning: _openLearning,
                 onOpenDiscussion: _openDiscussion,
               ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: MaterialImportButton(
+                enabled: !_importingMaterials,
+                onPaste: () => _importMaterials(word: false),
+                onWord: () => _importMaterials(word: true),
+              ),
             ),
-          ],
         ],
       ),
       child: PageWidth(
@@ -396,44 +438,60 @@ class _RecordsPageState extends State<RecordsPage> {
                 theme.space.page,
                 theme.space.md,
               ),
-              child: forui.FTextField(
-                key: const ValueKey('records-search-entry'),
-                control: .managed(controller: _searchHint),
-                readOnly: true,
-                onTap: _openSearch,
-                prefixBuilder: (context, style, variants) =>
-                    forui.FTextField.prefixIconBuilder(
-                      context,
-                      style,
-                      variants,
-                      const Icon(FLucideIcons.search, size: 16),
+              // 搜索框两种页签共用一条，点开之后交给当前页签自己的查找。
+              child: learning || _materialsKey.currentState == null
+                  ? forui.FTextField(
+                      key: const ValueKey('records-search-entry'),
+                      control: .managed(controller: _searchHint),
+                      readOnly: true,
+                      onTap: _openSearch,
+                      prefixBuilder: (context, style, variants) =>
+                          forui.FTextField.prefixIconBuilder(
+                            context,
+                            style,
+                            variants,
+                            const Icon(FLucideIcons.search, size: 16),
+                          ),
+                      hint: '搜索讨论、题目或材料原文',
+                    )
+                  // 材料页签换成同一位置的查找框，就在这一条里输入，结果在下面。
+                  : KeyedSubtree(
+                      key: const ValueKey('records-search-entry'),
+                      child: _materialsKey.currentState!.searchField(),
                     ),
-                hint: '搜索讨论、题目或材料原文',
-              ),
             ),
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-              child: ZhixinSegmented<RecordsTab>(
-                segments: const [
-                  ZhixinSegment(
-                    value: RecordsTab.learning,
-                    label: recordsTabLearning,
-                    icon: FLucideIcons.history,
-                  ),
-                  ZhixinSegment(
-                    value: RecordsTab.materials,
-                    label: recordsTabMaterials,
-                    icon: FLucideIcons.bookOpen,
-                  ),
-                ],
-                selected: _tab,
-                onChanged: (tab) => setState(() {
-                  _tab = tab;
-                  _visited.add(tab);
-                }),
+            if (learning || !_materialsSearching) ...[
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                child: ZhixinSegmented<RecordsTab>(
+                  segments: const [
+                    ZhixinSegment(
+                      value: RecordsTab.learning,
+                      label: recordsTabLearning,
+                      icon: FLucideIcons.history,
+                    ),
+                    ZhixinSegment(
+                      value: RecordsTab.materials,
+                      label: recordsTabMaterials,
+                      icon: FLucideIcons.bookOpen,
+                    ),
+                  ],
+                  selected: _tab,
+                  onChanged: (tab) {
+                    // 从材料查找里切到学习记录时先结束查找，两个页签的搜索框
+                    // 才不会带着同一个查询词各查一次。
+                    if (tab == RecordsTab.learning) {
+                      _materialsKey.currentState?.exitSearch();
+                    }
+                    setState(() {
+                      _tab = tab;
+                      _visited.add(tab);
+                    });
+                  },
+                ),
               ),
-            ),
-            SizedBox(height: theme.space.sm),
+              SizedBox(height: theme.space.sm),
+            ],
             Expanded(
               // 两个页签常驻，切换只换显示：材料列表的滚动位置与已经读到的
               // 数据都留住，切回来不再整棵重建、不再重读。首次进入某页签时
@@ -443,7 +501,10 @@ class _RecordsPageState extends State<RecordsPage> {
                 children: [
                   _learningRecords(theme),
                   if (_visited.contains(RecordsTab.materials))
-                    MaterialList(key: _materialsKey)
+                    MaterialList(
+                      key: _materialsKey,
+                      onQueryChanged: _onMaterialQueryChanged,
+                    )
                   else
                     const SizedBox.shrink(),
                 ],
@@ -510,6 +571,8 @@ class _RecordsPageState extends State<RecordsPage> {
                     : forui.FButtonVariant.outline,
                 size: forui.FButtonSizeVariant.sm,
                 mainAxisSize: MainAxisSize.min,
+                // 与右边“全部”“无归属”的芯片同一套圆角，整条筛选的边框一致。
+                style: chipButtonStyle(context),
                 onPress: controller.toggle,
                 suffix: const Icon(FLucideIcons.chevronDown),
                 child: Text(

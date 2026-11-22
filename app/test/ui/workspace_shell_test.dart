@@ -32,7 +32,8 @@ void main() {
     tester.testTextInput.hide();
     await tester.tap(find.text('从材料开始学习'));
     await settle(tester);
-    expect(find.text('导入材料'), findsOneWidget);
+    // 空库时标题栏与空态各有一个导入入口。
+    expect(find.text('导入材料'), findsWidgets);
     expect(tester.takeException(), isNull);
     await preview(tester, 'records-materials');
     await tester.tap(find.text('现在').last);
@@ -54,7 +55,7 @@ void main() {
     await tester.ensureVisible(materialButton);
     await tester.tap(materialButton.hitTestable());
     await settle(tester);
-    expect(find.text('导入材料'), findsOneWidget);
+    expect(find.text('导入材料'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

@@ -21,7 +21,6 @@ import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
-import 'zhixin_rhs.dart';
 import 'zhixin_select.dart';
 import 'zhixin_toast.dart';
 
@@ -85,7 +84,17 @@ Future<void> addMaterialPage(BuildContext context, Material material) async {
 
 /// 记录页的材料分组：按材料查看页码，导入新的一份或补充一页。
 class MaterialList extends StatefulWidget {
-  const MaterialList({super.key});
+  const MaterialList({
+    super.key,
+    this.onImportedFromHeader,
+    this.onQueryChanged,
+  });
+
+  /// 标题栏的导入入口在开始之前调用一次，记录页据此先切到材料页签。
+  final VoidCallback? onImportedFromHeader;
+
+  /// 查找的词变了时调用；记录页据此收起或放回页签与筛选条。
+  final VoidCallback? onQueryChanged;
 
   @override
   State<MaterialList> createState() => MaterialListState();
@@ -99,6 +108,10 @@ class MaterialListState extends State<MaterialList> {
   Stream<List<Material>>? _stream;
   bool _started = false;
   bool _importingWord = false;
+  bool _importingPaste = false;
+
+  /// 标题栏导入开始之前的回调，见 [MaterialList.onImportedFromHeader]。
+  VoidCallback? get _importedFromHeader => widget.onImportedFromHeader;
 
   /// 读取失败时就地说明；有内容时仍显示上一次读到的列表。
   String? _notice;
@@ -108,6 +121,7 @@ class MaterialListState extends State<MaterialList> {
   /// 查找是本地查询，不调用模型；查询或筛选变化后只显示最后一次请求的结果，
   /// 旧请求晚到就按编号丢弃（与记录页查找同一套 [RequestGate]）。
   final TextEditingController _searchField = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   final RequestGate _requests = RequestGate();
   Timer? _searchDebounce;
   MaterialSearchResults? _results;
@@ -139,6 +153,12 @@ class MaterialListState extends State<MaterialList> {
     });
   }
 
+  /// 收起源自材料的查找：清空查询词回到材料列表，记录页据此把页签放回来。
+  ///
+  /// 记录页在材料正在查找时收起页签与筛选条，换成另一个页签、随时想回到材料
+  /// 列表时都走这里；查找框的清除按钮与“清除查询”只清词，不换页签。
+  void exitSearch() => _clearSearch();
+
   void _reportReadFailure(Object error, StackTrace stack) {
     if (!mounted) return;
     final message = describeFailure(
@@ -162,14 +182,16 @@ class MaterialListState extends State<MaterialList> {
   void dispose() {
     _searchDebounce?.cancel();
     _searchField.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
   /// 输入停下之后再查一次，免得每敲一个字都读一遍库。
   void _onQueryChanged(String text) {
     _searchDebounce?.cancel();
-    // 清除按钮跟着输入框里的字出现，不等这一次查找返回。
+    // 清除按钮跟着输入框里的字出现，不等这一次查找返回；记录页也据此收起页签。
     setState(() {});
+    onQueryChanged?.call();
     _searchDebounce = Timer(const Duration(milliseconds: 250), () {
       if (mounted) _search(text);
     });
@@ -188,6 +210,7 @@ class MaterialListState extends State<MaterialList> {
         _loadingMore = false;
         _searchNotice = null;
       });
+      onQueryChanged?.call();
       return;
     }
     setState(() {
@@ -260,6 +283,55 @@ class MaterialListState extends State<MaterialList> {
     _search('');
   }
 
+  /// 查询词一变就告诉记录页：有词时记录页收起页签，把整块让给查找结果。
+  VoidCallback? get onQueryChanged => widget.onQueryChanged;
+
+  /// 记录页顶上那条搜索框在材料页签上的写法：就地输入与过滤，不再另开一页；
+  /// 切换页签时记录页把焦点交给它，键盘跟着切过去。
+  ///
+  /// 学习记录与材料共用记录页的同一个搜索框，材料页里不再放第二条。
+  Widget searchField() {
+    return forui.FTextField(
+      key: const ValueKey('materials-search-entry'),
+      focusNode: _searchFocus,
+      control: .managed(
+        controller: _searchField,
+        onChange: (value) => _onQueryChanged(value.text),
+      ),
+      textInputAction: TextInputAction.search,
+      onSubmit: _search,
+      hint: '按标题、来源或页标签查找材料',
+      prefixBuilder: (context, style, variants) =>
+          forui.FTextField.prefixIconBuilder(
+            context,
+            style,
+            variants,
+            const Icon(FLucideIcons.search, size: 16),
+          ),
+      suffixBuilder: (_, style, _) => _searchField.text.isEmpty
+          ? const SizedBox.shrink()
+          : ZhixinIconButton(
+              tooltip: '清除查询',
+              onPressed: _clearSearch,
+              icon: FLucideIcons.x,
+              size: forui.FButtonSizeVariant.sm,
+              style: style.clearButtonStyle,
+            ),
+    );
+  }
+
+  /// 搜索框里已经应用的查询词；记录页用它在切换页签之后重新写回搜索框。
+  String get appliedQuery => _appliedQuery;
+
+  /// 是否正在查找：有查询词或还在取结果时记录页收起页签，结束查找再放回。
+  bool get isSearching =>
+      _searching ||
+      _appliedQuery.isNotEmpty ||
+      _searchField.text.trim().isNotEmpty;
+
+  /// 搜索框的焦点：记录页在材料页签上点搜索入口时把键盘切到这里。
+  FocusNode get searchFocus => _searchFocus;
+
   /// 打开导入对话框之前读一次目标列表；归属选项只在打开对话框时用得到。
   Future<List<({String id, String title, bool active})>?> _loadGoals() async {
     try {
@@ -284,8 +356,31 @@ class MaterialListState extends State<MaterialList> {
     }
   }
 
+  /// 从记录页标题栏发起的导入：先切到材料页签，再按材料页自己的流程导入。
+  ///
+  /// 标题栏上的入口与列表、空态里的入口走同一套流程，导入成功之后打开新的一份。
+  Future<void> importFromHeader({required bool word}) async {
+    _importedFromHeader?.call();
+    // 等这一帧把材料列表建出来，读取目标之类的调用才拿得到页面上下文。
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    if (word) {
+      await _importWord();
+    } else {
+      await _import();
+    }
+  }
+
   Future<void> _import() async {
-    final scope = AppScope.of(context);
+    setState(() => _importingPaste = true);
+    try {
+      await _importPaste(AppScope.of(context));
+    } finally {
+      if (mounted) setState(() => _importingPaste = false);
+    }
+  }
+
+  Future<void> _importPaste(AppScopeState scope) async {
     final goals = await _loadGoals();
     if (goals == null || !mounted) return;
     final drafts = await showZhixinDialog<List<_MaterialDraft>>(
@@ -387,44 +482,12 @@ class MaterialListState extends State<MaterialList> {
       onData: (_) => _clearNotice(),
       builder: (context, materials, loading) {
         final list = materials ?? const <Material>[];
-        final canImport = !loading && !_importingWord;
-        final hasMaterials = list.isNotEmpty;
-        // 有材料或有查询时才显示查找入口；空库的导入入口由空态承担。
-        final showSearchRow =
-            loading || hasMaterials || _searchField.text.isNotEmpty;
+        final canImport = !loading && !_importingWord && !_importingPaste;
         final showResults =
             _results != null || _searching || _appliedQuery.isNotEmpty;
         return Column(
           children: [
-            if (showSearchRow)
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  theme.space.page,
-                  theme.space.sm,
-                  theme.space.page,
-                  theme.space.xs,
-                ),
-                child: RhsRow(
-                  leading: _searchBar(theme),
-                  // 导入按钮在两句话之间换长，与查找框同高；宽度按最长的那一句
-                  // 定住，换标签时查找框不跟着缩。
-                  trailing: [
-                    _ImportMaterialButton(
-                      enabled: canImport,
-                      onPaste: _import,
-                      onWord: _importWord,
-                    ),
-                    _ImportMaterialButton(
-                      enabled: canImport,
-                      onPaste: _import,
-                      onWord: _importWord,
-                      label: '从 Word 导入',
-                      visible: false,
-                    ),
-                  ],
-                ),
-              ),
-            if (_importingWord) const forui.FProgress(),
+            if (_importingWord || _importingPaste) const forui.FProgress(),
             if (_searching) const forui.FProgress(),
             if (_notice != null)
               Padding(
@@ -457,7 +520,7 @@ class MaterialListState extends State<MaterialList> {
                         icon: FLucideIcons.bookOpenText,
                         title: '还没有材料',
                         description: '粘贴原文或选择 .docx 文件，之后可以搜索材料、引用原文或建立学习计划。',
-                        action: _ImportMaterialButton(
+                        action: MaterialImportButton(
                           enabled: canImport,
                           onPaste: _import,
                           onWord: _importWord,
@@ -499,36 +562,6 @@ class MaterialListState extends State<MaterialList> {
           ],
         );
       },
-    );
-  }
-
-  /// 查找输入框：回车立即查一次，输入停下 250 毫秒之后自动查。
-  Widget _searchBar(ZhixinTheme theme) {
-    return forui.FTextField(
-      key: const ValueKey('materials-search-entry'),
-      control: .managed(
-        controller: _searchField,
-        onChange: (value) => _onQueryChanged(value.text),
-      ),
-      textInputAction: TextInputAction.search,
-      onSubmit: _search,
-      hint: '按标题、来源或页标签查找材料',
-      prefixBuilder: (context, style, variants) =>
-          forui.FTextField.prefixIconBuilder(
-            context,
-            style,
-            variants,
-            const Icon(FLucideIcons.search, size: 16),
-          ),
-      suffixBuilder: (_, style, _) => _searchField.text.isEmpty
-          ? const SizedBox.shrink()
-          : ZhixinIconButton(
-              tooltip: '清除查询',
-              onPressed: _clearSearch,
-              icon: FLucideIcons.x,
-              size: forui.FButtonSizeVariant.sm,
-              style: style.clearButtonStyle,
-            ),
     );
   }
 
@@ -638,13 +671,17 @@ class MaterialListState extends State<MaterialList> {
 }
 
 /// 材料的导入入口：一个按钮，菜单里选粘贴原文还是导入 Word 文件。
-class _ImportMaterialButton extends StatelessWidget {
-  const _ImportMaterialButton({
+///
+/// 记录页把它放在标题栏右侧，与“贴一道题”同一种写法：次要按钮、`sm` 尺寸、
+/// 图标在前；空库时这个入口在空态里也出现一次。
+class MaterialImportButton extends StatelessWidget {
+  const MaterialImportButton({
     required this.enabled,
     required this.onPaste,
     required this.onWord,
     this.label = '导入材料',
     this.visible = true,
+    super.key,
   });
 
   final bool enabled;
@@ -654,7 +691,7 @@ class _ImportMaterialButton extends StatelessWidget {
   /// 按钮上的文字。
   final String label;
 
-  /// 是否画出来；用来把按钮换成更短的一句时先按较长的一句量宽度。
+  /// 是否画出来；占位量宽时传 false，只按这句文字占一个位置。
   final bool visible;
 
   @override
@@ -672,8 +709,8 @@ class _ImportMaterialButton extends StatelessWidget {
         ],
         triggerBuilder: (context, controller) => forui.FButton(
           variant: forui.FButtonVariant.secondary,
+          size: forui.FButtonSizeVariant.sm,
           mainAxisSize: MainAxisSize.min,
-          style: fittedButtonStyle(),
           onPress: enabled && visible ? controller.toggle : null,
           prefix: const Icon(FLucideIcons.upload),
           child: Text(label),

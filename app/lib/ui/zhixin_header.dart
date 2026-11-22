@@ -52,21 +52,52 @@ class ZhixinHeader extends StatelessWidget {
     );
     final leading = <Widget>[
       if (showBack)
-        forui.FHeaderAction.back(
-          key: const ValueKey('zhixin-header-back'),
-          onPress: () => Navigator.maybePop(context),
-          semanticsLabel: '返回',
+        _AlignWithContent(
+          child: forui.FHeaderAction.back(
+            key: const ValueKey('zhixin-header-back'),
+            onPress: () => Navigator.maybePop(context),
+            semanticsLabel: '返回',
+          ),
         ),
-      ...prefixes,
+      for (final prefix in prefixes) _AlignWithContent(child: prefix),
     ];
     return nested
         ? forui.FHeader.nested(
             style: style,
             title: title,
             prefixes: leading,
-            suffixes: actions,
+            suffixes: actions
+                .map((action) => _AlignWithContent(child: action))
+                .toList(),
           )
-        : forui.FHeader(style: style, title: title, suffixes: actions);
+        : forui.FHeader(
+            style: style,
+            title: title,
+            suffixes: actions
+                .map((action) => _AlignWithContent(child: action))
+                .toList(),
+          );
+  }
+}
+
+/// 图标动作至少占 44 见方的可点区域，图标居中；标题栏两端的边距因此比页面
+/// 边距各少 [_iconInset]，图标离屏边仍是页面边距。文字按钮自己带留白，按原样
+/// 摆放不加宽。
+class _AlignWithContent extends StatelessWidget {
+  const _AlignWithContent({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (child is! forui.FHeaderAction) return child;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: ZhixinSpace.controlHeight,
+        minHeight: ZhixinSpace.controlHeight,
+      ),
+      child: Center(widthFactor: 1, heightFactor: 1, child: child),
+    );
   }
 }
 
