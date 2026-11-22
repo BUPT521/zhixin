@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>知新 比例预览（按 main 当前代码还原，可调）</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e9e9ec; color: #222; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { display: flex; gap: 28px; padding: 24px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
+
+  /* ---------- 控制面板 ---------- */
+  .panel { width: 340px; background: #fff; border-radius: 16px; padding: 16px 18px 18px; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  .panel h1 { font-size: 16px; margin: 0 0 2px; }
+  .panel p { font-size: 12px; color: #777; margin: 0 0 12px; line-height: 1.5; }
+  .presets { display: flex; gap: 6px; margin-bottom: 8px; }
+  .presets button, .tools button { flex: 1; font: inherit; font-size: 12.5px; padding: 7px 0; border-radius: 10px; border: 1px solid #d8d8dc; background: #fff; cursor: pointer; }
+  .presets button.on { background: #2563EB; color: #fff; border-color: #2563EB; }
+  .grp { font-size: 11px; color: #888; margin: 14px 0 4px; letter-spacing: .5px; }
+  .ctl { display: grid; grid-template-columns: 104px 1fr 34px; align-items: center; gap: 8px; font-size: 12.5px; margin: 3px 0; }
+  .ctl output { text-align: right; font-variant-numeric: tabular-nums; color: #2563EB; font-weight: 600; }
+  .ctl input[type=range] { width: 100%; accent-color: #2563EB; }
+  .ctl .src { grid-column: 1 / -1; font-size: 10.5px; color: #aaa; margin: -2px 0 2px; }
+  .tools { display: flex; gap: 6px; margin-top: 14px; }
+  .chk { font-size: 12.5px; display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  pre#out { background: #f4f4f5; border-radius: 10px; padding: 10px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; margin: 10px 0 0; display: none; }
+  .lay { margin: 6px 0 8px; font-size: 12.5px; }
+  .lay > span { display: block; color: #555; margin-bottom: 3px; }
+  .lay .opts { display: flex; background: #f0f0f2; border-radius: 9px; padding: 2px; }
+  .lay .opts button { flex: 1; font: inherit; font-size: 12px; border: 0; background: transparent; padding: 5px 2px; border-radius: 7px; cursor: pointer; color: #666; }
+  .lay .opts button.on { background: #fff; color: #111; font-weight: 600; box-shadow: 0 0 0 1px #ddd; }
+
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .tabsel { display: flex; gap: 6px; }
+  .tabsel button { font: inherit; font-size: 12.5px; padding: 6px 14px; border-radius: 999px; border: 1px solid #d0d0d5; background: #fff; cursor: pointer; }
+  .tabsel button.on { background: #111; color: #fff; border-color: #111; }
+  .note { font-size: 11.5px; color: #888; max-width: 390px; text-align: center; line-height: 1.5; }
+
+  /* ---------- 手机：令牌与 theme.dart 同名 ---------- */
+  .phone {
+    --page: 20px; --cardPad: 16px; --tilePadH: 16px; --tilePadV: 12px; --entryPad: 12px;
+    --rTag: 8px; --rControl: 14px; --rCard: 20px; --rFeature: 24px;
+    --pageTitle: 26px; --titleLarge: 22px; --titleMedium: 16px; --titleSmall: 14px; --body: 14px; --small: 12px; --label: 11px; --lh: 1.5;
+    --sm: 8px; --md: 12px; --sectionTop: 20px; --ctlH: 44px; --headH: 62px; --navIcon: 30px; --navPadV: 8px; --itemGap: 8px;
+    --paper:#FFFFFF; --card:#FFFFFF; --raised:#F4F4F5; --border:#E6E6E8; --inputBorder:#C9C9CE; --ink:#111; --muted:#6B6B72;
+    --primary:#2563EB; --onAccent:#fff; --pl:#EAF1FE; --pc:#D9E6FD; --onPc:#12378A; --al:#FEF1DF; --onAl:#7A3A06;
+    width: 390px; height: 800px; border-radius: 40px; border: 7px solid #1c1c1c; overflow: hidden; position: relative; display: flex; flex-direction: column;
+    background: var(--paper); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.2); font-size: var(--body); line-height: var(--lh);
+  }
+  .phone.dark { --paper:#000; --card:#131315; --raised:#1E1E21; --border:#2A2A2E; --inputBorder:#45454B; --ink:#ECECEE; --muted:#9D9DA5; --primary:#5B9BFF; --onAccent:#001A40; --pl:#14243F; --pc:#1D3C6E; --onPc:#D4E4FF; --al:#3A2A14; --onAl:#FFDDB8; }
+  .status { height: 30px; padding: 8px 24px 0; font-size: 12px; display: flex; justify-content: space-between; color: var(--muted); flex: none; }
+  .scroll { flex: 1; overflow: hidden; position: relative; }
+  .grid .scroll::after { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,0,80,.2) 1px, transparent 1px); background-size: 100% 8px; z-index: 5; }
+  .grid .scroll::before { content: ""; position: absolute; inset: 0 var(--page); pointer-events: none; border-left: 1px dashed rgba(255,0,80,.55); border-right: 1px dashed rgba(255,0,80,.55); z-index: 5; }
+  .pad { padding: var(--md) var(--page) 0; }
+  svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  /* ZhixinHeader：minHeight 62，padding 20/6，标题 pageTitle w600，动作 12+20+12=44 */
+  .hdr { min-height: var(--headH); padding: 6px var(--page); display: flex; align-items: center; justify-content: space-between; }
+  .hdr .t { font-size: var(--pageTitle); font-weight: 600; line-height: 1.3; }
+  .hdr .acts { display: flex; gap: 4px; align-items: center; margin-right: -12px; }
+  .hact { width: 44px; height: 44px; display: grid; place-items: center; color: var(--ink); }
+  .hdr.small { min-height: 52px; }
+  .hdr.small .t { font-size: calc(var(--pageTitle) - 6px); }
+
+  /* 文字 */
+  .tm { font-size: var(--titleMedium); font-weight: 600; line-height: 1.5; }
+  .ts { font-size: var(--titleSmall); font-weight: 600; line-height: 1.43; }
+  .tl { font-size: var(--titleLarge); font-weight: 600; line-height: 1.27; }
+  .sm { font-size: var(--small); color: var(--muted); line-height: 1.5; }
+  .ll { font-size: var(--body); font-weight: 600; line-height: 1.43; }
+
+  /* SectionHeading：top sectionTop，bottom md；动作是 ghost 按钮，最小高度 44 */
+  .sh { display: flex; align-items: center; padding: var(--sectionTop) 0 var(--md); min-height: calc(var(--sectionTop) + var(--md) + 24px); }
+  .sh.first { padding-top: 0; }
+  .sh .l { flex: 1; }
+  .ghost { min-height: var(--ctlH); display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; margin-right: -14px; font-size: 12.5px; font-weight: 600; color: var(--primary); }
+  .linkact { font-size: 12.5px; font-weight: 600; color: var(--primary); }
+  .sh.link { min-height: 0; }
+
+  /* 按钮：min-height 44，radius 14 */
+  .btn { min-height: var(--ctlH); padding: 0 18px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--rControl); font-weight: 600; font-size: var(--body); background: var(--primary); color: var(--onAccent); }
+  .btn.sm { font-size: 12.5px; padding: 0 14px; }
+  .btn.s { background: var(--pc); color: var(--onPc); }
+  .btn.o { background: transparent; color: var(--ink); border: 1px solid var(--inputBorder); }
+  .btn.full { display: flex; width: 100%; }
+  .sq { width: var(--ctlH); height: var(--ctlH); border-radius: var(--rControl); background: var(--raised); display: grid; place-items: center; flex: none; }
+  .field { min-height: var(--ctlH); border: 1px solid var(--inputBorder); border-radius: var(--rControl); display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--muted); font-size: var(--body); flex: 1; }
+  .field svg { width: 16px; height: 16px; }
+
+  /* FCard / FTile：radius card，border 描边 */
+  .fcard { background: var(--card); border: 1px solid var(--border); border-radius: var(--rCard); padding: var(--cardPad); }
+  .tile { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--border); border-radius: var(--rCard); padding: var(--tilePadV) var(--tilePadH); margin-bottom: var(--itemGap); }
+  .tile .body { flex: 1; min-width: 0; }
+  .tile .chev { color: var(--muted); } .tile .chev svg { width: 16px; height: 16px; }
+  .li { width: 36px; height: 36px; border-radius: var(--rControl); background: var(--pl); color: var(--onPc); display: grid; place-items: center; flex: none; }
+  .li.n { background: var(--raised); color: var(--ink); } .li.a { background: var(--al); color: var(--onAl); }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+  .tag { font-size: var(--small); font-weight: 600; padding: 2px 8px; border-radius: var(--rTag); line-height: 1.33; background: var(--raised); color: var(--ink); }
+  .tag.p { background: var(--pl); color: var(--primary); } .tag.a { background: var(--al); color: var(--onAl); }
+  .tag.m { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .trow { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .trow .tags { margin-top: 0; flex: 1; }
+  .clue { margin-top: 4px; font-size: var(--small); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 当前活动：feature 卡 */
+  .feature { background: var(--primary); color: var(--onAccent); border-radius: var(--rFeature); padding: var(--cardPad); margin-bottom: var(--itemGap); }
+  .feature .row1 { display: flex; align-items: center; gap: 6px; font-size: var(--body); font-weight: 600; opacity: .85; }
+  .feature .row1 svg { width: 16px; height: 16px; } .feature .row1 .sp { flex: 1; }
+  .feature .tl { margin-top: 8px; }
+  .feature .actions { margin-top: var(--cardPad); }
+  .feature .btn { background: var(--pc); color: var(--onPc); }
+  .feature .txtbtn { display: flex; justify-content: center; align-items: center; gap: 6px; min-height: 40px; margin-top: 4px; font-size: var(--body); font-weight: 600; }
+  .feature .txtbtn svg { width: 16px; height: 16px; }
+  .feature.inline .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .feature.inline .actions .btn { flex: 1; } .feature.inline .actions .txtbtn { margin: 0; min-height: 0; padding: 0 6px; white-space: nowrap; }
+
+  /* 输入区 _ComposerFrame：L16 T16 R12 B12，radius feature，边 outline */
+  .composer { border: 1px solid var(--inputBorder); border-radius: var(--rFeature); padding: var(--cardPad) var(--md) var(--md) var(--cardPad); background: var(--card); }
+  .composer .ph { color: var(--muted); min-height: calc(var(--body) * var(--lh) * 2); }
+  .composer .row { display: flex; justify-content: space-between; align-items: center; margin-top: var(--sm); }
+  .composer.bar { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: calc(var(--ctlH) / 2 + 4px); }
+  .composer.bar .ph { flex: 1; min-height: 0; padding-left: 8px; }
+  .composer.bar .sq { background: transparent; }
+  .btn.round { width: var(--ctlH); padding: 0; border-radius: 50%; }
+
+  /* 入口 */
+  .tiles { display: flex; gap: var(--md); margin-top: var(--md); }
+  .etile { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: var(--rCard); padding: var(--entryPad); }
+  .etile .top { display: flex; justify-content: space-between; margin-bottom: 8px; } .etile .top svg { width: 16px; height: 16px; color: var(--muted); }
+  .tiles.col { flex-direction: column; gap: var(--itemGap); }
+  .tiles.col .etile { display: flex; align-items: center; gap: 12px; }
+  .tiles.col .etile .top { margin: 0; } .tiles.col .etile .arr { margin-left: auto; color: var(--muted); } .tiles.col .etile .arr svg { width: 16px; height: 16px; }
+
+  /* 分段 ZhixinSegmented：整条 44，轨道 padding 3，radius control */
+  .segw { padding: 0 var(--page); }
+  .seg { min-height: var(--ctlH); display: flex; background: var(--raised); border-radius: var(--rControl); padding: 3px; }
+  .seg span { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--rControl); font-size: var(--body); font-weight: 600; color: var(--muted); }
+  .seg span svg { width: 16px; height: 16px; }
+  .seg span.on { background: var(--card); color: var(--onPc); box-shadow: 0 0 0 1px var(--border); }
+
+  /* 安排 */
+  .weekcard { display: flex; align-items: center; padding: var(--sm); }
+  .weekcard .mid { flex: 1; text-align: center; }
+  .dayh { padding-top: var(--md); }
+  .block { display: flex; align-items: center; gap: 8px; padding: var(--tilePadV) var(--tilePadH); background: var(--card); border: 1px solid var(--border); border-radius: var(--rCard); margin-top: 6px; }
+  .block .bar { width: 3px; height: 36px; border-radius: 2px; background: var(--primary); } .block .bar.g { background: var(--border); }
+  .block .tm2 { width: 38px; font-variant-numeric: tabular-nums; } .block .tm2 b { display: block; font-size: var(--body); line-height: 1.3; font-weight: 600; } .block .tm2 span { font-size: var(--small); color: var(--muted); }
+  .block .body { flex: 1; min-width: 0; margin-left: 4px; }
+
+  /* 我的 */
+  .acct { display: flex; align-items: center; gap: 12px; }
+  .av { width: 48px; height: 48px; border-radius: 50%; background: var(--pl); color: var(--onPc); display: grid; place-items: center; font-weight: 600; font-size: 18px; flex: none; }
+  .figs { display: flex; gap: 12px; margin-top: 12px; } .figs > div { flex: 1; }
+  .figs .k { font-size: var(--small); font-weight: 600; color: var(--muted); } .figs .v { font-size: var(--body); margin-top: 4px; }
+  .btns2 { display: flex; gap: 8px; margin-top: 12px; } .btns2 .btn { flex: 1; }
+
+  /* 底栏 FBottomNavigationBar：外 padding h20 v8，item padding 5，图标区 30，间距 4，文字 11 w600，选中只换色 */
+  .nav { flex: none; display: flex; background: var(--card); border-top: 1px solid var(--border); padding: var(--navPadV) var(--page); }
+  .nav > div { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 5px; gap: 4px; font-size: var(--label); font-weight: 600; color: var(--muted); line-height: 1.45; }
+  .nav .ic { height: var(--navIcon); display: grid; place-items: center; }
+  .nav > div.on { color: var(--ink); }
+  .nav.accent > div.on { color: var(--primary); }
+  .nav.pill > div.on { color: var(--primary); }
+  .nav.pill > div.on .ic { background: var(--pl); width: 56px; border-radius: 15px; }
+  .homebar { height: 5px; width: 120px; border-radius: 3px; background: var(--ink); opacity: .85; margin: 0 auto 6px; flex: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel" id="panel">
+    <h1>比例调节 <span style="font-weight:400;font-size:12px;color:#888">· 按 main 43fedc2 还原</span></h1>
+    <p>「现状」每个数字都来自 theme.dart 与各页面代码（滑块下方灰字是出处）。其余两个是在现状上的调整方案。</p>
+    <div class="presets">
+      <button data-p="now" class="on">现状</button><button data-p="a">方案 A（收口）</button><button data-p="b">方案 B（紧凑）</button>
+    </div>
+    <div class="grp">控件的安排与分布</div>
+    <div id="lay"></div>
+    <div id="ctls"></div>
+    <label class="chk"><input type="checkbox" id="dark"> 深色</label>
+    <label class="chk"><input type="checkbox" id="grid"> 显示 8dp 基线与页边距线</label>
+    <div class="tools"><button id="copy">导出当前数值</button><button id="reset">还原到所选预设</button></div>
+    <pre id="out"></pre>
+  </div>
+  <div class="stage">
+    <div class="tabsel" id="tabsel"></div>
+    <div class="phone" id="phone"></div>
+    <div class="note">页面内容为示意文案；结构、间距与字号取自 now_page / records_page / plan_page / mine_page 与 workspace_widgets。</div>
+  </div>
+</div>
+
+<script>
+const S = {
+  brain:'<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/>',
+  img:'<path d="M16 5h6M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/><circle cx="9" cy="9" r="2"/>',
+  up:'<path d="m5 12 7-7 7 7M12 19V5"/>',
+  book:'<path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+  route:'<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
+  house:'<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  hist:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  cal:'<path d="M16 14v2.2l1.6 1"/><path d="M16 2v4M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5M3 10h5M8 2v4"/><circle cx="16" cy="16" r="6"/>',
+  user:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/>',
+  chev:'<path d="m9 18 6-6-6-6"/>', chevl:'<path d="m15 18-6-6 6-6"/>',
+  arrUR:'<path d="M7 7h10v10M7 17 17 7"/>',
+  sync:'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  pkg:'<path d="m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/>',
+  spark:'<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+  msg:'<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  cloud:'<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  net:'<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/>',
+  more:'<circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>',
+  calc:'<rect width="16" height="20" x="4" y="2" rx="2"/><path d="M8 6h8M16 14v4M16 10h.01M12 10h.01M8 10h.01M12 14h.01M8 14h.01M12 18h.01M8 18h.01"/>',
+  clock:'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>', play:'<path d="M6 3 20 12 6 21Z"/>',
+  plus:'<path d="M5 12h14M12 5v14"/>', pen:'<path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9.4"/><path d="M2 6h4M2 10h4M2 14h4M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>',
+};
+const ic = (n, sz) => `<svg viewBox="0 0 24 24"${sz?` style="width:${sz}px;height:${sz}px"`:''}>${S[n]}</svg>`;
+
+/* 参数：键 / 名称 / 范围 / 出处 */
+const DEF = [
+  ['page','页面左右边距',12,28,1,'间距','ZhixinSpace.page'],
+  ['cardPad','卡片内边距',10,24,1,'间距','ZhixinSpace.lg（FCard、强调卡）'],
+  ['tilePadH','列表项横向内边距',10,24,1,'间距','FTile unsuffixedPadding.horizontal = lg'],
+  ['tilePadV','列表项纵向内边距',6,18,1,'间距','FTile padding.vertical = md'],
+  ['entryPad','入口方块内边距',8,20,1,'间距','EntryTile rawContent = md'],
+  ['itemGap','相邻条目间距',4,14,1,'间距','sm（FTile 底部 padding）'],
+  ['md','区块内小间距',6,20,1,'间距','ZhixinSpace.md'],
+  ['sectionTop','区块标题上方',12,36,1,'间距','ZhixinSpace.sectionTop'],
+  ['rCard','卡片/列表项圆角',8,28,1,'圆角','_cardRadius'],
+  ['rControl','控件圆角',6,20,1,'圆角','_controlRadius'],
+  ['rFeature','强调卡/输入区圆角',10,32,1,'圆角','_featureRadius'],
+  ['rTag','标签圆角',3,12,1,'圆角','_tagRadius'],
+  ['pageTitle','页面标题字号',22,34,1,'字号与高度','text.pageTitle'],
+  ['titleLarge','强调卡标题字号',18,26,1,'字号与高度','text.titleLarge'],
+  ['titleMedium','区块/卡片标题字号',14,19,1,'字号与高度','text.titleMedium'],
+  ['body','正文字号',13,17,.5,'字号与高度','bodyMedium / labelLarge / titleSmall'],
+  ['small','辅助字号',10.5,13.5,.5,'字号与高度','bodySmall / labelMedium'],
+  ['label','底栏标签字号',10,13,.5,'字号与高度','labelSmall'],
+  ['lh','正文行高',1.3,1.8,.05,'字号与高度','bodyMedium height'],
+  ['ctlH','按钮/输入/分段高度',36,52,1,'字号与高度','ZhixinSpace.controlHeight'],
+  ['headH','标签页标题栏高度',48,72,1,'字号与高度','ZhixinHeader minHeight'],
+  ['navIcon','底栏图标区高度',20,36,1,'字号与高度','_iconHeight'],
+  ['navPadV','底栏上下内边距',2,14,1,'字号与高度','barPadding.vertical = sm'],
+];
+const PX = k => !['lh'].includes(k);
+const PRE = {
+  now: {page:20,cardPad:16,tilePadH:16,tilePadV:12,entryPad:12,itemGap:8,md:12,sectionTop:20,rCard:20,rControl:14,rFeature:24,rTag:8,pageTitle:26,titleLarge:22,titleMedium:16,body:14,small:12,label:11,lh:1.5,ctlH:44,headH:62,navIcon:30,navPadV:8},
+  a:   {page:20,cardPad:16,tilePadH:14,tilePadV:12,entryPad:14,itemGap:8,md:12,sectionTop:24,rCard:16,rControl:12,rFeature:20,rTag:6,pageTitle:26,titleLarge:20,titleMedium:16,body:14,small:12,label:11,lh:1.5,ctlH:44,headH:56,navIcon:28,navPadV:6},
+  b:   {page:16,cardPad:14,tilePadH:14,tilePadV:10,entryPad:12,itemGap:8,md:12,sectionTop:20,rCard:16,rControl:12,rFeature:20,rTag:6,pageTitle:24,titleLarge:20,titleMedium:15,body:14,small:12,label:11,lh:1.5,ctlH:40,headH:52,navIcon:26,navPadV:6},
+};
+const LAY_DEF = [
+  ['head','标题栏',[['big','现状'],['small','紧凑']]],
+  ['sec','区块标题右侧动作',[['ghost','ghost 按钮'],['link','文字链接']]],
+  ['feat','当前活动卡',[['stack','现状：两个按钮叠放'],['inline','按钮同行']]],
+  ['comp','输入区',[['split','现状'],['bar','单行输入条']]],
+  ['tiles','学习入口',[['col2','现状：两列'],['col1','单列行']]],
+  ['rec','继续上次条目',[['three','现状：三行'],['two','两行（标签并入）']]],
+  ['nav','底栏选中',[['ink','现状：仅深色'],['accent','主色'],['pill','主色+胶囊']]],
+];
+const LAY_PRE = {
+  now: {head:'big',sec:'ghost',feat:'stack',comp:'split',tiles:'col2',rec:'three',nav:'ink'},
+  a:   {head:'big',sec:'link',feat:'inline',comp:'split',tiles:'col1',rec:'three',nav:'accent'},
+  b:   {head:'small',sec:'link',feat:'inline',comp:'bar',tiles:'col1',rec:'two',nav:'accent'},
+};
+let cur = {...PRE.now}, lay = {...LAY_PRE.now}, presetKey = 'now', tab = 0;
+const phone = document.getElementById('phone');
+
+/* ---------- 组件 ---------- */
+const hdr = (t, acts='') => `<div class="hdr ${lay.head==='small'?'small':''}"><div class="t">${t}</div><div class="acts">${acts}</div></div>`;
+const hact = n => `<div class="hact">${ic(n)}</div>`;
+const sh = (title, action, first, sub) => `<div class="sh ${first?'first':''} ${lay.sec==='link'?'link':''}"><div class="l"><div class="tm">${title}</div>${sub?`<div class="sm">${sub}</div>`:''}</div>${action? (lay.sec==='link'?`<span class="linkact">${action}</span>`:`<span class="ghost">${action}</span>`):''}</div>`;
+const tag = (t, c='') => `<span class="tag ${c}">${t}</span>`;
+const rec = (icon, tone, title, tags, time, clue, suffix='chev') => lay.rec==='two'
+  ? `<div class="tile"><div class="li ${tone}">${ic(icon)}</div><div class="body"><div style="display:flex;gap:8px;align-items:baseline"><div class="ts" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</div><div class="sm">${time}</div></div><div class="clue" style="display:flex;gap:6px;align-items:center">${tags}<span style="overflow:hidden;text-overflow:ellipsis">${clue}</span></div></div><div class="chev">${ic(suffix)}</div></div>`
+  : `<div class="tile"><div class="li ${tone}">${ic(icon)}</div><div class="body"><div class="ts" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</div><div class="trow"><div class="tags">${tags}</div><div class="sm">${time}</div></div><div class="clue">${clue}</div></div><div class="chev">${ic(suffix)}</div></div>`;
+const entry = (icon, t, d) => `<div class="tile"><div class="li">${ic(icon)}</div><div class="body"><div class="ts">${t}</div><div class="sm">${d}</div></div><div class="chev">${ic('chev')}</div></div>`;
+const seg = items => `<div class="segw"><div class="seg">${items.map((x,i)=>`<span class="${i===0?'on':''}">${x[1]?ic(x[1]):''}${x[0]}</span>`).join('')}</div></div>`;
+
+const featureCard = () => `<div class="feature ${lay.feat}">
+  <div class="row1">${ic('clock')}<span>正在进行 · 09:00–09:30</span><span class="sp"></span><span>30 分钟</span></div>
+  <div class="tl">DNS 递归查询流程复习</div>
+  <div class="actions"><span class="btn ${lay.feat==='stack'?'full':''}">${ic('play',16)}开始学习</span><span class="txtbtn">${ic('cal',16)}查看事项</span></div></div>`;
+const composer = () => lay.comp==='bar'
+  ? `<div class="composer bar"><span class="sq">${ic('img')}</span><div class="ph">输入问题…</div><span class="btn round">${ic('up')}</span></div>`
+  : `<div class="composer"><div class="ph">输入问题，说明希望获得的帮助…</div><div class="row"><span class="sq">${ic('img')}</span><span class="btn">${ic('up')}发送问题</span></div></div>`;
+const tiles = () => lay.tiles==='col1'
+  ? `<div class="tiles col"><div class="etile"><div class="top"><div class="li">${ic('book')}</div></div><div><div class="ts">从材料开始学习</div><div class="sm">导入材料，引用原文</div></div><span class="arr">${ic('chev')}</span></div>
+     <div class="etile"><div class="top"><div class="li">${ic('route')}</div></div><div><div class="ts">系统学习</div><div class="sm">查看学习进度与预约</div></div><span class="arr">${ic('chev')}</span></div></div>`
+  : `<div class="tiles"><div class="etile"><div class="top"><div class="li">${ic('book')}</div>${ic('arrUR')}</div><div class="ts">从材料开始学习</div><div class="sm">导入材料，引用原文</div></div>
+     <div class="etile"><div class="top"><div class="li">${ic('route')}</div>${ic('arrUR')}</div><div class="ts">系统学习</div><div class="sm">查看学习进度与预约</div></div></div>`;
+
+const PAGES = [
+  /* 现在 */ () => hdr('知新', hact('brain')) + `<div class="pad">
+    ${sh('正在进行','查看安排',true)}${featureCard()}
+    <div style="margin-top:${0}px">${''}</div>
+    <div class="sh" style="padding-bottom:4px;min-height:0"><div class="l"><div class="tm">提出一个问题</div><div class="sm" style="font-size:var(--body)">可以直接输入文字，也可以添加题目照片。</div></div></div><div style="height:var(--md)"></div>
+    ${composer()}${tiles()}
+    ${sh('继续上次','查看记录')}
+    ${rec('msg','n','校园网稳定性的成因',tag('讨论')+tag('草稿','a'),'昨天 21:30','上次问：为什么宿舍区晚高峰会掉线')}
+    ${rec('msg','','DNS 递归查询流程',tag('讨论'),'11/19 20:10','上次问：递归与迭代的区别')}</div>`,
+  /* 记录 */ () => hdr('记录', hact('net')+hact('sync')) + `
+    <div style="padding:4px var(--page) var(--md);display:flex;gap:8px"><div class="field">${ic('search')}搜索讨论、题目或材料原文</div><span class="sq" style="background:var(--pl);color:var(--onPc)">${ic('img')}</span></div>
+    ${seg([['学习记录','hist'],['材料','book']])}
+    <div style="height:var(--sm)"></div><div style="padding:0 var(--page)">
+    <div class="sm" style="font-weight:600;padding:var(--md) 0 6px">今天</div>
+    ${rec('msg','','校园网稳定性的成因',tag('讨论')+tag('正在生成回答','p'),'21:30','上次问：为什么宿舍区晚高峰会掉线')}
+    ${rec('pen','a','信息通信概论 · 习题 4.2',tag('未提交草稿','a'),'20:05','写到了：香农公式里带宽与信噪比…','play')}
+    <div class="sm" style="font-weight:600;padding:var(--md) 0 6px">11 月 19 日</div>
+    ${rec('msg','','DNS 递归查询流程',tag('讨论'),'20:10','上次问：递归与迭代的区别')}</div>`,
+  /* 安排 */ () => hdr('安排', hact('search')+`<div style="margin-right:4px"><span class="btn s sm">这周能做什么</span></div>`.replace('<div','<div').replace(/^/,'') ) .replace('<div class="acts">','<div class="acts" style="gap:0">') + `
+    <div style="padding:4px var(--page) 0"><div class="seg" style="min-height:var(--ctlH)">${['日程','事项','目标','AI 的改动'].map((t,i)=>`<span class="${i===0?'on':''}" style="font-size:${i===3?'12':'var(--body)'}px">${t}</span>`).join('')}</div></div>
+    <div style="padding:var(--sm) var(--page) 0">
+    <div class="fcard weekcard" style="padding:var(--sm)"><div class="sq" style="background:transparent">${ic('chevl')}</div><div class="mid"><div class="tm" style="font-variant-numeric:tabular-nums">11 月 16 日–11 月 22 日</div><div class="sm">本周 · 3 次预约</div></div><div class="sq" style="background:transparent">${ic('chev')}</div></div>
+    <div style="text-align:center;padding-top:var(--md)"><span class="ghost" style="margin:0">▦ 周视图</span></div>
+    <div class="dayh"><div class="ll">今天</div></div>
+    <div class="block"><div class="bar"></div><div class="tm2"><b>09:00</b><span>09:30</span></div><div class="body"><div class="ts">DNS 递归查询流程复习</div><div class="sm">所属计划：信息通信概论</div><div class="tags">${tag('系统学习','p')}</div></div></div>
+    <div class="block"><div class="bar"></div><div class="tm2"><b>14:30</b><span>15:30</span></div><div class="body"><div class="ts">论文选题讨论</div><div class="tags">${tag('预约','p')}</div></div></div>
+    <div class="dayh"><div class="ll" style="color:var(--muted)">明天</div></div>
+    <div class="block"><div class="bar g"></div><div class="tm2"><b style="color:var(--muted)">10:00</b><span>11:00</span></div><div class="body"><div class="ts" style="color:var(--muted)">校园网资料整理</div><div class="tags">${tag('已取消','m')}</div></div></div>
+    </div>`,
+  /* 我的 */ () => hdr('我的') + `<div class="pad" style="padding-top:var(--md)">
+    <div class="fcard"><div class="acct"><div class="av">陈</div><div style="flex:1;min-width:0"><div class="tm">chen@example.com</div><div class="sm">api.zhixin.example</div></div>${tag('已同步','p')}</div>
+      <div class="figs"><div><div class="k">上次同步</div><div class="v">今天 21:42</div></div><div><div class="k">今日模型额度</div><div class="v">3 120 / 50 000 token</div></div></div>
+      <div class="btns2"><span class="btn">${ic('sync')}立即同步</span><span class="btn o">账号管理</span></div></div>
+    ${sh('数据')}${entry('cloud','云端备份','上传、列出与下载整库快照')}${entry('hist','数据版本','提交历史、命名版本、导出与恢复')}
+    ${sh('学习')}${entry('brain','学习记忆','查看、修改和删除记忆')}${entry('spark','人格','选择知新的说话方式')}</div>`,
+];
+const TABS = [['现在','house'],['记录','hist'],['安排','cal'],['我的','user']];
+
+function render() {
+  phone.innerHTML = `<div class="status"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="scroll">${PAGES[tab]()}</div>
+    <div class="nav ${lay.nav==='accent'?'accent':lay.nav==='pill'?'pill':''}">${TABS.map((t,i)=>`<div class="${i===tab?'on':''}"><span class="ic">${ic(t[1])}</span>${t[0]}</div>`).join('')}</div>`;
+}
+function apply() {
+  const s = phone.style;
+  for (const k of Object.keys(cur)) s.setProperty('--'+k, PX(k)? cur[k]+'px' : cur[k]);
+  s.setProperty('--sm','8px');
+  document.querySelectorAll('.ctl').forEach(c => { const k=c.dataset.k; c.querySelector('input').value=cur[k]; c.querySelector('output').textContent = k==='lh'? (+cur[k]).toFixed(2) : cur[k]; });
+}
+
+/* ---------- 面板 ---------- */
+let lastG = '';
+document.getElementById('ctls').innerHTML = DEF.map(([k,n,mn,mx,st,g,src]) => {
+  let h = ''; if (g!==lastG) { h = `<div class="grp">${g}</div>`; lastG = g; }
+  return h + `<div class="ctl" data-k="${k}"><span>${n}</span><input type="range" min="${mn}" max="${mx}" step="${st}"><output></output><span class="src">${src}</span></div>`;
+}).join('');
+document.querySelectorAll('.ctl input').forEach(inp => inp.addEventListener('input', e => {
+  cur[e.target.closest('.ctl').dataset.k] = +e.target.value; apply();
+  document.querySelectorAll('.presets button').forEach(b => b.classList.remove('on'));
+}));
+function buildLay() {
+  document.getElementById('lay').innerHTML = LAY_DEF.map(([k,n,o]) =>
+    `<div class="lay"><span>${n}</span><div class="opts">${o.map(([v,t])=>`<button data-k="${k}" data-v="${v}" class="${lay[k]===v?'on':''}">${t}</button>`).join('')}</div></div>`).join('');
+  document.querySelectorAll('#lay button').forEach(b => b.onclick = () => { lay[b.dataset.k]=b.dataset.v; buildLay(); render(); });
+}
+function loadPreset(k) {
+  presetKey = k; cur = {...PRE[k]}; lay = {...LAY_PRE[k]}; buildLay(); render(); apply();
+  document.querySelectorAll('.presets button').forEach(x => x.classList.toggle('on', x.dataset.p===k));
+}
+document.querySelectorAll('.presets button').forEach(b => b.onclick = () => loadPreset(b.dataset.p));
+document.getElementById('reset').onclick = () => loadPreset(presetKey);
+document.getElementById('dark').onchange = e => phone.classList.toggle('dark', e.target.checked);
+document.getElementById('grid').onchange = e => phone.classList.toggle('grid', e.target.checked);
+document.getElementById('copy').onclick = () => {
+  const o = document.getElementById('out'); o.style.display = 'block';
+  o.textContent = DEF.map(([k,n,,,,,src]) => `${n}  ${k} = ${cur[k]}   // ${src}`).join('\n') + '\n\n' + LAY_DEF.map(([k,n]) => `${n}  ${k} = ${lay[k]}`).join('\n');
+};
+document.getElementById('tabsel').innerHTML = TABS.map((t,i)=>`<button class="${i===0?'on':''}">${t[0]}</button>`).join('');
+document.querySelectorAll('#tabsel button').forEach((b,i) => b.onclick = () => { tab=i; document.querySelectorAll('#tabsel button').forEach((x,j)=>x.classList.toggle('on',j===i)); render(); });
+
+buildLay(); render(); apply();
+</script>
+</body>
+</html>
