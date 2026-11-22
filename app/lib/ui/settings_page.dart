@@ -560,7 +560,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Text(
                   signedIn
                       ? '模型调用只用知新服务（登录账号）：请求发到 ${_account!.serverBaseUrl}/v1/llm，'
-                            '接口走 Chat Completions，密钥由服务端保管，不保存在本机。'
+                            '接口走 Responses，密钥由服务端保管，不保存在本机。'
                       : '模型调用只用知新服务，需要先登录账号；登录之前回答按本地步骤给出。',
                   style: theme.text.bodySmall.copyWith(
                     color: signedIn
@@ -594,7 +594,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 forui.FTextField(
                   control: .managed(controller: _model),
                   label: const Text('模型名'),
-                  description: const Text('需要模型支持工具调用（function calling）'),
+                  description: const Text(
+                    '填服务端允许的模型名，例如 zhixin-chat；需要模型支持工具调用',
+                  ),
                 ),
                 SizedBox(height: context.zhixin.space.gap),
                 forui.FTextField(

@@ -839,7 +839,7 @@ function checkModelName() {
     hint.classList.add('warn');
     return;
   }
-  hint.textContent = '客户端请求里的 model，例如 deepseek-flash；可用字母、数字与 . _ : -';
+  hint.textContent = '客户端请求里的 model，例如 zhixin-chat；可用字母、数字与 . _ : -';
 }
 
 $('#model-form').elements.name.addEventListener('input', checkModelName);

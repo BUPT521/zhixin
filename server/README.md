@@ -182,7 +182,7 @@ server/
 
 嵌入走 `POST /v1/llm/embeddings`，请求与响应是 OpenAI 的格式，`input` 只接受字符串或字符串数组，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，客户端在语义索引页选“知新服务”时，`RemoteEmbeddingClient` 每次请求前取 `<服务地址>/v1/llm` 与当前访问令牌，模型从列表里 `kind` 为 `embedding` 的项中选。路由的 `max_batch` 大于 0 时，服务端把一次请求拆成每批不超过这个数的几批，同时最多发出四批，再按原顺序合并、`index` 从 0 连续编号；一批失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。模型配置了维度时逐条核对向量长度，维度不符按来源故障处理；客户端请求的 `dimensions` 与配置不一致时返回 400。`GET /v1/llm/models` 的每一项带 `kind`（`chat` 或 `embedding`），嵌入模型配置了维度时带 `dimensions`。
 
-嵌入只有一个来源，文档向量与查询向量都从这里计算，客户端不在本地计算任何向量（[ADR-0049](../docs/adr/0049-嵌入统一走百炼与查询向量也走云端.md)）。第一套实例的来源是阿里云百炼的 `BAAI/bge-m3`，在管理后台按下面的口径建一次即可：来源基础地址填百炼的 OpenAI 兼容端点，对外模型名写 `bge-m3`，`kind` 选 `embedding`，`dimensions` 填 1024，路由的上游模型名与每批条数按来源侧的模型名与限额填写。对外模型名在所有客户端上统一，客户端的索引键与 `embedding_cache` 都以它为准，改名等于换一个向量空间，索引与缓存都不会命中。同一个对外模型下如果再加备用路由，也只能指向 bge-m3 的同一权重部署，服务端只核对维度、核对不了向量空间；混入别的模型或精调版本会让同一个索引里出现两套空间的向量，排序会错但不报错。具体步骤写在[运维手册](运维手册.md#5-常用操作)。
+嵌入只有一个来源，文档向量与查询向量都从这里计算，客户端不在本地计算任何向量（[ADR-0049](../docs/adr/0049-嵌入统一走百炼与查询向量也走云端.md)）。第一套实例的来源是阿里云百炼的 `BAAI/bge-m3`，在管理后台按下面的口径建一次即可：来源基础地址填百炼的 OpenAI 兼容端点，对外模型名写 `zhixin-embedding`（客户端默认取这个名字，与聊天模型 `zhixin-chat` 同一套命名），`kind` 选 `embedding`，`dimensions` 填 1024，路由的上游模型名与每批条数按来源侧的模型名与限额填写。对外模型名在所有客户端上统一，客户端的索引键与 `embedding_cache` 都以它为准，改名等于换一个向量空间，索引与缓存都不会命中。同一个对外模型下如果再加备用路由，也只能指向 bge-m3 的同一权重部署，服务端只核对维度、核对不了向量空间；混入别的模型或精调版本会让同一个索引里出现两套空间的向量，排序会错但不报错。具体步骤写在[运维手册](运维手册.md#5-常用操作)。
 
 嵌入向量另有按账号隔离的缓存，目的是消除换机、索引重建与模型在 A、B 之间切换时的重复嵌入与费用（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 决定第 2、3 条）。客户端在自动同步开启、且这次是索引刷新时，给 `POST /v1/llm/embeddings` 带 `X-Zhixin-Embedding-Cache: 1`，服务端在嵌入成功之后按每条输入的 SHA-256 写进 `embedding_cache`，重复写入不覆盖已有的行；检索查询的嵌入不带这个头，未登录与同步关闭的用户因此不会留下派生数据；客户端没有其他嵌入来源，本机哈希不联网也不经过服务端。索引刷新先调 `POST /v1/llm/embeddings/lookup`，请求体是 `model` 与 `hashes`（UTF-8 字节的 SHA-256 小写十六进制，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条）；命中返回小端序 FP16 的 base64 向量与 `dimensions`，全部未命中时 `vectors` 为空数组、不是错误，查找不消耗额度、不写 `llm_usage`。缓存随 `DELETE /v1/cloud` 与删除账号一起删除，清除期间带缓存头的嵌入照常返回但不写缓存；清除时缓存代次加一，清除之前发出、清除之后才落库的嵌入请求会因为代次对不上而放弃写入，清除成功的承诺不会因为在途请求而失效。每账号上限由 `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` 控制，写入之后按 `last_used_at` 删除最久未用的行。同名模型必须保持同一个向量空间：更换部署要换对外模型名，管理后台删除模型或改变维度时会先删掉这个模型的缓存行，再保存或删除，旧名字再次出现时不会命中上一个向量空间的向量。
 
@@ -441,7 +441,7 @@ curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/providers
   -d '{"id":"deepseek","base_url":"https://api.deepseek.com/v1","api_key":"sk-..."}'
 curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/models \
   -H 'Content-Type: application/json' \
-  -d '{"name":"deepseek-flash","kind":"chat","routes":[{"provider_id":"deepseek","upstream_model":"deepseek-chat"}]}'
+  -d '{"name":"zhixin-chat","kind":"chat","routes":[{"provider_id":"deepseek","upstream_model":"deepseek-chat"}]}'
 curl localhost:8080/v1/llm/models
 ```
 
