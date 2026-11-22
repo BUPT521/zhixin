@@ -148,17 +148,13 @@ void main() {
           }
           expect(aborted.isCompleted, isTrue);
           return http.StreamedResponse(
-            Stream.value(
-              utf8.encode('${textDelta('重试成功')}${completed()}'),
-            ),
+            Stream.value(utf8.encode('${textDelta('重试成功')}${completed()}')),
             200,
             headers: {'content-type': 'text/event-stream'},
           );
         }),
       );
-      final result = await client
-          .stream(system: 's', messages: _hi)
-          .toList();
+      final result = await client.stream(system: 's', messages: _hi).toList();
       expect(requests, hasLength(2));
       expect(requests[0], requests[1]);
       expect(result.map((delta) => delta.text).join(), '重试成功');
@@ -180,9 +176,7 @@ void main() {
           final stream = StreamController<List<int>>();
           stream.add(
             utf8.encode(
-              toolOnly
-                  ? argumentsDelta(1, '{"steps":')
-                  : textDelta('已经显示的正文'),
+              toolOnly ? argumentsDelta(1, '{"steps":') : textDelta('已经显示的正文'),
             ),
           );
           final heartbeats = toolOnly
@@ -209,13 +203,10 @@ void main() {
       );
       final deltas = <LlmDelta>[];
       await expectLater(
-        client
-            .stream(system: 's', messages: _hi)
-            .map((delta) {
-              deltas.add(delta);
-              return delta;
-            })
-            .drain<void>(),
+        client.stream(system: 's', messages: _hi).map((delta) {
+          deltas.add(delta);
+          return delta;
+        }).drain<void>(),
         throwsA(
           isA<LlmException>().having(
             (error) => error.failure,
@@ -296,13 +287,10 @@ void main() {
     );
     final deltas = <LlmDelta>[];
     await expectLater(
-      client
-          .stream(system: 's', messages: _hi)
-          .map((delta) {
-            deltas.add(delta);
-            return delta;
-          })
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).map((delta) {
+        deltas.add(delta);
+        return delta;
+      }).drain<void>(),
       throwsA(
         isA<LlmException>()
             .having((error) => error.failure, 'failure', LlmFailure.timeout)
@@ -340,14 +328,11 @@ void main() {
     );
     final deltas = <LlmDelta>[];
     await expectLater(
-      client
-          .stream(system: 's', messages: _hi)
-          .map((delta) {
-            deltas.add(delta);
-            if (delta.text.isNotEmpty) cancelled.cancel();
-            return delta;
-          })
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).map((delta) {
+        deltas.add(delta);
+        if (delta.text.isNotEmpty) cancelled.cancel();
+        return delta;
+      }).drain<void>(),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,
@@ -363,10 +348,7 @@ void main() {
   test('正常回答返回文本与用量', () async {
     final client = clientReturning(
       jsonEncode(
-        response(
-          text: ' 你好 ',
-          usage: {'input_tokens': 3, 'output_tokens': 2},
-        ),
+        response(text: ' 你好 ', usage: {'input_tokens': 3, 'output_tokens': 2}),
       ),
     );
     final reply = await client.complete(system: 's', messages: _hi);
@@ -448,8 +430,7 @@ void main() {
         sent = jsonDecode(
           utf8.decode(await bodyStream.toBytes()),
         ) as Map<String, Object?>;
-        final text =
-            '${textDelta('你')}${textDelta('好')}${completed()}';
+        final text = '${textDelta('你')}${textDelta('好')}${completed()}';
         return http.StreamedResponse(
           Stream.value(utf8.encode(text)),
           200,
@@ -489,7 +470,10 @@ void main() {
       containsAll(['type', 'name', 'description', 'parameters']),
     );
     expect(tools.single['name'], 'propose_next_steps');
-    expect(sent!['tool_choice'], {'type': 'function', 'name': 'propose_next_steps'});
+    expect(sent!['tool_choice'], {
+      'type': 'function',
+      'name': 'propose_next_steps',
+    });
     expect((sent!['input'] as List).single, {
       'type': 'message',
       'role': 'user',
@@ -521,7 +505,11 @@ void main() {
           system: 's',
           messages: _hi,
           tools: const [
-            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+            LlmTool(
+              name: 'propose_next_steps',
+              description: '提交建议',
+              parameters: {},
+            ),
           ],
           allowToolCalls: false,
         )
@@ -551,7 +539,11 @@ void main() {
           system: 's',
           messages: _hi,
           tools: const [
-            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+            LlmTool(
+              name: 'propose_next_steps',
+              description: '提交建议',
+              parameters: {},
+            ),
           ],
         )
         .toList();
@@ -561,10 +553,7 @@ void main() {
   test('事件按 SSE 规范拼行：BOM、注释、event 字段与多行 data 都不丢', () async {
     final client = rawStreamingClient(
       '\uFEFFevent: response.output_text.delta\r\n'
-      'data: ${jsonEncode({
-        'type': 'response.output_text.delta',
-        'delta': '你',
-      })}\r\n'
+      'data: ${jsonEncode({'type': 'response.output_text.delta', 'delta': '你'})}\r\n'
       '\r\n'
       ': keepalive\r\n'
       '\r\n'
@@ -589,14 +578,8 @@ void main() {
   test('服务端省略 event 时按负载里的 type 读取', () async {
     final client = rawStreamingClient(
       [
-        {
-          'type': 'response.output_text.delta',
-          'delta': '你',
-        },
-        {
-          'type': 'response.output_text.delta',
-          'delta': '好',
-        },
+        {'type': 'response.output_text.delta', 'delta': '你'},
+        {'type': 'response.output_text.delta', 'delta': '好'},
         {
           'type': 'response.completed',
           'response': {'status': 'completed'},
@@ -656,8 +639,16 @@ void main() {
           system: 's',
           messages: _hi,
           tools: const [
-            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
-            LlmTool(name: 'propose_citations', description: '提交引用', parameters: {}),
+            LlmTool(
+              name: 'propose_next_steps',
+              description: '提交建议',
+              parameters: {},
+            ),
+            LlmTool(
+              name: 'propose_citations',
+              description: '提交引用',
+              parameters: {},
+            ),
           ],
         )
         .toList();
@@ -671,10 +662,7 @@ void main() {
         if (call.id case final id?) ids[call.index] = id;
       }
     }
-    expect(
-      args[1].toString(),
-      '{"steps":[{"title":"读定义"}]}',
-    );
+    expect(args[1].toString(), '{"steps":[{"title":"读定义"}]}');
     expect(
       args[2].toString(),
       '{"citations":[{"material_id":1,"page_no":2,"quote":"原文"}]}',
@@ -692,7 +680,11 @@ void main() {
           system: 's',
           messages: _hi,
           tools: const [
-            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+            LlmTool(
+              name: 'propose_next_steps',
+              description: '提交建议',
+              parameters: {},
+            ),
           ],
         )
         .toList();
@@ -827,7 +819,9 @@ void main() {
         final body = jsonEncode(
           response(
             text: '整段回答',
-            calls: [call('call_1', 'propose_next_steps', {'steps': []})],
+            calls: [
+              call('call_1', 'propose_next_steps', {'steps': []}),
+            ],
           ),
         );
         return http.StreamedResponse(
@@ -842,7 +836,11 @@ void main() {
           system: 's',
           messages: _hi,
           tools: const [
-            LlmTool(name: 'propose_next_steps', description: '提交建议', parameters: {}),
+            LlmTool(
+              name: 'propose_next_steps',
+              description: '提交建议',
+              parameters: {},
+            ),
           ],
         )
         .toList();
@@ -850,57 +848,64 @@ void main() {
     expect(deltas.last.toolCalls.single.name, 'propose_next_steps');
   });
 
-  test('消息按条目展开：图片是 input_image，工具交换是 function_call 与 function_call_output', () {
-    final body = responsesBody(
-      config: const LlmConfig(endpoint: _testEndpoint, model: 'm'),
-      system: 'sys',
-      messages: [
-        LlmMessage(role: 'user', content: '请看图', images: [
-          LlmImage(bytes: Uint8List.fromList([1, 2])),
-        ]),
-        const LlmMessage(
-          role: 'assistant',
-          content: '先读原文',
-          toolCalls: [
-            LlmToolCall(
-              id: 'call_1',
-              name: 'read_material_page',
-              arguments: '{"page_no":7}',
-            ),
-          ],
-        ),
-        const LlmMessage.toolResult(callId: 'call_1', content: '{"result":"正文"}'),
-      ],
-      tools: const [],
-      forceTool: null,
-      allowToolCalls: false,
-      stream: false,
-    );
-    final input = (body['input'] as List).cast<Map<String, Object?>>();
-    final content = input.first['content'] as List;
-    expect(content.first, {'type': 'input_text', 'text': '请看图'});
-    expect(
-      (content.last as Map)['image_url'],
-      'data:image/jpeg;base64,AQI=',
-    );
-    expect(input[1], {
-      'type': 'message',
-      'role': 'assistant',
-      'content': '先读原文',
-    });
-    expect(input[2], {
-      'type': 'function_call',
-      'call_id': 'call_1',
-      'name': 'read_material_page',
-      'arguments': '{"page_no":7}',
-    });
-    final output = jsonDecode(input[3]['output'] as String) as Map;
-    expect(input[3]['type'], 'function_call_output');
-    expect(input[3]['call_id'], 'call_1');
-    expect(output['result'], '正文');
-    expect(body.containsKey('tools'), isFalse);
-    expect(body.containsKey('tool_choice'), isFalse);
-  });
+  test(
+    '消息按条目展开：图片是 input_image，工具交换是 function_call 与 function_call_output',
+    () {
+      final body = responsesBody(
+        config: const LlmConfig(endpoint: _testEndpoint, model: 'm'),
+        system: 'sys',
+        messages: [
+          LlmMessage(
+            role: 'user',
+            content: '请看图',
+            images: [
+              LlmImage(bytes: Uint8List.fromList([1, 2])),
+            ],
+          ),
+          const LlmMessage(
+            role: 'assistant',
+            content: '先读原文',
+            toolCalls: [
+              LlmToolCall(
+                id: 'call_1',
+                name: 'read_material_page',
+                arguments: '{"page_no":7}',
+              ),
+            ],
+          ),
+          const LlmMessage.toolResult(
+            callId: 'call_1',
+            content: '{"result":"正文"}',
+          ),
+        ],
+        tools: const [],
+        forceTool: null,
+        allowToolCalls: false,
+        stream: false,
+      );
+      final input = (body['input'] as List).cast<Map<String, Object?>>();
+      final content = input.first['content'] as List;
+      expect(content.first, {'type': 'input_text', 'text': '请看图'});
+      expect((content.last as Map)['image_url'], 'data:image/jpeg;base64,AQI=');
+      expect(input[1], {
+        'type': 'message',
+        'role': 'assistant',
+        'content': '先读原文',
+      });
+      expect(input[2], {
+        'type': 'function_call',
+        'call_id': 'call_1',
+        'name': 'read_material_page',
+        'arguments': '{"page_no":7}',
+      });
+      final output = jsonDecode(input[3]['output'] as String) as Map;
+      expect(input[3]['type'], 'function_call_output');
+      expect(input[3]['call_id'], 'call_1');
+      expect(output['result'], '正文');
+      expect(body.containsKey('tools'), isFalse);
+      expect(body.containsKey('tool_choice'), isFalse);
+    },
+  );
 
   test('讨论历史里的工具结果原样发送', () {
     final body = responsesBody(
@@ -940,9 +945,7 @@ void main() {
           );
         }
         return http.StreamedResponse(
-          Stream.value(
-            utf8.encode('${textDelta('好')}${completed()}'),
-          ),
+          Stream.value(utf8.encode('${textDelta('好')}${completed()}')),
           200,
           headers: {'content-type': 'text/event-stream'},
         );
@@ -1171,13 +1174,10 @@ void main() {
     );
     final deltas = <LlmDelta>[];
     await expectLater(
-      client
-          .stream(system: 's', messages: _hi)
-          .map((delta) {
-            deltas.add(delta);
-            return delta;
-          })
-          .drain<void>(),
+      client.stream(system: 's', messages: _hi).map((delta) {
+        deltas.add(delta);
+        return delta;
+      }).drain<void>(),
       throwsA(
         isA<LlmException>().having(
           (error) => error.failure,

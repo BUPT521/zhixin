@@ -42,27 +42,15 @@ class _MemorySecrets implements SecretStore {
 
 String _textDelta(String text) =>
     'event: response.output_text.delta\n'
-    'data: ${jsonEncode({
-      'type': 'response.output_text.delta',
-      'output_index': 0,
-      'delta': text,
-    })}\n\n';
+    'data: ${jsonEncode({'type': 'response.output_text.delta', 'output_index': 0, 'delta': text})}\n\n';
 
 String _argumentsDelta(int index, String delta) =>
     'event: response.function_call_arguments.delta\n'
-    'data: ${jsonEncode({
-      'type': 'response.function_call_arguments.delta',
-      'output_index': index,
-      'delta': delta,
-    })}\n\n';
+    'data: ${jsonEncode({'type': 'response.function_call_arguments.delta', 'output_index': index, 'delta': delta})}\n\n';
 
 String _itemDone(Map<String, Object?> item, {int index = 1}) =>
     'event: response.output_item.done\n'
-    'data: ${jsonEncode({
-      'type': 'response.output_item.done',
-      'output_index': index,
-      'item': item,
-    })}\n\n';
+    'data: ${jsonEncode({'type': 'response.output_item.done', 'output_index': index, 'item': item})}\n\n';
 
 const String _done =
     'event: response.completed\n'
@@ -103,22 +91,24 @@ http.Response _chatReply({String? text, List<Object?> calls = const []}) =>
     });
 
 /// 一段整段响应，内容按 JSON 返回；嵌套使用时不会重复编码。
-Map<String, Object?> chatReply({String? text, List<Object?> calls = const []}) =>
-    {
-      'object': 'response',
-      'status': 'completed',
-      'output': [
-        if (text != null)
-          {
-            'type': 'message',
-            'role': 'assistant',
-            'content': [
-              {'type': 'output_text', 'text': text, 'annotations': []},
-            ],
-          },
-        ...calls,
-      ],
-    };
+Map<String, Object?> chatReply({
+  String? text,
+  List<Object?> calls = const [],
+}) => {
+  'object': 'response',
+  'status': 'completed',
+  'output': [
+    if (text != null)
+      {
+        'type': 'message',
+        'role': 'assistant',
+        'content': [
+          {'type': 'output_text', 'text': text, 'annotations': []},
+        ],
+      },
+    ...calls,
+  ],
+};
 
 http.StreamedResponse _stream(String body) => http.StreamedResponse(
   Stream.value(utf8.encode(body)),
@@ -358,20 +348,14 @@ void main() {
         final items = inputOf(body.cast<String, Object?>());
         final user = items.where((item) => item['role'] == 'user');
         expect(user, hasLength(3));
-        expect(user.take(2).map((item) => item['content']), [
-          '同样的问题',
-          '同样的问题',
-        ]);
+        expect(user.take(2).map((item) => item['content']), ['同样的问题', '同样的问题']);
         final content = (user.last['content'] as List).cast<Map>();
         expect(content.first['text'], '当前问题');
         expect(
           content.where((part) => part['type'] == 'input_image'),
           hasLength(2),
         );
-        expect(
-          user.any((item) => item['content'] == '历史里的当前问题'),
-          isFalse,
-        );
+        expect(user.any((item) => item['content'] == '历史里的当前问题'), isFalse);
         return _chatReply(text: '继续回答。');
       }),
     );
@@ -598,10 +582,7 @@ void main() {
         }
         expect(body['tool_choice'], 'none');
         final outputs = outputsIn(body.cast<String, Object?>());
-        expect(outputs.map((output) => output['call_id']), [
-          'first',
-          'second',
-        ]);
+        expect(outputs.map((output) => output['call_id']), ['first', 'second']);
         final first = resultOf(outputs.first)['result'] as Map;
         final length = (first['content'] as String).runes.length;
         expect(length, inInclusiveRange(1, 7999));
@@ -763,33 +744,31 @@ void main() {
           jsonDecode(utf8.decode(await body.toBytes())) as Map<String, Object?>,
         );
         return switch (requests.length) {
-          1 || 3 || 4 => _streamedJson(
-            switch (requests.length) {
-              1 => chatReply(
-                text: '先读讲义。',
-                calls: [
-                  _callItem('', readMaterialPageTool, {
-                    'material_id': 'mat-2',
-                    'page_no': 7,
-                  }),
-                  _callItem('call_zhixin_1', readMaterialPageTool, {
-                    'material_id': 'mat-2',
-                    'page_no': 8,
-                  }),
-                ],
-              ),
-              3 => chatReply(
-                calls: [
-                  _callItem('draft', proposeNextStepsTool, {
-                    'steps': [
-                      {'title': '读定义'},
-                    ],
-                  }),
-                ],
-              ),
-              _ => chatReply(text: '按条件概率公式计算。'),
-            },
-          ),
+          1 || 3 || 4 => _streamedJson(switch (requests.length) {
+            1 => chatReply(
+              text: '先读讲义。',
+              calls: [
+                _callItem('', readMaterialPageTool, {
+                  'material_id': 'mat-2',
+                  'page_no': 7,
+                }),
+                _callItem('call_zhixin_1', readMaterialPageTool, {
+                  'material_id': 'mat-2',
+                  'page_no': 8,
+                }),
+              ],
+            ),
+            3 => chatReply(
+              calls: [
+                _callItem('draft', proposeNextStepsTool, {
+                  'steps': [
+                    {'title': '读定义'},
+                  ],
+                }),
+              ],
+            ),
+            _ => chatReply(text: '按条件概率公式计算。'),
+          }),
           2 => http.StreamedResponse(
             Stream.value(utf8.encode('stream unsupported')),
             400,
@@ -860,21 +839,19 @@ void main() {
                   '$_incomplete',
                 );
               case 2:
-                return _streamedJson(
-                  {
-                    'object': 'response',
-                    'status': 'incomplete',
-                    'output': [
-                      {
-                        'type': 'message',
-                        'role': 'assistant',
-                        'content': [
-                          {'type': 'output_text', 'text': '先看定义。'},
-                        ],
-                      },
-                    ],
-                  },
-                );
+                return _streamedJson({
+                  'object': 'response',
+                  'status': 'incomplete',
+                  'output': [
+                    {
+                      'type': 'message',
+                      'role': 'assistant',
+                      'content': [
+                        {'type': 'output_text', 'text': '先看定义。'},
+                      ],
+                    },
+                  ],
+                });
               default:
                 throw StateError('截断后仍然请求模型');
             }
@@ -985,10 +962,7 @@ void main() {
       MockClient.streaming((request, bodyStream) async {
         return _stream(
           '${_textDelta('先看定义。')}'
-          '${_argumentsDelta(
-            1,
-            '{"steps":[{"title":"读定义"}]}',
-          )}'
+          '${_argumentsDelta(1, '{"steps":[{"title":"读定义"}]}')}'
           '$_incomplete',
         );
       }),
@@ -1264,7 +1238,10 @@ void main() {
       MockClient((request) async {
         return _jsonReply(
           chatReply(
-            calls: [(_callItem('call_probe', 'submit_probe', {})..['arguments'] = '{')],
+            calls: [
+              (_callItem('call_probe', 'submit_probe', {})
+                ..['arguments'] = '{'),
+            ],
           ),
         );
       }),

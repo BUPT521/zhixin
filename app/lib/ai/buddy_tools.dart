@@ -233,7 +233,10 @@ Map<String, Object?> _parameters(Map<String, Object?> properties) => {
       'items': {
         'type': 'object',
         'properties': {
-          'type': {'type': 'string', 'enum': ['input_text']},
+          'type': {
+            'type': 'string',
+            'enum': ['input_text'],
+          },
           'text': {
             'type': 'string',
             'description': '参数的 JSON 文本，形状见 zod.properties',
@@ -252,16 +255,12 @@ Map<String, Object?> _parameters(Map<String, Object?> properties) => {
 Map<String, Object?> _zod(Map<String, Object?> properties) => {
   'type': 'object',
   'description': '参数依靠代码执行的形状声明，内容等同于参数的 JSON Schema',
-  'properties': {
-    'kind': _zodKind,
-    'properties': properties,
-  },
+  'properties': {'kind': _zodKind, 'properties': properties},
 };
 
 const Map<String, Object?> _zodKind = {
   'type': 'object',
-  'description':
-      '表示一段要按代码执行才能得到对象的文字：{"code": "…"}',
+  'description': '表示一段要按代码执行才能得到对象的文字：{"code": "…"}',
 };
 
 LlmTool get _memoriesSchema {

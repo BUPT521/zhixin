@@ -266,7 +266,10 @@ class AiChatService implements BuddyAi {
                   'items': {
                     'type': 'object',
                     'properties': {
-                      'type': {'type': 'string', 'enum': ['input_text']},
+                      'type': {
+                        'type': 'string',
+                        'enum': ['input_text'],
+                      },
                       'text': {'type': 'string'},
                     },
                     'required': ['type', 'text'],

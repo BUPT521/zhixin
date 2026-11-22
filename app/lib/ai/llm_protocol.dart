@@ -203,10 +203,7 @@ List<Map<String, Object?>> _items(LlmMessage message) {
         'content': [
           {'type': 'input_text', 'text': message.content},
           for (final image in message.images)
-            {
-              'type': 'input_image',
-              'image_url': _dataUrl(image),
-            },
+            {'type': 'input_image', 'image_url': _dataUrl(image)},
         ],
       },
   ];

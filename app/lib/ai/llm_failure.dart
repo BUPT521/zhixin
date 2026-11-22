@@ -210,7 +210,11 @@ class LlmToolCallDelta {
 
 /// 流式响应的一段：正文、工具参数与截断标记分开到达，互不影响。
 class LlmDelta {
-  const LlmDelta({this.text = '', this.toolCalls = const [], this.truncated = false});
+  const LlmDelta({
+    this.text = '',
+    this.toolCalls = const [],
+    this.truncated = false,
+  });
 
   final String text;
   final List<LlmToolCallDelta> toolCalls;

@@ -165,10 +165,8 @@ class AgentToolResult {
       'result': content,
   });
 
-  LlmMessage messageFor(String callId) => LlmMessage.toolResult(
-    callId: callId,
-    content: encoded,
-  );
+  LlmMessage messageFor(String callId) =>
+      LlmMessage.toolResult(callId: callId, content: encoded);
 }
 
 typedef PreparedToolCall = ({

@@ -12,7 +12,11 @@ import 'package:zhixin/domain/models/buddy_protocol.dart';
 /// 在 `text` 里。
 Map<String, Object?> _wire(Map<String, Object?> arguments) => {
   'input': [
-    {'type': 'input_text', 'text': jsonEncode(arguments), 'zod': _zodOf(arguments)},
+    {
+      'type': 'input_text',
+      'text': jsonEncode(arguments),
+      'zod': _zodOf(arguments),
+    },
   ],
 };
 
@@ -204,7 +208,8 @@ void main() {
       final zod = ((tool.parameters['properties']! as Map)['input'] as Map);
       final item = ((zod['items'] as Map)['properties']! as Map)['zod'] as Map;
       final declared = (item['properties']! as Map)['properties'] as Map;
-      final properties = (declared['properties']! as Map).cast<String, Object?>();
+      final properties = (declared['properties']! as Map)
+          .cast<String, Object?>();
       final required = (declared['required']! as List).cast<String>();
       final baseline = await _signature(contract, contract.arguments);
       expect(baseline, isNotEmpty, reason: '${contract.toolName} 的样例应当能解析出内容');
