@@ -76,7 +76,8 @@ class SectionHeading extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(
         top: first ? 0 : theme.space.sectionTop,
-        bottom: theme.space.md,
+        // 动作的可点区域本身就有 [SectionLink.height] 高，下方少留一档。
+        bottom: action is SectionLink ? theme.space.sm : theme.space.md,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -101,6 +102,63 @@ class SectionHeading extends StatelessWidget {
           ),
           ?action,
         ],
+      ),
+    );
+  }
+}
+
+/// 区块标题右侧的文字动作：只有主色文字（可带小图标），不画按钮。
+///
+/// 可点区域高 [height]，比 44 的按钮矮一截，一行标题不再被动作撑高；
+/// 右侧外扩半个内边距，文字与页面右边距对齐。
+class SectionLink extends StatelessWidget {
+  const SectionLink({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.icon,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+
+  static const double height = 40;
+  static const double _hitPadding = 12;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    final color = onPressed == null
+        ? theme.colors.onSurfaceVariant
+        : theme.colors.primary;
+    return Transform.translate(
+      offset: const Offset(_hitPadding, 0),
+      child: forui.FTappable.static(
+        onPress: onPressed,
+        behavior: HitTestBehavior.opaque,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: height),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: _hitPadding),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: color),
+                  SizedBox(width: theme.space.xs),
+                ],
+                Text(
+                  label,
+                  style: theme.text.labelLarge.copyWith(
+                    fontSize: 12.5,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -264,32 +322,35 @@ class EntryTile extends StatelessWidget {
     return forui.FTile.raw(
       style: .delta(
         rawContentStyle: .delta(
-          padding: .value(EdgeInsets.all(theme.space.md)),
+          padding: .value(
+            EdgeInsets.symmetric(horizontal: 14, vertical: theme.space.md),
+          ),
         ),
       ),
       onPress: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      // 一行一个入口：左图标，中间标题与说明，右箭头。
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              LeadingIcon(icon),
-              Icon(
-                FLucideIcons.arrowUpRight,
-                size: 16,
-                color: theme.colors.onSurfaceVariant,
-              ),
-            ],
-          ),
-          SizedBox(height: theme.space.sm),
-          Text(title, style: theme.text.titleSmall),
-          SizedBox(height: theme.space.xs),
-          Text(
-            subtitle,
-            style: theme.text.bodySmall.copyWith(
-              color: theme.colors.onSurfaceVariant,
+          LeadingIcon(icon),
+          SizedBox(width: theme.space.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.text.titleSmall),
+                Text(
+                  subtitle,
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
+          ),
+          Icon(
+            FLucideIcons.chevronRight,
+            size: 16,
+            color: theme.colors.onSurfaceVariant,
           ),
         ],
       ),

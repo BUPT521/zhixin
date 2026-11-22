@@ -32,10 +32,9 @@ class ZhixinHeader extends StatelessWidget {
       padding: .value(
         EdgeInsets.symmetric(horizontal: theme.space.page, vertical: 6),
       ),
-      titleTextStyle: .value(
-        nested ? theme.text.titleLarge : theme.text.pageTitle,
-      ),
-      constraints: BoxConstraints(minHeight: nested ? 56 : 62),
+      // 标签页的根标题与二级页同一档 titleLarge，只是根页面靠左。
+      titleTextStyle: .value(theme.text.titleLarge),
+      constraints: BoxConstraints(minHeight: nested ? 56 : 52),
       actionSpacing: theme.space.xs,
       actionStyle: .delta(
         padding: const .value(EdgeInsets.all(12)),

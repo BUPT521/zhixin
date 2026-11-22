@@ -128,12 +128,9 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
               subtitle: widget.showAllPlans ? '全部计划' : '进行中的计划，标出下一步与最近一次预约',
               action: widget.onOpenMaterials == null || visiblePlans.isEmpty
                   ? null
-                  : forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      size: forui.FButtonSizeVariant.sm,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: widget.onOpenMaterials,
-                      child: const Text('选择学习材料'),
+                  : SectionLink(
+                      label: '选择学习材料',
+                      onPressed: widget.onOpenMaterials,
                     ),
             );
           }
@@ -312,13 +309,10 @@ class _PlanScheduleTabState extends State<PlanScheduleTab> {
       (_) => SectionHeading(
         title: '固定课表',
         subtitle: '安排学习时自动避开这些时段',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => widget.actions.addTimetable(),
-          prefix: const Icon(FLucideIcons.plus),
-          child: const Text('添加'),
+        action: SectionLink(
+          label: '添加',
+          icon: FLucideIcons.plus,
+          onPressed: () => widget.actions.addTimetable(),
         ),
       ),
       if (week.timetable.isEmpty)

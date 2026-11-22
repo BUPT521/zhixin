@@ -228,7 +228,7 @@ void main() {
           .first,
       '导数的定义是什么',
     );
-    await tester.tap(find.text('发送问题'));
+    await tester.tap(find.bySemanticsLabel('发送问题'));
     await settle(tester);
     expect(find.byType(DiscussionPage), findsOneWidget);
     expect(find.text('导数的定义是什么'), findsOneWidget);

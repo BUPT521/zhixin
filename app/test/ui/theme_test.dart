@@ -309,7 +309,7 @@ void main() {
     expect(zhixin.text.headlineMedium.fontWeight, FontWeight.w600);
     expect(zhixin.text.pageTitle.fontWeight, FontWeight.w600);
     expect(zhixin.text.headlineSmall.fontWeight, FontWeight.w600);
-    expect(zhixin.text.titleLarge.fontSize, 22);
+    expect(zhixin.text.titleLarge.fontSize, 20);
     expect(zhixin.text.titleLarge.fontWeight, FontWeight.w600);
     expect(zhixin.text.pageTitle.fontSize, 26);
     for (final style in [
@@ -332,7 +332,7 @@ void main() {
     expect(zhixin.colors.primary, zhixinTheme.colorScheme.primary);
     expect(zhixin.colors.error, zhixinTheme.colorScheme.error);
     expect(zhixin.colors.card, zhixinForuiTheme.colors.card);
-    expect(zhixin.radius.card, const BorderRadius.all(Radius.circular(20)));
+    expect(zhixin.radius.card, const BorderRadius.all(Radius.circular(16)));
     // 容器描边取浅的一档，控件描边取深的一档；Forui 的全局描边跟着容器走。
     expect(zhixin.colors.outlineVariant, isNot(zhixin.colors.outline));
     expect(zhixinForuiTheme.colors.border, zhixin.colors.outlineVariant);

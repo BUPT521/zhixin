@@ -161,10 +161,13 @@ final forui.FToasterStyleDelta zhixinToasterStyle =
       ),
     );
 
-const _tagRadius = Radius.circular(8);
-const _controlRadius = Radius.circular(14);
-const _cardRadius = Radius.circular(20);
-const _featureRadius = Radius.circular(24);
+const _tagRadius = Radius.circular(6);
+const _controlRadius = Radius.circular(12);
+const _cardRadius = Radius.circular(16);
+const _featureRadius = Radius.circular(20);
+
+/// 列表项的横向内边距；比卡片内边距 [ZhixinSpace.lg] 少 2，图标与文字离边更近。
+const double _tilePadH = 14;
 
 /// 页面里的字号与颜色；从 Forui 主题的应用扩展读取。
 extension ZhixinThemeContext on BuildContext {
@@ -319,7 +322,7 @@ class ZhixinSpace {
   double get section => 28;
 
   /// 一节标题上方的留白：比 [section] 少一档，接在上一节内容后面。
-  double get sectionTop => 20;
+  double get sectionTop => 24;
 
   /// 内容区的最大宽度；平板与横屏上居中，不把一行拉得过长。
   double get maxWidth => 720;
@@ -666,7 +669,7 @@ forui.FTileStyles _tileStyles(
     style: style,
   );
   final padding = EdgeInsets.symmetric(
-    horizontal: space.lg,
+    horizontal: _tilePadH,
     vertical: space.md,
   );
 
@@ -685,7 +688,7 @@ forui.FTileStyles _tileStyles(
         IconThemeData(color: colors.mutedForeground, size: 16),
       ),
       suffixedPadding: forui.EdgeInsetsGeometryDelta.value(
-        EdgeInsets.fromLTRB(space.lg, space.md, space.md, space.md),
+        EdgeInsets.fromLTRB(_tilePadH, space.md, space.md, space.md),
       ),
       unsuffixedPadding: forui.EdgeInsetsGeometryDelta.value(padding),
     ),
@@ -722,8 +725,8 @@ forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
   );
 }
 
-/// 底栏：文字用常规字重，选中只改颜色（正文色与次要文字色），不靠字重与胶囊区分。
-/// 文字色；容器描边由 Forui 的 border 给出，与卡片、列表项同一档。
+/// 底栏：不靠字重与胶囊区分选中，只改颜色：选中为主色，其余为次要文字色。
+/// 容器描边由 Forui 的 border 给出，与卡片、列表项同一档。
 forui.FBottomNavigationBarStyle _navigationBarStyle(
   forui.FColors colors,
   forui.FTypography typography,
@@ -746,7 +749,7 @@ forui.FBottomNavigationBarStyle _navigationBarStyle(
         text.labelSmall.copyWith(color: colors.mutedForeground),
         variants: {
           [forui.FTappableVariant.selected]: text.labelSmall.copyWith(
-            color: colors.foreground,
+            color: colors.primary,
           ),
         },
       ),
@@ -857,8 +860,8 @@ ZhixinTextStyles _textStyles(_Palette palette) {
       weight: FontWeight.w600,
     ),
     titleLarge: style(
-      fontSize: 22,
-      height: 1.27,
+      fontSize: 20,
+      height: 1.3,
       letterSpacing: 0,
       weight: FontWeight.w600,
     ),

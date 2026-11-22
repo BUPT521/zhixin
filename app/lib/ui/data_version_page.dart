@@ -1360,13 +1360,10 @@ class _DataVersionPageState extends State<DataVersionPage>
             subtitle:
                 '共 ${usage.commitCount} 条保留提交 · '
                 '${_sizeLabel(usage.databaseBytes)} · HEAD ${history.head}',
-            action: forui.FButton(
-              variant: forui.FButtonVariant.ghost,
-              size: forui.FButtonSizeVariant.sm,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _busy ? null : _clearHistory,
-              prefix: const Icon(FLucideIcons.eraser),
-              child: const Text('清理历史'),
+            action: SectionLink(
+              label: '清理历史',
+              icon: FLucideIcons.eraser,
+              onPressed: _busy ? null : _clearHistory,
             ),
           ),
           Text(

@@ -273,13 +273,7 @@ class _NowPageState extends State<NowPage> {
       ),
       (_) => SectionHeading(
         title: '继续上次',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: widget.onOpenRecords,
-          child: const Text('查看记录'),
-        ),
+        action: SectionLink(label: '查看记录', onPressed: widget.onOpenRecords),
       ),
     ];
     return CustomScrollView(
@@ -344,37 +338,38 @@ class _NowPageState extends State<NowPage> {
   /// 输入区：卡片底色与页面区分开，聚焦时描边换成主色；发送按钮靠右，
   /// 与图片入口分在一行的两端，拇指够得着，也不会误点。
   Widget _composer(ZhixinTheme theme) => _ComposerFrame(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    // 单行输入条：图片入口、输入框、圆形发送按钮排在一行；文字变多时输入框
+    // 向上长到五行，两个按钮贴着底边。
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        forui.FTextField(
-          control: .managed(controller: _input),
-          minLines: 2,
-          maxLines: 5,
-          hint: '输入问题，说明希望获得的帮助…',
-          style: .delta(
-            border: .delta([.all(InputBorder.none)]),
-            color: .delta([.all(Colors.transparent)]),
-            contentPadding: const .value(EdgeInsets.zero),
+        ZhixinIconButton(
+          tooltip: '添加图片',
+          onPressed: _opening ? null : _pickForDiscussion,
+          icon: FLucideIcons.imagePlus,
+        ),
+        Expanded(
+          child: forui.FTextField(
+            control: .managed(controller: _input),
+            minLines: 1,
+            maxLines: 5,
+            hint: '输入问题…',
+            style: .delta(
+              border: .delta([.all(InputBorder.none)]),
+              color: .delta([.all(Colors.transparent)]),
+              contentPadding: const .value(
+                EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+              ),
+            ),
           ),
         ),
-        SizedBox(height: theme.space.sm),
-        Row(
-          children: [
-            ZhixinIconButton(
-              tooltip: '添加图片',
-              variant: forui.FButtonVariant.secondary,
-              onPressed: _opening ? null : _pickForDiscussion,
-              icon: FLucideIcons.imagePlus,
-            ),
-            const Spacer(),
-            forui.FButton(
-              mainAxisSize: MainAxisSize.min,
-              onPress: _opening ? null : _newDiscussion,
-              prefix: const Icon(FLucideIcons.arrowUp),
-              child: const Text('发送问题'),
-            ),
-          ],
+        ClipOval(
+          child: ZhixinIconButton(
+            tooltip: '发送问题',
+            variant: forui.FButtonVariant.primary,
+            onPressed: _opening ? null : _newDiscussion,
+            icon: FLucideIcons.arrowUp,
+          ),
         ),
       ],
     ),
@@ -396,28 +391,14 @@ class _NowPageState extends State<NowPage> {
         onTap: widget.onOpenPlan,
       ),
     ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        if (constraints.maxWidth < 290 * textScale) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              tiles[0],
-              SizedBox(height: theme.space.sm),
-              tiles[1],
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: tiles[0]),
-            SizedBox(width: theme.space.md),
-            Expanded(child: tiles[1]),
-          ],
-        );
-      },
+    // 单列行：窄屏与放大文字时不必再换排法。
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        tiles[0],
+        SizedBox(height: theme.space.sm),
+        tiles[1],
+      ],
     );
   }
 
@@ -561,13 +542,8 @@ class _NowPageState extends State<NowPage> {
     return sections;
   }
 
-  Widget _planAction() => forui.FButton(
-    variant: forui.FButtonVariant.ghost,
-    size: forui.FButtonSizeVariant.sm,
-    mainAxisSize: MainAxisSize.min,
-    onPress: widget.onOpenPlan,
-    child: const Text('查看安排'),
-  );
+  Widget _planAction() =>
+      SectionLink(label: '查看安排', onPressed: widget.onOpenPlan);
 
   Widget _scheduledActivityCard(
     ZhixinTheme theme,
@@ -717,13 +693,18 @@ class _NowPageState extends State<NowPage> {
               ),
             ],
             SizedBox(height: theme.space.lg),
-            if (feature) ...[
-              primaryAction,
-              if (secondaryAction != null) ...[
-                SizedBox(height: theme.space.xs),
-                Center(child: secondaryAction),
-              ],
-            ] else
+            if (feature)
+              // 开始按钮与文字入口同一行：首屏的主角卡不再叠两层按钮。
+              Row(
+                children: [
+                  Expanded(child: primaryAction),
+                  if (secondaryAction != null) ...[
+                    SizedBox(width: theme.space.sm),
+                    secondaryAction,
+                  ],
+                ],
+              )
+            else
               Wrap(
                 spacing: theme.space.sm,
                 runSpacing: theme.space.sm,
@@ -768,15 +749,13 @@ class _ComposerFrameState extends State<_ComposerFrame> {
       child: AnimatedContainer(
         duration: context.motionOf(theme.motion.fast),
         curve: theme.motion.move,
-        padding: EdgeInsets.fromLTRB(
-          theme.space.lg,
-          theme.space.lg,
-          theme.space.md,
-          theme.space.md,
-        ),
+        // 内边距 4 让圆形发送按钮与外框同心：外框圆角取控件高度的一半加 4。
+        padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
           color: theme.colors.card,
-          borderRadius: theme.radius.feature,
+          borderRadius: const BorderRadius.all(
+            Radius.circular(ZhixinSpace.controlHeight / 2 + 4),
+          ),
           // 与其它输入框同一条边：未聚焦用控件描边，聚焦时换主色。
           border: Border.all(
             color: _focused ? theme.colors.primary : theme.colors.outline,
@@ -821,23 +800,29 @@ class _ContinueTile extends StatelessWidget {
       padding: EdgeInsets.only(bottom: theme.space.sm),
       child: forui.FTile(
         prefix: leading,
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        // 两行：标题与时间在上；标签与继续位置并在下一行，放不下时换行。
+        title: Row(
           children: [
-            SizedBox(height: theme.space.xs),
-            Row(
-              children: [
-                Expanded(child: TagRow(children: tags)),
-                if (time != null) ...[
-                  SizedBox(width: theme.space.sm),
-                  Text(time!, style: muted),
-                ],
-              ],
+            Expanded(
+              child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
-            SizedBox(height: theme.space.xs),
-            Text(clue, maxLines: 1, overflow: TextOverflow.ellipsis),
+            if (time != null) ...[
+              SizedBox(width: theme.space.sm),
+              Text(time!, style: muted),
+            ],
           ],
+        ),
+        subtitle: Padding(
+          padding: EdgeInsets.only(top: theme.space.xs),
+          child: Wrap(
+            spacing: theme.space.tight,
+            runSpacing: theme.space.xs,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ...tags,
+              Text(clue, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          ),
         ),
         suffix: Icon(
           resume ? FLucideIcons.play : FLucideIcons.chevronRight,

@@ -93,7 +93,7 @@ void main() {
 
     await tester.enterText(find.byType(EditableText).first, '解方程 3x+2=8，求 x');
     await tester.pump();
-    await tester.tap(find.text('发送问题'));
+    await tester.tap(find.bySemanticsLabel('发送问题'));
     await waitFor(tester, find.text('本地规则'));
     await clearToasts(tester);
 
@@ -160,7 +160,7 @@ void main() {
 
     await tester.enterText(find.byType(EditableText).first, '解方程 3x+2=8，求 x');
     await tester.pump();
-    await tester.tap(find.text('发送问题'));
+    await tester.tap(find.bySemanticsLabel('发送问题'));
     await waitFor(tester, find.text('本地规则'));
     await waitFor(tester, find.text('重试这次回答'));
 

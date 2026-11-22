@@ -242,7 +242,7 @@ class _BottomBar extends StatelessWidget {
     (FLucideIcons.circleUserRound, tabMine),
   ];
   static const _itemPadding = 5.0;
-  static const _iconHeight = 30.0;
+  static const _iconHeight = 20.0;
 
   final int index;
   final ValueChanged<int> onChange;
@@ -250,10 +250,10 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    // 没有胶囊指示块之后上下各留一档 sm，底栏的高度与原来相当。
+    // 没有胶囊指示块：图标区 20 高，上下各留一档 tight，选中只换主色。
     final barPadding = EdgeInsets.symmetric(
       horizontal: theme.space.page,
-      vertical: theme.space.sm,
+      vertical: theme.space.tight,
     );
     return RepaintBoundary(
       child: DecoratedBox(
@@ -290,7 +290,7 @@ class _BottomBar extends StatelessWidget {
                       icon,
                       size: 20,
                       color: i == index
-                          ? theme.colors.onSurface
+                          ? theme.colors.primary
                           : theme.colors.onSurfaceVariant,
                     ),
                   ),

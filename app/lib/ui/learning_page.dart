@@ -744,12 +744,9 @@ class _LearningPageState extends State<LearningPage> {
             if (!_independentRedo && _recentMessages.isNotEmpty)
               SectionHeading(
                 title: '同一条记录里的讨论',
-                action: forui.FButton(
-                  variant: forui.FButtonVariant.ghost,
-                  size: forui.FButtonSizeVariant.sm,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : _openDiscussion,
-                  child: const Text('打开完整讨论'),
+                action: SectionLink(
+                  label: '打开完整讨论',
+                  onPressed: _busy ? null : _openDiscussion,
                 ),
               ),
             if (!_independentRedo && _recentMessages.isNotEmpty)

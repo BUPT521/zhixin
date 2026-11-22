@@ -44,13 +44,10 @@ class PlanGoalsTab extends StatelessWidget {
         first: true,
         title: '学习目标',
         subtitle: '多个目标可以同时进行',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => actions.addGoal(),
-          prefix: const Icon(FLucideIcons.plus),
-          child: const Text('新建'),
+        action: SectionLink(
+          label: '新建',
+          icon: FLucideIcons.plus,
+          onPressed: () => actions.addGoal(),
         ),
       ),
       if (week.goals.isEmpty)

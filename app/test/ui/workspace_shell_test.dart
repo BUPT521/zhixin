@@ -231,7 +231,7 @@ void main() {
     await settle(tester);
     await tester.tap(find.text('现在').last);
     await settle(tester);
-    await tester.tap(find.text('发送问题'));
+    await tester.tap(find.bySemanticsLabel('发送问题'));
     await settle(tester);
     tester.view.viewInsets = const FakeViewPadding(bottom: 300);
     addTearDown(tester.view.resetViewInsets);
@@ -259,7 +259,7 @@ void main() {
     );
     expect(scroll.height, closeTo(page.height - header.height, 1));
     // 输入区的发送按钮落在滚动区域之内，没有被裁掉。
-    final send = tester.getRect(find.text('发送问题'));
+    final send = tester.getRect(find.bySemanticsLabel('发送问题'));
     expect(send.bottom, lessThanOrEqualTo(scroll.bottom));
     expect(tester.takeException(), isNull);
   });

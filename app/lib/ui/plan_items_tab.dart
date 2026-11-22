@@ -268,13 +268,10 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
         first: true,
         title: planItemName,
         subtitle: '默认列出未完成的事项，已完成的按页查看',
-        action: forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: () => widget.actions.addItem(),
-          prefix: const Icon(FLucideIcons.plus),
-          child: const Text('新建'),
+        action: SectionLink(
+          label: '新建',
+          icon: FLucideIcons.plus,
+          onPressed: () => widget.actions.addItem(),
         ),
       ),
       if (week.items.isEmpty && week.doneItemCount == 0)
