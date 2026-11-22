@@ -285,7 +285,7 @@ class _BottomBar extends StatelessWidget {
                           width: 58,
                           height: _iconHeight,
                           decoration: ShapeDecoration(
-                            color: theme.colors.primaryContainer,
+                            color: theme.colors.primarySoft,
                             shape: const StadiumBorder(),
                           ),
                         ),
@@ -308,6 +308,7 @@ class _BottomBar extends StatelessWidget {
                         bounceTween: forui.FTappableMotion.noBounceTween,
                       ),
                     ),
+                    // 选中与未选中同一档强调字重，选中态靠颜色与指示块区分。
                     textStyle: .delta([
                       .all(
                         .delta(
@@ -315,7 +316,9 @@ class _BottomBar extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      .exact({.selected}, .delta(color: theme.colors.primary)),
+                      .exact({
+                        .selected,
+                      }, .delta(color: theme.colors.onSurface)),
                     ]),
                   ),
                 ),
@@ -326,9 +329,9 @@ class _BottomBar extends StatelessWidget {
                         height: _iconHeight,
                         child: Icon(
                           icon,
-                          size: 21,
+                          size: 20,
                           color: i == index
-                              ? theme.colors.onPrimaryContainer
+                              ? theme.colors.onSurface
                               : theme.colors.onSurfaceVariant,
                         ),
                       ),
