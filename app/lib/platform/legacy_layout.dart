@@ -65,12 +65,17 @@ Future<Set<String>> deleteLegacyLayoutData(
     }
   }
 
-  for (final suffix in const ['', ...zhixinDbSideFiles]) {
+  for (final suffix in const ['', ...zhixinDbSideFiles, '.incoming']) {
     await remove(
       '$zhixinDbFileName$suffix',
       p.join(root.path, '$zhixinDbFileName$suffix'),
     );
   }
+  // 0.2.0 的附件缓存重建标记；附件目录随 legacyLayoutDirectories 一起删除。
+  await remove(
+    'attachment_cache.pending',
+    p.join(root.path, 'attachment_cache.pending'),
+  );
   for (final name in legacyLayoutDirectories) {
     await remove(name, p.join(root.path, name));
   }

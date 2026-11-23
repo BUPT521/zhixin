@@ -19,6 +19,8 @@ void main() {
     const legacy = [
       'zhixin.db',
       'zhixin.db-wal',
+      'zhixin.db.incoming',
+      'attachment_cache.pending',
       'question_images/a.jpg',
       'vector_index/text/page',
       'memory_index/note',
@@ -49,6 +51,8 @@ void main() {
     expect(removed, {
       'zhixin.db',
       'zhixin.db-wal',
+      'zhixin.db.incoming',
+      'attachment_cache.pending',
       'question_images',
       'vector_index',
       'memory_index',
