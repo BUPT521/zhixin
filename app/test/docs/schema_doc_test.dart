@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 import 'package:zhixin/data/db/drift/app_database.dart';
 
 /// 01 第 4 章的 DDL 与第 6 章的索引是 drift 建库结果的抄件。
@@ -36,6 +37,16 @@ void main() {
     } finally {
       await db.close();
     }
+  });
+
+  test('01 开头的数据版本与客户端常量一致', () {
+    final match = RegExp(r'当前结构为 schema (\d+)').firstMatch(doc);
+    expect(match, isNotNull, reason: '01 开头没有写“当前结构为 schema N”');
+    expect(
+      int.parse(match!.group(1)!),
+      zhixinSchemaVersion,
+      reason: '01 的版本号与 zhixinSchemaVersion 不一致',
+    );
   });
 
   test('01 第 4 章的建表语句与表类建出的表一致', () {
