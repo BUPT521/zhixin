@@ -1,6 +1,7 @@
 /// 更新提示：只在检查全部通过并且确实有更新时出现，展示版本名与更新说明，
-/// 给一个打开下载地址的按钮。是否必须更新由清单的 `min_version` 与当前版本
-/// 比较得出（ADR-0025）；提示本身不下载、不安装，用户点了才交给浏览器。
+/// 给一个打开下载地址的按钮。版本低于清单的 `min_version` 时用“建议尽快更新”
+/// 提醒云端同步与在线模型可能不可用，但仍然提供“以后再说”，不阻断使用；
+/// 取舍见 02 第 3.16 节与 ADR-0025。提示本身不下载、不安装，用户点了才交给浏览器。
 library;
 
 import 'package:forui/forui.dart' as forui;
@@ -38,7 +39,7 @@ Future<void> showUpdateNotice(
   final notes = release.notes.trim();
   await showZhixinAlert<void>(
     context: context,
-    title: result.requiredUpdate ? '必须更新' : '有新版本可用',
+    title: result.belowMinimum ? '建议尽快更新' : '有新版本可用',
     content: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -53,8 +54,8 @@ Future<void> showUpdateNotice(
         ],
         SizedBox(height: theme.space.sm),
         Text(
-          result.requiredUpdate
-              ? '这个版本低于应用要求的最低版本 ${release.minVersion}，请更新之后继续使用。'
+          result.belowMinimum
+              ? '这个版本低于应用建议的最低版本 ${release.minVersion}，云端同步与在线模型可能不可用；可以先不更新，本机记录照常使用。'
               : '可以按需要更新；不更新不影响本机记录。',
           style: theme.text.bodySmall.copyWith(
             color: theme.colors.onSurfaceVariant,

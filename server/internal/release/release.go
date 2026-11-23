@@ -40,7 +40,8 @@ type Entry struct {
 	Signature string `json:"signature"`
 	// Size 是安装包的字节数，可选。
 	Size int64 `json:"size"`
-	// MinVersion 是仍然可以使用的版本下限；低于它的客户端应提示必须更新。
+	// MinVersion 是建议客户端保持的最低版本；低于它的客户端在提示里用建议尽快
+	// 更新的措辞，仍然可以关闭提示继续使用本机功能。
 	MinVersion string `json:"min_version"`
 	// Notes 是这一版的更新说明。
 	Notes string `json:"notes"`

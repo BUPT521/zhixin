@@ -27,30 +27,33 @@ enum UpdateFailure {
   unexpected,
 }
 
-/// 一次检查的结果：不提示时 [release] 为空，有更新时带上清单项与是否必须更新。
+/// 一次检查的结果：不提示时 [release] 为空，有更新时带上清单项与是否低于建议的最低版本。
 class UpdateCheckResult {
   const UpdateCheckResult.upToDate()
     : status = UpdateCheckStatus.upToDate,
       release = null,
-      requiredUpdate = false,
+      belowMinimum = false,
       failure = null;
 
   /// 清单里有比当前版本更新的安装包。检查阶段不下载安装包；用户确认后由系统
   /// 浏览器打开清单地址下载一次，系统安装器核对安装包签名后覆盖安装。
   const UpdateCheckResult.updateAvailable(
     ServerRelease this.release, {
-    required this.requiredUpdate,
+    required this.belowMinimum,
   }) : status = UpdateCheckStatus.updateAvailable,
        failure = null;
 
   const UpdateCheckResult.failed(UpdateFailure this.failure)
     : status = UpdateCheckStatus.failed,
       release = null,
-      requiredUpdate = false;
+      belowMinimum = false;
 
   final UpdateCheckStatus status;
   final ServerRelease? release;
-  final bool requiredUpdate;
+
+  /// 当前版本低于清单里的 `min_version`。只决定提示用哪种措辞，不阻断使用：
+  /// 应用仍然提供“以后再说”，本机记录与离线功能照常可用，见 02 第 3.16 节。
+  final bool belowMinimum;
   final UpdateFailure? failure;
 
   bool get hasUpdate =>
@@ -188,10 +191,10 @@ class UpdateCheckService {
     }
 
     final minimum = ReleaseVersion.tryParse(release.minVersion, 0);
-    final requiredUpdate = minimum != null && current.compareTo(minimum) < 0;
+    final belowMinimum = minimum != null && current.compareTo(minimum) < 0;
     return UpdateCheckResult.updateAvailable(
       release,
-      requiredUpdate: requiredUpdate,
+      belowMinimum: belowMinimum,
     );
   }
 

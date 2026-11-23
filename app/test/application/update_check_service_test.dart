@@ -73,7 +73,7 @@ void main() {
       releases: () => [release(version: '0.1.1', build: 3)],
     ).check();
     expect(result.status, UpdateCheckStatus.updateAvailable);
-    expect(result.requiredUpdate, isFalse);
+    expect(result.belowMinimum, isFalse);
     expect(result.release?.version, '0.1.1');
     expect(result.release?.build, 3);
     expect(result.release?.notes, '登录、云端备份与同步');
@@ -91,14 +91,14 @@ void main() {
     expect(same.status, UpdateCheckStatus.upToDate);
   });
 
-  test('版本低于 min_version 时提示必须更新', () async {
+  test('版本低于 min_version 时标记为低于建议的最低版本', () async {
     final result = await service(
       releases: () => [
         release(version: '0.2.0', build: 1, minVersion: '0.2.0'),
       ],
     ).check();
     expect(result.status, UpdateCheckStatus.updateAvailable);
-    expect(result.requiredUpdate, isTrue);
+    expect(result.belowMinimum, isTrue);
   });
 
   test('检查阶段不下载安装包：安装包地址不可解析也仍提示更新', () async {

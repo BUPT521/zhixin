@@ -79,14 +79,14 @@ void main() {
     }) async => signatureValid,
   );
 
-  ServerRelease release() => ServerRelease(
+  ServerRelease release({String minVersion = '0.1.0'}) => ServerRelease(
     platform: 'android',
     version: '0.2.0',
     build: 1,
     url: 'https://example.test/zhixin.apk',
     sha256: hash,
     signature: 'c2lnbmF0dXJl',
-    minVersion: '0.1.0',
+    minVersion: minVersion,
     notes: '登录、云端备份与同步',
   );
 
@@ -168,6 +168,25 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('有新版本可用'), findsNothing);
     expect(find.textContaining('有新版本 0.2.0'), findsOneWidget);
+  });
+
+  testWidgets('低于最低版本时提示建议尽快更新，但不阻断使用', (tester) async {
+    await pumpSettings(
+      tester,
+      service(releases: [release(minVersion: '0.2.0')]),
+    );
+    await tapCheckUpdates(tester);
+    await waitFor(tester, find.text('建议尽快更新'));
+
+    // 文案说明云端功能可能不可用，同时保留“以后再说”，本机功能继续可用。
+    expect(find.textContaining('云端同步与在线模型可能不可用'), findsOneWidget);
+    expect(find.textContaining('请更新之后继续使用'), findsNothing);
+    expect(find.text('以后再说'), findsOneWidget);
+
+    await tester.tap(find.text('以后再说'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('建议尽快更新'), findsNothing);
   });
 
   testWidgets('网络失败时说明检查失败，没有更新提示', (tester) async {

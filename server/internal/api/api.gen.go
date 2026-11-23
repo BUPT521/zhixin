@@ -711,7 +711,7 @@ type Release struct {
 	// Build Android 的 versionCode
 	Build int64 `json:"build"`
 
-	// MinVersion 低于它的客户端应提示必须更新
+	// MinVersion 低于它的客户端在提示里加上建议尽快更新的说明，不阻断使用
 	MinVersion *string `json:"min_version,omitempty"`
 
 	// Notes 这一版的更新说明

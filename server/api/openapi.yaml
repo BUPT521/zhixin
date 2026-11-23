@@ -853,8 +853,8 @@ paths:
       description: |
         不需要登录：更新提示在登录之前也可能出现。清单来自服务端本地的发布文件
         （`ZHIXIN_RELEASE_FILE`），服务端只原样给出每个平台的版本、构建号、地址与
-        说明，不比较客户端版本，也不决定是否必须更新；客户端按平台取一项，自己比较
-        `version` 与 `build`。没有配置发布文件时返回空数组，客户端据此不提示更新。
+        说明，不比较客户端版本，也不判断客户端是否低于建议的最低版本；客户端按平台取一项，
+        自己比较 `version` 与 `build`。没有配置发布文件时返回空数组，客户端据此不提示更新。
       responses:
         "200":
           description: OK
@@ -1616,7 +1616,7 @@ components:
             安装包 SHA-256 的 Ed25519 签名（base64）。应用使用内置公钥验证签名，
             验签通过之后才下载安装包。
         size: { type: integer, format: int64 }
-        min_version: { type: string, description: 低于它的客户端应提示必须更新 }
+        min_version: { type: string, description: 低于它的客户端在提示里加上建议尽快更新的说明，不阻断使用 }
         notes: { type: string, description: 这一版的更新说明 }
     ReleaseList:
       type: object
