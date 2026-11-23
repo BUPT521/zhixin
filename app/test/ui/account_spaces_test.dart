@@ -110,6 +110,12 @@ void main() {
         await File('${reopened.paths.filesDir}/未登录.jpg').exists(),
         isFalse,
       );
+      fake.cloudClearConflicts = 1;
+      await expectLater(
+        reopened.clearAllData(password: syncTestPassword),
+        throwsA(isA<ServerProblem>()),
+      );
+      expect(await reopened.accountServices.account.autoSync(), isFalse);
       await reopened.clearAllData(password: syncTestPassword);
     });
     final cleared = await ready();

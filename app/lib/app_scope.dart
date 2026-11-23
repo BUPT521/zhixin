@@ -166,7 +166,16 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
 
   Future<void> clearAllData({required String password}) async {
     await _sync.withSyncPaused(() async {
-      await _account.clearCloudData(password: password);
+      final autoSync = await _account.autoSync();
+      if (autoSync) await _account.setAutoSync(false);
+      try {
+        await _account.clearCloudData(password: password);
+      } on ServerProblem catch (error) {
+        if (autoSync && error.code == 'invalid_credentials') {
+          await _account.setAutoSync(true);
+        }
+        rethrow;
+      }
       if (managesSpaces) {
         await _changeSpace(spaceId, deleteCurrent: true);
       } else {
