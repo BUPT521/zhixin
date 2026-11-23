@@ -785,6 +785,9 @@ type SyncDeviceRename struct {
 
 // SyncHead defines model for SyncHead.
 type SyncHead struct {
+	// Compact 服务端有没有打开快照压缩（`ZHIXIN_SYNC_COMPACT`）；为假时客户端不上传整库快照，服务端登记只写指针
+	Compact bool `json:"compact"`
+
 	// EarliestSeq 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
 	EarliestSeq   int64 `json:"earliest_seq"`
 	Head          int64 `json:"head"`
@@ -972,7 +975,7 @@ type GetV1SyncCommitsParams struct {
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
 	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
@@ -987,7 +990,7 @@ type PostV1SyncCommitsJSONBody struct {
 
 // PostV1SyncCommitsParams defines parameters for PostV1SyncCommits.
 type PostV1SyncCommitsParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
 	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
@@ -996,7 +999,7 @@ type PostV1SyncCommitsParams struct {
 
 // GetV1SyncDevicesParams defines parameters for GetV1SyncDevices.
 type GetV1SyncDevicesParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
 	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
@@ -1005,7 +1008,7 @@ type GetV1SyncDevicesParams struct {
 
 // GetV1SyncHeadParams defines parameters for GetV1SyncHead.
 type GetV1SyncHeadParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
 	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
@@ -1014,7 +1017,7 @@ type GetV1SyncHeadParams struct {
 
 // PutV1SyncSnapshotParams defines parameters for PutV1SyncSnapshot.
 type PutV1SyncSnapshotParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
 	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。

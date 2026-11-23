@@ -168,7 +168,13 @@ void main() {
     });
     await expectLater(
       b.sync.syncNow(),
-      throwsA(isA<RecloneConfirmationRequired>()),
+      throwsA(
+        isA<SyncSnapshotProblem>().having(
+          (problem) => problem.code,
+          'code',
+          SyncSnapshotCode.confirmationRequired,
+        ),
+      ),
       reason: '本机已有数据时重建不能静默替换',
     );
     expect(await testMemoryContent(b.rig, 'm1'), 'B 的新内容');
@@ -200,6 +206,30 @@ void main() {
     await a.sync.syncNow();
     expect(await testMemoryContent(a.rig, 'm1'), 'B 的新内容');
     expect((await b.sync.status()).digestMismatch, isFalse);
+  });
+
+  test('服务端没有打开压缩时不上传也不登记快照', () async {
+    server.compact = false;
+    final a = await device(
+      'a@example.com',
+      register: true,
+      deviceId: 'device-a',
+    );
+    await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
+    final uploads = server.blobUploadAttempts;
+    await a.sync.syncNow(confirmBaseline: true);
+    final userId = await userIdOf(a);
+
+    expect(server.headOf(userId), greaterThan(0));
+    expect(server.snapshotRegistrations, 0, reason: '压缩关闭时登记只写指针，客户端不必登记');
+    expect(server.snapshotOf(userId), isNull, reason: '没有登记就没有快照指针');
+    expect(server.blobUploadAttempts, uploads, reason: '快照附件也不上传，避免白占附件配额');
+
+    // 服务端打开之后，下一轮同步照常补登记。
+    server.compact = true;
+    await a.sync.syncNow();
+    expect(server.snapshotOf(userId), isNotNull);
+    expect(server.snapshotRegistrations, 1);
   });
 
   test('空闲登记：成功之后重复同步不再登记，409 与失败都不阻塞同步', () async {
@@ -336,7 +366,13 @@ void main() {
     });
     await expectLater(
       b.sync.syncNow(),
-      throwsA(isA<RecloneConfirmationRequired>()),
+      throwsA(
+        isA<SyncSnapshotProblem>().having(
+          (problem) => problem.code,
+          'code',
+          SyncSnapshotCode.confirmationRequired,
+        ),
+      ),
     );
     final result = await b.sync.syncNow(confirmReclone: true);
 
@@ -373,7 +409,13 @@ void main() {
     );
     await expectLater(
       b.sync.syncNow(confirmBaseline: true),
-      throwsA(isA<RecloneConfirmationRequired>()),
+      throwsA(
+        isA<SyncSnapshotProblem>().having(
+          (problem) => problem.code,
+          'code',
+          SyncSnapshotCode.confirmationRequired,
+        ),
+      ),
       reason: '云端历史已压缩，替换本机历史之前还要确认一次',
     );
     expect(
@@ -423,7 +465,7 @@ void main() {
     await expectLater(
       b.sync.syncNow(),
       throwsA(
-        isA<SyncSnapshotUnavailable>().having(
+        isA<SyncSnapshotProblem>().having(
           (error) => error.message,
           'message',
           contains('缺少可用快照'),

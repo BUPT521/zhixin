@@ -155,6 +155,10 @@ class FakeServer {
   /// 打开之后快照登记一律返回 409：模拟服务端已有更新的快照。
   bool snapshotAlwaysConflicts = false;
 
+  /// head 响应里声明的压缩开关，默认打开：压缩关闭时客户端不上传整库快照
+  /// （ADR-0047）。用例按需关掉它来核对客户端确实没有上传与登记。
+  bool compact = true;
+
   /// 单个附件的上限与单账号附件总量上限；为空时不限制，与契约里的两个环境
   /// 变量对应。超限时分别返回 `payload_too_large` 与 `storage_full`。
   int? maxAttachmentBytes;
@@ -752,6 +756,7 @@ class FakeServer {
       'head': headOf(userId),
       'schema_version': schemaVersion,
       'earliest_seq': earliestSeqOf(userId),
+      'compact': compact,
       if (snapshot != null) 'snapshot': snapshot.toJson(),
     };
   }

@@ -19,6 +19,10 @@ SET synced_seq = least(
       $3::bigint),
     last_seen = now()
 WHERE user_id = $4 AND device_id = $5
+  AND least(
+      greatest(synced_seq, $1::bigint,
+        CASE WHEN $2::boolean THEN $3::bigint ELSE 0::bigint END),
+      $3::bigint) > synced_seq
 `
 
 type AdvanceSyncDeviceParams struct {
@@ -30,7 +34,7 @@ type AdvanceSyncDeviceParams struct {
 }
 
 // 推送之后推进设备位置：确有新提交写入时推到新 head，整批重放时只按 base 取较大值，
-// 两种情况都不超过当前 head（ADR-0054）。
+// 两种情况都不超过当前 head；位置没有前进时不写这一行（ADR-0054）。
 func (q *Queries) AdvanceSyncDevice(ctx context.Context, arg AdvanceSyncDeviceParams) error {
 	_, err := q.db.Exec(ctx, advanceSyncDevice,
 		arg.BaseSeq,
@@ -903,6 +907,8 @@ ON CONFLICT (user_id, device_id) DO UPDATE
 SET snapshot_capable = EXCLUDED.snapshot_capable,
     synced_seq = least(greatest(sync_device.synced_seq, EXCLUDED.synced_seq), $5::bigint),
     last_seen = now()
+WHERE sync_device.snapshot_capable IS DISTINCT FROM EXCLUDED.snapshot_capable
+   OR least(greatest(sync_device.synced_seq, EXCLUDED.synced_seq), $5::bigint) > sync_device.synced_seq
 `
 
 type TouchSyncDeviceParams struct {
@@ -914,8 +920,9 @@ type TouchSyncDeviceParams struct {
 }
 
 // ---- 设备名册（ADR-0048、ADR-0054） ----
-// 带设备标识的同步请求：最近出现时间写服务端当前时间，快照能力整组替换，位置按
-// after 取较大值且不超过当前 head，别名保持用户设置的值；首次出现时间只在插入时写。
+// 带设备标识的同步请求：快照能力整组替换，位置按 after 取较大值且不超过当前
+// head，别名保持用户设置的值，首次出现时间只在插入时写。最近出现时间只在能力或
+// 位置确实变化时前进：没有变化的一轮同步不再多写一行（ADR-0048）。
 func (q *Queries) TouchSyncDevice(ctx context.Context, arg TouchSyncDeviceParams) error {
 	_, err := q.db.Exec(ctx, touchSyncDevice,
 		arg.UserID,

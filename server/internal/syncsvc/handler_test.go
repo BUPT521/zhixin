@@ -75,6 +75,32 @@ func signIn(t *testing.T, svc *auth.Service, email string) string {
 	return tokens.AccessToken
 }
 
+// TestHandlerHeadDeclaresCompact 守住压缩开关的声明：默认关闭，装配打开之后 head
+// 的 compact 为真。客户端只在这个值为真时上传整库快照，否则快照上传只是白占
+// 附件配额（ADR-0047）。
+func TestHandlerHeadDeclaresCompact(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "compact@b.cn")
+	var head api.SyncHead
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", token, nil, &head); code != http.StatusOK || head.Compact {
+		t.Fatalf("默认关闭时 head.compact 应为假: %d %+v", code, head)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(NewMemoryStore(), testSchemaVersion).SetCompact(true)
+	handler := NewHandler(svc, log, 16*testMaxJSON)
+	authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	c = testutil.NewClient(t, testutil.NewServer(
+		testAPI{h: handler},
+		httpx.RequestID,
+		auth.Middleware(authSvc, log),
+	))
+	token = signIn(t, authSvc, "compact-on@b.cn")
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", token, nil, &head); code != http.StatusOK || !head.Compact {
+		t.Fatalf("打开之后 head.compact 应为真: %d %+v", code, head)
+	}
+}
+
 // TestHandlerWriteBlockedDuringPurge 守住清除期间的写拦截：gate 返回
 // cloudpurge.ErrPurging 时 Push 与 Reset 回 409 conflict，拉取仍可读，且没有
 // 写入任何提交。
@@ -686,6 +712,53 @@ func TestHandlerDeviceRoster(t *testing.T) {
 	}
 	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK || len(page.Devices) != 0 {
 		t.Fatalf("清空之后的名册: %d %+v", code, page)
+	}
+}
+
+// TestHandlerHeadKeepsDevicePosition 守住“head 查询不推进设备位置”：设备 A 推送
+// 到位置 1 之后另一台设备把 head 推到 2，A 只读 head 时名册里仍是 1；拉取请求
+// 的 after 才是 A 读到的位置（ADR-0054）。
+func TestHandlerHeadKeepsDevicePosition(t *testing.T) {
+	h := newSnapshotHarness(t)
+	token := signIn(t, h.authSvc, "positions@b.cn")
+
+	if code := h.syncJSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 0, "commits": []any{commitBody("r1")},
+	}, &api.PushResult{}); code != http.StatusOK {
+		t.Fatalf("设备 A 推送: %d", code)
+	}
+	if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 1, "commits": []any{commitBody("r2")},
+	}, &api.PushResult{}); code != http.StatusOK {
+		t.Fatalf("另一台设备推送: %d", code)
+	}
+
+	// A 只读 head：能力没变、位置也不该被推到 head。
+	if code := h.jsonWithHeaders(http.MethodGet, "/v1/sync/head", token, nil, nil, map[string]string{
+		"X-Device-Id":         "device-a",
+		"X-Sync-Capabilities": "snapshot",
+	}); code != http.StatusOK {
+		t.Fatalf("设备 A 读 head: %d", code)
+	}
+	var page api.SyncDeviceList
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("名册: %d", code)
+	}
+	if got := findDevice(t, page, "device-a"); got.SyncedSeq != 1 {
+		t.Fatalf("head 查询不应推进设备位置: %+v", got)
+	}
+
+	// 拉取请求的 after 是 A 已经应用到的位置，这时才推进到 2。
+	if code := h.jsonWithHeaders(http.MethodGet, "/v1/sync/commits?after=2", token, nil, nil, map[string]string{
+		"X-Device-Id": "device-a",
+	}); code != http.StatusOK {
+		t.Fatalf("设备 A 拉取: %d", code)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("名册: %d", code)
+	}
+	if got := findDevice(t, page, "device-a"); got.SyncedSeq != 2 {
+		t.Fatalf("拉取之后应推进到 after: %+v", got)
 	}
 }
 

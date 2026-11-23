@@ -522,8 +522,9 @@ func (m *MemoryStore) ReclaimOrphan(_ context.Context, userID, sha string) error
 	return nil
 }
 
-// TouchDevice 更新名册：最近出现时间写服务端当前时间，快照能力整组替换，位置按
-// position 取较大值且不超过当前 head，别名不动。
+// TouchDevice 更新名册：快照能力整组替换，位置按 position 取较大值且不超过当前
+// head，别名不动，最近出现时间只在能力或位置确实变化时前进——没有变化的一轮同步
+// 不再多写一行（ADR-0048）。
 func (m *MemoryStore) TouchDevice(_ context.Context, userID, deviceID string, snapshotCapable bool, position int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -532,8 +533,12 @@ func (m *MemoryStore) TouchDevice(_ context.Context, userID, deviceID string, sn
 	head := l.head()
 	position = min(position, head)
 	if d, ok := l.devices[deviceID]; ok {
+		next := max(d.syncedSeq, position)
+		if d.snapshotCapable == snapshotCapable && next == d.syncedSeq {
+			return nil
+		}
 		d.snapshotCapable = snapshotCapable
-		d.syncedSeq = max(d.syncedSeq, position)
+		d.syncedSeq = next
 		d.lastSeen = now
 		return nil
 	}
@@ -561,7 +566,7 @@ func (m *MemoryStore) EnsureDevice(_ context.Context, userID, deviceID string) e
 }
 
 // AdvanceDevice 推进一台已知设备的位置：new 为真时推到当前 head，否则只按 base
-// 取较大值；两种情况都不超过 head。
+// 取较大值；两种情况都不超过 head。位置没有前进时不写这一行（ADR-0048）。
 func (m *MemoryStore) AdvanceDevice(_ context.Context, userID, deviceID string, base int64, toHead bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -577,7 +582,11 @@ func (m *MemoryStore) AdvanceDevice(_ context.Context, userID, deviceID string, 
 	if toHead {
 		target = max(target, l.head())
 	}
-	d.syncedSeq = min(max(d.syncedSeq, target), l.head())
+	next := min(max(d.syncedSeq, target), l.head())
+	if next == d.syncedSeq {
+		return nil
+	}
+	d.syncedSeq = next
 	d.lastSeen = m.now().UTC()
 	return nil
 }

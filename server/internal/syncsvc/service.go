@@ -163,6 +163,10 @@ func (s *Service) SetLogger(log *slog.Logger) *Service {
 
 func (s *Service) SchemaVersion() int { return s.schemaVersion }
 
+// Compact 报告快照压缩是否打开。handler 在 head 响应里把这一位告诉客户端：
+// 关闭时客户端不上传整库快照，因为服务端不会按它删除提交（ADR-0047）。
+func (s *Service) Compact() bool { return s.compact }
+
 // State 返回账号的序列状态：head、保留下界与当前快照指针。
 func (s *Service) State(ctx context.Context, userID string) (State, error) {
 	return s.store.State(ctx, userID)
@@ -396,9 +400,10 @@ func (s *Service) reclaimOrphans(ctx context.Context, userID string) {
 	}
 }
 
-// TouchDevice 记录一次带设备标识的同步请求：最近出现时间写服务端当前时间，快照
-// 能力整组替换，设备位置按 position 取较大值且不超过当前 head，别名不动
-// （ADR-0048、ADR-0054）。
+// TouchDevice 记录一次带设备标识的同步请求：快照能力整组替换，设备位置按
+// position 取较大值且不超过当前 head，别名不动；最近出现时间只在能力或位置确实
+// 变化时前进，没有变化的一轮同步不多写一行（ADR-0048、ADR-0054）。position 为
+// 负值时按 0 处理，表示这次请求不说明设备读到了哪，已有设备的位置保持不变。
 func (s *Service) TouchDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
@@ -422,7 +427,7 @@ func (s *Service) EnsureDevice(ctx context.Context, userID, deviceID string) err
 
 // AdvanceDevice 在推送成功之后推进名册里这台设备的位置：有提交返回时，整批重放
 // 只按 base 取较大值，确有新提交写入时再推进到当前 head（ADR-0054）。名册里没有
-// 这台设备时什么都不做。
+// 这台设备或位置没有前进时什么都不做。
 func (s *Service) AdvanceDevice(ctx context.Context, userID, deviceID string, base int64, newCommits bool) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {

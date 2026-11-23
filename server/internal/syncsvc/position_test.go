@@ -115,6 +115,57 @@ func TestOrphanedAttachmentStaysInAccountQuota(t *testing.T) {
 	}
 }
 
+// TestTouchDeviceSkipsUnchangedWrites 守住名册写入只在能力或位置变化时发生：
+// 同一台设备连续上报同一个能力与位置时最近出现时间不前进，位置前进或能力变化
+// 才更新（ADR-0048）。
+func TestTouchDeviceSkipsUnchangedWrites(t *testing.T) {
+	ctx := context.Background()
+	store, clock := newSnapshotStore()
+	svc := NewService(store, snapshotTestSchema)
+	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 0); err != nil {
+		t.Fatalf("记录设备: %v", err)
+	}
+	devices, err := svc.Devices(ctx, "u1")
+	if err != nil || len(devices) != 1 || !devices[0].SnapshotCapable {
+		t.Fatalf("首次出现应写入名册: %+v, %v", devices, err)
+	}
+	first := devices[0].LastSeen
+
+	// 能力与位置都没变：不写这一行，最近出现时间留在第一次。
+	*clock = clock.Add(time.Hour)
+	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 0); err != nil {
+		t.Fatalf("再次记录设备: %v", err)
+	}
+	devices, err = svc.Devices(ctx, "u1")
+	if err != nil || !devices[0].LastSeen.Equal(first) {
+		t.Fatalf("没有变化时不应更新最近出现时间: %v -> %+v, %v", first, devices, err)
+	}
+
+	// 位置前进：更新位置与最近出现时间。
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	*clock = clock.Add(time.Hour)
+	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 1); err != nil {
+		t.Fatalf("记录前进的位置: %v", err)
+	}
+	devices, err = svc.Devices(ctx, "u1")
+	if err != nil || devices[0].SyncedSeq != 1 || !devices[0].LastSeen.After(first) {
+		t.Fatalf("位置前进应更新这一行: %+v, %v", devices, err)
+	}
+
+	// 能力变化：位置不动也更新。
+	advanced := devices[0].LastSeen
+	*clock = clock.Add(time.Hour)
+	if err := svc.TouchDevice(ctx, "u1", "device-a", false, 1); err != nil {
+		t.Fatalf("记录能力变化: %v", err)
+	}
+	devices, err = svc.Devices(ctx, "u1")
+	if err != nil || devices[0].SnapshotCapable || !devices[0].LastSeen.After(advanced) {
+		t.Fatalf("能力变化应更新这一行: %+v, %v", devices, err)
+	}
+}
+
 // TestAdvanceDeviceNeverPassesHead 守住设备位置的上限：清除云端数据之后别的设备
 // 还会带着旧的大位置来推送，位置不能被推到当前的 head 之外（ADR-0054）。
 func TestAdvanceDeviceNeverPassesHead(t *testing.T) {

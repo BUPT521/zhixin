@@ -8,6 +8,7 @@
 // 事务之外执行 SQL 不形成提交，与绕过命令的丢失一致。
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/application/sync_service.dart';
 
 import '../support/fake_server.dart';
 import '../support/sync_rig.dart';

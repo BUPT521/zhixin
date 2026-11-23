@@ -475,12 +475,13 @@ class ServerReady {
   final int schemaVersion;
 }
 
-/// 服务端序列的最新位置、保留下界与当前快照。
+/// 服务端序列的最新位置、保留下界、压缩开关与当前快照。
 class ServerHead {
   const ServerHead({
     required this.head,
     required this.schemaVersion,
     this.earliestSeq = 1,
+    this.compact = false,
     this.snapshot,
   });
 
@@ -488,6 +489,7 @@ class ServerHead {
     head: (json['head'] as num?)?.toInt() ?? 0,
     schemaVersion: (json['schema_version'] as num?)?.toInt() ?? 0,
     earliestSeq: (json['earliest_seq'] as num?)?.toInt() ?? 1,
+    compact: json['compact'] == true,
     snapshot: _snapshotOf(json['snapshot']),
   );
 
@@ -496,6 +498,10 @@ class ServerHead {
 
   /// 保留下界：第一条仍然可以拉取的序号，没有删除过提交时为 1。
   final int earliestSeq;
+
+  /// 服务端有没有打开快照压缩：关闭时登记只写指针、不删提交，客户端因此不上传
+  /// 整库快照，避免白占附件配额（ADR-0047）。旧版服务端没有这个字段时按关闭处理。
+  final bool compact;
 
   /// 当前快照指针；没有登记时为空。
   final ServerSnapshot? snapshot;
