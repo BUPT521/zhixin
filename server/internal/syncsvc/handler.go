@@ -9,7 +9,6 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
-	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
@@ -21,37 +20,11 @@ type Handler struct {
 	svc      *Service
 	log      *slog.Logger
 	maxBytes int64
-	// gate 在写数据之前问一次“这个账号是不是正在清除云端数据”；它由装配
-	// 注入，没有注入时不拦请求。
-	gate func(ctx context.Context, userID string) error
 }
 
 // NewHandler wires the handler.
 func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
 	return &Handler{svc: svc, log: log, maxBytes: min(maxBytes, MaxPushBytes)}
-}
-
-// SetPurgeGate 注入清除期间的写拦截。gate 返回 cloudpurge.ErrPurging 时，
-// Push、Reset 与快照登记回 409 并且不写数据；返回其它错误按 500 处理。装配时传
-// cloudpurge.Service.Gate。
-func (h *Handler) SetPurgeGate(gate func(ctx context.Context, userID string) error) {
-	h.gate = gate
-}
-
-// allowWrite 在清除进行时写好 409 并返回 false，调用方据此直接返回。
-func (h *Handler) allowWrite(w http.ResponseWriter, r *http.Request, userID string) bool {
-	if h.gate == nil {
-		return true
-	}
-	if err := h.gate(r.Context(), userID); err != nil {
-		if errors.Is(err, cloudpurge.ErrPurging) {
-			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "cloud purge in progress")
-			return false
-		}
-		httpx.WriteInternal(w, r, h.log, err)
-		return false
-	}
-	return true
 }
 
 // syncHead 把服务端状态写成契约的 SyncHead。GET /v1/sync/head、
@@ -168,9 +141,6 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 
 func (h *Handler) Push(w http.ResponseWriter, r *http.Request, params api.PostV1SyncCommitsParams) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	var in api.PostV1SyncCommitsJSONBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -239,9 +209,6 @@ func newCommits(commits []api.Commit, seqs []int64, base int64) bool {
 // （ADR-0043）。
 func (h *Handler) RegisterSnapshot(w http.ResponseWriter, r *http.Request, params api.PutV1SyncSnapshotParams) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	if id, capable, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
 		h.recordDeviceAt(r.Context(), p.UserID, id, capable)
 	}
@@ -278,9 +245,6 @@ func (h *Handler) RegisterSnapshot(w http.ResponseWriter, r *http.Request, param
 // 空序列也回 204，客户端只按状态码判断，不需要先看 head 再决定调不调用。
 func (h *Handler) Reset(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	if err := h.svc.Reset(r.Context(), p.UserID); err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
@@ -312,9 +276,6 @@ func (h *Handler) Devices(w http.ResponseWriter, r *http.Request, params api.Get
 // 形状时返回 400；清除云端数据期间的改名与其它写请求一样返回 409（ADR-0048）。
 func (h *Handler) RenameDevice(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	var in api.SyncDeviceRename
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return
@@ -354,9 +315,6 @@ func (h *Handler) Refs(w http.ResponseWriter, r *http.Request) {
 // 409（ADR-0054）。
 func (h *Handler) PutRef(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	var in api.SyncRefWrite
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return

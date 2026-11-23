@@ -50,10 +50,8 @@ type Proxy struct {
 	verifyContact func(ctx context.Context, userID string) (bool, error)
 
 	// cache 保存按账号隔离的嵌入向量缓存（ADR-0030），由 server 装配时经
-	// SetEmbeddingCache 注入；为空时查找返回空结果、嵌入不写缓存。cacheGate 是
-	// 清除云端数据的闸门，闸门返回错误时不写缓存。
-	cache     EmbeddingCache
-	cacheGate func(ctx context.Context, userID string) error
+	// SetEmbeddingCache 注入；为空时查找返回空结果、嵌入不写缓存。
+	cache EmbeddingCache
 
 	// maxPerUser 是同一账号同时进行的托管请求上限，由 SetConcurrencyLimit 设置，
 	// 小于等于 0 表示不限制。inflight 记在途请求数，由 mu 保护；计数归零时删键，

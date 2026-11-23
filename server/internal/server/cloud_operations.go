@@ -10,6 +10,16 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/routepolicy"
 )
 
+// cloudWriteOperations are writes to an account's cloud data that are not in the
+// upload list (they do not consume the upload rate limit or require a verified
+// contact). They still take part in the in-process exclusion so that a bulk
+// deletion waits for them and they answer 409 while it runs (review 9.3 V10).
+var cloudWriteOperations = []string{
+	"PUT /v1/sync/snapshot",
+	"PUT /v1/sync/refs",
+	"PUT /v1/sync/devices",
+}
+
 // cloudOperations lets writes for an account coexist and gives bulk deletion
 // exclusive access for the full request, including object storage operations.
 func cloudOperations(requireVerified bool) api.MiddlewareFunc {
@@ -18,13 +28,14 @@ func cloudOperations(requireVerified bool) api.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			upload := routepolicy.IsUpload(r.Pattern)
+			write := upload || isCloudWrite(r.Pattern)
 			var exclusive bool
 			switch r.Pattern {
 			case "DELETE /v1/cloud", "DELETE /v1/sync/commits", "DELETE /v1/backups", "DELETE /v1/me":
 				exclusive = true
 			case "DELETE /v1/backups/{id}":
 			default:
-				if !upload {
+				if !write {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -60,4 +71,15 @@ func cloudOperations(requireVerified bool) api.MiddlewareFunc {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isCloudWrite reports whether a matched route is one of the non-upload writes
+// that must not run while a bulk deletion is in flight.
+func isCloudWrite(pattern string) bool {
+	for _, item := range cloudWriteOperations {
+		if item == pattern {
+			return true
+		}
+	}
+	return false
 }

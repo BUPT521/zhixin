@@ -62,8 +62,8 @@ type Store interface {
 
 // ObjectStore 是生产实现：附件键放在共享的对象存储里，配额索引留在进程内存。
 //
-// 索引只在内存里的代价是重启后要由 backfill-attachments 从对象存储重建；
-// PostgreSQL 装配下改用 pg.Store 的 attachment 表，索引与账号一起持久化。
+// 索引只在内存里的代价是重启之后配额从 0 重新算起；PostgreSQL 装配下改用
+// pg.Store 的 attachment 表，索引与账号一起持久化。
 type ObjectStore struct {
 	objects objectstore.Store
 

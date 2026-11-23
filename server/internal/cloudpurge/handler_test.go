@@ -2,6 +2,7 @@ package cloudpurge
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,20 +24,24 @@ type testAPI struct {
 
 func (a testAPI) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) { a.h.Purge(w, r) }
 
-// newTestServer 装配清除处理器与鉴权中间件，返回客户端、账号服务与标记
-// 存储；标记存储让用例可以模拟“清除已经进行中”。
-func newTestServer(t *testing.T) (*testutil.Client, *auth.Service, *MemoryStore) {
+// newTestServer 装配清除处理器与鉴权中间件，返回客户端与账号服务。
+func newTestServer(t *testing.T) (*testutil.Client, *auth.Service) {
+	t.Helper()
+	return newTestServerWith(t, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, &fakeEmbeddings{})
+}
+
+// newTestServerWith 与 newTestServer 相同，只是允许用例传入会失败的步骤实现。
+func newTestServerWith(t *testing.T, backups Backups, syncLog SyncLog, blobs Attachments, embeddings Embeddings) (*testutil.Client, *auth.Service) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	marker := NewMemoryStore()
-	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, &fakeEmbeddings{}, objectstore.NewMemory())
+	svc := New(backups, syncLog, blobs, embeddings, objectstore.NewMemory())
 	handler := NewHandler(svc, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
 		httpx.RequestID,
 		auth.Middleware(authSvc, log),
-	)), authSvc, marker
+	)), authSvc
 }
 
 // signIn 注册一个测试账号并返回令牌（含账号 id）。
@@ -69,8 +74,10 @@ func requireProtectedRoute(t *testing.T, svc *auth.Service, token string) {
 }
 
 // TestHandlerPurgeEmptyAccount 守住空账号也回 204、重复调用幂等、未登录 401。
+// 并发清除与清除期间的写请求由 server 包的 cloudOperations 回 409，不经过这里
+// （审查 9.3 的 V10）。
 func TestHandlerPurgeEmptyAccount(t *testing.T) {
-	c, authSvc, _ := newTestServer(t)
+	c, authSvc := newTestServer(t)
 	tokens := signIn(t, authSvc, "a@b.cn")
 	requireProtectedRoute(t, authSvc, tokens.AccessToken)
 
@@ -85,26 +92,16 @@ func TestHandlerPurgeEmptyAccount(t *testing.T) {
 	}
 }
 
-// TestHandlerPurgeConflictWhileInProgress 守住标记期间的重复请求：另一个清除
-// 还没结束时回 409 conflict，结束标记之后同一条请求回 204。
-func TestHandlerPurgeConflictWhileInProgress(t *testing.T) {
-	c, authSvc, marker := newTestServer(t)
-	tokens := signIn(t, authSvc, "a@b.cn")
+// TestHandlerPurgeFailureIs500 守住某一步失败时的响应：回 500，由用户重发请求
+// 从头再走一遍；错误里不带内部细节。
+func TestHandlerPurgeFailureIs500(t *testing.T) {
+	boom := errors.New("备份存储不可用")
+	c, authSvc := newTestServerWith(t, &fakeBackups{errs: []error{boom}}, &fakeSync{}, &fakeBlobs{}, &fakeEmbeddings{})
+	tokens := signIn(t, authSvc, "fail@b.cn")
 	requireProtectedRoute(t, authSvc, tokens.AccessToken)
-	ctx := context.Background()
 
-	now := time.Now().UTC()
-	if claimed, err := marker.ClaimPurge(ctx, tokens.UserID, now, now.Add(-StaleAfter)); err != nil || !claimed {
-		t.Fatalf("seed marker: claimed %v, err %v", claimed, err)
-	}
 	p := testutil.ReadProblem(t, c.Do(http.MethodDelete, "/v1/cloud", tokens.AccessToken, nil, nil))
-	if p.Status != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
-		t.Fatalf("purge during purge: %+v", p)
-	}
-	if err := marker.EndPurge(ctx, tokens.UserID); err != nil {
-		t.Fatalf("end marker: %v", err)
-	}
-	if code := c.JSON(http.MethodDelete, "/v1/cloud", tokens.AccessToken, nil, nil); code != http.StatusNoContent {
-		t.Fatalf("purge after marker removed: %d", code)
+	if p.Status != http.StatusInternalServerError || p.Code != string(httpx.CodeInternal) {
+		t.Fatalf("failed purge: %+v", p)
 	}
 }

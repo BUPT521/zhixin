@@ -1,7 +1,6 @@
 package blobs
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -9,7 +8,6 @@ import (
 	"strconv"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
-	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
@@ -19,21 +17,11 @@ import (
 type Handler struct {
 	svc *Service
 	log *slog.Logger
-	// gate 在写字节之前问一次“这个账号是不是正在清除云端数据”；它由装配
-	// 注入，没有注入时不拦请求。
-	gate func(ctx context.Context, userID string) error
 }
 
 // NewHandler 组装附件接口。
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
-}
-
-// SetPurgeGate 注入清除期间的写拦截。gate 返回 cloudpurge.ErrPurging 时 Put
-// 回 409 并且不落字节；返回其它错误按 500 处理。装配时传
-// cloudpurge.Service.Gate。
-func (h *Handler) SetPurgeGate(gate func(ctx context.Context, userID string) error) {
-	h.gate = gate
 }
 
 // Head 只回答存在与否。HEAD 不返回响应体，所以错误也只给状态码，客户端按
@@ -86,17 +74,6 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	p := auth.MustPrincipal(r.Context())
-	// 清除进行时不读请求体：字节落临时文件再被拒绝，等于白花一次上传。
-	if h.gate != nil {
-		if err := h.gate(r.Context(), p.UserID); err != nil {
-			if errors.Is(err, cloudpurge.ErrPurging) {
-				httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "cloud purge in progress")
-				return
-			}
-			httpx.WriteInternal(w, r, h.log, err)
-			return
-		}
-	}
 	spool, ok := httpx.SpoolVerified(w, r, h.log, httpx.SpoolCheck{
 		Limit:    h.svc.MaxBytes(),
 		SHA256:   sha,

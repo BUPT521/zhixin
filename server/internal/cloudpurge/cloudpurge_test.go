@@ -5,13 +5,12 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
 // fakeBackups、fakeSync、fakeBlobs 记录调用次数，并可按顺序注入失败，用来
-// 覆盖编排顺序与失败保留标记的行为。
+// 覆盖编排顺序与失败之后各步的行为。
 type fakeBackups struct {
 	calls int
 	errs  []error
@@ -43,8 +42,8 @@ func (f *fakeBlobs) DeleteUser(context.Context, string) error {
 }
 
 // fakeEmbeddings 是嵌入向量缓存的清空步骤。缓存是派生数据，仍然要和其余几类
-// 数据一起清，清除顺序与失败保留标记的行为都要覆盖。实现里的 PurgeUser 在同一
-// 把账号锁中加代次并删行，编排只关心它被调用一次、失败时原样返回错误。
+// 数据一起清，清除顺序与失败之后的行为都要覆盖。实现里的 PurgeUser 在同一把
+// 账号锁中加代次并删行，编排只关心它被调用一次、失败时原样返回错误。
 type fakeEmbeddings struct {
 	calls int
 	errs  []error
@@ -82,8 +81,8 @@ func seedAccountObjects(t *testing.T, objects objectstore.Store, userID, sha str
 func shaFor(letter string) string { return string(bytes.Repeat([]byte(letter), 64)) }
 
 // TestPurgeClearsEverythingAndLeftoverObjects 守住一次成功清除做了哪些事：
-// 三类数据各清一次，两个账号前缀下的遗留对象都清掉，别的账号不受影响，标记
-// 在结束时删除（所以空账号再清一次也成功）。
+// 四类数据各清一次，两个账号前缀下的遗留对象都清掉，别的账号不受影响；清除
+// 可重复调用，所以空账号再清一次也成功（审查 9.3 的 V10：中途失败由用户重试）。
 func TestPurgeClearsEverythingAndLeftoverObjects(t *testing.T) {
 	ctx := context.Background()
 	objects := objectstore.NewMemory()
@@ -93,7 +92,7 @@ func TestPurgeClearsEverythingAndLeftoverObjects(t *testing.T) {
 	syncLog := &fakeSync{}
 	blobs := &fakeBlobs{}
 	embeddings := &fakeEmbeddings{}
-	svc := New(NewMemoryStore(), backups, syncLog, blobs, embeddings, objects)
+	svc := New(backups, syncLog, blobs, embeddings, objects)
 
 	if err := svc.Purge(ctx, "u1"); err != nil {
 		t.Fatalf("purge: %v", err)
@@ -119,94 +118,25 @@ func TestPurgeClearsEverythingAndLeftoverObjects(t *testing.T) {
 		}
 	}
 
-	// 标记已删：同一个账号马上可以再清一次。
+	// 各步幂等：同一个账号马上可以再清一次。
 	if err := svc.Purge(ctx, "u1"); err != nil {
 		t.Fatalf("second purge: %v", err)
 	}
-}
-
-// TestPurgeRejectsConcurrentRequestAndGatesWrites 守住标记的两个作用：新标记
-// 期间第二次清除返回 ErrInProgress（409），写处理器拿到 ErrPurging；标记超过
-// 10 分钟视为上次中断，写放行、新的清除接管并把标记删掉。
-func TestPurgeRejectsConcurrentRequestAndGatesWrites(t *testing.T) {
-	ctx := context.Background()
-	marker := NewMemoryStore()
-	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, &fakeEmbeddings{}, objectstore.NewMemory())
-	svc.now = func() time.Time { return now }
-
-	if err := svc.Gate(ctx, "u1"); err != nil {
-		t.Fatalf("gate without a purge: %v", err)
-	}
-	// 模拟一次已经开始、还没结束的清除。
-	claimed, err := marker.ClaimPurge(ctx, "u1", now, now.Add(-StaleAfter))
-	if err != nil || !claimed {
-		t.Fatalf("seed marker: claimed %v, err %v", claimed, err)
-	}
-	if err := svc.Purge(ctx, "u1"); !errors.Is(err, ErrInProgress) {
-		t.Fatalf("concurrent purge: want ErrInProgress, got %v", err)
-	}
-	if err := svc.Gate(ctx, "u1"); !errors.Is(err, ErrPurging) {
-		t.Fatalf("gate during purge: want ErrPurging, got %v", err)
-	}
-
-	// 超过有效期：上一次视为中断，写入放行，新的清除接管并完成。
-	now = now.Add(StaleAfter + time.Minute)
-	if err := svc.Gate(ctx, "u1"); err != nil {
-		t.Fatalf("gate after stale marker: %v", err)
-	}
-	if err := svc.Purge(ctx, "u1"); err != nil {
-		t.Fatalf("takeover purge: %v", err)
-	}
-	if _, ok, err := marker.PurgeStartedAt(ctx, "u1"); err != nil || ok {
-		t.Fatalf("marker should be removed, ok=%v err=%v", ok, err)
+	if backups.calls != 2 || embeddings.calls != 2 {
+		t.Fatalf("second purge calls: backups %d, embeddings %d", backups.calls, embeddings.calls)
 	}
 }
 
-// TestPurgeEmbeddingFailureKeepsMarker 守住嵌入缓存这一步失败时的行为：错误原样
-// 返回，标记保留，立即重试回 409；过了有效期重试从头执行并成功。代次加一与删行
-// 在实现里是同一个事务，失败就没有清掉任何缓存行（ADR-0037）。
-func TestPurgeEmbeddingFailureKeepsMarker(t *testing.T) {
+// TestPurgeStopsAtFirstFailure 守住失败之后的行为：出错的步骤之后不再执行，错误
+// 原样返回；用户重试时从头执行各步并成功（审查 9.3 的 V10）。
+func TestPurgeStopsAtFirstFailure(t *testing.T) {
 	ctx := context.Background()
-	marker := NewMemoryStore()
-	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-	boom := errors.New("嵌入缓存清理不可用")
-	embeddings := &fakeEmbeddings{errs: []error{boom}}
-	svc := New(marker, &fakeBackups{}, &fakeSync{}, &fakeBlobs{}, embeddings, objectstore.NewMemory())
-	svc.now = func() time.Time { return now }
-
-	if err := svc.Purge(ctx, "u1"); !errors.Is(err, boom) {
-		t.Fatalf("purge failure: want %v, got %v", boom, err)
-	}
-	if _, ok, err := marker.PurgeStartedAt(ctx, "u1"); err != nil || !ok {
-		t.Fatalf("marker must survive a failure, ok=%v err=%v", ok, err)
-	}
-	if err := svc.Purge(ctx, "u1"); !errors.Is(err, ErrInProgress) {
-		t.Fatalf("immediate retry: want ErrInProgress, got %v", err)
-	}
-	now = now.Add(StaleAfter + time.Minute)
-	if err := svc.Purge(ctx, "u1"); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	if embeddings.calls != 2 {
-		t.Fatalf("embeddings calls = %d, want 2", embeddings.calls)
-	}
-}
-
-// TestPurgeFailureKeepsMarkerAndRetryCompletes 守住失败后的行为：出错的步骤
-// 之后不再执行，标记保留，立即重试回 409；过了有效期之后重试从头执行各步并
-// 成功，标记删除。
-func TestPurgeFailureKeepsMarkerAndRetryCompletes(t *testing.T) {
-	ctx := context.Background()
-	marker := NewMemoryStore()
-	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	boom := errors.New("备份存储不可用")
 	backups := &fakeBackups{errs: []error{boom}}
 	syncLog := &fakeSync{}
 	blobs := &fakeBlobs{}
 	embeddings := &fakeEmbeddings{}
-	svc := New(marker, backups, syncLog, blobs, embeddings, objectstore.NewMemory())
-	svc.now = func() time.Time { return now }
+	svc := New(backups, syncLog, blobs, embeddings, objectstore.NewMemory())
 
 	if err := svc.Purge(ctx, "u1"); !errors.Is(err, boom) {
 		t.Fatalf("purge failure: want %v, got %v", boom, err)
@@ -215,15 +145,8 @@ func TestPurgeFailureKeepsMarkerAndRetryCompletes(t *testing.T) {
 		t.Fatalf("steps after the failure must not run: sync %d, blobs %d, embeddings %d",
 			syncLog.calls, blobs.calls, embeddings.calls)
 	}
-	if _, ok, err := marker.PurgeStartedAt(ctx, "u1"); err != nil || !ok {
-		t.Fatalf("marker must survive a failure, ok=%v err=%v", ok, err)
-	}
-	if err := svc.Purge(ctx, "u1"); !errors.Is(err, ErrInProgress) {
-		t.Fatalf("immediate retry: want ErrInProgress, got %v", err)
-	}
 
-	// 过了有效期，重试从头执行并成功。
-	now = now.Add(StaleAfter + time.Minute)
+	// 重试从头执行各步并成功。
 	if err := svc.Purge(ctx, "u1"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -231,7 +154,24 @@ func TestPurgeFailureKeepsMarkerAndRetryCompletes(t *testing.T) {
 		t.Fatalf("retry calls: backups %d, sync %d, blobs %d, embeddings %d",
 			backups.calls, syncLog.calls, blobs.calls, embeddings.calls)
 	}
-	if _, ok, _ := marker.PurgeStartedAt(ctx, "u1"); ok {
-		t.Fatal("marker should be removed after a successful retry")
+}
+
+// TestPurgeEmbeddingFailureIsReturned 守住嵌入缓存这一步失败时的行为：错误原样
+// 返回，前缀清理不再执行；重试时各步从头再走一遍。代次加一与删行在实现里是同
+// 一个事务，失败就没有清掉任何缓存行（ADR-0037）。
+func TestPurgeEmbeddingFailureIsReturned(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("嵌入缓存清理不可用")
+	embeddings := &fakeEmbeddings{errs: []error{boom}}
+	svc := New(&fakeBackups{}, &fakeSync{}, &fakeBlobs{}, embeddings, objectstore.NewMemory())
+
+	if err := svc.Purge(ctx, "u1"); !errors.Is(err, boom) {
+		t.Fatalf("purge failure: want %v, got %v", boom, err)
+	}
+	if err := svc.Purge(ctx, "u1"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if embeddings.calls != 2 {
+		t.Fatalf("embeddings calls = %d, want 2", embeddings.calls)
 	}
 }

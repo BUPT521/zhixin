@@ -176,23 +176,6 @@ func TestEmbeddingCacheDuplicateWriteKeepsFirstVector(t *testing.T) {
 	}
 }
 
-// TestEmbeddingCacheGateBlocksWrite 守住清除云端数据期间的写入拦截：嵌入照常
-// 返回，缓存不新增派生数据。
-func TestEmbeddingCacheGateBlocksWrite(t *testing.T) {
-	env, cache, tokens := newCacheTestServer(t)
-	env.proxy.SetEmbeddingCacheGate(func(context.Context, string) error {
-		return errors.New("cloud purge in progress")
-	})
-	texts := inputs(2)
-	if code := postEmbeddings(t, env, tokens.AccessToken, texts, true); code != http.StatusOK {
-		t.Fatalf("清除期间嵌入仍应可用：%d", code)
-	}
-	hashes := []string{textHash(texts[0]), textHash(texts[1])}
-	if rows, err := cache.Lookup(context.Background(), tokens.UserID, "zhixin-embed", hashes); err != nil || len(rows) != 0 {
-		t.Fatalf("清除期间不应写缓存：rows=%d err=%v", len(rows), err)
-	}
-}
-
 // TestEmbeddingCacheIsolatedByAccount 守住按账号隔离：一个账号算过的文本，另一个
 // 账号查不到。
 func TestEmbeddingCacheIsolatedByAccount(t *testing.T) {

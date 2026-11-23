@@ -187,14 +187,11 @@ func (p *Proxy) cacheEmbeddings(r *http.Request, userID, model string, inputs []
 	if len(items) == 0 {
 		return
 	}
-	// 清除云端数据期间不写派生数据：嵌入本身照常返回，删除之后不会又冒出缓存行。
+	// 写入只按代次判断清除有没有在读取与写入之间发生过：代次对不上时丢弃这次
+	// 写入，清除之后不会又冒出旧向量（ADR-0037）。清除进行期间新发起的嵌入请求
+	// 由进程内的 cloudOperations 挡在处理器之前，走不到这里。
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), embeddingCacheTimeout)
 	defer cancel()
-	if p.cacheGate != nil {
-		if err := p.cacheGate(ctx, userID); err != nil {
-			return
-		}
-	}
 	if err := p.cache.Put(ctx, userID, model, items, generation); err != nil {
 		p.log.Error("write embedding cache",
 			slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
@@ -208,12 +205,6 @@ func (p *Proxy) SetEmbeddingCache(cache EmbeddingCache) {
 	if setter, ok := cache.(cacheLimits); ok {
 		setter.SetEmbeddingCacheLimit(p.cfg.EmbeddingCacheBytes)
 	}
-}
-
-// SetEmbeddingCacheGate 注入清除云端数据的闸门：闸门返回错误时不写缓存，与
-// 备份、同步的写处理器共用同一个 Gate。
-func (p *Proxy) SetEmbeddingCacheGate(gate func(ctx context.Context, userID string) error) {
-	p.cacheGate = gate
 }
 
 // DeleteEmbeddingCache 删除一个对外模型的全部缓存行；管理后台删除模型或改变
