@@ -416,8 +416,9 @@ func deviceFromRequest(deviceID, capabilities *string) (string, bool, bool) {
 	return id, capable, true
 }
 
-// recordDeviceAt 只更新名册里的最近出现时间与快照能力，不动设备位置：head 查询、
+// recordDeviceAt 只更新名册里的快照能力与最近出现时间，不动设备位置：head 查询、
 // 快照登记、名册查询与改名这几条路径本身不说明这台设备读到了哪（ADR-0054）。
+// 能力与位置都没有变化时写入被跳过，进行中的同步因此不必每请求写一行（ADR-0048）。
 func (h *Handler) recordDeviceAt(ctx context.Context, userID, deviceID string, snapshotCapable bool) {
 	state, err := h.svc.State(ctx, userID)
 	if err != nil {
@@ -432,9 +433,9 @@ func (h *Handler) recordDeviceAt(ctx context.Context, userID, deviceID string, s
 	h.recordDevice(ctx, userID, deviceID, snapshotCapable, state.Head)
 }
 
-// recordDevice 更新设备名册：最近出现时间写服务端当前时间，快照能力整组替换，
-// 位置按 position 取较大值且不超过当前 head，别名不动。写入失败只记日志，不影响
-// 这一轮同步的结果（ADR-0048、ADR-0054）。
+// recordDevice 更新设备名册：快照能力整组替换，位置按 position 取较大值且不超过
+// 当前 head，别名不动；最近出现时间只在能力或位置变化时前进。写入失败只记日志，
+// 不影响这一轮同步的结果（ADR-0048、ADR-0054）。
 func (h *Handler) recordDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) {
 	if err := h.svc.TouchDevice(ctx, userID, deviceID, snapshotCapable, position); err != nil {
 		h.log.Warn("cannot record a sync device",

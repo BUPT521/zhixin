@@ -189,8 +189,9 @@ WHERE user_id = sqlc.arg(user_id);
 
 -- ---- 设备名册（ADR-0048、ADR-0054） ----
 
--- 带设备标识的同步请求：最近出现时间写服务端当前时间，快照能力整组替换，位置按
--- after 取较大值且不超过当前 head，别名保持用户设置的值；首次出现时间只在插入时写。
+-- 带设备标识的同步请求：快照能力整组替换，位置按 after 取较大值且不超过当前
+-- head，别名保持用户设置的值，首次出现时间只在插入时写。最近出现时间只在能力或
+-- 位置确实变化时前进：没有变化的一轮同步不再多写一行（ADR-0048）。
 -- name: TouchSyncDevice :exec
 INSERT INTO sync_device (user_id, device_id, snapshot_capable, synced_seq)
 VALUES (
@@ -200,7 +201,9 @@ VALUES (
 ON CONFLICT (user_id, device_id) DO UPDATE
 SET snapshot_capable = EXCLUDED.snapshot_capable,
     synced_seq = least(greatest(sync_device.synced_seq, EXCLUDED.synced_seq), sqlc.arg(head)::bigint),
-    last_seen = now();
+    last_seen = now()
+WHERE sync_device.snapshot_capable IS DISTINCT FROM EXCLUDED.snapshot_capable
+   OR least(greatest(sync_device.synced_seq, EXCLUDED.synced_seq), sqlc.arg(head)::bigint) > sync_device.synced_seq;
 
 -- 没有设备标识的推送按提交里的设备标识补一行：已有行只更新最近出现时间，能力、
 -- 位置与别名都不动，旧版本客户端因此也会出现在名册里。
@@ -211,7 +214,7 @@ ON CONFLICT (user_id, device_id) DO UPDATE
 SET last_seen = now();
 
 -- 推送之后推进设备位置：确有新提交写入时推到新 head，整批重放时只按 base 取较大值，
--- 两种情况都不超过当前 head（ADR-0054）。
+-- 两种情况都不超过当前 head；位置没有前进时不写这一行（ADR-0054）。
 -- name: AdvanceSyncDevice :exec
 UPDATE sync_device
 SET synced_seq = least(
@@ -219,7 +222,11 @@ SET synced_seq = least(
         CASE WHEN sqlc.arg(to_head)::boolean THEN sqlc.arg(head)::bigint ELSE 0::bigint END),
       sqlc.arg(head)::bigint),
     last_seen = now()
-WHERE user_id = sqlc.arg(user_id) AND device_id = sqlc.arg(device_id);
+WHERE user_id = sqlc.arg(user_id) AND device_id = sqlc.arg(device_id)
+  AND least(
+      greatest(synced_seq, sqlc.arg(base_seq)::bigint,
+        CASE WHEN sqlc.arg(to_head)::boolean THEN sqlc.arg(head)::bigint ELSE 0::bigint END),
+      sqlc.arg(head)::bigint) > synced_seq;
 
 -- name: SyncDevices :many
 SELECT device_id, alias, snapshot_capable, synced_seq, first_seen, last_seen

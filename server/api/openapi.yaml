@@ -308,11 +308,11 @@ paths:
         `null`，`compact` 是服务端有没有打开快照压缩。客户端在首次同步与判断是否
         需要重新克隆时读这一份（ADR-0043）；`compact` 为假时客户端不上传整库快照，
         因为服务端不会按它删除提交（ADR-0047）。
-        带 `X-Device-Id` 时同时更新设备名册的最近出现时间与快照能力（ADR-0048）。
+        带 `X-Device-Id` 时更新设备名册的快照能力，能力或位置有变化时同时更新最近出现时间（ADR-0048）。
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
@@ -349,7 +349,7 @@ paths:
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
@@ -389,7 +389,7 @@ paths:
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
@@ -505,7 +505,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
@@ -538,7 +538,7 @@ paths:
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的快照能力与设备位置，能力或位置有变化时同时更新最近出现时间（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
