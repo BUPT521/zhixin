@@ -76,7 +76,7 @@ void main() {
       kept: '本机数据没有改动',
     );
     expect(unavailable, contains('缺少可用快照'));
-    expect(unavailable, contains('清除云端数据后重新开始'));
+    expect(unavailable, contains('清除全部数据后重新开始'));
 
     final compacted = failureNotice(
       const SyncHistoryCompacted(

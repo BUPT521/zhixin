@@ -179,9 +179,9 @@ void main() {
     await tester.tap(find.text('取消'));
     await settle(tester);
 
-    // 清理历史读的是另一组阻塞原因（clearing: true）。
-    await scrollTo(tester, find.text('清理历史'));
-    await tester.tap(find.text('清理历史'));
+    // 清理本机历史读的是另一组阻塞原因（clearing: true）。
+    await scrollTo(tester, find.text('清理本机历史'));
+    await tester.tap(find.text('清理本机历史'));
     await settle(tester);
     expect(find.text('现在还不能清理：'), findsOneWidget);
     expect(stub.blockerRequests, contains(true));
@@ -321,7 +321,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('删除命名版本与清理历史都先弹确认，命名版本说明写清清理时保留', (tester) async {
+  testWidgets('删除命名版本与清理本机历史都先弹确认，命名版本说明写清清理时保留', (tester) async {
     final appScope = (await openPage(tester)).scope;
     await tester.runAsync(
       () async => appScope.data.revisions.name(
@@ -332,7 +332,7 @@ void main() {
     await settle(tester);
 
     await scrollTo(tester, find.text('版本一'));
-    expect(find.textContaining('命名后在清理历史时保留'), findsOneWidget);
+    expect(find.textContaining('命名后在清理本机历史时保留'), findsOneWidget);
 
     // 删除命名版本：先确认，取消之后名称仍在。
     final named = find.ancestor(
@@ -348,11 +348,11 @@ void main() {
     await settle(tester);
     expect(find.text('版本一'), findsOneWidget);
 
-    // 清理历史：同样先确认，取消之后历史仍在。
-    await scrollTo(tester, find.text('清理历史'));
-    await tester.tap(find.text('清理历史'));
+    // 清理本机历史：同样先确认，取消之后历史仍在。
+    await scrollTo(tester, find.text('清理本机历史'));
+    await tester.tap(find.text('清理本机历史'));
     await settle(tester);
-    expect(find.text('清理历史'), findsNWidgets(2));
+    expect(find.text('清理本机历史'), findsNWidgets(2));
     expect(find.text('清理'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await settle(tester);

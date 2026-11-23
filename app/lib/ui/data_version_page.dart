@@ -1037,7 +1037,7 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   /// 清理前的确认：先读历史下游读者的阻塞原因，有原因时写在框里并禁用确认。
   ///
-  /// [clearing] 为真时对应“清理历史”，否则对应“按留存清理”。读不到原因时
+  /// [clearing] 为真时对应“清理本机历史”，否则对应“按留存清理”。读不到原因时
   /// 不弹确认，按读取失败提示一次：不能在没有核对的情况下删提交。
   Future<bool> _confirmCleanup({
     required String title,
@@ -1190,7 +1190,7 @@ class _DataVersionPageState extends State<DataVersionPage>
   Future<void> _clearHistory() async {
     if (_busy) return;
     final confirmed = await _confirmCleanup(
-      title: '清理历史',
+      title: '清理本机历史',
       clearing: true,
       confirmLabel: '清理',
       content: const Text(
@@ -1202,7 +1202,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     setState(() => _busy = true);
     try {
       await AppScope.of(context).data.revisions.clearHistory();
-      _report('已清理历史，当前数据保留；更早的回执不再提供撤销入口');
+      _report('已清理本机历史，当前数据保留；更早的回执不再提供撤销入口');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -1210,7 +1210,7 @@ class _DataVersionPageState extends State<DataVersionPage>
           context,
           error,
           stack,
-          action: '清理历史',
+          action: '清理本机历史',
           kind: 'data_version_clear_history',
           kept: '当前数据保留',
           next: '可以再试一次',
@@ -1371,7 +1371,7 @@ class _DataVersionPageState extends State<DataVersionPage>
                 '共 ${usage.commitCount} 条保留提交 · '
                 '${_sizeLabel(usage.databaseBytes)} · HEAD ${history.head}',
             action: SectionLink(
-              label: '清理历史',
+              label: '清理本机历史',
               icon: FLucideIcons.eraser,
               onPressed: _busy ? null : _clearHistory,
             ),
@@ -1413,7 +1413,7 @@ class _DataVersionPageState extends State<DataVersionPage>
           if (history.refs.isNotEmpty) ...[
             const SectionHeading(
               title: '命名版本',
-              subtitle: '命名后在清理历史时保留；删除名称不会删除提交，仍可从提交历史恢复到这个版本。',
+              subtitle: '命名后在清理本机历史时保留；删除名称不会删除提交，仍可从提交历史恢复到这个版本。',
             ),
             for (final ref in history.refs)
               Padding(
@@ -1427,7 +1427,7 @@ class _DataVersionPageState extends State<DataVersionPage>
                   ),
                   subtitle: Text(
                     '${ref.note?.trim().isNotEmpty == true ? '${ref.note} · ' : ''}'
-                    '${history.refCommitIds[ref.name] == null ? '该版本的历史不在本机，需要时请导出版本库备份' : '提交 #${history.refCommitIds[ref.name]}'}',
+                    '${history.refCommitIds[ref.name] == null ? '该版本的历史不在本机，需要长期保留时请导出版本库备份' : '提交 #${history.refCommitIds[ref.name]}'}',
                   ),
                   suffix: ZhixinIconButton(
                     tooltip: '删除命名',

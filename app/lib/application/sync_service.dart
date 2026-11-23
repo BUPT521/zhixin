@@ -129,7 +129,7 @@ class SyncSnapshotProblem implements Exception {
           '设备看到的内容不变。取消则不同步，本机数据保持不变。',
     SyncSnapshotCode.unavailable =>
       '云端历史已经压缩，缺少可用快照，暂时不能自动重建这台设备。'
-          '可以先在一台还保留完整历史的设备上同步一次（它会登记快照），或者清除云端数据后重新开始。',
+          '可以先在一台还保留完整历史的设备上同步一次（它会登记快照），或者清除全部数据后重新开始。',
     SyncSnapshotCode.invalid => '云端快照校验失败，这次没有重建本机数据：$reason',
   };
 
