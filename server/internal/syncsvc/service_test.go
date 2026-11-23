@@ -14,7 +14,7 @@ import (
 func testCommit(id string, schema int) Commit {
 	after := json.RawMessage(`{"content":"x"}`)
 	return Commit{
-		RequestId:     id,
+		Uid:           id,
 		DeviceId:      "device-a",
 		SchemaVersion: schema,
 		Actor:         api.User,
@@ -33,13 +33,14 @@ func TestServicePushIsLinearAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
 
-	head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)})
-	if err != nil || head != 2 {
-		t.Fatalf("push: head %d, err %v", head, err)
+	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)})
+	if err != nil || result.Head != 2 || len(result.Seqs) != 2 || result.Seqs[0] != 1 || result.Seqs[1] != 2 {
+		t.Fatalf("push: %+v, err %v", result, err)
 	}
-	// A retried batch after a lost response is ignored.
-	if head, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}); err != nil || head != 2 {
-		t.Fatalf("replay: head %d, err %v", head, err)
+	// A retried batch after a lost response is ignored and answers with the
+	// sequence numbers the commits already hold.
+	if result, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}); err != nil || result.Head != 2 || len(result.Seqs) != 1 || result.Seqs[0] != 1 {
+		t.Fatalf("replay: %+v, err %v", result, err)
 	}
 	// A new commit on a stale base must pull first.
 	if _, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); !errors.Is(err, ErrHeadMoved) {
@@ -133,11 +134,11 @@ func TestServiceResetClearsLog(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
 
-	if head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}); err != nil || head != 2 {
-		t.Fatalf("push u1: head %d, err %v", head, err)
+	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}); err != nil || r.Head != 2 {
+		t.Fatalf("push u1: %+v, err %v", r, err)
 	}
-	if head, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("other", 27)}); err != nil || head != 1 {
-		t.Fatalf("push u2: head %d, err %v", head, err)
+	if r, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("other", 27)}); err != nil || r.Head != 1 {
+		t.Fatalf("push u2: %+v, err %v", r, err)
 	}
 
 	if err := svc.Reset(ctx, "u1"); err != nil {
@@ -151,8 +152,8 @@ func TestServiceResetClearsLog(t *testing.T) {
 		t.Fatalf("pull after reset = %+v, %v", page, err)
 	}
 	// 重置之后序号从 1 重新开始。
-	if head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); err != nil || head != 1 {
-		t.Fatalf("push after reset: head %d, err %v", head, err)
+	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); err != nil || r.Head != 1 {
+		t.Fatalf("push after reset: %+v, err %v", r, err)
 	}
 
 	if state, err := svc.State(ctx, "u2"); err != nil || state.Head != 1 {
@@ -174,9 +175,9 @@ func TestServiceKeepsOptionalStateDigest(t *testing.T) {
 	withDigest := testCommit("r2", 27)
 	withDigest.StateDigest = &digest
 
-	head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), withDigest})
-	if err != nil || head != 2 {
-		t.Fatalf("push: head %d, err %v", head, err)
+	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), withDigest})
+	if err != nil || result.Head != 2 {
+		t.Fatalf("push: %+v, err %v", result, err)
 	}
 	page, err := svc.Pull(ctx, "u1", nil, nil)
 	if err != nil || len(page.Commits) != 2 {

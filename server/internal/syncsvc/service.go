@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
@@ -20,9 +22,11 @@ const (
 	// DefaultSnapshotGrace 是旧快照附件的回收宽限期：另一台设备可能刚从响应里
 	// 读到旧哈希、正在下载，立即删除会让这次下载拿到 404（ADR-0047）。
 	DefaultSnapshotGrace = 24 * time.Hour
-	// DefaultDeviceActive 是压缩门槛看设备是否活跃的时间窗口（ADR-0047）。
+	// DefaultDeviceActive 是压缩门槛看设备是否活跃、以及设备位置门槛看哪些设备
+	// 的时间窗口（ADR-0047、ADR-0054）。
 	DefaultDeviceActive = 720 * time.Hour
-	// capabilitySnapshot 是压缩门槛认的能力名，当前只有这一项（ADR-0048）。
+	// capabilitySnapshot 是唯一的能力名，请求头含它时这台设备记为支持快照
+	// （ADR-0048）。
 	capabilitySnapshot = "snapshot"
 	// deviceListLimit 是 GET /v1/sync/devices 一次返回的最大条数（ADR-0048）。
 	deviceListLimit = 50
@@ -241,14 +245,18 @@ func trimPullBytes(commits []Commit, maxBytes int64) []Commit {
 }
 
 // Push validates one batch and appends it to the account log.
+//
+// 返回的 AppendResult 带调用之后的 head 与逐条序号：新提交是服务端分配的序号，
+// 已经接收过的提交回它原来的序号（ADR-0054）。处理器据此把提交写进名册并更新
+// 设备位置。
 func (s *Service) Push(
 	ctx context.Context,
 	userID string,
 	base int64,
 	commits []Commit,
-) (int64, error) {
+) (AppendResult, error) {
 	if len(commits) == 0 || len(commits) > maxPushCommits {
-		return 0, ErrInvalid
+		return AppendResult{}, ErrInvalid
 	}
 	var total int64
 	for i := range commits {
@@ -256,43 +264,52 @@ func (s *Service) Push(
 		commits[i].Seq = nil
 		commits[i].ReceivedAt = nil
 		if err := Validate(commits[i], s.schemaVersion); err != nil {
-			return 0, err
+			return AppendResult{}, err
 		}
 		b, err := json.Marshal(commits[i])
 		if err != nil {
-			return 0, ErrInvalid
+			return AppendResult{}, ErrInvalid
 		}
 		total += int64(len(b))
 		// PostgreSQL 的 JSONB 文本会为键值与数组元素补空格。为这部分及
 		// 服务端生成的元数据留空间，保证新提交能够独立拉取。
 		if len(b) > MaxCommitBytes || 2*int64(len(b))+256 > s.maxPullBytes || total > MaxPushBytes {
-			return 0, ErrPushTooLarge
+			return AppendResult{}, ErrPushTooLarge
 		}
 	}
 	policy, err := s.compactPolicy(ctx, userID)
 	if err != nil {
-		return 0, err
+		return AppendResult{}, err
 	}
 	return s.store.Append(ctx, userID, base, commits, policy)
 }
 
-// compactPolicy 决定这次登记或推送能不能删除快照覆盖的提交（ADR-0047）。
+// compactPolicy 决定这次登记或推送能不能删除快照覆盖的提交，以及常规压缩不能
+// 越过哪个设备位置（ADR-0047、ADR-0054）。
 //
 // 压缩开关关闭时不允许删除。打开之后还要看设备名册：账号最近
-// ZHIXIN_SYNC_DEVICE_ACTIVE 内出现过的设备里，有任何一台没有声明 snapshot 能力
-// 就不允许删除；名册里一台设备都没有时视为可以压缩。
+// ZHIXIN_SYNC_DEVICE_ACTIVE 内出现过的设备里，有任何一台不支持快照就不允许删除；
+// 名册里一台设备都没有时视为可以压缩。允许删除时位置门槛取同一窗口内设备的最小
+// synced_seq，窗口内没有设备时为零；零与负数在压缩查询里都按不设上限处理。预算
+// 压力下的压缩不看这个门槛。
 func (s *Service) compactPolicy(ctx context.Context, userID string) (CompactPolicy, error) {
 	policy := CompactPolicy{Keep: s.compactKeep}
 	if !s.compact {
 		return policy, nil
 	}
-	blocked, err := s.store.ActiveDeviceWithoutCapability(
-		ctx, userID, s.now().Add(-s.deviceActive), capabilitySnapshot,
-	)
+	since := s.now().Add(-s.deviceActive)
+	blocked, err := s.store.ActiveDeviceWithoutSnapshot(ctx, userID, since)
 	if err != nil {
 		return policy, err
 	}
 	policy.AllowDelete = !blocked
+	floor, ok, err := s.store.ActiveMinSyncedSeq(ctx, userID, since)
+	if err != nil {
+		return policy, err
+	}
+	if ok {
+		policy.DeviceFloor = floor
+	}
 	return policy, nil
 }
 
@@ -354,7 +371,7 @@ func (s *Service) RegisterSnapshot(
 }
 
 // reclaimOrphans 回收本账号让位时间早于宽限期的旧快照附件。当前指针的哈希不
-// 回收：SQL 已经排除，这里再排除一次。每一行独立回收，一行失败不影响其余行。
+// 回收：存储层已经排除，这里再排除一次。每一份独立回收，一份失败不影响其余。
 func (s *Service) reclaimOrphans(ctx context.Context, userID string) {
 	state, err := s.store.State(ctx, userID)
 	if err != nil {
@@ -362,7 +379,7 @@ func (s *Service) reclaimOrphans(ctx context.Context, userID string) {
 			slog.String("user_id", userID), slog.String("error", err.Error()))
 		return
 	}
-	hashes, err := s.store.SnapshotOrphansBefore(ctx, userID, s.now().Add(-s.snapshotGrace))
+	hashes, err := s.store.OrphanedAttachmentsBefore(ctx, userID, s.now().Add(-s.snapshotGrace))
 	if err != nil {
 		s.log.Warn("cannot list orphaned snapshot attachments",
 			slog.String("user_id", userID), slog.String("error", err.Error()))
@@ -372,32 +389,49 @@ func (s *Service) reclaimOrphans(ctx context.Context, userID string) {
 		if state.Snapshot != nil && state.Snapshot.SHA256 == sha {
 			continue
 		}
-		if err := s.store.ReclaimSnapshotOrphan(ctx, userID, sha); err != nil {
+		if err := s.store.ReclaimOrphan(ctx, userID, sha); err != nil {
 			s.log.Warn("cannot reclaim an orphaned snapshot attachment",
 				slog.String("user_id", userID), slog.String("sha256", sha), slog.String("error", err.Error()))
 		}
 	}
 }
 
-// TouchDevice 记录一次带设备标识的同步请求：最近出现时间写服务端当前时间，能力
-// 声明整组替换，别名不动（ADR-0048）。
-func (s *Service) TouchDevice(ctx context.Context, userID, deviceID string, capabilities []string) error {
+// TouchDevice 记录一次带设备标识的同步请求：最近出现时间写服务端当前时间，快照
+// 能力整组替换，设备位置按 position 取较大值且不超过当前 head，别名不动
+// （ADR-0048、ADR-0054）。
+func (s *Service) TouchDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
 		return ErrInvalid
 	}
-	// 存储里始终是逗号分隔的小写能力名：去空白、转小写、按出现顺序去重。
-	capabilities = SplitCapabilities(JoinCapabilities(capabilities))
-	return s.store.TouchDevice(ctx, userID, deviceID, capabilities)
+	if position < 0 {
+		position = 0
+	}
+	return s.store.TouchDevice(ctx, userID, deviceID, snapshotCapable, position)
 }
 
-// EnsureDevice 在名册里补一行推送中出现的设备标识，能力与别名留空（ADR-0048）。
+// EnsureDevice 在名册里补一行推送中出现的设备标识，快照能力、位置与别名留空
+// （ADR-0048）。
 func (s *Service) EnsureDevice(ctx context.Context, userID, deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
 		return ErrInvalid
 	}
 	return s.store.EnsureDevice(ctx, userID, deviceID)
+}
+
+// AdvanceDevice 在推送成功之后推进名册里这台设备的位置：有提交返回时，整批重放
+// 只按 base 取较大值，确有新提交写入时再推进到当前 head（ADR-0054）。名册里没有
+// 这台设备时什么都不做。
+func (s *Service) AdvanceDevice(ctx context.Context, userID, deviceID string, base int64, newCommits bool) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
+		return ErrInvalid
+	}
+	if base < 0 {
+		base = 0
+	}
+	return s.store.AdvanceDevice(ctx, userID, deviceID, base, newCommits)
 }
 
 // Devices 返回账号名册，按最近出现时间倒序，最多 50 条（ADR-0048）。
@@ -419,9 +453,73 @@ func (s *Service) RenameDevice(ctx context.Context, userID, deviceID, alias stri
 	return s.store.RenameDevice(ctx, userID, deviceID, alias)
 }
 
-// Reset 清空账号的提交序列、快照指针、待回收行与设备名册，把 head 重置为 0。
-// 设置页“清除云端数据”用它把服务端恢复到空白状态；账号与整库备份不受影响，规则
-// 在这里而不是处理器里。
+// Refs 返回本账号全部命名版本，包括墓碑，按名字排序（ADR-0054）。
+func (s *Service) Refs(ctx context.Context, userID string) ([]Ref, error) {
+	return s.store.Refs(ctx, userID)
+}
+
+// PutRef 写入或删除一个命名版本（ADR-0054）。
+//
+// 名字先做 NFC 规范化，规范化之后 1 到 30 个字符；写入时 commit_uid 必须给出且
+// 不超过 64 字节，备注不超过 200 个字符；删除时不需要 commit_uid。后写覆盖先写，
+// 写入时间不晚于已存删除时间时不复活名字，返回的仍是墓碑。未删除的名字每账号最多
+// 200 个，超限返回 ErrRefLimit。
+func (s *Service) PutRef(ctx context.Context, userID string, in api.SyncRefWrite) (Ref, error) {
+	name, ok := NormalizeRefName(in.Name)
+	if !ok {
+		return Ref{}, ErrInvalid
+	}
+	// 时间统一取 UTC 并截到微秒：PostgreSQL 的 timestamptz 只保留微秒，内存实现与
+	// 数据库实现因此按同一个时间比较写入顺序（ADR-0054）。
+	now := s.now().UTC().Truncate(time.Microsecond)
+	write := Ref{Name: name, UpdatedAt: now}
+	if in.Delete != nil && *in.Delete {
+		write.DeletedAt = now
+	} else {
+		if in.CommitUid == nil {
+			return Ref{}, ErrInvalid
+		}
+		uid := strings.TrimSpace(*in.CommitUid)
+		if uid == "" || len(uid) > MaxRefUIDBytes {
+			return Ref{}, ErrInvalid
+		}
+		write.CommitUID = uid
+		if in.Note != nil {
+			if utf8.RuneCountInString(*in.Note) > MaxRefNoteRunes {
+				return Ref{}, ErrInvalid
+			}
+			write.Note = *in.Note
+		}
+	}
+	if _, err := s.store.PutRef(ctx, userID, write); err != nil {
+		return Ref{}, err
+	}
+	refs, err := s.store.Refs(ctx, userID)
+	if err != nil {
+		return Ref{}, err
+	}
+	for _, ref := range refs {
+		if ref.Name == name {
+			return ref, nil
+		}
+	}
+	return Ref{}, ErrInvalid
+}
+
+// NormalizeRefName 把命名版本的名字做 NFC 规范化并校验：去掉首尾空白之后规范化，
+// 规范化之后按字符数计长度，必须在 1 到 30 个字符之间（ADR-0054）。
+func NormalizeRefName(raw string) (string, bool) {
+	name := norm.NFC.String(strings.TrimSpace(raw))
+	count := utf8.RuneCountInString(name)
+	if count < 1 || count > MaxRefNameRunes {
+		return "", false
+	}
+	return name, true
+}
+
+// Reset 清空账号的提交序列、去重记录、快照指针、设备名册与命名版本，把 head 重置
+// 为 0，并清掉本账号附件的回收标记。设置页“清除云端数据”用它把服务端恢复到空白
+// 状态；账号与整库备份不受影响，规则在这里而不是处理器里。
 func (s *Service) Reset(ctx context.Context, userID string) error {
 	return s.store.Reset(ctx, userID)
 }

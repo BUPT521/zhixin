@@ -1141,15 +1141,17 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   /// 删除命名版本：只去掉名称，不删提交；撤销入口由提交本身判断，不受影响。
+  ///
+  /// 删除会在所有设备上生效：本机写墓碑，下次同步推给云端。
   Future<void> _deleteName(RevisionRef ref) async {
     if (_busy) return;
     final confirmed = await confirmZhixin(
       context: context,
       title: '删除命名版本',
       content: Text(
-        '删除命名版本“${ref.name}”之后，这个名称不再出现在命名版本里。'
-        '它不会删除任何提交，指向提交 #${ref.commitId} 的“撤销”仍然有效；'
-        '当前数据与提交历史保持原样，仍可以从提交历史恢复到这个版本。',
+        '删除命名版本“${ref.name}”之后，这个名称在所有登录了这个账号的设备上都不再出现。'
+        '它不会删除任何提交，“撤销”入口仍然有效；当前数据与提交历史保持原样，'
+        '仍可以从提交历史恢复到这个版本。',
       ),
       confirmLabel: '删除',
       destructive: true,
@@ -1417,7 +1419,7 @@ class _DataVersionPageState extends State<DataVersionPage>
                   ),
                   subtitle: Text(
                     '${ref.note?.trim().isNotEmpty == true ? '${ref.note} · ' : ''}'
-                    '提交 #${ref.commitId}',
+                    '${history.refCommitIds[ref.name] == null ? '该版本的历史不在本机，需要时请导出版本库备份' : '提交 #${history.refCommitIds[ref.name]}'}',
                   ),
                   suffix: ZhixinIconButton(
                     tooltip: '删除命名',
@@ -1694,7 +1696,7 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 时间取作者时间（服务端没有带来时退回落库时间）；来源优先显示名册里的别名，
   /// 没有别名时显示设备标识前 8 位，不把整串设备标识放到界面上（ADR-0048）。
   String _commitTimeAndSource(RevisionCommit commit) {
-    final time = _timeText(commit.authoredAt ?? commit.createdAt);
+    final time = _timeText(commit.displayAuthoredAt);
     if (!commit.isRemote) return time;
     final alias = _sync.deviceAlias(commit.originDevice ?? '');
     if (alias != null) return '来自另一台设备 $alias · $time';
@@ -1717,7 +1719,6 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   String _tableLabel(String table) => switch (table) {
     'app_meta' => '设置',
-    'profile' => '档案',
     'learning_goal' => '目标',
     'asset_object' => '附件对象',
     'asset_chunk' => '附件内容',
@@ -1746,7 +1747,6 @@ class _DataVersionPageState extends State<DataVersionPage>
     'action': '动作',
     'restored_commit_id': '恢复来源提交',
     'reverted_commit_id': '撤销的提交',
-    'change_count': '变化处数',
     'name': '名称',
     'note': '备注',
     'key': '设置项',
@@ -1764,7 +1764,6 @@ class _DataVersionPageState extends State<DataVersionPage>
     'page_no': '页码',
     'page_from': '起始页',
     'page_to': '结束页',
-    'current_page': '当前页',
     'content': '内容',
     'source_ref': '出处',
     'source_file_name': '来源文件',
@@ -1794,13 +1793,17 @@ class _DataVersionPageState extends State<DataVersionPage>
     'delayed': '延后',
     'feedback': '反馈',
     'submitted_at': '提交时间',
-    'last_message_at': '最后一条消息时间',
     'attempt_id': '作答',
     'result': '结果',
     'basis': '依据',
     'source_kind': '来源',
     'source_id': '来源编号',
     'valid_until': '有效期',
+    'search_terms': '检索线索',
+    'reviewed_at': '确认保留时间',
+    'server_seq': '云端序号',
+    'table_digests': '分表摘要',
+    'head_commit_id': '当前提交',
   };
 
   static const Set<String> _booleanFields = {

@@ -10,22 +10,28 @@ DateTime _fixedClock() => DateTime(2026, 11, 17, 10);
 const String _createdAt = '2026-11-17 10:00:00';
 
 /// 一行完整的记忆记录；远端提交里的新增带整行，删除带的旧行也是整行。
+///
+/// `RevisionValue.of` 只接受非空值，空列在这里显式指明 `Object?` 让 `null`
+/// 走 `nullValue`，与 `typedRow` 的写法一致。
 Map<String, RevisionValue> _memoryRow(String id, String content) => {
-  'id': RevisionValue.of(id),
-  'kind': RevisionValue.of('preference'),
-  'content': RevisionValue.of(content),
-  'scope': RevisionValue.of(null),
-  'source_kind': RevisionValue.of('user'),
-  'source_id': RevisionValue.of(null),
-  'valid_until': RevisionValue.of(null),
-  'status': RevisionValue.of('active'),
-  'created_at': RevisionValue.of(_createdAt),
-  'updated_at': RevisionValue.of(_createdAt),
+  for (final entry in <String, Object?>{
+    'id': id,
+    'kind': 'semantic',
+    'content': content,
+    'scope': null,
+    'source_kind': 'user',
+    'source_id': null,
+    'valid_until': null,
+    'status': 'active',
+    'created_at': _createdAt,
+    'updated_at': _createdAt,
+  }.entries)
+    entry.key: RevisionValue.of(entry.value),
 };
 
 Map<String, Object?> _memoryValues(String id, String content) => {
   'id': id,
-  'kind': 'preference',
+  'kind': 'semantic',
   'content': content,
   'scope': null,
   'source_kind': 'user',

@@ -1,10 +1,14 @@
--- 知新 API 后端 · PostgreSQL 表结构草案（ADR-0009）
+-- 知新 API 后端 · PostgreSQL 表结构（ADR-0009）
 --
--- 开发阶段不写迁移（ADR-0001）：结构变化时直接按本文件重建库。
--- 服务端不解析学习内容：同步变更与备份按客户端提交原样保存。
+-- 开发阶段不写迁移（ADR-0001）：结构变化时直接按本文件整份重建库，重建会清空
+-- 包括 app_user 在内的全部表（ADR-0057）。
+-- 服务端不解析学习内容：同步变更、摘要、分表摘要与命名版本按客户端提交原样保存。
+-- 同步一侧的表是 sync_state（每账号一行：head、保留下界与快照指针）、
+-- sync_commit、sync_commit_seen、sync_device 与 sync_ref；旧快照的回收标记在
+-- attachment.orphaned_at 上，不单独建表。
 
 -- 一个账号对应一个人的学习数据，登录凭据与联系方式分开放：密码留在这里，
--- 邮箱、手机号、微信这类“登录方式”各在 user_identity 占一行（ADR-0038）。
+-- 登录方式（现在是邮箱）各在 user_identity 占一行（ADR-0038）。
 CREATE TABLE app_user (
   id             TEXT PRIMARY KEY,
   password_hash  TEXT NOT NULL,                 -- argon2id，PHC 格式
@@ -12,14 +16,14 @@ CREATE TABLE app_user (
 );
 
 -- 登录方式：一个账号可以挂多种联系方式，一种联系方式只能属于一个账号。
--- kind 的取值先留好 email、phone、wechat 三种，代码现在只写 email；以后接手机号
--- 或微信，只需新增一种 kind 与对应的登录入口，不用再改这张表。identifier 是
--- 规范化之后的值（邮箱转小写），判重与登录都按 (kind, identifier) 定位账号。
+-- kind 现在只有 email 一种取值，CHECK 与代码识别的种类一致；以后接手机号或微信
+-- 时再放宽 CHECK 并新增登录入口，表本身不必改（ADR-0057 的改表口径）。identifier
+-- 是规范化之后的值（邮箱转小写），判重与登录都按 (kind, identifier) 定位账号。
 -- verified_at 为空表示这种登录方式还没有用验证码确认。
 CREATE TABLE user_identity (
   id           TEXT PRIMARY KEY,
   user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  kind         TEXT NOT NULL CHECK (kind IN ('email', 'phone', 'wechat')),
+  kind         TEXT NOT NULL CHECK (kind IN ('email')),
   identifier   TEXT NOT NULL,
   verified_at  TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -28,12 +32,13 @@ CREATE TABLE user_identity (
 -- 账号页按账号列出登录方式，每日清理按“有没有已验证的登录方式”筛账号。
 CREATE INDEX user_identity_by_user ON user_identity(user_id, created_at);
 
--- 验证码按登录方式保存，不挂在账号上：还没有账号的邮箱或手机号也能先发一枚。
--- 每种用途、每种登录方式只保留最新一枚，只存 HMAC-SHA256（验证码只有六位，
--- 直接存哈希可以被穷举）。过期或输错次数达到上限时删除，重新发送时覆盖。
+-- 验证码按登录方式保存，不挂在账号上：还没有账号的邮箱也能先发一枚。每种用途、
+-- 每种登录方式只保留最新一枚，只存 HMAC-SHA256（验证码只有六位，直接存哈希可以
+-- 被穷举）。过期或输错次数达到上限时删除，重新发送时覆盖。kind 与 user_identity
+-- 一样现在只有 email 一种取值。
 CREATE TABLE auth_code (
   purpose     TEXT NOT NULL CHECK (purpose IN ('verify_contact', 'reset_password')),
-  kind        TEXT NOT NULL CHECK (kind IN ('email', 'phone', 'wechat')),
+  kind        TEXT NOT NULL CHECK (kind IN ('email')),
   identifier  TEXT NOT NULL,
   user_id     TEXT REFERENCES app_user(id) ON DELETE CASCADE,
   code_hash   TEXT NOT NULL,
@@ -42,9 +47,8 @@ CREATE TABLE auth_code (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (purpose, kind, identifier)
 );
--- 每日清理过期验证码按 expires_at 扫。
-CREATE INDEX auth_code_by_expires ON auth_code(expires_at);
--- 删除账号时按 user_id 找到还没用掉的验证码。
+-- 删除账号时按 user_id 找到还没用掉的验证码；过期验证码的每日清理按 expires_at
+-- 全表扫描，表在万行以下，不为它单建索引（审查 V4）。
 CREATE INDEX auth_code_by_user ON auth_code(user_id);
 
 -- 一台登录的设备一行；只存令牌的 SHA-256。
@@ -61,8 +65,6 @@ CREATE TABLE session (
 -- 登录时锁住账号行、按创建时间倒序只保留最新的若干条，会话上限因此不受并发
 -- 影响；user_id 上的这条复合索引同时承担按账号查会话的查询。
 CREATE INDEX session_by_user ON session(user_id, created_at DESC);
--- 每日清理过期会话按 refresh_expires 扫。
-CREATE INDEX session_by_refresh_expires ON session(refresh_expires);
 
 -- 已经轮换掉的刷新令牌摘要。旧令牌再次出现时，服务层用它区分“同一客户端的
 -- 重试”与“令牌被复制”：宽限期固定 60 秒，重试不延长。只存摘要，不存令牌本身；
@@ -78,22 +80,32 @@ CREATE TABLE session_refresh_used (
   replaced_refresh_hash TEXT NOT NULL           -- 本次轮换发出的刷新令牌摘要
 );
 CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);
-CREATE INDEX session_refresh_used_rotated_at ON session_refresh_used(rotated_at);
 
--- 每个账号一条线性提交序列。推送时在同一事务里 SELECT ... FOR UPDATE
--- 锁住 sync_head，核对 base_seq = head 之后再追加。
--- trimmed_through 是已经删除到哪个序号：压缩删掉快照覆盖的旧提交之后推进，
--- 保留下界（第一条仍可拉取的序号）等于它加一（ADR-0043）。
-CREATE TABLE sync_head (
-  user_id          TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-  head             BIGINT NOT NULL DEFAULT 0,
-  trimmed_through  BIGINT NOT NULL DEFAULT 0
+-- 每个账号的同步状态与提交序列（ADR-0043）。推送时在同一事务里
+-- SELECT ... FOR UPDATE 锁住这一行，核对 base_seq = head 之后再追加，压缩也在
+-- 同一次事务里推进保留下界（ADR-0057 之前是单独的 sync_head，已并入本表）。
+--
+-- head 是最后分配的序号；trimmed_through 是已经删除到哪个序号，保留下界
+-- （第一条仍可拉取的序号）等于它加一。快照指针的四个列同时可空：都为空表示还
+-- 没有登记过快照；登记更新的位置时整行覆盖，字节是 attachments/<账号>/<sha256>。
+CREATE TABLE sync_state (
+  user_id              TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  head                 BIGINT NOT NULL DEFAULT 0,
+  trimmed_through      BIGINT NOT NULL DEFAULT 0,
+  snapshot_seq         BIGINT,
+  snapshot_sha256      TEXT,
+  snapshot_digest      TEXT,
+  snapshot_created_at  TIMESTAMPTZ
 );
 
+-- 提交是一条流水账：uid 是客户端在用户动作发生时生成的提交身份（UUID 字符串），
+-- 服务端按 (user_id, uid) 永久去重。state_digest 与 table_digests 是客户端算出的
+-- 整库摘要与分表摘要，服务端原样保存、不解析，拉取时原样带回（改进方案 3.5、
+-- ADR-0054）；没有带的提交存 NULL，响应里不出现这个键。
 CREATE TABLE sync_commit (
   user_id         TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   seq             BIGINT NOT NULL,
-  request_id      TEXT NOT NULL,               -- 客户端 revision_commit.request_id，重试去重
+  uid             TEXT NOT NULL,               -- 客户端提交身份，重试去重
   device_id       TEXT NOT NULL,
   schema_version  INTEGER NOT NULL,
   actor           TEXT NOT NULL CHECK (actor IN ('user', 'ai', 'system')),
@@ -101,55 +113,55 @@ CREATE TABLE sync_commit (
   created_at      TEXT NOT NULL,               -- 客户端时间，格式同 docs/01 D7
   received_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   changes         JSONB NOT NULL,              -- [{table,row_key,op,before,after}]
-  state_digest    TEXT,                        -- 客户端整库摘要，可选，原样保存不解析（改进方案 3.5）
+  state_digest    TEXT,                        -- 客户端整库摘要，可选，原样保存不解析
+  table_digests   JSONB,                       -- 表名到 64 位十六进制摘要的映射，可选，原样保存不解析
   PRIMARY KEY (user_id, seq),
-  UNIQUE (user_id, request_id)
+  UNIQUE (user_id, uid)
 );
 
--- 账号当前快照的指针，每个账号最多一行；字节是 attachments/<账号>/<sha256>。
--- 只保留最新一份，登记更新的位置时整行覆盖（ADR-0043）。
-CREATE TABLE sync_snapshot (
-  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-  seq         BIGINT NOT NULL,
-  sha256      TEXT NOT NULL,
-  digest      TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 已经接收过的提交身份。与 sync_commit 分开保存，压缩删掉旧提交之后仍然按它
--- 去重（ADR-0040 的永久去重）；每行几十字节，不进入 256 MiB 的序列预算。
+-- 已经接收过的提交身份与它当时的序号。与 sync_commit 分开保存，压缩删掉旧提交
+-- 之后仍然按它去重，整批重放时把重复提交原来的序号回给客户端（ADR-0040、
+-- ADR-0054）；每行几十字节，不进入 256 MiB 的序列预算。
 CREATE TABLE sync_commit_seen (
-  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  request_id  TEXT NOT NULL,
-  PRIMARY KEY (user_id, request_id)
+  user_id  TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  uid      TEXT NOT NULL,
+  seq      BIGINT NOT NULL,
+  PRIMARY KEY (user_id, uid)
 );
 
--- 被新快照替换下来的旧附件，按宽限期回收（ADR-0047）。每行是账号、附件哈希与
--- 让位时间；同一哈希重复让位时保留最早的 orphaned_at，新指针哈希重新投入使用时
--- 删掉这一行，回收时还要排除当前指针。清空云端数据时整表清掉，删号按外键级联。
-CREATE TABLE sync_snapshot_orphan (
-  user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  sha256       TEXT NOT NULL,
-  orphaned_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, sha256)
-);
--- 回收按账号找早于宽限期的行。
-CREATE INDEX sync_snapshot_orphan_by_user_time ON sync_snapshot_orphan(user_id, orphaned_at);
-
--- 账号级设备名册（ADR-0048）：设备标识、用户设置的别名、能力声明与首次、最近
--- 出现时间。capabilities 是逗号分隔的小写能力名，当前只有 snapshot；压缩门槛
--- 按最近出现时间判断设备是否活跃。清空云端数据时整表清掉，删号按外键级联。
+-- 账号级设备名册（ADR-0048）：设备标识、用户设置的别名、快照能力、已经应用到的
+-- 服务端序号与首次、最近出现时间。snapshot_capable 现在只有这一种能力，压缩门槛
+-- 与设备位置门槛都按最近出现时间判断设备是否活跃（ADR-0054）。synced_seq 由带
+-- X-Device-Id 的拉取与推送更新，不超过当前 head。清空云端数据时整表清掉，删号按
+-- 外键级联。
 CREATE TABLE sync_device (
-  user_id       TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  device_id     TEXT NOT NULL,
-  alias         TEXT NOT NULL DEFAULT '',
-  capabilities  TEXT NOT NULL DEFAULT '',
-  first_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seen     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id           TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  device_id         TEXT NOT NULL,
+  alias             TEXT NOT NULL DEFAULT '',
+  snapshot_capable  BOOLEAN NOT NULL DEFAULT false,
+  synced_seq        BIGINT NOT NULL DEFAULT 0,
+  first_seen        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen         TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, device_id)
 );
 -- 设备列表按最近出现时间倒序；压缩门槛按同一顺序找活跃设备。
 CREATE INDEX sync_device_by_user_seen ON sync_device(user_id, last_seen DESC);
+
+-- 账号级命名版本（ADR-0054）：名字指向一条提交的 uid，服务端只保存与转发，不解析。
+-- 主键按 NFC 规范化之后的名字比较，名字最长 30 个字符，每账号最多 200 个未删除
+-- 的名字。deleted_at 非空表示墓碑：删除之后名字在所有设备上消失，比删除时间更早
+-- 的写入不会让它复活；墓碑不计入条数上限，永久保留。清空云端数据时整表清掉，
+-- 删号按外键级联。
+CREATE TABLE sync_ref (
+  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  commit_uid  TEXT NOT NULL,                   -- 这个名字指向的提交身份
+  note        TEXT NOT NULL DEFAULT '',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at  TIMESTAMPTZ,
+  PRIMARY KEY (user_id, name)
+);
+CREATE INDEX sync_ref_by_user ON sync_ref(user_id);
 
 -- 整库备份：字节在对象存储的 backups/<user_id>/<id>.zip。
 CREATE TABLE backup (
@@ -209,16 +221,17 @@ CREATE TABLE feedback (
 );
 CREATE INDEX feedback_created ON feedback(created_at DESC);
 
--- 登录账号的活跃：一行是一天，按服务端收到的请求日期记（ADR-0019）。
+-- 登录账号的活跃：一行是一天，按服务端收到的请求日期记（ADR-0019）。保留期的
+-- 每日清理按 day 全表扫描，表在万行以下，不为它单建索引（审查 V4）。
 CREATE TABLE user_active (
   user_id  TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   day      DATE NOT NULL,                      -- ZHIXIN_TIMEZONE 下的自然日
   PRIMARY KEY (user_id, day)
 );
-CREATE INDEX user_active_day ON user_active(day);
 
 -- 未登录设备的匿名活跃：只保存安装标识的 HMAC-SHA256 与日期，原始标识不落库；
--- 按 180 天滚动删除（ADR-0019）。
+-- 按 180 天滚动删除（ADR-0019）。保留期的每日清理按 day 全表扫描，表在万行以下，
+-- 不为它单建索引（审查 V4）。
 CREATE TABLE install_active (
   install_hash  TEXT NOT NULL,
   day           DATE NOT NULL,
@@ -227,7 +240,6 @@ CREATE TABLE install_active (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (install_hash, day)
 );
-CREATE INDEX install_active_day ON install_active(day);
 
 -- 按账号调整每日模型额度：没有行或者某一列为空时用 ZHIXIN_LLM_DAILY_TOKENS
 -- 与 ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS。管理员直接写这张表调整个别账号，不重启
@@ -244,11 +256,17 @@ CREATE TABLE llm_quota (
 -- 账号有这份内容、占多少字节”。账号总量配额按它求和；同一账号相同内容只有一行，
 -- 重复上传因此不重复计入。主键的前缀 (user_id) 已能支持按账号求和，另按
 -- created_at 建索引供回填与排查时按时间列出。
+--
+-- orphaned_at 记旧快照让位的时间（ADR-0047、审查 V2）：快照指针换成另一个哈希时
+-- 旧哈希这一行标记，同一哈希重复让位保留最早的时间，指针重新使用某个哈希时置空。
+-- 回收删除 orphaned_at 早于宽限期、且不是当前快照指针的行：先删对象字节，再删
+-- 索引行。待回收的行仍然计入账号总量，与“删除之前仍占空间”的口径一致。
 CREATE TABLE attachment (
-  user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  sha256      TEXT NOT NULL,
-  size        BIGINT NOT NULL CHECK (size >= 0),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  sha256       TEXT NOT NULL,
+  size         BIGINT NOT NULL CHECK (size >= 0),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  orphaned_at  TIMESTAMPTZ,
   PRIMARY KEY (user_id, sha256)
 );
 CREATE INDEX attachment_user_created ON attachment(user_id, created_at DESC);

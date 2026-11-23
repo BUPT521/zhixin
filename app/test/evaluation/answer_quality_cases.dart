@@ -172,17 +172,17 @@ final List<AnswerQualityCase> answerQualityCases = [
       mode: BuddyMode.explain,
       persona: const BuddyPersona(name: '先定义', text: '先讲定义，例题从简。'),
       memories: const [
-        Memory(id: 'memory-11', kind: MemoryKind.preference, content: '讲解先给例题'),
+        Memory(id: 'memory-11', kind: MemoryKind.semantic, content: '讲解先给例题'),
       ],
     ),
     requiredText: [
       '当前启用的人格：先定义',
       '人格只影响语气、称呼、讲解风格与篇幅倾向',
       '用户本轮说明优先于人格',
-      '人格优先于记忆里的讲解偏好',
+      '人格优先于记忆里的做法',
       '讲解先给例题',
     ],
-    orderedText: ['规则：', '当前启用的人格：先定义', '当前时间：', '记得的事：'],
+    orderedText: ['规则：', '当前启用的人格：先定义', '当前时间：', '记得的事（[情景]'],
     expected: ['先给定义，省略例题；本轮要求优先', '失效记忆不出现在本轮上下文'],
   ),
   AnswerQualityCase(
@@ -253,13 +253,13 @@ final List<AnswerQualityCase> answerQualityCases = [
       memories: const [
         Memory(
           id: 'memory-persona',
-          kind: MemoryKind.preference,
+          kind: MemoryKind.semantic,
           content: '讲解先给例题',
         ),
       ],
     ),
-    requiredText: ['当前启用的人格：先讲定义', '讲解先给例题', '用户本轮说明优先于人格', '人格优先于记忆里的讲解偏好'],
-    orderedText: ['规则：', '当前启用的人格：先讲定义', '记得的事：'],
+    requiredText: ['当前启用的人格：先讲定义', '讲解先给例题', '用户本轮说明优先于人格', '人格优先于记忆里的做法'],
+    orderedText: ['规则：', '当前启用的人格：先讲定义', '记得的事（[情景]'],
     expected: ['不说明时按人格的顺序，说明时按本轮要求', '判分、引用与写入规则不随人格改变'],
   ),
 ];

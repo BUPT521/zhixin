@@ -186,10 +186,9 @@ String memoryDeleteImpact(Memory memory, Map<String, String> scopeLabels) {
   final scope = memory.scope;
   final place = scope == null ? '全部学习里' : '「${scopeLabels[scope] ?? '范围已删除'}」下';
   final effect = switch (memory.kind) {
-    MemoryKind.preference => '讲解与建议不再参考这条偏好',
-    MemoryKind.constraint => '回答不再按这条限制安排',
-    MemoryKind.difficulty => '讲解不再针对这类困难',
-    MemoryKind.progress => '安排不再参考这条进展',
+    MemoryKind.episodic => '讲解与安排不再参考这件事',
+    MemoryKind.semantic => '回答不再按这条事实与限制',
+    MemoryKind.procedural => '回答不再按这套做法',
     MemoryKind.unknown => '后续回答不再使用这条记忆',
   };
   return '删除后，$place的$effect。';

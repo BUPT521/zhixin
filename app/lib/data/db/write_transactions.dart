@@ -39,7 +39,8 @@ class WriteTransactions {
   /// 数据版本引擎；命令的开始、收尾与编号分配都经它完成。
   final RevisionEngine revisions;
 
-  /// 一次业务动作；[label] 写进数据变更历史，[requestId] 用于重试去重。
+  /// 一次业务动作；[label] 写进数据变更历史，[uid] 是这次动作的提交身份，
+  /// [kind] 是提交类型（维护、写入等，见 `RevisionKind`）。
   ///
   /// 结果里的 [WriteResult] 在命令结束之后才定稿：没有形成提交时改成
   /// [WriteResult.skipped]，形成提交时补上落库的提交编号（R1）。把结果包在
@@ -48,7 +49,8 @@ class WriteTransactions {
     Future<T> Function(WriteTransaction) action, {
     String label = '数据写入',
     String actor = 'user',
-    String? requestId,
+    String? uid,
+    RevisionKind kind = RevisionKind.write,
     T Function(RevisionCommit commit)? onDuplicate,
   }) async {
     final db = _db;
@@ -57,7 +59,8 @@ class WriteTransactions {
         (executor) => action(WriteTransaction(executor, revisions: revisions)),
         label: label,
         actor: actor,
-        requestId: requestId,
+        uid: uid,
+        kind: kind,
         onDuplicate: onDuplicate,
       );
       return _settle(outcome.value, outcome.commit);

@@ -332,7 +332,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('截止时间保存后立即生效，撤销后设置与时间口径一起刷新', (tester) async {
+  testWidgets('截止时间保存后立即生效，app_meta 写入不形成提交', (tester) async {
     await openApp(tester);
     await openMineEntry(tester, '设置');
     final cutoffField = selectField<int>('每天的截止时间');
@@ -343,24 +343,32 @@ void main() {
     );
     expect(scope!.timePolicy.cutoffHour, 4);
 
+    final headBefore = await tester.runAsync(
+      () => scope!.data.versions.currentHead(),
+    );
     await tester.ensureVisible(cutoffField);
     await tester.pumpAndSettle();
     await tester.tap(cutoffField);
     await settle(tester);
     await tester.tap(find.text('0 点').last);
     await settle(tester);
+    await tester.pumpAndSettle();
+    // 保存之后时间口径立刻换成新值，不必等下次启动。
     expect(scope!.timePolicy.cutoffHour, 0);
 
-    final head = await tester.runAsync(
+    // 截止小时并进 app_meta 之后，这一项与别的内部设置一样不参与数据版本采集：
+    // 保存不会新增提交，也就没有可以单项撤销的提交。
+    final headAfter = await tester.runAsync(
       () => scope!.data.versions.currentHead(),
     );
+    expect(headAfter, headBefore, reason: 'app_meta 的写入不进提交历史');
     final result = await tester.runAsync(
-      () => scope!.data.undo.undoCommit(head!),
+      () => scope!.data.undo.undoCommit(headAfter!),
     );
-    expect(result!.applied, isTrue, reason: result.message);
+    expect(result!.applied, isFalse, reason: result.message);
+    expect(result.message, '找不到要撤销的提交');
     await settle(tester);
-    expect(scope!.timePolicy.cutoffHour, 4);
-    expect(tester.widget<EditableText>(cutoffField).controller.text, '4 点');
+    expect(scope!.timePolicy.cutoffHour, 0);
     expect(tester.takeException(), isNull);
   });
 }

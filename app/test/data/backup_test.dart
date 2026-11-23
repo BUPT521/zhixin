@@ -120,7 +120,6 @@ void main() {
       'status': 'open',
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:05:00',
-      'last_message_at': '2026-11-06 09:05:00',
     });
     await insertRow(db1, 'message', {
       'id': 'msg-1',

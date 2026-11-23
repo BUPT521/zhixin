@@ -7,7 +7,7 @@ import '../domain/models/memory.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
 import 'service_runtime.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 
 /// 记忆页的一屏：记忆条目与适用范围的名字。
 ///
@@ -222,26 +222,30 @@ class MemoryService {
     return memory.content.toLowerCase().contains(text);
   }
 
-  /// 用户改记忆时直接更新类型、内容、范围与有效期；回答读的是更新后的记忆本身。
+  /// 用户改记忆时直接更新类型、内容、线索、范围与有效期；回答读的是改后的内容。
   ///
   /// 类型与内容在同一条提交里写入，撤销仍按提交整组回放。不传 [kind] 时只改
-  /// 内容与有效期，类型与范围保持原样；换成偏好或限制时不再保留原来的目标或
-  /// 材料范围，因为这两类适用于全部学习。
+  /// 内容与有效期，类型与范围保持原样；换成语义或程序时不再保留原来的目标或
+  /// 材料范围，因为这两类适用于全部学习，只有情景跟本次范围走（ADR-0051 决定
+  /// 第 5 条）。检索线索拿不到时写空串，旧线索不留在新正文后面。
   Future<WriteResult> save(
     Memory memory, {
     MemoryKind? kind,
     required String content,
+    String searchTerms = '',
     DateTime? validUntil,
   }) {
     final text = content.trim();
     if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
     final nextKind = kind;
+    final terms = searchTerms.trim();
     return transactions.run((txn) async {
       final current = await repository.byId(memory.id);
       if (current == null) throw StateError('这条记忆已不存在');
       final kindChanged = nextKind != null && current.kind != nextKind;
       if (!kindChanged &&
           current.content == text &&
+          current.searchTerms == terms &&
           _sameValidUntil(current.validUntil, validUntil)) {
         return const WriteResult.skipped('这条记忆没有变化');
       }
@@ -251,6 +255,7 @@ class MemoryService {
         content: text,
         kind: savedKind,
         scope: savedKind.followsContext ? current.scope : null,
+        searchTerms: terms,
         validUntil: validUntil,
         transaction: txn,
       );
@@ -258,9 +263,13 @@ class MemoryService {
     }, label: editMemoryAction);
   }
 
+  /// 记一条新记忆；[searchTerms] 是写入时顺带给出的检索线索，拿不到时写空串。
+  ///
+  /// 用户手写不推断程序类，偏好与限制按内容归语义（ADR-0051 决定第 1 条）。
   Future<WriteResult> add({
     required MemoryKind kind,
     required String content,
+    String searchTerms = '',
     DateTime? validUntil,
   }) {
     return transactions.run(
@@ -268,6 +277,7 @@ class MemoryService {
         await repository.create(
           kind: kind,
           content: content,
+          searchTerms: searchTerms,
           sourceKind: MemorySourceKind.user,
           validUntil: validUntil,
           transaction: txn,
@@ -275,7 +285,24 @@ class MemoryService {
         return txn.result();
       },
       label: addMemoryAction,
-      requestId: commandId('add-memory', [kind.value, content, validUntil]),
+      uid: newUuidV7(),
+      onDuplicate: (commit) => WriteResult.committed(commit.id),
+    );
+  }
+
+  /// 用户确认保留这条记忆：只写 `reviewed_at`，不更新 `updated_at`，也不触发
+  /// 索引重建（ADR-0051 决定第 9 条）。计时从最近使用、最近确认保留与创建
+  /// 三者里最晚的一个算起，“保留”因此把“很久没用到”的计时推到现在。
+  Future<WriteResult> keep(String id) {
+    return transactions.run(
+      (txn) async {
+        final current = await repository.byId(id);
+        if (current == null) throw StateError('这条记忆已不存在');
+        await repository.markReviewed(id, transaction: txn);
+        return txn.result();
+      },
+      label: keepMemoryAction,
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -288,7 +315,7 @@ class MemoryService {
         return txn.result();
       },
       label: deleteMemoryAction,
-      requestId: commandId('delete-memory', [id]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }

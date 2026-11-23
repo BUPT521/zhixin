@@ -46,7 +46,8 @@ void main() {
         call(proposeMemoriesTool, {
           'memories': [
             {
-              'kind': 'constraint',
+              // 工具参数里的类别就是库里的三分类（ADR-0051）。
+              'kind': 'semantic',
               'content': '本周晚上只有半小时',
               'valid_until': null,
               'source': 'user',
@@ -72,7 +73,7 @@ void main() {
     );
 
     expect(reply.text, '先检查这一步。');
-    expect(reply.memories.single.kind, MemoryKind.constraint);
+    expect(reply.memories.single.kind, MemoryKind.semantic);
     expect(reply.memories.single.source, MemorySource.user);
     expect(reply.nextSteps.single.title, '重做第 8 题');
     expect(reply.nextSteps.single.minutes, 20);
@@ -131,20 +132,28 @@ void main() {
     expect(reply.nextSteps.single.title, '读定义');
   });
 
-  test('无效的记忆类别与判断被丢掉', () async {
+  test('工具给的类别照三类解析，认不出的类别与无效判断被丢掉', () async {
     final reply = await _runTools(
       text: '好。',
       mode: BuddyMode.check,
       calls: [
         call(proposeMemoriesTool, {
           'memories': [
-            {'kind': 'unknown', 'content': '不该保存', 'source': 'user'},
+            {'kind': 'preference', 'content': '旧四类标签不再接受', 'source': 'user'},
+            {
+              'kind': 'procedural',
+              'content': '讲到矩阵时先给 2 阶例子',
+              'source': 'user',
+            },
           ],
         }),
         call(proposeAssessmentTool, {'result': '掌握'}),
       ],
     );
-    expect(reply.memories, isEmpty);
+    // 旧四类取值不在工具声明的枚举里，整条参数不合法，这一批一条也不写；
+    // 三条合法类别都能原样解析。
+    expect(reply.memories.map((draft) => draft.content), ['讲到矩阵时先给 2 阶例子']);
+    expect(reply.memories.single.kind, MemoryKind.procedural);
     expect(reply.assessment, isNull);
   });
 
@@ -241,7 +250,7 @@ void main() {
       memories: const [
         Memory(
           id: 'memory-1',
-          kind: MemoryKind.difficulty,
+          kind: MemoryKind.episodic,
           content: '放缩方向不确定',
           status: MemoryStatus.active,
         ),

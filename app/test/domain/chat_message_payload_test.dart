@@ -14,7 +14,7 @@ ChatMessagePayload sample() => ChatMessagePayload(
   memoryItems: const [
     MemoryDraft(
       id: 'm0',
-      kind: MemoryKind.preference,
+      kind: MemoryKind.semantic,
       content: '讲解概率时先用具体例子。',
       validUntil: null,
       source: MemorySource.user,
@@ -55,7 +55,7 @@ void main() {
     expect(restored.notices, [Notice.answerTruncated]);
     final item = restored.memoryItems.single;
     expect(item.id, 'm0');
-    expect(item.kind, MemoryKind.preference);
+    expect(item.kind, MemoryKind.semantic);
     expect(item.source, MemorySource.user);
     expect(item.status, MemoryCardStatus.accepted);
     expect(item.commitId, 12);
@@ -136,7 +136,7 @@ void main() {
   test('记忆草案序列化一套，超过上限不写', () {
     const draft = MemoryDraft(
       id: 'm3',
-      kind: MemoryKind.constraint,
+      kind: MemoryKind.semantic,
       content: '本周晚上只有半小时。',
       source: MemorySource.inferred,
     );
@@ -147,7 +147,7 @@ void main() {
     expect(draft.tooLong, isFalse);
     expect(
       MemoryDraft(
-        kind: MemoryKind.preference,
+        kind: MemoryKind.semantic,
         content: '长' * (memoryContentLimit + 1),
       ).tooLong,
       isTrue,

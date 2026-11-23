@@ -61,7 +61,7 @@ void main() {
       unknown: MemoryStatus.unknown,
       fromValue: MemoryStatus.fromValue,
     );
-    expect(MemoryKind.fromValue('not-a-value'), isNot(MemoryKind.progress));
+    expect(MemoryKind.fromValue('not-a-value'), isNot(MemoryKind.episodic));
     expect(EvidenceKind.fromValue('not-a-value'), isNot(EvidenceKind.message));
   });
 
@@ -93,8 +93,8 @@ void main() {
     expect(PlanItemStatus.doing.open, isTrue);
     expect(PlanItemStatus.done.open, isFalse);
     expect(PlanItemStatus.unknown.open, isFalse);
-    expect(MemoryKind.difficulty.followsContext, isTrue);
-    expect(MemoryKind.preference.followsContext, isFalse);
+    expect(MemoryKind.episodic.followsContext, isTrue);
+    expect(MemoryKind.semantic.followsContext, isFalse);
     expect(MemoryKind.unknown.followsContext, isFalse);
   });
 }

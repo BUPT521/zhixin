@@ -73,6 +73,19 @@ Future<String> _signature(
 BuddyTurnTools _tools(BuddyMode mode) =>
     BuddyTurnTools(BuddyContext(now: DateTime(2026, 11, 6), mode: mode));
 
+/// 工具声明里某个列表参数每一项的形状；工具没有这个参数时返回空。
+Map<String, Object?>? _declaredProperties(LlmTool tool, String listField) {
+  final input = (tool.parameters['properties']! as Map)['input'] as Map;
+  final item = ((input['items'] as Map)['properties']! as Map)['zod'] as Map;
+  final declared = (item['properties']! as Map)['properties'] as Map;
+  final properties = declared['properties'] as Map?;
+  final field = properties?[listField];
+  if (field is! Map) return null;
+  final items = field['items'];
+  if (items is! Map) return null;
+  return ((items['properties'] as Map?)?.cast<String, Object?>());
+}
+
 /// 去掉数组里每一条的某个字段，其余参数保持不变。
 Map<String, Object?> _withoutItemField(
   Map<String, Object?> arguments,
@@ -98,7 +111,7 @@ void main() {
       toolName: proposeMemoriesTool,
       arguments: {
         'memories': [
-          {'kind': 'preference', 'content': '喜欢先看例子', 'source': 'user'},
+          {'kind': 'semantic', 'content': '喜欢先看例子', 'source': 'user'},
         ],
       },
       signature: (reply) => [
@@ -175,6 +188,21 @@ void main() {
         for (final tool in _tools(mode).registry.schemas) tool.name,
     };
     expect(contracts.map((contract) => contract.toolName).toSet(), exposed);
+  });
+
+  test('每一项类别枚举都是三类标签', () {
+    for (final mode in BuddyMode.values) {
+      for (final tool in _tools(mode).registry.schemas) {
+        final declared = _declaredProperties(tool, 'memories');
+        final kind = declared?['kind'];
+        if (kind is! Map) continue;
+        expect(kind['enum'], [
+          'episodic',
+          'semantic',
+          'procedural',
+        ], reason: '${tool.name} 的 kind 只有三类（ADR-0051）');
+      }
+    }
   });
 
   test('工具说明来自提示词资源', () {

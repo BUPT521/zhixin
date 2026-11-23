@@ -118,7 +118,7 @@ void main() {
         db.command((txn) async {
           await insertRow(txn, 'memory', {
             'id': id,
-            'kind': 'preference',
+            'kind': 'semantic',
             'content': content,
             'scope': null,
             'source_kind': 'user',

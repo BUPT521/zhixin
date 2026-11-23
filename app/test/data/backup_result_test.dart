@@ -107,11 +107,14 @@ void main() {
 
     // 一次普通写入形成提交：提交收尾通知版本元数据表，整屏重读一次。
     await rig.db.command((txn) async {
-      await updateRow(txn, 'profile', {
-        'day_cutoff_hour': 6,
+      await insertRow(txn, 'learning_goal', {
+        'id': 'goal-1',
+        'title': '恢复点之后的改动',
+        'status': 'active',
+        'created_at': '2026-11-10T12:00:00',
         'updated_at': '2026-11-10T12:00:00',
-      }, where: 'id = 1');
-    }, label: '调整每日截止时间');
+      });
+    }, label: '新建目标');
     await _waitFor(values, 2);
     expect(values, hasLength(2), reason: '写入之后重读一次');
     expect(values.last.history.head, greaterThan(headBefore));

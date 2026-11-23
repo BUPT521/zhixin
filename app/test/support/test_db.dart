@@ -26,12 +26,6 @@ Future<RawDatabase> openTestDb() async {
     'value': '$zhixinSchemaVersion',
     'updated_at': '2026-11-10 10:00:00',
   }, replace: true);
-  await insertRow(raw, 'profile', {
-    'id': 1,
-    'day_cutoff_hour': 4,
-    'created_at': '2026-11-10 10:00:00',
-    'updated_at': '2026-11-10 10:00:00',
-  }, ignore: true);
   await RevisionEngine().initialize(raw);
   return raw;
 }

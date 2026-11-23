@@ -148,4 +148,19 @@ class CloudPreferencesStore {
   Future<void> clearSyncState() => _mutate((raw) {
     raw.remove('sync_state');
   });
+
+  /// 上次冲刷记忆使用统计的时刻；没有记录过时为空。
+  ///
+  /// 冲刷间隔是“一天”，跨进程也要算数，所以记在本机偏好文件里，与同步状态
+  /// 同一份文件、同一套排队写（ADR-0051 决定第 8 条）。
+  Future<DateTime?> memoryUsageFlushedAt() async {
+    final raw = await _read();
+    final value = raw['memory_usage_flushed_at'];
+    if (value is! String) return null;
+    return DateTime.tryParse(value);
+  }
+
+  Future<void> setMemoryUsageFlushedAt(DateTime at) => _mutate((raw) {
+    raw['memory_usage_flushed_at'] = at.toUtc().toIso8601String();
+  });
 }

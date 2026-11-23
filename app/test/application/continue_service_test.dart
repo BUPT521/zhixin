@@ -49,23 +49,28 @@ void main() {
     now = DateTime(2026, 11, 10, 11, 30);
     await attempts.saveDraft(attempt.id, answer: '先写出 P(A|B)=P(AB)/P(B)');
 
-    // 完成第一步会让计划的继续位置与更新时间都向前推进。
+    // 完成第一步会把进行中的步骤换成下一步，但计划行只在状态变化时才写：
+    // 当前页不再存回计划行（审查 S5），所以计划的更新时间仍停留在建计划那一刻。
     now = DateTime(2026, 11, 10, 12);
     final firstStep = (await plans.steps(planId)).first;
     await plans.setStepStatus(firstStep.id, PlanItemStatus.done);
+    expect((await plans.byId(planId))!.updatedAt, DateTime(2026, 11, 10, 9));
 
     final entries = await service.load();
 
+    // 草稿那条讨论 11:00 建、11:30 存下草稿，排在 10:00 的“较早的讨论”之前；
+    // 计划的更新时间停在建计划那一刻（09:00），排在最后。
     expect(entries.map((entry) => _label(entry)), [
-      'plan',
       'draft',
       'discussion',
+      'plan',
     ]);
-    expect(entries.first.plan!.nextStepTitle, '求导法则');
-    expect(entries[1].record!.draftSnippet, '先写出 P(A|B)=P(AB)/P(B)');
-    expect(entries[1].lastActiveAt, DateTime(2026, 11, 10, 11, 30));
-    expect(entries[2].record!.lastUserMessage, '较早的问题');
-    expect(entries[2].record!.preview, '较早的问题');
+    expect(entries.first.record!.draftSnippet, '先写出 P(A|B)=P(AB)/P(B)');
+    expect(entries.first.record!.displayTitle, '条件概率');
+    expect(entries[1].record!.lastUserMessage, '较早的问题');
+    expect(entries[1].record!.preview, '较早的问题');
+    expect(entries.last.plan!.nextStepTitle, '求导法则');
+    expect(entries.last.plan!.currentPage, 3, reason: '未完成步骤的起始页');
 
     expect(await service.load(limit: 2), hasLength(2));
   });

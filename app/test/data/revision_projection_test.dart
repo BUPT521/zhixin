@@ -21,7 +21,7 @@ DateTime _fixedClock() => DateTime(2026, 11, 10, 9);
 Future<void> _insertMemory(WriteTransaction txn, String id, String content) =>
     insertRow(txn.executor, 'memory', {
       'id': id,
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': content,
       'source_kind': 'user',
       'status': 'active',
@@ -122,7 +122,7 @@ void main() {
     expect(checkpoints, hasLength(2));
     final periodic = checkpoints.first;
     expect(periodic.kind, 'periodic');
-    expect(periodic.encoding, 'json+gzip');
+    // 检查点只有一种编码：gzip 压缩的 JSON，压缩之前的字节数记在 raw_bytes。
     expect(periodic.rawBytes, greaterThan(periodic.payload.length));
     final head = await rig.engine.headId(rig.raw);
     expect(periodic.commitId, head);
@@ -133,7 +133,7 @@ void main() {
     expect(rebuilt['memory'], hasLength(triggeredAt + 1));
   });
 
-  test('gzip 检查点与 json 检查点的重建结果一致，篡改 payload 报损坏', () async {
+  test('检查点篡改 payload 报损坏，换回正确内容可以重建', () async {
     final rig = await openTestRig(engine: _engine());
     addTearDown(rig.close);
     final writes = WriteTransactions(rig.db, revisions: rig.engine);
@@ -153,34 +153,20 @@ void main() {
     );
     final gzipRow = rows.first;
     final checkpointId = gzipRow['id']! as int;
+    // 只有一种编码：gzip 压缩的 JSON（ADR-0054 实施前核对删去了 `json`）。
     expect(gzipRow['encoding'], 'json+gzip');
     final gzipPayload = Uint8List.fromList(gzipRow['payload']! as Uint8List);
     final gzipRawBytes = gzipRow['raw_bytes']! as int;
     final gzipProjection = await rig.engine.projectionAt(rig.raw, head);
+    expect(utf8.encode(encodeProjection(gzipProjection)).length, gzipRawBytes);
 
-    // 换成阶段 0 的 json 编码；校验值按解压后的原文计算，因此保持不变。
-    final jsonBytes = utf8.encode(encodeProjection(gzipProjection));
-    expect(jsonBytes.length, gzipRawBytes);
-    await updateRow(
-      rig.raw,
-      'revision_checkpoint',
-      {
-        'payload': Uint8List.fromList(jsonBytes),
-        'encoding': 'json',
-        'raw_bytes': jsonBytes.length,
-      },
-      where: 'id = ?',
-      whereArgs: [checkpointId],
-    );
-    expect(await rig.engine.projectionAt(rig.raw, head), gzipProjection);
-
-    // 换回 gzip 并改一个字节：解压或校验失败都按损坏报告。
+    // 改一个字节：解压或按摘要比对失败都按损坏报告。
     final tampered = Uint8List.fromList(gzipPayload);
     tampered[tampered.length ~/ 2] ^= 0xFF;
     await updateRow(
       rig.raw,
       'revision_checkpoint',
-      {'payload': tampered, 'encoding': 'json+gzip', 'raw_bytes': gzipRawBytes},
+      {'payload': tampered},
       where: 'id = ?',
       whereArgs: [checkpointId],
     );
@@ -188,6 +174,16 @@ void main() {
       rig.engine.projectionAt(rig.raw, head),
       throwsA(isA<RevisionCorruption>()),
     );
+
+    // 内容换回来之后重建结果与当前数据一致。
+    await updateRow(
+      rig.raw,
+      'revision_checkpoint',
+      {'payload': gzipPayload, 'raw_bytes': gzipRawBytes},
+      where: 'id = ?',
+      whereArgs: [checkpointId],
+    );
+    expect(await rig.engine.projectionAt(rig.raw, head), gzipProjection);
   });
 
   test('随机 200 次写入后任取两个提交点，合并结果与两次重建一致', () async {
@@ -222,7 +218,7 @@ void main() {
             'memory',
             {
               'content': '改写 $step',
-              'status': random.nextBool() ? 'active' : 'superseded',
+              'status': random.nextBool() ? 'active' : 'deleted',
             },
             where: 'id = ?',
             whereArgs: [id],

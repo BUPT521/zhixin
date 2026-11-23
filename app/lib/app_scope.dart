@@ -27,6 +27,7 @@ import 'application/material_search.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
+import 'application/memory_usage_service.dart';
 import 'application/search_index_service.dart';
 import 'application/memory_scope_service.dart';
 import 'application/plan_service.dart';
@@ -130,7 +131,7 @@ class AppScope extends StatefulWidget {
   State<AppScope> createState() => AppScopeState();
 }
 
-class AppScopeState extends State<AppScope> {
+class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   RawDatabase? _connection;
   late GuardedDatabase _db;
   late AppPaths paths;
@@ -530,6 +531,7 @@ class AppScopeState extends State<AppScope> {
     materials: _materials,
     runtime: _runtime,
     evidence: _evidence,
+    usage: _memoryUsage,
     personaSource: () async {
       final runtime = _pluginRuntime;
       if (runtime == null) return null;
@@ -640,6 +642,24 @@ class AppScopeState extends State<AppScope> {
     runtime: _runtime,
   );
 
+  /// 记忆使用统计：召回时只记在本机，应用进入后台且距上次冲刷不少于一天时
+  /// 冲刷成一条维护提交（ADR-0051 决定第 8 条）。
+  late final MemoryUsageService _memoryUsage = MemoryUsageService(
+    db: _db,
+    transactions: _transactions,
+    deviceIdSource: () async {
+      try {
+        return await _account.deviceId();
+      } catch (_) {
+        return null;
+      }
+    },
+    clock: clock,
+    storedFlushAt: _cloudPreferences.memoryUsageFlushedAt,
+    recordFlushAt: _cloudPreferences.setMemoryUsageFlushedAt,
+    onFlushed: () => _refreshSearchIndexNowAndWait(),
+  );
+
   late final SettingsService _settingsEdit = SettingsService(
     settings: _settings,
     transactions: _transactions,
@@ -743,6 +763,8 @@ class AppScopeState extends State<AppScope> {
   @override
   void initState() {
     super.initState();
+    // 进入后台时冲刷记忆使用统计；能走到这里说明应用根已经装配到监听阶段。
+    WidgetsBinding.instance.addObserver(this);
     ready = _initTracked();
     // 首屏数据就绪（或开库失败）之后放行第一帧；没压过第一帧时这次调用
     // 什么都不做，测试照常跑。
@@ -752,6 +774,22 @@ class AppScopeState extends State<AppScope> {
           .whenComplete(FirstFrameGate.release),
     );
   }
+
+  /// 应用进入后台（`paused` 或 `hidden`）时冲刷记忆使用统计；回到前台不触发。
+  ///
+  /// 首屏服务还没装配完时不碰它们：后台事件可能早于启动完成。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.paused &&
+        state != AppLifecycleState.hidden) {
+      return;
+    }
+    if (!_servicesInitialized) return;
+    _flushMemoryUsageOnPause();
+  }
+
+  /// 首屏服务已经装配完成；没有完成时后台事件也不去碰它们。
+  bool _servicesInitialized = false;
 
   Future<void> _init() async {
     paths = await AppPaths.resolve();
@@ -876,6 +914,7 @@ class AppScopeState extends State<AppScope> {
     // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。
     unawaited(_sync.schedule());
     _scheduleActiveReport();
+    _servicesInitialized = true;
   }
 
   /// 首帧之后在空闲里尝试一次匿名活跃上报（ADR-0019）：不等待、不阻塞启动，
@@ -1002,17 +1041,36 @@ class AppScopeState extends State<AppScope> {
   ///
   /// 设置页的手动“更新索引”直接调用服务并捕获异常，看到的是就地说明。
   void _refreshSearchIndexNow() {
+    unawaited(_refreshSearchIndexNowAndWait());
+  }
+
+  /// 应用进入后台时冲刷记忆使用统计：距上次冲刷不少于一天才写（ADR-0051
+  /// 决定第 8 条）。失败只写诊断记录，与用户此刻的操作无关。
+  void _flushMemoryUsageOnPause() {
     unawaited(
-      _searchIndex.refresh().catchError((Object error, StackTrace stack) {
-        crashLog.record(error, stack, kind: 'semantic_index');
-        return const IndexRefreshResult(failure: IndexFailure.error);
+      _memoryUsage.flushIfDue().catchError((Object error, StackTrace stack) {
+        crashLog.record(error, stack, kind: 'memory_usage_flush');
+        return false;
       }),
     );
+  }
+
+  /// 同 [_refreshSearchIndexNow]，但把这一次刷新等完：冲刷记忆使用统计之后
+  /// 要等索引写完再结束，不留下一个没人等的写入。
+  Future<void> _refreshSearchIndexNowAndWait() async {
+    final index = _searchIndexService;
+    if (index == null || !index.configured) return;
+    try {
+      await index.refresh();
+    } catch (error, stack) {
+      crashLog.record(error, stack, kind: 'semantic_index');
+    }
   }
 
   @override
   void dispose() {
     _searchIndexRefreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _cloudSync?.dispose();
     _accountService?.dispose();
     _configuredAi?.dispose();

@@ -4,10 +4,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/context_request.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
+import 'package:zhixin/data/db/sql.dart';
+import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/domain/models/material.dart';
-import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/learning_page.dart';
@@ -65,13 +66,18 @@ void main() {
 
   testWidgets('过期记忆单独标出且不参与回答上下文', (tester) async {
     await openApp(tester);
-    await tester.runAsync(
-      () => scope!.memory.edit.add(
-        kind: MemoryKind.constraint,
+    // 先用记忆页的新增写一条语义记忆，再把有效期改到昨天，使它成为过期条目。
+    await tester.runAsync(() async {
+      await scope!.memory.edit.add(
+        kind: MemoryKind.semantic,
         content: '本周只有半小时可用于复习',
-        validUntil: DateTime.now().subtract(const Duration(days: 1)),
-      ),
-    );
+      );
+      await updateRow(scope!.testing.db, 'memory', {
+        'valid_until': DateTime.now()
+            .subtract(const Duration(days: 1))
+            .toIso8601String(),
+      });
+    });
     await tester.tap(find.byIcon(FLucideIcons.brain));
     await settle(tester);
     expect(find.text('已过期'), findsOneWidget);

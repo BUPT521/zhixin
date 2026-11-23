@@ -16,6 +16,7 @@ import '../domain/models/assessment.dart';
 import '../domain/models/chat_message.dart';
 import '../domain/models/question.dart';
 import '../domain/rules/notices.dart';
+import '../domain/rules/uuid_v7.dart';
 import '../domain/rules/text.dart';
 import 'answer_notice.dart';
 import 'buddy_flows.dart';
@@ -89,12 +90,12 @@ class _LearningPageState extends State<LearningPage> {
 
   /// 保存草稿与提交各保留一个请求编号：写入失败后用户再点一次时沿用同一个
   /// 编号，数据层按提交去重，不会重复写一条草稿或多提交一次作答。
-  String? _draftRequestId;
-  String? _draftRequestAttemptId;
-  String? _submitRequestId;
-  String? _submitRequestAttemptId;
-  String? _assessRequestId;
-  String? _assessRequestAttemptId;
+  String? _draftUid;
+  String? _draftUidAttemptId;
+  String? _submitUid;
+  String? _submitUidAttemptId;
+  String? _assessUid;
+  String? _assessUidAttemptId;
 
   /// 用户选择先不看上次答案重做时，隐藏历次尝试，求助不带入旧讨论回答与困难。
   bool _independentRedo = false;
@@ -264,32 +265,31 @@ class _LearningPageState extends State<LearningPage> {
   }
 
   /// 保存整份草稿；检查、提交与离开学习页之前都先调用它。
-  /// 同一份草稿或同一次提交的重试沿用同一个请求编号；换了一条尝试就换编号。
-  String _requestIdForDraft(String attemptId) {
-    if (_draftRequestAttemptId != attemptId) {
-      _draftRequestAttemptId = attemptId;
-      _draftRequestId =
-          'draft-$attemptId-${DateTime.now().microsecondsSinceEpoch}';
+  ///
+  /// 同一次动作重试沿用同一个提交身份，换了一条尝试就换身份；身份是动作开始时
+  /// 生成的一个 UUIDv7（ADR-0053 决定第 3 条）。
+  String _uidForDraft(String attemptId) {
+    if (_draftUidAttemptId != attemptId) {
+      _draftUidAttemptId = attemptId;
+      _draftUid = newUuidV7();
     }
-    return _draftRequestId!;
+    return _draftUid!;
   }
 
-  String _requestIdForSubmit(String attemptId) {
-    if (_submitRequestAttemptId != attemptId) {
-      _submitRequestAttemptId = attemptId;
-      _submitRequestId =
-          'submit-$attemptId-${DateTime.now().microsecondsSinceEpoch}';
+  String _uidForSubmit(String attemptId) {
+    if (_submitUidAttemptId != attemptId) {
+      _submitUidAttemptId = attemptId;
+      _submitUid = newUuidV7();
     }
-    return _submitRequestId!;
+    return _submitUid!;
   }
 
-  String _requestIdForAssess(String attemptId) {
-    if (_assessRequestAttemptId != attemptId) {
-      _assessRequestAttemptId = attemptId;
-      _assessRequestId =
-          'assess-$attemptId-${DateTime.now().microsecondsSinceEpoch}';
+  String _uidForAssess(String attemptId) {
+    if (_assessUidAttemptId != attemptId) {
+      _assessUidAttemptId = attemptId;
+      _assessUid = newUuidV7();
     }
-    return _assessRequestId!;
+    return _assessUid!;
   }
 
   Future<bool> _saveDraft({bool notify = true}) async {
@@ -318,11 +318,11 @@ class _LearningPageState extends State<LearningPage> {
         delayed: _delayed,
         feedback: _feedbackDraft.text,
         checkable: _checkableDraft.text,
-        requestId: _requestIdForDraft(attempt.id),
+        uid: _uidForDraft(attempt.id),
       );
       // 写成功之后这一次请求结束；下一次保存换新的编号。
-      _draftRequestId = null;
-      _draftRequestAttemptId = null;
+      _draftUid = null;
+      _draftUidAttemptId = null;
       if (!mounted) return true;
       _draftAttemptId = attempt.id;
       if (notify) {
@@ -581,10 +581,10 @@ class _LearningPageState extends State<LearningPage> {
         delayed: _delayed,
         feedback: _feedbackDraft.text,
         checkable: _checkableDraft.text,
-        requestId: _requestIdForSubmit(attempt.id),
+        uid: _uidForSubmit(attempt.id),
       );
-      _submitRequestId = null;
-      _submitRequestAttemptId = null;
+      _submitUid = null;
+      _submitUidAttemptId = null;
       if (!mounted) return;
       // 提交之后这条尝试不再可改：表单的复位由订阅回填新的一屏完成。
       setState(() {
@@ -1213,11 +1213,11 @@ class _LearningPageState extends State<LearningPage> {
         questionId: widget.questionId,
         attemptId: attempt.id,
         broughtIdentities: app.broughtSources.identities,
-        requestId: _requestIdForAssess(attempt.id),
+        uid: _uidForAssess(attempt.id),
       );
       app.broughtSources.clear();
-      _assessRequestId = null;
-      _assessRequestAttemptId = null;
+      _assessUid = null;
+      _assessUidAttemptId = null;
       if (!mounted) return;
       showToast(context, '模型判断已记录');
     } catch (error, stack) {

@@ -18,9 +18,10 @@ class SettingsRepository {
     DateTime now, {
     WriteTransaction? transaction,
   }) async {
-    await writeExecutor(transaction, _db).writeGenerated(
-      (db) => db.setProfileCutoffHour(hour, formatDateTime(now)),
-    );
+    await writeExecutor(
+      transaction,
+      _db,
+    ).writeGenerated((db) => db.setCutoffHour('$hour', formatDateTime(now)));
   }
 
   Future<String?> metadata(String key) async {

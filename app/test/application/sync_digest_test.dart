@@ -68,7 +68,7 @@ void main() {
   ) => device.rig.raw.execute(
     'INSERT INTO memory (id, kind, content, scope, source_kind, source_id, '
     'valid_until, status, created_at, updated_at) '
-    "VALUES (?, 'preference', ?, NULL, 'user', NULL, NULL, 'active', "
+    "VALUES (?, 'semantic', ?, NULL, 'user', NULL, NULL, 'active', "
     "'2026-11-17 10:00:00', '2026-11-17 10:00:00')",
     [id, content],
   );
@@ -365,14 +365,10 @@ void main() {
     await insertTestMemory(b.rig, 'm3', content: 'B 新增');
     await b.sync.syncNow();
     final pushed = server.commits[userId]!.last;
-    expect(
-      pushed['request_id'],
-      isNot(
-        server.commits[userId]![server.commits[userId]!.length -
-            2]['request_id'],
-      ),
-      reason: '最后一条是 B 推上去的本机提交',
-    );
+    final previous =
+        server.commits[userId]![server.commits[userId]!.length - 2];
+    // 提交身份改按 `uid`：最后一条是 B 推上去的本机提交，与前一条的 uid 不同。
+    expect(pushed['uid'], isNot(previous['uid']), reason: '最后一条是 B 推上去的本机提交');
     expect(
       pushed['state_digest'],
       await b.rig.revisions.currentStateDigest(),

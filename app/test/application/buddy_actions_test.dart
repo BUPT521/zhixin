@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/application/buddy_actions.dart';
+import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
@@ -9,51 +10,146 @@ import 'package:zhixin/domain/models/memory.dart';
 
 import '../support/test_db.dart';
 
-import 'package:zhixin/data/db/sql.dart';
+/// 直接写一行记忆；要先有一条现成的记忆时用它，写入路径本身走仓库。
+Future<String> _seedMemory(
+  TestRig rig, {
+  required String id,
+  required String kind,
+  required String content,
+  String? scope,
+  String? validUntil,
+}) async {
+  await insertRow(rig.db, 'memory', {
+    'id': id,
+    'kind': kind,
+    'content': content,
+    'scope': scope,
+    'source_kind': 'user',
+    'valid_until': validUntil,
+    'status': 'active',
+    'created_at': '2026-11-10T09:00:00',
+    'updated_at': '2026-11-10T09:00:00',
+  });
+  return id;
+}
 
 void main() {
-  test('模型给的记忆落库，并留下可按提交撤销的回执', () async {
+  test('把模型给的记忆写进库：三类标签照写，情景跟本次范围，语义与程序保持全局', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
 
-    const draft = MemoryDraft(
-      kind: MemoryKind.constraint,
-      content: '本周晚上只有半小时',
-    );
-    final result = await applyMemoryDrafts(
+    final applied = await applyMemoryDrafts(
       transactions: WriteTransactions(rig.db, revisions: rig.engine),
       memories: memories,
-      drafts: const [draft],
+      drafts: const [
+        MemoryDraft(kind: MemoryKind.episodic, content: '第 8 题在放缩处卡住'),
+        MemoryDraft(kind: MemoryKind.semantic, content: '本周晚上只有半小时'),
+        MemoryDraft(kind: MemoryKind.procedural, content: '先给例子再给定义'),
+      ],
+      sourceKind: MemorySourceKind.message,
+      sourceId: 'msg-1',
+      scope: memoryGoalScope('goal-1'),
+    );
+    expect(applied.changes, hasLength(3));
+    expect(applied.changes.first.memoryId, isNotNull);
+
+    final stored = {
+      for (final memory in await memories.list()) memory.kind: memory,
+    };
+    expect(
+      stored.keys,
+      unorderedEquals([
+        MemoryKind.episodic,
+        MemoryKind.semantic,
+        MemoryKind.procedural,
+      ]),
+    );
+    expect(stored[MemoryKind.episodic]!.scope, memoryGoalScope('goal-1'));
+    expect(stored[MemoryKind.semantic]!.scope, isNull);
+    expect(stored[MemoryKind.procedural]!.scope, isNull);
+    expect(stored[MemoryKind.episodic]!.sourceKind, MemorySourceKind.message);
+    expect(stored[MemoryKind.episodic]!.sourceId, 'msg-1');
+    // 写入后按同一条提交整组撤销。
+    final undone = await rig.revisions.undoCommit(
+      applied.changes.first.commitId,
+    );
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect(await memories.list(), isEmpty);
+  });
+
+  test('同样的记忆再写一次不重复写入，超长的按上限跳过', () async {
+    final rig = await openTestRigWithUndoRules();
+    addTearDown(rig.close);
+    final memories = MemoryRepository(rig.db);
+    final transactions = WriteTransactions(rig.db, revisions: rig.engine);
+
+    Future<ApplyResult> apply(List<MemoryDraft> drafts) => applyMemoryDrafts(
+      transactions: transactions,
+      memories: memories,
+      drafts: drafts,
       sourceKind: MemorySourceKind.message,
       sourceId: 'msg-1',
     );
-    expect(result.changes, hasLength(1));
-    expect(result.changes.single.draft, same(draft));
-    expect(await memories.activeForContext(now: DateTime.now()), hasLength(1));
 
-    final commitId = result.changes.single.commitId;
+    final first = await apply(const [
+      MemoryDraft(kind: MemoryKind.semantic, content: '本周晚上只有半小时'),
+    ]);
+    expect(first.changes, hasLength(1));
+    final again = await apply(const [
+      MemoryDraft(kind: MemoryKind.semantic, content: '本周晚上只有半小时'),
+    ]);
+    expect(again.changes, isEmpty, reason: '同一类、同一范围、同一正文不再写');
+    expect(await memories.list(), hasLength(1));
+
+    final tooLong = await apply([
+      MemoryDraft(kind: MemoryKind.semantic, content: '长' * 201),
+    ]);
+    expect(tooLong.changes, isEmpty);
+    expect(tooLong.skipped, isNotEmpty);
+    expect(await memories.list(), hasLength(1));
+  });
+  test('已落库的记忆可以按提交撤销', () async {
+    final rig = await openTestRigWithUndoRules();
+    addTearDown(rig.close);
+    final memories = MemoryRepository(rig.db);
+
+    await insertRow(rig.db, 'memory', {
+      'id': 'memory-1',
+      'kind': 'semantic',
+      'content': '本周晚上只有半小时',
+      'source_kind': 'user',
+      'status': 'active',
+      'created_at': '2026-11-10T09:00:00',
+      'updated_at': '2026-11-10T09:00:00',
+    });
+    final commitId = await rig.engine.headId(rig.raw);
+
+    expect(await memories.activeForContext(now: DateTime.now()), hasLength(1));
     expect(await rig.revisions.activeCommits([commitId]), {commitId});
     final undone = await rig.revisions.undoCommit(commitId);
-    expect(undone.applied, isTrue);
+    expect(undone.applied, isTrue, reason: undone.message);
     expect(await memories.activeForContext(now: DateTime.now()), isEmpty);
     expect(await rig.revisions.activeCommits([commitId]), isEmpty);
   });
 
-  test('用户修改记忆后，旧的写入提交不能删除新内容', () async {
+  test('用户改过的记忆，旧的写入提交不能撤销', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
-    final id = await memories.create(
-      kind: MemoryKind.difficulty,
+    final id = await _seedMemory(
+      rig,
+      id: 'memory-1',
+      kind: 'episodic',
       content: '原有困难',
-      sourceKind: MemorySourceKind.message,
     );
     final created = (await rig.revisions.undoableCommits()).last;
-    await memories.updateContent(
-      id,
-      content: '用户修改后的困难',
-      kind: MemoryKind.difficulty,
+    await updateRow(
+      rig.db,
+      'memory',
+      {'content': '用户修改后的困难', 'updated_at': '2026-11-10T10:00:00'},
+      where: 'id = ?',
+      whereArgs: [id],
     );
 
     final undone = await rig.revisions.undoCommit(created.id);
@@ -93,109 +189,98 @@ void main() {
     expect(await rig.revisions.activeCommits([created.id]), {created.id});
   });
 
-  test('重复的记忆不重复写，过长的记忆被跳过', () async {
+  test('记忆去重按正文逐字比较，过期记录不参与', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
-
-    await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      memories: memories,
-      drafts: const [
-        MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
-      ],
-      sourceKind: MemorySourceKind.message,
-    );
-    final second = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      memories: memories,
-      drafts: [
-        const MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
-        MemoryDraft(kind: MemoryKind.difficulty, content: '长' * 201),
-      ],
-      sourceKind: MemorySourceKind.message,
-    );
-    expect(second.changes, isEmpty);
-    expect(second.skipped, isNotEmpty);
-    expect(await memories.activeForContext(now: DateTime.now()), hasLength(1));
-  });
-
-  test('记忆去重区分类别与范围，过期记录和本批重复项不误抑制', () async {
-    final rig = await openTestRigWithUndoRules();
-    addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
-    await memories.create(
-      kind: MemoryKind.difficulty,
+    await _seedMemory(
+      rig,
+      id: 'memory-1',
+      kind: 'episodic',
       content: '同一内容',
-      scope: 'goal:1',
-      validUntil: DateTime.now().subtract(const Duration(days: 1)),
+      scope: memoryGoalScope('goal-1'),
+      validUntil: DateTime.now()
+          .subtract(const Duration(days: 1))
+          .toIso8601String(),
     );
 
-    final first = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      memories: memories,
-      drafts: const [
-        MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容'),
-        MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容'),
-      ],
-      sourceKind: MemorySourceKind.message,
-      scope: 'goal:1',
+    final identities = await memories.activeIdentities(DateTime.now());
+    expect(identities, isEmpty, reason: '过期的记录不进入去重比较');
+    final active = await _seedMemory(
+      rig,
+      id: 'memory-2',
+      kind: 'episodic',
+      content: '已经写过的一条',
     );
-    final otherScope = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      memories: memories,
-      drafts: const [MemoryDraft(kind: MemoryKind.difficulty, content: '同一内容')],
-      sourceKind: MemorySourceKind.message,
-      scope: 'goal:2',
+    await updateRow(
+      rig.db,
+      'memory',
+      {
+        'content': '同一内容',
+        'scope': memoryGoalScope('goal-1'),
+        'updated_at': '2026-11-10T09:30:00',
+      },
+      where: 'id = ?',
+      whereArgs: [active],
     );
-    final otherKind = await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      memories: memories,
-      drafts: const [MemoryDraft(kind: MemoryKind.preference, content: '同一内容')],
-      sourceKind: MemorySourceKind.message,
-      scope: 'goal:1',
-    );
-
-    expect(first.changes, hasLength(1));
-    expect(otherScope.changes, hasLength(1));
-    expect(otherKind.changes, hasLength(1));
-    expect(await selectRows(rig.db, 'memory'), hasLength(4));
-    expect(await rig.revisions.undoableCommits(), hasLength(4));
+    final again = await memories.activeIdentities(DateTime.now());
+    expect(again.single.content, '同一内容');
+    expect(again.single.scope, memoryGoalScope('goal-1'));
+    expect(again.single.kind, 'episodic');
   });
 
-  test('困难与进展写入本次范围，偏好与限制保持全局', () async {
+  test('范围由类别决定：情景记忆跟目标走，语义记忆保持全局', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
 
-    await applyMemoryDrafts(
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      memories: memories,
-      drafts: const [
-        MemoryDraft(kind: MemoryKind.difficulty, content: '放缩方向不确定'),
-        MemoryDraft(kind: MemoryKind.progress, content: '能独立列出条件'),
-        MemoryDraft(kind: MemoryKind.preference, content: '喜欢先看例子'),
-        MemoryDraft(kind: MemoryKind.constraint, content: '晚上只有半小时'),
-      ],
-      sourceKind: MemorySourceKind.message,
+    // `MemoryKind.followsContext` 是领域侧的判断，写入路径与界面都在用它：
+    // 情景是发生过的一件事，写本次范围；语义与程序是全局的事实与做法。
+    expect(MemoryKind.episodic.followsContext, isTrue);
+    expect(MemoryKind.semantic.followsContext, isFalse);
+    expect(MemoryKind.procedural.followsContext, isFalse);
+
+    final memories = MemoryRepository(rig.db);
+    await _seedMemory(
+      rig,
+      id: 'memory-episodic',
+      kind: 'episodic',
+      content: '放缩方向不确定',
       scope: memoryGoalScope('goal-3'),
     );
-    final all = await memories.list();
-    expect(all, hasLength(4));
-    String? scopeOf(String content) =>
-        all.firstWhere((memory) => memory.content == content).scope;
-    expect(scopeOf('放缩方向不确定'), memoryGoalScope('goal-3'));
-    expect(scopeOf('能独立列出条件'), memoryGoalScope('goal-3'));
-    expect(scopeOf('喜欢先看例子'), isNull);
-    expect(scopeOf('晚上只有半小时'), isNull);
-
+    await _seedMemory(
+      rig,
+      id: 'memory-semantic',
+      kind: 'semantic',
+      content: '喜欢先看例子',
+    );
     final other = await memories.activeForContext(
       now: DateTime.now(),
       scope: memoryGoalScope('goal-4'),
     );
-    expect(
-      other.map((memory) => memory.content),
-      unorderedEquals(['喜欢先看例子', '晚上只有半小时']),
+    expect(other.map((memory) => memory.content), ['喜欢先看例子']);
+    final same = await memories.activeForContext(
+      now: DateTime.now(),
+      scope: memoryGoalScope('goal-3'),
     );
+    expect(
+      same.map((memory) => memory.content),
+      containsAll(['放缩方向不确定', '喜欢先看例子']),
+    );
+  });
+
+  test('超过写入上限的记忆经写入路径跳过，不落库', () async {
+    final rig = await openTestRigWithUndoRules();
+    addTearDown(rig.close);
+    final memories = MemoryRepository(rig.db);
+    final applied = await applyMemoryDrafts(
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
+      memories: memories,
+      drafts: [MemoryDraft(kind: MemoryKind.episodic, content: '长' * 201)],
+      sourceKind: MemorySourceKind.message,
+      sourceId: 'msg-1',
+    );
+    expect(applied.changes, isEmpty, reason: '写入上限还是 200 字');
+    expect(applied.skipped.single, contains('200'));
+    expect(await selectRows(rig.db, 'memory'), isEmpty);
   });
 }

@@ -8,19 +8,17 @@ import 'package:zhixin/data/repository/assessment_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
-import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/material.dart';
-import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/uuid_v7.dart';
 
 import '../../support/test_db.dart';
 
-/// UUIDv7 主键（ADR-0018）：13 张业务表用文本主键，插入前由写入方生成，
+/// UUIDv7 主键（ADR-0018）：参与版本采集的 15 张业务表用文本主键，插入前由写入方生成，
 /// 时间有序且带版本位与变体位；增量同步让两台设备按同一文本定位同一行，
 /// 因此一次提交里的父行与子行引用必须能在这条提交的变更明细里对上。
 ///
@@ -46,9 +44,11 @@ void _expectUuidV7(String id) {
   expect('89ab'.contains(id[19]), isTrue, reason: '变体位应当落在 RFC 9562 的 10xx');
 }
 
-/// 13 张业务表：除固定为 1 的 `profile` 之外，参与版本采集的表都用 UUIDv7 主键。
-Set<String> _uuidPrimaryKeyTables() =>
-    {...versionedTableNames}..remove('profile');
+/// 参与版本采集的业务表都用 UUIDv7 主键。
+///
+/// `profile` 已经删掉，每日截止小时并进 `app_meta` 的文本键；`memory_usage` 与
+/// `memory_use` 是新增的记忆使用记录，也按文本主键写入。
+Set<String> _uuidPrimaryKeyTables() => {...versionedTableNames};
 
 void main() {
   test('主键是 36 位小写 UUIDv7，时间前缀取写入时刻', () {
@@ -96,12 +96,12 @@ void main() {
     expect(rolledBack.compareTo(ids.last), greaterThan(0));
   });
 
-  test('13 张业务表的主键是文本，外键列同为文本', () async {
+  test('业务表的主键都是文本，外键列同为文本', () async {
     final db = await openTestDb();
     addTearDown(db.close);
 
     final uuidTables = _uuidPrimaryKeyTables();
-    expect(uuidTables, hasLength(13), reason: '除 profile 之外的 13 张业务表用文本主键');
+    expect(uuidTables, hasLength(15), reason: '参与版本采集的 15 张业务表都用文本主键');
 
     final columnTypes = <String, Map<String, String>>{};
     for (final table in uuidTables) {
@@ -135,7 +135,7 @@ void main() {
           'TEXT',
           reason: '$table.$column 指向 ${fk['table']} 的文本主键',
         );
-        // 引用目标同样按文本定位：除 13 张业务表之外还有按内容哈希保存
+        // 引用目标同样按文本定位：除业务表之外还有按内容哈希保存
         // 附件的 asset_object，它的主键也是文本。
         expect(
           await primaryKeyType('${fk['table']}'),
@@ -145,17 +145,17 @@ void main() {
       }
     }
 
-    // 两张不参与 UUIDv7 改造的表保持原样：设置表是按名取值的文本键，
-    // profile 是固定为 1 的整数行。
+    // 不参与版本采集的持久表只有设置表 app_meta：按名取值的文本键。
     final meta = await db.rawQuery('PRAGMA table_info("app_meta")');
     expect(
       '${meta.firstWhere((row) => (row['pk']! as int) > 0)['type']}'
           .toUpperCase(),
       'TEXT',
     );
-    final profile = await db.rawQuery('PRAGMA table_info("profile")');
+    // 唯一的整数主键是版本引擎的单行状态：固定为 1，由安装时写入。
+    final state = await db.rawQuery('PRAGMA table_info("revision_state")');
     expect(
-      '${profile.firstWhere((row) => (row['pk']! as int) > 0)['type']}'
+      '${state.firstWhere((row) => (row['pk']! as int) > 0)['type']}'
           .toUpperCase(),
       'INTEGER',
     );
@@ -172,7 +172,6 @@ void main() {
     final attempts = AttemptRepository(rig.db, clock: _fixedClock);
     final assessments = AssessmentRepository(rig.db, clock: _fixedClock);
     final materials = MaterialRepository(rig.db, clock: _fixedClock);
-    final memories = MemoryRepository(rig.db, clock: _fixedClock);
     final studyPlans = StudyPlanRepository(rig.db, clock: _fixedClock);
 
     final goalId = await tasks.createGoal(title: '线代复习');
@@ -224,12 +223,38 @@ void main() {
       title: '系统学习条件概率',
       materialId: materialId,
     );
-    final memoryId = await memories.create(
-      kind: MemoryKind.preference,
-      content: '先给提示，再看完整解答',
-    );
+    // 记忆按现有仓库写不进库（类别取值与库里的三分类对不上），直接写一行，
+    // 标识同样由用例给出 UUIDv7 文本；记忆使用统计的两张表用仓库之外的方式
+    // 写行，标识也按 UUIDv7。
+    final memoryId = newUuidV7(now: _fixedClock());
+    await insertRow(rig.db, 'memory', {
+      'id': memoryId,
+      'kind': 'semantic',
+      'content': '先给提示，再看完整解答',
+      'source_kind': 'user',
+      'status': 'active',
+      'created_at': '2026-11-17 19:00:00',
+      'updated_at': '2026-11-17 19:00:00',
+    });
+    final usageId = newUuidV7(now: _fixedClock());
+    await insertRow(rig.db, 'memory_usage', {
+      'id': usageId,
+      'memory_id': memoryId,
+      'device_id': 'device-1',
+      'first_seen_at': '2026-11-17 19:00:00',
+      'updated_at': '2026-11-17 19:00:00',
+    });
+    final useId = newUuidV7(now: _fixedClock());
+    await insertRow(rig.db, 'memory_use', {
+      'id': useId,
+      'memory_id': memoryId,
+      'device_id': 'device-1',
+      'kind': 'recall',
+      'used_at': '2026-11-17 19:00:00',
+      'acquired_at': '2026-11-17 19:00:00',
+    });
 
-    // 13 张表各插入一行，插入生成的标识就是 UUIDv7 文本。
+    // 每张业务表各插入一行，插入生成的标识就是 UUIDv7 文本。
     final ids = <String, String>{
       'learning_goal': goalId,
       'plan_item': itemId,
@@ -244,9 +269,11 @@ void main() {
       'material_page': pageId,
       'study_plan': planId,
       'memory': memoryId,
+      'memory_usage': usageId,
+      'memory_use': useId,
     };
     expect(ids.keys.toSet(), _uuidPrimaryKeyTables());
-    expect(ids.values.toSet(), hasLength(13), reason: '同一时刻写入的 13 行互不撞键');
+    expect(ids.values.toSet(), hasLength(ids.length), reason: '同一时刻写入的行互不撞键');
     for (final entry in ids.entries) {
       _expectUuidV7(entry.value);
       final rows = await selectRows(

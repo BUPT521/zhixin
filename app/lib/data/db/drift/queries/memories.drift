@@ -1,4 +1,4 @@
--- 记忆的读写查询：一张表一个文件。
+-- 记忆的读写查询：一张表一个文件，使用记录表另有一个文件。
 
 import '../tables.dart';
 
@@ -8,9 +8,12 @@ SELECT * FROM memory
 WHERE (:activeOnly = 0 OR status = 'active')
 ORDER BY status, updated_at DESC, id DESC;
 
--- 同一范围里仍然有效的困难记忆；范围用空串表示无归属。
-activeDifficulties(REQUIRED :scope AS TEXT):
-SELECT id, content FROM memory
+-- 同一范围里仍然有效的某类记忆；范围用空串表示无归属。
+--
+-- 作答提案用它取同一道题以前写下的情景记忆：困难与进展都是情景标签，哪条是
+-- 困难由来源作答的结果判断（ADR-0051 决定第 9 条）。
+activeByKind(REQUIRED :kind AS TEXT, REQUIRED :scope AS TEXT):
+SELECT id, content, source_id FROM memory
 WHERE status = 'active' AND kind = :kind
   AND ((:scope = '' AND scope IS NULL) OR (:scope <> '' AND scope = :scope))
 ORDER BY id DESC;
@@ -25,7 +28,9 @@ SELECT kind, scope, content FROM memory
 WHERE status = 'active'
   AND (valid_until IS NULL OR valid_until >= :now);
 
--- 生成回答时取用的记忆：本次范围的排在前面，再按类型与更新时间。
+-- 生成回答时取用的记忆：常驻（语义或程序、全局、长期有效）的排在前面，其余
+-- 按更新时间（ADR-0051 决定第 5 条）。用途不再参与挑选类别，相关层的顺序由
+-- 召回服务按检索相关性重排。
 -- :scope 显式声明为必填文本：它同时与 '' 和可空的 scope 列比较，靠推断会在
 -- 可空与非空之间摇摆，生成文件因此每次重建都可能不同。
 memoriesForContext(REQUIRED :scope AS TEXT, REQUIRED :rowLimit AS INT OR NULL):
@@ -37,9 +42,10 @@ WHERE status = 'active'
     OR (:scope <> '' AND (scope IS NULL OR scope = :scope))
   )
 ORDER BY
-  CASE WHEN scope IS NULL THEN 1 ELSE 0 END,
-  CASE kind WHEN 'constraint' THEN 0 WHEN 'preference' THEN 1
-    WHEN 'difficulty' THEN 2 ELSE 3 END,
+  CASE
+    WHEN scope IS NULL AND valid_until IS NULL AND kind IN ('semantic', 'procedural')
+    THEN 1 ELSE 0
+  END DESC,
   updated_at DESC, id DESC
 LIMIT COALESCE(:rowLimit, -1);
 
@@ -50,15 +56,21 @@ WHERE source_kind = :sourceKind AND source_id = :sourceId
 LIMIT 1;
 
 insertMemory:
-INSERT INTO memory (id, kind, content, scope, source_kind, source_id, valid_until, status, created_at, updated_at)
-VALUES (:id, :kind, :content, :scope, :sourceKind, :sourceId, :validUntil, 'active', :stamp, :stamp);
+INSERT INTO memory (id, kind, content, scope, source_kind, source_id, valid_until, search_terms, status, created_at, updated_at)
+VALUES (:id, :kind, :content, :scope, :sourceKind, :sourceId, :validUntil, :searchTerms, 'active', :stamp, :stamp);
 
 updateMemoryContent:
 UPDATE memory SET content = :content,
   valid_until = :validUntil,
   kind = :kind,
   scope = :scope,
+  search_terms = :searchTerms,
   updated_at = :stamp
+WHERE id = :memoryId;
+
+-- 用户确认保留：只改 reviewed_at，不连带更新 updated_at（ADR-0051 决定第 9 条）。
+setMemoryReviewedAt:
+UPDATE memory SET reviewed_at = :stamp
 WHERE id = :memoryId;
 
 setMemoryStatus:

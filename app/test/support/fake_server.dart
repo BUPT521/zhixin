@@ -123,12 +123,14 @@ class FakeServer {
     required String deviceId,
     String alias = '',
     List<String> capabilities = const ['snapshot'],
+    int syncedSeq = 0,
     String lastSeen = '2026-11-20T10:00:00Z',
   }) {
     devices.putIfAbsent(userId, () => {})[deviceId] = FakeDevice(
       deviceId: deviceId,
       alias: alias,
       capabilities: capabilities,
+      syncedSeq: syncedSeq,
       lastSeen: lastSeen,
     );
   }
@@ -386,6 +388,19 @@ class FakeServer {
         return _renameDevice(userId, body);
       }
     }
+    if (path == '/v1/sync/refs') {
+      if (method == 'GET') {
+        final rows = refs[userId] ?? const <String, Map<String, Object?>>{};
+        return _json(200, {
+          'refs': [
+            for (final row in rows.values) {...row},
+          ],
+        });
+      }
+      if (method == 'PUT') {
+        return _putRef(userId, body);
+      }
+    }
     if (path == '/v1/sync/snapshot') {
       if (method == 'GET') {
         return _json(200, _syncHeadBody(userId));
@@ -427,6 +442,7 @@ class FakeServer {
           },
         );
       }
+      _advanceDeviceByPull(userId, request);
       final slice = [
         for (final commit in log)
           if ((commit['seq']! as int) > after &&
@@ -453,19 +469,45 @@ class FakeServer {
           (item as Map).cast<String, Object?>(),
       ];
       final log = commits.putIfAbsent(userId, () => []);
-      final seen = {for (final commit in log) commit['request_id']! as String};
+      final stored = {
+        for (final commit in log)
+          commit['uid']! as String: commit['seq']! as int,
+      };
       final fresh = [
         for (final commit in incoming)
-          if (!seen.contains(commit['request_id'])) commit,
+          if (!stored.containsKey(commit['uid'])) commit,
       ];
-      if (fresh.isEmpty) return _json(200, {'head': log.length});
+      final deviceId = (request.headers['x-device-id'] ?? '').trim();
+      if (fresh.isEmpty) {
+        // 整批都是重放：回当前 head 与每条提交原来的序号，位置只按 base 推进。
+        if (deviceId.isNotEmpty) {
+          _advanceDevice(userId, deviceId, base, toHead: false);
+        }
+        return _json(200, {
+          'head': log.length,
+          'seqs': [for (final commit in incoming) stored[commit['uid']]],
+        });
+      }
       if (base != log.length) {
         return _problem(409, 'conflict', extra: {'head': log.length});
       }
-      for (final commit in fresh) {
-        log.add({...commit, 'seq': log.length + 1});
+      final seqs = <int>[];
+      for (final commit in incoming) {
+        final uid = commit['uid']! as String;
+        final known = stored[uid];
+        if (known != null) {
+          seqs.add(known);
+          continue;
+        }
+        final seq = log.length + 1;
+        stored[uid] = seq;
+        log.add({...commit, 'seq': seq});
+        seqs.add(seq);
       }
-      return _json(200, {'head': log.length});
+      if (deviceId.isNotEmpty) {
+        _advanceDevice(userId, deviceId, base, toHead: true);
+      }
+      return _json(200, {'head': log.length, 'seqs': seqs});
     }
     if (path.startsWith('/v1/blobs/')) {
       final hash = path.substring('/v1/blobs/'.length);
@@ -664,6 +706,30 @@ class FakeServer {
     existing.lastSeen = lastSeen;
   }
 
+  /// 按请求里的 after 推进设备位置，与真实服务端一致：取较大值、不超过 head。
+  void _advanceDeviceByPull(String userId, http.Request request) {
+    final deviceId = (request.headers['x-device-id'] ?? '').trim();
+    if (deviceId.isEmpty) return;
+    final after =
+        int.tryParse(request.url.queryParameters['after'] ?? '0') ?? 0;
+    _advanceDevice(userId, deviceId, after, toHead: false);
+  }
+
+  /// 推进名册里一台设备的位置：取较大值，不超过当前 head；[toHead] 为真时推到
+  /// 当前 head（确有新提交写入时）。
+  void _advanceDevice(
+    String userId,
+    String deviceId,
+    int base, {
+    required bool toHead,
+  }) {
+    final device = devices[userId]?[deviceId];
+    if (device == null) return;
+    final target = toHead ? headOf(userId) : base;
+    final capped = target > headOf(userId) ? headOf(userId) : target;
+    if (capped > device.syncedSeq) device.syncedSeq = capped;
+  }
+
   /// 改别名：只认名册里已有的设备，别名去掉首尾空白后 0–64 字符，空串表示清除。
   http.Response _renameDevice(String userId, Map<String, Object?> body) {
     final deviceId = (body['device_id'] as String? ?? '').trim();
@@ -751,6 +817,51 @@ class FakeServer {
       return _problem(401, 'invalid_credentials');
     }
     return _tokens(_userIds[identifier]!, body['device_name'] as String? ?? '');
+  }
+
+  /// 命名版本：名字到一行（name、commit_uid、note、updated_at、deleted_at）；按
+  /// 账号分开，墓碑永久保留。
+  final Map<String, Map<String, Map<String, Object?>>> refs = {};
+
+  /// 每个账号当次请求的时间戳计数，用例里的先后顺序因此确定。
+  int _refTicks = 0;
+
+  http.Response _putRef(String userId, Map<String, Object?> body) {
+    final name = (body['name'] as String? ?? '').trim();
+    if (name.isEmpty || name.runes.length > 30) {
+      return _problem(400, 'invalid_request');
+    }
+    final delete = body['delete'] == true;
+    final commitUid = (body['commit_uid'] as String? ?? '').trim();
+    if (!delete && commitUid.isEmpty) return _problem(400, 'invalid_request');
+    final rows = refs.putIfAbsent(userId, () => {});
+    final existing = rows[name];
+    final deletedAt = existing?['deleted_at'] as String?;
+    final now = DateTime.utc(
+      2026,
+      11,
+      22,
+      9,
+    ).add(Duration(seconds: ++_refTicks)).toIso8601String();
+    if (deletedAt != null && now.compareTo(deletedAt) < 0) {
+      // 比删除时间更早的写入不复活名字：回已存的墓碑。
+      return _json(200, {...existing!});
+    }
+    final live = rows.values.where((row) => row['deleted_at'] == null).length;
+    if (!delete && (existing == null || deletedAt != null) && live >= 200) {
+      return _problem(400, 'invalid_request');
+    }
+    final row = <String, Object?>{
+      'name': name,
+      'commit_uid': delete ? (existing?['commit_uid'] ?? '') : commitUid,
+      'note': delete
+          ? (existing?['note'] ?? '')
+          : (body['note'] as String? ?? ''),
+      'updated_at': now,
+      'deleted_at': delete ? now : null,
+    };
+    rows[name] = row;
+    return _json(200, {...row});
   }
 
   /// 账号的登录方式取值；假服务端一个账号只有一条。
@@ -949,18 +1060,26 @@ class FakeBackup {
   final Uint8List bytes;
 }
 
-/// 假服务端设备名册里的一台设备：标识、别名、能力声明与最近出现时间。
+/// 假服务端设备名册里的一台设备：标识、别名、能力声明、已应用位置与最近出现时间。
+///
+/// 契约里能力是布尔字段 `snapshot_capable`，位置是 `synced_seq`；这里保留能力
+/// 名列表只是为了沿用用例里按名字写的断言。
 class FakeDevice {
   FakeDevice({
     required this.deviceId,
     required this.alias,
     required this.capabilities,
+    this.syncedSeq = 0,
     required this.lastSeen,
   });
 
   final String deviceId;
   String alias;
   List<String> capabilities;
+  int syncedSeq;
+
+  /// 是否声明了 snapshot 能力。
+  bool get snapshotCapable => capabilities.contains('snapshot');
 
   /// RFC3339 的 UTC 时间；排序按字符串比较即可。
   String lastSeen;
@@ -968,7 +1087,8 @@ class FakeDevice {
   Map<String, Object?> toJson() => {
     'device_id': deviceId,
     'alias': alias,
-    'capabilities': capabilities,
+    'snapshot_capable': snapshotCapable,
+    'synced_seq': syncedSeq,
     'last_seen': lastSeen,
   };
 }

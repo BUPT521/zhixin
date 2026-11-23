@@ -22,7 +22,7 @@ DateTime _fixedClock() => DateTime(2026, 11, 10, 9);
 Future<void> _insertMemory(WriteTransaction txn, String id, String content) =>
     insertRow(txn.executor, 'memory', {
       'id': id,
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': content,
       'source_kind': 'user',
       'status': 'active',
@@ -79,7 +79,7 @@ Future<List<int>> _randomHistory(TestRig rig) async {
           'memory',
           {
             'content': '改写 $step',
-            'status': random.nextBool() ? 'active' : 'superseded',
+            'status': random.nextBool() ? 'active' : 'deleted',
           },
           where: 'id = ?',
           whereArgs: [id],

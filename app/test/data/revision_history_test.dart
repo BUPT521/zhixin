@@ -31,8 +31,14 @@ void main() {
   }
 
   test('全部业务表的新增、修改、删除与级联都进入采集', () async {
-    await updateRow(rig.db, 'profile', {'day_cutoff_hour': 5}, where: 'id = 1');
-    expect(await lastTables(), {'profile'});
+    // app_meta 不参与采集：写截止小时不形成提交，HEAD 停在基线。
+    await insertRow(rig.db, 'app_meta', {
+      'key': 'day_cutoff_hour',
+      'value': '5',
+      'updated_at': '2026-11-10T09:00:00',
+    }, replace: true);
+    expect(await rig.engine.headId(rig.raw), 0);
+    expect(await lastTables(), isEmpty);
 
     const goal = 'goal-1';
     await insertRow(rig.db, 'learning_goal', {
@@ -161,7 +167,7 @@ void main() {
     expect(await lastTables(), {'assessment'});
     await insertRow(rig.db, 'memory', {
       'id': 'memory-1',
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': '先看定义',
       'source_kind': 'user',
       'status': 'active',
@@ -219,7 +225,7 @@ void main() {
     for (var index = 0; index < 6; index++) {
       await insertRow(rig.db, 'memory', {
         'id': 'memory-${index + 1}',
-        'kind': 'preference',
+        'kind': 'semantic',
         'content': '第 $index 条',
         'source_kind': 'user',
         'status': 'active',
@@ -252,7 +258,7 @@ void main() {
     });
     await insertRow(rig.db, 'memory', {
       'id': 'memory-1',
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': '保留记忆',
       'source_kind': 'user',
       'status': 'active',
@@ -268,15 +274,8 @@ void main() {
     await rig.engine.clearHistory(rig.raw);
     expect(await selectRows(rig.raw, 'revision_commit'), hasLength(1));
     expect(await selectRows(rig.raw, 'revision_change'), isEmpty);
-    expect(
-      await selectRows(
-        rig.raw,
-        'revision_ref',
-        where: 'name != ?',
-        whereArgs: ['HEAD'],
-      ),
-      isEmpty,
-    );
+    // 命名版本随清理一起清掉，`HEAD` 不在 revision_ref 里（ADR-0054 决定第 4 条）。
+    expect(await selectRows(rig.raw, 'revision_ref'), isEmpty);
     expect(await rig.engine.readProjection(rig.raw), projection);
     final head = await rig.engine.headId(rig.raw);
     expect(await rig.engine.projectionAt(rig.raw, head), projection);

@@ -4,11 +4,14 @@ part of 'revision_engine.dart';
 ///
 /// 拥有者：泳道 A（ADR-0039 第 3.3 节）。私有成员与同库其他文件共享。
 
-/// 创建采集暂存表、触发器和版本上下文；打开库时执行，重复执行保持幂等。
+/// 创建采集暂存表、触发器和版本状态行；打开库时执行，重复执行保持幂等。
 ///
 /// 只重建本引擎的采集对象：`rev_capture_` 前缀之外的触发器（其他模块建的）
 /// 原样保留；暂存表按当前列重建，列变了也能跟上（R12）。暂存表只在一个写
 /// 事务里使用，事务之外总是空的，所以打开库时直接删除重建不会丢数据。
+///
+/// 版本状态行（`revision_state`）在这里创建，早于编号为 0 的基线提交，所以
+/// `head_commit_id` 默认的 0 正好指向基线，不加外键（ADR-0054 决定第 4 条）。
 Future<void> installRevisionSchema(
   RawDatabase db,
   RevisionEngine engine,
@@ -39,15 +42,14 @@ Future<void> installRevisionSchema(
     await _createTriggers(db, table);
   }
 
-  await insertRow(db, 'revision_context', {
+  await insertRow(db, 'revision_state', {
     'id': 1,
     'active_commit': null,
     'capturing': 0,
     'suppress': 0,
-  }, ignore: true);
-  await insertRow(db, 'revision_sequence', {
-    'id': 1,
     'next_commit': 1,
+    'head_commit_id': 0,
+    'table_digests_json': jsonEncode(revisionEmptyTableDigests()),
   }, ignore: true);
 }
 
@@ -56,8 +58,8 @@ Future<void> _createTriggers(RawDatabase db, RevisionTable table) async {
   final stage = q(table.stageTable);
   final source = q(table.name);
   final when =
-      '(SELECT capturing FROM revision_context WHERE id = 1) = 1 '
-      'AND (SELECT suppress FROM revision_context WHERE id = 1) = 0';
+      '(SELECT capturing FROM revision_state WHERE id = 1) = 1 '
+      'AND (SELECT suppress FROM revision_state WHERE id = 1) = 0';
   final allOld = table.columns.map((c) => q('o_$c')).join(', ');
   final allNew = table.columns.map((c) => q('n_$c')).join(', ');
   final oldValues = table.columns.map((c) => 'OLD.${q(c)}').join(', ');
@@ -107,16 +109,19 @@ mixin RevisionCaptureMixin {
   /// 定下来之后补上；没有净变化时就不必占一个编号（R1）。
   ///
   /// 同一次合并按“减去旧行哈希、加上新行哈希”算出这次命令对一致性摘要的增量，
-  /// 不再额外读业务表：暂存表两侧本来就是整行，行哈希因此与整库重算完全一致
-  /// （方案 3.5）。
+  /// 按表分别累加，不再额外读业务表：暂存表两侧本来就是整行，行哈希因此与整库
+  /// 重算完全一致（方案 3.5、ADR-0054 决定第 1 条）。
   Future<CapturedChanges> _collect(RawExecutor txn) async {
     final schema = await self.tables(txn);
     final result = <RevisionChange>[];
-    var digestDelta = BigInt.zero;
+    final tableDeltas = <String, BigInt>{
+      for (final name in versionedTableNames) name: BigInt.zero,
+    };
     var seq = 1;
     for (final table in schema.values) {
       final rows = await selectRows(txn, table.stageTable, orderBy: 'seq');
       if (rows.isEmpty) continue;
+      var delta = BigInt.zero;
       final groups = <String, List<Map<String, Object?>>>{};
       for (final row in rows) {
         final key = row['row_key']! as String;
@@ -141,11 +146,10 @@ mixin RevisionCaptureMixin {
           final changed = changedColumns(before, after);
           if (changed.isEmpty) continue;
           // 摘要按整行算，变更明细只留变化列；两侧都用暂存表里的整行。
-          digestDelta = _modDigest(
-            digestDelta -
-                revisionRowHashValue(table.name, entry.key, before) +
-                revisionRowHashValue(table.name, entry.key, after),
-          );
+          delta =
+              delta -
+              revisionRowHashValue(table.name, entry.key, before) +
+              revisionRowHashValue(table.name, entry.key, after);
           result.add(
             RevisionChange(
               commitId: 0,
@@ -159,13 +163,9 @@ mixin RevisionCaptureMixin {
           );
           continue;
         }
-        digestDelta = _modDigest(
-          before == null
-              ? digestDelta +
-                    revisionRowHashValue(table.name, entry.key, after!)
-              : digestDelta -
-                    revisionRowHashValue(table.name, entry.key, before),
-        );
+        delta = before == null
+            ? delta + revisionRowHashValue(table.name, entry.key, after!)
+            : delta - revisionRowHashValue(table.name, entry.key, before);
         result.add(
           RevisionChange(
             commitId: 0,
@@ -178,8 +178,9 @@ mixin RevisionCaptureMixin {
           ),
         );
       }
+      tableDeltas[table.name] = _modDigest(delta);
     }
-    return CapturedChanges(changes: result, digestDelta: digestDelta);
+    return CapturedChanges(changes: result, tableDeltas: tableDeltas);
   }
 
   TypedRow _sideRow(
@@ -195,13 +196,17 @@ mixin RevisionCaptureMixin {
 /// 把摘要的增量收进 2^256 的范围：减出来的负数在这里回绕，与整库重算同余。
 BigInt _modDigest(BigInt value) => value % revisionDigestModulus;
 
-/// 一次命令合并出来的净变化与它对一致性摘要的增量。
+/// 一次命令合并出来的净变化与它对各表一致性摘要的增量。
 ///
-/// [digestDelta] 是“提交之后的状态摘要减去提交之前的状态摘要”，按 2^256 取模；
-/// [_appendCommit] 把它加到父提交的摘要上，得到这条提交的 `state_digest`。
+/// [tableDeltas] 按表给出“提交之后的状态摘要减去提交之前的状态摘要”，按 2^256
+/// 取模；[_appendCommit] 把它加到父提交的分表摘要上，得到这条提交之后各表的值，
+/// 总摘要仍等于各表值之和（ADR-0054 决定第 1 条）。
 class CapturedChanges {
-  const CapturedChanges({required this.changes, required this.digestDelta});
+  const CapturedChanges({required this.changes, required this.tableDeltas});
 
   final List<RevisionChange> changes;
-  final BigInt digestDelta;
+  final Map<String, BigInt> tableDeltas;
+
+  /// 各表增量之和，等于整库摘要的增量。
+  BigInt get digestDelta => revisionDigestSum(tableDeltas.values);
 }

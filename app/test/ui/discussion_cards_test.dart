@@ -11,7 +11,7 @@ import 'package:zhixin/ui/discussion_cards.dart';
 
 MemoryItemView memory({
   String content = '讲解概率时先用具体例子。',
-  MemoryKind kind = MemoryKind.preference,
+  MemoryKind kind = MemoryKind.semantic,
   MemorySource source = MemorySource.inferred,
   DateTime? validUntil,
   MemoryCardStatus status = MemoryCardStatus.pending,
@@ -77,7 +77,7 @@ void main() {
     expect(find.text('记忆建议'), findsOneWidget);
     expect(find.text('待确认'), findsOneWidget);
     expect(find.text('讲解概率时先用具体例子。'), findsOneWidget);
-    expect(find.text('偏好 · 模型推断 · 有效至 2026-12-31'), findsOneWidget);
+    expect(find.text('语义 · 模型推断 · 有效至 2026-12-31'), findsOneWidget);
     expect(find.text('撤销'), findsNothing);
 
     await tester.tap(find.text('记下'));
@@ -109,7 +109,7 @@ void main() {
 
     expect(find.text('已记下'), findsOneWidget);
     expect(find.text('待确认'), findsNothing);
-    expect(find.text('偏好 · 你说的 · 长期有效'), findsOneWidget);
+    expect(find.text('语义 · 你说的 · 长期有效'), findsOneWidget);
     expect(find.text('记下'), findsNothing);
     expect(find.text('不记'), findsNothing);
 
@@ -187,7 +187,7 @@ void main() {
   testWidgets('回执按条列出改动，撤销带出对应那一条', (tester) async {
     final undone = <AppliedChange>[];
     const changes = [
-      AppliedChange(commitId: 3, text: '已添加记忆：偏好 · 讲解先用例子'),
+      AppliedChange(commitId: 3, text: '已添加记忆：语义 · 讲解先用例子'),
       AppliedChange(commitId: 4, text: '已创建学习事项：练习条件概率'),
     ];
     await tester.pumpWidget(
@@ -195,7 +195,7 @@ void main() {
     );
 
     expect(find.text('改动回执'), findsOneWidget);
-    expect(find.text('已添加记忆：偏好 · 讲解先用例子'), findsOneWidget);
+    expect(find.text('已添加记忆：语义 · 讲解先用例子'), findsOneWidget);
     expect(find.text('已创建学习事项：练习条件概率'), findsOneWidget);
     expect(find.byType(Divider), findsOneWidget);
     expect(find.text('撤销'), findsNWidgets(2));
@@ -218,7 +218,7 @@ void main() {
         MemoryCard(
           item: memory(
             content: '讲解概率时先用具体例子，再回到公式，最后才做需要两步推理的题目。',
-            kind: MemoryKind.difficulty,
+            kind: MemoryKind.episodic,
             validUntil: DateTime(2026, 12, 31),
           ),
           onAccept: () {},

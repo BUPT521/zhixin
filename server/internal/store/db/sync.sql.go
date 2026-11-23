@@ -11,10 +11,111 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceSyncDevice = `-- name: AdvanceSyncDevice :exec
+UPDATE sync_device
+SET synced_seq = least(
+      greatest(synced_seq, $1::bigint,
+        CASE WHEN $2::boolean THEN $3::bigint ELSE 0::bigint END),
+      $3::bigint),
+    last_seen = now()
+WHERE user_id = $4 AND device_id = $5
+`
+
+type AdvanceSyncDeviceParams struct {
+	BaseSeq  int64
+	ToHead   bool
+	Head     int64
+	UserID   string
+	DeviceID string
+}
+
+// 推送之后推进设备位置：确有新提交写入时推到新 head，整批重放时只按 base 取较大值，
+// 两种情况都不超过当前 head（ADR-0054）。
+func (q *Queries) AdvanceSyncDevice(ctx context.Context, arg AdvanceSyncDeviceParams) error {
+	_, err := q.db.Exec(ctx, advanceSyncDevice,
+		arg.BaseSeq,
+		arg.ToHead,
+		arg.Head,
+		arg.UserID,
+		arg.DeviceID,
+	)
+	return err
+}
+
+const attachmentsOrphanedBefore = `-- name: AttachmentsOrphanedBefore :many
+SELECT a.sha256
+FROM attachment a
+WHERE a.user_id = $1
+  AND a.orphaned_at IS NOT NULL
+  AND a.orphaned_at < $2
+  AND ($3::text IS NULL OR a.sha256 <> $3::text)
+ORDER BY a.orphaned_at, a.sha256
+`
+
+type AttachmentsOrphanedBeforeParams struct {
+	UserID        string
+	Before        pgtype.Timestamptz
+	CurrentSha256 pgtype.Text
+}
+
+// 可回收的哈希：让位时间早于宽限期，且不是当前快照指针；SQL 这一层与代码都排除
+// 当前指针，两道都保证当前指针的字节不会被删。
+func (q *Queries) AttachmentsOrphanedBefore(ctx context.Context, arg AttachmentsOrphanedBeforeParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, attachmentsOrphanedBefore, arg.UserID, arg.Before, arg.CurrentSha256)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var sha256 string
+		if err := rows.Scan(&sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, sha256)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const clearAttachmentOrphaned = `-- name: ClearAttachmentOrphaned :exec
+UPDATE attachment
+SET orphaned_at = NULL
+WHERE user_id = $1
+  AND (sha256 = ANY ($2::text[]) OR sha256 = $3)
+`
+
+type ClearAttachmentOrphanedParams struct {
+	UserID         string
+	CurrentSha256s []string
+	Sha256         string
+}
+
+// 新指针重新使用一个待回收的哈希时清掉标记，避免回收一份重新投入使用的附件；
+// 顺利登记时连旧指针的标记也清掉，指针换回来之后两份附件都还在使用。
+func (q *Queries) ClearAttachmentOrphaned(ctx context.Context, arg ClearAttachmentOrphanedParams) error {
+	_, err := q.db.Exec(ctx, clearAttachmentOrphaned, arg.UserID, arg.CurrentSha256s, arg.Sha256)
+	return err
+}
+
+const clearAttachmentsOrphaned = `-- name: ClearAttachmentsOrphaned :exec
+UPDATE attachment
+SET orphaned_at = NULL
+WHERE user_id = $1
+`
+
+// 清空云端数据时清掉本账号全部附件的回收标记；附件索引与字节由附件存储另行清。
+func (q *Queries) ClearAttachmentsOrphaned(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, clearAttachmentsOrphaned, userID)
+	return err
+}
+
 const commitsAfter = `-- name: CommitsAfter :many
 WITH page AS MATERIALIZED (
   SELECT p.seq AS page_seq, octet_length(p.changes::text)::bigint + octet_length(p.action)
-    + octet_length(p.request_id) + octet_length(p.device_id) + 256 AS bytes
+    + octet_length(p.uid) + octet_length(p.device_id) + 256 AS bytes
   FROM sync_commit p
   WHERE p.user_id = $1 AND p.seq > $3
   ORDER BY p.seq
@@ -22,8 +123,8 @@ WITH page AS MATERIALIZED (
 ), budget AS (
   SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
 )
-SELECT c.seq, c.request_id, c.device_id, c.schema_version, c.actor, c.action,
-  c.created_at, c.received_at, c.changes, c.state_digest
+SELECT c.seq, c.uid, c.device_id, c.schema_version, c.actor, c.action,
+  c.created_at, c.received_at, c.changes, c.state_digest, c.table_digests
 FROM sync_commit c
 WHERE c.user_id = $1 AND c.seq IN (
   SELECT budget.page_seq FROM budget
@@ -41,7 +142,7 @@ type CommitsAfterParams struct {
 
 type CommitsAfterRow struct {
 	Seq           int64
-	RequestID     string
+	Uid           string
 	DeviceID      string
 	SchemaVersion int32
 	Actor         string
@@ -50,6 +151,7 @@ type CommitsAfterRow struct {
 	ReceivedAt    pgtype.Timestamptz
 	Changes       []byte
 	StateDigest   pgtype.Text
+	TableDigests  []byte
 }
 
 func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]CommitsAfterRow, error) {
@@ -68,7 +170,7 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 		var i CommitsAfterRow
 		if err := rows.Scan(
 			&i.Seq,
-			&i.RequestID,
+			&i.Uid,
 			&i.DeviceID,
 			&i.SchemaVersion,
 			&i.Actor,
@@ -77,6 +179,7 @@ func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]C
 			&i.ReceivedAt,
 			&i.Changes,
 			&i.StateDigest,
+			&i.TableDigests,
 		); err != nil {
 			return nil, err
 		}
@@ -103,8 +206,8 @@ DELETE FROM sync_commit
 WHERE user_id = $1
 `
 
-// 清空一个账号的提交序列；sync_head 由调用方在同一事务里 EnsureSyncHead、
-// LockSyncHead 之后用 ResetSyncHead 重置为 0，与追加提交共用同一把锁。
+// 清空一个账号的提交序列；sync_state 由调用方在同一事务里 EnsureSyncState、
+// LockSyncState 之后用 ResetSyncState 重置为 0，与追加提交共用同一把锁。
 func (q *Queries) DeleteSyncCommits(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, deleteSyncCommits, userID)
 	return err
@@ -137,40 +240,47 @@ func (q *Queries) DeleteSyncDevices(ctx context.Context, userID string) error {
 	return err
 }
 
-const deleteSyncSnapshot = `-- name: DeleteSyncSnapshot :exec
-DELETE FROM sync_snapshot
+const deleteSyncRef = `-- name: DeleteSyncRef :execrows
+INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
+VALUES (
+  $1, $2, $3, $4,
+  statement_timestamp(), statement_timestamp()
+)
+ON CONFLICT (user_id, name) DO UPDATE
+SET deleted_at = LEAST(sync_ref.deleted_at, EXCLUDED.deleted_at)
+WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at
+`
+
+type DeleteSyncRefParams struct {
+	UserID    string
+	Name      string
+	CommitUid string
+	Note      string
+}
+
+// 删除一个名字：已经是墓碑时保留最早的删除时间；写入时间早于删除时间时什么都不
+// 改。函数调用放在标量位置，与 PutSyncRef 的写入时间在同一事务里各取一次。
+func (q *Queries) DeleteSyncRef(ctx context.Context, arg DeleteSyncRefParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSyncRef,
+		arg.UserID,
+		arg.Name,
+		arg.CommitUid,
+		arg.Note,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSyncRefs = `-- name: DeleteSyncRefs :exec
+DELETE FROM sync_ref
 WHERE user_id = $1
 `
 
-func (q *Queries) DeleteSyncSnapshot(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, deleteSyncSnapshot, userID)
-	return err
-}
-
-const deleteSyncSnapshotOrphan = `-- name: DeleteSyncSnapshotOrphan :exec
-DELETE FROM sync_snapshot_orphan
-WHERE user_id = $1 AND sha256 = $2
-`
-
-type DeleteSyncSnapshotOrphanParams struct {
-	UserID string
-	Sha256 string
-}
-
-// 新指针重新使用一个待回收的哈希时删掉那一行，避免回收一份重新投入使用的附件。
-func (q *Queries) DeleteSyncSnapshotOrphan(ctx context.Context, arg DeleteSyncSnapshotOrphanParams) error {
-	_, err := q.db.Exec(ctx, deleteSyncSnapshotOrphan, arg.UserID, arg.Sha256)
-	return err
-}
-
-const deleteSyncSnapshotOrphans = `-- name: DeleteSyncSnapshotOrphans :exec
-DELETE FROM sync_snapshot_orphan
-WHERE user_id = $1
-`
-
-// 清空云端数据时整表清掉。
-func (q *Queries) DeleteSyncSnapshotOrphans(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, deleteSyncSnapshotOrphans, userID)
+// 清空云端数据时整表清掉，墓碑一并清掉。
+func (q *Queries) DeleteSyncRefs(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteSyncRefs, userID)
 	return err
 }
 
@@ -186,65 +296,70 @@ type EnsureSyncDeviceParams struct {
 	DeviceID string
 }
 
-// 没有设备标识的推送按提交里的设备标识补一行：已有行只更新最近出现时间，能力
-// 与别名都不动，旧版本客户端因此也会出现在名册里。
+// 没有设备标识的推送按提交里的设备标识补一行：已有行只更新最近出现时间，能力、
+// 位置与别名都不动，旧版本客户端因此也会出现在名册里。
 func (q *Queries) EnsureSyncDevice(ctx context.Context, arg EnsureSyncDeviceParams) error {
 	_, err := q.db.Exec(ctx, ensureSyncDevice, arg.UserID, arg.DeviceID)
 	return err
 }
 
-const ensureSyncHead = `-- name: EnsureSyncHead :exec
+const ensureSyncState = `-- name: EnsureSyncState :exec
 
-INSERT INTO sync_head (user_id, head)
+
+INSERT INTO sync_state (user_id, head)
 VALUES ($1, 0)
 ON CONFLICT (user_id) DO NOTHING
 `
 
-// 每个账号的线性提交序列（internal/store/schema.sql 的 sync_head、sync_commit、
-// sync_snapshot 与 sync_commit_seen）。
+// 每个账号的同步状态与线性提交序列（internal/store/schema.sql 的 sync_state、
+// sync_commit、sync_commit_seen、sync_device 与 sync_ref）。
 //
-// 推送时先锁住 sync_head 再核对 base_seq，整个过程在一个事务里完成（ADR-0015）。
-// 压缩删掉快照覆盖的旧提交时推进 trimmed_through，已经接收过的提交身份另外记在
-// sync_commit_seen 里，因此删除提交不会让重放被重新接收（ADR-0043）。
+// 推送时先锁住 sync_state 这一行再核对 base_seq，整个追加在一个事务里完成
+// （ADR-0015）。压缩删掉快照覆盖的旧提交时推进 trimmed_through，已经接收过的提交
+// 身份另外记在 sync_commit_seen 里（带当时的序号），因此删除提交不会让重放被重新
+// 接收，整批重放也能回出原序号（ADR-0043、ADR-0054）。
 // 参数一律用 sqlc.arg(名字)：同一个名字在一句里出现多次也只绑一次。
-func (q *Queries) EnsureSyncHead(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, ensureSyncHead, userID)
+// ---- 账号同步状态（head、保留下界与快照指针） ----
+func (q *Queries) EnsureSyncState(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, ensureSyncState, userID)
 	return err
 }
 
-const existingRequestIDs = `-- name: ExistingRequestIDs :many
-SELECT ids.request_id::text
-FROM unnest($1::text[]) AS ids(request_id)
-WHERE EXISTS (
-    SELECT 1 FROM sync_commit c
-    WHERE c.user_id = $2 AND c.request_id = ids.request_id
-  )
-  OR EXISTS (
-    SELECT 1 FROM sync_commit_seen s
-    WHERE s.user_id = $2 AND s.request_id = ids.request_id
-  )
+const existingCommitSeqs = `-- name: ExistingCommitSeqs :many
+SELECT DISTINCT ON (ids.uid) ids.uid::text, coalesce(c.seq, s.seq)::bigint AS seq
+FROM unnest($1::text[]) AS ids(uid)
+LEFT JOIN sync_commit c
+  ON c.user_id = $2 AND c.uid = ids.uid
+LEFT JOIN sync_commit_seen s
+  ON s.user_id = $2 AND s.uid = ids.uid
+WHERE c.seq IS NOT NULL OR s.seq IS NOT NULL
 `
 
-type ExistingRequestIDsParams struct {
-	RequestIds []string
-	UserID     string
+type ExistingCommitSeqsParams struct {
+	Uids   []string
+	UserID string
 }
 
-// 去重同时查提交表与去重表：压缩删除旧提交之后只剩后者，升级前的旧提交只有
-// 前者，两边合起来覆盖全部接收过的身份。
-func (q *Queries) ExistingRequestIDs(ctx context.Context, arg ExistingRequestIDsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, existingRequestIDs, arg.RequestIds, arg.UserID)
+type ExistingCommitSeqsRow struct {
+	IdsUid string
+	Seq    int64
+}
+
+// 去重同时查提交表与去重表：压缩删除旧提交之后只剩后者，两边合起来覆盖全部接收过
+// 的身份，并给出重复提交原来分配的序号。
+func (q *Queries) ExistingCommitSeqs(ctx context.Context, arg ExistingCommitSeqsParams) ([]ExistingCommitSeqsRow, error) {
+	rows, err := q.db.Query(ctx, existingCommitSeqs, arg.Uids, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []string{}
+	items := []ExistingCommitSeqsRow{}
 	for rows.Next() {
-		var ids_request_id string
-		if err := rows.Scan(&ids_request_id); err != nil {
+		var i ExistingCommitSeqsRow
+		if err := rows.Scan(&i.IdsUid, &i.Seq); err != nil {
 			return nil, err
 		}
-		items = append(items, ids_request_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -254,21 +369,21 @@ func (q *Queries) ExistingRequestIDs(ctx context.Context, arg ExistingRequestIDs
 
 const insertSyncCommit = `-- name: InsertSyncCommit :exec
 INSERT INTO sync_commit (
-  user_id, seq, request_id, device_id, schema_version,
-  actor, action, created_at, changes, state_digest
+  user_id, seq, uid, device_id, schema_version,
+  actor, action, created_at, changes, state_digest, table_digests
 )
 VALUES (
   $1, $2, $3,
   $4, $5, $6,
   $7, $8, $9,
-  $10
+  $10, $11
 )
 `
 
 type InsertSyncCommitParams struct {
 	UserID        string
 	Seq           int64
-	RequestID     string
+	Uid           string
 	DeviceID      string
 	SchemaVersion int32
 	Actor         string
@@ -276,15 +391,16 @@ type InsertSyncCommitParams struct {
 	CreatedAt     string
 	Changes       []byte
 	StateDigest   pgtype.Text
+	TableDigests  []byte
 }
 
-// state_digest 是可选的整库摘要：客户端只在推送完成且本机没有待推送提交时带上，
-// 服务端原样保存、不解析，拉取时原样带回（改进方案 3.5）。
+// state_digest 与 table_digests 都是可选摘要：客户端只在推送完成且本机没有待推送
+// 提交时带上，服务端原样保存、不解析，拉取时原样带回（改进方案 3.5、ADR-0054）。
 func (q *Queries) InsertSyncCommit(ctx context.Context, arg InsertSyncCommitParams) error {
 	_, err := q.db.Exec(ctx, insertSyncCommit,
 		arg.UserID,
 		arg.Seq,
-		arg.RequestID,
+		arg.Uid,
 		arg.DeviceID,
 		arg.SchemaVersion,
 		arg.Actor,
@@ -292,70 +408,165 @@ func (q *Queries) InsertSyncCommit(ctx context.Context, arg InsertSyncCommitPara
 		arg.CreatedAt,
 		arg.Changes,
 		arg.StateDigest,
+		arg.TableDigests,
 	)
 	return err
 }
 
 const insertSyncCommitSeen = `-- name: InsertSyncCommitSeen :exec
-INSERT INTO sync_commit_seen (user_id, request_id)
-VALUES ($1, $2)
+INSERT INTO sync_commit_seen (user_id, uid, seq)
+VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING
 `
 
 type InsertSyncCommitSeenParams struct {
-	UserID    string
-	RequestID string
-}
-
-func (q *Queries) InsertSyncCommitSeen(ctx context.Context, arg InsertSyncCommitSeenParams) error {
-	_, err := q.db.Exec(ctx, insertSyncCommitSeen, arg.UserID, arg.RequestID)
-	return err
-}
-
-const insertSyncSnapshotOrphan = `-- name: InsertSyncSnapshotOrphan :exec
-
-INSERT INTO sync_snapshot_orphan (user_id, sha256)
-VALUES ($1, $2)
-ON CONFLICT (user_id, sha256) DO NOTHING
-`
-
-type InsertSyncSnapshotOrphanParams struct {
 	UserID string
-	Sha256 string
+	Uid    string
+	Seq    int64
 }
 
-// ---- 旧快照附件待回收（ADR-0047） ----
-// 登记新指针时记下让位的旧哈希。同一哈希重复出现时保留最早的 orphaned_at，
-// 宽限期因此从第一次让位算起。
-func (q *Queries) InsertSyncSnapshotOrphan(ctx context.Context, arg InsertSyncSnapshotOrphanParams) error {
-	_, err := q.db.Exec(ctx, insertSyncSnapshotOrphan, arg.UserID, arg.Sha256)
+// 插入去重记录时同时写这次分配的序号，压缩删掉提交之后重复推送仍回得到它。
+func (q *Queries) InsertSyncCommitSeen(ctx context.Context, arg InsertSyncCommitSeenParams) error {
+	_, err := q.db.Exec(ctx, insertSyncCommitSeen, arg.UserID, arg.Uid, arg.Seq)
 	return err
 }
 
-const lockSyncHead = `-- name: LockSyncHead :one
-SELECT head, trimmed_through
-FROM sync_head
+const lockSyncState = `-- name: LockSyncState :one
+SELECT head, trimmed_through, snapshot_seq, snapshot_sha256, snapshot_digest, snapshot_created_at
+FROM sync_state
 WHERE user_id = $1
 FOR UPDATE
 `
 
-type LockSyncHeadRow struct {
-	Head           int64
-	TrimmedThrough int64
+type LockSyncStateRow struct {
+	Head              int64
+	TrimmedThrough    int64
+	SnapshotSeq       pgtype.Int8
+	SnapshotSha256    pgtype.Text
+	SnapshotDigest    pgtype.Text
+	SnapshotCreatedAt pgtype.Timestamptz
 }
 
-func (q *Queries) LockSyncHead(ctx context.Context, userID string) (LockSyncHeadRow, error) {
-	row := q.db.QueryRow(ctx, lockSyncHead, userID)
-	var i LockSyncHeadRow
-	err := row.Scan(&i.Head, &i.TrimmedThrough)
+func (q *Queries) LockSyncState(ctx context.Context, userID string) (LockSyncStateRow, error) {
+	row := q.db.QueryRow(ctx, lockSyncState, userID)
+	var i LockSyncStateRow
+	err := row.Scan(
+		&i.Head,
+		&i.TrimmedThrough,
+		&i.SnapshotSeq,
+		&i.SnapshotSha256,
+		&i.SnapshotDigest,
+		&i.SnapshotCreatedAt,
+	)
 	return i, err
+}
+
+const markAttachmentOrphaned = `-- name: MarkAttachmentOrphaned :exec
+
+UPDATE attachment
+SET orphaned_at = now()
+WHERE user_id = $1 AND sha256 = $2 AND orphaned_at IS NULL
+`
+
+type MarkAttachmentOrphanedParams struct {
+	UserID string
+	Sha256 string
+}
+
+// ---- 旧快照附件（ADR-0047、审查 V2） ----
+// 旧指针让位时标记旧哈希那一行；这一行已经标记过时保留最早的 orphaned_at，宽限期
+// 因此从第一次让位算起。这一行不存在（字节或索引早就不在）时什么也不做。
+func (q *Queries) MarkAttachmentOrphaned(ctx context.Context, arg MarkAttachmentOrphanedParams) error {
+	_, err := q.db.Exec(ctx, markAttachmentOrphaned, arg.UserID, arg.Sha256)
+	return err
+}
+
+const putSyncRef = `-- name: PutSyncRef :execrows
+INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
+VALUES (
+  $1, $2, $3, $4,
+  $5, NULL
+)
+ON CONFLICT (user_id, name) DO UPDATE
+SET commit_uid = EXCLUDED.commit_uid,
+    note = EXCLUDED.note,
+    updated_at = EXCLUDED.updated_at,
+    deleted_at = NULL
+WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at
+`
+
+type PutSyncRefParams struct {
+	UserID    string
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+}
+
+// 写入一个命名版本。后写覆盖先写；名字已经是墓碑时，只有这次的写入时间晚于删除
+// 时间才复活，更早的写入什么都不改（受影响行数为 0）。
+func (q *Queries) PutSyncRef(ctx context.Context, arg PutSyncRefParams) (int64, error) {
+	result, err := q.db.Exec(ctx, putSyncRef,
+		arg.UserID,
+		arg.Name,
+		arg.CommitUid,
+		arg.Note,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const putSyncRefWithinLimit = `-- name: PutSyncRefWithinLimit :execrows
+INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
+SELECT $1, $2, $3, $4,
+  $5, NULL
+WHERE $6::bigint > (
+  SELECT count(*) FROM sync_ref
+  WHERE user_id = $1 AND deleted_at IS NULL
+)
+ON CONFLICT (user_id, name) DO UPDATE
+SET commit_uid = EXCLUDED.commit_uid,
+    note = EXCLUDED.note,
+    updated_at = EXCLUDED.updated_at,
+    deleted_at = NULL
+WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at
+`
+
+type PutSyncRefWithinLimitParams struct {
+	UserID    string
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	MaxAlive  int64
+}
+
+// 写入一个命名版本并核对每账号的上限：新名字（原来没有或只在墓碑上）会新增一个
+// 未删除的名字，未删除的条数已经到上限时受影响行数为 0，调用方按 ErrRefLimit
+// 处理。判断与写入在同一句里完成，并发写入不会把条数推过上限。
+func (q *Queries) PutSyncRefWithinLimit(ctx context.Context, arg PutSyncRefWithinLimitParams) (int64, error) {
+	result, err := q.db.Exec(ctx, putSyncRefWithinLimit,
+		arg.UserID,
+		arg.Name,
+		arg.CommitUid,
+		arg.Note,
+		arg.UpdatedAt,
+		arg.MaxAlive,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const renameSyncDevice = `-- name: RenameSyncDevice :one
 UPDATE sync_device
 SET alias = $1
 WHERE user_id = $2 AND device_id = $3
-RETURNING device_id, alias, capabilities, first_seen, last_seen
+RETURNING device_id, alias, snapshot_capable, synced_seq, first_seen, last_seen
 `
 
 type RenameSyncDeviceParams struct {
@@ -365,11 +576,12 @@ type RenameSyncDeviceParams struct {
 }
 
 type RenameSyncDeviceRow struct {
-	DeviceID     string
-	Alias        string
-	Capabilities string
-	FirstSeen    pgtype.Timestamptz
-	LastSeen     pgtype.Timestamptz
+	DeviceID        string
+	Alias           string
+	SnapshotCapable bool
+	SyncedSeq       int64
+	FirstSeen       pgtype.Timestamptz
+	LastSeen        pgtype.Timestamptz
 }
 
 // 设备改名：只改本账号已有的行，没有这一行时调用方按 404 处理。
@@ -379,26 +591,30 @@ func (q *Queries) RenameSyncDevice(ctx context.Context, arg RenameSyncDevicePara
 	err := row.Scan(
 		&i.DeviceID,
 		&i.Alias,
-		&i.Capabilities,
+		&i.SnapshotCapable,
+		&i.SyncedSeq,
 		&i.FirstSeen,
 		&i.LastSeen,
 	)
 	return i, err
 }
 
-const resetSyncHead = `-- name: ResetSyncHead :exec
-UPDATE sync_head
-SET head = 0, trimmed_through = 0
+const resetSyncState = `-- name: ResetSyncState :exec
+UPDATE sync_state
+SET head = 0, trimmed_through = 0,
+    snapshot_seq = NULL, snapshot_sha256 = NULL, snapshot_digest = NULL,
+    snapshot_created_at = NULL
 WHERE user_id = $1
 `
 
-func (q *Queries) ResetSyncHead(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, resetSyncHead, userID)
+// 清空云端数据与删号：head、保留下界与快照指针一起回到初始状态。
+func (q *Queries) ResetSyncState(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, resetSyncState, userID)
 	return err
 }
 
 const setSyncHead = `-- name: SetSyncHead :exec
-UPDATE sync_head
+UPDATE sync_state
 SET head = $1
 WHERE user_id = $2
 `
@@ -414,7 +630,7 @@ func (q *Queries) SetSyncHead(ctx context.Context, arg SetSyncHeadParams) error 
 }
 
 const setSyncTrimmedThrough = `-- name: SetSyncTrimmedThrough :exec
-UPDATE sync_head
+UPDATE sync_state
 SET trimmed_through = $1
 WHERE user_id = $2
 `
@@ -429,35 +645,50 @@ func (q *Queries) SetSyncTrimmedThrough(ctx context.Context, arg SetSyncTrimmedT
 	return err
 }
 
-const syncActiveDeviceWithoutCapability = `-- name: SyncActiveDeviceWithoutCapability :one
+const syncActiveDeviceWithoutSnapshot = `-- name: SyncActiveDeviceWithoutSnapshot :one
 SELECT EXISTS (
     SELECT 1
     FROM sync_device
     WHERE user_id = $1
       AND last_seen >= $2
-      AND (
-        capabilities IS NULL
-        OR capabilities = ''
-        OR NOT ($3 = ANY (string_to_array(capabilities, ',')))
-      )
+      AND NOT snapshot_capable
 ) AS found
 `
 
-type SyncActiveDeviceWithoutCapabilityParams struct {
+type SyncActiveDeviceWithoutSnapshotParams struct {
 	UserID      string
 	ActiveSince pgtype.Timestamptz
-	Capability  string
 }
 
-// 压缩门槛：最近 active_since 之后出现过的设备里，有没有任何一台的能力声明不含
-// 给定的能力名。名册为空时返回 false，即可以压缩（ADR-0047）。
-// capabilities 为空串或 NULL 时不依赖 string_to_array 的取值语义，直接按“没有
-// 声明任何能力”处理：空能力列表里一定没有 snapshot，旧设备必须挡住压缩。
-func (q *Queries) SyncActiveDeviceWithoutCapability(ctx context.Context, arg SyncActiveDeviceWithoutCapabilityParams) (bool, error) {
-	row := q.db.QueryRow(ctx, syncActiveDeviceWithoutCapability, arg.UserID, arg.ActiveSince, arg.Capability)
+// 压缩门槛：最近 active_since 之后出现过的设备里，有没有任何一台没有声明 snapshot
+// 能力。名册为空或窗口内没有设备时返回 false，即可以压缩（ADR-0047）。
+func (q *Queries) SyncActiveDeviceWithoutSnapshot(ctx context.Context, arg SyncActiveDeviceWithoutSnapshotParams) (bool, error) {
+	row := q.db.QueryRow(ctx, syncActiveDeviceWithoutSnapshot, arg.UserID, arg.ActiveSince)
 	var found bool
 	err := row.Scan(&found)
 	return found, err
+}
+
+const syncActiveMinSyncedSeq = `-- name: SyncActiveMinSyncedSeq :one
+SELECT min(synced_seq)::bigint AS floor_seq
+FROM sync_device
+WHERE user_id = $1
+  AND last_seen >= $2
+HAVING min(synced_seq) IS NOT NULL
+`
+
+type SyncActiveMinSyncedSeqParams struct {
+	UserID      string
+	ActiveSince pgtype.Timestamptz
+}
+
+// 常规压缩的设备位置门槛：活跃窗口内设备的最小 synced_seq；窗口内没有设备时返回
+// NULL，调用方据此不设上限（ADR-0054）。
+func (q *Queries) SyncActiveMinSyncedSeq(ctx context.Context, arg SyncActiveMinSyncedSeqParams) (int64, error) {
+	row := q.db.QueryRow(ctx, syncActiveMinSyncedSeq, arg.UserID, arg.ActiveSince)
+	var floor_seq int64
+	err := row.Scan(&floor_seq)
+	return floor_seq, err
 }
 
 const syncCompactionLimit = `-- name: SyncCompactionLimit :one
@@ -472,7 +703,7 @@ type SyncCompactionLimitParams struct {
 	ThroughSeq int64
 }
 
-// 预算压力下的压缩点：不按保留期过滤，快照位置及之前的提交全部可删。
+// 预算压力下的压缩点：不按保留期与设备位置过滤，快照位置及之前的提交全部可删。
 func (q *Queries) SyncCompactionLimit(ctx context.Context, arg SyncCompactionLimitParams) (int64, error) {
 	row := q.db.QueryRow(ctx, syncCompactionLimit, arg.UserID, arg.ThroughSeq)
 	var column_1 int64
@@ -485,26 +716,35 @@ SELECT coalesce(max(seq), 0)::bigint
 FROM sync_commit
 WHERE user_id = $1
   AND seq <= $2
-  AND received_at < $3
+  AND ($3::bigint <= 0 OR seq <= $3::bigint)
+  AND received_at < $4
 `
 
 type SyncCompactionPointParams struct {
 	UserID     string
 	ThroughSeq int64
+	FloorSeq   int64
 	Cutoff     pgtype.Timestamptz
 }
 
-// 常规压缩的删除点：快照位置及之前、服务端收到时间早于保留期的提交里最大的
-// 序号；没有可删的提交时返回 0，调用方据此不动保留下界。
+// 常规压缩的删除点：快照位置及之前、服务端收到时间早于保留期、且不越过活跃窗口内
+// 设备最小位置（floor_seq）的提交里最大的序号；没有可删的提交时返回 0，调用方据此
+// 不动保留下界（ADR-0043、ADR-0054）。floor_seq 不大于零表示窗口内没有设备，不设
+// 位置上限。
 func (q *Queries) SyncCompactionPoint(ctx context.Context, arg SyncCompactionPointParams) (int64, error) {
-	row := q.db.QueryRow(ctx, syncCompactionPoint, arg.UserID, arg.ThroughSeq, arg.Cutoff)
+	row := q.db.QueryRow(ctx, syncCompactionPoint,
+		arg.UserID,
+		arg.ThroughSeq,
+		arg.FloorSeq,
+		arg.Cutoff,
+	)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const syncDevices = `-- name: SyncDevices :many
-SELECT device_id, alias, capabilities, first_seen, last_seen
+SELECT device_id, alias, snapshot_capable, synced_seq, first_seen, last_seen
 FROM sync_device
 WHERE user_id = $1
 ORDER BY last_seen DESC, device_id
@@ -517,11 +757,12 @@ type SyncDevicesParams struct {
 }
 
 type SyncDevicesRow struct {
-	DeviceID     string
-	Alias        string
-	Capabilities string
-	FirstSeen    pgtype.Timestamptz
-	LastSeen     pgtype.Timestamptz
+	DeviceID        string
+	Alias           string
+	SnapshotCapable bool
+	SyncedSeq       int64
+	FirstSeen       pgtype.Timestamptz
+	LastSeen        pgtype.Timestamptz
 }
 
 func (q *Queries) SyncDevices(ctx context.Context, arg SyncDevicesParams) ([]SyncDevicesRow, error) {
@@ -536,7 +777,8 @@ func (q *Queries) SyncDevices(ctx context.Context, arg SyncDevicesParams) ([]Syn
 		if err := rows.Scan(
 			&i.DeviceID,
 			&i.Alias,
-			&i.Capabilities,
+			&i.SnapshotCapable,
+			&i.SyncedSeq,
 			&i.FirstSeen,
 			&i.LastSeen,
 		); err != nil {
@@ -548,24 +790,6 @@ func (q *Queries) SyncDevices(ctx context.Context, arg SyncDevicesParams) ([]Syn
 		return nil, err
 	}
 	return items, nil
-}
-
-const syncHead = `-- name: SyncHead :one
-SELECT head, trimmed_through
-FROM sync_head
-WHERE user_id = $1
-`
-
-type SyncHeadRow struct {
-	Head           int64
-	TrimmedThrough int64
-}
-
-func (q *Queries) SyncHead(ctx context.Context, userID string) (SyncHeadRow, error) {
-	row := q.db.QueryRow(ctx, syncHead, userID)
-	var i SyncHeadRow
-	err := row.Scan(&i.Head, &i.TrimmedThrough)
-	return i, err
 }
 
 const syncIncomingBytes = `-- name: SyncIncomingBytes :one
@@ -580,63 +804,75 @@ func (q *Queries) SyncIncomingBytes(ctx context.Context, changes [][]byte) (int6
 	return column_1, err
 }
 
-const syncSnapshot = `-- name: SyncSnapshot :one
-SELECT seq, sha256, digest, created_at
-FROM sync_snapshot
-WHERE user_id = $1
+const syncRef = `-- name: SyncRef :one
+SELECT name, commit_uid, note, updated_at, deleted_at
+FROM sync_ref
+WHERE user_id = $1 AND name = $2
 `
 
-type SyncSnapshotRow struct {
-	Seq       int64
-	Sha256    string
-	Digest    string
-	CreatedAt pgtype.Timestamptz
+type SyncRefParams struct {
+	UserID string
+	Name   string
 }
 
-func (q *Queries) SyncSnapshot(ctx context.Context, userID string) (SyncSnapshotRow, error) {
-	row := q.db.QueryRow(ctx, syncSnapshot, userID)
-	var i SyncSnapshotRow
+type SyncRefRow struct {
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+}
+
+// 写入之后核对一行：0 行说明这个名字已经不在，或者这次写入没有生效。
+func (q *Queries) SyncRef(ctx context.Context, arg SyncRefParams) (SyncRefRow, error) {
+	row := q.db.QueryRow(ctx, syncRef, arg.UserID, arg.Name)
+	var i SyncRefRow
 	err := row.Scan(
-		&i.Seq,
-		&i.Sha256,
-		&i.Digest,
-		&i.CreatedAt,
+		&i.Name,
+		&i.CommitUid,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
-const syncSnapshotOrphansBefore = `-- name: SyncSnapshotOrphansBefore :many
-SELECT o.sha256
-FROM sync_snapshot_orphan o
-WHERE o.user_id = $1
-  AND o.orphaned_at < $2
-  AND NOT EXISTS (
-    SELECT 1 FROM sync_snapshot s
-    WHERE s.user_id = o.user_id AND s.sha256 = o.sha256
-  )
-ORDER BY o.orphaned_at, o.sha256
+const syncRefs = `-- name: SyncRefs :many
+
+SELECT name, commit_uid, note, updated_at, deleted_at
+FROM sync_ref
+WHERE user_id = $1
+ORDER BY name
 `
 
-type SyncSnapshotOrphansBeforeParams struct {
-	UserID string
-	Before pgtype.Timestamptz
+type SyncRefsRow struct {
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
 }
 
-// 可回收的哈希：让位时间早于宽限期，且不是当前快照指针；SQL 这一层也排除，
-// 代码再排除一次，两道都保证当前指针的字节不会被删（ADR-0047）。
-func (q *Queries) SyncSnapshotOrphansBefore(ctx context.Context, arg SyncSnapshotOrphansBeforeParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, syncSnapshotOrphansBefore, arg.UserID, arg.Before)
+// ---- 命名版本（ADR-0054） ----
+func (q *Queries) SyncRefs(ctx context.Context, userID string) ([]SyncRefsRow, error) {
+	rows, err := q.db.Query(ctx, syncRefs, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []string{}
+	items := []SyncRefsRow{}
 	for rows.Next() {
-		var sha256 string
-		if err := rows.Scan(&sha256); err != nil {
+		var i SyncRefsRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.CommitUid,
+			&i.Note,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, sha256)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -644,9 +880,38 @@ func (q *Queries) SyncSnapshotOrphansBefore(ctx context.Context, arg SyncSnapsho
 	return items, nil
 }
 
+const syncState = `-- name: SyncState :one
+SELECT head, trimmed_through, snapshot_seq, snapshot_sha256, snapshot_digest, snapshot_created_at
+FROM sync_state
+WHERE user_id = $1
+`
+
+type SyncStateRow struct {
+	Head              int64
+	TrimmedThrough    int64
+	SnapshotSeq       pgtype.Int8
+	SnapshotSha256    pgtype.Text
+	SnapshotDigest    pgtype.Text
+	SnapshotCreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) SyncState(ctx context.Context, userID string) (SyncStateRow, error) {
+	row := q.db.QueryRow(ctx, syncState, userID)
+	var i SyncStateRow
+	err := row.Scan(
+		&i.Head,
+		&i.TrimmedThrough,
+		&i.SnapshotSeq,
+		&i.SnapshotSha256,
+		&i.SnapshotDigest,
+		&i.SnapshotCreatedAt,
+	)
+	return i, err
+}
+
 const syncStorageBytes = `-- name: SyncStorageBytes :one
 SELECT coalesce(sum(pg_column_size(changes)::bigint + octet_length(action)
-  + octet_length(request_id) + octet_length(device_id) + 256), 0)::bigint
+  + octet_length(uid) + octet_length(device_id) + 256), 0)::bigint
 FROM sync_commit
 WHERE user_id = $1
 `
@@ -660,52 +925,70 @@ func (q *Queries) SyncStorageBytes(ctx context.Context, userID string) (int64, e
 
 const touchSyncDevice = `-- name: TouchSyncDevice :exec
 
-INSERT INTO sync_device (user_id, device_id, capabilities)
-VALUES ($1, $2, $3)
+INSERT INTO sync_device (user_id, device_id, snapshot_capable, synced_seq)
+VALUES (
+  $1, $2, $3,
+  least($4::bigint, $5::bigint)
+)
 ON CONFLICT (user_id, device_id) DO UPDATE
-SET capabilities = EXCLUDED.capabilities,
+SET snapshot_capable = EXCLUDED.snapshot_capable,
+    synced_seq = least(greatest(sync_device.synced_seq, EXCLUDED.synced_seq), $5::bigint),
     last_seen = now()
 `
 
 type TouchSyncDeviceParams struct {
-	UserID       string
-	DeviceID     string
-	Capabilities string
+	UserID          string
+	DeviceID        string
+	SnapshotCapable bool
+	SyncedSeq       int64
+	Head            int64
 }
 
-// ---- 设备名册（ADR-0048） ----
-// 带设备标识的同步请求：最近出现时间写服务端当前时间，能力声明整组替换，别名
-// 保持用户设置的值；首次出现时间只在插入时写。
+// ---- 设备名册（ADR-0048、ADR-0054） ----
+// 带设备标识的同步请求：最近出现时间写服务端当前时间，快照能力整组替换，位置按
+// after 取较大值且不超过当前 head，别名保持用户设置的值；首次出现时间只在插入时写。
 func (q *Queries) TouchSyncDevice(ctx context.Context, arg TouchSyncDeviceParams) error {
-	_, err := q.db.Exec(ctx, touchSyncDevice, arg.UserID, arg.DeviceID, arg.Capabilities)
+	_, err := q.db.Exec(ctx, touchSyncDevice,
+		arg.UserID,
+		arg.DeviceID,
+		arg.SnapshotCapable,
+		arg.SyncedSeq,
+		arg.Head,
+	)
 	return err
 }
 
 const upsertSyncSnapshot = `-- name: UpsertSyncSnapshot :exec
-INSERT INTO sync_snapshot (user_id, seq, sha256, digest, created_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO sync_state (
+  user_id, snapshot_seq, snapshot_sha256, snapshot_digest, snapshot_created_at
+)
+VALUES (
+  $1, $2, $3,
+  $4, $5
+)
 ON CONFLICT (user_id) DO UPDATE
-SET seq = EXCLUDED.seq,
-    sha256 = EXCLUDED.sha256,
-    digest = EXCLUDED.digest,
-    created_at = EXCLUDED.created_at
+SET snapshot_seq = EXCLUDED.snapshot_seq,
+    snapshot_sha256 = EXCLUDED.snapshot_sha256,
+    snapshot_digest = EXCLUDED.snapshot_digest,
+    snapshot_created_at = EXCLUDED.snapshot_created_at
 `
 
 type UpsertSyncSnapshotParams struct {
-	UserID    string
-	Seq       int64
-	Sha256    string
-	Digest    string
-	CreatedAt pgtype.Timestamptz
+	UserID            string
+	SnapshotSeq       pgtype.Int8
+	SnapshotSha256    pgtype.Text
+	SnapshotDigest    pgtype.Text
+	SnapshotCreatedAt pgtype.Timestamptz
 }
 
+// 登记用快照指针覆盖整组四个列；没有旧指针时这里就是第一次登记。
 func (q *Queries) UpsertSyncSnapshot(ctx context.Context, arg UpsertSyncSnapshotParams) error {
 	_, err := q.db.Exec(ctx, upsertSyncSnapshot,
 		arg.UserID,
-		arg.Seq,
-		arg.Sha256,
-		arg.Digest,
-		arg.CreatedAt,
+		arg.SnapshotSeq,
+		arg.SnapshotSha256,
+		arg.SnapshotDigest,
+		arg.SnapshotCreatedAt,
 	)
 	return err
 }

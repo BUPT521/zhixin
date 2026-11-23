@@ -15,10 +15,11 @@ type AppUser struct {
 }
 
 type Attachment struct {
-	UserID    string
-	Sha256    string
-	Size      int64
-	CreatedAt pgtype.Timestamptz
+	UserID     string
+	Sha256     string
+	Size       int64
+	CreatedAt  pgtype.Timestamptz
+	OrphanedAt pgtype.Timestamptz
 }
 
 type AuthCode struct {
@@ -163,7 +164,7 @@ type SessionRefreshUsed struct {
 type SyncCommit struct {
 	UserID        string
 	Seq           int64
-	RequestID     string
+	Uid           string
 	DeviceID      string
 	SchemaVersion int32
 	Actor         string
@@ -172,40 +173,42 @@ type SyncCommit struct {
 	ReceivedAt    pgtype.Timestamptz
 	Changes       []byte
 	StateDigest   pgtype.Text
+	TableDigests  []byte
 }
 
 type SyncCommitSeen struct {
-	UserID    string
-	RequestID string
+	UserID string
+	Uid    string
+	Seq    int64
 }
 
 type SyncDevice struct {
-	UserID       string
-	DeviceID     string
-	Alias        string
-	Capabilities string
-	FirstSeen    pgtype.Timestamptz
-	LastSeen     pgtype.Timestamptz
+	UserID          string
+	DeviceID        string
+	Alias           string
+	SnapshotCapable bool
+	SyncedSeq       int64
+	FirstSeen       pgtype.Timestamptz
+	LastSeen        pgtype.Timestamptz
 }
 
-type SyncHead struct {
-	UserID         string
-	Head           int64
-	TrimmedThrough int64
-}
-
-type SyncSnapshot struct {
+type SyncRef struct {
 	UserID    string
-	Seq       int64
-	Sha256    string
-	Digest    string
-	CreatedAt pgtype.Timestamptz
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
 }
 
-type SyncSnapshotOrphan struct {
-	UserID     string
-	Sha256     string
-	OrphanedAt pgtype.Timestamptz
+type SyncState struct {
+	UserID            string
+	Head              int64
+	TrimmedThrough    int64
+	SnapshotSeq       pgtype.Int8
+	SnapshotSha256    pgtype.Text
+	SnapshotDigest    pgtype.Text
+	SnapshotCreatedAt pgtype.Timestamptz
 }
 
 type UserActive struct {

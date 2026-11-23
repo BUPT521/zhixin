@@ -10,8 +10,12 @@ import 'raw_executor.dart';
 import 'sql.dart';
 
 /// 库文件与 schema 版本。库文件放在应用私有目录，导出时整份复制。
+///
+/// 30 之后的那一次变化把版本与同步的簿记收拢成一次：单行状态与 `HEAD` 合进
+/// `revision_state`，完整性只留整库摘要，命名版本改按 `uid` 引用并随账号同步，
+/// 记忆改三类标签并加使用统计（ADR-0051、0054，审查第 8 节）。
 const String zhixinDbFileName = 'zhixin.db';
-const int zhixinSchemaVersion = 30;
+const int zhixinSchemaVersion = 31;
 
 /// 与库文件同名的附属文件：回滚日志、WAL 与共享内存。
 const List<String> zhixinDbSideFiles = ['-journal', '-wal', '-shm'];
@@ -49,10 +53,4 @@ Future<void> _seed(RawDatabase db, int version, Clock clock) async {
     'value': '$version',
     'updated_at': now,
   }, replace: true);
-  await insertRow(db, 'profile', {
-    'id': 1,
-    'day_cutoff_hour': 4,
-    'created_at': now,
-    'updated_at': now,
-  }, ignore: true);
 }

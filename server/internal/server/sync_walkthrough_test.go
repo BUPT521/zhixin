@@ -13,7 +13,7 @@ import (
 // request_id，模拟客户端各自的提交。
 func walkCommit(requestID, deviceID, actor, action string, change map[string]any) map[string]any {
 	return map[string]any{
-		"request_id":     requestID,
+		"uid":            requestID,
 		"device_id":      deviceID,
 		"schema_version": ClientSchemaVersion,
 		"actor":          actor,
@@ -80,10 +80,10 @@ func TestTwoDeviceSyncWalkthrough(t *testing.T) {
 	// pull 拉 after 之后的提交，返回提交本身与 head。
 	type pulled struct {
 		Commits []struct {
-			Seq       int64  `json:"seq"`
-			RequestID string `json:"request_id"`
-			DeviceID  string `json:"device_id"`
-			Action    string `json:"action"`
+			Seq      int64  `json:"seq"`
+			Uid      string `json:"uid"`
+			DeviceID string `json:"device_id"`
+			Action   string `json:"action"`
 		} `json:"commits"`
 		Head int64 `json:"head"`
 	}
@@ -177,7 +177,7 @@ func TestTwoDeviceSyncWalkthrough(t *testing.T) {
 			t.Fatalf("提交序号应为 1..5 连续，得到 %v", seqs)
 		}
 	}
-	if history.Commits[3].RequestID != "walk-a-concurrent" || history.Commits[4].RequestID != "walk-b-reconciled" {
+	if history.Commits[3].Uid != "walk-a-concurrent" || history.Commits[4].Uid != "walk-b-reconciled" {
 		t.Fatalf("同一行的两条并发修改都应在历史里，顺序为先 A 后 B：%+v", history.Commits)
 	}
 	if history.Head != 5 {

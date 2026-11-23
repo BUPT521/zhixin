@@ -465,13 +465,20 @@ type Commit struct {
 	CreatedAt     string     `json:"created_at"`
 	DeviceId      string     `json:"device_id"`
 	ReceivedAt    *time.Time `json:"received_at,omitempty"`
-	RequestId     string     `json:"request_id"`
 	SchemaVersion int        `json:"schema_version"`
 	Seq           *int64     `json:"seq,omitempty"`
 
 	// StateDigest 客户端按改进方案 3.5 算出的整库摘要（SHA-256 多重集哈希的十六进制）；
 	// 只有推送完成、本机没有待推送提交时最后一条提交才带这个字段。
 	StateDigest *string `json:"state_digest,omitempty"`
+
+	// TableDigests 按表拆开的同一份摘要，表名到 64 位十六进制值的映射，各值之和等于这条提交的
+	// state_digest。服务端原样保存与回传，不解析；没有带的提交在响应里不出现这个键
+	// （ADR-0054）。
+	TableDigests *map[string]string `json:"table_digests,omitempty"`
+
+	// Uid 客户端在用户动作发生时生成的提交身份，同一动作重试时沿用；服务端按它永久去重
+	Uid string `json:"uid"`
 }
 
 // CommitActor defines model for Commit.Actor.
@@ -683,6 +690,10 @@ type ProblemCode string
 // PushResult defines model for PushResult.
 type PushResult struct {
 	Head int64 `json:"head"`
+
+	// Seqs 与请求里的 commits 按条数与顺序一一对应；新提交是服务端分配的序号，被当作
+	// 重复跳过的提交回它在服务端记下的原序号（ADR-0054）。
+	Seqs []int64 `json:"seqs"`
 }
 
 // Ready defines model for Ready.
@@ -744,17 +755,20 @@ type SnapshotRegistration struct {
 	Sha256 string `json:"sha256"`
 }
 
-// SyncDevice 账号设备名册里的一台设备（ADR-0048）
+// SyncDevice 账号设备名册里的一台设备（ADR-0048、ADR-0054）
 type SyncDevice struct {
 	// Alias 用户设置的别名，空串表示未命名
-	Alias string `json:"alias"`
-
-	// Capabilities 这一台设备声明的小写能力名，当前只有 snapshot
-	Capabilities []string `json:"capabilities"`
-	DeviceId     string   `json:"device_id"`
+	Alias    string `json:"alias"`
+	DeviceId string `json:"device_id"`
 
 	// LastSeen 最近一次同步请求的服务端时间
 	LastSeen time.Time `json:"last_seen"`
+
+	// SnapshotCapable 这一台设备是否声明了 snapshot 能力；现在是唯一的一种能力，请求头含 snapshot 时置为 true
+	SnapshotCapable bool `json:"snapshot_capable"`
+
+	// SyncedSeq 这台设备已经应用到的服务端序号，不超过当前 head；常规压缩不越过活跃窗口内设备的最小值
+	SyncedSeq int64 `json:"synced_seq"`
 }
 
 // SyncDeviceList defines model for SyncDeviceList.
@@ -778,6 +792,42 @@ type SyncHead struct {
 
 	// Snapshot 当前快照指针，没有登记时省略
 	Snapshot *SyncSnapshot `json:"snapshot,omitempty"`
+}
+
+// SyncRef 账号级命名版本的一行（ADR-0054）
+type SyncRef struct {
+	// CommitUid 这个名字指向的提交身份；服务端不核对它是否存在
+	CommitUid string `json:"commit_uid"`
+
+	// DeletedAt 删除时间；非空表示这个名字是墓碑，没有这个键表示名字仍然有效
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+
+	// Name NFC 规范化之后的名字，最长 30 个字符
+	Name string `json:"name"`
+
+	// Note 用户写的备注，服务端原样保存
+	Note      string    `json:"note"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SyncRefList defines model for SyncRefList.
+type SyncRefList struct {
+	Refs []SyncRef `json:"refs"`
+}
+
+// SyncRefWrite 写入或删除一个命名版本，两种形状二选一（ADR-0054）
+type SyncRefWrite struct {
+	// CommitUid 写入时必填，删除时忽略
+	CommitUid *string `json:"commit_uid,omitempty"`
+
+	// Delete 为真表示删除这个名字，此时不需要 commit_uid
+	Delete *bool `json:"delete,omitempty"`
+
+	// Name 名字，服务端按 NFC 规范化之后计长度，最长 30 个字符
+	Name string `json:"name"`
+
+	// Note 写入时的备注，删除时忽略
+	Note *string `json:"note,omitempty"`
 }
 
 // SyncSnapshot 账号当前快照的指针（ADR-0043）
@@ -889,12 +939,14 @@ type PostV1LlmResponsesJSONBody struct {
 	Instructions *string                  `json:"instructions,omitempty"`
 
 	// MaxOutputTokens 省略时服务端补 4096，每次尝试按它与请求字节预留额度
-	MaxOutputTokens *int                      `json:"max_output_tokens,omitempty"`
-	Model           string                    `json:"model"`
-	Store           *bool                     `json:"store,omitempty"`
-	Stream          *bool                     `json:"stream,omitempty"`
-	ToolChoice      interface{}               `json:"tool_choice,omitempty"`
-	Tools           *[]map[string]interface{} `json:"tools,omitempty"`
+	MaxOutputTokens *int   `json:"max_output_tokens,omitempty"`
+	Model           string `json:"model"`
+
+	// Store 接受但不使用客户端的取值；服务端转发给来源时固定写成 false
+	Store      *bool                     `json:"store,omitempty"`
+	Stream     *bool                     `json:"stream,omitempty"`
+	ToolChoice interface{}               `json:"tool_choice,omitempty"`
+	Tools      *[]map[string]interface{} `json:"tools,omitempty"`
 }
 
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
@@ -917,10 +969,10 @@ type GetV1SyncCommitsParams struct {
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
-	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
 	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
@@ -932,37 +984,37 @@ type PostV1SyncCommitsJSONBody struct {
 
 // PostV1SyncCommitsParams defines parameters for PostV1SyncCommits.
 type PostV1SyncCommitsParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
-	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
 	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
 // GetV1SyncDevicesParams defines parameters for GetV1SyncDevices.
 type GetV1SyncDevicesParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
-	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
 	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
 // GetV1SyncHeadParams defines parameters for GetV1SyncHead.
 type GetV1SyncHeadParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
-	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
 	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
 // PutV1SyncSnapshotParams defines parameters for PutV1SyncSnapshot.
 type PutV1SyncSnapshotParams struct {
-	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+	// XDeviceId 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
 	XDeviceId *string `json:"X-Device-Id,omitempty"`
 
-	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
 	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
 
@@ -1025,6 +1077,9 @@ type PostV1SyncCommitsJSONRequestBody PostV1SyncCommitsJSONBody
 
 // PutV1SyncDevicesJSONRequestBody defines body for PutV1SyncDevices for application/json ContentType.
 type PutV1SyncDevicesJSONRequestBody = SyncDeviceRename
+
+// PutV1SyncRefsJSONRequestBody defines body for PutV1SyncRefs for application/json ContentType.
+type PutV1SyncRefsJSONRequestBody = SyncRefWrite
 
 // PutV1SyncSnapshotJSONRequestBody defines body for PutV1SyncSnapshot for application/json ContentType.
 type PutV1SyncSnapshotJSONRequestBody = SnapshotRegistration
@@ -1310,6 +1365,12 @@ type ServerInterface interface {
 	// GetV1SyncHead 服务端序列的最新位置、保留下界与当前快照
 	// (GET /v1/sync/head)
 	GetV1SyncHead(w http.ResponseWriter, r *http.Request, params GetV1SyncHeadParams)
+	// GetV1SyncRefs 账号的命名版本
+	// (GET /v1/sync/refs)
+	GetV1SyncRefs(w http.ResponseWriter, r *http.Request)
+	// PutV1SyncRefs 写入或删除一个命名版本
+	// (PUT /v1/sync/refs)
+	PutV1SyncRefs(w http.ResponseWriter, r *http.Request)
 	// GetV1SyncSnapshot 当前快照指针
 	// (GET /v1/sync/snapshot)
 	GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request)
@@ -2474,6 +2535,34 @@ func (siw *ServerInterfaceWrapper) GetV1SyncHead(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetV1SyncRefs operation middleware
+func (siw *ServerInterfaceWrapper) GetV1SyncRefs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1SyncRefs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutV1SyncRefs operation middleware
+func (siw *ServerInterfaceWrapper) PutV1SyncRefs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutV1SyncRefs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetV1SyncSnapshot operation middleware
 func (siw *ServerInterfaceWrapper) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
 
@@ -2700,6 +2789,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/sync/snapshot", wrapper.PutV1SyncSnapshot)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/devices", wrapper.GetV1SyncDevices)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/sync/devices", wrapper.PutV1SyncDevices)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/refs", wrapper.GetV1SyncRefs)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/sync/refs", wrapper.PutV1SyncRefs)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/sync/commits", wrapper.DeleteV1SyncCommits)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/commits", wrapper.GetV1SyncCommits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/sync/commits", wrapper.PostV1SyncCommits)

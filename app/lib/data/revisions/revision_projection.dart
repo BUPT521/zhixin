@@ -11,9 +11,8 @@ part of 'revision_engine.dart';
 /// 不能只按保留的变更明细合并出 `(from, to]` 的净变化。
 ///
 /// 起点之前的提交已经被裁掉、中间有清理历史留下的基线提交，或者某条提交的
-/// `change_count` 与实际的变更明细条数对不上时抛出。[RevisionProjectionMixin
-/// .compare] 捕获它之后退回两次重建，因此这种情况不按数据损坏处理
-/// （ADR-0039 第 2 条）。
+/// 变更明细缺失时抛出。[RevisionProjectionMixin.compare] 捕获它之后退回两
+/// 次重建，因此这种情况不按数据损坏处理（ADR-0039 第 2 条）。
 class _FoldUnavailable implements Exception {
   const _FoldUnavailable(this.reason);
 
@@ -36,17 +35,9 @@ class _RestoreMismatch implements Exception {
   String toString() => '反向写入没有恢复到目标版本：$reason';
 }
 
-/// 检查点投影的原文：`json` 直接解 UTF-8，`json+gzip` 先解压。
-String decodeCheckpointPayload(RevisionCheckpoint checkpoint) {
-  switch (checkpoint.encoding) {
-    case 'json':
-      return utf8.decode(checkpoint.payload);
-    case 'json+gzip':
-      return utf8.decode(gzip.decode(checkpoint.payload));
-    default:
-      throw FormatException('未知的检查点编码 ${checkpoint.encoding}');
-  }
-}
+/// 检查点投影的原文：gzip 压缩的 JSON，只有这一种编码（ADR-0054 实施前核对）。
+String decodeCheckpointPayload(RevisionCheckpoint checkpoint) =>
+    utf8.decode(gzip.decode(checkpoint.payload));
 
 String encodeProjection(Projection projection) => jsonEncode({
   for (final table in projection.entries)
@@ -200,10 +191,6 @@ mixin RevisionProjectionMixin {
     } catch (error) {
       throw RevisionCorruption('检查点 ${checkpoint.id} 解码失败：$error');
     }
-    final expected = self._checksum(projectionJson, checkpoint.assetHashes);
-    if (expected != checkpoint.checksum) {
-      throw RevisionCorruption('检查点 ${checkpoint.id} 校验值不一致');
-    }
     final Projection projection;
     try {
       projection = decodeProjection(projectionJson);
@@ -211,7 +198,8 @@ mixin RevisionProjectionMixin {
       throw RevisionCorruption('检查点 ${checkpoint.id} 投影格式不正确：$error');
     }
     // 检查点记录的摘要必须等于按投影重算的值：投影与摘要对不上说明检查点本身
-    // 坏了，不能拿来当重建起点（方案 3.5）。
+    // 坏了，不能拿来当重建起点（方案 3.5）。完整性只认这一个原语，不再有
+    // 另算的校验值（ADR-0054 与审查 S10）。
     final digest = revisionStateDigest(projection);
     if (digest != checkpoint.stateDigest) {
       throw RevisionCorruption('检查点 ${checkpoint.id} 的摘要与投影不一致');
@@ -375,7 +363,7 @@ mixin RevisionProjectionMixin {
     final commits = await selectRows(
       executor,
       'revision_commit',
-      columns: ['id', 'parent_id', 'kind', 'change_count'],
+      columns: ['id', 'parent_id', 'kind'],
       where: 'id > ? AND id <= ?',
       whereArgs: [from, to],
       orderBy: 'id',
@@ -399,7 +387,8 @@ mixin RevisionProjectionMixin {
           RevisionKind.baseline) {
         throw _FoldUnavailable('提交 $id 是一次历史清理留下的基线');
       }
-      if ((detailCounts[id] ?? 0) != row['change_count']) {
+      // 变更条数不存表：保留区间里的提交都应当有明细，缺明细说明历史不完整。
+      if ((detailCounts[id] ?? 0) == 0) {
         throw _FoldUnavailable('提交 $id 的变更明细不完整');
       }
       expectedParent = id;
@@ -658,8 +647,7 @@ mixin RevisionProjectionMixin {
         kind: RevisionKind.restore,
         restoredCommitId: targetCommit.id,
         changes: _withCommitId(captured.changes, commitId),
-        digestDelta: captured.digestDelta,
-        parentHash: headCommit?.hash,
+        tableDeltas: captured.tableDeltas,
       ),
     );
     await self._clearContext(txn);
@@ -878,9 +866,7 @@ mixin RevisionProjectionMixin {
       }
       await self.beginCommand(txn);
       final commitId = await self.reserveCommitId(txn);
-      await updateRow(txn, 'revision_context', {
-        'suppress': 1,
-      }, where: 'id = 1');
+      await updateRow(txn, 'revision_state', {'suppress': 1}, where: 'id = 1');
       await self._replaceProjection(txn, projection);
       await self._verifyProjection(txn, projection);
       final parent = await self.commitById(txn, head);
@@ -898,7 +884,7 @@ mixin RevisionProjectionMixin {
           kind: RevisionKind.baseline,
           changes: const [],
           stateDigest: revisionStateDigest(projection),
-          parentHash: parent?.hash,
+          tableDigests: revisionTableDigests(projection),
         ),
       );
       // 这条提交没有变更明细可回放，写一条 `initial` 检查点作为重建起点，与
@@ -968,7 +954,9 @@ mixin RevisionProjectionMixin {
   ///
   /// 清除与装入在同一个事务里完成，触发器在此期间被上下文标记为暂停，避免把
   /// 整库删除与重插记成逐行历史；净变化由事务内比较后一次性写入（[changes]
-  /// 给出时直接使用调用方算好的净变化，不再读一次当前投影）。
+  /// 给出时直接使用调用方算好的净变化，不再读一次当前投影）。装入之后写一份
+  /// `initial` 检查点作为重建起点，与清理本机历史、快照重建同一做法，否则导入
+  /// 之后没有可以起步重放比较的检查点（ADR-0054 实施前核对）。
   Future<RevisionCommit> _writeProjectionCommit(
     RawExecutor txn,
     Projection targetProjection, {
@@ -981,7 +969,7 @@ mixin RevisionProjectionMixin {
   }) async {
     await self.beginCommand(txn);
     final commitId = await self.reserveCommitId(txn);
-    await updateRow(txn, 'revision_context', {'suppress': 1}, where: 'id = 1');
+    await updateRow(txn, 'revision_state', {'suppress': 1}, where: 'id = 1');
     for (final entry in attachments.entries) {
       await self.assets.putBytes(txn, entry.key, entry.value);
     }
@@ -1014,8 +1002,16 @@ mixin RevisionProjectionMixin {
         // 整份数据被替换成目标投影：摘要直接按目标投影整库重算，不必经过
         // 暂存表的增量（方案 3.5）。
         stateDigest: revisionStateDigest(targetProjection),
-        parentHash: parent?.hash,
+        tableDigests: revisionTableDigests(targetProjection),
       ),
+    );
+    // 这条提交的明细是两份投影的整库差异，重建时不必重放一遍；写一份
+    // `initial` 检查点作为起点。
+    await self._writeCheckpoint(
+      txn,
+      commitId: commitId,
+      kind: 'initial',
+      projection: targetProjection,
     );
     await self._clearContext(txn);
     return commit;
@@ -1065,7 +1061,7 @@ mixin RevisionProjectionMixin {
           changes: changes,
           // 换库恢复之后的数据就是 [after]；摘要按它整库重算（方案 3.5）。
           stateDigest: revisionStateDigest(after),
-          parentHash: parent?.hash,
+          tableDigests: revisionTableDigests(after),
         ),
       );
       await self._clearContext(txn);
@@ -1136,12 +1132,11 @@ mixin RevisionProjectionMixin {
       'payload': compressed,
       'encoding': 'json+gzip',
       'raw_bytes': raw.length,
-      'asset_hashes_json': jsonEncode(hashes),
-      'checksum': self._checksum(projectionJson, hashes),
       // 检查点也存一份投影摘要：重建之后不必从当前表重新取数就能比对。
       'state_digest': revisionStateDigest(projection),
       'created_at': formatDateTime(self.clock()),
     });
+    // 附件清单只存引用表，回收与核对都从那里取（ADR-0054 与审查 S2）。
     await self.recordAssetRefs(
       txn,
       ownerKind: 'checkpoint',
@@ -1149,12 +1144,6 @@ mixin RevisionProjectionMixin {
       hashes: hashes,
     );
     return id;
-  }
-
-  /// 检查点的校验值：按解压后的投影原文与附件清单计算，与编码方式无关。
-  String _checksum(String projectionJson, List<String> hashes) {
-    final input = '$projectionJson\n${hashes.join(',')}';
-    return sha256.convert(utf8.encode(input)).toString();
   }
 
   /// 把某一提交的投影固化成检查点；命名、裁剪与清理历史都从这里取基线。

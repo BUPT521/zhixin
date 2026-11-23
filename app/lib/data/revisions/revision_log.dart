@@ -10,9 +10,9 @@ part of 'revision_engine.dart';
 /// 普通写入、撤销、恢复与远端应用都从这里写提交行，不再各自拼一份 INSERT；
 /// 撤销提交的回指字段随 [CommitDraft] 一次写入，不再事后补 UPDATE（R10）。
 ///
-/// 一致性摘要与哈希链的四列（`state_digest`、`hash`、`origin_device`、
-/// `authored_at`）也在这里定下：采集路径给出 [digestDelta]，整版恢复与导入直接
-/// 给出 [stateDigest]，两条路径都落到同一次写入里（方案 3.5、3.10、3.12）。
+/// 一致性摘要在这里定下：采集路径给出各表增量 [tableDeltas]，整版恢复与导入
+/// 直接给出 [stateDigest] 与 [tableDigests]，两条路径都落到同一次写入里
+/// （方案 3.5、ADR-0054）。
 class CommitDraft {
   const CommitDraft({
     required this.id,
@@ -23,15 +23,15 @@ class CommitDraft {
     required this.kind,
     required this.changes,
     this.uid,
-    this.requestId,
     this.restoredCommitId,
     this.revertedCommitId,
     this.conflicts = const [],
-    this.digestDelta,
+    this.tableDeltas,
     this.stateDigest,
-    this.parentHash,
+    this.tableDigests,
     this.originDevice,
     this.authoredAt,
+    this.serverSeq,
   });
 
   final int id;
@@ -42,37 +42,32 @@ class CommitDraft {
   final RevisionKind kind;
   final List<RevisionChange> changes;
 
-  /// 提交身份；为空时由 [_appendCommit] 生成 UUIDv7，远端提交沿用远端的 uid。
+  /// 提交身份；界面在动作开始时生成并一路传下来，为空时由 [_appendCommit] 生成
+  /// 一个兜底值（ADR-0053 决定第 3 条）。
   final String? uid;
-
-  /// 同一次用户动作的重试编号；只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
-  /// 的重试去重。
-  final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
   final List<RevisionConflict> conflicts;
 
-  /// 采集路径算出的一致性摘要增量；与父提交的摘要相加得到这条提交的摘要。
-  final BigInt? digestDelta;
+  /// 采集路径算出的各表摘要增量；加到父提交的分表摘要上得到这条提交之后的值。
+  final Map<String, BigInt>? tableDeltas;
 
   /// 直接给定这条提交之后的状态摘要；整版恢复与导入用它，因为目标投影当场
   /// 可用，不必再经过暂存表。
   final String? stateDigest;
 
-  /// 直接给定父提交的哈希；为空时读父提交或取哈希链初值。
-  final String? parentHash;
+  /// 直接给定各表摘要；与 [stateDigest] 一起给，各表之和必须等于它。
+  final Map<String, String>? tableDigests;
 
   /// 远端提交由服务端带来的设备标识；本机提交为空。
   final String? originDevice;
 
-  /// 远端提交的作者创建时间；本机提交为空，写入时取 `created_at`。
+  /// 远端提交的作者创建时间；本机提交为空，写入时取这条提交的落库时间。
   final DateTime? authoredAt;
-}
 
-/// 本机重试去重的时效：同编号的旧提交在这段时间内创建、且仍是 `HEAD` 时，才按
-/// 同一次动作的重试处理；超过之后或者中间已有别的提交，同一个编号按新的用户
-/// 动作执行（ADR-0040）。
-const Duration retryRequestWindow = Duration(minutes: 2);
+  /// 远端提交对应的服务端序号；本机提交为空，推送成功之后补写。
+  final int? serverSeq;
+}
 
 /// 把合并好的净变化补上提交编号；合并时编号还没定下来，先写 0。
 List<RevisionChange> _withCommitId(
@@ -95,16 +90,17 @@ mixin RevisionLogMixin {
   /// 引擎本身；字段与同库其他文件的方法都经它访问。
   RevisionEngine get self;
 
+  /// 读单行版本状态的原始行；没有这一行时为空。
+  Future<Map<String, Object?>?> _stateRow(RawExecutor executor) async {
+    final rows = await selectRows(executor, 'revision_state', limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// `HEAD` 指向的提交编号，单行直读、不联表（ADR-0054 决定第 4 条）。
   Future<int> headId(RawExecutor executor) async {
-    final rows = await selectRows(
-      executor,
-      'revision_ref',
-      columns: ['commit_id'],
-      where: 'name = ?',
-      whereArgs: [RevisionRef.headName],
-    );
-    if (rows.isEmpty) throw StateError('数据版本缺少 HEAD');
-    return rows.first['commit_id']! as int;
+    final row = await _stateRow(executor);
+    if (row == null) throw StateError('数据版本缺少单行状态');
+    return row['head_commit_id'] as int? ?? 0;
   }
 
   /// 当前数据代次：`HEAD` 所在提交的 `generation`。
@@ -117,6 +113,10 @@ mixin RevisionLogMixin {
     return head?.generation ?? 0;
   }
 
+  /// 读一条提交，并补上现数的变更条数与冲突条数。
+  ///
+  /// 这两列不存表，读取时从 `revision_change` 与 `revision_conflict` 现数
+  /// （ADR-0054 与审查 S1）。
   Future<RevisionCommit?> commitById(RawExecutor executor, int id) async {
     final rows = await selectRows(
       executor,
@@ -125,24 +125,46 @@ mixin RevisionLogMixin {
       whereArgs: [id],
       limit: 1,
     );
-    return rows.isEmpty ? null : RevisionCommit.fromRow(rows.first);
+    if (rows.isEmpty) return null;
+    final counts = await _commitCounts(executor, [id]);
+    return RevisionCommit.fromRow(_withCounts(rows.first, counts[id]!));
   }
 
-  Future<RevisionCommit?> commitByRequest(
+  /// 一组提交的变更条数与冲突条数，一次查询现数；没有明细的提交记 0。
+  Future<Map<int, ({int changes, int conflicts})>> _commitCounts(
     RawExecutor executor,
-    String requestId,
+    List<int> ids,
   ) async {
-    final rows = await selectRows(
-      executor,
-      'revision_commit',
-      where: 'request_id = ?',
-      whereArgs: [requestId],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : RevisionCommit.fromRow(rows.first);
+    if (ids.isEmpty) return const {};
+    final marks = List.filled(ids.length, '?').join(', ');
+    final result = <int, ({int changes, int conflicts})>{
+      for (final id in ids) id: (changes: 0, conflicts: 0),
+    };
+    for (final row in await executor.rawQuery(
+      'SELECT commit_id, COUNT(*) AS count FROM revision_change '
+      'WHERE commit_id IN ($marks) GROUP BY commit_id',
+      ids,
+    )) {
+      final id = row['commit_id']! as int;
+      final current = result[id]!;
+      result[id] = (
+        changes: row['count']! as int,
+        conflicts: current.conflicts,
+      );
+    }
+    for (final row in await executor.rawQuery(
+      'SELECT commit_id, COUNT(*) AS count FROM revision_conflict '
+      'WHERE commit_id IN ($marks) GROUP BY commit_id',
+      ids,
+    )) {
+      final id = row['commit_id']! as int;
+      final current = result[id]!;
+      result[id] = (changes: current.changes, conflicts: row['count']! as int);
+    }
+    return result;
   }
 
-  /// 按提交身份取提交；远端提交是否已经应用按它判断。
+  /// 按提交身份取提交；远端提交是否已经应用、重试是否落到原提交都按它判断。
   Future<RevisionCommit?> commitByUid(RawExecutor executor, String uid) async {
     final rows = await selectRows(
       executor,
@@ -151,44 +173,33 @@ mixin RevisionLogMixin {
       whereArgs: [uid],
       limit: 1,
     );
-    return rows.isEmpty ? null : RevisionCommit.fromRow(rows.first);
+    if (rows.isEmpty) return null;
+    final id = rows.first['id']! as int;
+    final counts = await _commitCounts(executor, [id]);
+    return RevisionCommit.fromRow(_withCounts(rows.first, counts[id]!));
   }
 
-  /// 同一次用户动作的重试：是则返回原提交，不是则先把旧提交的编号释放掉。
-  ///
-  /// 两条同时成立才按重试处理：旧提交在 [retryRequestWindow] 之内创建，且它仍是
-  /// 当前 `HEAD`。旧提交还在 `HEAD` 说明这次调用紧接在它之后，是界面双击或网络
-  /// 回调造成的重试；之后已经有了别的提交（暂停、恢复之后再次暂停，撤销之后
-  /// 重做同一动作），即便编号相同也是用户重新做的一次动作，必须照常执行，
-  /// 否则方案 3.1 的验收无法达成（ADR-0040）。
-  ///
-  /// 时间按本机时钟算，创建时间只精确到秒，所以两者相差按绝对值比较。旧提交的
-  /// `request_id` 置空之后，唯一索引与回执查询都按非空值判断，它不再是重试目标；
-  /// 编号由这一次的新提交继续使用。
-  Future<RevisionCommit?> retryCommit(
-    RawExecutor executor,
-    String requestId,
-  ) async {
-    final existing = await self.commitByRequest(executor, requestId);
-    if (existing == null) return null;
-    final headId = await self.headId(executor);
-    final createdAt = existing.createdAt;
-    final elapsed = createdAt == null
-        ? null
-        : self.clock().difference(createdAt).abs();
-    if (existing.id == headId &&
-        elapsed != null &&
-        elapsed <= retryRequestWindow) {
-      return existing;
-    }
-    await updateRow(
+  /// 提交行补上现数的条数，键名与 [RevisionCommit.fromRow] 读取的一致。
+  Map<String, Object?> _withCounts(
+    Map<String, Object?> row,
+    ({int changes, int conflicts}) counts,
+  ) => {
+    ...row,
+    'change_count': counts.changes,
+    'conflict_count': counts.conflicts,
+  };
+
+  /// 按 uid 取提交编号；本机已经没有这条提交时为空。
+  Future<int?> commitIdByUid(RawExecutor executor, String uid) async {
+    final rows = await selectRows(
       executor,
       'revision_commit',
-      {'request_id': null},
-      where: 'id = ?',
-      whereArgs: [existing.id],
+      columns: ['id'],
+      where: 'uid = ?',
+      whereArgs: [uid],
+      limit: 1,
     );
-    return null;
+    return rows.isEmpty ? null : rows.first['id']! as int;
   }
 
   Future<List<RevisionCommit>> commits(
@@ -201,7 +212,7 @@ mixin RevisionLogMixin {
       orderBy: 'id DESC',
       limit: limit,
     );
-    return rows.map(RevisionCommit.fromRow).toList(growable: false);
+    return self._commitsOf(executor, rows);
   }
 
   /// 编号大于 [after] 的提交，按编号升序；推送远端提交时从这里取。
@@ -218,7 +229,25 @@ mixin RevisionLogMixin {
       orderBy: 'id',
       limit: limit,
     );
-    return rows.map(RevisionCommit.fromRow).toList(growable: false);
+    return self._commitsOf(executor, rows);
+  }
+
+  /// 把提交行组装成模型，变更条数与冲突条数现数一次补齐。
+  Future<List<RevisionCommit>> _commitsOf(
+    RawExecutor executor,
+    List<Map<String, Object?>> rows,
+  ) async {
+    if (rows.isEmpty) return const [];
+    final counts = await _commitCounts(executor, [
+      for (final row in rows) row['id']! as int,
+    ]);
+    return rows
+        .map(
+          (row) => RevisionCommit.fromRow(
+            _withCounts(row, counts[row['id']! as int]!),
+          ),
+        )
+        .toList(growable: false);
   }
 
   Future<List<RevisionChange>> changesFor(
@@ -290,18 +319,13 @@ mixin RevisionLogMixin {
       ''',
       [table, rowKey, head.generation, limit],
     );
-    return rows.map(RevisionCommit.fromRow).toList(growable: false);
+    return self._commitsOf(executor, rows);
   }
 
   /// 当前命令已经预留的提交编号；还没有预留时为空。
   Future<int?> activeCommit(RawExecutor executor) async {
-    final rows = await selectRows(
-      executor,
-      'revision_context',
-      columns: ['active_commit'],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : rows.first['active_commit'] as int?;
+    final row = await _stateRow(executor);
+    return row == null ? null : row['active_commit'] as int?;
   }
 
   /// 开始一次命令：标记采集并清掉暂停标记。
@@ -309,40 +333,38 @@ mixin RevisionLogMixin {
   /// 这里不分配提交编号：命令里显式要回执时由 [reserveCommitId] 预留，有净
   /// 变化时由 [finishCommand] 就地分配，没有净变化又不预留时序号不动（R1）。
   ///
-  /// [requestId] 只用于同一次动作的重试去重：查到仍在时效内的原提交时抛出
-  /// [RevisionDuplicateRequest]，调用方据此返回原结果；查到过期的旧提交时先
-  /// 释放它的编号，再照常执行（[retryCommit]）。
-  Future<void> beginCommand(RawExecutor txn, {String? requestId}) async {
-    if (requestId != null) {
-      final existing = await self.retryCommit(txn, requestId);
+  /// [uid] 是这个动作的提交身份：本机提交直接写进 `revision_commit.uid`，
+  /// 同一个 uid 查到已有提交时抛出 [RevisionDuplicateRequest]，调用方据此返回
+  /// 原结果；不再有按参数派生的重试编号与两分钟窗口（ADR-0053 决定第 3 条）。
+  Future<void> beginCommand(RawExecutor txn, {String? uid}) async {
+    if (uid != null) {
+      final existing = await self.commitByUid(txn, uid);
       if (existing != null) throw RevisionDuplicateRequest(existing);
     }
-    await updateRow(txn, 'revision_context', {
+    await updateRow(txn, 'revision_state', {
       'capturing': 1,
       'suppress': 0,
     }, where: 'id = 1');
   }
 
-  /// 为本次命令预留一个提交编号并写进上下文；已经预留过时返回原编号。
+  /// 为本次命令预留一个提交编号并写进状态行；已经预留过时返回原编号。
   ///
   /// 编号只增不减：预留之后即使没有形成提交，序号也不回退（R1）。
   Future<int> reserveCommitId(RawExecutor txn) async {
     final current = await self.activeCommit(txn);
     if (current != null) return current;
-    final rows = await selectRows(txn, 'revision_sequence', limit: 1);
-    if (rows.isEmpty) throw StateError('数据版本缺少提交编号');
-    final id = rows.first['next_commit']! as int;
-    await updateRow(txn, 'revision_sequence', {
+    final row = await _stateRow(txn);
+    if (row == null) throw StateError('数据版本缺少单行状态');
+    final id = row['next_commit']! as int;
+    await updateRow(txn, 'revision_state', {
       'next_commit': id + 1,
-    }, where: 'id = 1');
-    await updateRow(txn, 'revision_context', {
       'active_commit': id,
     }, where: 'id = 1');
     return id;
   }
 
   Future<void> _clearContext(RawExecutor txn) async {
-    await updateRow(txn, 'revision_context', {
+    await updateRow(txn, 'revision_state', {
       'active_commit': null,
       'capturing': 0,
       'suppress': 0,
@@ -355,8 +377,7 @@ mixin RevisionLogMixin {
   /// 预留就地分配；没有净变化且没有预留时序号不动，预留过也不回退。
   ///
   /// [originDevice] 与 [authoredAt] 只在应用远端提交时给：服务端带来的设备标识
-  /// 与作者创建时间原样记进提交行；本机提交两者都为空，`authored_at` 写成本次
-  /// 提交的创建时间（方案 3.12）。
+  /// 与作者创建时间原样记进提交行；本机提交两者都为空（方案 3.12）。
   ///
   /// [changedTables] 是输出参数：形成提交时填入这次改到的表与版本元数据表，
   /// 由调用方在事务提交之后发布给订阅中的页面（ADR-0014 第 2 条）；没有净
@@ -365,7 +386,6 @@ mixin RevisionLogMixin {
     RawExecutor txn, {
     required String action,
     String actor = 'user',
-    String? requestId,
     String? uid,
     Set<String>? changedTables,
     RevisionKind kind = RevisionKind.write,
@@ -373,6 +393,7 @@ mixin RevisionLogMixin {
     List<RevisionConflict> conflicts = const [],
     String? originDevice,
     DateTime? authoredAt,
+    int? serverSeq,
   }) async {
     final reserved = await self.activeCommit(txn);
     final captured = await self._collect(txn);
@@ -400,14 +421,13 @@ mixin RevisionLogMixin {
         actor: actor,
         action: action,
         kind: kind,
-        requestId: requestId,
         revertedCommitId: revertedCommitId,
         changes: net,
         conflicts: conflicts,
-        digestDelta: captured.digestDelta,
-        parentHash: parent?.hash,
+        tableDeltas: captured.tableDeltas,
         originDevice: originDevice,
         authoredAt: authoredAt,
+        serverSeq: serverSeq,
       ),
     );
     // 这次提交改到的表与版本元数据表；发布由调用方在提交之后做。
@@ -420,14 +440,12 @@ mixin RevisionLogMixin {
     return commit;
   }
 
-  /// 写入一条提交、它的变更明细与冲突记录，并推进 `HEAD`。
+  /// 写入一条提交、它的变更明细与冲突记录，并推进 `HEAD` 与分表摘要。
   ///
-  /// 提交身份在落库之前定下来：本机提交生成 UUIDv7，远端提交沿用远端的 uid，
-  /// 两者都写进 `revision_commit.uid`（ADR-0040）。同一处一次算好四列：
-  /// `parent_hash` 接上父提交的哈希，`state_digest` 由父提交摘要加上这次命令的
-  /// 增量（整版恢复与导入直接给目标投影的摘要），`hash` 按提交内容重算，
-  /// `origin_device` 与 `authored_at` 按本机或远端规则写入（方案 3.5、3.10、
-  /// 3.12）。
+  /// 提交身份在落库之前定下来：本机提交沿用界面传下来的 uid，缺失时生成
+  /// UUIDv7 兜底；远端提交沿用远端的 uid（ADR-0053）。摘要由父提交的分表值
+  /// 加上这次命令的增量，整版恢复与导入直接给目标投影的分表值；`origin_device`
+  /// 与 `authored_at` 按本机或远端规则写入（方案 3.5、3.12）。
   Future<RevisionCommit> _appendCommit(
     RawExecutor txn,
     CommitDraft draft,
@@ -436,46 +454,70 @@ mixin RevisionLogMixin {
     final now = formatDateTime(createdAt);
     final uid = draft.uid ?? newUuidV7();
     final byteLength = self._changesByteLength(draft.changes);
-    final parent = draft.parentId == null
-        ? null
-        : await self.commitById(txn, draft.parentId!);
-    final parentHash = draft.parentHash ?? parent?.hash ?? revisionChainGenesis;
-    final parentDigest = BigInt.parse(
-      parent?.stateDigest ?? revisionEmptyStateDigest,
-      radix: 16,
-    );
-    final stateDigest =
-        draft.stateDigest ??
-        revisionStateDigestHex(
-          (parentDigest + (draft.digestDelta ?? BigInt.zero)) %
-              revisionDigestModulus,
-        );
-    final hash = revisionCommitHash(
-      parentHash: parentHash,
-      uid: uid,
-      kind: draft.kind,
-      changes: draft.changes,
-    );
-    final authoredAt = draft.authoredAt ?? createdAt;
+    final state = await _stateRow(txn);
+    final parentDigests = state == null
+        ? revisionEmptyTableDigests()
+        : _decodeTableDigests(state['table_digests_json'] as String?);
+    final Map<String, String> tableDigests;
+    final String stateDigest;
+    if (draft.tableDigests != null) {
+      tableDigests = {
+        for (final name in versionedTableNames)
+          name:
+              draft.tableDigests![name] ?? revisionStateDigestHex(BigInt.zero),
+      };
+      stateDigest =
+          draft.stateDigest ??
+          revisionStateDigestHex(revisionTableDigestsSum(tableDigests));
+      if (!revisionTableDigestsMatch(tableDigests, stateDigest)) {
+        throw StateError('各表摘要之和与整库摘要不一致');
+      }
+    } else if (draft.stateDigest != null) {
+      // 只给总值时把它记在首张业务表上，其余表写零：各表之和仍等于总值，总摘要
+      // 的比对不受影响；按表比较在这条提交上退回整条应用（ADR-0054）。
+      tableDigests = {
+        for (final name in versionedTableNames)
+          name: revisionStateDigestHex(BigInt.zero),
+      };
+      final first = versionedTableNames.isEmpty
+          ? null
+          : versionedTableNames.first;
+      if (first != null) tableDigests[first] = draft.stateDigest!;
+      stateDigest = draft.stateDigest!;
+    } else {
+      final deltas = draft.tableDeltas ?? const <String, BigInt>{};
+      tableDigests = {
+        for (final name in versionedTableNames)
+          name: revisionStateDigestHex(
+            (BigInt.parse(
+                      parentDigests[name] ??
+                          revisionStateDigestHex(BigInt.zero),
+                      radix: 16,
+                    ) +
+                    (deltas[name] ?? BigInt.zero)) %
+                revisionDigestModulus,
+          ),
+      };
+      stateDigest = revisionStateDigestHex(
+        revisionTableDigestsSum(tableDigests),
+      );
+    }
+    final authoredAt = draft.authoredAt;
     await insertRow(txn, 'revision_commit', {
       'id': draft.id,
       'uid': uid,
       'parent_id': draft.parentId,
-      'parent_hash': parentHash,
       'generation': draft.generation,
       'state_digest': stateDigest,
-      'hash': hash,
       'actor': draft.actor,
       'action': draft.action,
       'kind': draft.kind.value,
-      'request_id': draft.requestId,
       'restored_commit_id': draft.restoredCommitId,
       'reverted_commit_id': draft.revertedCommitId,
-      'change_count': draft.changes.length,
       'byte_length': byteLength,
-      'conflict_count': draft.conflicts.length,
+      'server_seq': draft.serverSeq,
       'origin_device': draft.originDevice,
-      'authored_at': formatDateTime(authoredAt),
+      'authored_at': authoredAt == null ? null : formatDateTime(authoredAt),
       'created_at': now,
     });
     for (final change in draft.changes) {
@@ -493,34 +535,73 @@ mixin RevisionLogMixin {
         'commit_id': draft.id,
       });
     }
-    await updateRow(
-      txn,
-      'revision_ref',
-      {'commit_id': draft.id, 'updated_at': now},
-      where: 'name = ?',
-      whereArgs: [RevisionRef.headName],
-    );
+    await updateRow(txn, 'revision_state', {
+      'head_commit_id': draft.id,
+      'table_digests_json': jsonEncode(tableDigests),
+    }, where: 'id = 1');
     return RevisionCommit(
       id: draft.id,
       uid: uid,
       parentId: draft.parentId,
-      parentHash: parentHash,
       generation: draft.generation,
       stateDigest: stateDigest,
-      hash: hash,
       actor: draft.actor,
       action: draft.action,
       kind: draft.kind,
-      requestId: draft.requestId,
       restoredCommitId: draft.restoredCommitId,
       revertedCommitId: draft.revertedCommitId,
       changeCount: draft.changes.length,
       byteLength: byteLength,
       conflictCount: draft.conflicts.length,
+      serverSeq: draft.serverSeq,
       originDevice: draft.originDevice,
       authoredAt: authoredAt,
       createdAt: createdAt,
     );
+  }
+
+  /// 读 `HEAD` 上各表摘要；缺的表按零补齐。
+  Map<String, String> _decodeTableDigests(String? raw) {
+    final fallback = revisionEmptyTableDigests();
+    if (raw == null || raw.isEmpty) return fallback;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return fallback;
+      return {
+        for (final name in versionedTableNames)
+          name:
+              decoded[name] is String && validDigestHex(decoded[name] as String)
+              ? decoded[name] as String
+              : fallback[name]!,
+      };
+    } on FormatException {
+      return fallback;
+    }
+  }
+
+  /// `HEAD` 上各表的一致性摘要；分表比较与诊断读它。
+  Future<Map<String, String>> tableDigests(RawExecutor executor) async {
+    final row = await _stateRow(executor);
+    return _decodeTableDigests(row?['table_digests_json'] as String?);
+  }
+
+  /// 在推送成功之后补写一组提交的服务端序号（ADR-0054 决定第 2 条）。
+  ///
+  /// 序号来自推送响应的逐条位置，与本机提交按 uid 对应；不在这里形成提交，
+  /// 也不改摘要。写不进去只意味着显示不到这条信息，不影响同步正确性。
+  Future<void> recordServerSeqs(
+    RawExecutor executor,
+    Map<String, int> seqsByUid,
+  ) async {
+    for (final entry in seqsByUid.entries) {
+      await updateRow(
+        executor,
+        'revision_commit',
+        {'server_seq': entry.value},
+        where: 'uid = ?',
+        whereArgs: [entry.key],
+      );
+    }
   }
 
   /// 一次提交里变更明细的字节数：主键、变化前后的行各算一次 UTF-8 长度。
@@ -536,23 +617,6 @@ mixin RevisionLogMixin {
     return total;
   }
 
-  /// 哈希链的锚点：最早保留提交记录的父哈希；空库返回哈希链初值。
-  ///
-  /// 裁剪之后最早的保留提交指向的父提交已经不在库里，这个哈希就是还能校验的
-  /// 边界；命名版本让更早的提交留在库里时，锚点是编号最小的那一行记录的父哈希
-  /// （方案 3.10）。
-  Future<String> chainAnchor(RawExecutor executor) async {
-    final rows = await selectRows(
-      executor,
-      'revision_commit',
-      columns: ['parent_hash'],
-      orderBy: 'id',
-      limit: 1,
-    );
-    if (rows.isEmpty) return revisionChainGenesis;
-    return rows.first['parent_hash']! as String;
-  }
-
   /// 当前数据的摘要，按当前业务表整库重算（方案 3.5）。
   ///
   /// 同步摘要交换与完整性检查都用它；与 `HEAD` 记录的 `state_digest` 比对，
@@ -560,61 +624,60 @@ mixin RevisionLogMixin {
   Future<String> currentStateDigest(RawExecutor executor) async =>
       revisionStateDigest(await self.readProjection(executor));
 
-  /// 数据完整性检查：核对保留历史的哈希链，再把整库重算的摘要与 `HEAD` 比对。
+  /// 当前数据的分表摘要，按当前业务表整库重算。
+  Future<Map<String, String>> currentTableDigests(RawExecutor executor) async =>
+      revisionTableDigests(await self.readProjection(executor));
+
+  /// 数据完整性检查：从最近的检查点把变更明细重放到 `HEAD`，核对两次摘要。
   ///
-  /// 逐条重算 `sha256(parent_hash, uid, kind, 规范化变更明细)`，父提交还在库里
-  /// 时顺带核对父哈希；最后按当前表重算摘要，与 `HEAD` 记录的 `state_digest`
-  /// 比较，因此改动业务行、改动变更明细、改动提交身份都会进 [problems]。裁剪
-  /// 之后的锚点无法回溯，最早保留提交的父哈希只作起点，不参与核对。这个方法只
-  /// 读不写，界面入口与导出前检查由后续任务接入（方案 3.10）。
+  /// 重放得到的摘要必须等于 `HEAD` 记录的 `state_digest`，也等于按当前业务表
+  /// 重算的摘要；改动业务行、改动变更明细或改动提交身份都会让某个摘要对不上
+  /// （ADR-0054 与审查 S1）。这个方法只读不写，诊断入口与导出前检查接在这里。
   Future<RevisionIntegrityReport> verifyIntegrity(RawExecutor executor) async {
-    final rows = await selectRows(executor, 'revision_commit', orderBy: 'id');
-    if (rows.isEmpty) {
+    final headId = await self.headId(executor);
+    final head = await self.commitById(executor, headId);
+    if (head == null) {
       return const RevisionIntegrityReport(
         commitId: 0,
         checkedCommits: 0,
         problems: ['提交历史为空'],
       );
     }
-    final changesByCommit = <int, List<RevisionChange>>{};
-    for (final row in await selectRows(
-      executor,
-      'revision_change',
-      orderBy: 'commit_id, seq',
-    )) {
-      final change = RevisionChange.fromRow(row);
-      changesByCommit.putIfAbsent(change.commitId, () => []).add(change);
-    }
-    final commits = <int, RevisionCommit>{};
-    for (final row in rows) {
-      final commit = RevisionCommit.fromRow(row);
-      commits[commit.id] = commit;
-    }
     final problems = <String>[];
-    for (final commit in commits.values) {
-      final expected = revisionCommitHash(
-        parentHash: commit.parentHash,
-        uid: commit.uid,
-        kind: commit.kind,
-        changes: changesByCommit[commit.id] ?? const [],
-      );
-      if (expected != commit.hash) {
-        problems.add('提交 ${commit.id} 的哈希与变更明细不一致');
-      }
-      final parent = commit.parentId == null ? null : commits[commit.parentId];
-      if (parent != null && parent.hash != commit.parentHash) {
-        problems.add('提交 ${commit.id} 记录的父哈希与提交 ${parent.id} 的哈希不一致');
+    Projection? replay;
+    try {
+      replay = await self.projectionAt(executor, headId);
+    } on RevisionCorruption catch (error) {
+      problems.add(error.message);
+    }
+    if (replay != null) {
+      final replayed = revisionStateDigest(replay);
+      if (replayed != head.stateDigest) {
+        problems.add('重放结果的摘要与提交 $headId 的记录不一致');
       }
     }
-    final head = commits.values.last;
-    final digest = await self.currentStateDigest(executor);
-    if (head.stateDigest != digest) {
-      problems.add('当前数据的摘要与提交 ${head.id} 的记录不一致');
+    final current = await self.readProjection(executor);
+    final digest = revisionStateDigest(current);
+    if (digest != head.stateDigest) {
+      problems.add('当前数据的摘要与提交 $headId 的记录不一致');
+    } else {
+      final expected = await tableDigests(executor);
+      final actual = revisionTableDigests(current);
+      for (final name in versionedTableNames) {
+        if (expected[name] != actual[name]) problems.add('$name 的摘要与记录不一致');
+      }
     }
+    final rows = await executor.rawQuery(
+      'SELECT COUNT(*) AS count FROM revision_commit',
+    );
+    final total = rows.isEmpty ? 0 : (rows.first['count'] as int? ?? 0);
     return RevisionIntegrityReport(
-      commitId: head.id,
-      checkedCommits: commits.length,
+      commitId: headId,
+      checkedCommits: total,
       problems: problems,
     );
   }
 }
+
+/// 64 位小写十六进制的摘要格式。
+bool validDigestHex(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);

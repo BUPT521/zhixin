@@ -5,7 +5,7 @@ typedef Clock = DateTime Function();
 
 DateTime systemClock() => DateTime.now();
 
-/// 01 的 `profile.day_cutoff_hour` 默认值；没有读到配置时用它。
+/// 01 的 `app_meta` 里 `day_cutoff_hour` 的默认值；没有读到配置时用它。
 const int defaultDayCutoffHour = 4;
 
 /// 自然日：当天零点。页面与规则原先各写一次 DateTime(y, m, d)，统一从这里取。

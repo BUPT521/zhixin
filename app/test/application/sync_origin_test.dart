@@ -68,13 +68,13 @@ void main() {
     );
     await a.sync.syncNow(confirmBaseline: true);
 
-    // A 在 10:05 写一条并推送：本机提交的 origin_device 为空，authored_at 与
-    // 落库时间 created_at 相同。
+    // A 在 10:05 写一条并推送：本机提交的 origin_device 为空，authored_at 这一
+    // 列也只有远端提交才写，本机提交是空值，落库时间看 created_at。
     clock.advance(const Duration(minutes: 5));
     await insertTestMemory(a.rig, 'm1', content: 'A 写的一条');
     final aCommit = await commitRow(a.rig, action: '新增记忆');
     expect(aCommit['origin_device'], isNull);
-    expect(aCommit['authored_at'], aCommit['created_at']);
+    expect(aCommit['authored_at'], isNull);
     expect(aCommit['created_at'], '2026-11-17 10:05:00');
     await a.sync.syncNow();
 

@@ -73,18 +73,14 @@ enum RevisionValueType {
 /// 只记录维护信息、不算内容变化的列；撤销核对与撤销写回都跳过它们。
 const Set<String> revisionBookkeepingColumns = {'updated_at'};
 
-/// 哈希链的初值：基线提交没有父提交，它记录的父哈希取这个值。
-///
-/// 裁剪之后最早的保留提交记录的父哈希就是哈希链的锚点，更早的提交已经不在库
-/// 里、无法校验；没有历史的空库也返回这个值，所以锚点读取在任何时候都有确定
-/// 结果（方案 3.10）。写成 64 个 `0`，与空状态摘要的表示相同但含义不同。
-const String revisionChainGenesis =
+/// 没有任何业务行时的一致性摘要：多重集为空，和为零（方案 3.5）。
+const String revisionEmptyStateDigest =
     '0000000000000000000000000000000000000000000000000000000000000000';
 
-/// 没有任何业务行时的一致性摘要：多重集为空，和为零（方案 3.5）。
-const String revisionEmptyStateDigest = revisionChainGenesis;
-
 /// 数据版本里的一次提交。
+///
+/// 完整性只认 [stateDigest] 一个原语：变更明细条数与冲突条数在读取时现数，提交
+/// 没有哈希链（ADR-0054 与数据库结构过度设计审查的 S1）。
 class RevisionCommit {
   const RevisionCommit({
     required this.id,
@@ -96,14 +92,12 @@ class RevisionCommit {
     required this.kind,
     required this.changeCount,
     required this.createdAt,
-    this.requestId,
     this.restoredCommitId,
     this.revertedCommitId,
     this.byteLength = 0,
     this.conflictCount = 0,
-    this.parentHash = revisionChainGenesis,
     this.stateDigest = revisionEmptyStateDigest,
-    this.hash = '',
+    this.serverSeq,
     this.originDevice,
     this.authoredAt,
   });
@@ -116,15 +110,13 @@ class RevisionCommit {
     actor: row['actor']! as String,
     action: row['action']! as String,
     kind: RevisionKind.fromValue(row['kind']! as String),
-    requestId: row['request_id'] as String?,
     restoredCommitId: row['restored_commit_id'] as int?,
     revertedCommitId: row['reverted_commit_id'] as int?,
-    changeCount: row['change_count']! as int,
+    changeCount: row['change_count'] as int? ?? 0,
     byteLength: row['byte_length'] as int? ?? 0,
     conflictCount: row['conflict_count'] as int? ?? 0,
-    parentHash: row['parent_hash'] as String? ?? revisionChainGenesis,
     stateDigest: row['state_digest'] as String? ?? revisionEmptyStateDigest,
-    hash: row['hash'] as String? ?? '',
+    serverSeq: row['server_seq'] as int?,
     originDevice: row['origin_device'] as String?,
     authoredAt: optionalDateTime(row['authored_at'] as String? ?? ''),
     createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
@@ -136,39 +128,31 @@ class RevisionCommit {
   final String uid;
   final int? parentId;
 
-  /// 父提交的哈希：这条提交接在前一条提交的哈希链上。
-  ///
-  /// 基线提交写 [revisionChainGenesis]；裁剪之后最早保留提交的这一列是哈希链
-  /// 的锚点，它指向的父提交已经不在库里（方案 3.10）。
-  final String parentHash;
-
   /// 这条提交落库之后全部业务行的一致性摘要（方案 3.5）。
   final String stateDigest;
-
-  /// 这条提交的哈希：`sha256(父哈希, uid, kind, 规范化变更明细)`；本机构造、
-  /// 不在库里的占位对象为空串（方案 3.10）。
-  final String hash;
   final int generation;
   final String actor;
   final String action;
   final RevisionKind kind;
-
-  /// 同一次用户动作的重试编号；只用于两分钟内的重试去重，不再是提交身份。
-  final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
+
+  /// 这条提交变更明细的条数；读取时从 `revision_change` 现数，不存列。
   final int changeCount;
 
   /// 这条提交变更明细的字节数；按容量裁剪用它估算每条提交占用的空间。
   final int byteLength;
 
-  /// 应用远端提交时记下的冲突条数。
+  /// 应用远端提交时记下的冲突条数；读取时从 `revision_conflict` 现数，不存列。
   final int conflictCount;
+
+  /// 这条提交在服务端序列上的序号；还不知道时为空（ADR-0054 决定第 2 条）。
+  final int? serverSeq;
 
   /// 远端提交由服务端带来的设备标识；本机提交为空（方案 3.12）。
   final String? originDevice;
 
-  /// 远端提交的作者创建时间；本机提交等于 [createdAt]（方案 3.12）。
+  /// 远端提交的作者创建时间；本机提交为空，界面回退到 [createdAt]（方案 3.12）。
   final DateTime? authoredAt;
   final DateTime? createdAt;
 
@@ -178,23 +162,22 @@ class RevisionCommit {
   /// 是否来自其他设备；界面据此显示“来自另一台设备”（方案 3.12）。
   bool get isRemote => originDevice != null;
 
+  /// 界面显示的作者时间：远端用作者时间，本机用落库时间。
+  DateTime? get displayAuthoredAt => authoredAt ?? createdAt;
+
   Map<String, Object?> toRow() => {
     'id': id,
     'uid': uid,
     'parent_id': parentId,
-    'parent_hash': parentHash,
     'generation': generation,
     'state_digest': stateDigest,
-    'hash': hash,
     'actor': actor,
     'action': action,
     'kind': kind.value,
-    'request_id': requestId,
     'restored_commit_id': restoredCommitId,
     'reverted_commit_id': revertedCommitId,
-    'change_count': changeCount,
     'byte_length': byteLength,
-    'conflict_count': conflictCount,
+    'server_seq': serverSeq,
     'origin_device': originDevice,
     'authored_at': authoredAt == null ? null : formatDateTime(authoredAt!),
     'created_at': createdAt?.toIso8601String(),
@@ -249,11 +232,15 @@ class RevisionChange {
   };
 }
 
-/// 命名版本或 `HEAD` 的指向。
+/// 用户给版本起的名字；`HEAD` 另存在 `revision_state` 里（ADR-0054 决定第 4 条）。
+///
+/// 指向的提交按 [commitUid] 查，本机已经没有这条提交时就是“只剩标签”的名字，
+/// 可以查看标签、不能恢复。
 class RevisionRef {
   const RevisionRef({
     required this.name,
-    required this.commitId,
+    required this.commitUid,
+    this.syncState = RevisionRefSyncState.clean,
     this.note,
     this.createdAt,
     this.updatedAt,
@@ -261,66 +248,126 @@ class RevisionRef {
 
   factory RevisionRef.fromRow(Map<String, Object?> row) => RevisionRef(
     name: row['name']! as String,
-    commitId: row['commit_id']! as int,
+    commitUid: row['commit_uid']! as String,
+    syncState: RevisionRefSyncState.fromValue(
+      row['sync_state'] as String? ?? RevisionRefSyncState.clean.value,
+    ),
     note: row['note'] as String?,
     createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
     updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
   );
 
-  static const String headName = 'HEAD';
+  /// 每账号最多保留的名字数，客户端与服务端取同一个值。
+  static const int maxRefs = 200;
+
+  /// 名字规范化之后的字符数上限，两端一致。
+  static const int maxNameLength = 30;
 
   final String name;
-  final int commitId;
+  final String commitUid;
+  final RevisionRefSyncState syncState;
   final String? note;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+
+  bool get isDirty => syncState == RevisionRefSyncState.dirty;
+
+  RevisionRef copyWith({
+    String? name,
+    String? commitUid,
+    RevisionRefSyncState? syncState,
+    String? note,
+  }) => RevisionRef(
+    name: name ?? this.name,
+    commitUid: commitUid ?? this.commitUid,
+    syncState: syncState ?? this.syncState,
+    note: note ?? this.note,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
+
+  Map<String, Object?> toRow() => {
+    'name': name,
+    'commit_uid': commitUid,
+    'sync_state': syncState.value,
+    'note': note,
+    'created_at': createdAt == null ? null : formatDateTime(createdAt!),
+    'updated_at': updatedAt == null ? null : formatDateTime(updatedAt!),
+  };
 }
 
-/// 检查点：从某一提交重建所需的业务投影与附件清单。
+/// 命名版本的同步状态：干净表示与云端一致，已改表示本机改过、还没推送。
+enum RevisionRefSyncState implements CodedEnum {
+  clean('clean', '已同步'),
+  dirty('dirty', '待同步');
+
+  const RevisionRefSyncState(this.value, this.label);
+
+  @override
+  final String value;
+
+  @override
+  final String label;
+
+  static RevisionRefSyncState fromValue(String value) =>
+      codedValueOrNull(RevisionRefSyncState.values, value) ??
+      RevisionRefSyncState.clean;
+}
+
+/// 用户显式删除一个名字留下的墓碑；推送成功之后删行（ADR-0054 决定第 4 条）。
+class RevisionRefTombstone {
+  const RevisionRefTombstone({required this.name, required this.deletedAt});
+
+  factory RevisionRefTombstone.fromRow(Map<String, Object?> row) =>
+      RevisionRefTombstone(
+        name: row['name']! as String,
+        deletedAt: optionalDateTime(row['deleted_at'] as String? ?? ''),
+      );
+
+  final String name;
+  final DateTime? deletedAt;
+
+  Map<String, Object?> toRow() => {
+    'name': name,
+    'deleted_at': deletedAt == null ? null : formatDateTime(deletedAt!),
+  };
+}
+
+/// 检查点：从某一提交重建所需的业务投影。
+///
+/// 只有一种编码（gzip 压缩的 JSON）；完整性由 [stateDigest] 与重建出的投影比对，
+/// 附件清单存在 `revision_asset_ref` 里（ADR-0054 与审查 S2、S10）。
 class RevisionCheckpoint {
   const RevisionCheckpoint({
     required this.id,
     required this.kind,
     required this.commitId,
     required this.payload,
-    required this.encoding,
     required this.rawBytes,
-    required this.assetHashes,
-    required this.checksum,
     required this.createdAt,
     this.stateDigest = revisionEmptyStateDigest,
   });
 
-  factory RevisionCheckpoint.fromRow(Map<String, Object?> row) {
-    final hashes = (row['asset_hashes_json'] as String? ?? '[]');
-    return RevisionCheckpoint(
-      id: row['id']! as int,
-      kind: row['kind']! as String,
-      commitId: row['commit_id']! as int,
-      payload: row['payload']! as Uint8List,
-      encoding: row['encoding']! as String,
-      rawBytes: row['raw_bytes']! as int,
-      assetHashes: decodeStringList(hashes),
-      checksum: row['checksum']! as String,
-      stateDigest: row['state_digest'] as String? ?? revisionEmptyStateDigest,
-      createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
-    );
-  }
+  factory RevisionCheckpoint.fromRow(Map<String, Object?> row) =>
+      RevisionCheckpoint(
+        id: row['id']! as int,
+        kind: row['kind']! as String,
+        commitId: row['commit_id']! as int,
+        payload: row['payload']! as Uint8List,
+        rawBytes: row['raw_bytes']! as int,
+        stateDigest: row['state_digest'] as String? ?? revisionEmptyStateDigest,
+        createdAt: optionalDateTime(row['created_at'] as String? ?? ''),
+      );
 
   final int id;
   final String kind;
   final int commitId;
 
-  /// 业务投影的字节：`json` 是 UTF-8 原文，`json+gzip` 是它的 gzip 压缩。
+  /// 业务投影的字节，gzip 压缩的检查点原文。
   final Uint8List payload;
-  final String encoding;
 
   /// 压缩之前的字节数。
   final int rawBytes;
-  final List<String> assetHashes;
-
-  /// 按解压后的原文计算，与 [encoding] 无关。
-  final String checksum;
 
   /// 这份投影的一致性摘要；重建之后可以直接与当前表比对（方案 3.5）。
   final String stateDigest;
@@ -330,13 +377,13 @@ class RevisionCheckpoint {
 /// 历史的下游读者在库里登记读到哪里。
 ///
 /// 会丢数据的读者（同步推送）把 [blocking] 置 1，裁剪与清理历史不能越过它的
-/// [position]；只会退回全量重建的读者（索引）只登记位置，不阻止裁剪。
+/// [position]；只会退回全量重建的读者（索引）只登记位置，不阻止裁剪。一个库
+/// 只属于一个账号与实例，位置因此不再带账号归属（ADR-0056 决定第 9 条）。
 class RevisionCursor {
   const RevisionCursor({
     required this.name,
     required this.position,
     this.blocking = false,
-    this.scope,
     this.updatedAt,
   });
 
@@ -344,7 +391,6 @@ class RevisionCursor {
     name: row['name']! as String,
     position: row['position']! as int,
     blocking: (row['blocking'] as int? ?? 0) != 0,
-    scope: row['scope'] as String?,
     updatedAt: optionalDateTime(row['updated_at'] as String? ?? ''),
   );
 
@@ -365,17 +411,12 @@ class RevisionCursor {
   final String name;
   final int position;
   final bool blocking;
-
-  /// 这个位置属于哪个同步身份：同步的两个位置写“账号编号 + 实例来源”的哈希，
-  /// 检索索引等读者为空（同步方案 3.3）。
-  final String? scope;
   final DateTime? updatedAt;
 
   Map<String, Object?> toRow() => {
     'name': name,
     'position': position,
     'blocking': blocking ? 1 : 0,
-    'scope': scope,
     'updated_at': updatedAt == null
         ? formatDateTime(DateTime.now())
         : formatDateTime(updatedAt!),
@@ -493,16 +534,6 @@ class RevisionConflict {
     'remote_after_json': encodeTypedRow(remoteAfter),
     'resolved_commit_id': resolvedCommitId,
   };
-}
-
-List<String> decodeStringList(String raw) {
-  try {
-    final decoded = jsonDecode(raw);
-    if (decoded is! List) return const [];
-    return decoded.whereType<String>().toList(growable: false);
-  } catch (_) {
-    return const [];
-  }
 }
 
 /// 业务投影：表名 → 主键 → 行。
@@ -744,3 +775,10 @@ TypedRow projectColumns(TypedRow row, Set<String> columns) => {
   for (final entry in row.entries)
     if (columns.contains(entry.key)) entry.key: entry.value,
 };
+
+/// 命名版本名字的规范化：去掉首尾空白。
+///
+/// 名字的比较口径要求两端一致；客户端不引 Unicode 规范化库，两端都按原样
+/// 比较并与服务端同时做 NFC，服务端负责把规范化之后的形状存下来
+/// （ADR-0054 决定第 4 条）。
+String normalizeRefName(String name) => name.trim();

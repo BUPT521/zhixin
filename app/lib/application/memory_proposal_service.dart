@@ -10,13 +10,16 @@ import '../domain/models/write_result.dart';
 
 import '../domain/rules/time_format.dart';
 import '../domain/rules/text.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 import 'service_runtime.dart';
 
 /// 一条待确认的记忆提案。
 ///
 /// 提案带来源（哪次作答）、适用范围（目标或材料）与判断依据；依据按 R2 写明
 /// 是否用过帮助、是否声明独立、是否隔一段时间重做，用户确认之后才写入记忆。
+///
+/// 困难与进展都是情景标签（ADR-0051 决定第 1 条），哪条是困难由来源作答的
+/// 结果判断：[isDifficulty] 为真时是困难，否则是进展。
 class MemoryProposal {
   const MemoryProposal({
     required this.id,
@@ -28,6 +31,9 @@ class MemoryProposal {
     required this.basis,
     required this.conditionLabel,
     this.conversationId,
+    this.isDifficulty = false,
+    this.removesDifficultyId,
+    this.removesDifficultyContent,
   });
 
   final String id;
@@ -45,6 +51,16 @@ class MemoryProposal {
   /// 提示下完成、独立完成或延迟后的独立完成。
   final String conditionLabel;
   final String? conversationId;
+
+  /// 这条提案是不是“在某处卡住”；困难与进展同为情景，靠这一项区分。
+  final bool isDifficulty;
+
+  /// 同一道题以前写下的困难记忆编号：进展提案带一项默认勾选的“同时删除
+  /// 旧的困难”（ADR-0051 决定第 9 条）。
+  final String? removesDifficultyId;
+
+  /// 要删掉的旧困难正文，卡片上写明依据。
+  final String? removesDifficultyContent;
 }
 
 /// 一次提取的结果：待确认提案、已经处理过的来源与需要说明的情况。
@@ -57,7 +73,7 @@ class MemoryProposalOutcome {
 
   final List<MemoryProposal> proposals;
 
-  /// 同一来源已经有记忆记录（包括纠正或删除过的），不再生成提案。
+  /// 同一来源已经有记忆记录（包括删除过的），不再生成提案。
   final List<String> skipped;
 
   /// 独立性未说明、只在帮助下完成等情况，按 R2 保留说明，不写成独立表现。
@@ -147,8 +163,8 @@ class MemoryProposalService {
       final label = '第 $submitted 次作答';
       labels[attempt.id] = label;
       final basis = _basis(attempt);
-      final memoryKind = _kindFor(attempt);
-      if (memoryKind == null) {
+      final stuck = _isStuck(attempt);
+      if (!stuck && !_isProgress(attempt)) {
         if (attempt.isCorrect == true && attempt.independent == null) {
           notes.add('$stem：$label没有说明是否独立，暂不生成独立完成的判断。');
         } else if (attempt.isCorrect == true && !attempt.delayed) {
@@ -156,12 +172,13 @@ class MemoryProposalService {
         }
         continue;
       }
+      // 困难与进展都是情景标签，类别成了同一个值，来源去重按来源编号。
       if (processed.contains(attempt.id)) {
         skipped.add('$stem：$label已经处理过，不再重复生成。');
         continue;
       }
-      final content = _contentFor(stem, attempt, memoryKind);
-      final key = _contentKey(memoryKind, content);
+      final content = _contentFor(stem, attempt, stuck: stuck);
+      final key = _contentKey(MemoryKind.episodic, content);
       if (remembered.contains(key)) {
         skipped.add('$stem：相同判断已经在记忆里，不再重复提出。');
         continue;
@@ -174,9 +191,12 @@ class MemoryProposalService {
         );
         continue;
       }
+      final removesDifficulty = stuck
+          ? null
+          : await _oldDifficultyFor(attempt, scope);
       final proposal = MemoryProposal(
-        id: 'attempt:${attempt.id}:${memoryKind.value}',
-        kind: memoryKind,
+        id: 'attempt:${attempt.id}:${stuck ? 'difficulty' : 'progress'}',
+        kind: MemoryKind.episodic,
         content: content,
         scope: scope,
         sourceId: attempt.id,
@@ -184,6 +204,9 @@ class MemoryProposalService {
         basis: basis,
         conditionLabel: _conditionLabel(attempt),
         conversationId: conversationId,
+        isDifficulty: stuck,
+        removesDifficultyId: removesDifficulty?.id,
+        removesDifficultyContent: removesDifficulty?.content,
       );
       pending[key] = proposal;
       proposals.add(proposal);
@@ -197,8 +220,39 @@ class MemoryProposalService {
     );
   }
 
+  /// 同一道题以前写下的、仍然有效的情景记忆里，来源作答有误的那一条。
+  ///
+  /// 困难与进展现在都是情景标签，只能按来源作答的结果判断哪条是困难
+  /// （ADR-0051 决定第 9 条）。
+  Future<({String id, String content})?> _oldDifficultyFor(
+    Attempt attempt,
+    String? scope,
+  ) async {
+    final episodes = await memories.activeByKind(MemoryKind.episodic, scope);
+    if (episodes.isEmpty) return null;
+    final stuckAttempts = <String>{};
+    for (final episode in episodes) {
+      final sourceId = episode.sourceId;
+      if (sourceId == null || sourceId == attempt.id) continue;
+      final source = await attempts.attemptById(sourceId);
+      if (source?.isCorrect == false) stuckAttempts.add(episode.id);
+    }
+    for (final episode in episodes) {
+      if (stuckAttempts.contains(episode.id)) {
+        return (id: episode.id, content: episode.content);
+      }
+    }
+    return null;
+  }
+
   /// 用户确认之后写入记忆，返回写结果供撤销；重复确认同一条提案不再写入。
-  Future<WriteResult> accept(MemoryProposal proposal) async {
+  ///
+  /// 进展提案带着“同时删除旧的困难”时，写入与删除在同一条提交里完成
+  /// （ADR-0051 决定第 9 条）。
+  Future<WriteResult> accept(
+    MemoryProposal proposal, {
+    bool removeDifficulty = true,
+  }) async {
     final known = await memories.hasSource(
       MemorySourceKind.attempt,
       proposal.sourceId,
@@ -213,6 +267,9 @@ class MemoryProposalService {
     )) {
       return const WriteResult.skipped('这条记忆已经存在');
     }
+    final removesId = removeDifficulty && !proposal.isDifficulty
+        ? proposal.removesDifficultyId
+        : null;
     return transactions.run(
       (txn) async {
         // 事务内再核对一次，两个确认同时到达时也只写入一条。
@@ -231,33 +288,38 @@ class MemoryProposalService {
           sourceId: proposal.sourceId,
           transaction: txn,
         );
+        if (removesId != null) {
+          final old = await memories.byId(removesId);
+          // 旧困难在打开页面之后被用户改过或删掉时只写进展，不覆盖用户的选择。
+          if (old != null && old.active) {
+            await memories.delete(removesId, transaction: txn);
+          }
+        }
         return txn.result();
       },
       label: addMemoryAction,
-      requestId: commandId('accept-memory-proposal', [proposal.id]),
+      uid: newUuidV7(),
       onDuplicate: (_) => const WriteResult.skipped('这条记忆已经存在'),
     );
   }
 
-  MemoryKind? _kindFor(Attempt attempt) {
-    if (attempt.isCorrect == false &&
-        (attempt.helps.isNotEmpty || attempt.independent == false)) {
-      return MemoryKind.difficulty;
-    }
-    if (attempt.isCorrect == true &&
-        attempt.delayed &&
-        attempt.independent == true) {
-      return MemoryKind.progress;
-    }
-    return null;
-  }
+  /// 做错且有帮助时是一次困难。
+  static bool _isStuck(Attempt attempt) =>
+      attempt.isCorrect == false &&
+      (attempt.helps.isNotEmpty || attempt.independent == false);
 
-  String _contentFor(String stem, Attempt attempt, MemoryKind kind) {
-    if (kind == MemoryKind.difficulty) {
-      final stuck = (attempt.feedback ?? attempt.userAnswer ?? '这一步')
+  /// 隔一段时间后独立完成是一次进展。
+  static bool _isProgress(Attempt attempt) =>
+      attempt.isCorrect == true &&
+      attempt.delayed &&
+      attempt.independent == true;
+
+  String _contentFor(String stem, Attempt attempt, {required bool stuck}) {
+    if (stuck) {
+      final feedback = (attempt.feedback ?? attempt.userAnswer ?? '这一步')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
-      final short = truncateCodePoints(stuck, 40);
+      final short = truncateCodePoints(feedback, 40);
       return '$stem：在「$short」处卡住；${_conditionLabel(attempt)}。';
     }
     final time = attempt.submittedAt == null

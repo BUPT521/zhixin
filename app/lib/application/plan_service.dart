@@ -8,7 +8,7 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../domain/models/study_plan.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 import 'plan_search.dart';
 import 'service_runtime.dart';
 
@@ -280,13 +280,7 @@ class PlanService {
         return txn.result();
       },
       label: '新建学习事项',
-      requestId: commandId('create-item', [
-        title,
-        goalId,
-        note,
-        dueAt,
-        minutes,
-      ]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -308,7 +302,7 @@ class PlanService {
         return txn.result();
       },
       label: '新建目标',
-      requestId: commandId('create-goal', [title, scopeText, dueDate]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -340,7 +334,7 @@ class PlanService {
         return txn.result();
       },
       label: '暂停目标',
-      requestId: commandId('pause-goal', [id, cancelFlexibleFuture]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -352,7 +346,7 @@ class PlanService {
         return txn.result();
       },
       label: '恢复目标',
-      requestId: commandId('resume-goal', [id]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -364,7 +358,7 @@ class PlanService {
         return txn.result();
       },
       label: '结束目标',
-      requestId: commandId('close-goal', [id]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -401,7 +395,7 @@ class PlanService {
       return txn.result();
     },
     label: '调整事项优先级',
-    requestId: commandId('set-item-priority', [id, priority]),
+    uid: newUuidV7(),
     onDuplicate: (commit) => WriteResult.committed(commit.id),
   );
 
@@ -427,7 +421,7 @@ class PlanService {
         return txn.result();
       },
       label: '安排学习时间',
-      requestId: commandId('schedule-item', [planItemId, start, end]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -444,7 +438,7 @@ class PlanService {
         return txn.result();
       },
       label: '调整预约时间',
-      requestId: commandId('move-block', [id, start, end]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -461,13 +455,7 @@ class PlanService {
       },
       label: '调整多个预约',
       actor: 'user',
-      requestId: commandId('reschedule-group', [
-        for (final adjustment in adjustments) ...[
-          adjustment.id,
-          adjustment.start,
-          adjustment.end,
-        ],
-      ]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -480,7 +468,7 @@ class PlanService {
         return txn.result();
       },
       label: '修改预约状态',
-      requestId: commandId('set-block-status', [id, status.value]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -492,7 +480,7 @@ class PlanService {
         return txn.result();
       },
       label: '删除预约',
-      requestId: commandId('delete-block', [id]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -504,7 +492,7 @@ class PlanService {
         return txn.result();
       },
       label: locked ? '固定这次预约' : '改为弹性预约',
-      requestId: commandId('set-block-locked', [id, locked]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -529,13 +517,7 @@ class PlanService {
         return txn.result();
       },
       label: '新增课表',
-      requestId: commandId('create-timetable', [
-        weekday,
-        startTime,
-        endTime,
-        title,
-        location,
-      ]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -548,7 +530,7 @@ class PlanService {
         return txn.result();
       },
       label: '删除课表',
-      requestId: commandId('delete-timetable', [id]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }

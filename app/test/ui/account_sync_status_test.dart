@@ -171,7 +171,7 @@ void main() {
       () => scope!.testing.db.command((txn) async {
         await insertRow(txn, 'memory', {
           'id': id,
-          'kind': 'preference',
+          'kind': 'semantic',
           'content': content,
           'scope': null,
           'source_kind': 'user',
@@ -211,7 +211,7 @@ void main() {
         (db) => db.customStatement(
           'INSERT INTO memory (id, kind, content, scope, source_kind, '
           'source_id, valid_until, status, created_at, updated_at) '
-          "VALUES (?, 'preference', ?, NULL, 'user', NULL, NULL, 'active', "
+          "VALUES (?, 'semantic', ?, NULL, 'user', NULL, NULL, 'active', "
           "'2026-11-17 10:00:00', '2026-11-17 10:00:00')",
           [id, content],
         ),

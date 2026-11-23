@@ -198,8 +198,7 @@ INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, 
 VALUES (:id, :title, :goalId, :materialId, :pageNo, :sourceRef, :contextText, :entryKind, 'open', :stamp, :stamp);
 
 recordLastMessageTime:
-UPDATE conversation SET updated_at = :stamp,
-  last_message_at = :stamp
+UPDATE conversation SET updated_at = :stamp
 WHERE id = :conversationId;
 
 setConversationGoal:

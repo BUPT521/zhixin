@@ -26,7 +26,7 @@ void main() {
   Future<void> insertMemory(TestRig rig, String id, {String? content}) {
     return insertRow(rig.db, 'memory', {
       'id': id,
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': content ?? '记住的内容',
       'source_kind': 'user',
       'status': 'active',
@@ -219,7 +219,7 @@ void main() {
     await rig.db.command(
       (txn) => insertRow(txn, 'memory', {
         'id': 'memory-remote',
-        'kind': 'preference',
+        'kind': 'semantic',
         'content': '其他设备写入的记忆',
         'source_kind': 'user',
         'status': 'active',

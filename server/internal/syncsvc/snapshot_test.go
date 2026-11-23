@@ -178,11 +178,11 @@ func TestPullRejectsCompactedRange(t *testing.T) {
 	}
 
 	// 压缩之后的新提交照常拉取，保留下界不再变化。
-	if head, err := svc.Push(ctx, "u1", 4, []Commit{testCommit("r5", snapshotTestSchema)}); err != nil || head != 5 {
-		t.Fatalf("压缩之后推送: %d, %v", head, err)
+	if r, err := svc.Push(ctx, "u1", 4, []Commit{testCommit("r5", snapshotTestSchema)}); err != nil || r.Head != 5 || r.Seqs[0] != 5 {
+		t.Fatalf("压缩之后推送: %+v, %v", r, err)
 	}
 	page, err = svc.Pull(ctx, "u1", &after, nil)
-	if err != nil || len(page.Commits) != 1 || page.Commits[0].RequestId != "r5" || page.EarliestSeq != 5 {
+	if err != nil || len(page.Commits) != 1 || page.Commits[0].Uid != "r5" || page.EarliestSeq != 5 {
 		t.Fatalf("压缩之后的增量 = %+v, %v", page, err)
 	}
 }
@@ -208,9 +208,9 @@ func TestPushCompactsInsteadOfFailingAtBudget(t *testing.T) {
 	store.mu.Lock()
 	store.logs["u1"].snapshot = &Snapshot{Seq: 1, SHA256: snapshotSHA, Digest: snapshotDigest, CreatedAt: time.Now().UTC()}
 	store.mu.Unlock()
-	head, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)})
-	if err != nil || head != 2 {
-		t.Fatalf("压缩之后应能继续推送: %d, %v", head, err)
+	result, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)})
+	if err != nil || result.Head != 2 {
+		t.Fatalf("压缩之后应能继续推送: %+v, %v", result, err)
 	}
 	state, err := svc.State(ctx, "u1")
 	if err != nil || state.EarliestSeq != 2 || state.Head != 2 {
@@ -237,12 +237,12 @@ func TestSeenIDsSurviveCompaction(t *testing.T) {
 		t.Fatalf("压缩之后的状态: %+v, %v", state, err)
 	}
 	// 重放已经接收过的提交：按身份跳过，head 不变。
-	if head, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil || head != 2 {
-		t.Fatalf("重放应被跳过: %d, %v", head, err)
+	if r, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil || r.Head != 2 || r.Seqs[0] != 1 {
+		t.Fatalf("重放应被跳过并回原序号: %+v, %v", r, err)
 	}
 	// 新的提交照常追加。
-	if head, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}); err != nil || head != 3 {
-		t.Fatalf("新提交: %d, %v", head, err)
+	if r, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}); err != nil || r.Head != 3 {
+		t.Fatalf("新提交: %+v, %v", r, err)
 	}
 	if page, err := svc.Pull(ctx, "u1", pointer(int64(2)), nil); err != nil || len(page.Commits) != 1 || *page.Commits[0].Seq != 3 {
 		t.Fatalf("压缩之后的增量: %+v, %v", page, err)
@@ -273,8 +273,8 @@ func TestResetClearsSnapshotAndSeen(t *testing.T) {
 		t.Fatalf("清空之后的状态: %+v, %v", state, err)
 	}
 	// 去重身份也清掉了：同一编号重新推送会被当成新提交。
-	if head, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil || head != 1 {
-		t.Fatalf("清空之后重新推送: %d, %v", head, err)
+	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil || r.Head != 1 {
+		t.Fatalf("清空之后重新推送: %+v, %v", r, err)
 	}
 }
 
@@ -295,7 +295,7 @@ func newSnapshotService(store *MemoryStore, clock *time.Time) *Service {
 // orphansBefore 列出 before 之前的待回收哈希。
 func orphansBefore(t *testing.T, store *MemoryStore, userID string, before time.Time) []string {
 	t.Helper()
-	hashes, err := store.SnapshotOrphansBefore(context.Background(), userID, before)
+	hashes, err := store.OrphanedAttachmentsBefore(context.Background(), userID, before)
 	if err != nil {
 		t.Fatalf("列出待回收: %v", err)
 	}
@@ -311,7 +311,8 @@ func TestRegisterSnapshotRecordsOrphans(t *testing.T) {
 	shaA := strings.Repeat("a", 64)
 	shaB := strings.Repeat("b", 64)
 	svc := newSnapshotService(store, clock).
-		SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096})
+		SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096}).
+		SetSnapshotGrace(time.Hour)
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -340,8 +341,9 @@ func TestRegisterSnapshotRecordsOrphans(t *testing.T) {
 		t.Fatalf("重新登记 A 之后应只有 B 待回收: %v", got)
 	}
 
-	// 同一哈希重复让位时保留最早的 orphaned_at：先手动放一行 A，再让 A 让位。
-	first := clock.Add(-time.Hour)
+	// 同一哈希重复让位时保留最早的 orphaned_at：先手动把 A 的让位时间拨早，再让
+	// A 让位。B 的让位时间要晚于这里，回收时限才会先遇到 A。
+	first := clock.Add(-30 * time.Minute)
 	store.mu.Lock()
 	store.logs["u1"].snapshot.SHA256 = shaA
 	store.logs["u1"].orphans[shaA] = first
@@ -426,7 +428,7 @@ func TestReclaimSnapshotOrphansAfterGrace(t *testing.T) {
 // 即使存储层漏掉了 SQL 的排除，当前指针的字节也不会被删（ADR-0047 第 3 条）。
 type pointerLeakingStore struct{ *MemoryStore }
 
-func (s pointerLeakingStore) SnapshotOrphansBefore(ctx context.Context, userID string, _ time.Time) ([]string, error) {
+func (s pointerLeakingStore) OrphanedAttachmentsBefore(ctx context.Context, userID string, _ time.Time) ([]string, error) {
 	state, err := s.MemoryStore.State(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -522,7 +524,7 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 	// 一台旧设备没有声明 snapshot 能力：登记照常成功，但不删提交。
-	if err := svc.TouchDevice(ctx, "u1", "device-legacy", nil); err != nil {
+	if err := svc.TouchDevice(ctx, "u1", "device-legacy", false, 0); err != nil {
 		t.Fatalf("记录设备: %v", err)
 	}
 	*clock = clock.Add(2 * time.Hour)
@@ -538,7 +540,7 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 	}
 
 	// 设备声明能力之后，登记路径照常按保留期删除。
-	if err := svc.TouchDevice(ctx, "u1", "device-legacy", []string{"snapshot"}); err != nil {
+	if err := svc.TouchDevice(ctx, "u1", "device-legacy", true, 0); err != nil {
 		t.Fatalf("更新设备能力: %v", err)
 	}
 	state, err = svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 2, Sha256: shaA, Digest: snapshotDigest})
@@ -550,25 +552,25 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 	if _, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("s1", snapshotTestSchema)}); err != nil {
 		t.Fatalf("push u2: %v", err)
 	}
-	if err := svc.TouchDevice(ctx, "u2", "device-a", []string{"snapshot"}); err != nil {
+	if err := svc.TouchDevice(ctx, "u2", "device-a", true, 0); err != nil {
 		t.Fatalf("记录 u2 设备: %v", err)
 	}
 	if _, err := svc.RegisterSnapshot(ctx, "u2", api.SnapshotRegistration{Seq: 1, Sha256: shaA, Digest: snapshotDigest}); err != nil {
 		t.Fatalf("登记 u2: %v", err)
 	}
 	store.SetMaxAccountBytes(600)
-	head, err := svc.Push(ctx, "u2", 1, []Commit{testCommit("s2", snapshotTestSchema)})
-	if err != nil || head != 2 {
-		t.Fatalf("设备都声明能力之后预算压力应能继续推送: %d, %v", head, err)
+	result, err := svc.Push(ctx, "u2", 1, []Commit{testCommit("s2", snapshotTestSchema)})
+	if err != nil || result.Head != 2 {
+		t.Fatalf("设备都声明能力之后预算压力应能继续推送: %+v, %v", result, err)
 	}
 	if state, err := svc.State(ctx, "u2"); err != nil || state.EarliestSeq != 2 {
 		t.Fatalf("预算压力压缩之后保留下界应为 2: %+v, %v", state, err)
 	}
 }
 
-// TestCompactionGateBlocksEmptyCapabilities 守住能力声明为空串的设备：旧版本
-// 客户端补行时留下的是空能力，压缩门槛必须把它当成“没有声明 snapshot”，不能因为
-// 空列表的取值语义漏判（ADR-0047）。登记与预算压力两条路径都不许删提交。
+// TestCompactionGateBlocksEmptyCapabilities 守住没有声明 snapshot 的设备：旧版本
+// 客户端补行时留下的是 snapshot_capable = false，压缩门槛必须把它当成“不支持
+// 快照”，登记与预算压力两条路径都不许删提交（ADR-0047、ADR-0054）。
 func TestCompactionGateBlocksEmptyCapabilities(t *testing.T) {
 	ctx := context.Background()
 	store, clock := newSnapshotStore()
@@ -585,12 +587,12 @@ func TestCompactionGateBlocksEmptyCapabilities(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 	// 能力声明传空串：服务层归一化之后名册里就是空能力列表。
-	if err := svc.TouchDevice(ctx, "u1", "device-empty", []string{""}); err != nil {
+	if err := svc.TouchDevice(ctx, "u1", "device-empty", false, 0); err != nil {
 		t.Fatalf("记录空能力设备: %v", err)
 	}
 	devices, err := svc.Devices(ctx, "u1")
-	if err != nil || len(devices) != 1 || len(devices[0].Capabilities) != 0 {
-		t.Fatalf("空能力设备应保存为空列表: %+v, %v", devices, err)
+	if err != nil || len(devices) != 1 || devices[0].SnapshotCapable {
+		t.Fatalf("空能力设备应保存为不支持快照: %+v, %v", devices, err)
 	}
 
 	// 过了保留期登记：空能力设备挡住删除。
@@ -625,7 +627,7 @@ func TestResetClearsOrphansAndDevices(t *testing.T) {
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 1, Sha256: shaB, Digest: snapshotDigest}); err != nil {
 		t.Fatalf("登记 B: %v", err)
 	}
-	if err := svc.TouchDevice(ctx, "u1", "device-a", []string{"snapshot"}); err != nil {
+	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 0); err != nil {
 		t.Fatalf("记录设备: %v", err)
 	}
 

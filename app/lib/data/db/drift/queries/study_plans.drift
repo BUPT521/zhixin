@@ -2,9 +2,34 @@
 
 import '../tables.dart';
 
--- 按编号取一份计划。
+-- 按编号取一份计划，带当前页与材料标题；当前页由步骤算出的口径与列表相同。
 studyPlanById:
-SELECT * FROM study_plan WHERE id = :id LIMIT 1;
+SELECT sp.*,
+  (SELECT title FROM material WHERE id = sp.material_id) AS material_title,
+  (SELECT source_file_name FROM material WHERE id = sp.material_id)
+    AS source_file_name,
+  (SELECT COUNT(*) FROM plan_item pi
+    WHERE pi.study_plan_id = sp.id AND pi.status = 'done') AS steps_done,
+  (SELECT COUNT(*) FROM plan_item pi WHERE pi.study_plan_id = sp.id)
+    AS steps_total,
+  (SELECT pi.title FROM plan_item pi WHERE pi.study_plan_id = sp.id
+    AND pi.status IN ('doing', 'todo')
+    ORDER BY CASE pi.status WHEN 'doing' THEN 0 ELSE 1 END, pi.seq, pi.id
+    LIMIT 1) AS next_step_title,
+  COALESCE(
+    (SELECT pi.page_from FROM plan_item pi WHERE pi.study_plan_id = sp.id
+      AND pi.status IN ('doing', 'todo')
+      ORDER BY CASE pi.status WHEN 'doing' THEN 0 ELSE 1 END, pi.seq, pi.id
+      LIMIT 1),
+    (SELECT pi.page_to FROM plan_item pi
+      WHERE pi.study_plan_id = sp.id AND pi.status = 'done'
+        AND pi.page_to IS NOT NULL
+      ORDER BY pi.page_to DESC LIMIT 1),
+    sp.page_from
+  ) AS current_page
+FROM study_plan sp
+WHERE sp.id = :id
+LIMIT 1;
 
 -- 计划列表；参数按调用点传，不生效的条件由空参数关掉。
 planRows(
@@ -28,7 +53,20 @@ SELECT sp.*,
   (SELECT pi.title FROM plan_item pi WHERE pi.study_plan_id = sp.id
     AND pi.status IN ('doing', 'todo')
     ORDER BY CASE pi.status WHEN 'doing' THEN 0 ELSE 1 END, pi.seq, pi.id
-    LIMIT 1) AS next_step_title
+    LIMIT 1) AS next_step_title,
+  -- 当前页由步骤算出，不再写在计划行里：未完成步骤的页码优先，全部完成时取
+  -- 最后完成一步的页码，没有步骤时退回计划起点。
+  COALESCE(
+    (SELECT pi.page_from FROM plan_item pi WHERE pi.study_plan_id = sp.id
+      AND pi.status IN ('doing', 'todo')
+      ORDER BY CASE pi.status WHEN 'doing' THEN 0 ELSE 1 END, pi.seq, pi.id
+      LIMIT 1),
+    (SELECT pi.page_to FROM plan_item pi
+      WHERE pi.study_plan_id = sp.id AND pi.status = :doneStatus
+        AND pi.page_to IS NOT NULL
+      ORDER BY pi.page_to DESC LIMIT 1),
+    sp.page_from
+  ) AS current_page
 FROM study_plan sp
 WHERE (:id IS NULL OR sp.id = :id)
   AND (:openOnly = 0 OR sp.status IN (:activeStatus, :pausedStatus))
@@ -42,16 +80,11 @@ ORDER BY
 LIMIT COALESCE(:rowLimit, -1);
 
 insertStudyPlan:
-INSERT INTO study_plan (id, material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at)
-VALUES (:id, :materialId, :goalId, :conversationId, :title, :pageFrom, :pageTo, :currentPage, :status, :stamp, :stamp);
+INSERT INTO study_plan (id, material_id, goal_id, conversation_id, title, page_from, page_to, status, created_at, updated_at)
+VALUES (:id, :materialId, :goalId, :conversationId, :title, :pageFrom, :pageTo, :status, :stamp, :stamp);
 
 setStudyPlanStatus:
 UPDATE study_plan SET status = :status,
   updated_at = :stamp
 WHERE id = :planId;
 
-updateStudyPlanProgress(REQUIRED :status AS TEXT OR NULL):
-UPDATE study_plan SET current_page = :currentPage,
-  status = COALESCE(:status, status),
-  updated_at = :stamp
-WHERE id = :planId;

@@ -106,7 +106,7 @@ func TestHandlerWriteBlockedDuringPurge(t *testing.T) {
 
 func commitBody(reqID string) map[string]any {
 	return map[string]any{
-		"request_id":     reqID,
+		"uid":            reqID,
 		"device_id":      "device-a",
 		"schema_version": testSchemaVersion,
 		"actor":          "user",
@@ -138,7 +138,7 @@ func TestHandlerSyncIsLinearAndIdempotent(t *testing.T) {
 	}
 
 	var pull api.CommitPage
-	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=0&limit=1", token, nil, &pull); code != http.StatusOK || len(pull.Commits) != 1 || !pull.HasMore || pull.Commits[0].RequestId != "r1" {
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=0&limit=1", token, nil, &pull); code != http.StatusOK || len(pull.Commits) != 1 || !pull.HasMore || pull.Commits[0].Uid != "r1" {
 		t.Fatalf("pull page 1: %d %+v", code, pull)
 	}
 	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=1", token, nil, &pull); code != http.StatusOK || len(pull.Commits) != 1 || pull.HasMore || pull.Commits[0].Seq == nil || *pull.Commits[0].Seq != 2 {
@@ -216,7 +216,7 @@ func TestHandlerSyncPreservesLargeIntegers(t *testing.T) {
 
 	const big = "9007199254740993"
 	body := fmt.Sprintf(`{"base_seq":0,"commits":[{
-		"request_id":"big-1","device_id":"device-a","schema_version":%d,
+		"uid":"big-1","device_id":"device-a","schema_version":%d,
 		"actor":"user","action":"create","created_at":"2026-11-15 10:00:00",
 		"changes":[{"table":"memory","row_key":"1","op":"insert","after":{"id":%s}}]}]}`,
 		testSchemaVersion, big)
@@ -262,6 +262,8 @@ type snapshotHarness struct {
 	authSvc *auth.Service
 	store   *MemoryStore
 	clock   time.Time
+	handler *Handler
+	log     *slog.Logger
 }
 
 func newSnapshotHarness(t *testing.T) *snapshotHarness {
@@ -274,7 +276,10 @@ func newSnapshotHarness(t *testing.T) *snapshotHarness {
 		SetAttachments(fakeAttachments{snapshotSHA: 4096}).
 		SetCompact(true).
 		SetCompactKeep(time.Hour)
+	svc.now = func() time.Time { return h.clock }
 	handler := NewHandler(svc, log, 16*testMaxJSON)
+	h.handler = handler
+	h.log = log
 	h.client = testutil.NewClient(t, testutil.NewServer(
 		snapshotAPI{testAPI{h: handler}},
 		httpx.RequestID,
@@ -455,7 +460,7 @@ func TestHandlerPullAfterCompaction(t *testing.T) {
 	}, &push); code != http.StatusOK || push.Head != 5 {
 		t.Fatalf("压缩之后推送: %d %+v", code, push)
 	}
-	if code := h.client.JSON(http.MethodGet, "/v1/sync/commits?after=4", token, nil, &page); code != http.StatusOK || len(page.Commits) != 1 || page.Commits[0].RequestId != "r5" || page.EarliestSeq != 5 {
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/commits?after=4", token, nil, &page); code != http.StatusOK || len(page.Commits) != 1 || page.Commits[0].Uid != "r5" || page.EarliestSeq != 5 {
 		t.Fatalf("压缩之后的增量: %d %+v", code, page)
 	}
 }
@@ -551,9 +556,10 @@ func findDevice(t *testing.T, list api.SyncDeviceList, deviceID string) api.Sync
 }
 
 // TestHandlerDeviceRoster 守住设备名册的请求路径：带 X-Device-Id 的同步请求更
-// 新最近出现时间与能力声明（整组替换，别名不动）；没有请求头的推送按提交里的
-// 设备标识补行；GET 与 PUT /v1/sync/devices 返回名册、改别名、未知设备 404，
-// 别名按去掉首尾空白之后的字符数校验（ADR-0048）。
+// 新最近出现时间与快照能力（能力头含 snapshot 才置为 true，别名不动）；推送之后
+// 确有新提交时设备位置推进到当前 head；没有请求头的推送按提交里的设备标识补行；
+// GET 与 PUT /v1/sync/devices 返回名册、改别名、未知设备 404，别名按去掉首尾空白
+// 之后的字符数校验（ADR-0048、ADR-0054）。
 func TestHandlerDeviceRoster(t *testing.T) {
 	h := newSnapshotHarness(t)
 	token := signIn(t, h.authSvc, "devices@b.cn")
@@ -570,17 +576,21 @@ func TestHandlerDeviceRoster(t *testing.T) {
 		t.Fatalf("名册: %d %+v", code, page)
 	}
 	first := findDevice(t, page, "device-a")
-	if first.Alias != "" || len(first.Capabilities) != 1 || first.Capabilities[0] != "snapshot" || !first.LastSeen.Equal(h.clock) {
+	if first.Alias != "" || !first.SnapshotCapable || !first.LastSeen.Equal(h.clock) {
 		t.Fatalf("第一次记录的设备: %+v", first)
 	}
+	if first.SyncedSeq != 1 {
+		t.Fatalf("推送成功之后设备位置应推进到 head: %+v", first)
+	}
 
-	// 拨快时钟再同步一次，能力整组替换（大小写与空白按逗号拆分规范化）。
+	// 拨快时钟再同步一次：能力头里没有 snapshot 时这台设备记为不支持快照，大小写
+	// 与空白按逗号拆开之后比较。
 	h.clock = h.clock.Add(time.Minute)
 	if code := h.jsonWithHeaders(http.MethodPost, "/v1/sync/commits", token, map[string]any{
 		"base_seq": 1, "commits": []any{commitBody("r2")},
 	}, &push, map[string]string{
 		"X-Device-Id":         "device-a",
-		"X-Sync-Capabilities": "Snapshot, OTHER, snapshot",
+		"X-Sync-Capabilities": "OTHER, legacy",
 	}); code != http.StatusOK {
 		t.Fatalf("第二次推送: %d", code)
 	}
@@ -588,11 +598,25 @@ func TestHandlerDeviceRoster(t *testing.T) {
 		t.Fatalf("名册: %d", code)
 	}
 	second := findDevice(t, page, "device-a")
-	if len(second.Capabilities) != 2 || second.Capabilities[0] != "snapshot" || second.Capabilities[1] != "other" {
-		t.Fatalf("能力声明应整组替换并规范化: %+v", second.Capabilities)
+	if second.SnapshotCapable {
+		t.Fatalf("能力头不含 snapshot 时应记为不支持快照: %+v", second)
 	}
 	if !second.LastSeen.Equal(h.clock) || !second.LastSeen.After(first.LastSeen) {
 		t.Fatalf("最近出现时间应更新: first=%v second=%v", first.LastSeen, second.LastSeen)
+	}
+
+	// 能力头含 snapshot（大小写与空白不算差异）时重新记为支持。
+	if code := h.jsonWithHeaders(http.MethodGet, "/v1/sync/head", token, nil, nil, map[string]string{
+		"X-Device-Id":         "device-a",
+		"X-Sync-Capabilities": " Snapshot , other ",
+	}); code != http.StatusOK {
+		t.Fatalf("带能力头查询 head: %d", code)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("名册: %d", code)
+	}
+	if got := findDevice(t, page, "device-a"); !got.SnapshotCapable {
+		t.Fatalf("能力头含 snapshot 时应记为支持快照: %+v", got)
 	}
 
 	// 改名：首尾空白去掉，别名落库并原样返回。
@@ -652,8 +676,8 @@ func TestHandlerDeviceRoster(t *testing.T) {
 		t.Fatalf("补行之后的名册: %d %+v", code, page)
 	}
 	added := findDevice(t, page, "device-b")
-	if added.Alias != "" || len(added.Capabilities) != 0 {
-		t.Fatalf("补行设备的别名与能力应为空: %+v", added)
+	if added.Alias != "" || added.SnapshotCapable || added.SyncedSeq != 0 {
+		t.Fatalf("补行设备的别名、快照能力与位置都应为空: %+v", added)
 	}
 
 	// 清空云端数据把名册一起清掉。
@@ -684,8 +708,12 @@ func TestHandlerDevicesRecordsRequestingDevice(t *testing.T) {
 		t.Fatalf("带设备标识查询名册: %d %+v", code, page)
 	}
 	device := findDevice(t, page, "device-new")
-	if len(device.Capabilities) != 1 || device.Capabilities[0] != "snapshot" || !device.LastSeen.Equal(h.clock) {
+	if !device.SnapshotCapable || !device.LastSeen.Equal(h.clock) {
 		t.Fatalf("请求里的设备应写入名册: %+v", device)
+	}
+	// 名册查询本身不推进设备位置：它不知道这台设备读到了哪。
+	if device.SyncedSeq != 0 {
+		t.Fatalf("查询名册不应推进设备位置: %+v", device)
 	}
 
 	// 名册按账号隔离。

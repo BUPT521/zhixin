@@ -42,6 +42,8 @@ String buildBuddySystemPrompt(BuddyContext context) {
     text['system.rule.markdown'],
     if (!withStudySteps) text['system.rule.tools'],
     if (withMemories) text['system.rule.memories'],
+    if (withMemories && context.memories.isNotEmpty)
+      text['system.rule.memory_use'],
     if (canReadMaterial(context))
       text.format('system.rule.read_material', {'tool': readMaterialPageTool}),
     if (canSearchSources(context))

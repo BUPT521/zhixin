@@ -6,17 +6,13 @@
 // 马上要改掉的内部实现。
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/application/memory_service.dart';
 import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
-import 'package:zhixin/data/repository/material_repository.dart';
-import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
-import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
@@ -62,14 +58,6 @@ void main() {
     devices.add(opened);
     return opened;
   }
-
-  MemoryService memoryService(TestRig rig) => MemoryService(
-    MemoryRepository(rig.db),
-    tasks: TaskRepository(rig.db),
-    materials: MaterialRepository(rig.db),
-    transactions: WriteTransactions(rig.db, revisions: rig.engine),
-    runtime: testRuntime(policy: () => TimePolicy(clock: clock.call)),
-  );
 
   /// 两台设备同步到同一条记忆：A 上传基线，B 首次同步拉取之后，A 再同步一次
   /// 消化掉 B 首次同步上传的基线，后面只比较两边各自改过的内容。
@@ -166,13 +154,21 @@ void main() {
     await a.sync.syncNow(confirmBaseline: true);
     final userId = (await a.account.snapshot()).session!.userId;
     final headAfterBaseline = server.headOf(userId);
-    final memories = memoryService(a.rig);
 
-    final added = await memories.add(
-      kind: MemoryKind.preference,
-      content: 'prefer-examples',
-    );
-    expect(added.changed, isTrue, reason: '准备阶段：新增记忆应当形成一条提交');
+    // 写入走与界面同一条命令路径，记忆行按列写，便于在同一个命令里固定标识。
+    int firstCommit = 0;
+    await a.rig.db.command((txn) async {
+      await insertRow(txn, 'memory', {
+        'id': 'm-redo',
+        'kind': 'semantic',
+        'content': 'prefer-examples',
+        'source_kind': 'user',
+        'status': 'active',
+        'created_at': '2026-11-17 10:00:00',
+        'updated_at': '2026-11-17 10:00:00',
+      });
+    }, label: '新增记忆');
+    firstCommit = await a.rig.engine.headId(a.rig.raw);
     await a.sync.syncNow();
     expect(
       server.headOf(userId),
@@ -180,18 +176,25 @@ void main() {
       reason: '准备阶段：新增记忆推上去之后服务端应当多一条提交',
     );
 
-    final undone = await a.rig.revisions.undoCommit(added.commitId!);
-    expect(undone.applied, isTrue, reason: '准备阶段：新增记忆可以撤销');
+    final undone = await a.rig.revisions.undoCommit(firstCommit);
+    expect(undone.applied, isTrue, reason: undone.message);
     expect(await testMemories(a.rig), isEmpty, reason: '准备阶段：撤销之后本机没有这条记忆');
 
-    // 用户过一会儿又加了一条一模一样的内容：参数相同、动作编号也相同，但这是
-    // 一次新的用户动作，不是上一次动作的重试。
+    // 用户过一会儿又加了一条一模一样的内容：这是一个新的用户动作，界面上另起
+    // 一个 uid，不是上一次动作的重试（ADR-0053 决定第 3 条）。
     clock.advance(const Duration(minutes: 3));
-    final redone = await memories.add(
-      kind: MemoryKind.preference,
-      content: 'prefer-examples',
+    await a.rig.db.command(
+      (txn) => insertRow(txn, 'memory', {
+        'id': 'm-redo',
+        'kind': 'semantic',
+        'content': 'prefer-examples',
+        'source_kind': 'user',
+        'status': 'active',
+        'created_at': '2026-11-17 10:03:00',
+        'updated_at': '2026-11-17 10:03:00',
+      }),
+      label: '新增记忆',
     );
-    expect(redone.changed, isTrue, reason: '重做应当形成一条新的提交');
     expect(await testMemories(a.rig), hasLength(1), reason: '准备阶段：重做之后本机有一条记忆');
 
     await a.sync.syncNow();
@@ -220,7 +223,7 @@ void main() {
       'updated_at': '2026-11-17 10:05:00',
     }, label: '修改记忆内容');
     await updateTestMemory(b.rig, 'm1', {
-      'status': 'superseded',
+      'status': 'deleted',
       'updated_at': '2026-11-17 10:06:00',
     }, label: '修改记忆状态');
 
@@ -239,8 +242,8 @@ void main() {
     );
     expect(
       aRow['status'],
-      'superseded',
-      reason: 'A 没有收到 B 改的状态：期望 superseded，实际 ${aRow['status']}',
+      'deleted',
+      reason: 'A 没有收到 B 改的状态：期望 deleted，实际 ${aRow['status']}',
     );
     expect(
       aRow['content'],
@@ -249,7 +252,7 @@ void main() {
     );
     expect(
       bRow['status'],
-      'superseded',
+      'deleted',
       reason: 'B 本机的状态应当保持自己写的新值，实际 ${bRow['status']}',
     );
 

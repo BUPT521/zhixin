@@ -2,10 +2,15 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 29 的 27 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 31 的 28 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
+//
+// 业务表 14 张、设置表 1 张、记忆使用统计 1 张，其余 12 张是版本与同步的簿记。
+// 这一版把同一事实只存一份：完整性只有整库摘要一个原语（ADR-0054 与审查 S1），
+// 单行状态、`HEAD` 与提交编号合进 `revision_state`（S3、S14），截止小时并进
+// `app_meta`（S4），计划当前页由步骤算出（S5）。
 
 /// 不参与业务变更采集的版本元数据、同步元数据与附件对象表名前缀。
 ///
@@ -42,19 +47,17 @@ const List<String> sourceValues = ['user', 'ai'];
 const List<String> scheduleBlockStatuses = ['planned', 'done', 'cancelled'];
 const List<String> sessionOutcomes = ['done', 'partial', 'not_done'];
 const List<String> assessmentKinds = ['model', 'user'];
-const List<String> memoryKinds = [
-  'preference',
-  'constraint',
-  'difficulty',
-  'progress',
-];
+const List<String> memoryKinds = ['episodic', 'semantic', 'procedural'];
 const List<String> memorySourceKinds = [
   'user',
   'message',
   'attempt',
   'session',
 ];
-const List<String> memoryStatuses = ['active', 'superseded', 'deleted'];
+const List<String> memoryStatuses = ['active', 'deleted'];
+
+/// 记忆使用记录的种类：进入相关层、由 `search_memory` 读到。
+const List<String> memoryUseKinds = ['recall', 'search'];
 const List<String> revisionActors = ['user', 'ai', 'system'];
 const List<String> changeOperations = ['insert', 'update', 'delete'];
 const List<String> checkpointKinds = [
@@ -75,8 +78,11 @@ const List<String> revisionKinds = [
   'remote',
 ];
 
-/// 检查点投影的编码：`json` 是 UTF-8 原文，`json+gzip` 是它的 gzip 压缩。
-const List<String> checkpointEncodings = ['json', 'json+gzip'];
+/// 检查点投影的编码：只有 `json+gzip` 一种（ADR-0054 实施前核对删去了 `json`）。
+const List<String> checkpointEncodings = ['json+gzip'];
+
+/// 命名版本的同步状态：干净表示与云端一致，已改表示本机改过、还没推送。
+const List<String> revisionRefSyncStates = ['clean', 'dirty'];
 
 /// 附件引用的主人：一次提交的变更明细，或者一份检查点。
 const List<String> revisionAssetOwnerKinds = ['change', 'checkpoint'];
@@ -106,6 +112,7 @@ const Map<String, List<String>> checkValueSets = {
   'memory.kind': memoryKinds,
   'memory.source_kind': memorySourceKinds,
   'memory.status': memoryStatuses,
+  'memory_use.kind': memoryUseKinds,
   'revision_commit.actor': revisionActors,
   'revision_commit.kind': revisionKinds,
   'revision_change.op': changeOperations,
@@ -113,6 +120,7 @@ const Map<String, List<String>> checkValueSets = {
   'revision_checkpoint.encoding': checkpointEncodings,
   'revision_asset_ref.owner_kind': revisionAssetOwnerKinds,
   'revision_conflict.reason': revisionConflictReasons,
+  'revision_ref.sync_state': revisionRefSyncStates,
 };
 
 @DataClassName('AppMetaRow')
@@ -125,21 +133,6 @@ class AppMeta extends Table {
 
   @override
   Set<Column> get primaryKey => {key};
-}
-
-@DataClassName('ProfileRow')
-class Profiles extends Table {
-  @override
-  String get tableName => 'profile';
-  IntColumn get id => integer().check(id.equals(1))();
-  IntColumn get dayCutoffHour => integer()
-      .withDefault(const Constant(4))
-      .check(dayCutoffHour.isBetweenValues(0, 6))();
-  TextColumn get createdAt => text()();
-  TextColumn get updatedAt => text()();
-
-  @override
-  Set<Column> get primaryKey => {id};
 }
 
 @DataClassName('LearningGoalRow')
@@ -271,7 +264,6 @@ class Conversations extends Table {
       .withDefault(const Constant('open'))
       .check(status.isIn(conversationStatuses))();
   TextColumn get endedAt => text().nullable()();
-  TextColumn get lastMessageAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
 
@@ -324,7 +316,6 @@ class StudyPlans extends Table {
   TextColumn get title => text()();
   IntColumn get pageFrom => integer().nullable()();
   IntColumn get pageTo => integer().nullable()();
-  IntColumn get currentPage => integer().nullable()();
   TextColumn get status => text()
       .withDefault(const Constant('active'))
       .check(status.isIn(studyPlanStatuses))();
@@ -543,6 +534,8 @@ class Memories extends Table {
   @override
   String get tableName => 'memory';
   TextColumn get id => text()();
+
+  /// 情景、语义、程序三类（ADR-0051）；旧的四类标签由回复注入口径取代。
   TextColumn get kind => text().check(kind.isIn(memoryKinds))();
   TextColumn get content => text()();
   TextColumn get scope => text().nullable()();
@@ -550,6 +543,13 @@ class Memories extends Table {
       text().check(sourceKind.isIn(memorySourceKinds))();
   TextColumn get sourceId => text().nullable()();
   TextColumn get validUntil => text().nullable()();
+
+  /// 写入时由模型顺带给出的检索线索，几条短语用换行分隔，空串表示没有；
+  /// 只进全文索引，不在界面显示（ADR-0051 决定第 7 条）。
+  TextColumn get searchTerms => text().withDefault(const Constant(''))();
+
+  /// 用户确认保留的时间；写这一列不连带更新 [updatedAt]（ADR-0051 决定第 9 条）。
+  TextColumn get reviewedAt => text().nullable()();
   TextColumn get status => text()
       .withDefault(const Constant('active'))
       .check(status.isIn(memoryStatuses))();
@@ -560,10 +560,68 @@ class Memories extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@TableIndex.sql(
-  'CREATE UNIQUE INDEX idx_revision_request '
-  'ON revision_commit(request_id) WHERE request_id IS NOT NULL',
+/// 记忆的使用统计（ADR-0051 决定第 8 条）。
+///
+/// 一行是某条记忆在某台设备的计数与时间，设备编号取自 ADR-0048；每台设备只写
+/// 自己的行，汇总时计数相加、时间取最大值，因此不产生同步冲突。
+///
+/// 计数由本机已导出到使用记录表的时间点现算（召回、读出、使用、确认保留各记
+/// 一条），[FirstSeenAt] 记本机最早看到这条时间点的时刻，远端提交带来其他设备
+/// 的更早时间点时把它前移；下一次冲刷只数 [FirstSeenAt] 之后的时间点，重复
+/// 冲刷不重复累加。主键是单列 [Id]，按“记忆编号＋设备编号”的唯一约束定位行：
+/// 版本引擎的采集只支持单列主键，复合主键的稳定行键由这一列承担。
+@TableIndex(
+  name: 'idx_memory_usage_memory_device',
+  columns: {#memoryId, #deviceId},
+  unique: true,
 )
+@DataClassName('MemoryUsageRow')
+class MemoryUsages extends Table {
+  @override
+  String get tableName => 'memory_usage';
+  TextColumn get id => text()();
+  TextColumn get memoryId =>
+      text().references(Memories, #id, onDelete: KeyAction.cascade)();
+  TextColumn get deviceId => text()();
+  IntColumn get recallCount => integer().withDefault(const Constant(0))();
+  IntColumn get searchCount => integer().withDefault(const Constant(0))();
+  TextColumn get lastRecalledAt => text().nullable()();
+  TextColumn get lastSearchedAt => text().nullable()();
+  TextColumn get firstSeenAt => text()();
+  TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// 记忆被召回与读出的时间点，一台设备一行、只增不改。
+///
+/// 一行是“某台设备在某个时刻把某条记忆放进了相关层（或由 `search_memory` 读
+/// 到）”，正文只是时间与记忆编号，由使用统计现算计数，因此不需要计数器与去重
+/// 列；每行带 [acquiredAt] 记本机拿到它的时刻，远端提交同样带上，远端行落在
+/// 更大的值上时按后写覆盖，两端取较大值。旧行由使用统计在冲刷时清理（ADR-0051 决定第 8 条）。
+@TableIndex(name: 'idx_memory_use_memory', columns: {#memoryId, #usedAt})
+@TableIndex(name: 'idx_memory_use_device', columns: {#deviceId, #usedAt})
+@DataClassName('MemoryUseRow')
+class MemoryUses extends Table {
+  @override
+  String get tableName => 'memory_use';
+  TextColumn get id => text()();
+  TextColumn get memoryId =>
+      text().references(Memories, #id, onDelete: KeyAction.cascade)();
+  TextColumn get deviceId => text()();
+
+  /// `recall` 表示进入相关层，`search` 表示由 `search_memory` 读到。
+  TextColumn get kind => text()
+      .withDefault(const Constant('recall'))
+      .check(kind.isIn(memoryUseKinds))();
+  TextColumn get usedAt => text()();
+  TextColumn get acquiredAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @TableIndex(name: 'idx_revision_uid', columns: {#uid}, unique: true)
 @TableIndex(name: 'idx_revision_commit_parent', columns: {#parentId})
 @TableIndex(name: 'idx_revision_commit_reverted', columns: {#revertedCommitId})
@@ -578,15 +636,11 @@ class RevisionCommits extends Table {
     onDelete: KeyAction.setNull,
   )();
 
-  /// 父提交的哈希；基线提交写 64 个 `0`，裁剪之后最早保留提交的这一列是锚点。
-  TextColumn get parentHash => text()();
   IntColumn get generation => integer()();
 
-  /// 这条提交落库之后全部业务行的一致性摘要（方案 3.5）。
+  /// 这条提交落库之后全部业务行的一致性摘要；完整性只认这一个原语，变更明细
+  /// 的条数与冲突条数在读取时现数（ADR-0054 与审查 S1）。
   TextColumn get stateDigest => text()();
-
-  /// 这条提交的哈希：`sha256(父哈希, uid, kind, 规范化变更明细)`（方案 3.10）。
-  TextColumn get hash => text()();
   TextColumn get actor => text().check(actor.isIn(revisionActors))();
 
   /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
@@ -595,16 +649,12 @@ class RevisionCommits extends Table {
 
   /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
   ///
-  /// 本机提交在 [_appendCommit] 里生成 UUIDv7，远端提交沿用远端的 uid；不按提交
-  /// 编号或请求编号派生，因为编号会在整库恢复旧备份后重复（ADR-0040）。
+  /// 本机提交由界面在用户动作开始时生成 UUIDv7 并一路传下来，远端提交沿用远端
+  /// 的 uid；不按提交编号或动作参数派生（ADR-0053 决定第 3 条）。
   TextColumn get uid => text()();
 
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   TextColumn get action => text()();
-
-  /// 同一次用户动作的重试编号：只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
-  /// 的重试去重，不再是提交身份。
-  TextColumn get requestId => text().nullable()();
   IntColumn get restoredCommitId => integer().nullable()();
   IntColumn get revertedCommitId => integer().nullable()();
 
@@ -613,18 +663,18 @@ class RevisionCommits extends Table {
       .withDefault(const Constant(0))
       .check(byteLength.isBiggerOrEqualValue(0))();
 
-  /// 应用这条远端提交时记下的冲突条数（`revision_conflict`）。
-  IntColumn get conflictCount => integer()
-      .withDefault(const Constant(0))
-      .check(conflictCount.isBiggerOrEqualValue(0))();
-  IntColumn get changeCount => integer().withDefault(const Constant(0))();
   TextColumn get createdAt => text()();
 
   /// 远端提交由服务端带来的设备标识；本机提交为空（方案 3.12）。
   TextColumn get originDevice => text().nullable()();
 
-  /// 远端提交的作者创建时间；本机提交等于 [createdAt]（方案 3.12）。
+  /// 远端提交的作者创建时间；本机提交为空，界面回退到 [createdAt]（方案 3.12）。
   TextColumn get authoredAt => text().nullable()();
+
+  /// 这条提交在服务端序列上的序号：远端提交取拉取到的值，本机提交推送成功之后
+  /// 取推送响应里的逐条序号。空值只表示还不知道它排在第几条，不影响同步
+  /// （ADR-0054 决定第 2 条）。
+  IntColumn get serverSeq => integer().nullable()();
 }
 
 @TableIndex(
@@ -649,15 +699,42 @@ class RevisionChanges extends Table {
   Set<Column> get primaryKey => {commitId, seq};
 }
 
+/// 用户给版本起的名字（01 `revision_ref`）。
+///
+/// 只存命名版本，`HEAD` 在 [RevisionStates] 的 `head_commit_id` 里；指向的提交按
+/// `revision_commit.uid` 查，查不到就是“只剩标签”的名字（ADR-0054 决定第 4 条）。
+@TableIndex(name: 'idx_revision_ref_uid', columns: {#commitUid})
 @DataClassName('RevisionRefRow')
 class RevisionRefs extends Table {
   @override
   String get tableName => 'revision_ref';
+
+  /// 名字先做 NFC 规范化再写入，主键按规范化之后的名字比较。
   TextColumn get name => text()();
-  IntColumn get commitId => integer()();
+  TextColumn get commitUid => text()();
+
+  /// 干净表示与云端一致，已改表示本机改过、还没推送。
+  TextColumn get syncState => text()
+      .withDefault(const Constant('clean'))
+      .check(syncState.isIn(revisionRefSyncStates))();
   TextColumn get note => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
+
+  @override
+  Set<Column> get primaryKey => {name};
+}
+
+/// 用户显式删除一个名字之后留下的墓碑，推送成功之后删行（ADR-0054 决定第 4 条）。
+///
+/// 清理本机历史、清除全部数据与恢复备份都不写墓碑；表名沿用 `revision_` 前缀，
+/// 不参与版本采集。
+@DataClassName('RevisionRefTombstoneRow')
+class RevisionRefTombstones extends Table {
+  @override
+  String get tableName => 'revision_ref_tombstone';
+  TextColumn get name => text()();
+  TextColumn get deletedAt => text()();
 
   @override
   Set<Column> get primaryKey => {name};
@@ -672,16 +749,12 @@ class RevisionCheckpoints extends Table {
   TextColumn get kind => text().check(kind.isIn(checkpointKinds))();
   IntColumn get commitId => integer()();
 
-  /// 业务投影的字节；`json` 直接存 UTF-8 原文，`json+gzip` 存它的 gzip 压缩。
+  /// 业务投影的字节，gzip 压缩之后的检查点原文；解出 JSON 再还原投影。
   BlobColumn get payload => blob()();
   TextColumn get encoding => text().check(encoding.isIn(checkpointEncodings))();
 
   /// 压缩之前的字节数，用于留存统计与按容量裁剪的估算。
   IntColumn get rawBytes => integer().check(rawBytes.isBiggerOrEqualValue(0))();
-  TextColumn get assetHashesJson => text()();
-
-  /// 按解压后的原文计算，与 [payload] 的编码无关。
-  TextColumn get checksum => text()();
 
   /// 这份投影的一致性摘要；重建之后可以直接与当前表比对（方案 3.5）。
   TextColumn get stateDigest => text()();
@@ -699,11 +772,6 @@ class RevisionCursors extends Table {
   TextColumn get name => text()();
   IntColumn get position => integer()();
   BoolColumn get blocking => boolean().withDefault(const Constant(false))();
-
-  /// 这个读取位置属于哪个同步身份：只有同步的两个位置写“账号编号 + 实例来源”
-  /// 的哈希，检索索引等读者为空。退出登录之后位置保留但不阻塞，重新登录同一
-  /// scope 时据此从原位置继续增量同步，而不是按首次基线整份重传（同步方案 3.3）。
-  TextColumn get scope => text().nullable()();
   TextColumn get updatedAt => text()();
 
   @override
@@ -774,10 +842,15 @@ class SyncShadows extends Table {
   Set<Column> get primaryKey => {targetTable, rowKey, columnName};
 }
 
-@DataClassName('RevisionContextRow')
-class RevisionContexts extends Table {
+/// 版本引擎的单行状态：采集上下文、提交编号与 `HEAD`（ADR-0054 决定第 4 条）。
+///
+/// 这一行在 `installRevisionSchema` 里创建，早于编号为 0 的基线提交，所以
+/// [headCommitId] 不设外键、默认指向基线提交；[tableDigestsJson] 只在 `HEAD`
+/// 上保存各业务表的分表摘要，每条提交仍只存总摘要。
+@DataClassName('RevisionStateRow')
+class RevisionStates extends Table {
   @override
-  String get tableName => 'revision_context';
+  String get tableName => 'revision_state';
   IntColumn get id => integer().check(id.equals(1))();
 
   /// 已经预留、还没有落库的提交编号；没有预留时为空。
@@ -789,16 +862,17 @@ class RevisionContexts extends Table {
   /// 整版恢复与导入期间暂停采集，避免把整库删除与重插记成逐行历史。
   BoolColumn get suppress => boolean().withDefault(const Constant(false))();
 
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
-@DataClassName('RevisionSequenceRow')
-class RevisionSequences extends Table {
-  @override
-  String get tableName => 'revision_sequence';
-  IntColumn get id => integer().check(id.equals(1))();
+  /// 下一个要分配的提交编号；只增不减。
   IntColumn get nextCommit => integer()();
+
+  /// `HEAD` 指向的提交编号。
+  IntColumn get headCommitId => integer()
+      .withDefault(const Constant(0))
+      .check(headCommitId.isBiggerOrEqualValue(0))();
+
+  /// `HEAD` 上各业务表的一致性摘要，表名到 64 位十六进制值的 JSON 映射；各表
+  /// 值之和恒等于 `HEAD` 提交的 `state_digest`（ADR-0054 决定第 1 条）。
+  TextColumn get tableDigestsJson => text().withDefault(const Constant('{}'))();
 
   @override
   Set<Column> get primaryKey => {id};

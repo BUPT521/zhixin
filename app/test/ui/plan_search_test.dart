@@ -204,7 +204,6 @@ void main() {
         materialId: material,
         pageFrom: 1,
         pageTo: 1,
-        currentPage: 1,
         drafts: const [StudyStepDraft(title: '阅读导数定义', pageFrom: 1, pageTo: 1)],
       );
     });

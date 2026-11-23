@@ -25,6 +25,10 @@ class MemoryDraft {
 }
 
 /// 记一条或修改一条记忆的弹窗；记忆页与记忆查找页共用这一份。
+///
+/// 类别只有情景、语义、程序三项（ADR-0051 决定第 1 条）：情景是发生过的一件事，
+/// 语义是稳定的事实与限制，程序是该怎么做的做法。用户手写不从内容推断程序类，
+/// 新建时默认语义。
 class MemoryDialog extends StatefulWidget {
   const MemoryDialog({super.key, this.memory});
 
@@ -36,7 +40,8 @@ class MemoryDialog extends StatefulWidget {
 }
 
 class _MemoryDialogState extends State<MemoryDialog> {
-  late MemoryKind _kind = widget.memory?.kind ?? MemoryKind.preference;
+  /// 新建时默认语义：用户手写的偏好与限制按内容归语义（ADR-0051 第 1 条）。
+  late MemoryKind _kind = widget.memory?.kind ?? MemoryKind.semantic;
   late final TextEditingController _content = TextEditingController(
     text: widget.memory?.content ?? '',
   );

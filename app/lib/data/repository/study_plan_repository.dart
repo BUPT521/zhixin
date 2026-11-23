@@ -30,7 +30,6 @@ class StudyPlanRepository {
     String? conversationId,
     int? pageFrom,
     int? pageTo,
-    int? currentPage,
     WriteTransaction? transaction,
   }) {
     return _insertPlan(
@@ -40,7 +39,6 @@ class StudyPlanRepository {
       conversationId: conversationId,
       pageFrom: pageFrom,
       pageTo: pageTo,
-      currentPage: currentPage,
       executor: writeExecutor(transaction, _db),
     );
   }
@@ -52,7 +50,6 @@ class StudyPlanRepository {
     required String? conversationId,
     required int? pageFrom,
     required int? pageTo,
-    required int? currentPage,
     required RawExecutor executor,
   }) async {
     final text = title.trim();
@@ -68,7 +65,6 @@ class StudyPlanRepository {
         text,
         pageFrom,
         pageTo,
-        currentPage,
         StudyPlanStatus.active.value,
         now,
       ),
@@ -85,7 +81,6 @@ class StudyPlanRepository {
     String? conversationId,
     int? pageFrom,
     int? pageTo,
-    int? currentPage,
     WriteTransaction? transaction,
   }) async {
     final txn = writeExecutor(transaction, _db);
@@ -96,7 +91,6 @@ class StudyPlanRepository {
       conversationId: conversationId,
       pageFrom: pageFrom,
       pageTo: pageTo,
-      currentPage: currentPage,
       executor: txn,
     );
     final now = formatDateTime(_clock());
@@ -395,6 +389,10 @@ class StudyPlanRepository {
     );
   }
 
+  /// 步骤变化之后重算计划状态。
+  ///
+  /// 当前页由步骤在读取时算出，这里不再把页码写回计划行（审查 S5）：完成一步
+  /// 只更新计划的状态与更新时间，不再多改一次 `study_plan`。
   Future<void> _recompute(RawExecutor executor, String planId) async {
     final plan = await _plainPlan(planId, executor: executor);
     if (plan == null) return;
@@ -402,53 +400,36 @@ class StudyPlanRepository {
       (db) => db.stepsOfPlan(planId).get(),
     );
     final allSteps = rows.map(_stepOfRow).toList(growable: false);
-    final current = currentStudyStep(allSteps);
-    final donePages = allSteps
-        .where((step) => step.done && step.pageTo != null)
-        .map((step) => step.pageTo!)
-        .toList(growable: false);
-    final currentPage =
-        current?.pageFrom ??
-        (donePages.isEmpty ? plan.currentPage : donePages.last);
     final finished = allSteps.isNotEmpty && allSteps.every((step) => step.done);
     final status = finished
         ? StudyPlanStatus.done
         : plan.done
         ? StudyPlanStatus.active
         : plan.status;
-    if (currentPage == plan.currentPage && status == plan.status) return;
-    final stamp = formatDateTime(_clock());
+    if (status == plan.status) return;
     await executor.writeGenerated(
-      (db) => db.updateStudyPlanProgress(
-        currentPage,
-        status != plan.status ? status.value : null,
-        stamp,
-        planId,
-      ),
+      (db) =>
+          db.setStudyPlanStatus(status.value, formatDateTime(_clock()), planId),
     );
   }
 
   Future<StudyPlan?> _plainPlan(String id, {RawExecutor? executor}) async {
-    final row = await (executor ?? _db).selectGenerated(
-      (db) => db.studyPlanById(id).getSingleOrNull(),
+    final rows = await (executor ?? _db).selectGenerated(
+      (db) => db
+          .planRows(
+            PlanItemStatus.done.value,
+            id,
+            0,
+            StudyPlanStatus.active.value,
+            StudyPlanStatus.paused.value,
+            0,
+            1,
+            1,
+          )
+          .get(),
     );
-    return row == null ? null : _planOfRow(row);
+    return rows.isEmpty ? null : _planOf(rows.first);
   }
-
-  /// 计划表的字段与领域模型同名，只补状态与时间解析。
-  static StudyPlan _planOfRow(StudyPlanRow row) => StudyPlan(
-    id: row.id,
-    title: row.title,
-    materialId: row.materialId,
-    goalId: row.goalId,
-    conversationId: row.conversationId,
-    pageFrom: row.pageFrom,
-    pageTo: row.pageTo,
-    currentPage: row.currentPage,
-    status: StudyPlanStatus.fromValue(row.status),
-    createdAt: requiredDateTime(row.createdAt),
-    updatedAt: requiredDateTime(row.updatedAt),
-  );
 
   /// 步骤整行与其它查询挑的列不同名，走同一个 _stepItem 组装。
   static PlanItem _stepOfRow(PlanItemRow row) => _stepItem(

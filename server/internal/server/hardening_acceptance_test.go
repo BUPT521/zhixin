@@ -240,7 +240,7 @@ func TestCloudPurgeClearsAllCloudData(t *testing.T) {
 	if code := h.json("POST", "/v1/sync/commits", token, map[string]any{
 		"base_seq": 0,
 		"commits": []map[string]any{{
-			"request_id": "r1", "device_id": "d1", "schema_version": ClientSchemaVersion,
+			"uid": "r1", "device_id": "d1", "schema_version": ClientSchemaVersion,
 			"actor": "user", "action": "test", "created_at": "2026-11-18 20:00:00",
 			"changes": []map[string]any{{"table": "t", "row_key": "k", "op": "insert", "after": map[string]any{"v": 1}}},
 		}},
