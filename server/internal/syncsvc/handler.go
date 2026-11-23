@@ -84,9 +84,9 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request, params api.GetV1S
 		return
 	}
 	// 设备位置只由拉取与推送推进：head 查询只知道服务端的最新位置，不知道这台
-	// 设备读到了哪，所以它只更新最近出现时间与快照能力。
+	// 设备读到了哪，所以它只更新最近出现时间与快照能力（ADR-0054）。
 	if id, capable, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
-		h.recordDevice(r.Context(), p.UserID, id, capable, state.Head)
+		h.recordDeviceAt(r.Context(), p.UserID, id, capable)
 	}
 	httpx.WriteJSON(w, http.StatusOK, h.syncHead(state))
 }
@@ -418,19 +418,10 @@ func deviceFromRequest(deviceID, capabilities *string) (string, bool, bool) {
 
 // recordDeviceAt 只更新名册里的快照能力与最近出现时间，不动设备位置：head 查询、
 // 快照登记、名册查询与改名这几条路径本身不说明这台设备读到了哪（ADR-0054）。
+// 位置传负值，服务端按 0 处理，已有设备的位置因此保持不变；新设备以 0 进名册。
 // 能力与位置都没有变化时写入被跳过，进行中的同步因此不必每请求写一行（ADR-0048）。
 func (h *Handler) recordDeviceAt(ctx context.Context, userID, deviceID string, snapshotCapable bool) {
-	state, err := h.svc.State(ctx, userID)
-	if err != nil {
-		h.log.Warn("cannot read sync state before recording a device",
-			slog.String("user_id", userID),
-			slog.String("device_id", deviceID),
-			slog.String("error", err.Error()),
-		)
-		return
-	}
-	// 以当前 head 作为位置的下限，取较大值之后不会改变已有的位置。
-	h.recordDevice(ctx, userID, deviceID, snapshotCapable, state.Head)
+	h.recordDevice(ctx, userID, deviceID, snapshotCapable, -1)
 }
 
 // recordDevice 更新设备名册：快照能力整组替换，位置按 position 取较大值且不超过

@@ -715,6 +715,53 @@ func TestHandlerDeviceRoster(t *testing.T) {
 	}
 }
 
+// TestHandlerHeadKeepsDevicePosition 守住“head 查询不推进设备位置”：设备 A 推送
+// 到位置 1 之后另一台设备把 head 推到 2，A 只读 head 时名册里仍是 1；拉取请求
+// 的 after 才是 A 读到的位置（ADR-0054）。
+func TestHandlerHeadKeepsDevicePosition(t *testing.T) {
+	h := newSnapshotHarness(t)
+	token := signIn(t, h.authSvc, "positions@b.cn")
+
+	if code := h.syncJSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 0, "commits": []any{commitBody("r1")},
+	}, &api.PushResult{}); code != http.StatusOK {
+		t.Fatalf("设备 A 推送: %d", code)
+	}
+	if code := h.client.JSON(http.MethodPost, "/v1/sync/commits", token, map[string]any{
+		"base_seq": 1, "commits": []any{commitBody("r2")},
+	}, &api.PushResult{}); code != http.StatusOK {
+		t.Fatalf("另一台设备推送: %d", code)
+	}
+
+	// A 只读 head：能力没变、位置也不该被推到 head。
+	if code := h.jsonWithHeaders(http.MethodGet, "/v1/sync/head", token, nil, nil, map[string]string{
+		"X-Device-Id":         "device-a",
+		"X-Sync-Capabilities": "snapshot",
+	}); code != http.StatusOK {
+		t.Fatalf("设备 A 读 head: %d", code)
+	}
+	var page api.SyncDeviceList
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("名册: %d", code)
+	}
+	if got := findDevice(t, page, "device-a"); got.SyncedSeq != 1 {
+		t.Fatalf("head 查询不应推进设备位置: %+v", got)
+	}
+
+	// 拉取请求的 after 是 A 已经应用到的位置，这时才推进到 2。
+	if code := h.jsonWithHeaders(http.MethodGet, "/v1/sync/commits?after=2", token, nil, nil, map[string]string{
+		"X-Device-Id": "device-a",
+	}); code != http.StatusOK {
+		t.Fatalf("设备 A 拉取: %d", code)
+	}
+	if code := h.client.JSON(http.MethodGet, "/v1/sync/devices", token, nil, &page); code != http.StatusOK {
+		t.Fatalf("名册: %d", code)
+	}
+	if got := findDevice(t, page, "device-a"); got.SyncedSeq != 2 {
+		t.Fatalf("拉取之后应推进到 after: %+v", got)
+	}
+}
+
 // TestHandlerDevicesRecordsRequestingDevice 守住设备列表自身的名册写入：刚登录、
 // 还没同步过的设备带 X-Device-Id 查一次名册，就先出现在返回列表里，能力声明也
 // 按请求头记录（ADR-0048）。

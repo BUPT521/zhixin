@@ -402,7 +402,8 @@ func (s *Service) reclaimOrphans(ctx context.Context, userID string) {
 
 // TouchDevice 记录一次带设备标识的同步请求：快照能力整组替换，设备位置按
 // position 取较大值且不超过当前 head，别名不动；最近出现时间只在能力或位置确实
-// 变化时前进，没有变化的一轮同步不多写一行（ADR-0048、ADR-0054）。
+// 变化时前进，没有变化的一轮同步不多写一行（ADR-0048、ADR-0054）。position 为
+// 负值时按 0 处理，表示这次请求不说明设备读到了哪，已有设备的位置保持不变。
 func (s *Service) TouchDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
