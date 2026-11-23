@@ -653,8 +653,11 @@ mixin RevisionLogMixin {
     }
     final problems = <String>[];
     Projection? replay;
+    var checked = 0;
     try {
+      final checkpoint = await self._latestCheckpoint(executor, headId);
       replay = await self.projectionAt(executor, headId);
+      checked = await self._commitsAfter(executor, checkpoint.commitId, headId);
     } on RevisionCorruption catch (error) {
       problems.add(error.message);
     }
@@ -675,15 +678,23 @@ mixin RevisionLogMixin {
         if (expected[name] != actual[name]) problems.add('$name 的摘要与记录不一致');
       }
     }
-    final rows = await executor.rawQuery(
-      'SELECT COUNT(*) AS count FROM revision_commit',
-    );
-    final total = rows.isEmpty ? 0 : (rows.first['count'] as int? ?? 0);
     return RevisionIntegrityReport(
       commitId: headId,
-      checkedCommits: total,
+      checkedCommits: checked,
       problems: problems,
     );
+  }
+
+  /// 检查点到 `HEAD`（含两端）的提交条数，完整性检查用它写“共核对 N 条提交”。
+  ///
+  /// 检查点自己的投影是重放的起点，它本身也算核对过的一条，所以区间两端都含；
+  /// 这样“只清理过本机历史、只剩一条基线”的库里是 1 条，而不是 0 条（审查 S1）。
+  Future<int> _commitsAfter(RawExecutor executor, int from, int to) async {
+    final rows = await executor.rawQuery(
+      'SELECT COUNT(*) AS count FROM revision_commit WHERE id >= ? AND id <= ?',
+      [from, to],
+    );
+    return rows.isEmpty ? 0 : (rows.first['count'] as int? ?? 0);
   }
 }
 

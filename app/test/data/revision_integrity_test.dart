@@ -191,6 +191,30 @@ void main() {
       );
     });
 
+    test('新建检查点之后只核对检查点到 HEAD 这一段，不把更早的提交算进去', () async {
+      final rig = await openTestRig();
+      addTearDown(rig.close);
+      for (var index = 1; index <= 3; index++) {
+        await _insertMemory(rig, 'm$index', '记忆 $index');
+      }
+      final total = (await rig.engine.commits(rig.raw)).length;
+      expect(total, 4, reason: '初始基线加三条写入');
+      await rig.engine.materializeCheckpoint(
+        rig.raw,
+        await rig.engine.headId(rig.raw),
+        kind: 'named',
+      );
+
+      final report = await rig.revisions.verifyIntegrity();
+      expect(report.isClean, isTrue, reason: report.summary);
+      expect(
+        report.checkedCommits,
+        1,
+        reason: 'HEAD 这一条既是检查点也是重放的起点，更早的三条不在这一段里',
+      );
+      expect(report.checkedCommits, lessThan(total));
+    });
+
     test('篡改变更明细之后重放得到的摘要对不上', () async {
       final rig = await openTestRig();
       addTearDown(rig.close);

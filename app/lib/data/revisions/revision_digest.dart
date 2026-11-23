@@ -102,7 +102,7 @@ class RevisionIntegrityReport {
   /// 检查时的 `HEAD`；没有提交记录时为 0。
   final int commitId;
 
-  /// 从检查点重放到 `HEAD` 时经过的提交条数。
+  /// 从检查点到 `HEAD`（含两端）的提交条数。
   final int checkedCommits;
 
   /// 发现的问题，中文说明；为空表示重放结果与 `HEAD`、当前表都一致。
