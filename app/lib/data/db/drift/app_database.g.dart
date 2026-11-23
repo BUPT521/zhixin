@@ -8234,6 +8234,7 @@ class $MemoriesTable extends Memories
     'content',
     aliasedName,
     false,
+    check: () => CustomExpression<bool>('length(content) <= 2000'),
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
@@ -8518,6 +8519,9 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
 
   /// 情景、语义、程序三类（ADR-0051）；旧的四类标签由回复注入口径取代。
   final String kind;
+
+  /// 正文允许 Markdown 与多句条件，表的长度上限 2000 字；写入上限在召回预算
+  /// 做出来之前仍是 200 字，见 `memoryContentLimit`（ADR-0051 决定第 6 条）。
   final String content;
   final String? scope;
   final String sourceKind;

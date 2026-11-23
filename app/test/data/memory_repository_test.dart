@@ -83,6 +83,34 @@ void main() {
     expect(memoryKindForContent('喜欢先看例子'), MemoryKind.semantic);
   });
 
+  test('记忆正文的表的长度上限是 2000 字，超出时库直接拒绝', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+
+    final base = {
+      'kind': 'semantic',
+      'source_kind': 'user',
+      'status': 'active',
+      'created_at': '2026-11-10 09:00:00',
+      'updated_at': '2026-11-10 09:00:00',
+    };
+    await insertRow(rig.db, 'memory', {
+      'id': 'm-2000',
+      'content': '长' * 2000,
+      ...base,
+    });
+    expect((await _row(rig, 'm-2000'))['content'], '长' * 2000);
+
+    await expectLater(
+      insertRow(rig.db, 'memory', {
+        'id': 'm-2001',
+        'content': '长' * 2001,
+        ...base,
+      }),
+      throwsA(anything),
+    );
+  });
+
   test('过期与删除的记忆不进入上下文', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

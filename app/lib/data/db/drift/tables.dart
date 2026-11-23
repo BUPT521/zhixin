@@ -7,7 +7,8 @@ import 'package:drift/drift.dart';
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 //
-// 业务表 14 张、设置表 1 张、记忆使用统计 1 张，其余 12 张是版本与同步的簿记。
+// 业务表 13 张、设置表 1 张、记忆使用统计 2 张，其余 12 张是版本、附件与同步的
+// 簿记。
 // 这一版把同一事实只存一份：完整性只有整库摘要一个原语（ADR-0054 与审查 S1），
 // 单行状态、`HEAD` 与提交编号合进 `revision_state`（S3、S14），截止小时并进
 // `app_meta`（S4），计划当前页由步骤算出（S5）。
@@ -537,7 +538,11 @@ class Memories extends Table {
 
   /// 情景、语义、程序三类（ADR-0051）；旧的四类标签由回复注入口径取代。
   TextColumn get kind => text().check(kind.isIn(memoryKinds))();
-  TextColumn get content => text()();
+
+  /// 正文允许 Markdown 与多句条件，表的长度上限 2000 字；写入上限在召回预算
+  /// 做出来之前仍是 200 字，见 `memoryContentLimit`（ADR-0051 决定第 6 条）。
+  TextColumn get content =>
+      text().check(CustomExpression<bool>('length(content) <= 2000'))();
   TextColumn get scope => text().nullable()();
   TextColumn get sourceKind =>
       text().check(sourceKind.isIn(memorySourceKinds))();
