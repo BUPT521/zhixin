@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../domain/models/memory.dart';
+import '../domain/models/memory_draft.dart' show memoryContentLimit;
 import 'date_time_dialogs.dart';
 import 'format.dart';
 import 'zhixin_dialog.dart';
@@ -77,6 +78,12 @@ class _MemoryDialogState extends State<MemoryDialog> {
     final content = _content.text.trim();
     if (content.isEmpty) {
       setState(() => _contentError = '先写一句要记住的内容再保存。');
+      return;
+    }
+    // 写入上限在步骤 5 之前保持 200 字，与工具写入和提示词的单条截断同一个
+    // 常量；表的 CHECK 放到 2000 字是为步骤 5 的总预算预留（ADR-0051）。
+    if (content.runes.length > memoryContentLimit) {
+      setState(() => _contentError = '一条记忆最多 $memoryContentLimit 字，长内容请拆成几条。');
       return;
     }
     Navigator.of(context)
