@@ -20,7 +20,7 @@
 | [vector_store_isolate.dart](../app/lib/data/vector/vector_store_isolate.dart) | `IsolateVectorStore`：后台 isolate 持有索引，界面线程按操作名发送请求，`_runOperation` 分派 |
 | [vector_index.dart](../app/lib/data/vector/vector_index.dart) | `VectorIndex` 同步接口，以及 `StoredVector`、`IndexedSource` 与 `VectorPrefilter` 值类型 |
 | [zvec_vector_index.dart](../app/lib/data/vector/zvec_vector_index.dart) | `ZvecVectorIndex`：一个模型键一个 collection 目录，状态写在同名的 JSON 文件里 |
-| [memory_vector_index.dart](../app/lib/data/vector/memory_vector_index.dart) | `MemoryVectorIndex`：纯 Dart 的余弦距离排序，服务层测试与契约测试用 |
+| [memory_recall.dart](../app/lib/application/memory_recall.dart) | 记忆召回按常驻、相关层与主动搜索排序；原 `MemoryVectorIndex` 的余弦距离实现已随 [ADR-0026](adr/0026-记忆召回改用zvec全文索引.md) 删除 |
 | [search_index_service.dart](../app/lib/application/search_index_service.dart) | 刷新（比对来源版本、嵌入、写入、清理）与检索（取候选、逐条核对业务记录与范围） |
 | [app_paths.dart](../app/lib/platform/app_paths.dart) | `vectorIndexPath` 指向 `filesDir/vector_index/`，`vectorLogPath` 指向缓存目录下的 `zvec_logs/` |
 
