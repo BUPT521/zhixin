@@ -59,7 +59,7 @@ dependencies:
   calendar_view: ^2.0.0
 
   # 崩溃与诊断上报：自建 Sentry，DSN 由构建参数注入。
-  sentry_flutter: ^10.5.0
+  sentry_flutter: ^10.6.0
 
   # 打开回答里的链接。
   url_launcher: ^6.3.3
