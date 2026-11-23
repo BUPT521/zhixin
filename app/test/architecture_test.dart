@@ -48,6 +48,36 @@ void main() {
     }
   });
 
+  test('界面不直接依赖数据层', () {
+    final lib = Directory('lib').absolute;
+    final ui = Directory(p.join(lib.path, 'ui'));
+    expect(ui.existsSync(), isTrue, reason: '界面层应保留在 lib/ui');
+
+    final depending = <String, File>{};
+    for (final source in _dartFiles(ui)) {
+      final dependsOnData = _directives(source).any((uri) {
+        final target = _resolveLocal(lib, source, uri);
+        return target != null && _inside(lib, 'data', target);
+      });
+      if (dependsOnData) depending[p.basename(source.path)] = source;
+    }
+
+    for (final entry in depending.entries) {
+      expect(
+        _uiDataAllowlist.contains(entry.key),
+        isTrue,
+        reason: '${p.relative(entry.value.path)} 不能依赖数据层，值类型放 domain，行为经应用服务取用',
+      );
+    }
+    for (final name in _uiDataAllowlist) {
+      expect(
+        depending.containsKey(name),
+        isTrue,
+        reason: '${p.join('lib', 'ui', name)} 已不再依赖数据层，请从 _uiDataAllowlist 删除',
+      );
+    }
+  });
+
   test('周视图只接收传入的数据与回调，不直接读业务数据', () {
     final lib = Directory('lib').absolute;
     final view = File(p.join(lib.path, 'ui', 'plan_week_view.dart'));
@@ -190,6 +220,26 @@ void main() {
     }
   });
 }
+
+/// 界面层直接依赖数据层的文件白名单，只减不增。
+///
+/// 界面不直接依赖数据层：页面需要的值类型放在 `domain/models`，行为经应用服务取用，
+/// 目标与进度见 `docs/分层整改清单与提示词.md`。这份清单记录搬家还没做完的部分，
+/// 不是允许继续新增依赖的许可；每去掉一处引用，就把文件名删掉，用例会强制清单只减不增。
+const _uiDataAllowlist = <String>{
+  'account_page.dart',
+  'cloud_backup_page.dart',
+  'data_version_page.dart',
+  'embedding_settings_page.dart',
+  'feedback_page.dart',
+  'integrity_check.dart',
+  'mine_page.dart',
+  'plan_actions.dart',
+  'plan_operations_tab.dart',
+  'restore_flow.dart',
+  'settings_page.dart',
+  'update_notice.dart',
+};
 
 /// 曾经公开在 [AppScopeState] 上的仓库与连接字段；现在只在测试入口里露出。
 const _repositoryMembers = [
