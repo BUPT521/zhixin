@@ -778,58 +778,17 @@ class SyncService {
       // 直接推进到当前 HEAD；云端没有行的本机独有行照常作为基线补传。
       final headAfterAlign = await engine.headId(database.raw);
       final projection = await engine.readProjection(database.raw);
-      final changes = <RevisionChange>[];
-      var seq = 1;
-      for (final table in versionedTableNames) {
-        final rows = projection[table] ?? const <String, TypedRow>{};
-        for (final entry in rows.entries) {
-          if (touched.contains((table, entry.key))) continue;
-          changes.add(
-            RevisionChange(
-              commitId: 0,
-              seq: seq++,
-              table: table,
-              rowKey: entry.key,
-              op: ChangeOp.insert,
-              after: entry.value,
-            ),
-          );
-        }
-      }
-      var pushed = 0;
-      var baseSeq = serverHead;
-      String? baselineDigest;
-      Map<String, String>? baselineTableDigests;
-      if (changes.isNotEmpty) {
-        final headBefore = await engine.headId(database.raw);
-        final digest = await revisions.currentStateDigest();
-        final digests = await revisions.currentTableDigests();
-        if (await engine.headId(database.raw) == headBefore) {
-          baselineDigest = digest;
-          if (revisionTableDigestsMatch(digests, digest)) {
-            baselineTableDigests = digests;
-          }
-        }
-      }
-      await _pushBatches(
-        Stream.fromIterable(
-          _baselineCommits(
-            deviceId,
-            changes,
-            stateDigest: baselineDigest,
-            tableDigests: baselineTableDigests,
-          ),
-        ),
-        baseSeq,
-        (head, count, seqs) async {
-          baseSeq = head;
-          pushed += count;
-        },
-        deviceId: deviceId,
+      final changes = _baselineChanges(projection, skip: touched);
+      final summary = changes.isEmpty ? null : await _baselineSummary();
+      final upload = await _uploadBaseline(
+        deviceId,
+        changes,
+        baseSeq: serverHead,
+        stateDigest: summary?.digest,
+        tableDigests: summary?.tables,
       );
-      final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
       _ensureIdentity();
-      await _saveServerHead(baseSeq);
+      await _saveServerHead(upload.serverHead);
       await _savePushed(headAfterAlign);
       await _shadows.clear();
       await _saveDigestMismatch(false);
@@ -837,8 +796,8 @@ class SyncService {
       await refreshDevices();
       return SyncResult(
         pulledCommits: pulled,
-        pushedCommits: pushed,
-        uploadedAssets: uploaded,
+        pushedCommits: upload.pushed,
+        uploadedAssets: upload.uploaded,
       );
     } catch (error, stack) {
       if (error is! SyncIdentityChanged) {
@@ -875,24 +834,9 @@ class SyncService {
       for (final entry in projection.entries)
         entry.key: <String, TypedRow>{...entry.value},
     };
-    final localOnly = <RevisionChange>[];
-    var seq = 1;
-    for (final table in versionedTableNames) {
-      final rows = local[table] ?? const <String, TypedRow>{};
-      for (final entry in rows.entries) {
-        if (touched.contains((table, entry.key))) continue;
-        merged.putIfAbsent(table, () => {})[entry.key] = entry.value;
-        localOnly.add(
-          RevisionChange(
-            commitId: 0,
-            seq: seq++,
-            table: table,
-            rowKey: entry.key,
-            op: ChangeOp.insert,
-            after: entry.value,
-          ),
-        );
-      }
+    final localOnly = _baselineChanges(local, skip: touched);
+    for (final change in localOnly) {
+      merged.putIfAbsent(change.table, () => {})[change.rowKey] = change.after!;
     }
     final imported = await _importSnapshotProjection(merged);
     _ensureIdentity();
@@ -910,48 +854,26 @@ class SyncService {
       for (final change in localOnly)
         if (!touched.contains((change.table, change.rowKey))) change,
     ];
-    var pushed = 0;
-    var baseSeq = serverHead;
-    String? baselineDigest;
-    Map<String, String>? baselineTableDigests;
-    if (changes.isNotEmpty && _pulledSkipped == 0) {
-      final headBefore = await engine.headId(database.raw);
-      final digest = await revisions.currentStateDigest();
-      final digests = await revisions.currentTableDigests();
-      if (await engine.headId(database.raw) == headBefore) {
-        baselineDigest = digest;
-        if (revisionTableDigestsMatch(digests, digest)) {
-          baselineTableDigests = digests;
-        }
-      }
-    }
-    await _pushBatches(
-      Stream.fromIterable(
-        _baselineCommits(
-          deviceId,
-          changes,
-          stateDigest: baselineDigest,
-          tableDigests: baselineTableDigests,
-        ),
-      ),
-      baseSeq,
-      (head, count, seqs) async {
-        baseSeq = head;
-        pushed += count;
-      },
-      deviceId: deviceId,
+    final summary = changes.isEmpty || _pulledSkipped > 0
+        ? null
+        : await _baselineSummary();
+    final upload = await _uploadBaseline(
+      deviceId,
+      changes,
+      baseSeq: serverHead,
+      stateDigest: summary?.digest,
+      tableDigests: summary?.tables,
     );
-    final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
     _ensureIdentity();
-    await _saveServerHead(baseSeq);
+    await _saveServerHead(upload.serverHead);
     await _savePushed(imported.id);
     await _shadows.clear();
     await _saveDigestMismatch(false);
     await _markSynced();
     return SyncResult(
       pulledCommits: pulled.pulled,
-      pushedCommits: pushed,
-      uploadedAssets: uploaded,
+      pushedCommits: upload.pushed,
+      uploadedAssets: upload.uploaded,
       downloadedAssets: fetched.downloaded,
     );
   }
@@ -1002,29 +924,11 @@ class SyncService {
       final projection = await engine.readProjection(database.raw);
       final differentTables =
           (await preferences.syncState())?.differentTables ?? const <String>[];
-      final changes = <RevisionChange>[];
-      var seq = 1;
-      for (final table in versionedTableNames) {
-        if (differentTables.isNotEmpty && !differentTables.contains(table)) {
-          continue;
-        }
-        final rows = projection[table] ?? const <String, TypedRow>{};
-        for (final entry in rows.entries) {
-          if (pushedRows.contains((table, entry.key))) continue;
-          changes.add(
-            RevisionChange(
-              commitId: 0,
-              seq: seq++,
-              table: table,
-              rowKey: entry.key,
-              op: ChangeOp.insert,
-              after: entry.value,
-            ),
-          );
-        }
-      }
-      var pushed = 0;
-      var baseSeq = current.serverHead;
+      final changes = _baselineChanges(
+        projection,
+        skip: pushedRows,
+        tables: differentTables.isEmpty ? null : differentTables.toSet(),
+      );
       for (final change in changes) {
         cloud.projection.putIfAbsent(change.table, () => {})[change.rowKey] =
             change.after!;
@@ -1034,27 +938,17 @@ class SyncService {
       final matches = versionedTableNames.every(
         (table) => cloudTables[table] == localTables[table],
       );
-      await _pushBatches(
-        Stream.fromIterable(
-          _baselineCommits(
-            deviceId,
-            changes,
-            stateDigest: matches
-                ? revisionStateDigestHex(revisionTableDigestsSum(cloudTables))
-                : null,
-            tableDigests: matches ? cloudTables : null,
-          ),
-        ),
-        baseSeq,
-        (head, count, seqs) async {
-          baseSeq = head;
-          pushed += count;
-        },
-        deviceId: deviceId,
+      final upload = await _uploadBaseline(
+        deviceId,
+        changes,
+        baseSeq: current.serverHead,
+        stateDigest: matches
+            ? revisionStateDigestHex(revisionTableDigestsSum(cloudTables))
+            : null,
+        tableDigests: matches ? cloudTables : null,
       );
-      final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
       _ensureIdentity();
-      await _saveServerHead(baseSeq);
+      await _saveServerHead(upload.serverHead);
       await _savePushed(localHead);
       await _shadows.deleteSettled(localHead);
       await _compareRepairDigest(cloudTables);
@@ -1062,8 +956,8 @@ class SyncService {
       await refreshDevices();
       return SyncResult(
         pulledCommits: current.pulled,
-        pushedCommits: pushed,
-        uploadedAssets: uploaded,
+        pushedCommits: upload.pushed,
+        uploadedAssets: upload.uploaded,
       );
     } catch (error, stack) {
       if (error is! SyncIdentityChanged) {
@@ -1638,74 +1532,36 @@ class SyncService {
     }
     final headAfterPull = await engine.headId(database.raw);
     final projection = await engine.readProjection(database.raw);
-    final changes = <RevisionChange>[];
-    var seq = 1;
-    for (final table in versionedTableNames) {
-      final rows = projection[table] ?? const <String, TypedRow>{};
-      for (final entry in rows.entries) {
-        // 被远端提交触及过的行已经由服务端序列表达，不进基线。
-        if (touchedRows.contains((table, entry.key))) continue;
-        changes.add(
-          RevisionChange(
-            commitId: 0,
-            seq: seq++,
-            table: table,
-            rowKey: entry.key,
-            op: ChangeOp.insert,
-            after: entry.value,
-          ),
-        );
-      }
-    }
-    var pushed = 0;
-    var baseSeq = serverHead;
+    // 被远端提交触及过的行已经由服务端序列表达，不进基线。
+    final changes = _baselineChanges(projection, skip: touchedRows);
     // 基线推送完成、两个同步位置收尾之后，本机没有待推送提交；这时最后一条
     // 基线提交带上当前整库摘要，其他设备拉到它之后可以比较（同步方案 3.5）。
     // 读 HEAD、整库重算之间又有本机写入，或者这次拉取有被跳过的变化（本机状态
     // 与云端对不上），就不带，避免声明一个不成立的云端状态。
-    String? baselineDigest;
-    Map<String, String>? baselineTableDigests;
-    if (changes.isNotEmpty && _pulledSkipped == 0 && !_knownDigestMismatch) {
-      final headBefore = await engine.headId(database.raw);
-      final digest = await revisions.currentStateDigest();
-      final digests = await revisions.currentTableDigests();
-      if (await engine.headId(database.raw) == headBefore) {
-        baselineDigest = digest;
-        if (revisionTableDigestsMatch(digests, digest)) {
-          baselineTableDigests = digests;
-        }
-      }
-    }
-    await _pushBatches(
-      Stream.fromIterable(
-        _baselineCommits(
-          deviceId,
-          changes,
-          stateDigest: baselineDigest,
-          tableDigests: baselineTableDigests,
-        ),
-      ),
-      baseSeq,
-      (head, count, seqs) async {
-        baseSeq = head;
-        pushed += count;
-      },
-      deviceId: deviceId,
-    );
+    final summary =
+        changes.isEmpty || _pulledSkipped > 0 || _knownDigestMismatch
+        ? null
+        : await _baselineSummary();
     // 附件只跟着基线里的行走：被跳过行的哈希按“服务端已有”处理，本机保留行
     // 也引用到同一个哈希时仍然上传，集合去重。
-    final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
+    final upload = await _uploadBaseline(
+      deviceId,
+      changes,
+      baseSeq: serverHead,
+      stateDigest: summary?.digest,
+      tableDigests: summary?.tables,
+    );
     _ensureIdentity();
-    await _saveServerHead(baseSeq);
+    await _saveServerHead(upload.serverHead);
     await _savePushed(headAfterPull);
     // 首次基线把本机独有的内容上传，编号不大于它的本机提交不再单独推送，
     // 换账号或服务端清空后重建时留下的遮蔽行一并清掉。
     await _shadows.deleteSettled(headAfterPull);
     return (
-      serverHead: baseSeq,
+      serverHead: upload.serverHead,
       pulled: pulled,
-      pushed: pushed,
-      uploaded: uploaded,
+      pushed: upload.pushed,
+      uploaded: upload.uploaded,
       downloaded: downloaded,
     );
   }
@@ -1971,6 +1827,89 @@ class SyncService {
     } catch (error, stack) {
       recordFailure(error, stack, kind: 'cloud_sync_snapshot');
     }
+  }
+
+  /// 投影里还没有被服务端序列表达的行，按表名与主键顺序组装成基线变化。
+  ///
+  /// [skip] 里的“表名 + 主键”已经由远端提交表达，本机这份只是拉下来的副本；
+  /// [tables] 非空时只处理这几张表（“以本机为准修复”按不一致的表缩小范围）。
+  /// 首次同步、两种修复与按快照重建共用这一段，避免每条路径各写一份
+  /// （同步方案 3.6）。
+  List<RevisionChange> _baselineChanges(
+    Projection projection, {
+    required Set<(String, String)> skip,
+    Set<String>? tables,
+  }) {
+    final changes = <RevisionChange>[];
+    var seq = 1;
+    for (final table in versionedTableNames) {
+      if (tables != null && !tables.contains(table)) continue;
+      final rows = projection[table] ?? const <String, TypedRow>{};
+      for (final entry in rows.entries) {
+        if (skip.contains((table, entry.key))) continue;
+        changes.add(
+          RevisionChange(
+            commitId: 0,
+            seq: seq++,
+            table: table,
+            rowKey: entry.key,
+            op: ChangeOp.insert,
+            after: entry.value,
+          ),
+        );
+      }
+    }
+    return changes;
+  }
+
+  /// 读一次本机 `HEAD` 对应的整库摘要与分表摘要。
+  ///
+  /// 读 `HEAD` 与整库重算之间又有本机写入时返回空：这时不能声明一个不成立的云端
+  /// 状态（同步方案 3.5）。分表之和不等于总摘要时只带总摘要（ADR-0054）。
+  Future<({String digest, Map<String, String>? tables})?>
+  _baselineSummary() async {
+    final headBefore = await engine.headId(database.raw);
+    final digest = await revisions.currentStateDigest();
+    final digests = await revisions.currentTableDigests();
+    if (await engine.headId(database.raw) != headBefore) return null;
+    return (
+      digest: digest,
+      tables: revisionTableDigestsMatch(digests, digest) ? digests : null,
+    );
+  }
+
+  /// 把一组本机独有的行作为基线上传：分批推送、补传附件，返回推送之后的位置。
+  ///
+  /// 首次同步、两种修复与按快照重建共用这一段。调用方拿到返回的 [serverHead]
+  /// 之后自己写两个同步位置：各条路径的推送位置含义不同（本机 `HEAD`、恢复点、
+  /// 快照导入提交），这里不替它们决定（同步方案 3.6）。
+  Future<({int serverHead, int pushed, int uploaded})> _uploadBaseline(
+    String deviceId,
+    List<RevisionChange> changes, {
+    required int baseSeq,
+    String? stateDigest,
+    Map<String, String>? tableDigests,
+  }) async {
+    var head = baseSeq;
+    var pushed = 0;
+    await _pushBatches(
+      Stream.fromIterable(
+        _baselineCommits(
+          deviceId,
+          changes,
+          stateDigest: stateDigest,
+          tableDigests: tableDigests,
+        ),
+      ),
+      head,
+      (next, count, seqs) async {
+        head = next;
+        pushed += count;
+      },
+      deviceId: deviceId,
+    );
+    final uploaded = await _uploadAssets(AssetStore.hashesInChanges(changes));
+    return (serverHead: head, pushed: pushed, uploaded: uploaded);
   }
 
   /// 把本机独有的行按每片最多 [_baselineChunk] 处变化组装成基线提交。
