@@ -15,6 +15,7 @@ import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
+import 'package:zhixin/domain/rules/package_budget.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
@@ -454,6 +455,61 @@ void main() {
       );
     }
     expect(await selectRows(db, 'conversation'), isEmpty);
+    final version = await db.rawQuery('PRAGMA user_version');
+    expect(version.first.values.first, zhixinSchemaVersion);
+  });
+
+  test('包级预算超限时在替换数据库之前拒绝，当前库不动', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_budget_');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final path = '${dir.path}/zhixin.db';
+    final db = await openZhixinDatabase(path: path);
+    addTearDown(db.close);
+    final recordId = await _captureRecord(db, '预算检查前的题目');
+    await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    final bytes = await _packageBytes(path, {
+      'm-1.jpg': [4, 5, 6],
+    });
+
+    Future<void> expectRejected(PackageBudget budget, String item) async {
+      final service = DataPackageService(
+        filesDir: dir.path,
+        dbPath: path,
+        appVersion: 'test',
+        schemaVersion: zhixinSchemaVersion,
+        budget: budget,
+      );
+      await expectLater(
+        service.restorePackage(
+          bytes,
+          currentDb: db,
+          openDb: () => openZhixinDatabase(path: path),
+        ),
+        throwsA(
+          isA<BackupException>().having(
+            (error) => error.message,
+            'message',
+            allOf(contains(item), contains('没有读取')),
+          ),
+        ),
+      );
+      expect(await File('${dir.path}/.restore-journal.json').exists(), isFalse);
+    }
+
+    // 包里有 manifest、zhixin.db 与一张图片，共 3 个条目。
+    await expectRejected(const PackageBudget(maxEntries: 2), '条目');
+    await expectRejected(
+      const PackageBudget(maxUncompressedBytes: 1024),
+      '累计解压',
+    );
+
+    expect(
+      (await ConversationRepository(db).question(recordId))?.stem,
+      '预算检查前的题目',
+    );
+    expect(await selectRows(db, 'conversation'), hasLength(1));
     final version = await db.rawQuery('PRAGMA user_version');
     expect(version.first.values.first, zhixinSchemaVersion);
   });

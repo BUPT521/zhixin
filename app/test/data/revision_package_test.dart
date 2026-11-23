@@ -12,6 +12,7 @@ import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
+import 'package:zhixin/domain/rules/package_budget.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
@@ -310,6 +311,130 @@ void main() {
     );
   });
 
+  test('当前数据包导入超预算时拒绝，当前库不动', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_package_budget');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
+    addTearDown(raw.close);
+    final engine = RevisionEngine();
+    final db = GuardedDatabase(
+      gate: DatabaseGate(),
+      resolve: () => raw,
+      revisions: engine,
+    );
+    final packages = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
+    const conversation = 'conv-budget';
+    await insertRow(db, 'conversation', {
+      'id': conversation,
+      'title': '预算检查前',
+      'entry_kind': 'text',
+      'status': 'open',
+      'created_at': '2026-11-10T10:00:00',
+      'updated_at': '2026-11-10T10:00:00',
+    });
+    final path = '${dir.path}/current.zip';
+    await packages.exportCurrent(db, path);
+    final bytes = await File(path).readAsBytes();
+    await deleteRows(
+      db,
+      'conversation',
+      where: 'id = ?',
+      whereArgs: [conversation],
+    );
+    final head = await engine.headId(raw);
+    final commitsBefore = await selectRows(raw, 'revision_commit');
+
+    // 包里有 manifest.json 与 data.json 两个条目。
+    final strict = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      budget: const PackageBudget(maxEntries: 1),
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
+    await expectLater(
+      strict.importCurrent(raw, bytes, expectedHead: head),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains('条目'), contains('没有读取')),
+        ),
+      ),
+    );
+
+    expect(await selectRows(raw, 'conversation'), isEmpty);
+    expect(await engine.headId(raw), head);
+    expect(
+      await selectRows(raw, 'revision_commit'),
+      hasLength(commitsBefore.length),
+    );
+  });
+
+  test('版本库备份超预算时预检拒绝，当前库不动', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_repo_budget');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
+    addTearDown(raw.close);
+    final engine = RevisionEngine();
+    final packages = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
+    await insertRow(raw, 'learning_goal', {
+      'id': 'goal-budget',
+      'title': '预算检查前',
+      'status': 'active',
+      'created_at': '2026-11-10T10:00:00',
+      'updated_at': '2026-11-10T10:00:00',
+    });
+    final path = '${dir.path}/repository.zip';
+    await packages.backupRepository(raw, path);
+    final bytes = await File(path).readAsBytes();
+    final head = await engine.headId(raw);
+    final goalsBefore = await selectRows(raw, 'learning_goal');
+
+    final strict = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      budget: const PackageBudget(maxDatabaseBytes: 1024),
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
+    await expectLater(
+      strict.inspectRepository(bytes),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains('zhixin.db'), contains('没有读取')),
+        ),
+      ),
+    );
+
+    expect(await engine.headId(raw), head);
+    expect(
+      await selectRows(raw, 'learning_goal'),
+      hasLength(goalsBefore.length),
+    );
+    expect((await selectRows(raw, 'learning_goal')).single['title'], '预算检查前');
+  });
+
   test('当前数据包不是版本库备份，预检返回 null', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_package_kind');
     addTearDown(() async {
@@ -332,10 +457,20 @@ void main() {
     );
     final path = '${dir.path}/current.zip';
     await packages.exportCurrent(db, path);
+    final bytes = await File(path).readAsBytes();
 
-    expect(
-      await packages.inspectRepository(await File(path).readAsBytes()),
-      isNull,
+    expect(await packages.inspectRepository(bytes), isNull);
+
+    // 当前数据包的 kind 不是 repository，即使预算小到必然超限也返回 null：
+    // 恢复入口据此继续走旧数据包预检，预算检查不能把这个分支变成异常。
+    final strict = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      budget: const PackageBudget(maxEntries: 0, maxPackageBytes: 1),
+      clock: () => DateTime(2026, 11, 10, 10),
     );
+    expect(await strict.inspectRepository(bytes), isNull);
   });
 }

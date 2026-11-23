@@ -6,6 +6,7 @@ import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../../domain/rules/package_budget.dart';
 import '../../domain/rules/time_policy.dart';
 import '../backup/backup_manifest.dart';
 import '../backup/restore_validation.dart';
@@ -26,6 +27,7 @@ class RevisionPackageService {
     required this.assets,
     required this.schemaVersion,
     required this.appVersion,
+    this.budget = const PackageBudget(),
     this.chunkSize = 64 * 1024,
     this.clock = systemClock,
   });
@@ -34,6 +36,10 @@ class RevisionPackageService {
   final AssetStore assets;
   final int schemaVersion;
   final String appVersion;
+
+  /// 解压预算；当前数据包在读取 manifest、data 与附件之前执行，
+  /// 版本库备份在确认 kind 与 schema 之后、读取 `zhixin.db` 之前执行。
+  final PackageBudget budget;
   final int chunkSize;
   final Clock clock;
 
@@ -112,6 +118,7 @@ class RevisionPackageService {
     required int expectedHead,
   }) async {
     final archive = ZipDecoder().decodeBytes(bytes);
+    _checkBudget(archive, bytes.length);
     final manifestFile = archive.findFile(_manifestEntry);
     final dataFile = archive.findFile(_dataEntry);
     if (manifestFile == null || dataFile == null) {
@@ -250,6 +257,7 @@ class RevisionPackageService {
     if (version != schemaVersion) {
       throw FormatException('版本库备份是 schema v$version，当前只接受 v$schemaVersion');
     }
+    _checkBudget(archive, bytes.length);
     final dbFile = archive.findFile(_databaseEntry);
     if (dbFile == null) throw const FormatException('版本库备份缺少 zhixin.db');
     final data = Uint8List.fromList(dbFile.content as List<int>);
@@ -300,6 +308,21 @@ class RevisionPackageService {
       await copy?.close();
       if (await dir.exists()) await dir.delete(recursive: true);
     }
+  }
+
+  /// 在读取任何条目内容之前按 zip 头执行解压预算，超限时以 [FormatException] 报告。
+  void _checkBudget(Archive archive, int packageBytes) {
+    final problem = budget.problem(
+      packageBytes: packageBytes,
+      entries: archive.files.map(
+        (file) => PackageBudgetEntry(
+          name: file.name,
+          uncompressedBytes: file.size,
+          isDirectory: file.isDirectory,
+        ),
+      ),
+    );
+    if (problem != null) throw FormatException(problem);
   }
 
   /// 暂存库的只读校验：版本、对象白名单、物理完整性与外键。

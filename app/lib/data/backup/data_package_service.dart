@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../db/app_database.dart';
 import '../../domain/rules/attachments.dart';
+import '../../domain/rules/package_budget.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
 import '../revisions/revision_engine.dart' show versionedTableNames;
@@ -29,6 +30,7 @@ class DataPackageService {
     required this.dbPath,
     required this.appVersion,
     required this.schemaVersion,
+    this.budget = const PackageBudget(),
     this.clock = systemClock,
   });
 
@@ -36,6 +38,9 @@ class DataPackageService {
   final String dbPath;
   final String appVersion;
   final int schemaVersion;
+
+  /// 解压预算；在读取 manifest、数据库与附件之前执行。
+  final PackageBudget budget;
   final Clock clock;
 
   /// 预检旧格式的数据包：核对 manifest、schema、图片与暂存库，返回导出信息。
@@ -321,11 +326,24 @@ class DataPackageService {
   }
 
   Archive _decodeArchive(Uint8List bytes) {
+    final Archive archive;
     try {
-      return ZipDecoder().decodeBytes(bytes);
+      archive = ZipDecoder().decodeBytes(bytes);
     } catch (_) {
       throw const BackupException('这个文件不是知新导出的 zip 数据包');
     }
+    final problem = budget.problem(
+      packageBytes: bytes.length,
+      entries: archive.files.map(
+        (file) => PackageBudgetEntry(
+          name: file.name,
+          uncompressedBytes: file.size,
+          isDirectory: file.isDirectory,
+        ),
+      ),
+    );
+    if (problem != null) throw BackupException(problem);
+    return archive;
   }
 
   BackupManifest _readManifest(Archive archive) {
