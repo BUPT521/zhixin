@@ -2,11 +2,14 @@ import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
+import 'dart:io';
+
 import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/prefetch_service.dart';
 import '../data/cloud/server_client.dart';
+import '../domain/rules/package_budget.dart';
 import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
@@ -149,11 +152,19 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
     if (_busy) return;
     setState(() => _busy = true);
     _report('正在下载云端备份…');
+    File? package;
     try {
-      final bytes = await AppScope.of(context).accountServices.backups
+      package = await AppScope.of(context).accountServices.backups
           .download(backup.id);
       if (!mounted) return;
+      final size = await package.length();
+      if (size > dataPackageMaxBytes) {
+        _report(dataPackageTooLargeMessage(size), failed: true);
+        return;
+      }
       _report('正在校验云端备份…');
+      final bytes = await package.readAsBytes();
+      if (!mounted) return;
       final message = await runPackageRestore(
         context,
         preset: bytes,
@@ -180,6 +191,13 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
         failed: true,
       );
     } finally {
+      if (package != null) {
+        try {
+          await package.delete();
+        } catch (_) {
+          // 临时包删不掉不影响恢复结果，下次下载前会再清一次。
+        }
+      }
       if (mounted) setState(() => _busy = false);
     }
   }

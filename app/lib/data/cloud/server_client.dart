@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 /// 服务端的一次拒绝：`application/problem+json` 里的 `code` 是分支依据，
@@ -576,6 +577,22 @@ class ServerBackup {
   final DateTime? createdAt;
 }
 
+/// 一次备份下载的结果：写入的字节数、实际哈希与服务端声明的哈希。
+///
+/// 文件已经落在调用方给的路径上，字节只经过一次拷贝；声明值与实际值不一致时
+/// 由下载方法直接失败并删掉文件，不会返回半个包。
+class BackupDownload {
+  const BackupDownload({
+    required this.length,
+    required this.sha256,
+    this.declaredSha256,
+  });
+
+  final int length;
+  final String sha256;
+  final String? declaredSha256;
+}
+
 /// 今天的模型用量与额度；聊天与嵌入分开计。
 class ServerQuota {
   const ServerQuota({
@@ -1103,18 +1120,23 @@ class ServerClient {
     ];
   }
 
+  /// 上传整库备份：请求体从文件流读，内存占用不随备份大小增长。
+  ///
+  /// [sha256] 由调用方先在同一个文件上分块算出，服务端按它与字节数记账。请求体
+  /// 只能消费一次，所以这里不跟随重定向：备份接口固定在服务地址上，出现重定向
+  /// 按服务地址配置错误拒绝。
   Future<ServerBackup> backupUpload(
     String accessToken, {
-    required Uint8List bytes,
+    required File file,
     required String sha256,
     required int schemaVersion,
     required String deviceName,
   }) async {
-    final json = await _json(
+    final response = await _sendFile(
       'POST',
       '/v1/backups',
       accessToken: accessToken,
-      bodyBytes: bytes,
+      file: file,
       headers: {
         'Content-Type': 'application/zip',
         'X-Content-SHA256': sha256,
@@ -1125,12 +1147,78 @@ class ServerClient {
           'X-Device-Name': Uri.encodeComponent(deviceName),
       },
     );
-    return ServerBackup.fromJson(json);
+    final bytes = await response.stream.toBytes();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _problemFrom(response.statusCode, response.headers, bytes);
+    }
+    if (bytes.isEmpty) return ServerBackup.fromJson(const {});
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map) {
+      throw ServerProblem(code: 'invalid_request', status: response.statusCode);
+    }
+    return ServerBackup.fromJson(decoded.cast<String, Object?>());
   }
 
-  /// 下载备份的原始字节；服务端给出的哈希与大小由调用方核对。
-  Future<http.Response> backupDownload(String accessToken, String id) =>
-      _raw('GET', '/v1/backups/$id', accessToken: accessToken);
+  /// 把一份备份下载到 [target]：边收边写、边算 SHA-256，不在内存里攒整包。
+  ///
+  /// 成功时保留 [target] 并返回字节数与哈希；服务端拒绝、超时、连接中断、写入
+  /// 失败或校验值不一致时删掉 [target]，调用方在失败路径上不会拿到半个包。
+  Future<BackupDownload> backupDownloadTo(
+    String accessToken,
+    String id,
+    File target,
+  ) async {
+    final origin = Uri.parse(baseUrl).origin;
+    var uri = _uri('/v1/backups/$id');
+    try {
+      for (var redirects = 0; ; redirects++) {
+        final request = http.Request('GET', uri)..followRedirects = false;
+        if (accessToken.trim().isNotEmpty) {
+          request.headers['Authorization'] = 'Bearer ${accessToken.trim()}';
+        }
+        final response = await _sendStreamedRequest(request);
+        final location = response.headers['location'];
+        final isRedirect = const {
+          301,
+          302,
+          303,
+          307,
+          308,
+        }.contains(response.statusCode);
+        if (isRedirect && location != null && location.trim().isNotEmpty) {
+          await response.stream.drain<void>();
+          if (redirects >= _maxRedirects) {
+            throw ServerProblem(
+              code: 'redirect_blocked',
+              status: response.statusCode,
+              detail: '重定向次数超过上限',
+            );
+          }
+          final next = uri.resolve(location.trim());
+          if (next.origin != origin) {
+            throw ServerProblem(
+              code: 'redirect_blocked',
+              status: response.statusCode,
+              detail: '拒绝跟随跨域重定向',
+            );
+          }
+          uri = next;
+          continue;
+        }
+        if (response.statusCode != 200) {
+          throw _problemFrom(
+            response.statusCode,
+            response.headers,
+            await response.stream.toBytes(),
+          );
+        }
+        return await _writeDownload(response, target);
+      }
+    } catch (_) {
+      await _deleteQuietly(target);
+      rethrow;
+    }
+  }
 
   Future<void> backupDelete(String accessToken, String id) =>
       _send('DELETE', '/v1/backups/$id', accessToken: accessToken);
@@ -1400,13 +1488,130 @@ class ServerClient {
     }
   }
 
-  ServerProblem _problem(http.Response response) {
-    var code = response.statusCode == 401 ? 'unauthorized' : 'internal';
-    var detail = 'HTTP ${response.statusCode}';
+  /// 发送一个请求体来自文件的请求。响应头与请求体并行处理：边读文件边发，
+  /// 读文件或发送中断时按 [ServerProblem.offline] 处理。
+  Future<http.StreamedResponse> _sendFile(
+    String method,
+    String path, {
+    String? accessToken,
+    required File file,
+    Map<String, String> headers = const {},
+  }) async {
+    final request = http.StreamedRequest(method, _uri(path));
+    request.contentLength = await file.length();
+    if (accessToken != null && accessToken.trim().isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer ${accessToken.trim()}';
+    }
+    request.headers.addAll(headers);
+    final responseFuture = _sendStreamedRequest(request);
+    Object? writeError;
+    final wrote = file.openRead().pipe(request.sink).catchError((Object error) {
+      writeError = error;
+    });
+    http.StreamedResponse response;
+    try {
+      response = await responseFuture;
+    } catch (_) {
+      // 服务端没有应答时先关掉请求体：没有听众的流会把文件越攒越多，
+      // 关闭之后上游的写入立即失败，不必把整个文件读完。
+      unawaited(request.sink.close().catchError((Object _) {}));
+      await wrote;
+      rethrow;
+    }
+    await wrote;
+    if (writeError != null &&
+        response.statusCode >= 200 &&
+        response.statusCode < 300) {
+      throw ServerProblem.offline('上传中断：$writeError');
+    }
+    return response;
+  }
+
+  Future<http.StreamedResponse> _sendStreamedRequest(
+    http.BaseRequest request,
+  ) async {
+    try {
+      return await _http.send(request).timeout(timeout);
+    } on TimeoutException catch (_) {
+      throw const ServerProblem.offline('请求超时');
+    } on SocketException catch (error) {
+      throw ServerProblem.offline(error.message);
+    } on http.ClientException catch (error) {
+      throw ServerProblem.offline(error.message);
+    }
+  }
+
+  /// 把响应体写到 [target]，同时算 SHA-256 与字节数。
+  ///
+  /// 声明了 `Content-Length` 或 `X-Content-SHA256` 时逐一核对：两者都是流式下载
+  /// 能拿到的完整性依据，不一致说明传输被截断或被改写。
+  Future<BackupDownload> _writeDownload(
+    http.StreamedResponse response,
+    File target,
+  ) async {
+    final declared = response.headers['x-content-sha256'];
+    final declaredLength = response.contentLength;
+    final digest = _DigestSink();
+    final input = sha256.startChunkedConversion(digest);
+    final sink = target.openWrite();
+    var length = 0;
+    try {
+      await for (final chunk in response.stream.timeout(timeout)) {
+        length += chunk.length;
+        input.add(chunk);
+        sink.add(chunk);
+      }
+      input.close();
+      await sink.flush();
+    } on TimeoutException {
+      throw const ServerProblem.offline('请求超时');
+    } on SocketException catch (error) {
+      throw ServerProblem.offline(error.message);
+    } on http.ClientException catch (error) {
+      throw ServerProblem.offline(error.message);
+    } finally {
+      try {
+        await sink.close();
+      } catch (_) {
+        // 句柄在这里释放，写入错误由上面的分支或调用方的校验处理。
+      }
+    }
+    if (declaredLength != null && declaredLength != length) {
+      throw const ServerProblem.offline('下载不完整：字节数与服务端声明不一致');
+    }
+    final actual = digest.value.toString();
+    if (declared != null && declared.isNotEmpty && declared != actual) {
+      throw const FormatException('云端备份下载不完整，校验值不一致');
+    }
+    return BackupDownload(
+      length: length,
+      sha256: actual,
+      declaredSha256: declared,
+    );
+  }
+
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // 删不掉不影响这次调用的结果，调用方下次会覆盖同名临时文件。
+    }
+  }
+
+  ServerProblem _problem(http.Response response) =>
+      _problemFrom(response.statusCode, response.headers, response.bodyBytes);
+
+  ServerProblem _problemFrom(
+    int status,
+    Map<String, String> headers,
+    List<int> bodyBytes,
+  ) {
+    var code = status == 401 ? 'unauthorized' : 'internal';
+    var detail = 'HTTP $status';
     Map<String, Object?> extra = const {};
     int? retryAfter;
     try {
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = jsonDecode(utf8.decode(bodyBytes));
       if (decoded is Map) {
         final map = decoded.cast<String, Object?>();
         if (map['code'] is String) code = map['code']! as String;
@@ -1418,16 +1623,33 @@ class ServerClient {
     } catch (_) {
       // 非 problem+json 的响应保留状态码。
     }
-    final retry = response.headers['retry-after'];
+    final retry = headers['retry-after'];
     if (retry != null) retryAfter = int.tryParse(retry.trim());
     return ServerProblem(
       code: code,
-      status: response.statusCode,
+      status: status,
       detail: detail,
       extra: extra,
       retryAfterSeconds: retryAfter,
     );
   }
+}
+
+/// 收下 [sha256.startChunkedConversion] 在 `close` 时产出的唯一摘要。
+class _DigestSink implements Sink<Digest> {
+  Digest? _value;
+
+  Digest get value {
+    final digest = _value;
+    if (digest == null) throw StateError('摘要还没有产出');
+    return digest;
+  }
+
+  @override
+  void add(Digest data) => _value = data;
+
+  @override
+  void close() {}
 }
 
 DateTime? _parseTime(Object? value) {

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -6,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 import 'package:zhixin/data/cloud/server_client.dart';
 
 import '../../support/fake_server.dart';
@@ -342,7 +345,7 @@ void main() {
     );
   });
 
-  test('备份上传带哈希与 schema，列表、下载与删除往返', () async {
+  test('备份上传从文件流发送，下载写到本地文件并核对哈希', () async {
     final server = FakeServer();
     final client = ServerClient(
       baseUrl: 'http://server.test',
@@ -354,9 +357,12 @@ void main() {
     );
     final bytes = Uint8List.fromList(utf8.encode('zip-bytes'));
     final sha = _sha256Of(bytes);
+    final file = await _tempFile(bytes);
+    addTearDown(() => file.parent.delete(recursive: true));
+
     final uploaded = await client.backupUpload(
       tokens.accessToken,
-      bytes: bytes,
+      file: file,
       sha256: sha,
       schemaVersion: zhixinSchemaVersion,
       deviceName: '测试设备',
@@ -370,14 +376,117 @@ void main() {
     // 设备名在头里编码，列表里是解码后的原文。
     expect(list.first.deviceName, '测试设备');
 
-    final response = await client.backupDownload(
+    final target = File(p.join(file.parent.path, 'download.zip'));
+    final downloaded = await client.backupDownloadTo(
       tokens.accessToken,
       uploaded.id,
+      target,
     );
-    expect(response.bodyBytes, bytes);
+    expect(downloaded.length, bytes.length);
+    expect(downloaded.sha256, sha);
+    expect(downloaded.declaredSha256, sha);
+    expect(await target.readAsBytes(), bytes);
 
     await client.backupDelete(tokens.accessToken, uploaded.id);
     expect(await client.backupList(tokens.accessToken), isEmpty);
+  });
+
+  test('上传途中连接失败按离线处理，不把文件读完', () async {
+    final file = await _tempFile(utf8.encode('zip-bytes'));
+    addTearDown(() => file.parent.delete(recursive: true));
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: MockClient(
+        (request) async => throw http.ClientException('网络断了'),
+      ),
+    );
+
+    await expectLater(
+      client.backupUpload(
+        'token',
+        file: file,
+        sha256: _sha256Of(await file.readAsBytes()),
+        schemaVersion: zhixinSchemaVersion,
+        deviceName: '测试设备',
+      ),
+      throwsA(
+        isA<ServerProblem>().having((error) => error.code, 'code', 'offline'),
+      ),
+    );
+  });
+
+  test('下载校验值不一致时删掉临时文件并失败', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_backup_');
+    addTearDown(() => dir.delete(recursive: true));
+    final target = File(p.join(dir.path, 'backup.zip'));
+    final body = utf8.encode('zip-bytes');
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: MockClient.streaming(
+        (request, bodyStream) async => http.StreamedResponse(
+          Stream.value(body),
+          200,
+          headers: {'x-content-sha256': 'deadbeef'},
+          contentLength: body.length,
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.backupDownloadTo('token', 'backup-1', target),
+      throwsA(isA<FormatException>()),
+    );
+    expect(await target.exists(), isFalse);
+  });
+
+  test('下载中途超时删掉临时文件并按离线处理', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_backup_');
+    addTearDown(() => dir.delete(recursive: true));
+    final target = File(p.join(dir.path, 'backup.zip'));
+    final chunks = StreamController<List<int>>();
+    addTearDown(chunks.close);
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      timeout: const Duration(milliseconds: 20),
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        chunks.add(utf8.encode('partial'));
+        return http.StreamedResponse(chunks.stream, 200, contentLength: 10);
+      }),
+    );
+
+    await expectLater(
+      client.backupDownloadTo('token', 'backup-1', target),
+      throwsA(
+        isA<ServerProblem>().having((error) => error.code, 'code', 'offline'),
+      ),
+    );
+    expect(await target.exists(), isFalse);
+  });
+
+  test('服务端声明字节数与实际不一致时按离线处理', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_backup_');
+    addTearDown(() => dir.delete(recursive: true));
+    final target = File(p.join(dir.path, 'backup.zip'));
+    final body = utf8.encode('zip-bytes');
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: MockClient.streaming(
+        (request, bodyStream) async => http.StreamedResponse(
+          Stream.value(body),
+          200,
+          headers: {'x-content-sha256': _sha256Of(body)},
+          contentLength: body.length + 2,
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.backupDownloadTo('token', 'backup-1', target),
+      throwsA(
+        isA<ServerProblem>().having((error) => error.code, 'code', 'offline'),
+      ),
+    );
+    expect(await target.exists(), isFalse);
   });
 
   test('附件按内容寻址：上传、存在检查与下载', () async {
@@ -594,3 +703,11 @@ void main() {
 }
 
 String _sha256Of(List<int> bytes) => sha256.convert(bytes).toString();
+
+/// 建一个临时目录里的文件，测试结束由调用方按父目录清理。
+Future<File> _tempFile(List<int> bytes) async {
+  final dir = await Directory.systemTemp.createTemp('zhixin_backup_');
+  final file = File(p.join(dir.path, 'backup.zip'));
+  await file.writeAsBytes(bytes);
+  return file;
+}

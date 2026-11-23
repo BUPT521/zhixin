@@ -21,6 +21,7 @@ import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart'
     show RevisionDetails, RevisionService;
 import '../domain/models/result.dart';
+import '../domain/rules/package_budget.dart';
 import '../platform/data_package_export.dart';
 import 'copy.dart';
 import 'data_version_watcher.dart';
@@ -849,7 +850,14 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (_busy) return;
     final picked = await FilePicker.pickFile(dialogTitle: '选择数据包');
     final path = picked?.path;
-    if (path == null || !mounted) return;
+    if (picked == null || path == null || !mounted) return;
+    // 超过上限的包不读进内存：先看文件大小，再决定是否读取。
+    final size = await picked.length();
+    if (!mounted) return;
+    if (size != null && size > dataPackageMaxBytes) {
+      _report(dataPackageTooLargeMessage(size));
+      return;
+    }
     final scope = AppScope.of(context);
     final int expectedHead;
     final Uint8List bytes;

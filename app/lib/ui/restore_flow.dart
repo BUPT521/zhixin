@@ -10,6 +10,7 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../data/backup/restore_inspection.dart';
 import '../domain/models/result.dart';
+import '../domain/rules/package_budget.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'zhixin_dialog.dart';
@@ -148,6 +149,22 @@ Future<(Uint8List, RestoreInspection, String?)?> _selectAndInspect(
       final picked = await FilePicker.pickFile(dialogTitle: '选择数据包');
       if (picked == null) return null;
       fileName = picked.name;
+      // 超过上限的包不读进内存：先看文件大小，再决定是否读取。
+      final size = await picked.length();
+      if (size != null && size > dataPackageMaxBytes) {
+        final message = dataPackageTooLargeMessage(size);
+        onStatus?.call(message);
+        if (!context.mounted) return null;
+        if (await _showRejectedPackage(
+          context,
+          message,
+          allowReselect: preset == null,
+        )) {
+          fileName = null;
+          continue;
+        }
+        return null;
+      }
       onStatus?.call('正在读取数据包…');
       bytes = await picked.readAsBytes();
     }
