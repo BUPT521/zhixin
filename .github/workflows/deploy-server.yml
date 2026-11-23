@@ -54,6 +54,22 @@ jobs:
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go mod tidy -diff
       - run: go vet ./...
+
+      # 生成代码与 CI 的服务端任务一样提交入库；重新生成后比对，避免契约或查询改了
+      # 却拿旧生成物构建部署（ADR-0015、ADR-0032）。生成器版本与 ci.yml 保持一致。
+      - name: 核对 sqlc 生成
+        run: |
+          go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
+          git diff --exit-code -- internal/store/db
+          test -z "$(git status --porcelain -- internal/store/db)"
+
+      - name: 核对契约生成
+        run: |
+          go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2 \
+            -config api/cfg.yaml api/openapi.yaml
+          git diff --exit-code -- internal/api
+          test -z "$(git status --porcelain -- internal/api)"
+
       - run: go test -race ./...
         env:
           ZHIXIN_TEST_DATABASE_URL: postgresql://zhixin_test@localhost:${{ job.services.postgres.ports[5432] }}/zhixin_test?sslmode=disable
