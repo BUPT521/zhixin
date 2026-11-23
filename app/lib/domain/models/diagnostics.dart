@@ -17,7 +17,7 @@ class CrashEntry {
   final String stack;
 }
 
-/// 崩溃记录的汇总：启动次数、最近的错误，以及两者的比值。
+/// 崩溃记录的汇总：启动次数与最近的错误。
 class CrashSummary {
   const CrashSummary({required this.launches, required this.crashes});
 
@@ -27,9 +27,6 @@ class CrashSummary {
   final List<CrashEntry> crashes;
 
   int get count => crashes.length;
-
-  /// 崩溃率按“错误次数 / 启动次数”算；没有启动记录时返回 null。
-  double? get rate => launches <= 0 ? null : count / launches;
 
   CrashEntry? get latest => crashes.isEmpty ? null : crashes.first;
 

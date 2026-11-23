@@ -1,10 +1,11 @@
 import 'dart:typed_data';
 
-import '../../domain/rules/embedding.dart';
-import '../../domain/rules/search_terms.dart';
-import 'vector_index.dart';
+import 'package:zhixin/domain/rules/embedding.dart';
+import 'package:zhixin/domain/rules/search_terms.dart';
+import 'package:zhixin/data/vector/vector_index.dart';
 
-/// 纯 Dart 的索引实现，供服务层测试使用；关键词匹配口径与 zvec 的实现一致。
+/// 纯 Dart 的索引实现，只给测试用，生产走 `ZvecVectorIndex`；关键词匹配口径
+/// 与 zvec 的实现一致，改动排序时两处一起改。
 ///
 /// 与 zvec 的实现一样按 spec 分成两种 collection：纯文本 spec 只接受正文、
 /// 提供关键词检索；其余 spec 只接受向量与文本哈希、提供向量检索。

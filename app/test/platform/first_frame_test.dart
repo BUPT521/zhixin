@@ -7,7 +7,6 @@ void main() {
   tearDown(() {
     // 每个用例都放行，避免压住的帧数带到下一个用例。
     FirstFrameGate.release();
-    FirstFrameGate.resetForTest();
   });
 
   test('压住之后放行一次就够，重复放行不再动框架', () {

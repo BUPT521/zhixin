@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:zhixin/application/embedding_client.dart';
+
+import '../support/fixed_embedding_client.dart';
+
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/embedding_settings.dart';
@@ -18,8 +21,13 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/revisions/revision_cursor.dart';
 import 'package:zhixin/data/vector/embedding_codec.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
-import 'package:zhixin/data/vector/memory_vector_index.dart';
+
+import '../support/memory_vector_index.dart';
+
 import 'package:zhixin/data/vector/vector_store.dart';
+
+import '../support/direct_vector_store.dart';
+
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/embedding.dart';

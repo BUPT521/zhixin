@@ -859,12 +859,3 @@ class PlanActions {
     );
   }
 }
-
-/// 周视图里点到一段预约时按编号补读事项；读不到时用预约里的标题说明。
-Future<PlanItem?> itemForBlock(BuildContext context, String itemId) async {
-  try {
-    return await AppScope.of(context).study.plan.itemById(itemId);
-  } catch (_) {
-    return null;
-  }
-}

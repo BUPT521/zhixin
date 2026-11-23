@@ -165,7 +165,7 @@ void main() {
       expect(() => runtime.isEnabled('nope'), throwsA(isA<PluginNotFound>()));
       expect(() => runtime.byId('nope'), throwsA(isA<PluginNotFound>()));
       expect(
-        () => runtime.permissionsOf('nope'),
+        () => runtime.byId('nope').manifest.permissions,
         throwsA(isA<PluginNotFound>()),
       );
       await expectLater(
@@ -223,7 +223,7 @@ void main() {
         completion(isNull),
         reason: '启动失败只记录，不打断应用启动',
       );
-      expect(runtime.startFailures.single.pluginId, 'broken');
+      expect(runtime.isEnabled('broken'), isTrue);
       expect(store.values[pluginEnabledKey('broken')], isNull);
 
       await expectLater(

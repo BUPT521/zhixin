@@ -6,6 +6,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/application/embedding_client.dart';
+
+import '../support/fixed_embedding_client.dart';
+
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/ui/records_search_page.dart';

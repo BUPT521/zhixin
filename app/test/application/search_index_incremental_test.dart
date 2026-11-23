@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/embedding_client.dart';
+
+import '../support/fixed_embedding_client.dart';
+
 import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -13,8 +16,10 @@ import 'package:zhixin/data/revisions/revision_cursor.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/semantic_change.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
-import 'package:zhixin/data/vector/memory_vector_index.dart';
-import 'package:zhixin/data/vector/vector_store.dart';
+
+import '../support/memory_vector_index.dart';
+import '../support/direct_vector_store.dart';
+
 import 'package:zhixin/domain/models/evidence_id.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 

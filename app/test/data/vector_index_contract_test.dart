@@ -5,7 +5,9 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:zhixin/data/vector/embedding_codec.dart';
-import 'package:zhixin/data/vector/memory_vector_index.dart';
+
+import '../support/memory_vector_index.dart';
+
 import 'package:zhixin/data/vector/vector_index.dart';
 import 'package:zhixin/data/vector/vector_store.dart';
 import 'package:zhixin/data/vector/zvec_vector_index.dart';

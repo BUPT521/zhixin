@@ -71,15 +71,14 @@ class PluginRuntime {
   final Map<String, PluginAccess> _access = {};
   final Set<String> _enabled = {};
   final Set<String> _running = {};
+
+  /// 装载阶段的启动失败，只在这里记录：启用状态保持启用，单个插件启动失败
+  /// 不打断应用启动，下次启用或重载时再试。
   final List<PluginStartException> _startFailures = [];
   FirstPartyPlugin? _personaPlugin;
 
   /// 注册的插件，按注册顺序排列。
   List<FirstPartyPlugin> get plugins => List.unmodifiable(_plugins.values);
-
-  /// 装载阶段的启动失败；启用状态保持启用，失败原因供诊断与界面说明。
-  List<PluginStartException> get startFailures =>
-      List.unmodifiable(_startFailures);
 
   /// 按标识取插件；未知标识拒绝。
   FirstPartyPlugin byId(String id) {
@@ -94,11 +93,12 @@ class PluginRuntime {
     return _enabled.contains(id);
   }
 
-  /// 清单声明的权限；未知标识拒绝。
-  PluginPermissions permissionsOf(String id) => byId(id).manifest.permissions;
-
   /// 从 `app_meta` 读取启停状态与人格配置；启动已启用的插件。
   ///
+  /// 装载阶段的启动失败；推送诊断记录时读取。
+  List<PluginStartException> get startFailures =>
+      List.unmodifiable(_startFailures);
+
   /// 应用启动、整库恢复与清空之后调用；重复调用只重读状态，已经在运行的插件
   /// 不再次启动。
   Future<void> load() async {
@@ -116,6 +116,7 @@ class PluginRuntime {
         await plugin.start(_access[id]!);
         _running.add(id);
       } catch (error) {
+        // 启用状态保持启用，单个插件启动失败不打断应用启动；下次启用或重载再试。
         _startFailures.add(PluginStartException(id, error));
       }
     }

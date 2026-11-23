@@ -293,12 +293,10 @@ void main() {
     final lists = <List<Material>>[];
     final rows = <Material?>[];
     final pages = <List<MaterialPage>>[];
-    final singlePages = <MaterialPage?>[];
     final subscriptions = [
       service.watchList().listen(lists.add),
       service.watchMaterial(materialId).listen(rows.add),
       service.watchPages(materialId).listen(pages.add),
-      service.watchPage(materialId, 2).listen(singlePages.add),
     ];
     addTearDown(() async {
       for (final subscription in subscriptions) {
@@ -309,16 +307,13 @@ void main() {
     expect(lists.single.single.pageCount, 2);
     expect(rows.single?.title, '概率论讲义');
     expect(pages.single.map((page) => page.pageNo), [1, 2]);
-    expect(singlePages.single?.content, '第二页');
+    expect(pages.single.singleWhere((page) => page.pageNo == 2).content, '第二页');
 
-    // 补一页之后，整份页码与单页原文都跟着重读。
+    // 补一页之后整份页码跟着重读。
     await service.addPage(materialId: materialId, pageNo: 3, content: '补充的第三页');
     await _settle();
     expect(pages.last.map((page) => page.pageNo), [1, 2, 3]);
     expect(lists.last.single.pageCount, 3);
-    // 按表通知不区分行，补别的页也会让这一页重读一次，结果仍是第 2 页。
-    expect(singlePages, hasLength(2));
-    expect(singlePages.last?.content, '第二页');
 
     // 改第 2 页之后，单页读法读到更正后的原文。
     await service.correctPage(
@@ -326,7 +321,6 @@ void main() {
       corrected: '更正后的第二页',
     );
     await _settle();
-    expect(singlePages.last?.content, '更正后的第二页');
     expect(
       pages.last.singleWhere((page) => page.pageNo == 2).content,
       '更正后的第二页',

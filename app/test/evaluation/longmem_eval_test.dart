@@ -12,8 +12,10 @@ import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
-import 'package:zhixin/data/vector/memory_vector_index.dart';
-import 'package:zhixin/data/vector/vector_store.dart';
+
+import '../support/memory_vector_index.dart';
+import '../support/direct_vector_store.dart';
+
 import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/question.dart';
 import 'package:zhixin/domain/rules/embedding.dart';

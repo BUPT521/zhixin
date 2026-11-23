@@ -5,8 +5,10 @@ import 'package:zhixin/application/embedding_settings.dart';
 import 'package:zhixin/application/search_index_service.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
-import 'package:zhixin/data/vector/memory_vector_index.dart';
-import 'package:zhixin/data/vector/vector_store.dart';
+
+import '../support/memory_vector_index.dart';
+import '../support/direct_vector_store.dart';
+
 import 'package:zhixin/domain/rules/embedding.dart';
 
 import '../support/test_db.dart';

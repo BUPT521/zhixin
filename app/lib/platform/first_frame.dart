@@ -27,7 +27,4 @@ class FirstFrameGate {
 
   /// 是否还压着第一帧；测试据此确认放行只做了一次。
   static bool get isDeferred => _deferred;
-
-  /// 只给测试复位，让同一个进程里的用例互不影响。
-  static void resetForTest() => _deferred = false;
 }

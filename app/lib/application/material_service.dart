@@ -55,10 +55,6 @@ class MaterialService {
   Stream<List<MaterialPage>> watchPages(String materialId) =>
       runtime.watch(tables: _pageTables, read: () => pages(materialId));
 
-  /// 跟随写入更新的单页原文；只显示一页的地方换页时换一条新流。
-  Stream<MaterialPage?> watchPage(String materialId, int pageNo) =>
-      runtime.watch(tables: _pageTables, read: () => page(materialId, pageNo));
-
   Future<Material?> byId(String id) => materials.byId(id);
 
   /// 材料当前的最小与最大页码；做学习计划时据此决定可选范围。
