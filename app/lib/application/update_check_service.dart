@@ -1,19 +1,13 @@
-/// 应用内更新检查：读公开发布清单，按平台取一项，比较版本之后下载安装包，
-/// 核对 https、SHA-256 与签名，三项都通过才报告有更新。
+/// 应用内更新检查：读公开发布清单，按平台取一项，比较版本，核对 https 与
+/// SHA-256 格式，再用内置公钥核对清单签名。
 ///
-/// 网络读取、下载、哈希与验签都拆成可注入的函数，单元测试不需要真的联网；
-/// 生产路径用 [ServerClient] 读清单、用独立 HTTP 客户端下载安装包。检查本身
-/// 不提示、不改界面：调用方按 [UpdateCheckResult] 决定是否弹窗，失败时把原因
-/// 交给本机诊断记录（`kind` 为 `update_check`），不打扰用户。
+/// 检查阶段不下载安装包：清单签名对象是安装包 SHA-256 字符串，验签通过即可
+/// 判定有更新；安装包由系统浏览器在用户确认后下载一次，系统安装器在覆盖安装前
+/// 核对安装包签名。网络读取与验签都拆成可注入的函数，单元测试不需要真的联网；
+/// 生产路径只用 [ServerClient] 读清单。检查本身不提示、不改界面：调用方按
+/// [UpdateCheckResult] 决定是否弹窗，失败时把原因交给本机诊断记录（`kind` 为
+/// `update_check`），不打扰用户。
 library;
-
-import 'dart:async';
-import 'dart:io';
-import 'dart:typed_data';
-
-import 'package:crypto/crypto.dart' show sha256;
-import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
 
 import '../data/cloud/release_verification.dart';
 import '../data/cloud/server_client.dart';
@@ -29,8 +23,6 @@ enum UpdateFailure {
   invalidReleaseVersion,
   insecureUrl,
   missingHash,
-  download,
-  hashMismatch,
   signatureMismatch,
   unexpected,
 }
@@ -43,6 +35,8 @@ class UpdateCheckResult {
       requiredUpdate = false,
       failure = null;
 
+  /// 清单里有比当前版本更新的安装包。检查阶段不下载安装包；用户确认后由系统
+  /// 浏览器打开清单地址下载一次，系统安装器核对安装包签名后覆盖安装。
   const UpdateCheckResult.updateAvailable(
     ServerRelease this.release, {
     required this.requiredUpdate,
@@ -69,8 +63,6 @@ class UpdateCheckResult {
     UpdateFailure.invalidReleaseVersion => '发布清单里的版本号无法解析',
     UpdateFailure.insecureUrl => '下载地址不是 https，不提示更新',
     UpdateFailure.missingHash => '发布清单缺少合法的 sha256',
-    UpdateFailure.download => '下载安装包失败，检查更新没有完成',
-    UpdateFailure.hashMismatch => '安装包哈希与发布清单不一致，不提示更新',
     UpdateFailure.signatureMismatch => '发布清单签名没有通过，不提示更新',
     UpdateFailure.unexpected => '检查更新时出现异常，可以稍后再试',
     null => '',
@@ -79,9 +71,6 @@ class UpdateCheckResult {
 
 /// 读发布清单：参数是服务地址，返回该实例给出的清单项。
 typedef ReleaseFetcher = Future<List<ServerRelease>> Function(String baseUrl);
-
-/// 下载安装包：参数已经核对过是 https 地址。
-typedef ReleaseDownloader = Future<Uint8List> Function(Uri url);
 
 /// 用内置公钥核对清单签名；失败返回 false。
 typedef ReleaseSignatureChecker = Future<bool> Function({
@@ -98,15 +87,11 @@ class UpdateCheckService {
     required this.publicKeyPem,
     this.platform = 'android',
     ReleaseFetcher? fetchReleases,
-    ReleaseDownloader? downloadPackage,
     ReleaseSignatureChecker? verifySignature,
     this.recordFailure,
     this.timeout = const Duration(seconds: 30),
-    this.tempDirectory,
   }) : _fetchReleases =
            fetchReleases ?? ((baseUrl) => _fetchReleasesFrom(baseUrl, timeout)),
-       _downloadPackage =
-           downloadPackage ?? ((url) => _downloadFromNetwork(url, timeout)),
        _verifySignature = verifySignature ?? verifyReleaseSignature;
 
   /// 账号页保存的服务地址；没有登录或没有自定义时是编译时的默认地址。
@@ -127,14 +112,13 @@ class UpdateCheckService {
 
   final Duration timeout;
 
-  /// 下载安装包的临时目录；留空用系统临时目录，测试可以指定。
-  final Directory? tempDirectory;
-
   final ReleaseFetcher _fetchReleases;
-  final ReleaseDownloader _downloadPackage;
   final ReleaseSignatureChecker _verifySignature;
 
-  /// 走完版本、https、哈希与签名四步；任何一步不通过都返回不提示。
+  /// 走完版本、https、哈希格式与签名四步；任何一步不通过都返回不提示。
+  ///
+  /// 检查阶段只读发布清单，不对安装包地址发起请求；安装包由系统浏览器在用户
+  /// 确认后下载一次，应用内不安装。
   Future<UpdateCheckResult> check() async {
     try {
       return await _check();
@@ -203,43 +187,12 @@ class UpdateCheckService {
       return const UpdateCheckResult.failed(UpdateFailure.signatureMismatch);
     }
 
-    final String actual;
-    try {
-      actual = await _downloadAndHash(uri);
-    } catch (error, stack) {
-      _record(error, stack);
-      return const UpdateCheckResult.failed(UpdateFailure.download);
-    }
-    if (actual != expected) {
-      _recordReason(UpdateFailure.hashMismatch);
-      return const UpdateCheckResult.failed(UpdateFailure.hashMismatch);
-    }
-
     final minimum = ReleaseVersion.tryParse(release.minVersion, 0);
     final requiredUpdate = minimum != null && current.compareTo(minimum) < 0;
     return UpdateCheckResult.updateAvailable(
       release,
       requiredUpdate: requiredUpdate,
     );
-  }
-
-  /// 下载到临时文件之后再算哈希：确认落盘的内容与清单一致，临时文件用完即删。
-  Future<String> _downloadAndHash(Uri url) async {
-    final bytes = await _downloadPackage(url);
-    final parent = tempDirectory ?? Directory.systemTemp;
-    final directory = await parent.createTemp('zhixin_update_');
-    final file = File(p.join(directory.path, 'release.package'));
-    try {
-      await file.writeAsBytes(bytes, flush: true);
-      final digest = await sha256.bind(file.openRead()).first;
-      return digest.toString();
-    } finally {
-      try {
-        await directory.delete(recursive: true);
-      } catch (_) {
-        // 临时文件删不掉不影响结论；系统清理临时目录时会带走。
-      }
-    }
   }
 
   void _record(Object error, StackTrace stack) {
@@ -254,7 +207,6 @@ class UpdateCheckService {
   static String _reasonText(UpdateFailure failure) => switch (failure) {
     UpdateFailure.insecureUrl => '发布清单的下载地址不是 https',
     UpdateFailure.missingHash => '发布清单缺少合法的 sha256',
-    UpdateFailure.hashMismatch => '安装包哈希与发布清单不一致',
     UpdateFailure.signatureMismatch => '发布清单签名没有通过',
     UpdateFailure.invalidReleaseVersion => '发布清单里的版本号无法解析',
     _ => '更新检查没有通过',
@@ -271,19 +223,5 @@ Future<List<ServerRelease>> _fetchReleasesFrom(
     return await client.releases();
   } finally {
     client.dispose();
-  }
-}
-
-/// 生产路径的安装包下载：单独用短连接，失败由调用方按诊断记下。
-Future<Uint8List> _downloadFromNetwork(Uri url, Duration timeout) async {
-  final client = http.Client();
-  try {
-    final response = await client.get(url).timeout(timeout);
-    if (response.statusCode != 200) {
-      throw HttpException('下载安装包返回 HTTP ${response.statusCode}');
-    }
-    return response.bodyBytes;
-  } finally {
-    client.close();
   }
 }

@@ -22,8 +22,7 @@ void main() {
   late Directory directory;
   AppScopeState? scope;
 
-  final package = Uint8List.fromList(utf8.encode('zhixin apk bytes'));
-  final hash = releaseSha256Hex(package);
+  final hash = releaseSha256Hex(utf8.encode('zhixin apk bytes'));
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp(
@@ -64,7 +63,6 @@ void main() {
   UpdateCheckService service({
     List<ServerRelease> releases = const [],
     bool failFetch = false,
-    Uint8List? bytes,
     bool signatureValid = true,
   }) => UpdateCheckService(
     serverBaseUrl: () async => 'http://server.test',
@@ -74,7 +72,6 @@ void main() {
       if (failFetch) throw const ServerProblem.offline('测试断网');
       return releases;
     },
-    downloadPackage: (_) async => bytes ?? package,
     verifySignature: ({
       required publicKeyPem,
       required sha256Hex,
@@ -178,19 +175,6 @@ void main() {
     await tapCheckUpdates(tester);
     await waitFor(tester, find.textContaining('检查更新失败'));
     expect(find.textContaining('无法连接服务端'), findsOneWidget);
-    expect(find.text('有新版本可用'), findsNothing);
-  });
-
-  testWidgets('哈希不符时说明检查失败', (tester) async {
-    await pumpSettings(
-      tester,
-      service(
-        releases: [release()],
-        bytes: Uint8List.fromList(utf8.encode('被替换的安装包')),
-      ),
-    );
-    await tapCheckUpdates(tester);
-    await waitFor(tester, find.textContaining('哈希与发布清单不一致'));
     expect(find.text('有新版本可用'), findsNothing);
   });
 }

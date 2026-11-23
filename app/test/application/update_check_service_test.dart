@@ -1,15 +1,16 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/update_check_service.dart';
 import 'package:zhixin/data/cloud/release_verification.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 
-/// 更新检查的拒绝与接受：版本、https、哈希与签名四步，任一不通过都不提示。
+/// 更新检查的拒绝与接受：版本、https、哈希格式与签名四步，任一不通过都不提示。
+///
+/// 检查阶段不下载安装包，安装包由系统浏览器在用户确认后下载，所以这些用例都
+/// 不涉及对安装包地址的请求。
 void main() {
-  final package = Uint8List.fromList(utf8.encode('zhixin apk bytes'));
-  final hash = releaseSha256Hex(package);
+  final hash = releaseSha256Hex(utf8.encode('zhixin apk bytes'));
 
   ServerRelease release({
     String version = '0.2.0',
@@ -33,7 +34,6 @@ void main() {
   UpdateCheckService service({
     List<ServerRelease> Function()? releases,
     bool failFetch = false,
-    Uint8List? bytes,
     bool signatureValid = true,
     bool useRealSignatureCheck = false,
     String publicKeyPem = '内置公钥',
@@ -46,7 +46,6 @@ void main() {
       if (failFetch) throw const ServerProblem.offline('测试断网');
       return releases?.call() ?? <ServerRelease>[];
     },
-    downloadPackage: (_) async => bytes ?? package,
     verifySignature: useRealSignatureCheck
         ? verifyReleaseSignature
         : ({
@@ -102,41 +101,25 @@ void main() {
     expect(result.requiredUpdate, isTrue);
   });
 
-  test('下载地址不是 https 时不提示，也不下载', () async {
-    var downloads = 0;
-    final checker = UpdateCheckService(
-      serverBaseUrl: () async => 'http://server.test',
-      appVersion: '0.1.1-dev+2',
-      publicKeyPem: '内置公钥',
-      fetchReleases: (_) async => [
-        release(url: 'http://example.test/zhixin.apk'),
-      ],
-      downloadPackage: (_) async {
-        downloads++;
-        return package;
-      },
-      verifySignature: ({
-        required publicKeyPem,
-        required sha256Hex,
-        required signatureBase64,
-      }) async => true,
-    );
-    final result = await checker.check();
-    expect(result.status, UpdateCheckStatus.failed);
-    expect(result.failure, UpdateFailure.insecureUrl);
-    expect(downloads, 0);
+  test('检查阶段不下载安装包：安装包地址不可解析也仍提示更新', () async {
+    // 清单地址是不可解析的域名；检查只读清单并验签，不对安装包地址发请求，
+    // 所以这里仍然拿到 updateAvailable。
+    final result = await service(
+      releases: () => [release(url: 'https://example.invalid/zhixin.apk')],
+    ).check();
+    expect(result.status, UpdateCheckStatus.updateAvailable);
+    expect(result.release?.url, 'https://example.invalid/zhixin.apk');
   });
 
-  test('下载后的哈希与清单不一致时不提示', () async {
+  test('下载地址不是 https 时不提示', () async {
     final result = await service(
-      releases: () => [release()],
-      bytes: Uint8List.fromList(utf8.encode('被替换的安装包')),
+      releases: () => [release(url: 'http://example.test/zhixin.apk')],
     ).check();
     expect(result.status, UpdateCheckStatus.failed);
-    expect(result.failure, UpdateFailure.hashMismatch);
+    expect(result.failure, UpdateFailure.insecureUrl);
   });
 
-  test('哈希一致但签名不通过时不提示', () async {
+  test('清单签名不通过时不提示', () async {
     final result = await service(
       releases: () => [release()],
       signatureValid: false,
