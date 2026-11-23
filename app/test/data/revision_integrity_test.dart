@@ -149,6 +149,7 @@ void main() {
         uid: 'remote-1',
         action: '另一台设备新增记忆',
         actor: 'user',
+        kind: RevisionKind.write,
         changes: [_remoteInsert('m9', '远端写下的')],
         originDevice: 'device-b',
         authoredAt: DateTime(2026, 11, 11, 8),

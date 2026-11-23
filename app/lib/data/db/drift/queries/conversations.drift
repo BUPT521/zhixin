@@ -29,12 +29,12 @@ SELECT c.id, c.source_ref, c.context_text, c.page_no,
         WHERE m2.conversation_id = c.id AND m2.role = 'user'
         ORDER BY m2.id LIMIT 1))
     ) LIMIT 1) AS stem,
-  (SELECT m.image_paths_json FROM message m WHERE m.conversation_id = c.id
+  (SELECT m.image_hashes_json FROM message m WHERE m.conversation_id = c.id
     AND m.role = 'user' AND m.id = (
       COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
         WHERE m2.conversation_id = c.id AND m2.role = 'user'
         ORDER BY m2.id LIMIT 1))
-    ) LIMIT 1) AS image_paths_json
+    ) LIMIT 1) AS image_hashes_json
 FROM conversation c
 WHERE c.id = :conversationId
 LIMIT 1;
@@ -56,12 +56,12 @@ SELECT c.id, c.source_ref, c.context_text, c.page_no,
         WHERE m2.conversation_id = c.id AND m2.role = 'user'
         ORDER BY m2.id LIMIT 1))
     ) LIMIT 1) AS stem,
-  (SELECT m.image_paths_json FROM message m WHERE m.conversation_id = c.id
+  (SELECT m.image_hashes_json FROM message m WHERE m.conversation_id = c.id
     AND m.role = 'user' AND m.id = (
       COALESCE(c.question_message_id, (SELECT m2.id FROM message m2
         WHERE m2.conversation_id = c.id AND m2.role = 'user'
         ORDER BY m2.id LIMIT 1))
-    ) LIMIT 1) AS image_paths_json,
+    ) LIMIT 1) AS image_hashes_json,
   a.id AS last_attempt_id,
   a.session_id AS last_attempt_session_id,
   a.user_answer AS last_attempt_user_answer,
@@ -194,8 +194,8 @@ ORDER BY max(c.updated_at,
 LIMIT COALESCE(:limit, -1);
 
 insertConversationRecord:
-INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at)
-VALUES (:id, :title, :goalId, :materialId, :pageNo, :sourceRef, :contextText, :entryKind, 'open', :stamp, :stamp);
+INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, created_at, updated_at)
+VALUES (:id, :title, :goalId, :materialId, :pageNo, :sourceRef, :contextText, :entryKind, :stamp, :stamp);
 
 recordLastMessageTime:
 UPDATE conversation SET updated_at = :stamp
@@ -217,8 +217,7 @@ UPDATE conversation SET question_message_id = :messageId
 WHERE id = :conversationId;
 
 endConversation:
-UPDATE conversation SET status = 'ended',
-  ended_at = :stamp,
+UPDATE conversation SET ended_at = :stamp,
   updated_at = :stamp
 WHERE id = :conversationId;
 
@@ -226,7 +225,7 @@ deleteConversationRecord:
 DELETE FROM conversation WHERE id = :conversationId;
 
 reopenConversation:
-UPDATE conversation SET status = 'open',
+UPDATE conversation SET
   ended_at = NULL,
   updated_at = :stamp
 WHERE id = :conversationId;

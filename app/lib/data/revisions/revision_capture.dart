@@ -143,9 +143,13 @@ mixin RevisionCaptureMixin {
         }
         if (before == null && after == null) continue;
         if (before != null && after != null) {
-          final changed = changedColumns(before, after);
+          final changed = expandedRevisionColumns(
+            table.name,
+            changedColumns(before, after),
+          );
           if (changed.isEmpty) continue;
-          // 摘要按整行算，变更明细只留变化列；两侧都用暂存表里的整行。
+          // 摘要按整行算，变更明细只留变化列与列组里的同组成员（审查 S18）；
+          // 两侧都用暂存表里的整行。
           delta =
               delta -
               revisionRowHashValue(table.name, entry.key, before) +

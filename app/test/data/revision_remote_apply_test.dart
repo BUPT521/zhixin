@@ -53,6 +53,7 @@ void main() {
       uid: 'remote-1',
       action: '从其他设备同步',
       actor: 'user',
+      kind: RevisionKind.write,
       changes: [_insertMemory('m1', '旧')],
     );
     expect(applied.commit, isNotNull);
@@ -68,6 +69,7 @@ void main() {
       uid: 'remote-2',
       action: '从其他设备同步',
       actor: 'user',
+      kind: RevisionKind.write,
       changes: [_updateMemory('m1', '新')],
     );
     expect(updated.commit, isNotNull);
@@ -81,6 +83,7 @@ void main() {
       uid: 'remote-2',
       action: '从其他设备同步',
       actor: 'user',
+      kind: RevisionKind.write,
       changes: [_updateMemory('m1', '新')],
     );
     expect(duplicate.duplicate, isTrue);
@@ -90,6 +93,7 @@ void main() {
       uid: 'remote-3',
       action: '从其他设备同步',
       actor: 'user',
+      kind: RevisionKind.write,
       changes: [
         RevisionChange(
           commitId: 0,
@@ -116,6 +120,7 @@ void main() {
       uid: 'remote-x',
       action: '从其他设备同步',
       actor: 'user',
+      kind: RevisionKind.write,
       changes: [
         _updateMemory('missing', 'x'),
         RevisionChange(
@@ -136,6 +141,7 @@ void main() {
         uid: 'remote-y',
         action: '从其他设备同步',
         actor: 'user',
+        kind: RevisionKind.write,
         changes: [
           RevisionChange(
             commitId: 0,

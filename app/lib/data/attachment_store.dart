@@ -18,15 +18,15 @@ class AttachmentStore {
     final rows = await selectRows(
       executor,
       'message',
-      columns: ['image_paths_json'],
-      where: 'image_paths_json IS NOT NULL',
+      columns: ['image_hashes_json'],
+      where: 'image_hashes_json IS NOT NULL',
     );
     final root = p.normalize(
       p.absolute(p.join(filesDir, questionImagesDirName)),
     );
     final paths = <String>{};
     for (final row in rows) {
-      final encoded = row['image_paths_json'] as String?;
+      final encoded = row['image_hashes_json'] as String?;
       if (encoded == null || encoded.isEmpty) continue;
       try {
         final decoded = jsonDecode(encoded);

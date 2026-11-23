@@ -10,7 +10,13 @@ import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/uuid_v7.dart';
 import '../db/drift/tables.dart'
-    show nonVersionedPersistentTableNames, revisionMetadataTablePrefixes;
+    show
+        nonVersionedPersistentTableNames,
+        revisionColumnGroups,
+        revisionMetadataTablePrefixes,
+        revisionUniqueKeys,
+        RevisionUniqueKey,
+        RevisionUniqueKeyPolicy;
 import '../db/schema.dart' show schemaTableNames, schemaTables;
 import '../db/sql.dart';
 import '../db/raw_executor.dart';
@@ -338,3 +344,21 @@ class RevisionEngine
 }
 
 String _quote(String identifier) => '"${identifier.replaceAll('"', '""')}"';
+
+/// 变更明细里要一起写的列：变化列加上同一列组的其余列（审查 S18）。
+///
+/// 跨列 CHECK 只约束总是一起写入的列，所以采集与远端应用都把整组带上；组里
+/// 有列不在这一次的变化里时也照常带上，整组从同一行取值为准。
+Set<String> expandedRevisionColumns(String table, Set<String> changed) {
+  final columns = {...changed};
+  final prefix = '$table.';
+  for (final group in revisionColumnGroups) {
+    final members = [
+      for (final entry in group)
+        if (entry.startsWith(prefix)) entry.substring(prefix.length),
+    ];
+    if (members.length < 2) continue;
+    if (members.any(columns.contains)) columns.addAll(members);
+  }
+  return columns;
+}

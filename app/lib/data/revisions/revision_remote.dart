@@ -5,11 +5,12 @@ part of 'revision_engine.dart';
 ///
 /// 拥有者：泳道 S（ADR-0039 第 3.3 节）。
 
-/// 一条远端提交在本机应用之后的结果：因本机状态对不上而跳过的条数，以及被
-/// 覆盖的本机修改。冲突由调用方交给 `finishCommand` 写进 `revision_conflict`，
-/// 这次提交的 `conflict_count` 随之更新。
+/// 一条远端提交在本机应用之后的结果：因本机状态对不上而跳过的条数、把本机行
+/// 改到下一个空号的条数，以及被覆盖的本机修改。冲突由调用方交给 `finishCommand`
+/// 写进 `revision_conflict`；本机行的改号也被触发器和这次提交一起采集。
 typedef RemoteApplyOutcome = ({
   int skipped,
+  int adjusted,
   List<RevisionConflict> conflicts,
   List<RevisionChange> applied,
 });
@@ -29,6 +30,11 @@ mixin RevisionRemoteMixin {
   /// 记冲突，更新遇到本机没有这一行时跳过并记冲突，删除遇到本机改过的行时先记下
   /// 本机整行再删除。外键检查延迟到事务提交，先写子行再写父行的顺序不会失败。
   ///
+  /// 表结构里声明的列组（[revisionColumnGroups]）整组写入，跨列 CHECK 因此只
+  /// 约束总是一起写入的列；表结构里声明的唯一键（[revisionUniqueKeys]）撞车时
+  /// 按声明的处置执行：只表示顺序的列把本机行改到下一个空号，有含义的唯一键
+  /// 跳过远端这一行并记一条 `unique_key_taken` 冲突（审查 S18）。
+  ///
   /// 真正写进本机的格子同时登记进 `sync_shadow`：编号不大于应用之前本机 `HEAD`
   /// 的本机提交在这些格子上的改动作废，推送时按格去掉（ADR-0040）。
   ///
@@ -47,6 +53,9 @@ mixin RevisionRemoteMixin {
     var skipped = 0;
     final conflicts = <RevisionConflict>[];
     final appliedChanges = <RevisionChange>[];
+    // 为了绕开唯一键而改号的本机行也登记进遮蔽：它们不来自远端的变化明细，
+    // 但同样是这次提交写进本机的格子。
+    final adjustedChanges = <RevisionChange>[];
     for (final change in changes) {
       final table = schema[change.table];
       if (table == null) {
@@ -58,12 +67,14 @@ mixin RevisionRemoteMixin {
           table,
           change,
           conflicts,
+          adjustedChanges,
         ),
         ChangeOp.update => await _applyRemoteUpdate(
           txn,
           table,
           change,
           conflicts,
+          adjustedChanges,
         ),
         ChangeOp.delete => await _applyRemoteDelete(
           txn,
@@ -78,13 +89,19 @@ mixin RevisionRemoteMixin {
         appliedChanges.add(change);
       }
     }
-    // 遮蔽行与这条远端提交在本机形成的 remote 提交同属一个事务：拉取成功、推送
+    appliedChanges.addAll(adjustedChanges);
+    // 遮蔽行与这条远端提交在本机形成的提交同属一个事务：拉取成功、推送
     // 失败之后它仍然在库里，下一轮推送不会再把这些格子推回去。
     final shadows = RevisionShadows(txn);
     for (final change in appliedChanges) {
       await shadows.recordChange(change, uptoCommit: uptoCommit);
     }
-    return (skipped: skipped, conflicts: conflicts, applied: appliedChanges);
+    return (
+      skipped: skipped,
+      adjusted: adjustedChanges.length,
+      conflicts: conflicts,
+      applied: appliedChanges,
+    );
   }
 
   /// 把一条冲突记录里保存的本机值写回当前事务，返回是否写了行。
@@ -136,12 +153,22 @@ mixin RevisionRemoteMixin {
     RevisionTable table,
     RevisionChange change,
     List<RevisionConflict> conflicts,
+    List<RevisionChange> adjusted,
   ) async {
     final after = change.after ?? const <String, RevisionValue>{};
     final columns = _remoteColumns(table, after);
     if (columns.isEmpty) return false;
     final current = await _readRemoteRow(txn, table, change.rowKey);
     if (current == null) {
+      final writable = await _resolveUniqueKeys(
+        txn,
+        table,
+        after,
+        rowKey: change.rowKey,
+        conflicts: conflicts,
+        adjusted: adjusted,
+      );
+      if (!writable) return false;
       await _insertColumns(
         txn,
         table,
@@ -179,12 +206,14 @@ mixin RevisionRemoteMixin {
 
   /// 远端更新：本机没有这一行时记 `deleted_locally` 并跳过写入；行存在时按列
   /// 比较本机当前值，既不是远端旧值也不是远端新值的列记 `concurrent_update`，
-  /// 然后写入远端值。
+  /// 然后写入远端值。列组里的其他列一起写入，跨列 CHECK 因此不会被半行更新
+  /// 破坏（审查 S18）。
   Future<bool> _applyRemoteUpdate(
     RawExecutor txn,
     RevisionTable table,
     RevisionChange change,
     List<RevisionConflict> conflicts,
+    List<RevisionChange> adjusted,
   ) async {
     final after = change.after ?? const <String, RevisionValue>{};
     final columns = _remoteColumns(table, after);
@@ -205,6 +234,15 @@ mixin RevisionRemoteMixin {
       );
       return false;
     }
+    final writable = await _resolveUniqueKeys(
+      txn,
+      table,
+      {...current, ...after},
+      rowKey: change.rowKey,
+      conflicts: conflicts,
+      adjusted: adjusted,
+    );
+    if (!writable) return false;
     final before = change.before ?? const <String, RevisionValue>{};
     for (final column in columns) {
       // 维护列（`updated_at`）按合并驱动处理：远端值照常写入，但不记冲突。
@@ -279,11 +317,120 @@ mixin RevisionRemoteMixin {
     return true;
   }
 
+  /// 检查远端这一行会撞上的非主键唯一约束，按 [revisionUniqueKeys] 的声明处置。
+  ///
+  /// 返回是否可以继续写入：有含义的唯一键被本机另一行占着时返回 false，这条
+  /// 远端变化跳过并留下 `unique_key_taken` 冲突；只表示顺序的列则把本机那一行
+  /// 改到下一个空号，改号随这次提交一起被采集，并登记进 [adjusted] 供遮蔽。
+  Future<bool> _resolveUniqueKeys(
+    RawExecutor txn,
+    RevisionTable table,
+    TypedRow row, {
+    required String rowKey,
+    required List<RevisionConflict> conflicts,
+    required List<RevisionChange> adjusted,
+  }) async {
+    for (final rule in revisionUniqueKeys) {
+      if (rule.table != table.name) continue;
+      if (!rule.columns.every(row.containsKey)) continue;
+      if (rule.columns.any(
+        (column) =>
+            row[column]!.type == RevisionValueType.nullValue ||
+            row[column]!.value == null,
+      )) {
+        // SQLite 的唯一约束认为两个 NULL 互不相同，带空值的行不会撞车。
+        continue;
+      }
+      final where = rule.columns
+          .map((column) => '${_quote(column)} = ?')
+          .join(' AND ');
+      final values = [
+        for (final column in rule.columns) row[column]!.sqliteValue,
+      ];
+      final rows = await txn.rawQuery(
+        'SELECT * FROM ${_quote(table.name)} WHERE $where '
+        'AND ${_quote(table.primaryKey)} != ? LIMIT 2',
+        [...values, rowKey],
+      );
+      if (rows.isEmpty) continue;
+      final taken = typedRow(rows.first);
+      switch (rule.policy) {
+        case RevisionUniqueKeyPolicy.skipRemote:
+          conflicts.add(
+            RevisionConflict(
+              table: table.name,
+              rowKey: rowKey,
+              reason: RevisionConflict.uniqueKeyTaken,
+              local: taken,
+              remoteAfter: row,
+            ),
+          );
+          return false;
+        case RevisionUniqueKeyPolicy.renumberLocal:
+          await _renumberLocalRow(txn, table, rule, row, taken, adjusted);
+      }
+    }
+    return true;
+  }
+
+  /// 把占用唯一键的本机行改到同一前缀下的下一个空号，并留下可供遮蔽的变更。
+  Future<void> _renumberLocalRow(
+    RawExecutor txn,
+    RevisionTable table,
+    RevisionUniqueKey rule,
+    TypedRow remote,
+    TypedRow taken,
+    List<RevisionChange> adjusted,
+  ) async {
+    final orderColumn = rule.columns.last;
+    final prefix = rule.columns.sublist(0, rule.columns.length - 1);
+    final prefixWhere = prefix.isEmpty
+        ? ''
+        : ' WHERE ${prefix.map((column) => '${_quote(column)} = ?').join(' AND ')}';
+    final maxRows = await txn.rawQuery(
+      'SELECT MAX(${_quote(orderColumn)}) AS max_value '
+      'FROM ${_quote(table.name)}$prefixWhere',
+      [for (final column in prefix) remote[column]!.sqliteValue],
+    );
+    final maxValue = maxRows.first['max_value'] as int? ?? 0;
+    final next = maxValue + 1;
+    final localKey = taken[table.primaryKey]!.sqliteValue;
+    await txn.execute(
+      'UPDATE ${_quote(table.name)} SET ${_quote(orderColumn)} = ? '
+      'WHERE ${_quote(table.primaryKey)} = ?',
+      [next, localKey],
+    );
+    final after = {...taken, orderColumn: RevisionValue.of(next)};
+    adjusted.add(
+      RevisionChange(
+        commitId: 0,
+        seq: adjusted.length + 1,
+        table: table.name,
+        rowKey: '$localKey',
+        op: ChangeOp.update,
+        before: taken,
+        after: after,
+      ),
+    );
+  }
+
   /// 远端提交里要写入本机的列：只保留本机表结构里有的列，主键单独处理。
-  List<String> _remoteColumns(RevisionTable table, TypedRow row) => [
-    for (final column in row.keys)
-      if (table.columns.contains(column) && column != table.primaryKey) column,
-  ];
+  ///
+  /// 有列落在 [revisionColumnGroups] 的列组里时，同组的其他列也一起写入，
+  /// 跨列 CHECK 因此只约束总是一起写入的列（审查 S18）。
+  List<String> _remoteColumns(RevisionTable table, TypedRow row) {
+    final source = {
+      for (final column in row.keys)
+        if (table.columns.contains(column) && column != table.primaryKey)
+          column,
+    };
+    final expanded = expandedRevisionColumns(table.name, source);
+    final columns = [
+      for (final column in expanded)
+        if (row.containsKey(column) && table.columns.contains(column)) column,
+    ]..sort();
+    return columns;
+  }
 
   /// 读一行当前值；行不存在时返回空。
   Future<TypedRow?> _readRemoteRow(

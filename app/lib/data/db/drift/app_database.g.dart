@@ -2909,17 +2909,6 @@ class $ConversationsTable extends Conversations
     requiredDuringInsert: false,
     defaultValue: const Constant('text'),
   );
-  static const VerificationMeta _statusMeta = const VerificationMeta('status');
-  @override
-  late final GeneratedColumn<String> status = GeneratedColumn<String>(
-    'status',
-    aliasedName,
-    false,
-    check: () => status.isIn(conversationStatuses),
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('open'),
-  );
   static const VerificationMeta _endedAtMeta = const VerificationMeta(
     'endedAt',
   );
@@ -2964,7 +2953,6 @@ class $ConversationsTable extends Conversations
     contextText,
     questionMessageId,
     entryKind,
-    status,
     endedAt,
     createdAt,
     updatedAt,
@@ -3040,12 +3028,6 @@ class $ConversationsTable extends Conversations
         entryKind.isAcceptableOrUnknown(data['entry_kind']!, _entryKindMeta),
       );
     }
-    if (data.containsKey('status')) {
-      context.handle(
-        _statusMeta,
-        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
-      );
-    }
     if (data.containsKey('ended_at')) {
       context.handle(
         _endedAtMeta,
@@ -3113,10 +3095,6 @@ class $ConversationsTable extends Conversations
         DriftSqlType.string,
         data['${effectivePrefix}entry_kind'],
       )!,
-      status: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}status'],
-      )!,
       endedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}ended_at'],
@@ -3148,7 +3126,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
   final String? contextText;
   final String? questionMessageId;
   final String entryKind;
-  final String status;
   final String? endedAt;
   final String createdAt;
   final String updatedAt;
@@ -3162,7 +3139,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     this.contextText,
     this.questionMessageId,
     required this.entryKind,
-    required this.status,
     this.endedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -3193,7 +3169,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       map['question_message_id'] = Variable<String>(questionMessageId);
     }
     map['entry_kind'] = Variable<String>(entryKind);
-    map['status'] = Variable<String>(status);
     if (!nullToAbsent || endedAt != null) {
       map['ended_at'] = Variable<String>(endedAt);
     }
@@ -3227,7 +3202,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
           ? const Value.absent()
           : Value(questionMessageId),
       entryKind: Value(entryKind),
-      status: Value(status),
       endedAt: endedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(endedAt),
@@ -3253,7 +3227,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
         json['questionMessageId'],
       ),
       entryKind: serializer.fromJson<String>(json['entryKind']),
-      status: serializer.fromJson<String>(json['status']),
       endedAt: serializer.fromJson<String?>(json['endedAt']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
@@ -3272,7 +3245,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       'contextText': serializer.toJson<String?>(contextText),
       'questionMessageId': serializer.toJson<String?>(questionMessageId),
       'entryKind': serializer.toJson<String>(entryKind),
-      'status': serializer.toJson<String>(status),
       'endedAt': serializer.toJson<String?>(endedAt),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
@@ -3289,7 +3261,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     Value<String?> contextText = const Value.absent(),
     Value<String?> questionMessageId = const Value.absent(),
     String? entryKind,
-    String? status,
     Value<String?> endedAt = const Value.absent(),
     String? createdAt,
     String? updatedAt,
@@ -3305,7 +3276,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
         ? questionMessageId.value
         : this.questionMessageId,
     entryKind: entryKind ?? this.entryKind,
-    status: status ?? this.status,
     endedAt: endedAt.present ? endedAt.value : this.endedAt,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -3327,7 +3297,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
           ? data.questionMessageId.value
           : this.questionMessageId,
       entryKind: data.entryKind.present ? data.entryKind.value : this.entryKind,
-      status: data.status.present ? data.status.value : this.status,
       endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -3346,7 +3315,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
           ..write('contextText: $contextText, ')
           ..write('questionMessageId: $questionMessageId, ')
           ..write('entryKind: $entryKind, ')
-          ..write('status: $status, ')
           ..write('endedAt: $endedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -3365,7 +3333,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     contextText,
     questionMessageId,
     entryKind,
-    status,
     endedAt,
     createdAt,
     updatedAt,
@@ -3383,7 +3350,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
           other.contextText == this.contextText &&
           other.questionMessageId == this.questionMessageId &&
           other.entryKind == this.entryKind &&
-          other.status == this.status &&
           other.endedAt == this.endedAt &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -3399,7 +3365,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
   final Value<String?> contextText;
   final Value<String?> questionMessageId;
   final Value<String> entryKind;
-  final Value<String> status;
   final Value<String?> endedAt;
   final Value<String> createdAt;
   final Value<String> updatedAt;
@@ -3414,7 +3379,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     this.contextText = const Value.absent(),
     this.questionMessageId = const Value.absent(),
     this.entryKind = const Value.absent(),
-    this.status = const Value.absent(),
     this.endedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -3430,7 +3394,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     this.contextText = const Value.absent(),
     this.questionMessageId = const Value.absent(),
     this.entryKind = const Value.absent(),
-    this.status = const Value.absent(),
     this.endedAt = const Value.absent(),
     required String createdAt,
     required String updatedAt,
@@ -3448,7 +3411,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     Expression<String>? contextText,
     Expression<String>? questionMessageId,
     Expression<String>? entryKind,
-    Expression<String>? status,
     Expression<String>? endedAt,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
@@ -3464,7 +3426,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       if (contextText != null) 'context_text': contextText,
       if (questionMessageId != null) 'question_message_id': questionMessageId,
       if (entryKind != null) 'entry_kind': entryKind,
-      if (status != null) 'status': status,
       if (endedAt != null) 'ended_at': endedAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -3482,7 +3443,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     Value<String?>? contextText,
     Value<String?>? questionMessageId,
     Value<String>? entryKind,
-    Value<String>? status,
     Value<String?>? endedAt,
     Value<String>? createdAt,
     Value<String>? updatedAt,
@@ -3498,7 +3458,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       contextText: contextText ?? this.contextText,
       questionMessageId: questionMessageId ?? this.questionMessageId,
       entryKind: entryKind ?? this.entryKind,
-      status: status ?? this.status,
       endedAt: endedAt ?? this.endedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -3536,9 +3495,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     if (entryKind.present) {
       map['entry_kind'] = Variable<String>(entryKind.value);
     }
-    if (status.present) {
-      map['status'] = Variable<String>(status.value);
-    }
     if (endedAt.present) {
       map['ended_at'] = Variable<String>(endedAt.value);
     }
@@ -3566,7 +3522,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
           ..write('contextText: $contextText, ')
           ..write('questionMessageId: $questionMessageId, ')
           ..write('entryKind: $entryKind, ')
-          ..write('status: $status, ')
           ..write('endedAt: $endedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -3626,12 +3581,12 @@ class $MessagesTable extends Messages
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _imagePathsJsonMeta = const VerificationMeta(
-    'imagePathsJson',
+  static const VerificationMeta _imageHashesJsonMeta = const VerificationMeta(
+    'imageHashesJson',
   );
   @override
-  late final GeneratedColumn<String> imagePathsJson = GeneratedColumn<String>(
-    'image_paths_json',
+  late final GeneratedColumn<String> imageHashesJson = GeneratedColumn<String>(
+    'image_hashes_json',
     aliasedName,
     true,
     type: DriftSqlType.string,
@@ -3665,7 +3620,7 @@ class $MessagesTable extends Messages
     conversationId,
     role,
     content,
-    imagePathsJson,
+    imageHashesJson,
     structuredJson,
     createdAt,
   ];
@@ -3713,12 +3668,12 @@ class $MessagesTable extends Messages
     } else if (isInserting) {
       context.missing(_contentMeta);
     }
-    if (data.containsKey('image_paths_json')) {
+    if (data.containsKey('image_hashes_json')) {
       context.handle(
-        _imagePathsJsonMeta,
-        imagePathsJson.isAcceptableOrUnknown(
-          data['image_paths_json']!,
-          _imagePathsJsonMeta,
+        _imageHashesJsonMeta,
+        imageHashesJson.isAcceptableOrUnknown(
+          data['image_hashes_json']!,
+          _imageHashesJsonMeta,
         ),
       );
     }
@@ -3764,9 +3719,9 @@ class $MessagesTable extends Messages
         DriftSqlType.string,
         data['${effectivePrefix}content'],
       )!,
-      imagePathsJson: attachedDatabase.typeMapping.read(
+      imageHashesJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
-        data['${effectivePrefix}image_paths_json'],
+        data['${effectivePrefix}image_hashes_json'],
       ),
       structuredJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -3790,7 +3745,9 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   final String conversationId;
   final String role;
   final String content;
-  final String? imagePathsJson;
+
+  /// 图片的附件哈希数组；列名写的是哈希，不是路径（审查 S17）。
+  final String? imageHashesJson;
   final String? structuredJson;
   final String createdAt;
   const MessageRow({
@@ -3798,7 +3755,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     required this.conversationId,
     required this.role,
     required this.content,
-    this.imagePathsJson,
+    this.imageHashesJson,
     this.structuredJson,
     required this.createdAt,
   });
@@ -3809,8 +3766,8 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     map['conversation_id'] = Variable<String>(conversationId);
     map['role'] = Variable<String>(role);
     map['content'] = Variable<String>(content);
-    if (!nullToAbsent || imagePathsJson != null) {
-      map['image_paths_json'] = Variable<String>(imagePathsJson);
+    if (!nullToAbsent || imageHashesJson != null) {
+      map['image_hashes_json'] = Variable<String>(imageHashesJson);
     }
     if (!nullToAbsent || structuredJson != null) {
       map['structured_json'] = Variable<String>(structuredJson);
@@ -3825,9 +3782,9 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
       conversationId: Value(conversationId),
       role: Value(role),
       content: Value(content),
-      imagePathsJson: imagePathsJson == null && nullToAbsent
+      imageHashesJson: imageHashesJson == null && nullToAbsent
           ? const Value.absent()
-          : Value(imagePathsJson),
+          : Value(imageHashesJson),
       structuredJson: structuredJson == null && nullToAbsent
           ? const Value.absent()
           : Value(structuredJson),
@@ -3845,7 +3802,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
       conversationId: serializer.fromJson<String>(json['conversationId']),
       role: serializer.fromJson<String>(json['role']),
       content: serializer.fromJson<String>(json['content']),
-      imagePathsJson: serializer.fromJson<String?>(json['imagePathsJson']),
+      imageHashesJson: serializer.fromJson<String?>(json['imageHashesJson']),
       structuredJson: serializer.fromJson<String?>(json['structuredJson']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
     );
@@ -3858,7 +3815,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
       'conversationId': serializer.toJson<String>(conversationId),
       'role': serializer.toJson<String>(role),
       'content': serializer.toJson<String>(content),
-      'imagePathsJson': serializer.toJson<String?>(imagePathsJson),
+      'imageHashesJson': serializer.toJson<String?>(imageHashesJson),
       'structuredJson': serializer.toJson<String?>(structuredJson),
       'createdAt': serializer.toJson<String>(createdAt),
     };
@@ -3869,7 +3826,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     String? conversationId,
     String? role,
     String? content,
-    Value<String?> imagePathsJson = const Value.absent(),
+    Value<String?> imageHashesJson = const Value.absent(),
     Value<String?> structuredJson = const Value.absent(),
     String? createdAt,
   }) => MessageRow(
@@ -3877,9 +3834,9 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     conversationId: conversationId ?? this.conversationId,
     role: role ?? this.role,
     content: content ?? this.content,
-    imagePathsJson: imagePathsJson.present
-        ? imagePathsJson.value
-        : this.imagePathsJson,
+    imageHashesJson: imageHashesJson.present
+        ? imageHashesJson.value
+        : this.imageHashesJson,
     structuredJson: structuredJson.present
         ? structuredJson.value
         : this.structuredJson,
@@ -3893,9 +3850,9 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
           : this.conversationId,
       role: data.role.present ? data.role.value : this.role,
       content: data.content.present ? data.content.value : this.content,
-      imagePathsJson: data.imagePathsJson.present
-          ? data.imagePathsJson.value
-          : this.imagePathsJson,
+      imageHashesJson: data.imageHashesJson.present
+          ? data.imageHashesJson.value
+          : this.imageHashesJson,
       structuredJson: data.structuredJson.present
           ? data.structuredJson.value
           : this.structuredJson,
@@ -3910,7 +3867,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
           ..write('conversationId: $conversationId, ')
           ..write('role: $role, ')
           ..write('content: $content, ')
-          ..write('imagePathsJson: $imagePathsJson, ')
+          ..write('imageHashesJson: $imageHashesJson, ')
           ..write('structuredJson: $structuredJson, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -3923,7 +3880,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     conversationId,
     role,
     content,
-    imagePathsJson,
+    imageHashesJson,
     structuredJson,
     createdAt,
   );
@@ -3935,7 +3892,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
           other.conversationId == this.conversationId &&
           other.role == this.role &&
           other.content == this.content &&
-          other.imagePathsJson == this.imagePathsJson &&
+          other.imageHashesJson == this.imageHashesJson &&
           other.structuredJson == this.structuredJson &&
           other.createdAt == this.createdAt);
 }
@@ -3945,7 +3902,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   final Value<String> conversationId;
   final Value<String> role;
   final Value<String> content;
-  final Value<String?> imagePathsJson;
+  final Value<String?> imageHashesJson;
   final Value<String?> structuredJson;
   final Value<String> createdAt;
   final Value<int> rowid;
@@ -3954,7 +3911,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     this.conversationId = const Value.absent(),
     this.role = const Value.absent(),
     this.content = const Value.absent(),
-    this.imagePathsJson = const Value.absent(),
+    this.imageHashesJson = const Value.absent(),
     this.structuredJson = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3964,7 +3921,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     required String conversationId,
     required String role,
     required String content,
-    this.imagePathsJson = const Value.absent(),
+    this.imageHashesJson = const Value.absent(),
     this.structuredJson = const Value.absent(),
     required String createdAt,
     this.rowid = const Value.absent(),
@@ -3978,7 +3935,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     Expression<String>? conversationId,
     Expression<String>? role,
     Expression<String>? content,
-    Expression<String>? imagePathsJson,
+    Expression<String>? imageHashesJson,
     Expression<String>? structuredJson,
     Expression<String>? createdAt,
     Expression<int>? rowid,
@@ -3988,7 +3945,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
       if (conversationId != null) 'conversation_id': conversationId,
       if (role != null) 'role': role,
       if (content != null) 'content': content,
-      if (imagePathsJson != null) 'image_paths_json': imagePathsJson,
+      if (imageHashesJson != null) 'image_hashes_json': imageHashesJson,
       if (structuredJson != null) 'structured_json': structuredJson,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
@@ -4000,7 +3957,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     Value<String>? conversationId,
     Value<String>? role,
     Value<String>? content,
-    Value<String?>? imagePathsJson,
+    Value<String?>? imageHashesJson,
     Value<String?>? structuredJson,
     Value<String>? createdAt,
     Value<int>? rowid,
@@ -4010,7 +3967,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
       conversationId: conversationId ?? this.conversationId,
       role: role ?? this.role,
       content: content ?? this.content,
-      imagePathsJson: imagePathsJson ?? this.imagePathsJson,
+      imageHashesJson: imageHashesJson ?? this.imageHashesJson,
       structuredJson: structuredJson ?? this.structuredJson,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
@@ -4032,8 +3989,8 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     if (content.present) {
       map['content'] = Variable<String>(content.value);
     }
-    if (imagePathsJson.present) {
-      map['image_paths_json'] = Variable<String>(imagePathsJson.value);
+    if (imageHashesJson.present) {
+      map['image_hashes_json'] = Variable<String>(imageHashesJson.value);
     }
     if (structuredJson.present) {
       map['structured_json'] = Variable<String>(structuredJson.value);
@@ -4054,7 +4011,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
           ..write('conversationId: $conversationId, ')
           ..write('role: $role, ')
           ..write('content: $content, ')
-          ..write('imagePathsJson: $imagePathsJson, ')
+          ..write('imageHashesJson: $imageHashesJson, ')
           ..write('structuredJson: $structuredJson, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
@@ -9010,17 +8967,6 @@ class $MemoryUsagesTable extends MemoryUsages
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _firstSeenAtMeta = const VerificationMeta(
-    'firstSeenAt',
-  );
-  @override
-  late final GeneratedColumn<String> firstSeenAt = GeneratedColumn<String>(
-    'first_seen_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -9041,7 +8987,6 @@ class $MemoryUsagesTable extends MemoryUsages
     searchCount,
     lastRecalledAt,
     lastSearchedAt,
-    firstSeenAt,
     updatedAt,
   ];
   @override
@@ -9113,17 +9058,6 @@ class $MemoryUsagesTable extends MemoryUsages
         ),
       );
     }
-    if (data.containsKey('first_seen_at')) {
-      context.handle(
-        _firstSeenAtMeta,
-        firstSeenAt.isAcceptableOrUnknown(
-          data['first_seen_at']!,
-          _firstSeenAtMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_firstSeenAtMeta);
-    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -9169,10 +9103,6 @@ class $MemoryUsagesTable extends MemoryUsages
         DriftSqlType.string,
         data['${effectivePrefix}last_searched_at'],
       ),
-      firstSeenAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}first_seen_at'],
-      )!,
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}updated_at'],
@@ -9194,7 +9124,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
   final int searchCount;
   final String? lastRecalledAt;
   final String? lastSearchedAt;
-  final String firstSeenAt;
   final String updatedAt;
   const MemoryUsageRow({
     required this.id,
@@ -9204,7 +9133,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
     required this.searchCount,
     this.lastRecalledAt,
     this.lastSearchedAt,
-    required this.firstSeenAt,
     required this.updatedAt,
   });
   @override
@@ -9221,7 +9149,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
     if (!nullToAbsent || lastSearchedAt != null) {
       map['last_searched_at'] = Variable<String>(lastSearchedAt);
     }
-    map['first_seen_at'] = Variable<String>(firstSeenAt);
     map['updated_at'] = Variable<String>(updatedAt);
     return map;
   }
@@ -9239,7 +9166,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
       lastSearchedAt: lastSearchedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(lastSearchedAt),
-      firstSeenAt: Value(firstSeenAt),
       updatedAt: Value(updatedAt),
     );
   }
@@ -9257,7 +9183,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
       searchCount: serializer.fromJson<int>(json['searchCount']),
       lastRecalledAt: serializer.fromJson<String?>(json['lastRecalledAt']),
       lastSearchedAt: serializer.fromJson<String?>(json['lastSearchedAt']),
-      firstSeenAt: serializer.fromJson<String>(json['firstSeenAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
   }
@@ -9272,7 +9197,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
       'searchCount': serializer.toJson<int>(searchCount),
       'lastRecalledAt': serializer.toJson<String?>(lastRecalledAt),
       'lastSearchedAt': serializer.toJson<String?>(lastSearchedAt),
-      'firstSeenAt': serializer.toJson<String>(firstSeenAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
   }
@@ -9285,7 +9209,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
     int? searchCount,
     Value<String?> lastRecalledAt = const Value.absent(),
     Value<String?> lastSearchedAt = const Value.absent(),
-    String? firstSeenAt,
     String? updatedAt,
   }) => MemoryUsageRow(
     id: id ?? this.id,
@@ -9299,7 +9222,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
     lastSearchedAt: lastSearchedAt.present
         ? lastSearchedAt.value
         : this.lastSearchedAt,
-    firstSeenAt: firstSeenAt ?? this.firstSeenAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   MemoryUsageRow copyWithCompanion(MemoryUsagesCompanion data) {
@@ -9319,9 +9241,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
       lastSearchedAt: data.lastSearchedAt.present
           ? data.lastSearchedAt.value
           : this.lastSearchedAt,
-      firstSeenAt: data.firstSeenAt.present
-          ? data.firstSeenAt.value
-          : this.firstSeenAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -9336,7 +9255,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
           ..write('searchCount: $searchCount, ')
           ..write('lastRecalledAt: $lastRecalledAt, ')
           ..write('lastSearchedAt: $lastSearchedAt, ')
-          ..write('firstSeenAt: $firstSeenAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -9351,7 +9269,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
     searchCount,
     lastRecalledAt,
     lastSearchedAt,
-    firstSeenAt,
     updatedAt,
   );
   @override
@@ -9365,7 +9282,6 @@ class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
           other.searchCount == this.searchCount &&
           other.lastRecalledAt == this.lastRecalledAt &&
           other.lastSearchedAt == this.lastSearchedAt &&
-          other.firstSeenAt == this.firstSeenAt &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -9377,7 +9293,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
   final Value<int> searchCount;
   final Value<String?> lastRecalledAt;
   final Value<String?> lastSearchedAt;
-  final Value<String> firstSeenAt;
   final Value<String> updatedAt;
   final Value<int> rowid;
   const MemoryUsagesCompanion({
@@ -9388,7 +9303,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
     this.searchCount = const Value.absent(),
     this.lastRecalledAt = const Value.absent(),
     this.lastSearchedAt = const Value.absent(),
-    this.firstSeenAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -9400,13 +9314,11 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
     this.searchCount = const Value.absent(),
     this.lastRecalledAt = const Value.absent(),
     this.lastSearchedAt = const Value.absent(),
-    required String firstSeenAt,
     required String updatedAt,
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        memoryId = Value(memoryId),
        deviceId = Value(deviceId),
-       firstSeenAt = Value(firstSeenAt),
        updatedAt = Value(updatedAt);
   static Insertable<MemoryUsageRow> custom({
     Expression<String>? id,
@@ -9416,7 +9328,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
     Expression<int>? searchCount,
     Expression<String>? lastRecalledAt,
     Expression<String>? lastSearchedAt,
-    Expression<String>? firstSeenAt,
     Expression<String>? updatedAt,
     Expression<int>? rowid,
   }) {
@@ -9428,7 +9339,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
       if (searchCount != null) 'search_count': searchCount,
       if (lastRecalledAt != null) 'last_recalled_at': lastRecalledAt,
       if (lastSearchedAt != null) 'last_searched_at': lastSearchedAt,
-      if (firstSeenAt != null) 'first_seen_at': firstSeenAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -9442,7 +9352,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
     Value<int>? searchCount,
     Value<String?>? lastRecalledAt,
     Value<String?>? lastSearchedAt,
-    Value<String>? firstSeenAt,
     Value<String>? updatedAt,
     Value<int>? rowid,
   }) {
@@ -9454,7 +9363,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
       searchCount: searchCount ?? this.searchCount,
       lastRecalledAt: lastRecalledAt ?? this.lastRecalledAt,
       lastSearchedAt: lastSearchedAt ?? this.lastSearchedAt,
-      firstSeenAt: firstSeenAt ?? this.firstSeenAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -9484,9 +9392,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
     if (lastSearchedAt.present) {
       map['last_searched_at'] = Variable<String>(lastSearchedAt.value);
     }
-    if (firstSeenAt.present) {
-      map['first_seen_at'] = Variable<String>(firstSeenAt.value);
-    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
@@ -9506,7 +9411,6 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
           ..write('searchCount: $searchCount, ')
           ..write('lastRecalledAt: $lastRecalledAt, ')
           ..write('lastSearchedAt: $lastSearchedAt, ')
-          ..write('firstSeenAt: $firstSeenAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -9514,20 +9418,24 @@ class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
   }
 }
 
-class $MemoryUsesTable extends MemoryUses
-    with TableInfo<$MemoryUsesTable, MemoryUseRow> {
+class $LocalMemoryUsesTable extends LocalMemoryUses
+    with TableInfo<$LocalMemoryUsesTable, LocalMemoryUseRow> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
-  $MemoryUsesTable(this.attachedDatabase, [this._alias]);
+  $LocalMemoryUsesTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
-  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
     'id',
     aliasedName,
     false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
   );
   static const VerificationMeta _memoryIdMeta = const VerificationMeta(
     'memoryId',
@@ -9542,17 +9450,6 @@ class $MemoryUsesTable extends MemoryUses
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES memory (id) ON DELETE CASCADE',
     ),
-  );
-  static const VerificationMeta _deviceIdMeta = const VerificationMeta(
-    'deviceId',
-  );
-  @override
-  late final GeneratedColumn<String> deviceId = GeneratedColumn<String>(
-    'device_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
   );
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
@@ -9574,42 +9471,22 @@ class $MemoryUsesTable extends MemoryUses
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _acquiredAtMeta = const VerificationMeta(
-    'acquiredAt',
-  );
   @override
-  late final GeneratedColumn<String> acquiredAt = GeneratedColumn<String>(
-    'acquired_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    memoryId,
-    deviceId,
-    kind,
-    usedAt,
-    acquiredAt,
-  ];
+  List<GeneratedColumn> get $columns => [id, memoryId, kind, usedAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
-  static const String $name = 'memory_use';
+  static const String $name = 'local_memory_use';
   @override
   VerificationContext validateIntegrity(
-    Insertable<MemoryUseRow> instance, {
+    Insertable<LocalMemoryUseRow> instance, {
     bool isInserting = false,
   }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    } else if (isInserting) {
-      context.missing(_idMeta);
     }
     if (data.containsKey('memory_id')) {
       context.handle(
@@ -9618,14 +9495,6 @@ class $MemoryUsesTable extends MemoryUses
       );
     } else if (isInserting) {
       context.missing(_memoryIdMeta);
-    }
-    if (data.containsKey('device_id')) {
-      context.handle(
-        _deviceIdMeta,
-        deviceId.isAcceptableOrUnknown(data['device_id']!, _deviceIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_deviceIdMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
@@ -9641,34 +9510,22 @@ class $MemoryUsesTable extends MemoryUses
     } else if (isInserting) {
       context.missing(_usedAtMeta);
     }
-    if (data.containsKey('acquired_at')) {
-      context.handle(
-        _acquiredAtMeta,
-        acquiredAt.isAcceptableOrUnknown(data['acquired_at']!, _acquiredAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_acquiredAtMeta);
-    }
     return context;
   }
 
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  MemoryUseRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+  LocalMemoryUseRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return MemoryUseRow(
+    return LocalMemoryUseRow(
       id: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
+        DriftSqlType.int,
         data['${effectivePrefix}id'],
       )!,
       memoryId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}memory_id'],
-      )!,
-      deviceId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}device_id'],
       )!,
       kind: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -9678,209 +9535,157 @@ class $MemoryUsesTable extends MemoryUses
         DriftSqlType.string,
         data['${effectivePrefix}used_at'],
       )!,
-      acquiredAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}acquired_at'],
-      )!,
     );
   }
 
   @override
-  $MemoryUsesTable createAlias(String alias) {
-    return $MemoryUsesTable(attachedDatabase, alias);
+  $LocalMemoryUsesTable createAlias(String alias) {
+    return $LocalMemoryUsesTable(attachedDatabase, alias);
   }
 }
 
-class MemoryUseRow extends DataClass implements Insertable<MemoryUseRow> {
-  final String id;
+class LocalMemoryUseRow extends DataClass
+    implements Insertable<LocalMemoryUseRow> {
+  final int id;
   final String memoryId;
-  final String deviceId;
 
   /// `recall` 表示进入相关层，`search` 表示由 `search_memory` 读到。
   final String kind;
   final String usedAt;
-  final String acquiredAt;
-  const MemoryUseRow({
+  const LocalMemoryUseRow({
     required this.id,
     required this.memoryId,
-    required this.deviceId,
     required this.kind,
     required this.usedAt,
-    required this.acquiredAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
-    map['id'] = Variable<String>(id);
+    map['id'] = Variable<int>(id);
     map['memory_id'] = Variable<String>(memoryId);
-    map['device_id'] = Variable<String>(deviceId);
     map['kind'] = Variable<String>(kind);
     map['used_at'] = Variable<String>(usedAt);
-    map['acquired_at'] = Variable<String>(acquiredAt);
     return map;
   }
 
-  MemoryUsesCompanion toCompanion(bool nullToAbsent) {
-    return MemoryUsesCompanion(
+  LocalMemoryUsesCompanion toCompanion(bool nullToAbsent) {
+    return LocalMemoryUsesCompanion(
       id: Value(id),
       memoryId: Value(memoryId),
-      deviceId: Value(deviceId),
       kind: Value(kind),
       usedAt: Value(usedAt),
-      acquiredAt: Value(acquiredAt),
     );
   }
 
-  factory MemoryUseRow.fromJson(
+  factory LocalMemoryUseRow.fromJson(
     Map<String, dynamic> json, {
     ValueSerializer? serializer,
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return MemoryUseRow(
-      id: serializer.fromJson<String>(json['id']),
+    return LocalMemoryUseRow(
+      id: serializer.fromJson<int>(json['id']),
       memoryId: serializer.fromJson<String>(json['memoryId']),
-      deviceId: serializer.fromJson<String>(json['deviceId']),
       kind: serializer.fromJson<String>(json['kind']),
       usedAt: serializer.fromJson<String>(json['usedAt']),
-      acquiredAt: serializer.fromJson<String>(json['acquiredAt']),
     );
   }
   @override
   Map<String, dynamic> toJson({ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
-      'id': serializer.toJson<String>(id),
+      'id': serializer.toJson<int>(id),
       'memoryId': serializer.toJson<String>(memoryId),
-      'deviceId': serializer.toJson<String>(deviceId),
       'kind': serializer.toJson<String>(kind),
       'usedAt': serializer.toJson<String>(usedAt),
-      'acquiredAt': serializer.toJson<String>(acquiredAt),
     };
   }
 
-  MemoryUseRow copyWith({
-    String? id,
+  LocalMemoryUseRow copyWith({
+    int? id,
     String? memoryId,
-    String? deviceId,
     String? kind,
     String? usedAt,
-    String? acquiredAt,
-  }) => MemoryUseRow(
+  }) => LocalMemoryUseRow(
     id: id ?? this.id,
     memoryId: memoryId ?? this.memoryId,
-    deviceId: deviceId ?? this.deviceId,
     kind: kind ?? this.kind,
     usedAt: usedAt ?? this.usedAt,
-    acquiredAt: acquiredAt ?? this.acquiredAt,
   );
-  MemoryUseRow copyWithCompanion(MemoryUsesCompanion data) {
-    return MemoryUseRow(
+  LocalMemoryUseRow copyWithCompanion(LocalMemoryUsesCompanion data) {
+    return LocalMemoryUseRow(
       id: data.id.present ? data.id.value : this.id,
       memoryId: data.memoryId.present ? data.memoryId.value : this.memoryId,
-      deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
       kind: data.kind.present ? data.kind.value : this.kind,
       usedAt: data.usedAt.present ? data.usedAt.value : this.usedAt,
-      acquiredAt: data.acquiredAt.present
-          ? data.acquiredAt.value
-          : this.acquiredAt,
     );
   }
 
   @override
   String toString() {
-    return (StringBuffer('MemoryUseRow(')
+    return (StringBuffer('LocalMemoryUseRow(')
           ..write('id: $id, ')
           ..write('memoryId: $memoryId, ')
-          ..write('deviceId: $deviceId, ')
           ..write('kind: $kind, ')
-          ..write('usedAt: $usedAt, ')
-          ..write('acquiredAt: $acquiredAt')
+          ..write('usedAt: $usedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, memoryId, deviceId, kind, usedAt, acquiredAt);
+  int get hashCode => Object.hash(id, memoryId, kind, usedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is MemoryUseRow &&
+      (other is LocalMemoryUseRow &&
           other.id == this.id &&
           other.memoryId == this.memoryId &&
-          other.deviceId == this.deviceId &&
           other.kind == this.kind &&
-          other.usedAt == this.usedAt &&
-          other.acquiredAt == this.acquiredAt);
+          other.usedAt == this.usedAt);
 }
 
-class MemoryUsesCompanion extends UpdateCompanion<MemoryUseRow> {
-  final Value<String> id;
+class LocalMemoryUsesCompanion extends UpdateCompanion<LocalMemoryUseRow> {
+  final Value<int> id;
   final Value<String> memoryId;
-  final Value<String> deviceId;
   final Value<String> kind;
   final Value<String> usedAt;
-  final Value<String> acquiredAt;
-  final Value<int> rowid;
-  const MemoryUsesCompanion({
+  const LocalMemoryUsesCompanion({
     this.id = const Value.absent(),
     this.memoryId = const Value.absent(),
-    this.deviceId = const Value.absent(),
     this.kind = const Value.absent(),
     this.usedAt = const Value.absent(),
-    this.acquiredAt = const Value.absent(),
-    this.rowid = const Value.absent(),
   });
-  MemoryUsesCompanion.insert({
-    required String id,
+  LocalMemoryUsesCompanion.insert({
+    this.id = const Value.absent(),
     required String memoryId,
-    required String deviceId,
     this.kind = const Value.absent(),
     required String usedAt,
-    required String acquiredAt,
-    this.rowid = const Value.absent(),
-  }) : id = Value(id),
-       memoryId = Value(memoryId),
-       deviceId = Value(deviceId),
-       usedAt = Value(usedAt),
-       acquiredAt = Value(acquiredAt);
-  static Insertable<MemoryUseRow> custom({
-    Expression<String>? id,
+  }) : memoryId = Value(memoryId),
+       usedAt = Value(usedAt);
+  static Insertable<LocalMemoryUseRow> custom({
+    Expression<int>? id,
     Expression<String>? memoryId,
-    Expression<String>? deviceId,
     Expression<String>? kind,
     Expression<String>? usedAt,
-    Expression<String>? acquiredAt,
-    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (memoryId != null) 'memory_id': memoryId,
-      if (deviceId != null) 'device_id': deviceId,
       if (kind != null) 'kind': kind,
       if (usedAt != null) 'used_at': usedAt,
-      if (acquiredAt != null) 'acquired_at': acquiredAt,
-      if (rowid != null) 'rowid': rowid,
     });
   }
 
-  MemoryUsesCompanion copyWith({
-    Value<String>? id,
+  LocalMemoryUsesCompanion copyWith({
+    Value<int>? id,
     Value<String>? memoryId,
-    Value<String>? deviceId,
     Value<String>? kind,
     Value<String>? usedAt,
-    Value<String>? acquiredAt,
-    Value<int>? rowid,
   }) {
-    return MemoryUsesCompanion(
+    return LocalMemoryUsesCompanion(
       id: id ?? this.id,
       memoryId: memoryId ?? this.memoryId,
-      deviceId: deviceId ?? this.deviceId,
       kind: kind ?? this.kind,
       usedAt: usedAt ?? this.usedAt,
-      acquiredAt: acquiredAt ?? this.acquiredAt,
-      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -9888,13 +9693,10 @@ class MemoryUsesCompanion extends UpdateCompanion<MemoryUseRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     if (id.present) {
-      map['id'] = Variable<String>(id.value);
+      map['id'] = Variable<int>(id.value);
     }
     if (memoryId.present) {
       map['memory_id'] = Variable<String>(memoryId.value);
-    }
-    if (deviceId.present) {
-      map['device_id'] = Variable<String>(deviceId.value);
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
@@ -9902,25 +9704,16 @@ class MemoryUsesCompanion extends UpdateCompanion<MemoryUseRow> {
     if (usedAt.present) {
       map['used_at'] = Variable<String>(usedAt.value);
     }
-    if (acquiredAt.present) {
-      map['acquired_at'] = Variable<String>(acquiredAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
     return map;
   }
 
   @override
   String toString() {
-    return (StringBuffer('MemoryUsesCompanion(')
+    return (StringBuffer('LocalMemoryUsesCompanion(')
           ..write('id: $id, ')
           ..write('memoryId: $memoryId, ')
-          ..write('deviceId: $deviceId, ')
           ..write('kind: $kind, ')
-          ..write('usedAt: $usedAt, ')
-          ..write('acquiredAt: $acquiredAt, ')
-          ..write('rowid: $rowid')
+          ..write('usedAt: $usedAt')
           ..write(')'))
         .toString();
   }
@@ -9938,12 +9731,8 @@ class $RevisionCommitsTable extends RevisionCommits
     'id',
     aliasedName,
     false,
-    hasAutoIncrement: true,
     type: DriftSqlType.int,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'PRIMARY KEY AUTOINCREMENT',
-    ),
   );
   static const VerificationMeta _parentIdMeta = const VerificationMeta(
     'parentId',
@@ -10321,6 +10110,8 @@ class $RevisionCommitsTable extends RevisionCommits
 
 class RevisionCommitRow extends DataClass
     implements Insertable<RevisionCommitRow> {
+  /// 提交编号：基线为 0，其余由 `revision_state.next_commit` 预留，两处插入都
+  /// 显式给出，不用 `AUTOINCREMENT` 另维护一份 `sqlite_sequence`（审查 S22）。
   final int id;
   final int? parentId;
   final int generation;
@@ -10330,8 +10121,9 @@ class RevisionCommitRow extends DataClass
   final String stateDigest;
   final String actor;
 
-  /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
-  /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
+  /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、`maintenance`；
+  /// 界面按它显示标签与图标，不再从 [action] 推断。来源是另一台设备还是本机，
+  /// 只看 [originDevice]，与类型无关（审查 S23）。
   final String kind;
 
   /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
@@ -11980,18 +11772,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     type: DriftSqlType.blob,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _encodingMeta = const VerificationMeta(
-    'encoding',
-  );
-  @override
-  late final GeneratedColumn<String> encoding = GeneratedColumn<String>(
-    'encoding',
-    aliasedName,
-    false,
-    check: () => encoding.isIn(checkpointEncodings),
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
   static const VerificationMeta _rawBytesMeta = const VerificationMeta(
     'rawBytes',
   );
@@ -12032,7 +11812,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     kind,
     commitId,
     payload,
-    encoding,
     rawBytes,
     stateDigest,
     createdAt,
@@ -12075,14 +11854,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
       );
     } else if (isInserting) {
       context.missing(_payloadMeta);
-    }
-    if (data.containsKey('encoding')) {
-      context.handle(
-        _encodingMeta,
-        encoding.isAcceptableOrUnknown(data['encoding']!, _encodingMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_encodingMeta);
     }
     if (data.containsKey('raw_bytes')) {
       context.handle(
@@ -12136,10 +11907,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
         DriftSqlType.blob,
         data['${effectivePrefix}payload'],
       )!,
-      encoding: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}encoding'],
-      )!,
       rawBytes: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}raw_bytes'],
@@ -12169,7 +11936,6 @@ class RevisionCheckpointRow extends DataClass
 
   /// 业务投影的字节，gzip 压缩之后的检查点原文；解出 JSON 再还原投影。
   final Uint8List payload;
-  final String encoding;
 
   /// 压缩之前的字节数，用于留存统计与按容量裁剪的估算。
   final int rawBytes;
@@ -12182,7 +11948,6 @@ class RevisionCheckpointRow extends DataClass
     required this.kind,
     required this.commitId,
     required this.payload,
-    required this.encoding,
     required this.rawBytes,
     required this.stateDigest,
     required this.createdAt,
@@ -12194,7 +11959,6 @@ class RevisionCheckpointRow extends DataClass
     map['kind'] = Variable<String>(kind);
     map['commit_id'] = Variable<int>(commitId);
     map['payload'] = Variable<Uint8List>(payload);
-    map['encoding'] = Variable<String>(encoding);
     map['raw_bytes'] = Variable<int>(rawBytes);
     map['state_digest'] = Variable<String>(stateDigest);
     map['created_at'] = Variable<String>(createdAt);
@@ -12207,7 +11971,6 @@ class RevisionCheckpointRow extends DataClass
       kind: Value(kind),
       commitId: Value(commitId),
       payload: Value(payload),
-      encoding: Value(encoding),
       rawBytes: Value(rawBytes),
       stateDigest: Value(stateDigest),
       createdAt: Value(createdAt),
@@ -12224,7 +11987,6 @@ class RevisionCheckpointRow extends DataClass
       kind: serializer.fromJson<String>(json['kind']),
       commitId: serializer.fromJson<int>(json['commitId']),
       payload: serializer.fromJson<Uint8List>(json['payload']),
-      encoding: serializer.fromJson<String>(json['encoding']),
       rawBytes: serializer.fromJson<int>(json['rawBytes']),
       stateDigest: serializer.fromJson<String>(json['stateDigest']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
@@ -12238,7 +12000,6 @@ class RevisionCheckpointRow extends DataClass
       'kind': serializer.toJson<String>(kind),
       'commitId': serializer.toJson<int>(commitId),
       'payload': serializer.toJson<Uint8List>(payload),
-      'encoding': serializer.toJson<String>(encoding),
       'rawBytes': serializer.toJson<int>(rawBytes),
       'stateDigest': serializer.toJson<String>(stateDigest),
       'createdAt': serializer.toJson<String>(createdAt),
@@ -12250,7 +12011,6 @@ class RevisionCheckpointRow extends DataClass
     String? kind,
     int? commitId,
     Uint8List? payload,
-    String? encoding,
     int? rawBytes,
     String? stateDigest,
     String? createdAt,
@@ -12259,7 +12019,6 @@ class RevisionCheckpointRow extends DataClass
     kind: kind ?? this.kind,
     commitId: commitId ?? this.commitId,
     payload: payload ?? this.payload,
-    encoding: encoding ?? this.encoding,
     rawBytes: rawBytes ?? this.rawBytes,
     stateDigest: stateDigest ?? this.stateDigest,
     createdAt: createdAt ?? this.createdAt,
@@ -12270,7 +12029,6 @@ class RevisionCheckpointRow extends DataClass
       kind: data.kind.present ? data.kind.value : this.kind,
       commitId: data.commitId.present ? data.commitId.value : this.commitId,
       payload: data.payload.present ? data.payload.value : this.payload,
-      encoding: data.encoding.present ? data.encoding.value : this.encoding,
       rawBytes: data.rawBytes.present ? data.rawBytes.value : this.rawBytes,
       stateDigest: data.stateDigest.present
           ? data.stateDigest.value
@@ -12286,7 +12044,6 @@ class RevisionCheckpointRow extends DataClass
           ..write('kind: $kind, ')
           ..write('commitId: $commitId, ')
           ..write('payload: $payload, ')
-          ..write('encoding: $encoding, ')
           ..write('rawBytes: $rawBytes, ')
           ..write('stateDigest: $stateDigest, ')
           ..write('createdAt: $createdAt')
@@ -12300,7 +12057,6 @@ class RevisionCheckpointRow extends DataClass
     kind,
     commitId,
     $driftBlobEquality.hash(payload),
-    encoding,
     rawBytes,
     stateDigest,
     createdAt,
@@ -12313,7 +12069,6 @@ class RevisionCheckpointRow extends DataClass
           other.kind == this.kind &&
           other.commitId == this.commitId &&
           $driftBlobEquality.equals(other.payload, this.payload) &&
-          other.encoding == this.encoding &&
           other.rawBytes == this.rawBytes &&
           other.stateDigest == this.stateDigest &&
           other.createdAt == this.createdAt);
@@ -12325,7 +12080,6 @@ class RevisionCheckpointsCompanion
   final Value<String> kind;
   final Value<int> commitId;
   final Value<Uint8List> payload;
-  final Value<String> encoding;
   final Value<int> rawBytes;
   final Value<String> stateDigest;
   final Value<String> createdAt;
@@ -12334,7 +12088,6 @@ class RevisionCheckpointsCompanion
     this.kind = const Value.absent(),
     this.commitId = const Value.absent(),
     this.payload = const Value.absent(),
-    this.encoding = const Value.absent(),
     this.rawBytes = const Value.absent(),
     this.stateDigest = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -12344,14 +12097,12 @@ class RevisionCheckpointsCompanion
     required String kind,
     required int commitId,
     required Uint8List payload,
-    required String encoding,
     required int rawBytes,
     required String stateDigest,
     required String createdAt,
   }) : kind = Value(kind),
        commitId = Value(commitId),
        payload = Value(payload),
-       encoding = Value(encoding),
        rawBytes = Value(rawBytes),
        stateDigest = Value(stateDigest),
        createdAt = Value(createdAt);
@@ -12360,7 +12111,6 @@ class RevisionCheckpointsCompanion
     Expression<String>? kind,
     Expression<int>? commitId,
     Expression<Uint8List>? payload,
-    Expression<String>? encoding,
     Expression<int>? rawBytes,
     Expression<String>? stateDigest,
     Expression<String>? createdAt,
@@ -12370,7 +12120,6 @@ class RevisionCheckpointsCompanion
       if (kind != null) 'kind': kind,
       if (commitId != null) 'commit_id': commitId,
       if (payload != null) 'payload': payload,
-      if (encoding != null) 'encoding': encoding,
       if (rawBytes != null) 'raw_bytes': rawBytes,
       if (stateDigest != null) 'state_digest': stateDigest,
       if (createdAt != null) 'created_at': createdAt,
@@ -12382,7 +12131,6 @@ class RevisionCheckpointsCompanion
     Value<String>? kind,
     Value<int>? commitId,
     Value<Uint8List>? payload,
-    Value<String>? encoding,
     Value<int>? rawBytes,
     Value<String>? stateDigest,
     Value<String>? createdAt,
@@ -12392,7 +12140,6 @@ class RevisionCheckpointsCompanion
       kind: kind ?? this.kind,
       commitId: commitId ?? this.commitId,
       payload: payload ?? this.payload,
-      encoding: encoding ?? this.encoding,
       rawBytes: rawBytes ?? this.rawBytes,
       stateDigest: stateDigest ?? this.stateDigest,
       createdAt: createdAt ?? this.createdAt,
@@ -12414,9 +12161,6 @@ class RevisionCheckpointsCompanion
     if (payload.present) {
       map['payload'] = Variable<Uint8List>(payload.value);
     }
-    if (encoding.present) {
-      map['encoding'] = Variable<String>(encoding.value);
-    }
     if (rawBytes.present) {
       map['raw_bytes'] = Variable<int>(rawBytes.value);
     }
@@ -12436,7 +12180,6 @@ class RevisionCheckpointsCompanion
           ..write('kind: $kind, ')
           ..write('commitId: $commitId, ')
           ..write('payload: $payload, ')
-          ..write('encoding: $encoding, ')
           ..write('rawBytes: $rawBytes, ')
           ..write('stateDigest: $stateDigest, ')
           ..write('createdAt: $createdAt')
@@ -13798,7 +13541,7 @@ class RevisionConflictRow extends DataClass
     implements Insertable<RevisionConflictRow> {
   final int id;
 
-  /// 应用远端提交时在本机形成的 `remote` 提交。
+  /// 应用远端提交时在本机形成的提交，类型沿用远端那条提交的 `kind`。
   final int commitId;
   final String targetTable;
   final String rowKey;
@@ -14494,7 +14237,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AssessmentsTable assessments = $AssessmentsTable(this);
   late final $MemoriesTable memories = $MemoriesTable(this);
   late final $MemoryUsagesTable memoryUsages = $MemoryUsagesTable(this);
-  late final $MemoryUsesTable memoryUses = $MemoryUsesTable(this);
+  late final $LocalMemoryUsesTable localMemoryUses = $LocalMemoryUsesTable(
+    this,
+  );
   late final $RevisionCommitsTable revisionCommits = $RevisionCommitsTable(
     this,
   );
@@ -14515,21 +14260,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $RevisionConflictsTable revisionConflicts =
       $RevisionConflictsTable(this);
   late final $SyncShadowsTable syncShadows = $SyncShadowsTable(this);
-  late final Index idxAssetChunkHash = Index(
-    'idx_asset_chunk_hash',
-    'CREATE INDEX idx_asset_chunk_hash ON asset_chunk (hash, seq)',
-  );
   late final Index idxMaterialGoal = Index(
     'idx_material_goal',
     'CREATE INDEX idx_material_goal ON material (goal_id)',
   );
-  late final Index idxMaterialPageMaterial = Index(
-    'idx_material_page_material',
-    'CREATE INDEX idx_material_page_material ON material_page (material_id, page_no)',
+  late final Index idxMaterialSourceFileHash = Index(
+    'idx_material_source_file_hash',
+    'CREATE INDEX idx_material_source_file_hash ON material (source_file_hash)',
   );
-  late final Index idxConversationStatus = Index(
-    'idx_conversation_status',
-    'CREATE INDEX idx_conversation_status ON conversation (status, updated_at)',
+  late final Index idxConversationUpdated = Index(
+    'idx_conversation_updated',
+    'CREATE INDEX idx_conversation_updated ON conversation (updated_at)',
   );
   late final Index idxConversationGoal = Index(
     'idx_conversation_goal',
@@ -14546,6 +14287,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxStudyPlanMaterial = Index(
     'idx_study_plan_material',
     'CREATE INDEX idx_study_plan_material ON study_plan (material_id, status)',
+  );
+  late final Index idxStudyPlanGoal = Index(
+    'idx_study_plan_goal',
+    'CREATE INDEX idx_study_plan_goal ON study_plan (goal_id)',
+  );
+  late final Index idxStudyPlanConversation = Index(
+    'idx_study_plan_conversation',
+    'CREATE INDEX idx_study_plan_conversation ON study_plan (conversation_id)',
   );
   late final Index idxPlanItemStatusDue = Index(
     'idx_plan_item_status_due',
@@ -14579,6 +14328,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_session_conversation',
     'CREATE INDEX idx_session_conversation ON study_session (conversation_id, ended_at)',
   );
+  late final Index idxSessionGoal = Index(
+    'idx_session_goal',
+    'CREATE INDEX idx_session_goal ON study_session (goal_id)',
+  );
   late final Index idxAttemptConversation = Index(
     'idx_attempt_conversation',
     'CREATE INDEX idx_attempt_conversation ON attempt (conversation_id, submitted_at)',
@@ -14599,21 +14352,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_memory_status',
     'CREATE INDEX idx_memory_status ON memory (status, kind)',
   );
-  late final Index idxMemoryValid = Index(
-    'idx_memory_valid',
-    'CREATE INDEX idx_memory_valid ON memory (valid_until)',
-  );
   late final Index idxMemoryUsageMemoryDevice = Index(
     'idx_memory_usage_memory_device',
     'CREATE UNIQUE INDEX idx_memory_usage_memory_device ON memory_usage (memory_id, device_id)',
   );
-  late final Index idxMemoryUseMemory = Index(
-    'idx_memory_use_memory',
-    'CREATE INDEX idx_memory_use_memory ON memory_use (memory_id, used_at)',
-  );
-  late final Index idxMemoryUseDevice = Index(
-    'idx_memory_use_device',
-    'CREATE INDEX idx_memory_use_device ON memory_use (device_id, used_at)',
+  late final Index idxLocalMemoryUseMemory = Index(
+    'idx_local_memory_use_memory',
+    'CREATE INDEX idx_local_memory_use_memory ON local_memory_use (memory_id)',
   );
   late final Index idxRevisionUid = Index(
     'idx_revision_uid',
@@ -14631,10 +14376,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_revision_change_target',
     'CREATE INDEX idx_revision_change_target ON revision_change (table_name, row_key)',
   );
-  late final Index idxRevisionChangeCommit = Index(
-    'idx_revision_change_commit',
-    'CREATE INDEX idx_revision_change_commit ON revision_change (commit_id, seq)',
-  );
   late final Index idxRevisionRefUid = Index(
     'idx_revision_ref_uid',
     'CREATE INDEX idx_revision_ref_uid ON revision_ref (commit_uid)',
@@ -14646,6 +14387,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxRevisionAssetHash = Index(
     'idx_revision_asset_hash',
     'CREATE INDEX idx_revision_asset_hash ON revision_asset_ref (hash)',
+  );
+  late final Index idxRevisionConflictCommit = Index(
+    'idx_revision_conflict_commit',
+    'CREATE INDEX idx_revision_conflict_commit ON revision_conflict (commit_id)',
   );
   Future<int> insertTimetableEntry(
     String id,
@@ -15876,7 +15621,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String? beforeId,
   ) {
     return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)AND(?2 IS NULL OR id < ?2)ORDER BY id LIMIT 1',
+      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_hashes_json IS NOT NULL)AND(?2 IS NULL OR id < ?2)ORDER BY id LIMIT 1',
       variables: [Variable<String>(conversationId), Variable<String>(beforeId)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
@@ -15884,7 +15629,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<MessageRow> lastUserMessage(String conversationId) {
     return customSelect(
-      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_paths_json IS NOT NULL)ORDER BY id DESC LIMIT 1',
+      'SELECT * FROM message WHERE conversation_id = ?1 AND role = \'user\' AND(TRIM(content) <> \'\' OR image_hashes_json IS NOT NULL)ORDER BY id DESC LIMIT 1',
       variables: [Variable<String>(conversationId)],
       readsFrom: {this.messages},
     ).asyncMap(this.messages.mapFromRow);
@@ -15898,12 +15643,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.messages.mapFromRow);
   }
 
-  Selectable<String?> imagePathsOfConversation(String conversationId) {
+  Selectable<String?> imageHashesOfConversation(String conversationId) {
     return customSelect(
-      'SELECT image_paths_json FROM message WHERE conversation_id = ?1 AND image_paths_json IS NOT NULL',
+      'SELECT image_hashes_json FROM message WHERE conversation_id = ?1 AND image_hashes_json IS NOT NULL',
       variables: [Variable<String>(conversationId)],
       readsFrom: {this.messages},
-    ).map((QueryRow row) => row.readNullable<String>('image_paths_json'));
+    ).map((QueryRow row) => row.readNullable<String>('image_hashes_json'));
   }
 
   Future<int> insertConversationMessage(
@@ -15911,18 +15656,18 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String conversationId,
     String role,
     String content,
-    String? imagePaths,
+    String? imageHashes,
     String? structuredJson,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO message (id, conversation_id, role, content, image_paths_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
+      'INSERT INTO message (id, conversation_id, role, content, image_hashes_json, structured_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
       variables: [
         Variable<String>(id),
         Variable<String>(conversationId),
         Variable<String>(role),
         Variable<String>(content),
-        Variable<String>(imagePaths),
+        Variable<String>(imageHashes),
         Variable<String>(structuredJson),
         Variable<String>(stamp),
       ],
@@ -16021,25 +15766,51 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<UsesAfterResult> usesAfter(String deviceId, String after) {
+  Selectable<LocalUseCountsResult> localUseCounts() {
     return customSelect(
-      'SELECT memory_id, kind, used_at FROM memory_use WHERE device_id = ?1 AND acquired_at > ?2',
-      variables: [Variable<String>(deviceId), Variable<String>(after)],
-      readsFrom: {this.memoryUses},
+      'SELECT memory_id AS memory_id, kind AS kind, COUNT(*) AS use_count, MAX(used_at) AS last_used_at FROM local_memory_use GROUP BY memory_id, kind',
+      variables: [],
+      readsFrom: {this.localMemoryUses},
     ).map(
-      (QueryRow row) => UsesAfterResult(
+      (QueryRow row) => LocalUseCountsResult(
         memoryId: row.read<String>('memory_id'),
         kind: row.read<String>('kind'),
-        usedAt: row.read<String>('used_at'),
+        useCount: row.read<int>('use_count'),
+        lastUsedAt: row.readNullable<String>('last_used_at'),
       ),
+    );
+  }
+
+  Future<int> insertLocalMemoryUse(
+    String memoryId,
+    String kind,
+    String usedAt,
+  ) {
+    return customInsert(
+      'INSERT INTO local_memory_use (memory_id, kind, used_at) VALUES (?1, ?2, ?3)',
+      variables: [
+        Variable<String>(memoryId),
+        Variable<String>(kind),
+        Variable<String>(usedAt),
+      ],
+      updates: {this.localMemoryUses},
+    );
+  }
+
+  Future<int> deleteLocalMemoryUses() {
+    return customUpdate(
+      'DELETE FROM local_memory_use',
+      variables: [],
+      updates: {this.localMemoryUses},
+      updateKind: UpdateKind.delete,
     );
   }
 
   Selectable<String> usedMemoryIds(String deviceId) {
     return customSelect(
-      'SELECT DISTINCT memory_id FROM memory_use WHERE device_id = ?1',
+      'SELECT memory_id FROM memory_usage WHERE device_id = ?1 UNION SELECT memory_id FROM local_memory_use',
       variables: [Variable<String>(deviceId)],
-      readsFrom: {this.memoryUses},
+      readsFrom: {this.memoryUsages, this.localMemoryUses},
     ).map((QueryRow row) => row.read<String>('memory_id'));
   }
 
@@ -16059,36 +15830,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.memoryUsages.mapFromRow);
   }
 
-  Future<int> insertMemoryUse(
-    String id,
-    String memoryId,
-    String deviceId,
-    String kind,
-    String usedAt,
-    String acquiredAt,
-  ) {
-    return customInsert(
-      'INSERT INTO memory_use (id, memory_id, device_id, kind, used_at, acquired_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
-      variables: [
-        Variable<String>(id),
-        Variable<String>(memoryId),
-        Variable<String>(deviceId),
-        Variable<String>(kind),
-        Variable<String>(usedAt),
-        Variable<String>(acquiredAt),
-      ],
-      updates: {this.memoryUses},
-    );
-  }
-
-  Selectable<String> memoryUseById(String id) {
-    return customSelect(
-      'SELECT id FROM memory_use WHERE id = ?1',
-      variables: [Variable<String>(id)],
-      readsFrom: {this.memoryUses},
-    ).map((QueryRow row) => row.read<String>('id'));
-  }
-
   Future<int> insertMemoryUsage(
     String id,
     String memoryId,
@@ -16097,11 +15838,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int searchCount,
     String? lastRecalledAt,
     String? lastSearchedAt,
-    String firstSeenAt,
     String updatedAt,
   ) {
     return customInsert(
-      'INSERT INTO memory_usage (id, memory_id, device_id, recall_count, search_count, last_recalled_at, last_searched_at, first_seen_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
+      'INSERT INTO memory_usage (id, memory_id, device_id, recall_count, search_count, last_recalled_at, last_searched_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)',
       variables: [
         Variable<String>(id),
         Variable<String>(memoryId),
@@ -16110,7 +15850,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<int>(searchCount),
         Variable<String>(lastRecalledAt),
         Variable<String>(lastSearchedAt),
-        Variable<String>(firstSeenAt),
         Variable<String>(updatedAt),
       ],
       updates: {this.memoryUsages},
@@ -16122,32 +15861,21 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int searchCount,
     String? lastRecalledAt,
     String? lastSearchedAt,
-    String firstSeenAt,
     String updatedAt,
     String id,
   ) {
     return customUpdate(
-      'UPDATE memory_usage SET recall_count = ?1, search_count = ?2, last_recalled_at = ?3, last_searched_at = ?4, first_seen_at = ?5, updated_at = ?6 WHERE id = ?7',
+      'UPDATE memory_usage SET recall_count = ?1, search_count = ?2, last_recalled_at = ?3, last_searched_at = ?4, updated_at = ?5 WHERE id = ?6',
       variables: [
         Variable<int>(recallCount),
         Variable<int>(searchCount),
         Variable<String>(lastRecalledAt),
         Variable<String>(lastSearchedAt),
-        Variable<String>(firstSeenAt),
         Variable<String>(updatedAt),
         Variable<String>(id),
       ],
       updates: {this.memoryUsages},
       updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> deleteCountedMemoryUses(String deviceId) {
-    return customUpdate(
-      'DELETE FROM memory_use WHERE device_id = ?1 AND acquired_at <= (SELECT first_seen_at FROM memory_usage WHERE memory_id = memory_use.memory_id AND device_id = memory_use.device_id)',
-      variables: [Variable<String>(deviceId)],
-      updates: {this.memoryUses},
-      updateKind: UpdateKind.delete,
     );
   }
 
@@ -16650,7 +16378,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         contextText: row.readNullable<String>('context_text'),
         questionMessageId: row.readNullable<String>('question_message_id'),
         entryKind: row.read<String>('entry_kind'),
-        status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
@@ -16666,7 +16393,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String conversationId,
   ) {
     return customSelect(
-      'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_paths_json FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
+      'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_hashes_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_hashes_json FROM conversation AS c WHERE c.id = ?1 LIMIT 1',
       variables: [Variable<String>(conversationId)],
       readsFrom: {this.conversations, this.materials, this.messages},
     ).map(
@@ -16680,7 +16407,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         materialTitle: row.readNullable<String>('material_title'),
         sourceFileName: row.readNullable<String>('source_file_name'),
         stem: row.readNullable<String>('stem'),
-        imagePathsJson: row.readNullable<String>('image_paths_json'),
+        imageHashesJson: row.readNullable<String>('image_hashes_json'),
       ),
     );
   }
@@ -16690,7 +16417,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int? rowLimit,
   ) {
     return customSelect(
-      'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_paths_json, a.id AS last_attempt_id, a.session_id AS last_attempt_session_id, a.user_answer AS last_attempt_user_answer, a.solution AS last_attempt_solution, a.is_correct AS last_attempt_is_correct, a.independent AS last_attempt_independent, a.help_json AS last_attempt_help_json, a.feedback AS last_attempt_feedback, a.delayed AS last_attempt_delayed, a.submitted_at AS last_attempt_submitted_at, a.created_at AS last_attempt_created_at, EXISTS (SELECT 1 AS _c0 FROM attempt AS a3 WHERE a3.conversation_id = c.id AND a3.submitted_at IS NULL) AS has_draft FROM conversation AS c LEFT JOIN attempt AS a ON a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) WHERE EXISTS (SELECT 1 AS _c1 FROM attempt AS a3 WHERE a3.conversation_id = c.id) AND(?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1)))ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(?2, -1)',
+      'SELECT c.id, c.source_ref, c.context_text, c.page_no, c.created_at, c.updated_at, (SELECT title FROM material WHERE id = c.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS stem, (SELECT m.image_hashes_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS image_hashes_json, a.id AS last_attempt_id, a.session_id AS last_attempt_session_id, a.user_answer AS last_attempt_user_answer, a.solution AS last_attempt_solution, a.is_correct AS last_attempt_is_correct, a.independent AS last_attempt_independent, a.help_json AS last_attempt_help_json, a.feedback AS last_attempt_feedback, a.delayed AS last_attempt_delayed, a.submitted_at AS last_attempt_submitted_at, a.created_at AS last_attempt_created_at, EXISTS (SELECT 1 AS _c0 FROM attempt AS a3 WHERE a3.conversation_id = c.id AND a3.submitted_at IS NULL) AS has_draft FROM conversation AS c LEFT JOIN attempt AS a ON a.id = (SELECT a2.id FROM attempt AS a2 WHERE a2.conversation_id = c.id AND a2.submitted_at IS NOT NULL ORDER BY a2.submitted_at DESC, a2.id DESC LIMIT 1) WHERE EXISTS (SELECT 1 AS _c1 FROM attempt AS a3 WHERE a3.conversation_id = c.id) AND(?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1)))ORDER BY c.updated_at DESC, c.id DESC LIMIT COALESCE(?2, -1)',
       variables: [Variable<String>(conversationIds), Variable<int>(rowLimit)],
       readsFrom: {
         this.conversations,
@@ -16709,7 +16436,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         materialTitle: row.readNullable<String>('material_title'),
         sourceFileName: row.readNullable<String>('source_file_name'),
         stem: row.readNullable<String>('stem'),
-        imagePathsJson: row.readNullable<String>('image_paths_json'),
+        imageHashesJson: row.readNullable<String>('image_hashes_json'),
         lastAttemptId: row.readNullable<String>('last_attempt_id'),
         lastAttemptSessionId: row.readNullable<String>(
           'last_attempt_session_id',
@@ -16769,7 +16496,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         contextText: row.readNullable<String>('context_text'),
         questionMessageId: row.readNullable<String>('question_message_id'),
         entryKind: row.read<String>('entry_kind'),
-        status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
@@ -16807,7 +16533,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         contextText: row.readNullable<String>('context_text'),
         questionMessageId: row.readNullable<String>('question_message_id'),
         entryKind: row.read<String>('entry_kind'),
-        status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
@@ -16836,7 +16561,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, \'open\', ?9, ?9)',
+      'INSERT INTO conversation (id, title, goal_id, material_id, page_no, source_ref, context_text, entry_kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)',
       variables: [
         Variable<String>(id),
         Variable<String>(title),
@@ -16911,7 +16636,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Future<int> endConversation(String? stamp, String conversationId) {
     return customUpdate(
-      'UPDATE conversation SET status = \'ended\', ended_at = ?1, updated_at = ?1 WHERE id = ?2',
+      'UPDATE conversation SET ended_at = ?1, updated_at = ?1 WHERE id = ?2',
       variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
@@ -16929,7 +16654,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Future<int> reopenConversation(String stamp, String conversationId) {
     return customUpdate(
-      'UPDATE conversation SET status = \'open\', ended_at = NULL, updated_at = ?1 WHERE id = ?2',
+      'UPDATE conversation SET ended_at = NULL, updated_at = ?1 WHERE id = ?2',
       variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
@@ -17154,7 +16879,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int? rowLimit,
   ) {
     return customSelect(
-      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_paths_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_paths_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 IS NOT NULL AND c.goal_id = ?1)OR(?2 IS NOT NULL AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 IS NOT NULL OR ?2 IS NOT NULL OR(?3 IS NOT NULL AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 IS NOT NULL OR ?2 IS NOT NULL)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT COALESCE(?5, -1)',
+      'SELECT a.id AS attempt_id, a.conversation_id AS attempt_conversation_id, a.session_id AS attempt_session_id, a.user_answer AS attempt_user_answer, a.solution AS attempt_solution, a.is_correct AS attempt_is_correct, a.independent AS attempt_independent, a.help_json AS attempt_help_json, a.feedback AS attempt_feedback, a.delayed AS attempt_delayed, a.submitted_at AS attempt_submitted_at, a.created_at AS attempt_created_at, c.id AS question_id, c.source_ref AS question_source_ref, c.context_text AS question_context_text, c.page_no AS question_page_no, c.created_at AS question_created_at, c.updated_at AS question_updated_at, (SELECT title FROM material WHERE id = c.material_id) AS question_material_title, (SELECT source_file_name FROM material WHERE id = c.material_id) AS source_file_name, (SELECT m.content FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_stem, (SELECT m.image_hashes_json FROM message AS m WHERE m.conversation_id = c.id AND m.role = \'user\' AND m.id =(COALESCE(c.question_message_id, (SELECT m2.id FROM message AS m2 WHERE m2.conversation_id = c.id AND m2.role = \'user\' ORDER BY m2.id LIMIT 1)))LIMIT 1) AS question_image_hashes_json FROM attempt AS a JOIN conversation AS c ON c.id = a.conversation_id WHERE a.submitted_at IS NOT NULL AND((?1 IS NOT NULL AND c.goal_id = ?1)OR(?2 IS NOT NULL AND c.material_id = ?2)OR(c.goal_id IS NULL AND c.material_id IS NULL AND(?1 IS NOT NULL OR ?2 IS NOT NULL OR(?3 IS NOT NULL AND c.id = ?3)OR a.id IN (SELECT value FROM json_each(?4))))OR((?1 IS NOT NULL OR ?2 IS NOT NULL)AND a.id IN (SELECT value FROM json_each(?4))))ORDER BY a.submitted_at DESC, a.id DESC LIMIT COALESCE(?5, -1)',
       variables: [
         Variable<String>(goalId),
         Variable<String>(materialId),
@@ -17193,8 +16918,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         ),
         sourceFileName: row.readNullable<String>('source_file_name'),
         questionStem: row.readNullable<String>('question_stem'),
-        questionImagePathsJson: row.readNullable<String>(
-          'question_image_paths_json',
+        questionImageHashesJson: row.readNullable<String>(
+          'question_image_hashes_json',
         ),
       ),
     );
@@ -17439,7 +17164,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     assessments,
     memories,
     memoryUsages,
-    memoryUses,
+    localMemoryUses,
     revisionCommits,
     revisionChanges,
     revisionRefs,
@@ -17450,14 +17175,15 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     revisionAssetRefs,
     revisionConflicts,
     syncShadows,
-    idxAssetChunkHash,
     idxMaterialGoal,
-    idxMaterialPageMaterial,
-    idxConversationStatus,
+    idxMaterialSourceFileHash,
+    idxConversationUpdated,
     idxConversationGoal,
     idxConversationMaterial,
     idxMessageConversation,
     idxStudyPlanMaterial,
+    idxStudyPlanGoal,
+    idxStudyPlanConversation,
     idxPlanItemStatusDue,
     idxPlanItemGoal,
     idxPlanItemConversation,
@@ -17466,23 +17192,22 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxSchedulePlan,
     idxSessionPlan,
     idxSessionConversation,
+    idxSessionGoal,
     idxAttemptConversation,
     idxAttemptSession,
     idxAttemptRedo,
     idxAssessmentAttempt,
     idxMemoryStatus,
-    idxMemoryValid,
     idxMemoryUsageMemoryDevice,
-    idxMemoryUseMemory,
-    idxMemoryUseDevice,
+    idxLocalMemoryUseMemory,
     idxRevisionUid,
     idxRevisionCommitParent,
     idxRevisionCommitReverted,
     idxRevisionChangeTarget,
-    idxRevisionChangeCommit,
     idxRevisionRefUid,
     idxRevisionCheckpointCommit,
     idxRevisionAssetHash,
+    idxRevisionConflictCommit,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -17638,7 +17363,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         'memory',
         limitUpdateKind: UpdateKind.delete,
       ),
-      result: [TableUpdate('memory_use', kind: UpdateKind.delete)],
+      result: [TableUpdate('local_memory_use', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -18403,14 +18128,16 @@ class EvidenceMessageSourceByIdResult {
   });
 }
 
-class UsesAfterResult {
+class LocalUseCountsResult {
   final String memoryId;
   final String kind;
-  final String usedAt;
-  UsesAfterResult({
+  final int useCount;
+  final String? lastUsedAt;
+  LocalUseCountsResult({
     required this.memoryId,
     required this.kind,
-    required this.usedAt,
+    required this.useCount,
+    this.lastUsedAt,
   });
 }
 
@@ -18548,7 +18275,6 @@ class ConversationByIdResult {
   final String? contextText;
   final String? questionMessageId;
   final String entryKind;
-  final String status;
   final String? endedAt;
   final String createdAt;
   final String updatedAt;
@@ -18566,7 +18292,6 @@ class ConversationByIdResult {
     this.contextText,
     this.questionMessageId,
     required this.entryKind,
-    required this.status,
     this.endedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -18587,7 +18312,7 @@ class ConversationQuestionResult {
   final String? materialTitle;
   final String? sourceFileName;
   final String? stem;
-  final String? imagePathsJson;
+  final String? imageHashesJson;
   ConversationQuestionResult({
     required this.id,
     this.sourceRef,
@@ -18598,7 +18323,7 @@ class ConversationQuestionResult {
     this.materialTitle,
     this.sourceFileName,
     this.stem,
-    this.imagePathsJson,
+    this.imageHashesJson,
   });
 }
 
@@ -18612,7 +18337,7 @@ class QuestionRowsResult {
   final String? materialTitle;
   final String? sourceFileName;
   final String? stem;
-  final String? imagePathsJson;
+  final String? imageHashesJson;
   final String? lastAttemptId;
   final String? lastAttemptSessionId;
   final String? lastAttemptUserAnswer;
@@ -18635,7 +18360,7 @@ class QuestionRowsResult {
     this.materialTitle,
     this.sourceFileName,
     this.stem,
-    this.imagePathsJson,
+    this.imageHashesJson,
     this.lastAttemptId,
     this.lastAttemptSessionId,
     this.lastAttemptUserAnswer,
@@ -18661,7 +18386,6 @@ class ConversationRecordsResult {
   final String? contextText;
   final String? questionMessageId;
   final String entryKind;
-  final String status;
   final String? endedAt;
   final String createdAt;
   final String updatedAt;
@@ -18684,7 +18408,6 @@ class ConversationRecordsResult {
     this.contextText,
     this.questionMessageId,
     required this.entryKind,
-    required this.status,
     this.endedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -18710,7 +18433,6 @@ class RecentlyActiveRecordsResult {
   final String? contextText;
   final String? questionMessageId;
   final String entryKind;
-  final String status;
   final String? endedAt;
   final String createdAt;
   final String updatedAt;
@@ -18733,7 +18455,6 @@ class RecentlyActiveRecordsResult {
     this.contextText,
     this.questionMessageId,
     required this.entryKind,
-    required this.status,
     this.endedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -18798,7 +18519,7 @@ class RecentSubmittedResult {
   final String? questionMaterialTitle;
   final String? sourceFileName;
   final String? questionStem;
-  final String? questionImagePathsJson;
+  final String? questionImageHashesJson;
   RecentSubmittedResult({
     required this.attemptId,
     required this.attemptConversationId,
@@ -18821,7 +18542,7 @@ class RecentSubmittedResult {
     this.questionMaterialTitle,
     this.sourceFileName,
     this.questionStem,
-    this.questionImagePathsJson,
+    this.questionImageHashesJson,
   });
 }
 

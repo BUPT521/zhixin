@@ -243,6 +243,7 @@ class ServerCommit {
     required this.uid,
     required this.deviceId,
     required this.schemaVersion,
+    required this.kind,
     required this.actor,
     required this.action,
     required this.changes,
@@ -258,6 +259,7 @@ class ServerCommit {
     uid: json['uid'] as String? ?? '',
     deviceId: json['device_id'] as String? ?? '',
     schemaVersion: (json['schema_version'] as num?)?.toInt() ?? 0,
+    kind: json['kind'] as String? ?? '',
     actor: json['actor'] as String? ?? 'user',
     action: json['action'] as String? ?? '',
     createdAt: json['created_at'] as String?,
@@ -276,6 +278,10 @@ class ServerCommit {
   final String uid;
   final String deviceId;
   final int schemaVersion;
+
+  /// 提交类型；远端提交沿用它在原来设备上的类型，来源只看 [deviceId]
+  /// （审查 S23、契约的 `kind`，必填）。
+  final String kind;
   final String actor;
   final String action;
   final String? createdAt;
@@ -290,6 +296,7 @@ class ServerCommit {
     'uid': uid,
     'device_id': deviceId,
     'schema_version': schemaVersion,
+    'kind': kind,
     'actor': actor,
     'action': action,
     'created_at': createdAt,

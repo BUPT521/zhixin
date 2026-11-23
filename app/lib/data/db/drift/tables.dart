@@ -2,26 +2,29 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 31 的 28 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 32 的 28 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 //
 // 业务表 13 张、设置表 1 张、记忆使用统计 2 张，其余 12 张是版本、附件与同步的
 // 簿记。
-// 这一版把同一事实只存一份：完整性只有整库摘要一个原语（ADR-0054 与审查 S1），
-// 单行状态、`HEAD` 与提交编号合进 `revision_state`（S3、S14），截止小时并进
-// `app_meta`（S4），计划当前页由步骤算出（S5）。
+// 这一版把表结构的形状收口到索引与约束上：记忆召回先记在本机缓冲表、不参与
+// 采集，附件引用列与列组显式声明，跨列 CHECK 只约束总是一起写入的列（ADR-0051、
+// 0054，审查第 9 节）。完整性仍只有整库摘要一个原语。
 
-/// 不参与业务变更采集的版本元数据、同步元数据与附件对象表名前缀。
+/// 不参与业务变更采集的版本元数据、同步元数据、附件对象与本机缓冲表名前缀。
 ///
 /// 新增这类表时沿用前缀即可，版本引擎按前缀把它归入元数据；其余新表默认
 /// 参与采集，写入才会进入数据版本历史。同步元数据是同步过程的簿记，不是用户
-/// 数据（ADR-0040），因此与版本元数据一样排除在采集、检查点投影与数据包之外。
+/// 数据（ADR-0040），本机缓冲表（`local_memory_use`）记的是还没有汇总进统计的
+/// 召回，同样不是用户数据（审查 S16），因此一并排除在采集、检查点投影与数据包
+/// 之外。
 const List<String> revisionMetadataTablePrefixes = [
   'revision_',
   'asset_',
   'sync_',
+  'local_',
 ];
 
 /// 保留在库里、但不参与版本采集的内部设置表。
@@ -38,7 +41,6 @@ const Set<String> nonVersionedPersistentTableNames = {'app_meta'};
 const List<String> learningGoalStatuses = ['active', 'paused', 'done'];
 const List<String> materialKinds = ['text', 'slides', 'book', 'other'];
 const List<String> entryKinds = ['text', 'photo', 'text_photo'];
-const List<String> conversationStatuses = ['open', 'ended'];
 const List<String> messageRoles = ['user', 'assistant', 'system'];
 const List<String> studyPlanStatuses = ['active', 'paused', 'done'];
 const List<String> planItemStatuses = ['todo', 'doing', 'done', 'deferred'];
@@ -69,6 +71,9 @@ const List<String> checkpointKinds = [
 ];
 
 /// 提交类型：由写入路径决定，动作文案只给人看（[ADR-0039](../../../../../docs/adr/0039-数据版本的提交类型与同步冲突记录.md)）。
+///
+/// `kind` 只表示这条提交做了什么，来源只看 `origin_device`；远端提交沿用它在
+/// 原来设备上的类型（审查 S23）。
 const List<String> revisionKinds = [
   'baseline',
   'write',
@@ -76,11 +81,7 @@ const List<String> revisionKinds = [
   'restore',
   'import',
   'maintenance',
-  'remote',
 ];
-
-/// 检查点投影的编码：只有 `json+gzip` 一种（ADR-0054 实施前核对删去了 `json`）。
-const List<String> checkpointEncodings = ['json+gzip'];
 
 /// 命名版本的同步状态：干净表示与云端一致，已改表示本机改过、还没推送。
 const List<String> revisionRefSyncStates = ['clean', 'dirty'];
@@ -89,11 +90,16 @@ const List<String> revisionRefSyncStates = ['clean', 'dirty'];
 const List<String> revisionAssetOwnerKinds = ['change', 'checkpoint'];
 
 /// 远端提交覆盖本机修改时记下的冲突原因。
+///
+/// `unique_key_taken` 表示远端插入的行与另一条本机行撞上有含义的唯一键（目前是
+/// `material_page(material_id, page_no)`），这一行跳过不写，由数据版本页提示
+/// 用户处理（审查 S18）。
 const List<String> revisionConflictReasons = [
   'concurrent_update',
   'deleted_locally',
   'insert_collision',
   'deleted_remotely_modified',
+  'unique_key_taken',
 ];
 
 /// 各列允许的取值集合；键是“表名.列名”。
@@ -101,7 +107,6 @@ const Map<String, List<String>> checkValueSets = {
   'learning_goal.status': learningGoalStatuses,
   'material.kind': materialKinds,
   'conversation.entry_kind': entryKinds,
-  'conversation.status': conversationStatuses,
   'message.role': messageRoles,
   'study_plan.status': studyPlanStatuses,
   'plan_item.status': planItemStatuses,
@@ -113,16 +118,71 @@ const Map<String, List<String>> checkValueSets = {
   'memory.kind': memoryKinds,
   'memory.source_kind': memorySourceKinds,
   'memory.status': memoryStatuses,
-  'memory_use.kind': memoryUseKinds,
+  'local_memory_use.kind': memoryUseKinds,
   'revision_commit.actor': revisionActors,
   'revision_commit.kind': revisionKinds,
   'revision_change.op': changeOperations,
   'revision_checkpoint.kind': checkpointKinds,
-  'revision_checkpoint.encoding': checkpointEncodings,
   'revision_asset_ref.owner_kind': revisionAssetOwnerKinds,
   'revision_conflict.reason': revisionConflictReasons,
   'revision_ref.sync_state': revisionRefSyncStates,
 };
+
+/// 附件引用列：键是“表名.列名”，值表示这一列存一个哈希还是哈希组成的 JSON 数组。
+///
+/// 附件回收、导出核对与版本明细的引用收集只读这里声明的列。以前的做法是扫描
+/// 每个文本列，凡是 64 位十六进制就当成附件哈希，`memory_usage.id` 这种恰好是
+/// 这种形状的编号会被误当成缺失的附件（审查 S17）。
+enum AttachmentReferenceKind { hash, hashArray }
+
+const Map<String, AttachmentReferenceKind> attachmentReferenceColumns = {
+  'material.source_file_hash': AttachmentReferenceKind.hash,
+  'message.image_hashes_json': AttachmentReferenceKind.hashArray,
+};
+
+/// 采集与远端应用时整组写入的列组：键是“表名.列名”。
+///
+/// 组里任一列变化时，采集把整组列写进变更明细，远端应用时也整组写入；跨列
+/// CHECK 因此只约束总是一起写入的列，本机改一列、远端改另一列时合并出来的行
+/// 不会违反约束（审查 S18）。
+const List<List<String>> revisionColumnGroups = [
+  ['timetable_entry.start_time', 'timetable_entry.end_time'],
+  ['schedule_block.start_at', 'schedule_block.end_at'],
+  ['material.source_file_name', 'material.source_file_hash'],
+];
+
+/// 远端应用时撞上非主键唯一约束的两种处置（审查 S18）。
+enum RevisionUniqueKeyPolicy {
+  /// 只表示顺序的列：把本机行改到下一个空号，远端这一行照常写入。
+  renumberLocal,
+
+  /// 有含义的唯一键：跳过远端这一行，记一条 `unique_key_taken` 冲突。
+  skipRemote,
+}
+
+/// 会让远端提交在本机撞上非主键唯一约束的列与处置方式。
+///
+/// 列的顺序就是唯一约束的列顺序；[RevisionUniqueKeyPolicy.renumberLocal] 改的
+/// 是最后一列（步骤序号）。表上其他唯一约束没有登记时一律按
+/// [RevisionUniqueKeyPolicy.skipRemote] 处理。
+class RevisionUniqueKey {
+  const RevisionUniqueKey(this.table, this.columns, this.policy);
+
+  final String table;
+  final List<String> columns;
+  final RevisionUniqueKeyPolicy policy;
+}
+
+const List<RevisionUniqueKey> revisionUniqueKeys = [
+  RevisionUniqueKey('plan_item', [
+    'study_plan_id',
+    'seq',
+  ], RevisionUniqueKeyPolicy.renumberLocal),
+  RevisionUniqueKey('material_page', [
+    'material_id',
+    'page_no',
+  ], RevisionUniqueKeyPolicy.skipRemote),
+];
 
 @DataClassName('AppMetaRow')
 class AppMeta extends Table {
@@ -167,7 +227,6 @@ class AssetObjects extends Table {
   Set<Column> get primaryKey => {hash};
 }
 
-@TableIndex(name: 'idx_asset_chunk_hash', columns: {#hash, #seq})
 @DataClassName('AssetChunkRow')
 class AssetChunks extends Table {
   @override
@@ -182,6 +241,7 @@ class AssetChunks extends Table {
 }
 
 @TableIndex(name: 'idx_material_goal', columns: {#goalId})
+@TableIndex(name: 'idx_material_source_file_hash', columns: {#sourceFileHash})
 @DataClassName('MaterialRow')
 class Materials extends Table {
   @override
@@ -212,7 +272,6 @@ class Materials extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@TableIndex(name: 'idx_material_page_material', columns: {#materialId, #pageNo})
 @DataClassName('MaterialPageRow')
 class MaterialPages extends Table {
   @override
@@ -235,7 +294,7 @@ class MaterialPages extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@TableIndex(name: 'idx_conversation_status', columns: {#status, #updatedAt})
+@TableIndex(name: 'idx_conversation_updated', columns: {#updatedAt})
 @TableIndex(name: 'idx_conversation_goal', columns: {#goalId})
 @TableIndex(name: 'idx_conversation_material', columns: {#materialId})
 @DataClassName('ConversationRow')
@@ -261,9 +320,6 @@ class Conversations extends Table {
   TextColumn get entryKind => text()
       .withDefault(const Constant('text'))
       .check(entryKind.isIn(entryKinds))();
-  TextColumn get status => text()
-      .withDefault(const Constant('open'))
-      .check(status.isIn(conversationStatuses))();
   TextColumn get endedAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
@@ -285,7 +341,9 @@ class Messages extends Table {
       text().references(Conversations, #id, onDelete: KeyAction.cascade)();
   TextColumn get role => text().check(role.isIn(messageRoles))();
   TextColumn get content => text()();
-  TextColumn get imagePathsJson => text().nullable()();
+
+  /// 图片的附件哈希数组；列名写的是哈希，不是路径（审查 S17）。
+  TextColumn get imageHashesJson => text().nullable()();
   TextColumn get structuredJson => text().nullable()();
   TextColumn get createdAt => text()();
 
@@ -294,6 +352,8 @@ class Messages extends Table {
 }
 
 @TableIndex(name: 'idx_study_plan_material', columns: {#materialId, #status})
+@TableIndex(name: 'idx_study_plan_goal', columns: {#goalId})
+@TableIndex(name: 'idx_study_plan_conversation', columns: {#conversationId})
 @DataClassName('StudyPlanRow')
 class StudyPlans extends Table {
   @override
@@ -440,6 +500,7 @@ class ScheduleBlocks extends Table {
   name: 'idx_session_conversation',
   columns: {#conversationId, #endedAt},
 )
+@TableIndex(name: 'idx_session_goal', columns: {#goalId})
 @DataClassName('StudySessionRow')
 class StudySessions extends Table {
   @override
@@ -529,7 +590,6 @@ class Assessments extends Table {
 }
 
 @TableIndex(name: 'idx_memory_status', columns: {#status, #kind})
-@TableIndex(name: 'idx_memory_valid', columns: {#validUntil})
 @DataClassName('MemoryRow')
 class Memories extends Table {
   @override
@@ -565,16 +625,16 @@ class Memories extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 记忆的使用统计（ADR-0051 决定第 8 条）。
+/// 记忆的使用统计（ADR-0051 决定第 8 条，审查 S16）。
 ///
-/// 一行是某条记忆在某台设备的计数与时间，设备编号取自 ADR-0048；每台设备只写
-/// 自己的行，汇总时计数相加、时间取最大值，因此不产生同步冲突。
+/// 一行是某条记忆在某台设备的计数与最近使用时间，设备编号取自 ADR-0048；每台
+/// 设备只写自己的行，汇总时计数相加、时间取最大值，因此不产生同步冲突。
 ///
-/// 计数由本机已导出到使用记录表的时间点现算（召回、读出、使用、确认保留各记
-/// 一条），[FirstSeenAt] 记本机最早看到这条时间点的时刻，远端提交带来其他设备
-/// 的更早时间点时把它前移；下一次冲刷只数 [FirstSeenAt] 之后的时间点，重复
-/// 冲刷不重复累加。主键是单列 [Id]，按“记忆编号＋设备编号”的唯一约束定位行：
-/// 版本引擎的采集只支持单列主键，复合主键的稳定行键由这一列承担。
+/// 计数先记在本机缓冲表 [LocalMemoryUses]，由冲刷在一条 `maintenance` 提交里
+/// 汇总进来，所以这里没有水位列。主键是单列 [id]，按“记忆编号＋设备编号”的
+/// 唯一约束定位行：版本引擎的采集只支持单列主键，复合主键的稳定行键由这一列
+/// 承担；编号按 ADR-0053 用 UUIDv5 从设备编号与记忆编号生成，不再是内容哈希的
+/// 形状（审查 S17）。
 @TableIndex(
   name: 'idx_memory_usage_memory_device',
   columns: {#memoryId, #deviceId},
@@ -592,36 +652,33 @@ class MemoryUsages extends Table {
   IntColumn get searchCount => integer().withDefault(const Constant(0))();
   TextColumn get lastRecalledAt => text().nullable()();
   TextColumn get lastSearchedAt => text().nullable()();
-  TextColumn get firstSeenAt => text()();
   TextColumn get updatedAt => text()();
 
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// 记忆被召回与读出的时间点，一台设备一行、只增不改。
+/// 记忆被召回与读出的本机缓冲，只在本机累积、不参与采集与同步。
 ///
-/// 一行是“某台设备在某个时刻把某条记忆放进了相关层（或由 `search_memory` 读
-/// 到）”，正文只是时间与记忆编号，由使用统计现算计数，因此不需要计数器与去重
-/// 列；每行带 [acquiredAt] 记本机拿到它的时刻，远端提交同样带上，远端行落在
-/// 更大的值上时按后写覆盖，两端取较大值。旧行由使用统计在冲刷时清理（ADR-0051 决定第 8 条）。
-@TableIndex(name: 'idx_memory_use_memory', columns: {#memoryId, #usedAt})
-@TableIndex(name: 'idx_memory_use_device', columns: {#deviceId, #usedAt})
-@DataClassName('MemoryUseRow')
-class MemoryUses extends Table {
+/// 一行是“某一刻把某条记忆放进了相关层（或由 `search_memory` 读到）”，只保存
+/// 记忆编号、种类与时刻；冲刷在同一条 `maintenance` 提交里把行汇总进
+/// [MemoryUsages] 再删除缓冲行，汇总与删除在同一个事务里，所以不再需要水位，
+/// 也没有设备编号与取得时刻两列（审查 S16）。表名前缀 `local_` 让它不参与
+/// 采集、检查点投影与数据包。
+@TableIndex(name: 'idx_local_memory_use_memory', columns: {#memoryId})
+@DataClassName('LocalMemoryUseRow')
+class LocalMemoryUses extends Table {
   @override
-  String get tableName => 'memory_use';
-  TextColumn get id => text()();
+  String get tableName => 'local_memory_use';
+  IntColumn get id => integer().autoIncrement()();
   TextColumn get memoryId =>
       text().references(Memories, #id, onDelete: KeyAction.cascade)();
-  TextColumn get deviceId => text()();
 
   /// `recall` 表示进入相关层，`search` 表示由 `search_memory` 读到。
   TextColumn get kind => text()
       .withDefault(const Constant('recall'))
       .check(kind.isIn(memoryUseKinds))();
   TextColumn get usedAt => text()();
-  TextColumn get acquiredAt => text()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -634,7 +691,10 @@ class MemoryUses extends Table {
 class RevisionCommits extends Table {
   @override
   String get tableName => 'revision_commit';
-  IntColumn get id => integer().autoIncrement()();
+
+  /// 提交编号：基线为 0，其余由 `revision_state.next_commit` 预留，两处插入都
+  /// 显式给出，不用 `AUTOINCREMENT` 另维护一份 `sqlite_sequence`（审查 S22）。
+  IntColumn get id => integer()();
   IntColumn get parentId => integer().nullable().references(
     RevisionCommits,
     #id,
@@ -648,8 +708,9 @@ class RevisionCommits extends Table {
   TextColumn get stateDigest => text()();
   TextColumn get actor => text().check(actor.isIn(revisionActors))();
 
-  /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
-  /// `maintenance`、`remote`；界面按它显示标签与图标，不再从 [action] 推断。
+  /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、`maintenance`；
+  /// 界面按它显示标签与图标，不再从 [action] 推断。来源是另一台设备还是本机，
+  /// 只看 [originDevice]，与类型无关（审查 S23）。
   TextColumn get kind => text().check(kind.isIn(revisionKinds))();
 
   /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
@@ -680,13 +741,15 @@ class RevisionCommits extends Table {
   /// 取推送响应里的逐条序号。空值只表示还不知道它排在第几条，不影响同步
   /// （ADR-0054 决定第 2 条）。
   IntColumn get serverSeq => integer().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
 }
 
 @TableIndex(
   name: 'idx_revision_change_target',
   columns: {#targetTable, #rowKey},
 )
-@TableIndex(name: 'idx_revision_change_commit', columns: {#commitId, #seq})
 @DataClassName('RevisionChangeRow')
 class RevisionChanges extends Table {
   @override
@@ -756,7 +819,6 @@ class RevisionCheckpoints extends Table {
 
   /// 业务投影的字节，gzip 压缩之后的检查点原文；解出 JSON 再还原投影。
   BlobColumn get payload => blob()();
-  TextColumn get encoding => text().check(encoding.isIn(checkpointEncodings))();
 
   /// 压缩之前的字节数，用于留存统计与按容量裁剪的估算。
   IntColumn get rawBytes => integer().check(rawBytes.isBiggerOrEqualValue(0))();
@@ -804,13 +866,14 @@ class RevisionAssetRefs extends Table {
 ///
 /// 同步仍然是后到覆盖先到；这张表让本机能列出每一处被覆盖的本机值，并把本机
 /// 值作为一条普通提交写回（`keepLocal`）。
+@TableIndex(name: 'idx_revision_conflict_commit', columns: {#commitId})
 @DataClassName('RevisionConflictRow')
 class RevisionConflicts extends Table {
   @override
   String get tableName => 'revision_conflict';
   IntColumn get id => integer().autoIncrement()();
 
-  /// 应用远端提交时在本机形成的 `remote` 提交。
+  /// 应用远端提交时在本机形成的提交，类型沿用远端那条提交的 `kind`。
   IntColumn get commitId =>
       integer().references(RevisionCommits, #id, onDelete: KeyAction.cascade)();
   TextColumn get targetTable => text().named('table_name')();

@@ -3,6 +3,9 @@
 /// 讨论由 `id` 打开，日期只用于展示和筛选；没有目标归属时 `goalId` 为空，
 /// 带入材料时 `materialId` 与 `pageNo` 指向引用位置。一条讨论就是一条学习
 /// 记录：题目取开始作答时确定的用户消息与图片，开始作答后 `hasAttempts` 为真。
+///
+/// 讨论是否结束只由 [endedAt] 推出，没有单独的状态列（审查 S20）；结束与重开
+/// 写的是同一个时间列。
 library;
 
 import '../rules/coded_enum.dart';
@@ -30,24 +33,10 @@ enum EntryKind implements CodedEnum {
       codedValueOr(EntryKind.values, value, unknown: unknown);
 }
 
-/// 讨论当前状态（01 `conversation.status`）；结束时记录结束时间。
-enum ConversationStatus implements CodedEnum {
-  open('open', '进行中'),
-  ended('ended', '已结束'),
-  unknown('', '状态未知');
-
-  const ConversationStatus(this.value, this.label);
-
-  @override
-  final String value;
-
-  @override
-  final String label;
-
-  static ConversationStatus fromValue(String? value) =>
-      codedValueOr(ConversationStatus.values, value, unknown: unknown);
-}
-
+/// 一条讨论记录（01 `conversation`）。
+///
+/// 讨论是否结束由 [endedAt] 推出：为空表示仍在进行，有值表示已经结束。没有
+/// 单独的状态列，两种情况由同一列表达（审查 S20）。
 class ConversationRecord {
   const ConversationRecord({
     required this.id,
@@ -58,7 +47,6 @@ class ConversationRecord {
     this.materialTitle,
     this.materialIsDocx = false,
     this.entryKind = EntryKind.text,
-    this.status = ConversationStatus.open,
     this.endedAt,
     this.lastMessageAt,
     this.createdAt,
@@ -87,8 +75,7 @@ class ConversationRecord {
   /// 这次求助来自文字、图片还是两者。
   final EntryKind entryKind;
 
-  /// 讨论是否还在进行；读库时认不出的值回落到 [ConversationStatus.unknown]。
-  final ConversationStatus status;
+  /// 讨论结束的时刻；为空表示仍在进行。结束与重开只改这一列。
   final DateTime? endedAt;
   final DateTime? lastMessageAt;
   final DateTime? createdAt;
@@ -109,7 +96,8 @@ class ConversationRecord {
   /// 是否有已经保存的未提交草稿；为真时列表直接给出“继续作答”。
   final bool hasDraft;
 
-  bool get open => status == ConversationStatus.open;
+  /// 讨论是否还在进行；由结束时刻推出。
+  bool get open => endedAt == null;
 
   /// 继续入口使用的时间：有草稿时取草稿的保存时间，因为写草稿不会改
   /// `conversation.updated_at`，只看记录更新时间会把刚写下的草稿排到后面。

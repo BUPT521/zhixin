@@ -402,9 +402,17 @@ mixin RevisionLogMixin {
 
     if (drafts.isEmpty) {
       // 没有业务净变化的写入不形成提交，也不留下可撤销的回执；已经预留的
-      // 编号留在序号里，后续提交不会复用（R1）。
-      await self._clearContext(txn);
-      return null;
+      // 编号留在序号里，后续提交不会复用（R1）。例外是唯一键被本机占着而跳过
+      // 的远端行：这条冲突要挂在提交行上才能在数据版本页提示用户处理，所以写
+      // 一条没有数据变化的提交（审查 S18）。其余跳过（本机已删、对不上的更新
+      // 与删除）照旧不形成提交。
+      final needsConflictCommit = conflicts.any(
+        (conflict) => conflict.reason == RevisionConflict.uniqueKeyTaken,
+      );
+      if (!needsConflictCommit) {
+        await self._clearContext(txn);
+        return null;
+      }
     }
 
     final commitId = reserved ?? await self.reserveCommitId(txn);

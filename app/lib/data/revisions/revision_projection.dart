@@ -1130,7 +1130,6 @@ mixin RevisionProjectionMixin {
       'kind': kind,
       'commit_id': commitId,
       'payload': compressed,
-      'encoding': 'json+gzip',
       'raw_bytes': raw.length,
       // 检查点也存一份投影摘要：重建之后不必从当前表重新取数就能比对。
       'state_digest': revisionStateDigest(projection),

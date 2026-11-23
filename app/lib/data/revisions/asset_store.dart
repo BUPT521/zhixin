@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import '../db/drift/tables.dart'
+    show AttachmentReferenceKind, attachmentReferenceColumns;
 import '../db/raw_executor.dart';
 import '../db/sql.dart';
 
@@ -136,60 +138,76 @@ class AssetStore {
   static const int _keepParameterLimit = 20000;
 
   /// 投影里被业务行引用的附件哈希。
+  ///
+  /// 只读 [attachmentReferenceColumns] 声明过的列（审查 S17）：声明之外的文本
+  /// 即使正好是 64 位十六进制，也当作用户内容，不算附件引用。`hash` 列只在整
+  /// 个值是哈希时收；`hashArray` 列解码 JSON 数组后收其中形如哈希的字符串。
   static Set<String> hashesInProjection(Projection projection) {
     final result = <String>{};
-    for (final table in projection.values) {
-      for (final row in table.values) {
-        for (final value in row.values) {
-          if (value.type != RevisionValueType.text) continue;
-          final text = value.value as String;
-          if (isHash(text)) {
-            result.add(text);
-            continue;
-          }
-          if (!text.startsWith('[')) continue;
-          try {
-            final decoded = jsonDecode(text);
-            if (decoded is! List) continue;
-            for (final item in decoded.whereType<String>()) {
-              if (isHash(item)) result.add(item);
-            }
-          } catch (_) {
-            // 非 JSON 的文本列与附件无关。
-          }
-        }
+    for (final declared in attachmentReferenceColumns.entries) {
+      final (table, column) = _splitColumn(declared.key);
+      final rows = projection[table];
+      if (rows == null) continue;
+      for (final row in rows.values) {
+        _collectHash(result, row[column], declared.value);
       }
     }
     return result;
   }
 
   /// 版本明细里引用到的附件哈希。
+  ///
+  /// 与 [hashesInProjection] 同一口径：只读声明过的列。
   static Set<String> hashesInChanges(Iterable<RevisionChange> changes) {
     final result = <String>{};
     for (final change in changes) {
-      for (final row in [change.before, change.after]) {
-        if (row == null) continue;
-        for (final value in row.values) {
-          if (value.type != RevisionValueType.text) continue;
-          final text = value.value as String;
-          if (isHash(text)) {
-            result.add(text);
-          } else if (text.startsWith('[')) {
-            try {
-              final decoded = jsonDecode(text);
-              if (decoded is List) {
-                for (final item in decoded.whereType<String>()) {
-                  if (isHash(item)) result.add(item);
-                }
-              }
-            } catch (_) {
-              // 与业务无关的文本。
-            }
-          }
+      for (final declared in attachmentReferenceColumns.entries) {
+        final (table, column) = _splitColumn(declared.key);
+        if (change.table != table) continue;
+        for (final row in [change.before, change.after]) {
+          if (row == null) continue;
+          _collectHash(result, row[column], declared.value);
         }
       }
     }
     return result;
+  }
+
+  /// 把“表名.列名”拆成两段；声明格式不对时按不含点的列名处理。
+  static (String, String) _splitColumn(String declared) {
+    final separator = declared.lastIndexOf('.');
+    if (separator <= 0) return (declared, '');
+    return (
+      declared.substring(0, separator),
+      declared.substring(separator + 1),
+    );
+  }
+
+  /// 按列的种类收一个值里的附件哈希；不是文本或形状不对时跳过。
+  static void _collectHash(
+    Set<String> result,
+    RevisionValue? value,
+    AttachmentReferenceKind kind,
+  ) {
+    if (value == null || value.type != RevisionValueType.text) return;
+    final text = value.value as String;
+    switch (kind) {
+      case AttachmentReferenceKind.hash:
+        final trimmed = text.trim();
+        if (isHash(trimmed)) result.add(trimmed);
+      case AttachmentReferenceKind.hashArray:
+        if (!text.startsWith('[')) return;
+        try {
+          final decoded = jsonDecode(text);
+          if (decoded is! List) return;
+          for (final item in decoded.whereType<String>()) {
+            final trimmed = item.trim();
+            if (isHash(trimmed)) result.add(trimmed);
+          }
+        } catch (_) {
+          // 损坏的 JSON 数组不提供引用，导入校验会按缺项处理。
+        }
+    }
   }
 }
 
@@ -253,12 +271,12 @@ class AttachmentCache {
     final rows = await selectRows(
       executor,
       'message',
-      columns: ['image_paths_json'],
-      where: "image_paths_json IS NOT NULL AND image_paths_json != ''",
+      columns: ['image_hashes_json'],
+      where: "image_hashes_json IS NOT NULL AND image_hashes_json != ''",
     );
     final hashes = <String>{};
     for (final row in rows) {
-      final raw = row['image_paths_json'] as String?;
+      final raw = row['image_hashes_json'] as String?;
       if (raw == null || raw.isEmpty) continue;
       try {
         final decoded = jsonDecode(raw);

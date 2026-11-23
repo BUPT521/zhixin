@@ -30,7 +30,6 @@ void main() {
       'id': conversationId,
       'title': '回执',
       'entry_kind': 'text',
-      'status': 'open',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });

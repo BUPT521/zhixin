@@ -65,11 +65,16 @@ class RemoteApplyResult {
     required this.commit,
     required this.skipped,
     required this.duplicate,
+    this.adjusted = 0,
   });
 
   final RevisionCommit? commit;
   final int skipped;
   final bool duplicate;
+
+  /// 因唯一键撞车、把本机行改到下一个空号的次数；整库摘要因此可能与云端不同，
+  /// 调用方据此跳过这一次摘要比对（审查 S18）。
+  final int adjusted;
 }
 
 /// 页面与设置入口使用的一层：历史、比较、命名、撤销、整版恢复、留存与清理。
@@ -228,10 +233,11 @@ class RevisionService {
   /// 应用一条远端提交：本机因此生成一条同样的净变化提交，撤销与数据版本页
   /// 照常可用；提交身份沿用远端的 uid，服务端重复下发时不会在本机叠加第二次。
   ///
-  /// [originDevice]、[authoredAt] 与 [serverSeq] 是服务端带来的设备标识、作者
-  /// 创建时间与这条提交在服务端序列上的序号，原样记进本机提交行；三者都是可选
-  /// 参数，调用方没有时按本机提交处理、`server_seq` 留空（方案 3.12、
-  /// ADR-0054 决定第 2 条）。
+  /// [kind] 沿用远端那条提交的类型：`kind` 只表示提交做了什么，来源是另一台
+  /// 设备只看 `origin_device`（审查 S23）。[originDevice]、[authoredAt] 与
+  /// [serverSeq] 是服务端带来的设备标识、作者创建时间与这条提交在服务端序列上
+  /// 的序号，原样记进本机提交行；三者都是可选参数，调用方没有时按本机提交
+  /// 处理、`server_seq` 留空（方案 3.12、ADR-0054 决定第 2 条）。
   ///
   /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
   /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），
@@ -241,6 +247,7 @@ class RevisionService {
     required String uid,
     required String action,
     required String actor,
+    required RevisionKind kind,
     required List<RevisionChange> changes,
     String? originDevice,
     DateTime? authoredAt,
@@ -251,6 +258,7 @@ class RevisionService {
       return RemoteApplyResult(commit: existing, skipped: 0, duplicate: true);
     }
     var skipped = 0;
+    var adjusted = 0;
     var duplicate = false;
     final changed = <String>{};
     await db.gate.exclusive(() async {
@@ -264,13 +272,14 @@ class RevisionService {
         await engine.beginCommand(txn);
         final applied = await engine.applyChanges(txn, changes);
         skipped = applied.skipped;
+        adjusted = applied.adjusted;
         await engine.finishCommand(
           txn,
           action: action,
           actor: actor,
           uid: uid,
           changedTables: changed,
-          kind: RevisionKind.remote,
+          kind: kind,
           conflicts: applied.conflicts,
           originDevice: originDevice,
           authoredAt: authoredAt,
@@ -295,6 +304,7 @@ class RevisionService {
     return RemoteApplyResult(
       commit: commit,
       skipped: skipped,
+      adjusted: adjusted,
       duplicate: false,
     );
   }
@@ -367,10 +377,11 @@ class RevisionService {
     return commit;
   }
 
-  /// 消解一条没有可写回本机值的冲突记录（本机已经删掉那一行）。
+  /// 消解一条没有可写回本机值的冲突记录（本机已经删掉那一行，或者远端这一行
+  /// 撞上本机占着的唯一键）。
   ///
   /// 这条记录只说明远端的修改没有写入，用户确认之后直接删除，不形成提交，
-  /// 也不改业务数据；其余三种冲突要写回本机值，走 [keepLocal]，这里返回 false。
+  /// 也不改业务数据；其余冲突要写回本机值，走 [keepLocal]，这里返回 false。
   Future<bool> dismissConflict(int conflictId) async {
     final rows = await selectRows(
       db.raw,
@@ -381,7 +392,10 @@ class RevisionService {
     );
     if (rows.isEmpty) return false;
     final conflict = RevisionConflict.fromRow(rows.first);
-    if (conflict.reason != RevisionConflict.deletedLocally) return false;
+    if (conflict.reason != RevisionConflict.deletedLocally &&
+        conflict.reason != RevisionConflict.uniqueKeyTaken) {
+      return false;
+    }
     final removed = await db.execute(
       'DELETE FROM revision_conflict WHERE id = ?',
       [conflictId],
@@ -395,12 +409,12 @@ class RevisionService {
 
   /// 编号大于 [after] 的提交，推送前从这里取；编号已经由版本引擎分配。
   ///
-  /// 远端提交（`kind = remote`）对应服务端已有的提交，不在待推送范围里。
+  /// 远端提交（`origin_device` 非空）对应服务端已有的提交，不在待推送范围里。
   Future<List<RevisionCommit>> commitsAfter(int after) async {
     final commits = await engine.commitsAfter(db.raw, after);
     return [
       for (final commit in commits)
-        if (commit.kind != RevisionKind.remote) commit,
+        if (!commit.isRemote) commit,
     ];
   }
 

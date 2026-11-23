@@ -127,6 +127,33 @@ Future<void> _insertMemory(TestRig rig, String id, String content) {
 Future<List<Map<String, Object?>>> _memories(TestRig rig) =>
     rig.raw.rawQuery('SELECT id, content FROM memory ORDER BY id');
 
+/// 附件引用只认表结构里声明的列（审查 S17）：用材料行的文件哈希引用附件，
+/// 不再把哈希写进记忆正文。
+Future<void> _insertMaterialWithFile(TestRig rig, String id, String hash) {
+  return rig.db.command((txn) async {
+    await insertRow(txn, 'material', {
+      'id': id,
+      'title': '带附件的材料',
+      'kind': 'text',
+      'source_file_name': '$id.png',
+      'source_file_hash': hash,
+      'created_at': '2026-11-17 10:00:00',
+      'updated_at': '2026-11-17 10:00:00',
+    });
+  }, label: '保存材料');
+}
+
+Future<String?> _materialFileHash(TestRig rig, String id) async {
+  final rows = await selectRows(
+    rig.raw,
+    'material',
+    columns: ['source_file_hash'],
+    where: 'id = ?',
+    whereArgs: [id],
+  );
+  return rows.isEmpty ? null : rows.single['source_file_hash'] as String?;
+}
+
 void main() {
   late FakeServer server;
   final devices = <_Device>[];
@@ -192,7 +219,8 @@ void main() {
     await a.rig.db.command((txn) async {
       await a.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
     }, label: '保存附件');
-    await _insertMemory(a.rig, 'm1', hash);
+    await _insertMemory(a.rig, 'm1', '带附件的讲义');
+    await _insertMaterialWithFile(a.rig, 'mat1', hash);
     await a.sync.syncNow(confirmBaseline: true);
     final userId = (await a.account.snapshot()).session!.userId;
     final headAfterA = server.headOf(userId);
@@ -216,7 +244,8 @@ void main() {
           '期望 $headAfterA 条',
     );
     expect(server.blobUploadAttempts, uploadsBefore, reason: '拉到的附件不该再传一遍');
-    expect(await _memoryContent(b.rig, 'm1'), hash);
+    expect(await _memoryContent(b.rig, 'm1'), '带附件的讲义');
+    expect(await _materialFileHash(b.rig, 'mat1'), hash);
     final bytesOnB = await b.rig.engine.assets.readBytes(b.rig.raw, hash);
     expect(bytesOnB, bytes);
 
@@ -246,7 +275,7 @@ void main() {
     await b.rig.db.command((txn) async {
       await b.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
     }, label: '保存附件');
-    await _insertMemory(b.rig, 'm3', hash);
+    await _insertMaterialWithFile(b.rig, 'mat-b', hash);
     await expectLater(
       b.sync.syncNow(),
       throwsA(isA<BaselineConfirmationRequired>()),
@@ -267,7 +296,7 @@ void main() {
         for (final change in changes)
           '${(change as Map)['table']}/${change['row_key']}',
       ],
-      ['memory/m2', 'memory/m3'],
+      ['material/mat-b', 'memory/m2'],
       reason: '服务端已有的 m1 与 profile 行不该重复上传：$changes',
     );
     expect(server.blobs[userId]!.keys, contains(hash), reason: '本机独有行的附件要跟着上传');
@@ -275,7 +304,7 @@ void main() {
     // 两边互相拿到对方的记录；B 的第二轮同步没有可推的东西。
     await a.sync.syncNow();
     expect(await _memoryContent(a.rig, 'm2'), 'B 先有的记录');
-    expect(await _memoryContent(a.rig, 'm3'), hash);
+    expect(await _materialFileHash(a.rig, 'mat-b'), hash);
     expect(await _memoryContent(b.rig, 'm1'), 'A 先有的记录');
     final again = await b.sync.syncNow();
     expect(again.pushedCommits, 0);
@@ -296,7 +325,7 @@ void main() {
     await a.rig.db.command((txn) async {
       await a.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
     }, label: '保存附件');
-    await _insertMemory(a.rig, 'm2', hash);
+    await _insertMaterialWithFile(a.rig, 'mat1', hash);
     final pushed = await a.sync.syncNow();
     expect(pushed.pushedCommits, greaterThanOrEqualTo(1));
     expect(pushed.uploadedAssets, 1);
@@ -304,8 +333,7 @@ void main() {
     final pulled = await b.sync.syncNow();
     expect(pulled.pulledCommits, greaterThanOrEqualTo(1));
     expect(pulled.downloadedAssets, 1);
-    final rows = await _memories(b.rig);
-    expect(rows.map((row) => row['content']), contains(hash));
+    expect(await _materialFileHash(b.rig, 'mat1'), hash);
     final bytesOnB = await b.rig.engine.assets.readBytes(b.rig.raw, hash);
     expect(bytesOnB, bytes);
   });
@@ -407,8 +435,8 @@ void main() {
         Uint8List.fromList(second),
       );
     }, label: '保存附件');
-    await _insertMemory(a.rig, 'm1', firstHash);
-    await _insertMemory(a.rig, 'm2', secondHash);
+    await _insertMaterialWithFile(a.rig, 'mat1', firstHash);
+    await _insertMaterialWithFile(a.rig, 'mat2', secondHash);
 
     await expectLater(
       a.sync.syncNow(confirmBaseline: true),
@@ -434,7 +462,7 @@ void main() {
     await a.rig.db.command((txn) async {
       await a.rig.engine.assets.putBytes(txn, hash, Uint8List.fromList(bytes));
     }, label: '保存附件');
-    await _insertMemory(a.rig, 'm1', hash);
+    await _insertMaterialWithFile(a.rig, 'mat1', hash);
 
     final gate = Completer<void>();
     server.delayBlobUpload = gate.future;
@@ -601,7 +629,10 @@ void main() {
     expect(again.pushedCommits, 0);
     expect(server.headOf(userId), afterPush);
     final kinds = await b.rig.engine.commitsAfter(b.rig.raw, 0);
-    expect(kinds.map((commit) => commit.kind), contains(RevisionKind.remote));
+    expect(
+      kinds.where((commit) => commit.isRemote).map((commit) => commit.kind),
+      contains(RevisionKind.write),
+    );
   });
   test('两台设备改同一行时列出被覆盖的本机修改，保留本机修改写回并推到另一台', () async {
     final a = await device('a@example.com', register: true);

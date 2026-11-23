@@ -12,7 +12,7 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
-  test('新库是 v31，15 张业务表与版本元数据就位', () async {
+  test('新库是 v32，14 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
     addTearDown(db.close);
 
@@ -34,10 +34,10 @@ void main() {
     );
     expect(
       versionedTableNames,
-      hasLength(15),
-      reason: '业务表 15 张：记忆使用统计 memory_usage 与 memory_use 也参与采集',
+      hasLength(14),
+      reason: '业务表 14 张：记忆使用统计 memory_usage 参与采集，local_memory_use 是本机缓冲',
     );
-    expect(schemaTableNames(), hasLength(28), reason: 'schema 31 共 28 张表');
+    expect(schemaTableNames(), hasLength(28), reason: 'schema 32 共 28 张表');
     final classified = {
       ...versionedTableNames,
       ...revisionMetadataTables,
@@ -71,9 +71,10 @@ void main() {
         'revision_state',
         'revision_ref_tombstone',
         'memory_usage',
-        'memory_use',
+        'local_memory_use',
       ]),
     );
+    expect(names, isNot(contains('memory_use')), reason: '使用记录改为本机缓冲表');
 
     // 每日截止小时并进 app_meta，键名 day_cutoff_hour；新库还没有写过，读取时
     // 由 SettingsRepository 回退到默认值。
@@ -110,9 +111,11 @@ void main() {
         'context_text',
         'goal_id',
         'question_message_id',
-        'status',
       ]),
     );
+    // 讨论是否结束由 ended_at 推出，status 恒等于 ended_at IS NOT NULL（审查 S20）。
+    expect(await columns('conversation'), isNot(contains('status')));
+    expect(await columns('conversation'), contains('ended_at'));
     // 最后消息时间不再存列：会话列表按消息表现数。
     expect(await columns('conversation'), isNot(contains('last_message_at')));
     expect(await columns('study_session'), contains('conversation_id'));
@@ -194,7 +197,7 @@ void main() {
     expect(await columns('revision_checkpoint'), contains('state_digest'));
     expect(
       await columns('revision_checkpoint'),
-      isNot(contains(anyOf(['asset_hashes_json', 'checksum']))),
+      isNot(contains(anyOf(['asset_hashes_json', 'checksum', 'encoding']))),
     );
     expect(await columns('revision_cursor'), isNot(contains('scope')));
     expect(
@@ -211,20 +214,18 @@ void main() {
         'search_count',
         'last_recalled_at',
         'last_searched_at',
-        'first_seen_at',
         'updated_at',
       ]),
     );
+    // 冲刷与应用在同一事务里完成，不再需要记录“已经数到哪一刻”的水位（审查 S16）。
+    expect(await columns('memory_usage'), isNot(contains('first_seen_at')));
     expect(
-      await columns('memory_use'),
-      containsAll([
-        'id',
-        'memory_id',
-        'device_id',
-        'kind',
-        'used_at',
-        'acquired_at',
-      ]),
+      await columns('local_memory_use'),
+      containsAll(['id', 'memory_id', 'kind', 'used_at']),
+    );
+    expect(
+      await columns('local_memory_use'),
+      isNot(contains(anyOf(['device_id', 'acquired_at']))),
     );
     final attemptColumns = await columns('attempt');
     expect(attemptColumns, contains('conversation_id'));
@@ -237,6 +238,19 @@ void main() {
     expect(planColumns, isNot(contains('end_condition')));
     expect(await columns('memory'), isNot(contains('confidence')));
     expect(await columns('message'), isNot(contains('answer_version')));
+    // 图片列存的是附件哈希，列名跟着改成 image_hashes_json（审查 S17）。
+    expect(await columns('message'), contains('image_hashes_json'));
+    expect(await columns('message'), isNot(contains('image_paths_json')));
+    // 提交编号由 next_commit 预留、两处插入都显式给出，不再用 AUTOINCREMENT
+    // 另维护一份 sqlite_sequence（审查 S22）。
+    final commitSql =
+        (await selectRows(
+              db,
+              'sqlite_master',
+              where: "type = 'table' AND name = 'revision_commit'",
+            )).first['sql']!
+            as String;
+    expect(commitSql.toUpperCase(), isNot(contains('AUTOINCREMENT')));
     expect(await columns('assessment'), isNot(contains('source_json')));
     expect(await columns('memory'), isNot(contains('valid_from')));
     final assessmentSql =
@@ -539,5 +553,76 @@ void main() {
     );
     expect(rows, isEmpty);
     expect(await db.rawQuery('PRAGMA integrity_check'), isNotEmpty);
+  });
+
+  test('每个外键列都有前导索引，索引不与主键或唯一约束重复', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+
+    final tables = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' "
+      "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'rev_stage_%'",
+    );
+    for (final row in tables) {
+      final table = row['name']! as String;
+      final info = await db.rawQuery('PRAGMA table_info("$table")');
+      final primary = [
+        for (final column in info)
+          if ((column['pk'] as int? ?? 0) > 0) column['name']! as String,
+      ];
+      final explicit = <String, List<String>>{};
+      final declared = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'index' "
+        "AND tbl_name = ? AND sql IS NOT NULL",
+        [table],
+      );
+      for (final index in declared) {
+        final name = index['name']! as String;
+        explicit[name] = [
+          for (final column in await db.rawQuery('PRAGMA index_info("$name")'))
+            column['name']! as String,
+        ];
+      }
+      final uniqueConstraints = <List<String>>[];
+      for (final index in await db.rawQuery('PRAGMA index_list("$table")')) {
+        if (index['origin'] != 'u') continue;
+        final name = index['name']! as String;
+        uniqueConstraints.add([
+          for (final column in await db.rawQuery('PRAGMA index_info("$name")'))
+            column['name']! as String,
+        ]);
+      }
+      final leading = <String>{
+        if (primary.isNotEmpty) primary.first,
+        for (final columns in explicit.values) columns.first,
+        for (final columns in uniqueConstraints) columns.first,
+      };
+      final foreignKeys = await db.rawQuery(
+        'PRAGMA foreign_key_list("$table")',
+      );
+      for (final foreignKey in foreignKeys) {
+        final column = foreignKey['from']! as String;
+        expect(
+          leading,
+          contains(column),
+          reason: '$table.$column 是外键，但没有以它开头的索引',
+        );
+      }
+      for (final entry in explicit.entries) {
+        final columns = entry.value;
+        expect(
+          columns == primary,
+          isFalse,
+          reason: '索引 ${entry.key} 与 $table 的主键列完全相同',
+        );
+        for (final unique in uniqueConstraints) {
+          expect(
+            columns == unique,
+            isFalse,
+            reason: '索引 ${entry.key} 与 $table 的唯一约束列完全相同',
+          );
+        }
+      }
+    }
   });
 }

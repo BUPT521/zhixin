@@ -51,7 +51,7 @@ part 'app_database.g.dart';
     Assessments,
     Memories,
     MemoryUsages,
-    MemoryUses,
+    LocalMemoryUses,
     RevisionCommits,
     RevisionChanges,
     RevisionRefs,
