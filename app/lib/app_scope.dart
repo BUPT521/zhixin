@@ -1196,6 +1196,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
       _configuredAi?.dispose();
       final index = _searchIndexService;
       if (index != null) unawaited(index.close());
+      _searchIndexService = null;
       if (_connection != null) unawaited(_db.close());
     }
     dataVersion.dispose();
