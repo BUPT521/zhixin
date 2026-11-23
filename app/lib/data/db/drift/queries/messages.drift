@@ -30,7 +30,7 @@ firstUserMessage(
 SELECT * FROM message
 WHERE conversation_id = :conversationId
   AND role = 'user'
-  AND (TRIM(content) <> '' OR image_paths_json IS NOT NULL)
+  AND (TRIM(content) <> '' OR image_hashes_json IS NOT NULL)
   AND (:beforeId IS NULL OR id < :beforeId)
 ORDER BY id
 LIMIT 1;
@@ -39,7 +39,7 @@ lastUserMessage:
 SELECT * FROM message
 WHERE conversation_id = :conversationId
   AND role = 'user'
-  AND (TRIM(content) <> '' OR image_paths_json IS NOT NULL)
+  AND (TRIM(content) <> '' OR image_hashes_json IS NOT NULL)
 ORDER BY id DESC
 LIMIT 1;
 
@@ -47,14 +47,14 @@ LIMIT 1;
 messageById:
 SELECT * FROM message WHERE id = :id LIMIT 1;
 
--- 这条记录的消息里带过的图片路径，清空记录时一并删除附件。
-imagePathsOfConversation:
-SELECT image_paths_json FROM message
-WHERE conversation_id = :conversationId AND image_paths_json IS NOT NULL;
+-- 这条记录的消息里带过的图片哈希，清空记录时一并删除附件。
+imageHashesOfConversation:
+SELECT image_hashes_json FROM message
+WHERE conversation_id = :conversationId AND image_hashes_json IS NOT NULL;
 
 insertConversationMessage:
-INSERT INTO message (id, conversation_id, role, content, image_paths_json, structured_json, created_at)
-VALUES (:id, :conversationId, :role, :content, :imagePaths, :structuredJson, :stamp);
+INSERT INTO message (id, conversation_id, role, content, image_hashes_json, structured_json, created_at)
+VALUES (:id, :conversationId, :role, :content, :imageHashes, :structuredJson, :stamp);
 
 deleteConversationMessages:
 DELETE FROM message WHERE conversation_id = :conversationId;

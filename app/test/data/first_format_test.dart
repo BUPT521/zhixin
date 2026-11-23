@@ -150,7 +150,6 @@ void main() {
       'material_id': materialId,
       'page_no': 3,
       'entry_kind': 'text_photo',
-      'status': 'open',
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:05:00',
     });
@@ -159,7 +158,7 @@ void main() {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',
-      'image_paths_json': '["m-1.jpg"]',
+      'image_hashes_json': '["m-1.jpg"]',
       'created_at': '2026-11-06 09:05:00',
     });
     await first.close();
@@ -176,7 +175,7 @@ void main() {
     final messages = await selectRows(reopened, 'message');
     expect(messages, hasLength(1));
     expect(messages.single['content'], '');
-    final stored = jsonDecode(messages.single['image_paths_json']! as String);
+    final stored = jsonDecode(messages.single['image_hashes_json']! as String);
     final fileName = (stored as List).single as String;
     final resolved = resolveAttachment(dir.path, fileName);
     expect(await File(resolved).exists(), isTrue);

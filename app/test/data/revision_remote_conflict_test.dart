@@ -142,6 +142,7 @@ Future<RemoteApplyResult> _apply(
   uid: uid,
   action: '从其他设备同步',
   actor: 'user',
+  kind: RevisionKind.write,
   changes: changes,
 );
 
@@ -158,7 +159,7 @@ void main() {
     expect(applied.skipped, 0);
     expect(applied.duplicate, isFalse);
     expect(applied.commit, isNotNull);
-    expect(applied.commit!.kind, RevisionKind.remote);
+    expect(applied.commit!.kind, RevisionKind.write);
     expect(applied.commit!.conflictCount, 1);
 
     final conflict = (await rig.revisions.conflicts()).single;

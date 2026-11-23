@@ -1479,8 +1479,13 @@ class _DataVersionPageState extends State<DataVersionPage>
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(
         // 图标与标题都按提交类型来；动作文案只作说明，放在副标题最前面。
+        // 来自另一台设备的提交用云下载图标，来源与类型分开显示（审查 S23）。
         prefix: Icon(
-          _kindIcon(commit.kind, undoDepth: undoDepth),
+          _kindIcon(
+            commit.kind,
+            undoDepth: undoDepth,
+            isRemote: commit.isRemote,
+          ),
           color: current ? theme.colors.primary : theme.colors.onSurfaceVariant,
         ),
         title: Text(
@@ -1559,19 +1564,25 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   /// 提交类型对应的图标；类型由写入路径记录，不从动作文案推断（ADR-0039）。
   ///
-  /// 撤销提交按回指链的层数区分图标：奇数是撤销，偶数是重做。
-  IconData _kindIcon(RevisionKind kind, {int undoDepth = 0}) => switch (kind) {
-    RevisionKind.baseline => FLucideIcons.flag,
-    RevisionKind.write => FLucideIcons.pencil,
-    RevisionKind.undo =>
-      undoDepth > 0 && undoDepth.isEven
-          ? FLucideIcons.redo2
-          : FLucideIcons.undo2,
-    RevisionKind.restore => FLucideIcons.rotateCcw,
-    RevisionKind.import => FLucideIcons.upload,
-    RevisionKind.maintenance => FLucideIcons.wrench,
-    RevisionKind.remote => FLucideIcons.cloudDownload,
-  };
+  /// 撤销提交按回指链的层数区分图标：奇数是撤销，偶数是重做。来源是另一台
+  /// 设备时统一用云下载图标，类型仍由后面的标题说明（审查 S23）。
+  IconData _kindIcon(
+    RevisionKind kind, {
+    int undoDepth = 0,
+    bool isRemote = false,
+  }) => isRemote
+      ? FLucideIcons.cloudDownload
+      : switch (kind) {
+          RevisionKind.baseline => FLucideIcons.flag,
+          RevisionKind.write => FLucideIcons.pencil,
+          RevisionKind.undo =>
+            undoDepth > 0 && undoDepth.isEven
+                ? FLucideIcons.redo2
+                : FLucideIcons.undo2,
+          RevisionKind.restore => FLucideIcons.rotateCcw,
+          RevisionKind.import => FLucideIcons.upload,
+          RevisionKind.maintenance => FLucideIcons.wrench,
+        };
 
   /// 一处被远端覆盖的本机修改：写明哪项内容的哪个字段、本机原来的值与现在的值。
   Widget _conflictTile(ZhixinTheme theme, RevisionConflict conflict) {
@@ -1593,9 +1604,10 @@ class _DataVersionPageState extends State<DataVersionPage>
           ],
         ),
         suffix: switch (conflict.reason) {
-          // 本机已经删掉这一行，远端的修改没有写入，没有可以写回的本机值；
-          // 用户确认之后把这条说明删掉即可。
-          RevisionConflict.deletedLocally => forui.FButton(
+          // 本机已经删掉这一行，或者远端这一行撞上了本机占着的唯一键：都没有
+          // 可以写回的本机值，用户确认之后把这条说明删掉即可（审查 S18）。
+          RevisionConflict.deletedLocally ||
+          RevisionConflict.uniqueKeyTaken => forui.FButton(
             variant: forui.FButtonVariant.outline,
             size: forui.FButtonSizeVariant.sm,
             mainAxisSize: MainAxisSize.min,
@@ -1620,8 +1632,10 @@ class _DataVersionPageState extends State<DataVersionPage>
     return label == table ? '内容' : label;
   }
 
-  /// 冲突涉及的字段名：整行冲突（新增撞上同一主键）时列成“整行”。
+  /// 冲突涉及的字段名：整行冲突（新增撞上同一主键）时列成“整行”，唯一键撞车
+  /// 时说明是页码这一类的值被占着（审查 S18）。
   String _conflictFieldLabel(RevisionConflict conflict) {
+    if (conflict.reason == RevisionConflict.uniqueKeyTaken) return '页码或序号';
     final column = conflict.column;
     if (column == null) return '整行';
     return _fieldLabels[column] ?? '内容';
@@ -1629,6 +1643,9 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   /// 每行的“本机原来的值 → 现在的值”；字段名一律走 [_fieldLabels]，不显示列名。
   List<String> _conflictLines(RevisionConflict conflict) {
+    if (conflict.reason == RevisionConflict.uniqueKeyTaken) {
+      return const ['远端这一行与本机另一条记录用了同一个唯一值，这一行没有写入；改掉本机那一行的页码或序号之后可以重新同步'];
+    }
     final column = conflict.column;
     if (column != null) {
       final label = _fieldLabels[column] ?? '内容';
@@ -1861,7 +1878,6 @@ class _DataVersionPageState extends State<DataVersionPage>
         'paused': '已暂停',
         'done': '已完成',
       },
-      'conversation.status' => const {'open': '进行中', 'ended': '已结束'},
       'conversation.entry_kind' => const {
         'text': '文字',
         'photo': '拍照',
@@ -1890,7 +1906,6 @@ class _DataVersionPageState extends State<DataVersionPage>
         'procedural': '程序',
       },
       'memory.status' => const {'active': '有效', 'deleted': '已删除'},
-      'memory_use.kind' => const {'recall': '进入相关层', 'search': '主动搜索'},
       'memory.source_kind' => const {
         'user': '你说的',
         'message': '讨论里',

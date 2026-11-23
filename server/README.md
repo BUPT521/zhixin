@@ -10,7 +10,7 @@
 
 2026-11-20 的加固轮次补上了四处写路径的窗口：嵌入缓存按账号记代次，清除云端数据之后，清除之前发出的嵌入请求写不回旧向量；刷新令牌的轮换与重放记录在同一个事务或同一把锁里完成；备份对象每小时窗口之外由后台对账清理没有元数据的遗留字节；注册增加实例级上限，超过保留期仍没有任何已验证登录方式的账号由每日清理删除。取舍与代价见 [ADR-0037](../docs/adr/0037-遗留写路径与公开入口的加固.md)。
 
-`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。2026-11-19 又增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 第一步）。2026-11-20 增加 `llm_instance_usage`，把实例当天的模型用量从账号用量里分出来，删号不再减少实例预算（[ADR-0036](../docs/adr/0036-实例模型预算与账号用量分开.md)）。同日还增加 `embedding_cache_generation`，记录每个账号的缓存代次，清空云端数据时加一，清除之前发出的嵌入请求因此写不回旧向量（[ADR-0037](../docs/adr/0037-遗留写路径与公开入口的加固.md)）。2026-11-20 又把账号与登录方式拆开：`app_user` 只保留 `id`、`password_hash` 与 `created_at`，邮箱移进新表 `user_identity`，`auth_code` 的主键换成（用途，kind，identifier）且 `user_id` 允许为空（[ADR-0038](../docs/adr/0038-账号与登录方式分开.md)）。
+`schema.sql` 在 2026-11-17 增加了 `auth_code` 表与 `app_user.email_verified_at`，在 2026-11-18 增加了 `feedback`、`user_active`、`install_active` 与 `llm_quota` 四张表，同日的加固轮次又增加了 `attachment`、`user_purge` 与 `session_refresh_used` 三张表与相应索引（`user_purge` 已在 schema 32 删除，见下文）。模型路由增加了 `llm_provider`、`llm_model` 与 `llm_route`，并按用途记录 `llm_usage` 与额度覆盖值，用途见[表结构](#表结构)。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），已有实例按当前 `schema.sql` 重建库；当时实例里只有联调数据。2026-11-19 又增加了 `embedding_cache` 表，保存按账号隔离的嵌入向量缓存（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 第一步）。2026-11-20 增加 `llm_instance_usage`，把实例当天的模型用量从账号用量里分出来，删号不再减少实例预算（[ADR-0036](../docs/adr/0036-实例模型预算与账号用量分开.md)）。同日还增加 `embedding_cache_generation`，记录每个账号的缓存代次，清空云端数据时加一，清除之前发出的嵌入请求因此写不回旧向量（[ADR-0037](../docs/adr/0037-遗留写路径与公开入口的加固.md)）。2026-11-20 又把账号与登录方式拆开：`app_user` 只保留 `id`、`password_hash` 与 `created_at`，邮箱移进新表 `user_identity`，`auth_code` 的主键换成（用途，kind，identifier）且 `user_id` 允许为空（[ADR-0038](../docs/adr/0038-账号与登录方式分开.md)）。
 
 模型代理按优先级与权重从多个来源选择路由，嵌入接口按路由配置拆批，聊天与嵌入分别计入账号额度。模型来源与路由可在[管理后台](#管理后台)配置，取舍见 [ADR-0029](../docs/adr/0029-模型来源路由与嵌入代理.md)。
 
@@ -34,12 +34,11 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 
 服务端 PostgreSQL 的表与索引以 [internal/store/schema.sql](internal/store/schema.sql) 为唯一真相，本节只说明用途；客户端本机 SQLite 的表在 [01](../docs/01-ER数据模型.md)，两份文档不互相复制。开发阶段不写迁移（[ADR-0001](../docs/adr/0001-开发阶段不向下兼容.md)），结构变化时按当前文件重建库。
 
-2026-11-18 的加固轮次新增了三张表：
+2026-11-18 的加固轮次新增了三张表，其中 `user_purge` 已随 schema 32 删除，现在只剩两张：
 
 | 表 | 用途 | 关键列与约束 |
 |---|---|---|
-| `attachment` | 附件索引，按账号与内容哈希去重，用于账号附件总量配额与回填；可空的 `orphaned_at` 记旧快照附件让位的时间，让位中的行仍然计入配额 | `user_id` 外键级联删除，`sha256`、`size`、`orphaned_at`，主键 `(user_id, sha256)`；对象字节仍在 `attachments/<账号>/<sha256>`，删号时按前缀清理 |
-| `user_purge` | `DELETE /v1/cloud` 的清除标记，存在时该账号的写入返回 409 | `user_id` 主键，`started_at`；超过十分钟视为中断，可以接管重做 |
+| `attachment` | 附件索引，按账号与内容哈希去重，用于账号附件总量配额；可空的 `orphaned_at` 记旧快照附件让位的时间，让位中的行仍然计入配额 | `user_id` 外键级联删除，`sha256`、`size`、`orphaned_at`，主键 `(user_id, sha256)`；对象字节仍在 `attachments/<账号>/<sha256>`，删号时按前缀清理 |
 | `session_refresh_used` | 已用刷新令牌的摘要与重试宽限，支撑轮换与 60 秒宽限 | `token_hash` 主键，`session_id` 与 `user_id` 外键级联删除，`request_id`，`rotated_at`、`grace_until` 与轮换前后的访问令牌、刷新令牌摘要；重放不带匹配 `request_id` 或超出宽限时撤销该账号全部会话并记录安全事件 |
 
 同轮新增的索引是 `session(refresh_expires)`、`session(user_id, created_at DESC)` 与 `auth_code(expires_at)`。字段与索引以 `schema.sql` 为准，本节只用于说明用途，不复制建表语句。
@@ -67,10 +66,12 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 
 2026-11-23 按 [ADR-0053](../docs/adr/0053-标识按身份顺序指纹分工并收拢提交标识.md)、[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md) 与[数据库结构过度设计审查](../docs/数据库结构过度设计审查.md) 第 8 节批 1 重构了同步一侧的表，并按 [ADR-0057](../docs/adr/0057-服务端改表清空重建.md) 整份重建库、不写迁移。`sync_head` 与 `sync_snapshot` 合成一张 `sync_state`，每账号一行；`sync_snapshot_orphan` 整表删除，让位标记挪到 `attachment.orphaned_at`；`sync_commit` 与 `sync_commit_seen` 的 `request_id` 改名为 `uid`，`sync_commit` 增加可空的分表摘要列 `table_digests`，`sync_commit_seen` 增加 `seq`；`sync_device` 的 `capabilities` 文本列改为布尔列 `snapshot_capable`，并增加 `synced_seq`；新增命名版本表 `sync_ref`；`user_identity.kind` 与 `auth_code.kind` 的 CHECK 收窄到只有 `email`；删掉为每日清理建的 5 个索引。
 
+2026-11-23 的 schema 32（[数据库结构过度设计审查](../docs/数据库结构过度设计审查.md#9-schema-32-复审) 第 9 节）又收口了一次，仍按 [ADR-0057](../docs/adr/0057-服务端改表清空重建.md) 整份重建库、不写迁移。`user_purge` 整表删除，清除云端数据的互斥只保留进程内的 `cloudOperations`，写操作名单加上快照登记、命名版本写入与修改设备别名三个入口，因此清除期间的 409 只在当前进程里成立，服务端按单实例部署。`sync_commit` 增加必填 `kind`，取值与客户端的 `revisionKinds` 一致，即 `baseline`、`write`、`undo`、`restore`、`import`、`maintenance`，契约里的提交对象把它设为必填，缺字段或未知取值返回 400 `invalid_request`，来源仍只看 `device_id` 一类字段；同时删去 `UNIQUE (user_id, uid)`，去重只查 `sync_commit_seen`，最大的一张表少维护一份索引。索引删去 `sync_ref_by_user`、`embedding_cache_by_model` 与 `attachment_user_created`，服务端共 24 张表、9 个索引；`server.ClientSchemaVersion` 升到 32，附件回填命令 `cmd/backfill-attachments`、`ListAttachments` 查询与 `BlobStore` 的回填包装一并删除。
+
 | 表 | 用途 | 关键列与约束 |
 |---|---|---|
 | `sync_state` | 每账号一行：提交序列的最后位置、保留下界与当前快照指针（[ADR-0057](../docs/adr/0057-服务端改表清空重建.md) 把原来的 `sync_head` 与 `sync_snapshot` 并成这一张） | `user_id` 主键并外键级联删除，`head` 与 `trimmed_through`，可空的 `snapshot_seq`、`snapshot_sha256`、`snapshot_digest` 与 `snapshot_created_at`；四列同时为空表示还没有登记过快照 |
-| `sync_commit` | 提交本身，`uid` 是客户端在用户动作发生时生成的提交身份 | `user_id` 外键级联删除，主键 `(user_id, seq)`，`UNIQUE (user_id, uid)`，可空的 `state_digest` 与 `table_digests`（分表摘要） |
+| `sync_commit` | 提交本身，`uid` 是客户端在用户动作发生时生成的提交身份，`kind` 是这条提交做了什么 | `user_id` 外键级联删除，主键 `(user_id, seq)`，`kind` 非空且取值与客户端的提交类型一致，`uid` 不再单独建唯一约束，可空的 `state_digest` 与 `table_digests`（分表摘要） |
 | `sync_commit_seen` | 已经接收过的提交身份与它当时的序号，压缩删除旧提交之后仍然按它去重，整批重放时回出原序号 | `user_id` 外键级联删除，主键 `(user_id, uid)`，`seq`；每行几十字节，不进入 256 MiB 的序列预算 |
 | `sync_device` | 账号级设备名册，记录设备标识、别名、快照能力、已经应用到的位置与首次、最近出现时间（[ADR-0048](../docs/adr/0048-设备名册与提交来源的别名.md)、[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md)） | `user_id` 外键级联删除，主键 `(user_id, device_id)`，`snapshot_capable` 是布尔列，`synced_seq` 记录设备位置且不超过 head；`(user_id, last_seen DESC)` 支撑设备列表与压缩门槛 |
 | `sync_ref` | 账号级命名版本，名字指向一条提交的 `uid`，删除之后留墓碑（[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md)） | `user_id` 外键级联删除，主键 `(user_id, name)`，`commit_uid`、`note`、`updated_at` 与可空的 `deleted_at`；名字按 NFC 规范化，最长 30 个字符，未删除的名字每账号最多 200 个 |
@@ -83,7 +84,6 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 server/
 ├── api/openapi.yaml            ← 接口契约，唯一真相
 ├── cmd/zhixin-api/             ← 入口：读配置、选存储、启动与优雅退出
-├── cmd/backfill-attachments/   ← 回填附件索引的一次性命令，见[附件与备份的字节](#附件与备份的字节)
 ├── 运维手册.md                  ← 资源清单、授权方式与配置
 ├── internal/
 │   ├── config/                 ← ZHIXIN_* 环境变量与发布清单文件
@@ -131,7 +131,7 @@ server/
 
 ## 同步协议
 
-服务端为每个账号保存一条线性的提交序列，不合并、不解析内容。客户端推送时带上自己所知的 `base_seq`，等于服务端 head 才追加，否则返回 409 和最新 head；客户端先拉取 `after=<本机已同步位置>` 的提交，在本机按现有的净变化应用为新的本地提交（撤销与数据版本页因此照常可用），再重新推送。每条提交带 `uid`：它是客户端在用户动作发生时生成的提交身份，标识一条提交，不按命令参数生成，也不复用，服务端按它永久去重，已经收到过的提交会被跳过，所以丢失响应之后原样重试是安全的，同参数的不同提交不会互相顶掉（[ADR-0040](../docs/adr/0040-数据版本的提交身份与同步变基.md)、[ADR-0053](../docs/adr/0053-标识按身份顺序指纹分工并收拢提交标识.md)）。推送响应的 `seqs` 与请求里的 `commits` 按条数与顺序一一对应：新提交是服务端分配的序号，被当作重复跳过的提交回它在 `sync_commit_seen` 里记下的原序号，客户端据此判断整批重放（[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md)）。每条提交还带客户端的 schema 版本，服务端只接受当前版本 31（`server.ClientSchemaVersion`），不符时返回 400 `invalid_request`，`extra.schema_version` 给出服务端接受的版本；`GET /v1/sync/head` 同样返回这个版本，客户端对照本机版本决定是否继续同步。同一字段在两台设备上并发修改时，后到达服务端的覆盖先到达的，被覆盖的值留在提交历史里；这条规则在 2026-11-18 的协议走查中确认可用，真机走查待内测阶段补做。客户端还可以在推送最后一条提交上带可选的 `state_digest` 与 `table_digests`，后者是“表名到 64 位十六进制值”的映射，服务端都只保存与回传、不解析，没有带的提交在响应里不出现这两个键。
+服务端为每个账号保存一条线性的提交序列，不合并、不解析内容。客户端推送时带上自己所知的 `base_seq`，等于服务端 head 才追加，否则返回 409 和最新 head；客户端先拉取 `after=<本机已同步位置>` 的提交，在本机按现有的净变化应用为新的本地提交（撤销与数据版本页因此照常可用），再重新推送。每条提交带 `uid`：它是客户端在用户动作发生时生成的提交身份，标识一条提交，不按命令参数生成，也不复用，服务端按它永久去重，已经收到过的提交会被跳过，所以丢失响应之后原样重试是安全的，同参数的不同提交不会互相顶掉（[ADR-0040](../docs/adr/0040-数据版本的提交身份与同步变基.md)、[ADR-0053](../docs/adr/0053-标识按身份顺序指纹分工并收拢提交标识.md)）。推送响应的 `seqs` 与请求里的 `commits` 按条数与顺序一一对应：新提交是服务端分配的序号，被当作重复跳过的提交回它在 `sync_commit_seen` 里记下的原序号，客户端据此判断整批重放（[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md)）。每条提交必须给出 `kind`，取值与客户端的提交类型一致，即 `baseline`、`write`、`undo`、`restore`、`import` 与 `maintenance`，缺字段或取值不在其中返回 400 `invalid_request`；服务端只校验并原样保存，不据此解析内容，来源只看提交里的设备标识。每条提交还带客户端的 schema 版本，服务端只接受当前版本 32（`server.ClientSchemaVersion`），不符时返回 400 `invalid_request`，`extra.schema_version` 给出服务端接受的版本；`GET /v1/sync/head` 同样返回这个版本，客户端对照本机版本决定是否继续同步。同一字段在两台设备上并发修改时，后到达服务端的覆盖先到达的，被覆盖的值留在提交历史里；这条规则在 2026-11-18 的协议走查中确认可用，真机走查待内测阶段补做。客户端还可以在推送最后一条提交上带可选的 `state_digest` 与 `table_digests`，后者是“表名到 64 位十六进制值”的映射，服务端都只保存与回传、不解析，没有带的提交在响应里不出现这两个键。
 
 客户端第一次同步时先拉取这个账号已有的全部提交并在本机应用，拉取时记下被远端提交触及过的表与主键，只把云端还没有的行作为一份或几份基线提交上传，全新设备不上传任何内容，之后只推送新提交，取舍见 [ADR-0023](../docs/adr/0023-首次同步上传基线.md) 与[改进方案 3.6](../docs/数据版本系统对照git的改进方案.md)。基线提交的来源记为 `system`、动作写“首次同步基线”，服务端与其他提交一样只做校验和保存，不区分基线；本机提交编号不进入提交内容；同步位置存在客户端库里的 `revision_cursor`（`sync.pushed` 与 `sync.server_head`），每个账号和服务实例组合各用一份本机库，重新登录时打开原空间并从原位置继续增量同步。清除全部数据会重建当前空间的本机库，下一次同步从空库开始。整库恢复之后本机补记一条差异提交，下一轮同步跳过旧位置、只把恢复前后的差异推上去，两个位置收敛到当前服务端位置与本机 `HEAD`，恢复之前的改动不会再从旧位置拉回来。提交里引用的附件在推送之后按哈希上传、拉取之后按哈希下载，服务端按内容寻址核对，业务行只保存哈希。同步推送与备份、附件上传共用按账号的写入速率，单条提交至多 2 MiB，单次请求至多 16 MiB，每账号提交序列预算为 256 MiB。超出请求大小返回 413 `payload_too_large`；超出序列预算时先按下一段的规则压缩，压缩之后仍然超出才返回 413 `storage_full`。客户端按字节和条数分批推送。PostgreSQL 拉取按 `ZHIXIN_SYNC_PULL_MAX_BYTES` 选出连续页，再读取正文，客户端以下一页起点之前的最后一个序号继续读取。如果游标的下一条旧提交单独就超出页上限，接口返回 413，由已备份本机数据的用户清除云端序列后重新上传基线。
 
@@ -145,7 +145,7 @@ server/
 
 客户端的拉取位置落在已经删除的区间时，接口返回明确的错误：`after + 1 < earliest_seq` 说明客户端要的下一条提交已经删除，`GET /v1/sync/commits` 返回 410，`code` 是 `history_compacted`，`extra` 给出 `after`、`earliest_seq`、`head` 与 `snapshot_seq`、`snapshot_sha256`、`snapshot_digest`。客户端按 `snapshot_sha256` 下载快照附件、导入本机、把同步位置改成 `snapshot_seq`，再把未推送的本机提交在快照之上重放，服务端的序列与快照本身不变。`after` 恰好等于 `earliest_seq - 1` 时照常增量返回；`after` 为 0 而保留下界大于 1 的首次同步同样返回 410，新设备应当先读 `head` 或拉取响应里的 `snapshot` 再下载。快照附件与业务附件共用账号附件总量配额；被替换下来的旧快照在宽限期之内继续计入配额，过了 `ZHIXIN_SYNC_SNAPSHOT_GRACE`（默认 24 小时）由下一次登记顺带删除对象存储字节与附件索引行，让位标记就是 `attachment.orphaned_at`，多台设备交替登记时账号占用因此有上限；客户端侧已经接入（[ADR-0046](../docs/adr/0046-客户端按快照浅克隆与重新克隆.md)）：首次同步按 `earliest_seq` 与快照做浅克隆，增量拉取遇到 410 时按快照重新克隆，服务端在 `head` 里声明压缩打开时空闲时把当前投影登记为快照。快照登记由已经同步到当前服务端位置、且没有待推送提交的客户端在同步收尾时做，同位置或更新位置已有快照时客户端跳过；服务端在收到第一份登记之前不删除任何提交。
 
-清空一个账号的云端数据走 `DELETE /v1/cloud`：依次删除全部备份、提交序列、附件索引与对象存储里遗留的字节，可重复调用，失败之后重试从剩下的部分继续，返回 204。清除期间这个账号的写入请求返回 409 `conflict`，账号、会话与本机数据保留；下一次同步重新上传基线。旧的 `DELETE /v1/sync/commits` 与 `DELETE /v1/backups` 仍然分别可用，只清空提交序列或备份，客户端设置页的“清除云端数据”改用 `DELETE /v1/cloud`。删除账号本身走 `DELETE /v1/me`，需要重新提交密码，删除之后账号、会话与云端数据一并消失。
+清空一个账号的云端数据走 `DELETE /v1/cloud`：依次删除全部备份、提交序列、附件索引与对象存储里遗留的字节，可重复调用，失败之后重试从剩下的部分继续，返回 204。清除期间这个账号的写入请求返回 409 `conflict`，账号、会话与本机数据保留；下一次同步重新上传基线。互斥状态保存在进程内，服务端按单实例部署时覆盖全部写入入口（推送、附件上传、备份、快照登记、命名版本与设备别名），进程中途退出之后没有数据库标记可以接管，由用户重新发起一次 `DELETE /v1/cloud` 从剩下的部分继续；从崩溃到重试之间另一台设备推送的内容会在重试时一并清除。旧的 `DELETE /v1/sync/commits` 与 `DELETE /v1/backups` 仍然分别可用，只清空提交序列或备份，客户端设置页的“清除云端数据”改用 `DELETE /v1/cloud`。删除账号本身走 `DELETE /v1/me`，需要重新提交密码，删除之后账号、会话与云端数据一并消失。
 
 同步请求还会维护账号的设备名册（[ADR-0048](../docs/adr/0048-设备名册与提交来源的别名.md)）。`GET /v1/sync/head`、`GET /v1/sync/commits`、`POST /v1/sync/commits` 与 `PUT /v1/sync/snapshot` 接受可选的 `X-Device-Id`（不超过 64 字符）与 `X-Sync-Capabilities`（逗号分隔的小写能力名，当前只有 `snapshot`），服务端按能力头整组替换这一台设备的快照能力、按请求推进设备位置，能力或位置确实变化时才更新最近出现时间，没有变化的一轮同步不写名册；别名保持用户设置的值。没有 `X-Device-Id` 的推送按提交里的设备标识补一行，快照能力、位置与别名都留空，旧版本客户端因此也会出现在名册里。带设备标识的拉取请求把 `after` 记成这台设备的 `synced_seq`，推送请求按 `base_seq` 推进它，确有新提交写入时再推进到当前 head，整批重放不推进到 head，任何情况下都不超过当前 head（[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md)）。`GET /v1/sync/devices` 接受同样的两个头，先按请求更新名册再按最近出现时间倒序返回最多 50 条，刚登录、还没同步过的设备打开账号页时因此也能看到自己；`PUT /v1/sync/devices` 修改一台已知设备的别名，别名去掉首尾空白之后 0–64 个字符、空串表示清除，未知设备返回 404 `not_found`。名册随清除云端数据与删除账号一起清空，压缩门槛读的就是这份名册。
 
@@ -159,7 +159,7 @@ server/
 
 设置了 `ZHIXIN_S3_ENDPOINT` 时用 S3 兼容存储，没设时写到 `ZHIXIN_BLOB_DIR`，不设数据库时用内存实现。上传的请求体先落到系统临时目录再入库，单份备份与附件的默认上限分别为 256 MiB 和 32 MiB，两个上传入口在读取请求体之前按单次上限预留临时空间，单个服务进程合计最多预留 1 GiB，用尽时返回 429。启用 PostgreSQL 的实例要求至少一种登录方式已经确认之后才接受同步、备份和附件写入，没有任何已验证方式时返回 403 `contact_unverified`。预签名直传的取舍见 [ADR-0016](../docs/adr/0016-对象存储与附件接口.md)，本期仍由服务端转发字节。
 
-附件另有账号总量配额。每写入一个新对象之前，服务端按 `attachment` 表核对这个账号已用的字节数加上本次大小是否超过 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`（默认 2 GiB），超过时返回 413 `storage_full`，`extra` 里带 `used_bytes` 与 `limit_bytes`，客户端提示用户清理附件或换一个账号；同一账号重复上传相同内容命中同一个对象与同一行索引，不重复计入总量。配额与用量读的是 `attachment` 索引，历史上只按对象前缀写入过字节、没有索引行的实例需要先回填：在 `server/` 目录下设置 `ZHIXIN_DATABASE_URL` 与对象存储变量之后执行 `go run ./cmd/backfill-attachments`，命令按 `attachments/<账号>/` 前缀列出对象、核对大小并补写索引行，可重复执行，已有的行不会重复插入。回填完成之前配额只按索引里的字节计算，账面数字偏小，不影响上传与下载本身。
+附件另有账号总量配额。每写入一个新对象之前，服务端按 `attachment` 表核对这个账号已用的字节数加上本次大小是否超过 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`（默认 2 GiB），超过时返回 413 `storage_full`，`extra` 里带 `used_bytes` 与 `limit_bytes`，客户端提示用户清理附件或换一个账号；同一账号重复上传相同内容命中同一个对象与同一行索引，不重复计入总量。配额与用量读的是 `attachment` 索引，每次上传成功时同时写索引行；历史上只按对象前缀写入过字节、没有索引行的实例已随 schema 32 重建库清空，回填命令与 `ListAttachments` 查询一并删除（[数据库结构过度设计审查](../docs/数据库结构过度设计审查.md) 的 V6）。
 
 备份的元数据与字节分两步写：上传先写对象再写行，删除与保留裁剪先删行再删对象，中断时只会留下没有元数据的对象，不会出现列表里有、下载失败的备份。删对象失败或请求被取消时，待删的 id 已经从库里消失，重试拿不到它们，所以服务按 `ZHIXIN_BACKUP_RECONCILE_INTERVAL`（默认 24 小时）对账一次：列出 `backups/` 下的对象，把库里查不到对应行、且写于一小时之前的对象删掉，一小时是给正在上传的备份留的窗口。
 
@@ -416,7 +416,7 @@ ORDER BY f.first_day;
 
 加固轮次之后，启动时会自检生产配置：配置了数据库时 `ZHIXIN_MAIL_LOG` 必须为 `0`，`ZHIXIN_CODE_SECRET` 与 `ZHIXIN_TELEMETRY_SECRET` 必须固定，带认证的 SMTP 连接不允许 `none`，任何一项不满足都拒绝启动；第一套实例因此需要在 `api.env` 里补上两个固定密钥。带 key 的模型上游公网地址必须是 https，这条在后台保存来源时校验，不再随启动检查。按地址的限流要分清真实用户，`ZHIXIN_TRUSTED_PROXIES` 写 `127.0.0.1/32,::1/128`（nginx 只从回环地址连进来）；服务直接对外监听时保持为空。改了 `ZHIXIN_TRUSTED_PROXIES` 或其它配置之后重启服务生效，部署前按[运维手册](运维手册.md#4-加固后的运维动作)的核对清单逐项确认。
 
-部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#49-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。同步一侧的结构（`sync_state`、`sync_commit`、`sync_commit_seen`、`sync_device`、`sync_ref` 与 `attachment.orphaned_at`）同样要在现有实例上按当前 `schema.sql` 重建库，重建会清空全部账号，内测者需要重新注册（[ADR-0057](../docs/adr/0057-服务端改表清空重建.md)）；保留期 `ZHIXIN_SYNC_COMPACT_KEEP` 有默认值 168 小时，不配置也照常运行，内测期间希望落后设备少重新克隆时可以调到 720 小时并写进 `api.env`，重启后生效。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
+部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#49-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。schema 32 的结构变化（删 `user_purge`、`sync_commit` 增加必填 `kind`、删三条索引与 `sync_commit` 的 `UNIQUE (user_id, uid)`）同样要在现有实例上按当前 `schema.sql` 手工重建库，重建会清空全部账号，内测者需要重新注册（[ADR-0057](../docs/adr/0057-服务端改表清空重建.md)）；重建按[运维手册](运维手册.md#49-自动部署与回滚)的步骤停服、`pg_dump` 全量备份、只保留模型来源与模型路由和两张实例级用量表，建库之后用 ossutil 按 `attachments/` 前缀清空对象存储里的附件字节，这类字节在重建之后既没有索引行也没有对应的账号；清除云端数据期间的互斥只在进程内有效，服务端按单实例部署，换成多实例部署时要另做跨进程协调。保留期 `ZHIXIN_SYNC_COMPACT_KEEP` 有默认值 168 小时，不配置也照常运行，内测期间希望落后设备少重新克隆时可以调到 720 小时并写进 `api.env`，重启后生效。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
 
 服务器只有一位管理员（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D7），不设第二位。数据库口令、对象存储密钥、TLS 证书与备份介质的存放位置，以及主机失联、数据库损坏、对象存储不可用三种情况下的恢复步骤，由管理员写在仓库之外的私有目录；仓库只保留需要哪些变量与恢复的先后顺序。公测准备阶段做一次恢复演练，用备份重建一台可用实例，演练日期与结果写进结题材料。
 

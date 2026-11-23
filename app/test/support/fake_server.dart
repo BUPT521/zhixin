@@ -6,6 +6,11 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:zhixin/data/db/drift/tables.dart' show revisionKinds;
+
+/// 契约里提交类型的合法取值：与客户端 `RevisionKind` 的取值一致，没有
+/// `remote`（审查 S23、V18）。
+final Set<String> _commitKinds = {...revisionKinds};
 
 /// 测试使用的内存 SecretStore：不碰平台通道。
 class MemorySecretStore implements SecretStore {
@@ -474,6 +479,13 @@ class FakeServer {
         for (final item in (body['commits'] as List? ?? const []))
           (item as Map).cast<String, Object?>(),
       ];
+      // 提交类型是契约的必填字段，取值与客户端一致；缺字段或未知取值按服务端
+      // 的口径返回 400（审查 S23、V18）。
+      for (final commit in incoming) {
+        if (!_commitKinds.contains(commit['kind'])) {
+          return _problem(400, 'invalid_request');
+        }
+      }
       final log = commits.putIfAbsent(userId, () => []);
       final stored = {
         for (final commit in log)

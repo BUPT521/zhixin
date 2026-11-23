@@ -68,7 +68,6 @@ func run(log *slog.Logger) error {
 			Cache:     pg.NewEmbeddingCache(pgStore),
 			Feedback:  pgStore,
 			Retention: pgStore,
-			Cloud:     pgStore,
 			Objects:   objects,
 			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
 			// 由这里按前缀清理。

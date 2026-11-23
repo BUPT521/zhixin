@@ -88,7 +88,7 @@ void main() {
     expect(remoteRow['origin_device'], 'device-a');
     expect(remoteRow['authored_at'], '2026-11-17 10:05:00');
     expect(remoteRow['created_at'], '2026-11-17 10:15:00');
-    expect(remoteRow['kind'], RevisionKind.remote.value);
+    expect(remoteRow['kind'], RevisionKind.write.value);
 
     final remote = RevisionCommit.fromRow(remoteRow);
     expect(remote.originDevice, 'device-a');

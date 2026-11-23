@@ -75,7 +75,6 @@ void main() {
       'goal_id': goal,
       'material_id': material,
       'entry_kind': 'text',
-      'status': 'open',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
@@ -195,7 +194,6 @@ void main() {
       'id': conversation,
       'title': '图片',
       'entry_kind': 'photo',
-      'status': 'open',
       'created_at': '2026-11-10T09:00:00',
       'updated_at': '2026-11-10T09:00:00',
     });
@@ -208,7 +206,7 @@ void main() {
         'conversation_id': conversation,
         'role': 'user',
         'content': '',
-        'image_paths_json': '["$hash"]',
+        'image_hashes_json': '["$hash"]',
         'created_at': '2026-11-10T09:00:00',
       });
     });

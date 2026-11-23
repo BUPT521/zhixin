@@ -11,11 +11,11 @@ import 'sql.dart';
 
 /// 库文件与 schema 版本。库文件放在应用私有目录，导出时整份复制。
 ///
-/// 30 之后的那一次变化把版本与同步的簿记收拢成一次：单行状态与 `HEAD` 合进
-/// `revision_state`，完整性只留整库摘要，命名版本改按 `uid` 引用并随账号同步，
-/// 记忆改三类标签并加使用统计（ADR-0051、0054，审查第 8 节）。
+/// 31 之后的那一次变化按数据库结构过度设计审查第 9 节收口：记忆召回改为本机
+/// 缓冲表，附件引用列与列组显式声明，删掉恒等的列与重复索引，提交类型不再
+/// 区分远端（S16 至 S23、V16 至 V18）。
 const String zhixinDbFileName = 'zhixin.db';
-const int zhixinSchemaVersion = 31;
+const int zhixinSchemaVersion = 32;
 
 /// 与库文件同名的附属文件：回滚日志、WAL 与共享内存。
 const List<String> zhixinDbSideFiles = ['-journal', '-wal', '-shm'];

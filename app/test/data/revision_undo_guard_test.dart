@@ -207,7 +207,7 @@ void main() {
         'updated_at': '2026-11-10 09:00:00',
       }),
       label: '其他设备',
-      kind: RevisionKind.remote,
+      kind: RevisionKind.write,
     );
     final blocked = await rig.revisions.undoCommit(
       await rig.engine.headId(rig.raw),
@@ -227,7 +227,7 @@ void main() {
         'updated_at': '2026-11-10 09:00:00',
       }),
       label: '其他设备',
-      kind: RevisionKind.remote,
+      kind: RevisionKind.write,
     );
     final remote = await rig.engine.headId(rig.raw);
     final undone = await rig.revisions.undoCommit(remote);

@@ -37,7 +37,7 @@ class ConversationRepository {
     conversationId: row.conversationId,
     role: MessageRole.fromValue(row.role),
     content: row.content,
-    imagePaths: decodeStoredAttachmentPaths(row.imagePathsJson),
+    imagePaths: decodeStoredAttachmentPaths(row.imageHashesJson),
     createdAt: optionalDateTime(row.createdAt),
     payload: ChatMessagePayload.decode(row.structuredJson),
   );
@@ -84,7 +84,7 @@ class ConversationRepository {
         materialTitle: r.questionMaterialTitle,
         pageNo: r.questionPageNo,
         sourceFileName: r.sourceFileName,
-        imagePathsJson: r.questionImagePathsJson,
+        imageHashesJson: r.questionImageHashesJson,
         createdAt: r.questionCreatedAt,
         updatedAt: r.questionUpdatedAt,
       ),
@@ -92,6 +92,8 @@ class ConversationRepository {
   }
 
   /// 列表与“继续上次”挑的列相同，按同一组字段还原成领域模型。
+  ///
+  /// 讨论是否结束由 `ended_at` 推出，没有单独的状态列（审查 S20）。
   static ConversationRecord _record(
     String id,
     String? title,
@@ -101,7 +103,6 @@ class ConversationRepository {
     String? materialTitle,
     String? sourceFileName,
     String entryKind,
-    String status,
     String? endedAt,
     String createdAt,
     String updatedAt,
@@ -121,7 +122,6 @@ class ConversationRepository {
     materialTitle: materialTitle,
     materialIsDocx: isDocxFile(sourceFileName),
     entryKind: EntryKind.fromValue(entryKind),
-    status: ConversationStatus.fromValue(status),
     endedAt: optionalDateTime(endedAt ?? ''),
     createdAt: requiredDateTime(createdAt),
     updatedAt: requiredDateTime(updatedAt),
@@ -144,7 +144,6 @@ class ConversationRepository {
         r.materialTitle,
         r.sourceFileName,
         r.entryKind,
-        r.status,
         r.endedAt,
         r.createdAt,
         r.updatedAt,
@@ -167,7 +166,6 @@ class ConversationRepository {
         r.materialTitle,
         r.sourceFileName,
         r.entryKind,
-        r.status,
         r.endedAt,
         r.createdAt,
         r.updatedAt,
@@ -191,7 +189,6 @@ class ConversationRepository {
         materialTitle: r.materialTitle,
         materialIsDocx: isDocxFile(r.sourceFileName),
         entryKind: EntryKind.fromValue(r.entryKind),
-        status: ConversationStatus.fromValue(r.status),
         endedAt: optionalDateTime(r.endedAt ?? ''),
         lastMessageAt: optionalDateTime(r.updatedAt),
         createdAt: requiredDateTime(r.createdAt),
@@ -208,7 +205,7 @@ class ConversationRepository {
     materialTitle: r.materialTitle,
     pageNo: r.pageNo,
     sourceFileName: r.sourceFileName,
-    imagePathsJson: r.imagePathsJson,
+    imageHashesJson: r.imageHashesJson,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   );
@@ -222,7 +219,7 @@ class ConversationRepository {
       materialTitle: r.materialTitle,
       pageNo: r.pageNo,
       sourceFileName: r.sourceFileName,
-      imagePathsJson: r.imagePathsJson,
+      imageHashesJson: r.imageHashesJson,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     );
@@ -259,7 +256,7 @@ class ConversationRepository {
     required String? materialTitle,
     required int? pageNo,
     required String? sourceFileName,
-    required String? imagePathsJson,
+    required String? imageHashesJson,
     required String createdAt,
     required String updatedAt,
   }) {
@@ -274,7 +271,7 @@ class ConversationRepository {
               ? null
               : '《$title》${materialPosition(page, isDocx: isDocxFile(sourceFileName))}'),
       contextText: contextText,
-      imagePaths: decodeStoredAttachmentPaths(imagePathsJson),
+      imagePaths: decodeStoredAttachmentPaths(imageHashesJson),
       createdAt: optionalDateTime(createdAt),
       updatedAt: optionalDateTime(updatedAt),
     );
@@ -613,7 +610,7 @@ class ConversationRepository {
     );
     final sessionIds = <String>{for (final id in linkedSessionIds) ?id};
     final encodedPaths = await txn.selectGenerated(
-      (db) => db.imagePathsOfConversation(conversationId).get(),
+      (db) => db.imageHashesOfConversation(conversationId).get(),
     );
     final imagePaths = <String>{};
     for (final encoded in encodedPaths) {

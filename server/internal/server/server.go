@@ -34,7 +34,7 @@ import (
 // ClientSchemaVersion is the client data schema this server accepts for
 // sync commits and backups. It must equal the schema number at the top of
 // docs/01; both sides move together and old versions are rejected (ADR-0002).
-const ClientSchemaVersion = 31
+const ClientSchemaVersion = 32
 
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
@@ -52,9 +52,8 @@ type Stores struct {
 	Cache     llmproxy.EmbeddingCache
 	Feedback  feedback.Store
 	Retention retention.Store
-	// Cloud 保存云端清除的进行中标记；Objects 与备份、附件共用同一份对象
-	// 存储，清除时按账号前缀兜底清理遗留对象。
-	Cloud   cloudpurge.Store
+	// Objects 与备份、附件共用同一份对象存储，清除云端数据时按账号前缀兜底
+	// 清理遗留对象。
 	Objects objectstore.Store
 	// DeleteAccount removes per-account data owned outside the auth store.
 	// It runs once before the account row disappears.
@@ -85,7 +84,6 @@ func MemoryStores() Stores {
 		Cache:     cacheStore,
 		Feedback:  feedback.NewMemoryStore(),
 		Retention: retention.NewMemoryStore(),
-		Cloud:     cloudpurge.NewMemoryStore(),
 		Objects:   objects,
 		DeleteAccount: DeleteAccountData(
 			syncStore.DeleteUser,
@@ -257,12 +255,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 登记接口返回 501，不静默接受一个查不到归属的哈希（ADR-0043）。
 	syncSvc.SetAttachments(syncAttachments{svc: blobSvc})
 
-	// 云端清除编排备份、提交序列、附件与遗留对象；清除期间三个写处理器由 gate
-	// 回 409，读接口不受影响。
-	purgeSvc := cloudpurge.New(st.Cloud, st.Backups, st.Sync, st.Blobs, st.Cache, st.Objects)
-	syncHandler.SetPurgeGate(purgeSvc.Gate)
-	backupHandler.SetPurgeGate(purgeSvc.Gate)
-	blobHandler.SetPurgeGate(purgeSvc.Gate)
+	// 云端清除编排备份、提交序列、附件与遗留对象；清除与写请求的互斥、清除
+	// 期间写请求的 409 由进程内的 cloudOperations 中间件保证（审查 9.3 的 V10）。
+	purgeSvc := cloudpurge.New(st.Backups, st.Sync, st.Blobs, st.Cache, st.Objects)
 
 	// 模型来源的 key 加密入库。没有配置密钥时，内存存储用一把随进程消失的
 	// 随机密钥（数据本来也随进程消失）；数据库存储则无法保存或解密 key，
@@ -297,7 +292,6 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 嵌入向量缓存是派生数据：按账号隔离，命中时省掉嵌入与计费；清除云端数据
 	// 期间不写，清除与删号时一并删除（ADR-0030）。
 	llmProxy.SetEmbeddingCache(st.Cache)
-	llmProxy.SetEmbeddingCacheGate(purgeSvc.Gate)
 	llmProxy.SetConcurrencyLimit(cfg.LLM.ConcurrentPerUser)
 	if cfg.LLM.RequireVerifiedContact {
 		llmProxy.SetContactVerifier(func(ctx context.Context, _ string) (bool, error) {

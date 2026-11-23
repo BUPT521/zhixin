@@ -332,6 +332,7 @@ Future<void> applyRemoteCommit(
     uid: 'remote-$deviceId',
     action: '其他设备新增讨论',
     actor: 'system',
+    kind: RevisionKind.write,
     originDevice: deviceId,
     authoredAt: DateTime(2026, 11, 20, 9, 30),
     changes: [
@@ -345,7 +346,6 @@ Future<void> applyRemoteCommit(
           'id': 'conv-$deviceId',
           'title': '其他设备追加的讨论',
           'entry_kind': 'text',
-          'status': 'open',
           'created_at': '2026-11-20 09:00:00',
           'updated_at': '2026-11-20 09:00:00',
         }),

@@ -153,8 +153,8 @@ void main() {
     );
     final gzipRow = rows.first;
     final checkpointId = gzipRow['id']! as int;
-    // 只有一种编码：gzip 压缩的 JSON（ADR-0054 实施前核对删去了 `json`）。
-    expect(gzipRow['encoding'], 'json+gzip');
+    // 编码只有一种，版本字段不再单独存列（审查 S21）。
+    expect(gzipRow.containsKey('encoding'), isFalse);
     final gzipPayload = Uint8List.fromList(gzipRow['payload']! as Uint8List);
     final gzipRawBytes = gzipRow['raw_bytes']! as int;
     final gzipProjection = await rig.engine.projectionAt(rig.raw, head);

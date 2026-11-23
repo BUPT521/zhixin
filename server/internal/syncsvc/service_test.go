@@ -15,6 +15,7 @@ func testCommit(id string, schema int) Commit {
 	after := json.RawMessage(`{"content":"x"}`)
 	return Commit{
 		Uid:           id,
+		Kind:          api.Write,
 		DeviceId:      "device-a",
 		SchemaVersion: schema,
 		Actor:         api.User,

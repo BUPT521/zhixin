@@ -118,7 +118,6 @@ void main() {
       'material_id': materialId,
       'page_no': 12,
       'entry_kind': 'text',
-      'status': 'open',
       'created_at': '2026-11-06 09:00:00',
       'updated_at': '2026-11-06 09:05:00',
     });
@@ -127,7 +126,7 @@ void main() {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '为什么这里需要独立性',
-      'image_paths_json': '["m-1.jpg"]',
+      'image_hashes_json': '["m-1.jpg"]',
       'created_at': '2026-11-06 09:00:00',
     });
     await insertRow(db1, 'plan_item', {
@@ -204,7 +203,7 @@ void main() {
     final restoredImage = File('${dir2.path}/question_images/m-1.jpg');
     expect(await restoredImage.exists(), isTrue);
     expect(await restoredImage.readAsBytes(), [4, 5, 6]);
-    expect(imageMessage['image_paths_json'], '["m-1.jpg"]');
+    expect(imageMessage['image_hashes_json'], '["m-1.jpg"]');
 
     final tasks = TaskRepository(restored);
     expect((await tasks.goalById(goalId))?.status, LearningGoalStatus.active);

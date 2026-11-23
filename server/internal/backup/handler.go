@@ -1,7 +1,6 @@
 package backup
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
-	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
@@ -22,36 +20,10 @@ import (
 type Handler struct {
 	svc *Service
 	log *slog.Logger
-	// gate 在写数据之前问一次“这个账号是不是正在清除云端数据”；它由装配
-	// 注入，没有注入时不拦请求。
-	gate func(ctx context.Context, userID string) error
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
-}
-
-// SetPurgeGate 注入清除期间的写拦截。gate 返回 cloudpurge.ErrPurging 时，
-// 上传与两个删除入口回 409 并且不写数据；返回其它错误按 500 处理。装配时传
-// cloudpurge.Service.Gate。
-func (h *Handler) SetPurgeGate(gate func(ctx context.Context, userID string) error) {
-	h.gate = gate
-}
-
-// allowWrite 在清除进行时写好 409 并返回 false，调用方据此直接返回。
-func (h *Handler) allowWrite(w http.ResponseWriter, r *http.Request, userID string) bool {
-	if h.gate == nil {
-		return true
-	}
-	if err := h.gate(r.Context(), userID); err != nil {
-		if errors.Is(err, cloudpurge.ErrPurging) {
-			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "cloud purge in progress")
-			return false
-		}
-		httpx.WriteInternal(w, r, h.log, err)
-		return false
-	}
-	return true
 }
 
 // backupJSON 把存储层的元数据转成契约类型，响应字段只在这里出现一次。
@@ -73,9 +45,6 @@ func backupJSON(m Meta) api.Backup {
 // X-Content-SHA256 (hex), X-Schema-Version and an optional X-Device-Name.
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.PostV1BackupsParams) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	want := params.XContentSHA256
 	if !httpx.ValidSHA256(want) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "X-Content-SHA256 must be 64 lowercase hex characters")
@@ -176,9 +145,6 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request, id string) {
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request, id string) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	err := h.svc.Delete(r.Context(), p.UserID, id)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
@@ -195,9 +161,6 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request, id string) {
 // 不需要先列表再决定调不调用。
 func (h *Handler) DeleteAll(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r.Context())
-	if !h.allowWrite(w, r, p.UserID) {
-		return
-	}
 	if err := h.svc.DeleteAll(r.Context(), p.UserID); err != nil {
 		httpx.WriteInternal(w, r, h.log, err)
 		return

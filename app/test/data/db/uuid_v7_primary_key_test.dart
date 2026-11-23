@@ -18,7 +18,7 @@ import 'package:zhixin/domain/rules/uuid_v7.dart';
 
 import '../../support/test_db.dart';
 
-/// UUIDv7 主键（ADR-0018）：参与版本采集的 15 张业务表用文本主键，插入前由写入方生成，
+/// UUIDv7 主键（ADR-0018）：参与版本采集的 14 张业务表用文本主键，插入前由写入方生成，
 /// 时间有序且带版本位与变体位；增量同步让两台设备按同一文本定位同一行，
 /// 因此一次提交里的父行与子行引用必须能在这条提交的变更明细里对上。
 ///
@@ -46,8 +46,9 @@ void _expectUuidV7(String id) {
 
 /// 参与版本采集的业务表都用 UUIDv7 主键。
 ///
-/// `profile` 已经删掉，每日截止小时并进 `app_meta` 的文本键；`memory_usage` 与
-/// `memory_use` 是新增的记忆使用记录，也按文本主键写入。
+/// `profile` 已经删掉，每日截止小时并进 `app_meta` 的文本键；`memory_usage` 的
+/// 编号改用 UUIDv5（审查 S17），`local_memory_use` 是本机缓冲表、行号自增，两张
+/// 记忆使用表因此都不在业务表清单里，`memory_usage` 单独在下面核对。
 Set<String> _uuidPrimaryKeyTables() => {...versionedTableNames};
 
 void main() {
@@ -101,7 +102,7 @@ void main() {
     addTearDown(db.close);
 
     final uuidTables = _uuidPrimaryKeyTables();
-    expect(uuidTables, hasLength(15), reason: '参与版本采集的 15 张业务表都用文本主键');
+    expect(uuidTables, hasLength(14), reason: '参与版本采集的 14 张业务表都用文本主键');
 
     final columnTypes = <String, Map<String, String>>{};
     for (final table in uuidTables) {
@@ -224,8 +225,8 @@ void main() {
       materialId: materialId,
     );
     // 记忆按现有仓库写不进库（类别取值与库里的三分类对不上），直接写一行，
-    // 标识同样由用例给出 UUIDv7 文本；记忆使用统计的两张表用仓库之外的方式
-    // 写行，标识也按 UUIDv7。
+    // 标识同样由用例给出 UUIDv7 文本；记忆使用统计的行用仓库之外的方式写，
+    // 统计行的编号按 ADR-0053 用 UUIDv5，这里只核对主键是文本、外键能对上。
     final memoryId = newUuidV7(now: _fixedClock());
     await insertRow(rig.db, 'memory', {
       'id': memoryId,
@@ -241,17 +242,13 @@ void main() {
       'id': usageId,
       'memory_id': memoryId,
       'device_id': 'device-1',
-      'first_seen_at': '2026-11-17 19:00:00',
       'updated_at': '2026-11-17 19:00:00',
     });
-    final useId = newUuidV7(now: _fixedClock());
-    await insertRow(rig.db, 'memory_use', {
-      'id': useId,
+    // 本机缓冲表按行号自增，只留记忆编号、种类与时刻（审查 S16）。
+    await insertRow(rig.db, 'local_memory_use', {
       'memory_id': memoryId,
-      'device_id': 'device-1',
       'kind': 'recall',
       'used_at': '2026-11-17 19:00:00',
-      'acquired_at': '2026-11-17 19:00:00',
     });
 
     // 每张业务表各插入一行，插入生成的标识就是 UUIDv7 文本。
@@ -270,7 +267,6 @@ void main() {
       'study_plan': planId,
       'memory': memoryId,
       'memory_usage': usageId,
-      'memory_use': useId,
     };
     expect(ids.keys.toSet(), _uuidPrimaryKeyTables());
     expect(ids.values.toSet(), hasLength(ids.length), reason: '同一时刻写入的行互不撞键');

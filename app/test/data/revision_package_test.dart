@@ -11,6 +11,7 @@ import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
+import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
 import 'package:zhixin/domain/rules/package_budget.dart';
 
@@ -44,7 +45,6 @@ void main() {
       'id': conversation,
       'title': '带图',
       'entry_kind': 'photo',
-      'status': 'open',
       'created_at': '2026-11-10T10:00:00',
       'updated_at': '2026-11-10T10:00:00',
     });
@@ -55,7 +55,7 @@ void main() {
         'conversation_id': conversation,
         'role': 'user',
         'content': '',
-        'image_paths_json': '["$hash"]',
+        'image_hashes_json': '["$hash"]',
         'created_at': '2026-11-10T10:00:00',
       });
     });
@@ -122,7 +122,6 @@ void main() {
       'id': conversation,
       'title': '缺图',
       'entry_kind': 'photo',
-      'status': 'open',
       'created_at': '2026-11-10T10:00:00',
       'updated_at': '2026-11-10T10:00:00',
     });
@@ -132,7 +131,7 @@ void main() {
       'conversation_id': conversation,
       'role': 'user',
       'content': '',
-      'image_paths_json': '["$missingHash"]',
+      'image_hashes_json': '["$missingHash"]',
       'created_at': '2026-11-10T10:00:00',
     });
 
@@ -336,7 +335,6 @@ void main() {
       'id': conversation,
       'title': '预算检查前',
       'entry_kind': 'text',
-      'status': 'open',
       'created_at': '2026-11-10T10:00:00',
       'updated_at': '2026-11-10T10:00:00',
     });
@@ -472,5 +470,106 @@ void main() {
       clock: () => DateTime(2026, 11, 10, 10),
     );
     expect(await strict.inspectRepository(bytes), isNull);
+  });
+
+  test('笔记正文与编号列里形如哈希的文本不算附件引用', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_hex_text');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
+    addTearDown(raw.close);
+    final engine = RevisionEngine();
+    final db = GuardedDatabase(
+      gate: DatabaseGate(),
+      resolve: () => raw,
+      revisions: engine,
+    );
+    final packages = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
+    // 笔记正文就是一个完整的 SHA-256；旧口径会把它当成缺失的附件（审查 S17）。
+    final hashLike = 'a' * 64;
+    const memoryId = 'memory-hex';
+    await insertRow(db, 'memory', {
+      'id': memoryId,
+      'kind': 'semantic',
+      'content': hashLike,
+      'source_kind': 'user',
+      'status': 'active',
+      'created_at': '2026-11-10T10:00:00',
+      'updated_at': '2026-11-10T10:00:00',
+    });
+    // `memory_usage.id` 曾经由内容哈希生成，形状也是 64 位十六进制；它在声明之外，
+    // 同样不算附件引用。
+    await insertRow(db, 'memory_usage', {
+      'id': hashLike,
+      'memory_id': memoryId,
+      'device_id': 'device-1',
+      'updated_at': '2026-11-10T10:00:00',
+    });
+
+    final path = '${dir.path}/current.zip';
+    await packages.exportCurrent(db, path);
+
+    final archive = ZipDecoder().decodeBytes(await File(path).readAsBytes());
+    expect(archive.findFile('assets/$hashLike'), isNull);
+    expect(await selectRows(db, 'memory'), hasLength(1));
+  });
+
+  test('投影与版本明细只把声明过的列算作附件引用', () {
+    final single = 'b' * 64;
+    final array = 'c' * 64;
+    final ignored = 'd' * 64;
+    final Projection projection = {
+      'material': {
+        'mat-1': typedRow({'id': 'mat-1', 'source_file_hash': single}),
+      },
+      'message': {
+        'msg-1': typedRow({'id': 'msg-1', 'image_hashes_json': '["$array"]'}),
+      },
+      'memory': {
+        'mem-1': typedRow({'id': 'mem-1', 'content': ignored}),
+      },
+    };
+    expect(
+      AssetStore.hashesInProjection(projection),
+      unorderedEquals([single, array]),
+    );
+
+    final changes = [
+      RevisionChange(
+        commitId: 1,
+        seq: 1,
+        table: 'material',
+        rowKey: 'mat-1',
+        op: ChangeOp.insert,
+        after: typedRow({'id': 'mat-1', 'source_file_hash': single}),
+      ),
+      RevisionChange(
+        commitId: 1,
+        seq: 2,
+        table: 'message',
+        rowKey: 'msg-1',
+        op: ChangeOp.insert,
+        after: typedRow({'id': 'msg-1', 'image_hashes_json': '["$array"]'}),
+      ),
+      RevisionChange(
+        commitId: 1,
+        seq: 3,
+        table: 'memory',
+        rowKey: 'mem-1',
+        op: ChangeOp.insert,
+        after: typedRow({'id': 'mem-1', 'content': ignored}),
+      ),
+    ];
+    expect(
+      AssetStore.hashesInChanges(changes),
+      unorderedEquals([single, array]),
+    );
   });
 }

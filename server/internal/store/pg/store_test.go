@@ -16,12 +16,15 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/blobs"
-	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
+
+// dropSchemaTables 是重建测试库之前要删掉的表，与 schema.sql 的表一一对应。
+// 漏一张会让残留的旧表挡住下一次建表，testSchemaTables 在无数据库时也会核对。
+const dropSchemaTables = `DROP TABLE IF EXISTS embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_ref, sync_device, sync_state, auth_code, user_identity, session, app_user CASCADE`
 
 // newTestStore 连一个真实的 PostgreSQL 并整份建表。
 //
@@ -47,14 +50,56 @@ func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
 	}
 	t.Cleanup(st.Close)
 	// 开发阶段不写迁移：先删后建，保证从当前 schema.sql 起步（ADR-0001）。
-	drop := `DROP TABLE IF EXISTS embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, user_purge, session_refresh_used, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_ref, sync_device, sync_state, auth_code, user_identity, session, app_user CASCADE`
-	if _, err := st.pool.Exec(ctx, drop); err != nil {
+	if _, err := st.pool.Exec(ctx, dropSchemaTables); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
 	if err := st.ApplySchema(ctx); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
 	return st
+}
+
+// TestDropListCoversSchema 核对删表清单与 schema.sql 的表一一对应（24 张）。清单
+// 多一张是无害的，少一张会让重建后的库里留下旧表，下一次建表在 CI 上失败；这条
+// 用例不需要数据库，改动 schema.sql 时立刻能发现两边漂移。
+func TestDropListCoversSchema(t *testing.T) {
+	schema, err := os.ReadFile("../schema.sql")
+	if err != nil {
+		t.Fatalf("读 schema.sql: %v", err)
+	}
+	var want []string
+	for _, line := range strings.Split(string(schema), "\n") {
+		const prefix = "CREATE TABLE "
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(line, prefix), " ")
+		want = append(want, strings.TrimSpace(name))
+	}
+	listed := strings.TrimSuffix(strings.TrimPrefix(dropSchemaTables, "DROP TABLE IF EXISTS "), " CASCADE")
+	var got []string
+	for _, name := range strings.Split(listed, ",") {
+		got = append(got, strings.TrimSpace(name))
+	}
+	if len(want) != 24 {
+		t.Fatalf("schema.sql 应有 24 张表，实际 %d: %v", len(want), want)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("删表清单 %d 张，schema.sql %d 张: %v", len(got), len(want), got)
+	}
+	inSchema := map[string]bool{}
+	for _, name := range want {
+		inSchema[name] = true
+	}
+	for _, name := range got {
+		if !inSchema[name] {
+			t.Fatalf("删表清单里的 %q 不在 schema.sql 里", name)
+		}
+		delete(inSchema, name)
+	}
+	for name := range inSchema {
+		t.Fatalf("删表清单漏了 %q", name)
+	}
 }
 
 func TestPostgresAuthAndSessions(t *testing.T) {
@@ -478,7 +523,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 	mk := func(id string) syncsvc.Commit {
 		after := json.RawMessage(`{}`)
 		return syncsvc.Commit{
-			Uid: id, DeviceId: "d1", SchemaVersion: 27,
+			Uid: id, Kind: "write", DeviceId: "d1", SchemaVersion: 27,
 			Actor: "user", Action: "write", CreatedAt: "2026-11-15 10:00:00",
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
@@ -677,20 +722,13 @@ func TestPostgresBlobQuota(t *testing.T) {
 		t.Fatalf("other account reserve: used %d, err %v", used, err)
 	}
 
-	// 回填：对象已经在存储里、索引没有时补一行，幂等。
+	// 同一内容重复预留不重复计入总量。
 	orphan := []byte("five!")
-	if err := st.objects.Put(ctx, objectstore.AttachmentKey("u1", shaC), bytes.NewReader(orphan),
-		objectstore.Info{Size: int64(len(orphan))}); err != nil {
-		t.Fatalf("seed object: %v", err)
+	if used, err := bs.Reserve(ctx, "u1", shaC, int64(len(orphan)), 0); err != nil || used != 4+int64(len(orphan)) {
+		t.Fatalf("reserve another attachment: used %d, err %v", used, err)
 	}
-	if added, err := bs.BackfillAttachment(ctx, "u1", shaC, int64(len(orphan))); err != nil || !added {
-		t.Fatalf("backfill: added %v, err %v", added, err)
-	}
-	if added, err := bs.BackfillAttachment(ctx, "u1", shaC, int64(len(orphan))); err != nil || added {
-		t.Fatalf("second backfill must be a no-op: added %v, err %v", added, err)
-	}
-	if used, err := bs.Used(ctx, "u1"); err != nil || used != 4+int64(len(orphan)) {
-		t.Fatalf("used after backfill = %d, %v", used, err)
+	if used, err := bs.Reserve(ctx, "u1", shaC, int64(len(orphan)), 0); err != nil || used != 4+int64(len(orphan)) {
+		t.Fatalf("duplicate reserve: used %d, err %v", used, err)
 	}
 
 	// 清账号（保留账号行）删索引与字节。
@@ -761,64 +799,6 @@ func TestPostgresBlobReserveIsSerialized(t *testing.T) {
 	}
 }
 
-// TestPostgresPurgeMarker 核对清除标记的存储语义：没有标记、取得后拒绝新请求
-// 覆盖、超过有效期可接管、结束时删除；删账号时标记按外键级联删除。
-func TestPostgresPurgeMarker(t *testing.T) {
-	st := newTestStore(t)
-	ctx := context.Background()
-	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
-		t.Fatalf("user: %v", err)
-	}
-
-	if _, ok, err := st.PurgeStartedAt(ctx, "u1"); err != nil || ok {
-		t.Fatalf("marker before purge: ok=%v err=%v", ok, err)
-	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	claimed, err := st.ClaimPurge(ctx, "u1", now, now.Add(-cloudpurge.StaleAfter))
-	if err != nil || !claimed {
-		t.Fatalf("claim: claimed %v, err %v", claimed, err)
-	}
-	started, ok, err := st.PurgeStartedAt(ctx, "u1")
-	if err != nil || !ok || !started.Equal(now) {
-		t.Fatalf("marker = %v, ok %v, err %v", started, ok, err)
-	}
-	// 标记还新：第二次取得被拒绝。
-	if claimed, err := st.ClaimPurge(ctx, "u1", now.Add(time.Minute), now.Add(time.Minute-cloudpurge.StaleAfter)); err != nil || claimed {
-		t.Fatalf("fresh marker must reject a second claim: claimed %v, err %v", claimed, err)
-	}
-	// 超过有效期：接管并刷新时间。
-	later := now.Add(cloudpurge.StaleAfter + time.Minute)
-	if claimed, err := st.ClaimPurge(ctx, "u1", later, later.Add(-cloudpurge.StaleAfter)); err != nil || !claimed {
-		t.Fatalf("stale marker takeover: claimed %v, err %v", claimed, err)
-	}
-	if started, _, _ := st.PurgeStartedAt(ctx, "u1"); !started.Equal(later) {
-		t.Fatalf("marker after takeover = %v, want %v", started, later)
-	}
-
-	// 结束时删除标记。
-	if err := st.EndPurge(ctx, "u1"); err != nil {
-		t.Fatalf("end purge: %v", err)
-	}
-	if _, ok, err := st.PurgeStartedAt(ctx, "u1"); err != nil || ok {
-		t.Fatalf("marker after end: ok=%v err=%v", ok, err)
-	}
-
-	// 删账号时标记级联删除，不会留下指向不存在账号的行。
-	if _, err := st.ClaimPurge(ctx, "u1", later, later.Add(-cloudpurge.StaleAfter)); err != nil {
-		t.Fatalf("claim before account deletion: %v", err)
-	}
-	if err := st.DeleteUser(ctx, "u1"); err != nil {
-		t.Fatalf("delete account: %v", err)
-	}
-	var rows int
-	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM user_purge`).Scan(&rows); err != nil {
-		t.Fatalf("count user_purge: %v", err)
-	}
-	if rows != 0 {
-		t.Fatalf("user_purge rows should cascade with the account, got %d", rows)
-	}
-}
-
 func TestPostgresSyncSequence(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -834,7 +814,7 @@ func TestPostgresSyncSequence(t *testing.T) {
 	mk := func(id string) syncsvc.Commit {
 		after := json.RawMessage(`{}`)
 		return syncsvc.Commit{
-			Uid: id, DeviceId: "d1", SchemaVersion: 26,
+			Uid: id, Kind: "write", DeviceId: "d1", SchemaVersion: 26,
 			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
@@ -880,7 +860,7 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 	mk := func(id string) syncsvc.Commit {
 		after := json.RawMessage(`{}`)
 		return syncsvc.Commit{
-			Uid: id, DeviceId: "d1", SchemaVersion: 26,
+			Uid: id, Kind: "write", DeviceId: "d1", SchemaVersion: 26,
 			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
@@ -966,7 +946,7 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 	mk := func(id string) syncsvc.Commit {
 		after := json.RawMessage(`{}`)
 		return syncsvc.Commit{
-			Uid: id, DeviceId: "d1", SchemaVersion: 26,
+			Uid: id, Kind: "write", DeviceId: "d1", SchemaVersion: 26,
 			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
@@ -983,7 +963,7 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 		if err := bs.Save(ctx, "u1", sha, int64(len(body)), bytes.NewReader(body)); err != nil {
 			t.Fatalf("写入附件字节: %v", err)
 		}
-		if _, err := bs.BackfillAttachment(ctx, "u1", sha, int64(len(body))); err != nil {
+		if _, err := bs.Reserve(ctx, "u1", sha, int64(len(body)), 0); err != nil {
 			t.Fatalf("写入附件索引: %v", err)
 		}
 	}
@@ -1034,14 +1014,13 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 	if _, err := st.objects.Stat(ctx, objectstore.AttachmentKey("u1", shaA)); !errors.Is(err, objectstore.ErrNotFound) {
 		t.Fatalf("回收之后字节应删除: %v", err)
 	}
-	rows, err := bs.ListAttachments(ctx, "u1")
-	if err != nil {
-		t.Fatalf("列出索引: %v", err)
+	var reclaimed int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM attachment WHERE user_id = $1 AND sha256 = $2`,
+		"u1", shaA).Scan(&reclaimed); err != nil {
+		t.Fatalf("核对索引行: %v", err)
 	}
-	for _, row := range rows {
-		if row.Sha256 == shaA {
-			t.Fatalf("回收之后索引行应删除: %+v", rows)
-		}
+	if reclaimed != 0 {
+		t.Fatalf("回收之后索引行应删除，仍有 %d 行", reclaimed)
 	}
 	if orphans, err = st.OrphanedAttachmentsBefore(ctx, "u1", time.Now().UTC().Add(time.Hour)); err != nil ||
 		len(orphans) != 0 {

@@ -27,7 +27,6 @@ void main() {
     await insertRow(db, 'conversation', {
       'id': conversationId,
       'entry_kind': 'photo',
-      'status': 'open',
       'created_at': '2026-11-08 09:00:00',
       'updated_at': '2026-11-08 09:00:00',
     });
@@ -36,7 +35,7 @@ void main() {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',
-      'image_paths_json': '["kept.jpg"]',
+      'image_hashes_json': '["kept.jpg"]',
       'created_at': '2026-11-08 09:00:00',
     });
     final images = Directory('${root.path}/question_images');
@@ -57,7 +56,6 @@ void main() {
     await insertRow(db, 'conversation', {
       'id': conversationId,
       'entry_kind': 'photo',
-      'status': 'open',
       'created_at': '2026-11-08 09:00:00',
       'updated_at': '2026-11-08 09:00:00',
     });
@@ -66,7 +64,7 @@ void main() {
       'conversation_id': conversationId,
       'role': 'user',
       'content': '',
-      'image_paths_json': '["shared.jpg"]',
+      'image_hashes_json': '["shared.jpg"]',
       'created_at': '2026-11-08 09:00:00',
     });
     final images = Directory('${root.path}/question_images');

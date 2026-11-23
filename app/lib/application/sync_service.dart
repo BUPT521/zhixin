@@ -992,6 +992,7 @@ class SyncService {
         uid: _baselineUid(deviceId, changes.sublist(start, index)),
         deviceId: deviceId,
         schemaVersion: zhixinSchemaVersion,
+        kind: RevisionKind.baseline.value,
         actor: 'system',
         action: '首次同步基线',
         createdAt: formatDateTime(clock()),
@@ -1122,6 +1123,9 @@ class SyncService {
     var current = serverHead;
     var pulled = 0;
     var downloadCount = 0;
+    // 为了绕开唯一键把本机行改过号的次数：这一次拉取的整库摘要因此可能与
+    // 云端不同，比对的结论没有意义，跳过这一次比较（审查 S18）。
+    var adjusted = 0;
     // 这一次拉取最后读到的一条提交带的摘要；最新一条没有带时为空。
     String? latestDigest;
     Map<String, String>? latestTableDigests;
@@ -1136,13 +1140,14 @@ class SyncService {
         if (persist) await _saveServerHead(current);
         break;
       }
-      final hashes = <String>{};
       for (final commit in page.commits) {
         _ensureIdentity();
         // 被这条远端提交取代的本机格子由 `applyChanges` 在同一个事务里登记进
-        // `sync_shadow`，这一层不用再记（ADR-0040）。
+        // `sync_shadow`，这一层不用再记（ADR-0040）。引用附件的业务行（材料行的
+        // 文件哈希）有指向 `asset_object` 的外键，附件在这一步先落库。
         final applied = await _applyRemote(commit);
         _pulledSkipped += applied.skipped;
+        adjusted += applied.adjusted;
         if (touchedRows != null) {
           // 服务端序列里的行全部来自远端提交：变化明细里出现过的行即被触及，
           // 本机这份只是副本。被跳过或被删除的变化也记下，对应的本机行要么已经
@@ -1151,7 +1156,8 @@ class SyncService {
             touchedRows.add((change.table, change.rowKey));
           }
         }
-        hashes.addAll(applied.assetHashes);
+        downloadCount += applied.downloaded;
+        if (applied.downloaded > 0) downloaded(applied.downloaded);
         pulled++;
       }
       latestDigest = page.commits.last.stateDigest;
@@ -1159,12 +1165,9 @@ class SyncService {
       current = page.commits.last.seq ?? page.head;
       _ensureIdentity();
       if (persist) await _saveServerHead(current);
-      final fetched = await _downloadAssets(hashes);
-      downloadCount += fetched;
-      downloaded(fetched);
       if (!page.hasMore) break;
     }
-    if (latestDigest != null) {
+    if (latestDigest != null && adjusted == 0) {
       await _comparePulledDigest(
         latestDigest,
         serverHead: current,
@@ -1356,6 +1359,7 @@ class SyncService {
               uid: commit.uid,
               deviceId: deviceId,
               schemaVersion: zhixinSchemaVersion,
+              kind: commit.kind.value,
               actor: _actorOf(commit.actor),
               action: commit.action,
               createdAt: formatDateTime(commit.createdAt ?? clock()),
@@ -1405,7 +1409,15 @@ class SyncService {
     );
   }
 
-  Future<({RevisionCommit? commit, Set<String> assetHashes, int skipped})>
+  Future<
+    ({
+      RevisionCommit? commit,
+      Set<String> assetHashes,
+      int skipped,
+      int adjusted,
+      int downloaded,
+    })
+  >
   _applyRemote(ServerCommit commit) async {
     final changes = <RevisionChange>[];
     var seq = 1;
@@ -1431,10 +1443,17 @@ class SyncService {
     final actor = const {'user', 'ai', 'system'}.contains(commit.actor)
         ? commit.actor
         : 'user';
+    final assetHashes = AssetStore.hashesInChanges(changes);
+    // 引用附件的业务行（材料行的文件哈希）有指向 `asset_object` 的外键，先把附件
+    // 落库再写业务行；反过来的顺序会在提交时触发外键约束失败。
+    final fetched = await _downloadAssets(assetHashes);
     final result = await revisions.applyRemoteCommit(
       uid: commit.uid,
       action: commit.action.isEmpty ? '从其他设备同步' : commit.action,
       actor: actor,
+      // 提交类型沿用远端那条提交的类型：`kind` 只表示做了什么，来源是另一台
+      // 设备只看 `origin_device`（审查 S23）。
+      kind: RevisionKind.fromValue(commit.kind),
       changes: changes,
       // 服务端带来的设备标识、作者创建时间与云端序号原样落到本机提交行；本机
       // 提交的来源设备与作者时间仍为空（方案 3.12、ADR-0054 决定第 2 条）。
@@ -1451,8 +1470,10 @@ class SyncService {
     }
     return (
       commit: result.commit,
-      assetHashes: AssetStore.hashesInChanges(changes),
+      assetHashes: assetHashes,
       skipped: result.skipped,
+      adjusted: result.adjusted,
+      downloaded: fetched,
     );
   }
 

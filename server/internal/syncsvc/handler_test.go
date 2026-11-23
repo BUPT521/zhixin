@@ -14,7 +14,6 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
-	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
@@ -101,38 +100,11 @@ func TestHandlerHeadDeclaresCompact(t *testing.T) {
 	}
 }
 
-// TestHandlerWriteBlockedDuringPurge 守住清除期间的写拦截：gate 返回
-// cloudpurge.ErrPurging 时 Push 与 Reset 回 409 conflict，拉取仍可读，且没有
-// 写入任何提交。
-func TestHandlerWriteBlockedDuringPurge(t *testing.T) {
-	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(NewService(NewMemoryStore(), testSchemaVersion), log, 16*testMaxJSON)
-	handler.SetPurgeGate(func(context.Context, string) error { return cloudpurge.ErrPurging })
-	c := testutil.NewClient(t, testutil.NewServer(
-		testAPI{h: handler},
-		httpx.RequestID,
-		auth.Middleware(authSvc, log),
-	))
-	token := signIn(t, authSvc, "a@b.cn")
-
-	var p testutil.Problem
-	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token,
-		map[string]any{"base_seq": 0, "commits": []any{commitBody("r1")}}, &p); code != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
-		t.Fatalf("push during purge: %d %+v", code, p)
-	}
-	if code := c.JSON(http.MethodDelete, "/v1/sync/commits", token, nil, nil); code != http.StatusConflict {
-		t.Fatalf("reset during purge: %d", code)
-	}
-	var page api.CommitPage
-	if code := c.JSON(http.MethodGet, "/v1/sync/commits", token, nil, &page); code != http.StatusOK || len(page.Commits) != 0 {
-		t.Fatalf("pull during purge: %d %+v", code, page)
-	}
-}
-
+// commitBody 是一条合法的推送提交；kind 是契约要求的提交类型。
 func commitBody(reqID string) map[string]any {
 	return map[string]any{
 		"uid":            reqID,
+		"kind":           "write",
 		"device_id":      "device-a",
 		"schema_version": testSchemaVersion,
 		"actor":          "user",
@@ -145,6 +117,9 @@ func commitBody(reqID string) map[string]any {
 	}
 }
 
+// TestHandlerSyncIsLinearAndIdempotent 守住提交序列的线性与去重：同一 uid 重复
+// 推送跳过、head 不变，基于旧 head 的推送返回 409。清除云端数据期间写请求返回
+// 409 由 server 包的 cloudOperations 中间件负责，不在这里测（审查 9.3 的 V10）。
 func TestHandlerSyncIsLinearAndIdempotent(t *testing.T) {
 	c, authSvc := newTestServer(t)
 	token := signIn(t, authSvc, "a@b.cn")
@@ -242,7 +217,7 @@ func TestHandlerSyncPreservesLargeIntegers(t *testing.T) {
 
 	const big = "9007199254740993"
 	body := fmt.Sprintf(`{"base_seq":0,"commits":[{
-		"uid":"big-1","device_id":"device-a","schema_version":%d,
+		"uid":"big-1","kind":"write","device_id":"device-a","schema_version":%d,
 		"actor":"user","action":"create","created_at":"2026-11-15 10:00:00",
 		"changes":[{"table":"memory","row_key":"1","op":"insert","after":{"id":%s}}]}]}`,
 		testSchemaVersion, big)
@@ -491,28 +466,59 @@ func TestHandlerPullAfterCompaction(t *testing.T) {
 	}
 }
 
-// TestHandlerSnapshotBlockedDuringPurge 守住清除云端数据期间的写拦截：登记快照
-// 与推送、重置一样返回 409，查询不受影响。
-func TestHandlerSnapshotBlockedDuringPurge(t *testing.T) {
-	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewService(NewMemoryStore(), testSchemaVersion).SetAttachments(fakeAttachments{snapshotSHA: 4096})
-	handler := NewHandler(svc, log, 16*testMaxJSON)
-	handler.SetPurgeGate(func(context.Context, string) error { return cloudpurge.ErrPurging })
-	c := testutil.NewClient(t, testutil.NewServer(
-		snapshotAPI{testAPI{h: handler}},
-		httpx.RequestID,
-		auth.Middleware(authSvc, log),
-	))
-	token := signIn(t, authSvc, "purge-snap@b.cn")
+// TestHandlerCommitKindIsRequiredAndRoundTripped 守住契约里的提交类型：推送时必须
+// 给出 kind，服务端原样保存并在拉取时带回；缺字段或未知取值（包括已经删掉的
+// remote）按 400 invalid_request 拒绝，且不写入任何提交（审查 S23、V18）。
+func TestHandlerCommitKindIsRequiredAndRoundTripped(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "kind@b.cn")
 
-	var p testutil.Problem
-	if code := c.JSON(http.MethodPut, "/v1/sync/snapshot", token, snapshotBody(1, snapshotSHA), &p); code != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
-		t.Fatalf("清除期间登记: %d %+v", code, p)
+	var push api.PushResult
+	first := commitBody("kind-1")
+	first["kind"] = "maintenance"
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token,
+		map[string]any{"base_seq": 0, "commits": []any{first}}, &push); code != http.StatusOK || push.Head != 1 {
+		t.Fatalf("带 kind 的推送: %d %+v", code, push)
 	}
-	var head api.SyncHead
-	if code := c.JSON(http.MethodGet, "/v1/sync/snapshot", token, nil, &head); code != http.StatusOK || head.Head != 0 || head.EarliestSeq != 1 {
-		t.Fatalf("清除期间查询: %d %+v", code, head)
+
+	// 拉取返回原样的类型，响应体里确实有 kind 这个键。
+	var page api.CommitPage
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=0", token, nil, &page); code != http.StatusOK ||
+		len(page.Commits) != 1 || page.Commits[0].Kind != api.Maintenance {
+		t.Fatalf("拉取返回 kind: %d %+v", code, page)
+	}
+	var raw struct {
+		Commits []map[string]any `json:"commits"`
+	}
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=0", token, nil, &raw); code != http.StatusOK ||
+		len(raw.Commits) != 1 || raw.Commits[0]["kind"] != "maintenance" {
+		t.Fatalf("原始响应的 kind: %d %+v", code, raw)
+	}
+
+	// 缺 kind 与未知取值都按 400 invalid_request 拒绝，提交一条也不写入。
+	missing := commitBody("kind-2")
+	delete(missing, "kind")
+	var p testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/sync/commits", token,
+		map[string]any{"base_seq": 1, "commits": []any{missing}}, &p); code != http.StatusBadRequest ||
+		p.Code != string(httpx.CodeInvalidRequest) {
+		t.Fatalf("缺 kind: %d %+v", code, p)
+	}
+	for _, value := range []string{"remote", "checkpoint", ""} {
+		bad := commitBody("kind-3")
+		bad["kind"] = value
+		if code := c.JSON(http.MethodPost, "/v1/sync/commits", token,
+			map[string]any{"base_seq": 1, "commits": []any{bad}}, &p); code != http.StatusBadRequest ||
+			p.Code != string(httpx.CodeInvalidRequest) {
+			t.Fatalf("未知 kind %q: %d %+v", value, code, p)
+		}
+	}
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", token, nil, &api.SyncHead{}); code != http.StatusOK {
+		t.Fatalf("head: %d", code)
+	}
+	if code := c.JSON(http.MethodGet, "/v1/sync/commits?after=0", token, nil, &page); code != http.StatusOK ||
+		len(page.Commits) != 1 || page.Head != 1 {
+		t.Fatalf("被拒绝的提交不应写入: %d %+v", code, page)
 	}
 }
 

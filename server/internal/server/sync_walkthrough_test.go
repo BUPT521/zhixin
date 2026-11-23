@@ -14,6 +14,7 @@ import (
 func walkCommit(requestID, deviceID, actor, action string, change map[string]any) map[string]any {
 	return map[string]any{
 		"uid":            requestID,
+		"kind":           "write",
 		"device_id":      deviceID,
 		"schema_version": ClientSchemaVersion,
 		"actor":          actor,

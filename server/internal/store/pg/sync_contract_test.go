@@ -24,7 +24,7 @@ func TestPostgresAppendReturnsSeqs(t *testing.T) {
 	mk := func(id string) syncsvc.Commit {
 		after := json.RawMessage(`{}`)
 		return syncsvc.Commit{
-			Uid: id, DeviceId: "d1", SchemaVersion: 27,
+			Uid: id, Kind: "write", DeviceId: "d1", SchemaVersion: 27,
 			Actor: "user", Action: "写入", CreatedAt: "2026-11-15 10:00:00",
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
@@ -75,12 +75,12 @@ func TestPostgresTableDigestsRoundTrip(t *testing.T) {
 	}
 	commits := []syncsvc.Commit{
 		{
-			Uid: "a", DeviceId: "d1", SchemaVersion: 27, Actor: "user", Action: "写入",
+			Uid: "a", Kind: "write", DeviceId: "d1", SchemaVersion: 27, Actor: "user", Action: "写入",
 			CreatedAt: "2026-11-15 10:00:00",
 			Changes:   []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		},
 		{
-			Uid: "b", DeviceId: "d1", SchemaVersion: 27, Actor: "user", Action: "写入",
+			Uid: "b", Kind: "maintenance", DeviceId: "d1", SchemaVersion: 27, Actor: "user", Action: "写入",
 			CreatedAt:    "2026-11-15 10:00:00",
 			Changes:      []syncsvc.Change{{Table: "memory", RowKey: "2", Op: "insert", After: &after}},
 			TableDigests: &tables,
@@ -92,6 +92,10 @@ func TestPostgresTableDigestsRoundTrip(t *testing.T) {
 	pulled, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes)
 	if err != nil || len(pulled) != 2 {
 		t.Fatalf("pull: %d %v", len(pulled), err)
+	}
+	// 提交类型照原样落库与读回（审查 V18）。
+	if pulled[0].Kind != "write" || pulled[1].Kind != "maintenance" {
+		t.Fatalf("拉取返回的 kind 不对: %q %q", pulled[0].Kind, pulled[1].Kind)
 	}
 	if pulled[0].TableDigests != nil {
 		t.Fatalf("没有分表摘要的提交读回时应为空: %+v", *pulled[0].TableDigests)
@@ -113,7 +117,7 @@ func TestPostgresDevicePosition(t *testing.T) {
 	after := json.RawMessage(`{}`)
 	mk := func(id string) syncsvc.Commit {
 		return syncsvc.Commit{
-			Uid: id, DeviceId: "d1", SchemaVersion: 27, Actor: "user", Action: "写入",
+			Uid: id, Kind: "write", DeviceId: "d1", SchemaVersion: 27, Actor: "user", Action: "写入",
 			CreatedAt: "2026-11-15 10:00:00",
 			Changes:   []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
@@ -278,7 +282,7 @@ func TestPostgresResetClearsDevicePositions(t *testing.T) {
 	if err := bs.Save(ctx, "u1", sha, int64(len(body)), strings.NewReader(string(body))); err != nil {
 		t.Fatalf("写入附件字节: %v", err)
 	}
-	if _, err := bs.BackfillAttachment(ctx, "u1", sha, int64(len(body))); err != nil {
+	if _, err := bs.Reserve(ctx, "u1", sha, int64(len(body)), 0); err != nil {
 		t.Fatalf("写入附件索引: %v", err)
 	}
 	if _, err := st.pool.Exec(ctx, `UPDATE attachment SET orphaned_at = now() WHERE user_id = $1`, "u1"); err != nil {
@@ -298,8 +302,11 @@ func TestPostgresResetClearsDevicePositions(t *testing.T) {
 		t.Fatalf("清空之后不应再有回收标记: %v %v", orphans, err)
 	}
 	// 附件索引行的清理由附件存储负责，Reset 不动它。
-	rows, err := bs.ListAttachments(ctx, "u1")
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("Reset 不应删除附件索引行: %+v %v", rows, err)
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM attachment WHERE user_id = $1`, "u1").Scan(&rows); err != nil {
+		t.Fatalf("清点附件索引行: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("Reset 不应删除附件索引行，剩 %d 行", rows)
 	}
 }

@@ -1,7 +1,6 @@
 package syncsvc
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
-	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
@@ -343,16 +341,9 @@ func TestHandlerRefsWriteOverwriteAndTombstone(t *testing.T) {
 		t.Fatalf("超限应返回 400 invalid_request: %d %+v", code, p)
 	}
 
-	// 清除云端数据期间与其它写请求一样返回 409。
-	h.handler.SetPurgeGate(func(_ context.Context, _ string) error { return cloudpurge.ErrPurging })
-	if code := c.JSON(http.MethodPut, "/v1/sync/refs", token, map[string]any{
-		"name": "清除期间", "commit_uid": "uid-purge",
-	}, &p); code != http.StatusConflict || p.Code != string(httpx.CodeConflict) {
-		t.Fatalf("清除期间写入: %d %+v", code, p)
-	}
 	// 查询不受影响。
 	if code := c.JSON(http.MethodGet, "/v1/sync/refs", token, nil, &list); code != http.StatusOK {
-		t.Fatalf("清除期间查询: %d", code)
+		t.Fatalf("查询命名版本: %d", code)
 	}
 }
 

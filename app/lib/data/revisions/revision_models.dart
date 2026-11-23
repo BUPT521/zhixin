@@ -7,15 +7,16 @@ import '../../domain/rules/time_format.dart';
 /// 提交类型（01 `revision_commit.kind`）。
 ///
 /// 由写入路径决定，界面按它显示标签与图标；动作文案 [RevisionCommit.action]
-/// 只给人看，不参与类型判断（ADR-0039）。
+/// 只给人看，不参与类型判断（ADR-0039）。`kind` 只表示这条提交做了什么，来源
+/// 是另一台设备还是本机只看 [RevisionCommit.originDevice]（审查 S23），所以
+/// 远端提交沿用它在原来设备上的类型。
 enum RevisionKind implements CodedEnum {
   baseline('baseline', '初始基线'),
   write('write', '写入'),
   undo('undo', '撤销'),
   restore('restore', '恢复版本'),
   import('import', '导入数据'),
-  maintenance('maintenance', '维护'),
-  remote('remote', '其他设备');
+  maintenance('maintenance', '维护');
 
   const RevisionKind(this.value, this.label);
 
@@ -504,6 +505,10 @@ class RevisionConflict {
 
   /// 本机改过这一行，远端把它删掉了。
   static const String deletedRemotelyModified = 'deleted_remotely_modified';
+
+  /// 远端这一行与另一条本机行撞上有含义的唯一键（目前是 `material_page` 的
+  /// 页码与 `memory_usage` 的记忆加设备），这一行跳过不写（审查 S18）。
+  static const String uniqueKeyTaken = 'unique_key_taken';
 
   final int id;
   final int commitId;

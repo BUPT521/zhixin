@@ -215,6 +215,7 @@ void main() {
         uid: 'remote-lane-v-1',
         action: '其他设备新增讨论',
         actor: 'system',
+        kind: RevisionKind.write,
         originDevice: 'device-0123456789abcdef',
         authoredAt: DateTime(2020, 1, 2, 3, 4),
         changes: [
@@ -228,7 +229,6 @@ void main() {
               'id': 'conv-remote',
               'title': '其他设备追加的讨论',
               'entry_kind': 'text',
-              'status': 'open',
               'created_at': '2026-11-20 09:00:00',
               'updated_at': '2026-11-20 09:00:00',
             }),
@@ -238,7 +238,7 @@ void main() {
     );
     await settle(tester);
 
-    expect(find.text('其他设备（HEAD）'), findsOneWidget);
+    expect(find.text('写入（HEAD）'), findsOneWidget);
     expect(find.text('写入'), findsOneWidget);
     expect(find.textContaining('其他设备新增讨论'), findsOneWidget);
     expect(find.byIcon(FLucideIcons.cloudDownload), findsOneWidget);
@@ -513,6 +513,7 @@ void main() {
         uid: 'remote-memory-labels-1',
         action: '其他设备写入记忆',
         actor: 'ai',
+        kind: RevisionKind.write,
         changes: [
           RevisionChange(
             commitId: head,
@@ -541,7 +542,7 @@ void main() {
     await settle(tester);
 
     final remoteTile = find.ancestor(
-      of: find.text('其他设备（HEAD）'),
+      of: find.text('写入（HEAD）'),
       matching: find.byType(forui.FTile),
     );
     await scrollTo(tester, remoteTile);

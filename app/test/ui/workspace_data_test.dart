@@ -107,7 +107,6 @@ void main() {
           'id': 'conv-1',
           'title': '带图的学习记录',
           'entry_kind': 'photo',
-          'status': 'open',
           'created_at': '2026-11-10T10:00:00',
           'updated_at': '2026-11-10T10:00:00',
         });
@@ -117,7 +116,7 @@ void main() {
           'conversation_id': 'conv-1',
           'role': 'user',
           'content': '',
-          'image_paths_json': '["$hash"]',
+          'image_hashes_json': '["$hash"]',
           'created_at': '2026-11-10T10:00:00',
         });
         return 'conv-1';
@@ -261,7 +260,6 @@ void main() {
             'id': 'conv-restore-$index',
             'title': '恢复前的讨论 $index',
             'entry_kind': 'text',
-            'status': 'open',
             'created_at': '2026-11-10 09:00:00',
             'updated_at': '2026-11-10 09:00:00',
           });
@@ -301,7 +299,6 @@ void main() {
         'id': 'conv-1',
         'title': '不能撤销的讨论',
         'entry_kind': 'text',
-        'status': 'open',
         'created_at': '2026-11-10 09:00:00',
         'updated_at': '2026-11-10 09:00:00',
       }),

@@ -50,6 +50,8 @@ WHERE (c.user_id, c.model, c.text_hash) IN (
 );
 
 -- name: DeleteEmbeddingCacheForModel :exec
+-- 管理后台删除模型或改变维度时按模型清缓存：表在万行级别，全表扫描即可，不再为
+-- model 单建索引（审查 V5）。
 DELETE FROM embedding_cache WHERE model = sqlc.arg(model);
 
 -- name: DeleteEmbeddingCacheForUser :exec
