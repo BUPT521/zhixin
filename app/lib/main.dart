@@ -14,6 +14,7 @@ import 'platform/app_license.dart';
 import 'platform/app_paths.dart';
 import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
+import 'platform/legacy_layout.dart';
 import 'platform/prompt_assets.dart';
 import 'platform/secure_secret_store.dart';
 import 'platform/theme_accent_store.dart';
@@ -39,6 +40,9 @@ Future<void> main() async {
   final paths = await _resolvePaths();
   final crashLog = paths == null ? null : CrashLog(filesDir: paths.filesDir);
   if (crashLog != null) _installErrorHandlers(crashLog);
+  // 0.2.0 的单体布局不再读取，第一次启动时删除；删不掉的条目记进诊断，
+  // 不阻断启动，下次启动再试。
+  if (paths != null) await _deleteLegacyLayout(paths.filesDir, crashLog);
   // 提示词在启动时读一次；读取失败只影响模型回答，本机功能照常可用。
   await _loadPromptText(crashLog);
   final spaces = paths == null ? null : AppSpaces(paths);
@@ -105,6 +109,22 @@ Future<String> _openStartupSpace(AppSpaces spaces) async {
         : '${profile.displayLabel} · ${Uri.parse(origin).authority}',
   );
   return id;
+}
+
+/// 删除 0.2.0 留在应用私有目录根下的学习数据。
+///
+/// 旧布局的库、图片、检索索引、恢复点与临时备份都属于升级前的本机数据，
+/// 0.3.0 不再读取；删除失败只记一条本机诊断，不影响启动与当前空间。
+Future<void> _deleteLegacyLayout(String filesDir, CrashLog? crashLog) async {
+  try {
+    await deleteLegacyLayoutData(
+      filesDir,
+      onFailure: (name, error, stack) =>
+          crashLog?.record(error, stack, kind: 'legacy_layout', report: false),
+    );
+  } catch (error, stack) {
+    crashLog?.record(error, stack, kind: 'legacy_layout', report: false);
+  }
 }
 
 /// 崩溃记录与外观都要赶在界面起来之前就位，所以路径在 main 里先解析一次；
