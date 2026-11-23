@@ -1,14 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:zhixin/data/db/app_database.dart'
     show zhixinDbFileName, zhixinSchemaVersion;
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
+import 'package:zhixin/ai/llm_protocol.dart';
+import 'package:zhixin/ai/llm_transport.dart';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/application/service_runtime.dart';
@@ -201,7 +206,7 @@ void main() {
     );
     expect(authorized, isNotNull);
     expect(authorized!.apiKey, startsWith('access-'));
-    expect(authorized.endpoint, 'http://server.test/v1/llm');
+    expect(authorized.endpoint, 'http://server.test/v1/llm/responses');
     expect(authorized.model, 'zhixin-chat');
   });
 
@@ -258,7 +263,10 @@ void main() {
     expect(saved.endpoint, isEmpty);
     // 回答路径每次现取：地址按服务地址拼，令牌是当前访问令牌。
     final current = await ai.config();
-    expect(current.valueOrNull!.endpoint, 'http://server.test/v1/llm');
+    expect(
+      current.valueOrNull!.endpoint,
+      'http://server.test/v1/llm/responses',
+    );
     expect(current.valueOrNull!.apiKey, startsWith('access-'));
   });
 
@@ -630,5 +638,106 @@ void main() {
     expect(second.session!.userId, isNot(first.session!.userId));
     expect(second.autoSync, isFalse);
     expect(await preferences.syncState(), isNull);
+  });
+
+  // 项目技术审查 API-01 的验收：登录后经过账号服务拼出的地址，再经过真实传输
+  // 层，最终请求必须落在服务端注册的 /v1/llm/responses。以前的用例分别验证
+  // 地址拼接与由测试注入的完整地址，两者之间错位过一次，所以这里只经过
+  // authorizeModelConfig，不注入地址。
+  group('对话请求的跨层契约', () {
+    late List<http.Request> sent;
+    late HttpLlmClient Function(LlmConfig config) transport;
+
+    setUp(() {
+      sent = [];
+      transport = (config) => HttpLlmClient(
+        config: config,
+        httpClient: MockClient.streaming((request, body) async {
+          sent.add(request as http.Request);
+          final reply = jsonEncode({
+            'id': 'resp_1',
+            'object': 'response',
+            'status': 'completed',
+            'output': [
+              {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [
+                  {'type': 'output_text', 'text': '好的', 'annotations': []},
+                ],
+              },
+            ],
+          });
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(reply)),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+    });
+
+    Future<LlmConfig> signedInConfig() async {
+      await account.register(
+        identifier: 'contract@example.com',
+        password: 'password123',
+      );
+      final config = await account.authorizeModelConfig(
+        const LlmConfig(model: 'zhixin-chat'),
+      );
+      return config!;
+    }
+
+    test('地址是 /v1/llm/responses，方法是 POST，鉴权头是当前访问令牌', () async {
+      final config = await signedInConfig();
+      final client = transport(config);
+      addTearDown(client.dispose);
+
+      final reply = await client.complete(
+        system: '你是搭子',
+        messages: const [LlmMessage(role: 'user', content: '在吗')],
+        tools: const [],
+      );
+      expect(reply.text, '好的');
+
+      final request = sent.single;
+      expect(request.url.path, '/v1/llm/responses');
+      expect(request.url.toString(), 'http://server.test/v1/llm/responses');
+      expect(request.method, 'POST');
+      expect(request.headers['Authorization'], 'Bearer ${config.apiKey}');
+      expect(config.apiKey, startsWith('access-'));
+    });
+
+    test('请求体带 store: false，不带 temperature 与 top_p', () async {
+      final config = await signedInConfig();
+      final client = transport(config);
+      addTearDown(client.dispose);
+
+      await client.complete(
+        system: '你是搭子',
+        messages: const [LlmMessage(role: 'user', content: '在吗')],
+        tools: const [],
+      );
+
+      final body = jsonDecode(sent.single.body) as Map<String, Object?>;
+      expect(body['store'], isFalse);
+      expect(body.containsKey('temperature'), isFalse);
+      expect(body.containsKey('top_p'), isFalse);
+      expect(body['model'], 'zhixin-chat');
+      // 服务端的输出上限是 16 到 32768，客户端不能发出范围之外的请求。
+      final limit = body['max_output_tokens'] as int;
+      expect(limit, inInclusiveRange(16, 32768));
+    });
+
+    test('嵌入走 /v1/llm/embeddings，与对话地址分开', () async {
+      await signedInConfig();
+      final target = await account.embeddingEndpoint();
+      expect(target.endpoint, 'http://server.test/v1/llm');
+      expect(endpointUri(target, '/embeddings').path, '/v1/llm/embeddings');
+      expect(
+        endpointUri(target, '/embeddings/lookup').path,
+        '/v1/llm/embeddings/lookup',
+      );
+    });
   });
 }

@@ -7,10 +7,10 @@ const int buddyMaxOutputTokens = 32768;
 
 /// 模型配置：只记用户可选的模型名、上下文上限与图片开关。
 ///
-/// 客户端只用“知新服务”：地址按 `<服务地址>/v1/llm` 在运行时由账号服务拼出，
-/// 访问令牌代替 key 临时填进请求，两者都不写进本机配置；接口固定走 Responses
-/// 的 `/v1/llm/responses`（ADR-0052）。令牌过期、退出登录或没有登录时回答退回
-/// 本地兜底（ADR-0008、ADR-0009）。
+/// 客户端只用“知新服务”：接口地址在运行时由账号服务按 `<服务地址>` 拼出，对话
+/// 走 `/v1/llm/responses`，嵌入走 `/v1/llm/embeddings`（ADR-0052）；访问令牌代替
+/// key 临时填进请求，两者都不写进本机配置。令牌过期、退出登录或没有登录时回答
+/// 退回本地兜底（ADR-0008、ADR-0009）。
 class LlmConfig {
   const LlmConfig({
     this.model = defaultModel,

@@ -26,6 +26,12 @@ class EmbeddingSourceUnavailable extends EmbeddingUnavailable {
 /// 一次嵌入请求要用的接口地址与凭据；由账号服务在每次请求前给出。
 typedef EmbeddingEndpoint = ({String endpoint, String apiKey});
 
+/// 嵌入接口的完整地址：前缀加 `/embeddings` 或 `/embeddings/lookup`。
+/// 前缀由账号服务的 `embeddingsEndpoint` 拼出，与对话地址
+/// `<服务地址>/v1/llm/responses` 是两条路。
+Uri endpointUri(EmbeddingEndpoint target, String path) =>
+    Uri.parse('${target.endpoint}$path');
+
 /// 一次批量查找命中的向量：键是片段文本的 SHA-256，值已经归一化。
 typedef EmbeddingLookup = Map<String, List<double>>;
 
@@ -214,7 +220,7 @@ class RemoteEmbeddingClient extends EmbeddingClient {
     EmbeddingEndpoint target,
     List<String> hashes,
   ) async {
-    final uri = Uri.parse('${target.endpoint}/embeddings/lookup');
+    final uri = endpointUri(target, '/embeddings/lookup');
     final request = http.Request('POST', uri)
       ..followRedirects = false
       ..headers['Content-Type'] = 'application/json'
@@ -276,7 +282,7 @@ class RemoteEmbeddingClient extends EmbeddingClient {
   ) async {
     final source = credentials;
     final target = await source();
-    final uri = Uri.parse('${target.endpoint}/embeddings');
+    final uri = endpointUri(target, '/embeddings');
     final request = http.Request('POST', uri)
       ..followRedirects = false
       ..headers['Content-Type'] = 'application/json'

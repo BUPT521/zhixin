@@ -191,6 +191,60 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}
 }
 
+// TestHandlerResponsesForcesStoreOff 断言服务端转发给来源的 `store` 恒为
+// false：客户端发 true、发 false 或不发这个字段，上游收到的都是 false。
+// Responses 创建接口在缺少该字段时默认让上游保存响应，所以既不能删掉它，也不
+// 能照抄客户端给出的值。
+func TestHandlerResponsesForcesStoreOff(t *testing.T) {
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_1","object":"response","status":"completed","output":[]}`)
+	}))
+	defer upstream.Close()
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "up", upstream.URL, "sk-server")
+		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
+	})
+	tokens, err := env.authSvc.Register(context.Background(), "store@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := tokens.AccessToken
+	// 三次请求都要真正到达上游：额度放宽到不会在中途拒绝。
+	env.quota.SetDailyLimit(tokens.UserID, 1<<30)
+
+	for _, tc := range []struct {
+		name string
+		req  map[string]any
+	}{
+		{"客户端发 false", map[string]any{"model": "deepseek-flash", "input": []any{}, "store": false}},
+		{"客户端发 true", map[string]any{"model": "deepseek-flash", "input": []any{}, "store": true}},
+		{"客户端不发", map[string]any{"model": "deepseek-flash", "input": []any{}}},
+	} {
+		gotBody = nil
+		req, err := json.Marshal(tc.req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 只看状态码：testutil.Client.JSON 会把成功响应也解成 Problem。
+		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token, bytes.NewReader(req), map[string]string{"Content-Type": "application/json"})
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s：应放行，得到 %d", tc.name, resp.StatusCode)
+		}
+		store, present := gotBody["store"]
+		if !present || store != false {
+			t.Fatalf("%s：上游收到的 store 应为 false，得到 %v（存在 %v）", tc.name, store, present)
+		}
+		if gotBody["model"] != "deepseek-flash" {
+			t.Fatalf("%s：模型名应换成来源侧名字，得到 %v", tc.name, gotBody["model"])
+		}
+	}
+}
+
 func TestHandlerQuotaOverride(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

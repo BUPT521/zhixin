@@ -351,7 +351,7 @@ class AccountService {
 
   /// 当前账号的访问令牌，过期时先刷新。未登录或刷新失败时返回 null。
   Future<String?> accessTokenOrNull() async =>
-      (await _hostedModelEndpoint())?.apiKey;
+      (await _hostedModelEndpoint())?.token;
 
   /// 发一次需要登录的请求；401 时刷新令牌后重试一次。
   Future<T> call<T>(
@@ -369,16 +369,26 @@ class AccountService {
     }
   }
 
-  /// 给模型配置补上知新服务的地址与当前访问令牌；没有登录时返回 null。
+  /// 知新服务的对话接口地址：`<服务地址>/v1/llm/responses`（ADR-0052）。
+  static String responsesEndpoint(String base) => '$base/v1/llm/responses';
+
+  /// 知新服务的嵌入接口地址：`<服务地址>/v1/llm`，嵌入客户端在它后面接
+  /// `/embeddings` 与 `/embeddings/lookup`。
+  static String embeddingsEndpoint(String base) => '$base/v1/llm';
+
+  /// 给模型配置补上知新服务的对话地址与当前访问令牌；没有登录时返回 null。
   ///
-  /// 保存的配置里只有模型名、上下文上限与图片开关，地址按 `<服务地址>/v1/llm`
-  /// 现拼，令牌不进 Keystore。没有登录或令牌取不到时返回 null，让回答按未配置
-  /// 退回本地兜底；界面在设置页说明要先登录。
+  /// 保存的配置里只有模型名、上下文上限与图片开关，地址按
+  /// [responsesEndpoint] 现拼，令牌不进 Keystore。没有登录或令牌取不到时返回
+  /// null，让回答按未配置退回本地兜底；界面在设置页说明要先登录。
   Future<LlmConfig?> authorizeModelConfig(LlmConfig? stored) async {
     if (stored == null) return null;
     final target = await _hostedModelEndpoint();
     if (target == null) return null;
-    return stored.copyWith(endpoint: target.endpoint, apiKey: target.apiKey);
+    return stored.copyWith(
+      endpoint: responsesEndpoint(target.base),
+      apiKey: target.token,
+    );
   }
 
   /// 设置页的连接测试与保存前使用：把表单里的配置补上地址与令牌。
@@ -397,10 +407,13 @@ class AccountService {
     if (target == null) {
       throw const EmbeddingSourceUnavailable('当前登录不可用，暂时无法使用知新服务的嵌入');
     }
-    return target;
+    return (endpoint: embeddingsEndpoint(target.base), apiKey: target.token);
   }
 
-  Future<EmbeddingEndpoint?> _hostedModelEndpoint() async {
+  /// 一次取到服务地址与当前访问令牌；没有登录或令牌取不到时为 null。
+  /// 两类地址由 [responsesEndpoint] 与 [embeddingsEndpoint] 在调用处各自拼出，
+  /// 不在这里拼成同一个前缀。
+  Future<({String base, String token})?> _hostedModelEndpoint() async {
     final epoch = _epoch;
     final base = await serverBaseUrl();
     if (base.isEmpty) return null;
@@ -419,7 +432,7 @@ class AccountService {
           current.serverOrigin != origin) {
         return null;
       }
-      return (endpoint: '$base/v1/llm', apiKey: current.accessToken);
+      return (base: base, token: current.accessToken);
     } catch (_) {
       return null;
     }

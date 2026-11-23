@@ -554,14 +554,17 @@ func keyRejected(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }
 
-// chatFields 是转发前允许经过的 Responses 请求字段；`store` 固定为 false，
-// 客户端不发 `previous_response_id`，服务端也不保存会话。`temperature` 与
-// `top_p` 仍然放行，供管理端自测与排查使用，客户端不再发送这两个字段。
+// chatFields 是转发前允许经过的 Responses 请求字段。客户端不发
+// `previous_response_id`，服务端也不保存会话；`temperature` 与 `top_p` 仍然
+// 放行，供管理端自测与排查使用，客户端不再发送这两个字段。
+//
+// `store` 放行但取值不由客户端决定：Responses 创建接口默认 `store: true`，
+// 上游会把用户内容保存在模型来源一侧。转发前一律改写成 false，见 withModel。
 var chatFields = map[string]bool{
 	"model": true, "instructions": true, "input": true,
 	"max_output_tokens": true, "temperature": true, "top_p": true,
 	"stream": true, "tools": true, "tool_choice": true, "parallel_tool_calls": true,
-	"reasoning": true, "text": true,
+	"reasoning": true, "text": true, "store": true,
 }
 
 func functionToolsOnly(raw json.RawMessage) bool {
@@ -598,9 +601,11 @@ func retryable(status int) bool {
 		status >= 500
 }
 
-// withModel 返回把 model 换成来源侧名字之后的请求体。其余字段按原始字节保留。
+// withModel 返回转发给来源的请求体：model 换成来源侧名字，`store` 固定写成
+// false 并随请求带上，其余字段按原始字节保留。`store` 由服务端决定而不是
+// 删掉，因为 Responses 接口在缺少该字段时默认在上游保存响应。
 func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, error) {
-	out := make(map[string]json.RawMessage, len(fields))
+	out := make(map[string]json.RawMessage, len(fields)+1)
 	for k, v := range fields {
 		out[k] = v
 	}
@@ -609,6 +614,7 @@ func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, erro
 		return nil, err
 	}
 	out["model"] = name
+	out["store"] = json.RawMessage("false")
 	return json.Marshal(out)
 }
 

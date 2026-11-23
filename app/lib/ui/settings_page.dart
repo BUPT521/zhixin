@@ -559,8 +559,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 SizedBox(height: context.zhixin.space.gap),
                 Text(
                   signedIn
-                      ? '模型调用只用知新服务（登录账号）：请求发到 ${_account!.serverBaseUrl}/v1/llm，'
-                            '接口走 Responses，密钥由服务端保管，不保存在本机。'
+                      ? '模型调用只用知新服务（登录账号）：对话请求发到 ${_account!.serverBaseUrl}/v1/llm/responses，'
+                            '密钥由服务端保管，不保存在本机。'
                       : '模型调用只用知新服务，需要先登录账号；登录之前回答按本地步骤给出。',
                   style: theme.text.bodySmall.copyWith(
                     color: signedIn

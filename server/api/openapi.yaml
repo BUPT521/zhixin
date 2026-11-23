@@ -668,6 +668,8 @@ paths:
         `max_output_tokens`、`stream` 与 `store: false`，客户端不使用
         `previous_response_id`，也不发送 `temperature` 与 `top_p`。服务端校验
         `model` 后转发到来源的 `/responses`，只放行白名单内的字段，其余字段回 400。
+        `store` 放行但不按客户端取值转发：服务端在转发前一律写成 `false`，因为
+        Responses 接口在缺少该字段时默认让上游保存响应。
         `max_output_tokens` 取 16 到 32768，省略时补 4096，与客户端的上限一致，
         超出范围回 400 `invalid_request`。额度预留与结算取流里
         `response.completed` 的 `usage`（`input_tokens`、`output_tokens`），非流式
@@ -702,7 +704,9 @@ paths:
                   default: 4096
                   description: 省略时服务端补 4096，每次尝试按它与请求字节预留额度
                 stream: { type: boolean }
-                store: { type: boolean }
+                store:
+                  type: boolean
+                  description: 接受但不使用客户端的取值；服务端转发给来源时固定写成 false
       responses:
         "200":
           description: 提供方的响应，流式时为 text/event-stream，事件名为 response.*
