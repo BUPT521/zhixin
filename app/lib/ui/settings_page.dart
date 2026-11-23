@@ -176,7 +176,7 @@ class _SettingsPageState extends State<SettingsPage> {
           // 模型列表只用于提示；读不到时保持空，不打断设置页。
         }
       }
-      final reportCrashes = await DiagnosticsStore(scope.paths.filesDir)
+      final reportCrashes = await DiagnosticsStore(scope.devicePaths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
       final reportUsage = await scope.accountServices.activeReport.enabled();
@@ -803,8 +803,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 setState(() => _reportCrashes = value);
                 CrashLog.reportEnabled = value;
                 try {
-                  await DiagnosticsStore(AppScope.of(context).paths.filesDir)
-                      .write(value);
+                  await DiagnosticsStore(
+                    AppScope.of(context).devicePaths.filesDir,
+                  ).write(value);
                 } catch (_) {
                   if (!context.mounted) return;
                   setState(() => _reportCrashes = previous);

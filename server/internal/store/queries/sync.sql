@@ -268,36 +268,20 @@ FROM sync_ref
 WHERE user_id = sqlc.arg(user_id)
 ORDER BY name;
 
--- 写入一个命名版本。后写覆盖先写；名字已经是墓碑时，只有这次的写入时间晚于删除
--- 时间才复活，更早的写入什么都不改（受影响行数为 0）。
--- name: PutSyncRef :execrows
-INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
-VALUES (
-  sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(commit_uid), sqlc.arg(note),
-  sqlc.arg(updated_at), NULL
-)
-ON CONFLICT (user_id, name) DO UPDATE
-SET commit_uid = EXCLUDED.commit_uid,
-    note = EXCLUDED.note,
-    updated_at = EXCLUDED.updated_at,
-    deleted_at = NULL
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at;
-
--- 删除一个名字：已经是墓碑时保留最早的删除时间；写入时间早于删除时间时什么都不
--- 改。函数调用放在标量位置，与 PutSyncRef 的写入时间在同一事务里各取一次。
+-- 删除一个名字，重试时保留原来的墓碑时间。
 -- name: DeleteSyncRef :execrows
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 VALUES (
   sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(commit_uid), sqlc.arg(note),
-  statement_timestamp(), statement_timestamp()
+  sqlc.arg(updated_at), sqlc.arg(updated_at)
 )
 ON CONFLICT (user_id, name) DO UPDATE
-SET deleted_at = LEAST(sync_ref.deleted_at, EXCLUDED.deleted_at)
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at;
+SET deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
+WHERE sync_ref.deleted_at IS NULL;
 
 -- 写入一个命名版本并核对每账号的上限：新名字（原来没有或只在墓碑上）会新增一个
 -- 未删除的名字，未删除的条数已经到上限时受影响行数为 0，调用方按 ErrRefLimit
--- 处理。判断与写入在同一句里完成，并发写入不会把条数推过上限。
+-- 处理。调用方先锁定账号行，同一个账号的并发写入按顺序核对条数。
 -- name: PutSyncRefWithinLimit :execrows
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 SELECT sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(commit_uid), sqlc.arg(note),
@@ -306,12 +290,16 @@ WHERE sqlc.arg(max_alive)::bigint > (
   SELECT count(*) FROM sync_ref
   WHERE user_id = sqlc.arg(user_id) AND deleted_at IS NULL
 )
+OR EXISTS (
+  SELECT 1 FROM sync_ref
+  WHERE user_id = sqlc.arg(user_id) AND name = sqlc.arg(name) AND deleted_at IS NULL
+)
 ON CONFLICT (user_id, name) DO UPDATE
 SET commit_uid = EXCLUDED.commit_uid,
     note = EXCLUDED.note,
     updated_at = EXCLUDED.updated_at,
     deleted_at = NULL
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at;
+WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < sqlc.arg(source_updated_at)::timestamptz;
 
 -- 写入之后核对一行：0 行说明这个名字已经不在，或者这次写入没有生效。
 -- name: SyncRef :one

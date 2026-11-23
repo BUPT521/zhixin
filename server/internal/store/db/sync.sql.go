@@ -244,11 +244,11 @@ const deleteSyncRef = `-- name: DeleteSyncRef :execrows
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 VALUES (
   $1, $2, $3, $4,
-  statement_timestamp(), statement_timestamp()
+  $5, $5
 )
 ON CONFLICT (user_id, name) DO UPDATE
-SET deleted_at = LEAST(sync_ref.deleted_at, EXCLUDED.deleted_at)
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at
+SET deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
+WHERE sync_ref.deleted_at IS NULL
 `
 
 type DeleteSyncRefParams struct {
@@ -256,16 +256,17 @@ type DeleteSyncRefParams struct {
 	Name      string
 	CommitUid string
 	Note      string
+	UpdatedAt pgtype.Timestamptz
 }
 
-// 删除一个名字：已经是墓碑时保留最早的删除时间；写入时间早于删除时间时什么都不
-// 改。函数调用放在标量位置，与 PutSyncRef 的写入时间在同一事务里各取一次。
+// 删除一个名字，重试时保留原来的墓碑时间。
 func (q *Queries) DeleteSyncRef(ctx context.Context, arg DeleteSyncRefParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSyncRef,
 		arg.UserID,
 		arg.Name,
 		arg.CommitUid,
 		arg.Note,
+		arg.UpdatedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -481,44 +482,6 @@ func (q *Queries) MarkAttachmentOrphaned(ctx context.Context, arg MarkAttachment
 	return err
 }
 
-const putSyncRef = `-- name: PutSyncRef :execrows
-INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
-VALUES (
-  $1, $2, $3, $4,
-  $5, NULL
-)
-ON CONFLICT (user_id, name) DO UPDATE
-SET commit_uid = EXCLUDED.commit_uid,
-    note = EXCLUDED.note,
-    updated_at = EXCLUDED.updated_at,
-    deleted_at = NULL
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at
-`
-
-type PutSyncRefParams struct {
-	UserID    string
-	Name      string
-	CommitUid string
-	Note      string
-	UpdatedAt pgtype.Timestamptz
-}
-
-// 写入一个命名版本。后写覆盖先写；名字已经是墓碑时，只有这次的写入时间晚于删除
-// 时间才复活，更早的写入什么都不改（受影响行数为 0）。
-func (q *Queries) PutSyncRef(ctx context.Context, arg PutSyncRefParams) (int64, error) {
-	result, err := q.db.Exec(ctx, putSyncRef,
-		arg.UserID,
-		arg.Name,
-		arg.CommitUid,
-		arg.Note,
-		arg.UpdatedAt,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const putSyncRefWithinLimit = `-- name: PutSyncRefWithinLimit :execrows
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 SELECT $1, $2, $3, $4,
@@ -527,26 +490,31 @@ WHERE $6::bigint > (
   SELECT count(*) FROM sync_ref
   WHERE user_id = $1 AND deleted_at IS NULL
 )
+OR EXISTS (
+  SELECT 1 FROM sync_ref
+  WHERE user_id = $1 AND name = $2 AND deleted_at IS NULL
+)
 ON CONFLICT (user_id, name) DO UPDATE
 SET commit_uid = EXCLUDED.commit_uid,
     note = EXCLUDED.note,
     updated_at = EXCLUDED.updated_at,
     deleted_at = NULL
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < EXCLUDED.updated_at
+WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < $7::timestamptz
 `
 
 type PutSyncRefWithinLimitParams struct {
-	UserID    string
-	Name      string
-	CommitUid string
-	Note      string
-	UpdatedAt pgtype.Timestamptz
-	MaxAlive  int64
+	UserID          string
+	Name            string
+	CommitUid       string
+	Note            string
+	UpdatedAt       pgtype.Timestamptz
+	MaxAlive        int64
+	SourceUpdatedAt pgtype.Timestamptz
 }
 
 // 写入一个命名版本并核对每账号的上限：新名字（原来没有或只在墓碑上）会新增一个
 // 未删除的名字，未删除的条数已经到上限时受影响行数为 0，调用方按 ErrRefLimit
-// 处理。判断与写入在同一句里完成，并发写入不会把条数推过上限。
+// 处理。调用方先锁定账号行，同一个账号的并发写入按顺序核对条数。
 func (q *Queries) PutSyncRefWithinLimit(ctx context.Context, arg PutSyncRefWithinLimitParams) (int64, error) {
 	result, err := q.db.Exec(ctx, putSyncRefWithinLimit,
 		arg.UserID,
@@ -555,6 +523,7 @@ func (q *Queries) PutSyncRefWithinLimit(ctx context.Context, arg PutSyncRefWithi
 		arg.Note,
 		arg.UpdatedAt,
 		arg.MaxAlive,
+		arg.SourceUpdatedAt,
 	)
 	if err != nil {
 		return 0, err

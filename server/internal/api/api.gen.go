@@ -828,6 +828,9 @@ type SyncRefWrite struct {
 
 	// Note 写入时的备注，删除时忽略
 	Note *string `json:"note,omitempty"`
+
+	// SourceUpdatedAt 本机改名时间，用于判断写入是否早于墓碑
+	SourceUpdatedAt *time.Time `json:"source_updated_at,omitempty"`
 }
 
 // SyncSnapshot 账号当前快照的指针（ADR-0043）

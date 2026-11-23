@@ -85,6 +85,7 @@ class RevisionService {
     required this.cache,
     AssetStore? assets,
     this.onDataChanged,
+    this.onNamedVersionsChanged,
     this.onCacheFailure,
     this.undoGuards = const [],
   }) : assets = assets ?? AssetStore();
@@ -103,6 +104,7 @@ class RevisionService {
   /// 版本恢复或单项撤销真正改了当前数据之后通知应用根推进代次：恢复前
   /// 发出的模型回答与判断不能再写回，三栏也要重读。
   final Future<void> Function()? onDataChanged;
+  final void Function()? onNamedVersionsChanged;
 
   /// 图片缓存重建失败只记诊断，不影响已经提交的数据版本；下次启动会重试。
   final void Function(Object error, StackTrace? stack)? onCacheFailure;
@@ -415,6 +417,7 @@ class RevisionService {
         note: note,
       );
       db.notifyTables(_historyTables);
+      onNamedVersionsChanged?.call();
       return ref;
     });
   }
@@ -423,6 +426,7 @@ class RevisionService {
     return db.gate.exclusive(() async {
       await engine.deleteName(raw(), label);
       db.notifyTables(_historyTables);
+      onNamedVersionsChanged?.call();
     });
   }
 

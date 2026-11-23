@@ -203,6 +203,13 @@ func TestPostgresRefs(t *testing.T) {
 	if refs, err = st.Refs(ctx, "u1"); err != nil || refs[0].DeletedAt.IsZero() {
 		t.Fatalf("迟到的写入不应改变墓碑: %+v %v", refs, err)
 	}
+	written, err = st.PutRef(ctx, "u1", syncsvc.Ref{
+		Name: "第三章", CommitUID: "uid-late-offline", UpdatedAt: deletedAt.Add(time.Minute),
+		SourceUpdatedAt: deletedAt.Add(-time.Minute),
+	})
+	if err != nil || written {
+		t.Fatalf("晚到的离线旧编辑不应复活: %v %v", written, err)
+	}
 	// 删除之后的写入复活，墓碑清空。
 	written, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-revived", UpdatedAt: deletedAt.Add(time.Minute)})
 	if err != nil || !written {
@@ -228,6 +235,12 @@ func TestPostgresRefs(t *testing.T) {
 		if i > 300 {
 			t.Fatal("没有在 300 次之内碰到上限")
 		}
+	}
+	written, err = st.PutRef(ctx, "u1", syncsvc.Ref{
+		Name: "第三章", CommitUID: "uid-existing", UpdatedAt: deletedAt.Add(2 * time.Minute),
+	})
+	if err != nil || !written {
+		t.Fatalf("达到上限仍可更新已有名字: %v %v", written, err)
 	}
 	// 清空云端数据把整表清掉，墓碑一并清掉。
 	if err := st.Reset(ctx, "u1"); err != nil {

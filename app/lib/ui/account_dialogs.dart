@@ -14,7 +14,7 @@ Future<String?> askDeleteAccountPassword(BuildContext context) {
     title: '删除账号',
     message:
         '会删除这个账号在服务端保存的备份、同步序列、附件与登录会话，且无法恢复。'
-        '本机学习记录会保留，删除之后可以用同一个邮箱重新注册。',
+        '这个账号的本机空间也会删除。请先导出需要保留的数据包，之后可以在本机空间导入。',
     confirmLabel: '删除账号',
   );
 }

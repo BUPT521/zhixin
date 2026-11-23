@@ -161,6 +161,12 @@ mixin RevisionMaintenanceMixin {
         throw ArgumentError('最多保留 ${RevisionRef.maxRefs} 个版本名称');
       }
       final now = formatDateTime(self.clock());
+      await deleteRows(
+        txn,
+        'revision_ref_tombstone',
+        where: 'name = ?',
+        whereArgs: [trimmed],
+      );
       await insertRow(txn, 'revision_ref', {
         'name': trimmed,
         'commit_uid': commit.uid,

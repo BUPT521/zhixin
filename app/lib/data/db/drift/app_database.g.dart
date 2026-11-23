@@ -15699,7 +15699,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<SearchPlanItemsResult> searchPlanItems(
-    String? goalId,
+    String goalId,
     String status,
     String? dayStart,
     String? dayEnd,

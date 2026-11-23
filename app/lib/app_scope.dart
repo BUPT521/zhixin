@@ -99,12 +99,24 @@ class AppScope extends StatefulWidget {
     this.ai,
     this.clock,
     this.serverClientFactory,
+    this.spaces,
+    this.spaceId = AppSpaces.local,
+    this.changeSpace,
     required this.themeMode,
     required this.themeAccent,
   });
 
   final Widget child;
   final CrashLog? crashLog;
+  final AppSpaces? spaces;
+  final String spaceId;
+  final Future<void> Function(
+    String id, {
+    required bool adoptLocal,
+    required bool deleteCurrent,
+    String? label,
+  })?
+  changeSpace;
 
   /// 连服务端用的客户端；测试换成进程内的假服务端，为空时按地址直连。
   final ServerClient Function(String baseUrl)? serverClientFactory;
@@ -135,6 +147,42 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   RawDatabase? _connection;
   late GuardedDatabase _db;
   late AppPaths paths;
+  AppPaths get devicePaths => widget.spaces?.device ?? paths;
+  String get spaceId => widget.spaceId;
+  AppSpaces? get spaces => widget.spaces;
+  bool get managesSpaces => widget.changeSpace != null;
+
+  Future<void> _changeSpace(
+    String id, {
+    bool adoptLocal = false,
+    bool deleteCurrent = false,
+    String? label,
+  }) async => widget.changeSpace?.call(
+    id,
+    adoptLocal: adoptLocal,
+    deleteCurrent: deleteCurrent,
+    label: label,
+  );
+
+  Future<void> clearAllData({required String password}) async {
+    await _sync.withSyncPaused(() async {
+      await _account.clearCloudData(password: password);
+      if (managesSpaces) {
+        await _changeSpace(spaceId, deleteCurrent: true);
+      } else {
+        await _dataVersions.resetAllData();
+        await _sync.clearState(forgetPosition: true);
+      }
+    });
+  }
+
+  Future<void> deleteLocalSpace(String id) async {
+    if (id == spaceId) {
+      await _changeSpace(id, deleteCurrent: true);
+    } else {
+      await spaces!.delete(id);
+    }
+  }
 
   /// 启动失败时留下的原因：失败页展示它，本机诊断文件与反馈都用同一份说明。
   /// 打开成功之后写进诊断文件并清空，下次启动不再重复记。
@@ -160,6 +208,9 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   late StudyPlanRepository _studyPlans;
 
   late LlmConfigStore _llmStore;
+  late final SecretStore _modelSettings = managesSpaces
+      ? SpaceModelSettings(paths)
+      : SecureSecretStore();
   AiChatService? _configuredAi;
 
   /// 账号与云同步：令牌在 Keystore，服务地址与同步游标在应用私有目录。
@@ -167,7 +218,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   ActiveReportService? _activeReportService;
   FeedbackService? _feedbackService;
   UpdateCheckService? _updateCheckService;
-  late final CloudPreferencesStore _cloudPreferences;
+  late CloudPreferencesStore _cloudPreferences;
   CloudBackupService? _cloudBackups;
   SyncService? _cloudSync;
 
@@ -282,7 +333,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
         }
       }
       final embedding = await _embeddingSettings.summary();
-      final reportCrashes = await DiagnosticsStore(paths.filesDir)
+      final reportCrashes = await DiagnosticsStore(devicePaths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
       final reportUsage = await _activeReportService!.enabled();
@@ -368,7 +419,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   late final EvidenceRepository _evidenceRepository = EvidenceRepository(_db);
 
   late final EmbeddingConfigStore _embeddingStore = EmbeddingConfigStore(
-    SecureSecretStore(),
+    _modelSettings,
   );
 
   /// 检索索引配置的唯一入口：页面保存一次，应用根启动时恢复一次。
@@ -784,7 +835,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
         state != AppLifecycleState.hidden) {
       return;
     }
-    if (!_servicesInitialized) return;
+    if (!_servicesInitialized || _closing != null) return;
     _flushMemoryUsageOnPause();
   }
 
@@ -792,9 +843,9 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   bool _servicesInitialized = false;
 
   Future<void> _init() async {
-    paths = await AppPaths.resolve();
+    paths = spaces?.pathsFor(spaceId) ?? await AppPaths.resolve();
     await paths.ensureDirectories();
-    crashLog = widget.crashLog ?? CrashLog(filesDir: paths.filesDir);
+    crashLog = widget.crashLog ?? CrashLog(filesDir: devicePaths.filesDir);
     crashLog.recordLaunch();
     // 上一次启动失败时可能连数据目录都没解析出来，那时写不了诊断；这次目录
     // 可用了，先把上次的失败补记下来，再清掉内存里的副本。
@@ -806,8 +857,11 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     }
     _db = GuardedDatabase(gate: _gate, resolve: () => _connection!);
     _db.onCommitted = _onCommitted;
-    _llmStore = LlmConfigStore(SecureSecretStore());
-    _cloudPreferences = CloudPreferencesStore(filesDir: paths.filesDir);
+    _llmStore = LlmConfigStore(_modelSettings);
+    _cloudPreferences = CloudPreferencesStore(
+      filesDir: devicePaths.filesDir,
+      spaceFilesDir: paths.filesDir,
+    );
     _accountService = AccountService(
       store: AccountStore(SecureSecretStore()),
       preferences: _cloudPreferences,
@@ -815,14 +869,44 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
       clientFactory: widget.serverClientFactory,
       // 退出登录、删除账号、清除云端与重设密码之后，让同步服务把库里的推送
       // 位置改成不阻塞；位置与 scope 保留，重新登录同一账号时从原位置继续。
-      onSyncStateCleared: () =>
-          _cloudSync?.releaseSyncCursor() ?? Future<void>.value(),
+      onSyncStateCleared: managesSpaces
+          ? null
+          : () => _cloudSync?.releaseSyncCursor() ?? Future<void>.value(),
+      acceptsSession: managesSpaces
+          ? (session) =>
+                syncScopeFor(session.userId, session.serverOrigin) == spaceId
+          : null,
+      onSignedIn: managesSpaces
+          ? (session, profile) => _changeSpace(
+              syncScopeFor(session.userId, session.serverOrigin),
+              adoptLocal: spaceId == AppSpaces.local,
+              label: profile == null || profile.displayLabel.isEmpty
+                  ? null
+                  : '${profile.displayLabel} · ${Uri.parse(session.serverOrigin).authority}',
+            )
+          : null,
+      onSignedOut: managesSpaces
+          ? (deleteSpace) =>
+                _changeSpace(AppSpaces.local, deleteCurrent: deleteSpace)
+          : null,
+      onSessionExpired: managesSpaces
+          ? () {
+              unawaited(
+                _changeSpace(AppSpaces.local).catchError((
+                  Object error,
+                  StackTrace stack,
+                ) {
+                  crashLog.record(error, stack, kind: 'account_space_expired');
+                }),
+              );
+            }
+          : null,
     );
     // 先把服务实例来源读进内存：页面构建与预读会在假异步区里取会话，那里等不到
     // 文件 I/O，来源缓存让这些读取不再落盘。
     await _accountService!.serverOrigin();
     _activeReportService = ActiveReportService(
-      store: TelemetryStore(filesDir: paths.filesDir),
+      store: TelemetryStore(filesDir: devicePaths.filesDir),
       signedIn: () async => (await _account.snapshot()).session != null,
       serverBaseUrl: _account.serverBaseUrl,
       crashLog: crashLog,
@@ -872,6 +956,10 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
       // 撤销的业务约束与可撤销表名单由应用层注册，数据层只做通用核对。
       undoGuards: defaultUndoGuards,
       onDataChanged: _invalidatePendingWork,
+      onNamedVersionsChanged: () {
+        final sync = _cloudSync;
+        if (sync != null) unawaited(sync.schedule());
+      },
       onCacheFailure: (error, stack) =>
           crashLog.record(error, stack, kind: 'rebuild_attachments_restore'),
     );
@@ -952,12 +1040,13 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   }
 
   Future<void> _maintainAttachments() async {
+    if (_closing != null) return;
     try {
       await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(_db);
     } catch (error, stack) {
       crashLog.record(error, stack, kind: 'cleanup_attachments');
     }
-    if (!mounted) return;
+    if (!mounted || _closing != null) return;
     try {
       await _gate.shared(() async {
         if (!await _attachmentCache.needsRebuild) return;
@@ -1067,17 +1156,39 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     }
   }
 
-  @override
-  void dispose() {
+  Future<void>? _closing;
+
+  Future<void> closeSpace() => _closing ??= _closeSpace();
+
+  Future<void> _closeSpace() async {
+    _operationEpoch++;
     _searchIndexRefreshTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
-    _cloudSync?.dispose();
     _accountService?.dispose();
     _configuredAi?.dispose();
+    await _cloudSync?.close();
     final index = _searchIndexService;
-    if (index != null) unawaited(index.close());
+    if (index != null) await index.close();
     _searchIndexService = null;
-    if (_connection != null) _db.close();
+    if (_connection != null) {
+      await _gate.exclusive(_db.close);
+      _connection = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (managesSpaces) {
+      unawaited(closeSpace());
+    } else {
+      _searchIndexRefreshTimer?.cancel();
+      _cloudSync?.dispose();
+      _accountService?.dispose();
+      _configuredAi?.dispose();
+      final index = _searchIndexService;
+      if (index != null) unawaited(index.close());
+      if (_connection != null) unawaited(_db.close());
+    }
     dataVersion.dispose();
     super.dispose();
   }

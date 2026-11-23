@@ -5,12 +5,17 @@ import 'package:material_ui/material_ui.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'app.dart';
+import 'application/sync_service.dart' show syncScopeFor;
+import 'data/cloud/account_store.dart';
+import 'data/cloud/cloud_preferences_store.dart';
+import 'data/cloud/server_client.dart' show ServerClient;
 import 'data/diagnostics/crash_log.dart';
 import 'platform/app_license.dart';
 import 'platform/app_paths.dart';
 import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
 import 'platform/prompt_assets.dart';
+import 'platform/secure_secret_store.dart';
 import 'platform/theme_accent_store.dart';
 import 'platform/theme_mode_store.dart';
 import 'platform/zvec_license.dart';
@@ -36,7 +41,13 @@ Future<void> main() async {
   if (crashLog != null) _installErrorHandlers(crashLog);
   // 提示词在启动时读一次；读取失败只影响模型回答，本机功能照常可用。
   await _loadPromptText(crashLog);
-  final appearance = paths == null ? null : await _loadAppearance(paths);
+  final spaces = paths == null ? null : AppSpaces(paths);
+  final spaceId = spaces == null
+      ? AppSpaces.local
+      : await _readOrNull(() => _openStartupSpace(spaces)) ?? AppSpaces.local;
+  final appearance = spaces == null
+      ? null
+      : await _loadAppearance(spaces.pathsFor(spaceId));
   final reporting =
       paths != null &&
       await DiagnosticsStore(paths.filesDir).read(fallback: !kReleaseMode);
@@ -47,6 +58,8 @@ Future<void> main() async {
       crashLog: crashLog,
       themeMode: appearance?.themeMode,
       themeAccent: appearance?.themeAccent,
+      spaces: spaces,
+      spaceId: spaceId,
     ),
   );
 
@@ -69,6 +82,29 @@ Future<void> main() async {
     options.attachViewHierarchy = false;
     options.beforeSend = prepareCrashReport;
   }, appRunner: run);
+}
+
+Future<String> _openStartupSpace(AppSpaces spaces) async {
+  final previous = await spaces.lastOpened();
+  final preferences = CloudPreferencesStore(filesDir: spaces.device.filesDir);
+  final origin = ServerClient.originOf(await preferences.serverBaseUrl());
+  final accounts = AccountStore(SecureSecretStore());
+  final session = await accounts.read(origin: origin);
+  final profile = session == null
+      ? null
+      : await accounts.readProfile(origin: origin);
+  final id = session == null || session.isExpired
+      ? AppSpaces.local
+      : syncScopeFor(session.userId, origin);
+  await spaces.open(
+    id,
+    adoptLocal: previous == AppSpaces.local,
+    label:
+        id == AppSpaces.local || profile == null || profile.displayLabel.isEmpty
+        ? null
+        : '${profile.displayLabel} · ${Uri.parse(origin).authority}',
+  );
+  return id;
 }
 
 /// 崩溃记录与外观都要赶在界面起来之前就位，所以路径在 main 里先解析一次；

@@ -1058,12 +1058,19 @@ class ServerClient {
     required String name,
     required String commitUid,
     String note = '',
+    DateTime? sourceUpdatedAt,
   }) async {
     final json = await _json(
       'PUT',
       '/v1/sync/refs',
       accessToken: accessToken,
-      body: {'name': name, 'commit_uid': commitUid, 'note': note},
+      body: {
+        'name': name,
+        'commit_uid': commitUid,
+        'note': note,
+        if (sourceUpdatedAt != null)
+          'source_updated_at': sourceUpdatedAt.toUtc().toIso8601String(),
+      },
     );
     return SyncRefRow.fromJson(json);
   }

@@ -138,6 +138,12 @@ class DataVersionService {
         openDb: reopen,
       );
       markPendingWorkInvalidated();
+      await connection().transaction((txn) async {
+        await txn.execute('DELETE FROM revision_ref_tombstone');
+        await txn.execute("UPDATE revision_ref SET sync_state = 'dirty'");
+        await RevisionCursors(txn)
+            .set(RevisionCursor.syncRefMerge, 0, blocking: false);
+      });
       await _alignSyncAfterRestore(before);
       cacheWarning = await _rebuildPackageAttachments('数据已恢复');
     });

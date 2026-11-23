@@ -135,11 +135,19 @@ type Device struct {
 // Ref 是一个命名版本（ADR-0054）。DeletedAt 非零表示这一行是墓碑；服务端只保存
 // 与转发名字、提交身份与备注，不核对提交是否存在。
 type Ref struct {
-	Name      string
-	CommitUID string
-	Note      string
-	UpdatedAt time.Time
-	DeletedAt time.Time
+	Name            string
+	CommitUID       string
+	Note            string
+	UpdatedAt       time.Time
+	DeletedAt       time.Time
+	SourceUpdatedAt time.Time
+}
+
+func (r Ref) SourceTime() time.Time {
+	if r.SourceUpdatedAt.IsZero() {
+		return r.UpdatedAt
+	}
+	return r.SourceUpdatedAt
 }
 
 // CompactedError 报告客户端的位置落在已经删除的区间，并带上删除之后的账号
@@ -694,7 +702,8 @@ func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (bool, e
 	current, exists := l.refs[ref.Name]
 	revives := true
 
-	if exists && !current.DeletedAt.IsZero() && !ref.UpdatedAt.After(current.DeletedAt) {
+	if exists && !current.DeletedAt.IsZero() &&
+		(!ref.DeletedAt.IsZero() || !ref.SourceTime().After(current.DeletedAt)) {
 		// 名字已经是墓碑，而这次写入不晚于删除时间：不复活，也不改变已存的行。
 		revives = false
 	}

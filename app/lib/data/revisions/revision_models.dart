@@ -407,6 +407,7 @@ class RevisionCursor {
   /// 位置挪到当前服务端位置与本机 `HEAD`；补记失败时为 -1，这一轮按首次基线
   /// 重新对齐。
   static const String syncRestoreAlign = 'sync.restore_align';
+  static const String syncRefMerge = 'sync.ref_merge';
 
   final String name;
   final int position;

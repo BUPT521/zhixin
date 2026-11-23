@@ -476,6 +476,9 @@ func (s *Service) PutRef(ctx context.Context, userID string, in api.SyncRefWrite
 	if in.Delete != nil && *in.Delete {
 		write.DeletedAt = now
 	} else {
+		if in.SourceUpdatedAt != nil && in.SourceUpdatedAt.Before(now) {
+			write.SourceUpdatedAt = in.SourceUpdatedAt.UTC()
+		}
 		if in.CommitUid == nil {
 			return Ref{}, ErrInvalid
 		}

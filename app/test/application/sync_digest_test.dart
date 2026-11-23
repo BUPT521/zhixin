@@ -149,6 +149,50 @@ void main() {
     );
   });
 
+  test('另一台设备收到命名版本，显式删除后旧编辑不会恢复名称', () async {
+    final a = await device('a@example.com', register: true, deviceId: 'a');
+    final b = await device('a@example.com', deviceId: 'b');
+    await a.sync.syncNow();
+    await insertTestMemory(a.rig, 'named-memory', content: '需要保留的记录');
+    final head = await a.rig.engine.headId(a.rig.raw);
+    final named = await a.rig.revisions.name(head, label: '期中复习');
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    final refs = await b.rig.engine.refs(b.rig.raw);
+    expect(refs.single.commitUid, named.commitUid);
+    expect((await b.rig.engine.refCommitIds(b.rig.raw))['期中复习'], isNotNull);
+
+    final otherHead = await b.rig.engine.headId(b.rig.raw);
+    await b.rig.revisions.name(otherHead, label: '期中复习', note: '较早的离线编辑');
+    await a.rig.revisions.deleteName('期中复习');
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    expect(await b.rig.engine.refs(b.rig.raw), isEmpty);
+    expect(await a.rig.engine.tombstones(a.rig.raw), isEmpty);
+  });
+
+  test('以本机为准补传独有记录后，保留云端已有但值不同的差异', () async {
+    final a = await device('a@example.com', register: true, deviceId: 'a');
+    await insertTestMemory(a.rig, 'changed', content: '云端保留的值');
+    await a.sync.syncNow(confirmBaseline: true);
+    await a.rig.raw.execute(
+      "UPDATE memory SET content = '只有本机改过' WHERE id = 'changed'",
+    );
+    await insertRowDirectly(a, 'missing', '云端缺少的记忆');
+
+    await a.sync.repairFromLocal();
+
+    final status = await a.sync.status();
+    expect(status.digestMismatch, isTrue);
+    expect(status.differentTables, ['memory']);
+    final b = await device('a@example.com', deviceId: 'b');
+    await b.sync.syncNow();
+    final rows = await b.rig.raw.rawQuery(
+      'SELECT id, content FROM memory ORDER BY id',
+    );
+    expect(rows.map((row) => row['content']), ['云端保留的值', '云端缺少的记忆']);
+  });
+
   test('一台设备漏掉一条提交之后，下一次同步发现不一致并写诊断', () async {
     final a = await device(
       'a@example.com',

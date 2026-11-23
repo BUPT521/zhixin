@@ -559,45 +559,60 @@ func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (boo
 	if err != nil {
 		return false, err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	if _, err := q.LockUser(ctx, userID); err != nil {
+		return false, err
+	}
 	if ref.DeletedAt.IsZero() {
-		changed, err := s.q.PutSyncRefWithinLimit(ctx, db.PutSyncRefWithinLimitParams{
-			UserID:    userID,
-			Name:      ref.Name,
-			CommitUid: ref.CommitUID,
-			Note:      ref.Note,
-			UpdatedAt: updated,
-			MaxAlive:  syncsvc.MaxRefsPerAccount,
+		sourceTime, err := pgTime(ref.SourceTime())
+		if err != nil {
+			return false, err
+		}
+		changed, err := q.PutSyncRefWithinLimit(ctx, db.PutSyncRefWithinLimitParams{
+			UserID:          userID,
+			Name:            ref.Name,
+			CommitUid:       ref.CommitUID,
+			Note:            ref.Note,
+			UpdatedAt:       updated,
+			SourceUpdatedAt: sourceTime,
+			MaxAlive:        syncsvc.MaxRefsPerAccount,
 		})
 		if err != nil {
 			return false, err
 		}
 		if changed > 0 {
-			return true, nil
+			return true, tx.Commit(ctx)
 		}
 		// 0 行有两种原因：名字已经是墓碑且这次写入不晚于删除时间（不复活），或者
 		// 未删除的名字已经到上限。前者这一行存在，后者不存在。
-		state, err := s.q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
+		state, err := q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, syncsvc.ErrRefLimit
 		}
 		if err != nil {
 			return false, err
 		}
-		if state.DeletedAt.Valid {
+		if state.DeletedAt.Valid && !ref.SourceTime().After(state.DeletedAt.Time) {
 			return false, nil
 		}
 		return false, syncsvc.ErrRefLimit
 	}
-	changed, err := s.q.DeleteSyncRef(ctx, db.DeleteSyncRefParams{
+	changed, err := q.DeleteSyncRef(ctx, db.DeleteSyncRefParams{
 		UserID:    userID,
 		Name:      ref.Name,
 		CommitUid: ref.CommitUID,
 		Note:      ref.Note,
+		UpdatedAt: updated,
 	})
 	if err != nil {
 		return false, err
 	}
-	return changed > 0, nil
+	return changed > 0, tx.Commit(ctx)
 }
 
 // After 返回 seq 大于 after 的提交，按顺序最多 limit 条。

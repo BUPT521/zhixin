@@ -144,6 +144,7 @@ class SyncStatus {
     this.baselineNeedsConfirmation = false,
     this.restoreNeedsConfirmation = false,
     this.digestMismatch = false,
+    this.differentTables = const [],
     this.lastSyncedAt,
     this.lastError,
   });
@@ -169,6 +170,7 @@ class SyncStatus {
   /// 上次同步比较摘要时发现本机与云端不一致（同步方案 3.5）：账号页据此
   /// 显示“本机与云端不一致”与两个修复入口，不阻塞同步本身。
   final bool digestMismatch;
+  final List<String> differentTables;
   final DateTime? lastSyncedAt;
   final String? lastError;
 
@@ -188,6 +190,7 @@ class SyncStatus {
     baselineNeedsConfirmation: baselineNeedsConfirmation,
     restoreNeedsConfirmation: restoreNeedsConfirmation,
     digestMismatch: mismatch,
+    differentTables: mismatch ? differentTables : const [],
     lastSyncedAt: lastSyncedAt,
     lastError: lastError,
   );
@@ -316,6 +319,7 @@ class SyncService {
   String? _lastError;
 
   bool _disposed = false;
+  bool _paused = false;
 
   /// 这次同步开始时的身份代次；切换账号或实例之后进行中的同步据此丢弃结果。
   int? _runEpoch;
@@ -519,6 +523,7 @@ class SyncService {
         needsBootstrap: true,
         baselineNeedsConfirmation: localHead > 0,
         digestMismatch: identityState?.digestMismatch ?? false,
+        differentTables: identityState?.differentTables ?? const [],
         lastError: _lastError,
       );
     }
@@ -535,6 +540,7 @@ class SyncService {
       needsBootstrap: false,
       restoreNeedsConfirmation: alignment != null,
       digestMismatch: identityState?.digestMismatch ?? false,
+      differentTables: identityState?.differentTables ?? const [],
       lastSyncedAt: identityState?.syncedAt,
       lastError: _lastError,
     );
@@ -552,6 +558,7 @@ class SyncService {
     bool confirmBaseline = false,
     bool confirmReclone = false,
   }) {
+    if (_paused || _disposed) return Future.error(const SyncIdentityChanged());
     final running = _running;
     if (running != null) return running;
     final future =
@@ -574,18 +581,23 @@ class SyncService {
   /// 的“立即同步”会先问一次。整库恢复之后同样先不自动同步：下一轮同步要
   /// 用户确认“云端会改成恢复后的内容”（同步方案 3.4）。
   Future<void> schedule({Duration delay = const Duration(seconds: 5)}) async {
-    if (_disposed) return;
+    if (_disposed || _paused) return;
     final snapshot = await account.snapshot();
     if (!snapshot.signedIn || !snapshot.autoSync) return;
-    final pushed = await _cursors.read(RevisionCursor.syncPushed);
-    if (!_positionLinked(pushed) && await engine.headId(database.raw) > 0) {
-      return;
-    }
-    if (await _cursors.read(RevisionCursor.syncRestoreAlign) != null) return;
+    final canSchedule = await database.gate.shared(() async {
+      if (_disposed || _paused) return false;
+      final pushed = await _cursors.read(RevisionCursor.syncPushed);
+      if (!_positionLinked(pushed) && await engine.headId(database.raw) > 0) {
+        return false;
+      }
+      return await _cursors.read(RevisionCursor.syncRestoreAlign) == null;
+    });
+    if (!canSchedule) return;
+    if (_disposed || _paused) return;
     _timer?.cancel();
     _timer = Timer(delay, () {
       _timer = null;
-      if (_disposed) return;
+      if (_disposed || _paused) return;
       unawaited(
         syncNow().catchError((Object error, StackTrace stack) {
           _lastError = _describe(error);
@@ -696,18 +708,7 @@ class SyncService {
           for (final commit in page.commits) {
             for (final change in commit.changes) {
               touched.add((change.table, change.rowKey));
-              final rows = cloud.putIfAbsent(change.table, () => {});
-              if (change.op == 'delete') {
-                rows.remove(change.rowKey);
-                continue;
-              }
-              final after = decodeTypedRow(jsonEncode(change.after));
-              if (change.op == 'insert') {
-                rows[change.rowKey] = after;
-              } else {
-                // 更新只带变化列，重放时要并进上一条提交留下的整行。
-                rows[change.rowKey] = {...?rows[change.rowKey], ...after};
-              }
+              _applyChangeToCloudProjection(cloud, change);
             }
           }
           pulled += page.commits.length;
@@ -983,42 +984,30 @@ class SyncService {
           confirmBaseline: true,
           confirmReclone: true,
         );
-        await _saveDigestMismatch(false);
+        await _verifyRepairDigest(deviceId);
         return result;
       }
-      var serverHead = await _serverHeadPosition();
-      // 按首次同步的做法从第 1 条开始读一遍服务端序列，只记录被提交碰过的行；
-      // 已经应用过的远端提交按 uid 去重，不会重写本机内容。云端历史被压缩过时
-      // 读不到更早的提交，退回按本机已有的远端提交判断，再从当前位置增量拉取。
-      final pushedRows = <(String, String)>{};
-      var pulled = 0;
-      try {
-        final result = await _pull(
-          serverHead: 0,
-          deviceId: deviceId,
-          persist: false,
-          downloaded: (count) {},
-          touchedRows: pushedRows,
-        );
-        serverHead = result.serverHead;
-        pulled = result.pulled;
-      } on SyncHistoryCompacted {
-        // 云端历史已经压缩：按本机已有的远端提交判断哪些行已经由远端表达过，
-        // 再从当前位置增量拉取；快照重建只由“以云端为准修复”负责。
-        pushedRows.addAll(await _remoteTouchedRows());
-        final result = await _pull(
-          serverHead: serverHead,
-          deviceId: deviceId,
-          downloaded: (count) {},
-        );
-        serverHead = result.serverHead;
-        pulled = result.pulled;
-      }
+      final current = await _pull(
+        serverHead: await _serverHeadPosition(),
+        deviceId: deviceId,
+        downloaded: (count) {},
+      );
+      final cloud = await _readCloudProjection(
+        deviceId,
+        through: current.serverHead,
+      );
+      final pushedRows = cloud.touched;
+      if (cloud.compacted) pushedRows.addAll(await _remoteTouchedRows());
       final localHead = await engine.headId(database.raw);
       final projection = await engine.readProjection(database.raw);
+      final differentTables =
+          (await preferences.syncState())?.differentTables ?? const <String>[];
       final changes = <RevisionChange>[];
       var seq = 1;
       for (final table in versionedTableNames) {
+        if (differentTables.isNotEmpty && !differentTables.contains(table)) {
+          continue;
+        }
         final rows = projection[table] ?? const <String, TypedRow>{};
         for (final entry in rows.entries) {
           if (pushedRows.contains((table, entry.key))) continue;
@@ -1035,27 +1024,25 @@ class SyncService {
         }
       }
       var pushed = 0;
-      var baseSeq = serverHead;
-      String? baselineDigest;
-      Map<String, String>? baselineTableDigests;
-      if (changes.isNotEmpty && _pulledSkipped == 0) {
-        final headBefore = await engine.headId(database.raw);
-        final digest = await revisions.currentStateDigest();
-        final digests = await revisions.currentTableDigests();
-        if (await engine.headId(database.raw) == headBefore) {
-          baselineDigest = digest;
-          if (revisionTableDigestsMatch(digests, digest)) {
-            baselineTableDigests = digests;
-          }
-        }
+      var baseSeq = current.serverHead;
+      for (final change in changes) {
+        cloud.projection.putIfAbsent(change.table, () => {})[change.rowKey] =
+            change.after!;
       }
+      final cloudTables = revisionTableDigests(cloud.projection);
+      final localTables = revisionTableDigests(projection);
+      final matches = versionedTableNames.every(
+        (table) => cloudTables[table] == localTables[table],
+      );
       await _pushBatches(
         Stream.fromIterable(
           _baselineCommits(
             deviceId,
             changes,
-            stateDigest: baselineDigest,
-            tableDigests: baselineTableDigests,
+            stateDigest: matches
+                ? revisionStateDigestHex(revisionTableDigestsSum(cloudTables))
+                : null,
+            tableDigests: matches ? cloudTables : null,
           ),
         ),
         baseSeq,
@@ -1070,11 +1057,11 @@ class SyncService {
       await _saveServerHead(baseSeq);
       await _savePushed(localHead);
       await _shadows.deleteSettled(localHead);
-      if (changes.isNotEmpty) await _saveDigestMismatch(false);
+      await _compareRepairDigest(cloudTables);
       await _markSynced();
       await refreshDevices();
       return SyncResult(
-        pulledCommits: pulled,
+        pulledCommits: current.pulled,
         pushedCommits: pushed,
         uploadedAssets: uploaded,
       );
@@ -1086,6 +1073,83 @@ class SyncService {
     } finally {
       _runEpoch = null;
     }
+  }
+
+  Future<void> _verifyRepairDigest(String deviceId) async {
+    final head = await account.call(
+      (client, token) => client.head(token, deviceId: deviceId),
+    );
+    final cloud = await _readCloudProjection(deviceId, through: head.head);
+    await _compareRepairDigest(revisionTableDigests(cloud.projection));
+  }
+
+  Future<
+    ({Projection projection, Set<(String, String)> touched, bool compacted})
+  >
+  _readCloudProjection(String deviceId, {required int through}) async {
+    final head = await account.call(
+      (client, token) => client.head(token, deviceId: deviceId),
+    );
+    final snapshot = head.snapshot;
+    final Projection cloud = {};
+    final touched = <(String, String)>{};
+    var after = 0;
+    if (head.historyCompacted) {
+      if (snapshot == null || snapshot.seq > through) {
+        throw const SyncSnapshotUnavailable();
+      }
+      final base = (await _downloadSnapshotProjection(snapshot)).projection;
+      for (final entry in base.entries) {
+        cloud[entry.key] = {...entry.value};
+        touched.addAll(entry.value.keys.map((key) => (entry.key, key)));
+      }
+      after = snapshot.seq;
+    }
+    while (after < through) {
+      final page = await account.call(
+        (client, token) => client.pull(token, after: after),
+      );
+      _ensureIdentity();
+      if (page.commits.isEmpty) throw StateError('核对修复结果时云端位置已改变');
+      for (final commit in page.commits) {
+        if (commit.seq != null && commit.seq! > through) break;
+        for (final change in commit.changes) {
+          touched.add((change.table, change.rowKey));
+          _applyChangeToCloudProjection(cloud, change);
+        }
+      }
+      after = page.commits.last.seq ?? page.head;
+    }
+    return (
+      projection: cloud,
+      touched: touched,
+      compacted: head.historyCompacted,
+    );
+  }
+
+  Future<void> _compareRepairDigest(Map<String, String> cloudTables) async {
+    final local = await revisions.currentTableDigests();
+    final differentTables = [
+      for (final table in versionedTableNames)
+        if (local[table] != cloudTables[table]) table,
+    ];
+    _ensureIdentity();
+    await _saveDigestMismatch(
+      differentTables.isNotEmpty,
+      differentTables: differentTables,
+    );
+  }
+
+  void _applyChangeToCloudProjection(Projection cloud, ServerChange change) {
+    final rows = cloud.putIfAbsent(change.table, () => {});
+    if (change.op == 'delete') {
+      rows.remove(change.rowKey);
+      return;
+    }
+    final after = decodeTypedRow(jsonEncode(change.after));
+    rows[change.rowKey] = change.op == 'insert'
+        ? after
+        : {...?rows[change.rowKey], ...after};
   }
 
   /// 正在同步时等它结束再修复：两轮同时改同步位置会把位置写乱。
@@ -1122,6 +1186,23 @@ class SyncService {
     _disposed = true;
     _timer?.cancel();
     _timer = null;
+  }
+
+  Future<T> withSyncPaused<T>(Future<T> Function() action) async {
+    if (_paused || _disposed) throw const SyncIdentityChanged();
+    _paused = true;
+    _timer?.cancel();
+    try {
+      await _waitForRunningSync();
+      return await action();
+    } finally {
+      _paused = false;
+    }
+  }
+
+  Future<void> close() async {
+    dispose();
+    await _waitForRunningSync();
   }
 
   Future<SyncResult> _sync({
@@ -1186,6 +1267,10 @@ class SyncService {
         linked = false;
         alignment = null;
         restoreFallback = true;
+      }
+
+      if (!linked) {
+        await _cursors.set(RevisionCursor.syncRefMerge, 0, blocking: false);
       }
 
       if (linked && alignment != null) {
@@ -1278,6 +1363,7 @@ class SyncService {
         state = state ?? SyncState(userId: userId, serverOrigin: origin);
       }
       _ensureIdentity();
+      await _syncNamedRefs();
       // 收尾只更新“上次同步时间”。摘要比较与修复可能在这之前改过不一致标记，
       // 所以从偏好文件重读一次，不拿这次同步开头读到的那份覆盖它。
       final stored = await preferences.syncState();
@@ -1310,6 +1396,134 @@ class SyncService {
       rethrow;
     } finally {
       _runEpoch = null;
+    }
+  }
+
+  Future<void> _syncNamedRefs() async {
+    final generation = await engine.currentGeneration(database.raw);
+    final merge = await _cursors.read(RevisionCursor.syncRefMerge) != null;
+    final initial = await account.call((client, token) => client.refs(token));
+    _ensureIdentity();
+    final hasLocalNames =
+        (await engine.refs(database.raw)).isNotEmpty ||
+        (await engine.tombstones(database.raw)).isNotEmpty;
+    if (initial.isEmpty && !hasLocalNames) {
+      if (merge) await _cursors.delete(RevisionCursor.syncRefMerge);
+      return;
+    }
+    final remote = {for (final ref in initial) ref.name: ref};
+    final (dirty, tombstones) = await database.transaction((txn) async {
+      if (await engine.currentGeneration(txn) != generation) {
+        throw const SyncIdentityChanged();
+      }
+      final local = await engine.refs(txn);
+      final reserved = {...remote.keys, ...local.map((ref) => ref.name)};
+      final dirty = <RevisionRef>[];
+      for (var ref in local.where((item) => item.isDirty)) {
+        final cloud = remote[ref.name];
+        if (merge &&
+            cloud != null &&
+            !cloud.isDeleted &&
+            cloud.commitUid != ref.commitUid) {
+          final name = _availableRefName(ref.name, reserved);
+          await deleteRows(
+            txn,
+            'revision_ref',
+            where: 'name = ?',
+            whereArgs: [ref.name],
+          );
+          ref = ref.copyWith(name: name);
+          await insertRow(txn, 'revision_ref', ref.toRow());
+        }
+        dirty.add(ref);
+      }
+      return (dirty, await engine.tombstones(txn));
+    });
+    for (final ref in tombstones) {
+      _ensureIdentity();
+      await account.call(
+        (client, token) => client.deleteRef(token, name: ref.name),
+      );
+    }
+    for (final ref in dirty) {
+      _ensureIdentity();
+      final cloud = remote[ref.name];
+      if (cloud?.deletedAt case final deletedAt?) {
+        if (ref.updatedAt?.isAfter(deletedAt) != true) continue;
+      }
+      if (merge &&
+          cloud != null &&
+          !cloud.isDeleted &&
+          cloud.commitUid == ref.commitUid &&
+          cloud.note == (ref.note ?? '')) {
+        continue;
+      }
+      await account.call(
+        (client, token) => client.putRef(
+          token,
+          name: ref.name,
+          commitUid: ref.commitUid,
+          note: ref.note ?? '',
+          sourceUpdatedAt: ref.updatedAt,
+        ),
+      );
+    }
+    final latest = dirty.isEmpty && tombstones.isEmpty
+        ? initial
+        : await account.call((client, token) => client.refs(token));
+    _ensureIdentity();
+    await database.transaction((txn) async {
+      if (await engine.currentGeneration(txn) != generation) {
+        throw const SyncIdentityChanged();
+      }
+      for (final ref in tombstones) {
+        await deleteRows(
+          txn,
+          'revision_ref_tombstone',
+          where: 'name = ? AND deleted_at = ?',
+          whereArgs: [ref.name, ref.toRow()['deleted_at']],
+        );
+      }
+      for (final ref in dirty) {
+        await txn.execute(
+          "UPDATE revision_ref SET sync_state = 'clean' "
+          'WHERE name = ? AND commit_uid = ? AND updated_at = ? AND note IS ?',
+          [ref.name, ref.commitUid, ref.toRow()['updated_at'], ref.note],
+        );
+      }
+      await deleteRows(txn, 'revision_ref', where: "sync_state = 'clean'");
+      final pendingDeletes = (await engine.tombstones(txn))
+          .map((ref) => ref.name)
+          .toSet();
+      for (final ref in latest) {
+        if (ref.isDeleted || pendingDeletes.contains(ref.name)) continue;
+        final updated = ref.updatedAt ?? clock();
+        await insertRow(
+          txn,
+          'revision_ref',
+          RevisionRef(
+            name: ref.name,
+            commitUid: ref.commitUid,
+            note: ref.note.isEmpty ? null : ref.note,
+            createdAt: updated,
+            updatedAt: updated,
+          ).toRow(),
+          ignore: true,
+        );
+      }
+      await RevisionCursors(txn).delete(RevisionCursor.syncRefMerge);
+    });
+    database.notifyTables({'revision_ref', 'revision_ref_tombstone'});
+  }
+
+  String _availableRefName(String base, Set<String> reserved) {
+    for (var index = 1; ; index++) {
+      final suffix = index == 1 ? '（本机）' : '（本机 $index）';
+      final prefix = String.fromCharCodes(
+        base.runes.take(RevisionRef.maxNameLength - suffix.runes.length),
+      );
+      final name = '$prefix$suffix';
+      if (reserved.add(name)) return name;
     }
   }
 
@@ -1916,6 +2130,7 @@ class SyncService {
     var downloadCount = 0;
     // 这一次拉取最后读到的一条提交带的摘要；最新一条没有带时为空。
     String? latestDigest;
+    Map<String, String>? latestTableDigests;
     while (true) {
       _ensureIdentity();
       final page = await account.call(
@@ -1946,6 +2161,7 @@ class SyncService {
         pulled++;
       }
       latestDigest = page.commits.last.stateDigest;
+      latestTableDigests = page.commits.last.tableDigests;
       current = page.commits.last.seq ?? page.head;
       _ensureIdentity();
       if (persist) await _saveServerHead(current);
@@ -1955,7 +2171,11 @@ class SyncService {
       if (!page.hasMore) break;
     }
     if (latestDigest != null) {
-      await _comparePulledDigest(latestDigest, serverHead: current);
+      await _comparePulledDigest(
+        latestDigest,
+        serverHead: current,
+        cloudTables: latestTableDigests,
+      );
     }
     return (serverHead: current, pulled: pulled, downloaded: downloadCount);
   }
@@ -1969,19 +2189,26 @@ class SyncService {
   Future<void> _comparePulledDigest(
     String cloudDigest, {
     required int serverHead,
+    Map<String, String>? cloudTables,
   }) async {
     final pushed = await _pushedPosition();
     if ((await revisions.commitsAfter(pushed)).isNotEmpty) return;
-    final localDigest = await revisions.currentStateDigest();
+    final localTables = await revisions.currentTableDigests();
+    final localDigest = revisionStateDigestHex(
+      revisionTableDigestsSum(localTables),
+    );
     if ((await revisions.commitsAfter(pushed)).isNotEmpty) return;
     _ensureIdentity();
     final matched = localDigest == cloudDigest;
-    await _saveDigestMismatch(!matched);
+    final differentTables = matched
+        ? const <String>[]
+        : _differentTables(localTables, cloudTables, cloudDigest);
+    await _saveDigestMismatch(!matched, differentTables: differentTables);
     if (!matched) {
       recordFailure(
         StateError(
           '同步摘要不一致：本机 $localDigest，云端 $cloudDigest，'
-          '服务端位置 $serverHead',
+          '服务端位置 $serverHead，差异表 ${differentTables.join("、")}',
         ),
         StackTrace.current,
         kind: 'cloud_sync_digest',
@@ -1993,7 +2220,27 @@ class SyncService {
   ///
   /// 首次同步时偏好文件里可能还没有同步状态，这里按当前账号与实例建一份，
   /// 收尾保存“上次同步时间”时会从文件重读，不会把它盖掉。
-  Future<void> _saveDigestMismatch(bool mismatch) async {
+  List<String> _differentTables(
+    Map<String, String> local,
+    Map<String, String>? cloud,
+    String cloudDigest,
+  ) {
+    if (cloud == null ||
+        cloud.length != local.length ||
+        !local.keys.every(cloud.containsKey) ||
+        !revisionTableDigestsMatch(cloud, cloudDigest)) {
+      return const [];
+    }
+    return [
+      for (final table in versionedTableNames)
+        if (local[table] != cloud[table]) table,
+    ];
+  }
+
+  Future<void> _saveDigestMismatch(
+    bool mismatch, {
+    List<String> differentTables = const [],
+  }) async {
     final snapshot = await account.snapshot();
     if (!snapshot.signedIn) return;
     final origin = await account.serverOrigin();
@@ -2002,8 +2249,14 @@ class SyncService {
     final base = stored != null && _sameIdentity(stored, userId, origin)
         ? stored
         : SyncState(userId: userId, serverOrigin: origin);
-    if (base.digestMismatch == mismatch) return;
-    await preferences.saveSyncState(base.copyWith(digestMismatch: mismatch));
+    _knownDigestMismatch = mismatch;
+    if (base.digestMismatch == mismatch &&
+        base.differentTables.join(",") == differentTables.join(",")) {
+      return;
+    }
+    await preferences.saveSyncState(
+      base.copyWith(digestMismatch: mismatch, differentTables: differentTables),
+    );
   }
 
   /// 修复完成之后推进“上次同步时间”，与普通同步收尾一致。

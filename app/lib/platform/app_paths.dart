@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../ai/llm_config.dart' show SecretStore;
+import '../data/atomic_file.dart';
 import '../data/db/app_database.dart';
 import '../domain/rules/attachments.dart';
 
@@ -39,4 +41,102 @@ class AppPaths {
   Future<void> ensureDirectories() async {
     await Directory(imagesDir).create(recursive: true);
   }
+}
+
+typedef LocalSpace = ({String id, String label, int bytes});
+
+/// 数据目录可以在关库之后整体改名或删除，设备目录始终保持打开。
+class AppSpaces {
+  const AppSpaces(this.device);
+
+  static const local = 'local';
+  static final _accountId = RegExp(r'^[a-f0-9]{32}$');
+  final AppPaths device;
+
+  String get _root => p.join(device.filesDir, 'spaces');
+  String get _pointer => p.join(device.filesDir, 'active_space');
+
+  AppPaths pathsFor(String id) {
+    if (id != local && !_accountId.hasMatch(id)) {
+      throw ArgumentError.value(id, 'id', '无效的本机空间标识');
+    }
+    return AppPaths(p.join(_root, id), cacheDir: device.cacheDir);
+  }
+
+  Directory _directory(String id) => Directory(pathsFor(id).filesDir);
+
+  Future<String> lastOpened() async {
+    try {
+      final id = (await File(_pointer).readAsString()).trim();
+      return id == local || _accountId.hasMatch(id) ? id : local;
+    } on FileSystemException {
+      return local;
+    }
+  }
+
+  Future<void> open(String id, {bool adoptLocal = false, String? label}) async {
+    final dir = _directory(id);
+    await dir.parent.create(recursive: true);
+    if (adoptLocal && id != local && !await dir.exists()) {
+      final source = _directory(local);
+      if (await source.exists()) await source.rename(dir.path);
+      await source.create(recursive: true);
+    }
+    await dir.create(recursive: true);
+    if (label != null && label.isNotEmpty) {
+      await AtomicFile(p.join(dir.path, 'space_label')).writeText(label);
+    }
+    await AtomicFile(_pointer).writeText(id);
+  }
+
+  Future<void> delete(String id) async {
+    final dir = _directory(id);
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
+
+  Future<List<LocalSpace>> list() async {
+    final result = <LocalSpace>[];
+    final root = Directory(_root);
+    if (!await root.exists()) return result;
+    await for (final entry in root.list(followLinks: false)) {
+      final id = p.basename(entry.path);
+      if (entry is! Directory || (id != local && !_accountId.hasMatch(id))) {
+        continue;
+      }
+      final labelFile = File(p.join(entry.path, 'space_label'));
+      final label = await labelFile.exists()
+          ? await labelFile.readAsString()
+          : id == local
+          ? '本机空间'
+          : '账号空间 ${id.substring(0, 8)}';
+      var bytes = 0;
+      await for (final file in entry.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (file is File) bytes += (await file.stat()).size;
+      }
+      result.add((id: id, label: label, bytes: bytes));
+    }
+    return result;
+  }
+}
+
+/// 模型配置只含可见设置，访问令牌仍由设备的会话存储管理。
+class SpaceModelSettings implements SecretStore {
+  SpaceModelSettings(AppPaths paths)
+    : _file = AtomicJsonFile(p.join(paths.filesDir, 'model_settings.json'));
+
+  final AtomicJsonFile _file;
+
+  @override
+  Future<String?> read(String key) async =>
+      (await _file.read())[key] as String?;
+
+  @override
+  Future<void> write(String key, String value) =>
+      _file.update((data) => data[key] = value);
+
+  @override
+  Future<void> delete(String key) => _file.update((data) => data.remove(key));
 }

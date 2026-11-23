@@ -5,19 +5,15 @@ import '../atomic_file.dart';
 /// 增量同步的账号标识：这个账号在这个服务实例上已经初始化过同步，下次同步
 /// 按增量走，不再上传首次基线。
 ///
-/// 同步位置（推送读到哪里、服务端拉到哪个位置）不在这里，而是随库保存在
-/// `revision_cursor` 表里，两个位置都带一个 scope（账号编号与实例来源的哈希）：
-/// 退出登录、删除账号与清除云端只把推送位置改成不阻塞、位置与 scope 保留，
-/// 重新登录同一 scope 时从原位置继续增量同步，scope 不同才按新账号处理
-/// （同步方案 3.3）。[serverOrigin] 与 [userId] 一起标识这份状态属于哪个服务
-/// 实例与账号：切换实例或账号之后旧状态不能再用，否则会把一个实例的同步进度
-/// 带到另一个实例上。
+/// 同步位置随库保存在当前空间的 `revision_cursor` 表里。[serverOrigin] 与
+/// [userId] 用于核对偏好文件的同步状态属于当前账号和实例（ADR-0056）。
 class SyncState {
   const SyncState({
     required this.userId,
     required this.serverOrigin,
     this.syncedAt,
     this.digestMismatch = false,
+    this.differentTables = const [],
   });
 
   factory SyncState.fromJson(Map<String, Object?> json) => SyncState(
@@ -25,6 +21,9 @@ class SyncState {
     serverOrigin: json['server_origin'] as String? ?? '',
     syncedAt: DateTime.tryParse(json['synced_at'] as String? ?? ''),
     digestMismatch: json['digest_mismatch'] == true,
+    differentTables: (json['different_tables'] as List? ?? const [])
+        .whereType<String>()
+        .toList(),
   );
 
   final String userId;
@@ -39,12 +38,18 @@ class SyncState {
   /// 重新比较；两个修复入口成功之后清掉。它只说明“两边内容不同”，不是一个
   /// 错误状态，所以同步照常继续，账号页据此显示修复入口。
   final bool digestMismatch;
+  final List<String> differentTables;
 
-  SyncState copyWith({DateTime? syncedAt, bool? digestMismatch}) => SyncState(
+  SyncState copyWith({
+    DateTime? syncedAt,
+    bool? digestMismatch,
+    List<String>? differentTables,
+  }) => SyncState(
     userId: userId,
     serverOrigin: serverOrigin,
     syncedAt: syncedAt ?? this.syncedAt,
     digestMismatch: digestMismatch ?? this.digestMismatch,
+    differentTables: differentTables ?? this.differentTables,
   );
 
   Map<String, Object?> toJson() => {
@@ -52,6 +57,7 @@ class SyncState {
     'server_origin': serverOrigin,
     'synced_at': syncedAt?.toUtc().toIso8601String(),
     'digest_mismatch': digestMismatch,
+    if (differentTables.isNotEmpty) 'different_tables': differentTables,
   };
 }
 
@@ -75,25 +81,30 @@ const String defaultServerBaseUrl = String.fromEnvironment(
 /// 写按文件排队、先写临时文件再改名，口径见 [AtomicJsonFile]：界面切换自动同步与
 /// 同步收尾写状态可能同时发生，两个动作各自在这份文件上读改写。
 class CloudPreferencesStore {
-  CloudPreferencesStore({required this.filesDir});
+  CloudPreferencesStore({required this.filesDir, String? spaceFilesDir})
+    : spaceFilesDir = spaceFilesDir ?? filesDir;
 
   static const String fileName = 'cloud.json';
 
   final String filesDir;
+  final String spaceFilesDir;
 
   String get path => p.join(filesDir, fileName);
 
   AtomicJsonFile get _file => AtomicJsonFile(path);
 
-  Future<Map<String, Object?>> _read() => _file.read();
+  AtomicJsonFile get _spaceFile =>
+      AtomicJsonFile(p.join(spaceFilesDir, fileName));
+
+  Future<Map<String, Object?>> _read() => _spaceFile.read();
 
   /// 读最新的内容、改一个键再整体写回，这一段在这份文件的队列里独占执行。
   Future<void> _mutate(void Function(Map<String, Object?> raw) change) =>
-      _file.update(change);
+      _spaceFile.update(change);
 
   /// 本机保存的地址；没有保存过时为空，调用方据此区分默认地址与用户改过的地址。
   Future<String> storedServerBaseUrl() async {
-    final raw = await _read();
+    final raw = await _file.read();
     final value = raw['server_base_url'];
     return value is String ? value.trim() : '';
   }
@@ -106,7 +117,7 @@ class CloudPreferencesStore {
     return stored.isEmpty ? defaultServerBaseUrl : stored;
   }
 
-  Future<void> setServerBaseUrl(String value) => _mutate((raw) {
+  Future<void> setServerBaseUrl(String value) => _file.update((raw) {
     raw['server_base_url'] = value.trim();
   });
 

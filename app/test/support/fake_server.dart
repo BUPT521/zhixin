@@ -346,6 +346,7 @@ class FakeServer {
       trimmedThrough.remove(userId);
       snapshots.remove(userId);
       devices.remove(userId);
+      refs.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/backups') {
@@ -365,6 +366,7 @@ class FakeServer {
       trimmedThrough.remove(userId);
       snapshots.remove(userId);
       devices.remove(userId);
+      refs.remove(userId);
       return http.Response('', 204);
     }
     if (method == 'DELETE' && path == '/v1/sync/commits') {
@@ -843,7 +845,11 @@ class FakeServer {
       22,
       9,
     ).add(Duration(seconds: ++_refTicks)).toIso8601String();
-    if (deletedAt != null && now.compareTo(deletedAt) < 0) {
+    final sourceUpdatedAt = body['source_updated_at'] as String? ?? now;
+    if (deletedAt != null &&
+        (delete ||
+            !DateTime.parse(sourceUpdatedAt)
+                .isAfter(DateTime.parse(deletedAt)))) {
       // 比删除时间更早的写入不复活名字：回已存的墓碑。
       return _json(200, {...existing!});
     }
