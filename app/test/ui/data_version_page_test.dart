@@ -499,6 +499,68 @@ void main() {
     expect(undoItems.any((item) => item.enabled ?? true), isTrue);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('明细里的记忆类型与状态显示中文，旧四类与已替换不再出现', (tester) async {
+    final appScope = (await openPage(tester)).scope;
+    await tester.runAsync(() async {
+      await appScope.testing.tasks.createGoal(title: '明细取值目标');
+      final head = await appScope.testing.db
+          .rawQuery(
+            'SELECT head_commit_id AS id FROM revision_state WHERE id = 1',
+          )
+          .then((rows) => rows.single['id']! as int);
+      await appScope.data.revisions.applyRemoteCommit(
+        uid: 'remote-memory-labels-1',
+        action: '其他设备写入记忆',
+        actor: 'ai',
+        changes: [
+          RevisionChange(
+            commitId: head,
+            seq: 0,
+            table: 'memory',
+            rowKey: 'memory-labels-1',
+            op: ChangeOp.insert,
+            after: typedRow({
+              'id': 'memory-labels-1',
+              'kind': 'semantic',
+              'content': '线性代数是本学期的必修课',
+              'scope': null,
+              'source_kind': 'user',
+              'source_id': null,
+              'valid_until': null,
+              'search_terms': '',
+              'reviewed_at': null,
+              'status': 'active',
+              'created_at': '2026-11-20 09:00:00',
+              'updated_at': '2026-11-20 09:00:00',
+            }),
+          ),
+        ],
+      );
+    });
+    await settle(tester);
+
+    final remoteTile = find.ancestor(
+      of: find.text('其他设备（HEAD）'),
+      matching: find.byType(forui.FTile),
+    );
+    await scrollTo(tester, remoteTile);
+    await tester.tap(
+      find.descendant(
+        of: remoteTile,
+        matching: find.byIcon(FLucideIcons.ellipsis),
+      ),
+    );
+    await settle(tester);
+    await tester.tap(find.text('查看明细'));
+    await settle(tester);
+    expect(find.text('记忆 · 新增'), findsOneWidget);
+    expect(find.textContaining('类型：语义'), findsOneWidget);
+    expect(find.textContaining('状态：有效'), findsOneWidget);
+    expect(find.textContaining('偏好'), findsNothing);
+    expect(find.textContaining('已替换'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Widget _host(ThemeModeController themeMode, RevisionService? revisions) {

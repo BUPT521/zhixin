@@ -1843,6 +1843,9 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   /// 状态、类型与来源这类取值只在表与列对得上时翻译，其余保留原值。
+  ///
+  /// 键里的表名是提交与冲突记录的 `table_name`，即建表的 SQL 名称；写成表类的
+  /// 实体名（`Memories`）时翻译不生效、明细退回原样。
   String? _enumText(String table, String key, String value) {
     final labels = switch ('$table.$key') {
       'learning_goal.status' || 'study_plan.status' => const {
@@ -1874,16 +1877,12 @@ class _DataVersionPageState extends State<DataVersionPage>
       },
       'assessment.kind' => const {'model': '模型判断', 'user': '自评'},
       'memory.kind' => const {
-        'preference': '偏好',
-        'constraint': '限制',
-        'difficulty': '困难',
-        'progress': '进展',
+        'episodic': '情景',
+        'semantic': '语义',
+        'procedural': '程序',
       },
-      'memory.status' => const {
-        'active': '有效',
-        'superseded': '已替换',
-        'deleted': '已删除',
-      },
+      'memory.status' => const {'active': '有效', 'deleted': '已删除'},
+      'memory_use.kind' => const {'recall': '进入相关层', 'search': '主动搜索'},
       'memory.source_kind' => const {
         'user': '你说的',
         'message': '讨论里',
@@ -1903,6 +1902,42 @@ class _DataVersionPageState extends State<DataVersionPage>
       },
       'plan_item.source' ||
       'schedule_block.source' => const {'user': '你', 'ai': buddyName},
+      'revision_commit.actor' => const {
+        'user': '你',
+        'ai': buddyName,
+        'system': '系统',
+      },
+      'revision_commit.kind' => const {
+        'baseline': '基线',
+        'write': '写入',
+        'undo': '撤销',
+        'restore': '恢复',
+        'import': '导入',
+        'maintenance': '维护',
+        'remote': '远端',
+      },
+      'revision_change.op' => const {
+        'insert': '新增',
+        'update': '修改',
+        'delete': '删除',
+      },
+      'revision_checkpoint.kind' => const {
+        'initial': '初始',
+        'periodic': '周期',
+        'trimmed': '裁剪后',
+        'named': '命名版本',
+      },
+      'revision_asset_ref.owner_kind' => const {
+        'change': '提交',
+        'checkpoint': '检查点',
+      },
+      'revision_conflict.reason' => const {
+        'concurrent_update': '两边各改了一列',
+        'deleted_locally': '本机已删除',
+        'insert_collision': '新增撞上同一编号',
+        'deleted_remotely_modified': '云端删除、本机改过',
+      },
+      'revision_ref.sync_state' => const {'clean': '已同步', 'dirty': '待同步'},
       _ => null,
     };
     return labels?[value];
