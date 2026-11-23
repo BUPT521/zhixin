@@ -61,6 +61,9 @@ func (h *Handler) syncHead(state State) api.SyncHead {
 		Head:          state.Head,
 		SchemaVersion: h.svc.SchemaVersion(),
 		EarliestSeq:   state.EarliestSeq,
+		// 压缩开关由服务端告诉客户端：关闭时客户端不上传整库快照，登记也不会
+		// 删提交，快照上传只是白占附件配额（ADR-0047）。
+		Compact: h.svc.Compact(),
 	}
 	if snap := state.Snapshot; snap != nil {
 		out.Snapshot = &api.SyncSnapshot{

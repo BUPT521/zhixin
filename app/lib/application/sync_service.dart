@@ -1377,6 +1377,7 @@ class SyncService {
       await _registerSnapshotQuietly(
         serverHead: serverHead,
         knownSnapshot: remoteHead.snapshot,
+        compact: remoteHead.compact,
         deviceId: deviceId,
       );
       return SyncResult(
@@ -1904,16 +1905,20 @@ class SyncService {
   /// 空闲登记快照：同步到 [serverHead]、没有待推送提交时把当前投影按检查点格式
   /// 压缩上传，再登记 `{seq, sha256, digest}`，服务端据此可以压缩提交序列。
   ///
-  /// 只在完全同步、摘要一致、本机没有绕过提交的写入时登记：登记错的快照会让
-  /// 之后克隆的设备得到错误数据，服务端不校验内容（ADR-0043）。同一位置或更
-  /// 新的位置已有快照、同一份内容刚登记过、以及服务端已经有这个附件时都跳过；
-  /// 409 表示服务端已有更新的快照（或正在清除云端数据），放弃本次；其他失败只
-  /// 记诊断，不影响这一轮同步的结果。
+  /// 只在服务端声明压缩已打开（[compact]）、完全同步、摘要一致、本机没有绕过
+  /// 提交的写入时登记：登记错的快照会让之后克隆的设备得到错误数据，服务端不校验
+  /// 内容（ADR-0043）。压缩关闭时登记只写指针、不删提交，上传快照只是白占附件
+  /// 配额，所以客户端直接跳过（ADR-0047）。同一位置或更新的位置已有快照、同一份
+  /// 内容刚登记过、以及服务端已经有这个附件时都跳过；409 表示服务端已有更新的
+  /// 快照（或正在清除云端数据），放弃本次；其他失败只记诊断，不影响这一轮同步
+  /// 的结果。
   Future<void> _registerSnapshotQuietly({
     required int serverHead,
     required ServerSnapshot? knownSnapshot,
+    required bool compact,
     required String deviceId,
   }) async {
+    if (!compact) return;
     try {
       if (serverHead <= 0) return;
       if (_pulledSkipped > 0 || _knownDigestMismatch) return;

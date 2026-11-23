@@ -163,6 +163,10 @@ func (s *Service) SetLogger(log *slog.Logger) *Service {
 
 func (s *Service) SchemaVersion() int { return s.schemaVersion }
 
+// Compact 报告快照压缩是否打开。handler 在 head 响应里把这一位告诉客户端：
+// 关闭时客户端不上传整库快照，因为服务端不会按它删除提交（ADR-0047）。
+func (s *Service) Compact() bool { return s.compact }
+
 // State 返回账号的序列状态：head、保留下界与当前快照指针。
 func (s *Service) State(ctx context.Context, userID string) (State, error) {
 	return s.store.State(ctx, userID)

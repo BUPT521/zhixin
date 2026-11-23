@@ -785,6 +785,9 @@ type SyncDeviceRename struct {
 
 // SyncHead defines model for SyncHead.
 type SyncHead struct {
+	// Compact 服务端有没有打开快照压缩（`ZHIXIN_SYNC_COMPACT`）；为假时客户端不上传整库快照，服务端登记只写指针
+	Compact bool `json:"compact"`
+
 	// EarliestSeq 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
 	EarliestSeq   int64 `json:"earliest_seq"`
 	Head          int64 `json:"head"`

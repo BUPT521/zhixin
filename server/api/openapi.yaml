@@ -305,7 +305,9 @@ paths:
       description: |
         `head` 是最新位置，`earliest_seq` 是保留下界（第一条仍然可以拉取的序号，
         没有删除过提交时为 1），`snapshot` 是账号当前快照的指针，没有登记时为
-        `null`。客户端在首次同步与判断是否需要重新克隆时读这一份（ADR-0043）。
+        `null`，`compact` 是服务端有没有打开快照压缩。客户端在首次同步与判断是否
+        需要重新克隆时读这一份（ADR-0043）；`compact` 为假时客户端不上传整库快照，
+        因为服务端不会按它删除提交（ADR-0047）。
         带 `X-Device-Id` 时同时更新设备名册的最近出现时间与快照能力（ADR-0048）。
       parameters:
         - name: X-Device-Id
@@ -1625,7 +1627,7 @@ components:
           items: { $ref: "#/components/schemas/Release" }
     SyncHead:
       type: object
-      required: [head, schema_version, earliest_seq]
+      required: [head, schema_version, earliest_seq, compact]
       properties:
         head: { type: integer, format: int64 }
         schema_version: { type: integer }
@@ -1633,6 +1635,9 @@ components:
           type: integer
           format: int64
           description: 保留下界，第一条仍然可以拉取的序号；没有删除过提交时为 1
+        compact:
+          type: boolean
+          description: 服务端有没有打开快照压缩（`ZHIXIN_SYNC_COMPACT`）；为假时客户端不上传整库快照，服务端登记只写指针
         snapshot:
           description: 当前快照指针，没有登记时省略
           $ref: "#/components/schemas/SyncSnapshot"

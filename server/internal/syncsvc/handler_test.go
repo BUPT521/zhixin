@@ -75,6 +75,32 @@ func signIn(t *testing.T, svc *auth.Service, email string) string {
 	return tokens.AccessToken
 }
 
+// TestHandlerHeadDeclaresCompact 守住压缩开关的声明：默认关闭，装配打开之后 head
+// 的 compact 为真。客户端只在这个值为真时上传整库快照，否则快照上传只是白占
+// 附件配额（ADR-0047）。
+func TestHandlerHeadDeclaresCompact(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "compact@b.cn")
+	var head api.SyncHead
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", token, nil, &head); code != http.StatusOK || head.Compact {
+		t.Fatalf("默认关闭时 head.compact 应为假: %d %+v", code, head)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(NewMemoryStore(), testSchemaVersion).SetCompact(true)
+	handler := NewHandler(svc, log, 16*testMaxJSON)
+	authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
+	c = testutil.NewClient(t, testutil.NewServer(
+		testAPI{h: handler},
+		httpx.RequestID,
+		auth.Middleware(authSvc, log),
+	))
+	token = signIn(t, authSvc, "compact-on@b.cn")
+	if code := c.JSON(http.MethodGet, "/v1/sync/head", token, nil, &head); code != http.StatusOK || !head.Compact {
+		t.Fatalf("打开之后 head.compact 应为真: %d %+v", code, head)
+	}
+}
+
 // TestHandlerWriteBlockedDuringPurge 守住清除期间的写拦截：gate 返回
 // cloudpurge.ErrPurging 时 Push 与 Reset 回 409 conflict，拉取仍可读，且没有
 // 写入任何提交。
