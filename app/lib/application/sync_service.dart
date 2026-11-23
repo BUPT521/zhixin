@@ -22,7 +22,6 @@ import '../domain/rules/time_policy.dart';
 import 'account_service.dart';
 
 part 'sync_devices.dart';
-part 'sync_repair.dart';
 part 'sync_refs.dart';
 part 'sync_snapshot.dart';
 
@@ -183,7 +182,7 @@ class SyncStatus {
   final bool restoreNeedsConfirmation;
 
   /// 上次同步比较摘要时发现本机与云端不一致（同步方案 3.5）：账号页据此
-  /// 显示“本机与云端不一致”与两个修复入口，不阻塞同步本身。
+  /// 显示“本机与云端不一致”与重建云端的入口，不阻塞同步本身。
   final bool digestMismatch;
   final List<String> differentTables;
   final DateTime? lastSyncedAt;
@@ -191,7 +190,7 @@ class SyncStatus {
 
   /// 换掉“与云端不一致”的标记，其余字段保持原样。
   ///
-  /// 同步与两个修复入口结束之后先用它就地更新状态卡，再给结论，其余字段随后由
+  /// 同步与重建云端结束之后先用它就地更新状态卡，再给结论，其余字段随后由
   /// 重读状态补齐，提示与状态卡因此不会在几帧里互相矛盾（ADR-0045）。
   SyncStatus withDigestMismatch(bool mismatch) => SyncStatus(
     signedIn: signedIn,
@@ -405,7 +404,7 @@ class SyncService {
 
   /// 当前是否记着“本机与云端不一致”，只读偏好文件、不碰数据库。
   ///
-  /// 账号页在同步与两个修复入口结束之后用它就地更新状态卡，再给结论；完整状态由
+  /// 账号页在同步与重建云端结束之后用它就地更新状态卡，再给结论；完整状态由
   /// [status] 随后补齐，页面因此不会在几帧里出现提示与状态卡互相矛盾（ADR-0045）。
   Future<bool> digestMismatch() async =>
       (await preferences.syncState())?.digestMismatch ?? false;
@@ -572,6 +571,43 @@ class SyncService {
     }
   }
 
+  /// 以本机为准重建云端：清空账号的提交序列，再把本机当前投影整份上传为基线。
+  ///
+  /// 原来有两个修复入口，一个按云端重新对齐、一个补传本机独有的行，差别只在
+  /// 哪边算数；清空云端之后从 0 开始上传，不需要先分辨差异，也不会留下删不掉
+  /// 的行（过度设计审查 3.4）。清空只影响这个账号的提交序列、快照、设备名册与
+  /// 命名版本，账号、整库备份与附件字节保留；其他设备下一次同步会发现服务端
+  /// 位置回到 0，按首次同步重新上传它们本机的内容。
+  ///
+  /// 调用方必须先向用户说明并取得当前密码。清空期间另一个云操作正在进行时
+  /// 服务端返回 409，这里原样抛出，界面提示稍后重试。
+  Future<SyncResult> rebuildCloudFromLocal({required String password}) async {
+    final snapshot = await account.snapshot();
+    if (!snapshot.signedIn) throw const AccountSignedOut();
+    await _waitForRunningSync();
+    _runEpoch = account.identityEpoch;
+    try {
+      await account.call(
+        (client, token) => client.deleteSyncLog(token, password: password),
+      );
+      _ensureIdentity();
+      // 服务端序列已经清空：本机的位置、遮蔽行与摘要标记都不再对应任何云端
+      // 历史，清掉之后按首次同步整份上传，收尾由 `syncNow` 自己写回位置。
+      await preferences.clearSyncState();
+      await _forgetSyncPosition();
+      _lastSnapshotHash = null;
+      _knownDigestMismatch = false;
+      return await syncNow(confirmBaseline: true, confirmReclone: true);
+    } catch (error, stack) {
+      if (error is! SyncIdentityChanged) {
+        recordFailure(error, stack, kind: 'cloud_sync_rebuild');
+      }
+      rethrow;
+    } finally {
+      _runEpoch = null;
+    }
+  }
+
   /// 正在同步时等它结束再修复：两轮同时改同步位置会把位置写乱。
   ///
   /// 前一轮失败不影响这次修复，失败说明只在那个调用方处理。
@@ -654,6 +690,10 @@ class SyncService {
       var alignment = linked
           ? await _cursors.read(RevisionCursor.syncRestoreAlign)
           : null;
+      // 服务端位置比本机记下的位置还小：账号的云端序列被另一台设备清空重建过。
+      // 这不是首次同步，本机已经有这些记录，按首次基线重新对齐时不再要求用户
+      // 确认一次（清空是账号所有者在修复时确认过的），只把云端缺少的行补上去。
+      var serverReset = false;
       if (linked && remoteHead.head < serverHead) {
         // 服务端序列被清空过，旧位置回到 0，需要重新上传基线；位置在首次
         // 同步收尾时随基线一起重写。
@@ -662,6 +702,7 @@ class SyncService {
         serverHead = 0;
         pushedThrough = 0;
         alignment = null;
+        serverReset = true;
       }
       var restoreFallback = false;
       if (alignment != null && alignment.position < 0) {
@@ -695,7 +736,7 @@ class SyncService {
         // 时按快照浅克隆，否则先拉取云端已有的记录，再把本机独有、云端没有的
         // 行作为基线上传；本机没有记录时不上传任何东西（同步方案 3.6、3.7）。
         await _clearRestoreMarker();
-        if (localHead > 0 && !confirmBaseline) {
+        if (localHead > 0 && !confirmBaseline && !serverReset) {
           throw BaselineConfirmationRequired(
             localHead,
             afterRestore: restoreFallback,
@@ -844,19 +885,15 @@ class SyncService {
 
   /// 投影里还没有被服务端序列表达的行，按表名与主键顺序组装成基线变化。
   ///
-  /// [skip] 里的“表名 + 主键”已经由远端提交表达，本机这份只是拉下来的副本；
-  /// [tables] 非空时只处理这几张表（“以本机为准修复”按不一致的表缩小范围）。
-  /// 首次同步、两种修复与按快照重建共用这一段，避免每条路径各写一份
-  /// （同步方案 3.6）。
+  /// [skip] 里的“表名 + 主键”已经由远端提交表达，本机这份只是拉下来的副本。
+  /// 首次同步与清空云端之后的整份重建都走这一段（同步方案 3.6）。
   List<RevisionChange> _baselineChanges(
     Projection projection, {
     required Set<(String, String)> skip,
-    Set<String>? tables,
   }) {
     final changes = <RevisionChange>[];
     var seq = 1;
     for (final table in versionedTableNames) {
-      if (tables != null && !tables.contains(table)) continue;
       final rows = projection[table] ?? const <String, TypedRow>{};
       for (final entry in rows.entries) {
         if (skip.contains((table, entry.key))) continue;
@@ -893,9 +930,9 @@ class SyncService {
 
   /// 把一组本机独有的行作为基线上传：分批推送、补传附件，返回推送之后的位置。
   ///
-  /// 首次同步、两种修复与按快照重建共用这一段。调用方拿到返回的 [serverHead]
-  /// 之后自己写两个同步位置：各条路径的推送位置含义不同（本机 `HEAD`、恢复点、
-  /// 快照导入提交），这里不替它们决定（同步方案 3.6）。
+  /// 首次同步与清空云端之后的整份重建共用这一段。调用方拿到返回的 [serverHead]
+  /// 之后自己写两个同步位置（本机 `HEAD` 与基线推完之后的序列长度），这里不替
+  /// 它们决定（同步方案 3.6）。
   Future<({int serverHead, int pushed, int uploaded})> _uploadBaseline(
     String deviceId,
     List<RevisionChange> changes, {
@@ -1214,19 +1251,6 @@ class SyncService {
     await preferences.saveSyncState(
       base.copyWith(digestMismatch: mismatch, differentTables: differentTables),
     );
-  }
-
-  /// 修复完成之后推进“上次同步时间”，与普通同步收尾一致。
-  Future<void> _markSynced() async {
-    final snapshot = await account.snapshot();
-    if (!snapshot.signedIn) return;
-    final origin = await account.serverOrigin();
-    final stored = await preferences.syncState();
-    if (stored == null ||
-        !_sameIdentity(stored, snapshot.session!.userId, origin)) {
-      return;
-    }
-    await preferences.saveSyncState(stored.copyWith(syncedAt: clock()));
   }
 
   /// 推送本机推送位置之后的提交；服务端位置变化时先拉取再重试。

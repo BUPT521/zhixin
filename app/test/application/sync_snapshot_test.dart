@@ -8,8 +8,7 @@
 // - 新设备首次同步只下载快照与快照之后的提交，服务端序列长度不变；
 // - 位置落在压缩区间的设备收到 410 之后按快照重建，本机未推送的提交重放；
 // - 空闲时登记快照，409 与失败路径不阻塞同步；
-// - 3.5 的“以云端为准修复”在历史被压缩时走快照重新克隆；
-// - 服务端没有可用快照时给明确说明，不静默清空本机数据。
+// // - 服务端没有可用快照时给明确说明，不静默清空本机数据。
 //
 // 快照的字节由客户端按检查点格式压缩（`encodeSnapshotBytes`），用例直接解码核对
 // 内容，不假设服务端解析过它。
@@ -64,10 +63,6 @@ void main() {
 
   Future<String> userIdOf(SyncDevice device) async =>
       (await device.account.snapshot()).session!.userId;
-
-  /// 直接改库、不形成提交：模拟绕过命令的写入。
-  Future<void> deleteRowDirectly(SyncDevice device, String id) =>
-      device.rig.raw.execute('DELETE FROM memory WHERE id = ?', [id]);
 
   /// 服务端的快照附件解出来的投影原文，用来核对登记的内容就是当时的投影。
   String snapshotProjectionOf(String userId) {
@@ -280,52 +275,6 @@ void main() {
       server.snapshotOf(userId)!.seq,
       server.headOf(userId),
       reason: '下一轮同步把快照补登记到最新位置',
-    );
-  });
-
-  test('以云端为准修复：历史被压缩时走快照重新克隆', () async {
-    final a = await device(
-      'a@example.com',
-      register: true,
-      deviceId: 'device-a',
-    );
-    await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
-    await a.sync.syncNow(confirmBaseline: true);
-    final userId = await userIdOf(a);
-
-    final b = await device('a@example.com', deviceId: 'device-b');
-    await b.sync.syncNow();
-    // B 本机删掉一行、没有形成提交：两边内容不一致。
-    await deleteRowDirectly(b, 'm1');
-    await insertTestMemory(a.rig, 'm2', content: '晚上效率低');
-    await a.sync.syncNow();
-    final headBeforeRepair = server.headOf(userId);
-    await b.sync.syncNow();
-    expect((await b.sync.status()).digestMismatch, isTrue);
-
-    // 快照之前的提交被压缩掉：差异重放读不到第 1 条，修复改走快照。
-    server.compactThrough(userId, server.snapshotOf(userId)!.seq);
-    final repaired = await b.sync.repairFromCloud();
-    expect(repaired.pulledCommits, greaterThanOrEqualTo(0));
-    expect(
-      await testMemoryContent(b.rig, 'm1'),
-      '喜欢先看例子',
-      reason: '快照里的行按云端内容装回本机',
-    );
-    expect(await testMemoryContent(b.rig, 'm2'), '晚上效率低');
-    expect(
-      (await b.sync.status()).digestMismatch,
-      isFalse,
-      reason: '以云端为准修复之后清掉不一致状态',
-    );
-    expect(
-      server.headOf(userId),
-      headBeforeRepair,
-      reason: '本机没有独有行可补传时服务端序列不变',
-    );
-    expect(
-      await b.rig.revisions.currentStateDigest(),
-      await a.rig.revisions.currentStateDigest(),
     );
   });
 

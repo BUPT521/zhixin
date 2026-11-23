@@ -528,87 +528,62 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  /// 摘要不一致时“以云端为准修复”：按云端提交序列重新对齐这台设备。
+  /// 摘要不一致时的唯一修复入口：以本机为准重建云端。
   ///
-  /// 确认之后才执行；失败说明哪一步没有完成，本机记录不清空，已同步的部分保留
-  /// （同步方案 3.5：3.7 客户端落地前先按差异重放云端状态，再补传本机独有的行）。
-  Future<void> _repairFromCloud() async {
+  /// 清空账号的提交序列之后从 0 开始整份上传，不需要先分辨哪边多、哪边少，也不
+  /// 会留下删不掉的行（过度设计审查 3.4）。确认框同时要求输入当前密码；失败时
+  /// 云端与本机都不清空，已经上传的部分保留。
+  Future<void> _rebuildCloudFromLocal() async {
     if (_busy) return;
-    final confirmed = await confirmRepairFromCloud(context);
-    if (!confirmed || !mounted) return;
+    final password = await askDestructiveActionPassword(
+      context,
+      title: '以本机为准重建云端',
+      message:
+          '会清空这个账号在服务端的提交序列、快照、设备名册与命名版本，再把本机'
+          '当前的记录整份上传为新的基线。云端备份与附件不受影响；其他设备下一次'
+          '同步时会按首次同步重新上传它们本机的内容。操作不可撤销，需要输入当前密码。',
+      confirmLabel: '重建云端',
+    );
+    if (password == null || !mounted || _busy) return;
     setState(() => _busy = true);
     final scope = AppScope.of(context);
     try {
-      final result = await scope.accountServices.sync.repairFromCloud();
-      // 修复成功已经把两边对齐：先摘掉状态卡上的“待修复”，再给结论，其余状态
-      // 由后台重读补齐，提示与状态卡因此不会互相矛盾（ADR-0045）。
-      if (mounted) setState(() => _sync = _sync?.withDigestMismatch(false));
-      _report(
-        result.changed
-            ? '已按云端修复：拉取 ${result.pulledCommits} 条、补传 '
-                  '${result.pushedCommits} 条提交，本机与云端重新对齐'
-            : '已按云端修复：本机与云端已经一致',
+      final result = await scope.accountServices.sync.rebuildCloudFromLocal(
+        password: password,
       );
-      unawaited(_load());
-    } catch (error, stack) {
       if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '以云端为准修复',
-          kind: 'account_sync_repair_cloud',
-          kept: '本机记录没有删除，已经同步的部分保留',
-          next: '可以检查网络后再试',
-        ),
-        failed: true,
-      );
-      await _load();
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  /// 摘要不一致时“以本机为准修复”：把云端缺少的本机记录作为基线补传。
-  ///
-  /// 先拉取云端的新提交，再按 3.6 的方式补传本机独有的行；确认之后才执行。
-  /// 一行都没补传时说明差异只来自云端多出来的内容，界面照实说明，标记不强行
-  /// 清掉（同步方案 3.5）。这个入口只补传、不删除云端已有的记录，所以云端多
-  /// 出来的行不会因此消失，界面与确认框都按这条边界说明（ADR-0045）。
-  Future<void> _repairFromLocal() async {
-    if (_busy) return;
-    final confirmed = await confirmRepairFromLocal(context);
-    if (!confirmed || !mounted) return;
-    setState(() => _busy = true);
-    final scope = AppScope.of(context);
-    try {
-      final result = await scope.accountServices.sync.repairFromLocal();
-      // 与“以云端为准修复”同一顺序：先摘掉“待修复”，再给结论，其余状态在后台
-      // 重读，避免提示写着已经补齐、状态卡仍停在“待修复”。
-      if (mounted) setState(() => _sync = _sync?.withDigestMismatch(false));
+      // 先摘掉状态卡上的“待修复”，再给结论，其余状态由后台重读补齐，提示与
+      // 状态卡因此不会互相矛盾（ADR-0045）。
+      setState(() => _sync = _sync?.withDigestMismatch(false));
       _report(
         result.pushedCommits > 0
-            ? '已按本机修复：补传 ${result.pushedCommits} 条提交、'
-                  '${result.uploadedAssets} 个附件，云端缺少的本机记录已经上传'
-            : '没有找到云端缺少的本机记录；云端多出来的内容没有改动，'
-                  '需要时可以改用“以云端为准修复”',
+            ? '已按本机重建云端：上传 ${result.pushedCommits} 条提交、'
+                  '${result.uploadedAssets} 个附件；其他设备下次同步会重新上传'
+                  '它们本机的内容'
+            : '云端已经按本机当前内容重建，没有需要上传的改动',
       );
       unawaited(_load());
     } catch (error, stack) {
       if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '以本机为准修复',
-          kind: 'account_sync_repair_local',
-          kept: '本机记录没有改动，已经同步的部分保留',
-          next: '可以检查网络后再试',
-        ),
-        failed: true,
-      );
+      if (error is ServerProblem && error.isConflict) {
+        _report('该账号还有云端操作在进行，请稍后重试');
+      } else if (error is ServerProblem &&
+          error.code == 'invalid_credentials') {
+        _report('密码不正确；云端与本机数据都没有改动', failed: true);
+      } else {
+        _report(
+          describeFailure(
+            context,
+            error,
+            stack,
+            action: '重建云端',
+            kind: 'account_sync_rebuild',
+            kept: '本机记录没有删除；云端可能已经清空，再试一次会按首次同步重新对齐',
+            next: '可以检查网络后再试',
+          ),
+          failed: true,
+        );
+      }
       await _load();
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -1209,32 +1184,22 @@ class _AccountPageState extends State<AccountPage> {
                   Text('差异表 ${sync.differentTables.join('、')}'),
                 SizedBox(height: theme.space.xs),
                 Text(
-                  '上次同步比较整库摘要时发现两边内容不同。可以选一边为准修复：'
-                  '以云端为准会按云端重新对齐这台设备，以本机为准会把云端缺少的'
-                  '本机记录补传上去；云端多出来的记录不会被删掉，需要的话在仍有'
-                  '这些记录的设备上删除。修复只改记录，不影响登录状态与其他设备的'
-                  '账号。',
+                  '上次同步比较整库摘要时发现两边内容不同。修复只有一个入口：'
+                  '以本机为准重建云端，会清空这个账号在服务端的提交序列，再把本机'
+                  '当前的记录整份上传为新的基线；云端备份与附件保留，其他设备下次'
+                  '同步时会重新上传它们本机的内容。修复只改记录，不影响登录状态。',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),
                 ),
                 SizedBox(height: theme.space.sm),
-                Wrap(
-                  spacing: theme.space.sm,
-                  runSpacing: theme.space.sm,
-                  children: [
-                    forui.FButton(
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy || sync.syncing ? null : _repairFromCloud,
-                      child: const Text('以云端为准修复'),
-                    ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.outline,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy || sync.syncing ? null : _repairFromLocal,
-                      child: const Text('以本机为准修复'),
-                    ),
-                  ],
+                forui.FButton(
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy || sync.syncing
+                      ? null
+                      : _rebuildCloudFromLocal,
+                  child: const Text('以本机为准重建云端'),
                 ),
               ],
               if (sync?.restoreNeedsConfirmation == true) ...[

@@ -253,8 +253,7 @@ void main() {
     await waitFor(tester, find.text('同步'));
   }
 
-  Finder cloudRepairButton() => find.widgetWithText(forui.FButton, '以云端为准修复');
-  Finder localRepairButton() => find.widgetWithText(forui.FButton, '以本机为准修复');
+  Finder rebuildButton() => find.widgetWithText(forui.FButton, '以本机为准重建云端');
 
   Finder dialogAction(String label) => find.descendant(
     of: find.byType(ZhixinDialogLayout),
@@ -338,7 +337,7 @@ void main() {
     await waitFor(tester, find.byType(MinePage));
   }
 
-  testWidgets('摘要不一致时账号页的同步卡显示待修复、说明与两个可点修复入口', (tester) async {
+  testWidgets('摘要不一致时账号页的同步卡显示待修复、说明与一个重建入口', (tester) async {
     await pumpApp(tester);
     await seedCloudAheadMismatch(tester);
 
@@ -348,25 +347,16 @@ void main() {
     expect(find.text('待修复'), findsOneWidget);
     expect(find.text('本机与云端不一致'), findsOneWidget);
     expect(find.textContaining('上次同步比较整库摘要时发现两边内容不同'), findsOneWidget);
-    expect(find.textContaining('以云端为准会按云端重新对齐这台设备'), findsOneWidget);
-    expect(find.textContaining('以本机为准会把云端缺少的本机记录补传上去'), findsOneWidget);
-    expect(cloudRepairButton(), findsOneWidget);
-    expect(localRepairButton(), findsOneWidget);
-    expect(
-      tester.widget<forui.FButton>(cloudRepairButton()).onPress,
-      isNotNull,
-    );
-    expect(
-      tester.widget<forui.FButton>(localRepairButton()).onPress,
-      isNotNull,
-    );
+    expect(find.textContaining('以本机为准重建云端，会清空这个账号在服务端的提交序列'), findsOneWidget);
+    expect(rebuildButton(), findsOneWidget);
+    expect(tester.widget<forui.FButton>(rebuildButton()).onPress, isNotNull);
 
     // 状态卡与说明不能互相矛盾：卡上是“待修复”，就不能说两边已经一致。
     expect(find.textContaining('已经一致'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('以云端为准修复：取消不做修复，确认之后给出结果并回到空闲', (tester) async {
+  testWidgets('以本机为准重建云端：取消不执行，确认之后清空并重新上传', (tester) async {
     await pumpApp(tester);
     await seedCloudAheadMismatch(tester);
     await openAccountPage(tester);
@@ -374,84 +364,70 @@ void main() {
     final userId = server.userIdOf(email);
     final headBefore = server.headOf(userId);
 
-    // 取消：确认框说明会改哪一边，退出之后不做修复，卡片保持原样。
-    await tester.tap(cloudRepairButton());
-    await waitFor(tester, find.text('以云端为准修复会重做这台设备的同步'));
-    expect(find.textContaining('重新从云端拉取全部提交'), findsOneWidget);
-    expect(find.textContaining('云端已有的记录不会删除'), findsOneWidget);
-    expect(find.textContaining('取消则不做修复，两边内容保持原样'), findsOneWidget);
+    // 取消：确认框说明会清空云端，退出之后不做修复，云端序列不变。
+    await tester.tap(rebuildButton());
+    await waitFor(tester, find.text('以本机为准重建云端'));
+    expect(
+      find.descendant(
+        of: find.byType(ZhixinDialogLayout),
+        matching: find.textContaining('会清空这个账号在服务端的提交序列'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(ZhixinDialogLayout),
+        matching: find.textContaining('云端备份与附件不受影响'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(dialogAction('取消'));
     await tester.pumpAndSettle();
     expect(find.byType(ZhixinDialogLayout), findsNothing);
     expect(find.text('待修复'), findsOneWidget);
-    expect(find.text('本机与云端不一致'), findsOneWidget);
-    expect(find.textContaining('已按云端修复'), findsNothing);
+    expect(find.textContaining('已按本机重建云端'), findsNothing);
     expect(server.headOf(userId), headBefore, reason: '取消不执行修复，云端序列不变');
 
-    // 确认之后修复执行；修复途中页面 busy，两个入口都不可点。
-    final gate = Completer<void>();
-    server.onPull = () => gate.future;
-    await tester.tap(cloudRepairButton());
-    await waitFor(tester, find.text('以云端为准修复会重做这台设备的同步'));
-    await tester.tap(dialogAction('以云端为准修复'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(find.byType(ZhixinDialogLayout), findsNothing);
-    expect(find.text('待修复'), findsOneWidget);
-    expect(tester.widget<forui.FButton>(cloudRepairButton()).onPress, isNull);
-    expect(tester.widget<forui.FButton>(localRepairButton()).onPress, isNull);
-
-    server.onPull = null;
-    await tester.runAsync(() async {
-      gate.complete();
-    });
-    await waitFor(tester, find.textContaining('已按云端修复'));
-    // 结果提示先出现，页面随后重读同步状态；等到状态卡换掉再一起核对。
+    // 确认：输入当前密码之后清空服务端序列，再把本机当前投影整份上传。
+    await tester.tap(rebuildButton());
+    await waitFor(tester, find.text('以本机为准重建云端'));
+    await tester.enterText(find.byType(EditableText), syncTestPassword);
+    await tester.tap(dialogAction('重建云端'));
+    await waitFor(tester, find.textContaining('已按本机重建云端'));
     await waitFor(tester, find.text('空闲'));
-    expect(find.textContaining('本机与云端重新对齐'), findsOneWidget);
     expect(find.text('待修复'), findsNothing);
-    expect(cloudRepairButton(), findsNothing);
-    expect(localRepairButton(), findsNothing);
-    expect(server.headOf(userId), headBefore, reason: '以云端为准不新增云端内容');
+    expect(rebuildButton(), findsNothing);
+    expect(server.headOf(userId), greaterThan(0), reason: '清空之后本机当前内容作为新的基线上传');
+    final rows = [
+      for (final commit in server.commits[userId]!)
+        for (final change in commit['changes']! as List)
+          '${(change as Map)['table']}/${change['row_key']}',
+    ];
+    expect(rows, contains('memory/m2'), reason: '本机当前投影整份上传');
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('以本机为准修复：取消不做修复，确认之后补传并回到空闲', (tester) async {
+  testWidgets('以本机为准重建云端：本机独有的行随基线补传', (tester) async {
     await pumpApp(tester);
     await seedLocalOnlyMismatch(tester);
     await openAccountPage(tester);
     await waitFor(tester, find.text('待修复'));
     final userId = server.userIdOf(email);
-    final headBefore = server.headOf(userId);
 
-    // 取消：这个入口只补传、不删除云端已有的记录，确认框要写清楚。
-    await tester.tap(localRepairButton());
-    await waitFor(tester, find.text('以本机为准修复会补传云端缺少的记录'));
-    expect(find.textContaining('云端已有的记录不会删除'), findsOneWidget);
-    expect(find.textContaining('取消则不做修复'), findsOneWidget);
-    await tester.tap(dialogAction('取消'));
-    await tester.pumpAndSettle();
-    expect(find.byType(ZhixinDialogLayout), findsNothing);
-    expect(find.text('待修复'), findsOneWidget);
-    expect(find.textContaining('已按本机修复'), findsNothing);
-    expect(server.headOf(userId), headBefore, reason: '取消不执行修复，云端序列不变');
-
-    // 确认之后补传本机独有的那一行。
-    await tester.tap(localRepairButton());
-    await waitFor(tester, find.text('以本机为准修复会补传云端缺少的记录'));
-    await tester.tap(dialogAction('以本机为准修复'));
-    await waitFor(tester, find.textContaining('已按本机修复'));
-    // 结果提示先出现，页面随后重读同步状态；等到状态卡换掉再一起核对。
+    await tester.tap(rebuildButton());
+    await waitFor(tester, find.text('以本机为准重建云端'));
+    await tester.enterText(find.byType(EditableText), syncTestPassword);
+    await tester.tap(dialogAction('重建云端'));
+    await waitFor(tester, find.textContaining('已按本机重建云端'));
     await waitFor(tester, find.text('空闲'));
-    expect(find.textContaining('云端缺少的本机记录已经上传'), findsOneWidget);
+
     expect(find.text('待修复'), findsNothing);
-    expect(cloudRepairButton(), findsNothing);
-    expect(localRepairButton(), findsNothing);
-    expect(
-      server.headOf(userId),
-      headBefore + 1,
-      reason: '本机独有的 m2 作为一条基线提交补传，云端已有内容不删除',
-    );
+    expect(server.headOf(userId), 1, reason: '本机投影合成一条基线提交');
+    final rows = [
+      for (final change in server.commits[userId]!.single['changes']! as List)
+        '${(change as Map)['table']}/${change['row_key']}',
+    ];
+    expect(rows, containsAll(['memory/m1', 'memory/m2']));
     expect(tester.takeException(), isNull);
   });
 
@@ -472,7 +448,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('同步中账号页的两个修复入口都不可点', (tester) async {
+  testWidgets('同步中账号页的重建按钮不可点', (tester) async {
     await pumpApp(tester);
     await seedCloudAheadMismatch(tester);
 
@@ -483,17 +459,14 @@ void main() {
       gate = Completer<void>.sync();
       server.onPull = () => gate.future;
       running = scope!.accountServices.sync.syncNow();
-      await Future<void>.delayed(const Duration(milliseconds: 100));
     });
 
     try {
       await openAccountPage(tester);
       await waitFor(tester, find.text('同步中'));
       expect(find.text('待修复'), findsNothing);
-      expect(cloudRepairButton(), findsOneWidget);
-      expect(localRepairButton(), findsOneWidget);
-      expect(tester.widget<forui.FButton>(cloudRepairButton()).onPress, isNull);
-      expect(tester.widget<forui.FButton>(localRepairButton()).onPress, isNull);
+      expect(rebuildButton(), findsOneWidget);
+      expect(tester.widget<forui.FButton>(rebuildButton()).onPress, isNull);
       expect(tester.takeException(), isNull);
     } finally {
       server.onPull = null;
@@ -509,7 +482,7 @@ void main() {
     }
   });
 
-  testWidgets('摘要一致时账号页不显示不一致说明与两个修复入口', (tester) async {
+  testWidgets('摘要一致时账号页不显示不一致说明与重建入口', (tester) async {
     await pumpApp(tester);
     await seedMatched(tester);
 
@@ -519,12 +492,11 @@ void main() {
     expect(find.text('待修复'), findsNothing);
     expect(find.text('本机与云端不一致'), findsNothing);
     expect(find.textContaining('上次同步比较整库摘要时发现两边内容不同'), findsNothing);
-    expect(cloudRepairButton(), findsNothing);
-    expect(localRepairButton(), findsNothing);
+    expect(rebuildButton(), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('我的页在摘要不一致时只标待修复，不放修复按钮', (tester) async {
+  testWidgets('我的页在摘要不一致时只标待修复，不放重建按钮', (tester) async {
     await pumpApp(tester);
     await seedCloudAheadMismatch(tester);
 
@@ -532,9 +504,8 @@ void main() {
     await waitFor(tester, find.text('待修复'));
 
     expect(find.text('待修复'), findsOneWidget);
-    // 修复入口只在账号页：账号卡上不再放两个按钮，也不复制那段说明。
-    expect(find.text('以云端为准修复'), findsNothing);
-    expect(find.text('以本机为准修复'), findsNothing);
+    // 重建入口只在账号页：账号卡上不放按钮，也不复制那段说明。
+    expect(find.text('以本机为准重建云端'), findsNothing);
     expect(find.text('本机与云端不一致'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -555,27 +526,26 @@ void main() {
     final status = await tester.runAsync(
       () => scope!.accountServices.sync.status(),
     );
-    expect(status!.digestMismatch, isTrue, reason: '前置状态：不一致标记仍在');
-    expect(status.lastError, isNotNull, reason: '前置状态：上一轮同步失败');
+    expect(status!.digestMismatch, isTrue, reason: '失败不影响已经记下的不一致');
 
     // 现状：先看上次错误，再看摘要不一致（mine_page.dart 的 _syncTag）。
     expect(find.text('同步失败'), findsOneWidget);
     expect(find.text('待修复'), findsNothing);
-    expect(find.text('以云端为准修复'), findsNothing);
-    expect(find.text('以本机为准修复'), findsNothing);
+    expect(find.text('以本机为准重建云端'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('摘要修复之后我的页回到已同步', (tester) async {
+  testWidgets('重建云端之后我的页回到已同步', (tester) async {
     await pumpApp(tester);
     await seedCloudAheadMismatch(tester);
 
-    // 在账号页按云端修复，两边重新一致；再到“我的”看账号卡的状态标。
+    // 在账号页以本机为准重建云端，两边重新一致；再到“我的”看账号卡的状态标。
     await openAccountPage(tester);
     await waitFor(tester, find.text('待修复'));
-    await tester.tap(cloudRepairButton());
-    await waitFor(tester, find.text('以云端为准修复会重做这台设备的同步'));
-    await tester.tap(dialogAction('以云端为准修复'));
+    await tester.tap(rebuildButton());
+    await waitFor(tester, find.text('以本机为准重建云端'));
+    await tester.enterText(find.byType(EditableText), syncTestPassword);
+    await tester.tap(dialogAction('重建云端'));
     await waitFor(tester, find.text('空闲'));
     navigator.currentState!.pop();
     await tester.pumpAndSettle();

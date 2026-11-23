@@ -2,7 +2,7 @@
 //
 // 摘要的纯函数与“增量更新等于整库重算”在 data 层用例里已经覆盖；这里只验行为：
 // 推送完成且本机没有待推送提交时最后一条提交带摘要、另一台设备拉取之后比较、
-// 一台设备漏掉一条提交之后能发现不一致，以及两个修复入口能清掉状态。
+// 一台设备漏掉一条提交之后能发现不一致，以及以本机为准重建云端能清掉状态。
 //
 // “漏掉一条提交”用直接改库模拟：版本采集只在命令事务里打开（capturing = 1），
 // 事务之外执行 SQL 不形成提交，与绕过命令的丢失一致。
@@ -56,10 +56,6 @@ void main() {
 
   Future<String> userIdOf(SyncDevice device) async =>
       (await device.account.snapshot()).session!.userId;
-
-  /// 直接改库，不形成提交：模拟一次没有到达服务端、也没有留下提交记录的丢写。
-  Future<void> deleteRowDirectly(SyncDevice device, String id) =>
-      device.rig.raw.execute('DELETE FROM memory WHERE id = ?', [id]);
 
   /// 直接插一行，不形成提交：模拟本机独有、云端没有的内容。
   Future<void> insertRowDirectly(
@@ -172,223 +168,90 @@ void main() {
     expect(await a.rig.engine.tombstones(a.rig.raw), isEmpty);
   });
 
-  test('以本机为准补传独有记录后，保留云端已有但值不同的差异', () async {
-    final a = await device('a@example.com', register: true, deviceId: 'a');
-    await insertTestMemory(a.rig, 'changed', content: '云端保留的值');
-    await a.sync.syncNow(confirmBaseline: true);
-    await a.rig.raw.execute(
-      "UPDATE memory SET content = '只有本机改过' WHERE id = 'changed'",
-    );
-    await insertRowDirectly(a, 'missing', '云端缺少的记忆');
-
-    await a.sync.repairFromLocal();
-
-    final status = await a.sync.status();
-    expect(status.digestMismatch, isTrue);
-    expect(status.differentTables, ['memory']);
-    final b = await device('a@example.com', deviceId: 'b');
-    await b.sync.syncNow();
-    final rows = await b.rig.raw.rawQuery(
-      'SELECT id, content FROM memory ORDER BY id',
-    );
-    expect(rows.map((row) => row['content']), ['云端保留的值', '云端缺少的记忆']);
-  });
-
-  test('一台设备漏掉一条提交之后，下一次同步发现不一致并写诊断', () async {
+  test('以本机为准重建云端：清空服务端序列后整份上传，另一台设备重新上传', () async {
     final a = await device(
       'a@example.com',
       register: true,
       deviceId: 'device-a',
     );
-    await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
-    await a.sync.syncNow(confirmBaseline: true);
-    final b = await device('a@example.com', deviceId: 'device-b');
-    await b.sync.syncNow();
-    await a.sync.syncNow();
-    final userId = await userIdOf(a);
-    expect((await b.sync.status()).digestMismatch, isFalse);
-
-    // B 本机漏掉了 m1 这一行：直接改库，没有形成提交，云端对应的提交仍在。
-    await deleteRowDirectly(b, 'm1');
-    await insertTestMemory(a.rig, 'm2', content: '晚上效率低');
-    await a.sync.syncNow();
-    failures.clear();
-
-    // 下一次同步拉到 A 的新提交（带摘要），本机没有待推送提交，于是比较摘要。
-    await b.sync.syncNow();
-    final status = await b.sync.status();
-    expect(status.digestMismatch, isTrue, reason: '两边内容不同，应当置为不一致');
-    expect(
-      failures.map((failure) => failure.kind),
-      contains('cloud_sync_digest'),
-      reason: '不一致时写一条诊断记录',
-    );
-    expect(
-      await b.rig.revisions.currentStateDigest(),
-      isNot(server.commits[userId]!.last['state_digest']),
-    );
-
-    // 已知不一致时继续写入并同步：推送只补本机内容，删不掉云端多出来的行，
-    // 所以这一轮不对外声明摘要，免得把“推完就一致”的错误结论带给别的设备。
-    await insertTestMemory(b.rig, 'm4', content: 'B 新加的一行');
-    await b.sync.syncNow();
-    expect(
-      server.commits[userId]!.last['state_digest'],
-      isNull,
-      reason: '已知不一致时最后一条提交不带摘要',
-    );
-    expect((await b.sync.status()).digestMismatch, isTrue);
-  });
-
-  test('以云端为准修复：清掉不一致状态，并按云端找回漏掉的内容', () async {
-    final a = await device(
-      'a@example.com',
-      register: true,
-      deviceId: 'device-a',
-    );
-    await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
+    await insertTestMemory(a.rig, 'm1', content: '云端原来的值');
     await a.sync.syncNow(confirmBaseline: true);
     final b = await device('a@example.com', deviceId: 'device-b');
     await b.sync.syncNow();
     await a.sync.syncNow();
     final userId = await userIdOf(a);
 
-    await deleteRowDirectly(b, 'm1');
-    await insertTestMemory(a.rig, 'm2', content: '晚上效率低');
-    await a.sync.syncNow();
-    await b.sync.syncNow();
-    expect((await b.sync.status()).digestMismatch, isTrue);
-    final headBeforeRepair = server.headOf(userId);
-
-    final result = await b.sync.repairFromCloud();
-    expect(result.pulledCommits, greaterThanOrEqualTo(1), reason: '按首次基线重新拉取');
-    expect(
-      await b.rig.revisions.currentStateDigest(),
-      await a.rig.revisions.currentStateDigest(),
-      reason: '重新拉取之后两边摘要相等',
+    // B 本机改一行、再插一行，都没有形成提交：两边内容不同。
+    await b.rig.raw.execute(
+      "UPDATE memory SET content = 'B 改过的值', "
+      "updated_at = '2026-11-17 10:01:00' WHERE id = 'm1'",
     );
-    expect(
-      await testMemoryContent(b.rig, 'm1'),
-      '喜欢先看例子',
-      reason: '漏掉的行由云端提交重新应用回来',
-    );
-    expect(
-      (await b.sync.status()).digestMismatch,
-      isFalse,
-      reason: '修复之后清掉不一致状态',
-    );
-    expect(
-      server.headOf(userId),
-      headBeforeRepair,
-      reason: '以云端为准不新增云端内容（本机没有独有行可补）',
-    );
-  });
-
-  test('以本机为准修复：补传本机独有的行，并清掉不一致状态', () async {
-    final a = await device(
-      'a@example.com',
-      register: true,
-      deviceId: 'device-a',
-    );
-    await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
-    await a.sync.syncNow(confirmBaseline: true);
-    final b = await device('a@example.com', deviceId: 'device-b');
-    await b.sync.syncNow();
-    await a.sync.syncNow();
-    final userId = await userIdOf(a);
-
-    // B 本机多出一行，直接改库、没有形成提交：云端没有，本机有。
     await insertRowDirectly(b, 'm2', 'B 本机独有的行');
     await insertTestMemory(a.rig, 'm3', content: 'A 新加的一行');
     await a.sync.syncNow();
     await b.sync.syncNow();
-    expect(
-      (await b.sync.status()).digestMismatch,
-      isTrue,
-      reason: '本机多一行，摘要对不上',
-    );
-    final headBeforeRepair = server.headOf(userId);
+    expect((await b.sync.status()).digestMismatch, isTrue);
 
-    final result = await b.sync.repairFromLocal();
-    expect(result.pushedCommits, 1, reason: '本机独有的 m2 作为一条基线提交补传');
-    expect(
-      server.headOf(userId),
-      headBeforeRepair + 1,
-      reason: '补传只增加一条基线提交，不删除云端已有的提交',
+    final result = await b.sync.rebuildCloudFromLocal(
+      password: syncTestPassword,
     );
-    final baseline = server.commits[userId]!.last;
-    expect(
-      [
-        for (final change in baseline['changes']! as List)
+    expect(server.headOf(userId), greaterThan(0), reason: '清空之后本机内容整份上传');
+    expect(result.pushedCommits, greaterThan(0));
+    expect((await b.sync.status()).digestMismatch, isFalse);
+    expect(await testMemoryContent(b.rig, 'm1'), 'B 改过的值', reason: '重建不改本机内容');
+    final rebuiltRows = [
+      for (final commit in server.commits[userId]!)
+        for (final change in commit['changes']! as List)
           '${(change as Map)['table']}/${change['row_key']}',
-      ],
-      ['memory/m2'],
-      reason: '已经由远端提交表达过的行不重复上传：${baseline['changes']}',
-    );
-    expect(
-      baseline['state_digest'],
-      await b.rig.revisions.currentStateDigest(),
-      reason: '补传完成且本机没有待推送提交，基线提交带当前摘要',
-    );
-    expect(
-      (await b.sync.status()).digestMismatch,
-      isFalse,
-      reason: '修复之后清掉不一致状态',
-    );
+    ];
+    expect(rebuiltRows, contains('memory/m2'), reason: 'B 本机独有的行随基线一起上传');
 
-    // 另一台设备同步之后拿到这条本机独有的行。
+    // 另一台设备发现服务端位置回到 0，按首次同步重新上传它本机的内容；两边最后
+    // 收敛到同一份摘要。
     await a.sync.syncNow();
+    await b.sync.syncNow();
     expect(await testMemoryContent(a.rig, 'm2'), 'B 本机独有的行');
+    expect(
+      await a.rig.revisions.currentStateDigest(),
+      await b.rig.revisions.currentStateDigest(),
+    );
+    expect((await a.sync.status()).digestMismatch, isFalse);
+    expect((await b.sync.status()).digestMismatch, isFalse);
   });
 
-  test('以云端为准修复能重放更新，不只覆盖新增', () async {
+  test('以本机为准重建云端在历史被压缩之后也能用', () async {
     final a = await device(
       'a@example.com',
       register: true,
       deviceId: 'device-a',
     );
-    await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
-    await insertTestMemory(a.rig, 'm2', content: '晚上效率低');
+    await insertTestMemory(a.rig, 'm1', content: '压缩前的记录');
     await a.sync.syncNow(confirmBaseline: true);
+    final userId = await userIdOf(a);
     final b = await device('a@example.com', deviceId: 'device-b');
     await b.sync.syncNow();
+    await insertTestMemory(a.rig, 'm2', content: '压缩前的另一条');
     await a.sync.syncNow();
-    final userId = await userIdOf(a);
+    final snapshotSeq = server.snapshotOf(userId)!.seq;
+    server.compactThrough(userId, snapshotSeq);
 
-    await updateTestMemory(a.rig, 'm1', {
-      'content': '先看例子再看定义',
-      'updated_at': '2026-11-17 10:01:00',
-    });
-    await a.sync.syncNow();
-    // B 本机把另一行改成别的内容，没有形成提交；拉取只覆盖 A 改过的 m1。
-    await b.rig.raw.execute(
-      'UPDATE memory SET content = ?, updated_at = ? WHERE id = ?',
-      ['本机乱改的内容', '2026-11-17 10:02:00', 'm2'],
+    // B 落后于保留下界：普通同步要先确认再按快照重建，重建云端不必下载快照。
+    await expectLater(b.sync.syncNow(), throwsA(isA<SyncSnapshotProblem>()));
+    final result = await b.sync.rebuildCloudFromLocal(
+      password: syncTestPassword,
     );
+    expect(result.pushedCommits, greaterThan(0));
+    expect(server.headOf(userId), greaterThan(0));
+    expect((await b.sync.status()).digestMismatch, isFalse);
+    expect(await testMemoryContent(b.rig, 'm1'), '压缩前的记录');
+
+    // 另一台设备按首次同步重新对齐，B 再拉一次把 A 补传的行取回来。
+    await a.sync.syncNow();
     await b.sync.syncNow();
     expect(
-      (await b.sync.status()).digestMismatch,
-      isTrue,
-      reason: '本机与云端有一行内容不同',
-    );
-
-    await b.sync.repairFromCloud();
-    expect(
-      await testMemoryContent(b.rig, 'm1'),
-      '先看例子再看定义',
-      reason: '更新只带变化列，重放时要并进上一条提交留下的整行',
-    );
-    expect(
-      await testMemoryContent(b.rig, 'm2'),
-      '晚上效率低',
-      reason: '本机被直接改过的行按云端值改回',
-    );
-    expect((await b.sync.status()).digestMismatch, isFalse);
-    expect(
-      await b.rig.revisions.currentStateDigest(),
       await a.rig.revisions.currentStateDigest(),
+      await b.rig.revisions.currentStateDigest(),
     );
-    expect(server.headOf(userId), greaterThan(0));
   });
 
   test('先拉取再推送的那一轮也在最后一条提交上带摘要', () async {
