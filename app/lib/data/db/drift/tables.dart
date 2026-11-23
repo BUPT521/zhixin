@@ -163,8 +163,8 @@ enum RevisionUniqueKeyPolicy {
 /// 会让远端提交在本机撞上非主键唯一约束的列与处置方式。
 ///
 /// 列的顺序就是唯一约束的列顺序；[RevisionUniqueKeyPolicy.renumberLocal] 改的
-/// 是最后一列（步骤序号）。表上其他唯一约束没有登记时一律按
-/// [RevisionUniqueKeyPolicy.skipRemote] 处理。
+/// 是最后一列（步骤序号）。表上还有唯一约束没登记时不会检查，撞上会抛约束错误
+/// 并让整条远端提交回滚，所以新增唯一索引时要在这里补一行（审查 S18）。
 class RevisionUniqueKey {
   const RevisionUniqueKey(this.table, this.columns, this.policy);
 
@@ -181,6 +181,10 @@ const List<RevisionUniqueKey> revisionUniqueKeys = [
   RevisionUniqueKey('material_page', [
     'material_id',
     'page_no',
+  ], RevisionUniqueKeyPolicy.skipRemote),
+  RevisionUniqueKey('memory_usage', [
+    'memory_id',
+    'device_id',
   ], RevisionUniqueKeyPolicy.skipRemote),
 ];
 

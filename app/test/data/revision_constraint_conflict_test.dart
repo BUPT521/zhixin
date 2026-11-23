@@ -219,4 +219,69 @@ void main() {
     expect(local!['seq'], 2, reason: '本机这一行改到下一个空号');
     expect(await rig.revisions.conflicts(), isEmpty, reason: '顺序列自动处置，不记冲突');
   });
+
+  test('两端给同一条记忆的同一台设备写使用统计时跳过远端这一行并记 unique_key_taken', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    await _insert(rig, 'memory', {
+      'id': 'm1',
+      'kind': 'semantic',
+      'content': '讲解先给例题',
+      'scope': null,
+      'source_kind': 'user',
+      'source_id': null,
+      'valid_until': null,
+      'status': 'active',
+      'created_at': _stamp,
+      'updated_at': _stamp,
+    });
+    await _insert(rig, 'memory_usage', {
+      'id': 'u-local',
+      'memory_id': 'm1',
+      'device_id': 'device-a',
+      'recall_count': 1,
+      'search_count': 0,
+      'updated_at': _stamp,
+    });
+
+    // 同一台设备重新克隆之后又推了一次汇总，行键与编号都不是本机这一行，
+    // 撞上的是“记忆编号＋设备编号”的唯一约束。
+    final applied = await rig.revisions.applyRemoteCommit(
+      uid: 'remote-usage-1',
+      action: '从其他设备同步',
+      actor: 'system',
+      kind: RevisionKind.maintenance,
+      originDevice: 'device-a',
+      changes: [
+        RevisionChange(
+          commitId: 0,
+          seq: 1,
+          table: 'memory_usage',
+          rowKey: 'u-remote',
+          op: ChangeOp.insert,
+          after: typedRow({
+            'id': 'u-remote',
+            'memory_id': 'm1',
+            'device_id': 'device-a',
+            'recall_count': 2,
+            'search_count': 0,
+            'updated_at': _stamp,
+          }),
+        ),
+      ],
+    );
+
+    expect(applied.skipped, 1, reason: '同一记忆同一设备的行已经在，远端这一行跳过');
+    expect(applied.adjusted, 0);
+    expect(
+      await rig.raw.rawQuery('SELECT id FROM memory_usage'),
+      hasLength(1),
+      reason: '远端这一行没有写入',
+    );
+    final conflicts = await rig.revisions.conflicts();
+    expect(conflicts, hasLength(1));
+    expect(conflicts.single.reason, RevisionConflict.uniqueKeyTaken);
+    expect(conflicts.single.table, 'memory_usage');
+    expect(conflicts.single.rowKey, 'u-remote');
+  });
 }
