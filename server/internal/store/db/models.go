@@ -165,6 +165,7 @@ type SyncCommit struct {
 	UserID        string
 	Seq           int64
 	Uid           string
+	Kind          string
 	DeviceID      string
 	SchemaVersion int32
 	Actor         string
@@ -223,9 +224,4 @@ type UserIdentity struct {
 	Identifier string
 	VerifiedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
-}
-
-type UserPurge struct {
-	UserID    string
-	StartedAt pgtype.Timestamptz
 }

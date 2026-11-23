@@ -26,6 +26,8 @@ const deleteEmbeddingCacheForModel = `-- name: DeleteEmbeddingCacheForModel :exe
 DELETE FROM embedding_cache WHERE model = $1
 `
 
+// 管理后台删除模型或改变维度时按模型清缓存：表在万行级别，全表扫描即可，不再为
+// model 单建索引（审查 V5）。
 func (q *Queries) DeleteEmbeddingCacheForModel(ctx context.Context, model string) error {
 	_, err := q.db.Exec(ctx, deleteEmbeddingCacheForModel, model)
 	return err

@@ -27,8 +27,8 @@ type BlobStore struct {
 // NewBlobStore 建立附件存储；它不访问网络，连通性由 Store 的 Ping 负责。
 func NewBlobStore(store *Store) *BlobStore { return &BlobStore{store: store} }
 
-// Stat 返回附件字节数。存在与否以对象存储为准：历史版本只写了字节、还没回填
-// 索引的附件因此仍然可读；回填命令负责把它们的配额补进 attachment 表。
+// Stat 返回附件字节数。存在与否以对象存储为准；索引行由 Reserve 在上传时
+// 一并写入，配额按索引求和。
 func (b *BlobStore) Stat(ctx context.Context, userID, sha string) (int64, error) {
 	info, err := b.store.objects.Stat(ctx, objectstore.AttachmentKey(userID, sha))
 	if err != nil {
@@ -131,25 +131,6 @@ func (b *BlobStore) DeleteUser(ctx context.Context, userID string) error {
 		return err
 	}
 	return b.store.objects.RemovePrefix(ctx, objectstore.AttachmentPrefix(userID))
-}
-
-// BackfillAttachment 把对象存储里的一个附件补进索引，返回是否新增了一行。
-// 回填命令按 attachments/ 前缀遍历对象后调用它，重复执行是安全的。
-func (b *BlobStore) BackfillAttachment(ctx context.Context, userID, sha string, size int64) (bool, error) {
-	inserted, err := b.store.q.InsertAttachment(ctx, db.InsertAttachmentParams{
-		UserID: userID,
-		Sha256: sha,
-		Size:   size,
-	})
-	if err != nil {
-		return false, err
-	}
-	return inserted > 0, nil
-}
-
-// ListAttachments 按从新到旧列出账号的索引行，供核对与排查使用。
-func (b *BlobStore) ListAttachments(ctx context.Context, userID string) ([]db.ListAttachmentsRow, error) {
-	return b.store.q.ListAttachments(ctx, userID)
 }
 
 func mapObjectErr(err error) error {

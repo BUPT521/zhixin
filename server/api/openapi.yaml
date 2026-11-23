@@ -533,6 +533,10 @@ paths:
         与顺序一一对应：新提交是服务端分配的序号，被当作重复跳过的提交回它原来的
         序号，客户端据此判断整批重放（ADR-0054）。每次 1 到 200 条，单条最多 2 MiB，
         请求最多 16 MiB。生产实例要求至少一种登录方式已经验证，账号同步日志预算为 256 MiB。
+        每条提交必须带 `kind`，取值是 `baseline`、`write`、`undo`、`restore`、`import`
+        或 `maintenance`，缺字段或未知取值返回 400 `invalid_request`；来源只看
+        `device_id` 一类字段，没有 `remote` 这种取值（审查 S23、V18）。服务端原样保存
+        这条提交的类型，拉取时原样带回。
         没有 `X-Device-Id` 时按提交里的设备标识补进设备名册，快照能力与别名留空
         （ADR-0048）。
       parameters:
@@ -1429,13 +1433,20 @@ components:
           x-go-type: json.RawMessage
     Commit:
       type: object
-      required: [uid, device_id, schema_version, actor, action, created_at, changes]
+      required: [uid, kind, device_id, schema_version, actor, action, created_at, changes]
       properties:
         seq: { type: integer, format: int64, readOnly: true }
         uid:
           type: string
           maxLength: 64
           description: 客户端在用户动作发生时生成的提交身份，同一动作重试时沿用；服务端按它永久去重
+        kind:
+          description: |
+            这条提交做了什么，取值与客户端的 revisionKinds 一致；来源只看 device_id
+            一类字段，不设 remote 取值（审查 S23、V18）。推送时必须给出，缺字段或
+            未知取值返回 400 `invalid_request`。
+          type: string
+          enum: [baseline, write, undo, restore, import, maintenance]
         device_id: { type: string, maxLength: 64 }
         schema_version: { type: integer }
         actor: { type: string, enum: [user, ai, system] }
@@ -1599,7 +1610,7 @@ components:
       required: [status, schema_version]
       properties:
         status: { type: string, const: ready }
-        schema_version: { type: integer, examples: [27] }
+        schema_version: { type: integer, examples: [32] }
     Release:
       type: object
       required: [platform, version, build, url, sha256, signature]

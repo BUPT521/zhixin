@@ -813,11 +813,12 @@ func (m *MemoryStore) Reset(_ context.Context, userID string) error {
 }
 
 // Validate checks the shape of a commit, not its business meaning: the server
-// never interprets learning content. Op and Actor are checked through the
+// never interprets learning content. Kind, Op and Actor are checked through the
 // generated enum validators, so the contract stays the only value list.
 func Validate(c Commit, schemaVersion int) error {
 	switch {
 	case c.Uid == "" || len(c.Uid) > MaxRefUIDBytes,
+		!c.Kind.Valid(),
 		c.DeviceId == "" || len(c.DeviceId) > 64,
 		c.SchemaVersion != schemaVersion,
 		!c.Actor.Valid(),

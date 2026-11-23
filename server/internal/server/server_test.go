@@ -224,6 +224,7 @@ func blobSHA(data []byte) string {
 func commitRequest(requestID string) map[string]any {
 	return map[string]any{
 		"uid":            requestID,
+		"kind":           "write",
 		"device_id":      "device-a",
 		"schema_version": ClientSchemaVersion,
 		"actor":          "user",

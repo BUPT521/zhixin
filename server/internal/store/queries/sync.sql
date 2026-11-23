@@ -29,16 +29,13 @@ WHERE user_id = sqlc.arg(user_id);
 SELECT coalesce(sum(pg_column_size(contents.data)), 0)::bigint
 FROM unnest(sqlc.arg(changes)::jsonb[]) AS contents(data);
 
--- 去重同时查提交表与去重表：压缩删除旧提交之后只剩后者，两边合起来覆盖全部接收过
--- 的身份，并给出重复提交原来分配的序号。
+-- 去重只查去重表：每次追加都在同一个事务里写 sync_commit_seen，压缩删掉旧提交
+-- 之后它仍然覆盖全部接收过的身份，并给出重复提交原来分配的序号（审查 V17）。
 -- name: ExistingCommitSeqs :many
-SELECT DISTINCT ON (ids.uid) ids.uid::text, coalesce(c.seq, s.seq)::bigint AS seq
+SELECT ids.uid::text, s.seq::bigint AS seq
 FROM unnest(sqlc.arg(uids)::text[]) AS ids(uid)
-LEFT JOIN sync_commit c
-  ON c.user_id = sqlc.arg(user_id) AND c.uid = ids.uid
-LEFT JOIN sync_commit_seen s
-  ON s.user_id = sqlc.arg(user_id) AND s.uid = ids.uid
-WHERE c.seq IS NOT NULL OR s.seq IS NOT NULL;
+JOIN sync_commit_seen s
+  ON s.user_id = sqlc.arg(user_id) AND s.uid = ids.uid;
 
 -- 插入去重记录时同时写这次分配的序号，压缩删掉提交之后重复推送仍回得到它。
 -- name: InsertSyncCommitSeen :exec
@@ -58,13 +55,14 @@ WHERE user_id = sqlc.arg(user_id);
 
 -- state_digest 与 table_digests 都是可选摘要：客户端只在推送完成且本机没有待推送
 -- 提交时带上，服务端原样保存、不解析，拉取时原样带回（改进方案 3.5、ADR-0054）。
+-- kind 只表示提交做了什么，取值由契约的 CommitKind 约束（审查 S23、V18）。
 -- name: InsertSyncCommit :exec
 INSERT INTO sync_commit (
-  user_id, seq, uid, device_id, schema_version,
+  user_id, seq, uid, kind, device_id, schema_version,
   actor, action, created_at, changes, state_digest, table_digests
 )
 VALUES (
-  sqlc.arg(user_id), sqlc.arg(seq), sqlc.arg(uid),
+  sqlc.arg(user_id), sqlc.arg(seq), sqlc.arg(uid), sqlc.arg(kind),
   sqlc.arg(device_id), sqlc.arg(schema_version), sqlc.arg(actor),
   sqlc.arg(action), sqlc.arg(created_at), sqlc.arg(changes),
   sqlc.narg(state_digest), sqlc.narg(table_digests)
@@ -106,7 +104,7 @@ SET snapshot_seq = EXCLUDED.snapshot_seq,
 -- name: CommitsAfter :many
 WITH page AS MATERIALIZED (
   SELECT p.seq AS page_seq, octet_length(p.changes::text)::bigint + octet_length(p.action)
-    + octet_length(p.uid) + octet_length(p.device_id) + 256 AS bytes
+    + octet_length(p.uid) + octet_length(p.device_id) + octet_length(p.kind) + 256 AS bytes
   FROM sync_commit p
   WHERE p.user_id = sqlc.arg(user_id) AND p.seq > sqlc.arg(after_seq)
   ORDER BY p.seq
@@ -114,7 +112,7 @@ WITH page AS MATERIALIZED (
 ), budget AS (
   SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
 )
-SELECT c.seq, c.uid, c.device_id, c.schema_version, c.actor, c.action,
+SELECT c.seq, c.uid, c.kind, c.device_id, c.schema_version, c.actor, c.action,
   c.created_at, c.received_at, c.changes, c.state_digest, c.table_digests
 FROM sync_commit c
 WHERE c.user_id = sqlc.arg(user_id) AND c.seq IN (
@@ -125,7 +123,7 @@ ORDER BY c.seq;
 
 -- name: SyncStorageBytes :one
 SELECT coalesce(sum(pg_column_size(changes)::bigint + octet_length(action)
-  + octet_length(uid) + octet_length(device_id) + 256), 0)::bigint
+  + octet_length(uid) + octet_length(device_id) + octet_length(kind) + 256), 0)::bigint
 FROM sync_commit
 WHERE user_id = sqlc.arg(user_id);
 

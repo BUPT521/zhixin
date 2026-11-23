@@ -109,6 +109,36 @@ func (e CommitActor) Valid() bool {
 	}
 }
 
+// Defines values for CommitKind.
+const (
+	Baseline    CommitKind = "baseline"
+	Import      CommitKind = "import"
+	Maintenance CommitKind = "maintenance"
+	Restore     CommitKind = "restore"
+	Undo        CommitKind = "undo"
+	Write       CommitKind = "write"
+)
+
+// Valid indicates whether the value is a known member of the CommitKind enum.
+func (e CommitKind) Valid() bool {
+	switch e {
+	case Baseline:
+		return true
+	case Import:
+		return true
+	case Maintenance:
+		return true
+	case Restore:
+		return true
+	case Undo:
+		return true
+	case Write:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -462,8 +492,13 @@ type Commit struct {
 	Changes []Change    `json:"changes"`
 
 	// CreatedAt 客户端时间，YYYY-MM-DD HH:MM:SS
-	CreatedAt     string     `json:"created_at"`
-	DeviceId      string     `json:"device_id"`
+	CreatedAt string `json:"created_at"`
+	DeviceId  string `json:"device_id"`
+
+	// Kind 这条提交做了什么，取值与客户端的 revisionKinds 一致；来源只看 device_id
+	// 一类字段，不设 remote 取值（审查 S23、V18）。推送时必须给出，缺字段或
+	// 未知取值返回 400 `invalid_request`。
+	Kind          CommitKind `json:"kind"`
 	ReceivedAt    *time.Time `json:"received_at,omitempty"`
 	SchemaVersion int        `json:"schema_version"`
 	Seq           *int64     `json:"seq,omitempty"`
@@ -483,6 +518,11 @@ type Commit struct {
 
 // CommitActor defines model for Commit.Actor.
 type CommitActor string
+
+// CommitKind 这条提交做了什么，取值与客户端的 revisionKinds 一致；来源只看 device_id
+// 一类字段，不设 remote 取值（审查 S23、V18）。推送时必须给出，缺字段或
+// 未知取值返回 400 `invalid_request`。
+type CommitKind string
 
 // CommitPage defines model for CommitPage.
 type CommitPage struct {
@@ -698,7 +738,7 @@ type PushResult struct {
 
 // Ready defines model for Ready.
 type Ready struct {
-	// SchemaVersion Examples: 27
+	// SchemaVersion Examples: 32
 	SchemaVersion int         `json:"schema_version"`
 	Status        ReadyStatus `json:"status"`
 }

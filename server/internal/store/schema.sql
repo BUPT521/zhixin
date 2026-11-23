@@ -99,13 +99,18 @@ CREATE TABLE sync_state (
 );
 
 -- 提交是一条流水账：uid 是客户端在用户动作发生时生成的提交身份（UUID 字符串），
--- 服务端按 (user_id, uid) 永久去重。state_digest 与 table_digests 是客户端算出的
--- 整库摘要与分表摘要，服务端原样保存、不解析，拉取时原样带回（改进方案 3.5、
--- ADR-0054）；没有带的提交存 NULL，响应里不出现这个键。
+-- 去重只按 sync_commit_seen 的主键，本表不再单独为 uid 建唯一约束（审查 V17）。
+-- state_digest 与 table_digests 是客户端算出的整库摘要与分表摘要，服务端原样保存、
+-- 不解析，拉取时原样带回（改进方案 3.5、ADR-0054）；没有带的提交存 NULL，响应里
+-- 不出现这个键。
+--
+-- kind 只表示这条提交做了什么，取值与客户端的 revisionKinds 一致；来源只看
+-- origin_device 一类字段，不设 remote 取值（审查 S23、V18）。
 CREATE TABLE sync_commit (
   user_id         TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   seq             BIGINT NOT NULL,
   uid             TEXT NOT NULL,               -- 客户端提交身份，重试去重
+  kind            TEXT NOT NULL CHECK (kind IN ('baseline', 'write', 'undo', 'restore', 'import', 'maintenance')),
   device_id       TEXT NOT NULL,
   schema_version  INTEGER NOT NULL,
   actor           TEXT NOT NULL CHECK (actor IN ('user', 'ai', 'system')),
@@ -115,8 +120,7 @@ CREATE TABLE sync_commit (
   changes         JSONB NOT NULL,              -- [{table,row_key,op,before,after}]
   state_digest    TEXT,                        -- 客户端整库摘要，可选，原样保存不解析
   table_digests   JSONB,                       -- 表名到 64 位十六进制摘要的映射，可选，原样保存不解析
-  PRIMARY KEY (user_id, seq),
-  UNIQUE (user_id, uid)
+  PRIMARY KEY (user_id, seq)
 );
 
 -- 已经接收过的提交身份与它当时的序号。与 sync_commit 分开保存，压缩删掉旧提交
@@ -161,7 +165,7 @@ CREATE TABLE sync_ref (
   deleted_at  TIMESTAMPTZ,
   PRIMARY KEY (user_id, name)
 );
-CREATE INDEX sync_ref_by_user ON sync_ref(user_id);
+-- 主键的前导列已经能按账号列出全部名字，不再单建 (user_id) 索引（审查 V16）。
 
 -- 整库备份：字节在对象存储的 backups/<user_id>/<id>.zip。
 CREATE TABLE backup (
@@ -254,8 +258,8 @@ CREATE TABLE llm_quota (
 
 -- 附件索引：字节在对象存储的 attachments/<user_id>/<sha256>，这张表只记“这个
 -- 账号有这份内容、占多少字节”。账号总量配额按它求和；同一账号相同内容只有一行，
--- 重复上传因此不重复计入。主键的前缀 (user_id) 已能支持按账号求和，另按
--- created_at 建索引供回填与排查时按时间列出。
+-- 重复上传因此不重复计入。主键的前缀 (user_id) 已能支持按账号求和，不再为回填与
+-- 排查单建 created_at 索引（审查 V6）。
 --
 -- orphaned_at 记旧快照让位的时间（ADR-0047、审查 V2）：快照指针换成另一个哈希时
 -- 旧哈希这一行标记，同一哈希重复让位保留最早的时间，指针重新使用某个哈希时置空。
@@ -268,15 +272,6 @@ CREATE TABLE attachment (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   orphaned_at  TIMESTAMPTZ,
   PRIMARY KEY (user_id, sha256)
-);
-CREATE INDEX attachment_user_created ON attachment(user_id, created_at DESC);
-
--- 清除云端数据的进行中标记：一行表示这个账号正在清除（或上次清除中途失败）。
--- 清除开始写入 started_at，结束时删除行；超过 10 分钟的标记视为上次中断，新的
--- 请求接管并从头重做各步。清除期间写请求据此返回 409。账号删除时级联删除。
-CREATE TABLE user_purge (
-  user_id     TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-  started_at  TIMESTAMPTZ NOT NULL
 );
 
 -- 模型来源：一个 OpenAI 兼容的基础地址与一把 key，由管理后台维护（ADR-0029、
@@ -337,8 +332,7 @@ CREATE TABLE embedding_cache (
 );
 -- 上限清理按账号与 last_used_at 扫，命中时按批更新 last_used_at。
 CREATE INDEX embedding_cache_by_user_used ON embedding_cache(user_id, last_used_at);
--- 管理后台删除模型或改变维度时按模型删除。
-CREATE INDEX embedding_cache_by_model ON embedding_cache(model);
+-- 管理后台删除模型或改变维度时按模型删除：全表扫描，不再为它单建索引（审查 V5）。
 
 -- 嵌入向量缓存的清除代次：清空云端数据时加一，之前发出的嵌入请求即使之后才写
 -- 缓存，也因为代次对不上而被丢弃（ADR-0037）。账号删除时随外键级联。
