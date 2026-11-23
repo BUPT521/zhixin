@@ -259,8 +259,8 @@ void main() {
     await settle(tester);
 
     expect(find.text('数据完整性检查'), findsOneWidget);
-    expect(find.textContaining('检查范围：保留历史的哈希链'), findsOneWidget);
-    expect(find.textContaining('通过：哈希链与当前数据一致'), findsOneWidget);
+    expect(find.textContaining('检查范围：从最近的检查点把变更明细重放到 HEAD'), findsOneWidget);
+    expect(find.textContaining('通过：重放得到的摘要与当前数据一致'), findsOneWidget);
     expect(find.textContaining('共核对'), findsOneWidget);
     await tester.tap(find.text('知道了'));
     await settle(tester);

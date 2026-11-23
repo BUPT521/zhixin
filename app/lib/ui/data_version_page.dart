@@ -746,7 +746,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
   }
 
-  /// 手动检查数据完整性：哈希链、当前摘要与附件；结果框说明检查范围与建议。
+  /// 手动检查数据完整性：从检查点重放比对摘要，再核对附件；结果框说明检查范围与建议。
   ///
   /// 检查只读，不改数据；发现问题时逐条列出第几处不一致，并给出处理建议。
   Future<void> _checkIntegrity() async {
@@ -1301,7 +1301,7 @@ class _DataVersionPageState extends State<DataVersionPage>
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.shieldCheck),
             title: const Text('检查数据完整性'),
-            subtitle: const Text('核对历史哈希链、当前摘要与附件；备份版本库与上传云端备份前也会自动检查。'),
+            subtitle: const Text('从检查点重放到当前版本并比对摘要，核对附件；备份版本库与上传云端备份前也会自动检查。'),
             onPress: _busy ? null : _checkIntegrity,
           ),
           SizedBox(height: theme.space.sm),
