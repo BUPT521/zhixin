@@ -480,7 +480,7 @@ void main() {
     late Completer<void> gate;
     late Future<SyncResult> running;
     await tester.runAsync(() async {
-      gate = Completer<void>();
+      gate = Completer<void>.sync();
       server.onPull = () => gate.future;
       running = scope!.accountServices.sync.syncNow();
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -498,8 +498,13 @@ void main() {
     } finally {
       server.onPull = null;
       await tester.runAsync(() async {
-        gate.complete();
-        await running;
+        final stopped = expectLater(
+          running,
+          throwsA(isA<SyncIdentityChanged>()),
+        );
+        // 面板断言完成后终止这一轮请求，避免继续执行收尾写入和界面更新。
+        gate.completeError(const SyncIdentityChanged());
+        await stopped;
       });
     }
   });
