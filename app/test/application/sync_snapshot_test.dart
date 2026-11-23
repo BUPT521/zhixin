@@ -168,7 +168,13 @@ void main() {
     });
     await expectLater(
       b.sync.syncNow(),
-      throwsA(isA<RecloneConfirmationRequired>()),
+      throwsA(
+        isA<SyncSnapshotProblem>().having(
+          (problem) => problem.code,
+          'code',
+          SyncSnapshotCode.confirmationRequired,
+        ),
+      ),
       reason: '本机已有数据时重建不能静默替换',
     );
     expect(await testMemoryContent(b.rig, 'm1'), 'B 的新内容');
@@ -360,7 +366,13 @@ void main() {
     });
     await expectLater(
       b.sync.syncNow(),
-      throwsA(isA<RecloneConfirmationRequired>()),
+      throwsA(
+        isA<SyncSnapshotProblem>().having(
+          (problem) => problem.code,
+          'code',
+          SyncSnapshotCode.confirmationRequired,
+        ),
+      ),
     );
     final result = await b.sync.syncNow(confirmReclone: true);
 
@@ -397,7 +409,13 @@ void main() {
     );
     await expectLater(
       b.sync.syncNow(confirmBaseline: true),
-      throwsA(isA<RecloneConfirmationRequired>()),
+      throwsA(
+        isA<SyncSnapshotProblem>().having(
+          (problem) => problem.code,
+          'code',
+          SyncSnapshotCode.confirmationRequired,
+        ),
+      ),
       reason: '云端历史已压缩，替换本机历史之前还要确认一次',
     );
     expect(
@@ -447,7 +465,7 @@ void main() {
     await expectLater(
       b.sync.syncNow(),
       throwsA(
-        isA<SyncSnapshotUnavailable>().having(
+        isA<SyncSnapshotProblem>().having(
           (error) => error.message,
           'message',
           contains('缺少可用快照'),

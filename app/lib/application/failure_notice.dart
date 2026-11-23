@@ -50,9 +50,7 @@ String? _knownMessage(Object error) => switch (error) {
   // 快照字节对不上、首次基线要确认；落到通用兜底会把“接下来能做什么”丢掉
   // （ADR-0046）。
   BaselineConfirmationRequired(:final message) => message,
-  RecloneConfirmationRequired(:final message) => message,
   SyncHistoryCompacted(:final userMessage) => userMessage,
-  SyncSnapshotUnavailable(:final message) => message,
-  SyncSnapshotInvalid(:final message) => message,
+  SyncSnapshotProblem(:final message) => message,
   _ => null,
 };

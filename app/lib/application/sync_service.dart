@@ -68,56 +68,66 @@ class BaselineConfirmationRequired implements Exception {
   String toString() => message;
 }
 
-/// 云端历史已经压缩，这台设备要用云端快照重新克隆，替换本机的数据版本历史。
+/// 云端快照这一类情况的代码，处理方式由它决定。
+enum SyncSnapshotCode {
+  /// 要用快照重建本机：调用方先向用户确认，确认之后带 `confirmReclone` 再调一次。
+  confirmationRequired,
+
+  /// 云端历史已经压缩，但服务端没有登记可用的快照。
+  unavailable,
+
+  /// 快照的字节、哈希或摘要对不上。
+  invalid,
+}
+
+/// 云端快照这类情况的统一异常：重建确认、缺少快照与校验失败共用一种带代码的
+/// 异常，界面与消息表只认一个类型（过度设计审查 3.1）。
 ///
 /// 重建会改写本机历史：撤销窗口、命名版本与更早的提交按快照重建，本机还没有
-/// 推送的提交会作为新提交重放到快照之上。调用方必须先向用户说明再确认，不能
-/// 静默替换（同步方案 3.7）；与 [BaselineConfirmationRequired] 一样先从
-/// `syncNow` 抛出，用户确认之后用 `confirmReclone: true` 再调一次。
-class RecloneConfirmationRequired implements Exception {
-  const RecloneConfirmationRequired({
+/// 推送的提交会作为新提交重放到快照之上，所以 [SyncSnapshotCode.confirmationRequired]
+/// 与 [BaselineConfirmationRequired] 一样先从 `syncNow` 抛出，不能静默替换
+/// （同步方案 3.7）。缺少快照时客户端不猜、不静默清空，给用户能做什么的说明；
+/// 校验失败时这一次不替换本机数据（ADR-0046）。
+class SyncSnapshotProblem implements Exception {
+  const SyncSnapshotProblem.reclone({
     required this.localCommits,
     this.snapshotSeq,
-  });
+  }) : code = SyncSnapshotCode.confirmationRequired,
+       reason = '';
 
-  /// 本机待推送的提交数，界面据此说明有多少本机改动会被重放。
+  const SyncSnapshotProblem.unavailable()
+    : code = SyncSnapshotCode.unavailable,
+      localCommits = 0,
+      snapshotSeq = null,
+      reason = '';
+
+  const SyncSnapshotProblem.invalid(this.reason)
+    : code = SyncSnapshotCode.invalid,
+      localCommits = 0,
+      snapshotSeq = null;
+
+  final SyncSnapshotCode code;
+
+  /// 本机待推送的提交数，确认框据此说明有多少本机改动会被重放；其余情况为 0。
   final int localCommits;
 
   /// 云端快照覆盖到的服务端序列位置；读不到时为空。
   final int? snapshotSeq;
 
-  String get message =>
-      '云端历史已经压缩，这台设备要从云端快照重新克隆。继续之后会用快照替换'
-      '本机的数据版本历史：撤销窗口、命名版本与更早的提交按快照重建，本机还没有'
-      '推送的 $localCommits 条改动会作为新提交重放到快照之上，其他登录这个账号的'
-      '设备看到的内容不变。取消则不同步，本机数据保持不变。';
-
-  @override
-  String toString() => message;
-}
-
-/// 云端历史已经压缩，但服务端没有登记可用的快照，无法自动重建本机。
-///
-/// 这种情况下客户端不猜、不静默清空：给用户明确说明，让仍在保留完整历史的设备
-/// 登记一份快照之后重试，或者清除云端数据重新开始（同步方案 3.7）。
-class SyncSnapshotUnavailable implements Exception {
-  const SyncSnapshotUnavailable();
-
-  String get message =>
-      '云端历史已经压缩，缺少可用快照，暂时不能自动重建这台设备。'
-      '可以先在一台还保留完整历史的设备上同步一次（它会登记快照），或者清除云端数据后重新开始。';
-
-  @override
-  String toString() => message;
-}
-
-/// 云端快照的字节、哈希或摘要对不上：这次没有替换本机数据。
-class SyncSnapshotInvalid implements Exception {
-  const SyncSnapshotInvalid(this.reason);
-
+  /// 校验失败的原因；其余情况为空串。
   final String reason;
 
-  String get message => '云端快照校验失败，这次没有重建本机数据：$reason';
+  String get message => switch (code) {
+    SyncSnapshotCode.confirmationRequired =>
+      '云端历史已经压缩，这台设备要从云端快照重新克隆。继续之后会用快照替换'
+          '本机的数据版本历史：撤销窗口、命名版本与更早的提交按快照重建，本机还没有'
+          '推送的 $localCommits 条改动会作为新提交重放到快照之上，其他登录这个账号的'
+          '设备看到的内容不变。取消则不同步，本机数据保持不变。',
+    SyncSnapshotCode.unavailable =>
+      '云端历史已经压缩，缺少可用快照，暂时不能自动重建这台设备。'
+          '可以先在一台还保留完整历史的设备上同步一次（它会登记快照），或者清除云端数据后重新开始。',
+    SyncSnapshotCode.invalid => '云端快照校验失败，这次没有重建本机数据：$reason',
+  };
 
   @override
   String toString() => message;
@@ -552,7 +562,7 @@ class SyncService {
   /// 遇到需要上传本机记录的情况会抛出 [BaselineConfirmationRequired]。
   ///
   /// [confirmReclone] 表示用户已经在界面上确认过“云端历史已经压缩、要用快照
-  /// 重建本机”；没有确认而本机已有数据时会抛出 [RecloneConfirmationRequired]，
+  /// 重建本机”；没有确认而本机已有数据时会抛出 [SyncSnapshotProblem]，
   /// 不静默替换本机投影（同步方案 3.7）。
   Future<SyncResult> syncNow({
     bool confirmBaseline = false,
@@ -685,7 +695,7 @@ class SyncService {
       }
       if (remoteHead.historyCompacted) {
         final covered = remoteHead.snapshot;
-        if (covered == null) throw const SyncSnapshotUnavailable();
+        if (covered == null) throw const SyncSnapshotProblem.unavailable();
         return await _repairFromCloudBySnapshot(covered, deviceId: deviceId);
       }
       final cloud = <String, Map<String, TypedRow>>{};
@@ -719,7 +729,7 @@ class SyncService {
         final covered = (await account.call(
           (client, token) => client.head(token, deviceId: deviceId),
         )).snapshot;
-        if (covered == null) throw const SyncSnapshotUnavailable();
+        if (covered == null) throw const SyncSnapshotProblem.unavailable();
         return await _repairFromCloudBySnapshot(covered, deviceId: deviceId);
       }
       // 云端碰过的行按云端值改写，没有被云端碰过的本机行保留下来补传。
@@ -990,7 +1000,7 @@ class SyncService {
     var after = 0;
     if (head.historyCompacted) {
       if (snapshot == null || snapshot.seq > through) {
-        throw const SyncSnapshotUnavailable();
+        throw const SyncSnapshotProblem.unavailable();
       }
       final base = (await _downloadSnapshotProjection(snapshot)).projection;
       for (final entry in base.entries) {
@@ -1282,10 +1292,11 @@ class SyncService {
       );
     } catch (error, stack) {
       _lastError = _describe(error);
+      // 确认与缺快照都是给人看的正常路径，只有校验失败要记诊断。
       if (error is! SyncIdentityChanged &&
           error is! BaselineConfirmationRequired &&
-          error is! RecloneConfirmationRequired &&
-          error is! SyncSnapshotUnavailable) {
+          !(error is SyncSnapshotProblem &&
+              error.code != SyncSnapshotCode.invalid)) {
         recordFailure(error, stack, kind: 'cloud_sync');
       }
       rethrow;
@@ -1472,7 +1483,7 @@ class SyncService {
   /// 保留下界是 1 时快照之前的提交仍然可以拉取，首次同步继续走全量回放：先拉取
   /// 云端已有的记录，再把本机独有、云端还没有的行作为基线上传（同步方案 3.6）。
   /// 已经在保留期内登记的快照因此不会让落后不多的设备白白改写本机历史。
-  /// 保留下界大于 1 却没有快照时无法自动重建，抛出 [SyncSnapshotUnavailable]。
+  /// 保留下界大于 1 却没有快照时无法自动重建，抛出 [SyncSnapshotProblem]。
   Future<
     ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
   >
@@ -1483,7 +1494,7 @@ class SyncService {
   }) async {
     if (remoteHead.historyCompacted) {
       final snapshot = remoteHead.snapshot;
-      if (snapshot == null) throw const SyncSnapshotUnavailable();
+      if (snapshot == null) throw const SyncSnapshotProblem.unavailable();
       return _recloneFromSnapshot(
         snapshot,
         deviceId: deviceId,
@@ -1569,7 +1580,7 @@ class SyncService {
   /// 拉取遇到 410：从服务端解析出快照，本机已有数据时先要用户确认再重建。
   ///
   /// 410 的 `extra` 里没有带上快照（旧版服务端、或者字段缺失）时再读一次 head，
-  /// 服务端登记过快照就照常重建；两边都没有快照时抛出 [SyncSnapshotUnavailable]，
+  /// 服务端登记过快照就照常重建；两边都没有快照时抛出 [SyncSnapshotProblem]，
   /// 不静默清空本机数据。
   Future<
     ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
@@ -1587,7 +1598,7 @@ class SyncService {
       );
       snapshot = remoteHead.snapshot;
     }
-    if (snapshot == null) throw const SyncSnapshotUnavailable();
+    if (snapshot == null) throw const SyncSnapshotProblem.unavailable();
     return _recloneFromSnapshot(
       snapshot,
       deviceId: deviceId,
@@ -1605,7 +1616,7 @@ class SyncService {
   /// 云端遮蔽的格子之后在快照之上重放，写成本机新提交再按普通推送发上去。
   ///
   /// 本机已有历史（`HEAD` 大于 0）而用户没有确认时抛出
-  /// [RecloneConfirmationRequired]，替换之前不写任何东西：重建会改写本机的数据
+  /// [SyncSnapshotProblem]，替换之前不写任何东西：重建会改写本机的数据
   /// 版本历史，不能静默执行。
   Future<
     ({int serverHead, int pulled, int pushed, int uploaded, int downloaded})
@@ -1619,7 +1630,7 @@ class SyncService {
     final localHead = await engine.headId(database.raw);
     final pending = await revisions.commitsAfter(pushedThrough);
     if (localHead > 0 && !confirmReclone) {
-      throw RecloneConfirmationRequired(
+      throw SyncSnapshotProblem.reclone(
         localCommits: pending.length,
         snapshotSeq: snapshot.seq,
       );
@@ -1707,7 +1718,7 @@ class SyncService {
   /// 引用到的附件补齐到本机。
   ///
   /// 快照是内容寻址的附件，服务端不解析内容，正确性由客户端保证（ADR-0043）；
-  /// 哈希或摘要对不上时抛出 [SyncSnapshotInvalid]，这次不替换本机数据。
+  /// 哈希或摘要对不上时抛出 [SyncSnapshotProblem]，这次不替换本机数据。
   Future<({Projection projection, int downloaded})> _downloadSnapshotProjection(
     ServerSnapshot snapshot,
   ) async {
@@ -1715,17 +1726,17 @@ class SyncService {
       (client, token) => client.blobDownload(token, snapshot.sha256),
     );
     if (AssetStore.hashBytes(bytes) != snapshot.sha256) {
-      throw const SyncSnapshotInvalid('快照附件的哈希与登记的不一致');
+      throw const SyncSnapshotProblem.invalid('快照附件的哈希与登记的不一致');
     }
     final Projection projection;
     try {
       projection = decodeSnapshotBytes(bytes);
     } catch (error) {
-      throw SyncSnapshotInvalid('快照解不开：$error');
+      throw SyncSnapshotProblem.invalid('快照解不开：$error');
     }
     if (snapshot.digest.isNotEmpty &&
         revisionStateDigest(projection) != snapshot.digest) {
-      throw const SyncSnapshotInvalid('快照的整库摘要与登记的不一致');
+      throw const SyncSnapshotProblem.invalid('快照的整库摘要与登记的不一致');
     }
     final downloaded = await _downloadAssets(
       AssetStore.hashesInProjection(projection),
@@ -2574,9 +2585,7 @@ class SyncService {
     SyncSchemaMismatch() => error.toString(),
     SyncIdentityChanged() => error.toString(),
     BaselineConfirmationRequired(:final message) => message,
-    RecloneConfirmationRequired(:final message) => message,
-    SyncSnapshotUnavailable(:final message) => message,
-    SyncSnapshotInvalid(:final message) => message,
+    SyncSnapshotProblem(:final message) => message,
     SyncHistoryCompacted(:final userMessage) => userMessage,
     _ => '同步没有完成',
   };

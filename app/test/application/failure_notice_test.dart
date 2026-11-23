@@ -62,7 +62,7 @@ void main() {
 
   test('同步的快照重建与历史压缩说明直接给用户看，不退化成通用失败', () {
     final reclone = failureNotice(
-      const RecloneConfirmationRequired(localCommits: 3, snapshotSeq: 40),
+      const SyncSnapshotProblem.reclone(localCommits: 3, snapshotSeq: 40),
       action: '同步',
       kept: '本机数据没有改动',
     );
@@ -71,7 +71,7 @@ void main() {
     expect(reclone, isNot(contains('同步没有完成')));
 
     final unavailable = failureNotice(
-      const SyncSnapshotUnavailable(),
+      const SyncSnapshotProblem.unavailable(),
       action: '同步',
       kept: '本机数据没有改动',
     );
@@ -93,7 +93,7 @@ void main() {
     expect(compacted, contains('要从云端快照重新克隆'));
 
     final invalid = failureNotice(
-      const SyncSnapshotInvalid('摘要对不上'),
+      const SyncSnapshotProblem.invalid('摘要对不上'),
       action: '同步',
       kept: '本机数据没有改动',
     );

@@ -467,8 +467,9 @@ class _AccountPageState extends State<AccountPage> {
     if (!mounted) return;
     setState(() => _busy = true);
     try {
-      // 云端历史被压缩时同步会抛出 RecloneConfirmationRequired：先说明再确认，
-      // 确认之后带 confirmReclone 再跑一轮，本机数据不在未确认时被替换（3.7）。
+      // 云端历史被压缩时同步会抛出 SyncSnapshotProblem（code 为
+      // confirmationRequired）：先说明再确认，确认之后带 confirmReclone 再跑一轮，
+      // 本机数据不在未确认时被替换（3.7）。
       var confirmReclone = false;
       while (true) {
         try {
@@ -491,11 +492,12 @@ class _AccountPageState extends State<AccountPage> {
           );
           unawaited(_load());
           return;
-        } on RecloneConfirmationRequired catch (required) {
+        } on SyncSnapshotProblem catch (problem) {
+          if (problem.code != SyncSnapshotCode.confirmationRequired) rethrow;
           if (!mounted) return;
           final confirmed = await confirmSnapshotRebuild(
             context,
-            localCommits: required.localCommits,
+            localCommits: problem.localCommits,
           );
           if (!confirmed) {
             if (!mounted) return;
