@@ -17,6 +17,7 @@ import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import 'account_dialogs.dart';
 import 'cloud_sync_prompts.dart';
+import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
@@ -1181,7 +1182,7 @@ class _AccountPageState extends State<AccountPage> {
                   ),
                 ),
                 if (sync!.differentTables.isNotEmpty)
-                  Text('差异表 ${sync.differentTables.join('、')}'),
+                  Text('差异表 ${sync.differentTables.map(tableLabel).join('、')}'),
                 SizedBox(height: theme.space.xs),
                 Text(
                   '上次同步比较整库摘要时发现两边内容不同。修复只有一个入口：'

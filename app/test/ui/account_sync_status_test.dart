@@ -346,6 +346,7 @@ void main() {
 
     expect(find.text('待修复'), findsOneWidget);
     expect(find.text('本机与云端不一致'), findsOneWidget);
+    expect(find.text('差异表 记忆'), findsOneWidget, reason: '差异表按中文名显示');
     expect(find.textContaining('上次同步比较整库摘要时发现两边内容不同'), findsOneWidget);
     expect(find.textContaining('以本机为准重建云端，会清空这个账号在服务端的提交序列'), findsOneWidget);
     expect(rebuildButton(), findsOneWidget);

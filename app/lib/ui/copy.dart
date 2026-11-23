@@ -38,6 +38,32 @@ const planTabGoals = '目标';
 /// 事项的实体名。页签写 [planTabItems]，板块标题与提交明细写“学习事项”。
 const planItemName = '学习事项';
 
+/// 数据版本与同步状态里的表名：提交明细、恢复预检与账号页的差异表共用这一份。
+///
+/// 键是库里的表名，值是界面上的叫法；没有登记的表按表名原样显示，新增表时要
+/// 在这里补一行，`test/ui/table_labels_test.dart` 会核对参与采集的表都有中文名。
+String tableLabel(String table) => switch (table) {
+  'app_meta' => '设置',
+  'learning_goal' => '目标',
+  'asset_object' => '附件对象',
+  'asset_chunk' => '附件内容',
+  'attachment' => '附件',
+  'material' => '材料',
+  'material_page' => '材料页',
+  'conversation' => '讨论',
+  'message' => '消息',
+  'study_plan' => '学习计划',
+  'plan_item' => planItemName,
+  'timetable_entry' => '课表',
+  'schedule_block' => '预约',
+  'study_session' => '学习场次',
+  'attempt' => '作答',
+  'assessment' => '学习判断',
+  'memory' => '记忆',
+  'memory_usage' => '记忆使用',
+  _ => table,
+};
+
 /// 空态标题的句式：写“还没有 X”，不写“暂无 X”，说明里再给下一步。
 ///
 /// 记录页的学习记录、事项页的两处、安排页的 [aiChanges] 与本周预约、记忆页

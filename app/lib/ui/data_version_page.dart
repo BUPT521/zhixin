@@ -501,7 +501,7 @@ class _DataVersionPageState extends State<DataVersionPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${_tableLabel(change.table)} · ${_opLabel(change.op)}',
+            '${tableLabel(change.table)} · ${_opLabel(change.op)}',
             style: theme.text.labelLarge,
           ),
           for (final key in keys) _changeLine(theme, change, key),
@@ -590,7 +590,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     return Padding(
       padding: EdgeInsets.only(bottom: theme.space.tight),
       child: Text(
-        '${_tableLabel(entry.table)} · ${_opLabel(entry.op)} · ${entry.rowKey}'
+        '${tableLabel(entry.table)} · ${_opLabel(entry.op)} · ${entry.rowKey}'
         '${columns.isEmpty ? '' : '（${columns.join('、')}）'}',
         style: theme.text.bodySmall,
       ),
@@ -1628,7 +1628,7 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   /// 冲突涉及的内容名：不认识的表不显示英文表名，退成“内容”。
   String _conflictTableLabel(String table) {
-    final label = _tableLabel(table);
+    final label = tableLabel(table);
     return label == table ? '内容' : label;
   }
 
@@ -1740,26 +1740,6 @@ class _DataVersionPageState extends State<DataVersionPage>
     'ai' => buddyName,
     'system' => '系统',
     _ => '你',
-  };
-
-  String _tableLabel(String table) => switch (table) {
-    'app_meta' => '设置',
-    'learning_goal' => '目标',
-    'asset_object' => '附件对象',
-    'asset_chunk' => '附件内容',
-    'material' => '材料',
-    'material_page' => '材料页',
-    'conversation' => '讨论',
-    'message' => '消息',
-    'study_plan' => '学习计划',
-    'plan_item' => planItemName,
-    'timetable_entry' => '课表',
-    'schedule_block' => '预约',
-    'study_session' => '学习场次',
-    'attempt' => '作答',
-    'assessment' => '学习判断',
-    'memory' => '记忆',
-    _ => table,
   };
 
   String _opLabel(ChangeOp op) => op.label;
@@ -1937,7 +1917,6 @@ class _DataVersionPageState extends State<DataVersionPage>
         'restore': '恢复',
         'import': '导入',
         'maintenance': '维护',
-        'remote': '远端',
       },
       'revision_change.op' => const {
         'insert': '新增',
@@ -1959,6 +1938,7 @@ class _DataVersionPageState extends State<DataVersionPage>
         'deleted_locally': '本机已删除',
         'insert_collision': '新增撞上同一编号',
         'deleted_remotely_modified': '云端删除、本机改过',
+        'unique_key_taken': '唯一键已被占用',
       },
       'revision_ref.sync_state' => const {'clean': '已同步', 'dirty': '待同步'},
       _ => null,
