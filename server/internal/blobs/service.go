@@ -61,7 +61,7 @@ func (s *Service) Put(ctx context.Context, userID, sha string, size int64, data 
 	if err := s.store.Save(ctx, userID, sha, size, data); err != nil {
 		if releaseErr := s.store.Release(ctx, userID, sha, size); releaseErr != nil {
 			// 回滚也失败时把两个错误一起上报：调用方看到 500，日志里能看出
-			// 配额可能多算了一点，由回填命令或重试收敛。
+			// 配额可能多算了一点，由下一次上传或清理收敛。
 			return errors.Join(err, fmt.Errorf("blobs: 回滚附件配额失败: %w", releaseErr))
 		}
 		return err

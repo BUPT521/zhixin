@@ -106,7 +106,7 @@ func (s *S3) RemovePrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
-// List 按前缀列出对象；没有对象时返回空切片，回填附件索引靠它读出现有键。
+// List 按前缀列出对象；没有对象时返回空切片，备份对账靠它读出现有键。
 // 写入时间取自 ListObjectsV2 的 LastModified，备份对账据此判断宽限期。
 func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
 	if prefix == "" {

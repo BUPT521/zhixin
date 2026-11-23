@@ -62,7 +62,7 @@ type Store interface {
 	// RemovePrefix 删除以 prefix 开头的全部对象，删除账号时用。
 	RemovePrefix(ctx context.Context, prefix string) error
 	// List 返回以 prefix 开头的全部对象；没有对象时返回空切片而不是错误。
-	// 回填附件索引需要从存储里读出键与字节数，所以三种实现都要能列目录。
+	// 备份对账要按前缀列出对象，所以三种实现都要能列目录。
 	List(ctx context.Context, prefix string) ([]Object, error)
 	// Ping 报告存储是否可用，供 /readyz 使用。
 	Ping(ctx context.Context) error
