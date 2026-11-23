@@ -15701,8 +15701,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   Selectable<SearchPlanItemsResult> searchPlanItems(
     String goalId,
     String status,
-    String? dayStart,
-    String? dayEnd,
+    String dayStart,
+    String dayEnd,
   ) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE(?1 = \'\' OR p.goal_id = ?1)AND(?2 = \'\' OR p.status = ?2)AND(?3 = \'\' OR(p.due_at IS NOT NULL AND p.due_at >= ?3 AND p.due_at < ?4))ORDER BY p.due_at IS NULL, p.due_at DESC, p.id DESC',
