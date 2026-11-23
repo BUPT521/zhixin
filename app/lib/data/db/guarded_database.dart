@@ -30,6 +30,15 @@ class GuardedDatabase implements RawDatabase {
   /// 取当前连接；恢复替换期间由调用方切到新连接。
   final RawDatabase Function() resolve;
 
+  /// 当前连接的 drift 主库；测试里的原始执行器、只读副本与换库期间为空。
+  ///
+  /// 需要生成查询的读取（例如记忆使用统计按设备现算）从这里取，依赖真实类型，
+  /// 而不是把基类返回的可空连接强制转换。
+  AppDatabase? get appDatabase {
+    final connection = _db.driftConnection;
+    return connection is AppDatabase ? connection : null;
+  }
+
   /// 数据版本引擎；为空的旧测试入口只执行原始 SQL。
   RevisionEngine? revisions;
 
@@ -137,21 +146,22 @@ class GuardedDatabase implements RawDatabase {
   /// 带业务动作标签的命令；一次动作修改多张表时仍只形成一个提交。
   ///
   /// [kind] 是提交类型，远端提交应用走 [RevisionKind.remote]，其余入口默认是
-  /// 普通写入。[requestId] 表示同一次用户动作的重试编号：仍在时效内的原提交
-  /// 不再执行写入；提供 [onDuplicate] 时由调用方把原提交还原成同样的结果，
-  /// 否则抛出 [RevisionDuplicateRequest]（ADR-0040）。
+  /// 普通写入。[uid] 是这个动作的提交身份：界面在动作开始时生成 UUIDv7 并一路
+  /// 传下来，重试沿用同一个值；已经有这条提交时不再执行写入，提供 [onDuplicate]
+  /// 时由调用方把原提交还原成同样的结果，否则抛出 [RevisionDuplicateRequest]
+  /// （ADR-0053 决定第 3 条）。
   Future<T> command<T>(
     Future<T> Function(RawExecutor txn) action, {
     required String label,
     String actor = 'user',
-    String? requestId,
+    String? uid,
     RevisionKind kind = RevisionKind.write,
     T Function(RevisionCommit commit)? onDuplicate,
   }) async => (await commandOutcome(
     action,
     label: label,
     actor: actor,
-    requestId: requestId,
+    uid: uid,
     kind: kind,
     onDuplicate: onDuplicate,
   )).value;
@@ -164,14 +174,14 @@ class GuardedDatabase implements RawDatabase {
     Future<T> Function(RawExecutor txn) action, {
     required String label,
     String actor = 'user',
-    String? requestId,
+    String? uid,
     RevisionKind kind = RevisionKind.write,
     T Function(RevisionCommit commit)? onDuplicate,
   }) => _run(
     action,
     label: label,
     actor: actor,
-    requestId: requestId,
+    uid: uid,
     kind: kind,
     onDuplicate: onDuplicate,
   );
@@ -180,7 +190,7 @@ class GuardedDatabase implements RawDatabase {
     Future<T> Function(RawExecutor txn) action, {
     String? label,
     String actor = 'user',
-    String? requestId,
+    String? uid,
     RevisionKind kind = RevisionKind.write,
     T Function(RevisionCommit commit)? onDuplicate,
   }) {
@@ -205,8 +215,8 @@ class GuardedDatabase implements RawDatabase {
           final changed = <String>{};
           return _db
               .transaction<({T value, RevisionCommit? commit})>((txn) async {
-                if (requestId != null) {
-                  final existing = await engine.retryCommit(txn, requestId);
+                if (uid != null && uid.isNotEmpty) {
+                  final existing = await engine.commitByUid(txn, uid);
                   if (existing != null) {
                     if (onDuplicate != null) {
                       return (value: onDuplicate(existing), commit: existing);
@@ -214,7 +224,7 @@ class GuardedDatabase implements RawDatabase {
                     throw RevisionDuplicateRequest(existing);
                   }
                 }
-                await engine.beginCommand(txn, requestId: requestId);
+                await engine.beginCommand(txn, uid: uid);
                 RevisionCommit? formed;
                 final value = await runZoned(() async {
                   final result = await action(txn);
@@ -222,7 +232,7 @@ class GuardedDatabase implements RawDatabase {
                     txn,
                     action: label ?? defaultAction,
                     actor: actor,
-                    requestId: requestId,
+                    uid: uid,
                     changedTables: changed,
                     kind: kind,
                   );

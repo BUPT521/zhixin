@@ -12,7 +12,7 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
-  test('新库是 v30，15 张业务表与版本元数据就位', () async {
+  test('新库是 v31，15 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
     addTearDown(db.close);
 
@@ -32,6 +32,12 @@ void main() {
       isEmpty,
       reason: '关键词检索并入索引之后业务库不再有 FTS5 表（ADR-0024）',
     );
+    expect(
+      versionedTableNames,
+      hasLength(15),
+      reason: '业务表 15 张：记忆使用统计 memory_usage 与 memory_use 也参与采集',
+    );
+    expect(schemaTableNames(), hasLength(28), reason: 'schema 31 共 28 张表');
     final classified = {
       ...versionedTableNames,
       ...revisionMetadataTables,
@@ -54,10 +60,33 @@ void main() {
     expect(names, isNot(contains('correction')));
     expect(names, isNot(contains('question')));
     expect(names, isNot(contains('operation_log')));
+    // 这一版删掉的三张表：个人资料并进 app_meta，单行状态与 HEAD 合进
+    // revision_state（ADR-0054 决定第 4 条）。
+    expect(names, isNot(contains('profile')));
+    expect(names, isNot(contains('revision_context')));
+    expect(names, isNot(contains('revision_sequence')));
+    expect(
+      names,
+      containsAll([
+        'revision_state',
+        'revision_ref_tombstone',
+        'memory_usage',
+        'memory_use',
+      ]),
+    );
 
-    final profile = await selectRows(db, 'profile');
-    expect(profile, hasLength(1));
-    expect(profile.first['day_cutoff_hour'], 4);
+    // 每日截止小时并进 app_meta，键名 day_cutoff_hour；新库还没有写过，读取时
+    // 由 SettingsRepository 回退到默认值。
+    expect(await selectRows(db, 'app_meta'), hasLength(1));
+    expect(
+      await selectRows(
+        db,
+        'app_meta',
+        where: 'key = ?',
+        whereArgs: ['day_cutoff_hour'],
+      ),
+      isEmpty,
+    );
 
     final meta = await selectRows(
       db,
@@ -84,6 +113,8 @@ void main() {
         'status',
       ]),
     );
+    // 最后消息时间不再存列：会话列表按消息表现数。
+    expect(await columns('conversation'), isNot(contains('last_message_at')));
     expect(await columns('study_session'), contains('conversation_id'));
     expect(await columns('attempt'), contains('redo_of_attempt_id'));
     expect(await columns('attempt'), contains('solution'));
@@ -91,10 +122,9 @@ void main() {
       await columns('material_page'),
       containsAll(['material_id', 'page_no', 'content']),
     );
-    expect(
-      await columns('study_plan'),
-      containsAll(['material_id', 'current_page', 'status']),
-    );
+    // 计划当前页由 plan_item 算出，不再写在计划行里。
+    expect(await columns('study_plan'), containsAll(['material_id', 'status']));
+    expect(await columns('study_plan'), isNot(contains('current_page')));
     final scheduleColumns = await columns('schedule_block');
     expect(scheduleColumns, contains('locked'));
     expect(scheduleColumns, isNot(contains('authorized')));
@@ -112,18 +142,90 @@ void main() {
     );
     expect(await columns('assessment'), contains('kind'));
     expect(await columns('assessment'), isNot(contains('verified')));
-    // 数据版本的四列（方案 3.5、3.10、3.12）：摘要、哈希链、来源设备与作者时间。
+    // 完整性只认整库摘要一个原语：提交没有哈希链与现存的条数列，冲突条数与
+    // 变更条数读取时现数（ADR-0054 与审查 S1）。
     expect(
       await columns('revision_commit'),
       containsAll([
-        'parent_hash',
+        'uid',
         'state_digest',
-        'hash',
+        'server_seq',
         'origin_device',
         'authored_at',
       ]),
     );
+    expect(
+      await columns('revision_commit'),
+      isNot(
+        contains(
+          anyOf([
+            'hash',
+            'parent_hash',
+            'conflict_count',
+            'change_count',
+            'request_id',
+          ]),
+        ),
+      ),
+    );
+    expect(
+      await columns('revision_state'),
+      containsAll([
+        'active_commit',
+        'capturing',
+        'suppress',
+        'next_commit',
+        'head_commit_id',
+        'table_digests_json',
+      ]),
+    );
+    expect(
+      await columns('revision_ref'),
+      containsAll(['name', 'commit_uid', 'sync_state', 'note']),
+    );
+    expect(
+      await columns('revision_ref'),
+      isNot(contains(anyOf(['commit_id', 'head_name']))),
+    );
+    expect(
+      await columns('revision_ref_tombstone'),
+      containsAll(['name', 'deleted_at']),
+    );
     expect(await columns('revision_checkpoint'), contains('state_digest'));
+    expect(
+      await columns('revision_checkpoint'),
+      isNot(contains(anyOf(['asset_hashes_json', 'checksum']))),
+    );
+    expect(await columns('revision_cursor'), isNot(contains('scope')));
+    expect(
+      await columns('memory'),
+      containsAll(['kind', 'status', 'search_terms', 'reviewed_at']),
+    );
+    expect(
+      await columns('memory_usage'),
+      containsAll([
+        'id',
+        'memory_id',
+        'device_id',
+        'recall_count',
+        'search_count',
+        'last_recalled_at',
+        'last_searched_at',
+        'first_seen_at',
+        'updated_at',
+      ]),
+    );
+    expect(
+      await columns('memory_use'),
+      containsAll([
+        'id',
+        'memory_id',
+        'device_id',
+        'kind',
+        'used_at',
+        'acquired_at',
+      ]),
+    );
     final attemptColumns = await columns('attempt');
     expect(attemptColumns, contains('conversation_id'));
     expect(attemptColumns, isNot(contains('hint_used')));
@@ -134,10 +236,6 @@ void main() {
     expect(planColumns, isNot(contains('action')));
     expect(planColumns, isNot(contains('end_condition')));
     expect(await columns('memory'), isNot(contains('confidence')));
-    final profileColumns = await columns('profile');
-    expect(profileColumns, isNot(contains('nickname')));
-    expect(profileColumns, isNot(contains('daily_target_minutes')));
-    expect(profileColumns, isNot(contains('preferences_json')));
     expect(await columns('message'), isNot(contains('answer_version')));
     expect(await columns('assessment'), isNot(contains('source_json')));
     expect(await columns('memory'), isNot(contains('valid_from')));
@@ -353,7 +451,7 @@ void main() {
         'updated_at': stamp,
       });
       await insertRow(old, 'memory', {
-        'kind': 'difficulty',
+        'kind': 'episodic',
         'content': '旧的场次困难',
         'source_kind': 'session',
       });
@@ -385,7 +483,8 @@ void main() {
       whereArgs: ['schema_version'],
     );
     expect(meta.first['value'], '$zhixinSchemaVersion');
-    expect(await selectRows(rebuilt, 'profile'), hasLength(1));
+    // 个人资料表已删除，截止小时并进 app_meta，重建之后同样没有这一行。
+    expect(await selectRows(rebuilt, 'app_meta'), hasLength(1));
 
     // 旧库的数据不迁移：题目、作答、事项、时间块、记忆与旧步骤都随重建丢弃。
     for (final table in [

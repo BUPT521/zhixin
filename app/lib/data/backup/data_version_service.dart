@@ -138,6 +138,12 @@ class DataVersionService {
         openDb: reopen,
       );
       markPendingWorkInvalidated();
+      await connection().transaction((txn) async {
+        await txn.execute('DELETE FROM revision_ref_tombstone');
+        await txn.execute("UPDATE revision_ref SET sync_state = 'dirty'");
+        await RevisionCursors(txn)
+            .set(RevisionCursor.syncRefMerge, 0, blocking: false);
+      });
       await _alignSyncAfterRestore(before);
       cacheWarning = await _rebuildPackageAttachments('数据已恢复');
     });
@@ -162,7 +168,6 @@ class DataVersionService {
     final pushed = await cursors.read(RevisionCursor.syncPushed);
     // 这个库从来没有同步过：云端没有它的位置，恢复不涉及重新对齐。
     if (pushed == null) return;
-    final scope = pushed.scope;
     try {
       final head = await engine.headId(db);
       RevisionCommit? commit;
@@ -179,31 +184,19 @@ class DataVersionService {
         RevisionCursor.syncPushed,
         commit?.parentId ?? head,
         blocking: true,
-        scope: scope,
       );
       await cursors.set(
         RevisionCursor.syncRestoreAlign,
         commit?.id ?? (before == null ? -1 : 0),
         blocking: false,
-        scope: scope,
       );
     } catch (error, stack) {
       recordFailure(error, stack, kind: 'sync_restore_align');
       // 补记失败时同样先跳过旧位置：标成 -1，下一次同步按首次基线重新对齐。
       try {
         final head = await engine.headId(db);
-        await cursors.set(
-          RevisionCursor.syncPushed,
-          head,
-          blocking: true,
-          scope: scope,
-        );
-        await cursors.set(
-          RevisionCursor.syncRestoreAlign,
-          -1,
-          blocking: false,
-          scope: scope,
-        );
+        await cursors.set(RevisionCursor.syncPushed, head, blocking: true);
+        await cursors.set(RevisionCursor.syncRestoreAlign, -1, blocking: false);
       } catch (error, stack) {
         recordFailure(error, stack, kind: 'sync_restore_align_cursor');
       }

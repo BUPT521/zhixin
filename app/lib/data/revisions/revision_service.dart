@@ -26,19 +26,33 @@ class RevisionHistory {
     required this.head,
     required this.commits,
     required this.refs,
+    this.refCommitIds = const {},
   });
 
   final int head;
   final List<RevisionCommit> commits;
   final List<RevisionRef> refs;
 
+  /// 命名版本名与提交编号的对应；值为空的名字在本机已经没有指向的提交，只剩
+  /// 标签（ADR-0054 决定第 4 条）。
+  final Map<String, int?> refCommitIds;
+
+  /// 提交编号 → 指向它的命名版本；只剩标签的名字不在其中。
   Map<int, List<RevisionRef>> get refsByCommit {
     final result = <int, List<RevisionRef>>{};
     for (final ref in refs) {
-      result.putIfAbsent(ref.commitId, () => []).add(ref);
+      final commitId = refCommitIds[ref.name];
+      if (commitId == null) continue;
+      result.putIfAbsent(commitId, () => []).add(ref);
     }
     return result;
   }
+
+  /// 本机已经没有指向提交的命名版本。
+  List<RevisionRef> get danglingRefs => [
+    for (final ref in refs)
+      if (refCommitIds[ref.name] == null) ref,
+  ];
 }
 
 /// 应用一条远端提交的结果：本机新生成的提交编号（没有净变化时为空）与因
@@ -71,6 +85,7 @@ class RevisionService {
     required this.cache,
     AssetStore? assets,
     this.onDataChanged,
+    this.onNamedVersionsChanged,
     this.onCacheFailure,
     this.undoGuards = const [],
   }) : assets = assets ?? AssetStore();
@@ -89,6 +104,7 @@ class RevisionService {
   /// 版本恢复或单项撤销真正改了当前数据之后通知应用根推进代次：恢复前
   /// 发出的模型回答与判断不能再写回，三栏也要重读。
   final Future<void> Function()? onDataChanged;
+  final void Function()? onNamedVersionsChanged;
 
   /// 图片缓存重建失败只记诊断，不影响已经提交的数据版本；下次启动会重试。
   final void Function(Object error, StackTrace? stack)? onCacheFailure;
@@ -109,7 +125,13 @@ class RevisionService {
     final head = await engine.headId(db.raw);
     final commits = await engine.commits(db.raw, limit: limit);
     final refs = await engine.refs(db.raw);
-    return RevisionHistory(head: head, commits: commits, refs: refs);
+    final refCommitIds = await engine.refCommitIds(db.raw);
+    return RevisionHistory(
+      head: head,
+      commits: commits,
+      refs: refs,
+      refCommitIds: refCommitIds,
+    );
   }
 
   Future<RevisionDetails?> details(int commitId) async {
@@ -206,15 +228,15 @@ class RevisionService {
   /// 应用一条远端提交：本机因此生成一条同样的净变化提交，撤销与数据版本页
   /// 照常可用；提交身份沿用远端的 uid，服务端重复下发时不会在本机叠加第二次。
   ///
-  /// [originDevice] 与 [authoredAt] 是服务端带来的设备标识与作者创建时间，原样
-  /// 记进本机提交行；两者都是可选参数，调用方没有时按本机提交处理，`authored_at`
-  /// 取落库时间、`origin_device` 留空（方案 3.12）。同步服务在应用远端提交时
-  /// 把 `ServerCommit` 的两个字段传进来。
+  /// [originDevice]、[authoredAt] 与 [serverSeq] 是服务端带来的设备标识、作者
+  /// 创建时间与这条提交在服务端序列上的序号，原样记进本机提交行；三者都是可选
+  /// 参数，调用方没有时按本机提交处理、`server_seq` 留空（方案 3.12、
+  /// ADR-0054 决定第 2 条）。
   ///
   /// 事务自己开，而不是走 `db.command`，因为被覆盖的本机修改要与提交行一起
   /// 写进 `revision_conflict`（由 `finishCommand` 的 `conflicts` 参数写入），
-  /// 提交的 `conflict_count` 也随之更新；被远端取代的本机格子同样在这个事务里
-  /// 登记进 `sync_shadow`（由 `applyChanges` 写入，ADR-0040）。
+  /// 提交的冲突条数也随之可数；被远端取代的本机格子同样在这个事务里登记进
+  /// `sync_shadow`（由 `applyChanges` 写入，ADR-0040）。
   Future<RemoteApplyResult> applyRemoteCommit({
     required String uid,
     required String action,
@@ -222,6 +244,7 @@ class RevisionService {
     required List<RevisionChange> changes,
     String? originDevice,
     DateTime? authoredAt,
+    int? serverSeq,
   }) async {
     final existing = await engine.commitByUid(db.raw, uid);
     if (existing != null) {
@@ -251,6 +274,7 @@ class RevisionService {
           conflicts: applied.conflicts,
           originDevice: originDevice,
           authoredAt: authoredAt,
+          serverSeq: serverSeq,
         );
       });
       if (changed.isNotEmpty) {
@@ -393,6 +417,7 @@ class RevisionService {
         note: note,
       );
       db.notifyTables(_historyTables);
+      onNamedVersionsChanged?.call();
       return ref;
     });
   }
@@ -401,6 +426,7 @@ class RevisionService {
     return db.gate.exclusive(() async {
       await engine.deleteName(raw(), label);
       db.notifyTables(_historyTables);
+      onNamedVersionsChanged?.call();
     });
   }
 
@@ -474,8 +500,8 @@ class RevisionService {
     );
   }
 
-  /// 检查点按提交编号倒序；`payload` 是压缩后的投影，由版本引擎按 `encoding`
-  /// 解码，调用方不需要自己解压。
+  /// 检查点按提交编号倒序；`payload` 是 gzip 压缩的投影，由版本引擎解压，
+  /// 调用方不需要自己解压。
   Future<List<RevisionCheckpoint>> checkpoints() => engine.checkpoints(db.raw);
 
   Future<RevisionStorageUsage> storageUsage() async {
@@ -491,8 +517,7 @@ class RevisionService {
       'SELECT COUNT(*) AS count FROM revision_commit',
     );
     final names = await db.rawQuery(
-      'SELECT COUNT(*) AS count FROM revision_ref WHERE name != ?',
-      [RevisionRef.headName],
+      'SELECT COUNT(*) AS count FROM revision_ref',
     );
     int value(List<Map<String, Object?>> rows, String key) =>
         rows.isEmpty ? 0 : (rows.first[key] as int? ?? 0);
@@ -514,12 +539,16 @@ class RevisionService {
   /// 表示当前数据就是从提交历史来的。
   Future<String> currentStateDigest() => engine.currentStateDigest(db.raw);
 
-  /// 哈希链的锚点：最早保留提交记录的父哈希；空库返回哈希链初值（方案 3.10）。
-  Future<String> chainAnchor() => engine.chainAnchor(db.raw);
+  /// 当前数据的分表摘要，按当前业务表整库重算（ADR-0054 决定第 1 条）。
+  Future<Map<String, String>> currentTableDigests() =>
+      engine.currentTableDigests(db.raw);
 
-  /// 数据完整性检查：保留历史的哈希链与当前摘要（方案 3.10）。
+  /// `HEAD` 上各业务表的一致性摘要。
+  Future<Map<String, String>> headTableDigests() => engine.tableDigests(db.raw);
+
+  /// 数据完整性检查：从检查点重放到 `HEAD`，核对两次摘要（ADR-0054 与审查 S1）。
   ///
-  /// 只读，不改数据；“检查数据完整性”入口与导出前检查由后续任务接在这里。
+  /// 只读，不改数据；诊断入口与导出前检查接在这里。
   Future<RevisionIntegrityReport> verifyIntegrity() =>
       engine.verifyIntegrity(db.raw);
 

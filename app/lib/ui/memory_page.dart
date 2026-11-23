@@ -19,9 +19,10 @@ import 'zhixin_menu.dart';
 
 /// 记忆：搭子记得什么，可改、可删、可补一条。
 ///
-/// 有效条目按偏好、限制、困难、进展四类分组；过期的仍留在原来那一类里并标
-/// 「已过期」，可以延长有效期或删除。已删除与被取代的条目不在这里出现，追溯
-/// 走数据版本页。
+/// 有效条目按情景、语义、程序三类分组（ADR-0051 决定第 1 条）：情景是发生过的
+/// 一件事，语义是稳定的事实与限制，程序是该怎么做的做法；常驻的条目是语义或
+/// 程序、范围是全局、没有有效期，每轮必带。过期的仍留在原来那一组里并标
+/// 「已过期」，可以延长有效期或删除。已删除的条目不在这里出现，追溯走数据版本页。
 class MemoryPage extends StatefulWidget {
   const MemoryPage({super.key});
 
@@ -41,12 +42,11 @@ class _MemoryPageState extends State<MemoryPage> {
   /// 读取失败时就地说明；有内容时仍显示上一份结果。
   String? _notice;
 
-  /// 四个类型分组的顺序与 §3.6 一致。
+  /// 三个类型分组的顺序：情景、语义、程序（ADR-0051 与 02 第 3.6 节一致）。
   static const List<MemoryKind> _kinds = [
-    MemoryKind.preference,
-    MemoryKind.constraint,
-    MemoryKind.difficulty,
-    MemoryKind.progress,
+    MemoryKind.episodic,
+    MemoryKind.semantic,
+    MemoryKind.procedural,
   ];
 
   @override
@@ -138,7 +138,7 @@ class _MemoryPageState extends State<MemoryPage> {
             icon: FLucideIcons.brain,
             title: emptyMemory,
             description:
-                '搭子会在使用中逐步记住你的偏好与卡住的地方，'
+                '搭子会在使用中逐步记住你的说法、稳定的事实与限制，'
                 '例如“先给提示，再看完整解答”。',
             action: Wrap(
               spacing: theme.space.sm,

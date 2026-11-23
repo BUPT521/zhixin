@@ -14,7 +14,7 @@ void main() {
   Future<int> addMemory(TestRig rig, String content) async {
     await insertRow(rig.db, 'memory', {
       'id': 'memory-${++memorySeq}',
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': content,
       'source_kind': 'user',
       'status': 'active',
@@ -84,7 +84,7 @@ void main() {
           'memory_items': [
             {
               'id': 'old',
-              'kind': 'preference',
+              'kind': 'semantic',
               'content': '旧记忆',
               'source': 'user',
               'status': 'accepted',
@@ -92,7 +92,7 @@ void main() {
             },
             {
               'id': 'kept',
-              'kind': 'preference',
+              'kind': 'semantic',
               'content': '保留记忆',
               'source': 'user',
               'status': 'accepted',
@@ -144,7 +144,7 @@ void main() {
           'memory_items': [
             {
               'id': 'memory',
-              'kind': 'preference',
+              'kind': 'semantic',
               'content': '一条记忆',
               'source': 'user',
               'status': 'accepted',
@@ -190,7 +190,12 @@ void main() {
     final commits = await selectRows(rig.raw, 'revision_commit');
     expect(commits, hasLength(1));
     expect(commits.single['action'], '清理后保留');
-    expect(commits.single['change_count'], 0);
+    // 变更条数不存列，读取时现数：清理之后这条基线没有明细。
+    final baseline = await rig.engine.commitById(
+      rig.raw,
+      commits.single['id']! as int,
+    );
+    expect(baseline!.changeCount, 0);
   });
 }
 

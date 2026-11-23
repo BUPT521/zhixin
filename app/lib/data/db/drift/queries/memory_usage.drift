@@ -1,0 +1,56 @@
+-- 记忆使用统计：使用记录只增不改，计数由使用统计在冲刷时现算（ADR-0051 决定第 8 条）。
+
+import '../tables.dart';
+
+-- 某台设备最近一次冲刷之后的使用记录；冲刷时按它累加计数，重复冲刷不会重复计数。
+usesAfter(REQUIRED :deviceId AS TEXT):
+SELECT memory_id, kind, used_at FROM memory_use
+WHERE device_id = :deviceId AND acquired_at > :after;
+
+-- 某台设备总共用过哪些记忆，用于整理时判断“很久没用到”。
+usedMemoryIds(REQUIRED :deviceId AS TEXT):
+SELECT DISTINCT memory_id FROM memory_use WHERE device_id = :deviceId;
+
+-- 记忆编号加设备编号定位的一行统计；没有这一行时冲刷新建。
+usageOf(REQUIRED :memoryId AS TEXT, REQUIRED :deviceId AS TEXT):
+SELECT * FROM memory_usage
+WHERE memory_id = :memoryId AND device_id = :deviceId
+LIMIT 1;
+
+-- 按设备汇总的计数，整理页读这一份。
+usageForDevice(REQUIRED :deviceId AS TEXT):
+SELECT * FROM memory_usage WHERE device_id = :deviceId;
+
+insertMemoryUse:
+INSERT INTO memory_use (id, memory_id, device_id, kind, used_at, acquired_at)
+VALUES (:id, :memoryId, :deviceId, :kind, :usedAt, :acquiredAt);
+
+-- 按编号取一行使用记录：写入前用它判断同一时刻是否已经记过。
+memoryUseById:
+SELECT id FROM memory_use WHERE id = :id;
+
+insertMemoryUsage:
+INSERT INTO memory_usage (id, memory_id, device_id, recall_count, search_count, last_recalled_at, last_searched_at, first_seen_at, updated_at)
+VALUES (:id, :memoryId, :deviceId, :recallCount, :searchCount, :lastRecalledAt, :lastSearchedAt, :firstSeenAt, :updatedAt);
+
+updateMemoryUsage:
+UPDATE memory_usage SET
+  recall_count = :recallCount,
+  search_count = :searchCount,
+  last_recalled_at = :lastRecalledAt,
+  last_searched_at = :lastSearchedAt,
+  first_seen_at = :firstSeenAt,
+  updated_at = :updatedAt
+WHERE id = :id;
+
+-- 冲刷之后删掉已经数过的使用记录：只留冲刷之后记下的，记账因此不会越积越多。
+-- 不能用“早于本次冲刷时刻”判断：同一秒里记下的使用也要算进这一次，删早了
+-- 还没数过的行会一起删掉。计数已经进了 memory_usage，回头按 acquired_at >
+-- first_seen_at 现算也不会再数一遍。
+deleteCountedMemoryUses(REQUIRED :deviceId AS TEXT):
+DELETE FROM memory_use
+WHERE device_id = :deviceId
+  AND acquired_at <= (
+    SELECT first_seen_at FROM memory_usage
+    WHERE memory_id = memory_use.memory_id AND device_id = memory_use.device_id
+  );

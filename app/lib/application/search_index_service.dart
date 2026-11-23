@@ -505,7 +505,7 @@ class SearchIndexService implements MemoryRelevanceRanker {
       var written = 0;
       for (final memory in memories) {
         _requireCurrent(generation);
-        final chunks = semanticChunks(memory.content);
+        final chunks = _memoryTexts(memory);
         if (chunks.isEmpty) continue;
         final key = memorySourceKey(memory.id);
         final version = memorySourceVersion(memory);
@@ -515,17 +515,16 @@ class SearchIndexService implements MemoryRelevanceRanker {
             existing.chunks == chunks.length) {
           continue;
         }
-        final texts = [for (final chunk in chunks) chunk.text];
         await _useCurrentStore(
           generation,
           () => store.replaceSource(
             locator: memoryLocator(memory.id),
             sourceVersion: version,
-            chunks: texts,
+            chunks: chunks,
             createdAt: formatDateTime(now),
           ),
         );
-        written += texts.length;
+        written += chunks.length;
       }
       await _useCurrentStore(generation, () async {
         final removed = await store.pruneSources(keys.toSet());
@@ -567,6 +566,19 @@ class SearchIndexService implements MemoryRelevanceRanker {
     } on Object {
       return null;
     }
+  }
+
+  /// 一条记忆写进全文索引的切片：正文切成带重叠的块，检索线索单独一块。
+  ///
+  /// 线索是写入时顺带给出的“用户可能怎样问到它”的短语，补的是正文用词不
+  /// 重合的缺口，只进索引、不在界面显示（ADR-0051 决定第 7 条）。
+  static List<String> _memoryTexts(Memory memory) {
+    final chunks = [
+      for (final chunk in semanticChunks(memory.content)) chunk.text,
+    ];
+    final terms = memory.searchTerms.trim();
+    if (terms.isNotEmpty) chunks.add(terms);
+    return chunks;
   }
 
   /// 按当前数据补建索引；可以重复执行，已经是最新版本的来源会跳过。

@@ -283,8 +283,7 @@ class RevisionPackageService {
         'SELECT COUNT(*) AS count FROM revision_commit',
       );
       final names = await copy.rawQuery(
-        'SELECT COUNT(*) AS count FROM revision_ref WHERE name != ?',
-        [RevisionRef.headName],
+        'SELECT COUNT(*) AS count FROM revision_ref',
       );
       int countOf(List<Map<String, Object?>> rows) =>
           rows.isEmpty ? 0 : (rows.first['count'] as int? ?? 0);

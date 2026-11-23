@@ -14,6 +14,7 @@ import '../domain/models/study.dart';
 import 'context_request.dart';
 import 'evidence_service.dart';
 import 'memory_recall.dart';
+import 'memory_usage_service.dart';
 import 'service_runtime.dart';
 
 /// 一次回答最多带上的其他材料页与较早讨论条数；用户主动检索不受这个限制。
@@ -43,6 +44,7 @@ class ContextService {
     required this.runtime,
     this.evidence,
     this.personaSource,
+    this.usage,
   });
 
   final TaskRepository tasks;
@@ -55,6 +57,9 @@ class ContextService {
 
   /// 回答前的原文与记录检索；为空时不取检索结果，只用当前材料与记忆。
   final EvidenceService? evidence;
+
+  /// 记忆使用统计：进入相关层的记忆各记一次；为空时不记（ADR-0051 第 8 条）。
+  final MemoryUsageService? usage;
 
   /// 当前启用的人格；由应用根从插件运行时取，为空表示这轮不带人格段落。
   ///
@@ -100,18 +105,22 @@ class ContextService {
           )
         : const <AttemptWithQuestion>[];
     final scope = memoryScopeFor(goalId: goalId, materialId: materialId);
-    // 记忆先按有效性与范围筛选，再按这次请求的用途与问题相关性取用；相关性
-    // 由检索索引给出，索引不可用时按本机的二元组切分。
+    // 记忆先按有效性与范围筛选，再分成常驻与相关两层：常驻（语义或程序、
+    // 全局、长期有效）排在前面，其余按检索相关性。相关性由检索索引给出，
+    // 索引不可用时按本机的二元组切分（ADR-0051 决定第 5 条）。
     final purpose = switch (mode) {
       BuddyMode.plan => MemoryRecallPurpose.plan,
       BuddyMode.check => MemoryRecallPurpose.check,
       BuddyMode.explain || BuddyMode.hint => MemoryRecallPurpose.explain,
       BuddyMode.chat => MemoryRecallPurpose.chat,
     };
-    final remembered = await MemoryRecallService(
+    final recalled = await MemoryRecallService(
       memories,
       ranker: evidence?.index,
     ).recall(now: now, scope: scope, purpose: purpose, query: query);
+    // 进入提示词的记忆同时记一次使用：只记在本机，不形成提交；常驻的不降权，
+    // 所以只记相关层（ADR-0051 决定第 8 条）。
+    usage?.noteRecalled(recalled.related, at: now);
     // 同一道题以前的困难只从这道题的作答记录里取；不经过长期记忆，
     // 其他课程的卡点因此不会进入本次上下文。
     final earlier = question == null || !includeEarlier
@@ -237,7 +246,7 @@ class ContextService {
       openItems: openItems,
       todayBlocks: blocks,
       recentAttempts: recent,
-      memories: remembered,
+      memories: recalled.all,
       priorFeedback: earlier,
       question: question,
       attempt: attempt,

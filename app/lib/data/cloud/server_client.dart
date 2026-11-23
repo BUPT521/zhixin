@@ -235,10 +235,11 @@ class ServerChange {
 ///
 /// [stateDigest] 是可选的整库摘要：只有推送完成、本机没有待推送提交时，最后
 /// 一条提交才带它，服务端原样保存、不解析，拉取时原样带回。其他设备据此比较
-/// 本机摘要（同步方案 3.5）。
+/// 本机摘要（同步方案 3.5）。[tableDigests] 是同一份摘要按表拆开的映射，与
+/// [stateDigest] 一起带，各表值之和恒等于它（ADR-0054 决定第 1 条）。
 class ServerCommit {
   const ServerCommit({
-    required this.requestId,
+    required this.uid,
     required this.deviceId,
     required this.schemaVersion,
     required this.actor,
@@ -248,11 +249,12 @@ class ServerCommit {
     this.createdAt,
     this.receivedAt,
     this.stateDigest,
+    this.tableDigests,
   });
 
   factory ServerCommit.fromJson(Map<String, Object?> json) => ServerCommit(
     seq: (json['seq'] as num?)?.toInt(),
-    requestId: json['request_id'] as String? ?? '',
+    uid: json['uid'] as String? ?? '',
     deviceId: json['device_id'] as String? ?? '',
     schemaVersion: (json['schema_version'] as num?)?.toInt() ?? 0,
     actor: json['actor'] as String? ?? 'user',
@@ -260,6 +262,7 @@ class ServerCommit {
     createdAt: json['created_at'] as String?,
     receivedAt: json['received_at'] as String?,
     stateDigest: json['state_digest'] as String?,
+    tableDigests: _digestMapOf(json['table_digests']),
     changes: [
       for (final item in (json['changes'] as List? ?? const []))
         if (item is Map) ServerChange.fromJson(item.cast<String, Object?>()),
@@ -267,7 +270,9 @@ class ServerCommit {
   );
 
   final int? seq;
-  final String requestId;
+
+  /// 提交身份，由客户端在用户动作发生时生成（ADR-0053）。
+  final String uid;
   final String deviceId;
   final int schemaVersion;
   final String actor;
@@ -275,18 +280,35 @@ class ServerCommit {
   final String? createdAt;
   final String? receivedAt;
   final String? stateDigest;
+
+  /// 分表摘要；没有带的提交为空。
+  final Map<String, String>? tableDigests;
   final List<ServerChange> changes;
 
   Map<String, Object?> toJson() => {
-    'request_id': requestId,
+    'uid': uid,
     'device_id': deviceId,
     'schema_version': schemaVersion,
     'actor': actor,
     'action': action,
     'created_at': createdAt,
     if (stateDigest != null) 'state_digest': stateDigest,
+    if (tableDigests != null) 'table_digests': tableDigests,
     'changes': [for (final change in changes) change.toJson()],
   };
+}
+
+/// 分表摘要映射；键表名、值 64 位十六进制，缺字段或形状不对时为空。
+Map<String, String>? _digestMapOf(Object? raw) {
+  if (raw is! Map) return null;
+  final result = <String, String>{};
+  for (final entry in raw.entries) {
+    final value = entry.value;
+    if (entry.key is String && value is String) {
+      result[entry.key as String] = value;
+    }
+  }
+  return result;
 }
 
 /// 账号当前快照的指针：覆盖到的服务端位置、附件哈希与整库摘要。
@@ -405,6 +427,41 @@ class ServerCommitPage {
   final ServerSnapshot? snapshot;
 }
 
+/// 一次推送的结果：推送之后的服务端位置，与请求逐条对应的服务端序号。
+class ServerPushResult {
+  const ServerPushResult({required this.head, this.seqs = const []});
+
+  final int head;
+  final List<int> seqs;
+}
+
+/// 账号级命名版本的一行；[deletedAt] 非空表示这个名字已被删除（墓碑）。
+class SyncRefRow {
+  const SyncRefRow({
+    required this.name,
+    required this.commitUid,
+    this.note = '',
+    this.updatedAt,
+    this.deletedAt,
+  });
+
+  factory SyncRefRow.fromJson(Map<String, Object?> json) => SyncRefRow(
+    name: json['name'] as String? ?? '',
+    commitUid: json['commit_uid'] as String? ?? '',
+    note: json['note'] as String? ?? '',
+    updatedAt: _parseTime(json['updated_at']),
+    deletedAt: _parseTime(json['deleted_at']),
+  );
+
+  final String name;
+  final String commitUid;
+  final String note;
+  final DateTime? updatedAt;
+  final DateTime? deletedAt;
+
+  bool get isDeleted => deletedAt != null;
+}
+
 /// 服务端的就绪状态与它接受的客户端 schema 版本。
 class ServerReady {
   const ServerReady({required this.ready, required this.schemaVersion});
@@ -450,22 +507,23 @@ class ServerHead {
 /// 账号设备名册里的一台设备：设备标识、用户设置的别名、能力声明与最近出现时间。
 ///
 /// 名册按最近出现时间倒序返回，最多 50 条；别名由用户设置，空串表示还没有别名，
-/// 界面此时退回显示设备标识的前 8 位（ADR-0048）。
+/// 界面此时退回显示设备标识的前 8 位（ADR-0048）。能力声明现在只有快照一种，
+/// 服务端存成布尔列；[syncedSeq] 是这台设备已经应用到的服务端序号，常规压缩
+/// 不越过活跃窗口内设备的最小值（ADR-0054 决定第 3 条）。
 class ServerDevice {
   const ServerDevice({
     required this.deviceId,
     this.alias = '',
-    this.capabilities = const [],
+    this.snapshotCapable = false,
+    this.syncedSeq = 0,
     this.lastSeen,
   });
 
   factory ServerDevice.fromJson(Map<String, Object?> json) => ServerDevice(
     deviceId: json['device_id'] as String? ?? '',
     alias: json['alias'] as String? ?? '',
-    capabilities: [
-      for (final item in (json['capabilities'] as List? ?? const []))
-        if (item is String) item,
-    ],
+    snapshotCapable: json['snapshot_capable'] == true,
+    syncedSeq: (json['synced_seq'] as num?)?.toInt() ?? 0,
     lastSeen: _parseTime(json['last_seen']),
   );
 
@@ -474,8 +532,11 @@ class ServerDevice {
   /// 用户设置的别名；去掉首尾空白之后为空表示没有别名。
   final String alias;
 
-  /// 能力声明，当前只有 `snapshot`。
-  final List<String> capabilities;
+  /// 这台设备是否声明了 snapshot 能力。
+  final bool snapshotCapable;
+
+  /// 这台设备已经应用到的服务端序号。
+  final int syncedSeq;
 
   /// 服务端最后一次收到这台设备请求的时间。
   final DateTime? lastSeen;
@@ -953,7 +1014,11 @@ class ServerClient {
 
   /// 基于 `baseSeq` 推送一批提交；服务端位置已经变化时抛出 `conflict`，
   /// `extra['head']` 给出最新位置。
-  Future<int> push(
+  ///
+  /// 响应里的 `seqs` 与请求的提交按条数与顺序一一对应，被当作重复跳过的提交
+  /// 回它原来的序号；客户端据此记下每条本机提交的云端序号，并判断整批是不是
+  /// 重放（ADR-0054 决定第 2 条）。
+  Future<ServerPushResult> push(
     String accessToken, {
     required int baseSeq,
     required List<ServerCommit> commits,
@@ -969,7 +1034,59 @@ class ServerClient {
       },
       headers: _syncHeaders(deviceId),
     );
-    return (json['head'] as num?)?.toInt() ?? baseSeq;
+    return ServerPushResult(
+      head: (json['head'] as num?)?.toInt() ?? baseSeq,
+      seqs: [
+        for (final item in (json['seqs'] as List? ?? const []))
+          if (item is num) item.toInt(),
+      ],
+    );
+  }
+
+  /// 账号的全部命名版本，包括墓碑（ADR-0054 决定第 4 条）。
+  Future<List<SyncRefRow>> refs(String accessToken) async {
+    final json = await _json('GET', '/v1/sync/refs', accessToken: accessToken);
+    return [
+      for (final item in (json['refs'] as List? ?? const []))
+        if (item is Map) SyncRefRow.fromJson(item.cast<String, Object?>()),
+    ];
+  }
+
+  /// 写入一个命名版本；比已存删除时间更早的写入不复活名字，此时返回已存的墓碑。
+  Future<SyncRefRow> putRef(
+    String accessToken, {
+    required String name,
+    required String commitUid,
+    String note = '',
+    DateTime? sourceUpdatedAt,
+  }) async {
+    final json = await _json(
+      'PUT',
+      '/v1/sync/refs',
+      accessToken: accessToken,
+      body: {
+        'name': name,
+        'commit_uid': commitUid,
+        'note': note,
+        if (sourceUpdatedAt != null)
+          'source_updated_at': sourceUpdatedAt.toUtc().toIso8601String(),
+      },
+    );
+    return SyncRefRow.fromJson(json);
+  }
+
+  /// 删除一个命名版本，服务端留下墓碑；之后别的设备推回这个名字也不会复活。
+  Future<SyncRefRow> deleteRef(
+    String accessToken, {
+    required String name,
+  }) async {
+    final json = await _json(
+      'PUT',
+      '/v1/sync/refs',
+      accessToken: accessToken,
+      body: {'name': name, 'delete': true},
+    );
+    return SyncRefRow.fromJson(json);
   }
 
   Future<List<ServerBackup>> backupList(String accessToken) async {

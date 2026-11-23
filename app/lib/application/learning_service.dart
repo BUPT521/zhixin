@@ -25,7 +25,7 @@ import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
 import 'attachment_service.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
@@ -604,7 +604,7 @@ class LearningService {
     required String attemptId,
     required int helpIndex,
     required String itemId,
-    String? requestId,
+    String? uid,
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
@@ -643,9 +643,7 @@ class LearningService {
           );
         },
         label: confirmAttemptMemoryAction,
-        requestId:
-            requestId ??
-            commandId('accept-help-memory', [attemptId, helpIndex, itemId]),
+        uid: uid ?? newUuidV7(),
       );
     } on RevisionDuplicateRequest {
       // 同一次确认已经写入；重试按库里的状态返回，不再重复写记忆。
@@ -737,7 +735,7 @@ class LearningService {
     bool delayed = false,
     String? feedback,
     String? checkable,
-    String? requestId,
+    String? uid,
   }) async {
     final requestEpoch = runtime.dataEpoch;
     return transactions.run(
@@ -767,7 +765,7 @@ class LearningService {
         return txn.result();
       },
       label: '提交作答',
-      requestId: requestId,
+      uid: uid,
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -783,7 +781,7 @@ class LearningService {
     required String questionId,
     required String attemptId,
     Set<String> broughtIdentities = const {},
-    String? requestId,
+    String? uid,
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
@@ -851,7 +849,7 @@ class LearningService {
           );
         },
         label: '保存模型判断',
-        requestId: requestId,
+        uid: uid,
       );
     } on RevisionDuplicateRequest {
       // 同一次判断已经写入；重试读回原结果，不再新增一条。
@@ -924,7 +922,7 @@ class LearningService {
     bool delayed = false,
     String? feedback,
     String? checkable,
-    String? requestId,
+    String? uid,
   }) async {
     final requestEpoch = runtime.dataEpoch;
     await transactions.run(
@@ -952,7 +950,7 @@ class LearningService {
         );
       },
       label: '保存作答草稿',
-      requestId: requestId,
+      uid: uid,
       onDuplicate: (_) {},
     );
   }
@@ -960,8 +958,9 @@ class LearningService {
   /// 离开学习页时结束本次场次，结果由本次已提交的尝试推出。
   ///
   /// 场次只作为后台记录：最近一次答对记为完成，答错但本次有答对记为部分完成，
-  /// 其余记为没做成；没有提交过时结果留空。困难留在这场学习与作答记录里，
-  /// 不另写独立记忆，再次作答时只带入这道题以前留下的困难。
+  /// 其余记为没做成；没有提交过时结果留空。困难留在这条记录与作答记录里，
+  /// 不另写记忆：场次摘要与作答都还在，模型可以在讨论里用新增写一条情景记忆
+  /// 并指向场次编号（ADR-0051 决定第 4 条）。
   Future<void> closeForQuestion(String conversationId) async {
     final recordAttempts = await attempts.attemptsFor(conversationId);
     final sessionId = recordAttempts.firstOrNull?.sessionId;
@@ -980,8 +979,9 @@ class LearningService {
 
   /// 结束一次场次：写结果与一句困难；事项状态由事项自己的完成操作维护。
   ///
-  /// 困难同时留在作答记录的 `feedback` 里，场次只保留摘要；只有用户明确要求
-  /// 记住，或同一困难在同一目标下反复出现时才写成独立记忆（00 第 4 章）。
+  /// 困难留在作答记录与场次摘要里，不再按“同一困难反复出现”自动写成记忆：
+  /// 那条规则是推断且不出确认卡片，用户删掉的困难也会被同样的摘要写回，
+  /// 所以随 ADR-0051 决定第 4 条删除。
   Future<WriteResult> end({
     required StudySession session,
     SessionOutcome? outcome,
@@ -996,50 +996,9 @@ class LearningService {
         summary: summary,
         transaction: txn,
       );
-      await _promoteRepeatedDifficulty(session, summary, transaction: txn);
       return txn.result();
     }, label: '结束学习');
   }
-
-  /// 同一目标下同一困难再次出现时，才写成独立记忆。
-  ///
-  /// 只比较同一目标的场次摘要，按去掉多余空白后的整句判断；同一范围内已经
-  /// 有一条相同内容的困难记忆时不再重复写。场次没有目标归属时不升级。
-  Future<void> _promoteRepeatedDifficulty(
-    StudySession session,
-    String? summary, {
-    WriteTransaction? transaction,
-  }) async {
-    final goalId = session.goalId;
-    if (goalId == null) return;
-    final text = _difficultyKey(summary ?? '');
-    if (text.isEmpty) return;
-    final earlier = await study.recentForGoal(goalId, limit: null);
-    final repeated = earlier.any(
-      (other) =>
-          other.id != session.id && _difficultyKey(other.summary ?? '') == text,
-    );
-    if (!repeated) return;
-    final scope = memoryGoalScope(goalId);
-    final existing = await memories.activeDifficulties(scope);
-    final known = existing.any(
-      (memory) => _difficultyKey(memory.content) == text,
-    );
-    if (known) return;
-    // 超过写入长度的困难不截成半句记忆；完整内容仍留在作答记录的困难里。
-    if (text.length > memoryContentLimit) return;
-    await memories.create(
-      kind: MemoryKind.difficulty,
-      content: text,
-      scope: scope,
-      sourceKind: MemorySourceKind.session,
-      sourceId: session.id,
-      transaction: transaction,
-    );
-  }
-
-  String _difficultyKey(String text) =>
-      text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
   Future<StudySession> _ensureSession({
     required String conversationId,

@@ -132,14 +132,15 @@ void main() {
     expect(await selectRows(rig.db, 'learning_goal'), isEmpty);
   });
 
-  test('同一请求编号重复提交返回原提交', () async {
+  test('同一个提交身份（uid）重复提交返回原提交，不再执行写入', () async {
     var calls = 0;
+    const uid = '01a2b3c4-d5e6-7f80-9abc-def012345678';
     final first = await rig.db.command(
       (txn) async {
         calls++;
         await insertRow(txn, 'memory', {
           'id': 'memory-1',
-          'kind': 'preference',
+          'kind': 'semantic',
           'content': '重试一次',
           'source_kind': 'user',
           'status': 'active',
@@ -149,7 +150,7 @@ void main() {
         return 'first';
       },
       label: '写入记忆',
-      requestId: 'retry-1',
+      uid: uid,
     );
     final replay = await rig.db.command(
       (txn) async {
@@ -157,16 +158,36 @@ void main() {
         return 'second';
       },
       label: '写入记忆',
-      requestId: 'retry-1',
+      uid: uid,
       onDuplicate: (commit) => 'replay:${commit.id}',
     );
     expect(first, 'first');
     expect(replay, startsWith('replay:'));
     expect(calls, 1);
     expect(await selectRows(rig.raw, 'memory'), hasLength(1));
-    final commit = await rig.engine.commitByRequest(rig.raw, 'retry-1');
+    // 提交身份就是库里这一行的 uid；第二个参数完全相同的动作换一个 uid 就是
+    // 另一条提交，按 uid 去重不再有“同参数两分钟内算重试”的口径。
+    final commit = await rig.engine.commitByUid(rig.raw, uid);
     expect(commit, isNotNull);
-    expect(await rig.engine.headId(rig.raw), commit!.id);
+    expect(commit!.uid, uid);
+    expect(await rig.engine.headId(rig.raw), commit.id);
+
+    final again = await rig.db.command(
+      (txn) => insertRow(txn, 'memory', {
+        'id': 'memory-2',
+        'kind': 'semantic',
+        'content': '重试一次',
+        'source_kind': 'user',
+        'status': 'active',
+        'created_at': '2026-11-10T09:00:00',
+        'updated_at': '2026-11-10T09:00:00',
+      }),
+      label: '写入记忆',
+      uid: '01a2b3c4-d5e6-7f80-9abc-def012345679',
+    );
+    expect(again, isPositive);
+    expect(await selectRows(rig.raw, 'memory'), hasLength(2));
+    expect(await rig.engine.headId(rig.raw), greaterThan(commit.id));
   });
 
   test('命令里预留的编号就是落库的提交编号，没有净变化时不占编号', () async {
@@ -176,7 +197,7 @@ void main() {
       insideId = await txn.requireCommitId();
       await insertRow(txn.executor, 'memory', {
         'id': 'memory-1',
-        'kind': 'preference',
+        'kind': 'semantic',
         'content': '带回执',
         'source_kind': 'user',
         'status': 'active',
@@ -193,7 +214,7 @@ void main() {
     final before = await rig.engine.headId(rig.raw);
     final sequenceBefore = (await selectRows(
       rig.raw,
-      'revision_sequence',
+      'revision_state',
       columns: ['next_commit'],
     )).single['next_commit'];
     final empty = await transactions.run((txn) async {
@@ -206,7 +227,7 @@ void main() {
     expect(
       (await selectRows(
         rig.raw,
-        'revision_sequence',
+        'revision_state',
         columns: ['next_commit'],
       )).single['next_commit'],
       sequenceBefore,

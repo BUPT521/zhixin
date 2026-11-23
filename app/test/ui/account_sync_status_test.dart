@@ -141,10 +141,10 @@ void main() {
     int rounds = 150,
   }) async {
     for (var round = 0; round < rounds; round++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 100));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
       if (finder.evaluate().isNotEmpty) return;
     }
     fail('等待界面出现超时：$finder');
@@ -171,7 +171,7 @@ void main() {
       () => scope!.testing.db.command((txn) async {
         await insertRow(txn, 'memory', {
           'id': id,
-          'kind': 'preference',
+          'kind': 'semantic',
           'content': content,
           'scope': null,
           'source_kind': 'user',
@@ -211,7 +211,7 @@ void main() {
         (db) => db.customStatement(
           'INSERT INTO memory (id, kind, content, scope, source_kind, '
           'source_id, valid_until, status, created_at, updated_at) '
-          "VALUES (?, 'preference', ?, NULL, 'user', NULL, NULL, 'active', "
+          "VALUES (?, 'semantic', ?, NULL, 'user', NULL, NULL, 'active', "
           "'2026-11-17 10:00:00', '2026-11-17 10:00:00')",
           [id, content],
         ),
@@ -477,28 +477,36 @@ void main() {
     await seedCloudAheadMismatch(tester);
 
     // 把这一轮同步停在拉取上：页面读到 syncing 为真，标签应当是“同步中”。
-    final gate = Completer<void>();
-    server.onPull = () => gate.future;
+    late Completer<void> gate;
     late Future<SyncResult> running;
     await tester.runAsync(() async {
+      gate = Completer<void>.sync();
+      server.onPull = () => gate.future;
       running = scope!.accountServices.sync.syncNow();
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
 
-    await openAccountPage(tester);
-    await waitFor(tester, find.text('同步中'));
-    expect(find.text('待修复'), findsNothing);
-    expect(cloudRepairButton(), findsOneWidget);
-    expect(localRepairButton(), findsOneWidget);
-    expect(tester.widget<forui.FButton>(cloudRepairButton()).onPress, isNull);
-    expect(tester.widget<forui.FButton>(localRepairButton()).onPress, isNull);
-    expect(tester.takeException(), isNull);
-
-    server.onPull = null;
-    await tester.runAsync(() async {
-      gate.complete();
-      await running;
-    });
+    try {
+      await openAccountPage(tester);
+      await waitFor(tester, find.text('同步中'));
+      expect(find.text('待修复'), findsNothing);
+      expect(cloudRepairButton(), findsOneWidget);
+      expect(localRepairButton(), findsOneWidget);
+      expect(tester.widget<forui.FButton>(cloudRepairButton()).onPress, isNull);
+      expect(tester.widget<forui.FButton>(localRepairButton()).onPress, isNull);
+      expect(tester.takeException(), isNull);
+    } finally {
+      server.onPull = null;
+      await tester.runAsync(() async {
+        final stopped = expectLater(
+          running,
+          throwsA(isA<SyncIdentityChanged>()),
+        );
+        // 面板断言完成后终止这一轮请求，避免继续执行收尾写入和界面更新。
+        gate.completeError(const SyncIdentityChanged());
+        await stopped;
+      });
+    }
   });
 
   testWidgets('摘要一致时账号页不显示不一致说明与两个修复入口', (tester) async {

@@ -111,6 +111,12 @@ func (rt routes) GetV1SyncDevices(w http.ResponseWriter, r *http.Request, params
 func (rt routes) PutV1SyncDevices(w http.ResponseWriter, r *http.Request) {
 	rt.sync.RenameDevice(w, r)
 }
+func (rt routes) GetV1SyncRefs(w http.ResponseWriter, r *http.Request) {
+	rt.sync.Refs(w, r)
+}
+func (rt routes) PutV1SyncRefs(w http.ResponseWriter, r *http.Request) {
+	rt.sync.PutRef(w, r)
+}
 
 func (rt routes) GetV1BlobsSha256(w http.ResponseWriter, r *http.Request, sha256 string) {
 	rt.blobs.Get(w, r, sha256)

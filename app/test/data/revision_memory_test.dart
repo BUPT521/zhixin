@@ -40,7 +40,7 @@ class _NoAi implements BuddyAi {
 }
 
 void main() {
-  test('确认推断记忆后消息状态与回执一起提交', () async {
+  test('确认推断记忆时写进库并形成提交，卡片可以撤销回待确认', () async {
     final rig = await openTestRigWithUndoRules(
       clock: () => DateTime(2026, 11, 10, 10),
     );
@@ -85,32 +85,40 @@ void main() {
         memoryItems: [
           MemoryDraft(
             id: 'memory-1',
-            kind: MemoryKind.preference,
+            kind: MemoryKind.semantic,
             content: '讲解概率时先用具体例子。',
             source: MemorySource.inferred,
           ),
         ],
       ),
     );
-    final result = await service.acceptMemoryItem(
+    final accepted = await service.acceptMemoryItem(
       conversationId: conversationId,
       messageId: message.id,
       itemId: 'memory-1',
     );
-    expect(result.applied, isTrue);
+    expect(accepted.applied, isTrue);
+
+    // 记忆按模型给出的语义标签写进库；用户手写的类别不参与推断。
+    final saved = (await memories.list()).single;
+    expect(saved.kind, MemoryKind.semantic);
+    expect(saved.content, '讲解概率时先用具体例子。');
+    expect(saved.sourceKind, MemorySourceKind.message);
+    expect(saved.sourceId, message.id);
     final stored = await conversations.messageById(message.id);
-    final items = stored!.payload!.memoryItems;
-    expect(items.single.status, MemoryCardStatus.accepted);
-    expect(await memories.list(), hasLength(1));
-    final commitId = items.single.commitId!;
-    expect(await rig.revisions.activeCommits([commitId]), {commitId});
-    final undone = await rig.revisions.undoCommit(commitId);
+    final item = stored!.payload!.memoryItems.single;
+    expect(item.status, MemoryCardStatus.accepted);
+    expect(item.commitId, isNotNull);
+
+    // 撤销这次确认：记忆回到不存在，卡片回到待确认。
+    final undone = await rig.revisions.undoCommit(item.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
     expect(await memories.list(), isEmpty);
-    final restored = await conversations.messageById(message.id);
+    final reverted = await conversations.messageById(message.id);
     expect(
-      restored!.payload!.memoryItems.single.status,
+      reverted!.payload!.memoryItems.single.status,
       MemoryCardStatus.pending,
     );
+    expect(await conversations.byId(conversationId), isNotNull);
   });
 }

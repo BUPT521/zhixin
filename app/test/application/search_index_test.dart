@@ -833,10 +833,9 @@ void main() {
     final cursor = await RevisionCursors(rig.db).read(IndexCursorNames.search);
     expect(cursor, isNotNull);
     expect(cursor!.position, 7);
-    // 索引落后只会退回全量重建，所以它登记成非阻塞位置，scope 为空，裁剪与
-    // 清理历史都不受它影响（方案 3.12）。
+    // 索引落后只会退回全量重建，所以它登记成非阻塞位置，裁剪与清理历史都
+    // 不受它影响（方案 3.12；位置不再带账号归属，ADR-0056）。
     expect(cursor.blocking, isFalse);
-    expect(cursor.scope, isNull);
     expect(await RevisionCursors(rig.db).minimumBlockingPosition(), isNull);
     // 状态文件只留模型键、维度与代次；提交编号不再写在那里。
     expect(() => rig.textIndex.meta('commit_id'), throwsArgumentError);
@@ -1632,17 +1631,30 @@ void main() {
     );
     addTearDown(service.close);
 
-    final root = await memories.create(
-      kind: MemoryKind.difficulty,
-      content: '解分式方程时忘记检验增根',
+    // 记忆行按列写；索引只读正文与线索，改正文与删行也直接写。
+    Future<String> insertMemory(String id, String kind, String content) async {
+      await insertRow(db, 'memory', {
+        'id': id,
+        'kind': kind,
+        'content': content,
+        'source_kind': 'user',
+        'status': 'active',
+        'created_at': '2026-11-12 10:00:00',
+        'updated_at': '2026-11-12 10:00:00',
+      });
+      return id;
+    }
+
+    final root = await insertMemory('memory-root', 'episodic', '解分式方程时忘记检验增根');
+    final example = await insertMemory(
+      'memory-example',
+      'semantic',
+      '讲解时先给一个例子',
     );
-    final example = await memories.create(
-      kind: MemoryKind.preference,
-      content: '讲解时先给一个例子',
-    );
-    final timeLimit = await memories.create(
-      kind: MemoryKind.constraint,
-      content: '这周晚上只有半小时',
+    final timeLimit = await insertMemory(
+      'memory-time',
+      'semantic',
+      '这周晚上只有半小时',
     );
     final candidates = [root, example, timeLimit];
 
@@ -1656,10 +1668,12 @@ void main() {
     expect(memoryIndex.entryCount, 3);
 
     // 改写之后旧正文不再命中，新正文进索引。
-    await memories.updateContent(
-      root,
-      content: '分式方程解完要把根代回原方程',
-      kind: MemoryKind.difficulty,
+    await updateRow(
+      db,
+      'memory',
+      {'content': '分式方程解完要把根代回原方程'},
+      where: 'id = ?',
+      whereArgs: [root],
     );
     final rewritten = await memories.list();
     expect(
@@ -1680,7 +1694,7 @@ void main() {
     );
 
     // 删除的记忆不再留在索引里。
-    await memories.delete(example);
+    await deleteRows(db, 'memory', where: 'id = ?', whereArgs: [example]);
     await service.rankMemories(
       query: '例子',
       memories: await memories.list(),
@@ -1711,7 +1725,7 @@ void main() {
     final memory = (
       id: 'memory-1',
       content: '解分式方程时忘记检验增根',
-      kind: MemoryKind.difficulty,
+      kind: MemoryKind.episodic,
     );
     final ordered = await service.rankMemories(
       query: '增根',

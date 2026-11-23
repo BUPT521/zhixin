@@ -27,6 +27,7 @@ import 'application/material_search.dart';
 import 'application/material_service.dart';
 import 'application/memory_proposal_service.dart';
 import 'application/memory_service.dart';
+import 'application/memory_usage_service.dart';
 import 'application/search_index_service.dart';
 import 'application/memory_scope_service.dart';
 import 'application/plan_service.dart';
@@ -98,12 +99,24 @@ class AppScope extends StatefulWidget {
     this.ai,
     this.clock,
     this.serverClientFactory,
+    this.spaces,
+    this.spaceId = AppSpaces.local,
+    this.changeSpace,
     required this.themeMode,
     required this.themeAccent,
   });
 
   final Widget child;
   final CrashLog? crashLog;
+  final AppSpaces? spaces;
+  final String spaceId;
+  final Future<void> Function(
+    String id, {
+    required bool adoptLocal,
+    required bool deleteCurrent,
+    String? label,
+  })?
+  changeSpace;
 
   /// 连服务端用的客户端；测试换成进程内的假服务端，为空时按地址直连。
   final ServerClient Function(String baseUrl)? serverClientFactory;
@@ -130,10 +143,55 @@ class AppScope extends StatefulWidget {
   State<AppScope> createState() => AppScopeState();
 }
 
-class AppScopeState extends State<AppScope> {
+class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   RawDatabase? _connection;
   late GuardedDatabase _db;
   late AppPaths paths;
+  AppPaths get devicePaths => widget.spaces?.device ?? paths;
+  String get spaceId => widget.spaceId;
+  AppSpaces? get spaces => widget.spaces;
+  bool get managesSpaces => widget.changeSpace != null;
+
+  Future<void> _changeSpace(
+    String id, {
+    bool adoptLocal = false,
+    bool deleteCurrent = false,
+    String? label,
+  }) async => widget.changeSpace?.call(
+    id,
+    adoptLocal: adoptLocal,
+    deleteCurrent: deleteCurrent,
+    label: label,
+  );
+
+  Future<void> clearAllData({required String password}) async {
+    await _sync.withSyncPaused(() async {
+      final autoSync = await _account.autoSync();
+      if (autoSync) await _account.setAutoSync(false);
+      try {
+        await _account.clearCloudData(password: password);
+      } on ServerProblem catch (error) {
+        if (autoSync && error.code == 'invalid_credentials') {
+          await _account.setAutoSync(true);
+        }
+        rethrow;
+      }
+      if (managesSpaces) {
+        await _changeSpace(spaceId, deleteCurrent: true);
+      } else {
+        await _dataVersions.resetAllData();
+        await _sync.clearState(forgetPosition: true);
+      }
+    });
+  }
+
+  Future<void> deleteLocalSpace(String id) async {
+    if (id == spaceId) {
+      await _changeSpace(id, deleteCurrent: true);
+    } else {
+      await spaces!.delete(id);
+    }
+  }
 
   /// 启动失败时留下的原因：失败页展示它，本机诊断文件与反馈都用同一份说明。
   /// 打开成功之后写进诊断文件并清空，下次启动不再重复记。
@@ -159,6 +217,9 @@ class AppScopeState extends State<AppScope> {
   late StudyPlanRepository _studyPlans;
 
   late LlmConfigStore _llmStore;
+  late final SecretStore _modelSettings = managesSpaces
+      ? SpaceModelSettings(paths)
+      : SecureSecretStore();
   AiChatService? _configuredAi;
 
   /// 账号与云同步：令牌在 Keystore，服务地址与同步游标在应用私有目录。
@@ -166,7 +227,7 @@ class AppScopeState extends State<AppScope> {
   ActiveReportService? _activeReportService;
   FeedbackService? _feedbackService;
   UpdateCheckService? _updateCheckService;
-  late final CloudPreferencesStore _cloudPreferences;
+  late CloudPreferencesStore _cloudPreferences;
   CloudBackupService? _cloudBackups;
   SyncService? _cloudSync;
 
@@ -281,7 +342,7 @@ class AppScopeState extends State<AppScope> {
         }
       }
       final embedding = await _embeddingSettings.summary();
-      final reportCrashes = await DiagnosticsStore(paths.filesDir)
+      final reportCrashes = await DiagnosticsStore(devicePaths.filesDir)
           .read(fallback: !kReleaseMode);
       CrashLog.reportEnabled = reportCrashes;
       final reportUsage = await _activeReportService!.enabled();
@@ -367,7 +428,7 @@ class AppScopeState extends State<AppScope> {
   late final EvidenceRepository _evidenceRepository = EvidenceRepository(_db);
 
   late final EmbeddingConfigStore _embeddingStore = EmbeddingConfigStore(
-    SecureSecretStore(),
+    _modelSettings,
   );
 
   /// 检索索引配置的唯一入口：页面保存一次，应用根启动时恢复一次。
@@ -530,6 +591,7 @@ class AppScopeState extends State<AppScope> {
     materials: _materials,
     runtime: _runtime,
     evidence: _evidence,
+    usage: _memoryUsage,
     personaSource: () async {
       final runtime = _pluginRuntime;
       if (runtime == null) return null;
@@ -640,6 +702,24 @@ class AppScopeState extends State<AppScope> {
     runtime: _runtime,
   );
 
+  /// 记忆使用统计：召回时只记在本机，应用进入后台且距上次冲刷不少于一天时
+  /// 冲刷成一条维护提交（ADR-0051 决定第 8 条）。
+  late final MemoryUsageService _memoryUsage = MemoryUsageService(
+    db: _db,
+    transactions: _transactions,
+    deviceIdSource: () async {
+      try {
+        return await _account.deviceId();
+      } catch (_) {
+        return null;
+      }
+    },
+    clock: clock,
+    storedFlushAt: _cloudPreferences.memoryUsageFlushedAt,
+    recordFlushAt: _cloudPreferences.setMemoryUsageFlushedAt,
+    onFlushed: () => _refreshSearchIndexNowAndWait(),
+  );
+
   late final SettingsService _settingsEdit = SettingsService(
     settings: _settings,
     transactions: _transactions,
@@ -743,6 +823,8 @@ class AppScopeState extends State<AppScope> {
   @override
   void initState() {
     super.initState();
+    // 进入后台时冲刷记忆使用统计；能走到这里说明应用根已经装配到监听阶段。
+    WidgetsBinding.instance.addObserver(this);
     ready = _initTracked();
     // 首屏数据就绪（或开库失败）之后放行第一帧；没压过第一帧时这次调用
     // 什么都不做，测试照常跑。
@@ -753,10 +835,26 @@ class AppScopeState extends State<AppScope> {
     );
   }
 
+  /// 应用进入后台（`paused` 或 `hidden`）时冲刷记忆使用统计；回到前台不触发。
+  ///
+  /// 首屏服务还没装配完时不碰它们：后台事件可能早于启动完成。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.paused &&
+        state != AppLifecycleState.hidden) {
+      return;
+    }
+    if (!_servicesInitialized || _closing != null) return;
+    _flushMemoryUsageOnPause();
+  }
+
+  /// 首屏服务已经装配完成；没有完成时后台事件也不去碰它们。
+  bool _servicesInitialized = false;
+
   Future<void> _init() async {
-    paths = await AppPaths.resolve();
+    paths = spaces?.pathsFor(spaceId) ?? await AppPaths.resolve();
     await paths.ensureDirectories();
-    crashLog = widget.crashLog ?? CrashLog(filesDir: paths.filesDir);
+    crashLog = widget.crashLog ?? CrashLog(filesDir: devicePaths.filesDir);
     crashLog.recordLaunch();
     // 上一次启动失败时可能连数据目录都没解析出来，那时写不了诊断；这次目录
     // 可用了，先把上次的失败补记下来，再清掉内存里的副本。
@@ -768,8 +866,11 @@ class AppScopeState extends State<AppScope> {
     }
     _db = GuardedDatabase(gate: _gate, resolve: () => _connection!);
     _db.onCommitted = _onCommitted;
-    _llmStore = LlmConfigStore(SecureSecretStore());
-    _cloudPreferences = CloudPreferencesStore(filesDir: paths.filesDir);
+    _llmStore = LlmConfigStore(_modelSettings);
+    _cloudPreferences = CloudPreferencesStore(
+      filesDir: devicePaths.filesDir,
+      spaceFilesDir: paths.filesDir,
+    );
     _accountService = AccountService(
       store: AccountStore(SecureSecretStore()),
       preferences: _cloudPreferences,
@@ -777,14 +878,44 @@ class AppScopeState extends State<AppScope> {
       clientFactory: widget.serverClientFactory,
       // 退出登录、删除账号、清除云端与重设密码之后，让同步服务把库里的推送
       // 位置改成不阻塞；位置与 scope 保留，重新登录同一账号时从原位置继续。
-      onSyncStateCleared: () =>
-          _cloudSync?.releaseSyncCursor() ?? Future<void>.value(),
+      onSyncStateCleared: managesSpaces
+          ? null
+          : () => _cloudSync?.releaseSyncCursor() ?? Future<void>.value(),
+      acceptsSession: managesSpaces
+          ? (session) =>
+                syncScopeFor(session.userId, session.serverOrigin) == spaceId
+          : null,
+      onSignedIn: managesSpaces
+          ? (session, profile) => _changeSpace(
+              syncScopeFor(session.userId, session.serverOrigin),
+              adoptLocal: spaceId == AppSpaces.local,
+              label: profile == null || profile.displayLabel.isEmpty
+                  ? null
+                  : '${profile.displayLabel} · ${Uri.parse(session.serverOrigin).authority}',
+            )
+          : null,
+      onSignedOut: managesSpaces
+          ? (deleteSpace) =>
+                _changeSpace(AppSpaces.local, deleteCurrent: deleteSpace)
+          : null,
+      onSessionExpired: managesSpaces
+          ? () {
+              unawaited(
+                _changeSpace(AppSpaces.local).catchError((
+                  Object error,
+                  StackTrace stack,
+                ) {
+                  crashLog.record(error, stack, kind: 'account_space_expired');
+                }),
+              );
+            }
+          : null,
     );
     // 先把服务实例来源读进内存：页面构建与预读会在假异步区里取会话，那里等不到
     // 文件 I/O，来源缓存让这些读取不再落盘。
     await _accountService!.serverOrigin();
     _activeReportService = ActiveReportService(
-      store: TelemetryStore(filesDir: paths.filesDir),
+      store: TelemetryStore(filesDir: devicePaths.filesDir),
       signedIn: () async => (await _account.snapshot()).session != null,
       serverBaseUrl: _account.serverBaseUrl,
       crashLog: crashLog,
@@ -834,6 +965,10 @@ class AppScopeState extends State<AppScope> {
       // 撤销的业务约束与可撤销表名单由应用层注册，数据层只做通用核对。
       undoGuards: defaultUndoGuards,
       onDataChanged: _invalidatePendingWork,
+      onNamedVersionsChanged: () {
+        final sync = _cloudSync;
+        if (sync != null) unawaited(sync.schedule());
+      },
       onCacheFailure: (error, stack) =>
           crashLog.record(error, stack, kind: 'rebuild_attachments_restore'),
     );
@@ -876,6 +1011,7 @@ class AppScopeState extends State<AppScope> {
     // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。
     unawaited(_sync.schedule());
     _scheduleActiveReport();
+    _servicesInitialized = true;
   }
 
   /// 首帧之后在空闲里尝试一次匿名活跃上报（ADR-0019）：不等待、不阻塞启动，
@@ -913,12 +1049,13 @@ class AppScopeState extends State<AppScope> {
   }
 
   Future<void> _maintainAttachments() async {
+    if (_closing != null) return;
     try {
       await AttachmentStore(filesDir: paths.filesDir).cleanupUnreferenced(_db);
     } catch (error, stack) {
       crashLog.record(error, stack, kind: 'cleanup_attachments');
     }
-    if (!mounted) return;
+    if (!mounted || _closing != null) return;
     try {
       await _gate.shared(() async {
         if (!await _attachmentCache.needsRebuild) return;
@@ -1002,24 +1139,66 @@ class AppScopeState extends State<AppScope> {
   ///
   /// 设置页的手动“更新索引”直接调用服务并捕获异常，看到的是就地说明。
   void _refreshSearchIndexNow() {
+    unawaited(_refreshSearchIndexNowAndWait());
+  }
+
+  /// 应用进入后台时冲刷记忆使用统计：距上次冲刷不少于一天才写（ADR-0051
+  /// 决定第 8 条）。失败只写诊断记录，与用户此刻的操作无关。
+  void _flushMemoryUsageOnPause() {
     unawaited(
-      _searchIndex.refresh().catchError((Object error, StackTrace stack) {
-        crashLog.record(error, stack, kind: 'semantic_index');
-        return const IndexRefreshResult(failure: IndexFailure.error);
+      _memoryUsage.flushIfDue().catchError((Object error, StackTrace stack) {
+        crashLog.record(error, stack, kind: 'memory_usage_flush');
+        return false;
       }),
     );
   }
 
-  @override
-  void dispose() {
+  /// 同 [_refreshSearchIndexNow]，但把这一次刷新等完：冲刷记忆使用统计之后
+  /// 要等索引写完再结束，不留下一个没人等的写入。
+  Future<void> _refreshSearchIndexNowAndWait() async {
+    final index = _searchIndexService;
+    if (index == null || !index.configured) return;
+    try {
+      await index.refresh();
+    } catch (error, stack) {
+      crashLog.record(error, stack, kind: 'semantic_index');
+    }
+  }
+
+  Future<void>? _closing;
+
+  Future<void> closeSpace() => _closing ??= _closeSpace();
+
+  Future<void> _closeSpace() async {
+    _operationEpoch++;
     _searchIndexRefreshTimer?.cancel();
-    _cloudSync?.dispose();
     _accountService?.dispose();
     _configuredAi?.dispose();
+    await _cloudSync?.close();
     final index = _searchIndexService;
-    if (index != null) unawaited(index.close());
+    if (index != null) await index.close();
     _searchIndexService = null;
-    if (_connection != null) _db.close();
+    if (_connection != null) {
+      await _gate.exclusive(_db.close);
+      _connection = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (managesSpaces) {
+      unawaited(closeSpace());
+    } else {
+      _searchIndexRefreshTimer?.cancel();
+      _cloudSync?.dispose();
+      _accountService?.dispose();
+      _configuredAi?.dispose();
+      final index = _searchIndexService;
+      if (index != null) unawaited(index.close());
+      _searchIndexService = null;
+      if (_connection != null) unawaited(_db.close());
+    }
     dataVersion.dispose();
     super.dispose();
   }

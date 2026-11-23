@@ -48,15 +48,35 @@ mixin RevisionMaintenanceMixin {
   /// 维护事务。
   int? _autoRetentionFrom;
 
+  /// 命名版本，按创建时间倒序；`HEAD` 不在其中（ADR-0054 决定第 4 条）。
   Future<List<RevisionRef>> refs(RawExecutor executor) async {
     final rows = await selectRows(
       executor,
       'revision_ref',
-      where: 'name != ?',
-      whereArgs: [RevisionRef.headName],
       orderBy: 'created_at DESC',
     );
     return rows.map(RevisionRef.fromRow).toList(growable: false);
+  }
+
+  /// 本机还没推送的命名版本墓碑，按删除时间先后。
+  Future<List<RevisionRefTombstone>> tombstones(RawExecutor executor) async {
+    final rows = await selectRows(
+      executor,
+      'revision_ref_tombstone',
+      orderBy: 'deleted_at',
+    );
+    return rows.map(RevisionRefTombstone.fromRow).toList(growable: false);
+  }
+
+  /// 命名版本名与提交编号的对应；本机已经没有这条提交时值为空（只剩标签）。
+  Future<Map<String, int?>> refCommitIds(RawExecutor executor) async {
+    final rows = await executor.rawQuery(
+      'SELECT r.name AS name, c.id AS commit_id FROM revision_ref r '
+      'LEFT JOIN revision_commit c ON c.uid = r.commit_uid',
+    );
+    return {
+      for (final row in rows) row['name']! as String: row['commit_id'] as int?,
+    };
   }
 
   /// 登记一条提交或一份检查点引用的附件哈希。
@@ -116,32 +136,49 @@ mixin RevisionMaintenanceMixin {
 
   /// 命名版本：只写名称与提交的指向，不立即固化检查点。
   ///
-  /// 命名之后、裁剪之前的重建仍从更早的检查点回放；只有裁剪跨过这个命名提交
-  /// 时才固化一份 `named` 检查点（见 [_pruneOnce]）。
+  /// 名字先做 NFC 规范化，长度按规范化之后的字符数计，每账号最多
+  /// [RevisionRef.maxRefs] 个名字，两端上限一致（ADR-0054 决定第 4 条）。指向
+  /// 按提交的 uid 存，查不到时就是只剩标签的名字。命名之后、裁剪之前的重建仍从
+  /// 更早的检查点回放；只有裁剪跨过这个命名提交时才固化一份 `named` 检查点
+  /// （见 [_pruneOnce]）。
   Future<RevisionRef> nameCommit(
     RawDatabase db,
     int commitId, {
     required String name,
     String? note,
   }) async {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty || trimmed == RevisionRef.headName) {
-      throw ArgumentError('版本名称不能为空，也不能叫 HEAD');
+    final trimmed = normalizeRefName(name);
+    if (trimmed.isEmpty) throw ArgumentError('版本名称不能为空');
+    if (trimmed.runes.length > RevisionRef.maxNameLength) {
+      throw ArgumentError('版本名称不能超过 ${RevisionRef.maxNameLength} 个字');
     }
     final commit = await self.commitById(db, commitId);
     if (commit == null) throw RevisionCorruption('提交 $commitId 不存在');
     return db.transaction((txn) async {
+      final existing = await selectRows(txn, 'revision_ref');
+      final sameName = existing.any((row) => row['name'] == trimmed);
+      if (!sameName && existing.length >= RevisionRef.maxRefs) {
+        throw ArgumentError('最多保留 ${RevisionRef.maxRefs} 个版本名称');
+      }
       final now = formatDateTime(self.clock());
+      await deleteRows(
+        txn,
+        'revision_ref_tombstone',
+        where: 'name = ?',
+        whereArgs: [trimmed],
+      );
       await insertRow(txn, 'revision_ref', {
         'name': trimmed,
-        'commit_id': commitId,
+        'commit_uid': commit.uid,
+        'sync_state': RevisionRefSyncState.dirty.value,
         'note': note?.trim(),
         'created_at': now,
         'updated_at': now,
       }, replace: true);
       return RevisionRef(
         name: trimmed,
-        commitId: commitId,
+        commitUid: commit.uid,
+        syncState: RevisionRefSyncState.dirty,
         note: note?.trim(),
         createdAt: self.clock(),
         updatedAt: self.clock(),
@@ -149,34 +186,41 @@ mixin RevisionMaintenanceMixin {
     });
   }
 
-  /// 删除命名版本：只去掉名称与它独占的 `named` 检查点。
+  /// 删除命名版本：去掉名称，只给它独占的 `named` 检查点；留下墓碑。
   ///
-  /// 检查点只在这个命名提交已经固化、且没有别的名字指向它时删除；删检查点时
-  /// 连同它的附件引用行一起删，否则引用表会留下没有主人的行。
+  /// 墓碑让别的设备也删掉这个名字，推送成功之后由同步层删行。检查点只在这个
+  /// 命名提交已经固化、且没有别的名字指向它时删除；删检查点时连同它的附件引用
+  /// 行一起删，否则引用表会留下没有主人的行。
   Future<void> deleteName(RawDatabase db, String name) async {
-    if (name == RevisionRef.headName) throw ArgumentError('不能删除 HEAD');
+    final normalized = normalizeRefName(name);
     await db.transaction((txn) async {
       final rows = await selectRows(
         txn,
         'revision_ref',
         where: 'name = ?',
-        whereArgs: [name],
+        whereArgs: [normalized],
       );
       if (rows.isEmpty) return;
-      final commitId = rows.first['commit_id']! as int;
+      final commitUid = rows.first['commit_uid']! as String;
       await deleteRows(
         txn,
         'revision_ref',
         where: 'name = ?',
-        whereArgs: [name],
+        whereArgs: [normalized],
       );
+      await insertRow(txn, 'revision_ref_tombstone', {
+        'name': normalized,
+        'deleted_at': formatDateTime(self.clock()),
+      }, replace: true);
       final others = await selectRows(
         txn,
         'revision_ref',
-        where: 'commit_id = ?',
-        whereArgs: [commitId],
+        where: 'commit_uid = ?',
+        whereArgs: [commitUid],
       );
       if (others.isNotEmpty) return;
+      final commitId = await self.commitIdByUid(txn, commitUid);
+      if (commitId == null) return;
       final checkpoints = await selectRows(
         txn,
         'revision_checkpoint',
@@ -238,11 +282,12 @@ mixin RevisionMaintenanceMixin {
     return changed;
   }
 
-  /// 清理历史：以当前数据为新基线，删除全部提交明细、命名版本与检查点。
+  /// 清理本机历史：以当前数据为新基线，删除全部提交明细、命名版本与检查点。
   ///
   /// 有阻塞读取位置落后于 `HEAD` 时拒绝执行，抛出带原因的 [RevisionBlocked]。
   /// 提交编号只增不减：这里不再把 `next_commit` 退回 `HEAD + 1`，占过但没有
-  /// 落库的编号不会被后来的提交复用。
+  /// 落库的编号不会被后来的提交复用。云端不受影响，下次同步会拉回云端的命名
+  /// 版本，提交不在本机时显示为只剩标签；这一步不留墓碑（ADR-0056 决定第 7、8 条）。
   Future<void> clearHistory(RawDatabase db) async {
     final blockers = await self.historyBlockers(db, clearing: true);
     if (blockers.isNotEmpty) throw RevisionBlocked(blockers);
@@ -263,52 +308,36 @@ mixin RevisionMaintenanceMixin {
         where: 'id != ?',
         whereArgs: [head],
       );
-      await deleteRows(
-        txn,
-        'revision_ref',
-        where: 'name != ?',
-        whereArgs: [RevisionRef.headName],
-      );
-      final now = formatDateTime(self.clock());
+      // 命名版本与还没推送的墓碑一并清空：名字下次同步从云端拉回，显示为
+      // 只剩标签，不在这里留下“要传播的删除”。
+      await deleteRows(txn, 'revision_ref');
+      await deleteRows(txn, 'revision_ref_tombstone');
+      final digests = revisionTableDigests(projection);
       await updateRow(
         txn,
         'revision_commit',
         {
           'parent_id': null,
-          // 清理之后这条提交是本机的唯一基线：哈希链接回初值，摘要按当前投影
-          // 整库重算，哈希按 baseline 与空变更明细重算，来源设备清空、作者时间
-          // 取这条提交自己的创建时间（方案 3.5、3.10、3.12）。
-          'parent_hash': revisionChainGenesis,
+          // 清理之后这条提交是本机的唯一基线：摘要按当前投影整库重算，来源
+          // 设备与作者时间清空（方案 3.5、3.12）。
           'state_digest': revisionStateDigest(projection),
-          'hash': revisionCommitHash(
-            parentHash: revisionChainGenesis,
-            uid: commit.uid,
-            kind: RevisionKind.baseline,
-            changes: const [],
-          ),
           'generation': commit.generation + 1,
           'kind': RevisionKind.baseline.value,
           'action': '清理后保留',
           'reverted_commit_id': null,
           'restored_commit_id': null,
-          'change_count': 0,
           'byte_length': 0,
-          'conflict_count': 0,
+          'server_seq': null,
           'origin_device': null,
-          'authored_at': commit.createdAt == null
-              ? now
-              : formatDateTime(commit.createdAt!),
+          'authored_at': null,
         },
         where: 'id = ?',
         whereArgs: [head],
       );
-      await updateRow(
-        txn,
-        'revision_ref',
-        {'commit_id': head, 'updated_at': now},
-        where: 'name = ?',
-        whereArgs: [RevisionRef.headName],
-      );
+      await updateRow(txn, 'revision_state', {
+        'head_commit_id': head,
+        'table_digests_json': jsonEncode(digests),
+      }, where: 'id = 1');
       // 检查点写入时登记它引用的附件哈希，接着按当前数据回收附件。
       await self._writeCheckpoint(
         txn,
@@ -475,8 +504,11 @@ mixin RevisionMaintenanceMixin {
       );
       final ids = [for (final row in idRows) row['id']! as int];
       if (ids.isEmpty) throw RevisionCorruption('提交历史为空');
-      final named = await self.refs(txn);
-      final namedCommits = {for (final ref in named) ref.commitId};
+      // 命名版本按 uid 指向提交：本机已经没有这条提交的名字只剩标签，不参与
+      // 裁剪保护，也没有可固化的检查点（ADR-0054 决定第 4 条）。
+      final namedCommits = <int>{
+        for (final commitId in (await self.refCommitIds(txn)).values) ?commitId,
+      };
       if (oldest > head) oldest = head;
       // 下界之前的本机提交要删掉了，指向它们的遮蔽行也一并删掉；下界之后的
       // 遮蔽行还对应待推送的本机提交，留着（ADR-0040）。
@@ -502,8 +534,8 @@ mixin RevisionMaintenanceMixin {
       // 跨过下界的命名提交先固化检查点，再删除它下面的历史；已经固化过的
       // 不再重复写一份。
       final crossing = {
-        for (final ref in named)
-          if (ref.commitId < oldest) ref.commitId,
+        for (final commitId in namedCommits)
+          if (commitId < oldest) commitId,
       };
       for (final commitId in crossing) {
         final existing = await selectRows(
@@ -582,11 +614,8 @@ mixin RevisionMaintenanceMixin {
           whereArgs: [id],
         );
       }
-      // 被删掉的中间提交不再作为父提交；保留下来的提交父指针置空。
-      //
-      // `parent_hash` 保持不动：最早保留提交记录的父哈希就是哈希链的锚点，
-      // 它指向的父提交已经被这次裁剪删掉，更早的历史因此不再可校验
-      // （方案 3.10）。
+      // 被删掉的中间提交不再作为父提交；保留下来的提交父指针置空，更早的
+      // 历史因此不再能从下界往上追溯（ADR-0054 实施前核对第 3 条）。
       await updateRow(
         txn,
         'revision_commit',
@@ -676,18 +705,18 @@ mixin RevisionMaintenanceMixin {
 
   /// 附件回收：当前投影的附件哈希加上引用表里仍有主人的哈希，其余对象删除。
   ///
-  /// 引用表为空而检查点里仍有附件时不做回收：阶段 0 建表的库还没有写过引用
-  /// 行，这时回收会删掉仍被历史引用的附件，宁可留下也不误删。
+  /// 引用表为空而检查点表非空时不做回收：检查点与提交都把附件清单写在引用表
+  /// 里，两者都不为空却没有引用行只能说明历史不完整，这时回收会删掉仍被引用
+  /// 的附件，宁可留下也不误删（审查 S2 核对时保留的判断）。
   Future<int> _collectGarbage(RawExecutor executor, Projection current) async {
     final objects = await self.assets.objectHashes(executor);
     if (objects.isEmpty) return 0;
     final referenced = await _referencedAssetHashes(executor);
     if (referenced.isEmpty) {
-      final legacy = await executor.rawQuery(
-        'SELECT 1 FROM revision_checkpoint '
-        "WHERE asset_hashes_json NOT IN ('[]', '') LIMIT 1",
+      final incomplete = await executor.rawQuery(
+        'SELECT 1 FROM revision_checkpoint LIMIT 1',
       );
-      if (legacy.isNotEmpty) return 0;
+      if (incomplete.isNotEmpty) return 0;
     }
     final keep = <String>{
       ...AssetStore.hashesInProjection(current),

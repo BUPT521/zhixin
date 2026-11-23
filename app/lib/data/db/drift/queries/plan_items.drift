@@ -158,7 +158,12 @@ WHERE p.id IN (SELECT value FROM json_each(:itemIds));
 -- 三个条件都传空串表示不限；日期条件是自然日区间 [dayStart, dayEnd)，
 -- 截止时间为空的事项不进入带日期的结果。关键词的切词与大小写规则在应用层
 -- 只留一份，不写进 SQL（docs/02 第 3.14 节）。
-searchPlanItems:
+searchPlanItems(
+  REQUIRED :goalId AS TEXT,
+  REQUIRED :status AS TEXT,
+  REQUIRED :dayStart AS TEXT,
+  REQUIRED :dayEnd AS TEXT
+):
 SELECT p.*,
   (SELECT m.source_file_name FROM study_plan sp
     JOIN material m ON m.id = sp.material_id

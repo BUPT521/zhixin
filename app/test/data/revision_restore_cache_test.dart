@@ -26,7 +26,12 @@ void main() {
     final original = await openTestDb();
     final replacement = await openTestDb();
     addTearDown(replacement.close);
-    await updateRow(replacement, 'profile', {'day_cutoff_hour': 6});
+    // 截止小时存在 app_meta 的 day_cutoff_hour 键里，两库各写一份不同的值。
+    await insertRow(replacement, 'app_meta', {
+      'key': 'day_cutoff_hour',
+      'value': '6',
+      'updated_at': '2026-11-10 09:00:00',
+    }, replace: true);
 
     final gate = DatabaseGate();
     var active = original;

@@ -17,7 +17,7 @@ import 'buddy_answer.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'service_runtime.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 
 /// 一份学习计划与它的步骤。
 class StudyPlanView {
@@ -422,7 +422,6 @@ class StudyPlanService {
     final planTitle = title?.trim().isNotEmpty == true
         ? title!.trim()
         : '${material.title} ${material.position(pageFrom, to: pageTo)}';
-    final first = steps.first;
     final planId = await transactions.run(
       (txn) => plans.createWithDrafts(
         title: planTitle,
@@ -432,7 +431,6 @@ class StudyPlanService {
         conversationId: conversationId,
         pageFrom: pageFrom,
         pageTo: pageTo,
-        currentPage: first.pageFrom ?? pageFrom,
         transaction: txn,
       ),
       label: '建立学习计划',
@@ -455,7 +453,7 @@ class StudyPlanService {
       return txn.result();
     },
     label: '更新学习步骤',
-    requestId: commandId('set-step-status', [planId, stepId, status.value]),
+    uid: newUuidV7(),
     onDuplicate: (commit) => WriteResult.committed(commit.id),
   );
 
@@ -465,7 +463,7 @@ class StudyPlanService {
       return txn.result();
     },
     label: '暂停学习计划',
-    requestId: commandId('pause-study-plan', [planId]),
+    uid: newUuidV7(),
     onDuplicate: (commit) => WriteResult.committed(commit.id),
   );
 
@@ -475,7 +473,7 @@ class StudyPlanService {
       return txn.result();
     },
     label: '继续学习计划',
-    requestId: commandId('resume-study-plan', [planId]),
+    uid: newUuidV7(),
     onDuplicate: (commit) => WriteResult.committed(commit.id),
   );
 

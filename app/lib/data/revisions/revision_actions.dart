@@ -16,12 +16,14 @@ const String confirmAttemptMemoryAction = '确认作答记忆';
 const String correctMaterialPageAction = '更正材料页';
 
 /// 记忆页的手工写入；与讨论里的 AI 记忆动作分开，不进入安排页的“AI 的改动”。
-/// 删除是软删除，撤销时按反向规则把状态改回 active。
+/// 删除是软删除，撤销时按反向规则把状态改回 active；确认保留只写
+/// `reviewed_at`，撤销之后回到原来的确认时间（ADR-0051 决定第 9 条）。
 const String addMemoryAction = '新增记忆';
 const String editMemoryAction = '修改记忆';
 const String deleteMemoryAction = '删除记忆';
+const String keepMemoryAction = '确认保留记忆';
 
-/// 设置页修改每日截止小时；提交只更新 `profile` 一行。撤销之后界面与
+/// 设置页修改每日截止小时；提交只更新 `app_meta` 里的一项。撤销之后界面与
 /// 时间口径要重新读取，不能继续用启动时缓存的截止小时。
 const String changeCutoffHourAction = '修改每日截止小时';
 
@@ -32,6 +34,11 @@ const String changeRetentionDaysAction = '修改历史保留天数';
 /// 清理或裁剪历史之后，消息里指向已删除提交的回执由这条提交统一去掉；
 /// 它改的是派生数据，不能反过来撤销，否则会把失效编号装回消息。
 const String clearDeadReceiptsAction = '清理失效回执';
+
+/// 记忆使用统计的冲刷：应用进入后台且距上次冲刷不少于一天时，把本设备的使用
+/// 记录现算进 `memory_usage`。提交类型是 `maintenance`、行为者是 `system`，
+/// 不带回执、不可撤销，也不进“AI 的改动”（ADR-0051 决定第 8 条）。
+const String flushMemoryUsageAction = '记录记忆使用';
 
 /// 安排页展示的可撤销动作。
 const Set<String> receiptActions = {

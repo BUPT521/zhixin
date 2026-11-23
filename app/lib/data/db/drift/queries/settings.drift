@@ -2,18 +2,21 @@
 
 import '../tables.dart';
 
--- 每日截止小时；档案只有一行。
+-- 每日截止小时；与其他设置一样存在 app_meta 的
+-- “day_cutoff_hour”键里，没有设置时由调用方用默认值。
 cutoffHour:
-SELECT day_cutoff_hour FROM profile WHERE id = 1;
+SELECT CAST(a."value" AS INT) AS day_cutoff_hour FROM app_meta a
+WHERE a."key" = 'day_cutoff_hour' LIMIT 1;
 
 -- 内部状态里的一项；没有记录时返回空。
 appMetaValue:
 SELECT a."value" AS meta_value FROM app_meta a WHERE a."key" = :metaKey LIMIT 1;
 
-setProfileCutoffHour:
-UPDATE profile SET day_cutoff_hour = :hour,
-  updated_at = :stamp
-WHERE id = 1;
+setCutoffHour:
+INSERT INTO app_meta ("key", "value", updated_at)
+VALUES ('day_cutoff_hour', :hour, :stamp)
+ON CONFLICT ("key") DO UPDATE SET "value" = excluded."value",
+  updated_at = excluded.updated_at;
 
 saveAppMetadata:
 INSERT INTO app_meta ("key", "value", updated_at)

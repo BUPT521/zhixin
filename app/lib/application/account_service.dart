@@ -62,10 +62,10 @@ class AccountSnapshot {
       : (usesDefaultServer ? '默认地址：$serverBaseUrl' : serverBaseUrl);
 }
 
-/// 账号与登录：注册、登录、刷新令牌、退出、删除账号与清除云端数据。
+/// 账号与登录：注册、登录、刷新令牌、退出、删除账号与请求服务端清除数据。
 ///
-/// 令牌只进 Android Keystore；服务地址与同步游标写在应用私有目录的
-/// `cloud.json`（[CloudPreferencesStore]）。所有需要登录的请求经 [call] 发出去，
+/// 令牌只进 Android Keystore，服务地址与各空间的同步偏好由
+/// [CloudPreferencesStore] 保存。所有需要登录的请求经 [call] 发出去，
 /// 访问令牌过期时先刷新再重试一次；刷新失败说明登录已经失效，界面要求重登。
 class AccountService {
   AccountService({
@@ -75,6 +75,10 @@ class AccountService {
     String? deviceName,
     this.clientFactory,
     this.onSyncStateCleared,
+    this.acceptsSession,
+    this.onSignedIn,
+    this.onSignedOut,
+    this.onSessionExpired,
   }) : _now = now ?? DateTime.now,
        _deviceName = deviceName ?? '知新';
 
@@ -97,6 +101,7 @@ class AccountService {
   /// 多个请求同时发现令牌过期时只刷新一次，避免两次刷新互相作废。
   Future<AccountSession>? _refreshing;
   ServerClient? _client;
+  bool _disposed = false;
 
   /// 身份代次：切换服务实例、登录、退出、删除账号与重设密码时加一。
   ///
@@ -106,6 +111,11 @@ class AccountService {
 
   /// 当前实例来源的缓存，避免在界面构建路径上反复读文件。
   String? _origin;
+
+  final bool Function(AccountSession)? acceptsSession;
+  final Future<void> Function(AccountSession, AccountProfile?)? onSignedIn;
+  final Future<void> Function(bool deleteSpace)? onSignedOut;
+  final void Function()? onSessionExpired;
 
   int get identityEpoch => _epoch;
 
@@ -129,17 +139,23 @@ class AccountService {
   }
 
   /// 只读当前实例的会话：换了实例之后旧会话读不出来，按未登录处理。
-  Future<AccountSession?> _readSession() async =>
-      store.read(origin: await serverOrigin());
+  Future<AccountSession?> _readSession() async {
+    if (_disposed) return null;
+    final session = await store.read(origin: await serverOrigin());
+    return session != null && (acceptsSession?.call(session) ?? true)
+        ? session
+        : null;
+  }
 
   Future<AccountSnapshot> snapshot() async {
+    final epoch = _epoch;
     final session = await _readSession();
     final baseUrl = await preferences.serverBaseUrl();
     final autoSync = await preferences.autoSync();
     final usesDefault = await preferences.usesDefaultServerBaseUrl();
     final profile = session == null ? null : await _readProfile(session);
     if (session != null && session.isExpired) {
-      await store.clear();
+      await _expireSession(epoch);
       return AccountSnapshot(
         serverBaseUrl: baseUrl,
         session: null,
@@ -175,8 +191,13 @@ class AccountService {
     if (previousOrigin == nextOrigin) return;
     _advanceEpoch();
     await store.clear();
-    await _clearSyncState();
-    await preferences.setAutoSync(false);
+    final signedOut = onSignedOut;
+    if (signedOut != null) {
+      await signedOut(false);
+    } else {
+      await _clearSyncState();
+      await preferences.setAutoSync(false);
+    }
   }
 
   Future<bool> autoSync() => preferences.autoSync();
@@ -217,7 +238,7 @@ class AccountService {
   }
 
   /// 退出当前设备；服务端不可达时也要清掉本机会话。
-  Future<void> logout() async {
+  Future<void> logout({bool deleteSpace = false}) async {
     final epoch = _epoch;
     final session = await _readSession();
     if (session != null) {
@@ -232,9 +253,10 @@ class AccountService {
     if (epoch != _epoch) return;
     _advanceEpoch();
     await store.clear();
+    await onSignedOut?.call(deleteSpace);
   }
 
-  /// 删除账号，连同云端同步序列、附件与备份；本机学习记录保留。
+  /// 删除账号及其云端数据，并通知应用删除对应的本机空间。
   ///
   /// 服务端要求重新提交当前密码：密码错误时抛出 `invalid_credentials`，本机
   /// 会话与页面状态都不改动，也不刷新令牌重试，避免多消耗一次失败预算。
@@ -254,10 +276,15 @@ class AccountService {
     _ensureIdentityUnchanged(epoch);
     _advanceEpoch();
     await store.clear();
-    await _clearSyncState();
+    final signedOut = onSignedOut;
+    if (signedOut != null) {
+      await signedOut(true);
+    } else {
+      await _clearSyncState();
+    }
   }
 
-  /// 一次清空云端备份、提交序列、附件与遗留对象，保留账号与本机记录。
+  /// 清空账号的云端数据并保留会话，调用方随后重建当前本机空间。
   ///
   /// 清空之后服务端位置回到 0，下一次同步需要重新确认后再上传基线。上一次
   /// 清除还没结束时服务端返回 409 `conflict`，调用方按“稍后重试”处理。
@@ -267,7 +294,7 @@ class AccountService {
       (client, token) => client.deleteCloud(token, password: password),
     );
     _ensureIdentityUnchanged(epoch);
-    await _clearSyncState();
+    if (onSignedOut == null) await _clearSyncState();
   }
 
   /// 读服务端的就绪状态与它接受的客户端 schema；保存地址之后核对一次。
@@ -346,7 +373,12 @@ class AccountService {
     _ensureIdentityUnchanged(epoch);
     _advanceEpoch();
     await store.clear();
-    await _clearSyncState();
+    final signedOut = onSignedOut;
+    if (signedOut != null) {
+      await signedOut(false);
+    } else {
+      await _clearSyncState();
+    }
   }
 
   /// 当前账号的访问令牌，过期时先刷新。未登录或刷新失败时返回 null。
@@ -463,6 +495,8 @@ class AccountService {
   }
 
   void dispose() {
+    _disposed = true;
+    _advanceEpoch();
     _client?.dispose();
     _client = null;
   }
@@ -488,9 +522,20 @@ class AccountService {
       accessExpiresAt: tokens.accessExpiresAt,
       refreshExpiresAt: tokens.refreshExpiresAt,
     );
+    _advanceEpoch();
     await store.save(session);
     if (profile != null) await store.saveProfile(profile);
-    _advanceEpoch();
+    final signedIn = onSignedIn;
+    if (signedIn != null) {
+      final result = AccountSnapshot(
+        serverBaseUrl: await serverBaseUrl(),
+        session: session,
+        profile: profile,
+        autoSync: await autoSync(),
+      );
+      await signedIn(session, profile);
+      return result;
+    }
     final state = await preferences.syncState();
     final identity = '${session.serverOrigin}|${session.userId}';
     final lastIdentity = await preferences.lastIdentity();
@@ -538,10 +583,11 @@ class AccountService {
   }
 
   Future<AccountSession> _requireSession() async {
+    final epoch = _epoch;
     final session = await _readSession();
     if (session == null) throw const AccountSignedOut();
     if (session.isExpired) {
-      await store.clear();
+      await _expireSession(epoch);
       throw const AccountSignedOut();
     }
     return session;
@@ -604,13 +650,20 @@ class AccountService {
       return next;
     } on ServerProblem catch (error) {
       if (error.isUnauthorized && epoch == _epoch) {
-        await store.clear();
+        await _expireSession(epoch);
         throw const AccountSignedOut();
       }
       rethrow;
     } finally {
       _refreshing = null;
     }
+  }
+
+  Future<void> _expireSession(int epoch) async {
+    if (epoch != _epoch) return;
+    _advanceEpoch();
+    await store.clear();
+    onSessionExpired?.call();
   }
 
   Future<ServerClient> _requireClient() async {

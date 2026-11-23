@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
+import 'package:drift/drift.dart' show Table, TableInfo;
 
 import '../../domain/models/chat_message_payload.dart';
 import '../../domain/rules/time_format.dart';
@@ -41,11 +41,13 @@ const Set<String> nonVersionedPersistentTables =
 /// 记录提交历史的版本元数据表；每次提交都会写到，历史页因此也跟随更新。
 ///
 /// 这三张表不参与采集，业务表的通知按提交里的净变化发，历史页读的是它们，
-/// 所以提交收尾一并带上（ADR-0014 第 2 条）。
+/// 所以提交收尾一并带上（ADR-0014 第 2 条）。`HEAD` 每次提交都写进
+/// `revision_state`，命名版本只在用户命名、改名、删除时写 `revision_ref`
+/// （ADR-0054 实施前核对第 3 条）。
 const Set<String> revisionHistoryTables = {
   'revision_commit',
   'revision_change',
-  'revision_ref',
+  'revision_state',
 };
 
 /// 参与版本采集的业务表，顺序按外键依赖排列：先被引用的表在前。
@@ -60,12 +62,21 @@ final List<String> versionedTableNames = [
       name,
 ];
 
-/// 每张业务表的主键；版本化表目前都是单列主键。
+/// 每张业务表的主键；每张业务表都要有一个主键列，复合主键不在采集范围内。
 final Map<String, String> versionedPrimaryKeys = {
   for (final table in schemaTables())
     if (versionedTableNames.contains(table.entityName))
-      table.entityName: table.$primaryKey.single.name,
+      table.entityName: _primaryKeyOf(table),
 };
+
+/// 表的主键列名；复合主键或没有主键时给出能看懂的报错。
+String _primaryKeyOf(TableInfo<Table, Object?> table) {
+  final key = table.$primaryKey;
+  if (key.length != 1) {
+    throw StateError('业务表 ${table.entityName} 有 ${key.length} 列主键，版本采集只支持单列主键');
+  }
+  return key.single.name;
+}
 
 class RevisionTable {
   const RevisionTable({
@@ -88,8 +99,7 @@ class RevisionDuplicateRequest implements Exception {
   final RevisionCommit commit;
 
   @override
-  String toString() =>
-      '请求 ${commit.requestId ?? commit.uid} 已提交为版本 ${commit.id}';
+  String toString() => '请求 ${commit.uid} 已提交为版本 ${commit.id}';
 }
 
 /// 重建时断链或值与预期不一致。
@@ -214,6 +224,12 @@ class RevisionEngine
     }
   }
 
+  /// 写基线提交、初始检查点与单行状态；打开库时执行，重复执行保持幂等。
+  ///
+  /// `HEAD` 已经在 `revision_state.head_commit_id` 里，不再有“缺 HEAD 就补成
+  /// 最大编号”的分支（ADR-0054 决定第 4 条）；单行状态由
+  /// `installRevisionSchema` 建好，这里只补进程中断留下的预留编号与缺失的
+  /// 分表摘要。
   Future<void> _ensureMetadata(RawDatabase db) async {
     await db.transaction((txn) async {
       final heads = await selectRows(
@@ -225,99 +241,100 @@ class RevisionEngine
       if (heads.isEmpty) {
         final projection = await readProjection(txn);
         final now = formatDateTime(clock());
-        final uid = newUuidV7();
-        // 初始基线与普通提交一样补齐四列：父哈希取哈希链初值、摘要是当前投影
-        // 的整库重算、哈希按基线提交与空变更明细计算，本机提交没有来源设备
-        // （方案 3.5、3.10、3.12）。
+        // 初始基线的摘要是当前投影的整库重算，分表值同时写上，本机提交没有
+        // 来源设备与作者时间（方案 3.5、3.12）。
+        final digests = revisionTableDigests(projection);
         await insertRow(txn, 'revision_commit', {
           'id': 0,
-          'uid': uid,
+          'uid': newUuidV7(),
           'parent_id': null,
-          'parent_hash': revisionChainGenesis,
           'generation': 0,
           'state_digest': revisionStateDigest(projection),
-          'hash': revisionCommitHash(
-            parentHash: revisionChainGenesis,
-            uid: uid,
-            kind: RevisionKind.baseline,
-            changes: const [],
-          ),
           'actor': 'system',
           'action': '初始基线',
           'kind': RevisionKind.baseline.value,
-          'request_id': null,
           'restored_commit_id': null,
           'reverted_commit_id': null,
-          'change_count': 0,
           'byte_length': 0,
-          'conflict_count': 0,
+          'server_seq': null,
           'origin_device': null,
-          'authored_at': now,
+          'authored_at': null,
           'created_at': now,
         });
-        await insertRow(txn, 'revision_sequence', {
-          'id': 1,
+        await updateRow(txn, 'revision_state', {
+          'active_commit': null,
+          'capturing': 0,
+          'suppress': 0,
           'next_commit': 1,
-        }, replace: true);
+          'head_commit_id': 0,
+          'table_digests_json': jsonEncode(digests),
+        }, where: 'id = 1');
         await _writeCheckpoint(
           txn,
           commitId: 0,
           kind: 'initial',
           projection: projection,
         );
-        await insertRow(txn, 'revision_ref', {
-          'name': RevisionRef.headName,
-          'commit_id': 0,
-          'note': null,
-          'created_at': now,
-          'updated_at': now,
-        }, replace: true);
         return;
       }
 
-      final headRows = await selectRows(
-        txn,
-        'revision_ref',
-        where: 'name = ?',
-        whereArgs: [RevisionRef.headName],
-      );
-      if (headRows.isEmpty) {
-        final maxId = heads.last['id']! as int;
-        final now = formatDateTime(clock());
-        await insertRow(txn, 'revision_ref', {
-          'name': RevisionRef.headName,
-          'commit_id': maxId,
-          'note': null,
-          'created_at': now,
-          'updated_at': now,
-        });
-      }
-      final sequence = await selectRows(txn, 'revision_sequence', limit: 1);
-      if (sequence.isEmpty) {
-        await insertRow(txn, 'revision_sequence', {
-          'id': 1,
-          'next_commit': (heads.last['id']! as int) + 1,
-        });
-      }
-      final context = await selectRows(txn, 'revision_context', limit: 1);
-      if (context.isEmpty) {
-        await insertRow(txn, 'revision_context', {
+      final state = await selectRows(txn, 'revision_state', limit: 1);
+      if (state.isEmpty) {
+        await insertRow(txn, 'revision_state', {
           'id': 1,
           'active_commit': null,
           'capturing': 0,
           'suppress': 0,
+          'next_commit': (heads.last['id']! as int) + 1,
+          'head_commit_id': heads.last['id']! as int,
+          'table_digests_json': jsonEncode(revisionEmptyTableDigests()),
         });
-      } else if (context.first['active_commit'] != null) {
-        // 上次进程中断留下的上下文不跨事务保留；打开时清掉，避免新写入
-        // 被记到一个并不存在的提交上。
-        await updateRow(txn, 'revision_context', {
+        return;
+      }
+      // 上次进程中断留下的预留编号不跨事务保留；打开时清掉，避免新写入被记到
+      // 一个并不存在的提交上。
+      final row = state.first;
+      if (row['active_commit'] != null ||
+          (row['capturing'] as int? ?? 0) != 0 ||
+          (row['suppress'] as int? ?? 0) != 0) {
+        await updateRow(txn, 'revision_state', {
           'active_commit': null,
           'capturing': 0,
           'suppress': 0,
         }, where: 'id = 1');
       }
+      // 基线提交的分表摘要缺失时按它的摘要重建一份：全部记在首张业务表上，
+      // 各表之和仍等于这条提交的摘要。
+      final digests = row['table_digests_json'] as String?;
+      if (digests == null || digests.isEmpty || digests == '{}') {
+        final headRows = await selectRows(
+          txn,
+          'revision_commit',
+          columns: ['state_digest'],
+          where: 'id = ?',
+          whereArgs: [row['head_commit_id'] as int? ?? 0],
+          limit: 1,
+        );
+        final headDigest = headRows.isEmpty
+            ? revisionEmptyStateDigest
+            : headRows.first['state_digest']! as String;
+        final head = await commitById(txn, row['head_commit_id'] as int? ?? 0);
+        await updateRow(txn, 'revision_state', {
+          'table_digests_json': jsonEncode({
+            for (final name in versionedTableNames)
+              name: _legacyHeadDigestSplit(
+                head?.stateDigest ?? headDigest,
+                name,
+              ),
+          }),
+        }, where: 'id = 1');
+      }
     });
   }
+
+  /// 旧口径的提交只有整库摘要：把它记在首张业务表上，其余表写零。
+  String _legacyHeadDigestSplit(String digest, String table) =>
+      table == versionedTableNames.first ? digest : revisionEmptyStateDigest;
 }
 
 String _quote(String identifier) => '"${identifier.replaceAll('"', '""')}"';

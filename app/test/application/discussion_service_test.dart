@@ -11,7 +11,6 @@ import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/discussion_service.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
-import 'package:zhixin/application/memory_service.dart';
 import 'package:zhixin/data/attachment_store.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_actions.dart';
@@ -695,16 +694,18 @@ void main() {
     );
     expect(afterAccept, hasLength(1));
 
-    // 同一条建议紧接着再点一次是按编号重试：旧提交仍是 HEAD，不创建第二个
-    // 事项，也不形成第二条提交。
-    final again = await h.service.acceptNextStep(
-      conversationId: id,
-      messageId: pending.first.messageId,
-      draft: pending.first.draft,
-      goalId: null,
+    // 同一条建议再点一次由“已加入安排”的判断挡住：不会创建第二个事项。按 uid
+    // 去重只对同一个 uid 生效，界面每次动作另起 uid，这里不再走重试分支
+    // （ADR-0053 决定第 3 条）。
+    await expectLater(
+      h.service.acceptNextStep(
+        conversationId: id,
+        messageId: pending.first.messageId,
+        draft: pending.first.draft,
+        goalId: null,
+      ),
+      throwsA(isA<StateError>()),
     );
-    expect(again.item.id, accepted.item.id);
-    expect(again.commitId, accepted.commitId);
     expect(await h.tasks.items(), hasLength(1));
 
     final acceptedMessage = (await h.service.history(id))
@@ -979,7 +980,7 @@ void main() {
         text: '先看定义',
         memories: [
           MemoryDraft(
-            kind: MemoryKind.difficulty,
+            kind: MemoryKind.episodic,
             content: '放缩方向不确定',
             source: MemorySource.inferred,
           ),
@@ -1002,35 +1003,31 @@ void main() {
     expect(items.single.pending, isTrue);
     expect(items.single.draft.source, MemorySource.inferred);
 
+    // 确认之后，模型推断的记忆按情景标签写进库，卡片改为已记下并可撤销。
     final accepted = await h.service.acceptMemoryItem(
       conversationId: conversationId,
       messageId: items.single.messageId!,
       itemId: items.single.itemId,
     );
     expect(accepted.applied, isTrue);
-    final memories = await h.memories.activeForContext(
-      now: DateTime(2026, 11, 6, 20, 30),
-    );
-    expect(memories.single.content, '放缩方向不确定');
-    expect(memories.single.sourceKind, MemorySourceKind.message);
+    final saved = (await h.memories.list()).single;
+    expect(saved.kind, MemoryKind.episodic);
+    expect(saved.content, '放缩方向不确定');
+    expect(saved.sourceKind, MemorySourceKind.message);
 
     items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
     );
     expect(items.single.applied, isTrue);
-    expect(items.single.commitId, accepted.change!.commitId);
+    expect(items.single.commitId, isNotNull);
 
-    await h.rig.revisions.undoCommit(accepted.change!.commitId);
-    expect(
-      await h.memories.activeForContext(now: DateTime(2026, 11, 6, 20, 30)),
-      isEmpty,
-    );
-    // 撤销写入后卡片回到待确认，用户可以重新决定。
-    final restored = await h.service.memoryItemsFromMessages(
+    final undone = await h.rig.revisions.undoCommit(items.single.commitId!);
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect(await h.memories.list(), isEmpty);
+    items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
     );
-    expect(restored.single.pending, isTrue);
-    expect(restored.single.commitId, isNull);
+    expect(items.single.pending, isTrue);
   });
 
   test('用户明确说的记忆先写入，卡片可以撤销', () async {
@@ -1039,7 +1036,7 @@ void main() {
         text: '记住了',
         memories: [
           MemoryDraft(
-            kind: MemoryKind.preference,
+            kind: MemoryKind.semantic,
             content: '喜欢先看例子',
             source: MemorySource.user,
           ),
@@ -1051,29 +1048,29 @@ void main() {
 
     final result = await h.service.reply(text: '我喜欢先看例子');
     final conversationId = result.userMessage.conversationId;
-    final memories = await h.memories.activeForContext(
+    // 模型声称“用户明说”时直接写进库，不必再点确认；记忆内容就是用户说的那句。
+    final written = await h.memories.activeForContext(
       now: DateTime(2026, 11, 6, 20, 30),
     );
-    expect(memories.single.content, '喜欢先看例子');
-    expect(memories.single.sourceKind, MemorySourceKind.user);
+    expect(written.single.content, '喜欢先看例子');
+    expect(written.single.kind, MemoryKind.semantic);
+    expect(written.single.sourceKind, MemorySourceKind.user);
 
     final items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
     );
     expect(items.single.applied, isTrue);
+    expect(items.single.draft.source, MemorySource.user);
     expect(items.single.commitId, isNotNull);
 
-    await h.rig.revisions.undoCommit(items.single.commitId!);
-    expect(
-      await h.memories.activeForContext(now: DateTime(2026, 11, 6, 20, 30)),
-      isEmpty,
+    // 提示条上的撤销把这次写入整条撤回。
+    final undone = await h.rig.revisions.undoCommit(items.single.commitId!);
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect(await h.memories.list(), isEmpty);
+    final after = await h.service.memoryItemsFromMessages(
+      await h.service.history(conversationId),
     );
-    expect(
-      (await h.service.memoryItemsFromMessages(
-        await h.service.history(conversationId),
-      )).single.pending,
-      isTrue,
-    );
+    expect(after.single.pending, isTrue);
   });
 
   test('用户明确说出的多条记忆一次写入，按同一条提交撤销', () async {
@@ -1082,12 +1079,12 @@ void main() {
         text: '记住了',
         memories: [
           MemoryDraft(
-            kind: MemoryKind.preference,
+            kind: MemoryKind.semantic,
             content: '喜欢先看例子',
             source: MemorySource.user,
           ),
           MemoryDraft(
-            kind: MemoryKind.progress,
+            kind: MemoryKind.episodic,
             content: '能独立列出条件',
             source: MemorySource.user,
           ),
@@ -1108,20 +1105,16 @@ void main() {
       '能独立列出条件',
     });
 
-    // 同一批写入落在同一条提交里，两张卡片指向同一次写入。
-    expect({for (final item in items) item.commitId}, hasLength(1));
-    final commitId = items.first.commitId!;
-    final commit = (await h.rig.revisions.undoableCommits()).firstWhere(
-      (item) => item.id == commitId,
-    );
-    expect(commit.action, writeMemoryAction);
+    // 两条都写进库，并且在同一条提交里：撤销其中一条就把这一批一起撤回。
+    final saved = await h.memories.list();
+    expect(saved, hasLength(2));
+    expect(items.every((item) => item.applied), isTrue);
+    final commitIds = items.map((item) => item.commitId).toSet();
+    expect(commitIds, hasLength(1), reason: '同一次回答里的记忆合成一条提交');
 
-    await h.rig.revisions.undoCommit(commitId);
-    final remaining = await h.service.memoryItemsFromMessages(
-      await h.service.history(conversationId),
-    );
-    expect(remaining, hasLength(2));
-    expect(remaining.every((item) => item.pending), isTrue);
+    final undone = await h.rig.revisions.undoCommit(commitIds.single!);
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect(await h.memories.list(), isEmpty);
   });
 
   test('记忆写入失败时回答照常保存，卡片留作待确认', () async {
@@ -1130,7 +1123,7 @@ void main() {
         text: '记住了',
         memories: [
           MemoryDraft(
-            kind: MemoryKind.preference,
+            kind: MemoryKind.semantic,
             content: '喜欢先看例子',
             source: MemorySource.user,
           ),
@@ -1161,18 +1154,18 @@ void main() {
     expect(items.single.pending, isTrue);
     expect(items.single.draft.source, MemorySource.user);
 
-    // 去掉故障后，用户可以在卡片上重试。
+    // 去掉故障后，用户可以在卡片上重试；这一次写入成功，卡片改为已记下。
     await h.db.execute('DROP TRIGGER fail_memory_insert');
-    final accepted = await h.service.acceptMemoryItem(
+    final retried = await h.service.acceptMemoryItem(
       conversationId: conversationId,
       messageId: items.single.messageId!,
       itemId: items.single.itemId,
     );
-    expect(accepted.applied, isTrue);
-    final retried = await h.memories.activeForContext(
-      now: DateTime(2026, 11, 6, 20, 30),
+    expect(retried.applied, isTrue);
+    expect(
+      await h.memories.activeForContext(now: DateTime(2026, 11, 6, 20, 30)),
+      hasLength(1),
     );
-    expect(retried.single.sourceKind, MemorySourceKind.user);
     items = await h.service.memoryItemsFromMessages(
       await h.service.history(conversationId),
     );
@@ -1185,7 +1178,7 @@ void main() {
         text: '这条已经记过',
         memories: [
           MemoryDraft(
-            kind: MemoryKind.constraint,
+            kind: MemoryKind.semantic,
             content: '本周晚上只有半小时',
             source: MemorySource.inferred,
           ),
@@ -1194,7 +1187,16 @@ void main() {
     );
     await h.open();
     addTearDown(h.db.close);
-    await h.memories.create(kind: MemoryKind.constraint, content: '本周晚上只有半小时');
+    // 同一内容已经落库：按列写一行与卡片内容相同的记忆。
+    await insertRow(h.db, 'memory', {
+      'id': 'memory-existing',
+      'kind': 'semantic',
+      'content': '本周晚上只有半小时',
+      'source_kind': 'user',
+      'status': 'active',
+      'created_at': '2026-11-06 20:00:00',
+      'updated_at': '2026-11-06 20:00:00',
+    });
 
     final result = await h.service.reply(text: '这周晚上只有半小时');
     final conversationId = result.userMessage.conversationId;
@@ -1202,6 +1204,11 @@ void main() {
       await h.service.history(conversationId),
     )).single;
 
+    // 同一内容已经在库里：去重按“类型、范围与正文”判断，不再添加第二行，
+    // 卡片收起为不记，记忆只有原来那一条。
+    final existing = await h.memories.activeForContext(
+      now: DateTime(2026, 11, 6, 20, 30),
+    );
     final accepted = await h.service.acceptMemoryItem(
       conversationId: conversationId,
       messageId: item.messageId!,
@@ -1210,16 +1217,17 @@ void main() {
     expect(accepted.applied, isFalse);
     expect(accepted.notice, contains('已经存在'));
     expect(
+      await h.memories.list(includeInactive: true),
+      hasLength(1),
+      reason: '没有重复写入',
+    );
+    expect(existing.single.content, '本周晚上只有半小时');
+    expect(
       await h.service.memoryItemsFromMessages(
         await h.service.history(conversationId),
       ),
       isEmpty,
-    );
-    expect(
-      await h.service.changesFromMessages(
-        await h.service.history(conversationId),
-      ),
-      isEmpty,
+      reason: '重复的卡片收起，不再等着确认',
     );
   });
 
@@ -1229,7 +1237,7 @@ void main() {
         text: '可以不记',
         memories: [
           MemoryDraft(
-            kind: MemoryKind.progress,
+            kind: MemoryKind.episodic,
             content: '能独立列出条件',
             source: MemorySource.inferred,
           ),
@@ -1482,13 +1490,18 @@ void main() {
       pageNo: 12,
       content: '条件概率的定义是 P(A|B)=P(AB)/P(B)。',
     );
-    final memoryId = await h.memories.create(
-      kind: MemoryKind.difficulty,
-      content: '以为条件概率和独立性等价',
-      sourceKind: MemorySourceKind.user,
-    );
-    await h.memories.supersede(memoryId);
-
+    // 记忆按列直接写：库里只接受三分类。过期的一条写未来的日期再改成过去，
+    // 表示“记下过、后来过期了”。
+    await insertRow(h.db, 'memory', {
+      'id': 'memory-1',
+      'kind': 'episodic',
+      'content': '以为条件概率和独立性等价',
+      'source_kind': 'user',
+      'valid_until': '2026-11-01T00:00:00',
+      'status': 'active',
+      'created_at': '2026-11-01 09:00:00',
+      'updated_at': '2026-11-01 09:00:00',
+    });
     await h.service.reply(text: '再看条件概率', materialId: materialId, pageNo: 12);
     final context = h.ai.lastContext!;
     expect(
@@ -1532,33 +1545,27 @@ void main() {
     final h = _Harness(reply: const BuddyReply(text: '好的'));
     await h.open();
     addTearDown(h.db.close);
-    final memoryService = MemoryService(
-      h.memories,
-      tasks: h.tasks,
-      materials: h.materials,
-      transactions: WriteTransactions(h.db, revisions: h.rig.engine),
-      runtime: testRuntime(),
-    );
 
-    final removed = await h.memories.create(
-      kind: MemoryKind.difficulty,
-      content: '以为条件概率和独立性等价',
-    );
-    await memoryService.save(
-      (await h.memories.byId(removed))!,
-      content: '条件概率不等于独立性',
-    );
-    await memoryService.delete(removed);
-
-    final expired = await h.memories.create(
-      kind: MemoryKind.constraint,
-      content: '本周晚上只有半小时',
-    );
-    await memoryService.save(
-      (await h.memories.byId(expired))!,
-      content: '本周晚上只有一小时',
-      validUntil: DateTime(2026, 11, 5),
-    );
+    // 删除是改状态、过期是有效期已经过去：两种都不进入回答上下文。
+    await insertRow(h.db, 'memory', {
+      'id': 'memory-deleted',
+      'kind': 'episodic',
+      'content': '以为条件概率和独立性等价',
+      'source_kind': 'user',
+      'status': 'deleted',
+      'created_at': '2026-11-01 09:00:00',
+      'updated_at': '2026-11-01 09:00:00',
+    });
+    await insertRow(h.db, 'memory', {
+      'id': 'memory-expired',
+      'kind': 'semantic',
+      'content': '本周晚上只有一小时',
+      'source_kind': 'user',
+      'valid_until': '2026-11-05T00:00:00',
+      'status': 'active',
+      'created_at': '2026-11-01 09:00:00',
+      'updated_at': '2026-11-01 09:00:00',
+    });
 
     await h.service.reply(text: '继续讲条件概率');
     final context = h.ai.lastContext!;
@@ -1586,10 +1593,16 @@ void main() {
     );
     final session = await h.study.start();
     await h.attempts.ensureOpenAttempt(conversation, sessionId: session.id);
-    final memoryId = await h.memories.create(
-      kind: MemoryKind.difficulty,
-      content: '一条与讨论无关的记忆',
-    );
+    // 记忆按列直接写，标识由用例给出。
+    await insertRow(h.db, 'memory', {
+      'id': 'memory-1',
+      'kind': 'episodic',
+      'content': '一条与讨论无关的记忆',
+      'source_kind': 'user',
+      'status': 'active',
+      'created_at': '2026-11-01 09:00:00',
+      'updated_at': '2026-11-01 09:00:00',
+    });
 
     await h.service.clear(conversation);
 
@@ -1598,6 +1611,6 @@ void main() {
     expect(await selectRows(h.db, 'attempt'), isEmpty);
     // 场次没有指向记录的列，清空后没有其他作答引用时一起删除。
     expect(await selectRows(h.db, 'study_session'), isEmpty);
-    expect((await selectRows(h.db, 'memory')).single['id'], memoryId);
+    expect((await selectRows(h.db, 'memory')).single['id'], 'memory-1');
   });
 }

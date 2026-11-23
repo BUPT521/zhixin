@@ -16,7 +16,7 @@ MemoryItemView memory({
     messageId: 'msg-1',
     draft: MemoryDraft(
       id: 'memory-1',
-      kind: MemoryKind.preference,
+      kind: MemoryKind.semantic,
       content: '讲解概率时先用具体例子。',
       source: MemorySource.inferred,
       status: status,

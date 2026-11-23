@@ -777,312 +777,6 @@ class AppMetaCompanion extends UpdateCompanion<AppMetaRow> {
   }
 }
 
-class $ProfilesTable extends Profiles
-    with TableInfo<$ProfilesTable, ProfileRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $ProfilesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    check: () => id.equals(1),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _dayCutoffHourMeta = const VerificationMeta(
-    'dayCutoffHour',
-  );
-  @override
-  late final GeneratedColumn<int> dayCutoffHour = GeneratedColumn<int>(
-    'day_cutoff_hour',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(dayCutoffHour).isBetweenValues(0, 6),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(4),
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    dayCutoffHour,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'profile';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<ProfileRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('day_cutoff_hour')) {
-      context.handle(
-        _dayCutoffHourMeta,
-        dayCutoffHour.isAcceptableOrUnknown(
-          data['day_cutoff_hour']!,
-          _dayCutoffHourMeta,
-        ),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  ProfileRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return ProfileRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      dayCutoffHour: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}day_cutoff_hour'],
-      )!,
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $ProfilesTable createAlias(String alias) {
-    return $ProfilesTable(attachedDatabase, alias);
-  }
-}
-
-class ProfileRow extends DataClass implements Insertable<ProfileRow> {
-  final int id;
-  final int dayCutoffHour;
-  final String createdAt;
-  final String updatedAt;
-  const ProfileRow({
-    required this.id,
-    required this.dayCutoffHour,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['day_cutoff_hour'] = Variable<int>(dayCutoffHour);
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  ProfilesCompanion toCompanion(bool nullToAbsent) {
-    return ProfilesCompanion(
-      id: Value(id),
-      dayCutoffHour: Value(dayCutoffHour),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory ProfileRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return ProfileRow(
-      id: serializer.fromJson<int>(json['id']),
-      dayCutoffHour: serializer.fromJson<int>(json['dayCutoffHour']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'dayCutoffHour': serializer.toJson<int>(dayCutoffHour),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  ProfileRow copyWith({
-    int? id,
-    int? dayCutoffHour,
-    String? createdAt,
-    String? updatedAt,
-  }) => ProfileRow(
-    id: id ?? this.id,
-    dayCutoffHour: dayCutoffHour ?? this.dayCutoffHour,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  ProfileRow copyWithCompanion(ProfilesCompanion data) {
-    return ProfileRow(
-      id: data.id.present ? data.id.value : this.id,
-      dayCutoffHour: data.dayCutoffHour.present
-          ? data.dayCutoffHour.value
-          : this.dayCutoffHour,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ProfileRow(')
-          ..write('id: $id, ')
-          ..write('dayCutoffHour: $dayCutoffHour, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(id, dayCutoffHour, createdAt, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is ProfileRow &&
-          other.id == this.id &&
-          other.dayCutoffHour == this.dayCutoffHour &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class ProfilesCompanion extends UpdateCompanion<ProfileRow> {
-  final Value<int> id;
-  final Value<int> dayCutoffHour;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  const ProfilesCompanion({
-    this.id = const Value.absent(),
-    this.dayCutoffHour = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-  });
-  ProfilesCompanion.insert({
-    this.id = const Value.absent(),
-    this.dayCutoffHour = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<ProfileRow> custom({
-    Expression<int>? id,
-    Expression<int>? dayCutoffHour,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (dayCutoffHour != null) 'day_cutoff_hour': dayCutoffHour,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-    });
-  }
-
-  ProfilesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? dayCutoffHour,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-  }) {
-    return ProfilesCompanion(
-      id: id ?? this.id,
-      dayCutoffHour: dayCutoffHour ?? this.dayCutoffHour,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (dayCutoffHour.present) {
-      map['day_cutoff_hour'] = Variable<int>(dayCutoffHour.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ProfilesCompanion(')
-          ..write('id: $id, ')
-          ..write('dayCutoffHour: $dayCutoffHour, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-}
-
 class $LearningGoalsTable extends LearningGoals
     with TableInfo<$LearningGoalsTable, LearningGoalRow> {
   @override
@@ -3237,17 +2931,6 @@ class $ConversationsTable extends Conversations
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _lastMessageAtMeta = const VerificationMeta(
-    'lastMessageAt',
-  );
-  @override
-  late final GeneratedColumn<String> lastMessageAt = GeneratedColumn<String>(
-    'last_message_at',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -3283,7 +2966,6 @@ class $ConversationsTable extends Conversations
     entryKind,
     status,
     endedAt,
-    lastMessageAt,
     createdAt,
     updatedAt,
   ];
@@ -3370,15 +3052,6 @@ class $ConversationsTable extends Conversations
         endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta),
       );
     }
-    if (data.containsKey('last_message_at')) {
-      context.handle(
-        _lastMessageAtMeta,
-        lastMessageAt.isAcceptableOrUnknown(
-          data['last_message_at']!,
-          _lastMessageAtMeta,
-        ),
-      );
-    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -3448,10 +3121,6 @@ class $ConversationsTable extends Conversations
         DriftSqlType.string,
         data['${effectivePrefix}ended_at'],
       ),
-      lastMessageAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}last_message_at'],
-      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}created_at'],
@@ -3481,7 +3150,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
   final String entryKind;
   final String status;
   final String? endedAt;
-  final String? lastMessageAt;
   final String createdAt;
   final String updatedAt;
   const ConversationRow({
@@ -3496,7 +3164,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     required this.entryKind,
     required this.status,
     this.endedAt,
-    this.lastMessageAt,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -3529,9 +3196,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     map['status'] = Variable<String>(status);
     if (!nullToAbsent || endedAt != null) {
       map['ended_at'] = Variable<String>(endedAt);
-    }
-    if (!nullToAbsent || lastMessageAt != null) {
-      map['last_message_at'] = Variable<String>(lastMessageAt);
     }
     map['created_at'] = Variable<String>(createdAt);
     map['updated_at'] = Variable<String>(updatedAt);
@@ -3567,9 +3231,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       endedAt: endedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(endedAt),
-      lastMessageAt: lastMessageAt == null && nullToAbsent
-          ? const Value.absent()
-          : Value(lastMessageAt),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -3594,7 +3255,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       entryKind: serializer.fromJson<String>(json['entryKind']),
       status: serializer.fromJson<String>(json['status']),
       endedAt: serializer.fromJson<String?>(json['endedAt']),
-      lastMessageAt: serializer.fromJson<String?>(json['lastMessageAt']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
@@ -3614,7 +3274,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       'entryKind': serializer.toJson<String>(entryKind),
       'status': serializer.toJson<String>(status),
       'endedAt': serializer.toJson<String?>(endedAt),
-      'lastMessageAt': serializer.toJson<String?>(lastMessageAt),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
@@ -3632,7 +3291,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     String? entryKind,
     String? status,
     Value<String?> endedAt = const Value.absent(),
-    Value<String?> lastMessageAt = const Value.absent(),
     String? createdAt,
     String? updatedAt,
   }) => ConversationRow(
@@ -3649,9 +3307,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     entryKind: entryKind ?? this.entryKind,
     status: status ?? this.status,
     endedAt: endedAt.present ? endedAt.value : this.endedAt,
-    lastMessageAt: lastMessageAt.present
-        ? lastMessageAt.value
-        : this.lastMessageAt,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -3674,9 +3329,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
       entryKind: data.entryKind.present ? data.entryKind.value : this.entryKind,
       status: data.status.present ? data.status.value : this.status,
       endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
-      lastMessageAt: data.lastMessageAt.present
-          ? data.lastMessageAt.value
-          : this.lastMessageAt,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -3696,7 +3348,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
           ..write('entryKind: $entryKind, ')
           ..write('status: $status, ')
           ..write('endedAt: $endedAt, ')
-          ..write('lastMessageAt: $lastMessageAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -3716,7 +3367,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
     entryKind,
     status,
     endedAt,
-    lastMessageAt,
     createdAt,
     updatedAt,
   );
@@ -3735,7 +3385,6 @@ class ConversationRow extends DataClass implements Insertable<ConversationRow> {
           other.entryKind == this.entryKind &&
           other.status == this.status &&
           other.endedAt == this.endedAt &&
-          other.lastMessageAt == this.lastMessageAt &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -3752,7 +3401,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
   final Value<String> entryKind;
   final Value<String> status;
   final Value<String?> endedAt;
-  final Value<String?> lastMessageAt;
   final Value<String> createdAt;
   final Value<String> updatedAt;
   final Value<int> rowid;
@@ -3768,7 +3416,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     this.entryKind = const Value.absent(),
     this.status = const Value.absent(),
     this.endedAt = const Value.absent(),
-    this.lastMessageAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3785,7 +3432,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     this.entryKind = const Value.absent(),
     this.status = const Value.absent(),
     this.endedAt = const Value.absent(),
-    this.lastMessageAt = const Value.absent(),
     required String createdAt,
     required String updatedAt,
     this.rowid = const Value.absent(),
@@ -3804,7 +3450,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     Expression<String>? entryKind,
     Expression<String>? status,
     Expression<String>? endedAt,
-    Expression<String>? lastMessageAt,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
     Expression<int>? rowid,
@@ -3821,7 +3466,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       if (entryKind != null) 'entry_kind': entryKind,
       if (status != null) 'status': status,
       if (endedAt != null) 'ended_at': endedAt,
-      if (lastMessageAt != null) 'last_message_at': lastMessageAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -3840,7 +3484,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     Value<String>? entryKind,
     Value<String>? status,
     Value<String?>? endedAt,
-    Value<String?>? lastMessageAt,
     Value<String>? createdAt,
     Value<String>? updatedAt,
     Value<int>? rowid,
@@ -3857,7 +3500,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
       entryKind: entryKind ?? this.entryKind,
       status: status ?? this.status,
       endedAt: endedAt ?? this.endedAt,
-      lastMessageAt: lastMessageAt ?? this.lastMessageAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -3900,9 +3542,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
     if (endedAt.present) {
       map['ended_at'] = Variable<String>(endedAt.value);
     }
-    if (lastMessageAt.present) {
-      map['last_message_at'] = Variable<String>(lastMessageAt.value);
-    }
     if (createdAt.present) {
       map['created_at'] = Variable<String>(createdAt.value);
     }
@@ -3929,7 +3568,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
           ..write('entryKind: $entryKind, ')
           ..write('status: $status, ')
           ..write('endedAt: $endedAt, ')
-          ..write('lastMessageAt: $lastMessageAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -4509,17 +4147,6 @@ class $StudyPlansTable extends StudyPlans
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _currentPageMeta = const VerificationMeta(
-    'currentPage',
-  );
-  @override
-  late final GeneratedColumn<int> currentPage = GeneratedColumn<int>(
-    'current_page',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
@@ -4562,7 +4189,6 @@ class $StudyPlansTable extends StudyPlans
     title,
     pageFrom,
     pageTo,
-    currentPage,
     status,
     createdAt,
     updatedAt,
@@ -4625,15 +4251,6 @@ class $StudyPlansTable extends StudyPlans
         pageTo.isAcceptableOrUnknown(data['page_to']!, _pageToMeta),
       );
     }
-    if (data.containsKey('current_page')) {
-      context.handle(
-        _currentPageMeta,
-        currentPage.isAcceptableOrUnknown(
-          data['current_page']!,
-          _currentPageMeta,
-        ),
-      );
-    }
     if (data.containsKey('status')) {
       context.handle(
         _statusMeta,
@@ -4693,10 +4310,6 @@ class $StudyPlansTable extends StudyPlans
         DriftSqlType.int,
         data['${effectivePrefix}page_to'],
       ),
-      currentPage: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}current_page'],
-      ),
       status: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}status'],
@@ -4726,7 +4339,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
   final String title;
   final int? pageFrom;
   final int? pageTo;
-  final int? currentPage;
   final String status;
   final String createdAt;
   final String updatedAt;
@@ -4738,7 +4350,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
     required this.title,
     this.pageFrom,
     this.pageTo,
-    this.currentPage,
     required this.status,
     required this.createdAt,
     required this.updatedAt,
@@ -4762,9 +4373,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
     }
     if (!nullToAbsent || pageTo != null) {
       map['page_to'] = Variable<int>(pageTo);
-    }
-    if (!nullToAbsent || currentPage != null) {
-      map['current_page'] = Variable<int>(currentPage);
     }
     map['status'] = Variable<String>(status);
     map['created_at'] = Variable<String>(createdAt);
@@ -4791,9 +4399,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
       pageTo: pageTo == null && nullToAbsent
           ? const Value.absent()
           : Value(pageTo),
-      currentPage: currentPage == null && nullToAbsent
-          ? const Value.absent()
-          : Value(currentPage),
       status: Value(status),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -4813,7 +4418,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
       title: serializer.fromJson<String>(json['title']),
       pageFrom: serializer.fromJson<int?>(json['pageFrom']),
       pageTo: serializer.fromJson<int?>(json['pageTo']),
-      currentPage: serializer.fromJson<int?>(json['currentPage']),
       status: serializer.fromJson<String>(json['status']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
@@ -4830,7 +4434,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
       'title': serializer.toJson<String>(title),
       'pageFrom': serializer.toJson<int?>(pageFrom),
       'pageTo': serializer.toJson<int?>(pageTo),
-      'currentPage': serializer.toJson<int?>(currentPage),
       'status': serializer.toJson<String>(status),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
@@ -4845,7 +4448,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
     String? title,
     Value<int?> pageFrom = const Value.absent(),
     Value<int?> pageTo = const Value.absent(),
-    Value<int?> currentPage = const Value.absent(),
     String? status,
     String? createdAt,
     String? updatedAt,
@@ -4859,7 +4461,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
     title: title ?? this.title,
     pageFrom: pageFrom.present ? pageFrom.value : this.pageFrom,
     pageTo: pageTo.present ? pageTo.value : this.pageTo,
-    currentPage: currentPage.present ? currentPage.value : this.currentPage,
     status: status ?? this.status,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -4877,9 +4478,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
       title: data.title.present ? data.title.value : this.title,
       pageFrom: data.pageFrom.present ? data.pageFrom.value : this.pageFrom,
       pageTo: data.pageTo.present ? data.pageTo.value : this.pageTo,
-      currentPage: data.currentPage.present
-          ? data.currentPage.value
-          : this.currentPage,
       status: data.status.present ? data.status.value : this.status,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -4896,7 +4494,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
           ..write('title: $title, ')
           ..write('pageFrom: $pageFrom, ')
           ..write('pageTo: $pageTo, ')
-          ..write('currentPage: $currentPage, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -4913,7 +4510,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
     title,
     pageFrom,
     pageTo,
-    currentPage,
     status,
     createdAt,
     updatedAt,
@@ -4929,7 +4525,6 @@ class StudyPlanRow extends DataClass implements Insertable<StudyPlanRow> {
           other.title == this.title &&
           other.pageFrom == this.pageFrom &&
           other.pageTo == this.pageTo &&
-          other.currentPage == this.currentPage &&
           other.status == this.status &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -4943,7 +4538,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
   final Value<String> title;
   final Value<int?> pageFrom;
   final Value<int?> pageTo;
-  final Value<int?> currentPage;
   final Value<String> status;
   final Value<String> createdAt;
   final Value<String> updatedAt;
@@ -4956,7 +4550,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     this.title = const Value.absent(),
     this.pageFrom = const Value.absent(),
     this.pageTo = const Value.absent(),
-    this.currentPage = const Value.absent(),
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4970,7 +4563,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     required String title,
     this.pageFrom = const Value.absent(),
     this.pageTo = const Value.absent(),
-    this.currentPage = const Value.absent(),
     this.status = const Value.absent(),
     required String createdAt,
     required String updatedAt,
@@ -4987,7 +4579,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     Expression<String>? title,
     Expression<int>? pageFrom,
     Expression<int>? pageTo,
-    Expression<int>? currentPage,
     Expression<String>? status,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
@@ -5001,7 +4592,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
       if (title != null) 'title': title,
       if (pageFrom != null) 'page_from': pageFrom,
       if (pageTo != null) 'page_to': pageTo,
-      if (currentPage != null) 'current_page': currentPage,
       if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -5017,7 +4607,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     Value<String>? title,
     Value<int?>? pageFrom,
     Value<int?>? pageTo,
-    Value<int?>? currentPage,
     Value<String>? status,
     Value<String>? createdAt,
     Value<String>? updatedAt,
@@ -5031,7 +4620,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
       title: title ?? this.title,
       pageFrom: pageFrom ?? this.pageFrom,
       pageTo: pageTo ?? this.pageTo,
-      currentPage: currentPage ?? this.currentPage,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -5063,9 +4651,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
     if (pageTo.present) {
       map['page_to'] = Variable<int>(pageTo.value);
     }
-    if (currentPage.present) {
-      map['current_page'] = Variable<int>(currentPage.value);
-    }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
     }
@@ -5091,7 +4676,6 @@ class StudyPlansCompanion extends UpdateCompanion<StudyPlanRow> {
           ..write('title: $title, ')
           ..write('pageFrom: $pageFrom, ')
           ..write('pageTo: $pageTo, ')
-          ..write('currentPage: $currentPage, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -8696,6 +8280,29 @@ class $MemoriesTable extends Memories
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _searchTermsMeta = const VerificationMeta(
+    'searchTerms',
+  );
+  @override
+  late final GeneratedColumn<String> searchTerms = GeneratedColumn<String>(
+    'search_terms',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _reviewedAtMeta = const VerificationMeta(
+    'reviewedAt',
+  );
+  @override
+  late final GeneratedColumn<String> reviewedAt = GeneratedColumn<String>(
+    'reviewed_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
@@ -8738,6 +8345,8 @@ class $MemoriesTable extends Memories
     sourceKind,
     sourceId,
     validUntil,
+    searchTerms,
+    reviewedAt,
     status,
     createdAt,
     updatedAt,
@@ -8801,6 +8410,21 @@ class $MemoriesTable extends Memories
         validUntil.isAcceptableOrUnknown(data['valid_until']!, _validUntilMeta),
       );
     }
+    if (data.containsKey('search_terms')) {
+      context.handle(
+        _searchTermsMeta,
+        searchTerms.isAcceptableOrUnknown(
+          data['search_terms']!,
+          _searchTermsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('reviewed_at')) {
+      context.handle(
+        _reviewedAtMeta,
+        reviewedAt.isAcceptableOrUnknown(data['reviewed_at']!, _reviewedAtMeta),
+      );
+    }
     if (data.containsKey('status')) {
       context.handle(
         _statusMeta,
@@ -8860,6 +8484,14 @@ class $MemoriesTable extends Memories
         DriftSqlType.string,
         data['${effectivePrefix}valid_until'],
       ),
+      searchTerms: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}search_terms'],
+      )!,
+      reviewedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}reviewed_at'],
+      ),
       status: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}status'],
@@ -8883,12 +8515,21 @@ class $MemoriesTable extends Memories
 
 class MemoryRow extends DataClass implements Insertable<MemoryRow> {
   final String id;
+
+  /// 情景、语义、程序三类（ADR-0051）；旧的四类标签由回复注入口径取代。
   final String kind;
   final String content;
   final String? scope;
   final String sourceKind;
   final String? sourceId;
   final String? validUntil;
+
+  /// 写入时由模型顺带给出的检索线索，几条短语用换行分隔，空串表示没有；
+  /// 只进全文索引，不在界面显示（ADR-0051 决定第 7 条）。
+  final String searchTerms;
+
+  /// 用户确认保留的时间；写这一列不连带更新 [updatedAt]（ADR-0051 决定第 9 条）。
+  final String? reviewedAt;
   final String status;
   final String createdAt;
   final String updatedAt;
@@ -8900,6 +8541,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
     required this.sourceKind,
     this.sourceId,
     this.validUntil,
+    required this.searchTerms,
+    this.reviewedAt,
     required this.status,
     required this.createdAt,
     required this.updatedAt,
@@ -8919,6 +8562,10 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
     }
     if (!nullToAbsent || validUntil != null) {
       map['valid_until'] = Variable<String>(validUntil);
+    }
+    map['search_terms'] = Variable<String>(searchTerms);
+    if (!nullToAbsent || reviewedAt != null) {
+      map['reviewed_at'] = Variable<String>(reviewedAt);
     }
     map['status'] = Variable<String>(status);
     map['created_at'] = Variable<String>(createdAt);
@@ -8941,6 +8588,10 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
       validUntil: validUntil == null && nullToAbsent
           ? const Value.absent()
           : Value(validUntil),
+      searchTerms: Value(searchTerms),
+      reviewedAt: reviewedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(reviewedAt),
       status: Value(status),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -8960,6 +8611,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
       sourceKind: serializer.fromJson<String>(json['sourceKind']),
       sourceId: serializer.fromJson<String?>(json['sourceId']),
       validUntil: serializer.fromJson<String?>(json['validUntil']),
+      searchTerms: serializer.fromJson<String>(json['searchTerms']),
+      reviewedAt: serializer.fromJson<String?>(json['reviewedAt']),
       status: serializer.fromJson<String>(json['status']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
@@ -8976,6 +8629,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
       'sourceKind': serializer.toJson<String>(sourceKind),
       'sourceId': serializer.toJson<String?>(sourceId),
       'validUntil': serializer.toJson<String?>(validUntil),
+      'searchTerms': serializer.toJson<String>(searchTerms),
+      'reviewedAt': serializer.toJson<String?>(reviewedAt),
       'status': serializer.toJson<String>(status),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
@@ -8990,6 +8645,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
     String? sourceKind,
     Value<String?> sourceId = const Value.absent(),
     Value<String?> validUntil = const Value.absent(),
+    String? searchTerms,
+    Value<String?> reviewedAt = const Value.absent(),
     String? status,
     String? createdAt,
     String? updatedAt,
@@ -9001,6 +8658,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
     sourceKind: sourceKind ?? this.sourceKind,
     sourceId: sourceId.present ? sourceId.value : this.sourceId,
     validUntil: validUntil.present ? validUntil.value : this.validUntil,
+    searchTerms: searchTerms ?? this.searchTerms,
+    reviewedAt: reviewedAt.present ? reviewedAt.value : this.reviewedAt,
     status: status ?? this.status,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -9018,6 +8677,12 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
       validUntil: data.validUntil.present
           ? data.validUntil.value
           : this.validUntil,
+      searchTerms: data.searchTerms.present
+          ? data.searchTerms.value
+          : this.searchTerms,
+      reviewedAt: data.reviewedAt.present
+          ? data.reviewedAt.value
+          : this.reviewedAt,
       status: data.status.present ? data.status.value : this.status,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -9034,6 +8699,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
           ..write('sourceKind: $sourceKind, ')
           ..write('sourceId: $sourceId, ')
           ..write('validUntil: $validUntil, ')
+          ..write('searchTerms: $searchTerms, ')
+          ..write('reviewedAt: $reviewedAt, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -9050,6 +8717,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
     sourceKind,
     sourceId,
     validUntil,
+    searchTerms,
+    reviewedAt,
     status,
     createdAt,
     updatedAt,
@@ -9065,6 +8734,8 @@ class MemoryRow extends DataClass implements Insertable<MemoryRow> {
           other.sourceKind == this.sourceKind &&
           other.sourceId == this.sourceId &&
           other.validUntil == this.validUntil &&
+          other.searchTerms == this.searchTerms &&
+          other.reviewedAt == this.reviewedAt &&
           other.status == this.status &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -9078,6 +8749,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
   final Value<String> sourceKind;
   final Value<String?> sourceId;
   final Value<String?> validUntil;
+  final Value<String> searchTerms;
+  final Value<String?> reviewedAt;
   final Value<String> status;
   final Value<String> createdAt;
   final Value<String> updatedAt;
@@ -9090,6 +8763,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     this.sourceKind = const Value.absent(),
     this.sourceId = const Value.absent(),
     this.validUntil = const Value.absent(),
+    this.searchTerms = const Value.absent(),
+    this.reviewedAt = const Value.absent(),
     this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -9103,6 +8778,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     required String sourceKind,
     this.sourceId = const Value.absent(),
     this.validUntil = const Value.absent(),
+    this.searchTerms = const Value.absent(),
+    this.reviewedAt = const Value.absent(),
     this.status = const Value.absent(),
     required String createdAt,
     required String updatedAt,
@@ -9121,6 +8798,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     Expression<String>? sourceKind,
     Expression<String>? sourceId,
     Expression<String>? validUntil,
+    Expression<String>? searchTerms,
+    Expression<String>? reviewedAt,
     Expression<String>? status,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
@@ -9134,6 +8813,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
       if (sourceKind != null) 'source_kind': sourceKind,
       if (sourceId != null) 'source_id': sourceId,
       if (validUntil != null) 'valid_until': validUntil,
+      if (searchTerms != null) 'search_terms': searchTerms,
+      if (reviewedAt != null) 'reviewed_at': reviewedAt,
       if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -9149,6 +8830,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     Value<String>? sourceKind,
     Value<String?>? sourceId,
     Value<String?>? validUntil,
+    Value<String>? searchTerms,
+    Value<String?>? reviewedAt,
     Value<String>? status,
     Value<String>? createdAt,
     Value<String>? updatedAt,
@@ -9162,6 +8845,8 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
       sourceKind: sourceKind ?? this.sourceKind,
       sourceId: sourceId ?? this.sourceId,
       validUntil: validUntil ?? this.validUntil,
+      searchTerms: searchTerms ?? this.searchTerms,
+      reviewedAt: reviewedAt ?? this.reviewedAt,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -9193,6 +8878,12 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
     if (validUntil.present) {
       map['valid_until'] = Variable<String>(validUntil.value);
     }
+    if (searchTerms.present) {
+      map['search_terms'] = Variable<String>(searchTerms.value);
+    }
+    if (reviewedAt.present) {
+      map['reviewed_at'] = Variable<String>(reviewedAt.value);
+    }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
     }
@@ -9218,9 +8909,1013 @@ class MemoriesCompanion extends UpdateCompanion<MemoryRow> {
           ..write('sourceKind: $sourceKind, ')
           ..write('sourceId: $sourceId, ')
           ..write('validUntil: $validUntil, ')
+          ..write('searchTerms: $searchTerms, ')
+          ..write('reviewedAt: $reviewedAt, ')
           ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MemoryUsagesTable extends MemoryUsages
+    with TableInfo<$MemoryUsagesTable, MemoryUsageRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MemoryUsagesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _memoryIdMeta = const VerificationMeta(
+    'memoryId',
+  );
+  @override
+  late final GeneratedColumn<String> memoryId = GeneratedColumn<String>(
+    'memory_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES memory (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _deviceIdMeta = const VerificationMeta(
+    'deviceId',
+  );
+  @override
+  late final GeneratedColumn<String> deviceId = GeneratedColumn<String>(
+    'device_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _recallCountMeta = const VerificationMeta(
+    'recallCount',
+  );
+  @override
+  late final GeneratedColumn<int> recallCount = GeneratedColumn<int>(
+    'recall_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _searchCountMeta = const VerificationMeta(
+    'searchCount',
+  );
+  @override
+  late final GeneratedColumn<int> searchCount = GeneratedColumn<int>(
+    'search_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lastRecalledAtMeta = const VerificationMeta(
+    'lastRecalledAt',
+  );
+  @override
+  late final GeneratedColumn<String> lastRecalledAt = GeneratedColumn<String>(
+    'last_recalled_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastSearchedAtMeta = const VerificationMeta(
+    'lastSearchedAt',
+  );
+  @override
+  late final GeneratedColumn<String> lastSearchedAt = GeneratedColumn<String>(
+    'last_searched_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _firstSeenAtMeta = const VerificationMeta(
+    'firstSeenAt',
+  );
+  @override
+  late final GeneratedColumn<String> firstSeenAt = GeneratedColumn<String>(
+    'first_seen_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    memoryId,
+    deviceId,
+    recallCount,
+    searchCount,
+    lastRecalledAt,
+    lastSearchedAt,
+    firstSeenAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'memory_usage';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MemoryUsageRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('memory_id')) {
+      context.handle(
+        _memoryIdMeta,
+        memoryId.isAcceptableOrUnknown(data['memory_id']!, _memoryIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_memoryIdMeta);
+    }
+    if (data.containsKey('device_id')) {
+      context.handle(
+        _deviceIdMeta,
+        deviceId.isAcceptableOrUnknown(data['device_id']!, _deviceIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_deviceIdMeta);
+    }
+    if (data.containsKey('recall_count')) {
+      context.handle(
+        _recallCountMeta,
+        recallCount.isAcceptableOrUnknown(
+          data['recall_count']!,
+          _recallCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('search_count')) {
+      context.handle(
+        _searchCountMeta,
+        searchCount.isAcceptableOrUnknown(
+          data['search_count']!,
+          _searchCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_recalled_at')) {
+      context.handle(
+        _lastRecalledAtMeta,
+        lastRecalledAt.isAcceptableOrUnknown(
+          data['last_recalled_at']!,
+          _lastRecalledAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_searched_at')) {
+      context.handle(
+        _lastSearchedAtMeta,
+        lastSearchedAt.isAcceptableOrUnknown(
+          data['last_searched_at']!,
+          _lastSearchedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('first_seen_at')) {
+      context.handle(
+        _firstSeenAtMeta,
+        firstSeenAt.isAcceptableOrUnknown(
+          data['first_seen_at']!,
+          _firstSeenAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_firstSeenAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MemoryUsageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MemoryUsageRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      memoryId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}memory_id'],
+      )!,
+      deviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}device_id'],
+      )!,
+      recallCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}recall_count'],
+      )!,
+      searchCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}search_count'],
+      )!,
+      lastRecalledAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_recalled_at'],
+      ),
+      lastSearchedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_searched_at'],
+      ),
+      firstSeenAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}first_seen_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MemoryUsagesTable createAlias(String alias) {
+    return $MemoryUsagesTable(attachedDatabase, alias);
+  }
+}
+
+class MemoryUsageRow extends DataClass implements Insertable<MemoryUsageRow> {
+  final String id;
+  final String memoryId;
+  final String deviceId;
+  final int recallCount;
+  final int searchCount;
+  final String? lastRecalledAt;
+  final String? lastSearchedAt;
+  final String firstSeenAt;
+  final String updatedAt;
+  const MemoryUsageRow({
+    required this.id,
+    required this.memoryId,
+    required this.deviceId,
+    required this.recallCount,
+    required this.searchCount,
+    this.lastRecalledAt,
+    this.lastSearchedAt,
+    required this.firstSeenAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['memory_id'] = Variable<String>(memoryId);
+    map['device_id'] = Variable<String>(deviceId);
+    map['recall_count'] = Variable<int>(recallCount);
+    map['search_count'] = Variable<int>(searchCount);
+    if (!nullToAbsent || lastRecalledAt != null) {
+      map['last_recalled_at'] = Variable<String>(lastRecalledAt);
+    }
+    if (!nullToAbsent || lastSearchedAt != null) {
+      map['last_searched_at'] = Variable<String>(lastSearchedAt);
+    }
+    map['first_seen_at'] = Variable<String>(firstSeenAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  MemoryUsagesCompanion toCompanion(bool nullToAbsent) {
+    return MemoryUsagesCompanion(
+      id: Value(id),
+      memoryId: Value(memoryId),
+      deviceId: Value(deviceId),
+      recallCount: Value(recallCount),
+      searchCount: Value(searchCount),
+      lastRecalledAt: lastRecalledAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastRecalledAt),
+      lastSearchedAt: lastSearchedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastSearchedAt),
+      firstSeenAt: Value(firstSeenAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory MemoryUsageRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MemoryUsageRow(
+      id: serializer.fromJson<String>(json['id']),
+      memoryId: serializer.fromJson<String>(json['memoryId']),
+      deviceId: serializer.fromJson<String>(json['deviceId']),
+      recallCount: serializer.fromJson<int>(json['recallCount']),
+      searchCount: serializer.fromJson<int>(json['searchCount']),
+      lastRecalledAt: serializer.fromJson<String?>(json['lastRecalledAt']),
+      lastSearchedAt: serializer.fromJson<String?>(json['lastSearchedAt']),
+      firstSeenAt: serializer.fromJson<String>(json['firstSeenAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'memoryId': serializer.toJson<String>(memoryId),
+      'deviceId': serializer.toJson<String>(deviceId),
+      'recallCount': serializer.toJson<int>(recallCount),
+      'searchCount': serializer.toJson<int>(searchCount),
+      'lastRecalledAt': serializer.toJson<String?>(lastRecalledAt),
+      'lastSearchedAt': serializer.toJson<String?>(lastSearchedAt),
+      'firstSeenAt': serializer.toJson<String>(firstSeenAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  MemoryUsageRow copyWith({
+    String? id,
+    String? memoryId,
+    String? deviceId,
+    int? recallCount,
+    int? searchCount,
+    Value<String?> lastRecalledAt = const Value.absent(),
+    Value<String?> lastSearchedAt = const Value.absent(),
+    String? firstSeenAt,
+    String? updatedAt,
+  }) => MemoryUsageRow(
+    id: id ?? this.id,
+    memoryId: memoryId ?? this.memoryId,
+    deviceId: deviceId ?? this.deviceId,
+    recallCount: recallCount ?? this.recallCount,
+    searchCount: searchCount ?? this.searchCount,
+    lastRecalledAt: lastRecalledAt.present
+        ? lastRecalledAt.value
+        : this.lastRecalledAt,
+    lastSearchedAt: lastSearchedAt.present
+        ? lastSearchedAt.value
+        : this.lastSearchedAt,
+    firstSeenAt: firstSeenAt ?? this.firstSeenAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  MemoryUsageRow copyWithCompanion(MemoryUsagesCompanion data) {
+    return MemoryUsageRow(
+      id: data.id.present ? data.id.value : this.id,
+      memoryId: data.memoryId.present ? data.memoryId.value : this.memoryId,
+      deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
+      recallCount: data.recallCount.present
+          ? data.recallCount.value
+          : this.recallCount,
+      searchCount: data.searchCount.present
+          ? data.searchCount.value
+          : this.searchCount,
+      lastRecalledAt: data.lastRecalledAt.present
+          ? data.lastRecalledAt.value
+          : this.lastRecalledAt,
+      lastSearchedAt: data.lastSearchedAt.present
+          ? data.lastSearchedAt.value
+          : this.lastSearchedAt,
+      firstSeenAt: data.firstSeenAt.present
+          ? data.firstSeenAt.value
+          : this.firstSeenAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MemoryUsageRow(')
+          ..write('id: $id, ')
+          ..write('memoryId: $memoryId, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('recallCount: $recallCount, ')
+          ..write('searchCount: $searchCount, ')
+          ..write('lastRecalledAt: $lastRecalledAt, ')
+          ..write('lastSearchedAt: $lastSearchedAt, ')
+          ..write('firstSeenAt: $firstSeenAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    memoryId,
+    deviceId,
+    recallCount,
+    searchCount,
+    lastRecalledAt,
+    lastSearchedAt,
+    firstSeenAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MemoryUsageRow &&
+          other.id == this.id &&
+          other.memoryId == this.memoryId &&
+          other.deviceId == this.deviceId &&
+          other.recallCount == this.recallCount &&
+          other.searchCount == this.searchCount &&
+          other.lastRecalledAt == this.lastRecalledAt &&
+          other.lastSearchedAt == this.lastSearchedAt &&
+          other.firstSeenAt == this.firstSeenAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class MemoryUsagesCompanion extends UpdateCompanion<MemoryUsageRow> {
+  final Value<String> id;
+  final Value<String> memoryId;
+  final Value<String> deviceId;
+  final Value<int> recallCount;
+  final Value<int> searchCount;
+  final Value<String?> lastRecalledAt;
+  final Value<String?> lastSearchedAt;
+  final Value<String> firstSeenAt;
+  final Value<String> updatedAt;
+  final Value<int> rowid;
+  const MemoryUsagesCompanion({
+    this.id = const Value.absent(),
+    this.memoryId = const Value.absent(),
+    this.deviceId = const Value.absent(),
+    this.recallCount = const Value.absent(),
+    this.searchCount = const Value.absent(),
+    this.lastRecalledAt = const Value.absent(),
+    this.lastSearchedAt = const Value.absent(),
+    this.firstSeenAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MemoryUsagesCompanion.insert({
+    required String id,
+    required String memoryId,
+    required String deviceId,
+    this.recallCount = const Value.absent(),
+    this.searchCount = const Value.absent(),
+    this.lastRecalledAt = const Value.absent(),
+    this.lastSearchedAt = const Value.absent(),
+    required String firstSeenAt,
+    required String updatedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       memoryId = Value(memoryId),
+       deviceId = Value(deviceId),
+       firstSeenAt = Value(firstSeenAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<MemoryUsageRow> custom({
+    Expression<String>? id,
+    Expression<String>? memoryId,
+    Expression<String>? deviceId,
+    Expression<int>? recallCount,
+    Expression<int>? searchCount,
+    Expression<String>? lastRecalledAt,
+    Expression<String>? lastSearchedAt,
+    Expression<String>? firstSeenAt,
+    Expression<String>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (memoryId != null) 'memory_id': memoryId,
+      if (deviceId != null) 'device_id': deviceId,
+      if (recallCount != null) 'recall_count': recallCount,
+      if (searchCount != null) 'search_count': searchCount,
+      if (lastRecalledAt != null) 'last_recalled_at': lastRecalledAt,
+      if (lastSearchedAt != null) 'last_searched_at': lastSearchedAt,
+      if (firstSeenAt != null) 'first_seen_at': firstSeenAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MemoryUsagesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? memoryId,
+    Value<String>? deviceId,
+    Value<int>? recallCount,
+    Value<int>? searchCount,
+    Value<String?>? lastRecalledAt,
+    Value<String?>? lastSearchedAt,
+    Value<String>? firstSeenAt,
+    Value<String>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return MemoryUsagesCompanion(
+      id: id ?? this.id,
+      memoryId: memoryId ?? this.memoryId,
+      deviceId: deviceId ?? this.deviceId,
+      recallCount: recallCount ?? this.recallCount,
+      searchCount: searchCount ?? this.searchCount,
+      lastRecalledAt: lastRecalledAt ?? this.lastRecalledAt,
+      lastSearchedAt: lastSearchedAt ?? this.lastSearchedAt,
+      firstSeenAt: firstSeenAt ?? this.firstSeenAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (memoryId.present) {
+      map['memory_id'] = Variable<String>(memoryId.value);
+    }
+    if (deviceId.present) {
+      map['device_id'] = Variable<String>(deviceId.value);
+    }
+    if (recallCount.present) {
+      map['recall_count'] = Variable<int>(recallCount.value);
+    }
+    if (searchCount.present) {
+      map['search_count'] = Variable<int>(searchCount.value);
+    }
+    if (lastRecalledAt.present) {
+      map['last_recalled_at'] = Variable<String>(lastRecalledAt.value);
+    }
+    if (lastSearchedAt.present) {
+      map['last_searched_at'] = Variable<String>(lastSearchedAt.value);
+    }
+    if (firstSeenAt.present) {
+      map['first_seen_at'] = Variable<String>(firstSeenAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MemoryUsagesCompanion(')
+          ..write('id: $id, ')
+          ..write('memoryId: $memoryId, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('recallCount: $recallCount, ')
+          ..write('searchCount: $searchCount, ')
+          ..write('lastRecalledAt: $lastRecalledAt, ')
+          ..write('lastSearchedAt: $lastSearchedAt, ')
+          ..write('firstSeenAt: $firstSeenAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MemoryUsesTable extends MemoryUses
+    with TableInfo<$MemoryUsesTable, MemoryUseRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MemoryUsesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _memoryIdMeta = const VerificationMeta(
+    'memoryId',
+  );
+  @override
+  late final GeneratedColumn<String> memoryId = GeneratedColumn<String>(
+    'memory_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES memory (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _deviceIdMeta = const VerificationMeta(
+    'deviceId',
+  );
+  @override
+  late final GeneratedColumn<String> deviceId = GeneratedColumn<String>(
+    'device_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    check: () => kind.isIn(memoryUseKinds),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('recall'),
+  );
+  static const VerificationMeta _usedAtMeta = const VerificationMeta('usedAt');
+  @override
+  late final GeneratedColumn<String> usedAt = GeneratedColumn<String>(
+    'used_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _acquiredAtMeta = const VerificationMeta(
+    'acquiredAt',
+  );
+  @override
+  late final GeneratedColumn<String> acquiredAt = GeneratedColumn<String>(
+    'acquired_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    memoryId,
+    deviceId,
+    kind,
+    usedAt,
+    acquiredAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'memory_use';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MemoryUseRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('memory_id')) {
+      context.handle(
+        _memoryIdMeta,
+        memoryId.isAcceptableOrUnknown(data['memory_id']!, _memoryIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_memoryIdMeta);
+    }
+    if (data.containsKey('device_id')) {
+      context.handle(
+        _deviceIdMeta,
+        deviceId.isAcceptableOrUnknown(data['device_id']!, _deviceIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_deviceIdMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    }
+    if (data.containsKey('used_at')) {
+      context.handle(
+        _usedAtMeta,
+        usedAt.isAcceptableOrUnknown(data['used_at']!, _usedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_usedAtMeta);
+    }
+    if (data.containsKey('acquired_at')) {
+      context.handle(
+        _acquiredAtMeta,
+        acquiredAt.isAcceptableOrUnknown(data['acquired_at']!, _acquiredAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_acquiredAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MemoryUseRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MemoryUseRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      memoryId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}memory_id'],
+      )!,
+      deviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}device_id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      usedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}used_at'],
+      )!,
+      acquiredAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}acquired_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MemoryUsesTable createAlias(String alias) {
+    return $MemoryUsesTable(attachedDatabase, alias);
+  }
+}
+
+class MemoryUseRow extends DataClass implements Insertable<MemoryUseRow> {
+  final String id;
+  final String memoryId;
+  final String deviceId;
+
+  /// `recall` 表示进入相关层，`search` 表示由 `search_memory` 读到。
+  final String kind;
+  final String usedAt;
+  final String acquiredAt;
+  const MemoryUseRow({
+    required this.id,
+    required this.memoryId,
+    required this.deviceId,
+    required this.kind,
+    required this.usedAt,
+    required this.acquiredAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['memory_id'] = Variable<String>(memoryId);
+    map['device_id'] = Variable<String>(deviceId);
+    map['kind'] = Variable<String>(kind);
+    map['used_at'] = Variable<String>(usedAt);
+    map['acquired_at'] = Variable<String>(acquiredAt);
+    return map;
+  }
+
+  MemoryUsesCompanion toCompanion(bool nullToAbsent) {
+    return MemoryUsesCompanion(
+      id: Value(id),
+      memoryId: Value(memoryId),
+      deviceId: Value(deviceId),
+      kind: Value(kind),
+      usedAt: Value(usedAt),
+      acquiredAt: Value(acquiredAt),
+    );
+  }
+
+  factory MemoryUseRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MemoryUseRow(
+      id: serializer.fromJson<String>(json['id']),
+      memoryId: serializer.fromJson<String>(json['memoryId']),
+      deviceId: serializer.fromJson<String>(json['deviceId']),
+      kind: serializer.fromJson<String>(json['kind']),
+      usedAt: serializer.fromJson<String>(json['usedAt']),
+      acquiredAt: serializer.fromJson<String>(json['acquiredAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'memoryId': serializer.toJson<String>(memoryId),
+      'deviceId': serializer.toJson<String>(deviceId),
+      'kind': serializer.toJson<String>(kind),
+      'usedAt': serializer.toJson<String>(usedAt),
+      'acquiredAt': serializer.toJson<String>(acquiredAt),
+    };
+  }
+
+  MemoryUseRow copyWith({
+    String? id,
+    String? memoryId,
+    String? deviceId,
+    String? kind,
+    String? usedAt,
+    String? acquiredAt,
+  }) => MemoryUseRow(
+    id: id ?? this.id,
+    memoryId: memoryId ?? this.memoryId,
+    deviceId: deviceId ?? this.deviceId,
+    kind: kind ?? this.kind,
+    usedAt: usedAt ?? this.usedAt,
+    acquiredAt: acquiredAt ?? this.acquiredAt,
+  );
+  MemoryUseRow copyWithCompanion(MemoryUsesCompanion data) {
+    return MemoryUseRow(
+      id: data.id.present ? data.id.value : this.id,
+      memoryId: data.memoryId.present ? data.memoryId.value : this.memoryId,
+      deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      usedAt: data.usedAt.present ? data.usedAt.value : this.usedAt,
+      acquiredAt: data.acquiredAt.present
+          ? data.acquiredAt.value
+          : this.acquiredAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MemoryUseRow(')
+          ..write('id: $id, ')
+          ..write('memoryId: $memoryId, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('kind: $kind, ')
+          ..write('usedAt: $usedAt, ')
+          ..write('acquiredAt: $acquiredAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, memoryId, deviceId, kind, usedAt, acquiredAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MemoryUseRow &&
+          other.id == this.id &&
+          other.memoryId == this.memoryId &&
+          other.deviceId == this.deviceId &&
+          other.kind == this.kind &&
+          other.usedAt == this.usedAt &&
+          other.acquiredAt == this.acquiredAt);
+}
+
+class MemoryUsesCompanion extends UpdateCompanion<MemoryUseRow> {
+  final Value<String> id;
+  final Value<String> memoryId;
+  final Value<String> deviceId;
+  final Value<String> kind;
+  final Value<String> usedAt;
+  final Value<String> acquiredAt;
+  final Value<int> rowid;
+  const MemoryUsesCompanion({
+    this.id = const Value.absent(),
+    this.memoryId = const Value.absent(),
+    this.deviceId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.usedAt = const Value.absent(),
+    this.acquiredAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MemoryUsesCompanion.insert({
+    required String id,
+    required String memoryId,
+    required String deviceId,
+    this.kind = const Value.absent(),
+    required String usedAt,
+    required String acquiredAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       memoryId = Value(memoryId),
+       deviceId = Value(deviceId),
+       usedAt = Value(usedAt),
+       acquiredAt = Value(acquiredAt);
+  static Insertable<MemoryUseRow> custom({
+    Expression<String>? id,
+    Expression<String>? memoryId,
+    Expression<String>? deviceId,
+    Expression<String>? kind,
+    Expression<String>? usedAt,
+    Expression<String>? acquiredAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (memoryId != null) 'memory_id': memoryId,
+      if (deviceId != null) 'device_id': deviceId,
+      if (kind != null) 'kind': kind,
+      if (usedAt != null) 'used_at': usedAt,
+      if (acquiredAt != null) 'acquired_at': acquiredAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MemoryUsesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? memoryId,
+    Value<String>? deviceId,
+    Value<String>? kind,
+    Value<String>? usedAt,
+    Value<String>? acquiredAt,
+    Value<int>? rowid,
+  }) {
+    return MemoryUsesCompanion(
+      id: id ?? this.id,
+      memoryId: memoryId ?? this.memoryId,
+      deviceId: deviceId ?? this.deviceId,
+      kind: kind ?? this.kind,
+      usedAt: usedAt ?? this.usedAt,
+      acquiredAt: acquiredAt ?? this.acquiredAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (memoryId.present) {
+      map['memory_id'] = Variable<String>(memoryId.value);
+    }
+    if (deviceId.present) {
+      map['device_id'] = Variable<String>(deviceId.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (usedAt.present) {
+      map['used_at'] = Variable<String>(usedAt.value);
+    }
+    if (acquiredAt.present) {
+      map['acquired_at'] = Variable<String>(acquiredAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MemoryUsesCompanion(')
+          ..write('id: $id, ')
+          ..write('memoryId: $memoryId, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('kind: $kind, ')
+          ..write('usedAt: $usedAt, ')
+          ..write('acquiredAt: $acquiredAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -9260,17 +9955,6 @@ class $RevisionCommitsTable extends RevisionCommits
       'REFERENCES revision_commit (id) ON DELETE SET NULL',
     ),
   );
-  static const VerificationMeta _parentHashMeta = const VerificationMeta(
-    'parentHash',
-  );
-  @override
-  late final GeneratedColumn<String> parentHash = GeneratedColumn<String>(
-    'parent_hash',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
   static const VerificationMeta _generationMeta = const VerificationMeta(
     'generation',
   );
@@ -9288,15 +9972,6 @@ class $RevisionCommitsTable extends RevisionCommits
   @override
   late final GeneratedColumn<String> stateDigest = GeneratedColumn<String>(
     'state_digest',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
-  @override
-  late final GeneratedColumn<String> hash = GeneratedColumn<String>(
-    'hash',
     aliasedName,
     false,
     type: DriftSqlType.string,
@@ -9340,17 +10015,6 @@ class $RevisionCommitsTable extends RevisionCommits
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _requestIdMeta = const VerificationMeta(
-    'requestId',
-  );
-  @override
-  late final GeneratedColumn<String> requestId = GeneratedColumn<String>(
-    'request_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _restoredCommitIdMeta = const VerificationMeta(
     'restoredCommitId',
   );
@@ -9382,31 +10046,6 @@ class $RevisionCommitsTable extends RevisionCommits
     aliasedName,
     false,
     check: () => ComparableExpr(byteLength).isBiggerOrEqualValue(0),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
-  );
-  static const VerificationMeta _conflictCountMeta = const VerificationMeta(
-    'conflictCount',
-  );
-  @override
-  late final GeneratedColumn<int> conflictCount = GeneratedColumn<int>(
-    'conflict_count',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(conflictCount).isBiggerOrEqualValue(0),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
-  );
-  static const VerificationMeta _changeCountMeta = const VerificationMeta(
-    'changeCount',
-  );
-  @override
-  late final GeneratedColumn<int> changeCount = GeneratedColumn<int>(
-    'change_count',
-    aliasedName,
-    false,
     type: DriftSqlType.int,
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
@@ -9444,27 +10083,34 @@ class $RevisionCommitsTable extends RevisionCommits
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _serverSeqMeta = const VerificationMeta(
+    'serverSeq',
+  );
+  @override
+  late final GeneratedColumn<int> serverSeq = GeneratedColumn<int>(
+    'server_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
     parentId,
-    parentHash,
     generation,
     stateDigest,
-    hash,
     actor,
     kind,
     uid,
     action,
-    requestId,
     restoredCommitId,
     revertedCommitId,
     byteLength,
-    conflictCount,
-    changeCount,
     createdAt,
     originDevice,
     authoredAt,
+    serverSeq,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -9487,14 +10133,6 @@ class $RevisionCommitsTable extends RevisionCommits
         parentId.isAcceptableOrUnknown(data['parent_id']!, _parentIdMeta),
       );
     }
-    if (data.containsKey('parent_hash')) {
-      context.handle(
-        _parentHashMeta,
-        parentHash.isAcceptableOrUnknown(data['parent_hash']!, _parentHashMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_parentHashMeta);
-    }
     if (data.containsKey('generation')) {
       context.handle(
         _generationMeta,
@@ -9513,14 +10151,6 @@ class $RevisionCommitsTable extends RevisionCommits
       );
     } else if (isInserting) {
       context.missing(_stateDigestMeta);
-    }
-    if (data.containsKey('hash')) {
-      context.handle(
-        _hashMeta,
-        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_hashMeta);
     }
     if (data.containsKey('actor')) {
       context.handle(
@@ -9554,12 +10184,6 @@ class $RevisionCommitsTable extends RevisionCommits
     } else if (isInserting) {
       context.missing(_actionMeta);
     }
-    if (data.containsKey('request_id')) {
-      context.handle(
-        _requestIdMeta,
-        requestId.isAcceptableOrUnknown(data['request_id']!, _requestIdMeta),
-      );
-    }
     if (data.containsKey('restored_commit_id')) {
       context.handle(
         _restoredCommitIdMeta,
@@ -9582,24 +10206,6 @@ class $RevisionCommitsTable extends RevisionCommits
       context.handle(
         _byteLengthMeta,
         byteLength.isAcceptableOrUnknown(data['byte_length']!, _byteLengthMeta),
-      );
-    }
-    if (data.containsKey('conflict_count')) {
-      context.handle(
-        _conflictCountMeta,
-        conflictCount.isAcceptableOrUnknown(
-          data['conflict_count']!,
-          _conflictCountMeta,
-        ),
-      );
-    }
-    if (data.containsKey('change_count')) {
-      context.handle(
-        _changeCountMeta,
-        changeCount.isAcceptableOrUnknown(
-          data['change_count']!,
-          _changeCountMeta,
-        ),
       );
     }
     if (data.containsKey('created_at')) {
@@ -9625,6 +10231,12 @@ class $RevisionCommitsTable extends RevisionCommits
         authoredAt.isAcceptableOrUnknown(data['authored_at']!, _authoredAtMeta),
       );
     }
+    if (data.containsKey('server_seq')) {
+      context.handle(
+        _serverSeqMeta,
+        serverSeq.isAcceptableOrUnknown(data['server_seq']!, _serverSeqMeta),
+      );
+    }
     return context;
   }
 
@@ -9642,10 +10254,6 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.int,
         data['${effectivePrefix}parent_id'],
       ),
-      parentHash: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}parent_hash'],
-      )!,
       generation: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}generation'],
@@ -9653,10 +10261,6 @@ class $RevisionCommitsTable extends RevisionCommits
       stateDigest: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}state_digest'],
-      )!,
-      hash: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}hash'],
       )!,
       actor: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -9674,10 +10278,6 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.string,
         data['${effectivePrefix}action'],
       )!,
-      requestId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}request_id'],
-      ),
       restoredCommitId: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}restored_commit_id'],
@@ -9690,14 +10290,6 @@ class $RevisionCommitsTable extends RevisionCommits
         DriftSqlType.int,
         data['${effectivePrefix}byte_length'],
       )!,
-      conflictCount: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}conflict_count'],
-      )!,
-      changeCount: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}change_count'],
-      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}created_at'],
@@ -9709,6 +10301,10 @@ class $RevisionCommitsTable extends RevisionCommits
       authoredAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}authored_at'],
+      ),
+      serverSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}server_seq'],
       ),
     );
   }
@@ -9723,16 +10319,11 @@ class RevisionCommitRow extends DataClass
     implements Insertable<RevisionCommitRow> {
   final int id;
   final int? parentId;
-
-  /// 父提交的哈希；基线提交写 64 个 `0`，裁剪之后最早保留提交的这一列是锚点。
-  final String parentHash;
   final int generation;
 
-  /// 这条提交落库之后全部业务行的一致性摘要（方案 3.5）。
+  /// 这条提交落库之后全部业务行的一致性摘要；完整性只认这一个原语，变更明细
+  /// 的条数与冲突条数在读取时现数（ADR-0054 与审查 S1）。
   final String stateDigest;
-
-  /// 这条提交的哈希：`sha256(父哈希, uid, kind, 规范化变更明细)`（方案 3.10）。
-  final String hash;
   final String actor;
 
   /// 提交类型：`baseline`、`write`、`undo`、`restore`、`import`、
@@ -9741,52 +10332,45 @@ class RevisionCommitRow extends DataClass
 
   /// 提交身份：全局唯一、永不复用，推送与服务端去重、远端提交的本机去重都按它。
   ///
-  /// 本机提交在 [_appendCommit] 里生成 UUIDv7，远端提交沿用远端的 uid；不按提交
-  /// 编号或请求编号派生，因为编号会在整库恢复旧备份后重复（ADR-0040）。
+  /// 本机提交由界面在用户动作开始时生成 UUIDv7 并一路传下来，远端提交沿用远端
+  /// 的 uid；不按提交编号或动作参数派生（ADR-0053 决定第 3 条）。
   final String uid;
 
   /// 给人看的动作说明；不参与撤销与界面类型的判断。
   final String action;
-
-  /// 同一次用户动作的重试编号：只用于“旧提交仍是 HEAD 且在最近两分钟内创建”
-  /// 的重试去重，不再是提交身份。
-  final String? requestId;
   final int? restoredCommitId;
   final int? revertedCommitId;
 
   /// 这条提交变更明细的字节数；按容量裁剪用它估算每条提交占用的空间。
   final int byteLength;
-
-  /// 应用这条远端提交时记下的冲突条数（`revision_conflict`）。
-  final int conflictCount;
-  final int changeCount;
   final String createdAt;
 
   /// 远端提交由服务端带来的设备标识；本机提交为空（方案 3.12）。
   final String? originDevice;
 
-  /// 远端提交的作者创建时间；本机提交等于 [createdAt]（方案 3.12）。
+  /// 远端提交的作者创建时间；本机提交为空，界面回退到 [createdAt]（方案 3.12）。
   final String? authoredAt;
+
+  /// 这条提交在服务端序列上的序号：远端提交取拉取到的值，本机提交推送成功之后
+  /// 取推送响应里的逐条序号。空值只表示还不知道它排在第几条，不影响同步
+  /// （ADR-0054 决定第 2 条）。
+  final int? serverSeq;
   const RevisionCommitRow({
     required this.id,
     this.parentId,
-    required this.parentHash,
     required this.generation,
     required this.stateDigest,
-    required this.hash,
     required this.actor,
     required this.kind,
     required this.uid,
     required this.action,
-    this.requestId,
     this.restoredCommitId,
     this.revertedCommitId,
     required this.byteLength,
-    required this.conflictCount,
-    required this.changeCount,
     required this.createdAt,
     this.originDevice,
     this.authoredAt,
+    this.serverSeq,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -9795,17 +10379,12 @@ class RevisionCommitRow extends DataClass
     if (!nullToAbsent || parentId != null) {
       map['parent_id'] = Variable<int>(parentId);
     }
-    map['parent_hash'] = Variable<String>(parentHash);
     map['generation'] = Variable<int>(generation);
     map['state_digest'] = Variable<String>(stateDigest);
-    map['hash'] = Variable<String>(hash);
     map['actor'] = Variable<String>(actor);
     map['kind'] = Variable<String>(kind);
     map['uid'] = Variable<String>(uid);
     map['action'] = Variable<String>(action);
-    if (!nullToAbsent || requestId != null) {
-      map['request_id'] = Variable<String>(requestId);
-    }
     if (!nullToAbsent || restoredCommitId != null) {
       map['restored_commit_id'] = Variable<int>(restoredCommitId);
     }
@@ -9813,14 +10392,15 @@ class RevisionCommitRow extends DataClass
       map['reverted_commit_id'] = Variable<int>(revertedCommitId);
     }
     map['byte_length'] = Variable<int>(byteLength);
-    map['conflict_count'] = Variable<int>(conflictCount);
-    map['change_count'] = Variable<int>(changeCount);
     map['created_at'] = Variable<String>(createdAt);
     if (!nullToAbsent || originDevice != null) {
       map['origin_device'] = Variable<String>(originDevice);
     }
     if (!nullToAbsent || authoredAt != null) {
       map['authored_at'] = Variable<String>(authoredAt);
+    }
+    if (!nullToAbsent || serverSeq != null) {
+      map['server_seq'] = Variable<int>(serverSeq);
     }
     return map;
   }
@@ -9831,17 +10411,12 @@ class RevisionCommitRow extends DataClass
       parentId: parentId == null && nullToAbsent
           ? const Value.absent()
           : Value(parentId),
-      parentHash: Value(parentHash),
       generation: Value(generation),
       stateDigest: Value(stateDigest),
-      hash: Value(hash),
       actor: Value(actor),
       kind: Value(kind),
       uid: Value(uid),
       action: Value(action),
-      requestId: requestId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(requestId),
       restoredCommitId: restoredCommitId == null && nullToAbsent
           ? const Value.absent()
           : Value(restoredCommitId),
@@ -9849,8 +10424,6 @@ class RevisionCommitRow extends DataClass
           ? const Value.absent()
           : Value(revertedCommitId),
       byteLength: Value(byteLength),
-      conflictCount: Value(conflictCount),
-      changeCount: Value(changeCount),
       createdAt: Value(createdAt),
       originDevice: originDevice == null && nullToAbsent
           ? const Value.absent()
@@ -9858,6 +10431,9 @@ class RevisionCommitRow extends DataClass
       authoredAt: authoredAt == null && nullToAbsent
           ? const Value.absent()
           : Value(authoredAt),
+      serverSeq: serverSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(serverSeq),
     );
   }
 
@@ -9869,23 +10445,19 @@ class RevisionCommitRow extends DataClass
     return RevisionCommitRow(
       id: serializer.fromJson<int>(json['id']),
       parentId: serializer.fromJson<int?>(json['parentId']),
-      parentHash: serializer.fromJson<String>(json['parentHash']),
       generation: serializer.fromJson<int>(json['generation']),
       stateDigest: serializer.fromJson<String>(json['stateDigest']),
-      hash: serializer.fromJson<String>(json['hash']),
       actor: serializer.fromJson<String>(json['actor']),
       kind: serializer.fromJson<String>(json['kind']),
       uid: serializer.fromJson<String>(json['uid']),
       action: serializer.fromJson<String>(json['action']),
-      requestId: serializer.fromJson<String?>(json['requestId']),
       restoredCommitId: serializer.fromJson<int?>(json['restoredCommitId']),
       revertedCommitId: serializer.fromJson<int?>(json['revertedCommitId']),
       byteLength: serializer.fromJson<int>(json['byteLength']),
-      conflictCount: serializer.fromJson<int>(json['conflictCount']),
-      changeCount: serializer.fromJson<int>(json['changeCount']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       originDevice: serializer.fromJson<String?>(json['originDevice']),
       authoredAt: serializer.fromJson<String?>(json['authoredAt']),
+      serverSeq: serializer.fromJson<int?>(json['serverSeq']),
     );
   }
   @override
@@ -9894,58 +10466,47 @@ class RevisionCommitRow extends DataClass
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
       'parentId': serializer.toJson<int?>(parentId),
-      'parentHash': serializer.toJson<String>(parentHash),
       'generation': serializer.toJson<int>(generation),
       'stateDigest': serializer.toJson<String>(stateDigest),
-      'hash': serializer.toJson<String>(hash),
       'actor': serializer.toJson<String>(actor),
       'kind': serializer.toJson<String>(kind),
       'uid': serializer.toJson<String>(uid),
       'action': serializer.toJson<String>(action),
-      'requestId': serializer.toJson<String?>(requestId),
       'restoredCommitId': serializer.toJson<int?>(restoredCommitId),
       'revertedCommitId': serializer.toJson<int?>(revertedCommitId),
       'byteLength': serializer.toJson<int>(byteLength),
-      'conflictCount': serializer.toJson<int>(conflictCount),
-      'changeCount': serializer.toJson<int>(changeCount),
       'createdAt': serializer.toJson<String>(createdAt),
       'originDevice': serializer.toJson<String?>(originDevice),
       'authoredAt': serializer.toJson<String?>(authoredAt),
+      'serverSeq': serializer.toJson<int?>(serverSeq),
     };
   }
 
   RevisionCommitRow copyWith({
     int? id,
     Value<int?> parentId = const Value.absent(),
-    String? parentHash,
     int? generation,
     String? stateDigest,
-    String? hash,
     String? actor,
     String? kind,
     String? uid,
     String? action,
-    Value<String?> requestId = const Value.absent(),
     Value<int?> restoredCommitId = const Value.absent(),
     Value<int?> revertedCommitId = const Value.absent(),
     int? byteLength,
-    int? conflictCount,
-    int? changeCount,
     String? createdAt,
     Value<String?> originDevice = const Value.absent(),
     Value<String?> authoredAt = const Value.absent(),
+    Value<int?> serverSeq = const Value.absent(),
   }) => RevisionCommitRow(
     id: id ?? this.id,
     parentId: parentId.present ? parentId.value : this.parentId,
-    parentHash: parentHash ?? this.parentHash,
     generation: generation ?? this.generation,
     stateDigest: stateDigest ?? this.stateDigest,
-    hash: hash ?? this.hash,
     actor: actor ?? this.actor,
     kind: kind ?? this.kind,
     uid: uid ?? this.uid,
     action: action ?? this.action,
-    requestId: requestId.present ? requestId.value : this.requestId,
     restoredCommitId: restoredCommitId.present
         ? restoredCommitId.value
         : this.restoredCommitId,
@@ -9953,31 +10514,25 @@ class RevisionCommitRow extends DataClass
         ? revertedCommitId.value
         : this.revertedCommitId,
     byteLength: byteLength ?? this.byteLength,
-    conflictCount: conflictCount ?? this.conflictCount,
-    changeCount: changeCount ?? this.changeCount,
     createdAt: createdAt ?? this.createdAt,
     originDevice: originDevice.present ? originDevice.value : this.originDevice,
     authoredAt: authoredAt.present ? authoredAt.value : this.authoredAt,
+    serverSeq: serverSeq.present ? serverSeq.value : this.serverSeq,
   );
   RevisionCommitRow copyWithCompanion(RevisionCommitsCompanion data) {
     return RevisionCommitRow(
       id: data.id.present ? data.id.value : this.id,
       parentId: data.parentId.present ? data.parentId.value : this.parentId,
-      parentHash: data.parentHash.present
-          ? data.parentHash.value
-          : this.parentHash,
       generation: data.generation.present
           ? data.generation.value
           : this.generation,
       stateDigest: data.stateDigest.present
           ? data.stateDigest.value
           : this.stateDigest,
-      hash: data.hash.present ? data.hash.value : this.hash,
       actor: data.actor.present ? data.actor.value : this.actor,
       kind: data.kind.present ? data.kind.value : this.kind,
       uid: data.uid.present ? data.uid.value : this.uid,
       action: data.action.present ? data.action.value : this.action,
-      requestId: data.requestId.present ? data.requestId.value : this.requestId,
       restoredCommitId: data.restoredCommitId.present
           ? data.restoredCommitId.value
           : this.restoredCommitId,
@@ -9987,12 +10542,6 @@ class RevisionCommitRow extends DataClass
       byteLength: data.byteLength.present
           ? data.byteLength.value
           : this.byteLength,
-      conflictCount: data.conflictCount.present
-          ? data.conflictCount.value
-          : this.conflictCount,
-      changeCount: data.changeCount.present
-          ? data.changeCount.value
-          : this.changeCount,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       originDevice: data.originDevice.present
           ? data.originDevice.value
@@ -10000,6 +10549,7 @@ class RevisionCommitRow extends DataClass
       authoredAt: data.authoredAt.present
           ? data.authoredAt.value
           : this.authoredAt,
+      serverSeq: data.serverSeq.present ? data.serverSeq.value : this.serverSeq,
     );
   }
 
@@ -10008,23 +10558,19 @@ class RevisionCommitRow extends DataClass
     return (StringBuffer('RevisionCommitRow(')
           ..write('id: $id, ')
           ..write('parentId: $parentId, ')
-          ..write('parentHash: $parentHash, ')
           ..write('generation: $generation, ')
           ..write('stateDigest: $stateDigest, ')
-          ..write('hash: $hash, ')
           ..write('actor: $actor, ')
           ..write('kind: $kind, ')
           ..write('uid: $uid, ')
           ..write('action: $action, ')
-          ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
           ..write('revertedCommitId: $revertedCommitId, ')
           ..write('byteLength: $byteLength, ')
-          ..write('conflictCount: $conflictCount, ')
-          ..write('changeCount: $changeCount, ')
           ..write('createdAt: $createdAt, ')
           ..write('originDevice: $originDevice, ')
-          ..write('authoredAt: $authoredAt')
+          ..write('authoredAt: $authoredAt, ')
+          ..write('serverSeq: $serverSeq')
           ..write(')'))
         .toString();
   }
@@ -10033,23 +10579,19 @@ class RevisionCommitRow extends DataClass
   int get hashCode => Object.hash(
     id,
     parentId,
-    parentHash,
     generation,
     stateDigest,
-    hash,
     actor,
     kind,
     uid,
     action,
-    requestId,
     restoredCommitId,
     revertedCommitId,
     byteLength,
-    conflictCount,
-    changeCount,
     createdAt,
     originDevice,
     authoredAt,
+    serverSeq,
   );
   @override
   bool operator ==(Object other) =>
@@ -10057,90 +10599,72 @@ class RevisionCommitRow extends DataClass
       (other is RevisionCommitRow &&
           other.id == this.id &&
           other.parentId == this.parentId &&
-          other.parentHash == this.parentHash &&
           other.generation == this.generation &&
           other.stateDigest == this.stateDigest &&
-          other.hash == this.hash &&
           other.actor == this.actor &&
           other.kind == this.kind &&
           other.uid == this.uid &&
           other.action == this.action &&
-          other.requestId == this.requestId &&
           other.restoredCommitId == this.restoredCommitId &&
           other.revertedCommitId == this.revertedCommitId &&
           other.byteLength == this.byteLength &&
-          other.conflictCount == this.conflictCount &&
-          other.changeCount == this.changeCount &&
           other.createdAt == this.createdAt &&
           other.originDevice == this.originDevice &&
-          other.authoredAt == this.authoredAt);
+          other.authoredAt == this.authoredAt &&
+          other.serverSeq == this.serverSeq);
 }
 
 class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   final Value<int> id;
   final Value<int?> parentId;
-  final Value<String> parentHash;
   final Value<int> generation;
   final Value<String> stateDigest;
-  final Value<String> hash;
   final Value<String> actor;
   final Value<String> kind;
   final Value<String> uid;
   final Value<String> action;
-  final Value<String?> requestId;
   final Value<int?> restoredCommitId;
   final Value<int?> revertedCommitId;
   final Value<int> byteLength;
-  final Value<int> conflictCount;
-  final Value<int> changeCount;
   final Value<String> createdAt;
   final Value<String?> originDevice;
   final Value<String?> authoredAt;
+  final Value<int?> serverSeq;
   const RevisionCommitsCompanion({
     this.id = const Value.absent(),
     this.parentId = const Value.absent(),
-    this.parentHash = const Value.absent(),
     this.generation = const Value.absent(),
     this.stateDigest = const Value.absent(),
-    this.hash = const Value.absent(),
     this.actor = const Value.absent(),
     this.kind = const Value.absent(),
     this.uid = const Value.absent(),
     this.action = const Value.absent(),
-    this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
     this.revertedCommitId = const Value.absent(),
     this.byteLength = const Value.absent(),
-    this.conflictCount = const Value.absent(),
-    this.changeCount = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.originDevice = const Value.absent(),
     this.authoredAt = const Value.absent(),
+    this.serverSeq = const Value.absent(),
   });
   RevisionCommitsCompanion.insert({
     this.id = const Value.absent(),
     this.parentId = const Value.absent(),
-    required String parentHash,
     required int generation,
     required String stateDigest,
-    required String hash,
     required String actor,
     required String kind,
     required String uid,
     required String action,
-    this.requestId = const Value.absent(),
     this.restoredCommitId = const Value.absent(),
     this.revertedCommitId = const Value.absent(),
     this.byteLength = const Value.absent(),
-    this.conflictCount = const Value.absent(),
-    this.changeCount = const Value.absent(),
     required String createdAt,
     this.originDevice = const Value.absent(),
     this.authoredAt = const Value.absent(),
-  }) : parentHash = Value(parentHash),
-       generation = Value(generation),
+    this.serverSeq = const Value.absent(),
+  }) : generation = Value(generation),
        stateDigest = Value(stateDigest),
-       hash = Value(hash),
        actor = Value(actor),
        kind = Value(kind),
        uid = Value(uid),
@@ -10149,88 +10673,72 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
   static Insertable<RevisionCommitRow> custom({
     Expression<int>? id,
     Expression<int>? parentId,
-    Expression<String>? parentHash,
     Expression<int>? generation,
     Expression<String>? stateDigest,
-    Expression<String>? hash,
     Expression<String>? actor,
     Expression<String>? kind,
     Expression<String>? uid,
     Expression<String>? action,
-    Expression<String>? requestId,
     Expression<int>? restoredCommitId,
     Expression<int>? revertedCommitId,
     Expression<int>? byteLength,
-    Expression<int>? conflictCount,
-    Expression<int>? changeCount,
     Expression<String>? createdAt,
     Expression<String>? originDevice,
     Expression<String>? authoredAt,
+    Expression<int>? serverSeq,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (parentId != null) 'parent_id': parentId,
-      if (parentHash != null) 'parent_hash': parentHash,
       if (generation != null) 'generation': generation,
       if (stateDigest != null) 'state_digest': stateDigest,
-      if (hash != null) 'hash': hash,
       if (actor != null) 'actor': actor,
       if (kind != null) 'kind': kind,
       if (uid != null) 'uid': uid,
       if (action != null) 'action': action,
-      if (requestId != null) 'request_id': requestId,
       if (restoredCommitId != null) 'restored_commit_id': restoredCommitId,
       if (revertedCommitId != null) 'reverted_commit_id': revertedCommitId,
       if (byteLength != null) 'byte_length': byteLength,
-      if (conflictCount != null) 'conflict_count': conflictCount,
-      if (changeCount != null) 'change_count': changeCount,
       if (createdAt != null) 'created_at': createdAt,
       if (originDevice != null) 'origin_device': originDevice,
       if (authoredAt != null) 'authored_at': authoredAt,
+      if (serverSeq != null) 'server_seq': serverSeq,
     });
   }
 
   RevisionCommitsCompanion copyWith({
     Value<int>? id,
     Value<int?>? parentId,
-    Value<String>? parentHash,
     Value<int>? generation,
     Value<String>? stateDigest,
-    Value<String>? hash,
     Value<String>? actor,
     Value<String>? kind,
     Value<String>? uid,
     Value<String>? action,
-    Value<String?>? requestId,
     Value<int?>? restoredCommitId,
     Value<int?>? revertedCommitId,
     Value<int>? byteLength,
-    Value<int>? conflictCount,
-    Value<int>? changeCount,
     Value<String>? createdAt,
     Value<String?>? originDevice,
     Value<String?>? authoredAt,
+    Value<int?>? serverSeq,
   }) {
     return RevisionCommitsCompanion(
       id: id ?? this.id,
       parentId: parentId ?? this.parentId,
-      parentHash: parentHash ?? this.parentHash,
       generation: generation ?? this.generation,
       stateDigest: stateDigest ?? this.stateDigest,
-      hash: hash ?? this.hash,
       actor: actor ?? this.actor,
       kind: kind ?? this.kind,
       uid: uid ?? this.uid,
       action: action ?? this.action,
-      requestId: requestId ?? this.requestId,
       restoredCommitId: restoredCommitId ?? this.restoredCommitId,
       revertedCommitId: revertedCommitId ?? this.revertedCommitId,
       byteLength: byteLength ?? this.byteLength,
-      conflictCount: conflictCount ?? this.conflictCount,
-      changeCount: changeCount ?? this.changeCount,
       createdAt: createdAt ?? this.createdAt,
       originDevice: originDevice ?? this.originDevice,
       authoredAt: authoredAt ?? this.authoredAt,
+      serverSeq: serverSeq ?? this.serverSeq,
     );
   }
 
@@ -10243,17 +10751,11 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     if (parentId.present) {
       map['parent_id'] = Variable<int>(parentId.value);
     }
-    if (parentHash.present) {
-      map['parent_hash'] = Variable<String>(parentHash.value);
-    }
     if (generation.present) {
       map['generation'] = Variable<int>(generation.value);
     }
     if (stateDigest.present) {
       map['state_digest'] = Variable<String>(stateDigest.value);
-    }
-    if (hash.present) {
-      map['hash'] = Variable<String>(hash.value);
     }
     if (actor.present) {
       map['actor'] = Variable<String>(actor.value);
@@ -10267,9 +10769,6 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     if (action.present) {
       map['action'] = Variable<String>(action.value);
     }
-    if (requestId.present) {
-      map['request_id'] = Variable<String>(requestId.value);
-    }
     if (restoredCommitId.present) {
       map['restored_commit_id'] = Variable<int>(restoredCommitId.value);
     }
@@ -10278,12 +10777,6 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     }
     if (byteLength.present) {
       map['byte_length'] = Variable<int>(byteLength.value);
-    }
-    if (conflictCount.present) {
-      map['conflict_count'] = Variable<int>(conflictCount.value);
-    }
-    if (changeCount.present) {
-      map['change_count'] = Variable<int>(changeCount.value);
     }
     if (createdAt.present) {
       map['created_at'] = Variable<String>(createdAt.value);
@@ -10294,6 +10787,9 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     if (authoredAt.present) {
       map['authored_at'] = Variable<String>(authoredAt.value);
     }
+    if (serverSeq.present) {
+      map['server_seq'] = Variable<int>(serverSeq.value);
+    }
     return map;
   }
 
@@ -10302,23 +10798,19 @@ class RevisionCommitsCompanion extends UpdateCompanion<RevisionCommitRow> {
     return (StringBuffer('RevisionCommitsCompanion(')
           ..write('id: $id, ')
           ..write('parentId: $parentId, ')
-          ..write('parentHash: $parentHash, ')
           ..write('generation: $generation, ')
           ..write('stateDigest: $stateDigest, ')
-          ..write('hash: $hash, ')
           ..write('actor: $actor, ')
           ..write('kind: $kind, ')
           ..write('uid: $uid, ')
           ..write('action: $action, ')
-          ..write('requestId: $requestId, ')
           ..write('restoredCommitId: $restoredCommitId, ')
           ..write('revertedCommitId: $revertedCommitId, ')
           ..write('byteLength: $byteLength, ')
-          ..write('conflictCount: $conflictCount, ')
-          ..write('changeCount: $changeCount, ')
           ..write('createdAt: $createdAt, ')
           ..write('originDevice: $originDevice, ')
-          ..write('authoredAt: $authoredAt')
+          ..write('authoredAt: $authoredAt, ')
+          ..write('serverSeq: $serverSeq')
           ..write(')'))
         .toString();
   }
@@ -10813,16 +11305,29 @@ class $RevisionRefsTable extends RevisionRefs
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _commitIdMeta = const VerificationMeta(
-    'commitId',
+  static const VerificationMeta _commitUidMeta = const VerificationMeta(
+    'commitUid',
   );
   @override
-  late final GeneratedColumn<int> commitId = GeneratedColumn<int>(
-    'commit_id',
+  late final GeneratedColumn<String> commitUid = GeneratedColumn<String>(
+    'commit_uid',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.string,
     requiredDuringInsert: true,
+  );
+  static const VerificationMeta _syncStateMeta = const VerificationMeta(
+    'syncState',
+  );
+  @override
+  late final GeneratedColumn<String> syncState = GeneratedColumn<String>(
+    'sync_state',
+    aliasedName,
+    false,
+    check: () => syncState.isIn(revisionRefSyncStates),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('clean'),
   );
   static const VerificationMeta _noteMeta = const VerificationMeta('note');
   @override
@@ -10858,7 +11363,8 @@ class $RevisionRefsTable extends RevisionRefs
   @override
   List<GeneratedColumn> get $columns => [
     name,
-    commitId,
+    commitUid,
+    syncState,
     note,
     createdAt,
     updatedAt,
@@ -10883,13 +11389,19 @@ class $RevisionRefsTable extends RevisionRefs
     } else if (isInserting) {
       context.missing(_nameMeta);
     }
-    if (data.containsKey('commit_id')) {
+    if (data.containsKey('commit_uid')) {
       context.handle(
-        _commitIdMeta,
-        commitId.isAcceptableOrUnknown(data['commit_id']!, _commitIdMeta),
+        _commitUidMeta,
+        commitUid.isAcceptableOrUnknown(data['commit_uid']!, _commitUidMeta),
       );
     } else if (isInserting) {
-      context.missing(_commitIdMeta);
+      context.missing(_commitUidMeta);
+    }
+    if (data.containsKey('sync_state')) {
+      context.handle(
+        _syncStateMeta,
+        syncState.isAcceptableOrUnknown(data['sync_state']!, _syncStateMeta),
+      );
     }
     if (data.containsKey('note')) {
       context.handle(
@@ -10926,9 +11438,13 @@ class $RevisionRefsTable extends RevisionRefs
         DriftSqlType.string,
         data['${effectivePrefix}name'],
       )!,
-      commitId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}commit_id'],
+      commitUid: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}commit_uid'],
+      )!,
+      syncState: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sync_state'],
       )!,
       note: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -10952,14 +11468,19 @@ class $RevisionRefsTable extends RevisionRefs
 }
 
 class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
+  /// 名字先做 NFC 规范化再写入，主键按规范化之后的名字比较。
   final String name;
-  final int commitId;
+  final String commitUid;
+
+  /// 干净表示与云端一致，已改表示本机改过、还没推送。
+  final String syncState;
   final String? note;
   final String createdAt;
   final String updatedAt;
   const RevisionRefRow({
     required this.name,
-    required this.commitId,
+    required this.commitUid,
+    required this.syncState,
     this.note,
     required this.createdAt,
     required this.updatedAt,
@@ -10968,7 +11489,8 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['name'] = Variable<String>(name);
-    map['commit_id'] = Variable<int>(commitId);
+    map['commit_uid'] = Variable<String>(commitUid);
+    map['sync_state'] = Variable<String>(syncState);
     if (!nullToAbsent || note != null) {
       map['note'] = Variable<String>(note);
     }
@@ -10980,7 +11502,8 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
   RevisionRefsCompanion toCompanion(bool nullToAbsent) {
     return RevisionRefsCompanion(
       name: Value(name),
-      commitId: Value(commitId),
+      commitUid: Value(commitUid),
+      syncState: Value(syncState),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -10994,7 +11517,8 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return RevisionRefRow(
       name: serializer.fromJson<String>(json['name']),
-      commitId: serializer.fromJson<int>(json['commitId']),
+      commitUid: serializer.fromJson<String>(json['commitUid']),
+      syncState: serializer.fromJson<String>(json['syncState']),
       note: serializer.fromJson<String?>(json['note']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
@@ -11005,7 +11529,8 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'name': serializer.toJson<String>(name),
-      'commitId': serializer.toJson<int>(commitId),
+      'commitUid': serializer.toJson<String>(commitUid),
+      'syncState': serializer.toJson<String>(syncState),
       'note': serializer.toJson<String?>(note),
       'createdAt': serializer.toJson<String>(createdAt),
       'updatedAt': serializer.toJson<String>(updatedAt),
@@ -11014,13 +11539,15 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
 
   RevisionRefRow copyWith({
     String? name,
-    int? commitId,
+    String? commitUid,
+    String? syncState,
     Value<String?> note = const Value.absent(),
     String? createdAt,
     String? updatedAt,
   }) => RevisionRefRow(
     name: name ?? this.name,
-    commitId: commitId ?? this.commitId,
+    commitUid: commitUid ?? this.commitUid,
+    syncState: syncState ?? this.syncState,
     note: note.present ? note.value : this.note,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -11028,7 +11555,8 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
   RevisionRefRow copyWithCompanion(RevisionRefsCompanion data) {
     return RevisionRefRow(
       name: data.name.present ? data.name.value : this.name,
-      commitId: data.commitId.present ? data.commitId.value : this.commitId,
+      commitUid: data.commitUid.present ? data.commitUid.value : this.commitUid,
+      syncState: data.syncState.present ? data.syncState.value : this.syncState,
       note: data.note.present ? data.note.value : this.note,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -11039,7 +11567,8 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
   String toString() {
     return (StringBuffer('RevisionRefRow(')
           ..write('name: $name, ')
-          ..write('commitId: $commitId, ')
+          ..write('commitUid: $commitUid, ')
+          ..write('syncState: $syncState, ')
           ..write('note: $note, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -11048,13 +11577,15 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
   }
 
   @override
-  int get hashCode => Object.hash(name, commitId, note, createdAt, updatedAt);
+  int get hashCode =>
+      Object.hash(name, commitUid, syncState, note, createdAt, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is RevisionRefRow &&
           other.name == this.name &&
-          other.commitId == this.commitId &&
+          other.commitUid == this.commitUid &&
+          other.syncState == this.syncState &&
           other.note == this.note &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -11062,14 +11593,16 @@ class RevisionRefRow extends DataClass implements Insertable<RevisionRefRow> {
 
 class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
   final Value<String> name;
-  final Value<int> commitId;
+  final Value<String> commitUid;
+  final Value<String> syncState;
   final Value<String?> note;
   final Value<String> createdAt;
   final Value<String> updatedAt;
   final Value<int> rowid;
   const RevisionRefsCompanion({
     this.name = const Value.absent(),
-    this.commitId = const Value.absent(),
+    this.commitUid = const Value.absent(),
+    this.syncState = const Value.absent(),
     this.note = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -11077,18 +11610,20 @@ class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
   });
   RevisionRefsCompanion.insert({
     required String name,
-    required int commitId,
+    required String commitUid,
+    this.syncState = const Value.absent(),
     this.note = const Value.absent(),
     required String createdAt,
     required String updatedAt,
     this.rowid = const Value.absent(),
   }) : name = Value(name),
-       commitId = Value(commitId),
+       commitUid = Value(commitUid),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
   static Insertable<RevisionRefRow> custom({
     Expression<String>? name,
-    Expression<int>? commitId,
+    Expression<String>? commitUid,
+    Expression<String>? syncState,
     Expression<String>? note,
     Expression<String>? createdAt,
     Expression<String>? updatedAt,
@@ -11096,7 +11631,8 @@ class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
   }) {
     return RawValuesInsertable({
       if (name != null) 'name': name,
-      if (commitId != null) 'commit_id': commitId,
+      if (commitUid != null) 'commit_uid': commitUid,
+      if (syncState != null) 'sync_state': syncState,
       if (note != null) 'note': note,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -11106,7 +11642,8 @@ class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
 
   RevisionRefsCompanion copyWith({
     Value<String>? name,
-    Value<int>? commitId,
+    Value<String>? commitUid,
+    Value<String>? syncState,
     Value<String?>? note,
     Value<String>? createdAt,
     Value<String>? updatedAt,
@@ -11114,7 +11651,8 @@ class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
   }) {
     return RevisionRefsCompanion(
       name: name ?? this.name,
-      commitId: commitId ?? this.commitId,
+      commitUid: commitUid ?? this.commitUid,
+      syncState: syncState ?? this.syncState,
       note: note ?? this.note,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -11128,8 +11666,11 @@ class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
     if (name.present) {
       map['name'] = Variable<String>(name.value);
     }
-    if (commitId.present) {
-      map['commit_id'] = Variable<int>(commitId.value);
+    if (commitUid.present) {
+      map['commit_uid'] = Variable<String>(commitUid.value);
+    }
+    if (syncState.present) {
+      map['sync_state'] = Variable<String>(syncState.value);
     }
     if (note.present) {
       map['note'] = Variable<String>(note.value);
@@ -11150,10 +11691,234 @@ class RevisionRefsCompanion extends UpdateCompanion<RevisionRefRow> {
   String toString() {
     return (StringBuffer('RevisionRefsCompanion(')
           ..write('name: $name, ')
-          ..write('commitId: $commitId, ')
+          ..write('commitUid: $commitUid, ')
+          ..write('syncState: $syncState, ')
           ..write('note: $note, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $RevisionRefTombstonesTable extends RevisionRefTombstones
+    with TableInfo<$RevisionRefTombstonesTable, RevisionRefTombstoneRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RevisionRefTombstonesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _deletedAtMeta = const VerificationMeta(
+    'deletedAt',
+  );
+  @override
+  late final GeneratedColumn<String> deletedAt = GeneratedColumn<String>(
+    'deleted_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [name, deletedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'revision_ref_tombstone';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RevisionRefTombstoneRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(
+        _deletedAtMeta,
+        deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_deletedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {name};
+  @override
+  RevisionRefTombstoneRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RevisionRefTombstoneRow(
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      deletedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}deleted_at'],
+      )!,
+    );
+  }
+
+  @override
+  $RevisionRefTombstonesTable createAlias(String alias) {
+    return $RevisionRefTombstonesTable(attachedDatabase, alias);
+  }
+}
+
+class RevisionRefTombstoneRow extends DataClass
+    implements Insertable<RevisionRefTombstoneRow> {
+  final String name;
+  final String deletedAt;
+  const RevisionRefTombstoneRow({required this.name, required this.deletedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['name'] = Variable<String>(name);
+    map['deleted_at'] = Variable<String>(deletedAt);
+    return map;
+  }
+
+  RevisionRefTombstonesCompanion toCompanion(bool nullToAbsent) {
+    return RevisionRefTombstonesCompanion(
+      name: Value(name),
+      deletedAt: Value(deletedAt),
+    );
+  }
+
+  factory RevisionRefTombstoneRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RevisionRefTombstoneRow(
+      name: serializer.fromJson<String>(json['name']),
+      deletedAt: serializer.fromJson<String>(json['deletedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'name': serializer.toJson<String>(name),
+      'deletedAt': serializer.toJson<String>(deletedAt),
+    };
+  }
+
+  RevisionRefTombstoneRow copyWith({String? name, String? deletedAt}) =>
+      RevisionRefTombstoneRow(
+        name: name ?? this.name,
+        deletedAt: deletedAt ?? this.deletedAt,
+      );
+  RevisionRefTombstoneRow copyWithCompanion(
+    RevisionRefTombstonesCompanion data,
+  ) {
+    return RevisionRefTombstoneRow(
+      name: data.name.present ? data.name.value : this.name,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionRefTombstoneRow(')
+          ..write('name: $name, ')
+          ..write('deletedAt: $deletedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(name, deletedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RevisionRefTombstoneRow &&
+          other.name == this.name &&
+          other.deletedAt == this.deletedAt);
+}
+
+class RevisionRefTombstonesCompanion
+    extends UpdateCompanion<RevisionRefTombstoneRow> {
+  final Value<String> name;
+  final Value<String> deletedAt;
+  final Value<int> rowid;
+  const RevisionRefTombstonesCompanion({
+    this.name = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RevisionRefTombstonesCompanion.insert({
+    required String name,
+    required String deletedAt,
+    this.rowid = const Value.absent(),
+  }) : name = Value(name),
+       deletedAt = Value(deletedAt);
+  static Insertable<RevisionRefTombstoneRow> custom({
+    Expression<String>? name,
+    Expression<String>? deletedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (name != null) 'name': name,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RevisionRefTombstonesCompanion copyWith({
+    Value<String>? name,
+    Value<String>? deletedAt,
+    Value<int>? rowid,
+  }) {
+    return RevisionRefTombstonesCompanion(
+      name: name ?? this.name,
+      deletedAt: deletedAt ?? this.deletedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<String>(deletedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RevisionRefTombstonesCompanion(')
+          ..write('name: $name, ')
+          ..write('deletedAt: $deletedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -11235,28 +12000,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _assetHashesJsonMeta = const VerificationMeta(
-    'assetHashesJson',
-  );
-  @override
-  late final GeneratedColumn<String> assetHashesJson = GeneratedColumn<String>(
-    'asset_hashes_json',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _checksumMeta = const VerificationMeta(
-    'checksum',
-  );
-  @override
-  late final GeneratedColumn<String> checksum = GeneratedColumn<String>(
-    'checksum',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
   static const VerificationMeta _stateDigestMeta = const VerificationMeta(
     'stateDigest',
   );
@@ -11287,8 +12030,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     payload,
     encoding,
     rawBytes,
-    assetHashesJson,
-    checksum,
     stateDigest,
     createdAt,
   ];
@@ -11347,25 +12088,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
     } else if (isInserting) {
       context.missing(_rawBytesMeta);
     }
-    if (data.containsKey('asset_hashes_json')) {
-      context.handle(
-        _assetHashesJsonMeta,
-        assetHashesJson.isAcceptableOrUnknown(
-          data['asset_hashes_json']!,
-          _assetHashesJsonMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_assetHashesJsonMeta);
-    }
-    if (data.containsKey('checksum')) {
-      context.handle(
-        _checksumMeta,
-        checksum.isAcceptableOrUnknown(data['checksum']!, _checksumMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_checksumMeta);
-    }
     if (data.containsKey('state_digest')) {
       context.handle(
         _stateDigestMeta,
@@ -11418,14 +12140,6 @@ class $RevisionCheckpointsTable extends RevisionCheckpoints
         DriftSqlType.int,
         data['${effectivePrefix}raw_bytes'],
       )!,
-      assetHashesJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}asset_hashes_json'],
-      )!,
-      checksum: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}checksum'],
-      )!,
       stateDigest: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}state_digest'],
@@ -11449,16 +12163,12 @@ class RevisionCheckpointRow extends DataClass
   final String kind;
   final int commitId;
 
-  /// 业务投影的字节；`json` 直接存 UTF-8 原文，`json+gzip` 存它的 gzip 压缩。
+  /// 业务投影的字节，gzip 压缩之后的检查点原文；解出 JSON 再还原投影。
   final Uint8List payload;
   final String encoding;
 
   /// 压缩之前的字节数，用于留存统计与按容量裁剪的估算。
   final int rawBytes;
-  final String assetHashesJson;
-
-  /// 按解压后的原文计算，与 [payload] 的编码无关。
-  final String checksum;
 
   /// 这份投影的一致性摘要；重建之后可以直接与当前表比对（方案 3.5）。
   final String stateDigest;
@@ -11470,8 +12180,6 @@ class RevisionCheckpointRow extends DataClass
     required this.payload,
     required this.encoding,
     required this.rawBytes,
-    required this.assetHashesJson,
-    required this.checksum,
     required this.stateDigest,
     required this.createdAt,
   });
@@ -11484,8 +12192,6 @@ class RevisionCheckpointRow extends DataClass
     map['payload'] = Variable<Uint8List>(payload);
     map['encoding'] = Variable<String>(encoding);
     map['raw_bytes'] = Variable<int>(rawBytes);
-    map['asset_hashes_json'] = Variable<String>(assetHashesJson);
-    map['checksum'] = Variable<String>(checksum);
     map['state_digest'] = Variable<String>(stateDigest);
     map['created_at'] = Variable<String>(createdAt);
     return map;
@@ -11499,8 +12205,6 @@ class RevisionCheckpointRow extends DataClass
       payload: Value(payload),
       encoding: Value(encoding),
       rawBytes: Value(rawBytes),
-      assetHashesJson: Value(assetHashesJson),
-      checksum: Value(checksum),
       stateDigest: Value(stateDigest),
       createdAt: Value(createdAt),
     );
@@ -11518,8 +12222,6 @@ class RevisionCheckpointRow extends DataClass
       payload: serializer.fromJson<Uint8List>(json['payload']),
       encoding: serializer.fromJson<String>(json['encoding']),
       rawBytes: serializer.fromJson<int>(json['rawBytes']),
-      assetHashesJson: serializer.fromJson<String>(json['assetHashesJson']),
-      checksum: serializer.fromJson<String>(json['checksum']),
       stateDigest: serializer.fromJson<String>(json['stateDigest']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
     );
@@ -11534,8 +12236,6 @@ class RevisionCheckpointRow extends DataClass
       'payload': serializer.toJson<Uint8List>(payload),
       'encoding': serializer.toJson<String>(encoding),
       'rawBytes': serializer.toJson<int>(rawBytes),
-      'assetHashesJson': serializer.toJson<String>(assetHashesJson),
-      'checksum': serializer.toJson<String>(checksum),
       'stateDigest': serializer.toJson<String>(stateDigest),
       'createdAt': serializer.toJson<String>(createdAt),
     };
@@ -11548,8 +12248,6 @@ class RevisionCheckpointRow extends DataClass
     Uint8List? payload,
     String? encoding,
     int? rawBytes,
-    String? assetHashesJson,
-    String? checksum,
     String? stateDigest,
     String? createdAt,
   }) => RevisionCheckpointRow(
@@ -11559,8 +12257,6 @@ class RevisionCheckpointRow extends DataClass
     payload: payload ?? this.payload,
     encoding: encoding ?? this.encoding,
     rawBytes: rawBytes ?? this.rawBytes,
-    assetHashesJson: assetHashesJson ?? this.assetHashesJson,
-    checksum: checksum ?? this.checksum,
     stateDigest: stateDigest ?? this.stateDigest,
     createdAt: createdAt ?? this.createdAt,
   );
@@ -11572,10 +12268,6 @@ class RevisionCheckpointRow extends DataClass
       payload: data.payload.present ? data.payload.value : this.payload,
       encoding: data.encoding.present ? data.encoding.value : this.encoding,
       rawBytes: data.rawBytes.present ? data.rawBytes.value : this.rawBytes,
-      assetHashesJson: data.assetHashesJson.present
-          ? data.assetHashesJson.value
-          : this.assetHashesJson,
-      checksum: data.checksum.present ? data.checksum.value : this.checksum,
       stateDigest: data.stateDigest.present
           ? data.stateDigest.value
           : this.stateDigest,
@@ -11592,8 +12284,6 @@ class RevisionCheckpointRow extends DataClass
           ..write('payload: $payload, ')
           ..write('encoding: $encoding, ')
           ..write('rawBytes: $rawBytes, ')
-          ..write('assetHashesJson: $assetHashesJson, ')
-          ..write('checksum: $checksum, ')
           ..write('stateDigest: $stateDigest, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -11608,8 +12298,6 @@ class RevisionCheckpointRow extends DataClass
     $driftBlobEquality.hash(payload),
     encoding,
     rawBytes,
-    assetHashesJson,
-    checksum,
     stateDigest,
     createdAt,
   );
@@ -11623,8 +12311,6 @@ class RevisionCheckpointRow extends DataClass
           $driftBlobEquality.equals(other.payload, this.payload) &&
           other.encoding == this.encoding &&
           other.rawBytes == this.rawBytes &&
-          other.assetHashesJson == this.assetHashesJson &&
-          other.checksum == this.checksum &&
           other.stateDigest == this.stateDigest &&
           other.createdAt == this.createdAt);
 }
@@ -11637,8 +12323,6 @@ class RevisionCheckpointsCompanion
   final Value<Uint8List> payload;
   final Value<String> encoding;
   final Value<int> rawBytes;
-  final Value<String> assetHashesJson;
-  final Value<String> checksum;
   final Value<String> stateDigest;
   final Value<String> createdAt;
   const RevisionCheckpointsCompanion({
@@ -11648,8 +12332,6 @@ class RevisionCheckpointsCompanion
     this.payload = const Value.absent(),
     this.encoding = const Value.absent(),
     this.rawBytes = const Value.absent(),
-    this.assetHashesJson = const Value.absent(),
-    this.checksum = const Value.absent(),
     this.stateDigest = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
@@ -11660,8 +12342,6 @@ class RevisionCheckpointsCompanion
     required Uint8List payload,
     required String encoding,
     required int rawBytes,
-    required String assetHashesJson,
-    required String checksum,
     required String stateDigest,
     required String createdAt,
   }) : kind = Value(kind),
@@ -11669,8 +12349,6 @@ class RevisionCheckpointsCompanion
        payload = Value(payload),
        encoding = Value(encoding),
        rawBytes = Value(rawBytes),
-       assetHashesJson = Value(assetHashesJson),
-       checksum = Value(checksum),
        stateDigest = Value(stateDigest),
        createdAt = Value(createdAt);
   static Insertable<RevisionCheckpointRow> custom({
@@ -11680,8 +12358,6 @@ class RevisionCheckpointsCompanion
     Expression<Uint8List>? payload,
     Expression<String>? encoding,
     Expression<int>? rawBytes,
-    Expression<String>? assetHashesJson,
-    Expression<String>? checksum,
     Expression<String>? stateDigest,
     Expression<String>? createdAt,
   }) {
@@ -11692,8 +12368,6 @@ class RevisionCheckpointsCompanion
       if (payload != null) 'payload': payload,
       if (encoding != null) 'encoding': encoding,
       if (rawBytes != null) 'raw_bytes': rawBytes,
-      if (assetHashesJson != null) 'asset_hashes_json': assetHashesJson,
-      if (checksum != null) 'checksum': checksum,
       if (stateDigest != null) 'state_digest': stateDigest,
       if (createdAt != null) 'created_at': createdAt,
     });
@@ -11706,8 +12380,6 @@ class RevisionCheckpointsCompanion
     Value<Uint8List>? payload,
     Value<String>? encoding,
     Value<int>? rawBytes,
-    Value<String>? assetHashesJson,
-    Value<String>? checksum,
     Value<String>? stateDigest,
     Value<String>? createdAt,
   }) {
@@ -11718,8 +12390,6 @@ class RevisionCheckpointsCompanion
       payload: payload ?? this.payload,
       encoding: encoding ?? this.encoding,
       rawBytes: rawBytes ?? this.rawBytes,
-      assetHashesJson: assetHashesJson ?? this.assetHashesJson,
-      checksum: checksum ?? this.checksum,
       stateDigest: stateDigest ?? this.stateDigest,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -11746,12 +12416,6 @@ class RevisionCheckpointsCompanion
     if (rawBytes.present) {
       map['raw_bytes'] = Variable<int>(rawBytes.value);
     }
-    if (assetHashesJson.present) {
-      map['asset_hashes_json'] = Variable<String>(assetHashesJson.value);
-    }
-    if (checksum.present) {
-      map['checksum'] = Variable<String>(checksum.value);
-    }
     if (stateDigest.present) {
       map['state_digest'] = Variable<String>(stateDigest.value);
     }
@@ -11770,8 +12434,6 @@ class RevisionCheckpointsCompanion
           ..write('payload: $payload, ')
           ..write('encoding: $encoding, ')
           ..write('rawBytes: $rawBytes, ')
-          ..write('assetHashesJson: $assetHashesJson, ')
-          ..write('checksum: $checksum, ')
           ..write('stateDigest: $stateDigest, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -11779,12 +12441,12 @@ class RevisionCheckpointsCompanion
   }
 }
 
-class $RevisionContextsTable extends RevisionContexts
-    with TableInfo<$RevisionContextsTable, RevisionContextRow> {
+class $RevisionStatesTable extends RevisionStates
+    with TableInfo<$RevisionStatesTable, RevisionStateRow> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
-  $RevisionContextsTable(this.attachedDatabase, [this._alias]);
+  $RevisionStatesTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<int> id = GeneratedColumn<int>(
@@ -11836,16 +12498,60 @@ class $RevisionContextsTable extends RevisionContexts
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _nextCommitMeta = const VerificationMeta(
+    'nextCommit',
+  );
   @override
-  List<GeneratedColumn> get $columns => [id, activeCommit, capturing, suppress];
+  late final GeneratedColumn<int> nextCommit = GeneratedColumn<int>(
+    'next_commit',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _headCommitIdMeta = const VerificationMeta(
+    'headCommitId',
+  );
+  @override
+  late final GeneratedColumn<int> headCommitId = GeneratedColumn<int>(
+    'head_commit_id',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(headCommitId).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _tableDigestsJsonMeta = const VerificationMeta(
+    'tableDigestsJson',
+  );
+  @override
+  late final GeneratedColumn<String> tableDigestsJson = GeneratedColumn<String>(
+    'table_digests_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('{}'),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    activeCommit,
+    capturing,
+    suppress,
+    nextCommit,
+    headCommitId,
+    tableDigestsJson,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
-  static const String $name = 'revision_context';
+  static const String $name = 'revision_state';
   @override
   VerificationContext validateIntegrity(
-    Insertable<RevisionContextRow> instance, {
+    Insertable<RevisionStateRow> instance, {
     bool isInserting = false,
   }) {
     final context = VerificationContext();
@@ -11874,15 +12580,41 @@ class $RevisionContextsTable extends RevisionContexts
         suppress.isAcceptableOrUnknown(data['suppress']!, _suppressMeta),
       );
     }
+    if (data.containsKey('next_commit')) {
+      context.handle(
+        _nextCommitMeta,
+        nextCommit.isAcceptableOrUnknown(data['next_commit']!, _nextCommitMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nextCommitMeta);
+    }
+    if (data.containsKey('head_commit_id')) {
+      context.handle(
+        _headCommitIdMeta,
+        headCommitId.isAcceptableOrUnknown(
+          data['head_commit_id']!,
+          _headCommitIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('table_digests_json')) {
+      context.handle(
+        _tableDigestsJsonMeta,
+        tableDigestsJson.isAcceptableOrUnknown(
+          data['table_digests_json']!,
+          _tableDigestsJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  RevisionContextRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+  RevisionStateRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return RevisionContextRow(
+    return RevisionStateRow(
       id: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}id'],
@@ -11899,17 +12631,29 @@ class $RevisionContextsTable extends RevisionContexts
         DriftSqlType.bool,
         data['${effectivePrefix}suppress'],
       )!,
+      nextCommit: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}next_commit'],
+      )!,
+      headCommitId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}head_commit_id'],
+      )!,
+      tableDigestsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}table_digests_json'],
+      )!,
     );
   }
 
   @override
-  $RevisionContextsTable createAlias(String alias) {
-    return $RevisionContextsTable(attachedDatabase, alias);
+  $RevisionStatesTable createAlias(String alias) {
+    return $RevisionStatesTable(attachedDatabase, alias);
   }
 }
 
-class RevisionContextRow extends DataClass
-    implements Insertable<RevisionContextRow> {
+class RevisionStateRow extends DataClass
+    implements Insertable<RevisionStateRow> {
   final int id;
 
   /// 已经预留、还没有落库的提交编号；没有预留时为空。
@@ -11920,11 +12664,24 @@ class RevisionContextRow extends DataClass
 
   /// 整版恢复与导入期间暂停采集，避免把整库删除与重插记成逐行历史。
   final bool suppress;
-  const RevisionContextRow({
+
+  /// 下一个要分配的提交编号；只增不减。
+  final int nextCommit;
+
+  /// `HEAD` 指向的提交编号。
+  final int headCommitId;
+
+  /// `HEAD` 上各业务表的一致性摘要，表名到 64 位十六进制值的 JSON 映射；各表
+  /// 值之和恒等于 `HEAD` 提交的 `state_digest`（ADR-0054 决定第 1 条）。
+  final String tableDigestsJson;
+  const RevisionStateRow({
     required this.id,
     this.activeCommit,
     required this.capturing,
     required this.suppress,
+    required this.nextCommit,
+    required this.headCommitId,
+    required this.tableDigestsJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -11935,30 +12692,39 @@ class RevisionContextRow extends DataClass
     }
     map['capturing'] = Variable<bool>(capturing);
     map['suppress'] = Variable<bool>(suppress);
+    map['next_commit'] = Variable<int>(nextCommit);
+    map['head_commit_id'] = Variable<int>(headCommitId);
+    map['table_digests_json'] = Variable<String>(tableDigestsJson);
     return map;
   }
 
-  RevisionContextsCompanion toCompanion(bool nullToAbsent) {
-    return RevisionContextsCompanion(
+  RevisionStatesCompanion toCompanion(bool nullToAbsent) {
+    return RevisionStatesCompanion(
       id: Value(id),
       activeCommit: activeCommit == null && nullToAbsent
           ? const Value.absent()
           : Value(activeCommit),
       capturing: Value(capturing),
       suppress: Value(suppress),
+      nextCommit: Value(nextCommit),
+      headCommitId: Value(headCommitId),
+      tableDigestsJson: Value(tableDigestsJson),
     );
   }
 
-  factory RevisionContextRow.fromJson(
+  factory RevisionStateRow.fromJson(
     Map<String, dynamic> json, {
     ValueSerializer? serializer,
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return RevisionContextRow(
+    return RevisionStateRow(
       id: serializer.fromJson<int>(json['id']),
       activeCommit: serializer.fromJson<int?>(json['activeCommit']),
       capturing: serializer.fromJson<bool>(json['capturing']),
       suppress: serializer.fromJson<bool>(json['suppress']),
+      nextCommit: serializer.fromJson<int>(json['nextCommit']),
+      headCommitId: serializer.fromJson<int>(json['headCommitId']),
+      tableDigestsJson: serializer.fromJson<String>(json['tableDigestsJson']),
     );
   }
   @override
@@ -11969,96 +12735,149 @@ class RevisionContextRow extends DataClass
       'activeCommit': serializer.toJson<int?>(activeCommit),
       'capturing': serializer.toJson<bool>(capturing),
       'suppress': serializer.toJson<bool>(suppress),
+      'nextCommit': serializer.toJson<int>(nextCommit),
+      'headCommitId': serializer.toJson<int>(headCommitId),
+      'tableDigestsJson': serializer.toJson<String>(tableDigestsJson),
     };
   }
 
-  RevisionContextRow copyWith({
+  RevisionStateRow copyWith({
     int? id,
     Value<int?> activeCommit = const Value.absent(),
     bool? capturing,
     bool? suppress,
-  }) => RevisionContextRow(
+    int? nextCommit,
+    int? headCommitId,
+    String? tableDigestsJson,
+  }) => RevisionStateRow(
     id: id ?? this.id,
     activeCommit: activeCommit.present ? activeCommit.value : this.activeCommit,
     capturing: capturing ?? this.capturing,
     suppress: suppress ?? this.suppress,
+    nextCommit: nextCommit ?? this.nextCommit,
+    headCommitId: headCommitId ?? this.headCommitId,
+    tableDigestsJson: tableDigestsJson ?? this.tableDigestsJson,
   );
-  RevisionContextRow copyWithCompanion(RevisionContextsCompanion data) {
-    return RevisionContextRow(
+  RevisionStateRow copyWithCompanion(RevisionStatesCompanion data) {
+    return RevisionStateRow(
       id: data.id.present ? data.id.value : this.id,
       activeCommit: data.activeCommit.present
           ? data.activeCommit.value
           : this.activeCommit,
       capturing: data.capturing.present ? data.capturing.value : this.capturing,
       suppress: data.suppress.present ? data.suppress.value : this.suppress,
+      nextCommit: data.nextCommit.present
+          ? data.nextCommit.value
+          : this.nextCommit,
+      headCommitId: data.headCommitId.present
+          ? data.headCommitId.value
+          : this.headCommitId,
+      tableDigestsJson: data.tableDigestsJson.present
+          ? data.tableDigestsJson.value
+          : this.tableDigestsJson,
     );
   }
 
   @override
   String toString() {
-    return (StringBuffer('RevisionContextRow(')
+    return (StringBuffer('RevisionStateRow(')
           ..write('id: $id, ')
           ..write('activeCommit: $activeCommit, ')
           ..write('capturing: $capturing, ')
-          ..write('suppress: $suppress')
+          ..write('suppress: $suppress, ')
+          ..write('nextCommit: $nextCommit, ')
+          ..write('headCommitId: $headCommitId, ')
+          ..write('tableDigestsJson: $tableDigestsJson')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, activeCommit, capturing, suppress);
+  int get hashCode => Object.hash(
+    id,
+    activeCommit,
+    capturing,
+    suppress,
+    nextCommit,
+    headCommitId,
+    tableDigestsJson,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is RevisionContextRow &&
+      (other is RevisionStateRow &&
           other.id == this.id &&
           other.activeCommit == this.activeCommit &&
           other.capturing == this.capturing &&
-          other.suppress == this.suppress);
+          other.suppress == this.suppress &&
+          other.nextCommit == this.nextCommit &&
+          other.headCommitId == this.headCommitId &&
+          other.tableDigestsJson == this.tableDigestsJson);
 }
 
-class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
+class RevisionStatesCompanion extends UpdateCompanion<RevisionStateRow> {
   final Value<int> id;
   final Value<int?> activeCommit;
   final Value<bool> capturing;
   final Value<bool> suppress;
-  const RevisionContextsCompanion({
+  final Value<int> nextCommit;
+  final Value<int> headCommitId;
+  final Value<String> tableDigestsJson;
+  const RevisionStatesCompanion({
     this.id = const Value.absent(),
     this.activeCommit = const Value.absent(),
     this.capturing = const Value.absent(),
     this.suppress = const Value.absent(),
+    this.nextCommit = const Value.absent(),
+    this.headCommitId = const Value.absent(),
+    this.tableDigestsJson = const Value.absent(),
   });
-  RevisionContextsCompanion.insert({
+  RevisionStatesCompanion.insert({
     this.id = const Value.absent(),
     this.activeCommit = const Value.absent(),
     this.capturing = const Value.absent(),
     this.suppress = const Value.absent(),
-  });
-  static Insertable<RevisionContextRow> custom({
+    required int nextCommit,
+    this.headCommitId = const Value.absent(),
+    this.tableDigestsJson = const Value.absent(),
+  }) : nextCommit = Value(nextCommit);
+  static Insertable<RevisionStateRow> custom({
     Expression<int>? id,
     Expression<int>? activeCommit,
     Expression<bool>? capturing,
     Expression<bool>? suppress,
+    Expression<int>? nextCommit,
+    Expression<int>? headCommitId,
+    Expression<String>? tableDigestsJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (activeCommit != null) 'active_commit': activeCommit,
       if (capturing != null) 'capturing': capturing,
       if (suppress != null) 'suppress': suppress,
+      if (nextCommit != null) 'next_commit': nextCommit,
+      if (headCommitId != null) 'head_commit_id': headCommitId,
+      if (tableDigestsJson != null) 'table_digests_json': tableDigestsJson,
     });
   }
 
-  RevisionContextsCompanion copyWith({
+  RevisionStatesCompanion copyWith({
     Value<int>? id,
     Value<int?>? activeCommit,
     Value<bool>? capturing,
     Value<bool>? suppress,
+    Value<int>? nextCommit,
+    Value<int>? headCommitId,
+    Value<String>? tableDigestsJson,
   }) {
-    return RevisionContextsCompanion(
+    return RevisionStatesCompanion(
       id: id ?? this.id,
       activeCommit: activeCommit ?? this.activeCommit,
       capturing: capturing ?? this.capturing,
       suppress: suppress ?? this.suppress,
+      nextCommit: nextCommit ?? this.nextCommit,
+      headCommitId: headCommitId ?? this.headCommitId,
+      tableDigestsJson: tableDigestsJson ?? this.tableDigestsJson,
     );
   }
 
@@ -12077,219 +12896,28 @@ class RevisionContextsCompanion extends UpdateCompanion<RevisionContextRow> {
     if (suppress.present) {
       map['suppress'] = Variable<bool>(suppress.value);
     }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('RevisionContextsCompanion(')
-          ..write('id: $id, ')
-          ..write('activeCommit: $activeCommit, ')
-          ..write('capturing: $capturing, ')
-          ..write('suppress: $suppress')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $RevisionSequencesTable extends RevisionSequences
-    with TableInfo<$RevisionSequencesTable, RevisionSequenceRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $RevisionSequencesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    check: () => id.equals(1),
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _nextCommitMeta = const VerificationMeta(
-    'nextCommit',
-  );
-  @override
-  late final GeneratedColumn<int> nextCommit = GeneratedColumn<int>(
-    'next_commit',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [id, nextCommit];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'revision_sequence';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<RevisionSequenceRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('next_commit')) {
-      context.handle(
-        _nextCommitMeta,
-        nextCommit.isAcceptableOrUnknown(data['next_commit']!, _nextCommitMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_nextCommitMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  RevisionSequenceRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return RevisionSequenceRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      nextCommit: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}next_commit'],
-      )!,
-    );
-  }
-
-  @override
-  $RevisionSequencesTable createAlias(String alias) {
-    return $RevisionSequencesTable(attachedDatabase, alias);
-  }
-}
-
-class RevisionSequenceRow extends DataClass
-    implements Insertable<RevisionSequenceRow> {
-  final int id;
-  final int nextCommit;
-  const RevisionSequenceRow({required this.id, required this.nextCommit});
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['next_commit'] = Variable<int>(nextCommit);
-    return map;
-  }
-
-  RevisionSequencesCompanion toCompanion(bool nullToAbsent) {
-    return RevisionSequencesCompanion(
-      id: Value(id),
-      nextCommit: Value(nextCommit),
-    );
-  }
-
-  factory RevisionSequenceRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return RevisionSequenceRow(
-      id: serializer.fromJson<int>(json['id']),
-      nextCommit: serializer.fromJson<int>(json['nextCommit']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'nextCommit': serializer.toJson<int>(nextCommit),
-    };
-  }
-
-  RevisionSequenceRow copyWith({int? id, int? nextCommit}) =>
-      RevisionSequenceRow(
-        id: id ?? this.id,
-        nextCommit: nextCommit ?? this.nextCommit,
-      );
-  RevisionSequenceRow copyWithCompanion(RevisionSequencesCompanion data) {
-    return RevisionSequenceRow(
-      id: data.id.present ? data.id.value : this.id,
-      nextCommit: data.nextCommit.present
-          ? data.nextCommit.value
-          : this.nextCommit,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('RevisionSequenceRow(')
-          ..write('id: $id, ')
-          ..write('nextCommit: $nextCommit')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(id, nextCommit);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is RevisionSequenceRow &&
-          other.id == this.id &&
-          other.nextCommit == this.nextCommit);
-}
-
-class RevisionSequencesCompanion extends UpdateCompanion<RevisionSequenceRow> {
-  final Value<int> id;
-  final Value<int> nextCommit;
-  const RevisionSequencesCompanion({
-    this.id = const Value.absent(),
-    this.nextCommit = const Value.absent(),
-  });
-  RevisionSequencesCompanion.insert({
-    this.id = const Value.absent(),
-    required int nextCommit,
-  }) : nextCommit = Value(nextCommit);
-  static Insertable<RevisionSequenceRow> custom({
-    Expression<int>? id,
-    Expression<int>? nextCommit,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (nextCommit != null) 'next_commit': nextCommit,
-    });
-  }
-
-  RevisionSequencesCompanion copyWith({
-    Value<int>? id,
-    Value<int>? nextCommit,
-  }) {
-    return RevisionSequencesCompanion(
-      id: id ?? this.id,
-      nextCommit: nextCommit ?? this.nextCommit,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
     if (nextCommit.present) {
       map['next_commit'] = Variable<int>(nextCommit.value);
     }
+    if (headCommitId.present) {
+      map['head_commit_id'] = Variable<int>(headCommitId.value);
+    }
+    if (tableDigestsJson.present) {
+      map['table_digests_json'] = Variable<String>(tableDigestsJson.value);
+    }
     return map;
   }
 
   @override
   String toString() {
-    return (StringBuffer('RevisionSequencesCompanion(')
+    return (StringBuffer('RevisionStatesCompanion(')
           ..write('id: $id, ')
-          ..write('nextCommit: $nextCommit')
+          ..write('activeCommit: $activeCommit, ')
+          ..write('capturing: $capturing, ')
+          ..write('suppress: $suppress, ')
+          ..write('nextCommit: $nextCommit, ')
+          ..write('headCommitId: $headCommitId, ')
+          ..write('tableDigestsJson: $tableDigestsJson')
           ..write(')'))
         .toString();
   }
@@ -12336,15 +12964,6 @@ class $RevisionCursorsTable extends RevisionCursors
     ),
     defaultValue: const Constant(false),
   );
-  static const VerificationMeta _scopeMeta = const VerificationMeta('scope');
-  @override
-  late final GeneratedColumn<String> scope = GeneratedColumn<String>(
-    'scope',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -12357,13 +12976,7 @@ class $RevisionCursorsTable extends RevisionCursors
     requiredDuringInsert: true,
   );
   @override
-  List<GeneratedColumn> get $columns => [
-    name,
-    position,
-    blocking,
-    scope,
-    updatedAt,
-  ];
+  List<GeneratedColumn> get $columns => [name, position, blocking, updatedAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -12398,12 +13011,6 @@ class $RevisionCursorsTable extends RevisionCursors
         blocking.isAcceptableOrUnknown(data['blocking']!, _blockingMeta),
       );
     }
-    if (data.containsKey('scope')) {
-      context.handle(
-        _scopeMeta,
-        scope.isAcceptableOrUnknown(data['scope']!, _scopeMeta),
-      );
-    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -12433,10 +13040,6 @@ class $RevisionCursorsTable extends RevisionCursors
         DriftSqlType.bool,
         data['${effectivePrefix}blocking'],
       )!,
-      scope: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}scope'],
-      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}updated_at'],
@@ -12455,17 +13058,11 @@ class RevisionCursorRow extends DataClass
   final String name;
   final int position;
   final bool blocking;
-
-  /// 这个读取位置属于哪个同步身份：只有同步的两个位置写“账号编号 + 实例来源”
-  /// 的哈希，检索索引等读者为空。退出登录之后位置保留但不阻塞，重新登录同一
-  /// scope 时据此从原位置继续增量同步，而不是按首次基线整份重传（同步方案 3.3）。
-  final String? scope;
   final String updatedAt;
   const RevisionCursorRow({
     required this.name,
     required this.position,
     required this.blocking,
-    this.scope,
     required this.updatedAt,
   });
   @override
@@ -12474,9 +13071,6 @@ class RevisionCursorRow extends DataClass
     map['name'] = Variable<String>(name);
     map['position'] = Variable<int>(position);
     map['blocking'] = Variable<bool>(blocking);
-    if (!nullToAbsent || scope != null) {
-      map['scope'] = Variable<String>(scope);
-    }
     map['updated_at'] = Variable<String>(updatedAt);
     return map;
   }
@@ -12486,9 +13080,6 @@ class RevisionCursorRow extends DataClass
       name: Value(name),
       position: Value(position),
       blocking: Value(blocking),
-      scope: scope == null && nullToAbsent
-          ? const Value.absent()
-          : Value(scope),
       updatedAt: Value(updatedAt),
     );
   }
@@ -12502,7 +13093,6 @@ class RevisionCursorRow extends DataClass
       name: serializer.fromJson<String>(json['name']),
       position: serializer.fromJson<int>(json['position']),
       blocking: serializer.fromJson<bool>(json['blocking']),
-      scope: serializer.fromJson<String?>(json['scope']),
       updatedAt: serializer.fromJson<String>(json['updatedAt']),
     );
   }
@@ -12513,7 +13103,6 @@ class RevisionCursorRow extends DataClass
       'name': serializer.toJson<String>(name),
       'position': serializer.toJson<int>(position),
       'blocking': serializer.toJson<bool>(blocking),
-      'scope': serializer.toJson<String?>(scope),
       'updatedAt': serializer.toJson<String>(updatedAt),
     };
   }
@@ -12522,13 +13111,11 @@ class RevisionCursorRow extends DataClass
     String? name,
     int? position,
     bool? blocking,
-    Value<String?> scope = const Value.absent(),
     String? updatedAt,
   }) => RevisionCursorRow(
     name: name ?? this.name,
     position: position ?? this.position,
     blocking: blocking ?? this.blocking,
-    scope: scope.present ? scope.value : this.scope,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   RevisionCursorRow copyWithCompanion(RevisionCursorsCompanion data) {
@@ -12536,7 +13123,6 @@ class RevisionCursorRow extends DataClass
       name: data.name.present ? data.name.value : this.name,
       position: data.position.present ? data.position.value : this.position,
       blocking: data.blocking.present ? data.blocking.value : this.blocking,
-      scope: data.scope.present ? data.scope.value : this.scope,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -12547,14 +13133,13 @@ class RevisionCursorRow extends DataClass
           ..write('name: $name, ')
           ..write('position: $position, ')
           ..write('blocking: $blocking, ')
-          ..write('scope: $scope, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(name, position, blocking, scope, updatedAt);
+  int get hashCode => Object.hash(name, position, blocking, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -12562,7 +13147,6 @@ class RevisionCursorRow extends DataClass
           other.name == this.name &&
           other.position == this.position &&
           other.blocking == this.blocking &&
-          other.scope == this.scope &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -12570,14 +13154,12 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
   final Value<String> name;
   final Value<int> position;
   final Value<bool> blocking;
-  final Value<String?> scope;
   final Value<String> updatedAt;
   final Value<int> rowid;
   const RevisionCursorsCompanion({
     this.name = const Value.absent(),
     this.position = const Value.absent(),
     this.blocking = const Value.absent(),
-    this.scope = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -12585,7 +13167,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     required String name,
     required int position,
     this.blocking = const Value.absent(),
-    this.scope = const Value.absent(),
     required String updatedAt,
     this.rowid = const Value.absent(),
   }) : name = Value(name),
@@ -12595,7 +13176,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     Expression<String>? name,
     Expression<int>? position,
     Expression<bool>? blocking,
-    Expression<String>? scope,
     Expression<String>? updatedAt,
     Expression<int>? rowid,
   }) {
@@ -12603,7 +13183,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
       if (name != null) 'name': name,
       if (position != null) 'position': position,
       if (blocking != null) 'blocking': blocking,
-      if (scope != null) 'scope': scope,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -12613,7 +13192,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     Value<String>? name,
     Value<int>? position,
     Value<bool>? blocking,
-    Value<String?>? scope,
     Value<String>? updatedAt,
     Value<int>? rowid,
   }) {
@@ -12621,7 +13199,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
       name: name ?? this.name,
       position: position ?? this.position,
       blocking: blocking ?? this.blocking,
-      scope: scope ?? this.scope,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -12639,9 +13216,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
     if (blocking.present) {
       map['blocking'] = Variable<bool>(blocking.value);
     }
-    if (scope.present) {
-      map['scope'] = Variable<String>(scope.value);
-    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<String>(updatedAt.value);
     }
@@ -12657,7 +13231,6 @@ class RevisionCursorsCompanion extends UpdateCompanion<RevisionCursorRow> {
           ..write('name: $name, ')
           ..write('position: $position, ')
           ..write('blocking: $blocking, ')
-          ..write('scope: $scope, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -13902,7 +14475,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     this,
   );
   late final $AppMetaTable appMeta = $AppMetaTable(this);
-  late final $ProfilesTable profiles = $ProfilesTable(this);
   late final $LearningGoalsTable learningGoals = $LearningGoalsTable(this);
   late final $AssetObjectsTable assetObjects = $AssetObjectsTable(this);
   late final $AssetChunksTable assetChunks = $AssetChunksTable(this);
@@ -13917,6 +14489,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AttemptsTable attempts = $AttemptsTable(this);
   late final $AssessmentsTable assessments = $AssessmentsTable(this);
   late final $MemoriesTable memories = $MemoriesTable(this);
+  late final $MemoryUsagesTable memoryUsages = $MemoryUsagesTable(this);
+  late final $MemoryUsesTable memoryUses = $MemoryUsesTable(this);
   late final $RevisionCommitsTable revisionCommits = $RevisionCommitsTable(
     this,
   );
@@ -13924,13 +14498,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     this,
   );
   late final $RevisionRefsTable revisionRefs = $RevisionRefsTable(this);
+  late final $RevisionRefTombstonesTable revisionRefTombstones =
+      $RevisionRefTombstonesTable(this);
   late final $RevisionCheckpointsTable revisionCheckpoints =
       $RevisionCheckpointsTable(this);
-  late final $RevisionContextsTable revisionContexts = $RevisionContextsTable(
-    this,
-  );
-  late final $RevisionSequencesTable revisionSequences =
-      $RevisionSequencesTable(this);
+  late final $RevisionStatesTable revisionStates = $RevisionStatesTable(this);
   late final $RevisionCursorsTable revisionCursors = $RevisionCursorsTable(
     this,
   );
@@ -14027,9 +14599,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_memory_valid',
     'CREATE INDEX idx_memory_valid ON memory (valid_until)',
   );
-  late final Index idxRevisionRequest = Index(
-    'idx_revision_request',
-    'CREATE UNIQUE INDEX idx_revision_request ON revision_commit (request_id) WHERE request_id IS NOT NULL',
+  late final Index idxMemoryUsageMemoryDevice = Index(
+    'idx_memory_usage_memory_device',
+    'CREATE UNIQUE INDEX idx_memory_usage_memory_device ON memory_usage (memory_id, device_id)',
+  );
+  late final Index idxMemoryUseMemory = Index(
+    'idx_memory_use_memory',
+    'CREATE INDEX idx_memory_use_memory ON memory_use (memory_id, used_at)',
+  );
+  late final Index idxMemoryUseDevice = Index(
+    'idx_memory_use_device',
+    'CREATE INDEX idx_memory_use_device ON memory_use (device_id, used_at)',
   );
   late final Index idxRevisionUid = Index(
     'idx_revision_uid',
@@ -14050,6 +14630,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxRevisionChangeCommit = Index(
     'idx_revision_change_commit',
     'CREATE INDEX idx_revision_change_commit ON revision_change (commit_id, seq)',
+  );
+  late final Index idxRevisionRefUid = Index(
+    'idx_revision_ref_uid',
+    'CREATE INDEX idx_revision_ref_uid ON revision_ref (commit_uid)',
   );
   late final Index idxRevisionCheckpointCommit = Index(
     'idx_revision_checkpoint_commit',
@@ -14218,12 +14802,31 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<StudyPlanRow> studyPlanById(String id) {
+  Selectable<StudyPlanByIdResult> studyPlanById(String id) {
     return customSelect(
-      'SELECT * FROM study_plan WHERE id = ?1 LIMIT 1',
+      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = \'done\') AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title, COALESCE((SELECT pi.page_from FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1), (SELECT pi.page_to FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = \'done\' AND pi.page_to IS NOT NULL ORDER BY pi.page_to DESC LIMIT 1), sp.page_from) AS current_page FROM study_plan AS sp WHERE sp.id = ?1 LIMIT 1',
       variables: [Variable<String>(id)],
-      readsFrom: {this.studyPlans},
-    ).asyncMap(this.studyPlans.mapFromRow);
+      readsFrom: {this.materials, this.studyPlans, this.planItems},
+    ).map(
+      (QueryRow row) => StudyPlanByIdResult(
+        id: row.read<String>('id'),
+        materialId: row.readNullable<String>('material_id'),
+        goalId: row.readNullable<String>('goal_id'),
+        conversationId: row.readNullable<String>('conversation_id'),
+        title: row.read<String>('title'),
+        pageFrom: row.readNullable<int>('page_from'),
+        pageTo: row.readNullable<int>('page_to'),
+        status: row.read<String>('status'),
+        createdAt: row.read<String>('created_at'),
+        updatedAt: row.read<String>('updated_at'),
+        materialTitle: row.readNullable<String>('material_title'),
+        sourceFileName: row.readNullable<String>('source_file_name'),
+        stepsDone: row.read<int>('steps_done'),
+        stepsTotal: row.read<int>('steps_total'),
+        nextStepTitle: row.readNullable<String>('next_step_title'),
+        currentPage: row.readNullable<int>('current_page'),
+      ),
+    );
   }
 
   Selectable<PlanRowsResult> planRows(
@@ -14237,7 +14840,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int? rowLimit,
   ) {
     return customSelect(
-      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title FROM study_plan AS sp WHERE(?2 IS NULL OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT COALESCE(?8, -1)',
+      'SELECT sp.*, (SELECT title FROM material WHERE id = sp.material_id) AS material_title, (SELECT source_file_name FROM material WHERE id = sp.material_id) AS source_file_name, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1) AS steps_done, (SELECT COUNT(*) FROM plan_item AS pi WHERE pi.study_plan_id = sp.id) AS steps_total, (SELECT pi.title FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1) AS next_step_title, COALESCE((SELECT pi.page_from FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status IN (\'doing\', \'todo\') ORDER BY CASE pi.status WHEN \'doing\' THEN 0 ELSE 1 END, pi.seq, pi.id LIMIT 1), (SELECT pi.page_to FROM plan_item AS pi WHERE pi.study_plan_id = sp.id AND pi.status = ?1 AND pi.page_to IS NOT NULL ORDER BY pi.page_to DESC LIMIT 1), sp.page_from) AS current_page FROM study_plan AS sp WHERE(?2 IS NULL OR sp.id = ?2)AND(?3 = 0 OR sp.status IN (?4, ?5))AND(?6 = 0 OR sp.status = ?4)ORDER BY CASE WHEN ?7 = 0 THEN 0 WHEN sp.status = ?4 THEN 0 WHEN sp.status = ?5 THEN 1 ELSE 2 END, sp.updated_at DESC, sp.id DESC LIMIT COALESCE(?8, -1)',
       variables: [
         Variable<String>(doneStatus),
         Variable<String>(id),
@@ -14258,7 +14861,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         title: row.read<String>('title'),
         pageFrom: row.readNullable<int>('page_from'),
         pageTo: row.readNullable<int>('page_to'),
-        currentPage: row.readNullable<int>('current_page'),
         status: row.read<String>('status'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
@@ -14267,6 +14869,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         stepsDone: row.read<int>('steps_done'),
         stepsTotal: row.read<int>('steps_total'),
         nextStepTitle: row.readNullable<String>('next_step_title'),
+        currentPage: row.readNullable<int>('current_page'),
       ),
     );
   }
@@ -14279,12 +14882,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String title,
     int? pageFrom,
     int? pageTo,
-    int? currentPage,
     String status,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO study_plan (id, material_id, goal_id, conversation_id, title, page_from, page_to, current_page, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)',
+      'INSERT INTO study_plan (id, material_id, goal_id, conversation_id, title, page_from, page_to, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)',
       variables: [
         Variable<String>(id),
         Variable<String>(materialId),
@@ -14293,7 +14895,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(title),
         Variable<int>(pageFrom),
         Variable<int>(pageTo),
-        Variable<int>(currentPage),
         Variable<String>(status),
         Variable<String>(stamp),
       ],
@@ -14314,30 +14915,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Future<int> updateStudyPlanProgress(
-    int? currentPage,
-    String? status,
-    String stamp,
-    String planId,
-  ) {
-    return customUpdate(
-      'UPDATE study_plan SET current_page = ?1, status = COALESCE(?2, status), updated_at = ?3 WHERE id = ?4',
-      variables: [
-        Variable<int>(currentPage),
-        Variable<String>(status),
-        Variable<String>(stamp),
-        Variable<String>(planId),
-      ],
-      updates: {this.studyPlans},
-      updateKind: UpdateKind.update,
-    );
-  }
-
   Selectable<int> cutoffHour() {
     return customSelect(
-      'SELECT day_cutoff_hour FROM profile WHERE id = 1',
+      'SELECT CAST(a.value AS INT) AS day_cutoff_hour FROM app_meta AS a WHERE a."key" = \'day_cutoff_hour\' LIMIT 1',
       variables: [],
-      readsFrom: {this.profiles},
+      readsFrom: {this.appMeta},
     ).map((QueryRow row) => row.read<int>('day_cutoff_hour'));
   }
 
@@ -14349,12 +14931,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).map((QueryRow row) => row.read<String>('meta_value'));
   }
 
-  Future<int> setProfileCutoffHour(int hour, String stamp) {
-    return customUpdate(
-      'UPDATE profile SET day_cutoff_hour = ?1, updated_at = ?2 WHERE id = 1',
-      variables: [Variable<int>(hour), Variable<String>(stamp)],
-      updates: {this.profiles},
-      updateKind: UpdateKind.update,
+  Future<int> setCutoffHour(String hour, String stamp) {
+    return customInsert(
+      'INSERT INTO app_meta ("key", value, updated_at) VALUES (\'day_cutoff_hour\', ?1, ?2) ON CONFLICT ("key") DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      variables: [Variable<String>(hour), Variable<String>(stamp)],
+      updates: {this.appMeta},
     );
   }
 
@@ -15118,10 +15699,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<SearchPlanItemsResult> searchPlanItems(
-    String? goalId,
+    String goalId,
     String status,
-    String? dayStart,
-    String? dayEnd,
+    String dayStart,
+    String dayEnd,
   ) {
     return customSelect(
       'SELECT p.*, (SELECT m.source_file_name FROM study_plan AS sp JOIN material AS m ON m.id = sp.material_id WHERE sp.id = p.study_plan_id) AS source_file_name FROM plan_item AS p WHERE(?1 = \'\' OR p.goal_id = ?1)AND(?2 = \'\' OR p.status = ?2)AND(?3 = \'\' OR(p.due_at IS NOT NULL AND p.due_at >= ?3 AND p.due_at < ?4))ORDER BY p.due_at IS NULL, p.due_at DESC, p.id DESC',
@@ -15436,6 +16017,136 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
+  Selectable<UsesAfterResult> usesAfter(String deviceId, String after) {
+    return customSelect(
+      'SELECT memory_id, kind, used_at FROM memory_use WHERE device_id = ?1 AND acquired_at > ?2',
+      variables: [Variable<String>(deviceId), Variable<String>(after)],
+      readsFrom: {this.memoryUses},
+    ).map(
+      (QueryRow row) => UsesAfterResult(
+        memoryId: row.read<String>('memory_id'),
+        kind: row.read<String>('kind'),
+        usedAt: row.read<String>('used_at'),
+      ),
+    );
+  }
+
+  Selectable<String> usedMemoryIds(String deviceId) {
+    return customSelect(
+      'SELECT DISTINCT memory_id FROM memory_use WHERE device_id = ?1',
+      variables: [Variable<String>(deviceId)],
+      readsFrom: {this.memoryUses},
+    ).map((QueryRow row) => row.read<String>('memory_id'));
+  }
+
+  Selectable<MemoryUsageRow> usageOf(String memoryId, String deviceId) {
+    return customSelect(
+      'SELECT * FROM memory_usage WHERE memory_id = ?1 AND device_id = ?2 LIMIT 1',
+      variables: [Variable<String>(memoryId), Variable<String>(deviceId)],
+      readsFrom: {this.memoryUsages},
+    ).asyncMap(this.memoryUsages.mapFromRow);
+  }
+
+  Selectable<MemoryUsageRow> usageForDevice(String deviceId) {
+    return customSelect(
+      'SELECT * FROM memory_usage WHERE device_id = ?1',
+      variables: [Variable<String>(deviceId)],
+      readsFrom: {this.memoryUsages},
+    ).asyncMap(this.memoryUsages.mapFromRow);
+  }
+
+  Future<int> insertMemoryUse(
+    String id,
+    String memoryId,
+    String deviceId,
+    String kind,
+    String usedAt,
+    String acquiredAt,
+  ) {
+    return customInsert(
+      'INSERT INTO memory_use (id, memory_id, device_id, kind, used_at, acquired_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+      variables: [
+        Variable<String>(id),
+        Variable<String>(memoryId),
+        Variable<String>(deviceId),
+        Variable<String>(kind),
+        Variable<String>(usedAt),
+        Variable<String>(acquiredAt),
+      ],
+      updates: {this.memoryUses},
+    );
+  }
+
+  Selectable<String> memoryUseById(String id) {
+    return customSelect(
+      'SELECT id FROM memory_use WHERE id = ?1',
+      variables: [Variable<String>(id)],
+      readsFrom: {this.memoryUses},
+    ).map((QueryRow row) => row.read<String>('id'));
+  }
+
+  Future<int> insertMemoryUsage(
+    String id,
+    String memoryId,
+    String deviceId,
+    int recallCount,
+    int searchCount,
+    String? lastRecalledAt,
+    String? lastSearchedAt,
+    String firstSeenAt,
+    String updatedAt,
+  ) {
+    return customInsert(
+      'INSERT INTO memory_usage (id, memory_id, device_id, recall_count, search_count, last_recalled_at, last_searched_at, first_seen_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
+      variables: [
+        Variable<String>(id),
+        Variable<String>(memoryId),
+        Variable<String>(deviceId),
+        Variable<int>(recallCount),
+        Variable<int>(searchCount),
+        Variable<String>(lastRecalledAt),
+        Variable<String>(lastSearchedAt),
+        Variable<String>(firstSeenAt),
+        Variable<String>(updatedAt),
+      ],
+      updates: {this.memoryUsages},
+    );
+  }
+
+  Future<int> updateMemoryUsage(
+    int recallCount,
+    int searchCount,
+    String? lastRecalledAt,
+    String? lastSearchedAt,
+    String firstSeenAt,
+    String updatedAt,
+    String id,
+  ) {
+    return customUpdate(
+      'UPDATE memory_usage SET recall_count = ?1, search_count = ?2, last_recalled_at = ?3, last_searched_at = ?4, first_seen_at = ?5, updated_at = ?6 WHERE id = ?7',
+      variables: [
+        Variable<int>(recallCount),
+        Variable<int>(searchCount),
+        Variable<String>(lastRecalledAt),
+        Variable<String>(lastSearchedAt),
+        Variable<String>(firstSeenAt),
+        Variable<String>(updatedAt),
+        Variable<String>(id),
+      ],
+      updates: {this.memoryUsages},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> deleteCountedMemoryUses(String deviceId) {
+    return customUpdate(
+      'DELETE FROM memory_use WHERE device_id = ?1 AND acquired_at <= (SELECT first_seen_at FROM memory_usage WHERE memory_id = memory_use.memory_id AND device_id = memory_use.device_id)',
+      variables: [Variable<String>(deviceId)],
+      updates: {this.memoryUses},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
   Selectable<MemoryRow> listMemories(int activeOnly) {
     return customSelect(
       'SELECT * FROM memory WHERE(?1 = 0 OR status = \'active\')ORDER BY status, updated_at DESC, id DESC',
@@ -15444,18 +16155,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ).asyncMap(this.memories.mapFromRow);
   }
 
-  Selectable<ActiveDifficultiesResult> activeDifficulties(
-    String kind,
-    String scope,
-  ) {
+  Selectable<ActiveByKindResult> activeByKind(String kind, String scope) {
     return customSelect(
-      'SELECT id, content FROM memory WHERE status = \'active\' AND kind = ?1 AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND scope = ?2))ORDER BY id DESC',
+      'SELECT id, content, source_id FROM memory WHERE status = \'active\' AND kind = ?1 AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND scope = ?2))ORDER BY id DESC',
       variables: [Variable<String>(kind), Variable<String>(scope)],
       readsFrom: {this.memories},
     ).map(
-      (QueryRow row) => ActiveDifficultiesResult(
+      (QueryRow row) => ActiveByKindResult(
         id: row.read<String>('id'),
         content: row.read<String>('content'),
+        sourceId: row.readNullable<String>('source_id'),
       ),
     );
   }
@@ -15488,7 +16197,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     int? rowLimit,
   ) {
     return customSelect(
-      'SELECT * FROM memory WHERE status = \'active\' AND(valid_until IS NULL OR valid_until >= ?1)AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND(scope IS NULL OR scope = ?2)))ORDER BY CASE WHEN scope IS NULL THEN 1 ELSE 0 END, CASE kind WHEN \'constraint\' THEN 0 WHEN \'preference\' THEN 1 WHEN \'difficulty\' THEN 2 ELSE 3 END, updated_at DESC, id DESC LIMIT COALESCE(?3, -1)',
+      'SELECT * FROM memory WHERE status = \'active\' AND(valid_until IS NULL OR valid_until >= ?1)AND((?2 = \'\' AND scope IS NULL)OR(?2 <> \'\' AND(scope IS NULL OR scope = ?2)))ORDER BY CASE WHEN scope IS NULL AND valid_until IS NULL AND kind IN (\'semantic\', \'procedural\') THEN 1 ELSE 0 END DESC, updated_at DESC, id DESC LIMIT COALESCE(?3, -1)',
       variables: [
         Variable<String>(now),
         Variable<String>(scope),
@@ -15514,10 +16223,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String sourceKind,
     String? sourceId,
     String? validUntil,
+    String searchTerms,
     String stamp,
   ) {
     return customInsert(
-      'INSERT INTO memory (id, kind, content, scope, source_kind, source_id, valid_until, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, \'active\', ?8, ?8)',
+      'INSERT INTO memory (id, kind, content, scope, source_kind, source_id, valid_until, search_terms, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, \'active\', ?9, ?9)',
       variables: [
         Variable<String>(id),
         Variable<String>(kind),
@@ -15526,6 +16236,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         Variable<String>(sourceKind),
         Variable<String>(sourceId),
         Variable<String>(validUntil),
+        Variable<String>(searchTerms),
         Variable<String>(stamp),
       ],
       updates: {this.memories},
@@ -15537,19 +16248,30 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     String? validUntil,
     String kind,
     String? scope,
+    String searchTerms,
     String stamp,
     String memoryId,
   ) {
     return customUpdate(
-      'UPDATE memory SET content = ?1, valid_until = ?2, kind = ?3, scope = ?4, updated_at = ?5 WHERE id = ?6',
+      'UPDATE memory SET content = ?1, valid_until = ?2, kind = ?3, scope = ?4, search_terms = ?5, updated_at = ?6 WHERE id = ?7',
       variables: [
         Variable<String>(content),
         Variable<String>(validUntil),
         Variable<String>(kind),
         Variable<String>(scope),
+        Variable<String>(searchTerms),
         Variable<String>(stamp),
         Variable<String>(memoryId),
       ],
+      updates: {this.memories},
+      updateKind: UpdateKind.update,
+    );
+  }
+
+  Future<int> setMemoryReviewedAt(String? stamp, String memoryId) {
+    return customUpdate(
+      'UPDATE memory SET reviewed_at = ?1 WHERE id = ?2',
+      variables: [Variable<String>(stamp), Variable<String>(memoryId)],
       updates: {this.memories},
       updateKind: UpdateKind.update,
     );
@@ -15926,7 +16648,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         entryKind: row.read<String>('entry_kind'),
         status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
-        lastMessageAt: row.readNullable<String>('last_message_at'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         materialTitle: row.readNullable<String>('material_title'),
@@ -16046,7 +16767,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         entryKind: row.read<String>('entry_kind'),
         status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
-        lastMessageAt: row.readNullable<String>('last_message_at'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         messageCount: row.read<int>('message_count'),
@@ -16085,7 +16805,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         entryKind: row.read<String>('entry_kind'),
         status: row.read<String>('status'),
         endedAt: row.readNullable<String>('ended_at'),
-        lastMessageAt: row.readNullable<String>('last_message_at'),
         createdAt: row.read<String>('created_at'),
         updatedAt: row.read<String>('updated_at'),
         messageCount: row.read<int>('message_count'),
@@ -16131,7 +16850,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Future<int> recordLastMessageTime(String stamp, String conversationId) {
     return customUpdate(
-      'UPDATE conversation SET updated_at = ?1, last_message_at = ?1 WHERE id = ?2',
+      'UPDATE conversation SET updated_at = ?1 WHERE id = ?2',
       variables: [Variable<String>(stamp), Variable<String>(conversationId)],
       updates: {this.conversations},
       updateKind: UpdateKind.update,
@@ -16701,7 +17420,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     timetableEntries,
     appMeta,
-    profiles,
     learningGoals,
     assetObjects,
     assetChunks,
@@ -16716,12 +17434,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     attempts,
     assessments,
     memories,
+    memoryUsages,
+    memoryUses,
     revisionCommits,
     revisionChanges,
     revisionRefs,
+    revisionRefTombstones,
     revisionCheckpoints,
-    revisionContexts,
-    revisionSequences,
+    revisionStates,
     revisionCursors,
     revisionAssetRefs,
     revisionConflicts,
@@ -16748,12 +17468,15 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxAssessmentAttempt,
     idxMemoryStatus,
     idxMemoryValid,
-    idxRevisionRequest,
+    idxMemoryUsageMemoryDevice,
+    idxMemoryUseMemory,
+    idxMemoryUseDevice,
     idxRevisionUid,
     idxRevisionCommitParent,
     idxRevisionCommitReverted,
     idxRevisionChangeTarget,
     idxRevisionChangeCommit,
+    idxRevisionRefUid,
     idxRevisionCheckpointCommit,
     idxRevisionAssetHash,
   ];
@@ -16901,6 +17624,20 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
+        'memory',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('memory_usage', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'memory',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('memory_use', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
         'revision_commit',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -16936,7 +17673,7 @@ class TimetableEntriesOnWeekdayResult {
   });
 }
 
-class PlanRowsResult {
+class StudyPlanByIdResult {
   final String id;
   final String? materialId;
   final String? goalId;
@@ -16944,7 +17681,6 @@ class PlanRowsResult {
   final String title;
   final int? pageFrom;
   final int? pageTo;
-  final int? currentPage;
   final String status;
   final String createdAt;
   final String updatedAt;
@@ -16953,7 +17689,8 @@ class PlanRowsResult {
   final int stepsDone;
   final int stepsTotal;
   final String? nextStepTitle;
-  PlanRowsResult({
+  final int? currentPage;
+  StudyPlanByIdResult({
     required this.id,
     this.materialId,
     this.goalId,
@@ -16961,7 +17698,6 @@ class PlanRowsResult {
     required this.title,
     this.pageFrom,
     this.pageTo,
-    this.currentPage,
     required this.status,
     required this.createdAt,
     required this.updatedAt,
@@ -16970,6 +17706,44 @@ class PlanRowsResult {
     required this.stepsDone,
     required this.stepsTotal,
     this.nextStepTitle,
+    this.currentPage,
+  });
+}
+
+class PlanRowsResult {
+  final String id;
+  final String? materialId;
+  final String? goalId;
+  final String? conversationId;
+  final String title;
+  final int? pageFrom;
+  final int? pageTo;
+  final String status;
+  final String createdAt;
+  final String updatedAt;
+  final String? materialTitle;
+  final String? sourceFileName;
+  final int stepsDone;
+  final int stepsTotal;
+  final String? nextStepTitle;
+  final int? currentPage;
+  PlanRowsResult({
+    required this.id,
+    this.materialId,
+    this.goalId,
+    this.conversationId,
+    required this.title,
+    this.pageFrom,
+    this.pageTo,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+    this.materialTitle,
+    this.sourceFileName,
+    required this.stepsDone,
+    required this.stepsTotal,
+    this.nextStepTitle,
+    this.currentPage,
   });
 }
 
@@ -17625,10 +18399,22 @@ class EvidenceMessageSourceByIdResult {
   });
 }
 
-class ActiveDifficultiesResult {
+class UsesAfterResult {
+  final String memoryId;
+  final String kind;
+  final String usedAt;
+  UsesAfterResult({
+    required this.memoryId,
+    required this.kind,
+    required this.usedAt,
+  });
+}
+
+class ActiveByKindResult {
   final String id;
   final String content;
-  ActiveDifficultiesResult({required this.id, required this.content});
+  final String? sourceId;
+  ActiveByKindResult({required this.id, required this.content, this.sourceId});
 }
 
 class ActiveMemoryIdentitiesResult {
@@ -17760,7 +18546,6 @@ class ConversationByIdResult {
   final String entryKind;
   final String status;
   final String? endedAt;
-  final String? lastMessageAt;
   final String createdAt;
   final String updatedAt;
   final String? materialTitle;
@@ -17779,7 +18564,6 @@ class ConversationByIdResult {
     required this.entryKind,
     required this.status,
     this.endedAt,
-    this.lastMessageAt,
     required this.createdAt,
     required this.updatedAt,
     this.materialTitle,
@@ -17875,7 +18659,6 @@ class ConversationRecordsResult {
   final String entryKind;
   final String status;
   final String? endedAt;
-  final String? lastMessageAt;
   final String createdAt;
   final String updatedAt;
   final int messageCount;
@@ -17899,7 +18682,6 @@ class ConversationRecordsResult {
     required this.entryKind,
     required this.status,
     this.endedAt,
-    this.lastMessageAt,
     required this.createdAt,
     required this.updatedAt,
     required this.messageCount,
@@ -17926,7 +18708,6 @@ class RecentlyActiveRecordsResult {
   final String entryKind;
   final String status;
   final String? endedAt;
-  final String? lastMessageAt;
   final String createdAt;
   final String updatedAt;
   final int messageCount;
@@ -17950,7 +18731,6 @@ class RecentlyActiveRecordsResult {
     required this.entryKind,
     required this.status,
     this.endedAt,
-    this.lastMessageAt,
     required this.createdAt,
     required this.updatedAt,
     required this.messageCount,

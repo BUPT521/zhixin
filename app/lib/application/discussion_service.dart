@@ -27,7 +27,7 @@ import '../domain/rules/content_identity.dart';
 import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
 import 'buddy_answer.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'memory_scope_service.dart';
@@ -782,7 +782,7 @@ class DiscussionService {
         return txn.result();
       },
       label: '修改讨论归属',
-      requestId: commandId('set-conversation-goal', [conversationId, goalId]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -809,11 +809,7 @@ class DiscussionService {
         return txn.result();
       },
       label: '修改讨论材料',
-      requestId: commandId('set-conversation-material', [
-        conversationId,
-        materialId,
-        pageNo,
-      ]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }
@@ -825,7 +821,7 @@ class DiscussionService {
       return txn.result();
     },
     label: '结束求助',
-    requestId: commandId('end-conversation', [conversationId]),
+    uid: newUuidV7(),
     onDuplicate: (commit) => WriteResult.committed(commit.id),
   );
 
@@ -838,7 +834,7 @@ class DiscussionService {
         return txn.result();
       },
       label: '清空学习记录',
-      requestId: commandId('clear-conversation', [conversationId]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
     await cleanupAttachmentPaths(paths);
@@ -856,7 +852,7 @@ class DiscussionService {
     required NextStepDraft draft,
     String? stepId,
     String? goalId,
-    String? requestId,
+    String? uid,
   }) {
     return _acceptNextStepOnce(
       conversationId: conversationId,
@@ -864,13 +860,7 @@ class DiscussionService {
       draft: draft,
       stepId: stepId,
       goalId: goalId,
-      requestId:
-          requestId ??
-          commandId('accept-suggestion', [
-            conversationId,
-            messageId,
-            stepId ?? draft.title,
-          ]),
+      uid: uid ?? newUuidV7(),
     );
   }
 
@@ -880,7 +870,7 @@ class DiscussionService {
     required NextStepDraft draft,
     String? stepId,
     String? goalId,
-    String? requestId,
+    String? uid,
   }) async {
     try {
       return await transactions.run(
@@ -944,7 +934,7 @@ class DiscussionService {
           return AcceptedSuggestion(item: item, commitId: commitId);
         },
         label: acceptNextStepAction,
-        requestId: requestId,
+        uid: uid,
       );
     } on RevisionDuplicateRequest catch (error) {
       // 同一条建议已经接受；重试按消息与建议编号找回原事项，不再新建第二条。
@@ -1053,7 +1043,7 @@ class DiscussionService {
     required String conversationId,
     required String messageId,
     required String itemId,
-    String? requestId,
+    String? uid,
   }) async {
     // 范围在事务外按同一条规则解析；写入时不再读一次记录上的归属。
     final resolved = await memoryScope.resolve(conversationId);
@@ -1104,7 +1094,7 @@ class DiscussionService {
           );
         },
         label: confirmMemoryAction,
-        requestId: requestId ?? commandId('accept-memory', [messageId, itemId]),
+        uid: uid ?? newUuidV7(),
       );
     } on RevisionDuplicateRequest {
       // 同一张卡已经写入；重试按库里的状态返回，不再重复写记忆。

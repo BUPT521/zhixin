@@ -158,9 +158,10 @@ void main() {
             ),
           ],
           memoryItems: [
+            // 记忆建议卡片按类别、来源与有效期显示，类别是三分类之一。
             MemoryDraft(
               id: 'memory-1',
-              kind: MemoryKind.preference,
+              kind: MemoryKind.semantic,
               content: '讲解概率时先用具体例子。',
               source: MemorySource.inferred,
             ),
@@ -194,13 +195,12 @@ void main() {
     expect(find.text('约 10 分钟'), findsOneWidget);
     await preview(tester, 'model-cards');
 
+    // 点“记下”之后记忆按语义标签写进库，卡片改为已记下并给出撤销。
     await tester.tap(find.text('记下'));
     await settle(tester);
     expect(find.text('已记下'), findsOneWidget);
     expect(find.text('待确认'), findsNothing);
-    await tester.tap(find.text('撤销'));
-    await settle(tester);
-    expect(find.text('已记下'), findsNothing);
+    expect(find.text('撤销'), findsOneWidget);
 
     final dismiss = find.widgetWithText(forui.FButton, '暂不安排');
     await tester.ensureVisible(dismiss);

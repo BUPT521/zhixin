@@ -280,7 +280,7 @@ LlmTool get _memoriesSchema {
             'properties': {
               'kind': {
                 'type': 'string',
-                'enum': ['preference', 'constraint', 'difficulty', 'progress'],
+                'enum': ['episodic', 'semantic', 'procedural'],
               },
               'content': {
                 'type': 'string',

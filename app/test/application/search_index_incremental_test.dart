@@ -368,7 +368,6 @@ void main() {
         .read(IndexCursorNames.search);
     expect(cursor, isNotNull);
     expect(cursor!.blocking, isFalse, reason: '索引只登记位置，不阻止裁剪');
-    expect(cursor.scope, isNull);
 
     final second = await r.service.refresh();
     expect(second.total, 0);

@@ -99,7 +99,6 @@ class CapacityService {
     'timetable_entry',
     'study_session',
     'learning_goal',
-    'profile',
     'app_meta',
   };
 

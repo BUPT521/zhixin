@@ -34,7 +34,7 @@ Future<void> _insertGoal(
 Future<int> _nextCommit(RawExecutor executor) async =>
     (await selectRows(
           executor,
-          'revision_sequence',
+          'revision_state',
           columns: ['next_commit'],
         )).single['next_commit']!
         as int;

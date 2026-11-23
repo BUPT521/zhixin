@@ -306,15 +306,15 @@ paths:
         `head` 是最新位置，`earliest_seq` 是保留下界（第一条仍然可以拉取的序号，
         没有删除过提交时为 1），`snapshot` 是账号当前快照的指针，没有登记时为
         `null`。客户端在首次同步与判断是否需要重新克隆时读这一份（ADR-0043）。
-        带 `X-Device-Id` 时同时更新设备名册的最近出现时间与能力声明（ADR-0048）。
+        带 `X-Device-Id` 时同时更新设备名册的最近出现时间与快照能力（ADR-0048）。
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
-          description: 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+          description: 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 256 }
       responses:
         "200":
@@ -347,11 +347,11 @@ paths:
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
-          description: 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+          description: 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 256 }
       requestBody:
         required: true
@@ -380,17 +380,18 @@ paths:
       summary: 账号的设备名册
       description: |
         按最近出现时间倒序返回名册，最多 50 条。每条带设备标识、用户设置的别名、
-        能力声明与最近出现时间；名册只记录发过同步请求的设备，压缩门槛按它判断
-        有没有设备还没声明 `snapshot`（ADR-0048）。带 `X-Device-Id` 时先更新这
-        台设备的名册记录再返回列表，刚登录、还没同步过的设备因此也能先出现在名册里。
+        是否支持快照、已经应用到的服务端序号与最近出现时间；名册只记录发过同步请求
+        的设备。压缩门槛按它判断最近活跃的设备里有没有一台不支持快照，常规压缩还要
+        停在这些设备的最小位置之后（ADR-0047、ADR-0054）。带 `X-Device-Id` 时先更新
+        这台设备的名册记录再返回列表，刚登录、还没同步过的设备因此也能先出现在名册里。
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
-          description: 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+          description: 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 256 }
       responses:
         "200":
@@ -426,13 +427,59 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/sync/refs:
+    get:
+      tags: [sync]
+      summary: 账号的命名版本
+      description: |
+        返回本账号全部命名版本，按名字排序，包括删除之后留下的墓碑（`deleted_at` 非空）。
+        服务端只保存与转发名字、指向的提交身份与备注，不解析内容；名字按 NFC 规范化之后
+        比较，历史本身不随名字同步，服务端压缩之后旧名字引用的提交可能已经不在
+        （ADR-0054）。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRefList" }
+        "401": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [sync]
+      summary: 写入或删除一个命名版本
+      description: |
+        请求体是两种形状之一：写入时带 `name`、`commit_uid` 与可选的 `note`，删除时带
+        `name` 与 `delete: true`。后写覆盖先写，不记冲突；名字已经是墓碑时，删除时间
+        之后的写入会复活它，更早的写入不复活、返回的仍是墓碑。名字先做 NFC 规范化，
+        规范化之后最长 30 个字符；未删除的名字每账号最多 200 个，超限返回 400
+        `invalid_request`。写入引用不到本账号的提交 `uid` 也可以，只是那台设备上显示为
+        只剩标签（ADR-0054）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncRefWrite" }
+      responses:
+        "200":
+          description: 已写入的命名版本；不复活时返回的是已存的墓碑
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRef" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: "`conflict`：账号正在清除云端数据"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/sync/commits:
     delete:
       tags: [sync]
       summary: 清空该账号的提交序列，服务端 head 重置为 0
       description: |
-        删除这个账号在服务端保存的全部提交，并把 head 重置为 0，账号与整库备份不受影响。
-        操作不可撤销，调用前须重新确认当前密码。成功返回 204，没有响应体。
+        删除这个账号在服务端保存的全部提交，把 head 重置为 0，并清掉快照指针、设备名册与
+        命名版本；账号与整库备份不受影响。操作不可撤销，调用前须重新确认当前密码。成功
+        返回 204，没有响应体。
       requestBody: { $ref: "#/components/requestBodies/ConfirmPassword" }
       responses:
         "204": { description: 已清空 }
@@ -448,17 +495,19 @@ paths:
         被压缩删除时（`after + 1 < earliest_seq`，包括保留下界大于 1 而 `after` 为 0
         的首次同步）返回 410 `history_compacted`，`extra` 给出保留下界、head 与快照
         的序号、哈希和摘要，客户端据此下载快照、把位置改成快照位置之后继续增量拉取
-        （ADR-0043）。`after` 恰好等于 `earliest_seq - 1` 时照常返回。
+        （ADR-0043）。`after` 恰好等于 `earliest_seq - 1` 时照常返回。带 `X-Device-Id`
+        时把 `after` 记为这台设备已经应用到的位置，供常规压缩判断能不能删到那里
+        （ADR-0054）。
       parameters:
         - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0, default: 0 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
-          description: 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+          description: 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 256 }
       responses:
         "200":
@@ -477,19 +526,21 @@ paths:
       summary: 推送本机提交
       description: |
         `base_seq` 必须等于服务端当前 head，否则返回 409，`extra.head` 给出最新位置；
-        客户端先拉取、在本机应用为新的提交，再重新推送。已经收到过的 `request_id`
-        会被跳过，因此丢失响应后原样重试是安全的。每次 1 到 200 条，单条最多 2 MiB，
+        客户端先拉取、在本机应用为新的提交，再重新推送。已经收到过的 `uid` 会被跳过，
+        因此丢失响应后原样重试是安全的。响应里的 `seqs` 与请求里的 `commits` 按条数
+        与顺序一一对应：新提交是服务端分配的序号，被当作重复跳过的提交回它原来的
+        序号，客户端据此判断整批重放（ADR-0054）。每次 1 到 200 条，单条最多 2 MiB，
         请求最多 16 MiB。生产实例要求至少一种登录方式已经验证，账号同步日志预算为 256 MiB。
-        没有 `X-Device-Id` 时按提交里的设备标识补进设备名册，能力与别名留空
+        没有 `X-Device-Id` 时按提交里的设备标识补进设备名册，快照能力与别名留空
         （ADR-0048）。
       parameters:
         - name: X-Device-Id
           in: header
-          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间与能力声明（ADR-0048）。
+          description: 设备标识，不超过 64 字符；带上它同步请求会更新账号设备名册的最近出现时间、快照能力与设备位置（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 64 }
         - name: X-Sync-Capabilities
           in: header
-          description: 逗号分隔的小写能力名，当前只有 `snapshot`；整组替换这一台设备的能力声明（ADR-0048）。
+          description: 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
           schema: { type: string, maxLength: 256 }
       requestBody:
         required: true
@@ -1376,10 +1427,13 @@ components:
           x-go-type: json.RawMessage
     Commit:
       type: object
-      required: [request_id, device_id, schema_version, actor, action, created_at, changes]
+      required: [uid, device_id, schema_version, actor, action, created_at, changes]
       properties:
         seq: { type: integer, format: int64, readOnly: true }
-        request_id: { type: string, maxLength: 64 }
+        uid:
+          type: string
+          maxLength: 64
+          description: 客户端在用户动作发生时生成的提交身份，同一动作重试时沿用；服务端按它永久去重
         device_id: { type: string, maxLength: 64 }
         schema_version: { type: integer }
         actor: { type: string, enum: [user, ai, system] }
@@ -1395,6 +1449,13 @@ components:
           description: |
             客户端按改进方案 3.5 算出的整库摘要（SHA-256 多重集哈希的十六进制）；
             只有推送完成、本机没有待推送提交时最后一条提交才带这个字段。
+        table_digests:
+          type: object
+          additionalProperties: { type: string, pattern: "^[0-9a-f]{64}$" }
+          description: |
+            按表拆开的同一份摘要，表名到 64 位十六进制值的映射，各值之和等于这条提交的
+            state_digest。服务端原样保存与回传，不解析；没有带的提交在响应里不出现这个键
+            （ADR-0054）。
         changes:
           type: array
           minItems: 1
@@ -1522,9 +1583,15 @@ components:
           items: { $ref: "#/components/schemas/Model" }
     PushResult:
       type: object
-      required: [head]
+      required: [head, seqs]
       properties:
         head: { type: integer, format: int64 }
+        seqs:
+          type: array
+          items: { type: integer, format: int64 }
+          description: |
+            与请求里的 commits 按条数与顺序一一对应；新提交是服务端分配的序号，被当作
+            重复跳过的提交回它在服务端记下的原序号（ADR-0054）。
     Ready:
       type: object
       required: [status, schema_version]
@@ -1589,16 +1656,54 @@ components:
         created_at: { type: string, format: date-time }
     SyncDevice:
       type: object
-      description: 账号设备名册里的一台设备（ADR-0048）
-      required: [device_id, alias, capabilities, last_seen]
+      description: 账号设备名册里的一台设备（ADR-0048、ADR-0054）
+      required: [device_id, alias, snapshot_capable, synced_seq, last_seen]
       properties:
         device_id: { type: string }
         alias: { type: string, description: 用户设置的别名，空串表示未命名 }
-        capabilities:
-          type: array
-          items: { type: string }
-          description: 这一台设备声明的小写能力名，当前只有 snapshot
+        snapshot_capable:
+          type: boolean
+          description: 这一台设备是否声明了 snapshot 能力；现在是唯一的一种能力，请求头含 snapshot 时置为 true
+        synced_seq:
+          type: integer
+          format: int64
+          description: 这台设备已经应用到的服务端序号，不超过当前 head；常规压缩不越过活跃窗口内设备的最小值
         last_seen: { type: string, format: date-time, description: 最近一次同步请求的服务端时间 }
+    SyncRef:
+      type: object
+      description: 账号级命名版本的一行（ADR-0054）
+      required: [name, commit_uid, note, updated_at]
+      properties:
+        name: { type: string, description: NFC 规范化之后的名字，最长 30 个字符 }
+        commit_uid: { type: string, description: 这个名字指向的提交身份；服务端不核对它是否存在 }
+        note: { type: string, description: 用户写的备注，服务端原样保存 }
+        updated_at: { type: string, format: date-time }
+        deleted_at:
+          type: string
+          format: date-time
+          description: 删除时间；非空表示这个名字是墓碑，没有这个键表示名字仍然有效
+    SyncRefList:
+      type: object
+      required: [refs]
+      properties:
+        refs:
+          type: array
+          items: { $ref: "#/components/schemas/SyncRef" }
+    SyncRefWrite:
+      type: object
+      description: 写入或删除一个命名版本，两种形状二选一（ADR-0054）
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: 名字，服务端按 NFC 规范化之后计长度，最长 30 个字符
+        commit_uid: { type: string, maxLength: 64, description: 写入时必填，删除时忽略 }
+        note: { type: string, maxLength: 200, description: 写入时的备注，删除时忽略 }
+        source_updated_at: { type: string, format: date-time, description: 本机改名时间，用于判断写入是否早于墓碑 }
+        delete: { type: boolean, description: 为真表示删除这个名字，此时不需要 commit_uid }
     SyncDeviceList:
       type: object
       required: [devices]

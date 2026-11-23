@@ -17,12 +17,20 @@ import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
-import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/models/result.dart';
+import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
+import 'package:zhixin/domain/rules/uuid_v7.dart';
 
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
+
+/// 提交身份只用 `uid`（ADR-0053 决定第 3 条）。
+///
+/// 界面在动作开始时生成一次 UUIDv7 并一路传下来，同一次动作重试沿用同一个值；
+/// 写入层按 `revision_commit.uid` 的唯一索引先查，已存在就返回原提交，不再有
+/// 按参数派生的重试编号与两分钟窗口。两次真正独立、参数相同的动作是两个不同的
+/// 身份，各自形成提交。
 
 class _SilentAi implements BuddyAi {
   _SilentAi({this.reply = const BuddyReply(text: '不需要模型')});
@@ -48,7 +56,7 @@ class _SilentAi implements BuddyAi {
 }
 
 void main() {
-  test('同一请求编号的模型判断只写一次', () async {
+  test('同一个 uid 的模型判断只写一次', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final attempts = AttemptRepository(rig.db);
@@ -94,24 +102,25 @@ void main() {
 
     final questionId = await service.capture(stem: '检查这道题');
     final attempt = await service.openAttempt(questionId);
+    final uid = newUuidV7();
     final first = await service.assessWithModel(
       questionId: questionId,
       attemptId: attempt.id,
-      requestId: 'assess-1',
+      uid: uid,
     );
     final head = await rig.engine.headId(rig.raw);
 
     final again = await service.assessWithModel(
       questionId: questionId,
       attemptId: attempt.id,
-      requestId: 'assess-1',
+      uid: uid,
     );
     expect(again.id, first.id);
     expect(await rig.engine.headId(rig.raw), head);
     expect(await assessments.forAttempt(attempt.id), hasLength(1));
   });
 
-  test('同一请求编号的草稿与提交只写一次', () async {
+  test('同一个 uid 的草稿与提交只写一次', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final attempts = AttemptRepository(rig.db);
@@ -150,32 +159,34 @@ void main() {
       transactions: WriteTransactions(rig.db, revisions: rig.engine),
     );
 
-    final questionId = await service.capture(stem: '请求编号去重');
+    final questionId = await service.capture(stem: '提交身份去重');
     final attempt = await service.openAttempt(questionId);
 
     final draftHead = await rig.engine.headId(rig.raw);
+    final draftUid = newUuidV7();
     await service.saveDraft(
       attemptId: attempt.id,
       answer: '先写一步',
-      requestId: 'draft-1',
+      uid: draftUid,
     );
     final savedHead = await rig.engine.headId(rig.raw);
     expect(savedHead, greaterThan(draftHead));
-    // 写入失败后用户再点一次：同一个请求编号不再形成第二条提交。
+    // 写入失败后用户再点一次：同一个 uid 不再形成第二条提交。
     await service.saveDraft(
       attemptId: attempt.id,
       answer: '先写一步',
-      requestId: 'draft-1',
+      uid: draftUid,
     );
     expect(await rig.engine.headId(rig.raw), savedHead);
     expect((await attempts.attemptById(attempt.id))!.userAnswer, '先写一步');
 
+    final submitUid = newUuidV7();
     await service.submit(
       attemptId: attempt.id,
       answer: '写完了',
       isCorrect: true,
       independent: true,
-      requestId: 'submit-1',
+      uid: submitUid,
     );
     final submittedHead = await rig.engine.headId(rig.raw);
     await service.submit(
@@ -183,7 +194,7 @@ void main() {
       answer: '写完了',
       isCorrect: true,
       independent: true,
-      requestId: 'submit-1',
+      uid: submitUid,
     );
     expect(await rig.engine.headId(rig.raw), submittedHead);
     final stored = (await attempts.attemptById(attempt.id))!;
@@ -191,7 +202,7 @@ void main() {
     expect(stored.userAnswer, '写完了');
   });
 
-  test('新建目标与事项连点两次只形成一条提交，不同内容各自提交', () async {
+  test('新建目标与事项各形成一条提交，同内容两次是两个身份', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
@@ -205,27 +216,21 @@ void main() {
     expect(goal.changed, isTrue);
     final afterGoal = await rig.engine.headId(rig.raw);
     expect(afterGoal, greaterThan(before));
+    // 界面每次动作各自生成身份：内容相同也照常写入第二条。
     final goalAgain = await service.addGoal(title: '概率论期末');
-    expect(goalAgain.commitId, goal.commitId);
-    expect(await rig.engine.headId(rig.raw), afterGoal);
-    expect(await tasks.goals(), hasLength(1));
+    expect(goalAgain.changed, isTrue);
+    expect(goalAgain.commitId, isNot(goal.commitId));
+    expect(await tasks.goals(), hasLength(2));
 
     final item = await service.addItem(title: '做一组练习', minutes: 20);
     expect(item.changed, isTrue);
-    final afterItem = await rig.engine.headId(rig.raw);
-    final itemAgain = await service.addItem(title: '做一组练习', minutes: 20);
-    expect(itemAgain.commitId, item.commitId);
-    expect(await rig.engine.headId(rig.raw), afterItem);
-    expect(await tasks.items(), hasLength(1));
-
-    // 内容不同是另一个动作，不会被当成重试。
     final other = await service.addItem(title: '再做一组', minutes: 20);
     expect(other.changed, isTrue);
     expect(other.commitId, isNot(item.commitId));
     expect(await tasks.items(), hasLength(2));
   });
 
-  test('完成步骤连点两次只形成一条提交，改回后再完成仍能写入', () async {
+  test('完成步骤与改回是各自的动作，状态迁移都写入', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
@@ -238,11 +243,11 @@ void main() {
     final first = await service.setStatus(itemId, PlanItemStatus.done);
     expect(first.changed, isTrue);
     final head = await rig.engine.headId(rig.raw);
+    // 状态没有变化时不形成提交。
     final again = await service.setStatus(itemId, PlanItemStatus.done);
     expect(again.changed, isFalse);
     expect(await rig.engine.headId(rig.raw), head);
 
-    // 改回待办再完成是新的状态迁移，不能被当成上一次动作的重试。
     expect(
       (await service.setStatus(itemId, PlanItemStatus.todo)).changed,
       isTrue,
@@ -252,7 +257,7 @@ void main() {
     expect((await tasks.byId(itemId))!.status, PlanItemStatus.done);
   });
 
-  test('保存预约时间连点两次只形成一条提交', () async {
+  test('同一时段重复预约按冲突拒绝，换时间另起一条提交', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
@@ -270,26 +275,27 @@ void main() {
     );
     expect(scheduled.changed, isTrue);
     final head = await rig.engine.headId(rig.raw);
-    final scheduledAgain = await service.scheduleItem(
-      planItemId: itemId,
-      start: start,
-      end: end,
+    // 参数完全相同的第二次调用由界面另起一个 uid，不再按“同参数两分钟内算重试”
+    // 合并；这一次撞上同一时段的已有预约，被冲突校验拒绝，不形成提交。
+    await expectLater(
+      service.scheduleItem(planItemId: itemId, start: start, end: end),
+      throwsA(anything),
     );
-    expect(scheduledAgain.commitId, scheduled.commitId);
     expect(await rig.engine.headId(rig.raw), head);
     expect(await schedule.nextBlocksForItems([itemId], start), hasLength(1));
 
-    // 换一个时间是新动作，不会因为同一事项而被当成重试。
+    // 换一个时间就是另一个动作，各自形成一条提交。
     final later = await service.scheduleItem(
       planItemId: itemId,
       start: start.add(const Duration(hours: 2)),
       end: end.add(const Duration(hours: 2)),
     );
     expect(later.commitId, isNot(scheduled.commitId));
+    expect(later.changed, isTrue);
   });
 
-  test('同参数的暂停、恢复、再暂停在两分钟内都生效', () async {
-    final now = DateTime(2026, 11, 12, 9);
+  test('同参数的暂停、恢复、再暂停各自生效', () async {
+    var now = DateTime(2026, 11, 12, 9);
     final rig = await openTestRigWithUndoRules(clock: () => now);
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
@@ -303,57 +309,9 @@ void main() {
     expect((await service.resumeGoal(goalId)).changed, isTrue);
     expect((await tasks.goals()).single.status, LearningGoalStatus.active);
     final headBefore = await rig.engine.headId(rig.raw);
-    // 第三次暂停与第一次参数相同、命令编号也相同，但中间已经有过恢复提交，
-    // 旧暂停提交不再是 HEAD，所以这不是重试，必须照常写入（方案 3.1 验收）。
     expect((await service.pauseGoal(goalId)).changed, isTrue);
     expect((await tasks.goals()).single.status, LearningGoalStatus.paused);
     expect(await rig.engine.headId(rig.raw), greaterThan(headBefore));
-  });
-
-  test('两分钟内的同参数紧邻调用只算一次重试', () async {
-    final now = DateTime(2026, 11, 12, 9);
-    final rig = await openTestRigWithUndoRules(clock: () => now);
-    addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final service = _planService(rig, TimePolicy(clock: () => now));
-
-    await service.addGoal(title: '连续暂停');
-    final goalId = (await tasks.goals()).single.id;
-    final first = await service.pauseGoal(goalId);
-    expect(first.changed, isTrue);
-    final head = await rig.engine.headId(rig.raw);
-
-    // 双击或网络回调：旧提交仍是 HEAD，两分钟内同编号只算一次重试。
-    final retry = await service.pauseGoal(goalId);
-    expect(retry.commitId, first.commitId);
-    expect(await rig.engine.headId(rig.raw), head);
-    expect((await tasks.goals()).single.status, LearningGoalStatus.paused);
-  });
-
-  test('同一动作超过两分钟重试窗口后按新动作执行', () async {
-    var now = DateTime(2026, 11, 12, 9);
-    final rig = await openTestRigWithUndoRules(clock: () => now);
-    addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final service = _planService(rig, TimePolicy(clock: () => now));
-
-    final first = await service.addGoal(title: '过一会儿再做一次');
-    expect(first.changed, isTrue);
-    final head = await rig.engine.headId(rig.raw);
-
-    // 窗口内且旧提交仍是 HEAD：判为同一次动作的重试，不再执行写入。
-    final retry = await service.addGoal(title: '过一会儿再做一次');
-    expect(retry.commitId, first.commitId);
-    expect(await rig.engine.headId(rig.raw), head);
-    expect(await tasks.goals(), hasLength(1));
-
-    // 超过两分钟之后同参数是用户重新做的一次动作，照常形成新提交。
-    now = now.add(const Duration(minutes: 2, seconds: 1));
-    final again = await service.addGoal(title: '过一会儿再做一次');
-    expect(again.changed, isTrue);
-    expect(again.commitId, isNot(first.commitId));
-    expect(await rig.engine.headId(rig.raw), greaterThan(head));
-    expect(await tasks.goals(), hasLength(2));
   });
 
   test('撤销之后同一个动作可以重新提交', () async {
@@ -370,8 +328,6 @@ void main() {
     expect(undone.applied, isTrue);
     expect(await tasks.goals(), isEmpty);
 
-    // 撤销不释放目标的请求编号；旧提交之后已经有撤销提交，同编号不是重试，
-    // 重做照常形成新提交，不需要推时钟（方案 3.1 验收）。
     final again = await service.addGoal(title: '暂停后重开');
     expect(again.changed, isTrue);
     expect(again.commitId, isNot(goal.commitId));

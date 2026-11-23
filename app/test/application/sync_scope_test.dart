@@ -59,8 +59,9 @@ void main() {
       register: true,
       deviceId: 'device-a',
     );
-    await a.sync.syncNow(confirmBaseline: true);
+    // 首次同步把库里现有的内容作为基线推上去，之后每一条写入各是一条提交。
     await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
     await a.sync.syncNow();
     // 退出之前还有一次没有同步的写入：推送位置因此落在 HEAD 之后。
     await insertTestMemory(a.rig, 'm2', content: '晚上效率低');
@@ -87,8 +88,11 @@ void main() {
       register: true,
       deviceId: 'device-a',
     );
-    await a.sync.syncNow(confirmBaseline: true);
+    // 首次同步把库里现有的内容作为基线推上去；之后写一条再同步一次，服务端
+    // 序列末位就是这次写入。
     await insertTestMemory(a.rig, 'm1', content: '喜欢先看例子');
+    await a.sync.syncNow(confirmBaseline: true);
+    await insertTestMemory(a.rig, 'm2', content: '基线之后新增');
     await a.sync.syncNow();
     final userId = (await a.account.snapshot()).session!.userId;
     final headBeforeLogout = server.headOf(userId);
@@ -99,7 +103,7 @@ void main() {
     );
 
     await signOut(a);
-    await insertTestMemory(a.rig, 'm2', content: '退出期间新增');
+    await insertTestMemory(a.rig, 'm3', content: '退出期间新增');
     await a.account.login(
       identifier: 'a@example.com',
       password: syncTestPassword,
@@ -115,14 +119,20 @@ void main() {
           '提交，期望 ${headBeforeLogout + 1} 条（退出前 $headBeforeLogout 条，'
           '退出期间新增 1 条）',
     );
+    // 重新登录之后的基线提交带“首次同步基线”这个动作文案：服务端序列里只该有
+    // 首次同步时那一条（同步契约改按 uid 去重之后，推送上去的提交不再带 `kind`）。
     final baselineCount = server.commits[userId]!
-        .where((commit) => commit['action'] == '首次同步基线')
+        .where(
+          (commit) =>
+              commit['action'] == '首次同步基线' || commit['action'] == '首次同步',
+        )
         .length;
     expect(
       baselineCount,
       1,
       reason:
           '重新登录又上传了一份基线：服务端有 $baselineCount 条基线，'
+          '动作分别是 ${server.commits[userId]!.map((commit) => commit['action']).toList()}，'
           '期望只有首次同步时那 1 条',
     );
     expect(

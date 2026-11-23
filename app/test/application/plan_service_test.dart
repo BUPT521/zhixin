@@ -353,31 +353,33 @@ void main() {
     final service = _service(rig, policy: policy);
     final transactions = WriteTransactions(rig.db, revisions: rig.engine);
 
+    // 搭子写的记忆落库走同一条写入路径，按三类标签写进库；用户自己写的记忆
+    // 不在这个列表里。
     for (var index = 0; index < 35; index++) {
       await transactions.run((txn) async {
         await memories.create(
-          kind: MemoryKind.difficulty,
+          kind: MemoryKind.episodic,
           content: '第 $index 条记忆',
           sourceKind: MemorySourceKind.message,
           transaction: txn,
         );
       }, label: writeMemoryAction);
     }
-    // 用户自己写的记忆不在这个列表里。
     await memories.create(
-      kind: MemoryKind.preference,
+      kind: MemoryKind.semantic,
       content: '自己记下的一条',
       sourceKind: MemorySourceKind.user,
     );
 
     final week = await service.loadWeek(now);
 
-    expect(week.operations, hasLength(35));
-    expect(week.operations.first.id, 35);
-    expect(week.operations.last.id, 1);
+    expect(week.operations, hasLength(35), reason: '全部记忆写入都列出来，不截断较早的记录');
+    final actions = week.operations.map((commit) => commit.action);
+    expect(actions.first, writeMemoryAction);
     expect(
       week.operations.every((commit) => commit.action == writeMemoryAction),
       isTrue,
+      reason: '用户自己写的记忆不在这个列表里',
     );
   });
 
@@ -537,7 +539,7 @@ void main() {
     expect((await schedule.blockById(id))!.startAt.hour, 9);
   });
 
-  test('同一动作重试沿用原提交，不再写一遍', () async {
+  test('同参数的动作各起一个身份：新建目标两次是两条，状态与删除按现值跳过', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final tasks = TaskRepository(rig.db);
@@ -545,34 +547,39 @@ void main() {
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     final service = _service(rig, policy: policy);
 
-    final first = await service.addGoal(title: '重试不重复', scopeText: '整章');
+    final first = await service.addGoal(title: '两次都写', scopeText: '整章');
     final head = await rig.engine.headId(rig.raw);
-    // 重试走同一个编号：返回原提交，目标只留一条。
-    final retry = await service.addGoal(title: '重试不重复', scopeText: '整章');
-    expect(retry.commitId, first.commitId);
-    expect(await rig.engine.headId(rig.raw), head);
+    // 参数完全相同的第二次是另一个动作：界面各起一个 uid，各自形成一条提交，
+    // 不再有“同参数两分钟内算重试”的口径（ADR-0053 决定第 3 条）。
+    final second = await service.addGoal(title: '两次都写', scopeText: '整章');
+    expect(second.commitId, isNot(first.commitId));
+    expect(await rig.engine.headId(rig.raw), greaterThan(head));
     expect(
-      (await tasks.goals()).where((goal) => goal.title == '重试不重复'),
-      hasLength(1),
+      (await tasks.goals()).where((goal) => goal.title == '两次都写'),
+      hasLength(2),
     );
 
+    // 状态迁移不按 uid 去重：第二次改成同一状态没有净变化，按跳过返回。
     final item = await tasks.createItem(title: '改状态的一项');
     final done = await service.setStatus(item, PlanItemStatus.done);
     expect(done.changed, isTrue);
     final doneHead = await rig.engine.headId(rig.raw);
-    // 状态迁移不用编号去重，重试由事务内的状态比对跳过。
     final doneRetry = await service.setStatus(item, PlanItemStatus.done);
     expect(doneRetry.changed, isFalse);
     expect(await rig.engine.headId(rig.raw), doneHead);
 
+    // 删掉已经删掉的预约同样没有净变化，不再形成提交。
     final block = await schedule.addBlock(
       planItemId: item,
       start: DateTime(2026, 11, 11, 9),
       end: DateTime(2026, 11, 11, 10),
     );
     final cancel = await service.deleteBlock(block);
+    expect(cancel.changed, isTrue);
+    final cancelHead = await rig.engine.headId(rig.raw);
     final cancelRetry = await service.deleteBlock(block);
-    expect(cancelRetry.commitId, cancel.commitId);
+    expect(cancelRetry.changed, isFalse);
+    expect(await rig.engine.headId(rig.raw), cancelHead);
     expect(await schedule.blockById(block), isNull);
   });
 }

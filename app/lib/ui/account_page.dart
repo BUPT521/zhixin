@@ -5,6 +5,8 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
+import 'zhixin_dialog.dart';
+import '../platform/app_paths.dart' show LocalSpace;
 
 import '../app_scope.dart';
 import '../application/account_service.dart';
@@ -50,6 +52,7 @@ class _AccountPageState extends State<AccountPage> {
   AccountSnapshot? _snapshot;
   SyncStatus? _sync;
   ServerQuota? _quota;
+  List<LocalSpace> _spaces = const [];
   bool _loading = true;
   bool _busy = false;
 
@@ -121,8 +124,10 @@ class _AccountPageState extends State<AccountPage> {
         // 设备一节直接读同步服务缓存的名册；读取失败只记诊断，不阻塞本页。
         await scope.accountServices.sync.refreshDevices();
       }
+      final spaces = await scope.spaces?.list() ?? const <LocalSpace>[];
       if (!mounted) return;
       setState(() {
+        _spaces = spaces;
         _snapshot = snapshot;
         _sync = sync;
         _quota = quota;
@@ -218,6 +223,7 @@ class _AccountPageState extends State<AccountPage> {
       final result = register
           ? await account.register(identifier: identifier, password: password)
           : await account.login(identifier: identifier, password: password);
+      if (!mounted || scope.managesSpaces) return;
       _password.clear();
       // 登录之后是“确认登录方式”的流程，找回密码那一套的验证码状态要清掉。
       _codeSent = false;
@@ -612,7 +618,30 @@ class _AccountPageState extends State<AccountPage> {
     setState(() => _busy = true);
     try {
       final scope = AppScope.of(context);
-      await scope.accountServices.account.logout();
+      final deleteSpace = !scope.managesSpaces
+          ? false
+          : await showZhixinDialog<bool>(
+              context: context,
+              builder: (context) => ZhixinDialogLayout(
+                title: const Text('退出登录'),
+                content: const Text('退出后打开本机空间。可以保留这个账号在此设备上的数据，或在退出时一起删除。'),
+                actions: [
+                  cancelZhixinButton(context),
+                  forui.FButton(
+                    variant: forui.FButtonVariant.destructive,
+                    onPress: () => Navigator.of(context).pop(true),
+                    child: const Text('退出并删除本机数据'),
+                  ),
+                  forui.FButton(
+                    onPress: () => Navigator.of(context).pop(false),
+                    child: const Text('退出并保留数据'),
+                  ),
+                ],
+              ),
+            );
+      if (deleteSpace == null || !mounted) return;
+      await scope.accountServices.account.logout(deleteSpace: deleteSpace);
+      if (!mounted || scope.managesSpaces) return;
       // 退出之后同步位置不再继续推进，不能一直挡住“清理历史”；位置与账号
       // 归属保留，重新登录同一账号时仍从原位置继续增量同步（同步方案 3.3）。
       await scope.accountServices.sync.clearState();
@@ -637,40 +666,23 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  Future<void> _clearCloudData() async {
+  Future<void> _clearAllData() async {
     if (_busy) return;
     final password = await askDestructiveActionPassword(
       context,
-      title: '清除云端数据',
+      title: '清除全部数据',
       message:
-          '会永久删除这个账号在服务端保存的全部整库备份、同步提交序列与附件。'
-          '本机学习记录和账号会保留，清除后需要重新同步。',
+          '会清空当前本机空间的记录、附件、历史和设置，以及这个账号在服务端的数据。账号与登录状态保留。'
+          '其他设备会在下次同步时重新上传它们的记录。要彻底清空，请先在其他设备退出登录或分别清除。',
       confirmLabel: '清除',
     );
     if (password == null || !mounted || _busy) return;
     setState(() => _busy = true);
     final scope = AppScope.of(context);
     try {
-      await scope.accountServices.account.clearCloudData(password: password);
-      // 云端序列已经清空，旧位置不再有意义：连位置一起删掉，下次同步按首次
-      // 基线重新建立；留着位置会让“待确认”的状态与库里对不上。
-      await scope.accountServices.sync.clearState(forgetPosition: true);
-      // 清除之后先停掉自动同步，再问用户要不要恢复；首次同步仍会先确认。
-      await scope.accountServices.account.setAutoSync(false);
-      if (!mounted) return;
-      final resume = await confirmEnableAutoSync(
-        context,
-        accountLabel: _snapshot?.displayLabel ?? '',
-      );
-      if (resume) {
-        await scope.accountServices.account.setAutoSync(true);
-        await scope.accountServices.sync.schedule(
-          delay: const Duration(seconds: 1),
-        );
-        _report('云端数据已清除；自动同步已恢复，下次同步会先确认是否上传本机记录');
-      } else {
-        _report('云端数据已清除；自动同步保持暂停，需要时在“自动同步”开关里重新开启');
-      }
+      await scope.clearAllData(password: password);
+      if (!mounted || scope.managesSpaces) return;
+      _report('本机与云端数据已清除，登录状态保留');
       await _load();
     } on ServerProblem catch (error, stack) {
       if (!mounted) return;
@@ -684,13 +696,13 @@ class _AccountPageState extends State<AccountPage> {
             context,
             error,
             stack,
-            action: '清除云端数据',
+            action: '清除全部数据',
             kind: 'account_clear_cloud',
-            kept: '云端数据与本机记录没有改动',
-            next: '可以检查网络后重试',
+            kept: '账号保留，自动同步已暂停',
+            next: '可以检查网络后重试清除',
           ),
           failed: true,
-          retry: _clearCloudData,
+          retry: _clearAllData,
         );
       }
     } catch (error, stack) {
@@ -700,13 +712,13 @@ class _AccountPageState extends State<AccountPage> {
           context,
           error,
           stack,
-          action: '清除云端数据',
+          action: '清除全部数据',
           kind: 'account_clear_cloud',
-          kept: '云端数据与本机记录没有改动',
-          next: '可以检查网络后重试',
+          kept: '账号保留',
+          next: '可以重试清除，再检查同步状态',
         ),
         failed: true,
-        retry: _clearCloudData,
+        retry: _clearAllData,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -720,6 +732,7 @@ class _AccountPageState extends State<AccountPage> {
     try {
       final scope = AppScope.of(context);
       await scope.accountServices.account.deleteAccount(password: password);
+      if (!mounted || scope.managesSpaces) return;
       await scope.accountServices.sync.clearState();
       _report('账号与云端数据已删除；本机记录仍在');
       await _load();
@@ -830,6 +843,7 @@ class _AccountPageState extends State<AccountPage> {
                   padding: EdgeInsets.only(bottom: theme.space.md),
                   child: Text(_notice!, style: theme.text.bodySmall),
                 ),
+        if (_spaces.isNotEmpty) ..._localSpaces(context),
         if (!signedIn) ..._loggedOut(context),
         if (signedIn) ..._loggedIn(context, snapshot!),
         SizedBox(height: theme.space.md),
@@ -840,6 +854,57 @@ class _AccountPageState extends State<AccountPage> {
         ),
       ],
     );
+  }
+
+  List<Widget> _localSpaces(BuildContext context) {
+    final scope = AppScope.of(context);
+    return [
+      const SectionHeading(title: '本机空间'),
+      for (final space in _spaces)
+        forui.FTile(
+          title: Text(
+            space.id == scope.spaceId ? '${space.label}（当前）' : space.label,
+          ),
+          subtitle: Text(
+            '${(space.bytes / (1024 * 1024)).toStringAsFixed(1)} MiB',
+          ),
+          suffix: const Icon(FLucideIcons.trash2),
+          onPress: _busy ? null : () => _deleteLocalSpace(space),
+        ),
+    ];
+  }
+
+  Future<void> _deleteLocalSpace(LocalSpace space) async {
+    final scope = AppScope.of(context);
+    final confirmed = await confirmZhixin(
+      context: context,
+      title: '删除本机空间',
+      content: Text('删除“${space.label}”在这台设备上的记录、历史、附件与设置。请先导出需要保留的数据包。'),
+      confirmLabel: '删除本机空间',
+      destructive: true,
+    );
+    if (!confirmed || !mounted || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await scope.deleteLocalSpace(space.id);
+      if (mounted && space.id != scope.spaceId) await _load();
+    } catch (error, stack) {
+      if (!mounted) return;
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: '删除本机空间',
+          kind: 'account_delete_local_space',
+          kept: '云端数据保留',
+          next: '可以稍后重试',
+        ),
+        failed: true,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   List<Widget> _loggedOut(BuildContext context) {
@@ -1138,6 +1203,8 @@ class _AccountPageState extends State<AccountPage> {
                     color: theme.colors.error,
                   ),
                 ),
+                if (sync!.differentTables.isNotEmpty)
+                  Text('差异表 ${sync.differentTables.join('、')}'),
                 SizedBox(height: theme.space.xs),
                 Text(
                   '上次同步比较整库摘要时发现两边内容不同。可以选一边为准修复：'
@@ -1156,17 +1223,13 @@ class _AccountPageState extends State<AccountPage> {
                   children: [
                     forui.FButton(
                       mainAxisSize: MainAxisSize.min,
-                      onPress: _busy || sync?.syncing == true
-                          ? null
-                          : _repairFromCloud,
+                      onPress: _busy || sync.syncing ? null : _repairFromCloud,
                       child: const Text('以云端为准修复'),
                     ),
                     forui.FButton(
                       variant: forui.FButtonVariant.outline,
                       mainAxisSize: MainAxisSize.min,
-                      onPress: _busy || sync?.syncing == true
-                          ? null
-                          : _repairFromLocal,
+                      onPress: _busy || sync.syncing ? null : _repairFromLocal,
                       child: const Text('以本机为准修复'),
                     ),
                   ],
@@ -1259,24 +1322,21 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ),
       ),
-      SectionHeading(
-        title: '云端数据',
-        subtitle: '删除账号会一并删除云端记录；清除云端数据只删备份与同步序列，本机记录和账号保留。',
-      ),
+      SectionHeading(title: '账号与数据管理'),
       forui.FTile(
         variant: forui.FItemVariant.destructive,
         prefix: const LeadingIcon(FLucideIcons.cloudOff, tone: TagTone.muted),
-        title: const Text('清除云端数据'),
-        subtitle: const Text('删除云端备份与同步序列，之后从本机重新同步。'),
+        title: const Text('清除全部数据'),
+        subtitle: const Text('清空当前本机空间和云端数据，保留账号与登录状态。'),
         suffix: const Icon(FLucideIcons.trash2),
-        onPress: _busy ? null : _clearCloudData,
+        onPress: _busy ? null : _clearAllData,
       ),
       SizedBox(height: theme.space.sm),
       forui.FTile(
         variant: forui.FItemVariant.destructive,
         prefix: const LeadingIcon(FLucideIcons.userX, tone: TagTone.muted),
         title: const Text('删除账号'),
-        subtitle: const Text('删除账号与全部云端数据；本机学习记录保留。'),
+        subtitle: const Text('删除账号、云端数据及这个账号的本机空间。'),
         suffix: const Icon(FLucideIcons.trash2),
         onPress: _busy ? null : _deleteAccount,
       ),

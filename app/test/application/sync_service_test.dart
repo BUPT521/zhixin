@@ -13,6 +13,7 @@ import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/rules/uuid_v7.dart';
 
 import '../support/fake_server.dart';
 import '../support/test_db.dart';
@@ -110,7 +111,7 @@ Future<void> _insertMemory(TestRig rig, String id, String content) {
   return rig.db.command((txn) async {
     await insertRow(txn, 'memory', {
       'id': id,
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': content,
       'scope': null,
       'source_kind': 'user',
@@ -325,11 +326,16 @@ void main() {
     expect(last['action'], '首次同步基线');
   });
 
-  test('换实例重新登录后不复用旧同步游标，自动同步先暂停', () async {
+  test('换实例重新登录后自动同步先暂停，同步位置只看库里还在不在', () async {
     final a = await device('a@example.com', register: true);
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
     await a.sync.syncNow(confirmBaseline: true);
     expect((await a.sync.status()).serverHead, isNotNull);
+    final positionBefore = await a.rig.raw
+        .rawQuery('SELECT position FROM revision_cursor WHERE name = ?', [
+          RevisionCursor.syncPushed,
+        ])
+        .then((rows) => rows.single['position']);
 
     await a.account.setServerBaseUrl('http://other.test');
     final snapshot = await a.account.login(
@@ -340,8 +346,19 @@ void main() {
     expect(snapshot.autoSync, isFalse);
     expect(await a.account.preferences.syncState(), isNull);
     final status = await a.sync.status();
-    expect(status.serverHead, isNull);
-    expect(status.needsBootstrap, isTrue);
+    // 游标不再带账号与实例的 scope：本机空间标识只用于名册与诊断，同步位置
+    // 只看库里还在不在（ADR-0056 第 9 条）。换实例之后的这一轮因此仍从原位置
+    // 继续，不再有“位置属于别的实例就把下一次当基线”的分支。
+    expect(
+      await a.rig.raw
+          .rawQuery('SELECT position FROM revision_cursor WHERE name = ?', [
+            RevisionCursor.syncPushed,
+          ])
+          .then((rows) => rows.single['position']),
+      positionBefore,
+    );
+    expect(status.needsBootstrap, isFalse);
+    expect(status.serverHead, isNotNull);
   });
 
   test('首次基线上传前必须确认，未确认时不向服务端写任何记录', () async {
@@ -433,15 +450,16 @@ void main() {
     expect(await a.account.preferences.syncState(), isNull);
   });
 
-  test('推送填提交的 uid：命令编号再长也不影响推送，重复推送按 uid 去重', () async {
+  test('推送填提交的 uid：参数再长也不影响推送，重复推送按 uid 去重', () async {
     final a = await device('a@example.com', register: true);
     await a.sync.syncNow();
     final userId = (await a.account.snapshot()).session!.userId;
-    // 首次同步已经上传了本机投影（profile 一行）作为基线。
+    // 首次同步已经上传了本机投影作为基线。
     final baselineHead = server.headOf(userId);
 
-    // 更正材料页这类命令把 JSON 编码的请求编号写进提交，按 UTF-8 算是 70 个字节，
-    // 超过服务端对 request_id 的 64 字节上限；推送改填提交的 uid 之后不再受影响。
+    // 以前按动作参数派生的请求编号（JSON 编码的“动作 + 参数”原文）会把整条
+    // 参数写进提交身份，按 UTF-8 可能超过服务端的 64 字节上限。现在提交身份由
+    // 界面在动作开始时生成 UUIDv7，参数再长也只影响动作说明与行内容。
     final long = jsonEncode([
       'correct-material-page',
       '01a1f4d1-78ae-7000-befb-f35f122c1838',
@@ -449,34 +467,30 @@ void main() {
       '方阵的迹为主对角元素之和。',
     ]);
     expect(utf8.encode(long).length, greaterThan(64));
+    final uid = newUuidV7();
     final outcome = await a.rig.db.commandOutcome(
       (txn) => insertRow(txn, 'memory', {
         'id': 'm1',
-        'kind': 'preference',
-        'content': '长编号的写入',
-        'scope': null,
+        'kind': 'semantic',
+        'content': '长参数的写入：$long',
         'source_kind': 'user',
-        'source_id': null,
-        'valid_until': null,
         'status': 'active',
         'created_at': '2026-11-17 10:00:00',
         'updated_at': '2026-11-17 10:00:00',
       }),
-      label: '新增记忆',
-      requestId: long,
+      label: '更正材料页',
+      uid: uid,
     );
     final commit = outcome.commit!;
+    expect(commit.uid, uid);
     expect(commit.uid, hasLength(36));
     expect(utf8.encode(commit.uid).length, lessThanOrEqualTo(64));
 
     await a.sync.syncNow();
     expect(server.headOf(userId), baselineHead + 1);
     final pushed = server.commits[userId]!.last;
-    expect(pushed['request_id'], commit.uid);
-    expect(
-      utf8.encode(pushed['request_id']! as String).length,
-      lessThanOrEqualTo(64),
-    );
+    expect(pushed['uid'], commit.uid);
+    expect(utf8.encode(pushed['uid']! as String).length, lessThanOrEqualTo(64));
 
     // 服务端已经见过这条 uid：同一条提交再推一次不增加序列长度。
     await a.sync.syncNow();
@@ -524,7 +538,7 @@ void main() {
     expect(state['synced_at'], isNotNull);
   });
 
-  test('同步位置带账号与实例的 scope，退出登录只解除阻塞、位置与 scope 保留', () async {
+  test('同步位置不再带 scope：退出登录只解除阻塞，位置保留', () async {
     final a = await device(
       'a@example.com',
       register: true,
@@ -533,7 +547,9 @@ void main() {
     await _insertMemory(a.rig, 'm1', '喜欢先看例子');
     await a.sync.syncNow(confirmBaseline: true);
     final userId = (await a.account.snapshot()).session!.userId;
-    final scope = syncScopeFor(userId, 'http://server.test');
+    // 本机空间标识仍由 syncScopeFor 给出，服务端名册与诊断用它；游标本身只记
+    // 位置，一个库只属于一个账号与实例，不再按 scope 区分（ADR-0056 第 9 条）。
+    expect(syncScopeFor(userId, 'http://server.test'), isNotEmpty);
 
     Future<Map<String, Map<String, Object?>>> cursors() async {
       final rows = await selectRows(a.rig.raw, 'revision_cursor');
@@ -542,23 +558,21 @@ void main() {
 
     final before = await cursors();
     expect(
-      before[RevisionCursor.syncPushed]!['scope'],
-      scope,
-      reason: '推送位置应当写当前账号与实例的 scope',
+      before[RevisionCursor.syncPushed]!.containsKey('scope'),
+      isFalse,
+      reason: '游标表没有 scope 列',
     );
-    expect(before[RevisionCursor.syncServerHead]!['scope'], scope);
     final pushedPosition = before[RevisionCursor.syncPushed]!['position'];
     expect(before[RevisionCursor.syncPushed]!['blocking'], 1);
+    expect(before.containsKey(RevisionCursor.syncServerHead), isTrue);
 
-    // 退出登录只清偏好并把推送位置改成不阻塞：位置与 scope 都留着，重新登录
-    // 同一账号时从原位置继续增量同步（同步方案 3.3）。
+    // 退出登录只把推送位置改成不阻塞：位置留着，重新登录同一账号时从原位置
+    // 继续增量同步（同步方案 3.3）。
     await a.account.logout();
     await a.sync.clearState();
     final after = await cursors();
     expect(after[RevisionCursor.syncPushed]!['blocking'], 0);
     expect(after[RevisionCursor.syncPushed]!['position'], pushedPosition);
-    expect(after[RevisionCursor.syncPushed]!['scope'], scope);
-    expect(after[RevisionCursor.syncServerHead]!['scope'], scope);
   });
 
   test('拉下来的远端提交不会再推回服务端，同步两轮提交数不变', () async {

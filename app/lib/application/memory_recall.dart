@@ -4,13 +4,17 @@ import '../domain/rules/content_identity.dart';
 import '../domain/rules/embedding.dart';
 import '../domain/rules/search_terms.dart';
 
-/// 按本次用途挑选记忆，给回答提示词使用。
+/// 按三层取本次回答要带的记忆（ADR-0051 决定第 5、6 条）。
 ///
-/// 先由仓库筛掉过期的、已删除的、已被替代的条目和其他范围的条目，再在这里
-/// 按用途与查询相关性取最多 40 条。约束先占预算，其余条目先看用途类别，再按
-/// 记忆正文与本次问题的相关性排序；相关性由检索索引给出，索引不可用时退回
-/// 本机的二元组切分。更新时间只在相关性与类别都相同时比较。待确认的记忆提案
-/// 不在 `memory` 表里，确认之前不会成为候选。
+/// 先由仓库筛掉过期的、已删除的、其他范围的条目，再在这里分层：常驻（语义或
+/// 程序、范围是全局、没有有效期）排在最前，其余是当前范围内的相关层，按记忆
+/// 正文与本次问题的相关性排序，相关程度相同时按更新时间倒序。索引不可用时退回
+/// 本机的二元组切分。待确认的记忆提案不在 `memory` 表里，确认之前不会成为
+/// 候选。
+///
+/// 相关层沿用现有“当前范围内的条目全带”的行为，[relatedLimit] 留出得分下限
+/// 定下来之后只带达到下限的条目的位置；超过上限时截到上限。召回本身不在每次
+/// 召回时写库，使用记录交给 [MemoryUsageService] 在内存与本机缓冲。
 class MemoryRecallService {
   MemoryRecallService(this.repository, {this.ranker});
 
@@ -19,9 +23,10 @@ class MemoryRecallService {
   /// 相关性排序用的索引；为空时只用本机的二元组切分。
   final MemoryRelevanceRanker? ranker;
 
+  /// 每次回答最多带入的记忆条数。
   static const int defaultLimit = 40;
 
-  Future<List<Memory>> recall({
+  Future<MemoryRecallResult> recall({
     required DateTime now,
     required MemoryRecallPurpose purpose,
     String? scope,
@@ -33,65 +38,52 @@ class MemoryRecallService {
       scope: scope,
       limit: null,
     );
-    if (candidates.isEmpty) return const [];
-
-    final constraints = [
-      for (final memory in candidates)
-        if (memory.kind == MemoryKind.constraint) memory,
-    ];
-    final rest = [
-      for (final memory in candidates)
-        if (memory.kind != MemoryKind.constraint) memory,
-    ];
-    final ranks = await _relevanceRanks(rest, query, now);
-    final preferred = _preferredKinds(purpose);
-    final positions = {
-      for (var index = 0; index < rest.length; index++) rest[index].id: index,
-    };
-    rest.sort((left, right) {
-      final leftIndex = positions[left.id] ?? 0;
-      final rightIndex = positions[right.id] ?? 0;
-      final leftPreferred = preferred.contains(left.kind) ? 0 : 1;
-      final rightPreferred = preferred.contains(right.kind) ? 0 : 1;
-      if (leftPreferred != rightPreferred) {
-        return leftPreferred - rightPreferred;
-      }
-      final relevance =
-          (ranks[leftIndex] ?? rest.length) -
-          (ranks[rightIndex] ?? rest.length);
-      if (relevance != 0) return relevance;
-      if (purpose == MemoryRecallPurpose.check) {
-        // 检查优先用带来源的进展：来自作答或场次的进展比手工写下的更可核对。
-        final leftSourced =
-            left.kind == MemoryKind.progress &&
-                left.sourceKind != MemorySourceKind.user
-            ? 0
-            : 1;
-        final rightSourced =
-            right.kind == MemoryKind.progress &&
-                right.sourceKind != MemorySourceKind.user
-            ? 0
-            : 1;
-        if (leftSourced != rightSourced) return leftSourced - rightSourced;
-      }
-      final byTime = _compareUpdated(right, left);
-      if (byTime != 0) return byTime;
-      return right.id.compareTo(left.id);
-    });
-    return [...constraints, ...rest].take(limit).toList(growable: false);
+    return rank(candidates: candidates, now: now, query: query, limit: limit);
   }
 
-  static Set<MemoryKind> _preferredKinds(MemoryRecallPurpose purpose) {
-    return switch (purpose) {
-      // 规划先看时间限制与偏好；讲解先看讲解偏好与本题困难；检查先看进展。
-      MemoryRecallPurpose.plan => {MemoryKind.preference},
-      MemoryRecallPurpose.explain => {
-        MemoryKind.preference,
-        MemoryKind.difficulty,
-      },
-      MemoryRecallPurpose.check => {MemoryKind.progress},
-      MemoryRecallPurpose.chat => MemoryKind.values.toSet(),
+  /// 把候选分成常驻与相关两层并排出先后；调用方已经按有效性、范围筛过。
+  ///
+  /// 常驻按更新时间倒序，相关层按检索相关性、再按更新时间倒序。两层合起来
+  /// 超过 [limit] 时先截相关层，常驻全带。
+  Future<MemoryRecallResult> rank({
+    required List<Memory> candidates,
+    required DateTime now,
+    String query = '',
+    int limit = defaultLimit,
+  }) async {
+    if (candidates.isEmpty) {
+      return const MemoryRecallResult(resident: [], related: []);
+    }
+    final resident = [
+      for (final memory in candidates)
+        if (memory.resident) memory,
+    ]..sort(_byUpdatedDesc);
+    final relatedCandidates = [
+      for (final memory in candidates)
+        if (!memory.resident) memory,
+    ];
+    final ranks = await _relevanceRanks(relatedCandidates, query, now);
+    final positions = {
+      for (var index = 0; index < relatedCandidates.length; index++)
+        relatedCandidates[index].id: index,
     };
+    final related = [...relatedCandidates]
+      ..sort((left, right) {
+        final byRelevance =
+            (ranks[positions[left.id] ?? 0] ?? relatedCandidates.length) -
+            (ranks[positions[right.id] ?? 0] ?? relatedCandidates.length);
+        if (byRelevance != 0) return byRelevance;
+        final byTime = _byUpdatedDesc(left, right);
+        if (byTime != 0) return byTime;
+        return right.id.compareTo(left.id);
+      });
+    final room = limit - resident.length;
+    return MemoryRecallResult(
+      resident: List.unmodifiable(resident),
+      related: List.unmodifiable(
+        room <= 0 ? const <Memory>[] : related.take(room),
+      ),
+    );
   }
 
   /// 候选记忆的名次：先问索引，索引不可用时按二元组切分。
@@ -173,11 +165,27 @@ class MemoryRecallService {
     return {for (final (rank, index) in order.indexed) index: rank};
   }
 
-  static int _compareUpdated(Memory left, Memory right) {
+  /// 更新时间倒序；没有时间的一方排在后面。
+  static int _byUpdatedDesc(Memory left, Memory right) {
     final leftTime = left.updatedAt?.millisecondsSinceEpoch ?? 0;
     final rightTime = right.updatedAt?.millisecondsSinceEpoch ?? 0;
-    return leftTime.compareTo(rightTime);
+    return rightTime.compareTo(leftTime);
   }
+}
+
+/// 一次召回的结果：常驻层与相关层分开，两层都按进入提示词的先后排好。
+class MemoryRecallResult {
+  const MemoryRecallResult({required this.resident, required this.related});
+
+  const MemoryRecallResult.empty() : resident = const [], related = const [];
+
+  final List<Memory> resident;
+  final List<Memory> related;
+
+  /// 进入本次提示词的全部记忆：常驻在前，相关层在后。
+  List<Memory> get all => [...resident, ...related];
+
+  bool get isEmpty => resident.isEmpty && related.isEmpty;
 }
 
 /// 记忆排序用的索引能力；运行时由 `SearchIndexService` 实现。
@@ -201,9 +209,12 @@ String memorySourceKey(String id) => 'memory:$id';
 SemanticLocator memoryLocator(String id) =>
     SemanticLocator(kind: 'memory', sourceKey: memorySourceKey(id));
 
-/// 记忆的来源版本：正文与更新时间一起参与，编辑、纠正或恢复之后重新写入。
-String memorySourceVersion(Memory memory) =>
-    contentHash('${memory.content}\n${memory.updatedAt ?? ''}'.codeUnits);
+/// 记忆的来源版本：正文、更新时间与检索线索一起参与，编辑、纠正或恢复之后
+/// 重新写入。
+String memorySourceVersion(Memory memory) => contentHash(
+  '${memory.content}\n${memory.searchTerms}\n${memory.updatedAt ?? ''}'
+      .codeUnits,
+);
 
 /// 从来源键还原记忆编号；不是记忆来源时返回空。
 String? memoryIdOf(String sourceKey) {

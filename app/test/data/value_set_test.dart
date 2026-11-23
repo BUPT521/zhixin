@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
-import 'package:zhixin/data/db/drift/tables.dart' show checkValueSets;
+import 'package:zhixin/data/db/drift/tables.dart'
+    show checkValueSets, memoryKinds, memoryStatuses, memoryUseKinds;
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/study.dart';
@@ -98,6 +99,21 @@ void main() {
         reason: '${entry.key} 的常量与枚举取值不一致，改枚举时同步改 tables.dart',
       );
     }
+  });
+
+  test('记忆的三分类取值与状态取值固定，旧四类与“已被取代”不再接受', () {
+    expect(memoryKinds, ['episodic', 'semantic', 'procedural']);
+    expect(memoryStatuses, ['active', 'deleted']);
+    for (final legacy in [
+      'preference',
+      'constraint',
+      'difficulty',
+      'progress',
+    ]) {
+      expect(memoryKinds, isNot(contains(legacy)), reason: '旧四类标签不再写进库里');
+    }
+    expect(memoryStatuses, isNot(contains('superseded')));
+    expect(memoryUseKinds, ['recall', 'search']);
   });
 }
 

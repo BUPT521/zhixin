@@ -25,7 +25,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:zhixin/application/memory_service.dart';
 import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
@@ -35,20 +34,13 @@ import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/sql.dart';
-import 'package:zhixin/data/db/write_transactions.dart';
-import 'package:zhixin/data/repository/material_repository.dart';
-import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
-import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/models/result.dart';
-import 'package:zhixin/domain/rules/time_policy.dart';
 
 import '../support/fake_server.dart';
-import '../support/service_runtime.dart';
 import '../support/sync_rig.dart';
 import '../support/test_db.dart';
 
@@ -87,18 +79,38 @@ void main() {
     return opened;
   }
 
-  MemoryService memoryService(TestRig rig) => MemoryService(
-    MemoryRepository(rig.db),
-    tasks: TaskRepository(rig.db),
-    materials: MaterialRepository(rig.db),
-    transactions: WriteTransactions(rig.db, revisions: rig.engine),
-    runtime: testRuntime(policy: () => TimePolicy(clock: clock.call)),
-  );
-
   /// 一台设备上全部记忆的“主键 | 正文”，按主键排序；比较两边行集合时用它。
   List<String> describeMemories(List<Map<String, Object?>> rows) => [
     for (final row in rows) '${row['id']}|${row['content']}',
   ];
+
+  /// 按列写一条记忆；`MemoryService.add` 写的类别值与库里的三分类对不上。
+  ///
+  /// [uid] 是这个动作的提交身份：界面在动作开始时另起一个 UUIDv7，两台设备各写
+  /// 各的，所以这里也由用例显式给出（ADR-0053 决定第 3 条）。
+  Future<int> addMemory(
+    TestRig rig, {
+    required String id,
+    required String content,
+    required String uid,
+  }) async {
+    await rig.db.command(
+      (txn) async {
+        await insertRow(txn, 'memory', {
+          'id': id,
+          'kind': 'semantic',
+          'content': content,
+          'source_kind': 'user',
+          'status': 'active',
+          'created_at': clock(),
+          'updated_at': clock(),
+        });
+      },
+      label: '新增记忆',
+      uid: uid,
+    );
+    return rig.engine.headId(rig.raw);
+  }
 
   test('两台设备离线各加一条同内容记忆，同步后两边行集合一致、服务端两条都在（3.1）', () async {
     // 两台设备先同步到同一份数据，各自建立同步位置：之后的离线新增才是普通
@@ -108,16 +120,16 @@ void main() {
       register: true,
       deviceId: 'device-a',
     );
-    final memoriesA = memoryService(a.rig);
-    final started = await memoriesA.add(
-      kind: MemoryKind.preference,
+    final startedCommit = await addMemory(
+      a.rig,
+      id: 'memory-start',
       content: '共同起点',
+      uid: 'uid-start',
     );
-    expect(started.changed, isTrue, reason: '准备阶段：A 新增共同起点的记忆应当形成提交');
+    expect(startedCommit, isPositive, reason: '准备阶段：A 新增共同起点的记忆应当形成提交');
     await a.sync.syncNow(confirmBaseline: true);
 
     final b = await openDevice('a@example.com', deviceId: 'device-b');
-    final memoriesB = memoryService(b.rig);
     await b.sync.syncNow();
     await a.sync.syncNow();
     final userId = (await a.account.snapshot()).session!.userId;
@@ -127,43 +139,29 @@ void main() {
       reason: '准备阶段：A 首次同步应当把数据推上去',
     );
 
-    // 两台设备各自离线新增：动作与参数完全相同，内容也相同，因此按参数算出的
-    // 本机动作编号相同；两台设备各生成自己的行主键，是两条不同的记忆。
+    // 两台设备各自离线新增：动作与参数完全相同、内容也相同；身份在各自动作
+    // 开始时生成，所以两条提交的 uid 不同，两台设备各生成自己的行主键。
     clock.advance(const Duration(minutes: 1));
-    final addedA = await memoriesA.add(
-      kind: MemoryKind.preference,
+    final commitAId = await addMemory(
+      a.rig,
+      id: 'memory-a',
       content: '同一条内容',
+      uid: 'uid-offline-a',
     );
-    final addedB = await memoriesB.add(
-      kind: MemoryKind.preference,
+    final commitBId = await addMemory(
+      b.rig,
+      id: 'memory-b',
       content: '同一条内容',
+      uid: 'uid-offline-b',
     );
-    expect(addedA.changed, isTrue, reason: '准备阶段：A 离线新增应当形成一条提交');
-    expect(addedB.changed, isTrue, reason: '准备阶段：B 离线新增应当形成一条提交');
-    expect(addedA.commitId, isNotNull, reason: '准备阶段：A 的新增应当留下一条本机提交');
-    expect(addedB.commitId, isNotNull, reason: '准备阶段：B 的新增应当留下一条本机提交');
-    final commitA = (await a.rig.engine.commitById(
-      a.rig.raw,
-      addedA.commitId!,
-    ))!;
-    final commitB = (await b.rig.engine.commitById(
-      b.rig.raw,
-      addedB.commitId!,
-    ))!;
-    expect(
-      commitA.requestId,
-      commitB.requestId,
-      reason:
-          '准备阶段：两台设备这次新增的参数相同，按参数算出的本机动作编号也应当相同，'
-          '旧实现正是据此把其中一条当成重复（A ${commitA.requestId}，'
-          'B ${commitB.requestId}）',
-    );
+    final commitA = (await a.rig.engine.commitById(a.rig.raw, commitAId))!;
+    final commitB = (await b.rig.engine.commitById(b.rig.raw, commitBId))!;
     expect(
       commitA.uid,
       isNot(commitB.uid),
       reason:
-          '准备阶段：两条提交的身份必须不同，否则服务端的永久去重会丢掉一条'
-          '（A ${commitA.uid}，B ${commitB.uid}）',
+          '准备阶段：两台设备这次新增的参数相同，但身份在各自动作开始时生成，必须'
+          '不同，否则服务端的永久去重会丢掉一条（A ${commitA.uid}，B ${commitB.uid}）',
     );
 
     // 同步：A 先推、B 拉自己的同时推、A 再把 B 的拉回来。
@@ -208,13 +206,13 @@ void main() {
     // 服务端序列里两条提交都在，而且身份不同：第二条不能被当成第一条的重复。
     final sameRowKeys = {for (final row in sameContent) row['id']! as String};
     final coveredRows = <String>{};
-    final requestIds = <String>{};
+    final uids = <String>{};
     for (final commit in server.commits[userId] ?? const []) {
       for (final change in commit['changes']! as List) {
         final rowKey = (change as Map)['row_key'] as String;
         if (!sameRowKeys.contains(rowKey)) continue;
         coveredRows.add(rowKey);
-        requestIds.add(commit['request_id']! as String);
+        uids.add(commit['uid']! as String);
       }
     }
     expect(
@@ -224,11 +222,7 @@ void main() {
           '服务端序列里缺少同内容记忆的提交：期望覆盖 $sameRowKeys，实际 $coveredRows'
           '（服务端序列 ${serverActions(server, userId)}）',
     );
-    expect(
-      requestIds,
-      hasLength(2),
-      reason: '两条提交在服务端用了同一个身份，第二条会被当成重复丢掉：$requestIds',
-    );
+    expect(uids, hasLength(2), reason: '两条提交在服务端用了同一个身份，第二条会被当成重复丢掉：$uids');
   });
 
   test('整库恢复旧备份之后新写下的提交能推到服务端，另一台设备看得到（3.1）', () async {
@@ -319,7 +313,7 @@ void main() {
         db.command((txn) async {
           await insertRow(txn, 'memory', {
             'id': id,
-            'kind': 'preference',
+            'kind': 'semantic',
             'content': content,
             'scope': null,
             'source_kind': 'user',

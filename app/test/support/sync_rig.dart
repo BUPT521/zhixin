@@ -124,7 +124,7 @@ Future<void> insertTestMemory(
   TestRig rig,
   String id, {
   required String content,
-  String kind = 'preference',
+  String kind = 'semantic',
   String status = 'active',
   String timestamp = '2026-11-17 10:00:00',
   String label = '新增记忆',

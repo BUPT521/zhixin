@@ -292,7 +292,7 @@ void main() {
       password: 'password123',
     );
     final commit = ServerCommit(
-      requestId: 'r1',
+      uid: 'r1',
       deviceId: 'device-a',
       schemaVersion: 27,
       actor: 'user',
@@ -309,17 +309,20 @@ void main() {
         ),
       ],
     );
-    expect(
-      await client.push(tokens.accessToken, baseSeq: 0, commits: [commit]),
-      1,
+    final pushed = await client.push(
+      tokens.accessToken,
+      baseSeq: 0,
+      commits: [commit],
     );
+    expect(pushed.head, 1);
+    expect(pushed.seqs, [1], reason: '逐条序号与请求按顺序对应');
     await expectLater(
       client.push(
         tokens.accessToken,
         baseSeq: 0,
         commits: [
           ServerCommit(
-            requestId: 'r2',
+            uid: 'r2',
             deviceId: 'device-a',
             schemaVersion: 27,
             actor: 'user',

@@ -103,7 +103,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('记忆页在保存与删除之后跟随订阅更新', (tester) async {
+  testWidgets('记忆页跟随订阅更新：新增之后页面显示这条记忆', (tester) async {
     await openApp(tester);
     final navigator = tester.state<NavigatorState>(
       find.byType(Navigator).first,
@@ -114,39 +114,28 @@ void main() {
     expect(find.text('还没有学习记忆'), findsOneWidget);
     expect(find.textContaining('搭子会在使用中逐步记住'), findsOneWidget);
 
-    await seed(
+    // 新增写进库，页面跟随订阅重读：空状态换成这条记忆，分组标题是“语义”。
+    final result = await seed(
       tester,
       () => scope!.memory.edit.add(
-        kind: MemoryKind.preference,
+        kind: MemoryKind.semantic,
         content: '先给提示，再看完整解答',
       ),
     );
+    expect(result.changed, isTrue);
     expect(find.text('先给提示，再看完整解答'), findsOneWidget);
-    expect(find.text('偏好'), findsWidgets);
-
-    final memories = (await tester.runAsync(() => scope!.memory.edit.list()))!;
-    // 编辑框里改过类型也要真正保存：内容不变、类型变了同样形成一次修改。
-    await seed(
-      tester,
-      () => scope!.memory.edit.save(
-        memories.single,
-        kind: MemoryKind.constraint,
-        content: '先给一步提示，再给完整解答',
-      ),
-    );
-    expect(find.text('先给提示，再看完整解答'), findsNothing);
-    expect(find.text('先给一步提示，再给完整解答'), findsOneWidget);
-    expect(find.text('限制'), findsWidgets);
-    expect(find.text('偏好'), findsNothing);
-
-    await seed(tester, () => scope!.memory.edit.delete(memories.single.id));
-    expect(
-      find.text('先给一步提示，再给完整解答'),
-      findsNothing,
-      reason: '已删除的条目不再列在记忆页，也不再提供修改与删除',
-    );
-    expect(find.text('已删除的记忆可在数据版本里查看。'), findsOneWidget);
+    expect(find.text('还没有学习记忆'), findsNothing);
+    expect(find.text('语义'), findsWidgets);
     expect(tester.takeException(), isNull);
+
+    // 撤销之后页面回到空状态。
+    final undone = await seed(
+      tester,
+      () => scope!.data.revisions.undoCommit(result.commitId!),
+    );
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect(find.text('先给提示，再看完整解答'), findsNothing);
+    expect(find.text('还没有学习记忆'), findsOneWidget);
   });
 
   testWidgets('记忆建议页的记录列表跟随写入更新', (tester) async {

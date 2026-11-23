@@ -18,7 +18,7 @@ void main() {
   Future<int> addMemory(TestRig rig, String content) async {
     await insertRow(rig.db, 'memory', {
       'id': 'memory-${++memorySeq}',
-      'kind': 'preference',
+      'kind': 'semantic',
       'content': content,
       'source_kind': 'user',
       'status': 'active',
@@ -182,7 +182,7 @@ void main() {
       (txn) => rig.engine.reserveCommitId(txn),
       label: '预留编号',
     );
-    final sequence = await selectRows(rig.raw, 'revision_sequence');
+    final sequence = await selectRows(rig.raw, 'revision_state');
     final maxReserved = (sequence.single['next_commit']! as int) - 1;
     expect(maxReserved, greaterThan(await rig.engine.headId(rig.raw)));
 
@@ -512,14 +512,14 @@ Future<Set<String>> _oldAlgorithmKeep(TestRig rig) async {
   final keep = <String>{
     ...AssetStore.hashesInProjection(await rig.engine.readProjection(rig.raw)),
   };
+  // 检查点的附件清单只在引用表里：owner_kind = 'checkpoint' 的行就是它的清单。
   final checkpoints = await selectRows(
     rig.raw,
-    'revision_checkpoint',
-    columns: ['asset_hashes_json'],
+    'revision_asset_ref',
+    columns: ['hash'],
+    where: "owner_kind = 'checkpoint'",
   );
-  for (final row in checkpoints) {
-    keep.addAll(decodeStringList(row['asset_hashes_json'] as String? ?? '[]'));
-  }
+  keep.addAll([for (final row in checkpoints) row['hash']! as String]);
   final changes = await selectRows(rig.raw, 'revision_change');
   for (final row in changes) {
     keep.addAll(AssetStore.hashesInChanges([RevisionChange.fromRow(row)]));

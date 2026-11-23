@@ -152,18 +152,23 @@ void main() {
 
     final outcome = await service.propose(seeded.$2);
     expect(outcome.proposals, hasLength(2));
+    // 困难与进展现在都是情景标签，按来源作答的结果区分：`isDifficulty` 由程序
+    // 按作答本身判断，不再写在类别里（ADR-0051 决定第 9 条）。
     final difficulty = outcome.proposals.firstWhere(
-      (proposal) => proposal.kind == MemoryKind.difficulty,
+      (proposal) => proposal.isDifficulty,
     );
     final progress = outcome.proposals.firstWhere(
-      (proposal) => proposal.kind == MemoryKind.progress,
+      (proposal) => !proposal.isDifficulty,
     );
+    expect(difficulty.kind, MemoryKind.episodic);
+    expect(progress.kind, MemoryKind.episodic);
     expect(difficulty.sourceId, seeded.$4);
     expect(difficulty.scope, memoryGoalScope(seeded.$7));
     expect(difficulty.content, contains('记反'));
     expect(difficulty.conditionLabel, contains('提示'));
     expect(difficulty.basis, contains('自评有误'));
     expect(difficulty.basis, contains('应用内帮助 1 次'));
+    expect(difficulty.removesDifficultyId, isNull, reason: '困难提案不删旧困难');
 
     expect(progress.sourceId, seeded.$5);
     expect(progress.conditionLabel, '隔一段时间后独立完成');
@@ -189,7 +194,7 @@ void main() {
 
     final outcome = await service.propose(seeded.$2);
     final progress = outcome.proposals.firstWhere(
-      (proposal) => proposal.kind == MemoryKind.progress,
+      (proposal) => !proposal.isDifficulty,
     );
     final acceptResult = await service.accept(progress);
     expect(acceptResult.commitId, isNotNull);
@@ -199,7 +204,7 @@ void main() {
       (entry) => entry.sourceId == progress.sourceId,
     );
     expect(memory.sourceKind, MemorySourceKind.attempt);
-    expect(memory.kind, MemoryKind.progress);
+    expect(memory.kind, MemoryKind.episodic);
     expect(memory.scope, memoryGoalScope(seeded.$7));
     expect(memory.status, MemoryStatus.active);
     expect(memory.content, contains('独立完成'));
@@ -227,6 +232,61 @@ void main() {
     );
   });
 
+  test('进展提案带走旧困难：接受时写入与删除在同一条提交里', () async {
+    final rig = await openTestRigWithUndoRules();
+    addTearDown(rig.close);
+    final seeded = await _seed(rig);
+    final memories = MemoryRepository(rig.db);
+    final service = MemoryProposalService(
+      attempts: AttemptRepository(rig.db),
+      conversations: ConversationRepository(rig.db),
+      memories: memories,
+      transactions: WriteTransactions(rig.db, revisions: rig.engine),
+      runtime: testRuntime(),
+    );
+
+    final first = await service.propose(seeded.$2);
+    final difficulty = first.proposals.firstWhere(
+      (proposal) => proposal.isDifficulty,
+    );
+    // 困难提案已经写入：同一道题、同一范围里的一条情景记忆，来源指回作答。
+    final difficultyId = await memories.create(
+      kind: MemoryKind.episodic,
+      content: difficulty.content,
+      scope: difficulty.scope,
+      sourceKind: MemorySourceKind.attempt,
+      sourceId: difficulty.sourceId,
+    );
+
+    // 再提取一次：进展提案带上那条旧困难，默认勾选的“同时删除旧的困难”。
+    final second = await service.propose(seeded.$2);
+    final progress = second.proposals.firstWhere(
+      (proposal) => !proposal.isDifficulty,
+    );
+    expect(progress.removesDifficultyId, difficultyId);
+    expect(progress.removesDifficultyContent, difficulty.content);
+
+    final accepted = await service.accept(progress);
+    expect(accepted.commitId, isNotNull);
+    expect((await memories.byId(difficultyId))!.status, MemoryStatus.deleted);
+    final written = await memories.list();
+    expect(written.single.content, progress.content);
+    expect(written.single.kind, MemoryKind.episodic);
+
+    // 写入与删除在同一条提交里：撤销这一次就一起撤回。
+    final undone = await rig.revisions.undoCommit(accepted.commitId!);
+    expect(undone.applied, isTrue, reason: undone.message);
+    expect((await memories.byId(difficultyId))!.status, MemoryStatus.active);
+    expect((await memories.list()).single.id, difficultyId);
+
+    // 用户选择保留旧困难时，只写进展，不删旧困难。
+    final third = await service.propose(seeded.$2);
+    final again = third.proposals.firstWhere(
+      (proposal) => !proposal.isDifficulty,
+    );
+    await service.accept(again, removeDifficulty: false);
+    expect((await memories.byId(difficultyId))!.status, MemoryStatus.active);
+  });
   test('同一判断来自不同作答时合并成一条提案', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
@@ -277,7 +337,7 @@ void main() {
     expect(outcome.skipped.any((note) => note.contains('指向同一判断')), isTrue);
   });
 
-  test('用户纠正或删除后，同一来源版本不再生成旧判断', () async {
+  test('用户删掉某条来源的记忆之后，同一来源不再生成旧判断', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);
     final seeded = await _seed(rig);
@@ -287,32 +347,39 @@ void main() {
 
     final first = await service.propose(seeded.$2);
     final difficulty = first.proposals.firstWhere(
-      (proposal) => proposal.kind == MemoryKind.difficulty,
+      (proposal) => proposal.isDifficulty,
     );
-    await service.accept(difficulty);
-    final memory = (await MemoryRepository(
-      rig.db,
-    ).list()).singleWhere((entry) => entry.sourceId == difficulty.sourceId);
-
-    // 用户纠正内容：同一来源不再按旧内容重新生成提案。
-    await memoryService.save(memory, content: '记分母与分子时先写定义再代入。');
-    final afterCorrection = await service.propose(seeded.$2);
+    // 困难按情景标签写进库；这一行带着同一来源，来源因此算处理过。删除是改
+    // 状态，之后同一来源仍然算处理过。
+    await MemoryRepository(rig.db).create(
+      id: 'memory-difficulty',
+      kind: MemoryKind.episodic,
+      content: '例 3-3：在「记反」处卡住。',
+      scope: memoryGoalScope(seeded.$7),
+      sourceKind: MemorySourceKind.attempt,
+      sourceId: difficulty.sourceId,
+    );
+    final afterWrite = await service.propose(seeded.$2);
     expect(
-      afterCorrection.proposals.any(
+      afterWrite.proposals.any(
         (proposal) => proposal.sourceId == difficulty.sourceId,
       ),
       isFalse,
     );
-    expect(afterCorrection.skipped, isNotEmpty);
+    expect(afterWrite.skipped, isNotEmpty);
 
     // 用户删除：旧判断同样不再出现。
-    await memoryService.delete(memory.id);
+    await memoryService.delete('memory-difficulty');
     final afterDelete = await service.propose(seeded.$2);
     expect(
       afterDelete.proposals.any(
         (proposal) => proposal.sourceId == difficulty.sourceId,
       ),
       isFalse,
+    );
+    expect(
+      (await MemoryRepository(rig.db).byId('memory-difficulty'))!.status,
+      MemoryStatus.deleted,
     );
   });
 

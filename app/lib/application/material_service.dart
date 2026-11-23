@@ -3,7 +3,7 @@ import '../data/revisions/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../domain/models/material.dart';
 import '../domain/models/write_result.dart';
-import 'command_ids.dart';
+import '../../domain/rules/uuid_v7.dart';
 import 'docx_import.dart';
 import 'service_runtime.dart';
 
@@ -184,11 +184,7 @@ class MaterialService {
         return txn.result();
       },
       label: correctMaterialPageAction,
-      requestId: commandId('correct-material-page', [
-        page.id,
-        page.label,
-        text,
-      ]),
+      uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
   }

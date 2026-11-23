@@ -85,7 +85,7 @@ void main() {
       'updated_at': '2026-11-17 10:05:00',
     }, label: '修改记忆内容');
     await updateTestMemory(b.rig, 'm1', {
-      'status': 'superseded',
+      'status': 'deleted',
       'updated_at': '2026-11-17 10:06:00',
     }, label: '修改记忆状态');
 
@@ -103,7 +103,7 @@ void main() {
     );
     expect(
       aRow['status'],
-      'superseded',
+      'deleted',
       reason: '准备阶段：A 应当收到 B 改的状态，实际 ${aRow['status']}',
     );
 

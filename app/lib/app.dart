@@ -3,8 +3,12 @@ import 'package:material_ui/material_ui.dart';
 
 import 'ai/ai_chat_service.dart';
 import 'app_scope.dart';
+import 'data/cloud/server_client.dart' show ServerClient;
 import 'domain/rules/time_policy.dart';
 import 'data/diagnostics/crash_log.dart';
+import 'platform/app_paths.dart';
+import 'platform/theme_accent_store.dart';
+import 'platform/theme_mode_store.dart';
 import 'ui/home_shell.dart';
 import 'ui/theme.dart';
 import 'ui/theme_accent_controller.dart';
@@ -18,6 +22,9 @@ class ZhixinApp extends StatefulWidget {
     this.themeMode,
     this.themeAccent,
     this.clock,
+    this.spaces,
+    this.spaceId = AppSpaces.local,
+    this.serverClientFactory,
   });
 
   /// 启动时先建好的崩溃记录；测试或路径解析失败时为空。
@@ -34,22 +41,77 @@ class ZhixinApp extends StatefulWidget {
 
   /// 时间来源；为空时取系统时钟，测试传固定时钟。
   final Clock? clock;
+  final AppSpaces? spaces;
+  final String spaceId;
+  final ServerClient Function(String baseUrl)? serverClientFactory;
 
   @override
   State<ZhixinApp> createState() => _ZhixinAppState();
 }
 
 class _ZhixinAppState extends State<ZhixinApp> {
-  late final ThemeModeController _themeMode =
+  late ThemeModeController _themeMode =
       widget.themeMode ?? ThemeModeController();
-  late final ThemeAccentController _themeAccent =
+  late ThemeAccentController _themeAccent =
       widget.themeAccent ?? ThemeAccentController();
+  late String _spaceId = widget.spaceId;
+  GlobalKey<AppScopeState> _scopeKey = GlobalKey<AppScopeState>();
+  var _changingSpace = false;
+
+  Future<void> _changeSpace(
+    String id, {
+    required bool adoptLocal,
+    required bool deleteCurrent,
+    String? label,
+  }) async {
+    if (id == _spaceId && !deleteCurrent) return;
+    if (_changingSpace) throw StateError('正在切换本机空间');
+    _changingSpace = true;
+    final spaces = widget.spaces!;
+    try {
+      await _scopeKey.currentState?.closeSpace();
+      if (deleteCurrent) await spaces.delete(_spaceId);
+      await spaces.open(id, adoptLocal: adoptLocal, label: label);
+      await _showSpace(id);
+    } catch (_) {
+      // 文件操作失败时重新打开原目录，页面可以重试。
+      await _showSpace(_spaceId);
+      rethrow;
+    } finally {
+      _changingSpace = false;
+    }
+  }
+
+  Future<void> _showSpace(String id) async {
+    final dir = widget.spaces!.pathsFor(id).filesDir;
+    final (mode, accent) = await (
+      ThemeModeController.load(ThemeModeStore(dir)),
+      ThemeAccentController.load(ThemeAccentStore(dir)),
+    ).wait;
+    if (!mounted) {
+      mode.dispose();
+      accent.dispose();
+      return;
+    }
+    final oldMode = _themeMode;
+    final oldAccent = _themeAccent;
+    setState(() {
+      _spaceId = id;
+      _themeMode = mode;
+      _themeAccent = accent;
+      _scopeKey = GlobalKey<AppScopeState>();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (oldMode != widget.themeMode) oldMode.dispose();
+      if (oldAccent != widget.themeAccent) oldAccent.dispose();
+    });
+  }
 
   @override
   void dispose() {
     // 传进来的实例归 main 或调用方管；应用自己兜底建的那个才在这里释放。
-    if (widget.themeMode == null) _themeMode.dispose();
-    if (widget.themeAccent == null) _themeAccent.dispose();
+    if (_themeMode != widget.themeMode) _themeMode.dispose();
+    if (_themeAccent != widget.themeAccent) _themeAccent.dispose();
     super.dispose();
   }
 
@@ -62,6 +124,7 @@ class _ZhixinAppState extends State<ZhixinApp> {
         final material = materialThemesFor(accent);
         final foruiThemes = foruiThemesFor(accent);
         return MaterialApp(
+          key: ObjectKey(_scopeKey),
           title: '知新',
           debugShowCheckedModeBanner: false,
           theme: material[Brightness.light],
@@ -84,6 +147,11 @@ class _ZhixinAppState extends State<ZhixinApp> {
               // 提示的位置与底部留白在主题里统一写好，各平台的短提示都落在下面。
               style: zhixinToasterStyle,
               child: AppScope(
+                key: _scopeKey,
+                spaces: widget.spaces,
+                spaceId: _spaceId,
+                changeSpace: widget.spaces == null ? null : _changeSpace,
+                serverClientFactory: widget.serverClientFactory,
                 crashLog: widget.crashLog,
                 ai: widget.ai,
                 clock: widget.clock,

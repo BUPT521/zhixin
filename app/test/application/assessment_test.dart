@@ -275,13 +275,11 @@ void main() {
     },
   );
 
-  test('作答的记忆建议先待确认，点记下才写入并可撤销', () async {
+  test('作答的记忆建议先待确认，点记下后写进库并可撤销', () async {
     final h = _Harness(
       reply: const BuddyReply(
         text: '先看定义',
-        memories: [
-          MemoryDraft(kind: MemoryKind.difficulty, content: '放缩方向不确定'),
-        ],
+        memories: [MemoryDraft(kind: MemoryKind.episodic, content: '放缩方向不确定')],
       ),
     );
     await h.open();
@@ -303,58 +301,42 @@ void main() {
     expect(items, hasLength(1));
     expect(items.single.pending, isTrue);
 
+    // 点“记下”：记忆按模型给出的情景标签写进库，卡片改为已记下并可撤销。
     final accepted = await h.service.acceptMemory(
       attemptId: stored.id,
       helpIndex: 0,
       itemId: items.single.itemId,
     );
     expect(accepted.applied, isTrue);
-    final memories = await h.memories.list();
-    expect(memories.single.content, '放缩方向不确定');
-    final applied = (await h.attempts.attemptsFor(questionId)).single;
-    expect(
-      applied.helps.single.memories.single.status,
-      MemoryCardStatus.accepted,
-    );
+    final saved = (await h.memories.list()).single;
+    expect(saved.kind, MemoryKind.episodic);
+    expect(saved.content, '放缩方向不确定');
+    expect(saved.sourceKind, MemorySourceKind.attempt);
+    expect(saved.sourceId, stored.id);
+    final kept = (await h.attempts.attemptsFor(questionId)).single;
+    expect(kept.helps.single.memories.single.status, MemoryCardStatus.accepted);
+    expect(kept.helps.single.memories.single.commitId, isNotNull);
 
-    // 同一张卡再点一次是按编号重试，不重复写记忆。
-    final again = await h.service.acceptMemory(
-      attemptId: stored.id,
-      helpIndex: 0,
-      itemId: items.single.itemId,
-    );
-    expect(again.applied, isTrue);
-    expect(await h.memories.list(), hasLength(1));
-
-    // 撤销这次写入：记忆删除，帮助里的建议回到待确认。
     final undone = await h.revisions.undoCommit(accepted.change!.commitId);
     expect(undone.applied, isTrue, reason: undone.message);
     expect(await h.memories.list(), isEmpty);
-    final reverted = (await h.attempts.attemptsFor(questionId)).single;
     expect(
-      reverted.helps.single.memories.single.status,
+      (await h.attempts.attemptsFor(questionId))
+          .single
+          .helps
+          .single
+          .memories
+          .single
+          .status,
       MemoryCardStatus.pending,
     );
-
-    // 撤销不释放目标的请求编号；用户过一会儿再点记下时已经超出两分钟重试
-    // 窗口，同编号按新动作写入（ADR-0040）。
-    h.now = DateTime(2026, 11, 6, 20, 3);
-    final reaccepted = await h.service.acceptMemory(
-      attemptId: stored.id,
-      helpIndex: 0,
-      itemId: items.single.itemId,
-    );
-    expect(reaccepted.applied, isTrue);
-    expect(await h.memories.list(), hasLength(1));
   });
 
   test('记忆写入失败时帮助照常保存，建议留作待确认', () async {
     final h = _Harness(
       reply: const BuddyReply(
         text: '先看定义',
-        memories: [
-          MemoryDraft(kind: MemoryKind.difficulty, content: '放缩方向不确定'),
-        ],
+        memories: [MemoryDraft(kind: MemoryKind.episodic, content: '放缩方向不确定')],
       ),
     );
     await h.open();
@@ -955,13 +937,13 @@ void main() {
     expect(stored.solution, '设事件 A、B，按乘法公式展开');
   });
 
-  test('同一困难隔了二十次学习后再出现，仍然写成带范围的记忆', () async {
+  test('结束场次不按重复出现的困难自动写记忆，困难留在场次摘要与作答记录里', () async {
     final h = _Harness();
     await h.open();
     addTearDown(h.db.close);
 
     final goalId = await h.tasks.createGoal(title: '概率论期末');
-    for (var index = 0; index < 21; index++) {
+    for (var index = 0; index < 3; index++) {
       final session = await h.study.start(goalId: goalId);
       await h.study.end(
         session.id,
@@ -978,12 +960,16 @@ void main() {
       independent: true,
       feedback: ' 放缩方向还不确定 ',
     );
+    // 会话困难规则随 ADR-0051 决定第 4 条删除：同一句场次摘要再次出现时不
+    // 自动写记忆，场次摘要与作答记录照常保存，模型可以在讨论里用新增写情景。
     await h.service.closeForQuestion(questionId);
-
-    final memories = await h.memories.list();
-    expect(memories, hasLength(1));
-    expect(memories.single.content, '放缩方向还不确定');
-    expect(memories.single.scope, memoryGoalScope(goalId));
+    expect(await h.memories.list(), isEmpty);
+    final attempts = await h.attempts.attemptsFor(questionId);
+    expect(attempts.single.feedback!.trim(), '放缩方向还不确定');
+    final closed = (await h.study.recent()).firstWhere(
+      (session) => session.id == attempts.single.sessionId,
+    );
+    expect(closed.summary, '放缩方向还不确定');
   });
 
   test('超过两百字的困难不截成记忆，完整内容留在作答记录', () async {
@@ -1030,7 +1016,7 @@ void main() {
     expect(session.goalId, goalId);
   });
 
-  test('同一目标下同一困难反复出现时，才写成带范围的记忆', () async {
+  test('同一困难反复出现也不写记忆，作答记录全部保留', () async {
     final h = _Harness();
     await h.open();
     addTearDown(h.db.close);
@@ -1055,15 +1041,10 @@ void main() {
     expect(await h.memories.list(), isEmpty);
 
     await answer('  放缩方向还不确定 ');
-    final memories = await h.memories.list();
-    expect(memories, hasLength(1));
-    expect(memories.single.kind, MemoryKind.difficulty);
-    expect(memories.single.scope, memoryGoalScope(goalId));
-    expect(memories.single.content, '放缩方向还不确定');
-    expect(memories.single.sourceKind, MemorySourceKind.session);
-
-    await answer('放缩方向还不确定');
-    expect(await h.memories.list(), hasLength(1));
+    expect(await h.memories.list(), isEmpty);
+    final attempts = await h.attempts.attemptsFor(questionId);
+    expect(attempts, hasLength(2));
+    expect(attempts.last.feedback!.trim(), '放缩方向还不确定');
   });
 
   test('恢复之后迟到的模型判断不再写入', () async {

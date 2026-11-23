@@ -405,7 +405,7 @@ void main() {
     await tester.runAsync(
       () => insertRow(appScope.testing.db, 'memory', {
         'id': 'memory-1',
-        'kind': 'preference',
+        'kind': 'semantic',
         'content': '原来记下的内容',
         'source_kind': 'user',
         'status': 'active',

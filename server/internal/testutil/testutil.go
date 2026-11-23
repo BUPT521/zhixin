@@ -254,6 +254,10 @@ func (Base) PutV1SyncDevices(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
+func (Base) GetV1SyncRefs(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
+
+func (Base) PutV1SyncRefs(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
+
 func (Base) GetV1AppReleases(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

@@ -16,7 +16,7 @@ void main() {
         memories: const [
           Memory(
             id: 'memory-1',
-            kind: MemoryKind.preference,
+            kind: MemoryKind.semantic,
             content: '讲解时先给一个例子',
             status: MemoryStatus.active,
           ),
@@ -27,13 +27,13 @@ void main() {
     final rulesAt = prompt.indexOf('规则：');
     final personaAt = prompt.indexOf('当前启用的人格：温和讲题');
     final timeAt = prompt.indexOf('当前时间：');
-    final memoryAt = prompt.indexOf('记得的事：');
+    final memoryAt = prompt.indexOf('记得的事（[情景]');
     expect(rulesAt, greaterThanOrEqualTo(0));
     expect(personaAt, greaterThan(rulesAt), reason: '人格段落排在核心规则之后');
     expect(timeAt, greaterThan(personaAt), reason: '人格段落排在当前时间之前');
     expect(memoryAt, greaterThan(timeAt), reason: '人格段落排在记忆之前');
     expect(prompt, contains('语气平和，称呼用户为“你”，先接住卡住的地方。'));
-    expect(prompt, contains('讲解时先给一个例子'));
+    expect(prompt, contains('- 语义：讲解时先给一个例子'));
   });
 
   test('启用人格时补一条规则说明顺序与边界', () {
@@ -46,9 +46,10 @@ void main() {
     );
     expect(prompt, contains('人格只影响语气、称呼、讲解风格与篇幅倾向'));
     expect(prompt, contains('不改变判分、引用、写入、工具使用与事实依据'));
+    // 三分类之后冲突规则写的是依次优先：用户本轮说明、人格、记忆中的做法。
     expect(prompt, contains('用户本轮说明优先于人格'));
-    expect(prompt, contains('人格优先于记忆里的讲解偏好'));
-    expect(prompt, contains('记忆里的困难、进展与时间限制照常带入'));
+    expect(prompt, contains('人格优先于记忆里的做法'));
+    expect(prompt, contains('记忆里的情景与语义事实（发生过的事、稳定的事实与限制）照常带入'));
   });
 
   test('没有启用人格时不出现人格段落与人格规则', () {
@@ -58,7 +59,7 @@ void main() {
     expect(prompt, isNot(contains('当前启用的人格')));
     expect(prompt, isNot(contains('人格只影响')));
     expect(prompt, contains('当前时间：'));
-    expect(prompt, contains('记得的事：'));
+    expect(prompt, contains('记得的事（[情景]'));
   });
 
   test('人格文本超过上限时按码位兜底截断，不把长文本整段塞进提示词', () {

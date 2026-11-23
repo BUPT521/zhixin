@@ -7,6 +7,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/ui/memory_page.dart';
 import 'package:zhixin/ui/memory_search_page.dart';
@@ -59,6 +60,34 @@ void main() {
     final result = await tester.runAsync(action);
     await settle(tester);
     return result as T;
+  }
+
+  /// 直接写一行记忆：页面只读不写，标识与三分类取值由用例给出。
+  Future<void> insertMemory(
+    WidgetTester tester, {
+    required String id,
+    required String kind,
+    required String content,
+    String? memoryScope,
+    String? validUntil,
+    String sourceKind = 'user',
+    String? sourceId,
+    String status = 'active',
+  }) async {
+    await seed(tester, () async {
+      await insertRow(scope!.testing.db, 'memory', {
+        'id': id,
+        'kind': kind,
+        'content': content,
+        'scope': memoryScope,
+        'source_kind': sourceKind,
+        'source_id': sourceId,
+        'valid_until': validUntil,
+        'status': status,
+        'created_at': '2026-11-10 09:00:00',
+        'updated_at': '2026-11-10 09:00:00',
+      });
+    });
   }
 
   Future<void> openApp(
@@ -139,33 +168,38 @@ void main() {
       tester,
       () => scope!.testing.materials.create(title: '线性代数讲义'),
     );
-    await seed(tester, () async {
-      final memories = scope!.testing.memories;
-      await memories.create(
-        kind: MemoryKind.preference,
-        content: '先给提示，再看完整解答',
-        validUntil: DateTime(2030, 1, 1),
-      );
-      await memories.create(
-        kind: MemoryKind.difficulty,
-        content: '容易漏加主对角元素',
-        scope: memoryGoalScope(goalId),
-        sourceKind: MemorySourceKind.attempt,
-        sourceId: 'attempt-0001',
-      );
-      await memories.create(
-        kind: MemoryKind.progress,
-        content: '第 8 题独立完成',
-        scope: memoryMaterialScope(materialId),
-        sourceKind: MemorySourceKind.session,
-        sourceId: 'session-0001',
-      );
-      await memories.create(
-        kind: MemoryKind.difficulty,
-        content: '过期的困难记忆',
-        validUntil: DateTime(2020, 1, 1),
-      );
-    });
+    await insertMemory(
+      tester,
+      id: 'memory-1',
+      kind: 'semantic',
+      content: '先给提示，再看完整解答',
+      validUntil: '2030-01-01T00:00:00',
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-2',
+      kind: 'episodic',
+      content: '容易漏加主对角元素',
+      memoryScope: memoryGoalScope(goalId),
+      sourceKind: 'attempt',
+      sourceId: 'attempt-0001',
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-3',
+      kind: 'procedural',
+      content: '第 8 题独立完成',
+      memoryScope: memoryMaterialScope(materialId),
+      sourceKind: 'session',
+      sourceId: 'session-0001',
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-4',
+      kind: 'episodic',
+      content: '过期的困难记忆',
+      validUntil: '2020-01-01T00:00:00',
+    );
 
     await openSearch(tester);
 
@@ -174,8 +208,11 @@ void main() {
     expect(find.text('先给提示，再看完整解答'), findsOneWidget);
     expect(find.text('过期的困难记忆'), findsOneWidget);
 
-    // 类别、来源与来源对象、有效期与状态都写在结果里。
-    expect(find.text('偏好'), findsOneWidget);
+    // 类别、来源与来源对象、有效期与状态都写在结果里；类别就是库里的三分类。
+    expect(find.text('类别未知'), findsNothing);
+    expect(find.text('语义'), findsWidgets);
+    expect(find.text('情景'), findsWidgets);
+    expect(find.text('程序'), findsWidgets);
     expect(find.text('来源：你说的'), findsWidgets);
     expect(
       find.textContaining('来源：来自一次作答 · 作答记录 attempt-0001'),
@@ -222,25 +259,33 @@ void main() {
       tester,
       () => scope!.testing.materials.create(title: '线性代数讲义'),
     );
-    await seed(tester, () async {
-      final memories = scope!.testing.memories;
-      await memories.create(kind: MemoryKind.preference, content: '全局偏好：先看例题');
-      await memories.create(
-        kind: MemoryKind.difficulty,
-        content: '目标困难：漏主对角',
-        scope: memoryGoalScope(goalId),
-      );
-      await memories.create(
-        kind: MemoryKind.progress,
-        content: '材料进展：独立完成第 8 题',
-        scope: memoryMaterialScope(materialId),
-      );
-      await memories.create(
-        kind: MemoryKind.difficulty,
-        content: '材料困难：把秩算错',
-        scope: memoryMaterialScope(materialId),
-      );
-    });
+    await insertMemory(
+      tester,
+      id: 'memory-global',
+      kind: 'semantic',
+      content: '全局偏好：先看例题',
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-goal',
+      kind: 'semantic',
+      content: '目标困难：漏主对角',
+      memoryScope: memoryGoalScope(goalId),
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-procedural',
+      kind: 'procedural',
+      content: '材料进展：独立完成第 8 题',
+      memoryScope: memoryMaterialScope(materialId),
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-material',
+      kind: 'episodic',
+      content: '材料困难：把秩算错',
+      memoryScope: memoryMaterialScope(materialId),
+    );
 
     await openSearch(tester);
 
@@ -254,14 +299,16 @@ void main() {
     await tester.enterText(searchField(), '');
     await settle(tester);
 
-    // 类别。
-    await selectOption(tester, const ValueKey('memory-search-kind'), '困难');
+    // 类别筛选：下拉列三类，选中“语义”之后只剩语义条目。
+    expect(find.byKey(const ValueKey('memory-search-kind')), findsOneWidget);
+    await selectOption(tester, const ValueKey('memory-search-kind'), '语义');
+    expect(find.text('全局偏好：先看例题'), findsOneWidget);
     expect(find.text('目标困难：漏主对角'), findsOneWidget);
-    expect(find.text('材料困难：把秩算错'), findsOneWidget);
-    expect(find.text('全局偏好：先看例题'), findsNothing);
     expect(find.text('材料进展：独立完成第 8 题'), findsNothing);
+    expect(find.text('材料困难：把秩算错'), findsNothing);
+    await selectOption(tester, const ValueKey('memory-search-kind'), '全部类别');
 
-    // 适用范围叠加在类别上。
+    // 适用范围叠加：目标范围只保留这一范围的条目。
     await selectOption(
       tester,
       const ValueKey('memory-search-scope'),
@@ -269,6 +316,7 @@ void main() {
     );
     expect(find.text('目标困难：漏主对角'), findsOneWidget);
     expect(find.text('材料困难：把秩算错'), findsNothing);
+    expect(find.text('全局偏好：先看例题'), findsNothing);
 
     // 换材料范围，两个材料内的记忆重新出现。
     await selectOption(
@@ -279,11 +327,11 @@ void main() {
     expect(find.text('材料困难：把秩算错'), findsOneWidget);
     expect(find.text('目标困难：漏主对角'), findsNothing);
 
-    // 清除类别之后，材料范围里的进展也一起出现。
-    await selectOption(tester, const ValueKey('memory-search-kind'), '全部类别');
+    // 清除范围之后回到默认结果：三条记忆都在，全局那条也回来。
+    await selectOption(tester, const ValueKey('memory-search-scope'), '全部范围');
     expect(find.text('材料进展：独立完成第 8 题'), findsOneWidget);
     expect(find.text('材料困难：把秩算错'), findsOneWidget);
-    expect(find.text('全局偏好：先看例题'), findsNothing);
+    expect(find.text('全局偏好：先看例题'), findsOneWidget);
 
     expect(tester.takeException(), isNull);
   });
@@ -291,17 +339,19 @@ void main() {
   testWidgets('筛到已删除只给提示，追溯入口指向数据版本且没有恢复', (tester) async {
     await openApp(tester);
 
-    final deletedId = await seed(tester, () async {
-      final memories = scope!.testing.memories;
-      await memories.create(kind: MemoryKind.preference, content: '仍在使用的记忆');
-      final id = await memories.create(
-        kind: MemoryKind.preference,
-        content: '已经删掉的记忆',
-      );
-      await memories.delete(id);
-      return id;
-    });
-    expect(deletedId, isNotEmpty);
+    await insertMemory(
+      tester,
+      id: 'memory-active',
+      kind: 'semantic',
+      content: '仍在使用的记忆',
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-deleted',
+      kind: 'semantic',
+      content: '已经删掉的记忆',
+      status: 'deleted',
+    );
 
     await openSearch(tester);
     await selectOption(tester, const ValueKey('memory-search-status'), '已删除');
@@ -325,12 +375,16 @@ void main() {
     await openApp(tester, size: const Size(390, 1400));
 
     await seed(tester, () async {
-      final memories = scope!.testing.memories;
       for (var index = 1; index <= 45; index++) {
-        await memories.create(
-          kind: MemoryKind.preference,
-          content: '翻页记忆 ${index.toString().padLeft(2, '0')}',
-        );
+        await insertRow(scope!.testing.db, 'memory', {
+          'id': 'memory-page-$index',
+          'kind': 'semantic',
+          'content': '翻页记忆 ${index.toString().padLeft(2, '0')}',
+          'source_kind': 'user',
+          'status': 'active',
+          'created_at': '2026-11-10 09:00:00',
+          'updated_at': '2026-11-10 09:00:00',
+        });
       }
     });
 
@@ -377,11 +431,18 @@ void main() {
   testWidgets('快速改条件时只显示最后一次查询的结果', (tester) async {
     await openApp(tester);
 
-    await seed(tester, () async {
-      final memories = scope!.testing.memories;
-      await memories.create(kind: MemoryKind.preference, content: '旧条件命中的记忆');
-      await memories.create(kind: MemoryKind.preference, content: '新条件命中的记忆');
-    });
+    await insertMemory(
+      tester,
+      id: 'memory-old',
+      kind: 'semantic',
+      content: '旧条件命中的记忆',
+    );
+    await insertMemory(
+      tester,
+      id: 'memory-new',
+      kind: 'semantic',
+      content: '新条件命中的记忆',
+    );
 
     await openSearch(tester);
 

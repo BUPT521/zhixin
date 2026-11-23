@@ -9,153 +9,92 @@ import 'package:zhixin/domain/models/memory.dart';
 import '../support/service_runtime.dart';
 import '../support/test_db.dart';
 
+MemoryService _service(TestRig rig) => MemoryService(
+  MemoryRepository(rig.db),
+  tasks: TaskRepository(rig.db),
+  materials: MaterialRepository(rig.db),
+  transactions: WriteTransactions(rig.db, revisions: rig.engine),
+  runtime: testRuntime(live: rig.db.live),
+);
+
 void main() {
-  test('修改记忆后回答检索使用新内容', () async {
+  test('修改记忆原地改写：内存里的类型跟库一致，撤销后回到旧内容', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(),
-    );
-
+    final service = _service(rig);
     final id = await memories.create(
-      kind: MemoryKind.difficulty,
+      kind: MemoryKind.episodic,
       content: '以为条件概率和独立性等价',
-      sourceKind: MemorySourceKind.user,
     );
     final memory = (await memories.byId(id))!;
-    await service.save(memory, kind: memory.kind, content: '条件概率不等于独立性，需要单独判断');
+    expect(memory.kind, MemoryKind.episodic, reason: '三分类读回来就是同一类');
 
-    final active = await memories.activeForContext(now: DateTime.now());
-    expect(active.single.content, contains('不等于独立性'));
-
-    // 内容没变时再保存一次，仍然只有这一条记忆，也不形成新提交。
-    final head = await rig.engine.headId(rig.db.raw);
     final result = await service.save(
-      (await memories.byId(id))!,
-      kind: memory.kind,
+      memory,
+      kind: MemoryKind.semantic,
       content: '条件概率不等于独立性，需要单独判断',
     );
-    expect(result.changed, isFalse);
-    expect(result.skippedReason, isNotNull);
-    expect(await memories.list(), hasLength(1));
-    expect(await rig.engine.headId(rig.db.raw), head);
-  });
-
-  test('修改记忆返回提交编号，撤销后恢复原内容与有效期', () async {
-    final rig = await openTestRigWithUndoRules();
-    addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(),
-    );
-    final id = await memories.create(
-      kind: MemoryKind.difficulty,
-      content: '旧内容',
-      validUntil: DateTime(2026, 12, 1),
-    );
-
-    final result = await service.save(
-      (await memories.byId(id))!,
-      kind: MemoryKind.difficulty,
-      content: '新内容',
-      validUntil: DateTime(2026, 12, 10),
-    );
     expect(result.commitId, isNotNull);
-    expect((await memories.byId(id))!.content, '新内容');
+    final saved = (await memories.byId(id))!;
+    expect(saved.content, '条件概率不等于独立性，需要单独判断');
+    expect(saved.kind, MemoryKind.semantic);
+    expect(saved.scope, isNull);
 
     final undone = await rig.revisions.undoCommit(result.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
     final restored = (await memories.byId(id))!;
-    expect(restored.content, '旧内容');
-    expect(restored.validUntil, DateTime(2026, 12, 1));
+    expect(restored.content, '以为条件概率和独立性等价');
+    expect(restored.kind, MemoryKind.episodic);
+    expect(await memories.list(), hasLength(1), reason: '修改不新增行');
   });
 
-  test('修改记忆类型真正写入，撤销后回到原类型', () async {
+  test('新增的手写记忆按语义写库，线索拿不到时写空串', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(),
-    );
-    final id = await memories.create(
-      kind: MemoryKind.difficulty,
-      content: '卡在独立性与条件概率的区分',
-    );
+    final service = _service(rig);
 
-    // 只改类型、内容不变，也算一次修改并形成提交。
-    final result = await service.save(
-      (await memories.byId(id))!,
-      kind: MemoryKind.preference,
-      content: '卡在独立性与条件概率的区分',
+    final result = await service.add(
+      kind: MemoryKind.semantic,
+      content: '每次先问我要推哪一步',
     );
-    expect(result.changed, isTrue);
     expect(result.commitId, isNotNull);
-    expect((await memories.byId(id))!.kind, MemoryKind.preference);
-
-    final undone = await rig.revisions.undoCommit(result.commitId!);
-    expect(undone.applied, isTrue, reason: undone.message);
-    expect((await memories.byId(id))!.kind, MemoryKind.difficulty);
+    final saved = (await memories.list()).single;
+    expect(saved.kind, MemoryKind.semantic);
+    expect(saved.searchTerms, '');
+    expect(saved.sourceKind, MemorySourceKind.user);
   });
 
-  test('类型改成偏好时不再保留目标范围，撤销后类型与范围一起恢复', () async {
+  test('确认保留只写 reviewed_at，撤销后回到原来的确认时间', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(),
-    );
+    final service = _service(rig);
     final id = await memories.create(
-      kind: MemoryKind.difficulty,
-      content: '条件和独立性经常混在一起',
-      scope: memoryGoalScope('goal-1'),
+      kind: MemoryKind.semantic,
+      content: '晚上学习',
     );
+    final before = (await memories.byId(id))!;
 
-    final result = await service.save(
-      (await memories.byId(id))!,
-      kind: MemoryKind.preference,
-      content: '条件和独立性经常混在一起',
-    );
-    final changed = (await memories.byId(id))!;
-    expect(changed.kind, MemoryKind.preference);
-    expect(changed.scope, isNull, reason: '偏好适用于全部学习，不写范围');
+    final result = await service.keep(id);
+    expect(result.commitId, isNotNull);
+    final kept = (await memories.byId(id))!;
+    expect(kept.reviewedAt, isNotNull);
+    expect(kept.updatedAt, before.updatedAt, reason: '确认保留不改更新时间');
 
     final undone = await rig.revisions.undoCommit(result.commitId!);
     expect(undone.applied, isTrue, reason: undone.message);
-    final restored = (await memories.byId(id))!;
-    expect(restored.kind, MemoryKind.difficulty);
-    expect(restored.scope, memoryGoalScope('goal-1'));
+    expect((await memories.byId(id))!.reviewedAt, isNull);
   });
 
   test('删除记忆返回提交编号，撤销后状态改回 active', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
     final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(),
-    );
+    final service = _service(rig);
     final id = await memories.create(
-      kind: MemoryKind.progress,
+      kind: MemoryKind.episodic,
       content: '第 8 题独立完成',
     );
 
@@ -168,57 +107,23 @@ void main() {
     expect((await memories.byId(id))!.status, MemoryStatus.active);
   });
 
-  test('新增记忆返回提交编号，撤销后移除这一条', () async {
+  test('订阅中的记忆页在删除之后重读一次', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(),
-    );
-
-    final result = await service.add(
-      kind: MemoryKind.preference,
-      content: '晚上学习',
-    );
-    expect(result.commitId, isNotNull);
-    expect(await memories.list(includeInactive: true), hasLength(1));
-
-    final undone = await rig.revisions.undoCommit(result.commitId!);
-    expect(undone.applied, isTrue, reason: undone.message);
-    expect(await memories.list(includeInactive: true), isEmpty);
-  });
-
-  test('订阅中的记忆页在保存与删除之后重读一次', () async {
-    final rig = await openTestRigWithUndoRules();
-    addTearDown(rig.close);
-    final memories = MemoryRepository(rig.db);
-    final service = MemoryService(
-      memories,
-      tasks: TaskRepository(rig.db),
-      materials: MaterialRepository(rig.db),
-      transactions: WriteTransactions(rig.db, revisions: rig.engine),
-      runtime: testRuntime(live: rig.db.live),
-    );
+    final service = _service(rig);
+    await MemoryRepository(rig.db)
+        .create(kind: MemoryKind.semantic, content: '晚上学习');
     final views = <MemoryPageView>[];
     final subscription = service.watchMemories().listen(views.add);
     addTearDown(subscription.cancel);
 
     await _settle();
     expect(views, hasLength(1), reason: '订阅之后先读一次');
-    expect(views.single.memories, isEmpty);
-
-    await service.add(kind: MemoryKind.preference, content: '晚上学习');
-    await _settle();
-    expect(views, hasLength(2), reason: '写入之后重读一次');
-    expect(views.last.memories.single.content, '晚上学习');
+    expect(views.single.memories.single.content, '晚上学习');
 
     await service.delete(views.last.memories.single.id);
     await _settle();
-    expect(views, hasLength(3), reason: '删除之后重读一次');
+    expect(views, hasLength(2), reason: '删除之后重读一次');
     expect(views.last.memories.single.active, isFalse);
   });
 }

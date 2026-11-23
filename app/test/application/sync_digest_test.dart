@@ -68,7 +68,7 @@ void main() {
   ) => device.rig.raw.execute(
     'INSERT INTO memory (id, kind, content, scope, source_kind, source_id, '
     'valid_until, status, created_at, updated_at) '
-    "VALUES (?, 'preference', ?, NULL, 'user', NULL, NULL, 'active', "
+    "VALUES (?, 'semantic', ?, NULL, 'user', NULL, NULL, 'active', "
     "'2026-11-17 10:00:00', '2026-11-17 10:00:00')",
     [id, content],
   );
@@ -147,6 +147,50 @@ void main() {
       await a.rig.revisions.currentStateDigest(),
       reason: '最后一条提交带推完之后的状态摘要',
     );
+  });
+
+  test('另一台设备收到命名版本，显式删除后旧编辑不会恢复名称', () async {
+    final a = await device('a@example.com', register: true, deviceId: 'a');
+    final b = await device('a@example.com', deviceId: 'b');
+    await a.sync.syncNow();
+    await insertTestMemory(a.rig, 'named-memory', content: '需要保留的记录');
+    final head = await a.rig.engine.headId(a.rig.raw);
+    final named = await a.rig.revisions.name(head, label: '期中复习');
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    final refs = await b.rig.engine.refs(b.rig.raw);
+    expect(refs.single.commitUid, named.commitUid);
+    expect((await b.rig.engine.refCommitIds(b.rig.raw))['期中复习'], isNotNull);
+
+    final otherHead = await b.rig.engine.headId(b.rig.raw);
+    await b.rig.revisions.name(otherHead, label: '期中复习', note: '较早的离线编辑');
+    await a.rig.revisions.deleteName('期中复习');
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    expect(await b.rig.engine.refs(b.rig.raw), isEmpty);
+    expect(await a.rig.engine.tombstones(a.rig.raw), isEmpty);
+  });
+
+  test('以本机为准补传独有记录后，保留云端已有但值不同的差异', () async {
+    final a = await device('a@example.com', register: true, deviceId: 'a');
+    await insertTestMemory(a.rig, 'changed', content: '云端保留的值');
+    await a.sync.syncNow(confirmBaseline: true);
+    await a.rig.raw.execute(
+      "UPDATE memory SET content = '只有本机改过' WHERE id = 'changed'",
+    );
+    await insertRowDirectly(a, 'missing', '云端缺少的记忆');
+
+    await a.sync.repairFromLocal();
+
+    final status = await a.sync.status();
+    expect(status.digestMismatch, isTrue);
+    expect(status.differentTables, ['memory']);
+    final b = await device('a@example.com', deviceId: 'b');
+    await b.sync.syncNow();
+    final rows = await b.rig.raw.rawQuery(
+      'SELECT id, content FROM memory ORDER BY id',
+    );
+    expect(rows.map((row) => row['content']), ['云端保留的值', '云端缺少的记忆']);
   });
 
   test('一台设备漏掉一条提交之后，下一次同步发现不一致并写诊断', () async {
@@ -365,14 +409,10 @@ void main() {
     await insertTestMemory(b.rig, 'm3', content: 'B 新增');
     await b.sync.syncNow();
     final pushed = server.commits[userId]!.last;
-    expect(
-      pushed['request_id'],
-      isNot(
-        server.commits[userId]![server.commits[userId]!.length -
-            2]['request_id'],
-      ),
-      reason: '最后一条是 B 推上去的本机提交',
-    );
+    final previous =
+        server.commits[userId]![server.commits[userId]!.length - 2];
+    // 提交身份改按 `uid`：最后一条是 B 推上去的本机提交，与前一条的 uid 不同。
+    expect(pushed['uid'], isNot(previous['uid']), reason: '最后一条是 B 推上去的本机提交');
     expect(
       pushed['state_digest'],
       await b.rig.revisions.currentStateDigest(),

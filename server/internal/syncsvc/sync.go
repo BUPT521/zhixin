@@ -3,19 +3,20 @@
 // The server does not merge. A push must be based on the current server head;
 // otherwise it is rejected with 409 and the client pulls, applies the remote
 // commits locally as new local commits (so undo keeps working), and pushes
-// again. Each commit carries the client's commit uid in request_id, so a
-// retried push is a no-op; the field only identifies a commit and is never
-// reused (ADR-0040). Field-level conflict handling stays on the client: the
+// again. Each commit carries the client's commit uid in uid, so a retried push
+// is a no-op that answers with the sequence numbers the commits already hold
+// (ADR-0040, ADR-0054). Field-level conflict handling stays on the client: the
 // two-device protocol walkthrough of 2026-11-18 kept "last write wins,
 // overwritten values stay in the history"
 // (server/internal/server/sync_walkthrough_test.go).
 //
 // The log is compactable. An account whose device uploaded a checkpoint as an
 // attachment may register it as the snapshot of sequence N, and commits that
-// the snapshot already covers are deleted after the retention window
-// (ADR-0043). A pull whose position falls behind the retained lower bound is
-// answered with 410 history_compacted, and the client re-clones from the
-// snapshot instead of replaying the log from sequence 1.
+// the snapshot already covers are deleted after the retention window, never
+// past the position of a device that was active recently (ADR-0043, ADR-0054).
+// A pull whose position falls behind the retained lower bound is answered with
+// 410 history_compacted, and the client re-clones from the snapshot instead of
+// replaying the log from sequence 1.
 package syncsvc
 
 import (
@@ -58,6 +59,9 @@ var (
 	ErrHistoryCompacted = errors.New("sync: history was compacted")
 	// ErrDeviceNotFound 表示要改名的设备不在这个账号的名册里（ADR-0048）。
 	ErrDeviceNotFound = errors.New("sync: device is not in the roster")
+	// ErrRefLimit 表示写入之后未删除的名字会超过每账号上限（ADR-0054）。处理器按
+	// 400 invalid_request 返回。
+	ErrRefLimit = errors.New("sync: too many named refs")
 )
 
 const (
@@ -71,6 +75,15 @@ const (
 	// DefaultCompactKeep 是快照位置之下仍然保留提交的默认时间窗口，让落后不多的
 	// 设备继续增量拉取，不必每次登记快照都重新克隆（ADR-0043）。
 	DefaultCompactKeep = 7 * 24 * time.Hour
+
+	// MaxRefNameRunes 是命名版本名字规范化之后允许的最大字符数（ADR-0054）。
+	MaxRefNameRunes = 30
+	// MaxRefsPerAccount 是每账号未删除命名版本的上限，墓碑不计入（ADR-0054）。
+	MaxRefsPerAccount = 200
+	// MaxRefNoteRunes 是命名版本备注的字符数上限，与契约的 maxLength 一致。
+	MaxRefNoteRunes = 200
+	// MaxRefUIDBytes 是命名版本引用与提交身份的长度上限，与提交的 uid 规则一致。
+	MaxRefUIDBytes = 64
 )
 
 // Snapshot 是账号当前快照的指针：快照覆盖到的序列位置、附件哈希、客户端算出的
@@ -93,7 +106,8 @@ type State struct {
 	Snapshot    *Snapshot
 }
 
-// CompactPolicy 是压缩的保留口径（ADR-0043）与是否允许删除的开关（ADR-0047）。
+// CompactPolicy 是压缩的保留口径（ADR-0043）、是否允许删除的开关与设备位置门槛
+// （ADR-0047、ADR-0054）。
 type CompactPolicy struct {
 	// Keep 是快照位置之下仍然要保留的提交时间窗口：服务端收到时间早于它减去
 	// 当前时间的提交在登记快照时删除。预算不够时调用方忽略它，删掉快照位置之前
@@ -103,15 +117,37 @@ type CompactPolicy struct {
 	// 有活跃设备没有声明 snapshot 能力时为 false：登记只写指针，预算压力也不删
 	// 提交，仍超限就返回 ErrStorageFull（ADR-0047）。
 	AllowDelete bool
+	// DeviceFloor 是常规压缩不能越过的位置：活跃窗口内设备的最小 synced_seq。
+	// 窗口内没有设备时为零，表示不设上限。预算压力下的压缩不看它（ADR-0054）。
+	DeviceFloor int64
 }
 
-// Device 是账号名册里的一台设备（ADR-0048）。Capabilities 是解析之后的能力名，
-// 存储里是逗号分隔的小写字符串。
+// Device 是账号名册里的一台设备（ADR-0048、ADR-0054）。SnapshotCapable 对应
+// 唯一的 snapshot 能力；SyncedSeq 是这台设备已经应用到的服务端序号。
 type Device struct {
-	DeviceID     string
-	Alias        string
-	Capabilities []string
-	LastSeen     time.Time
+	DeviceID        string
+	Alias           string
+	SnapshotCapable bool
+	SyncedSeq       int64
+	LastSeen        time.Time
+}
+
+// Ref 是一个命名版本（ADR-0054）。DeletedAt 非零表示这一行是墓碑；服务端只保存
+// 与转发名字、提交身份与备注，不核对提交是否存在。
+type Ref struct {
+	Name            string
+	CommitUID       string
+	Note            string
+	UpdatedAt       time.Time
+	DeletedAt       time.Time
+	SourceUpdatedAt time.Time
+}
+
+func (r Ref) SourceTime() time.Time {
+	if r.SourceUpdatedAt.IsZero() {
+		return r.UpdatedAt
+	}
+	return r.SourceUpdatedAt
 }
 
 // CompactedError 报告客户端的位置落在已经删除的区间，并带上删除之后的账号
@@ -127,76 +163,106 @@ func (e *CompactedError) Error() string {
 // Is 让 errors.Is(err, ErrHistoryCompacted) 成立。
 func (e *CompactedError) Is(target error) bool { return target == ErrHistoryCompacted }
 
-// Store is the per-account commit log and device roster.
+// Store is the per-account commit log, device roster and named refs.
 type Store interface {
 	// State returns the head, the retained lower bound and the snapshot pointer.
 	State(ctx context.Context, userID string) (State, error)
-	// Append atomically checks base == head and appends commits whose
-	// request_id is new. When the account budget would be exceeded, the commits
-	// the snapshot covers are deleted first if policy allows it. It returns the
-	// resulting head, or ErrStorageFull.
-	Append(ctx context.Context, userID string, base int64, commits []Commit, policy CompactPolicy) (int64, error)
+	// Append atomically checks base == head and appends commits whose uid is
+	// new. It returns the head after the call and one sequence number per
+	// commit in request order: a new commit gets its assigned number, a
+	// duplicate gets the number it was stored with. When the account budget
+	// would be exceeded, the commits the snapshot covers are deleted first if
+	// policy allows it; ErrStorageFull is returned when that is not enough.
+	Append(ctx context.Context, userID string, base int64, commits []Commit, policy CompactPolicy) (AppendResult, error)
 	// After bounds the page before loading commit contents.
 	After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error)
-	// RegisterSnapshot stores the newest snapshot pointer and, when policy
-	// allows it, compacts commits the snapshot makes unnecessary. The old
-	// pointer is recorded as an orphan. It returns ErrSnapshotStale when seq is
-	// older than the stored pointer and ErrInvalid when seq is outside the log.
+	// RegisterSnapshot stores the newest snapshot pointer, marks the old
+	// attachment as orphaned when the pointer moves to another hash, and, when
+	// policy allows it, compacts commits the snapshot makes unnecessary without
+	// passing the position of a recently active device. It returns
+	// ErrSnapshotStale when seq is older than the stored pointer and ErrInvalid
+	// when seq is outside the log.
 	RegisterSnapshot(ctx context.Context, userID string, snap Snapshot, policy CompactPolicy) (State, error)
-	// Reset deletes every commit, the snapshot pointer, the orphan rows and the
-	// device roster of the account and sets the head back to 0. An empty log is
-	// not an error; a failure anywhere is returned.
+	// Reset deletes every commit, the dedup rows, the snapshot pointer, the
+	// device roster and the named refs of the account, sets the head back to 0
+	// and clears the orphan marks of its attachments. An empty log is not an
+	// error; a failure anywhere is returned.
 	Reset(ctx context.Context, userID string) error
-	// SnapshotOrphansBefore lists the hashes that gave way before the cutoff,
-	// excluding the current snapshot pointer (ADR-0047).
-	SnapshotOrphansBefore(ctx context.Context, userID string, before time.Time) ([]string, error)
-	// ReclaimSnapshotOrphan removes the bytes of an old snapshot attachment
-	// first, then its attachment index row and finally the orphan row. A
-	// missing object counts as already deleted; a failure keeps the later rows
-	// so that the next registration retries (ADR-0047).
-	ReclaimSnapshotOrphan(ctx context.Context, userID, sha string) error
+	// OrphanedAttachmentsBefore lists the hashes that gave way before the
+	// cutoff, excluding the current snapshot pointer (ADR-0047).
+	OrphanedAttachmentsBefore(ctx context.Context, userID string, before time.Time) ([]string, error)
+	// ReclaimOrphan removes the bytes of an old snapshot attachment first, then
+	// its attachment index row. A missing object counts as already deleted; a
+	// failure keeps the index row so that the next registration retries
+	// (ADR-0047).
+	ReclaimOrphan(ctx context.Context, userID, sha string) error
 	// TouchDevice records a sync request that carried a device id: last_seen
-	// becomes the server time and the capability list replaces the stored one
-	// (ADR-0048).
-	TouchDevice(ctx context.Context, userID, deviceID string, capabilities []string) error
+	// becomes the server time, the snapshot capability is replaced and the
+	// synced position moves to the larger of the stored one and position,
+	// bounded by the current head (ADR-0048, ADR-0054).
+	TouchDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) error
 	// EnsureDevice adds a device seen in a push without a device header. An
-	// existing row keeps its alias and capabilities and only moves last_seen.
+	// existing row keeps its alias, capability and position and only moves
+	// last_seen.
 	EnsureDevice(ctx context.Context, userID, deviceID string) error
+	// AdvanceDevice moves the synced position of a known device to the larger
+	// of the stored one, base and, when toHead is set, the current head; it
+	// never passes the head.
+	AdvanceDevice(ctx context.Context, userID, deviceID string, base int64, toHead bool) error
 	// Devices lists the roster, newest first, at most limit rows.
 	Devices(ctx context.Context, userID string, limit int) ([]Device, error)
 	// RenameDevice changes the alias of a known device and returns the updated
 	// row; an unknown device returns ErrDeviceNotFound.
 	RenameDevice(ctx context.Context, userID, deviceID, alias string) (Device, error)
-	// ActiveDeviceWithoutCapability reports whether any device seen since the
-	// given time does not declare the capability. An empty roster is not a
-	// blocker, so compaction stays allowed (ADR-0047).
-	ActiveDeviceWithoutCapability(ctx context.Context, userID string, since time.Time, capability string) (bool, error)
+	// ActiveDeviceWithoutSnapshot reports whether any device seen since the
+	// given time does not support snapshots. An empty roster is not a blocker,
+	// so compaction stays allowed (ADR-0047).
+	ActiveDeviceWithoutSnapshot(ctx context.Context, userID string, since time.Time) (bool, error)
+	// ActiveMinSyncedSeq returns the smallest synced position of the devices
+	// seen since the given time, and false when there is none (ADR-0054).
+	ActiveMinSyncedSeq(ctx context.Context, userID string, since time.Time) (int64, bool, error)
+	// Refs lists every named ref of the account, tombstones included.
+	Refs(ctx context.Context, userID string) ([]Ref, error)
+	// PutRef stores one named ref or its tombstone. A write older than the
+	// stored deletion time does not revive the name; it returns false then.
+	// ErrRefLimit is returned when a new name would exceed the per-account
+	// limit.
+	PutRef(ctx context.Context, userID string, ref Ref) (bool, error)
+}
+
+// AppendResult 是一次推送的结果：调用之后的 head，以及与请求逐条对应的序号。
+type AppendResult struct {
+	Head int64
+	Seqs []int64
 }
 
 // memoryLog 是一个账号在内存里的序列。
 //
 // commits 只保存仍然保留的提交，且序号连续：第一个元素的序号是 trimmedThrough
 // 加一，所以 head 等于 trimmedThrough 加提交条数。seen 与 commits 分开保存，
-// 压缩删掉旧提交之后，已经接收过的提交身份仍然按它去重（ADR-0043）。
+// 压缩删掉旧提交之后，已经接收过的提交身份仍然按它去重（ADR-0043），并记着它们
+// 原来的序号（ADR-0054）。
 type memoryLog struct {
 	commits        []Commit
 	sizes          []int64
 	bytes          int64
 	trimmedThrough int64
-	seen           map[string]bool
+	seen           map[string]int64
 	snapshot       *Snapshot
-	// orphans 是让位的旧快照附件哈希与让位时间，devices 是设备名册
-	// （ADR-0047、ADR-0048）。两者随 Reset 一起清掉。
+	// orphans 是让位的旧快照附件哈希与让位时间，devices 是设备名册，refs 是命名
+	// 版本（ADR-0047、ADR-0048、ADR-0054）。三者随 Reset 一起清掉。
 	orphans map[string]time.Time
 	devices map[string]*memoryDevice
+	refs    map[string]Ref
 }
 
 // memoryDevice 是内存名册里的一台设备。
 type memoryDevice struct {
-	alias        string
-	capabilities []string
-	firstSeen    time.Time
-	lastSeen     time.Time
+	alias           string
+	snapshotCapable bool
+	syncedSeq       int64
+	firstSeen       time.Time
+	lastSeen        time.Time
 }
 
 // head 返回最后分配的序号。
@@ -209,7 +275,7 @@ type MemoryStore struct {
 	maxBytes int64
 	now      func() time.Time
 	// orphanReclaimer 模拟对象字节与附件索引的删除，只给测试用：它返回错误时
-	// 待回收行保留，与 PostgreSQL 实现的失败语义一致。
+	// 索引行保留，与 PostgreSQL 实现的失败语义一致。
 	orphanReclaimer func(userID, sha string) error
 }
 
@@ -218,7 +284,7 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // SetOrphanReclaimer 给内存实现换一个回收动作，测试用它记录被回收的哈希并模拟
-// 字节或索引删除失败；为空时回收只删待回收行。
+// 字节或索引删除失败；为空时回收只清掉待回收标记。
 func (m *MemoryStore) SetOrphanReclaimer(fn func(userID, sha string) error) *MemoryStore {
 	m.orphanReclaimer = fn
 	return m
@@ -236,7 +302,12 @@ func (m *MemoryStore) SetMaxAccountBytes(n int64) *MemoryStore {
 func (m *MemoryStore) ensure(userID string) *memoryLog {
 	l := m.logs[userID]
 	if l == nil {
-		l = &memoryLog{seen: map[string]bool{}, orphans: map[string]time.Time{}, devices: map[string]*memoryDevice{}}
+		l = &memoryLog{
+			seen:    map[string]int64{},
+			orphans: map[string]time.Time{},
+			devices: map[string]*memoryDevice{},
+			refs:    map[string]Ref{},
+		}
 		m.logs[userID] = l
 	}
 	return l
@@ -260,79 +331,104 @@ func stateOf(l *memoryLog) State {
 	return state
 }
 
-// PlanAppend filters request IDs the account has already stored and checks that
-// a non-empty batch is based on the current head. Both the in-memory and the
-// PostgreSQL store call this, so the rules live in one place.
-func PlanAppend(
-	head, base int64,
-	commits []Commit,
-	seen map[string]bool,
-) (fresh []Commit, newHead int64, err error) {
-	for _, c := range commits {
-		if seen[c.RequestId] {
-			continue
-		}
-		seen[c.RequestId] = true
-		fresh = append(fresh, c)
-	}
-	// A fully replayed push succeeds whatever its base: the client simply did
-	// not see the previous response.
-	if len(fresh) == 0 {
-		return nil, head, nil
-	}
-	if base != head {
-		return nil, head, ErrHeadMoved
-	}
-	return fresh, head + int64(len(fresh)), nil
+// AppendPlan 是一次推送的去重与排号结果（ADR-0054）。
+type AppendPlan struct {
+	// Fresh 是仍然要写入的提交，按请求顺序（重复的已经去掉），第 i 条的序号是
+	// FreshSeqs[i]。
+	Fresh []Commit
+	// FreshSeqs 与 Fresh 一一对应，是这次新分配的序号。
+	FreshSeqs []int64
+	// Seqs 与请求里的提交逐条对应：新提交是接下来要分配的序号，重复提交是它在
+	// 服务端已经占用的序号。
+	Seqs []int64
+	// NewHead 是写入之后的 head；整批都是重复提交时等于当前 head。
+	NewHead int64
 }
 
-func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commits []Commit, policy CompactPolicy) (int64, error) {
+// AllDuplicates 报告这批提交是否全部是服务端已经接收过的。
+func (p AppendPlan) AllDuplicates() bool { return len(p.Fresh) == 0 }
+
+// PlanAppend filters request uids the account has already stored, gives every
+// commit its sequence number and checks that a batch with new commits is based
+// on the current head. Both the in-memory and the PostgreSQL store call this,
+// so the rules live in one place.
+//
+// seen maps a stored uid to the sequence number it was assigned; head is the
+// current head. A fully replayed push succeeds whatever its base: the client
+// simply did not see the previous response.
+func PlanAppend(head, base int64, commits []Commit, seen map[string]int64) (AppendPlan, error) {
+	plan := AppendPlan{Seqs: make([]int64, len(commits))}
+	next := head
+	taken := make(map[string]int64, len(seen))
+	for k, v := range seen {
+		taken[k] = v
+	}
+	for i, c := range commits {
+		if seq, ok := taken[c.Uid]; ok {
+			plan.Seqs[i] = seq
+			continue
+		}
+		next++
+		taken[c.Uid] = next
+		plan.Seqs[i] = next
+		plan.Fresh = append(plan.Fresh, c)
+		plan.FreshSeqs = append(plan.FreshSeqs, next)
+	}
+	plan.NewHead = next
+	if plan.AllDuplicates() {
+		return plan, nil
+	}
+	if base != head {
+		return plan, ErrHeadMoved
+	}
+	return plan, nil
+}
+
+func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commits []Commit, policy CompactPolicy) (AppendResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
 	head := l.head()
-	seen := make(map[string]bool, len(l.seen))
-	for id := range l.seen {
-		seen[id] = true
-	}
-	fresh, _, err := PlanAppend(head, base, commits, seen)
+	plan, err := PlanAppend(head, base, commits, l.seen)
 	if err != nil {
-		return head, err
+		return AppendResult{Head: head}, err
 	}
-	if len(fresh) == 0 {
-		return head, nil
+	if plan.AllDuplicates() {
+		return AppendResult{Head: head, Seqs: plan.Seqs}, nil
 	}
+	fresh := plan.Fresh
 	sizes := make([]int64, len(fresh))
 	var added int64
 	for i, c := range fresh {
 		b, err := json.Marshal(c)
 		if err != nil {
-			return head, err
+			return AppendResult{Head: head}, err
 		}
 		sizes[i] = int64(len(b)) + 256
 		added += sizes[i]
 	}
 	if l.bytes+added > m.maxBytes {
 		// 预算不够时先压缩：有快照且策略允许删除就删掉快照位置之前的全部提交，
-		// 不按保留期过滤，再判断是否仍然超限（ADR-0043、ADR-0047）。
+		// 不按保留期与设备位置过滤，再判断是否仍然超限（ADR-0043、ADR-0047、
+		// ADR-0054）。
 		if policy.AllowDelete && l.snapshot != nil {
 			l.compactThrough(l.snapshot.Seq)
 		}
 		if l.bytes+added > m.maxBytes {
-			return head, ErrStorageFull
+			return AppendResult{Head: head}, ErrStorageFull
 		}
 	}
 	received := m.now()
 	for i, c := range fresh {
-		seq := l.head() + 1
+		seq := plan.FreshSeqs[i]
 		c.Seq = &seq
 		c.ReceivedAt = &received
 		l.commits = append(l.commits, c)
 		l.sizes = append(l.sizes, sizes[i])
 		l.bytes += sizes[i]
-		l.seen[c.RequestId] = true
+		l.seen[c.Uid] = seq
 	}
-	return l.head(), nil
+	return AppendResult{Head: l.head(), Seqs: plan.Seqs}, nil
 }
 
 func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error) {
@@ -368,9 +464,11 @@ func (m *MemoryStore) RegisterSnapshot(_ context.Context, userID string, snap Sn
 	if snap.CreatedAt.IsZero() {
 		snap.CreatedAt = now.UTC()
 	}
-	// 旧指针让位时记入待回收表：同一哈希重复让位保留最早的时间；新指针的哈希
-	// 原本在待回收表里时删掉那一行，避免回收一份重新投入使用的附件（ADR-0047）。
-	if old := l.snapshot; old != nil && old.SHA256 != "" && old.SHA256 != snap.SHA256 {
+	// 旧指针让位时记下旧哈希与让位时间：同一哈希重复让位保留最早的时间；新指针的
+	// 哈希原本在待回收表里时删掉那一项，避免回收一份重新投入使用的附件；登记回旧
+	// 指针时它同样不再是待回收（ADR-0047）。
+	old := l.snapshot
+	if old != nil && old.SHA256 != "" && old.SHA256 != snap.SHA256 {
 		if _, ok := l.orphans[old.SHA256]; !ok {
 			l.orphans[old.SHA256] = now.UTC()
 		}
@@ -378,17 +476,17 @@ func (m *MemoryStore) RegisterSnapshot(_ context.Context, userID string, snap Sn
 	delete(l.orphans, snap.SHA256)
 	stored := snap
 	l.snapshot = &stored
-	// 常规压缩按保留期：快照位置及之前、早于保留窗口的提交删除，让落后不多的
-	// 设备继续增量拉取（ADR-0043）。压缩开关关闭或有活跃设备没有声明能力时
-	// 只写指针，不删提交（ADR-0047）。
+	// 常规压缩按保留期与设备位置：快照位置及之前、早于保留窗口、且不越过
+	// DeviceFloor 的提交删除（ADR-0043、ADR-0054）。压缩开关关闭或有活跃设备没有
+	// 声明能力时只写指针，不删提交（ADR-0047）。
 	if policy.AllowDelete {
-		l.compactOlder(snap.Seq, policy.Keep, now.Add(-policy.Keep))
+		l.compactOlder(snap.Seq, policy.DeviceFloor, policy.Keep, now.Add(-policy.Keep))
 	}
 	return stateOf(l), nil
 }
 
-// SnapshotOrphansBefore 列出早于 before 让位的哈希，排除当前快照指针。
-func (m *MemoryStore) SnapshotOrphansBefore(_ context.Context, userID string, before time.Time) ([]string, error) {
+// OrphanedAttachmentsBefore 列出早于 before 让位的哈希，排除当前快照指针。
+func (m *MemoryStore) OrphanedAttachmentsBefore(_ context.Context, userID string, before time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.logs[userID]
@@ -397,10 +495,9 @@ func (m *MemoryStore) SnapshotOrphansBefore(_ context.Context, userID string, be
 	}
 	out := make([]string, 0, len(l.orphans))
 	for sha, at := range l.orphans {
-		if !at.Before(before) {
-			continue
-		}
-		if l.snapshot != nil && l.snapshot.SHA256 == sha {
+		// 宽限期从第一次让位算起，同一哈希重新使用时标记已经清掉；当前指针的哈希
+		// 不回收。
+		if !at.Before(before) || (l.snapshot != nil && l.snapshot.SHA256 == sha) {
 			continue
 		}
 		out = append(out, sha)
@@ -409,9 +506,9 @@ func (m *MemoryStore) SnapshotOrphansBefore(_ context.Context, userID string, be
 	return out, nil
 }
 
-// ReclaimSnapshotOrphan 先做模拟的字节与索引删除，成功之后再删待回收行；任何
-// 一步失败都保留待回收行，与 PostgreSQL 实现一致。
-func (m *MemoryStore) ReclaimSnapshotOrphan(_ context.Context, userID, sha string) error {
+// ReclaimOrphan 先做模拟的字节与索引删除，成功之后才清掉待回收标记；任何一步
+// 失败都保留标记，与 PostgreSQL 实现一致。
+func (m *MemoryStore) ReclaimOrphan(_ context.Context, userID, sha string) error {
 	if m.orphanReclaimer != nil {
 		if err := m.orphanReclaimer(userID, sha); err != nil {
 			return err
@@ -425,26 +522,31 @@ func (m *MemoryStore) ReclaimSnapshotOrphan(_ context.Context, userID, sha strin
 	return nil
 }
 
-// TouchDevice 更新名册：最近出现时间写服务端当前时间，能力整组替换，别名不动。
-func (m *MemoryStore) TouchDevice(_ context.Context, userID, deviceID string, capabilities []string) error {
+// TouchDevice 更新名册：最近出现时间写服务端当前时间，快照能力整组替换，位置按
+// position 取较大值且不超过当前 head，别名不动。
+func (m *MemoryStore) TouchDevice(_ context.Context, userID, deviceID string, snapshotCapable bool, position int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
 	now := m.now().UTC()
+	head := l.head()
+	position = min(position, head)
 	if d, ok := l.devices[deviceID]; ok {
-		d.capabilities = append([]string(nil), capabilities...)
+		d.snapshotCapable = snapshotCapable
+		d.syncedSeq = max(d.syncedSeq, position)
 		d.lastSeen = now
 		return nil
 	}
 	l.devices[deviceID] = &memoryDevice{
-		capabilities: append([]string(nil), capabilities...),
-		firstSeen:    now,
-		lastSeen:     now,
+		snapshotCapable: snapshotCapable,
+		syncedSeq:       position,
+		firstSeen:       now,
+		lastSeen:        now,
 	}
 	return nil
 }
 
-// EnsureDevice 补一行设备；已有行只更新最近出现时间，能力与别名保持原样。
+// EnsureDevice 补一行设备；已有行只更新最近出现时间，能力、位置与别名保持原样。
 func (m *MemoryStore) EnsureDevice(_ context.Context, userID, deviceID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -455,6 +557,28 @@ func (m *MemoryStore) EnsureDevice(_ context.Context, userID, deviceID string) e
 		return nil
 	}
 	l.devices[deviceID] = &memoryDevice{firstSeen: now, lastSeen: now}
+	return nil
+}
+
+// AdvanceDevice 推进一台已知设备的位置：new 为真时推到当前 head，否则只按 base
+// 取较大值；两种情况都不超过 head。
+func (m *MemoryStore) AdvanceDevice(_ context.Context, userID, deviceID string, base int64, toHead bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.logs[userID]
+	if l == nil {
+		return nil
+	}
+	d, ok := l.devices[deviceID]
+	if !ok {
+		return nil
+	}
+	target := base
+	if toHead {
+		target = max(target, l.head())
+	}
+	d.syncedSeq = min(max(d.syncedSeq, target), l.head())
+	d.lastSeen = m.now().UTC()
 	return nil
 }
 
@@ -469,10 +593,11 @@ func (m *MemoryStore) Devices(_ context.Context, userID string, limit int) ([]De
 	out := make([]Device, 0, len(l.devices))
 	for id, d := range l.devices {
 		out = append(out, Device{
-			DeviceID:     id,
-			Alias:        d.alias,
-			Capabilities: append([]string{}, d.capabilities...),
-			LastSeen:     d.lastSeen,
+			DeviceID:        id,
+			Alias:           d.alias,
+			SnapshotCapable: d.snapshotCapable,
+			SyncedSeq:       d.syncedSeq,
+			LastSeen:        d.lastSeen,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -501,16 +626,17 @@ func (m *MemoryStore) RenameDevice(_ context.Context, userID, deviceID, alias st
 	}
 	d.alias = alias
 	return Device{
-		DeviceID:     deviceID,
-		Alias:        d.alias,
-		Capabilities: append([]string{}, d.capabilities...),
-		LastSeen:     d.lastSeen,
+		DeviceID:        deviceID,
+		Alias:           d.alias,
+		SnapshotCapable: d.snapshotCapable,
+		SyncedSeq:       d.syncedSeq,
+		LastSeen:        d.lastSeen,
 	}, nil
 }
 
-// ActiveDeviceWithoutCapability 报告最近 since 之后出现过的设备里有没有任何一台
-// 没有声明 capability；名册为空时返回 false。
-func (m *MemoryStore) ActiveDeviceWithoutCapability(_ context.Context, userID string, since time.Time, capability string) (bool, error) {
+// ActiveDeviceWithoutSnapshot 报告最近 since 之后出现过的设备里有没有任何一台
+// 不支持快照；名册为空时返回 false。
+func (m *MemoryStore) ActiveDeviceWithoutSnapshot(_ context.Context, userID string, since time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.logs[userID]
@@ -521,22 +647,87 @@ func (m *MemoryStore) ActiveDeviceWithoutCapability(_ context.Context, userID st
 		if d.lastSeen.Before(since) {
 			continue
 		}
-		declared := false
-		for _, name := range d.capabilities {
-			if name == capability {
-				declared = true
-				break
-			}
-		}
-		if !declared {
+		if !d.snapshotCapable {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
+// ActiveMinSyncedSeq 返回最近 since 之后出现过的设备的最小位置；窗口内没有设备
+// 时 ok 为 false，压缩因此不设上限。
+func (m *MemoryStore) ActiveMinSyncedSeq(_ context.Context, userID string, since time.Time) (int64, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.logs[userID]
+	if l == nil {
+		return 0, false, nil
+	}
+	var floor int64
+	found := false
+	for _, d := range l.devices {
+		if d.lastSeen.Before(since) {
+			continue
+		}
+		if !found || d.syncedSeq < floor {
+			floor = d.syncedSeq
+			found = true
+		}
+	}
+	return floor, found, nil
+}
+
+// Refs 按名字列出全部命名版本，包括墓碑。
+func (m *MemoryStore) Refs(_ context.Context, userID string) ([]Ref, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.logs[userID]
+	if l == nil {
+		return nil, nil
+	}
+	out := make([]Ref, 0, len(l.refs))
+	for _, ref := range l.refs {
+		out = append(out, ref)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// PutRef 写入一个命名版本：后写覆盖先写，写入时间不晚于已存删除时间时不复活；
+// 新增一个未删除的名字会超过上限时返回 ErrRefLimit。
+func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.ensure(userID)
+	current, exists := l.refs[ref.Name]
+	revives := true
+
+	if exists && !current.DeletedAt.IsZero() &&
+		(!ref.DeletedAt.IsZero() || !ref.SourceTime().After(current.DeletedAt)) {
+		// 名字已经是墓碑，而这次写入不晚于删除时间：不复活，也不改变已存的行。
+		revives = false
+	}
+	if !revives {
+		return false, nil
+	}
+	// 写入一个名字会新增一个未删除的名字：原来的行不存在或已经是墓碑时都要看上限。
+	if ref.DeletedAt.IsZero() && (!exists || !current.DeletedAt.IsZero()) {
+		alive := 0
+		for _, other := range l.refs {
+			if other.DeletedAt.IsZero() {
+				alive++
+			}
+		}
+		if alive >= MaxRefsPerAccount {
+			return false, ErrRefLimit
+		}
+	}
+	l.refs[ref.Name] = ref
+	return true, nil
+}
+
 // SplitCapabilities 把逗号分隔的能力声明解析成小写名字：去首尾空白、丢掉空项、
-// 按出现顺序去重（ADR-0048）。
+// 按出现顺序去重（ADR-0048）。能力名现在只用来判断有没有 snapshot。
 func SplitCapabilities(raw string) []string {
 	out := make([]string, 0, 4)
 	seen := map[string]bool{}
@@ -551,7 +742,7 @@ func SplitCapabilities(raw string) []string {
 	return out
 }
 
-// JoinCapabilities 与 SplitCapabilities 相反，写入存储的逗号分隔形式。
+// JoinCapabilities 与 SplitCapabilities 相反，写成逗号分隔的形式。
 func JoinCapabilities(names []string) string { return strings.Join(names, ",") }
 
 // compactThrough 删除序号不大于 through 的提交前缀，用于预算压力下的压缩。
@@ -559,10 +750,14 @@ func (l *memoryLog) compactThrough(through int64) {
 	l.dropPrefix(min(through-l.trimmedThrough, int64(len(l.commits))))
 }
 
-// compactOlder 删除序号不大于 through、且服务端收到时间早于 cutoff 的提交前缀。
-func (l *memoryLog) compactOlder(through int64, keep time.Duration, cutoff time.Time) {
+// compactOlder 删除序号不大于 through、不越过 floor（为正时）、且服务端收到时间
+// 早于 cutoff 的提交前缀。
+func (l *memoryLog) compactOlder(through, floor int64, keep time.Duration, cutoff time.Time) {
 	if keep <= 0 {
 		return
+	}
+	if floor > 0 {
+		through = min(through, floor)
 	}
 	drop := int64(0)
 	for i, c := range l.commits {
@@ -598,8 +793,9 @@ func (m *MemoryStore) DeleteUser(_ context.Context, userID string) error {
 	return nil
 }
 
-// Reset 清空一个账号的提交序列、快照指针、待回收行与设备名册。内存实现里 head
-// 由保留下界与提交条数算出，删掉日志即回到 0，空账号不算错误。
+// Reset 清空一个账号的提交序列、去重记录、快照指针、待回收标记、设备名册与命名
+// 版本。内存实现里 head 由保留下界与提交条数算出，删掉日志即回到 0，空账号不算
+// 错误。
 func (m *MemoryStore) Reset(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -612,7 +808,7 @@ func (m *MemoryStore) Reset(_ context.Context, userID string) error {
 // generated enum validators, so the contract stays the only value list.
 func Validate(c Commit, schemaVersion int) error {
 	switch {
-	case c.RequestId == "" || len(c.RequestId) > 64,
+	case c.Uid == "" || len(c.Uid) > MaxRefUIDBytes,
 		c.DeviceId == "" || len(c.DeviceId) > 64,
 		c.SchemaVersion != schemaVersion,
 		!c.Actor.Valid(),

@@ -223,7 +223,7 @@ func blobSHA(data []byte) string {
 // commitRequest 造一条能通过契约校验的提交，用于端到端的推送与清空。
 func commitRequest(requestID string) map[string]any {
 	return map[string]any{
-		"request_id":     requestID,
+		"uid":            requestID,
 		"device_id":      "device-a",
 		"schema_version": ClientSchemaVersion,
 		"actor":          "user",
@@ -496,8 +496,8 @@ func (failingSyncStore) State(context.Context, string) (syncsvc.State, error) {
 	return syncsvc.State{}, errors.New("database is down")
 }
 
-func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit, syncsvc.CompactPolicy) (int64, error) {
-	return 0, errors.New("database is down")
+func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit, syncsvc.CompactPolicy) (syncsvc.AppendResult, error) {
+	return syncsvc.AppendResult{}, errors.New("database is down")
 }
 
 func (failingSyncStore) After(context.Context, string, int64, int, int64) ([]syncsvc.Commit, error) {
@@ -512,19 +512,23 @@ func (failingSyncStore) Reset(context.Context, string) error {
 	return errors.New("database is down")
 }
 
-func (failingSyncStore) SnapshotOrphansBefore(context.Context, string, time.Time) ([]string, error) {
+func (failingSyncStore) OrphanedAttachmentsBefore(context.Context, string, time.Time) ([]string, error) {
 	return nil, errors.New("database is down")
 }
 
-func (failingSyncStore) ReclaimSnapshotOrphan(context.Context, string, string) error {
+func (failingSyncStore) ReclaimOrphan(context.Context, string, string) error {
 	return errors.New("database is down")
 }
 
-func (failingSyncStore) TouchDevice(context.Context, string, string, []string) error {
+func (failingSyncStore) TouchDevice(context.Context, string, string, bool, int64) error {
 	return errors.New("database is down")
 }
 
 func (failingSyncStore) EnsureDevice(context.Context, string, string) error {
+	return errors.New("database is down")
+}
+
+func (failingSyncStore) AdvanceDevice(context.Context, string, string, int64, bool) error {
 	return errors.New("database is down")
 }
 
@@ -536,7 +540,19 @@ func (failingSyncStore) RenameDevice(context.Context, string, string, string) (s
 	return syncsvc.Device{}, errors.New("database is down")
 }
 
-func (failingSyncStore) ActiveDeviceWithoutCapability(context.Context, string, time.Time, string) (bool, error) {
+func (failingSyncStore) ActiveDeviceWithoutSnapshot(context.Context, string, time.Time) (bool, error) {
+	return false, errors.New("database is down")
+}
+
+func (failingSyncStore) ActiveMinSyncedSeq(context.Context, string, time.Time) (int64, bool, error) {
+	return 0, false, errors.New("database is down")
+}
+
+func (failingSyncStore) Refs(context.Context, string) ([]syncsvc.Ref, error) {
+	return nil, errors.New("database is down")
+}
+
+func (failingSyncStore) PutRef(context.Context, string, syncsvc.Ref) (bool, error) {
 	return false, errors.New("database is down")
 }
 

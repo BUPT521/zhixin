@@ -3,11 +3,17 @@ import '../data/db/write_transactions.dart';
 import '../data/repository/memory_repository.dart';
 import '../domain/models/memory.dart';
 import '../domain/rules/time_policy.dart';
+import '../domain/rules/uuid_v7.dart';
 import 'memory_view.dart';
 
 /// 一次写入的结果：给界面显示回执，并拿到可以撤销的提交编号。
 class AppliedChange {
-  const AppliedChange({required this.commitId, required this.text, this.draft});
+  const AppliedChange({
+    required this.commitId,
+    required this.text,
+    this.draft,
+    this.memoryId,
+  });
 
   final int commitId;
   final String text;
@@ -16,6 +22,9 @@ class AppliedChange {
   ///
   /// 调用方据此把批量写入的结果对回各自的草案。
   final MemoryDraft? draft;
+
+  /// 这一次写入的记忆编号；草案与编号在同一个事务里写下（ADR-0053）。
+  final String? memoryId;
 }
 
 class ApplyResult {
@@ -32,8 +41,9 @@ class ApplyResult {
 /// 把模型给的记忆写进库：内容相同的有效记忆不重复写。
 ///
 /// 讨论里只应用记忆这一类写入；下一步建议留在消息里，等用户接受后才创建事项，
-/// 日程只由用户在安排页自己写入（00 第 4 章）。困难与进展写入本次目标的
-/// 适用范围，偏好与限制保持全局。
+/// 日程只由用户在安排页自己写入（00 第 4 章）。范围由草案的类别决定：情景是
+/// 发生过的一件事，写入本次讨论的目标或材料；语义与程序是对全部学习成立的
+/// 事实与做法，保持全局（ADR-0051 决定第 1 条）。
 ///
 /// 同一次调用里的记忆在同一条提交中写入，回执指向那一次提交；撤销其中一条
 /// 会按提交整组撤销。
@@ -77,7 +87,9 @@ Future<ApplyResult> applyMemoryDrafts({
       );
       if (!keys.add(key)) continue;
 
+      final memoryId = newUuidV7();
       await memories.create(
+        id: memoryId,
         kind: draft.kind,
         content: content,
         scope: draftScope,
@@ -91,6 +103,7 @@ Future<ApplyResult> applyMemoryDrafts({
           commitId: await txn.requireCommitId(),
           text: '已添加记忆：${draft.kind.label} · $content',
           draft: draft,
+          memoryId: memoryId,
         ),
       );
     }
