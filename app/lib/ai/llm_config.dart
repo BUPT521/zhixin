@@ -5,6 +5,11 @@ import 'dart:math' as math;
 /// 会按 `max_output_tokens` 超出范围回 400（ADR-0055）。
 const int buddyMaxOutputTokens = 32768;
 
+/// 单步输出的最低下限，与服务端 `minOutputTokens` 相同。Context windows
+/// 配得很小时，按四分之一算出的输出上限会落到 16 以下，服务端按这个下界回
+/// 400，所以请求前先抬到 16；两个数字不一致时，客户端发出的请求必然被拒。
+const int buddyMinOutputTokens = 16;
+
 /// 模型配置：只记用户可选的模型名、上下文上限与图片开关。
 ///
 /// 客户端只用“知新服务”：接口地址在运行时由账号服务按 `<服务地址>` 拼出，对话
@@ -39,8 +44,12 @@ class LlmConfig {
   final String apiKey;
   final String endpoint;
 
-  int get outputTokenLimit =>
-      math.min(buddyMaxOutputTokens, math.max(1, contextWindowTokens ~/ 4));
+  /// 单步输出上限：上下文上限的四分之一，夹在服务端接受的 16 到 32768 之间。
+  /// 上下文上限配得很小时取 16，而不是按四分之一算出个位数被服务端拒绝。
+  int get outputTokenLimit => math.min(
+    buddyMaxOutputTokens,
+    math.max(buddyMinOutputTokens, contextWindowTokens ~/ 4),
+  );
 
   /// 填了模型名才算配置好；能不能真正发出请求还要看当前账号是否登录。
   bool get isConfigured => model.trim().isNotEmpty;

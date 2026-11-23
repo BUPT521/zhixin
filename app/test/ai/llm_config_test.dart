@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
+import 'package:zhixin/ai/llm_protocol.dart';
 import 'package:zhixin/domain/models/result.dart';
 
 class _MemorySecrets implements SecretStore {
@@ -33,6 +34,39 @@ void main() {
     expect(saved.contextWindowTokens, 8192);
     expect(saved.outputTokenLimit, 2048);
     expect(LlmConfig.fromJson(const {}).contextWindowTokens, 65536);
+  });
+
+  // 项目技术审查 API-06：服务端只接受 16 到 32768，客户端算出的上限必须落在这个
+  // 区间里。上下文上限配得很小时，按四分之一算会得到个位数，改前服务端必然回 400。
+  test('输出上限始终落在服务端接受的 16 到 32768 之间', () {
+    for (final window in [1, 4, 15, 63, 64, 100, 8192, 65536, 1000000]) {
+      final limit = LlmConfig(contextWindowTokens: window).outputTokenLimit;
+      expect(
+        limit,
+        inInclusiveRange(buddyMinOutputTokens, buddyMaxOutputTokens),
+        reason: '上下文上限 $window 算出的输出上限是 $limit',
+      );
+    }
+    expect(const LlmConfig(contextWindowTokens: 1).outputTokenLimit, 16);
+    expect(const LlmConfig(contextWindowTokens: 64).outputTokenLimit, 16);
+    expect(const LlmConfig(contextWindowTokens: 8192).outputTokenLimit, 2048);
+    expect(
+      const LlmConfig(contextWindowTokens: 1000000).outputTokenLimit,
+      buddyMaxOutputTokens,
+    );
+  });
+
+  test('协议请求里的输出上限与配置算出的值一致', () {
+    final body = responsesBody(
+      config: const LlmConfig(model: 'zhixin-chat', contextWindowTokens: 8192),
+      system: '',
+      messages: const [LlmMessage(role: 'user', content: '在吗')],
+      tools: const [],
+      forceTool: null,
+      allowToolCalls: true,
+      stream: false,
+    );
+    expect(body['max_output_tokens'], 2048);
   });
 
   test('填了模型名才算配置好，令牌与地址不随配置保存', () {

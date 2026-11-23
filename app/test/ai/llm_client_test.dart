@@ -8,11 +8,44 @@ import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_protocol.dart';
+import 'package:zhixin/ai/llm_reply_reader.dart';
 
 /// 测试用的假地址：客户端只用配置里的完整接口地址发请求。
 const String _testEndpoint = 'https://zhixin.test/v1/llm/responses';
 
 const _hi = [LlmMessage(role: 'user', content: 'hi')];
+
+/// 用 [LlmReplyReader] 读一次流式回答，按序号汇总工具调用：编号、工具名与
+/// 参数。只读一次流；模拟流只能响应一次，所以不连续读第二个模型步骤。
+Future<List<(String, String, String)>> _readToolCalls(LlmClient client) async {
+  final ids = <int, String>{};
+  final names = <int, String>{};
+  final args = <int, StringBuffer>{};
+  final reader = LlmReplyReader(
+    client: client,
+    system: 's',
+    tools: const [],
+    budget: LlmRequestBudget(),
+  );
+  await for (final delta in client.stream(system: 's', messages: _hi)) {
+    for (final call in delta.toolCalls) {
+      if (call.id case final id? when id.isNotEmpty) ids[call.index] = id;
+      if (call.name case final name? when name.isNotEmpty) {
+        names[call.index] = name;
+      }
+      final buffer = args.putIfAbsent(call.index, StringBuffer.new);
+      if (call.replaceArguments) buffer.clear();
+      buffer.write(call.arguments);
+    }
+  }
+  // 读取器本身不在这里使用，保留构造是为了让两处共用同一份判据。
+  expect(reader, isNotNull);
+  final indexes = {...ids.keys, ...names.keys, ...args.keys}.toList()..sort();
+  return [
+    for (final index in indexes)
+      (ids[index] ?? '', names[index] ?? '', args[index]?.toString() ?? ''),
+  ];
+}
 
 void main() {
   Map<String, Object?> response({
@@ -670,6 +703,98 @@ void main() {
     expect(ids, {1: 'call_a', 2: 'call_b'});
   });
 
+  // 项目技术审查 API-04：官方事件里 response.output_item.done 的顶层带
+  // output_index，两个调用按相反顺序完成时也不能把参数、编号与工具名写到另一项
+  // 调用上。这里用两个同参数的调用，保证换错序号时只有工具名会不同。
+  // 真机路径会连续读两个模型步骤；模拟流只能响应一次，所以这里第一次读到的
+  // 工具调用按序号汇总后作为结果比较。
+  test('两个工具乱序完成时按顶层 output_index 归位', () async {
+    final client = streamingClient([
+      argumentsDelta(1, '{"steps":[]}'),
+      argumentsDelta(2, '{"steps":[]}'),
+      // 序号 2 先完成，序号 1 后完成。
+      itemDone(call('call_b', 'propose_citations', {'steps': []}), index: 2),
+      itemDone(call('call_a', 'propose_next_steps', {'steps': []}), index: 1),
+      completed(),
+    ]);
+    final calls = await _readToolCalls(client);
+    expect(calls, [
+      ('call_a', 'propose_next_steps', '{"steps":[]}'),
+      ('call_b', 'propose_citations', '{"steps":[]}'),
+    ]);
+  });
+
+  // 条目不带 output_index 时，服务端只在每条参数增量都报同一个序号的情况下才能
+  // 推测出归属；这里按官方事件顺序：先逐条发完参数，再逐条发完成条目。
+  test('工具条目不带 output_index 时按尚未完成的那个序号归位', () async {
+    final client = streamingClient([
+      argumentsDelta(1, '{"steps":[]}'),
+      argumentsDelta(2, '{"steps":[]}'),
+      event('response.output_item.done', {
+        'type': 'response.output_item.done',
+        'item': call('call_a', 'propose_next_steps', {'steps': []}),
+      }),
+      event('response.output_item.done', {
+        'type': 'response.output_item.done',
+        'item': call('call_b', 'propose_citations', {'steps': []}),
+      }),
+      completed(),
+    ]);
+    final calls = await _readToolCalls(client);
+    expect(
+      [for (final c in calls) (c.$1, c.$2)],
+      [('call_a', 'propose_next_steps'), ('call_b', 'propose_citations')],
+    );
+  });
+
+  // 项目技术审查 API-03：官方事件顺序里正文增量之后还有一条带完整 message 的
+  // response.output_item.done，界面不能把同一段正文再收一次。
+  test('正文增量之后仍有完整条目时只收一次正文', () async {
+    final client = streamingClient([
+      textDelta('你'),
+      textDelta('好'),
+      event('response.output_item.done', {
+        'type': 'response.output_item.done',
+        'output_index': 0,
+        'item': {
+          'type': 'message',
+          'role': 'assistant',
+          'content': [
+            {'type': 'output_text', 'text': '你好', 'annotations': []},
+          ],
+        },
+      }),
+      completed(),
+    ]);
+    final parts = <String>[];
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
+      parts.add(delta.text);
+    }
+    expect(parts.join(), '你好');
+  });
+
+  test('只有完整条目没有正文增量时才从条目补回正文', () async {
+    final client = streamingClient([
+      event('response.output_item.done', {
+        'type': 'response.output_item.done',
+        'output_index': 0,
+        'item': {
+          'type': 'message',
+          'role': 'assistant',
+          'content': [
+            {'type': 'output_text', 'text': '整段补回', 'annotations': []},
+          ],
+        },
+      }),
+      completed(),
+    ]);
+    final parts = <String>[];
+    await for (final delta in client.stream(system: 's', messages: _hi)) {
+      parts.add(delta.text);
+    }
+    expect(parts.join(), '整段补回');
+  });
+
   test('流式回答只有工具调用时不报错', () async {
     final client = streamingClient([
       itemDone(call('call_1', 'propose_next_steps', {'steps': []})),
@@ -689,6 +814,118 @@ void main() {
         )
         .toList();
     expect(deltas.single.toolCalls.single.name, 'propose_next_steps');
+  });
+
+  // 项目技术审查 API-05：不是所有 incomplete 都是“回答过长”。只有
+  // max_output_tokens 才按截断提示，内容被过滤等原因按服务端错误报告。
+  test('流式 incomplete 的原因不是输出上限时按服务端错误报告', () async {
+    final client = streamingClient([
+      textDelta('说了一半'),
+      event('response.incomplete', {
+        'type': 'response.incomplete',
+        'response': {
+          'status': 'incomplete',
+          'incomplete_details': {'reason': 'content_filter'},
+        },
+      }),
+    ]);
+    await expectLater(
+      client.stream(system: 's', messages: _hi).toList(),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.server)
+            .having(
+              (error) => error.detail,
+              'detail',
+              contains('content_filter'),
+            ),
+      ),
+    );
+  });
+
+  test('流式拒答按拒答失败报告，不带正文', () async {
+    final client = streamingClient([
+      event('response.refusal.delta', {
+        'type': 'response.refusal.delta',
+        'delta': '这个问题我不能回答',
+      }),
+      event('response.completed', {
+        'type': 'response.completed',
+        'response': {'id': 'resp_1', 'status': 'completed'},
+      }),
+    ]);
+    await expectLater(
+      client.stream(system: 's', messages: _hi).toList(),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.refused)
+            .having((error) => error.detail, 'detail', '这个问题我不能回答'),
+      ),
+    );
+  });
+
+  test('整段回答只有拒答块时按拒答失败报告', () async {
+    final client = clientReturning(
+      jsonEncode({
+        'id': 'resp_1',
+        'object': 'response',
+        'status': 'completed',
+        'output': [
+          {
+            'type': 'message',
+            'role': 'assistant',
+            'content': [
+              {'type': 'refusal', 'refusal': '不接受这类请求'},
+            ],
+          },
+        ],
+      }),
+    );
+    await expectLater(
+      client.complete(system: 's', messages: _hi),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.refused)
+            .having((error) => error.detail, 'detail', '不接受这类请求'),
+      ),
+    );
+  });
+
+  test('整段回答因输出上限未完成时标记截断，其他原因按服务端错误报告', () async {
+    String incomplete(String reason) => jsonEncode({
+      'id': 'resp_1',
+      'object': 'response',
+      'status': 'incomplete',
+      'incomplete_details': {'reason': reason},
+      'output': [
+        {
+          'type': 'message',
+          'role': 'assistant',
+          'content': [
+            {'type': 'output_text', 'text': '半截', 'annotations': []},
+          ],
+        },
+      ],
+    });
+
+    final truncated = await clientReturning(incomplete('max_output_tokens'))
+        .complete(system: 's', messages: _hi);
+    expect(truncated.text, '半截');
+    expect(truncated.truncated, isTrue);
+
+    await expectLater(
+      clientReturning(incomplete('content_filter'))
+          .complete(system: 's', messages: _hi),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.server)
+            .having(
+              (error) => error.detail,
+              'detail',
+              contains('content_filter'),
+            ),
+      ),
+    );
   });
 
   test('流式回答达到长度上限时保留正文并标记截断', () async {

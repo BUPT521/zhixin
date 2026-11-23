@@ -249,6 +249,9 @@ class LlmStream {
   /// 已经开始、还没有完成条目的工具调用序号。
   final _openCalls = <int>{};
 
+  /// 已经收到完整条目的工具调用序号；推测一个空位时不再分配给它们。
+  final _doneIndexes = <int>{};
+
   /// 一个 SSE 事件转成增量；服务端报错时抛出 [LlmException]。
   List<LlmDelta> accept(String? event, String data) {
     final payload = data.trim();
@@ -267,9 +270,16 @@ class LlmStream {
           arguments: _string(decoded['delta']),
         ),
       ]),
-      'response.output_item.done' => _doneItem(_object(decoded['item'])),
-      'response.completed' => _finish(truncated: false),
-      'response.incomplete' => _finish(truncated: true),
+      'response.output_item.done' => _doneItem(
+        decoded: decoded,
+        item: _object(decoded['item']),
+      ),
+      'response.refusal.delta' => throw LlmException(
+        LlmFailure.refused,
+        _string(decoded['delta']),
+      ),
+      'response.completed' => _finish(reason: null),
+      'response.incomplete' => _finish(reason: _incompleteReason(decoded)),
       'response.failed' => throw LlmException(
         LlmFailure.server,
         _failureText(decoded),
@@ -307,24 +317,45 @@ class LlmStream {
         : const [];
   }
 
-  /// 条目完成事件缺少序号时按参数事件开始过的序号取一个，最后取下一个空位。
+  /// 条目完成事件缺少序号时，取一个已经由参数增量开始、还没有完成过的序号；
+  /// 都没有时取最小的未用序号。已经取走的序号不再参与分配，避免两个调用换位。
   int _freeIndex() {
-    final index = _openCalls.isEmpty ? 0 : _openCalls.first;
-    _openCalls.remove(index);
+    final pending = <int>[
+      for (final index in _openCalls)
+        if (!_doneIndexes.contains(index)) index,
+    ]..sort();
+    if (pending.isNotEmpty) {
+      final index = pending.first;
+      _openCalls.remove(index);
+      return index;
+    }
+    var index = 0;
+    while (_doneIndexes.contains(index)) {
+      index++;
+    }
     return index;
   }
 
   /// 一个输出条目完成：函数调用收下完整参数，正文条目在这里确认结束。
-  List<LlmDelta> _doneItem(Map<String, Object?> item) {
+  ///
+  /// 序号先取事件顶层的 `output_index`，再退到条目自己的 `output_index`，最后
+  /// 才按未完成序号的插入顺序推测。两个调用按相反顺序完成时，只有顶层序号能
+  /// 把完整参数、调用编号与工具名写回自己的那一项。
+  List<LlmDelta> _doneItem({
+    required Map<String, Object?> decoded,
+    required Map<String, Object?> item,
+  }) {
     switch (item['type']) {
       case 'function_call':
         final name = _string(item['name']).trim();
         if (name.isEmpty) return const [];
         final callId = _string(item['call_id']);
-        // 条目完成事件在官方文档里不带 output_index，序号取空着的那一个。
-        final index = item['output_index'] is int
-            ? item['output_index'] as int
-            : _freeIndex();
+        final index =
+            _optionalIndex(decoded['output_index']) ??
+            _optionalIndex(item['output_index']) ??
+            _freeIndex();
+        _openCalls.remove(index);
+        _doneIndexes.add(index);
         sawOutput = true;
         return [
           LlmDelta(
@@ -340,6 +371,10 @@ class LlmStream {
           ),
         ];
       case 'message':
+        // 官方事件顺序里，正文增量之后还会有一条带完整 message 的条目完成
+        // 事件；增量已经把正文交给界面，这里若再发一遍就会出现“正文 + 正文”。
+        // 只有一条正文增量都没收到时才用完整条目补回，供不带增量的来源使用。
+        if (sawText) return const [];
         final text = _outputText(item['content']);
         return text.isEmpty ? const [] : _text(text);
       default:
@@ -347,12 +382,31 @@ class LlmStream {
     }
   }
 
-  List<LlmDelta> _finish({required bool truncated}) {
+  /// 结束事件：`response.completed` 不带原因，`response.incomplete` 带
+  /// `incomplete_details.reason`。
+  ///
+  /// 只有 `max_output_tokens` 才是“回答过长”，可以保留正文；内容被过滤或
+  /// 模型主动停下时正文不完整，按服务端错误报告，不能提示用户“回答过长”。
+  List<LlmDelta> _finish({required String? reason}) {
     done = true;
-    this.truncated |= truncated;
-    if (!truncated) return const [];
+    if (reason == null) return const [];
+    if (reason != _incompleteMaxTokens) {
+      throw LlmException(LlmFailure.server, '模型没有完成回答：$reason');
+    }
+    truncated = true;
     // 截断时正文保留，工具参数多半不完整，交给调用方丢掉。
     return sawText ? const [LlmDelta(truncated: true)] : const [];
+  }
+
+  /// `response.incomplete` 的 `incomplete_details.reason`；字段缺失时按输出
+  /// 上限处理，与官方文档里该原因的默认含义一致。
+  static String? _incompleteReason(Map<String, Object?> decoded) {
+    final response = _object(decoded['response']);
+    final details = _object(response['incomplete_details']);
+    final reason = details['reason'];
+    return reason is String && reason.isNotEmpty
+        ? reason
+        : _incompleteMaxTokens;
   }
 
   static String _failureText(Map<String, Object?> decoded) {
@@ -391,12 +445,16 @@ LlmReply decodeResponse(String body) {
       );
     }
     final buffer = StringBuffer();
+    final refusals = StringBuffer();
     final calls = <LlmToolCall>[];
     for (final entry in _list(decoded['output'])) {
       final item = _object(entry);
       switch (item['type']) {
         case 'message':
           buffer.write(_outputText(item['content']));
+          refusals.write(_refusalText(item['content']));
+        case 'refusal':
+          refusals.write(_string(item['refusal']));
         case 'function_call':
           final name = _string(item['name']).trim();
           if (name.isEmpty) continue;
@@ -414,10 +472,25 @@ LlmReply decodeResponse(String body) {
           );
       }
     }
+    // 模型按内容政策拒答时没有正文，只有 refusal 块。把它当成空回答会让界面
+    // 提示“没有内容”，用户不知道是被拒答了。
+    if (buffer.isEmpty && refusals.isNotEmpty) {
+      throw LlmException(LlmFailure.refused, refusals.toString());
+    }
+    final incomplete = _object(decoded['incomplete_details'])['reason'];
+    final truncated =
+        status == 'incomplete' &&
+        (incomplete is! String || incomplete == _incompleteMaxTokens);
+    if (status == 'incomplete' && !truncated) {
+      throw LlmException(
+        LlmFailure.server,
+        '模型没有完成回答：${incomplete is String ? incomplete : status}',
+      );
+    }
     return _replyFromParts(
       text: buffer.toString().trim(),
       toolCalls: calls,
-      truncated: status == 'incomplete',
+      truncated: truncated,
       emptyDetail: 'output 里没有正文与工具调用',
       usage: _object(decoded['usage']),
     );
@@ -470,9 +543,18 @@ Map<String, Object?> _decodeObject(String payload) {
 
 String _string(Object? value) => value is String ? value : '';
 
-int _indexOf(Map<String, Object?> event) => switch (event['output_index']) {
+/// `response.incomplete` 里表示“输出达到上限”的原因值；其余原因不属于回答被
+/// 截断，见 [LlmStream._finish]。
+const String _incompleteMaxTokens = 'max_output_tokens';
+
+int _indexOf(Map<String, Object?> event) =>
+    _optionalIndex(event['output_index']) ?? 0;
+
+/// 读出来的 `output_index`；没有这个字段或不是整数时为 null，由调用方决定
+/// 退到哪个默认值。
+int? _optionalIndex(Object? value) => switch (value) {
   final int index => index,
-  _ => 0,
+  _ => null,
 };
 
 int _intOf(Map<String, Object?> usage, String key) => switch (usage[key]) {
@@ -490,6 +572,19 @@ String _outputText(Object? content) {
       final text = block['text'] as String;
       if (buffer.isNotEmpty && text.isNotEmpty) buffer.write('\n');
       buffer.write(text);
+    }
+  }
+  return buffer.toString();
+}
+
+/// 助手消息里的拒答块；模型按内容政策拒答时正文为空，文字放在这里。
+String _refusalText(Object? content) {
+  if (content is String) return '';
+  final buffer = StringBuffer();
+  for (final part in _list(content)) {
+    final block = _object(part);
+    if (block['type'] == 'refusal' && block['refusal'] is String) {
+      buffer.write(block['refusal']);
     }
   }
   return buffer.toString();

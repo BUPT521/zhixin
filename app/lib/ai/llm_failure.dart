@@ -11,6 +11,9 @@ enum LlmFailure {
   rateLimited,
   badResponse,
   truncated,
+
+  /// 模型按内容政策拒答：没有正文，只有一句拒答说明。
+  refused,
   toolStalled,
   contextLimit,
   cancelled,
@@ -37,6 +40,7 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
   LlmFailure.rateLimited => '调用额度或频率受限',
   LlmFailure.badResponse => '模型回复格式无法识别',
   LlmFailure.truncated => '回答被截断，请再试一次',
+  LlmFailure.refused => '这个问题模型不能回答，请换一种问法',
   LlmFailure.toolStalled => '工具调用未能推进回答',
   LlmFailure.contextLimit => '本轮内容超过模型上下文预算',
   LlmFailure.cancelled => '已停止生成',
