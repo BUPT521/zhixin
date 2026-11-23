@@ -480,16 +480,16 @@ func TestTextHashIsSHA256OfUTF8Bytes(t *testing.T) {
 	if got := textHash("abc"); got != want || got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Fatalf("textHash(abc) = %s", got)
 	}
-	if textHash("知新") == textHash("知新x") || !validTextHash(textHash("知新")) {
+	if textHash("知新") == textHash("知新x") || !httpx.ValidSHA256(textHash("知新")) {
 		t.Fatal("中文文本的哈希不对")
 	}
 	// 大小写、长度与非法字符都拒绝。
 	for _, bad := range []string{"", "abc", strings.ToUpper(want), want + "0", "zz" + want[2:]} {
-		if validTextHash(bad) {
+		if httpx.ValidSHA256(bad) {
 			t.Fatalf("%q 应被判为不合法的哈希", bad)
 		}
 	}
-	if !validTextHash(want) {
+	if !httpx.ValidSHA256(want) {
 		t.Fatalf("%q 应该是合法哈希", want)
 	}
 }

@@ -98,7 +98,7 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	handler, router := server.Build(ctx, cfg, stores, log)
+	handler, _ := server.Build(ctx, cfg, stores, log)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
@@ -110,8 +110,6 @@ func run(log *slog.Logger) error {
 
 	// 匿名活跃按保留期滚动删除：启动时清一次，之后每天一次，与进程重启无关。
 	go retention.PruneLoop(ctx, stores.Retention, cfg.Location, log)
-	// 模型路由在管理接口保存时立即刷新；周期刷新只为直接改库与多实例部署。
-	go router.RunReloadLoop(ctx, cfg.ModelReloadInterval)
 
 	errc := make(chan error, 1)
 	go func() {

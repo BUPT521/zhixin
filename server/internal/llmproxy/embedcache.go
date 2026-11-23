@@ -64,24 +64,6 @@ func textHash(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// hashHexLength 是一条文本哈希的长度：SHA-256 是 32 字节，小写十六进制 64 位。
-const hashHexLength = 64
-
-// validTextHash 报告字符串是不是 64 位小写十六进制。大写、空白与更短或更长的
-// 输入都拒绝，客户端与服务端对同一段文本因此不会算出两种键。
-func validTextHash(h string) bool {
-	if len(h) != hashHexLength {
-		return false
-	}
-	for i := 0; i < len(h); i++ {
-		c := h[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 // encodeVector 把浮点数组转成小端序 FP16。缓存与查找接口都用这个格式，客户端
 // 解码之后按现有方式归一化。
 func encodeVector(v []float32) []byte {

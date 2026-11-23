@@ -115,7 +115,7 @@ func lookupHashes(raw json.RawMessage, max int) ([]string, error) {
 	out := make([]string, 0, len(list))
 	seen := make(map[string]bool, len(list))
 	for _, h := range list {
-		if !validTextHash(h) {
+		if !httpx.ValidSHA256(h) {
 			return nil, errors.New("hashes must be 64 lowercase hex characters")
 		}
 		if !seen[h] {

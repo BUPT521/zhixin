@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/BUPT521/zhixin/server/internal/periodic"
 )
 
 // Ping 是处理器从请求里取出、还没校验的一条匿名上报。
@@ -139,15 +141,5 @@ func PruneLoop(ctx context.Context, store Store, loc *time.Location, log *slog.L
 			log.Error("prune anonymous activity", slog.String("error", err.Error()))
 		}
 	}
-	prune()
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
+	periodic.Run(ctx, time.Hour*24, prune)
 }

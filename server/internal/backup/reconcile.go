@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/periodic"
 )
 
 // ReconcileGrace 是遗留对象要超过多久才会被对账删除。Put 先写对象、后写元数据
@@ -71,20 +72,7 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 // 0 时只跑启动那一次：进程重启至少会收敛一次遗留对象，配置成 0 可以关掉周期
 // 清理。对账失败只记日志等下一次再试，遗留对象不影响任何请求。
 func (s *Service) ReconcileLoop(ctx context.Context, log *slog.Logger) {
-	s.reconcileOnce(ctx, log)
-	if s.reconcileInterval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(s.reconcileInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.reconcileOnce(ctx, log)
-		}
-	}
+	periodic.Run(ctx, s.reconcileInterval, func() { s.reconcileOnce(ctx, log) })
 }
 
 // reconcileOnce 跑一次对账并把结果写进日志；失败不返回，由循环按周期重试。

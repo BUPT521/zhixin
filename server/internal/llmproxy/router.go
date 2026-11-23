@@ -119,23 +119,6 @@ func (r *Router) Reload(ctx context.Context) error {
 	return nil
 }
 
-// RunReloadLoop 每隔 every 重新读取一次配置，让直接改库或多实例部署时的修改
-// 也能生效；管理接口保存之后会立即 Reload，不等这个周期。
-func (r *Router) RunReloadLoop(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if err := r.Reload(ctx); err != nil && ctx.Err() == nil {
-				r.log.Error("reload model routes", slog.String("error", err.Error()))
-			}
-		}
-	}
-}
-
 func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapshot {
 	s := &snapshot{byID: map[string]*liveProvider{}, byName: map[string]*liveModel{}}
 

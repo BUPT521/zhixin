@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
 const (
@@ -30,10 +30,6 @@ const (
 	maxDeviceIDBytes = 64
 	maxAliasRunes    = 64
 )
-
-// hashPattern 是快照附件哈希与整库摘要的形状：64 位小写十六进制，与附件的路径
-// 参数一致（ADR-0043）。
-var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Attachments 报告一个账号名下是否存有某个附件，登记快照时用它核对归属与大小。
 // 附件字节与索引由 blobs 包维护，这里只声明需要的一个查询，两个包因此不互相
@@ -313,7 +309,7 @@ func (s *Service) RegisterSnapshot(
 	if s.attachments == nil {
 		return State{}, ErrSnapshotUnsupported
 	}
-	if in.Seq < 1 || !hashPattern.MatchString(in.Sha256) || !hashPattern.MatchString(in.Digest) {
+	if in.Seq < 1 || !httpx.ValidSHA256(in.Sha256) || !httpx.ValidSHA256(in.Digest) {
 		return State{}, ErrInvalid
 	}
 	state, err := s.store.State(ctx, userID)

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/BUPT521/zhixin/server/internal/periodic"
 )
 
 // 反馈各字段的上限。正文限 4000 字，够写清一次问题；诊断摘要是客户端从本机
@@ -77,17 +79,7 @@ func (s *Service) PruneLoop(ctx context.Context, log *slog.Logger) {
 			log.Info("pruned feedback", slog.Int64("rows", deleted))
 		}
 	}
-	prune()
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
+	periodic.Run(ctx, time.Hour*24, prune)
 }
 
 // Submit 校验并保存一条反馈。任何字段不合格都返回 ErrInvalidInput，客户端

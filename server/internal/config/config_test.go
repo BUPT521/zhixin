@@ -306,7 +306,7 @@ func TestLoadModelRoutingDefaults(t *testing.T) {
 	if cfg.LLM.EmbeddingDailyTokens != 2000000 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
 		t.Fatalf("unexpected routing defaults: %+v", cfg.LLM)
 	}
-	if cfg.AdminToken != "" || cfg.SecretKey != nil || cfg.ModelReloadInterval != 30*time.Second {
+	if cfg.AdminToken != "" || cfg.SecretKey != nil {
 		t.Fatalf("后台默认关闭：%+v", cfg)
 	}
 }

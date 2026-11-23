@@ -25,6 +25,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/BUPT521/zhixin/server/internal/periodic"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
 
@@ -249,17 +250,7 @@ func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) 
 			}
 		}
 	}
-	prune()
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
+	periodic.Run(ctx, time.Hour*24, prune)
 }
 
 // hashPassword 在预算内生成哈希。等待名额期间 ctx 结束时直接返回错误，不再

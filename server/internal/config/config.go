@@ -180,9 +180,6 @@ type Config struct {
 	// SecretKey 是加密数据库里模型来源 key 的 32 字节密钥（ZHIXIN_SECRET_KEY）。
 	// 为空时不能保存带 key 的来源，已保存的 key 也无法解密。
 	SecretKey []byte
-	// ModelReloadInterval 是从数据库重新读取模型路由的周期；管理接口保存之后
-	// 立即生效，这个周期只用于直接改库或多实例部署。
-	ModelReloadInterval time.Duration
 }
 
 // LLMConfig configures the model proxy.
@@ -376,10 +373,9 @@ func Load(getenv func(string) string) (Config, error) {
 			HeaderTimeout:          dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
 		},
 
-		AdminToken:          get("ZHIXIN_ADMIN_TOKEN", ""),
-		AdminRatePerSecond:  fnum("ZHIXIN_ADMIN_RATE", "0.05"),
-		AdminBurst:          int(num("ZHIXIN_ADMIN_BURST", "5")),
-		ModelReloadInterval: dur("ZHIXIN_MODEL_RELOAD_INTERVAL", "30s"),
+		AdminToken:         get("ZHIXIN_ADMIN_TOKEN", ""),
+		AdminRatePerSecond: fnum("ZHIXIN_ADMIN_RATE", "0.05"),
+		AdminBurst:         int(num("ZHIXIN_ADMIN_BURST", "5")),
 	}
 	if cfg.AdminToken != "" && len(cfg.AdminToken) < 32 {
 		errs = append(errs, errors.New("ZHIXIN_ADMIN_TOKEN: use at least 32 characters, e.g. `openssl rand -base64 32`"))
