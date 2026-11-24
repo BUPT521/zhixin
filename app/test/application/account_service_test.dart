@@ -90,6 +90,101 @@ void main() {
     if (await dir.exists()) await dir.delete(recursive: true);
   });
 
+  test('知新 API Key 使用账号令牌，输错当前密码时不刷新会话', () async {
+    final operations = <String>[];
+    final backend = server.client;
+    addTearDown(backend.close);
+    var revoked = false;
+    const fullKey = 'test-model-proxy-key';
+    const path = '/v1/me/api-keys';
+    late String accessToken;
+    final client = MockClient((request) async {
+      if (!request.url.path.startsWith(path)) {
+        final forwarded = http.Request(request.method, request.url)
+          ..headers.addAll(request.headers)
+          ..bodyBytes = request.bodyBytes;
+        return http.Response.fromStream(await backend.send(forwarded));
+      }
+      expect(request.headers['authorization'], 'Bearer $accessToken');
+      operations.add('${request.method} ${request.url.path}');
+      switch (request.method) {
+        case 'POST':
+          final body = jsonDecode(request.body) as Map;
+          expect(body['name'], '本机脚本');
+          if (body['password'] != 'password123') {
+            return http.Response('{"code":"invalid_credentials"}', 401);
+          }
+          return http.Response(jsonEncode({'key': fullKey}), 201);
+        case 'GET':
+          return http.Response(
+            jsonEncode({
+              'keys': [
+                {
+                  'id': 'key-1',
+                  'name': '本机脚本',
+                  'prefix': 'test-prefix',
+                  'revoked': revoked,
+                  'created_at': '2026-11-25T02:00:00Z',
+                  'last_used_at': '2026-11-25T03:00:00Z',
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        case 'DELETE':
+          revoked = true;
+          return http.Response('', 204);
+        default:
+          fail('意外的 API Key 请求 ${request.method}');
+      }
+    });
+    addTearDown(client.close);
+    final keysAccount = AccountService(
+      store: AccountStore(MemorySecretStore()),
+      preferences: preferences,
+      clientFactory: (baseUrl) =>
+          ServerClient(baseUrl: baseUrl, httpClient: client),
+    );
+    addTearDown(keysAccount.dispose);
+    final signedIn = await keysAccount.register(
+      identifier: 'keys@example.test',
+      password: 'password123',
+    );
+    accessToken = signedIn.session!.accessToken;
+
+    await expectLater(
+      keysAccount.createApiKey(name: '本机脚本', password: 'incorrect'),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.code,
+          'code',
+          'invalid_credentials',
+        ),
+      ),
+    );
+    expect(server.refreshRequests, isEmpty);
+    expect(
+      await keysAccount.createApiKey(name: '本机脚本', password: 'password123'),
+      fullKey,
+    );
+    final key = (await keysAccount.apiKeys()).single;
+    expect(key.prefix, 'test-prefix');
+    expect(key.lastUsedAt, DateTime.utc(2026, 11, 25, 3));
+    expect(key.revoked, isFalse);
+    await keysAccount.revokeApiKey(key.id);
+    expect((await keysAccount.apiKeys()).single.revoked, isTrue);
+    await keysAccount.revokeAllApiKeys();
+    expect(operations, [
+      'POST $path',
+      'POST $path',
+      'GET $path',
+      'DELETE $path/key-1',
+      'GET $path',
+      'DELETE $path',
+    ]);
+  });
+
   test('没有填写地址时使用默认服务地址，并能检查就绪状态', () async {
     final defaultDir = Directory('${dir.path}/default');
     final defaultAccount = AccountService(

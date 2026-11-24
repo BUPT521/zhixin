@@ -4,6 +4,7 @@ import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
+import '../domain/models/model_api_key.dart';
 import '../domain/rules/uuid_v7.dart';
 import 'embedding_client.dart';
 
@@ -174,6 +175,52 @@ class AccountService {
 
   Future<String> serverBaseUrl() => preferences.serverBaseUrl();
 
+  Future<bool> developerMode() => preferences.developerMode();
+
+  Future<void> setDeveloperMode(bool enabled) =>
+      preferences.setDeveloperMode(enabled);
+
+  /// 先用无凭据请求确认目标实例就绪且支持当前 schema，再切换服务实例。
+  Future<void> configureServerBaseUrl(
+    String value, {
+    required int schemaVersion,
+  }) async {
+    if (!await developerMode()) {
+      throw const AccountConfigException('请先开启开发者模式');
+    }
+    final epoch = _epoch;
+    final address = ServerClient.normalizeBaseUrl(value);
+    final uri = Uri.parse(address);
+    if (uri.hasQuery || uri.hasFragment) {
+      throw const FormatException('服务地址不能包含查询参数或片段');
+    }
+    final candidate =
+        clientFactory?.call(address) ?? ServerClient(baseUrl: address);
+    try {
+      final ready = await candidate.ready();
+      if (!ready.ready || ready.schemaVersion == 0) {
+        throw const AccountConfigException('该地址没有可用的知新服务');
+      }
+      if (ready.schemaVersion != schemaVersion) {
+        throw AccountConfigException(
+          '该服务支持 schema ${ready.schemaVersion}，当前客户端使用 $schemaVersion',
+        );
+      }
+    } on FormatException {
+      throw const AccountConfigException('该地址没有返回有效的知新服务就绪状态');
+    } on ServerProblem catch (error) {
+      if (error.code != 'offline') rethrow;
+      throw AccountConfigException(error.userMessage);
+    } finally {
+      candidate.dispose();
+    }
+    if (!await developerMode()) {
+      throw const AccountConfigException('请先开启开发者模式');
+    }
+    _ensureIdentityUnchanged(epoch);
+    await setServerBaseUrl(address);
+  }
+
   /// 保存服务地址；格式不合法时抛出 [FormatException]。
   ///
   /// 换到另一个实例时旧会话与同步游标都不再适用，直接清掉并暂停自动同步：
@@ -297,7 +344,7 @@ class AccountService {
     if (onSignedOut == null) await _clearSyncState();
   }
 
-  /// 读服务端的就绪状态与它接受的客户端 schema；保存地址之后核对一次。
+  /// 读当前服务端的就绪状态与它接受的客户端 schema。
   Future<ServerReady> checkServer() async {
     final client = await _requireClient();
     return client.ready();
@@ -399,6 +446,51 @@ class AccountService {
       final retry = await _refreshStale(token);
       return action(client, retry.accessToken);
     }
+  }
+
+  /// 换账号或实例时丢弃旧身份的密钥响应，尤其是签发返回的完整凭据。
+  Future<T> _callKeyOperation<T>(
+    Future<T> Function(ServerClient client, String token) action,
+  ) {
+    final epoch = _epoch;
+    return call((client, token) async {
+      _ensureIdentityUnchanged(epoch);
+      try {
+        return await action(client, token);
+      } finally {
+        _ensureIdentityUnchanged(epoch);
+      }
+    });
+  }
+
+  Future<List<ModelApiKey>> apiKeys() =>
+      _callKeyOperation((client, token) => client.apiKeys(token));
+
+  Future<String> createApiKey({
+    required String name,
+    required String password,
+  }) => _callKeyOperation(
+    (client, token) =>
+        client.createApiKey(token, name: name, password: password),
+  );
+
+  Future<void> revokeApiKey(String id) =>
+      _callKeyOperation((client, token) => client.revokeApiKey(token, id));
+
+  Future<void> revokeAllApiKeys() =>
+      _callKeyOperation((client, token) => client.revokeAllApiKeys(token));
+
+  String apiKeyErrorMessage(Object error, {bool issuing = false}) {
+    if (error is AccountSignedOut) return '请登录知新账号后管理 API Key';
+    if (error is ServerProblem) {
+      return switch (error.code) {
+        'invalid_credentials' => '当前密码不正确，请重新输入',
+        'conflict' when issuing => '有效密钥已达上限，请先撤销一把再申请',
+        'offline' when issuing => '未收到签发结果，请刷新列表确认后再试',
+        _ => error.userMessage,
+      };
+    }
+    return issuing ? '未取得完整 API Key，请刷新列表确认后再试' : '无法管理 API Key，请稍后重试';
   }
 
   /// 知新服务的对话接口地址：`<服务地址>/v1/llm/responses`（ADR-0052）。
@@ -669,7 +761,7 @@ class AccountService {
   Future<ServerClient> _requireClient() async {
     final base = await serverBaseUrl();
     if (base.isEmpty) {
-      throw const AccountConfigException('先在账号页填写服务地址');
+      throw const AccountConfigException('请在设置的开发者模式中填写知新服务地址');
     }
     return _clientFor(base);
   }

@@ -97,7 +97,7 @@ class UpdateCheckService {
            fetchReleases ?? ((baseUrl) => _fetchReleasesFrom(baseUrl, timeout)),
        _verifySignature = verifySignature ?? verifyReleaseSignature;
 
-  /// 账号页保存的服务地址；没有登录或没有自定义时是编译时的默认地址。
+  /// 当前知新服务地址；设备未保存实例地址时使用编译时默认值。
   final Future<String> Function() serverBaseUrl;
 
   /// 当前应用的版本串 `0.1.1-dev+2`；由调用方从 `platform/app_info.dart` 传入。

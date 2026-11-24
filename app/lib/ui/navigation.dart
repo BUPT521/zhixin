@@ -28,6 +28,7 @@ import 'materials_page.dart';
 import 'memory_page.dart';
 import 'memory_proposal_page.dart';
 import 'memory_search_page.dart';
+import 'model_api_keys_page.dart';
 import 'persona_page.dart';
 import 'plan_page.dart';
 import 'plan_search_page.dart';
@@ -135,6 +136,11 @@ Future<void> openPlanSearch(BuildContext context) {
 Future<void> openSettings(BuildContext context) {
   return Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+}
+
+Future<void> openModelApiKeys(BuildContext context) {
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const ModelApiKeysPage()));
 }
 
 /// 打开记忆页。

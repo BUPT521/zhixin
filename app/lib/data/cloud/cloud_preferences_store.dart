@@ -64,8 +64,7 @@ class SyncState {
 /// 编译时确定的默认服务地址：正式包指向项目组的第一套实例，本地联调用
 /// `--dart-define=ZHIXIN_SERVER_URL=http://127.0.0.1:8080` 覆盖。
 ///
-/// 账号可选，服务端接入默认就是可用的：用户不必先知道地址才能登录，账号页
-/// 仍可以改成别的自建实例。
+/// 账号可选，登录默认连接项目组提供的实例。开发者模式可以改用自建知新实例。
 const String defaultServerBaseUrl = String.fromEnvironment(
   'ZHIXIN_SERVER_URL',
   defaultValue: 'https://zhixin.chensiyuan.work',
@@ -119,6 +118,13 @@ class CloudPreferencesStore {
 
   Future<void> setServerBaseUrl(String value) => _file.update((raw) {
     raw['server_base_url'] = value.trim();
+  });
+
+  Future<bool> developerMode() async =>
+      (await _file.read())['developer_mode'] == true;
+
+  Future<void> setDeveloperMode(bool enabled) => _file.update((raw) {
+    raw['developer_mode'] = enabled;
   });
 
   Future<bool> autoSync() async {

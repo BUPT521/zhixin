@@ -1,4 +1,4 @@
-/// 应用内反馈：不要求登录，提交到当前账号页保存的服务地址（没有登录或没有
+/// 应用内反馈：不要求登录，提交到当前知新服务地址（没有登录或没有
 /// 自定义时是编译时的默认地址），服务端据此限流与保存（ADR-0025）。
 ///
 /// 版本名与平台由页面从应用信息填入；字段长度与格式的服务端口径见
@@ -40,7 +40,7 @@ class FeedbackService {
     this.timeout = const Duration(seconds: 30),
   });
 
-  /// 当前账号页保存的服务地址，登录与否都可用。
+  /// 当前知新服务地址，登录与否都可用。
   final Future<String> Function() serverBaseUrl;
 
   final FeedbackClientFactory? clientFactory;

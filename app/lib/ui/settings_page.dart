@@ -18,6 +18,7 @@ import '../domain/rules/time_policy.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
 import '../platform/diagnostics_store.dart';
+import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'live_view.dart';
 import 'navigation.dart';
@@ -28,7 +29,15 @@ import 'zhixin_header.dart';
 import 'zhixin_select.dart';
 
 /// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
-enum _Area { model, learning, appearance, updates, diagnostics, danger }
+enum _Area {
+  model,
+  developer,
+  learning,
+  appearance,
+  updates,
+  diagnostics,
+  danger,
+}
 
 /// 一级界面切进来之后预读的设置页首屏；字段与预读任务返回的记录一致。
 typedef _SettingsPrewarm = ({
@@ -54,7 +63,7 @@ class _Result {
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, this.updates});
 
-  /// 手动检查更新用的服务；测试注入固定清单，生产读账号页保存的服务地址。
+  /// 手动检查更新用的服务；测试注入固定清单，生产使用当前知新服务地址。
   final UpdateCheckService? updates;
 
   @override
@@ -67,6 +76,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   LlmConfig? _config;
   AccountSnapshot? _account;
+  bool? _developerMode;
 
   /// 服务端允许的模型；登录且读得到时显示，作为模型名的参照。
   List<String> _serverModels = const [];
@@ -164,6 +174,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final config = read.valueOrNull;
       final configFailure = read.failureOrNull;
       final account = await scope.accountServices.account.snapshot();
+      final developerMode = await scope.accountServices.account.developerMode();
       var serverModels = const <String>[];
       if (account.signedIn) {
         try {
@@ -188,6 +199,7 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         _account = account;
+        _developerMode = developerMode;
         _serverModels = serverModels;
         _applyConfig(config);
         _reportCrashes = reportCrashes;
@@ -458,6 +470,35 @@ class _SettingsPageState extends State<SettingsPage> {
     await _loadLocal(scope);
   }
 
+  Future<void> _setDeveloperMode(bool enabled) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _results.remove(_Area.developer);
+    });
+    try {
+      await AppScope.of(context).accountServices.account
+          .setDeveloperMode(enabled);
+      if (mounted) setState(() => _developerMode = enabled);
+    } catch (_) {
+      _report(_Area.developer, '开发者模式设置未保存，请重试', failed: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _editServerAddress() async {
+    final scope = AppScope.of(context);
+    final saved = await editZhixinServerAddress(
+      context,
+      serverBaseUrl: _account?.serverBaseUrl ?? '',
+      onSave: scope.configureServerBaseUrl,
+    );
+    if (!mounted || saved != true) return;
+    await _loadLocal(scope);
+    _report(_Area.developer, '知新服务地址已保存');
+  }
+
   Future<void> _resetAll() async {
     final confirmed = await confirmZhixin(
       context: context,
@@ -643,6 +684,41 @@ class _SettingsPageState extends State<SettingsPage> {
           suffix: const Icon(FLucideIcons.chevronRight),
           onPress: _busy ? null : _openEmbedding,
         ),
+        const SectionHeading(title: '开发者'),
+        forui.FCard(
+          child: Padding(
+            padding: EdgeInsets.all(theme.space.lg),
+            child: forui.FSwitch(
+              label: const Text('开发者模式'),
+              description: const Text('修改知新服务地址，或为脚本和第三方工具管理知新 API Key。'),
+              value: _developerMode ?? false,
+              onChange: _busy || _developerMode == null
+                  ? null
+                  : _setDeveloperMode,
+            ),
+          ),
+        ),
+        if (_developerMode == true) ...[
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.network),
+            title: const Text('知新服务地址'),
+            subtitle: Text(_account?.serverLabel ?? ''),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: _busy ? null : _editServerAddress,
+          ),
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.keyRound),
+            title: const Text('知新 API Key'),
+            subtitle: Text(signedIn ? '申请、查看和撤销模型代理密钥' : '登录账号后管理模型代理密钥'),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: _busy
+                ? null
+                : signedIn
+                ? () => openModelApiKeys(context)
+                : _openAccount,
+          ),
+        ],
+        ?_resultFor(_Area.developer),
         const SectionHeading(title: '学习', subtitle: '每天的截止时间与拍照方式影响记录与拍题。'),
         forui.FCard(
           child: Padding(

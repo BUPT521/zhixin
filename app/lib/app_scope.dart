@@ -152,6 +152,9 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   AppSpaces? get spaces => widget.spaces;
   bool get managesSpaces => widget.changeSpace != null;
 
+  Future<void> configureServerBaseUrl(String address) => _account
+      .configureServerBaseUrl(address, schemaVersion: zhixinSchemaVersion);
+
   Future<void> _changeSpace(
     String id, {
     bool adoptLocal = false,

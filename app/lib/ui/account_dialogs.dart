@@ -1,8 +1,101 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
+import '../application/account_service.dart';
 import 'theme.dart';
+import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
+
+Future<bool?> editZhixinServerAddress(
+  BuildContext context, {
+  required String serverBaseUrl,
+  required Future<void> Function(String address) onSave,
+}) => showZhixinDialog<bool>(
+  context: context,
+  builder: (_) =>
+      _ServerAddressDialog(serverBaseUrl: serverBaseUrl, onSave: onSave),
+);
+
+class _ServerAddressDialog extends StatefulWidget {
+  const _ServerAddressDialog({
+    required this.serverBaseUrl,
+    required this.onSave,
+  });
+
+  final String serverBaseUrl;
+  final Future<void> Function(String address) onSave;
+
+  @override
+  State<_ServerAddressDialog> createState() => _ServerAddressDialogState();
+}
+
+class _ServerAddressDialogState extends State<_ServerAddressDialog> {
+  late final _address = TextEditingController(text: widget.serverBaseUrl);
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _address.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    if (_address.text.trim().isEmpty) {
+      setState(() => _error = '请输入知新服务地址');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(_address.text);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = switch (error) {
+          AccountConfigException() => error.message,
+          FormatException() => error.message,
+          _ => '无法确认该地址运行着兼容的知新服务，请核对地址和服务状态',
+        };
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving,
+    child: ZhixinDialogLayout(
+      title: const Text('知新服务地址'),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          forui.FTextField(
+            control: .managed(controller: _address),
+            label: const Text('实例地址'),
+            keyboardType: TextInputType.url,
+            enabled: !_saving,
+            description: const Text('请填写知新实例的 HTTPS 地址。切换实例后需要重新登录。'),
+            onSubmit: (_) => _save(),
+          ),
+          if (_error case final error?) InlineNotice(message: error),
+        ],
+      ),
+      actions: [
+        if (!_saving) cancelZhixinButton(context),
+        forui.FButton(
+          mainAxisSize: MainAxisSize.min,
+          onPress: _saving ? null : _save,
+          child: Text(_saving ? '正在核对实例…' : '保存地址'),
+        ),
+      ],
+    ),
+  );
+}
 
 /// 删除账号前的重新认证：先读一遍删除范围，再输入当前密码。
 ///

@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
+import '../../domain/models/model_api_key.dart';
+
 /// 服务端的一次拒绝：`application/problem+json` 里的 `code` 是分支依据，
 /// `detail` 只给开发者看，界面按 [userMessage] 给出说明。
 class ServerProblem implements Exception {
@@ -850,6 +852,50 @@ class ServerClient {
     final json = await _json('GET', '/v1/me', accessToken: accessToken);
     return ServerAccount.fromJson(json);
   }
+
+  static const _apiKeysPath = '/v1/me/api-keys';
+
+  Future<List<ModelApiKey>> apiKeys(String accessToken) async {
+    final json = await _json('GET', _apiKeysPath, accessToken: accessToken);
+    return [
+      for (final row in (json['keys'] as List).cast<Map<String, Object?>>())
+        ModelApiKey(
+          id: row['id'] as String,
+          name: row['name'] as String,
+          prefix: row['prefix'] as String,
+          revoked: row['revoked'] as bool,
+          createdAt: DateTime.parse(row['created_at'] as String),
+          lastUsedAt: DateTime.tryParse(row['last_used_at'] as String? ?? ''),
+        ),
+    ];
+  }
+
+  Future<String> createApiKey(
+    String accessToken, {
+    required String name,
+    required String password,
+  }) async {
+    final json = await _json(
+      'POST',
+      _apiKeysPath,
+      accessToken: accessToken,
+      body: {'name': name, 'password': password},
+    );
+    final key = json['key'];
+    if (key is! String || key.isEmpty) {
+      throw const FormatException('签发响应中缺少完整密钥');
+    }
+    return key;
+  }
+
+  Future<void> revokeApiKey(String accessToken, String id) => _send(
+    'DELETE',
+    '$_apiKeysPath/${Uri.encodeComponent(id)}',
+    accessToken: accessToken,
+  );
+
+  Future<void> revokeAllApiKeys(String accessToken) =>
+      _send('DELETE', _apiKeysPath, accessToken: accessToken);
 
   /// 删除账号，连同同步序列、附件、备份与用量；删除前必须重新提交当前密码。
   ///

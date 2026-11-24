@@ -30,7 +30,7 @@ class ActiveReportService {
   /// 当前是否有登录账号；有账号时服务端已经按请求日期统计活跃。
   final Future<bool> Function() signedIn;
 
-  /// 账号页保存的服务地址；匿名上报也发到同一个实例。
+  /// 当前知新服务地址；匿名上报也发到同一个实例。
   final Future<String> Function() serverBaseUrl;
 
   final CrashLog crashLog;

@@ -14,7 +14,6 @@ import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/account_store.dart' show AccountIdentity;
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
-import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import 'account_dialogs.dart';
 import 'cloud_sync_prompts.dart';
 import 'copy.dart';
@@ -43,7 +42,6 @@ class AccountPage extends StatefulWidget {
 }
 
 class _AccountPageState extends State<AccountPage> {
-  final _server = TextEditingController();
   final _identifier = TextEditingController();
   final _password = TextEditingController();
   final _verifyCode = TextEditingController();
@@ -86,7 +84,6 @@ class _AccountPageState extends State<AccountPage> {
       _snapshot = prewarm.snapshot;
       _sync = prewarm.sync;
       _quota = prewarm.quota;
-      _server.text = prewarm.snapshot.serverBaseUrl;
       _loading = false;
     }
     _load();
@@ -94,7 +91,6 @@ class _AccountPageState extends State<AccountPage> {
 
   @override
   void dispose() {
-    _server.dispose();
     _identifier.dispose();
     _password.dispose();
     _verifyCode.dispose();
@@ -133,7 +129,6 @@ class _AccountPageState extends State<AccountPage> {
         _sync = sync;
         _quota = quota;
         _localDeviceId = localDeviceId;
-        _server.text = snapshot.serverBaseUrl;
         _loading = false;
       });
     } catch (error, stack) {
@@ -163,45 +158,6 @@ class _AccountPageState extends State<AccountPage> {
     });
   }
 
-  Future<void> _saveServer() async {
-    final scope = AppScope.of(context);
-    try {
-      final value = _server.text.trim();
-      if (value.isEmpty) {
-        _report('先填写服务地址，例如 https://zhixin.example.com', failed: true);
-        return;
-      }
-      await scope.accountServices.account.setServerBaseUrl(value);
-      final ready = await scope.accountServices.account.checkServer();
-      final matches = ready.schemaVersion == zhixinSchemaVersion;
-      _report(
-        matches
-            ? '服务地址已保存：服务端就绪，接受 schema ${ready.schemaVersion}'
-            : '服务地址已保存，但服务端接受 schema ${ready.schemaVersion}，'
-                  '本机是 $zhixinSchemaVersion；两端要一起升级才能同步',
-        failed: !matches,
-      );
-      await _load();
-    } on FormatException catch (error) {
-      if (!mounted) return;
-      _report(error.message, failed: true);
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '保存服务地址',
-          kind: 'account_server',
-          kept: '原来的地址没有改动',
-          next: '地址只填域名或完整的 https 地址',
-        ),
-        failed: true,
-      );
-    }
-  }
-
   Future<void> _submit({required bool register}) async {
     if (_busy) return;
     final identifier = _identifier.text.trim();
@@ -217,9 +173,6 @@ class _AccountPageState extends State<AccountPage> {
     setState(() => _busy = true);
     final scope = AppScope.of(context);
     try {
-      if (_server.text.trim().isNotEmpty) {
-        await scope.accountServices.account.setServerBaseUrl(_server.text);
-      }
       final account = scope.accountServices.account;
       final result = register
           ? await account.register(identifier: identifier, password: password)
@@ -889,49 +842,17 @@ class _AccountPageState extends State<AccountPage> {
     final theme = context.zhixin;
     return [
       SectionHeading(
-        title: '服务地址',
-        first: true,
-        subtitle: '默认使用项目组提供的实例，也可以改成自己的服务地址；账号与密码只用于这台设备登录。',
-        action: StatusTag(
-          _snapshot?.usesDefaultServer == true ? '默认地址' : '已修改',
-          tone: TagTone.accent,
-        ),
-      ),
-      forui.FCard(
-        child: Padding(
-          padding: EdgeInsets.all(theme.space.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              forui.FTextField(
-                control: .managed(controller: _server),
-                label: const Text('服务地址'),
-                hint: 'https://zhixin.example.com',
-                description: const Text(
-                  '只填域名时按 https 处理；正式版只接受 https 地址，'
-                  '本地联调要用 http 时需要在构建时显式打开明文开关。',
-                ),
-              ),
-              SizedBox(height: theme.space.sm),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: forui.FButton(
-                  variant: forui.FButtonVariant.outline,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : _saveServer,
-                  child: const Text('保存地址'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      SectionHeading(
         title: _showReset ? '找回密码' : '登录或注册',
+        first: true,
         subtitle: _showReset
             ? '向已经验证的邮箱发一封六位验证码，验证之后设置新密码；其他设备会退出登录。'
             : '登录之后可以上传整库备份、在多台设备之间同步，并使用知新服务的模型额度。',
       ),
+      if (_snapshot?.serverLabel case final serverLabel?)
+        Padding(
+          padding: EdgeInsets.only(bottom: theme.space.sm),
+          child: Text(serverLabel, style: theme.text.bodySmall),
+        ),
       forui.FCard(
         child: Padding(
           padding: EdgeInsets.all(theme.space.lg),
