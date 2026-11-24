@@ -545,6 +545,11 @@ func (s *Store) ResetPassword(ctx context.Context, reset auth.PasswordReset) err
 	if err := q.DeleteUserSessions(ctx, reset.UserID); err != nil {
 		return err
 	}
+	// 重设密码通常意味着账号可能已经泄露，模型代理密钥在同一次事务里全部撤销
+	// （ADR-0063）。
+	if _, err := q.RevokeApiKeysByUser(ctx, reset.UserID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

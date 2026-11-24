@@ -263,3 +263,41 @@ func TestMiddlewareKeyIsScopedToModels(t *testing.T) {
 		t.Fatalf("撤销之后应回 401，得到 %d", rec.Code)
 	}
 }
+
+// countingActivity 记下 RecordUserActive 被调用的次数。
+type countingActivity struct{ calls int }
+
+func (c *countingActivity) RecordUserActive(context.Context, string) error {
+	c.calls++
+	return nil
+}
+
+// TestMiddlewareKeyRequestsSkipActivity 核对日活口径：密钥请求不计入账号活跃，
+// 访问令牌请求照常记录（ADR-0063）。
+func TestMiddlewareKeyRequestsSkipActivity(t *testing.T) {
+	h, svc := newAuthedHandler(t, NewMemoryStore())
+	activity := &countingActivity{}
+	svc.SetActivityRecorder(activity)
+	ctx := context.Background()
+	tok, err := svc.Register(ctx, "quiet@b.cn", "password1", "")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	_, secret, err := svc.CreateAPIKey(ctx, Principal{UserID: tok.UserID}, "脚本")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	if rec := serve(t, h, http.MethodPost, "/v1/llm/responses", "Bearer "+secret); rec.Code != http.StatusOK {
+		t.Fatalf("模型路由应接受密钥，得到 %d", rec.Code)
+	}
+	if activity.calls != 0 {
+		t.Fatalf("密钥请求不应计入日活，记录 %d 次", activity.calls)
+	}
+	if rec := serve(t, h, http.MethodGet, "/v1/me", "Bearer "+tok.AccessToken); rec.Code != http.StatusOK {
+		t.Fatalf("令牌请求应通过，得到 %d", rec.Code)
+	}
+	if activity.calls != 1 {
+		t.Fatalf("访问令牌请求应记一次活跃，记录 %d 次", activity.calls)
+	}
+}

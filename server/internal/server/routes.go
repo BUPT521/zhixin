@@ -84,6 +84,9 @@ func (rt routes) PostV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
 func (rt routes) DeleteV1MeApiKeysId(w http.ResponseWriter, r *http.Request, id string) {
 	rt.auth.RevokeAPIKey(w, r, id)
 }
+func (rt routes) DeleteV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+	rt.auth.RevokeAllAPIKeys(w, r)
+}
 
 // DeleteV1Cloud 清空账号的备份、提交序列、附件与遗留对象；装配由 server.New
 // 注入，未装配时返回 501 而不是悄悄回 204。

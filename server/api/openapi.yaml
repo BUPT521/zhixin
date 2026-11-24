@@ -292,17 +292,24 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                required: [keys]
-                additionalProperties: false
-                properties:
-                  keys:
-                    type: array
-                    items: { $ref: "#/components/schemas/ApiKey" }
+              schema: { $ref: "#/components/schemas/ApiKeyList" }
         "401": { $ref: "#/components/responses/Problem" }
         "403":
           description: "`key_scope_denied`：用密钥调用账号接口；密钥只能调用模型接口"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    delete:
+      tags: [auth]
+      summary: 撤销本账号的全部模型代理密钥
+      description: |
+        一次撤销所有仍然有效的密钥，已经撤销的保留原样；账号可疑或换用工具时用它
+        一次清空。撤销之后这些密钥立刻不能再调用模型，登录状态不受影响。
+      responses:
+        "204": { description: 已全部撤销；本来就没有有效密钥时也返回 204 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403":
+          description: "`key_scope_denied`：用密钥调用账号接口；撤销全部要用登录令牌"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -1745,6 +1752,13 @@ components:
           type: string
           format: date-time
           description: 最近一次调用模型的时间，服务端按十分钟粒度更新；从没用过时省略
+    ApiKeyList:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/ApiKey" }
     ApiKeyCreated:
       type: object
       required: [id, name, prefix, key, created_at]

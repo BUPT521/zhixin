@@ -52,6 +52,9 @@ func (a testAPI) PostV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
 func (a testAPI) DeleteV1MeApiKeysId(w http.ResponseWriter, r *http.Request, id string) {
 	a.h.RevokeAPIKey(w, r, id)
 }
+func (a testAPI) DeleteV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+	a.h.RevokeAllAPIKeys(w, r)
+}
 
 // newTestServer 装配本包处理器与鉴权中间件；限流在这里关掉，由 server 包统一测。
 func newTestServer(t *testing.T) *testutil.Client {
@@ -363,5 +366,55 @@ func TestHandlerAPIKeysFlow(t *testing.T) {
 	}
 	if code := c.JSON(http.MethodGet, "/v1/me/api-keys", "", nil, nil); code != http.StatusUnauthorized {
 		t.Fatalf("未登录应回 401，得到 %d", code)
+	}
+}
+
+// TestHandlerRevokeAllAPIKeys 核对撤销全部的接口：密钥自己不能调用它，登录令牌
+// 调用之后列表里每一把都标记为已撤销，重复调用仍然回 204（ADR-0063）。
+func TestHandlerRevokeAllAPIKeys(t *testing.T) {
+	c := newTestServer(t)
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if code := c.JSON(http.MethodPost, "/v1/auth/register", "",
+		map[string]string{"identifier": "revoke-all@b.cn", "password": "password1"}, &tok); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+	var keys []string
+	for _, name := range []string{"甲", "乙"} {
+		var created struct {
+			Key string `json:"key"`
+		}
+		if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken,
+			map[string]string{"name": name}, &created); code != http.StatusCreated {
+			t.Fatalf("create %s: %d", name, code)
+		}
+		keys = append(keys, created.Key)
+	}
+
+	if code := c.JSON(http.MethodDelete, "/v1/me/api-keys", keys[0], nil, nil); code != http.StatusForbidden {
+		t.Fatalf("密钥调用撤销全部应回 403，得到 %d", code)
+	}
+	if code := c.JSON(http.MethodDelete, "/v1/me/api-keys", tok.AccessToken, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("撤销全部：%d", code)
+	}
+	var listed struct {
+		Keys []struct {
+			Revoked bool `json:"revoked"`
+		} `json:"keys"`
+	}
+	if code := c.JSON(http.MethodGet, "/v1/me/api-keys", tok.AccessToken, nil, &listed); code != http.StatusOK {
+		t.Fatalf("list: %d", code)
+	}
+	if len(listed.Keys) != 2 {
+		t.Fatalf("列表应有 2 把，得到 %d", len(listed.Keys))
+	}
+	for _, item := range listed.Keys {
+		if !item.Revoked {
+			t.Fatalf("撤销全部之后应全部标记为已撤销：%+v", listed.Keys)
+		}
+	}
+	if code := c.JSON(http.MethodDelete, "/v1/me/api-keys", tok.AccessToken, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("重复撤销全部应回 204，得到 %d", code)
 	}
 }

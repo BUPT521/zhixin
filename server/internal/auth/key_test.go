@@ -205,3 +205,31 @@ func TestLooksLikeAPIKeyChecksLength(t *testing.T) {
 		t.Fatal("43 个字符的访问令牌不应被当成密钥")
 	}
 }
+
+// TestRevokeAllAPIKeys 核对撤销全部：每一把都立即失效，返回的条数只算仍然有效
+// 的那些，再撤一次得到 0。
+func TestRevokeAllAPIKeys(t *testing.T) {
+	svc, userID, _ := newKeyTestService(t)
+	ctx := context.Background()
+	p := Principal{UserID: userID}
+	_, first, err := svc.CreateAPIKey(ctx, p, "甲")
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	_, second, err := svc.CreateAPIKey(ctx, p, "乙")
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	revoked, err := svc.RevokeAllAPIKeys(ctx, p)
+	if err != nil || revoked != 2 {
+		t.Fatalf("应撤销 2 把，得到 %d %v", revoked, err)
+	}
+	for _, secret := range []string{first, second} {
+		if _, err := svc.AuthenticateAPIKey(ctx, secret); !errors.Is(err, ErrInvalidToken) {
+			t.Fatalf("撤销全部之后应失效，得到 %v", err)
+		}
+	}
+	if revoked, err := svc.RevokeAllAPIKeys(ctx, p); err != nil || revoked != 0 {
+		t.Fatalf("再撤一次应撤销 0 把，得到 %d %v", revoked, err)
+	}
+}

@@ -63,12 +63,16 @@ func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler 
 				httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeKeyScopeDenied,
 					"api keys may only call the model endpoints")
 			default:
-				// 活跃统计是尽力而为：存储故障只记日志，不让这次请求失败。
-				if err := svc.RecordActivity(r.Context(), p.UserID); err != nil {
-					log.Warn("record user activity",
-						slog.String("request_id", httpx.RequestIDFrom(r.Context())),
-						slog.String("error", err.Error()),
-					)
+				// 只用密钥的脚本请求不计入日活：日活按本人打开应用计算，定时任务
+				// 不应该抬高留存指标（ADR-0063）。活跃统计本身是尽力而为，存储
+				// 故障只记日志，不让这次请求失败。
+				if p.KeyID == "" {
+					if err := svc.RecordActivity(r.Context(), p.UserID); err != nil {
+						log.Warn("record user activity",
+							slog.String("request_id", httpx.RequestIDFrom(r.Context())),
+							slog.String("error", err.Error()),
+						)
+					}
 				}
 				next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 			}

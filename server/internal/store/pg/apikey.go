@@ -69,6 +69,10 @@ func (s *Store) RevokeKey(ctx context.Context, userID, id string) error {
 	return err
 }
 
+func (s *Store) RevokeAllKeys(ctx context.Context, userID string) (int64, error) {
+	return s.q.RevokeApiKeysByUser(ctx, userID)
+}
+
 func (s *Store) TouchKey(ctx context.Context, id string) error {
 	return s.q.TouchApiKey(ctx, id)
 }

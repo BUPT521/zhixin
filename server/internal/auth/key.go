@@ -110,3 +110,9 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, token string) (Princip
 		ContactVerified: key.ContactVerified,
 	}, nil
 }
+
+// RevokeAllAPIKeys 撤销当前账号名下所有仍然有效的密钥，返回撤销的条数。已经
+// 撤销的行保留原样；重设密码时存储层做同一件事。
+func (s *Service) RevokeAllAPIKeys(ctx context.Context, p Principal) (int64, error) {
+	return s.store.RevokeAllKeys(ctx, p.UserID)
+}

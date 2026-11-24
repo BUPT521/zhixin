@@ -550,6 +550,11 @@ type ApiKeyCreated struct {
 	Prefix string `json:"prefix"`
 }
 
+// ApiKeyList defines model for ApiKeyList.
+type ApiKeyList struct {
+	Keys []ApiKey `json:"keys"`
+}
+
 // Backup defines model for Backup.
 type Backup struct {
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
@@ -1519,6 +1524,9 @@ type ServerInterface interface {
 	// GetV1Me 当前账号与它的登录方式
 	// (GET /v1/me)
 	GetV1Me(w http.ResponseWriter, r *http.Request)
+	// DeleteV1MeApiKeys 撤销本账号的全部模型代理密钥
+	// (DELETE /v1/me/api-keys)
+	DeleteV1MeApiKeys(w http.ResponseWriter, r *http.Request)
 	// GetV1MeApiKeys 列出本账号的模型代理密钥，新的在前
 	// (GET /v1/me/api-keys)
 	GetV1MeApiKeys(w http.ResponseWriter, r *http.Request)
@@ -2468,6 +2476,20 @@ func (siw *ServerInterfaceWrapper) GetV1Me(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteV1MeApiKeys operation middleware
+func (siw *ServerInterfaceWrapper) DeleteV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteV1MeApiKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetV1MeApiKeys operation middleware
 func (siw *ServerInterfaceWrapper) GetV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
 
@@ -3116,6 +3138,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetV1Me)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification", wrapper.PostV1MeIdentitiesIdVerification)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification/confirm", wrapper.PostV1MeIdentitiesIdVerificationConfirm)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me/api-keys", wrapper.DeleteV1MeApiKeys)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/api-keys", wrapper.GetV1MeApiKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/api-keys", wrapper.PostV1MeApiKeys)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me/api-keys/{id}", wrapper.DeleteV1MeApiKeysId)

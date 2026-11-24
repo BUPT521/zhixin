@@ -267,6 +267,11 @@ func TestPostgresResetPassword(t *testing.T) {
 	if err := st.CreateSession(ctx, sess, 20, ""); err != nil {
 		t.Fatalf("session: %v", err)
 	}
+	if err := st.CreateKey(ctx, auth.APIKey{
+		ID: "k1", UserID: u.ID, Name: "脚本", Prefix: "zx_AbCdEfGh", CreatedAt: now,
+	}, "kh1"); err != nil {
+		t.Fatalf("key: %v", err)
+	}
 	if err := st.PutCode(ctx, auth.Code{
 		Purpose: auth.PurposeResetPassword, Kind: auth.KindEmail, Identifier: "reset@b.cn",
 		UserID: u.ID, CodeHash: "good",
@@ -289,6 +294,9 @@ func TestPostgresResetPassword(t *testing.T) {
 	if _, err := st.Code(ctx, auth.PurposeResetPassword, auth.KindEmail, "reset@b.cn"); err != nil {
 		t.Fatalf("失败的原子操作不应吃掉验证码: %v", err)
 	}
+	if _, err := st.KeyByHash(ctx, "kh1"); err != nil {
+		t.Fatalf("失败的原子操作不应撤销密钥: %v", err)
+	}
 
 	if err := st.ResetPassword(ctx, reset); err != nil {
 		t.Fatalf("正确的摘要应当成功: %v", err)
@@ -304,6 +312,13 @@ func TestPostgresResetPassword(t *testing.T) {
 	}
 	if _, err := st.Code(ctx, auth.PurposeResetPassword, auth.KindEmail, "reset@b.cn"); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("验证码应被用掉，得到 %v", err)
+	}
+	if _, err := st.KeyByHash(ctx, "kh1"); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("重设密码之后密钥应全部撤销，得到 %v", err)
+	}
+	keys, err := st.KeysByUser(ctx, u.ID)
+	if err != nil || len(keys) != 1 || !keys[0].Revoked {
+		t.Fatalf("撤销的密钥应保留在列表里：%+v %v", keys, err)
 	}
 	if err := st.ResetPassword(ctx, reset); !errors.Is(err, auth.ErrInvalidCode) {
 		t.Fatalf("验证码重复使用应返回 ErrInvalidCode，得到 %v", err)

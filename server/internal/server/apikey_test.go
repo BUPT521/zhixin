@@ -81,6 +81,34 @@ func TestAPIKeyScopeRevocationAndSharedQuota(t *testing.T) {
 		t.Fatalf("重复撤销应回 404，得到 %d", code)
 	}
 
+	// 撤销全部：两把一起失效，密钥自己不能调用这个接口。
+	var batch []struct {
+		ID  string `json:"id"`
+		Key string `json:"key"`
+	}
+	for _, name := range []string{"甲", "乙"} {
+		var created struct {
+			ID  string `json:"id"`
+			Key string `json:"key"`
+		}
+		if code := h.json("POST", "/v1/me/api-keys", token,
+			map[string]string{"name": name}, &created); code != http.StatusCreated {
+			t.Fatalf("create %s: %d", name, code)
+		}
+		batch = append(batch, created)
+	}
+	if code := h.json("DELETE", "/v1/me/api-keys", batch[0].Key, nil, nil); code != http.StatusForbidden {
+		t.Fatalf("密钥调用撤销全部应回 403，得到 %d", code)
+	}
+	if code := h.json("DELETE", "/v1/me/api-keys", token, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("撤销全部：%d", code)
+	}
+	for _, item := range batch {
+		if code := h.json("GET", "/v1/llm/models", item.Key, nil, nil); code != http.StatusUnauthorized {
+			t.Fatalf("撤销全部之后密钥应失效，得到 %d", code)
+		}
+	}
+
 	// 删号之后密钥随账号一起消失。
 	var second struct {
 		ID  string `json:"id"`

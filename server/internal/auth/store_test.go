@@ -28,6 +28,11 @@ func TestMemoryResetPasswordIsAtomic(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.CreateKey(ctx, APIKey{
+		ID: "k1", UserID: "u1", Name: "脚本", Prefix: "zx_AbCdEfGh", CreatedAt: now,
+	}, "kh1"); err != nil {
+		t.Fatal(err)
+	}
 	reset := PasswordReset{
 		UserID: "u1", IdentityID: ident.ID, Purpose: PurposeResetPassword,
 		Kind: KindEmail, Identifier: "a@b.cn", ExpectedHash: "good",
@@ -47,6 +52,9 @@ func TestMemoryResetPasswordIsAtomic(t *testing.T) {
 	}
 	if _, err := st.Code(ctx, PurposeResetPassword, KindEmail, "a@b.cn"); err != nil {
 		t.Fatalf("失败的原子操作不应吃掉验证码: %v", err)
+	}
+	if _, err := st.KeyByHash(ctx, "kh1"); err != nil {
+		t.Fatalf("失败的原子操作不应撤销密钥: %v", err)
 	}
 
 	// 过期验证码同样不算用掉。
@@ -70,6 +78,13 @@ func TestMemoryResetPasswordIsAtomic(t *testing.T) {
 	}
 	if _, err := st.Code(ctx, PurposeResetPassword, KindEmail, "a@b.cn"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("验证码应被用掉，得到 %v", err)
+	}
+	if _, err := st.KeyByHash(ctx, "kh1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重设密码之后密钥应全部撤销，得到 %v", err)
+	}
+	keys, err := st.KeysByUser(ctx, "u1")
+	if err != nil || len(keys) != 1 || !keys[0].Revoked {
+		t.Fatalf("撤销的密钥应保留在列表里：%+v %v", keys, err)
 	}
 	// 验证码只能用一次，再用返回 ErrInvalidCode。
 	if err := st.ResetPassword(ctx, reset); !errors.Is(err, ErrInvalidCode) {

@@ -271,3 +271,9 @@ UPDATE api_key
 SET last_used_at = now()
 WHERE id = sqlc.arg(id)
   AND (last_used_at IS NULL OR last_used_at < now() - interval '10 minutes');
+
+-- 撤销账号的全部密钥：手动“撤销全部”与重设密码都用它，已经撤销的行保持不变。
+-- name: RevokeApiKeysByUser :execrows
+UPDATE api_key
+SET revoked_at = now()
+WHERE user_id = sqlc.arg(user_id) AND revoked_at IS NULL;

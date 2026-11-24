@@ -665,6 +665,21 @@ func (q *Queries) RevokeApiKey(ctx context.Context, arg RevokeApiKeyParams) (int
 	return result.RowsAffected(), nil
 }
 
+const revokeApiKeysByUser = `-- name: RevokeApiKeysByUser :execrows
+UPDATE api_key
+SET revoked_at = now()
+WHERE user_id = $1 AND revoked_at IS NULL
+`
+
+// 撤销账号的全部密钥：手动“撤销全部”与重设密码都用它，已经撤销的行保持不变。
+func (q *Queries) RevokeApiKeysByUser(ctx context.Context, userID string) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeApiKeysByUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rotateSession = `-- name: RotateSession :execrows
 UPDATE session
 SET access_hash = $1,

@@ -182,6 +182,9 @@ type Store interface {
 	// RevokeKey 撤销当前账号名下的一把密钥。不存在、已经撤销或属于别的账号时
 	// 返回 ErrNotFound，调用方据此回 404。
 	RevokeKey(ctx context.Context, userID, id string) error
+	// RevokeAllKeys 撤销账号名下所有仍然有效的密钥，返回撤销的条数。手动“撤销
+	// 全部”与重设密码都用它，已经撤销的行保持不变。
+	RevokeAllKeys(ctx context.Context, userID string) (int64, error)
 	// TouchKey 把最近使用时间推进到 now；实现按十分钟粒度条件写入，大部分请求
 	// 不会真的更新这一行。
 	TouchKey(ctx context.Context, id string) error
@@ -455,6 +458,26 @@ func (m *MemoryStore) RevokeKey(_ context.Context, userID, id string) error {
 	return nil
 }
 
+func (m *MemoryStore) RevokeAllKeys(_ context.Context, userID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.revokeKeysLocked(userID), nil
+}
+
+// revokeKeysLocked 撤销账号名下仍然有效的密钥并返回条数，调用方已持有锁。
+func (m *MemoryStore) revokeKeysLocked(userID string) int64 {
+	var revoked int64
+	for id, key := range m.apiKeys {
+		if key.UserID != userID || key.Revoked {
+			continue
+		}
+		key.Revoked = true
+		m.apiKeys[id] = key
+		revoked++
+	}
+	return revoked
+}
+
 func (m *MemoryStore) TouchKey(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -511,6 +534,9 @@ func (m *MemoryStore) ResetPassword(_ context.Context, reset PasswordReset) erro
 		}
 	}
 	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == reset.UserID })
+	// 重设密码通常意味着账号可能已经泄露，密钥随之全部撤销，与手动“撤销全部”
+	// 同一做法（ADR-0063）。
+	m.revokeKeysLocked(reset.UserID)
 	return nil
 }
 

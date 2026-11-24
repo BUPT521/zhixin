@@ -166,6 +166,7 @@ func TestKeyOperationsAreModelEndpointsOnly(t *testing.T) {
 	for _, pattern := range []string{
 		"POST /v1/me/api-keys",
 		"GET /v1/me/api-keys",
+		"DELETE /v1/me/api-keys",
 		"DELETE /v1/me/api-keys/{id}",
 		"GET /v1/sync/head",
 		"POST /v1/backups",

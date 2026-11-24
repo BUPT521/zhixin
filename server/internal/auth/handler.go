@@ -437,7 +437,7 @@ func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	out := apiKeysJSON{Keys: make([]api.ApiKey, 0, len(keys))}
+	out := api.ApiKeyList{Keys: make([]api.ApiKey, 0, len(keys))}
 	for _, key := range keys {
 		item := api.ApiKey{
 			Id: key.ID, Name: key.Name, Prefix: key.Prefix,
@@ -450,11 +450,6 @@ func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 		out.Keys = append(out.Keys, item)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-// apiKeysJSON 是列表响应的形状；契约里这是一个内联对象，不单独生成类型。
-type apiKeysJSON struct {
-	Keys []api.ApiKey `json:"keys"`
 }
 
 // CreateAPIKey 签发一把模型代理密钥。明文只在这次响应里出现，服务端只留摘要；
@@ -492,4 +487,14 @@ func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request, id string
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// RevokeAllAPIKeys 撤销当前账号的全部模型代理密钥，已经撤销的保留原样。账号
+// 可疑或换用工具时用一次清空（ADR-0063）。
+func (h *Handler) RevokeAllAPIKeys(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.svc.RevokeAllAPIKeys(r.Context(), MustPrincipal(r.Context())); err != nil {
+		httpx.WriteInternal(w, r, h.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
