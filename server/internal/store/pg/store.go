@@ -38,9 +38,11 @@ type Store struct {
 	// dailyTokens 与 instanceDailyTokens 是配置里的默认每日额度与实例预算，由
 	// llmproxy.NewHandler 装配时经 SetQuotaLimits 注入（见 quota.go），运行期间
 	// 不再修改，因此不加锁。
-	dailyTokens          int64
-	embeddingDailyTokens int64
-	instanceDailyTokens  int64
+	dailyTokens           int64
+	embeddingDailyTokens  int64
+	instanceDailyTokens   int64
+	purchasedQuotaEnabled bool
+	purchasedQuotaSandbox bool
 }
 
 var (
@@ -60,6 +62,9 @@ type Options struct {
 	Objects objectstore.Store
 	// MaxConns 为空时用 pgxpool 的默认值。
 	MaxConns int32
+	// PurchasedQuotaEnabled requires the payment tables in schema.sql.
+	PurchasedQuotaEnabled bool
+	PurchasedQuotaSandbox bool
 }
 
 // Open 连接 PostgreSQL 并返回四个接口共用的实现。
@@ -78,7 +83,7 @@ func Open(ctx context.Context, dsn string, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pg: 建立连接池失败: %w", err)
 	}
-	return &Store{pool: pool, q: db.New(pool), objects: opts.Objects}, nil
+	return &Store{pool: pool, q: db.New(pool), objects: opts.Objects, purchasedQuotaEnabled: opts.PurchasedQuotaEnabled, purchasedQuotaSandbox: opts.PurchasedQuotaSandbox}, nil
 }
 
 // Ping 报告数据库是否可达，供 /readyz 使用。

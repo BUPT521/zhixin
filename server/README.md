@@ -78,11 +78,13 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 
 被新快照替换下来的旧附件不再单独建表：`attachment` 表增加可空列 `orphaned_at` 记让位时间，回收时删除让位时间早于宽限期、且不是当前快照指针的附件行（[ADR-0047](../docs/adr/0047-快照附件回收与压缩前的客户端门槛.md)、[数据库结构过度设计审查](../docs/数据库结构过度设计审查.md) 的 V2）。
 
-2026-11-24 增加 `api_key`，保存模型代理的接入密钥（[ADR-0063](../docs/adr/0063-模型代理接入密钥.md)），服务端因此共 25 张表：
+2026-11-24 增加 `api_key`，保存模型代理的接入密钥（[ADR-0063](../docs/adr/0063-模型代理接入密钥.md)），当时服务端共 25 张表，接入密钥的存储如下。
 
 | 表 | 用途 | 关键列与约束 |
 |---|---|---|
 | `api_key` | 模型代理的接入密钥，给用户自己的脚本或第三方工具调用 `/v1/llm` 下的模型接口，不参与登录，也不持有学习数据；与访问令牌共用 Bearer 头，靠 `zx_` 前缀区分 | `user_id` 外键级联删除，`key_hash` 唯一且只存整个密钥的 SHA-256，`prefix` 是前 11 位用于展示，`revoked_at` 记录撤销并保留这一行，撤销超过 30 天的行由每日清理删除，`last_used_at` 按十分钟粒度更新；没有有效期列，每账号最多 20 把有效密钥，删号时随外键级联删除 |
+
+增加支付宝支付的三张表后，当前服务端共 28 张表，购买数据的归属和用途见[支付宝 App 收款](#支付宝-app-收款)。
 
 ## 目录
 
@@ -221,6 +223,23 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 ```
 
 用户自己的脚本或第三方工具不保存登录凭据，改用模型代理密钥（[ADR-0063](../docs/adr/0063-模型代理接入密钥.md)）。用登录令牌调 `POST /v1/me/api-keys`（请求体 `{"name": "脚本", "password": "当前密码"}`）签发一把：签发只凭访问令牌就能换一把不过期的密钥，所以与删号、清空云端数据一样要再提交一次当前密码，密码错误返回 401，连续输错超过按账号的失败预算时返回 429。响应里的 `key` 形如 `zx_` 加 32 位随机字符再加 4 位校验码，共 39 个字符，明文只出现这一次，库里只存 SHA-256；`GET /v1/me/api-keys` 列出编号、名字、前缀、是否撤销、创建时间与最近使用时间，`DELETE /v1/me/api-keys/{id}` 撤销一把，`DELETE /v1/me/api-keys` 撤销全部，撤销之后立刻失效，重复撤销单把回 404。密钥放在 `Authorization: Bearer <key>` 里，调用方式与访问令牌相同，但作用域只有 `/v1/llm` 下的五条模型接口，访问同步、备份、附件与账号管理一律回 403 `key_scope_denied`。额度、并发、实例预算与“登录方式已验证”的门槛都按账号算，密钥不单独记录额度，也没有单把密钥的额度或速率；密钥没有有效期，只能显式撤销，每账号最多保留 20 把有效密钥，上限在存储层与写入一起判定，并发签发不会突破，撤销超过 30 天的行由每日清理删除；重设密码与刷新令牌重放检测都会撤销这个账号的全部密钥，删号时随外键级联删除，用量按 `llm_usage` 的密钥列分开记，最近使用时间按十分钟粒度写入、进程内也跳过这十分钟内的重复写库，因此有十分钟的滞后。只用密钥的请求不计入账号日活。工具收到 401 时应当停止，不要照着客户端的方式刷新令牌。`api_key` 是新表，第一套实例上线这条改动时按 [ADR-0057](../docs/adr/0057-服务端改表清空重建.md) 在计划内停服重建库，重建会清空现有账号。
+
+## 支付宝 App 收款
+
+Android 的聊天额度包使用 Vibe Pay 的移动应用收款，服务端生成 `alipay.trade.app.pay` 的签名串，通过异步通知和 `alipay.trade.query` 确认到账。`model_quota_purchase` 保存订单、报价及环境，`model_quota_wallet` 保存账号在相应环境中的可用余额，`model_quota_paid_usage` 保存每日计入已购余额的 token。三个表的 DDL 见 [schema.sql](internal/store/schema.sql)，入账规则见 [ADR-0065](../docs/adr/0065-支付宝购买聊天模型额度.md)。
+
+| 环境变量 | 用途 |
+|---|---|
+| `ZHIXIN_ALIPAY_MODE` | `sandbox`（默认）或 `production` |
+| `ZHIXIN_ALIPAY_APP_ID` | 支付宝应用 ID |
+| `ZHIXIN_ALIPAY_SELLER_ID` | 与该应用配套的收款方支付宝用户 ID |
+| `ZHIXIN_ALIPAY_PRIVATE_KEY` | RSA2 应用私钥，支持 PEM 或 Base64 DER |
+| `ZHIXIN_ALIPAY_PUBLIC_KEY` | 支付宝公钥，支持 PEM 或 Base64 DER |
+| `ZHIXIN_ALIPAY_NOTIFY_URL` | 支付宝可访问的 HTTPS 通知地址，路径为 `/v1/payments/alipay/notify` |
+| `ZHIXIN_ALIPAY_QUOTA_AMOUNT_FEN` | 单份售价，单位分 |
+| `ZHIXIN_ALIPAY_QUOTA_TOKENS` | 单份发放的聊天 token 数 |
+
+在独立实例使用 PostgreSQL 空库，按本地运行章节建表，并在实例环境配置上述变量。价格与 token 数默认均为零，保留其他配置时可以暂停新售而继续确认旧单。沙箱 App ID、收款方 ID 和密钥取自同一个沙箱应用，安装支付宝沙箱版并使用沙箱买家登录，再在知新中用已验证邮箱的账号发起购买。核对取消后可以继续原订单、付款后到账、重复通知只发放一次以及回调延迟时主动查单能确认到账。正式开通前按 [ADR-0065](../docs/adr/0065-支付宝购买聊天模型额度.md#上线条件) 核对退款、对账和数据恢复。[支付宝 Vibe Pay 沙箱指引](https://aipay.alipay.com/products/vibe-pay)
 
 ## 管理后台
 

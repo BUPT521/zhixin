@@ -274,6 +274,27 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for QuotaPurchaseOrderStatus.
+const (
+	Closed  QuotaPurchaseOrderStatus = "closed"
+	Paid    QuotaPurchaseOrderStatus = "paid"
+	Pending QuotaPurchaseOrderStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the QuotaPurchaseOrderStatus enum.
+func (e QuotaPurchaseOrderStatus) Valid() bool {
+	switch e {
+	case Closed:
+		return true
+	case Paid:
+		return true
+	case Pending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadyStatus.
 const (
 	ReadyStatusReady ReadyStatus = "ready"
@@ -836,6 +857,33 @@ type PushResult struct {
 	Seqs []int64 `json:"seqs"`
 }
 
+// QuotaPurchaseOrder defines model for QuotaPurchaseOrder.
+type QuotaPurchaseOrder struct {
+	AmountFen int64                    `json:"amount_fen"`
+	ExpiresAt time.Time                `json:"expires_at"`
+	Id        string                   `json:"id"`
+	OfferId   string                   `json:"offer_id"`
+	Payable   bool                     `json:"payable"`
+	Sandbox   bool                     `json:"sandbox"`
+	Status    QuotaPurchaseOrderStatus `json:"status"`
+	Tokens    int64                    `json:"tokens"`
+}
+
+// QuotaPurchaseOrderStatus defines model for QuotaPurchaseOrder.Status.
+type QuotaPurchaseOrderStatus string
+
+// QuotaPurchaseOverview defines model for QuotaPurchaseOverview.
+type QuotaPurchaseOverview struct {
+	BalanceTokens int64               `json:"balance_tokens"`
+	LatestOrder   *QuotaPurchaseOrder `json:"latest_order,omitempty"`
+	Offer         *struct {
+		AmountFen int64  `json:"amount_fen"`
+		Id        string `json:"id"`
+		Sandbox   bool   `json:"sandbox"`
+		Tokens    int64  `json:"tokens"`
+	} `json:"offer,omitempty"`
+}
+
 // Ready defines model for Ready.
 type Ready struct {
 	// SchemaVersion Examples: 32
@@ -1143,6 +1191,18 @@ type PostV1MeIdentitiesIdVerificationConfirmJSONBody struct {
 	Code string `json:"code"`
 }
 
+// PostV1MeModelQuotaPurchasesJSONBody defines parameters for PostV1MeModelQuotaPurchases.
+type PostV1MeModelQuotaPurchasesJSONBody struct {
+	OfferId string `json:"offer_id"`
+
+	// OrderId 继续支付的原订单号，提供后不会另开新单
+	OrderId *string `json:"order_id,omitempty"`
+}
+
+// PostV1PaymentsAlipayNotifyFormdataBody defines parameters for PostV1PaymentsAlipayNotify.
+type PostV1PaymentsAlipayNotifyFormdataBody struct {
+}
+
 // DeleteV1SyncCommitsJSONBody defines parameters for DeleteV1SyncCommits.
 type DeleteV1SyncCommitsJSONBody struct {
 	Password string `json:"password"`
@@ -1255,6 +1315,12 @@ type PostV1MeApiKeysJSONRequestBody PostV1MeApiKeysJSONBody
 
 // PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody defines body for PostV1MeIdentitiesIdVerificationConfirm for application/json ContentType.
 type PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody PostV1MeIdentitiesIdVerificationConfirmJSONBody
+
+// PostV1MeModelQuotaPurchasesJSONRequestBody defines body for PostV1MeModelQuotaPurchases for application/json ContentType.
+type PostV1MeModelQuotaPurchasesJSONRequestBody PostV1MeModelQuotaPurchasesJSONBody
+
+// PostV1PaymentsAlipayNotifyFormdataRequestBody defines body for PostV1PaymentsAlipayNotify for application/x-www-form-urlencoded ContentType.
+type PostV1PaymentsAlipayNotifyFormdataRequestBody PostV1PaymentsAlipayNotifyFormdataBody
 
 // DeleteV1SyncCommitsJSONRequestBody defines body for DeleteV1SyncCommits for application/json ContentType.
 type DeleteV1SyncCommitsJSONRequestBody DeleteV1SyncCommitsJSONBody
@@ -1546,6 +1612,18 @@ type ServerInterface interface {
 	// PostV1MeIdentitiesIdVerificationConfirm 用验证码确认某一种登录方式
 	// (POST /v1/me/identities/{id}/verification/confirm)
 	PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string)
+	// GetV1MeModelQuotaPurchases 当前聊天 Token 包、购买余额与最近一笔订单
+	// (GET /v1/me/model-quota-purchases)
+	GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
+	// PostV1MeModelQuotaPurchases 按已确认的报价创建支付宝 App 支付订单
+	// (POST /v1/me/model-quota-purchases)
+	PostV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
+	// GetV1MeModelQuotaPurchasesId 查询本账号的支付宝订单并确认到账
+	// (GET /v1/me/model-quota-purchases/{id})
+	GetV1MeModelQuotaPurchasesId(w http.ResponseWriter, r *http.Request, id string)
+	// PostV1PaymentsAlipayNotify 接收支付宝到账通知
+	// (POST /v1/payments/alipay/notify)
+	PostV1PaymentsAlipayNotify(w http.ResponseWriter, r *http.Request)
 	// DeleteV1SyncCommits 清空该账号的提交序列，服务端 head 重置为 0
 	// (DELETE /v1/sync/commits)
 	DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request)
@@ -2600,6 +2678,74 @@ func (siw *ServerInterfaceWrapper) PostV1MeIdentitiesIdVerificationConfirm(w htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetV1MeModelQuotaPurchases operation middleware
+func (siw *ServerInterfaceWrapper) GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1MeModelQuotaPurchases(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1MeModelQuotaPurchases operation middleware
+func (siw *ServerInterfaceWrapper) PostV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1MeModelQuotaPurchases(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetV1MeModelQuotaPurchasesId operation middleware
+func (siw *ServerInterfaceWrapper) GetV1MeModelQuotaPurchasesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1MeModelQuotaPurchasesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1PaymentsAlipayNotify operation middleware
+func (siw *ServerInterfaceWrapper) PostV1PaymentsAlipayNotify(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1PaymentsAlipayNotify(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteV1SyncCommits operation middleware
 func (siw *ServerInterfaceWrapper) DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request) {
 
@@ -3165,6 +3311,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/backups", wrapper.PostV1Backups)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/backups/{id}", wrapper.DeleteV1BackupsId)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/backups/{id}", wrapper.GetV1BackupsId)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/model-quota-purchases", wrapper.GetV1MeModelQuotaPurchases)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/model-quota-purchases", wrapper.PostV1MeModelQuotaPurchases)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/model-quota-purchases/{id}", wrapper.GetV1MeModelQuotaPurchasesId)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/payments/alipay/notify", wrapper.PostV1PaymentsAlipayNotify)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/models", wrapper.GetV1LlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/responses", wrapper.PostV1LlmResponses)

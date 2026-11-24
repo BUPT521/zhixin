@@ -792,6 +792,89 @@ paths:
         "204": { description: 已删除 }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/me/model-quota-purchases:
+    get:
+      summary: 当前聊天 Token 包、购买余额与最近一笔订单
+      description: 需要登录令牌。购买功能未启用或账号未验证登录方式时省略 offer。
+      responses:
+        '200':
+          description: 购买概况
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotaPurchaseOverview' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      summary: 按已确认的报价创建支付宝 App 支付订单
+      description: 同一账号在订单可支付期间重试时复用原订单。价格与发放额度由服务端确定。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offer_id]
+              properties:
+                offer_id: { type: string }
+                order_id: { type: string, description: 继续支付的原订单号，提供后不会另开新单 }
+      responses:
+        '200':
+          description: 同一笔业务订单及签名后的支付宝 SDK 参数
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [order_string, order]
+                properties:
+                  order_string: { type: string }
+                  order: { $ref: '#/components/schemas/QuotaPurchaseOrder' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /v1/me/model-quota-purchases/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: 查询本账号的支付宝订单并确认到账
+      description: 未到账订单由服务端向支付宝查单。到账状态与额度发放在同一个事务中提交。
+      responses:
+        '200':
+          description: 服务端订单状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotaPurchaseOrder' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /v1/payments/alipay/notify:
+    post:
+      security: []
+      summary: 接收支付宝到账通知
+      description: 验证 RSA2 签名、应用与商户身份、订单、金额及支付宝交易号后才确认到账。
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+      responses:
+        '200':
+          description: 已处理或已处理过，响应正文为 success
+          content:
+            text/plain:
+              schema: { type: string }
+        '400': { description: 通知校验失败 }
+        '404': { description: 支付宝收款未配置 }
+        '500': { description: 持久化失败，支付宝应重试通知 }
   /v1/llm/models:
     get:
       tags: [llm]
@@ -1295,6 +1378,32 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    QuotaPurchaseOverview:
+      type: object
+      required: [balance_tokens]
+      properties:
+        balance_tokens: { type: integer, format: int64 }
+        offer:
+          type: object
+          required: [id, amount_fen, tokens, sandbox]
+          properties:
+            id: { type: string }
+            amount_fen: { type: integer, format: int64 }
+            tokens: { type: integer, format: int64 }
+            sandbox: { type: boolean }
+        latest_order: { $ref: '#/components/schemas/QuotaPurchaseOrder' }
+    QuotaPurchaseOrder:
+      type: object
+      required: [id, offer_id, amount_fen, tokens, status, expires_at, payable, sandbox]
+      properties:
+        id: { type: string }
+        offer_id: { type: string }
+        amount_fen: { type: integer, format: int64 }
+        tokens: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, paid, closed] }
+        expires_at: { type: string, format: date-time }
+        payable: { type: boolean }
+        sandbox: { type: boolean }
     EmbeddingRequest:
       type: object
       required: [model, input]

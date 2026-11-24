@@ -5,6 +5,7 @@ import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
 import '../domain/models/model_api_key.dart';
+import '../domain/models/quota_purchase.dart';
 import '../domain/rules/uuid_v7.dart';
 import 'embedding_client.dart';
 
@@ -448,8 +449,8 @@ class AccountService {
     }
   }
 
-  /// 换账号或实例时丢弃旧身份的密钥响应，尤其是签发返回的完整凭据。
-  Future<T> _callKeyOperation<T>(
+  /// 换账号或实例时丢弃旧身份的密钥响应，包括签发凭据和支付宝订单。
+  Future<T> _callForCurrentIdentity<T>(
     Future<T> Function(ServerClient client, String token) action,
   ) {
     final epoch = _epoch;
@@ -464,21 +465,23 @@ class AccountService {
   }
 
   Future<List<ModelApiKey>> apiKeys() =>
-      _callKeyOperation((client, token) => client.apiKeys(token));
+      _callForCurrentIdentity((client, token) => client.apiKeys(token));
 
   Future<String> createApiKey({
     required String name,
     required String password,
-  }) => _callKeyOperation(
+  }) => _callForCurrentIdentity(
     (client, token) =>
         client.createApiKey(token, name: name, password: password),
   );
 
-  Future<void> revokeApiKey(String id) =>
-      _callKeyOperation((client, token) => client.revokeApiKey(token, id));
+  Future<void> revokeApiKey(String id) => _callForCurrentIdentity(
+    (client, token) => client.revokeApiKey(token, id),
+  );
 
-  Future<void> revokeAllApiKeys() =>
-      _callKeyOperation((client, token) => client.revokeAllApiKeys(token));
+  Future<void> revokeAllApiKeys() => _callForCurrentIdentity(
+    (client, token) => client.revokeAllApiKeys(token),
+  );
 
   String apiKeyErrorMessage(Object error, {bool issuing = false}) {
     if (error is AccountSignedOut) return '请登录知新账号后管理 API Key';
@@ -564,6 +567,29 @@ class AccountService {
 
   Future<ServerQuota> quota() =>
       call<ServerQuota>((client, token) => client.quota(token));
+
+  Future<QuotaPurchaseOverview> quotaPurchases() =>
+      _callForCurrentIdentity((client, token) => client.quotaPurchases(token));
+
+  Future<({QuotaPurchaseOrder order, String orderString})?> quotaCheckout(
+    String offerId, {
+    String? orderId,
+  }) async {
+    try {
+      return await _callForCurrentIdentity(
+        (client, token) =>
+            client.quotaCheckout(token, offerId, orderId: orderId),
+      );
+    } on ServerProblem catch (error) {
+      if (error.status == 409) return null;
+      rethrow;
+    }
+  }
+
+  Future<QuotaPurchaseOrder> quotaOrder(String orderId) =>
+      _callForCurrentIdentity(
+        (client, token) => client.quotaOrder(token, orderId),
+      );
 
   Future<List<ServerModel>> models() =>
       call<List<ServerModel>>((client, token) => client.models(token));

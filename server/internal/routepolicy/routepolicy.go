@@ -22,6 +22,7 @@ var publicOperations = []string{
 	"GET /v1/app/releases",
 	"POST /v1/telemetry/active",
 	"POST /v1/feedback",
+	"POST /v1/payments/alipay/notify",
 }
 
 // uploadOperations 是写入云端数据的操作，按账号限制请求频率。

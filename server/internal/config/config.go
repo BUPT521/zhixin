@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/payment"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 )
@@ -29,6 +30,8 @@ type Config struct {
 	// DatabaseURL is the PostgreSQL DSN. Empty means the in-memory store,
 	// which is only for local development and tests.
 	DatabaseURL string
+	Alipay      *payment.Gateway
+	AlipayOffer payment.Offer
 	// Location decides where a "day" starts for the model quota.
 	Location *time.Location
 
@@ -458,6 +461,34 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("ZHIXIN_TELEMETRY_SECRET is required when ZHIXIN_DATABASE_URL is set: install hashes would change on restart"))
 		}
 	}
+	amountFen, amountErr := strconv.ParseInt(get("ZHIXIN_ALIPAY_QUOTA_AMOUNT_FEN", "0"), 10, 64)
+	tokens, tokensErr := strconv.ParseInt(get("ZHIXIN_ALIPAY_QUOTA_TOKENS", "0"), 10, 64)
+	cfg.AlipayOffer = payment.Offer{AmountFen: amountFen, Tokens: tokens}
+	if (cfg.AlipayOffer.AmountFen == 0) != (cfg.AlipayOffer.Tokens == 0) ||
+		amountErr != nil || tokensErr != nil || amountFen < 0 || tokens < 0 ||
+		amountFen > 99999999 || tokens > 1000000000000 {
+		errs = append(errs, errors.New("支付宝额度包价格（分）与 token 数须同时配置，或同时设为 0"))
+	}
+	appID := get("ZHIXIN_ALIPAY_APP_ID", "")
+	sellerID := get("ZHIXIN_ALIPAY_SELLER_ID", "")
+	notifyURL := get("ZHIXIN_ALIPAY_NOTIFY_URL", "")
+	privateKey := get("ZHIXIN_ALIPAY_PRIVATE_KEY", "")
+	publicKey := get("ZHIXIN_ALIPAY_PUBLIC_KEY", "")
+	if appID != "" || sellerID != "" || notifyURL != "" || privateKey != "" || publicKey != "" || cfg.AlipayOffer.Tokens > 0 {
+		if cfg.DatabaseURL == "" {
+			errs = append(errs, errors.New("支付宝收款需要 ZHIXIN_DATABASE_URL 保存订单和额度"))
+		}
+		mode := get("ZHIXIN_ALIPAY_MODE", "sandbox")
+		if mode != "sandbox" && mode != "production" {
+			errs = append(errs, errors.New("ZHIXIN_ALIPAY_MODE 必须是 sandbox 或 production"))
+		}
+		gateway, err := payment.NewGateway(appID, sellerID, notifyURL, privateKey, publicKey, mode == "sandbox")
+		if err != nil {
+			errs = append(errs, err)
+		}
+		cfg.Alipay = gateway
+	}
+
 	// 带 key 的上游地址由管理后台保存，地址在保存时校验（见 llmproxy.Admin）。
 	if cfg.AccessTTL >= cfg.RefreshTTL && len(errs) == 0 {
 		errs = append(errs, errors.New("ZHIXIN_ACCESS_TTL must be shorter than ZHIXIN_REFRESH_TTL"))

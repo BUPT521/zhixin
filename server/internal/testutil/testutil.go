@@ -127,6 +127,18 @@ func (Base) DeleteV1MeApiKeysId(w http.ResponseWriter, _ *http.Request, _ string
 func (Base) DeleteV1MeApiKeys(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) GetV1MeModelQuotaPurchases(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1MeModelQuotaPurchases(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) GetV1MeModelQuotaPurchasesId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1PaymentsAlipayNotify(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) PostV1AuthLogin(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

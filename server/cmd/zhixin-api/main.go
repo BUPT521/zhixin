@@ -43,13 +43,24 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{Objects: objects})
+		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{
+			Objects: objects, PurchasedQuotaEnabled: cfg.Alipay != nil,
+			PurchasedQuotaSandbox: cfg.Alipay != nil && cfg.Alipay.Sandbox(),
+		})
 		if err != nil {
 			return err
 		}
 		defer pgStore.Close()
 		if cfg.ApplySchema {
 			if err := pgStore.ApplySchema(context.Background()); err != nil {
+				return err
+			}
+		}
+		if cfg.Alipay != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			err := pgStore.CheckPurchaseSchema(ctx)
+			cancel()
+			if err != nil {
 				return err
 			}
 		}
@@ -81,6 +92,9 @@ func run(log *slog.Logger) error {
 				}
 				return objects.Ping(ctx)
 			},
+		}
+		if cfg.Alipay != nil {
+			stores.Payments = pgStore
 		}
 	}
 	if cfg.AdminToken == "" {

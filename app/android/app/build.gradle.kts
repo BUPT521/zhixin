@@ -44,6 +44,10 @@ logger.lifecycle(
     },
 )
 
+dependencies {
+    implementation("com.alipay.sdk:alipaysdk-android:15.8.42")
+}
+
 android {
     // Flutter 任务从同名 Gradle 属性读 dart-define；项目属性是只读的，这里写同名的
     // 系统属性，Gradle 9 读项目属性时会回落到它。命令行传进来的同名数组优先，两边

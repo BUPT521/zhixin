@@ -11,6 +11,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
+	"github.com/BUPT521/zhixin/server/internal/payment"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -26,6 +27,7 @@ type routes struct {
 	backups   *backup.Handler
 	blobs     *blobs.Handler
 	llm       *llmproxy.Proxy
+	payments  *payment.Handler
 	llmAdmin  *llmproxy.Admin
 	feedback  *feedback.Handler
 	release   *release.Handler
@@ -157,6 +159,19 @@ func (rt routes) GetV1BackupsId(w http.ResponseWriter, r *http.Request, id strin
 }
 func (rt routes) DeleteV1BackupsId(w http.ResponseWriter, r *http.Request, id string) {
 	rt.backups.Delete(w, r, id)
+}
+
+func (rt routes) GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request) {
+	rt.payments.Overview(w, r)
+}
+func (rt routes) PostV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request) {
+	rt.payments.Checkout(w, r)
+}
+func (rt routes) GetV1MeModelQuotaPurchasesId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.payments.Status(w, r, id)
+}
+func (rt routes) PostV1PaymentsAlipayNotify(w http.ResponseWriter, r *http.Request) {
+	rt.payments.Notify(w, r)
 }
 
 func (rt routes) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { rt.llm.Models(w, r) }
