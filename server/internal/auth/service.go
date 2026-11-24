@@ -22,6 +22,7 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -101,6 +102,12 @@ type Service struct {
 	// 账号、会话与请求标识，不含令牌。
 	securityLog *slog.Logger
 
+	// keyTouchMu 与 keyTouch 记录每把模型代理密钥最近一次尝试写 last_used_at 的
+	// 时刻，十分钟内重复使用同一把密钥时跳过数据库；存储层的条件更新仍是最终
+	// 频率约束，多实例部署时各实例各记一份。
+	keyTouchMu sync.Mutex
+	keyTouch   map[string]time.Time
+
 	// 验证码按登录方式分发：senders 为 nil 时请求返回 ErrMailUnavailable；
 	// codeSecret 用来给六位验证码做 HMAC，避免库里的哈希被穷举。
 	senders      CodeSender
@@ -161,6 +168,7 @@ func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
 	return &Service{
 		store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL,
 		maxSessions: defaultMaxSessions, unverifiedKeep: defaultUnverifiedKeep,
+		keyTouch: map[string]time.Time{},
 	}
 }
 

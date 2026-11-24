@@ -21,9 +21,9 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 // Middleware 对除公开操作以外的已匹配路由校验 Bearer 令牌，并把调用者放进
 // 请求上下文。
 //
-// 凭据有两种，靠固定前缀区分：zx_ 开头的是模型代理密钥，其余是访问令牌。密钥
-// 只接受 /v1/llm 下的模型接口，访问其余受保护路由时回 403 key_scope_denied；
-// 密钥本身不参与登录，也不持有学习数据（ADR-0063）。
+// 凭据有两种，靠固定前缀、长度与校验码区分：zx_ 开头的是模型代理密钥，其余是访问
+// 令牌。密钥只接受 /v1/llm 下的模型接口，访问其余受保护路由时回 403
+// key_scope_denied；密钥本身不参与登录，也不持有学习数据（ADR-0063）。
 //
 // 是否要求令牌只由 r.Pattern 决定：生成的路由处理器里，mux 已经把注册模式
 // （例如 "GET /v1/me"）写进 r.Pattern。编码路径先归一再匹配，HEAD 落到 GET

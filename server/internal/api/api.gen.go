@@ -544,7 +544,7 @@ type ApiKeyCreated struct {
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
 
-	// Key 完整密钥，只在这一次返回；调用模型时放在 `Authorization: Bearer` 里
+	// Key 完整密钥，只在这一次返回；形如 `zx_` 加 32 位随机字符再加 4 位校验码，共 39 个字符，调用模型时放在 `Authorization: Bearer` 里
 	Key    string `json:"key"`
 	Name   string `json:"name"`
 	Prefix string `json:"prefix"`

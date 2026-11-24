@@ -1273,7 +1273,7 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。`zx_` 开头的是模型代理密钥，只接受 `/v1/llm` 下的模型接口，与账号共用额度，没有有效期（ADR-0063）。
+      description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。`zx_` 开头、共 39 个字符的是模型代理密钥，末尾 4 位是校验码；密钥只接受 `/v1/llm` 下的模型接口，与账号共用额度，没有有效期（ADR-0063）。
     admin:
       type: http
       scheme: bearer
@@ -1778,7 +1778,7 @@ components:
         prefix: { type: string }
         key:
           type: string
-          description: "完整密钥，只在这一次返回；调用模型时放在 `Authorization: Bearer` 里"
+          description: "完整密钥，只在这一次返回；形如 `zx_` 加 32 位随机字符再加 4 位校验码，共 39 个字符，调用模型时放在 `Authorization: Bearer` 里"
         created_at: { type: string, format: date-time }
     Model:
       type: object

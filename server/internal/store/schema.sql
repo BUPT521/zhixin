@@ -83,10 +83,10 @@ CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);
 
 -- 模型代理的接入密钥：给用户自己的脚本或第三方工具调用 /v1/llm 下的模型接口，
 -- 不参与登录，也不持有学习数据（ADR-0063）。与访问令牌共用 Authorization: Bearer
--- 头，靠 zx_ 前缀与长度区分；只存整个密钥的 SHA-256，prefix 只留前几位供列表与撤销时
--- 辨认。没有有效期列：密钥不过期，只能由用户显式撤销，撤销写 revoked_at 并保留
--- 这一行，列表里仍能看到它，撤销超过 30 天的行由每日清理删除。账号删掉时随外键
--- 级联删除；重设密码与刷新令牌重放检测都会撤销这个账号的全部密钥。
+-- 头，靠 zx_ 前缀、长度与末尾校验码区分；只存整个密钥的 SHA-256，prefix 只留前几位
+-- 供列表与撤销时辨认。没有有效期列：密钥不过期，只能由用户显式撤销，撤销写
+-- revoked_at 并保留这一行，列表里仍能看到它，撤销超过 30 天的行由每日清理删除。
+-- 账号删掉时随外键级联删除；重设密码与刷新令牌重放检测都会撤销这个账号的全部密钥。
 CREATE TABLE api_key (
   id           TEXT PRIMARY KEY,
   user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,

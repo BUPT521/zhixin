@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -232,9 +233,9 @@ func TestDeleteUserRemovesAPIKeys(t *testing.T) {
 	}
 }
 
-// TestLooksLikeAPIKeyChecksLength 守住类型区分：以 zx_ 开头但长度是访问令牌的
-// 43 个字符时不能当成密钥，否则随机生成的访问令牌有极小概率被误判。
-func TestLooksLikeAPIKeyChecksLength(t *testing.T) {
+// TestLooksLikeAPIKeyChecksShape 守住类型区分与格式校验：以 zx_ 开头但长度是访问
+// 令牌的 43 个字符时不能当成密钥，长度对而校验码不对的串同样在查库之前被拒掉。
+func TestLooksLikeAPIKeyChecksShape(t *testing.T) {
 	svc, userID, _ := newKeyTestService(t)
 	_, secret, err := svc.CreateAPIKey(context.Background(), Principal{UserID: userID}, "")
 	if err != nil {
@@ -243,8 +244,62 @@ func TestLooksLikeAPIKeyChecksLength(t *testing.T) {
 	if !LooksLikeAPIKey(secret) {
 		t.Fatalf("签发的密钥应被认出来：%q", secret)
 	}
+	if len(secret) != apiKeyLength {
+		t.Fatalf("密钥长度应为 %d，得到 %d", apiKeyLength, len(secret))
+	}
 	if LooksLikeAPIKey(APIKeyPrefix + strings.Repeat("a", 40)) {
 		t.Fatal("43 个字符的访问令牌不应被当成密钥")
+	}
+	tampered := secret[:len(secret)-1] + "A"
+	if tampered == secret {
+		tampered = secret[:len(secret)-1] + "B"
+	}
+	if LooksLikeAPIKey(tampered) {
+		t.Fatalf("校验码不对的串不应被当成密钥：%q", tampered)
+	}
+}
+
+// countingTouchStore 在内存存储外面数 TouchKey 的调用次数，用于核对进程内节流。
+type countingTouchStore struct {
+	*MemoryStore
+	touches atomic.Int64
+}
+
+func (s *countingTouchStore) TouchKey(ctx context.Context, id string) error {
+	s.touches.Add(1)
+	return s.MemoryStore.TouchKey(ctx, id)
+}
+
+// TestAuthenticateAPIKeyThrottlesTouch 核对最近使用时间在进程内按十分钟节流：
+// 十分钟内重复使用同一把密钥只尝试写一次数据库，超过之后再写一次（ADR-0063）。
+func TestAuthenticateAPIKeyThrottlesTouch(t *testing.T) {
+	c := &clock{t: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
+	store := &countingTouchStore{MemoryStore: NewMemoryStore()}
+	svc := NewService(store, time.Hour, 24*time.Hour)
+	svc.now = c.now
+	ctx := context.Background()
+	tok, err := svc.Register(ctx, "touch@b.cn", "password1", "")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	_, secret, err := svc.CreateAPIKey(ctx, Principal{UserID: tok.UserID}, "脚本")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := svc.AuthenticateAPIKey(ctx, secret); err != nil {
+			t.Fatalf("authenticate %d: %v", i+1, err)
+		}
+	}
+	if got := store.touches.Load(); got != 1 {
+		t.Fatalf("十分钟内应只尝试写一次最近使用时间，得到 %d", got)
+	}
+	c.t = c.t.Add(keyTouchInterval + time.Second)
+	if _, err := svc.AuthenticateAPIKey(ctx, secret); err != nil {
+		t.Fatalf("authenticate after interval: %v", err)
+	}
+	if got := store.touches.Load(); got != 2 {
+		t.Fatalf("超过十分钟应按同一粒度再写一次，得到 %d", got)
 	}
 }
 
