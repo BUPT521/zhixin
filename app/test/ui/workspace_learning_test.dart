@@ -2,18 +2,107 @@ import 'dart:io';
 
 import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
+import 'package:zhixin/ai/llm_client.dart';
+import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/models/result.dart';
+import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/ui/discussion_page.dart';
 import 'package:zhixin/ui/learning_page.dart';
 
+import '../support/fake_server.dart';
+import '../support/sync_rig.dart';
 import 'workspace_support.dart';
+
+class _RetryHelpAi implements BuddyAi {
+  final modes = <BuddyMode>[];
+
+  @override
+  Future<Result<LlmConfig?>> config() async => const Success(LlmConfig());
+
+  @override
+  Future<BuddyReply> ask({
+    required BuddyContext context,
+    required List<ChatMessage> history,
+    required String text,
+    String? inputMessageId,
+    List<LlmImage> images = const [],
+    void Function(String text)? onText,
+    LlmCancelToken? cancelToken,
+    LlmConfigSnapshot? configSnapshot,
+  }) async {
+    modes.add(context.mode);
+    return modes.length == 1
+        ? const BuddyReply(text: '先列出已知条件', truncated: true)
+        : const BuddyReply(text: '补全后的提示');
+  }
+}
 
 void main() {
   registerWorkspaceTests();
+
+  testWidgets('重开学习页保留截断提示，使用原题与相同模式重试', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final ai = _RetryHelpAi();
+    final server = FakeServer();
+    await openApp(
+      tester,
+      ai: ai,
+      size: const Size(390, 1400),
+      serverClientFactory: (base) =>
+          ServerClient(baseUrl: base, httpClient: server.client),
+    );
+    final id = (await tester.runAsync(() async {
+      final account = scope!.accountServices.account;
+      await account.setServerBaseUrl(syncTestServerUrl);
+      await account.register(
+        identifier: 'retry@example.test',
+        password: syncTestPassword,
+      );
+      await scope!.settings.edit.saveConfig(const LlmConfig());
+      expect(await scope!.modelReady(), isTrue);
+      final id = await scope!.chat.learning.capture(stem: '原题：证明等式');
+      await scope!.chat.learning.help(questionId: id, mode: BuddyMode.hint);
+      return id;
+    }))!;
+    final navigator = tester.state<NavigatorState>(
+      find.byType(Navigator).first,
+    );
+    navigator.push(
+      MaterialPageRoute<void>(builder: (_) => LearningPage(questionId: id)),
+    );
+    await settle(tester);
+    expect(find.textContaining('先列出已知条件', findRichText: true), findsWidgets);
+    expect(find.textContaining('回答被截断'), findsOneWidget);
+
+    final retry = find.text('重试这次回答');
+    for (var i = 0; i < 20 && retry.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(retry, findsOneWidget);
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await settle(tester);
+    expect(ai.modes, [BuddyMode.hint, BuddyMode.hint]);
+    final view = (await tester.runAsync(() => scope!.chat.learning.view(id)))!;
+    expect(view.question.stem, '原题：证明等式');
+    final helps = view.openAttempt!.helps;
+    expect(helps.map((help) => help.content), ['先列出已知条件', '补全后的提示']);
+    expect(helps.first.notices, [Notice.answerTruncated]);
+    expect(helps.last.notices, isEmpty);
+    expect(find.textContaining('补全后的提示', findRichText: true), findsWidgets);
+    expect(retry, findsNothing);
+  });
 
   testWidgets('学习页可以进入先不看上次答案的独立重做', (tester) async {
     await openApp(tester);
@@ -157,13 +246,12 @@ void main() {
     );
     await settle(tester);
 
-    expect(find.text('查看全部 3 次帮助'), findsOneWidget);
-    expect(find.textContaining('· 提示：'), findsNWidgets(2));
     await tester.scrollUntilVisible(
       find.text('查看全部 3 次帮助'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
+    expect(find.textContaining('· 提示：'), findsNWidgets(2));
     await tester.tap(find.text('查看全部 3 次帮助'));
     await settle(tester);
     expect(find.text('收起较早帮助'), findsOneWidget);

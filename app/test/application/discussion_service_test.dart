@@ -299,21 +299,33 @@ void main() {
     expect(messages.last.payload?.stopped, isTrue);
   });
 
-  test('流中断时保留已经显示的部分并标记中断', () async {
+  test('流中断保存部分回答，重试复用原问题与原图', () async {
+    const memory = MemoryDraft(
+      kind: MemoryKind.semantic,
+      content: '用户希望先看定义',
+      source: MemorySource.user,
+    );
     final h = _Harness(
+      config: const LlmConfig(apiKey: 'test'),
       reply: const BuddyReply(
         text: '先看定义',
         interrupted: true,
         interruptedReason: '网络不可用',
+        memories: [memory],
       ),
     );
     await h.open();
     addTearDown(h.db.close);
     h.ai.streamChunks = const ['先看定义'];
+    const imageBytes = [7, 8, 9];
+    final image = File('${h.rig.filesDir}/question_images/test.jpg');
+    await image.parent.create(recursive: true);
+    await image.writeAsBytes(imageBytes);
 
     final partials = <String>[];
     final result = await h.service.reply(
       text: '为什么这里需要独立性？',
+      imagePaths: ['test.jpg'],
       onPartial: partials.add,
     );
 
@@ -330,11 +342,12 @@ void main() {
     expect(messages.last.payload?.fromModel, isTrue);
     expect(messages.last.payload?.interrupted, isTrue);
     expect(messages.last.payload?.modelFailed, isFalse);
+    expect(await h.memories.list(), isEmpty);
+    expect(h.ai.images.single.bytes, imageBytes);
+    await image.delete();
 
     // 中断之后仍然可以补一条完整回答，用户消息不重复。
-    h.ai
-      ..configValue = const LlmConfig(apiKey: 'test')
-      ..reply = const BuddyReply(text: '完整回答');
+    h.ai.reply = const BuddyReply(text: '完整回答', memories: [memory]);
     final retried = await h.service.reply(
       conversationId: result.userMessage.conversationId,
       repeatLast: true,
@@ -342,11 +355,16 @@ void main() {
     expect(retried.fromModel, isTrue);
     expect(retried.reply, '完整回答');
     expect(retried.userMessage.id, result.userMessage.id);
+    expect(retried.userMessage.imagePaths, [AssetStore.hashBytes(imageBytes)]);
+    expect(h.ai.lastText, '为什么这里需要独立性？');
+    expect(h.ai.images.single.bytes, imageBytes);
     final afterRetry = await h.service.history(
       result.userMessage.conversationId,
     );
     expect(afterRetry, hasLength(3));
+    expect(afterRetry[1].interrupted, isTrue);
     expect(afterRetry.last.content, '完整回答');
+    expect((await h.memories.list()).single.content, memory.content);
   });
 
   test('长讨论只读到字数预算为止，原问题仍在历史里', () async {

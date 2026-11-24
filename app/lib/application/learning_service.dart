@@ -522,7 +522,8 @@ class LearningService {
       final modelAnswer = answer;
       if (modelAnswer != null &&
           !modelAnswer.stopped &&
-          !modelAnswer.interrupted) {
+          !modelAnswer.interrupted &&
+          !modelAnswer.truncated) {
         final drafts = uniqueById(
           modelAnswer.memories,
           (draft) => draft.contentId,
@@ -549,6 +550,9 @@ class LearningService {
             content: text,
             at: runtime.policy.now,
             memories: suggestions,
+            fromModel: fromModel,
+            notices: notices,
+            failureName: run.failure?.name,
           ),
           transaction: txn,
         );

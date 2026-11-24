@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../rules/coded_enum.dart';
+import '../rules/notices.dart';
 import 'chat_message_payload.dart';
 
 /// 一条消息的作者角色（01 `message.role`）。
@@ -60,6 +61,9 @@ class ChatMessage {
 
   /// 这条回答是否在生成中断；历史记录里仍要标出来。
   bool get interrupted => payload?.interrupted == true;
+
+  bool get truncated =>
+      payload?.notices.contains(Notice.answerTruncated) == true;
 
   static String? encodePaths(List<String> paths) {
     final cleaned = paths

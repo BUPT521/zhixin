@@ -624,7 +624,7 @@ class DiscussionService {
       modelFailed = outcome.modelFailed;
       notices = outcome.notices;
       detail = outcome.detail;
-      if (fromModel && !stopped && !interrupted) {
+      if (fromModel && !stopped && !interrupted && !answer.truncated) {
         nextSteps = uniqueById(
           answer.nextSteps,
           (draft) => draft.contentId,
@@ -639,8 +639,13 @@ class DiscussionService {
       nextSteps = localNextStep(facts, text: text);
     }
 
-    final drafts = fromModel && !stopped && !interrupted
-        ? (answer?.memories ?? const <MemoryDraft>[])
+    final drafts =
+        answer != null &&
+            fromModel &&
+            !stopped &&
+            !interrupted &&
+            !answer.truncated
+        ? answer.memories
         : const <MemoryDraft>[];
     final scope = resolved.scope;
     final memoryItems = <MemoryDraft>[];

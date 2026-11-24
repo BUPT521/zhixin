@@ -1212,7 +1212,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 回答下方唯一的恢复入口：只挂在最后一条回答上。
   ///
   /// 没登录时给登录入口；登录之后，本地规则回答给「用模型重新回答」，
-  /// 模型失败或生成中断的回答给「重试这次回答」。失败说明随回答保存在消息里，
+  /// 模型失败、截断、中断或停止的回答给「重试这次回答」。失败说明随回答保存在消息里，
   /// 重新打开讨论后仍在这一条回答下方，不只是一次性提示。
   Widget? _localFooter(int index) {
     if (index != _messages.length - 1) return null;
@@ -1220,10 +1220,11 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (message.role != MessageRole.assistant) return null;
     final payload = message.payload;
     final fromModel = payload?.fromModel == true;
-    final interrupted = message.interrupted;
-    if (fromModel && !interrupted) return null;
+    final unfinished =
+        message.interrupted || message.truncated || message.stopped;
+    if (fromModel && !unfinished) return null;
     final failed = payload?.modelFailed == true;
-    final label = failed || interrupted ? '重试这次回答' : '用模型重新回答';
+    final label = failed || unfinished ? '重试这次回答' : '用模型重新回答';
     final saved = savedAnswerStatus(message);
     // 失败说明随回答保存，重新打开讨论时由按状态重新写出的同一句话显示。
     final failureNotice = failed ? savedAnswerNoticeText(saved) : null;

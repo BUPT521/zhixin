@@ -9,6 +9,7 @@ import 'theme.dart';
 
 import '../ai/llm_client.dart';
 import '../app_scope.dart';
+import '../application/answer_outcome.dart';
 import '../domain/models/buddy_protocol.dart';
 import '../application/learning_service.dart';
 import '../application/memory_view.dart';
@@ -59,7 +60,6 @@ class _LearningPageState extends State<LearningPage> {
   String? _readError;
 
   bool _busy = false;
-  String? _help;
   String? _notice;
   bool _started = false;
   bool _leaving = false;
@@ -72,11 +72,8 @@ class _LearningPageState extends State<LearningPage> {
   /// 已经展开全部帮助的尝试；默认只显示最近两条，更早的仍然可以查看。
   final Set<String> _expandedHelps = <String>{};
 
-  /// 模型是否可用（已经登录），以及上一次求助的模式与来源；用来决定能否重取。
+  /// 模型是否可用（已经登录）；求助的模式和收尾状态随帮助记录读取。
   bool _configured = false;
-  BuddyMode? _lastMode;
-  bool _lastFromModel = true;
-  bool _lastInterrupted = false;
 
   /// 作答草稿留在学习页上，检查与提交都读这一份；未提交的尝试是它的保存处。
   final _answerDraft = TextEditingController();
@@ -358,8 +355,6 @@ class _LearningPageState extends State<LearningPage> {
     setState(() {
       _busy = true;
       _notice = null;
-      _help = null;
-      _lastInterrupted = false;
       _generating = true;
     });
     // 检查、提示与讲解都读已经保存的尝试，先把草稿落下再看题。
@@ -393,11 +388,7 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _generating = false;
-        _help = nullableText(result.text);
         _notice = answerNoticeText(result.outcome);
-        _lastMode = mode;
-        _lastFromModel = result.fromModel;
-        _lastInterrupted = result.interrupted;
       });
       if (!mounted) return;
       if (!result.fromModel &&
@@ -408,7 +399,6 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _generating = false;
-        _help = null;
         _notice = describeFailure(
           context,
           error,
@@ -509,13 +499,6 @@ class _LearningPageState extends State<LearningPage> {
     );
   }
 
-  /// 配置好模型之后，用同一种方式重新请求一次帮助。
-  Future<void> _retryHelp() async {
-    final mode = _lastMode;
-    if (mode == null) return;
-    await _ask(mode);
-  }
-
   /// 进入独立重做：新建一条未提交尝试，先隐藏以前的答案与帮助，再把空白草稿
   /// 放到页面上；提交后恢复显示历次尝试。
   Future<void> _startRedo() async {
@@ -530,7 +513,6 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _independentRedo = true;
-        _help = null;
         _answerDraft.clear();
         _solutionDraft.clear();
         _feedbackDraft.clear();
@@ -589,7 +571,6 @@ class _LearningPageState extends State<LearningPage> {
       // 提交之后这条尝试不再可改：表单的复位由订阅回填新的一屏完成。
       setState(() {
         _independentRedo = false;
-        _help = null;
       });
       showToast(context, '这次作答已经记下');
     } catch (error, stack) {
@@ -1261,24 +1242,46 @@ class _LearningTimeline extends BuddyTimelineAdapter {
   @override
   List<BuddyTimelineEntry> get entries {
     final state = _state;
+    final latest = state._view?.openAttempt?.helps.lastOrNull;
+    final help = state._generating || latest?.fromModel == null ? null : latest;
+    final mode = switch (help?.kind) {
+      'hint' => BuddyMode.hint,
+      'explain' => BuddyMode.explain,
+      'check' => BuddyMode.check,
+      _ => null,
+    };
+    final notices = help?.notices ?? const [];
+    final retry =
+        notices.contains(Notice.modelCallFailed) ||
+        notices.contains(Notice.generationInterrupted) ||
+        notices.contains(Notice.answerTruncated) ||
+        notices.contains(Notice.userStopped);
+    final notice =
+        state._notice ??
+        savedAnswerNoticeText(
+          SavedAnswerStatus(
+            notices: notices,
+            failure: llmFailureFromName(help?.failureName),
+          ),
+          keptPartial: help?.fromModel == true,
+        );
     return [
-      if (state._help != null || state._generating)
+      if (help != null || state._generating)
         BuddyHelpEntry(
-          text: state._help,
+          text: help?.content,
           generating: state._generating,
           streaming: state._streamingHelp,
         ),
       for (final item in state._memoryItems) BuddyMemoryEntry(item),
-      if (state._notice != null)
+      if (notice != null)
         BuddyNoticeEntry(
-          message: state._notice!,
+          message: notice,
           actions: [
-            if (state._help != null &&
-                (!state._lastFromModel || state._lastInterrupted))
+            if (mode != null && (retry || help?.fromModel == false))
               ModelRecoveryButtons(
                 signedIn: state._configured,
-                primaryLabel: state._lastInterrupted ? '重试这次回答' : '用模型重新获取',
-                onPrimary: state._retryHelp,
+                primaryLabel: retry ? '重试这次回答' : '用模型重新获取',
+                onPrimary: () => state._ask(mode),
                 onSignIn: state._openSettings,
                 enabled: !state._busy,
               ),

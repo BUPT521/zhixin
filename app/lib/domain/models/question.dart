@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../rules/notices.dart';
 import '../rules/time_format.dart';
 import 'memory_draft.dart';
 
@@ -164,6 +165,9 @@ class HelpEntry {
     required this.content,
     required this.at,
     this.memories = const [],
+    this.fromModel,
+    this.notices = const [],
+    this.failureName,
   });
 
   /// `hint` / `explain` / `check` / `discuss`。
@@ -173,9 +177,19 @@ class HelpEntry {
 
   /// 这条帮助给出的记忆建议；没有建议时为空。
   final List<MemoryDraft> memories;
+  final bool? fromModel;
+  final List<Notice> notices;
+  final String? failureName;
 
-  HelpEntry withMemories(List<MemoryDraft> memories) =>
-      HelpEntry(kind: kind, content: content, at: at, memories: memories);
+  HelpEntry withMemories(List<MemoryDraft> memories) => HelpEntry(
+    kind: kind,
+    content: content,
+    at: at,
+    memories: memories,
+    fromModel: fromModel,
+    notices: notices,
+    failureName: failureName,
+  );
 
   Map<String, Object?> toJson() => {
     'kind': kind,
@@ -183,6 +197,10 @@ class HelpEntry {
     'at': at == null ? null : formatDateTime(at!),
     if (memories.isNotEmpty)
       'memories': [for (final memory in memories) memory.toJson()],
+    if (fromModel != null) 'from_model': fromModel,
+    if (notices.isNotEmpty)
+      'notices': [for (final notice in notices) notice.value],
+    if (failureName != null) 'model_failure': failureName,
   };
 
   static HelpEntry? fromJson(Object? value) {
@@ -190,6 +208,9 @@ class HelpEntry {
     final kind = value['kind'];
     final content = value['content'];
     final at = value['at'];
+    final fromModel = value['from_model'];
+    final notices = value['notices'];
+    final failureName = value['model_failure'];
     if (kind is! String || content is! String) return null;
     final DateTime? parsedAt;
     try {
@@ -202,6 +223,13 @@ class HelpEntry {
       content: content,
       at: parsedAt,
       memories: MemoryDraft.decodeList(value['memories']),
+      fromModel: fromModel is bool ? fromModel : null,
+      notices: [
+        if (notices is List)
+          for (final notice in notices.whereType<String>())
+            ?noticeFromValue(notice),
+      ],
+      failureName: failureName is String ? failureName : null,
     );
   }
 
