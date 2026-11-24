@@ -185,6 +185,8 @@ server/
 
 一个对外模型可以有多条路由，请求按优先级从小到大尝试，同组按权重随机排列，最多执行 `ZHIXIN_LLM_MAX_ATTEMPTS` 次。连接建立失败或 HTTP 401 会跳过本次请求中同来源的其他候选，模型响应异常只影响对应路由。冷却期间暂停普通请求，冷却到期后每个来源或路由只允许一次并发试探，完成有效请求后恢复常规分流。响应已经开始转发时由原路由收尾，流式完成、未完成和失败的判定见 [ADR-0059](../docs/adr/0059-模型路由按故障范围切换与恢复.md)。
 
+客户端在请求头 `X-Zhixin-Round-Budget-Ms` 里带这一轮剩下的时间，单位毫秒，从用户发出提问开始计算，工具调用后的后续请求沿用同一份预算。服务端按 `ZHIXIN_LLM_ROUND_BUDGET_MAX` 截断这个值，再把它用作整段回答、流式空闲等待与每次尝试等待首个有效输出的时限；候选还有多条时，等待首字的份额按还能尝试的候选数平分，所以首发与备用都落在同一轮预算内，不会出现客户端先结束等待、服务端还在等下一条来源的情况。一次尝试在首字时限内没有响应头时换下一条候选，这一轮预算在没有任何来源交付有效输出之前用完时，服务端中断上游请求并回 504 `upstream_failed`，客户端据此结束这一轮并给出重试入口。没有带这个请求头时（旧客户端与管理端探测）只按本机时限执行。
+
 对话只接受 Responses 的字段：`model`、`instructions`、`input`、`max_output_tokens`、`temperature`、`top_p`、`store`、`stream`、`tools`、`tool_choice`、`parallel_tool_calls`、`reasoning` 与 `text`，其余字段直接回 400，`input` 必须是数组。`store` 可以出现在请求里，服务端一律改写成 `false`，也不保存会话，客户端每一轮都发完整上下文。客户端不再发送 `temperature` 与 `top_p`，管理端的探测与排查仍可带这两个字段。输出上限取 16 到 32768，与客户端 `buddyMaxOutputTokens` 相同，省略时补 4096；超出范围回 400 `invalid_request`。每次尝试按请求字节与输出上限预留，然后按 `usage.total_tokens` 结算，缺少 `total_tokens` 时按 `input_tokens` 与 `output_tokens` 相加；流式响应从 `response.completed` 事件里的 `usage` 取用量，拿不到时保留预留值。嵌入按输入字节预留与估算，发生错误或换路由时也会结算已发出的批次。额度默认值只是占位，实际数字待内测用量出来之后再定。
 
 嵌入走 `POST /v1/llm/embeddings`，请求与响应是 OpenAI 的格式，`input` 只接受字符串或字符串数组，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条，客户端在语义索引页选“知新服务”时，`RemoteEmbeddingClient` 每次请求前取 `<服务地址>/v1/llm` 与当前访问令牌，模型从列表里 `kind` 为 `embedding` 的项中选。路由的 `max_batch` 大于 0 时，服务端按条数拆批，普通请求同时最多发出四批，试探时逐批发出，最后按原顺序合并并从 0 连续编号。一批出现可重试故障时，下一条路由重新执行整次请求，因此每次请求的向量都来自同一条路由。配置了维度时逐条核对向量长度，返回维度不符按路由故障处理，客户端请求的 `dimensions` 与配置不一致时返回 400。`GET /v1/llm/models` 的每一项带 `kind`（`chat` 或 `embedding`），嵌入模型配置了维度时带 `dimensions`。
@@ -193,7 +195,7 @@ server/
 
 嵌入向量另有按账号隔离的缓存，目的是消除换机、索引重建与模型在 A、B 之间切换时的重复嵌入与费用（[ADR-0030](../docs/adr/0030-服务端不建检索索引.md) 决定第 2、3 条）。客户端在自动同步开启、且这次是索引刷新时，给 `POST /v1/llm/embeddings` 带 `X-Zhixin-Embedding-Cache: 1`，服务端在嵌入成功之后按每条输入的 SHA-256 写进 `embedding_cache`，重复写入不覆盖已有的行；检索查询的嵌入不带这个头，未登录与同步关闭的用户因此不会留下派生数据；客户端没有其他嵌入来源，本机哈希不联网也不经过服务端。索引刷新先调 `POST /v1/llm/embeddings/lookup`，请求体是 `model` 与 `hashes`（UTF-8 字节的 SHA-256 小写十六进制，单次最多 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 条）；命中返回小端序 FP16 的 base64 向量与 `dimensions`，全部未命中时 `vectors` 为空数组、不是错误，查找不消耗额度、不写 `llm_usage`。缓存随 `DELETE /v1/cloud` 与删除账号一起删除，清除期间带缓存头的嵌入照常返回但不写缓存；清除时缓存代次加一，清除之前发出、清除之后才落库的嵌入请求会因为代次对不上而放弃写入，清除成功的承诺不会因为在途请求而失效。每账号上限由 `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` 控制，写入之后按 `last_used_at` 删除最久未用的行。同名模型必须保持同一个向量空间：更换部署要换对外模型名，管理后台删除模型或改变维度时会先删掉这个模型的缓存行，再保存或删除，旧名字再次出现时不会命中上一个向量空间的向量。
 
-账号没有任何一种已验证登录方式时，聊天与嵌入请求均返回 403 `contact_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前返回 429。整个实例同时在途的请求还共用一份 `ZHIXIN_LLM_MAX_INSTANCE_BYTES` 的字节预算：请求体按声明长度的两倍（长度未知时按请求体上限）、非流式响应与嵌入请求按各自的上限在读进内存之前预留，占不到时同样回 429，实例内存因此不随账号数量上涨。非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按无效响应处理，流式响应的空闲时限与总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，响应开始转发后，超时会中断当前来源并结束响应。账号的用途额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算读的是 `llm_instance_usage` 里按自然日记的账本，删号与清空云端数据都不减少它，提供方已经计费的部分因此不会重新变成可用额度。最后一次上游尝试返回 429 时，代理按 429 `rate_limited` 返回并原样转出上游的 `Retry-After`，客户端据此提示稍后重试；其余上游拒绝仍按 `upstream_failed` 处理，两者都不带上游响应正文。
+账号没有任何一种已验证登录方式时，聊天与嵌入请求均返回 403 `contact_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前返回 429。整个实例同时在途的请求还共用一份 `ZHIXIN_LLM_MAX_INSTANCE_BYTES` 的字节预算：请求体按声明长度的两倍（长度未知时按请求体上限）、非流式响应与嵌入请求按各自的上限在读进内存之前预留，占不到时同样回 429，实例内存因此不随账号数量上涨。非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按无效响应处理，流式响应的空闲时限与总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，两者都不超过本轮剩余预算，响应开始转发后，超时会中断当前来源并结束响应。账号的用途额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算读的是 `llm_instance_usage` 里按自然日记的账本，删号与清空云端数据都不减少它，提供方已经计费的部分因此不会重新变成可用额度。最后一次上游尝试返回 429 时，代理按 429 `rate_limited` 返回并原样转出上游的 `Retry-After`，客户端据此提示稍后重试；其余上游拒绝仍按 `upstream_failed` 处理，两者都不带上游响应正文。
 
 聊天与嵌入各有一份每日额度，默认分别取 `ZHIXIN_LLM_DAILY_TOKENS` 与 `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS`，用量按账号、自然日与种类分别记在 `llm_usage`，实例当天的合计另记一份在 `llm_instance_usage`，两份在同一个事务里更新，删号只清账号那一份。嵌入的提供方没有返回 `usage` 时按输入字数估算。需要单独调整某个账号时在 `llm_quota` 表里写一行，两列分别对应聊天与嵌入，为空的一列用默认值；下一次请求就按新数字判定，不用重启服务，删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 同时返回两类的用量与额度，429 的 `extra.kind` 表示请求用途，响应同时给出实例总用量与预算。额度调整是运营动作，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
 
@@ -400,7 +402,9 @@ ORDER BY f.first_day;
 | `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` | `256` | 一次嵌入请求最多的输入条数，查找接口的 `hashes` 上限相同 |
 | `ZHIXIN_LLM_EMBEDDING_CACHE_BYTES` | `1073741824` | 每个账号的嵌入向量缓存上限（字节，默认 1 GiB）；写入之后按 `last_used_at` 删除最久未用的行，磁盘与出口流量要按实际用量监控 |
 | `ZHIXIN_LLM_MAX_ATTEMPTS` | `3` | 一次请求实际执行的路由尝试上限 |
-| `ZHIXIN_LLM_HEADER_TIMEOUT` | `60s` | 流式聊天与嵌入等待来源响应头的时间，超时换下一个来源；非流式聊天不设这个期限 |
+| `ZHIXIN_LLM_HEADER_TIMEOUT` | `60s` | 嵌入等待来源响应头的时间，超时换下一个来源；流式聊天改看 `ZHIXIN_LLM_FIRST_OUTPUT_TIMEOUT`，后者为空时退回这个值 |
+| `ZHIXIN_LLM_FIRST_OUTPUT_TIMEOUT` | `20s` | 一次流式聊天尝试等待首个有效输出的上限；候选有多条时再按本轮剩余预算平分，超时换下一条候选 |
+| `ZHIXIN_LLM_ROUND_BUDGET_MAX` | `5m` | 客户端本轮剩余预算的上限，超过时按这个值截断；整段回答、空闲等待与首字等待都不超过它 |
 | `ZHIXIN_ADMIN_TOKEN` | 空 | 管理后台的令牌，至少 32 个字符；为空时 `/admin` 一律 404 |
 | `ZHIXIN_ADMIN_RATE` | `0.05` | 管理令牌校验失败按来源地址的补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_ADMIN_BURST` | `5` | 管理令牌校验失败的桶容量 |
@@ -410,7 +414,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_LLM_CONCURRENT_PER_USER` | `4` | 同一账号同时进行的托管请求上限 |
 | `ZHIXIN_LLM_MAX_RESPONSE_BYTES` | `33554432` | 非流式响应上限，超过时按 `upstream_failed` 处理 |
 | `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` | `90s` | 流式响应两次收到数据之间的最长等待 |
-| `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` | `30m` | 一次流式聊天或嵌入请求的总时限 |
+| `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` | `30m` | 一次流式聊天或嵌入请求的总时限；有本轮预算时取它与剩余预算中较小的一个 |
 
 ## 部署与凭据
 
