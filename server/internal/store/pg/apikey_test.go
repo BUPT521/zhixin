@@ -3,6 +3,8 @@ package pg
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,5 +134,50 @@ func TestAPIKeyPruneRevokedKeys(t *testing.T) {
 	}
 	if removed, err := st.PruneRevokedKeys(ctx, now.Add(-48*time.Hour)); err != nil || removed != 0 {
 		t.Fatalf("保留期内的撤销行不应删除，得到 %d %v", removed, err)
+	}
+}
+
+// TestAPIKeyLimitIsAtomic 核对并发签发不会突破上限：同一账号的签发在事务级
+// advisory lock 上排队，25 个并发请求里只有 20 把落地，其余返回 ErrKeyLimit
+// （ADR-0063）。
+func TestAPIKeyLimitIsAtomic(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	user := auth.User{ID: "user-limit", PasswordHash: "hash"}
+	if err := createAccount(ctx, st, user, "limit@b.cn"); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	const attempts = 25
+	var wg sync.WaitGroup
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := auth.APIKey{
+				ID: fmt.Sprintf("concurrent-%02d", i), UserID: user.ID,
+				Name: "并发", Prefix: "zx_Limit0000",
+			}
+			results <- st.CreateKey(ctx, key, fmt.Sprintf("hash-%02d", i), 20)
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	var created, limited int
+	for err := range results {
+		switch {
+		case err == nil:
+			created++
+		case errors.Is(err, auth.ErrKeyLimit):
+			limited++
+		default:
+			t.Fatalf("并发签发返回意外错误：%v", err)
+		}
+	}
+	if created != 20 || limited != attempts-20 {
+		t.Fatalf("并发签发应成功 20 把、拒绝 %d 把，得到 %d 与 %d", attempts-20, created, limited)
+	}
+	if keys, err := st.KeysByUser(ctx, user.ID); err != nil || len(keys) != 20 {
+		t.Fatalf("并发签发之后应正好 20 把：%d %v", len(keys), err)
 	}
 }

@@ -225,6 +225,7 @@ func TestPostgresQuotaAttributesUsageToKey(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows: %v", err)
 	}
+	rows.Close()
 	if len(byKey) != 3 || byKey["key-a"] != 100 || byKey["key-b"] != 50 || byKey[""] != 20 {
 		t.Fatalf("用量应按密钥分开记，得到 %+v", byKey)
 	}
