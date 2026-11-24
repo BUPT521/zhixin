@@ -105,7 +105,7 @@ func (s *Store) Models(ctx context.Context) ([]llmproxy.ModelRecord, error) {
 		byModel[r.Model] = append(byModel[r.Model], llmproxy.Route{
 			ProviderID: r.ProviderID, UpstreamModel: r.UpstreamModel,
 			Priority: int(r.Priority), Weight: int(r.Weight), MaxBatch: int(r.MaxBatch),
-			Enabled: r.Enabled,
+			Enabled: r.Enabled, SupportsTools: r.SupportsTools, SupportsImages: r.SupportsImages,
 		})
 	}
 	out := make([]llmproxy.ModelRecord, 0, len(models))
@@ -150,7 +150,8 @@ func (s *Store) PutModel(ctx context.Context, m llmproxy.ModelRecord) error {
 		err := q.InsertLLMRoute(ctx, db.InsertLLMRouteParams{
 			Model: m.Name, ProviderID: r.ProviderID, UpstreamModel: r.UpstreamModel,
 			Priority: int32(r.Priority), Weight: int32(r.Weight), MaxBatch: int32(r.MaxBatch),
-			Enabled: r.Enabled, Position: int32(i),
+			Enabled: r.Enabled, SupportsTools: r.SupportsTools, SupportsImages: r.SupportsImages,
+			Position: int32(i),
 		})
 		if isForeignKeyViolation(err) {
 			return llmproxy.ErrUnknownProvider

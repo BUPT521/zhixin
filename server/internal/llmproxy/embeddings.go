@@ -81,7 +81,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request, params api.Po
 	// 拿到旧代次，写回时对不上就丢弃这次写入（ADR-0037）。
 	generation, generationOK := p.embeddingCacheGeneration(ctx, r, userID)
 	plan := attemptPlan{
-		model: m, candidates: p.router.candidates(m, ""), reserve: p.budget(r, userID, day, m),
+		model: m, candidates: p.router.candidates(m, "", capabilities{}), reserve: p.budget(r, userID, day, m),
 		background: background,
 	}
 	res := p.embed(ctx, &plan, fields, inputs)

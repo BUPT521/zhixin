@@ -110,14 +110,16 @@ type LlmQuotum struct {
 }
 
 type LlmRoute struct {
-	Model         string
-	ProviderID    string
-	UpstreamModel string
-	Priority      int32
-	Weight        int32
-	MaxBatch      int32
-	Enabled       bool
-	Position      int32
+	Model          string
+	ProviderID     string
+	UpstreamModel  string
+	Priority       int32
+	Weight         int32
+	MaxBatch       int32
+	Enabled        bool
+	SupportsTools  bool
+	SupportsImages bool
+	Position       int32
 }
 
 type LlmRouteUsage struct {

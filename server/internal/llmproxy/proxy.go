@@ -506,9 +506,16 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 		reqCtx, cancel = context.WithTimeout(reqCtx, total)
 		defer cancel()
 	}
+	// 请求要用的能力先核对：带图片或 tools 时只走管理员核对过对应能力的路由，
+	// 一条都没有时直接说明缺哪一种，不让请求发到读不了它的来源上。
+	need := requiredCapabilities(fields)
+	if !modelSupports(model, need) {
+		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, capabilityDetail(need))
+		return
+	}
 	plan := attemptPlan{
 		model:      model,
-		candidates: p.router.candidates(model, sessionKey(userID, opts.SessionID)),
+		candidates: p.router.candidates(model, sessionKey(userID, opts.SessionID), need),
 		reserve:    reserve,
 	}
 	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output, deadline)

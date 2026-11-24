@@ -535,7 +535,7 @@ func TestCandidatesOrder(t *testing.T) {
 		}
 		return strings.Join(s, ",")
 	}
-	if got := ids(r.candidates(m, "")); got != "a,b,c" {
+	if got := ids(r.candidates(m, "", capabilities{})); got != "a,b,c" {
 		t.Fatalf("按优先级排列并跳过停用与 key 损坏的来源：%s", got)
 	}
 	for range coolAfterFailures {
@@ -545,11 +545,11 @@ func TestCandidatesOrder(t *testing.T) {
 		}
 		r.health.complete(lease, false, healthOutcome{reason: "无法连接", scope: sourceFailure})
 	}
-	if got := ids(r.candidates(m, "")); got != "b,c" {
+	if got := ids(r.candidates(m, "", capabilities{})); got != "b,c" {
 		t.Fatalf("冷却中的来源应跳过：%s", got)
 	}
 	now = now.Add(coolBase)
-	if got := ids(r.candidates(m, "")); got != "a,b,c" {
+	if got := ids(r.candidates(m, "", capabilities{})); got != "a,b,c" {
 		t.Fatalf("冷却到期后按原优先级试探：%s", got)
 	}
 }

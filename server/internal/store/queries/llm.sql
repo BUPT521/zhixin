@@ -41,7 +41,7 @@ FROM llm_model
 ORDER BY name;
 
 -- name: ListLLMRoutes :many
-SELECT model, provider_id, upstream_model, priority, weight, max_batch, enabled
+SELECT model, provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images
 FROM llm_route
 ORDER BY model, position;
 
@@ -62,10 +62,11 @@ ON CONFLICT (name) DO UPDATE SET
 DELETE FROM llm_route WHERE model = sqlc.arg(model);
 
 -- name: InsertLLMRoute :exec
-INSERT INTO llm_route (model, provider_id, upstream_model, priority, weight, max_batch, enabled, position)
+INSERT INTO llm_route (model, provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images, position)
 VALUES (
   sqlc.arg(model), sqlc.arg(provider_id), sqlc.arg(upstream_model), sqlc.arg(priority),
-  sqlc.arg(weight), sqlc.arg(max_batch), sqlc.arg(enabled), sqlc.arg(position)
+  sqlc.arg(weight), sqlc.arg(max_batch), sqlc.arg(enabled), sqlc.arg(supports_tools),
+  sqlc.arg(supports_images), sqlc.arg(position)
 );
 
 -- name: DeleteLLMModel :execrows

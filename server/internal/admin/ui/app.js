@@ -674,6 +674,9 @@ function routeRow(m, r, firstShare, configuredShare) {
   if (firstShare !== null) meta.push(`当前首选 ${routeShare(firstShare)}`);
   else if (routeEligible(r)) meta.push('仅在失败后尝试');
   if (m.kind === 'embedding' && r.max_batch) meta.push(`每批 ${r.max_batch} 条`);
+  // 能力标记只显示例外：关掉的才不会接对应的请求。
+  if (r.supports_tools === false) meta.push('不接工具请求');
+  if (r.supports_images === false) meta.push('不带图片');
   return el('div', { class: 'route' + (routeEligible(r) ? '' : ' is-off') },
     el('div', { class: 'route-main' },
       el('span', { class: 'mono route-name', title: r.provider_id }, providerLabel(r.provider_id) + ' → ' + r.upstream_model),
@@ -699,6 +702,7 @@ function routeInput(m, r) {
   const out = {
     provider_id: r.provider_id, upstream_model: r.upstream_model,
     priority: r.priority, weight: r.weight, enabled: r.enabled,
+    supports_tools: r.supports_tools !== false, supports_images: r.supports_images !== false,
   };
   if (m.kind === 'embedding') out.max_batch = r.max_batch;
   return out;
@@ -845,6 +849,8 @@ function addRouteRow(route, group) {
   const weight = el('input', { name: 'weight', type: 'number', min: 1, max: 1000, step: 1, inputmode: 'numeric', value: route.weight ?? 1, title: '同一讨论固定从同一条路由开始，权重决定会话落到各条路由的比例' });
   const batch = el('input', { name: 'max_batch', type: 'number', min: 0, max: 2048, step: 1, inputmode: 'numeric', value: route.max_batch ?? 0, title: '0 表示不拆分' });
   const enabled = el('input', { name: 'route_enabled', type: 'checkbox', checked: route.enabled ?? true });
+  const tools = el('input', { name: 'supports_tools', type: 'checkbox', checked: route.supports_tools ?? true });
+  const images = el('input', { name: 'supports_images', type: 'checkbox', checked: route.supports_images ?? true });
   const row = el('div', { class: 'route-edit', 'data-position': suffix },
     el('label', { class: 'route-field field-provider' },
       el('span', { class: 'field-label' }, '来源'),
@@ -868,6 +874,8 @@ function addRouteRow(route, group) {
       batch,
     ),
     el('label', { class: 'check route-enabled' }, enabled, '启用'),
+    el('label', { class: 'check route-tools', title: '按实际调用核对过函数调用；关掉之后带 tools 的请求不会走这条路由' }, tools, '工具'),
+    el('label', { class: 'check route-images', title: '按实际调用核对过图片输入；关掉之后带图片的请求不会走这条路由' }, images, '图片'),
     el('button', { type: 'button', class: 'link danger route-remove', onclick: () => {
       row.remove();
       updateRouteControls();
@@ -918,6 +926,8 @@ function readRouteRow(row) {
     priority: Number(row.querySelector('[name="priority"]').value),
     weight: weight.validity.valid ? Number(weight.value || 1) : NaN,
     enabled: row.querySelector('[name="route_enabled"]').checked,
+    supports_tools: row.querySelector('[name="supports_tools"]').checked,
+    supports_images: row.querySelector('[name="supports_images"]').checked,
   };
 }
 

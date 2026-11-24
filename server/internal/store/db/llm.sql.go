@@ -78,22 +78,25 @@ func (q *Queries) GetLLMProvider(ctx context.Context, id string) (LlmProvider, e
 }
 
 const insertLLMRoute = `-- name: InsertLLMRoute :exec
-INSERT INTO llm_route (model, provider_id, upstream_model, priority, weight, max_batch, enabled, position)
+INSERT INTO llm_route (model, provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images, position)
 VALUES (
   $1, $2, $3, $4,
-  $5, $6, $7, $8
+  $5, $6, $7, $8,
+  $9, $10
 )
 `
 
 type InsertLLMRouteParams struct {
-	Model         string
-	ProviderID    string
-	UpstreamModel string
-	Priority      int32
-	Weight        int32
-	MaxBatch      int32
-	Enabled       bool
-	Position      int32
+	Model          string
+	ProviderID     string
+	UpstreamModel  string
+	Priority       int32
+	Weight         int32
+	MaxBatch       int32
+	Enabled        bool
+	SupportsTools  bool
+	SupportsImages bool
+	Position       int32
 }
 
 func (q *Queries) InsertLLMRoute(ctx context.Context, arg InsertLLMRouteParams) error {
@@ -105,6 +108,8 @@ func (q *Queries) InsertLLMRoute(ctx context.Context, arg InsertLLMRouteParams) 
 		arg.Weight,
 		arg.MaxBatch,
 		arg.Enabled,
+		arg.SupportsTools,
+		arg.SupportsImages,
 		arg.Position,
 	)
 	return err
@@ -185,19 +190,21 @@ func (q *Queries) ListLLMProviders(ctx context.Context) ([]LlmProvider, error) {
 }
 
 const listLLMRoutes = `-- name: ListLLMRoutes :many
-SELECT model, provider_id, upstream_model, priority, weight, max_batch, enabled
+SELECT model, provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images
 FROM llm_route
 ORDER BY model, position
 `
 
 type ListLLMRoutesRow struct {
-	Model         string
-	ProviderID    string
-	UpstreamModel string
-	Priority      int32
-	Weight        int32
-	MaxBatch      int32
-	Enabled       bool
+	Model          string
+	ProviderID     string
+	UpstreamModel  string
+	Priority       int32
+	Weight         int32
+	MaxBatch       int32
+	Enabled        bool
+	SupportsTools  bool
+	SupportsImages bool
 }
 
 func (q *Queries) ListLLMRoutes(ctx context.Context) ([]ListLLMRoutesRow, error) {
@@ -217,6 +224,8 @@ func (q *Queries) ListLLMRoutes(ctx context.Context) ([]ListLLMRoutesRow, error)
 			&i.Weight,
 			&i.MaxBatch,
 			&i.Enabled,
+			&i.SupportsTools,
+			&i.SupportsImages,
 		); err != nil {
 			return nil, err
 		}

@@ -1369,7 +1369,7 @@ components:
           items: { $ref: "#/components/schemas/AdminUsageRoute" }
     AdminRoute:
       type: object
-      required: [provider_id, upstream_model, priority, weight, max_batch, enabled, state, health]
+      required: [provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images, state, health]
       properties:
         provider_id: { type: string }
         upstream_model: { type: string, description: 来源侧的模型名，例如 BAAI/bge-m3 }
@@ -1377,6 +1377,8 @@ components:
         weight: { type: integer, description: 同一优先级内按权重分流 }
         max_batch: { type: integer, description: 嵌入一次发给来源的最多条数，0 表示不拆分 }
         enabled: { type: boolean }
+        supports_tools: { type: boolean, description: 按实际调用核对过函数调用；请求带 tools 时只走这类路由 }
+        supports_images: { type: boolean, description: 按实际调用核对过图片输入；请求带图片时只走这类路由 }
         state: { type: string, enum: [ready, cooling, probe_ready, probing, disabled, provider_disabled, key_error, provider_missing] }
         health: { $ref: "#/components/schemas/AdminHealth", description: 这条路由自身的健康状态 }
     AdminRouteInput:
@@ -1390,6 +1392,8 @@ components:
         weight: { type: integer, minimum: 1, maximum: 1000, default: 1 }
         max_batch: { type: integer, minimum: 0, maximum: 2048, default: 0 }
         enabled: { type: boolean, default: true }
+        supports_tools: { type: boolean, default: true, description: 省略时按支持处理，与加筛选之前的行为一致 }
+        supports_images: { type: boolean, default: true, description: 省略时按支持处理，与加筛选之前的行为一致 }
     AdminModel:
       type: object
       required: [name, kind, enabled, available, note, routes]

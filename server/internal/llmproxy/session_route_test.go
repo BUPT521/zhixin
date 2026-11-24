@@ -40,8 +40,8 @@ func TestSessionOrderIsStable(t *testing.T) {
 	first := ""
 	seen := map[string]bool{}
 	for _, session := range []string{"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"} {
-		order := routeIDs(router.candidates(m, session))
-		if order != routeIDs(router.candidates(m, session)) {
+		order := routeIDs(router.candidates(m, session, capabilities{}))
+		if order != routeIDs(router.candidates(m, session, capabilities{})) {
 			t.Fatalf("同一会话两次得到不同顺序：%s", order)
 		}
 		if order == "" {
@@ -73,7 +73,7 @@ func TestSessionOrderFollowsWeights(t *testing.T) {
 	const sessions = 4000
 	heavy := 0
 	for i := range sessions {
-		order := routeIDs(env.proxy.router.candidates(m, fmt.Sprintf("session-%d", i)))
+		order := routeIDs(env.proxy.router.candidates(m, fmt.Sprintf("session-%d", i), capabilities{}))
 		if strings.HasPrefix(order, "a") {
 			heavy++
 		}

@@ -68,6 +68,68 @@ func TestAdminDisabledWithoutToken(t *testing.T) {
 	}
 }
 
+func TestAdminModelCapabilityFlags(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
+	admin := func(method, path string, in, out any, want int) {
+		t.Helper()
+		if code := h.json(method, path, testAdminToken, in, out); code != want {
+			t.Fatalf("%s %s: got %d, want %d", method, path, code, want)
+		}
+	}
+	admin("POST", "/admin/v1/providers", map[string]string{
+		"id": "caps", "base_url": "https://caps.example/v1", "api_key": "sk-caps",
+	}, nil, http.StatusCreated)
+
+	route := func(extra map[string]any) map[string]any {
+		out := map[string]any{"provider_id": "caps", "upstream_model": "chat"}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	admin("POST", "/admin/v1/models", map[string]any{
+		"name": "caps-chat", "kind": "chat",
+		"routes": []map[string]any{route(map[string]any{"supports_tools": false, "supports_images": false})},
+	}, nil, http.StatusCreated)
+
+	readFlags := func() (bool, bool) {
+		t.Helper()
+		var list api.AdminModelList
+		admin("GET", "/admin/v1/models", nil, &list, http.StatusOK)
+		for _, m := range list.Data {
+			if m.Name != "caps-chat" {
+				continue
+			}
+			if len(m.Routes) != 1 {
+				t.Fatalf("routes: %+v", m.Routes)
+			}
+			return m.Routes[0].SupportsTools, m.Routes[0].SupportsImages
+		}
+		t.Fatal("没有读到 caps-chat")
+		return false, false
+	}
+
+	if tools, images := readFlags(); tools || images {
+		t.Fatalf("能力标记应照写入值保存，得到 tools=%v images=%v", tools, images)
+	}
+
+	// 旧后台脚本不带这两个字段：按支持处理。
+	admin("PUT", "/admin/v1/models/caps-chat", map[string]any{
+		"kind": "chat", "routes": []map[string]any{route(nil)},
+	}, nil, http.StatusOK)
+	if tools, images := readFlags(); !tools || !images {
+		t.Fatalf("省略能力标记时应按支持处理，得到 tools=%v images=%v", tools, images)
+	}
+
+	// 只关掉图片能力。
+	admin("PUT", "/admin/v1/models/caps-chat", map[string]any{
+		"kind": "chat", "routes": []map[string]any{route(map[string]any{"supports_images": false})},
+	}, nil, http.StatusOK)
+	if tools, images := readFlags(); !tools || images {
+		t.Fatalf("应只关掉图片能力，得到 tools=%v images=%v", tools, images)
+	}
+}
+
 func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	var rejectProbe atomic.Bool
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

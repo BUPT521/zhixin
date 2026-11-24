@@ -135,6 +135,7 @@ func (a *Admin) modelView(snap *snapshot, m *liveModel) api.AdminModel {
 		v.Routes = append(v.Routes, api.AdminRoute{
 			ProviderId: rt.ProviderID, UpstreamModel: rt.UpstreamModel,
 			Priority: rt.Priority, Weight: rt.Weight, MaxBatch: rt.MaxBatch, Enabled: rt.Enabled,
+			SupportsTools: rt.SupportsTools, SupportsImages: rt.SupportsImages,
 			State: state, Health: adminHealthView(health.route),
 		})
 	}
@@ -521,6 +522,10 @@ func modelRecord(name string, in api.AdminModelInput, now time.Time) (ModelRecor
 			Weight:        deref(ri.Weight, 1),
 			MaxBatch:      deref(ri.MaxBatch, 0),
 			Enabled:       deref(ri.Enabled, true),
+			// 能力标记省略时按支持处理：旧版后台脚本不发送这两个字段，行为保持
+			// 与加筛选之前一致。
+			SupportsTools:  deref(ri.SupportsTools, true),
+			SupportsImages: deref(ri.SupportsImages, true),
 		}
 		switch {
 		case rt.UpstreamModel == "" || utf8.RuneCountInString(rt.UpstreamModel) > 128:
@@ -613,7 +618,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 			plan.candidates = []liveRoute{route}
 		}
 	} else {
-		plan.candidates = a.router().candidates(m, "")
+		plan.candidates = a.router().candidates(m, "", capabilities{})
 	}
 	fail := func(msg string) {
 		out.Error = &msg

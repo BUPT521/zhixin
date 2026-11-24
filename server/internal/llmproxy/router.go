@@ -161,19 +161,31 @@ func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapsh
 	return s
 }
 
+// capabilities 是这次请求需要路由具备的能力：声明了 tools 就要求函数调用，输入
+// 里带图片就要求视觉。两类标记都由管理员在后台按实际调用核对。
+type capabilities struct{ tools, images bool }
+
 // candidates 按优先级分组，组内按权重排列。执行前还要重新检查健康状态并占用
 // 试探名额。session 非空时组内顺序由会话与权重确定，同一会话的追问与工具步骤
 // 因此落到同一条来源；为空时每次请求重新随机，管理端探测与旧客户端照旧分流。
-func (r *Router) candidates(m *liveModel, session string) []liveRoute {
+// need 里要求的能力对应的标记为假时，这条路由不进入候选。
+func (r *Router) candidates(m *liveModel, session string, need capabilities) []liveRoute {
 	if !m.Enabled {
 		return nil
 	}
 	var usable []liveRoute
 	states := r.health.modelViews(m)
 	for i, rt := range m.Live {
-		if rt.usable() && states[i].phase().eligible() {
-			usable = append(usable, rt)
+		if !rt.usable() || !states[i].phase().eligible() {
+			continue
 		}
+		if need.tools && !rt.SupportsTools {
+			continue
+		}
+		if need.images && !rt.SupportsImages {
+			continue
+		}
+		usable = append(usable, rt)
 	}
 	sort.SliceStable(usable, func(i, j int) bool { return usable[i].Priority < usable[j].Priority })
 	for start := 0; start < len(usable); {

@@ -430,6 +430,12 @@ type AdminRoute struct {
 	ProviderId string          `json:"provider_id"`
 	State      AdminRouteState `json:"state"`
 
+	// SupportsImages 按实际调用核对过图片输入；请求带图片时只走这类路由
+	SupportsImages bool `json:"supports_images"`
+
+	// SupportsTools 按实际调用核对过函数调用；请求带 tools 时只走这类路由
+	SupportsTools bool `json:"supports_tools"`
+
 	// UpstreamModel 来源侧的模型名，例如 BAAI/bge-m3
 	UpstreamModel string `json:"upstream_model"`
 
@@ -442,10 +448,16 @@ type AdminRouteState string
 
 // AdminRouteInput defines model for AdminRouteInput.
 type AdminRouteInput struct {
-	Enabled       *bool  `json:"enabled,omitempty"`
-	MaxBatch      *int   `json:"max_batch,omitempty"`
-	Priority      *int   `json:"priority,omitempty"`
-	ProviderId    string `json:"provider_id"`
+	Enabled    *bool  `json:"enabled,omitempty"`
+	MaxBatch   *int   `json:"max_batch,omitempty"`
+	Priority   *int   `json:"priority,omitempty"`
+	ProviderId string `json:"provider_id"`
+
+	// SupportsImages 省略时按支持处理，与加筛选之前的行为一致
+	SupportsImages *bool `json:"supports_images,omitempty"`
+
+	// SupportsTools 省略时按支持处理，与加筛选之前的行为一致
+	SupportsTools *bool  `json:"supports_tools,omitempty"`
 	UpstreamModel string `json:"upstream_model"`
 	Weight        *int   `json:"weight,omitempty"`
 }

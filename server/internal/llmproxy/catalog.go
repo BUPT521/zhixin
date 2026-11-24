@@ -50,7 +50,12 @@ type Route struct {
 	Weight   int
 	// MaxBatch 是嵌入时一次发给来源的最多条数，0 表示不拆分。
 	MaxBatch int
-	Enabled  bool
+	// SupportsTools 与 SupportsImages 是管理员按实际调用核对过的能力：请求声明了
+	// tools 时只走支持函数调用的路由，输入里带图片时只走支持视觉的路由。默认按
+	// 支持处理，与加筛选之前的行为一致。
+	SupportsTools  bool
+	SupportsImages bool
+	Enabled        bool
 }
 
 // ModelRecord 是客户端看到的一个模型名与它的全部路由。

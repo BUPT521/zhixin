@@ -315,6 +315,10 @@ CREATE TABLE llm_route (
   weight          INTEGER NOT NULL DEFAULT 1 CHECK (weight BETWEEN 1 AND 1000),
   max_batch       INTEGER NOT NULL DEFAULT 0 CHECK (max_batch BETWEEN 0 AND 2048),
   enabled         BOOLEAN NOT NULL DEFAULT true,
+  -- 能力标记：管理员按实际调用核对过才保留为 true，请求带图片或工具声明时只走
+  -- 具备对应能力的候选。默认按支持处理，与加筛选之前的行为一致。
+  supports_tools  BOOLEAN NOT NULL DEFAULT true,
+  supports_images BOOLEAN NOT NULL DEFAULT true,
   position        INTEGER NOT NULL,              -- 管理后台里的排列顺序
   PRIMARY KEY (model, provider_id, upstream_model)
 );
